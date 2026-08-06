@@ -580,3 +580,45 @@ describe('drawArea — M4 decimation (Phase 3)', () => {
     expect(penCount(calls)).toBeGreaterThan(300);
   });
 });
+
+describe('drawArea — flat fill (stacking)', () => {
+  const flat: AreaStyle = { ...style, fillOpacity: 1, flatFill: true };
+
+  it('skips the gradient entirely and fills with the plain colour', () => {
+    const { ctx, calls, gradients } = areaContext();
+    drawArea(
+      ctx,
+      cs([0, 1, 2], [10, 20, 15]),
+      identity,
+      scaleLinear().domain([0, 30]).range([100, 0]) as unknown as Scale,
+      flat,
+      0,
+      resolveCurve('linear'),
+    );
+    // The whole point: no gradient is built, so nothing fades to transparent
+    // at the baseline and a band beneath this one stays covered.
+    expect(gradients).toHaveLength(0);
+    const fills = calls.filter(
+      (c) => c.type === 'set' && c.name === 'fillStyle',
+    );
+    expect(fills.at(-1)?.args[0]).toBe('#2563eb');
+  });
+
+  it('still grades when flatFill is absent (the elevation default)', () => {
+    const { ctx, gradients } = areaContext();
+    drawArea(
+      ctx,
+      cs([0, 1, 2], [10, 20, 15]),
+      identity,
+      scaleLinear().domain([0, 30]).range([100, 0]) as unknown as Scale,
+      style,
+      0,
+      resolveCurve('linear'),
+    );
+    expect(gradients).toHaveLength(1);
+    // …and that gradient does reach transparent — the behaviour stacking opts out of.
+    expect(gradients[0]!.some((s) => /rgba?\(.*0\)$|00$/.test(s.color))).toBe(
+      true,
+    );
+  });
+});

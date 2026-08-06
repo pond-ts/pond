@@ -34,12 +34,19 @@ Every layer draws identically across a **time**, **value**, or (for `BarChart`)
 in its `bins` mode _is_ the histogram; there's no separate `Histogram`
 component.
 
-## Data adapters
+Beside the draw layers sit two **standalone row lists** —
+[BarList & BoxList](./lists.mdx) — DOM tables (no `<ChartContainer>`) for the
+ranked-entity shape: one row per interface / split / symbol, a proportional
+bar or five-number distribution per row, data cells, custom sort, and a
+per-row expander.
 
-Most layers accept a pond `series` directly and shape it internally. The
-`from*` / `stacksFrom*` adapters in the package (`fromTimeSeries`,
-`bandFromTimeSeries`, `boxFromTimeSeries`, `ohlcFromTimeSeries`,
-`stacksFromColumns`, `categoryStack`, `transposeRow`, …) are the same shaping
-made explicit — reach for them when you're building the series shape yourself.
-Each page's **Data contract** section names the adapter and columns its layer
-reads.
+## View builders (for custom draw code)
+
+Starting from a pond series, **the series is the whole contract** — every
+layer accepts it directly and shapes internally; there is no adapter step to
+learn. The exported `from*` / `stacksFrom*` functions (`fromTimeSeries`,
+`boxFromTimeSeries`, `stacksFromColumns`, …) expose the package's
+chart-ready **view shapes** (`ChartSeries`, `BoxSeries`, …) for one audience:
+consumers writing their own draw code on top of them. No shipped layer needs
+their output — if you find yourself calling one to feed a layer, that's an
+API gap; file it. Each page's **Data contract** section names the columns its layer reads.

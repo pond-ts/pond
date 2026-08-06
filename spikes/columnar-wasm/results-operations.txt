@@ -1,0 +1,50 @@
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+What would a Rust columnar core save or cost, per Pond operation?
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+node v22.15.0 · darwin/arm64 · simd128 build · N = 1,000,000 rows, ~4% missing
+
+── per-column kernel cost by shape: one column of N rows, three ways ────────────────
+                     shape    js-typed        rust    lang x
+  ────────────────────────────────────────────────────────────
+              element-wise     3.858ms     1.884ms     2.05x
+               prefix scan     6.432ms     1.961ms     3.28x
+            sliding window     2.886ms     2.163ms     1.33x
+              whole reduce     1.707ms     0.912ms     1.87x
+           bucketed reduce     3.998ms     0.938ms     4.26x
+                    gather     2.185ms     0.666ms     3.28x
+
+── per-operation, C = 4 mapped columns ──────────────────────────────────────────────
+                 operation                  shape     total  kernel  algo x  lang x  JS-only    +RUST
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────
+                      rate           element-wise  421.45ms    100%   27.3x    2.0x   27.31x   55.92x~
+             fill ('hold')           element-wise  318.53ms    100%   20.6x    2.0x   20.64x   42.26x~
+           fill ('linear')           element-wise  295.80ms    100%   19.2x    2.0x   19.17x   39.25x~
+                      diff           element-wise  293.94ms    100%   19.0x    2.0x   19.05x   39.00x~
+           mapColumns (×2) element-wise (closure)  276.56ms    100%   17.9x    2.0x   17.92x   36.70x~
+                shift (+1)           element-wise  241.57ms    100%   15.7x    2.0x   15.65x   32.05x~
+          cumulative (sum)            prefix scan  166.17ms    100%    6.4x    3.3x    6.29x   19.47x 
+     rolling (100-bar avg)         sliding window  417.52ms     91%   32.9x    1.3x    8.42x    8.94x 
+              smooth (ema)            prefix scan 1625.52ms     65%   41.3x    3.3x    2.77x    2.85x 
+     bin(1024,'minMax') ×C        bucketed reduce    9.84ms    100%     n/a    4.3x    1.00x    2.62x~
+              reduce (avg)           whole reduce    9.03ms    100%     n/a    1.9x    1.00x    2.47x~
+         column().sum() ×C           whole reduce    8.87ms    100%     n/a    1.9x    1.00x    2.43x~
+   aggregate (60s buckets)        bucketed reduce   12.18ms     85%     n/a    4.3x    1.00x    2.17x 
+     select (reshape only)              no kernel    0.00ms     74%     n/a    1.0x    1.00x    1.00x 
+     rename (reshape only)              no kernel    0.01ms     58%     n/a    1.0x    1.00x    1.00x 
+       align (linear, 60s)           element-wise   18.00ms     20%    0.2x    2.0x    0.60x    0.82x~
+   byValue (sort + gather)                 gather    8.55ms      1%     n/a    3.3x    1.00x    0.77x~
+
+  total    = measured, C=4.  kernel = share that scales per column (fitted).
+  algo x   = pond-ts per-column cost / the same work as a tight JS typed-array
+             loop. Available today, no Rust. n/a where pond-ts already IS that
+             loop (reduce / bin / gather have nothing to rewrite).
+  lang x   = that JS loop / the Rust kernel. What the port itself adds.
+  JS-only  = whole-operation ceiling from the JS rewrite alone.
+  +RUST    = whole-operation ceiling with the Rust kernel. BOTH are upper
+             bounds: columns already resident, zero boundary, zero ingest,
+             whole per-column term replaced, and the Rust shape-kernel is a
+             floor for ops that do more per column than it does.
+  ~        = soft fit (negative intercept or R2 < 0.9); the split for that row
+             does not separate cleanly, read it as indicative only.
+
+raw results → results-operations.json

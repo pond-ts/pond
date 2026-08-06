@@ -27,10 +27,40 @@ export interface RecordingContext {
 }
 
 /**
+ * The `DOMException` a real canvas throws for an out-of-range argument. The two
+ * gradient entry points below are the ones this package can actually reach with
+ * a bad value, and they are **specified** to throw rather than no-op:
+ *
+ * - `createLinearGradient(x0, y0, x1, y1)` — throws if any coordinate is
+ *   non-finite;
+ * - `addColorStop(offset, color)` — throws if the offset is non-finite or
+ *   outside `[0, 1]`.
+ *
+ * This mock used to stub both unconditionally, and that is not a neutral
+ * simplification — it made the mock *more forgiving than the platform*, so a
+ * defect that crashes every real browser rendered as a clean green suite. It
+ * hid exactly that: an `AreaChart` on a log axis whose data touched zero
+ * scaled its extent to `NaN` and called `createLinearGradient(0, NaN, 0, NaN)`.
+ * A test double may be less capable than the real thing; it must not be more
+ * permissive, or the tests stop being evidence.
+ */
+function indexSizeError(method: string, detail: string): Error {
+  const err = new Error(
+    `Failed to execute '${method}' on 'CanvasRenderingContext2D': ${detail}`,
+  );
+  err.name = 'IndexSizeError';
+  return err;
+}
+
+/**
  * Build a recording 2D context. Any method call is logged and returns
  * `undefined` (except `measureText`, which returns a minimal `{ width: 0 }` so
  * text-measuring code doesn't crash); any property assignment is logged and
  * stored so a subsequent read returns it.
+ *
+ * The gradient factories additionally **enforce the platform's argument
+ * validation** (see {@link indexSizeError}) — the one place this double is
+ * deliberately strict rather than permissive.
  */
 export function recordingContext(): RecordingContext {
   const calls: CtxCall[] = [];
@@ -41,6 +71,30 @@ export function recordingContext(): RecordingContext {
       return (...args: unknown[]) => {
         calls.push({ type: 'call', name: prop, args });
         if (prop === 'measureText') return { width: 0 };
+        // A minimal gradient so fill code (`AreaChart`) can chain
+        // `addColorStop` without crashing; the call itself is still recorded.
+        if (
+          prop === 'createLinearGradient' ||
+          prop === 'createRadialGradient'
+        ) {
+          if (!args.every((a) => Number.isFinite(a))) {
+            throw indexSizeError(
+              prop,
+              `The provided double value is non-finite (${args.join(', ')}).`,
+            );
+          }
+          return {
+            addColorStop: (offset: number, color: string) => {
+              if (!(offset >= 0 && offset <= 1)) {
+                throw indexSizeError(
+                  'addColorStop',
+                  `The provided value (${offset}) is outside the range [0, 1].`,
+                );
+              }
+              void color;
+            },
+          };
+        }
         return undefined;
       };
     },

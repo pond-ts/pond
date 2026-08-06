@@ -31,6 +31,14 @@ const TOKEN_TO_RAMP: Record<string, keyof typeof docsPalette.light> = {
   '--pond-viz-down': 'vizDown',
   '--pond-viz-grid': 'grid',
   '--pond-viz-divider': 'divider',
+  '--pond-viz-seq-1': 'vizSeq1',
+  '--pond-viz-seq-2': 'vizSeq2',
+  '--pond-viz-seq-3': 'vizSeq3',
+  '--pond-viz-seq-4': 'vizSeq4',
+  '--pond-viz-seq-5': 'vizSeq5',
+  '--pond-viz-seq-6': 'vizSeq6',
+  '--pond-viz-seq-7': 'vizSeq7',
+  '--pond-viz-seq-8': 'vizSeq8',
 };
 
 /**

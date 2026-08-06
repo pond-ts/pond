@@ -131,6 +131,35 @@ export interface BarSeries {
   readonly end: Float64Array;
   readonly y: Float64Array;
   readonly length: number;
+  /**
+   * Optional **stable per-bar identity** — `marks[i]` names bar `i`. The
+   * single-series sibling of {@link StackedBarSeries.marks}: when present, the
+   * draw / hit-test / selection can key on this name instead of the bar's
+   * `begin` **edge**.
+   *
+   * The readers ({@link barsFromTimeSeries} / {@link barsFromValueSeries}) fill
+   * it with the **sample's own axis key** — `String(key[i])`, the timestamp or
+   * axis value the row is keyed on. That is the identity a caller already
+   * owns, and for a **point-keyed** series it is *not* `begin[i]`: there the
+   * span is synthesized, so `begin[i]` is a derived edge (`key - prevGap/2`,
+   * see {@link neighbourSpans}) and pinning a selection by key meant
+   * re-deriving the neighbour spacing. `undefined` on a hand-built view.
+   *
+   * Built **lazily** on first read and then memoized (~9 ms per 100k bars, on
+   * top of a ~0.8 ms reader). Who pays, precisely:
+   *
+   * - A **non-interactive** layer (no `id`, so no `hitTest`) never reads them.
+   * - An **interactive** one hit-tests on every *pointer move*, and that echo
+   *   reads the hovered bar's mark — so the first move that lands on a bar
+   *   materializes the array, once per data identity, on the input path
+   *   (11.1 ms vs 1.7 ms for a warm 100k-bar hover).
+   *
+   * So this is not free for an interactive chart; it is bounded and paid once,
+   * where an eager array would cost every chart on every data update. At
+   * realistic bar counts it is under a millisecond either way. See
+   * `scripts/perf-barmarks.mjs`.
+   */
+  readonly marks?: readonly string[];
 }
 
 /**
@@ -169,6 +198,42 @@ export interface StackedBarSeries {
 }
 
 /**
+ * Assert `column` names an existing **numeric** column of `series`, returning
+ * it. The single source of the reader's two errors, so a caller that reads a
+ * column **per event** rather than buffering it — the time-axis `readout` path
+ * in `LineChart` / `AreaChart` — rejects a bad name identically to one that
+ * materializes. Without it a mistyped `readout` throws on a `ValueSeries` (via
+ * {@link readValueColumn}) but silently produced no readout on a `TimeSeries`,
+ * where the per-event `get()` just returns `undefined`.
+ *
+ * The `undefined` guard is runtime-necessary even though it reads as dead code:
+ * `column()` returns `undefined` for an unknown name at runtime, but core's
+ * public overload currently types the result as non-`undefined` (see F-3 in the
+ * M1 friction note). Keep it — the "throws on unknown column" tests exercise it.
+ *
+ * @throws RangeError if `column` does not exist.
+ * @throws TypeError if `column` is not a numeric column.
+ */
+export function assertNumericColumn<S extends SeriesSchema>(
+  series: TimeSeries<S>,
+  column: string,
+): { kind: string; read(i: number): number | undefined } {
+  const col = series.column(column);
+  if (col === undefined) {
+    throw new RangeError(`unknown column '${column}'`);
+  }
+  if (col.kind !== 'number') {
+    throw new TypeError(
+      `column '${column}' must be numeric (got '${col.kind}')`,
+    );
+  }
+  return col as unknown as {
+    kind: string;
+    read(i: number): number | undefined;
+  };
+}
+
+/**
  * Read a numeric column into a `Float64Array`, missing cells as `NaN`.
  *
  * Uses `read(i)` — a method on the column *class* — rather than the bulk
@@ -187,19 +252,7 @@ function readNumericColumn<S extends SeriesSchema>(
   series: TimeSeries<S>,
   column: string,
 ): Float64Array {
-  // Runtime-necessary even though it reads as dead code: `column()` returns
-  // `undefined` for an unknown name at runtime, but core's public overload
-  // currently types the result as non-`undefined` (see F-3 in the M1 friction
-  // note). Keep the guard — the "throws on unknown column" test exercises it.
-  const col = series.column(column);
-  if (col === undefined) {
-    throw new RangeError(`unknown column '${column}'`);
-  }
-  if (col.kind !== 'number') {
-    throw new TypeError(
-      `column '${column}' must be numeric (got '${col.kind}')`,
-    );
-  }
+  const col = assertNumericColumn(series, column);
   const length = series.length;
   const out = new Float64Array(length);
   for (let i = 0; i < length; i += 1) {
@@ -559,6 +612,51 @@ function neighbourSpans(
 }
 
 /**
+ * Attach the lazy stable per-bar identity to a bar view — see
+ * {@link BarSeries.marks}. `keys` is the **sample's own** axis buffer (the key
+ * column's `begin` for a `TimeSeries`, `axisValues()` for a `ValueSeries`), not
+ * the possibly-derived bar span, and must already be trimmed to `bars.length`.
+ *
+ * The strings are built on first read and then memoized. That is why this is a
+ * getter rather than an eager array: 100k bars is ~9 ms of string allocation on
+ * top of a ~0.8 ms reader, and eager would charge it to every chart on every
+ * data update, for a channel a non-interactive one never uses at all. An
+ * interactive chart *does* pay it, once per data identity, on its first hover
+ * over a bar — see {@link BarSeries.marks}. `scripts/perf-barmarks.mjs` pins
+ * both halves.
+ *
+ * The getter is deliberately **enumerable**, so a `{...bs}` spread carries the
+ * marks through (materializing them) rather than silently dropping them — a
+ * perf surprise beats a correctness one. Nothing in the package spreads a
+ * `BarSeries` today; this is for outside callers. If one ever appears **in the
+ * draw path**, it would force materialization on every frame — but
+ * `perf-barmarks.mjs`'s `marks untouched` row is measured on exactly that, so
+ * it would show up as a reader regression rather than pass silently.
+ */
+function withKeyMarks(
+  bars: {
+    begin: Float64Array;
+    end: Float64Array;
+    y: Float64Array;
+    length: number;
+  },
+  keys: Float64Array,
+): BarSeries {
+  let marks: readonly string[] | undefined;
+  return {
+    ...bars,
+    get marks(): readonly string[] {
+      if (marks === undefined) {
+        const out = new Array<string>(bars.length);
+        for (let i = 0; i < bars.length; i += 1) out[i] = String(keys[i]!);
+        marks = out;
+      }
+      return marks;
+    },
+  };
+}
+
+/**
  * Build a {@link BarSeries} from a pond `TimeSeries` — one bar per event, the
  * key's `[begin, end]` as the x-span and `column` as the height.
  *
@@ -576,6 +674,10 @@ function neighbourSpans(
  * interval-keyed series (e.g. an `aggregate`/`window` rollup) draws its true
  * bucket spans. Detected by `keyColumn().kind === 'time'`.
  *
+ * Each bar also carries its **own key** as a stable {@link BarSeries.marks}
+ * identity, so a selection can be pinned on the sample rather than on the span
+ * this derived for it.
+ *
  * @throws RangeError if `column` does not exist.
  * @throws TypeError if `column` is not a numeric column.
  */
@@ -586,15 +688,16 @@ export function barsFromTimeSeries<S extends SeriesSchema>(
   const y = readNumericColumn(series, column);
   const n = series.length;
   const kind = series.keyColumn().kind;
-  if (kind !== 'time') {
-    // Interval / timeRange: the key's own endpoints are the bar span.
-    const { begin, end } = keyBeginEnd(series);
-    return { begin, end, y, length: n };
-  }
-  // Point key (begin === end): synthesize a span from neighbour spacing so the
-  // bars have width (see neighbourSpans).
-  const { begin, end } = neighbourSpans(series.keyColumn().begin, n);
-  return { begin, end, y, length: n };
+  // Interval / timeRange: the key's own endpoints are the bar span. Point key
+  // (begin === end): synthesize a span from neighbour spacing so the bars have
+  // width (see neighbourSpans).
+  const { begin, end } =
+    kind !== 'time'
+      ? keyBeginEnd(series)
+      : neighbourSpans(series.keyColumn().begin, n);
+  // The marks key on the event's own timestamp — which for a point key is the
+  // bar's *centre*, not the `begin` edge derived above (see BarSeries.marks).
+  return withKeyMarks({ begin, end, y, length: n }, timeAxis(series));
 }
 
 /**
@@ -613,6 +716,10 @@ export function barsFromTimeSeries<S extends SeriesSchema>(
  * (a slight drift from a true segment edge — fine for the bar look; key an
  * interval/timeRange `TimeSeries` instead if exact edges matter).
  *
+ * Each bar also carries its **axis value** as a stable {@link BarSeries.marks}
+ * identity — the centre it is drawn around, not the derived edge — so a
+ * selection can be pinned without re-deriving the neighbour spacing.
+ *
  * @throws RangeError if `column` does not exist.
  * @throws TypeError if `column` is not a numeric column.
  */
@@ -624,8 +731,9 @@ export function barsFromValueSeries<VS extends ValueSeriesSchema>(
   const n = series.length;
   // axisValues() is the monotonic key buffer (zero-copy); neighbourSpans reads it
   // and allocates fresh span buffers (never mutates the source).
-  const { begin, end } = neighbourSpans(series.axisValues(), n);
-  return { begin, end, y, length: n };
+  const axis = series.axisValues();
+  const { begin, end } = neighbourSpans(axis, n);
+  return withKeyMarks({ begin, end, y, length: n }, axis);
 }
 
 /**
@@ -767,6 +875,56 @@ export interface StacksFromBinsOptions {
    * `false` ⇒ real numeric edges (a true value axis — power W, risk %).
    */
   readonly ordinal?: boolean;
+}
+
+/**
+ * Build a {@link BarSeries} from **`byColumn` bin records** — the single-series
+ * sibling of {@link stacksFromBins}, for a histogram drawing **one** aggregate
+ * field.
+ *
+ * Why it exists ([PND-BARSEM]): a one-column histogram *is* a single-series
+ * bar chart — same mark, same geometry — but routing it through the stacked
+ * reader made its capabilities depend on which prop produced it (whole-slot
+ * hit-testing, the hover colour, the cursor readout and per-bar decimation all
+ * live on the single path). Reading it as a `BarSeries` lets the chart decide
+ * by what it *draws* rather than by how it was fed.
+ *
+ * `column` names the aggregate field; slots are the bins' numeric
+ * `[start, end]` edges, or uniform unit slots under `{ ordinal: true }` —
+ * identical to {@link stacksFromBins}. A missing / non-finite aggregate reads
+ * as a gap (`NaN`), and each bar carries its slot index as a stable
+ * {@link BarSeries.marks} identity (bin records have no key of their own).
+ */
+export function barsFromBins(
+  bins: readonly BinRecord[],
+  column: string,
+  options: StacksFromBinsOptions = {},
+): BarSeries {
+  const n = bins.length;
+  const begin = new Float64Array(n);
+  const end = new Float64Array(n);
+  const y = new Float64Array(n);
+  // The bin's own **start value** is its identity — the same axis-key
+  // convention every other reader uses, and stable under `ordinal` (which only
+  // changes the drawn slot, not which bin a row is). A slot *index* would be
+  // positional and would renumber if the bin set changed. Materialized through
+  // the shared lazy getter, so a non-interactive layer never pays for the
+  // strings (see {@link BarSeries.marks}).
+  const keys = new Float64Array(n);
+  for (let i = 0; i < n; i += 1) {
+    const bin = bins[i]!;
+    if (options.ordinal) {
+      begin[i] = i;
+      end[i] = i + 1;
+    } else {
+      begin[i] = bin.start;
+      end[i] = bin.end;
+    }
+    keys[i] = bin.start;
+    const v = (bin as unknown as Record<string, unknown>)[column];
+    y[i] = typeof v === 'number' && Number.isFinite(v) ? v : NaN;
+  }
+  return withKeyMarks({ begin, end, y, length: n }, keys);
 }
 
 /**

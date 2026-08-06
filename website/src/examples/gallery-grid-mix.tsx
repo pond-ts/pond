@@ -1,0 +1,130 @@
+import {
+  AreaChart,
+  ChartContainer,
+  ChartRow,
+  Layers,
+  Legend,
+  YAxis,
+} from '@pond-ts/charts';
+import { scanWindow } from '@site/src/lib/autoplay';
+import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
+import { gridMix, gridMixRange } from './lib/energy-fixtures';
+
+const HOUR = 3_600_000;
+
+/**
+ * **Cumulative** columns, one per band: `s2` is `other + lignite`, `s3` adds
+ * hard coal, and `s8` is total generation. That is the whole trick to a
+ * stacked area — pond builds the running totals with `collapse(…, { append:
+ * true })`, and the chart draws each cumulative column as a plain area from
+ * zero.
+ *
+ * `collapse` is the right operator rather than eight hand-written loops
+ * because it stays columnar (no per-row `Event` materialization) and each call
+ * appends one column to the same series, so the result is still one
+ * `TimeSeries` the chart can read eight ways.
+ */
+function stacked() {
+  return gridMix()
+    .collapse(['other', 'lignite'], 's2', (v) => v.other + v.lignite, {
+      append: true,
+    })
+    .collapse(['s2', 'hardCoal'], 's3', (v) => v.s2 + v.hardCoal, {
+      append: true,
+    })
+    .collapse(['s3', 'gas'], 's4', (v) => v.s3 + v.gas, { append: true })
+    .collapse(['s4', 'biomass'], 's5', (v) => v.s4 + v.biomass, {
+      append: true,
+    })
+    .collapse(['s5', 'hydro'], 's6', (v) => v.s5 + v.hydro, { append: true })
+    .collapse(['s6', 'wind'], 's7', (v) => v.s6 + v.wind, { append: true })
+    .collapse(['s7', 'solar'], 's8', (v) => v.s7 + v.solar, { append: true });
+}
+
+/**
+ * Bands **top-of-stack first** — which is also the paint order. Each area is
+ * drawn from zero to its cumulative total, so a later (smaller) one covers the
+ * lower part of the one before it and the slab left visible for band `k` is
+ * exactly `[cumulative(k-1), cumulative(k)]`.
+ *
+ * This only reads as slabs because the `tonalA*` / `tonalB*` area roles set
+ * `flatFill` — an area's default gradient fades to transparent at the
+ * baseline, which would let all eight bands show through each other.
+ *
+ * The roles carry the **fuel class**: `tonalB*` (the brand teal) is the
+ * renewable half, `tonalA*` (the desaturated slate) the thermal half, so the
+ * renewable share of the stack is one contiguous block of colour and the line
+ * between Gas and Biomass is the one edge that changes hue. Within a family
+ * the step number rises with the band, which is a tonal ordering *inside* a
+ * category and not across the whole stack — eight sources are eight
+ * categories, not eight rungs of one quantity.
+ */
+const PAINT_ORDER = [
+  { column: 's8', as: 'tonalB4', label: 'Solar' },
+  { column: 's7', as: 'tonalB3', label: 'Wind' },
+  { column: 's6', as: 'tonalB2', label: 'Hydro' },
+  { column: 's5', as: 'tonalB1', label: 'Biomass' },
+  { column: 's4', as: 'tonalA4', label: 'Gas' },
+  { column: 's3', as: 'tonalA3', label: 'Hard coal' },
+  { column: 's2', as: 'tonalA2', label: 'Lignite' },
+  { column: 'other', as: 'tonalA1', label: 'Other' },
+] as const;
+
+/**
+ * Germany's generation mix over Easter weekend 2025, eight bands stacked —
+ * the chart the two tonal families exist for (gallery plan §8.2: more than
+ * four series goes tonal, not chromatic — grouped into families where the
+ * categories themselves group).
+ *
+ * With a `phase` (the Gallery card's autoplay clock) a 14-hour window sweeps
+ * the three days, so the solar bulge grows and collapses as it crosses. Every
+ * other embed passes no phase and gets the whole weekend.
+ *
+ * `cursor="crosshair"` snaps its reticle to the **nearest band edge** under the
+ * pointer and prints that edge's value — which on a stack is a *cumulative*
+ * total, not one band's output. On the top edge that is total generation, which
+ * is the number worth reading here.
+ */
+export default function GalleryGridMix({
+  width,
+  phase,
+  height = 220,
+  legend = false,
+  cursor = 'crosshair',
+}: {
+  width: number;
+  phase?: number;
+  height?: number;
+  legend?: boolean;
+  cursor?: 'none' | 'line' | 'crosshair';
+}) {
+  const theme = useSiteChartTheme();
+  const series = stacked();
+  const [begin, end] = gridMixRange();
+  const range: [number, number] =
+    phase === undefined
+      ? [begin, end]
+      : scanWindow(begin, end, 14 * HOUR, phase);
+
+  return (
+    <ChartContainer range={range} width={width} theme={theme} cursor={cursor}>
+      <ChartRow height={height}>
+        <YAxis id="gw" label="GW" format=",.0f" min={0} width={56} />
+        <Layers>
+          {PAINT_ORDER.map((band) => (
+            <AreaChart
+              key={band.column}
+              series={series}
+              column={band.column}
+              as={band.as}
+              axis="gw"
+              baseline={0}
+              legend={band.label}
+            />
+          ))}
+        </Layers>
+      </ChartRow>
+      {legend ? <Legend placement="top-left" /> : null}
+    </ChartContainer>
+  );
+}

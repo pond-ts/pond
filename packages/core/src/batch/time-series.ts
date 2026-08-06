@@ -44,6 +44,7 @@ import type {
   ValidatedAggregateMap,
 } from '../schema/index.js';
 import type {
+  ColumnDef,
   RenameSchema,
   RollingAlignment,
   RollingSchema,
@@ -61,6 +62,9 @@ import type {
   SelectSchema,
   SeriesSchema,
   TimeKeyedSchema,
+  TimeSeriesColumnarInput,
+  TimeSeriesColumnarOutput,
+  TimeSeriesJsonColumns,
   TimeSeriesJsonInput,
   TimeSeriesInput,
   TimeRangeKeyedSchema,
@@ -70,10 +74,11 @@ import type {
   ValueColumnsForSchema,
   ValueKeyedSchema,
 } from '../schema/index.js';
+import { float64ColumnFromTypedArray } from './operators/numeric-io.js';
 import {
   isAggregateOutputSpec,
   normalizeAggregateColumns,
-  tryAggregateColumnarTimeKeyed,
+  tryAggregateColumnarStore,
   tryRollingCountColumnarNumeric,
 } from './aggregate-columns.js';
 import {
@@ -88,6 +93,12 @@ import {
   type ArrowTableLike,
   type FromArrowOptions,
 } from './operators/from-arrow.js';
+import {
+  storeToArrow,
+  type ArrowExport,
+  type ToArrowOptions,
+} from './operators/to-arrow.js';
+import { storeToColumns } from './operators/to-columns.js';
 import { ValueSeries } from './value-series.js';
 import { diffRateOp, type DiffRateMode } from './operators/diff-rate.js';
 import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
@@ -791,6 +802,38 @@ type TrustedStoreInput<S extends SeriesSchema> = {
 };
 
 /**
+ * Wraps a pre-built `ColumnarStore` as a `TimeSeries`, bypassing row
+ * intake via the sentinel.
+ *
+ * Module-scoped rather than a method because ES private names
+ * (`TimeSeries.#fromTrustedStore`) are lexically confined to the class
+ * body, and the module-level transform functions at the bottom of this
+ * file — `aggregateInternal` among them — legitimately need the same
+ * door. `#fromTrustedStore` delegates here so there is one
+ * implementation, not two that can drift on how the schema is frozen.
+ *
+ * Callers must have produced the store from data that already satisfies
+ * the intake invariants: keys non-decreasing, column kinds matching the
+ * schema, non-finite numerics rejected.
+ */
+function timeSeriesFromTrustedStore<S extends SeriesSchema>(
+  name: string,
+  schema: S,
+  columnarStore: ColumnarStore<ColumnSchema>,
+): TimeSeries<S> {
+  const frozenSchema = Object.freeze(schema.slice()) as S;
+  const store = SeriesStore.fromTrustedStore(
+    columnarStore as unknown as ColumnarStore<S>,
+  ) as SeriesStore<S>;
+  const trustedInput: TrustedStoreInput<S> = {
+    name,
+    schema: frozenSchema,
+    [TRUSTED_STORE_SENTINEL]: store,
+  };
+  return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
+}
+
+/**
  * An immutable, schema-typed, ordered collection of events — the batch
  * layer's core primitive. A series is constructed whole from complete data
  * and never mutated: every transform (`filter`, `align`, `rollup`, …)
@@ -923,8 +966,20 @@ export class TimeSeries<S extends SeriesSchema> {
    *
    * **Value columns:** `number` (→ `Float64Column`; `Float64Array` adopted) and
    * `string` (→ `StringColumn`, dict-encoded when it pays; `null`/`undefined`
-   * missing). Other key kinds (`interval` / `timeRange`) and other value kinds
-   * (`boolean` / array) throw for now — extend as consumers need.
+   * missing). Other value kinds (`boolean` / array) throw for now — extend as
+   * consumers need.
+   *
+   * **Key kinds: all three.** A `time` key is one column. A **two-edged** key
+   * arrives flattened across extra columns named off it — `timeRange` +
+   * `timeRangeEnd`, or `interval` + `intervalEnd` + `intervalLabel` — the same
+   * convention {@link TimeSeries.toColumns} and {@link TimeSeries.toArrow}
+   * emit, so an aggregated series round-trips through this door. The schema
+   * still declares the **logical** key (`{ name: 'interval', kind: 'interval'
+   * }`); the edge columns are derived from it, which is why a value column may
+   * not take one of those names (it throws, naming the collision). Ordering
+   * for a two-edged key is by `(begin, end)`, matching the row path — equal
+   * begins must be non-decreasing in `end`. Interval labels must be present in
+   * every row and all of one type (string or number).
    *
    * @throws ValidationError on a missing column, a length mismatch, an
    *   unsupported kind, or an out-of-order (decreasing) timestamp when `sort`
@@ -932,35 +987,45 @@ export class TimeSeries<S extends SeriesSchema> {
    *   RangeError on a non-finite timestamp key (from the key-column
    *   constructor) or a duplicate column name.
    */
-  static fromColumns<S extends SeriesSchema>(input: {
-    name: string;
-    schema: S;
-    columns: Record<
-      string,
-      | ReadonlyArray<number | null | undefined>
-      | Float64Array
-      | ReadonlyArray<string | null | undefined>
-    >;
-    /**
-     * Sort the rows by key before construction (off by default), for a columnar
-     * payload whose rows aren't guaranteed ordered — the counterpart of
-     * `fromJSON`'s `sort`. Stable; disables the `Float64Array` zero-copy adoption
-     * (columns are reordered into fresh buffers).
-     */
-    sort?: boolean;
-  }): TimeSeries<S> {
+  static fromColumns<S extends SeriesSchema>(
+    input: TimeSeriesColumnarInput<S> & {
+      /**
+       * Sort the rows by key before construction (off by default), for a columnar
+       * payload whose rows aren't guaranteed ordered — the counterpart of
+       * `fromJSON`'s `sort`. Stable; disables the `Float64Array` zero-copy adoption
+       * (columns are reordered into fresh buffers).
+       */
+      sort?: boolean;
+    },
+  ): TimeSeries<S> {
     const { name, schema, columns, sort = false } = input;
 
-    // Key column (schema[0]). v1: point-in-time (`time`) keys only.
+    // Key column (schema[0]). Every temporal key kind is accepted; a two-edged
+    // one (`timeRange` / `interval`) arrives flattened across extra columns
+    // named off the key — see `operators/flat-keys.ts` for the convention and
+    // why it is spelled that way.
     const keyDef = schema[0];
     if (keyDef === undefined) {
       throw new ValidationError(
         'fromColumns: schema must have at least a key column',
       );
     }
-    if (keyDef.kind !== 'time') {
+    // Widened deliberately: `FirstColumn` already excludes every other kind at
+    // the type level, so narrowing would make this branch `never` — but a
+    // caller who casts (or hands over a runtime-built schema) still reaches it.
+    const { name: keyName, kind: keyKind } = keyDef as ColumnDef<
+      string,
+      string
+    >;
+    if (
+      keyKind !== 'time' &&
+      keyKind !== 'timeRange' &&
+      keyKind !== 'interval'
+    ) {
       throw new ValidationError(
-        `fromColumns: v1 supports a 'time' key; schema[0] '${keyDef.name}' is '${keyDef.kind}'`,
+        `fromColumns: schema[0] '${keyName}' is '${keyKind}'; a TimeSeries ` +
+          `key is 'time', 'timeRange' or 'interval' (a 'value' axis is ` +
+          `ValueSeries.fromColumns)`,
       );
     }
 
@@ -973,7 +1038,6 @@ export class TimeSeries<S extends SeriesSchema> {
       schema: schema as unknown as ColumnSchema,
       columns,
       sort,
-      makeKey: (begin, count) => new TimeKeyColumn(begin, count),
     });
     return TimeSeries.#fromTrustedStore(name, schema, store);
   }
@@ -1000,11 +1064,31 @@ export class TimeSeries<S extends SeriesSchema> {
    *   `Date64` already arrives as epoch-ms via Arrow's `toArray()` and passes
    *   through; a plain int/float is taken as ms. `timeUnit` overrides.
    * - **Value columns** — every non-time field by default, or the subset named
-   *   by `columns` (in order). Numeric columns (`Float32`/int convert to
-   *   `Float64Array`; int64 recombines BigInt-free; nulls → `NaN`) and string
-   *   columns (Arrow `Utf8` → `StringColumn`, dict-encoded when it pays; nulls →
-   *   missing) are supported. Any other Arrow type (list/struct/…) throws,
-   *   naming it. A null in the time key throws.
+   *   by `columns` (in order). A null in the time key throws.
+   *
+   * **The readable types, and only these** (checked against each field's
+   * *declared* Arrow type, so an unreadable one is refused by name rather than
+   * misread — see `operators/arrow-types.ts`):
+   *
+   * | Arrow type | Becomes |
+   * | --- | --- |
+   * | `Int` (any width; int64 recombines BigInt-free) | `number` |
+   * | `Float32` / `Float64` | `number` |
+   * | `Date32` / `Date64` (already epoch-ms) | `number` |
+   * | `Timestamp`, `Time32` / `Time64` | `number` — **raw unit** as a value column; a `Timestamp` key is unit-scaled to ms |
+   * | `Utf8` / `LargeUtf8` / `Utf8View` | `string` |
+   * | `Null` | an all-missing `number` column (value columns only) |
+   * | `Dictionary<T>` | whatever `T` becomes — the encoding is transparent |
+   *
+   * A **key** additionally rejects the string and `Null` types: it must be an
+   * ordered axis. Everything else throws, naming the type and what to cast
+   * it to.
+   * `Float16` and `Decimal` are worth calling out because they *look*
+   * readable and are not: a `Decimal128` is four machine words per value and a
+   * `Float16` is a half-float bit pattern, so before the type gate existed
+   * both could ingest silently wrong numbers. `Bool` is refused for a
+   * different reason — the columnar ingest engine carries `number` and
+   * `string` value columns only.
    *
    * The rows must be time-ordered (as `fromColumns` requires); pass
    * `{ sort: true }` for an unordered table (disables zero-copy adoption).
@@ -1018,13 +1102,22 @@ export class TimeSeries<S extends SeriesSchema> {
     table: ArrowTableLike,
     options: FromArrowOptions = {},
   ): TimeSeries<S> {
-    const { name, schema, columns } = arrowToColumns(table, options);
-    return TimeSeries.fromColumns({
-      name,
-      schema: schema as unknown as S,
+    const { name, schema, columns, adopted } = arrowToColumns(table, options);
+    // Goes to the shared ingest engine directly rather than through
+    // `fromColumns`, which has no parameter for `adopted` — the null-bearing
+    // numeric columns built straight from Arrow's buffers, which `RawColumns`
+    // cannot express because it cannot carry a validity bitmap. The engine is
+    // the same one `fromColumns` calls; only the `op` label differs, so a
+    // failure now names the door the caller actually went through.
+    const store = ingestColumnsToStore({
+      op: 'fromArrow',
+      keyNoun: 'timestamps',
+      schema: schema as unknown as ColumnSchema,
       columns,
       sort: options.sort ?? false,
+      adopted,
     });
+    return timeSeriesFromTrustedStore(name, schema as unknown as S, store);
   }
 
   /**
@@ -1201,12 +1294,21 @@ export class TimeSeries<S extends SeriesSchema> {
    * (return-type-keyed on `rowFormat`) cascades TS2394 errors
    * through several unrelated overload sets in this file
    * (`pivotByGroup`, `rolling`, `arrayAggregate`, `arrayExplode`).
-   * The cascade is specific to `TimeSeries.toJSON`'s shape and has
-   * defeated several time-boxed attempts to isolate. The
-   * counterpart on {@link LiveSeries.toJSON} DOES narrow — for
+   * The counterpart on {@link LiveSeries.toJSON} DOES narrow — for
    * the networked snapshot path, the ergonomic win is already
-   * there. Re-attempt if a TS upgrade or refactor unblocks the
-   * cascade.
+   * there.
+   *
+   * The cascade was long recorded here as un-isolated. It is now
+   * isolated, on {@link TimeSeries.toColumns}: the trigger is a
+   * **key-remapped mapped type** (`{ [C in S[number] as C['name']]:
+   * … }` — which is what `JsonObjectRowForSchema<S>` is) in a
+   * **method return position on this class**, and a method-level
+   * type parameter defers it past whatever resolution order trips
+   * it. `toColumns` carries the full write-up and the three
+   * workarounds that do *not* work. Narrowing this method is
+   * therefore unblocked, but it changes an existing public return
+   * type, so it wants its own decision rather than a drive-by —
+   * tracked as [PND-TSJSONT] in PLAN.md.
    */
   toJSON(
     options: { rowFormat?: JsonRowFormat } = {},
@@ -1303,24 +1405,17 @@ export class TimeSeries<S extends SeriesSchema> {
    * new store on demand. The caller guarantees `columnarStore`'s
    * shape matches `schema` — that assertion is the single cast, the
    * trust boundary (Step 4).
+   *
+   * Delegates to the module-scoped {@link timeSeriesFromTrustedStore},
+   * which the module-level transform functions also use (a `#name` is
+   * lexically confined to this class body and they sit outside it).
    */
   static #fromTrustedStore<NextSchema extends SeriesSchema>(
     name: string,
     schema: NextSchema,
     columnarStore: ColumnarStore<ColumnSchema>,
   ): TimeSeries<NextSchema> {
-    const frozenSchema = Object.freeze(schema.slice()) as NextSchema;
-    const store = SeriesStore.fromTrustedStore(
-      columnarStore as unknown as ColumnarStore<NextSchema>,
-    ) as SeriesStore<NextSchema>;
-    const trustedInput: TrustedStoreInput<NextSchema> = {
-      name,
-      schema: frozenSchema,
-      [TRUSTED_STORE_SENTINEL]: store,
-    };
-    return new TimeSeries<NextSchema>(
-      trustedInput as unknown as TimeSeriesInput<NextSchema>,
-    );
+    return timeSeriesFromTrustedStore(name, schema, columnarStore);
   }
 
   /**
@@ -1377,23 +1472,93 @@ export class TimeSeries<S extends SeriesSchema> {
   _partitionByColumns(by: ReadonlyArray<string>): Map<string, TimeSeries<S>> {
     const columnarStore = this.#store.store;
     const length = columnarStore.length;
-    const encode = this.#partitionKeyEncoder(by);
-    const groups = new Map<string, number[]>();
-    for (let i = 0; i < length; i += 1) {
-      const key = encode(i);
-      let indices = groups.get(key);
-      if (indices === undefined) {
-        indices = [];
-        groups.set(key, indices);
+
+    // Row indices per group, in first-encountered group order. Two
+    // strategies, both **two-pass**: count first, then fill an exactly
+    // sized `Int32Array`. The single-pass version pushed into a
+    // `number[]` per group and converted each to a typed array at the
+    // end — one boxed push per row plus a full copy per group. Counting
+    // costs a second scan of one column and removes both.
+    const keys: string[] = [];
+    let members: Int32Array[];
+
+    const dict =
+      by.length === 1
+        ? dictionaryPartitionSource(columnarStore, by[0]!)
+        : undefined;
+    if (dict !== undefined) {
+      // **Dict-encoded fast path.** A dictionary-backed string column
+      // already carries an integer per row, so the partition key never
+      // has to be built or hashed: group by the dictionary index and
+      // index an array, instead of materialising a string per row and
+      // hashing it into a `Map`. This is the panel shape — one row per
+      // (symbol, bar) — and symbols are exactly what dict encoding is for.
+      const { indices, dictionary, validity } = dict;
+      const slots = dictionary.length + 1; // +1 for the missing bucket
+      const MISSING = dictionary.length;
+      const counts = new Int32Array(slots);
+      const slotOf = new Int32Array(length);
+      for (let i = 0; i < length; i += 1) {
+        const defined =
+          validity === undefined || (validity[i >> 3]! & (1 << (i & 7))) !== 0;
+        const slot = defined ? indices[i]! : MISSING;
+        slotOf[i] = slot;
+        counts[slot]! += 1;
       }
-      indices.push(i);
+      // First-encountered order, matching the Map-insertion order the
+      // previous implementation produced and callers may rely on.
+      const order = new Int32Array(slots).fill(-1);
+      for (let i = 0; i < length; i += 1) {
+        const slot = slotOf[i]!;
+        if (order[slot] === -1) {
+          order[slot] = keys.length;
+          keys.push(slot === MISSING ? ' undefined' : dictionary[slot]!);
+        }
+      }
+      members = keys.map(() => new Int32Array(0));
+      const buffers: Int32Array[] = new Array(keys.length);
+      for (let slot = 0; slot < slots; slot += 1) {
+        const at = order[slot]!;
+        if (at !== -1) buffers[at] = new Int32Array(counts[slot]!);
+      }
+      const fill = new Int32Array(keys.length);
+      for (let i = 0; i < length; i += 1) {
+        const at = order[slotOf[i]!]!;
+        buffers[at]![fill[at]!++] = i;
+      }
+      members = buffers;
+    } else {
+      // General path: still two-pass, but the key must be built.
+      const encode = this.#partitionKeyEncoder(by);
+      const index = new Map<string, number>();
+      const slotOf = new Int32Array(length);
+      const counts: number[] = [];
+      for (let i = 0; i < length; i += 1) {
+        const key = encode(i);
+        let at = index.get(key);
+        if (at === undefined) {
+          at = keys.length;
+          index.set(key, at);
+          keys.push(key);
+          counts.push(0);
+        }
+        slotOf[i] = at;
+        counts[at]! += 1;
+      }
+      const buffers = counts.map((n) => new Int32Array(n));
+      const fill = new Int32Array(keys.length);
+      for (let i = 0; i < length; i += 1) {
+        const at = slotOf[i]!;
+        buffers[at]![fill[at]!++] = i;
+      }
+      members = buffers;
     }
 
     const result = new Map<string, TimeSeries<S>>();
-    for (const [key, rowIndices] of groups) {
-      const sub = withRowSelection(columnarStore, new Int32Array(rowIndices));
+    for (let g = 0; g < keys.length; g += 1) {
+      const sub = withRowSelection(columnarStore, members[g]!);
       result.set(
-        key,
+        keys[g]!,
         TimeSeries.#fromTrustedStore(
           this.name,
           this.schema,
@@ -1412,10 +1577,34 @@ export class TimeSeries<S extends SeriesSchema> {
    * membership check so that path is materialization-free too.
    */
   _distinctPartitionKeys(by: ReadonlyArray<string>): string[] {
-    const length = this.#store.store.length;
+    const store = this.#store.store;
+    const length = store.length;
+    const keys: string[] = [];
+
+    // Same dict-encoded fast path as `_partitionByColumns` ([PND-SPLITCOST]):
+    // a dictionary-backed column carries an integer per row, so distinct
+    // keys are a seen-flag per dictionary slot rather than a string built
+    // and hashed per row.
+    const dict =
+      by.length === 1 ? dictionaryPartitionSource(store, by[0]!) : undefined;
+    if (dict !== undefined) {
+      const { indices, dictionary, validity } = dict;
+      const MISSING = dictionary.length;
+      const seen = new Uint8Array(dictionary.length + 1);
+      for (let i = 0; i < length; i += 1) {
+        const defined =
+          validity === undefined || (validity[i >> 3]! & (1 << (i & 7))) !== 0;
+        const slot = defined ? indices[i]! : MISSING;
+        if (seen[slot] === 0) {
+          seen[slot] = 1;
+          keys.push(slot === MISSING ? ' undefined' : dictionary[slot]!);
+        }
+      }
+      return keys;
+    }
+
     const encode = this.#partitionKeyEncoder(by);
     const seen = new Set<string>();
-    const keys: string[] = [];
     for (let i = 0; i < length; i += 1) {
       const key = encode(i);
       if (!seen.has(key)) {
@@ -1556,6 +1745,124 @@ export class TimeSeries<S extends SeriesSchema> {
   /** Example: `series.toRows()`. Returns normalized row arrays using `Time`/`TimeRange`/`Interval` keys and `undefined` for missing payload values. */
   toRows(): ReadonlyArray<NormalizedRowForSchema<S>> {
     return this.rows;
+  }
+
+  /**
+   * Example: `series.toArrow()`. Hands back this series' columns **in the
+   * Apache Arrow memory layout, without copying** — the export counterpart
+   * of {@link TimeSeries.fromArrow}.
+   *
+   * Every other export door here is row-shaped (`toRows`, `toObjects`,
+   * `toJSON`, `toPoints`, `toArray`), so reaching another columnar engine
+   * meant a full re-materialisation. It does not have to: pond's validity
+   * bitmap is LSB-first with one bit per value — Arrow's layout exactly —
+   * numeric columns are a contiguous `Float64Array`, booleans are a packed
+   * bitmap, and dict-encoded strings are `Int32Array` indices plus a
+   * dictionary. Those buffers are handed over as they stand.
+   *
+   * Returns `{ length, fields }` rather than an Arrow `Table`, because pond
+   * does not depend on `apache-arrow` — the caller brings their own and
+   * assembles with `makeData` / `makeVector`, narrowing each field on its
+   * `type` tag first. See {@link ArrowExportField} for the per-field shape
+   * and the worked adapter (the module doc of `operators/to-arrow.ts`).
+   *
+   * The point is to make "bring your own compute engine" a buffer handoff:
+   * polars is 4–9× faster than pond on whole-column reductions, and a
+   * consumer who wants that should be able to reach it without pond taking
+   * a dependency and without paying a re-ingest to get there.
+   *
+   * **The buffers are live storage, not copies.** Writing to one corrupts
+   * this series — the same read-only contract `column()` and `keyColumn()`
+   * already carry, restated because this hands them to another library.
+   *
+   * Two things are not zero-copy, both named rather than hidden: a
+   * **chunked** column materializes first (chunked storage is several
+   * buffers; an Arrow field is one), and a **non-dict-encoded string**
+   * column is a plain JS array, which Arrow `Utf8` is not.
+   *
+   * A `timeRange` / `interval` key exports as two fields — `<key>` and
+   * `<key>End` — since Arrow has no interval-of-time type; an `interval`
+   * key's labels follow as `<key>Label`. A value column already using one
+   * of those names throws rather than producing a table with duplicate
+   * field names.
+   */
+  toArrow(options: ToArrowOptions = {}): ArrowExport {
+    return storeToArrow(this.#store.store, options);
+  }
+
+  /**
+   * Example: `series.toColumns()`.
+   *
+   * The **columnar wire envelope**: `{ name, schema, columns }` with one plain
+   * array per column (the `time` key included, under its own name) — exactly
+   * what {@link TimeSeries.fromColumns} takes back, so
+   * `TimeSeries.fromColumns(series.toColumns())` round-trips without a cast.
+   *
+   * The columnar counterpart of {@link TimeSeries.toJSON}: same data, one
+   * array per column instead of one array per row. Prefer it when the consumer
+   * is itself column-oriented, or when the payload is dense enough that C
+   * arrays beat N×C-element rows on size and parse time — it allocates one
+   * array per **column** where the row exports mint one object per **row**.
+   *
+   * Gaps emit as `null`: `NaN` is not JSON, and a `Float64Array` does not
+   * stringify as an array, so a JSON-bound columnar payload pays that
+   * conversion somewhere. For a **zero-copy** columnar handoff in-process (no
+   * JSON, no per-cell walk) use {@link TimeSeries.toArrow} instead.
+   *
+   * **Every key kind exports.** A point (`time`) key is one column; a
+   * two-edged key **flattens** into extra columns named off it —
+   * `timeRange` + `timeRangeEnd`, or `interval` + `intervalEnd` +
+   * `intervalLabel` — which is the same convention {@link TimeSeries.toArrow}
+   * emits, and which {@link TimeSeries.fromColumns} reads back, so an
+   * aggregated series round-trips like any other. The `schema` in the envelope
+   * still declares the **logical** key, not the physical edges. See
+   * `operators/flat-keys.ts` for why flattened rather than paired, and for the
+   * one collision rule it implies: a value column may not be named
+   * `<key>End` / `<key>Label`, and this door throws rather than emit a payload
+   * whose value column has overwritten the key's second edge.
+   *
+   * **`boolean` / array columns** export fine but are not ingestable —
+   * `fromColumns` takes `number` and `string` value columns — and the return
+   * type says so, making that round trip a compile error rather than a runtime
+   * one. `series.select(…)` them out first, or use the row doors.
+   *
+   * **Why the `<T extends S = S>` parameter.** It is load-bearing, not
+   * decoration, and it is the workaround for the TS2394 cascade the
+   * {@link TimeSeries.toJSON} doc describes. Declaring a **key-remapped mapped
+   * type** (`{ [C in S[number] as C['name']]: … }`) directly as a method return
+   * type on this class makes TypeScript report "overload signature is not
+   * compatible with its implementation signature" on four *unrelated* overload
+   * sets (`pivotByGroup`, `rolling`, `arrayAggregate`, `arrayExplode`) plus
+   * four in the live layer. Isolated here, since the `toJSON` note records the
+   * cascade as un-isolated:
+   *
+   * - the trigger is the **construct, not its cost** — a trivial
+   *   `{ [C in S[number] as C['name']]: unknown }` cascades identically;
+   * - it is the **return position on this class** that matters, not the type's
+   *   definition: wrapping it in an `interface`, or deferring inside the alias
+   *   with `S extends unknown ? … : never`, changes nothing;
+   * - adding an **overload declaration** (precise signature, loose
+   *   implementation signature) makes it worse, not better;
+   * - a **method-level type parameter** defers the instantiation past whatever
+   *   resolution order trips it, and the cascade disappears.
+   *
+   * `T` defaults to `S`, so `series.toColumns()` — the only way anyone should
+   * call this — is exactly `TimeSeriesColumnarOutput<S>`. An explicit `T` is
+   * **unchecked**, not merely redundant: on a `TimeSeries<SeriesSchema>` (the
+   * wide type the join overloads hand back) the `extends S` bound admits any
+   * schema at all, so `toColumns<SomeOtherSchema>()` describes columns the
+   * runtime does not produce. Nothing forces that on a caller — it takes an
+   * explicit type argument nobody has reason to write — but it is a lie the
+   * bound cannot catch, so don't write one.
+   */
+  toColumns<T extends S = S>(): TimeSeriesColumnarOutput<T> {
+    return {
+      name: this.name,
+      schema: this.schema as unknown as T,
+      columns: storeToColumns(
+        this.#store.store,
+      ) as unknown as TimeSeriesJsonColumns<T>,
+    };
   }
 
   /** Example: `series.toObjects()`. Returns normalized schema-keyed object rows using temporal key objects and `undefined` for missing payload values. */
@@ -4763,15 +5070,23 @@ export class TimeSeries<S extends SeriesSchema> {
     // construction below bypasses the constructor's strict intake, so a
     // non-finite cell would otherwise pack into the column and break the
     // reducer non-finite policy's NaN-free invariant.
-    assertColumnValuesMatchKind(
-      'number',
-      values as ReadonlyArray<unknown>,
-      `withColumn '${String(name)}'`,
-    );
-    const column = columnFromValuesByKind(
-      'number',
-      values as unknown as unknown[],
-    );
+    //
+    // A `Float64Array` takes the typed door, where **`NaN` means missing**
+    // ([PND-WCNAN]). A typed buffer has no `undefined` slot, so `NaN` is
+    // the only way to express a gap in one — and requiring a gap to be
+    // spelled `undefined` forced every producer holding a typed buffer to
+    // box a whole column just to say "no value here". A boxed array keeps
+    // the strict reading: it already has `undefined`, so a `NaN` in one is
+    // a mistake, not a gap. `±Infinity` is rejected either way.
+    const column =
+      values instanceof Float64Array
+        ? float64ColumnFromTypedArray(values, `withColumn '${String(name)}'`)
+        : (assertColumnValuesMatchKind(
+            'number',
+            values as ReadonlyArray<unknown>,
+            `withColumn '${String(name)}'`,
+          ),
+          columnFromValuesByKind('number', values as unknown as unknown[]));
     const reshaped = withColumnAppended(
       this.#store.store,
       name as string,
@@ -5493,18 +5808,27 @@ function aggregateInternal<S extends SeriesSchema>(
     // `Float64Column` source, reduce each bucket's contiguous index range
     // off the typed arrays — no `series.events` materialization. Returns
     // null (→ the row path below, unchanged) for any non-qualifying column.
-    const columnarRows = tryAggregateColumnarTimeKeyed(
+    //
+    // [PND-IVLCOL]: the result is assembled as a `ColumnarStore` and
+    // adopted via trusted construction, rather than emitted as frozen
+    // `[Interval, …]` rows for `new TimeSeries({ rows })` to walk back
+    // into columns. The reduce already produced typed arrays; the round
+    // trip through rows cost more than the reduce itself at realistic
+    // bucket counts. `tryAggregateColumnarStore` performs every check
+    // row intake performed — see its doc comment.
+    const columnarStore = tryAggregateColumnarStore(
       series.keyColumn().begin,
       (name) => series.column(name as ValueColumnsForSchema<S>[number]['name']),
       buckets,
       columns,
+      resultSchema as unknown as ColumnSchema,
     );
-    if (columnarRows !== null) {
-      return new TimeSeries({
-        name: series.name,
-        schema: resultSchema as unknown as SeriesSchema,
-        rows: columnarRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-      });
+    if (columnarStore !== null) {
+      return timeSeriesFromTrustedStore(
+        series.name,
+        resultSchema as unknown as SeriesSchema,
+        columnarStore,
+      );
     }
 
     const builtInOnly = columns.every((column) =>
@@ -5653,4 +5977,48 @@ function alignLinearAt<S extends SeriesSchema>(
   }
 
   return result as EventDataForSchema<S>;
+}
+
+/**
+ * The integer-per-row view of a **dictionary-encoded** string column, if
+ * `name` is one — [PND-SPLITCOST].
+ *
+ * `partitionBy` on a single string column used to build a key string per
+ * row and hash it into a `Map`. A dict-encoded column already stores an
+ * integer per row, so the grouping can index an array instead: no string
+ * is materialised, nothing is hashed, and the common case (partitioning a
+ * panel by symbol) is exactly what dictionary encoding exists for.
+ *
+ * Returns `undefined` for anything else — a fallback-storage string
+ * column, a chunked one, a non-string kind — and the general path runs.
+ */
+function dictionaryPartitionSource(
+  store: { columns: ReadonlyMap<string, unknown> },
+  name: string,
+):
+  | {
+      indices: Int32Array;
+      dictionary: ReadonlyArray<string>;
+      validity: Uint8Array | undefined;
+    }
+  | undefined {
+  const col = store.columns.get(name) as
+    | {
+        kind?: string;
+        storage?: string;
+        indices?: Int32Array;
+        dictionary?: ReadonlyArray<string>;
+        validity?: { bits: Uint8Array };
+      }
+    | undefined;
+  if (col === undefined || col.kind !== 'string' || col.storage !== 'packed') {
+    return undefined;
+  }
+  if (col.indices === undefined || col.dictionary === undefined)
+    return undefined;
+  return {
+    indices: col.indices,
+    dictionary: col.dictionary,
+    validity: col.validity?.bits,
+  };
 }

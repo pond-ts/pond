@@ -255,3 +255,66 @@ describe('Sequence', () => {
     expect(() => sequence.stepMs()).toThrowError('fixed millisecond step size');
   });
 });
+
+import { toPlainDateStart } from '../src/core/calendar.js';
+
+describe('calendar math — fractional epoch milliseconds', () => {
+  // Regression: `Temporal.Instant.fromEpochMilliseconds` refuses a fractional
+  // epoch ms ("epoch milliseconds must be an integer"), and a fraction is not
+  // a caller error. A chart's wheel-zoom derives its view range from pixel
+  // positions via `xScale.invert()`, so an ordinary gesture produces
+  // `1.7e12 + 0.37`; realizing a calendar sequence over that range threw, and
+  // the exception unmounted the whole page.
+  const JAN = Date.UTC(2020, 0, 1);
+  const APR = Date.UTC(2020, 3, 1);
+
+  it('does not throw on a fractional instant', () => {
+    expect(() => toPlainDateStart(JAN + 0.37, 'UTC', 'month', 1)).not.toThrow();
+  });
+
+  it('puts a fraction in the same bucket as the millisecond containing it', () => {
+    // The sub-millisecond part cannot change which calendar bucket an instant
+    // falls in — boundaries are themselves whole milliseconds.
+    for (const unit of ['day', 'week', 'month'] as const) {
+      expect(toPlainDateStart(JAN + 0.37, 'UTC', unit, 1).toString()).toBe(
+        toPlainDateStart(JAN, 'UTC', unit, 1).toString(),
+      );
+    }
+  });
+
+  it('floors rather than rounds — 0.99 cannot advance the bucket', () => {
+    // One microsecond before a month boundary is still the previous month;
+    // rounding up would skip a bucket exactly where a zoom tends to land.
+    const lastMsOfMarch = APR - 1;
+    expect(
+      toPlainDateStart(lastMsOfMarch + 0.99, 'UTC', 'month', 1).toString(),
+    ).toBe(toPlainDateStart(lastMsOfMarch, 'UTC', 'month', 1).toString());
+  });
+
+  it('floors negative epochs toward the containing millisecond', () => {
+    // Pre-1970 `Math.floor` and `Math.trunc` disagree: -5.5 lies inside the
+    // millisecond spanning [-6, -5), so it must floor to -6, not -5.
+    expect(toPlainDateStart(-5.5, 'UTC', 'day', 1).toString()).toBe(
+      toPlainDateStart(-6, 'UTC', 'day', 1).toString(),
+    );
+  });
+
+  it('realizes a calendar sequence over a fractional range', () => {
+    const sequence = Sequence.calendar('month', { timeZone: 'UTC' });
+    const bounded = () =>
+      sequence.bounded(new TimeRange({ start: JAN + 0.37, end: APR + 0.91 }));
+    expect(bounded).not.toThrow();
+    // Every emitted boundary is a whole millisecond, and the fraction shifts
+    // nothing but inclusion at the edges: `JAN + 0.37` is after January's
+    // start, so January is legitimately not in range.
+    const b = bounded();
+    const begins = Array.from({ length: b.length }, (_, i) => b.at(i)!.begin());
+    expect(begins.every(Number.isInteger)).toBe(true);
+    const whole = sequence.bounded(
+      new TimeRange({ start: JAN + 1, end: APR + 1 }),
+    );
+    expect(begins).toEqual(
+      Array.from({ length: whole.length }, (_, i) => whole.at(i)!.begin()),
+    );
+  });
+});

@@ -28,7 +28,7 @@ end)` is a bar's span) with `column`, or a wide series with `columns` (stacked
 - **`categories`** — `CategoryDatum[]` (`{ label, value }`) → an ordinal
   [category axis](../axes/category-axis.mdx), vertical only.
 
-Adapters: `barsFromTimeSeries` / `barsFromValueSeries` (single),
+View builder (for custom draw code): `barsFromTimeSeries` / `barsFromValueSeries` (single),
 `stacksFromColumns` / `stacksFromGroups` / `stacksFromBins` (stacked),
 `categoryStack` (categories), `transposeRow` (a wide row → `categories`).
 
@@ -43,12 +43,30 @@ Adapters: `barsFromTimeSeries` / `barsFromValueSeries` (single),
 | `columns`     | `readonly string[]`                            | —                | Stacked segment columns, bottom → top.                         |
 | `as`          | `string`                                       | `'default'`      | Style role (single series only — **ignored on stacks**).       |
 | `colors`      | `Record<string, string>`                       | —                | Per-**group** fill override for stacks.                        |
-| `binColors`   | `readonly (string \| undefined)[]`             | —                | Per-**bin** fill for a single-series zone chart.               |
+| `binColors`   | `readonly (string \| undefined)[]`             | —                | Per-**bar** fill for a single series (zones, up/down volume).  |
 | `orientation` | `'vertical' \| 'horizontal'`                   | `'vertical'`     | Bar direction.                                                 |
 | `ordinal`     | `boolean`                                      | `false`          | For `bins`: uniform `[i, i+1]` slots instead of numeric edges. |
 | `id`          | `string`                                       | —                | Stable identity — **gates selection + hover**.                 |
 | `axis`        | `string`                                       | row default      | Which `<YAxis id>` to scale against.                           |
 | `gap`         | `number`                                       | theme (`1`)      | Px gap between bars.                                           |
+
+## Which path a bar takes
+
+Capabilities follow **the mark drawn**, not the prop that fed it
+([PND-BARSEM]). A **one-segment vertical** bar — `series` + `column`, a
+one-column `bins` histogram, or a one-entry `columns` — takes the
+single-series path and with it whole-slot hit-testing, the `theme.bar.hover`
+colour, the cursor readout, stable per-bar identity and per-bar decimation.
+
+Horizontal **categorical** charts (`categories` + `orientation="horizontal"`)
+are the funnel / ranking shape: the categories land on the **y** axis as unit
+slots, the value runs along x, and a `<YAxis>` with no `ticks` labels one slot
+per category automatically — no hand-built `i + 0.5` list ([PND-HCAT]).
+
+Genuinely multi-segment shapes keep the stacked path: a multi-group stack
+(`columns` / a `Map` series), `categories`, and any `horizontal` chart. There
+the segments share a bin's x-range and only y tells them apart, so the hit
+target is the drawn segment rather than the slot.
 
 ## Variants
 
@@ -56,8 +74,12 @@ Adapters: `barsFromTimeSeries` / `barsFromValueSeries` (single),
   `categories` (ordinal). This is the axis-behaviour fork.
 - **`orientation`** — `'vertical'` (default) or `'horizontal'`.
 - **`column` vs `columns`** — a single value column, or stacked segments.
-- **`colors`** (per-group stacks) vs **`binColors`** (per-bin single-series
-  zones).
+- **`colors`** (per-group stacks) vs **`binColors`** (per-bar single-series:
+  value-band zones, or a direction-coloured financial **volume** row — derive
+  the array from open vs close and the bars read green / red under the candles,
+  keeping their own colour in the hover / click readout). `binColors` draws
+  every visible bar (the dense-bar envelope decimation is skipped — one
+  envelope rect can't carry many colours).
 - **`ordinal`** — `bins` on a uniform ordinal band instead of their numeric
   spans.
 
@@ -66,8 +88,22 @@ Adapters: `barsFromTimeSeries` / `barsFromValueSeries` (single),
 - **Cursor:** the in-chart value cursor (flag / crosshair) is **single-series
   vertical only** — stacked and horizontal bars don't report a per-point
   readout.
+- **Hit target (single-series vertical):** a bar's hover / click region is its
+  **whole slot** — the full interval width and the full plot height — not the
+  drawn rect. The `gap` only separates the ink, so pointing between columns or
+  above a short bar still selects the bar you're over, and hover agrees with the
+  cursor readout. A shared edge goes to the left bar. Because the region spans
+  the plot height, declare a bar layer **below** any `<ScatterChart>` /
+  `<BoxPlot>` that should stay clickable. **Stacked, `bins`, `categories` and
+  horizontal** charts instead hit the drawn segment — a stack's segments share a
+  bin's x-range, so only y distinguishes them.
 - **Selection:** **id-gated** — set `id` for clickable / hover-lit bars (a
-  stack segment's identity is `(id, key, group)`).
+  stack segment's identity is `(id, key, group)`). A single-series bar also
+  reports a stable **`mark`** — its own axis key, stringified — and a
+  controlled `selected` carrying one matches on that instead of the bar's
+  `key`. Pin by `mark` on a **point-keyed** series, where the bar's `key` is
+  the _derived_ left edge of a neighbour-spaced span (`t - halfGap`) rather
+  than the sample's own time; pinning by `key` still works and is unchanged.
 - **Theming:** the `theme.bar` slot (`BarStyle`); stacks colour per group via
   `colors`, so `as` is single-series only.
 
@@ -88,7 +124,7 @@ Adapters: `barsFromTimeSeries` / `barsFromValueSeries` (single),
 - [Histograms guide](../../how-to-guides/histograms) ·
   [Categorical charts guide](../../how-to-guides/categorical-charts) — worked builds.
 - Storybook: [`Charts/BarChart`](pathname:///storybook/?path=/story/charts-barchart--buckets)
-  and [`Charts/Histogram`](pathname:///storybook/?path=/story/charts-histogram--power-distribution)
+  and [`Charts/BarChart/Histogram`](pathname:///storybook/?path=/story/charts-barchart-histogram--power-distribution)
   — buckets, stacks, zones, horizontal, selection.
 - The [API reference](/docs/api/charts/bar-chart) — the full
   `BarChartProps` type.

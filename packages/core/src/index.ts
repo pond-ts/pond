@@ -30,11 +30,20 @@ export { TimeSeries, type KeyLike } from './batch/time-series.js';
 export type {
   ArrowTableLike,
   ArrowVectorLike,
+  ArrowDataLike,
   ArrowFieldLike,
   ArrowSchemaLike,
   ArrowTimeUnit,
   FromArrowOptions,
+  FromArrowValueOptions,
 } from './batch/operators/from-arrow.js';
+export type {
+  ArrowExport,
+  ArrowExportField,
+  ArrowExportType,
+  ToArrowOptions,
+} from './batch/operators/to-arrow.js';
+export type { JsonColumn } from './batch/operators/to-columns.js';
 export { ValueSeries } from './batch/value-series.js';
 export { top } from './reducers/index.js';
 export { ValidationError } from './core/errors.js';
@@ -186,7 +195,11 @@ export type {
   SelectSchema,
   SeriesSchema,
   TimeKeyedSchema,
+  FlatKeyColumns,
+  TimeSeriesColumnarInput,
+  TimeSeriesColumnarOutput,
   TimeSeriesInput,
+  TimeSeriesJsonColumns,
   TimeSeriesJsonInput,
   TimeRangeKeyedSchema,
   ValueColumnsForSchema,
@@ -194,7 +207,18 @@ export type {
   ValueForKind,
   ValueFirstColumn,
   ValueKeyedSchema,
+  ValueSeriesColumnarInput,
+  ValueSeriesColumnarOutput,
   ValueSeriesColumnName,
+  ValueSeriesJsonCell,
+  ValueSeriesJsonColumns,
+  ValueSeriesJsonInput,
+  ValueSeriesJsonObjectRow,
+  ValueSeriesJsonOutputArray,
+  ValueSeriesJsonOutputObject,
+  ValueSeriesJsonRow,
+  ValueSeriesObjectRow,
+  ValueSeriesRow,
   ValueSeriesSchema,
   ValueSeriesValueColumns,
 } from './schema/index.js';

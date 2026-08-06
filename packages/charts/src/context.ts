@@ -1,5 +1,5 @@
 import { createContext } from 'react';
-import type { ScaleLinear, ScaleTime } from 'd3-scale';
+import type { ScaleContinuousNumeric, ScaleLinear, ScaleTime } from 'd3-scale';
 import type { ChartTheme } from './theme.js';
 import type { AxisFormat } from './format.js';
 // Type-only (erased at runtime): swatch.ts imports RowContext from here, so a
@@ -11,6 +11,7 @@ import type {
   DiscontinuityProvider,
 } from './tradingTimeScale.js';
 import type { ScaleBand } from './bandScale.js';
+import type { ElapsedScale } from './elapsed.js';
 
 /**
  * The frame a {@link ChartContainer} provides to its rows and the time axis.
@@ -173,6 +174,17 @@ export interface ContainerFrame {
    *  custom format owns the whole label, so the ladder mustn't second-line it. */
   readonly xFormatCustom: boolean;
   /**
+   * Whether an explicit container `cursorFormat` shaped {@link formatReadout} —
+   * as opposed to the axis kind supplying its own default readout (the elapsed
+   * axis's finer duration). The two are indistinguishable from the field alone,
+   * and `<XAxis>` must tell them apart to honour the documented pill precedence
+   * `cursorFormat → axis format → container`: a **`cursorFormat`** outranks an
+   * explicit `<XAxis format>`, a **default** does not. Without this the elapsed
+   * default silently occupied the `cursorFormat` slot and a wall-clock strip's
+   * pill read durations (issue #540, finding 2).
+   */
+  readonly xReadoutCustom: boolean;
+  /**
    * The shared **x-side tick count** — the `count` every x-side `ticks()` /
    * `tickFormat()` call passes (`<XAxis>` labels, the canvas x gridlines and
    * session dividers, {@link formatTime}), so labels, grid, and dividers all
@@ -229,12 +241,19 @@ export interface ContainerFrame {
    * container is given `discontinuities`) is the third kind — same callable /
    * `invert` / `ticks` / `tickFormat` surface, but the mapping runs through
    * trading time so closed-market gaps collapse (see {@link discontinuities}).
+   *
+   * A container given an `origin` wraps whichever of these it built in an
+   * {@link ElapsedScale} — the same pixel mapping, but ticks anchored at the
+   * origin and labelled as offsets (`00:05`), which is how the whole frame
+   * (axis labels, gridlines, cursor pill) reads durations without any consumer
+   * knowing about the mode.
    */
   readonly xScale:
     | ScaleTime<number, number>
     | ScaleLinear<number, number>
     | TradingTimeScale
-    | ScaleBand;
+    | ScaleBand
+    | ElapsedScale;
   /**
    * The discontinuity provider backing a **trading-time** x axis, if one was
    * supplied to the container — closed-market time (weekends, holidays,
@@ -559,6 +578,17 @@ export interface RowLayer {
    */
   xCategories?(): readonly string[] | null;
   /**
+   * A **horizontal** categorical source's ordered category names — the same
+   * list {@link xCategories} carries for a vertical one, but for the axis it
+   * lands on when the bars grow right: the **y** axis ([PND-HCAT]).
+   *
+   * The y axis stays a linear scale over the layer's unit slots (`[i, i+1]`),
+   * so this only supplies *labels*: a `<YAxis>` in the row with no explicit
+   * `ticks` derives one tick per category at the slot centre (`i + 0.5`).
+   * That hand-built tick list was the friction the gallery funnel documented.
+   */
+  binCategories?(): readonly string[] | null;
+  /**
    * A bar/histogram layer's bar `[begin, end)` spans, as pond `Interval`s — the
    * **region cursor's snap buckets**. When present (and no `cursorSequence` is
    * set), a region drag snaps bar by bar and a hover highlights the bar under the
@@ -628,6 +658,15 @@ export interface TrackerSample {
    *  quote) emits `"<as> <role>"` composites (`iv lower`, `SPY high`) when its
    *  `as` is set, else the raw column / role word. */
   readonly label: string;
+  /**
+   * Optional **source value for the off-chart readout**, when the layer plots a
+   * *derived* column but a `readout` column names the raw value (see
+   * `LineChart`/`AreaChart` `readout`). `value` stays the plotted number — so
+   * the in-chart cursor dot is unchanged — while an off-chart consumer shows
+   * `readout ?? value`. `undefined` when the layer has no `readout` column (the
+   * common case: the plotted value *is* the value to show).
+   */
+  readonly readout?: number;
 }
 
 /** One line of a {@link CursorFlag} — a labelled, coloured value. */
@@ -663,6 +702,17 @@ export interface TrackerSource {
   xExtent(): readonly [number, number] | null;
   /** A `'category'` source's ordered category names (see {@link RowLayer.xCategories}). */
   xCategories?(): readonly string[] | null;
+  /**
+   * A **horizontal** categorical source's ordered category names — the same
+   * list {@link xCategories} carries for a vertical one, but for the axis it
+   * lands on when the bars grow right: the **y** axis ([PND-HCAT]).
+   *
+   * The y axis stays a linear scale over the layer's unit slots (`[i, i+1]`),
+   * so this only supplies *labels*: a `<YAxis>` in the row with no explicit
+   * `ticks` derives one tick per category at the slot centre (`i + 0.5`).
+   * That hand-built tick list was the friction the gallery funnel documented.
+   */
+  binCategories?(): readonly string[] | null;
   /** A bar/histogram source's bar `[begin, end)` spans (see {@link RowLayer.binIntervals}). */
   binIntervals?(): readonly Interval[] | null;
 }
@@ -698,13 +748,25 @@ export interface SelectInfo {
   /** Display label (`as` ?? column ?? id) — labels the selection in a readout. */
   readonly label: string;
   /**
-   * An optional **stable per-mark identity within the layer** — a *category's
-   * column name* on the categorical axis, where every bar shares the layer's
-   * `id` but each column needs its own stable handle. When present, the
-   * highlight match + controlled `selected` echo key on `(id, mark)` instead of
-   * the sample `key`, so a pinned selection survives a column reorder / data
-   * update (the slot index is not stable; the column name is). `undefined` for
-   * marks whose sample `key` is already their identity (a time / value bar).
+   * An optional **stable per-mark identity within the layer** — every mark
+   * shares the layer's `id`, so this is the handle that picks one *within* it.
+   * When a selection carries it, the highlight match + controlled `selected`
+   * echo key on `(id, mark)` instead of the sample `key`, so a pin survives a
+   * reorder / data update that renumbers the slot.
+   *
+   * Two layers report one today:
+   *
+   * - A **categorical** bar reports its *column name* — the slot index is not
+   *   stable across a reorder, the name is.
+   * - A **single-series** bar (`<BarChart series column>`) reports its own axis
+   *   key, stringified. On a **point-keyed** series the sample `key` is *not*
+   *   its identity: the bar span is synthesized from neighbour spacing, so
+   *   `key` is a derived edge (`t - halfGap`) rather than the sample's own
+   *   time. See `BarSeries.marks`.
+   *
+   * `undefined` for every other mark (scatter, box, candle), whose sample `key`
+   * *is* its identity. A selection without a `mark` still matches on `key`
+   * everywhere — the mark is an additional channel, not a replacement.
    */
   readonly mark?: string;
 }
@@ -760,11 +822,29 @@ export interface LayerEntry {
 }
 
 /** A y-axis declared in a {@link ChartRow} via `<YAxis>`. */
+/** Which scale a y axis maps its domain through. */
+export type YScaleKind = 'linear' | 'log';
+
+/**
+ * A row's resolved y scale — d3's `scaleLinear()`, or `scaleLog()` when the
+ * axis asks for `scale="log"`.
+ *
+ * Deliberately the **continuous-numeric** supertype rather than `ScaleLinear`:
+ * every consumer (the axis labels, the row's gridlines, the cursor readout, and
+ * every draw layer) only ever calls it, or reads `domain` / `range` / `ticks` /
+ * `tickFormat` / `invert` — the surface both scales share. Keeping the shared
+ * type here is what lets a log axis be transparent to the draw layers instead
+ * of every layer growing a branch.
+ */
+export type YScale = ScaleContinuousNumeric<number, number>;
+
 export interface AxisSpec {
   readonly id: string;
   readonly side: 'left' | 'right';
   /** Gutter width in CSS pixels. */
   readonly width: number;
+  /** Which scale the axis maps its domain through ({@link YAxisProps.scale}). */
+  readonly scale: YScaleKind;
   /** Explicit domain bounds, or `undefined` to auto-fit linked layers. */
   readonly min: number | undefined;
   readonly max: number | undefined;
@@ -799,7 +879,7 @@ export interface AxisSpec {
  */
 export interface RowFrame {
   readonly height: number;
-  readonly yScales: ReadonlyMap<string, ScaleLinear<number, number>>;
+  readonly yScales: ReadonlyMap<string, YScale>;
   /** Value formatter per axis id (resolved from the axis's {@link AxisSpec.format}
    *  against its scale) — used by both the tick labels and the cursor readout, so
    *  a value reads identically in both. */

@@ -1,0 +1,70 @@
+/* Controls + readout for the scrubbing wind chart. The two strips sit above
+   and below the time strip, and both are fixed-height so nothing reflows as
+   the numbers change width while the window moves. */
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  min-height: 2rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.82rem;
+}
+
+.play {
+  min-width: 4.6rem;
+  padding: 0.15rem 0.6rem;
+  font: inherit;
+  color: var(--ifm-color-emphasis-800);
+  background: var(--ifm-background-surface-color);
+  border: 1px solid var(--site-surface-border);
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.play:hover {
+  border-color: var(--pond-viz-1);
+  color: var(--pond-viz-1);
+}
+
+.slider {
+  flex: 1 1 12rem;
+  min-width: 8rem;
+  accent-color: var(--pond-viz-1);
+}
+
+.span {
+  color: var(--ifm-color-emphasis-600);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The window's own numbers — what the histogram below is counting. */
+.readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 1rem;
+  min-height: 1.6rem;
+  margin: 0.3rem 0 0.1rem;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.dates {
+  font-weight: 600;
+  color: var(--pond-ink, var(--ifm-color-emphasis-900));
+}
+
+.field {
+  color: var(--ifm-color-emphasis-700);
+}
+
+.name {
+  margin-right: 0.3rem;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.year {
+  color: var(--ifm-color-emphasis-500);
+}

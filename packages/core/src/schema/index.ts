@@ -61,11 +61,28 @@ export type {
   JsonRowFormat,
   JsonTimeRangeInput,
   JsonTimestampInput,
+  FlatKeyColumns,
   JsonValueForKind,
+  TimeSeriesColumnarInput,
+  TimeSeriesColumnarOutput,
+  TimeSeriesJsonColumns,
   TimeSeriesJsonInput,
   TimeSeriesJsonOutputArray,
   TimeSeriesJsonOutputObject,
 } from './json.js';
+export type {
+  ValueSeriesColumnarInput,
+  ValueSeriesColumnarOutput,
+  ValueSeriesJsonCell,
+  ValueSeriesJsonColumns,
+  ValueSeriesJsonInput,
+  ValueSeriesJsonObjectRow,
+  ValueSeriesJsonOutputArray,
+  ValueSeriesJsonOutputObject,
+  ValueSeriesJsonRow,
+  ValueSeriesObjectRow,
+  ValueSeriesRow,
+} from './value-io.js';
 export type {
   AggregateColumns,
   AggregateFunction,

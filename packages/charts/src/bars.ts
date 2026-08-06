@@ -77,8 +77,10 @@ export function resolveBarBaseline(yScale: Scale): number {
  * from {@link barSpanPx} (the key's `[begin, end]`, inset by `gapPx`, floored at
  * `minWidthPx`); the y-span runs between the value and the `baseline` pixel,
  * normalized so a value above *or* below the baseline both yield an ascending
- * rect. Shared by {@link drawBars} and {@link barAt} so the drawn rect and the
- * hit rect are the same geometry.
+ * rect. This is the **ink** — what {@link drawBars} paints. Hit-testing uses
+ * {@link barSlotRect} instead (the bar's whole slot), so the drawn rect and the
+ * hit region are deliberately *not* the same geometry: the `gapPx` inset
+ * separates columns visually without carving a dead channel out of the target.
  */
 export function barRect(
   cs: BarSeries,
@@ -104,20 +106,86 @@ export function barRect(
 }
 
 /**
+ * The narrowed selection / hover identity a **single-series** bar matches
+ * against: the layer's series `id`, the sample's `key` (its `begin`), and — when
+ * the series carries {@link BarSeries.marks} — the stable per-bar `mark`. The
+ * single-series sibling of {@link StackMark}, which additionally carries the
+ * stack's group `label` (a single-series bar has no group to disambiguate).
+ */
+export interface BarMark {
+  readonly id: string;
+  readonly key: number;
+  readonly mark?: string;
+}
+
+/**
+ * Does `m` identify the bar with stable identity `stable` and key `begin`?
+ * The mark decides **only when both sides have one** — `m.mark` (the selection
+ * names a bar) and `stable` (this series names its bars). Either missing falls
+ * back to `m.key === begin`, so both of these keep working unchanged:
+ *
+ * - a selection with **no `mark`** — every controlled `selected={{ id, key }}`
+ *   that predates this channel, against a series that now carries marks;
+ * - a series with **no `marks`** — a hand-built {@link BarSeries} (tests, an
+ *   outside caller assembling the view themselves).
+ *
+ * This is the `mark`-first rule {@link drawStacks} applies, with one deliberate
+ * difference: it falls back on the **selection** carrying no mark, where
+ * `drawStacks` falls back on the **series** carrying none. `drawStacks` can
+ * switch on the series alone because only `categoryStack` produces marks and it
+ * never had key-pinned consumers. Every reader-built bar series now carries
+ * marks, so that unconditional switch would silently stop matching each shipped
+ * key-pinned selection — key-pinning is the only selection bars ever had.
+ */
+function barMatches(
+  m: BarMark | null,
+  seriesId: string | undefined,
+  stable: string | undefined,
+  begin: number,
+): boolean {
+  if (m === null || m.id !== seriesId) return false;
+  return m.mark !== undefined && stable !== undefined
+    ? m.mark === stable
+    : m.key === begin;
+}
+
+/**
  * Fill one rectangle per bar in `cs`, each spanning its key's `[begin, end]`
  * (inset by `gapPx`) from the resolved `baseline` to the value.
  *
  * A gap (non-finite value) is skipped — no bar, no zero-height sliver. A bar
- * matching the current `selection` (same sample `key` **and** the layer's own
- * series `id` — `seriesId`; a no-id layer passes `undefined` and never matches)
- * draws in the style's `highlight` colour **and outlined**, so a click reads back
- * on the canvas; a bar matching `hovered` draws in `highlight` **without** the
- * outline (a lighter "this bar is live" on pointer-over); all others use the flat
- * `fill`. `globalAlpha` carries the fill opacity and is restored so it doesn't
- * leak into later layers.
+ * matching the current `selection` (the layer's own series `id` — `seriesId`; a
+ * no-id layer passes `undefined` and never matches — plus the bar's identity,
+ * see {@link barMatches}) draws in the style's `highlight` colour **and
+ * outlined**, so a click reads back on the canvas; a bar matching `hovered`
+ * draws **without** the outline (a lighter "this bar is live" on pointer-over)
+ * in the style's optional `hover` colour, or in `highlight` when the theme
+ * doesn't set one; all others use the flat `fill`. Either live state fills at
+ * **full opacity** — the resting `opacity` applies to resting bars only, and is
+ * restored so it doesn't leak into later layers. A bar that is both selected
+ * and hovered reads as **selected**.
+ *
+ * **Which identity.** A selection carrying a `mark` matches against the series'
+ * stable per-bar name ({@link BarSeries.marks} — the sample's own axis key,
+ * which the readers always supply); one without falls back to the sample `key`
+ * (the bar's `begin`). The mark path is what lets a caller pin a bar on a
+ * **point-keyed** series without re-deriving the neighbour-spaced span, since
+ * there `begin` is not the sample's key but an edge computed from it.
  *
  * O(N) over the events, one fill (+ optional stroke) per bar, no per-bar
  * allocation beyond the rect tuple.
+ *
+ * **Per-bar fills (`binFills`):** an optional colour array aligned
+ * index-for-index to the source bars — bar `i` fills with `binFills[i]`
+ * (an `undefined` entry falls back to the flat `fill`). This is the
+ * direction-coloured financial volume row (rising / falling) and the
+ * value-band case on a time axis. Highlight follows {@link drawStacks}'s
+ * binFills convention: the bar **keeps its own colour** under hover /
+ * selection — the highlight pops `globalAlpha` to 1 (and outlines the
+ * selection in the bar's own fill) — so a red / green bar stays red / green
+ * while live, instead of swapping to the single `highlight` colour and losing
+ * its meaning. (Both paths now pop to 1; what still differs is the *colour* —
+ * the flat path swaps to `highlight`, this one keeps `binFills[i]`.)
  *
  * **M4 column decimation ([PND-MARKDEC]):** once the *visible* bars are denser
  * than ~2 per device pixel, they overplot into a solid silhouette, so
@@ -128,7 +196,10 @@ export function barRect(
  * columns aren't individually selectable, so per-bar selection/hover highlight is
  * suppressed (a <1px bar's ring wouldn't be visible anyway); interaction still
  * reads the **source** bars via {@link barAt} (§2.3). Pass `decimate={false}` to
- * always draw every bar. Returns {@link LayerDrawStats} for `onDrawStats`.
+ * always draw every bar. **`binFills` disables the envelope pass** — a single
+ * envelope rect spans many differently-coloured bars, so decimating would
+ * repaint them one flat colour; per-bar-coloured layers draw every visible bar.
+ * Returns {@link LayerDrawStats} for `onDrawStats`.
  */
 export function drawBars(
   ctx: CanvasRenderingContext2D,
@@ -139,9 +210,10 @@ export function drawBars(
   baseline: number,
   gapPx: number,
   seriesId: string | undefined,
-  selection: { key: number; id: string } | null,
-  hovered: { key: number; id: string } | null,
+  selection: BarMark | null,
+  hovered: BarMark | null,
   decimate: DecimateOption = true,
+  binFills?: readonly (string | undefined)[],
 ): LayerDrawStats {
   ctx.save();
   ctx.globalAlpha = style.opacity;
@@ -155,10 +227,15 @@ export function drawBars(
   // Decimate the visible bars to per-column envelope rects once dense (see the
   // header). `null` below the visible-density threshold ⇒ the full per-bar loop.
   // `{ threshold }` tunes the samples-per-pixel factor `k` (as line/area/band do);
-  // `undefined` ⇒ decimateBars' default (2).
+  // `undefined` ⇒ decimateBars' default (2). Per-bar fills skip the envelope —
+  // one flat rect can't carry many bars' colours (see the header) — but an
+  // *empty* colour array is "no colours" (every bar would flat-fill anyway), so
+  // it stays on the legacy path end-to-end (L2 review, PR #542).
+  const fills =
+    binFills !== undefined && binFills.length > 0 ? binFills : undefined;
   const k = typeof decimate === 'object' ? decimate.threshold : undefined;
   const envelope =
-    decimate !== false
+    decimate !== false && fills === undefined
       ? decimateBars(cs, xScale, ctx, baseline, k, vEnd - vStart)
       : null;
   if (envelope !== null) {
@@ -182,6 +259,16 @@ export function drawBars(
     ctx.restore();
     return { sourceCount, drawnCount: drawn, decimated: true };
   }
+  // The stable per-bar identity is consulted only when the live selection /
+  // hover actually carries a `mark` — `cs.marks` builds its strings lazily, so
+  // the *draw* never materializes them on its own. (The component's `hitTest`
+  // may already have: an interactive layer echoes the hovered bar's mark on
+  // every pointer move. See BarSeries.marks — this hoist keeps the draw path
+  // clean, it doesn't make the channel free.)
+  const marks =
+    selection?.mark !== undefined || hovered?.mark !== undefined
+      ? cs.marks
+      : undefined;
   let drawn = 0;
   for (let i = vStart; i < vEnd; i += 1) {
     const rect = barRect(
@@ -195,31 +282,59 @@ export function drawBars(
     );
     if (rect === null) continue;
     const [x0, x1, yTop, yBottom] = rect;
-    // Match by the series `id` **and** the sample `key` (begin), so two series
-    // sharing a timestamp don't both light up (a no-id, non-selectable layer
-    // passes `seriesId === undefined` and never matches). Both the committed
-    // selection and the transient hover use the `highlight` fill; only the
-    // selection adds the outline, so hover reads as a lighter "this bar is live"
-    // and select as the committed pick.
-    const selected =
-      selection !== null &&
-      selection.id === seriesId &&
-      selection.key === cs.begin[i];
-    const isHovered =
-      hovered !== null &&
-      hovered.id === seriesId &&
-      hovered.key === cs.begin[i];
-    ctx.fillStyle = selected || isHovered ? style.highlight : style.fill;
+    // Match by the series `id` **and** the bar's identity — its stable `mark`
+    // when the selection carries one, else the sample `key` (begin) — so two
+    // series sharing a timestamp don't both light up (a no-id, non-selectable
+    // layer passes `seriesId === undefined` and never matches). The selection
+    // takes `highlight` + the outline; the hover takes `hover` when the theme
+    // sets one and `highlight` otherwise, always without the outline — so hover
+    // reads as a lighter "this bar is live" and select as the committed pick.
+    const stable = marks?.[i];
+    const selected = barMatches(selection, seriesId, stable, cs.begin[i]!);
+    const isHovered = barMatches(hovered, seriesId, stable, cs.begin[i]!);
+    if (fills !== undefined) {
+      // Per-bar fills: the bar keeps its own colour under hover / selection —
+      // highlight pops the alpha to 1 and outlines the selection in the bar's
+      // own fill (the drawStacks binFills convention; see the header).
+      const fill = fills[i] ?? style.fill;
+      ctx.globalAlpha = selected || isHovered ? 1 : style.opacity;
+      ctx.fillStyle = fill;
+      ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
+      drawn += 1;
+      if (selected) {
+        ctx.lineWidth = style.outlineWidth;
+        ctx.strokeStyle = fill;
+        ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+      }
+      continue;
+    }
+    // A hovered / selected bar pops to full opacity, as the binFills branch
+    // above and `drawStacks` both do — without this the highlight *fill* drew
+    // at the resting `style.opacity`, so on an alpha'd theme a hovered bar
+    // (which has no outline) barely changed at all, and a selected one read
+    // only by its outline (#576).
+    ctx.globalAlpha = selected || isHovered ? 1 : style.opacity;
+    // Three-step emphasis when the theme opts in with `hover`: rest → hover →
+    // selected. Selection outranks hover on a bar that is both (as the outline
+    // already did). With no `hover` colour this is the shipped two-step —
+    // `highlight` for either state (see BarStyle.hover).
+    ctx.fillStyle = selected
+      ? style.highlight
+      : isHovered
+        ? (style.hover ?? style.highlight)
+        : style.fill;
     ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
     drawn += 1;
     if (selected) {
-      // The selected bar gets an outline so it reads at full strength over the
-      // (alpha'd) fills. Stroke at full opacity (reset within the save bracket).
-      ctx.globalAlpha = 1;
+      // The selected bar's outline. Already at alpha 1 from the fill above —
+      // which also means it no longer separates select from hover the way it
+      // used to: the stroke is `highlight` over a now-`highlight`, now-alpha-1
+      // fill, so only the half-stroke falling outside the rect reads. A theme
+      // that needs the two states clearly apart sets `BarStyle.hover` (#577);
+      // the outline is the shape cue, not the whole signal.
       ctx.lineWidth = style.outlineWidth;
       ctx.strokeStyle = style.highlight;
       ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
-      ctx.globalAlpha = style.opacity;
     }
   }
   ctx.restore();
@@ -247,16 +362,92 @@ export function barIndexAtTime(cs: BarSeries, time: number): number {
 }
 
 /**
+ * The pixel rect of bar `i`'s **slot** — the region that *belongs* to the bar,
+ * as opposed to the ink {@link barRect} puts on the canvas. It spans the key's
+ * full `[begin, end]` in x (**no `gapPx` inset**) and the **whole plot height**
+ * in y. `null` for a gap (non-finite value), which owns no slot to select.
+ *
+ * The distinction is the point: a bar *is* the full width of its interval, and
+ * the drawing gap is a display affordance so adjacent columns read as discrete.
+ * Hit-testing the drawn rect made that affordance interactive — the gap became
+ * a dead channel you could point at and select nothing, and the empty plot
+ * space above a short bar likewise. Slots tile the axis, so every x inside the
+ * data range belongs to exactly one bar, which is what a column chart's hover
+ * should feel like and what {@link barIndexAtTime} (the x-scrub cursor) has
+ * always done.
+ *
+ * The plot's y extent is read from the `yScale`'s own domain, the same
+ * localized shape {@link resolveBarBaseline} uses. When it isn't readable (a
+ * bare test stub with no `.domain()`), this falls back to {@link barRect}'s
+ * value→baseline span, so a scale-less caller keeps the old behaviour rather
+ * than getting an unbounded hit region.
+ *
+ * `minWidthPx` still floors the span, so a lone point-keyed bar (zero-width
+ * key) stays selectable.
+ *
+ * **Two consequences worth knowing before you compose with it.**
+ *
+ * 1. **It reaches across the whole plot height, so it can shadow layers below
+ *    it.** `resolveSelection` returns the topmost hit, so a `<BarChart>`
+ *    declared *after* a `<ScatterChart>` / `<BoxPlot>` / another `<BarChart>`
+ *    in the same row now claims every hit inside its x-range, at any y — where
+ *    the drawn-rect target only claimed the bar's own ink. Declare a bar layer
+ *    **below** the marks you want to stay clickable (which is also the usual
+ *    z-order for bars-as-context). No shipped story composes that way, so this
+ *    is latent rather than a live regression.
+ * 2. **Only the single-series vertical path uses it.** A stacked, `bins`,
+ *    `categories` or horizontal `<BarChart>` hit-tests through
+ *    {@link stackAt}, which still targets the drawn segment — a stack has to,
+ *    since segments share a bin's x-range and only y tells them apart. So
+ *    `<BarChart>` has two hit models; this is the one for a plain bar.
+ */
+export function barSlotRect(
+  cs: BarSeries,
+  i: number,
+  xScale: Scale,
+  yScale: Scale,
+  baseline: number,
+  minWidthPx: number,
+): [x0: number, x1: number, yTop: number, yBottom: number] | null {
+  const v = cs.y[i]!;
+  if (!Number.isFinite(v)) return null;
+  // Gap-free: the slot is the key's own span.
+  const [x0, x1] = barSpanPx(cs.begin[i]!, cs.end[i]!, xScale, 0, minWidthPx);
+  const d = (yScale as unknown as { domain?: () => number[] }).domain?.();
+  // `< 2`, not `=== 0`: a one-element domain would make both endpoints the same
+  // value, collapsing the slot to zero height and making the bar unhittable —
+  // worse than the fallback it was meant to skip. (`resolveBarBaseline`'s
+  // `=== 0` is fine because it clamps against min/max of the same endpoints.)
+  if (!d || d.length < 2) {
+    // No usable domain (a bare test stub): keep the drawn rect's y span.
+    const yValue = yScale(v);
+    const yBase = yScale(baseline);
+    return [x0, x1, Math.min(yValue, yBase), Math.max(yValue, yBase)];
+  }
+  const yA = yScale(d[0]!);
+  const yB = yScale(d[d.length - 1]!);
+  return [x0, x1, Math.min(yA, yB), Math.max(yA, yB)];
+}
+
+/**
  * Hit-test plot-pixel `(px, py)` against `cs`'s bars — the **first** bar whose
- * rect contains the point, or `null`. The geometry is {@link barRect}, so the
- * hit rect is exactly the drawn rect (same `baseline`/`gapPx`/`minWidth`). The
- * returned tuple is `[index, begin, value]` for the chart to assemble a
- * `SelectInfo` (it owns the colour + label); keeping this layer free of the
- * theme keeps it unit-testable without a `ChartTheme`.
+ * **slot** contains the point, or `null`. The geometry is {@link barSlotRect}:
+ * the bar's full interval width and the full plot height, *not* the drawn rect.
+ * Pointing at the gap between two columns, or above a short one, selects the
+ * bar whose slot you are in. The returned tuple is `[index, begin, value]` for
+ * the chart to assemble a `SelectInfo` (it owns the colour + label); keeping
+ * this layer free of the theme keeps it unit-testable without a `ChartTheme`.
+ *
+ * **Shared edges.** Contiguous bars meet exactly (`end[i] === begin[i+1]`) once
+ * the gap is gone, and both ends are inclusive, so a point landing precisely on
+ * the boundary matches **the left bar** — first match wins, the same rule
+ * {@link barIndexAtTime} documents, so hover and the x-scrub cursor agree.
+ *
+ * A **gap** bar (non-finite value) owns no slot and is skipped, so hovering
+ * where the data is missing selects nothing rather than a `NaN`.
  *
  * O(N) over the events (no spatial index — bar counts are view-scale, hundreds
- * not millions; click is a rare event). Bars don't overlap in x for a sorted
- * series, so "first match" is unambiguous in practice.
+ * not millions; click is a rare event).
  */
 export function barAt(
   cs: BarSeries,
@@ -265,11 +456,10 @@ export function barAt(
   xScale: Scale,
   yScale: Scale,
   baseline: number,
-  gapPx: number,
   minWidthPx: number,
 ): [index: number, begin: number, value: number] | null {
   for (let i = 0; i < cs.length; i += 1) {
-    const rect = barRect(cs, i, xScale, yScale, baseline, gapPx, minWidthPx);
+    const rect = barSlotRect(cs, i, xScale, yScale, baseline, minWidthPx);
     if (rect === null) continue;
     const [x0, x1, yTop, yBottom] = rect;
     if (px >= x0 && px <= x1 && py >= yTop && py <= yBottom) {
@@ -371,6 +561,29 @@ export function stackBinExtent(ss: StackedBarSeries): [number, number] | null {
 }
 
 /**
+ * The value a stack's **first** segment rests on, in data units — the same
+ * `0`-clamped-into-the-domain rule {@link resolveBarBaseline} applies to a plain
+ * bar, read off whichever scale carries the stacked value (`yScale` when the
+ * bars grow up, `xScale` when they grow right).
+ *
+ * Both stack walks used to start at a literal `0`, which is right only while the
+ * domain contains zero — and a **log** domain never can. `yScale(0)` on a log
+ * scale is `NaN`, `fillRect` with a `NaN` argument is a silent canvas no-op, and
+ * the same rect feeds {@link stackAt} — so the bottom segment of every stack
+ * both vanished *and* became unhittable, with nothing to see but a stack that
+ * starts one segment up. The linear case is unaffected: the value extents pull
+ * `0` into the domain, so this returns exactly `0` and the geometry is
+ * unchanged.
+ */
+export function stackBase(
+  orientation: Orientation,
+  xScale: Scale,
+  yScale: Scale,
+): number {
+  return resolveBarBaseline(orientation === 'vertical' ? yScale : xScale);
+}
+
+/**
  * The pixel rect `[x0, x1, yTop, yBottom]` (ascending on both axes) of bin `b`'s
  * segment `g`, stacked so it sits atop `cumBefore` (the summed value of the
  * segments below it, in value units). `null` for a gap (see below). Transposes on
@@ -460,10 +673,11 @@ export function drawStacks(
   hover: StackMark | null,
 ): void {
   const G = ss.groups.length;
+  const base = stackBase(orientation, xScale, yScale);
   ctx.save();
   ctx.globalAlpha = style.opacity;
   for (let b = 0; b < ss.length; b += 1) {
-    let cum = 0;
+    let cum = base;
     for (let g = 0; g < G; g += 1) {
       const rect = segmentRect(
         ss,
@@ -533,8 +747,9 @@ export function stackAt(
   | [bin: number, group: number, begin: number, name: string, value: number]
   | null {
   const G = ss.groups.length;
+  const base = stackBase(orientation, xScale, yScale);
   for (let b = 0; b < ss.length; b += 1) {
-    let cum = 0;
+    let cum = base;
     for (let g = 0; g < G; g += 1) {
       const rect = segmentRect(
         ss,

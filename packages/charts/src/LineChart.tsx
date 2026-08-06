@@ -1,7 +1,12 @@
 import { useContext, useEffect, useMemo } from 'react';
 import { ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
-import { fromTimeSeries, fromValueSeries } from './data.js';
+import {
+  assertNumericColumn,
+  fromTimeSeries,
+  fromValueSeries,
+} from './data.js';
+import type { NumericColumn, ValueNumericColumn } from './column-names.js';
 import { drawLine, yExtent } from './line.js';
 import type { DecimateOption } from './decimate.js';
 import { resolveCurve, type Curve } from './curve.js';
@@ -18,24 +23,10 @@ import {
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
-export interface LineChartProps<
+export interface LineChartCommon<
   S extends SeriesSchema = SeriesSchema,
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 > {
-  /**
-   * The source series. A `TimeSeries` plots against the time axis; a
-   * `ValueSeries` (`series.byValue('cumDist')`) against its value axis — the
-   * container infers which from the data, no axis-type prop. Either way the key
-   * / axis column supplies x and `column` supplies y.
-   *
-   * **Live charts:** `series.byValue(…)` mints a *fresh* projection each call, so
-   * passing `series={s.byValue('dist')}` inline re-registers this layer every
-   * render — on a frequently re-rendering (e.g. scrub-driven) chart, memoize the
-   * projection (`useMemo`) so the layer isn't rebuilt each frame.
-   */
-  series: TimeSeries<S> | ValueSeries<VS>;
-  /** Name of the numeric value column to plot. */
-  column: string;
   /**
    * The series' semantic identifier — what the data _is_ / how it should read
    * (e.g. `heartrate`, `power`, or a role name like `foam`). The theme maps it
@@ -107,6 +98,42 @@ export interface LineChartProps<
   index?: number;
 }
 
+/**
+ * LineChart's source + column props, a **union over the series kind** so the
+ * column names are checked against the schema that was actually passed
+ * ([PND-CHARTAPI]). A single member carrying `NumericColumn<S> |
+ * ValueNumericColumn<VS>` would silently widen to `string`: only one of the
+ * two generics is ever inferred, and the other falls back (measured in
+ * `spikes/charts-type-seam/`). Loosely-typed series still accept any name.
+ */
+type LineChartSource<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> =
+  | {
+      /**
+       * The source series. **Live charts:** `series.byValue(…)` mints a
+       * *fresh* projection each call, so an inline `series={s.byValue('d')}`
+       * re-registers this layer every render — on a frequently re-rendering
+       * (e.g. scrub-driven) chart, memoize the projection (`useMemo`) so the
+       * layer isn't rebuilt each frame.
+       */
+      series: TimeSeries<S>;
+      column: NumericColumn<S>;
+      readout?: NumericColumn<S>;
+    }
+  | {
+      series: ValueSeries<VS>;
+      column: ValueNumericColumn<VS>;
+      readout?: ValueNumericColumn<VS>;
+    };
+
+/** `<LineChart>`'s props: the shared knobs plus one series-kind source shape. */
+export type LineChartProps<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> = LineChartCommon<S, VS> & LineChartSource<S, VS>;
+
 /** Stable empty boundary list — so `sessionBreaks={false}` keeps a referentially
  *  constant array and the layer entry isn't rebuilt every render. */
 const NO_BREAKS: readonly number[] = [];
@@ -123,6 +150,7 @@ export function LineChart<
 >({
   series,
   column,
+  readout,
   as: semantic,
   axis,
   curve,
@@ -148,6 +176,21 @@ export function LineChart<
         : fromTimeSeries(series, column),
     [series, column],
   );
+  // Readout column values for a value-axis series (the time path reads it off
+  // the event in `sampleAt`). Built once per (series, readout) so the tracker
+  // can report a source value the line doesn't plot — see LineChartProps.readout.
+  //
+  // The time path buffers nothing (it has an event, not an index), so it
+  // validates the name here instead: otherwise a mistyped `readout` throws on a
+  // value axis but silently yields no readout on a time axis, and the same typo
+  // fails two different ways. Both now throw the reader's errors.
+  const readoutY = useMemo(() => {
+    if (readout === undefined) return undefined;
+    if (series instanceof ValueSeries)
+      return fromValueSeries(series, readout).y;
+    assertNumericColumn(series, readout);
+    return undefined;
+  }, [series, readout]);
   // Styling: semantic identifier → theme style. The single styling channel.
   const { line } = container.theme;
   const style =
@@ -191,8 +234,19 @@ export function LineChart<
             const i = series.nearestIndex(x);
             if (i < 0) return [];
             const v = cs.y[i]!;
+            const rv = readoutY?.[i];
             return Number.isFinite(v)
-              ? [{ x: cs.x[i]!, value: v, color: style.color, label }]
+              ? [
+                  {
+                    x: cs.x[i]!,
+                    value: v,
+                    color: style.color,
+                    label,
+                    ...(rv !== undefined && Number.isFinite(rv)
+                      ? { readout: rv }
+                      : {}),
+                  },
+                ]
               : [];
           }
           const e = series.nearest(x);
@@ -200,11 +254,21 @@ export function LineChart<
           // get() wants a literal key; column is a runtime string. Cast the
           // *event* (not the method — that would detach `this`) to a
           // string-keyed get; runtime-safe read + guard.
-          const v = (e as unknown as { get(field: string): unknown }).get(
-            column,
-          );
+          const ev = e as unknown as { get(field: string): unknown };
+          const v = ev.get(column);
+          const rv = readout !== undefined ? ev.get(readout) : undefined;
           return typeof v === 'number' && Number.isFinite(v)
-            ? [{ x: e.begin(), value: v, color: style.color, label }]
+            ? [
+                {
+                  x: e.begin(),
+                  value: v,
+                  color: style.color,
+                  label,
+                  ...(typeof rv === 'number' && Number.isFinite(rv)
+                    ? { readout: rv }
+                    : {}),
+                },
+              ]
             : [];
         },
         draw: (ctx, xScale, yScale) =>
@@ -228,6 +292,8 @@ export function LineChart<
       cs,
       series,
       column,
+      readout,
+      readoutY,
       style,
       label,
       curveFactory,

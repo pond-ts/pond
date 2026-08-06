@@ -1,6 +1,10 @@
 import type { ReducerDef } from './types.js';
 import { rollingSortedArray } from './rolling.js';
-import { percentileOfSorted, reducePercentileColumn } from './percentile.js';
+import {
+  percentileOfSorted,
+  reducePercentileColumn,
+  reducePercentileColumnRange,
+} from './percentile.js';
 
 export const median: ReducerDef = {
   outputKind: 'number',
@@ -11,6 +15,9 @@ export const median: ReducerDef = {
   },
   reduceColumn(col) {
     return reducePercentileColumn(col, 50);
+  },
+  reduceColumnRange(col, start, end) {
+    return reducePercentileColumnRange(col, 50, start, end);
   },
   bucketState() {
     const collected: number[] = [];

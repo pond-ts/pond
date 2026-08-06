@@ -1,0 +1,10 @@
+{
+  "name": "@pond-ts/router-worker",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker routing pond-ts.org path prefixes to their Pages projects. Not an npm workspace and never published — this manifest exists to declare ESM, so `node --test workers/router/` runs without a module-type warning.",
+  "scripts": {
+    "test": "node --test .",
+    "deploy": "wrangler deploy"
+  }
+}

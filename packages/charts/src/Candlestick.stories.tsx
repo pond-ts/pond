@@ -354,10 +354,20 @@ export const Estela: Story = {
 
 /** **Price + volume, two panels.** The canonical financial layout: candles on a
  *  price row, volume as a `<BarChart>` sub-panel sharing the time axis (the
- *  library doesn't fuse panels — the consumer composes rows). */
+ *  library doesn't fuse panels — the consumer composes rows). The volume bars
+ *  are **direction-coloured** the way trading UIs draw them: a `binColors`
+ *  array derived from the candles' own open vs close, reading the rising /
+ *  falling pair off the same `theme.candle` slot the candles use — so the two
+ *  panels agree on what green / red mean without a hand-kept palette. */
 export const ScenarioPriceVolume: Story = {
   render: () => {
     const d = dailyOHLC(N);
+    const { rising, falling } = docsTheme.candle.default;
+    const open = d.column('open');
+    const close = d.column('close');
+    const byDirection = Array.from({ length: d.length }, (_, i) =>
+      (close.at(i) ?? 0) >= (open.at(i) ?? 0) ? rising.body : falling.body,
+    );
     return (
       <ChartContainer range={dayRange(N)} width={720} theme={docsTheme}>
         <ChartRow height={260}>
@@ -369,7 +379,12 @@ export const ScenarioPriceVolume: Story = {
         <ChartRow height={110}>
           <YAxis id="vol" label="vol" />
           <Layers>
-            <BarChart series={d} column="volume" axis="vol" />
+            <BarChart
+              series={d}
+              column="volume"
+              axis="vol"
+              binColors={byDirection}
+            />
           </Layers>
         </ChartRow>
       </ChartContainer>

@@ -152,27 +152,31 @@ const points = series.sample({ reservoir: { size: 500 } }).toRows();
 
 ## Performance
 
-pond-ts is faster on **every** comparable operation, with no regressions —
-a **~17x** geometric-mean speedup across the measurable ops, plus a handful
-of transforms (`select` / `rename`) that are **effectively instant** (O(1)
-column rebinds, below the timer's resolution). The advantage grows with data
-size.
+Measured against three reference points (snapshot 2026-07-30; full tables,
+methodology, and every losing number in the
+[benchmark reference](website/docs/reference/benchmarks.mdx)):
 
-| Category          | Speedup (N=16k)                                      | Notes                                         |
-| ----------------- | ---------------------------------------------------- | --------------------------------------------- |
-| **Rate**          | ~120x                                                | Single columnar walk vs Pipeline              |
-| **Fill**          | 77–87x                                               | Single columnar pass vs Pipeline per strategy |
-| **Aggregation**   | 57–82x                                               | O(N+B) bucketing vs O(N×B) Pipeline           |
-| **Statistics**    | 18–80x                                               | Typed-array reduce vs ImmutableJS iteration   |
-| **Alignment**     | 42x                                                  | Forward cursor vs repeated binary search      |
-| **Construction**  | 13x                                                  | Columnar intake vs ImmutableJS wrapping       |
-| **Chained**       | 8x                                                   | Derived constructors vs per-step Pipeline     |
-| **Transforms**    | `select`/`rename` instant; `collapse` 30x; `map` ~4x | Column reshapes vs Pipeline                   |
-| **Event access**  | 6x                                                   | Array indexing vs ImmutableJS `get()`         |
-| **Serialization** | 4x                                                   | Lightweight columnar representation           |
+- **vs pondjs** (the predecessor): faster on all 54 measurable shared
+  operations — geometric mean **20.7×**, `aggregate` up to 453×,
+  `median` 157×, and `select` / `rename` effectively instant (O(1)
+  column rebinds).
+- **vs pandas** (500k-bar workload): roughly **even** — ahead on `ema`,
+  `mean`, `median` / `percentile`; behind ~1.1–1.9× on the rolling
+  studies. A five-study strategy pass runs 1.28× slower than pandas'
+  Cython kernels.
+- **vs polars, single-threaded**: **ahead on composite studies**
+  (`bollinger` 0.53×, strategy stack 0.85×, `ema` 0.32× — lower is
+  pond-ts faster), behind 4–9× on whole-column reductions (the SIMD gap;
+  half-closed already by blocked summation) and on raw ingest, where
+  pond-ts front-loads validation the dataframe engines defer.
+- **vs polars on all 10 cores**: behind ~3.5× on the strategy stack —
+  pond-ts has no parallelism today; a measured 2.42× worker-thread path
+  is on the roadmap (`[PND-PROCPAR]`).
 
-See the [full benchmark results](website/docs/reference/benchmarks.mdx)
-for detailed numbers. Run locally:
+The honest one-line version: the rewrite beat its predecessor by an order
+of magnitude, holds its own per-core against the native engines on the
+composite queries that dominate real workloads, and knows exactly where
+it is behind. Run locally:
 
 ```sh
 npm run build && node packages/core/bench/vs-pondjs.cjs

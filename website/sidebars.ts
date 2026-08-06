@@ -116,7 +116,42 @@ const sidebars: SidebarsConfig = {
       label: '@pond-ts/charts',
       link: { type: 'doc', id: 'charts/charts-index' },
       items: [
-        'charts/gallery',
+        {
+          type: 'category',
+          label: 'Gallery',
+          link: { type: 'doc', id: 'charts/gallery' },
+          // One page per chart, `charts/gallery/<slug>` — the build-it
+          // tutorial each card's "Build it →" link opens. Each track appends
+          // its own slugs here, grouped as they are on the Gallery page;
+          // `_template.mdx` is the shape they all follow.
+          items: [
+            // Track A — ops & infrastructure.
+            'charts/gallery/network-traffic',
+            'charts/gallery/traffic-by-interface',
+            'charts/gallery/multi-host-cpu',
+            'charts/gallery/latency-percentiles',
+            'charts/gallery/sla-incidents',
+            'charts/gallery/live-tail',
+            'charts/gallery/site-traffic-dashboard',
+            'charts/gallery/volume-history',
+            // Track B — finance.
+            'charts/gallery/candlestick',
+            'charts/gallery/price-volume',
+            'charts/gallery/bollinger-bands',
+            'charts/gallery/drawdown',
+            // Track C — weather & climate.
+            'charts/gallery/temperature-range',
+            'charts/gallery/rainfall',
+            'charts/gallery/climate-stripes',
+            'charts/gallery/wind-rose',
+            // Track D — Energy
+            'charts/gallery/grid-mix',
+            'charts/gallery/renewables-vs-demand',
+            'charts/gallery/negative-prices',
+            // Track F — science & measurement.
+            'charts/gallery/nino34',
+          ],
+        },
         {
           type: 'category',
           label: 'Learn charts',
@@ -141,6 +176,7 @@ const sidebars: SidebarsConfig = {
             'charts/axes/value-axis',
             'charts/axes/category-axis',
             'charts/axes/trading-time-axis',
+            'charts/axes/duration-axis',
           ],
         },
         'charts/layout',
@@ -186,6 +222,25 @@ const sidebars: SidebarsConfig = {
           type: 'link',
           label: 'API reference (charts)',
           href: '/docs/api/',
+        },
+      ],
+    },
+    {
+      type: 'category',
+      label: '@pond-ts/process',
+      link: { type: 'doc', id: 'process/process-index' },
+      items: [
+        'process/tutorial',
+        'process/authoring',
+        'process/requests',
+        'process/plans',
+        'process/registry',
+        'process/host',
+        'process/performance',
+        {
+          type: 'link',
+          label: 'API reference (process)',
+          href: 'pathname:///generated-api/process/',
         },
       ],
     },

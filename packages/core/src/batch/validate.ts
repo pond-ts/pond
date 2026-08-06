@@ -37,7 +37,24 @@ const FIRST_COLUMN_KINDS: ReadonlySet<FirstColKind> = new Set([
   'timeRange',
 ]);
 
-function assertCellKind(
+/**
+ * Asserts that a single cell matches its declared schema kind, throwing
+ * a `ValidationError` naming the offending `row` / `col` otherwise.
+ * `undefined` always passes — the missing-cell decision belongs to the
+ * column's `required` flag, checked by the caller.
+ *
+ * **Exported so the columnar `aggregate` output path can run the exact
+ * same checks with the exact same messages.** That path builds its
+ * result columns directly instead of round-tripping through rows
+ * (`aggregate-columns.ts`), so without sharing this function the two
+ * intake routes would validate by two similar-looking copies — and the
+ * first divergence would be a silently-accepted cell on one path and a
+ * `ValidationError` on the other. Sharing it makes the strictness
+ * contract a single fact rather than an invariant nobody re-checks.
+ *
+ * Framework-internal; not exported from `packages/core/src/index.ts`.
+ */
+export function assertCellKind(
   kind: string,
   value: unknown,
   row: number,

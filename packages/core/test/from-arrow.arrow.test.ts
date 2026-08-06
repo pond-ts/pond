@@ -14,7 +14,7 @@ import {
   tableFromIPC,
   tableToIPC,
 } from 'apache-arrow';
-import { TimeSeries } from '../src/index.js';
+import { Sequence, TimeSeries } from '../src/index.js';
 
 // Integration tests against REAL apache-arrow — the structural fakes in
 // from-arrow.test.ts can't validate what apache-arrow's `Vector.toArray()`
@@ -156,5 +156,166 @@ describe('TimeSeries.fromArrow — real apache-arrow tables', () => {
       undefined,
       'c',
     ]);
+  });
+});
+
+describe('[PND-FLATKEY] two-edged keys round-trip through Arrow', () => {
+  // `toArrow` has always flattened a two-edged key into `<key>` + `<key>End`
+  // (+ `<key>Label`) because Arrow has no interval-of-time type — but nothing
+  // read that shape back, so the pair was one-way for anything but a point
+  // key. `{ keyKind }` closes it, using the same convention the JSON columnar
+  // doors now speak.
+  function ranged() {
+    return new TimeSeries({
+      name: 'ranges',
+      schema: [
+        { name: 'timeRange', kind: 'timeRange' },
+        { name: 'load', kind: 'number' },
+      ] as const,
+      rows: [
+        [[0, 60_000], 1],
+        [[60_000, 120_000], 2],
+      ],
+    });
+  }
+
+  function assembled(series: ReturnType<typeof ranged>) {
+    const out = series.toArrow();
+    const entries: Record<string, ReturnType<typeof makeVector>> = {};
+    for (const f of out.fields) {
+      if (f.type === 'float64' || f.type === 'timestamp') {
+        entries[f.name] = makeVector(
+          makeData({
+            type: new Float64(),
+            length: f.length,
+            nullCount: f.nullCount,
+            nullBitmap: f.nullBitmap,
+            data: f.values as Float64Array,
+          }),
+        );
+      } else if (f.type === 'dictionary') {
+        // Dict-encoded strings hand over Int32 indices plus the dictionary —
+        // resolve them here, since this helper is standing in for whatever
+        // real Arrow assembly a consumer would write.
+        const dict = f.dictionary;
+        entries[f.name] = vectorFromArray(
+          Array.from(f.values, (i) => dict[i]!),
+          new Utf8(),
+        );
+      } else {
+        entries[f.name] = vectorFromArray(
+          (f as { values: ReadonlyArray<string | null> }).values.map(
+            (v) => v ?? '',
+          ),
+          new Utf8(),
+        );
+      }
+    }
+    return new Table(entries);
+  }
+
+  it('toArrow → Table → fromArrow({ keyKind: "timeRange" })', () => {
+    const series = ranged();
+    expect(series.toArrow().fields.map((f) => f.name)).toEqual([
+      'timeRange',
+      'timeRangeEnd',
+      'load',
+    ]);
+    const back = TimeSeries.fromArrow(assembled(series) as never, {
+      name: 'ranges',
+      keyKind: 'timeRange',
+    });
+    expect(back.schema).toEqual(series.schema);
+    expect(back.toRows()).toEqual(series.toRows());
+  });
+
+  it('an interval key round-trips with its labels', () => {
+    const series = new TimeSeries({
+      name: 'shifts',
+      schema: [
+        { name: 'interval', kind: 'interval' },
+        { name: 'load', kind: 'number' },
+      ] as const,
+      rows: [
+        [['morning', 0, 60_000], 1],
+        [['evening', 60_000, 120_000], 2],
+      ],
+    });
+    const back = TimeSeries.fromArrow(assembled(series as never) as never, {
+      name: 'shifts',
+      keyKind: 'interval',
+    });
+    expect(back.schema).toEqual(series.schema);
+    expect(back.toRows()).toEqual(series.toRows());
+  });
+
+  it('is explicit, not sniffed — a stray `timeEnd` stays a value column', () => {
+    // A table that merely carries `time` and `timeEnd` must NOT silently
+    // become range-keyed; without `keyKind` the default point key stands and
+    // `timeEnd` is read as an ordinary numeric column.
+    const table = tableFromArrays({
+      time: Float64Array.from([0, 1000]),
+      timeEnd: Float64Array.from([500, 1500]),
+    });
+    const series = TimeSeries.fromArrow(table as never);
+    expect(series.schema.map((c) => [c.name, c.kind])).toEqual([
+      ['time', 'time'],
+      ['timeEnd', 'number'],
+    ]);
+  });
+
+  it('round-trips an AGGREGATED series — numeric interval labels', () => {
+    // The case the option exists for, and the one the first cut of this PR
+    // got wrong: `aggregate` labels buckets numerically, `toArrow` emits that
+    // label column as float64, and the ingest engine was rejecting typed-array
+    // labels outright. Both original Arrow interval tests used STRING labels,
+    // which is exactly why it slipped through (Layer-2 review of #567).
+    const agg = new TimeSeries({
+      name: 'bars',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      rows: [
+        [0, 1],
+        [30_000, 3],
+        [60_000, 2],
+      ],
+    }).aggregate(Sequence.every('1m'), { v: 'avg' });
+
+    const back = TimeSeries.fromArrow(assembled(agg as never) as never, {
+      name: 'bars',
+      keyKind: 'interval',
+    });
+    // Names and kinds round-trip; `required: false` does not, because an Arrow
+    // field carries no such flag — `fromArrow` derives its schema from the
+    // table, as its trust contract says. The KEY is what this test is about.
+    expect(back.schema.map((c) => [c.name, c.kind])).toEqual(
+      agg.schema.map((c) => [c.name, c.kind]),
+    );
+    expect(back.toRows()).toEqual(agg.toRows());
+    expect(back.at(0)!.key().end()).toBe(agg.at(0)!.key().end());
+  });
+
+  it('refuses to key a two-edged kind off a differently-named field', () => {
+    // The flattened names are derived from the kind, so a key named anything
+    // else would mint a schema whose key name disagrees with its kind.
+    const table = tableFromArrays({
+      bucket: Float64Array.from([0]),
+      bucketEnd: Float64Array.from([60_000]),
+    });
+    expect(() =>
+      TimeSeries.fromArrow(table as never, {
+        time: 'bucket',
+        keyKind: 'timeRange',
+      }),
+    ).toThrow(/cannot name it — rename the table's fields/);
+  });
+
+  it('names the missing edge when a keyKind has nothing to read', () => {
+    const table = tableFromArrays({ timeRange: Float64Array.from([0, 1000]) });
+    expect(() =>
+      TimeSeries.fromArrow(table as never, { keyKind: 'timeRange' }),
+    ).toThrow(/key column 'timeRangeEnd' not found/);
   });
 });

@@ -20,10 +20,11 @@ intuition, and the closed-vs-projected-out story — read the
 the [API reference](/docs/api/core/value-series).
 :::
 
-## Two doors in
+## Doors in
 
-You never call the constructor directly (it's trusted-construction only). There
-are exactly two ways to get a `ValueSeries`:
+You never call the constructor directly (it's trusted-construction only). One
+door **projects** an existing `TimeSeries`; the other three **construct
+directly**, one per shape the data arrives in.
 
 ```ts
 // 1. PROJECT a TimeSeries onto one of its monotonic columns.
@@ -31,29 +32,32 @@ are exactly two ways to get a `ValueSeries`:
 //    re-keyed by the cumulative-distance column it already carries.
 const byDistance = ride.byValue('cumDist'); // TimeSeries → ValueSeries
 
-// 2. CONSTRUCT directly from columnar arrays.
-//    For data that is NATIVELY value-keyed and never had a per-row time key —
-//    an options chain keyed by strike, a spectrum keyed by frequency.
-const chain = ValueSeries.fromColumns({
-  name: 'chain',
-  schema: [
-    { name: 'strike', kind: 'value' }, // schema[0] is the axis
-    { name: 'iv', kind: 'number' },
-    { name: 'oi', kind: 'number' },
-  ],
-  columns: {
-    strike: [90, 95, 100, 105, 110],
-    iv: [0.31, 0.28, 0.26, 0.27, 0.3],
-    oi: [1200, 3400, 8800, 4100, 900],
-  },
-});
+// 2. CONSTRUCT directly. For data that is NATIVELY value-keyed and never had a
+//    per-row time key — an options chain keyed by strike, a spectrum keyed by
+//    frequency. Pick the door that matches what you're holding:
+const schema = [
+  { name: 'strike', kind: 'value' }, // schema[0] is the axis
+  { name: 'iv', kind: 'number' },
+  { name: 'oi', kind: 'number' },
+] as const;
+
+ValueSeries.fromJSON({ name: 'chain', schema, rows }); // row tuples / objects
+ValueSeries.fromColumns({ name: 'chain', schema, columns }); // struct-of-arrays
+ValueSeries.fromArrow(table, { axis: 'strike' }); // an Arrow Table
 ```
 
-Both doors share **one ingest engine** and the same monotonicity contract; they
-differ only in where the axis comes from. Before `fromColumns` existed,
-cross-sectional callers had to launder their axis through a fake `time` column
-just to reach `TimeSeries.fromColumns` and project — the direct door removes that
-detour.
+All four share **one ingest engine** and the same monotonicity contract; they
+differ only in where the axis comes from and how the payload is laid out.
+Before the direct doors existed, cross-sectional callers had to launder their
+axis through a fake `time` column just to reach `TimeSeries.fromColumns` and
+project — the detour is gone.
+
+| You have                                      | Door                      |
+| --------------------------------------------- | ------------------------- |
+| A `TimeSeries` with a monotonic column        | `series.byValue(axis)`    |
+| One record per row (a JSON API, a CSV parse)  | `ValueSeries.fromJSON`    |
+| One array per column (a columnar wire format) | `ValueSeries.fromColumns` |
+| A decoded Apache Arrow `Table`                | `ValueSeries.fromArrow`   |
 
 ### `byValue(axis)` — projection
 
@@ -65,6 +69,39 @@ build such a column is [`scan`](transforms/transformations#scan), a running fold
 that turns per-sample deltas into a cumulative, monotonic column. See
 [`byValue` in the aggregation reference](transforms/aggregation#byvalue).
 
+### `ValueSeries.fromJSON({ … })` — row ingest
+
+The shape data arrives in from an ordinary JSON API or a CSV parse: one record
+per row, as **tuples** aligned with the schema or as **objects** keyed by
+column name.
+
+```ts
+ValueSeries.fromJSON({
+  name: 'chain',
+  schema,
+  rows: [
+    [90, 0.31, 1200],
+    [95, 0.28, 3400],
+    [100, 0.26, 8800],
+  ],
+  // or: [{ strike: 90, iv: 0.31, oi: 1200 }, …]
+});
+```
+
+The `TimeSeries.fromJSON` contract minus the one thing a value axis has no use
+for: **there is no timestamp parsing and no `parse.timeZone`.** The axis cell
+must be a finite `number` — a value axis has no calendar to interpret
+`'2026-01-01'` against — so a string axis is an error naming the row, not a
+silent `NaN`.
+
+This is the **strict** door. Every defined cell is checked against its declared
+kind, so a `NaN`/`Infinity` in a `number` column or a number in a `string`
+column is **rejected**, and a column declared `required` (the default) rejects a
+missing cell. `null` and `undefined` both mean _missing_ and are fine on a
+`required: false` column. The columnar doors below are deliberately looser —
+they read a non-finite number as a gap and don't check `required`, because a
+decoded buffer can't tell "absent" from "not a number".
+
 ### `ValueSeries.fromColumns({ … })` — direct columnar ingest
 
 The exact `TimeSeries.fromColumns` contract, with the axis in place of time:
@@ -72,9 +109,9 @@ The exact `TimeSeries.fromColumns` contract, with the axis in place of time:
 - **`schema[0]` is the `'value'`-kind axis column**; the rest are value columns.
   Each `columns` entry is one column's values, keyed by schema column name and
   **aligned by index**.
-- Values may be a plain **`number[]`** _or_ a **`Float64Array`**. A cell is a
-  **gap** (missing) iff it is `null`/`undefined` or non-finite — identical for
-  both input types.
+- Values may be a plain **`number[]`** _or_ a **`Float64Array`** (or a
+  **`string[]`** for a `string` column). A cell is a **gap** (missing) iff it is
+  `null`/`undefined` or non-finite — identical for every input type.
 - **`Float64Array` inputs are adopted, not copied** (zero-copy): the resulting
   columns alias your buffers — pass a fresh buffer if that matters. Passing
   **`sort: true`** disables the adoption (a reorder needs its own buffers).
@@ -82,12 +119,41 @@ The exact `TimeSeries.fromColumns` contract, with the axis in place of time:
   the index. An out-of-order axis **throws** by default; pass **`sort: true`** to
   stably sort rows by axis value first (the right move for an unordered snapshot,
   e.g. a keyed live feed that arrives in update order, not axis order).
-- **v1 scope:** `number` value columns, matching `TimeSeries.fromColumns`.
+- **Value columns:** `number` and `string`, matching `TimeSeries.fromColumns`.
 
 It throws `ValidationError` on a non-`'value'` axis kind, a missing column, a
-length mismatch, a non-`number` value column, or an out-of-order axis without
-`sort`; and `RangeError` on a non-finite axis cell (sorting can't rescue it) or a
-duplicate column name. See [Creating series → Columnar ingest](creating#columnar-ingest).
+length mismatch, an unsupported value-column kind, or an out-of-order axis
+without `sort`; and `RangeError` on a non-finite axis cell (sorting can't rescue
+it) or a duplicate column name. See
+[Creating series → Columnar ingest](creating#columnar-ingest).
+
+### `ValueSeries.fromArrow(table, { axis })` — Arrow ingest
+
+A decoded Apache Arrow `Table` — often how a cross-sectional payload arrives in
+the first place, since an options chain or a spectrum reaching you over Arrow
+has no time column to key on.
+
+```ts
+import { tableFromIPC } from 'apache-arrow';
+
+const chain = ValueSeries.fromArrow(tableFromIPC(bytes), { axis: 'strike' });
+```
+
+pond takes **no dependency** on `apache-arrow` — bring your own and hand the
+`Table` over; the input is duck-typed against the small slice pond reads.
+Ingest is the zero-copy path: a single-chunk `Float64` column's backing
+`Float64Array` is adopted as-is, nulls and all (Arrow's validity bitmap is
+bit-identical to pond's).
+
+- **`axis` is required.** Unlike the time door there is no conventional field
+  name to fall back on — `strike`, `frequency`, `depth` and `cumDist` are all
+  equally plausible, and keying on the wrong one silently is worse than an
+  error. The axis is read **unscaled** (an axis carries no `TimeUnit`); a null
+  in it throws.
+- **Value columns:** every non-axis field by default, or the subset named by
+  `columns` (in order). Numeric and `Utf8` string columns are supported; any
+  other Arrow type (list/struct/…) throws, naming it.
+- **`sort: true`** for an unordered table, which disables the adoption.
 
 ## Reading a ValueSeries
 
@@ -117,6 +183,85 @@ byDistance.sliceByValue(40_000, 60_000); // the [40 km, 60 km) sub-series (zero-
   the contiguous sub-series with axis in `[lo, hi)`, zero-copy sliced. `lo >= hi`
   (or a range outside the extent) yields an empty series.
 
+## Doors out
+
+Every ingest door has a matching export door, so a `ValueSeries` is never a
+dead end — `fromX(series.toX())` reconstructs the series.
+
+```ts
+chain.toRows(); // [[90, 0.31, 1200], …] — tuples, gaps as undefined
+chain.toObjects(); // [{ strike: 90, iv: 0.31, oi: 1200 }, …]
+chain.toJSON(); // { name, schema, rows } — the wire envelope, gaps as null
+chain.toJSON({ rowFormat: 'object' }); // …with object rows
+chain.toColumns(); // { name, schema, columns } — one array per column
+chain.toArrow(); // { length, fields } — Arrow's layout, zero copy
+```
+
+| You want                                    | Door                       | Cost                                        |
+| ------------------------------------------- | -------------------------- | ------------------------------------------- |
+| To read rows in JS                          | `toRows()` / `toObjects()` | One object per row                          |
+| To send rows over the wire                  | `toJSON()`                 | One object per row; `JSON.stringify`-safe   |
+| To send a columnar payload over the wire    | `toColumns()`              | One array per **column** — no per-row alloc |
+| To hand the data to another columnar engine | `toArrow()`                | A buffer handoff — no per-row work at all   |
+
+**Rows vs columns on the wire.** `toJSON` and `toColumns` carry the same data
+in the same envelope shape (`{ name, schema, … }`); they differ only in the
+transpose. Prefer `toColumns` when the consumer is itself column-oriented, or
+when the payload is dense enough that C arrays beat N×C-element rows on size
+and parse time — measured at 100k rows × 7 columns, the columnar export
+allocates 7 arrays where the row exports mint 100 000 objects.
+
+**Gaps.** `toRows` / `toObjects` spell a gap `undefined` (the JS reading
+shape); `toJSON` and `toColumns` spell it `null` (the wire shape — `NaN` isn't
+JSON, and a `Float64Array` doesn't stringify as an array).
+
+**Round trips are typed, not just documented.**
+`ValueSeries.fromColumns(chain.toColumns())` and
+`ValueSeries.fromJSON(chain.toJSON())` compile with no cast — that
+assignability _is_ the contract, for the `number` / `string` columns the ingest
+engine carries (which is every series built through a direct door).
+
+:::note[The one column kind that doesn't come back]
+A `boolean` or array-kind column can only reach a `ValueSeries` by `byValue`
+projection — the direct doors take `number` and `string`. It **exports** on
+every door, but no door takes it back, and the two legs report that
+differently: `fromColumns` refuses the payload **at compile time** (the
+columnar return type isn't assignable to the ingest type), while `toJSON`
+types its `boolean` cells honestly, so `fromJSON` accepts the shape and
+**throws at ingest**, naming the column and its kind. Drop the column before
+projecting (`series.select(…).byValue(axis)`) if you need the round trip.
+:::
+
+### `toArrow()` — the zero-copy handoff
+
+`toArrow` hands back the buffers pond is already holding, in Arrow's memory
+layout, with no copy — the same `{ length, fields }` shape `TimeSeries.toArrow`
+returns (the exporter is shared; a `'value'` axis simply exports as a plain
+`float64` field where a time key would come out `timestamp`). pond takes no
+dependency on `apache-arrow`, so the caller assembles the `Table`:
+
+```ts
+import { makeData, makeVector, Float64 } from 'apache-arrow';
+
+const { fields } = chain.toArrow();
+const f = fields.find((x) => x.name === 'iv')!;
+if (f.type !== 'float64') throw new Error(f.type);
+const vec = makeVector(
+  makeData({
+    type: new Float64(),
+    length: f.length,
+    nullCount: f.nullCount,
+    nullBitmap: f.nullBitmap,
+    data: f.values,
+  }),
+);
+```
+
+From there another engine — polars, DuckDB, arrow-js — is reachable without a
+re-ingest. **The returned buffers are pond's live storage, not copies**: the
+same read-only contract `column(name)` and `axisValues()` already carry. Copy
+first if the consumer mutates in place.
+
 ## When _not_ to reach for it
 
 A `ValueSeries` keeps the full-resolution channel and lets you read/plot it
@@ -137,3 +282,6 @@ walks the split in full.
   [value axis chart reference](../charts/axes/value-axis).
 - **Minimal by design** — the type carries only the operators a value axis
   actually needs; the algebra grows as a second value-axis consumer earns it.
+  The **ingest / export surface is the exception**: it is deliberately at full
+  parity with `TimeSeries`, because a door you can't come back through isn't a
+  smaller API, it's a trap.

@@ -1,0 +1,241 @@
+---
+title: BarList & BoxList
+sidebar_position: 9
+---
+
+# BarList & BoxList — ranked row lists
+
+Standalone, DOM-rendered **row lists**: one row per _entity_ (an interface, a
+split, a symbol), a label cell, one glyph line per configured column, optional
+data cells, custom sort, and an optional per-row expander. `<BarList>` draws a
+proportional **value bar** per line; its sister `<BoxList>` draws a
+**five-number distribution** — range band, `q1`→`q3` body, median line — plus
+an optional current-value tick with a printed label (the classic
+traffic-by-interface table).
+
+This pattern is a **table, not a plot**, and the components embrace that: they
+render a real `<table>` (labels can be links, cells align by table layout, the
+expander is a spanning row) and take **no `<ChartContainer>`** — there is no
+time axis here. The in-plot histogram remains
+[`<BarChart orientation="horizontal">`](./barchart.mdx); reach for the lists
+when the rows are entities rather than buckets.
+
+## Data contract
+
+Rows are plain records — `{ key, label?, values }` — where `values` is a flat
+`Record<string, number | string | undefined>`:
+
+- **`key`** is the row's stable identity (selection, expansion, React keys).
+- **`label`** is the first cell's content (any node — a link is fine); the
+  `key` renders when omitted.
+- **`values`** feeds everything else by name: bar lengths, box quantiles,
+  `sortBy`, and whatever your data cells read. A missing / non-numeric entry
+  is a **gap** — an empty track / line, sorting last in either direction.
+
+Both components are generic over `R extends ListRow`, so extra fields on your
+rows flow into `render` / `renderExpanded` fully typed.
+
+## From your TimeSeries
+
+Three acquisition shapes cover the real cases; every one composes from core's
+own vocabulary (the list never computes statistics — the same stance as
+[`<BoxPlot>`](./boxplot.mdx) takes on quantiles).
+
+### Rows are events — a per-split rollup
+
+An `aggregate` produces one event per split; the series feeds **directly** —
+one row per event, every value column (numeric **and** string) landing in
+`values` under its own name, `label` naming the first cell. A `ValueSeries`
+(`run.byValue('km')`) rows per axis key identically. No shaping step.
+
+```tsx
+const splits = run.aggregate(Sequence.every('5m'), {
+  speed: { from: 'speed', using: 'avg' },
+  climb: { from: 'elevGain', using: 'sum' },
+});
+
+<BarList
+  series={splits}
+  label={(i) => `${i + 1}`}
+  columns={[{ column: 'speed' }]}
+/>;
+```
+
+(The `listRowsFromTimeSeries` / `listRowsFromValueSeries` readers remain for
+building **record** rows you want to post-process before passing as `rows`.)
+
+### Rows are entities — partition facts
+
+`reduce`'s **mapping form returns exactly a row's `values` shape**, so
+partition facts spread straight in. Quantiles come from pond's reducers:
+
+```tsx
+const rows = [...traffic.partitionBy('iface').toMap()].map(([name, s]) => ({
+  key: name,
+  label: <a href={`/ifaces/${name}`}>{name}</a>,
+  values: s.reduce({
+    p5: { from: 'in', using: 'p5' },
+    p25: { from: 'in', using: 'p25' },
+    p50: { from: 'in', using: 'p50' },
+    p75: { from: 'in', using: 'p75' },
+    p95: { from: 'in', using: 'p95' },
+    now: { from: 'in', using: 'last' },
+  }),
+}));
+
+<BoxList
+  rows={rows}
+  columns={[
+    {
+      lower: 'p5',
+      q1: 'p25',
+      median: 'p50',
+      q3: 'p75',
+      upper: 'p95',
+      value: 'now',
+      format: (v) => `${(v / 1000).toFixed(1)}Gbps`,
+    },
+  ]}
+  sortBy="now"
+/>;
+```
+
+### Rows are entities, distributed over buckets — grouped aggregate
+
+For "what does each band _typically_ see per window vs now", bucket first,
+then summarize the bucket column. Two semantics matter:
+
+- **`{ groups }` keeps silent entities as rows** — empty declared groups
+  still appear as empty series in the map, in declared order. For an ordinal
+  scale (risk bands low → severe), omit `sortBy` and the declared order **is**
+  the display order.
+- **Pass a shared `{ range }` to `aggregate`.** The default range is each
+  partition's _own_ extent, so bands get different reporting windows and
+  quiet periods fall outside the grid — biasing a count distribution upward.
+  With a shared range, empty buckets emit honest `n = 0` rows (`count` of an
+  empty bucket is `0`, not a gap) and every band lands on one comparable
+  scale.
+
+```tsx
+const range = riskReadings.timeRange()!;
+const byBand = riskReadings
+  .partitionBy('band', { groups: RISK_BANDS })
+  .aggregate(
+    Sequence.every('5m'),
+    { n: { from: 'band', using: 'count' } },
+    { range },
+  )
+  .toMap();
+
+const rows = [...byBand].map(([band, s]) => ({
+  key: band,
+  values: s.reduce({
+    p5: { from: 'n', using: 'p5' },
+    q1: { from: 'n', using: 'p25' },
+    q3: { from: 'n', using: 'p75' },
+    p95: { from: 'n', using: 'p95' },
+    now: { from: 'n', using: 'last' },
+  }),
+}));
+
+<BoxList
+  rows={rows}
+  columns={[
+    {
+      lower: 'p5',
+      q1: 'q1',
+      q3: 'q3',
+      upper: 'p95',
+      value: 'now',
+      format: (n) => `${n}/5m`,
+    },
+  ]}
+/>;
+```
+
+The same `byBand` map feeds `stacksFromGroups` → a stacked
+[`<BarChart>`](./barchart.mdx) — the list is the "typical vs now" summary
+view and the stack the time view of one acquisition.
+
+## Reference markers
+
+`markers={[{ value, label? }]}` draws a **dotted vertical rule through every
+row** at a value on the shared scale, with the label printed above the list,
+centred on the rule — an SLA threshold, a capacity line, the fleet average.
+Markers draw in the **annotation (marks) register** (the canvas
+[`<Marker>` / `<Baseline>`](../annotations/region-baseline-marker.mdx)
+siblings' colour), never a data hue. Under an auto-fitted domain, marker values **join the fit** — a
+threshold above the data max widens the scale instead of clamping to the
+edge; under an explicit `domain` an out-of-range marker clamps.
+
+Labels are positioned, not laid out: two markers close together overlap their
+labels, and a label near a domain edge overhangs it. Keep marker sets small
+and spaced (they are reference lines, not an axis).
+
+## One shared scale
+
+Every glyph line of every row maps through **one** `[min, max]` — cross-row
+comparison is the point of a ranked list. The domain resolves from the data
+(`[min(0, data min), data max]` over every bar column, or every box
+`lower`/`upper`/`value`); pass `domain={[min, max]}` to pin it across live
+updates or sibling lists.
+
+## Shared table props
+
+| Prop                                 | Type                       | Default     | Purpose                                                                                                                                                                   |
+| ------------------------------------ | -------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rows` / `series`                    | `R[]` / `TimeSeries`       | one-of      | The record door (entities) / the series door (one row per event, `label` names the cell).                                                                                 |
+| `columns`                            | see below                  | — (req)     | The glyph lines, top→bottom within each row.                                                                                                                              |
+| `domain`                             | `[number, number]`         | data fit    | Pin the shared scale.                                                                                                                                                     |
+| `sortBy`                             | `string`                   | input order | `values` entry that ranks the list (with several columns, this picks the driver).                                                                                         |
+| `sortDirection`                      | `'asc' \| 'desc'`          | `'desc'`    | Largest on top by default.                                                                                                                                                |
+| `sort`                               | `(a, b) => number`         | —           | Full comparator; overrides `sortBy`.                                                                                                                                      |
+| `before` / `after`                   | `ListCellSpec[]`           | —           | Data cell columns flanking the glyphs (`{ key, align?, render(row) }`).                                                                                                   |
+| `renderExpanded`                     | `(row) => ReactNode`       | —           | Per-row detail; providing it adds the chevron column.                                                                                                                     |
+| `defaultExpanded` / `onExpandToggle` | `string[]` / `(key, open)` | —           | Seed + observe expansion (uncontrolled, keyed on `row.key`).                                                                                                              |
+| `selected` / `onRowClick`            | `string \| null` / `(row)` | —           | Consumer-owned selection (inset accent edge) + row clicks.                                                                                                                |
+| `barHeight`                          | `number`                   | `8` / `10`  | Height per glyph line in px (bar / box).                                                                                                                                  |
+| `divided`                            | `boolean`                  | `true`      | Rules between rows.                                                                                                                                                       |
+| `markers`                            | `ListMarker[]`             | —           | Dotted reference rules through every row + a label strip above (see [Reference markers](#reference-markers)).                                                             |
+| `baseline`                           | `boolean`                  | box / bar   | Vertical rule at the scale origin — **on** for `BoxList` (its lines float at `lower`; the origin is what relates rows), **off** for `BarList` (tracks already show zero). |
+| `theme`                              | `ChartTheme`               | default     | The same one styling channel the canvas charts read.                                                                                                                      |
+
+## Column specs
+
+**`BarList`** — `{ column, as? }`: the `values` entry for the bar's length,
+plus a `theme.bar[as]` role (`secondary` pairs a second direction).
+
+**`BoxList`** — `{ lower, q1?, median?, q3?, upper, value?, as?, format? }`,
+each naming a `values` entry — the [`<BoxPlot>`](./boxplot.mdx) vocabulary:
+`lower`/`upper` required, `q1`+`q3` both-or-neither (omit both for a
+range-only band), `median` optional. `value` adds the current-value tick;
+`format` prints its inline label. Styles resolve `theme.box[as]` (both
+built-in themes ship a `secondary` role).
+
+`BarList` bars are **length-encoded from the domain minimum** and assume
+non-negative values — a negative value stays in-domain but draws as a short
+left-anchored bar, not a diverging one (diverging bar lists are out of scope;
+transform upstream, or use `BoxList`, whose marks are positional).
+
+Because box columns name plain `values` entries, **any stat can rank the
+list** — `sortBy="now"` for the current value, `sortBy="p95"` for tail
+latency; there is no stat-picking rule to remember.
+
+## Sorting semantics
+
+Numbers order numerically, strings lexicographically; numbers rank before
+strings; **missing / non-finite sorts last regardless of direction** (a dead
+interface stays at the bottom whether you rank best-first or worst-first).
+Ties keep input order (stable).
+
+## Theming
+
+No new theme surface: bars read `theme.bar[as]`, boxes `theme.box[as]`, text
+takes the axis inks, the row hover tint reuses the legend border, and the
+selected-row edge draws in the **annotation register** (a selection is a
+user's mark, not data). Swap `defaultTheme` for `estelaTheme` (or a
+`cssVarTheme`) and the list restyles wholesale.
+
+Storybook: `Lists/BarList` and `Lists/BoxList` fan out every knob;
+`Lists/Scenarios` composes both full tables (traffic by interface, activity
+splits) from real pond pipelines.

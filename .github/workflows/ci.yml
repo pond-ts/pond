@@ -38,4 +38,44 @@ jobs:
 
       - name: Verify package contents
         if: matrix.node-version == '24.x'
-        run: npm pack --dry-run --workspace=pond-ts
+        run: npm pack --dry-run --workspace=pond-ts --workspace=@pond-ts/process
+
+  # The docs site builds from package **source** (TypeDoc's entry points), not
+  # from `dist`, so it can break on a change that `npm run verify` is perfectly
+  # happy with. Because `Docs` only ever runs on a `v*` tag, such a break used
+  # to stay invisible until release day — [PND-SCANKERN] (#563) added Node-only
+  # sources in July and the failure did not surface until the v0.54.0 tag weeks
+  # later. This job runs the same build on every PR, minus the deploy, so the
+  # breakage lands on the PR that causes it.
+  docs-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            website/package-lock.json
+
+      - name: Install library dependencies
+        run: npm ci
+
+      - name: Build packages
+        # packages/core/dist is needed for @pond-ts/react's TypeDoc pass to
+        # resolve the 'pond-ts' import (same reason as the Docs workflow).
+        run: npm run build
+
+      - name: Install website dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Build website
+        # `prebuild` runs the TypeDoc API passes — the step that actually
+        # compiles package source, and the one that broke at v0.54.0.
+        working-directory: website
+        run: npm run build

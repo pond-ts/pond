@@ -1,6 +1,6 @@
 # API.md — public API map for agents
 
-A fast-navigation map of every public export across the monorepo's five
+A fast-navigation map of every public export across the monorepo's six
 packages, **for agents working in this repo**. Use it to find the right
 primitive and the file it lives in without crawling `src/`. It is a map, not a
 reference: one line per export, grouped by purpose, with the source path.
@@ -15,13 +15,14 @@ before writing code against them.
   and `pathname:///generated-api/<pkg>/` (generated typedoc). This file is the
   agent-facing complement, not a replacement.
 
-| Package              | npm name             | Entry points                                     | Docs hub                  |
-| -------------------- | -------------------- | ------------------------------------------------ | ------------------------- |
-| `packages/core`      | `pond-ts`            | `.` and `./types` (zero-runtime schema contract) | `website/docs/pond-ts/`   |
-| `packages/react`     | `@pond-ts/react`     | `.`                                              | `website/docs/react/`     |
-| `packages/charts`    | `@pond-ts/charts`    | `.`                                              | `website/docs/charts/`    |
-| `packages/financial` | `@pond-ts/financial` | `.` and `./fluent` (prototype augmentation)      | `website/docs/financial/` |
-| `packages/fit`       | `@pond-ts/fit`       | `.`                                              | `website/docs/fit/`       |
+| Package              | npm name             | Entry points                                           | Docs hub                  |
+| -------------------- | -------------------- | ------------------------------------------------------ | ------------------------- |
+| `packages/core`      | `pond-ts`            | `.` and `./types` (zero-runtime schema contract)       | `website/docs/pond-ts/`   |
+| `packages/react`     | `@pond-ts/react`     | `.`                                                    | `website/docs/react/`     |
+| `packages/charts`    | `@pond-ts/charts`    | `.`                                                    | `website/docs/charts/`    |
+| `packages/financial` | `@pond-ts/financial` | `.` and `./fluent` (prototype augmentation)            | `website/docs/financial/` |
+| `packages/fit`       | `@pond-ts/fit`       | `.`                                                    | `website/docs/fit/`       |
+| `packages/process`   | `@pond-ts/process`   | `.` and `./pool` (Node worker pool) — **experimental** | `website/docs/process/`   |
 
 ---
 
@@ -40,11 +41,51 @@ before writing code against them.
 Static constructors on `TimeSeries`: `fromJSON()` (row tuples/objects),
 `fromColumns()` (struct-of-arrays; `number` + `string` value columns),
 `fromArrow()` (bring-your-own Apache Arrow `Table`; zero-copy Float64 adopt +
-BigInt-free int64 time; numeric + `Utf8` string columns), `fromEvents()`,
+BigInt-free int64 time. Readable Arrow types are an **allowlist checked
+against each field's declared type** — `Int`, `Float32`/`Float64`, `Date`,
+`Time`, `Timestamp`, `Utf8`/`Utf8View`, `Null`, and a `Dictionary` of any of
+those — and anything else, notably `Decimal` and `Float16`, is refused by name
+rather than misread; see
+`packages/core/src/batch/operators/arrow-types.ts`), `fromEvents()`,
 `fromPoints()` (wide rows with `ts`), `concat()`, `joinMany()`. On
-`ValueSeries`: `fromColumns()`. Arrow-ingest types (`ArrowTableLike`,
-`ArrowVectorLike`, `ArrowFieldLike`, `ArrowSchemaLike`, `ArrowTimeUnit`,
-`FromArrowOptions`) live in `packages/core/src/batch/operators/from-arrow.ts`.
+`ValueSeries`, the same three shapes keyed on the axis instead of time:
+`fromJSON()`, `fromColumns()`, `fromArrow()` (`{ axis }` is required — no
+`'time'` field convention to fall back on, and no unit scaling). Arrow-ingest
+types (`ArrowTableLike`, `ArrowVectorLike`, `ArrowDataLike`, `ArrowFieldLike`,
+`ArrowSchemaLike`, `ArrowTimeUnit`, `FromArrowOptions`,
+`FromArrowValueOptions`) live in
+`packages/core/src/batch/operators/from-arrow.ts`.
+
+Both classes also export **columnar JSON** — `toColumns()`, one plain array
+per column with gaps as `null`, the exact `{ name, schema, columns }` envelope
+`fromColumns()` takes back (`packages/core/src/batch/operators/to-columns.ts`).
+A **two-edged key** (`timeRange` / `interval`) flattens into extra columns
+named off it — `timeRange` + `timeRangeEnd`, `interval` + `intervalEnd` +
+`intervalLabel` — the convention `toArrow` already emitted, now read by
+`fromColumns` and by `fromArrow({ keyKind })` as well
+(`packages/core/src/batch/operators/flat-keys.ts` owns the naming + collision
+rules). Columnar wire types live beside their row siblings:
+`TimeSeriesJsonColumns` / `FlatKeyColumns` / `TimeSeriesColumnarInput` /
+`TimeSeriesColumnarOutput` in `packages/core/src/schema/json.ts`.
+
+Going the other way, `TimeSeries.toArrow()` / `ValueSeries.toArrow()` export
+the columns **in Arrow's memory layout with no copy** — pond's validity bitmap
+is already LSB-first one-bit-per-value, numerics are a contiguous
+`Float64Array`, booleans a packed bitmap, dict-encoded strings `Int32Array`
+indices plus a dictionary. It returns `{ length, fields }` rather than an Arrow
+`Table` (pond doesn't depend on `apache-arrow`; the caller assembles with
+`makeData`/`makeVector`), so another columnar engine is a buffer handoff
+instead of a re-ingest. Arrow-export types (`ArrowExport`, `ArrowExportField`,
+`ArrowExportType`, `ToArrowOptions`) live in
+`packages/core/src/batch/operators/to-arrow.ts`.
+
+`ValueSeries` also exports rows (`toRows()`, `toObjects()`, `toJSON()`).
+Value-axis wire types
+(`ValueSeriesJsonInput`, `ValueSeriesJsonRow`, `ValueSeriesJsonObjectRow`,
+`ValueSeriesJsonOutputArray`, `ValueSeriesJsonOutputObject`,
+`ValueSeriesJsonCell`, `ValueSeriesRow`, `ValueSeriesObjectRow`,
+`ValueSeriesJsonColumns`, `ValueSeriesColumnarInput`,
+`ValueSeriesColumnarOutput`) live in `packages/core/src/schema/value-io.ts`.
 
 ### Temporal keys & events
 
@@ -62,7 +103,7 @@ BigInt-free int64 time; numeric + `Utf8` string columns), `fromEvents()`,
   `atOrBefore(key)`, `atOrAfter(key)`, `nearest(key)`, `find()`, `some()`,
   `every()`
 - **Export/access**: `column(name)`, `keyColumn()`, `toRows()`, `toObjects()`,
-  `toArray()`, `toJSON()`, `toPoints()`
+  `toArray()`, `toJSON()`, `toColumns()`, `toArrow()`, `toPoints()`
 - **Temporal range**: `timeRange()`, `overlaps()`, `contains()`,
   `intersection()`, `overlapping(range)`, `containedBy(range)`, `trim(range)`,
   `after()`, `before()`, `within()`, `tail(duration)`
@@ -82,6 +123,17 @@ method)` (EMA / Butterworth / Savitzky-Golay), `align(method, opts)`
   `cumulative()`, `scan()` (custom stateful reducer), `shift()`, `baseline()`
   (rolling avg/sd/bands), `outliers()` (deviation from baseline)
 - **Join/pivot**: `join(other, opts)`, `pivotByGroup(group, opts)`
+
+### ValueSeries methods (all in `packages/core/src/batch/value-series.ts`)
+
+Deliberately small — the ordering-based slice of the algebra, no calendar ops
+(see `docs/rfcs/value-axis.md`) — except for ingest/export, which is at full
+`TimeSeries` parity.
+
+- **Query/read**: `length`, `axisName`, `axisValues()`, `axisAt(i)`,
+  `column(name)`, `nearestIndex(value)`, `sliceByValue(lo, hi)`
+- **Export**: `toRows()`, `toObjects()`, `toJSON({ rowFormat })`,
+  `toColumns()`, `toArrow(opts)`
 
 ### Columnar layer & support
 
@@ -187,15 +239,15 @@ Types: `UseSnapshotOptions`, `SnapshotSource` (structural — covers
 
 ### Components — layout & axes
 
-| Component                   | Key props                                                                                                                    | Purpose                                          | Source                                                 |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------ |
-| `ChartContainer`            | `width`, `range?`, `theme?`, `cursor?`, `panZoom?`, `bounds?`, `showAxis?`, `calendar?`, `onTrackerChanged?`, `onDrawStats?` | Root: shared x-scale, interactions, annotations  | `packages/charts/src/ChartContainer.tsx`               |
-| `ChartRow`                  | `height`, `cursor?`                                                                                                          | One stacked plot band; owns its y-axes           | `packages/charts/src/ChartRow.tsx`                     |
-| `Layers`                    | children                                                                                                                     | Mandatory z-stack inside a row (back-to-front)   | `packages/charts/src/Layers.tsx`                       |
-| `YAxis`                     | `id` (req), `side?`, `min?`/`max?`, `format?`, `width?`                                                                      | Y-axis gutter; layers bind via their `axis` prop | `packages/charts/src/YAxis.tsx`                        |
-| `XAxis`                     | `side?`, `label?`, `format?`, `ticks?`, `transform?`, `dateStyle?`                                                           | Placeable x-axis strip; kind inferred from data  | `packages/charts/src/XAxis.tsx`                        |
-| `TimeAxis` / `CategoryAxis` | (XAxis props)                                                                                                                | Thin `XAxis` presets                             | `packages/charts/src/TimeAxis.tsx`, `CategoryAxis.tsx` |
-| `Canvas`                    | `width`, `height`, `draw`                                                                                                    | Low-level DPR-aware canvas primitive             | `packages/charts/src/Canvas.tsx`                       |
+| Component                   | Key props                                                                                                                               | Purpose                                          | Source                                                 |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------ |
+| `ChartContainer`            | `width`, `range?`, `theme?`, `cursor?`, `panZoom?`, `bounds?`, `showAxis?`, `calendar?`, `origin?`, `onTrackerChanged?`, `onDrawStats?` | Root: shared x-scale, interactions, annotations  | `packages/charts/src/ChartContainer.tsx`               |
+| `ChartRow`                  | `height`, `cursor?`                                                                                                                     | One stacked plot band; owns its y-axes           | `packages/charts/src/ChartRow.tsx`                     |
+| `Layers`                    | children                                                                                                                                | Mandatory z-stack inside a row (back-to-front)   | `packages/charts/src/Layers.tsx`                       |
+| `YAxis`                     | `id` (req), `side?`, `scale?` (`'linear'` \| `'log'`), `min?`/`max?`, `format?`, `width?`                                               | Y-axis gutter; layers bind via their `axis` prop | `packages/charts/src/YAxis.tsx`                        |
+| `XAxis`                     | `side?`, `label?`, `format?`, `ticks?`, `transform?`, `dateStyle?`                                                                      | Placeable x-axis strip; kind inferred from data  | `packages/charts/src/XAxis.tsx`                        |
+| `TimeAxis` / `CategoryAxis` | (XAxis props)                                                                                                                           | Thin `XAxis` presets                             | `packages/charts/src/TimeAxis.tsx`, `CategoryAxis.tsx` |
+| `Canvas`                    | `width`, `height`, `draw`                                                                                                               | Low-level DPR-aware canvas primitive             | `packages/charts/src/Canvas.tsx`                       |
 
 ### Components — draw layers
 
@@ -203,16 +255,26 @@ All take `series` plus an `as?` style identifier (theme lookup) and `axis?`
 scale id — style and scale are separate channels; there are no per-component
 color props (see Theming).
 
-| Component      | Data props                                                     | Purpose                                            | Source                                 |
-| -------------- | -------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------- |
-| `LineChart`    | `column`, `gaps?`, `sessionBreaks?`                            | Gap-aware line                                     | `packages/charts/src/LineChart.tsx`    |
-| `AreaChart`    | `column`, `baseline?`, `gaps?`                                 | Filled area                                        | `packages/charts/src/AreaChart.tsx`    |
-| `BandChart`    | `lower`, `upper`                                               | Variance-band envelope                             | `packages/charts/src/BandChart.tsx`    |
-| `ScatterChart` | `column`, `id?` (selection), radius/color encodings            | Points; data-driven size/colour                    | `packages/charts/src/ScatterChart.tsx` |
-| `BarChart`     | `column` \| `columns` \| `bins` \| `categories`, `horizontal?` | Bars, stacked bars, histograms, categorical        | `packages/charts/src/BarChart.tsx`     |
-| `BoxPlot`      | `lower`/`q1?`/`median?`/`q3?`/`upper`, `shape?`                | Box-and-whisker from quantile columns              | `packages/charts/src/BoxPlot.tsx`      |
-| `Candlestick`  | OHLC columns, `variant?`, `colorBy?`, `showOHLC?`              | First-class OHLC candles (TimeSeries only)         | `packages/charts/src/Candlestick.tsx`  |
-| `Legend`       | `placement?`, `items?`, `onRowClick?`, `onRowHover?`           | Series key from registered layers' resolved styles | `packages/charts/src/Legend.tsx`       |
+**Column props are schema-derived** ([PND-CHARTAPI]): a name that isn't a
+numeric column of the series fails to compile, and `<BarChart>`'s props are a
+union of its legal source modes, so mixing `series`/`bins`/`categories` or
+`column`/`columns` is a compile error too. Two carve-outs:
+a **loosely-typed** series (`TimeSeries<SeriesSchema>`) still accepts any name
+(`packages/charts/src/column-names.ts` explains the `never` fallback that makes
+this work), and `bins` names stay `string` (they name aggregate fields, not
+schema columns). Because the union splits per series _kind_, a value typed as
+**either** kind must be narrowed or cast at the call site.
+
+| Component      | Data props                                                      | Purpose                                            | Source                                 |
+| -------------- | --------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------- |
+| `LineChart`    | `column`, `gaps?`, `sessionBreaks?`                             | Gap-aware line                                     | `packages/charts/src/LineChart.tsx`    |
+| `AreaChart`    | `column`, `baseline?`, `gaps?`                                  | Filled area                                        | `packages/charts/src/AreaChart.tsx`    |
+| `BandChart`    | `lower`, `upper`                                                | Variance-band envelope                             | `packages/charts/src/BandChart.tsx`    |
+| `ScatterChart` | `column`, `id?` (selection), radius/color encodings             | Points; data-driven size/colour                    | `packages/charts/src/ScatterChart.tsx` |
+| `BarChart`     | `column` \| `columns` \| `bins` \| `categories`, `orientation?` | Bars, stacked bars, histograms, categorical        | `packages/charts/src/BarChart.tsx`     |
+| `BoxPlot`      | `lower`/`q1?`/`median?`/`q3?`/`upper`, `shape?`                 | Box-and-whisker from quantile columns              | `packages/charts/src/BoxPlot.tsx`      |
+| `Candlestick`  | OHLC columns, `variant?`, `colorBy?`, `showOHLC?`               | First-class OHLC candles (TimeSeries only)         | `packages/charts/src/Candlestick.tsx`  |
+| `Legend`       | `placement?`, `items?`, `onRowClick?`, `onRowHover?`            | Series key from registered layers' resolved styles | `packages/charts/src/Legend.tsx`       |
 
 ### Components — annotations & indicators
 
@@ -224,20 +286,46 @@ color props (see Theming).
 | `Zone`           | `from`, `to`, `axis?`, `role?`, `label?`, `edges?`    | Shaded y-span — a value-axis scale (AQI categories, HR zones); inert + edge-less by default, `±Infinity` for open ends | `packages/charts/src/annotations.tsx` |
 | `YAxisIndicator` | `value?` \| `source?`, `axis?`, `format?`             | Live value pill pinned to a y-axis edge                                                                                | `packages/charts/src/indicators.tsx`  |
 
-### Data adapters (all in `packages/charts/src/data.ts`)
+### Components — standalone row lists (DOM tables, no `<ChartContainer>`)
 
-| Export               | Signature gist                                         | Feeds                             |
-| -------------------- | ------------------------------------------------------ | --------------------------------- |
-| `fromTimeSeries`     | `(series, column) → ChartSeries`                       | Line/Area/Scatter                 |
-| `bandFromTimeSeries` | `(series, lower, upper) → BandSeries`                  | BandChart                         |
-| `boxFromTimeSeries`  | `(series, BoxColumns) → BoxSeries`                     | BoxPlot                           |
-| `barsFromTimeSeries` | `(series, column) → BarSeries`                         | BarChart                          |
-| `ohlcFromTimeSeries` | `(series, OhlcColumns) → OhlcSeries`                   | Candlestick                       |
-| `stacksFromGroups`   | `(Map<string, TimeSeries>, column) → StackedBarSeries` | Stacked bars from grouped series  |
-| `stacksFromColumns`  | `(series, columns[]) → StackedBarSeries`               | Stacked bars from wide columns    |
-| `stacksFromBins`     | `(bins, columns[], opts?) → StackedBarSeries`          | Histograms from `byColumn` output |
-| `categoryStack`      | `(CategoryDatum[]) → StackedBarSeries`                 | Categorical bars                  |
-| `transposeRow`       | `(series, opts?) → CategoryDatum[]`                    | One row read across as categories |
+One row per _entity_ (interface, split, symbol) on one shared value scale;
+label + data cells, `sortBy`/`sort`, optional per-row expander. The in-plot
+histogram stays `<BarChart orientation="horizontal">` — these are the table
+shape (react-timeseries-charts' `HorizontalBarChart`).
+
+| Component | Data props                                                                           | Purpose                                                             | Source                            |
+| --------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------- | --------------------------------- |
+| `BarList` | `rows`, `columns` (`values` names), `sortBy?`, `before?`/`after?`, `renderExpanded?` | Ranked bar list — one proportional bar line per column per row      | `packages/charts/src/BarList.tsx` |
+| `BoxList` | `rows`, `columns` (five-number names + `value?` tick), same table props              | Distribution list — range band / q1→q3 body / median / current tick | `packages/charts/src/BoxList.tsx` |
+
+Row/option types + readers (`packages/charts/src/list.ts`): `ListRow`,
+`ListValue`, `ListCellSpec`, `ListMarker` (reference rule through every row,
+label above; joins the auto domain fit), `ListSortDirection`, `BarListColumn`,
+`BoxListColumn`, `ListRowsOptions`; `listRowsFromTimeSeries` /
+`listRowsFromValueSeries` build one `ListRow` per event / axis key (numeric +
+string columns land in `values`).
+
+### View builders (all in `packages/charts/src/data.ts`)
+
+With a pond series, the components are the whole data contract (pass the
+series directly) — these exports expose the chart-ready view shapes for
+consumers writing custom draw code; no shipped layer needs their output.
+The ValueSeries siblings (`fromValueSeries` etc.) are deliberately
+**unexported** (adapters are internal; see [PND-VSADAPT]).
+
+| Export               | Signature gist                                         | Feeds                                                   |
+| -------------------- | ------------------------------------------------------ | ------------------------------------------------------- |
+| `fromTimeSeries`     | `(series, column) → ChartSeries`                       | Line/Area/Scatter                                       |
+| `bandFromTimeSeries` | `(series, lower, upper) → BandSeries`                  | BandChart                                               |
+| `boxFromTimeSeries`  | `(series, BoxColumns) → BoxSeries`                     | BoxPlot                                                 |
+| `barsFromTimeSeries` | `(series, column) → BarSeries`                         | BarChart                                                |
+| `ohlcFromTimeSeries` | `(series, OhlcColumns) → OhlcSeries`                   | Candlestick                                             |
+| `stacksFromGroups`   | `(Map<string, TimeSeries>, column) → StackedBarSeries` | Stacked bars from grouped series                        |
+| `stacksFromColumns`  | `(series, columns[]) → StackedBarSeries`               | Stacked bars from wide columns                          |
+| `barsFromBins`       | `(bins, column, opts?) → BarSeries`                    | One-column histogram (single-series path, [PND-BARSEM]) |
+| `stacksFromBins`     | `(bins, columns[], opts?) → StackedBarSeries`          | Multi-column histograms from `byColumn` output          |
+| `categoryStack`      | `(CategoryDatum[]) → StackedBarSeries`                 | Categorical bars                                        |
+| `transposeRow`       | `(series, opts?) → CategoryDatum[]`                    | One row read across as categories                       |
 
 Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 `BarSeries`, `OhlcSeries`, `StackedBarSeries`; option types `BoxColumns`,
@@ -342,6 +430,78 @@ by studies) — `packages/financial/src/kernels/rolling.ts`.
 
 ---
 
+### `@pond-ts/financial/parallel` (Node-only, opt-in)
+
+`withWorkers(series, { workers })` — opts a series into partitioned rolling
+studies and returns it unchanged; `shutdownWorkers()`; `parallelDispatches()`;
+`MIN_ROWS`; type `WithWorkersOptions`. Chosen **once at ingest**: the studies keep their
+signatures and stay synchronous, and derived series inherit it (registration is
+keyed on the key-column buffer). **Single-threaded remains the default** — the
+main package never imports this. Node-only by construction: `Atomics.wait` on
+the main thread is what keeps the studies synchronous, and browsers forbid it.
+
+Accelerates any rolling study asking for `avg`/`stdev` off one column — `sma`,
+`envelope`, `bollinger` — at 1.85×/1.35×/1.92×. **Partitioning does not change
+the answer**: since [PND-PROCKERN] the kernel's accumulator rebuilds are pinned
+to absolute row index, so a chunk reconstructs exactly the state a whole-column
+pass held and the partitioned result is bit-identical. **`zScore` is not
+accelerated**: [PND-SHIFTFRAME] moved it onto a shifted-frame kernel this pool
+does not hook, so opting in neither speeds it up nor changes its answer. It used
+to be the fastest entry here at 2.44×, and the only one whose error had no bound.
+Below `MIN_ROWS` a registered series still runs sequentially and is
+bit-identical. `parallelDispatches()` returns how many passes have actually run
+on workers — acceleration is otherwise invisible, since a declined pass returns
+the same answer, only slower than you expected. Source:
+`packages/financial/src/parallel/`.
+
+## @pond-ts/process
+
+**Experimental — published pre-1.0, API expected to move with friction
+reports; pin an exact version.** The declarative plan layer is the consumer
+surface (RFC [process.md](docs/rfcs/process.md)); the engine ships exported
+beneath it — the [PND-PROCSUB] packaging decision, resolved at first publish.
+Docs: [website/docs/process/](website/docs/process/). Tickets:
+[PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md).
+
+Typed dataflow graphs for pipelines whose **shape is data** (runtime-assembled,
+user-edited, one computation fanned out to several consumers). Chaining stays
+the default for pipelines known at authoring time — see the package README.
+
+| Group                   | Exports                                                                                                                                                                                                                                                                                                                                                                                                          | Source                                               |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Worker pool (Node)      | `HostPool` (`start`, `run`, `close`, `size`, `inFlight`); types `HostPoolOptions`, `PoolSetup`, `PoolSetupConfig`; `toWire` / `fromWire`, types `WireResult`, `WireColumn` — subpath `@pond-ts/process/pool`                                                                                                                                                                                                     | `packages/process/src/pool/index.ts`                 |
+| Ports                   | `Inlet`, `Outlet` (typed fields on `node.in` / `node.out`; `get()`, `peek()`, `version`, `connect`, `disconnect`)                                                                                                                                                                                                                                                                                                | `packages/process/src/port.ts`                       |
+| Nodes                   | `Node` (`in`, `out`, `dirty`, `error`, `invalidate()`), `defineNode` (reusable multi-output node type), `derive` (single-output, wired inline)                                                                                                                                                                                                                                                                   | `packages/process/src/node.ts`                       |
+| Port declaration        | `port<T>({ equals, defaultValue })`; types `PortSpec`, `PortSpecMap`, `PortValue`, `PortValues`                                                                                                                                                                                                                                                                                                                  | `packages/process/src/types.ts`                      |
+| Sources                 | `source<T>()` → `SourceNode` (`set()`), `fromLive(liveSource)` → `LiveSourceNode` (`dispose()`); `GraphSource` (bind contract — looser than core's `LiveSource`, accepts `LiveAggregation`), `SnapshotSource`, `NoInputs`                                                                                                                                                                                        | `packages/process/src/source.ts`                     |
+| Graph view              | `Graph` (`Graph.from(...roots)`, `nodes`, `order()`, `edges()`, `toJSON()`); types `GraphEdge`, `GraphJson`, `GraphNodeJson`, `GraphEdgeJson`                                                                                                                                                                                                                                                                    | `packages/process/src/graph.ts`                      |
+| Range output buffers    | `prepareRange(length, keep, prior)` → `RangeOutput` (`values`, `bits`, `set`, `clear`) carrying `[0, keep)` forward as blocks — values **and** validity; `sealRange(out, length)` → `Float64Column`; `validityByteCount`. Reached from an op as `ctx.out[n]`                                                                                                                                                     | `packages/process/src/column.ts`                     |
+| Ranged recompute        | `graph.setSourceFrom(series, changedFrom)` — declares which row first changed; `graph.recomputes` → `{ ranged, full }`. An op opts in with `OpDef.runRange(ctx)`, receiving `{ from, to, previous, previousView, out }` (type `RangeContext`) — write into `out` and return nothing for the block path alongside the usual context. Requires `lookback`. Falls back to a full `run` whenever anything is missing | `packages/process/src/plan/graph.ts`                 |
+| Node budget             | `bind(series, { registry, budgetBytes })` — engine-wide cap on retained node values, LRU, enforced after each `run`; `graph.retainedBytes` / `graph.evictions` / `graph.enforceBudget()`. Unbounded when omitted. Skips a node whose consumer still holds its outlet                                                                                                                                             | `packages/process/src/plan/graph.ts`                 |
+| Plan history            | `requiredHistory(registry, plan)` → `{ known, rows?, undeclared, byOp }` — the minimum safe tail in rows, folded from per-op `OpDef.lookback`. Sums along nesting, maxes across siblings. `known: false` names ops with no declared lookback rather than defaulting to zero (type `HistoryResult`)                                                                                                               | `packages/process/src/plan/history.ts`               |
+| Column values           | `packColumn` (values → packed `Float64Column`, NaN = missing), `columnBytes` (retained size, for a byte budget), `appendColumn` (column → series; boxing-free when gapless), `columnBuffers` / `columnFromBuffers` (the buffer pair a column is, for an isolate boundary; type `ColumnBuffers`), `columnView` (zero-copy borrowed read view for in-process folds; type `ColumnView`)                             | `packages/process/src/column.ts`                     |
+| Plan — registry         | `createRegistry({ folds })` / `Registry` (`define`, `get`, `foldFor`, `outputsOf`, `resolveParams`, `byFamily`, `describe`, `toJsonSchema`), param builders `int` / `num` / `choice` / `flag`, `UnknownOpError`, `ParamError`                                                                                                                                                                                    | `packages/process/src/plan/registry.ts`, `params.ts` |
+| Plan — identity         | `specId` (content-addressed, param-order invariant, defaults materialized), `refToId`, `explain`, `unitOf`, `columnsOf`, `dependsOn`, `outputKey`                                                                                                                                                                                                                                                                | `packages/process/src/plan/identity.ts`              |
+| Plan — types            | `Spec`, `Plan`, `Input` (column name \| `Spec` \| `PickedOutput`), `SpecRef`, `Def` (`OpDef` \| `FoldDef`), `OpContext`, `OpResult`, `FoldContext`, `FactBody`, `isFold`, `ParamDef`, `Params`, `Units`, `InputDef`, `OutputDef`                                                                                                                                                                                 | `packages/process/src/plan/types.ts`                 |
+| Plan — bind / run       | `bind(series, { registry, units })` → `BoundGraph` (`compile`, `setSource`, `ids`, `series`, `columnOf`), `run(graph, { plan, select, onError })` → `RunResult`, `UnitError`                                                                                                                                                                                                                                     | `packages/process/src/plan/graph.ts`, `run.ts`       |
+| Plan — request/response | `RunRequest` (`PlanRequest` \| `SlotRequest`), `RunOptions`, `RunResult`, `Select` (`{ on, output?, name? }` — points at a node; what comes back is what that node produces), `ErrorPolicy`, `Fact` (carries `op`), `OutputInfo`, `Skipped`, `NodeTiming` (`slot`, `pulled`, `cached`, `ms`, `inputs`)                                                                                                           | `packages/process/src/plan/run.ts`                   |
+| Plan — host             | `createHost({ registry, units, sources })` → `Host` (`add`, `has`, `datasets`, `graphFor`, `run`, `runAsync`), `toWire`, `UnknownDatasetError`; local-string `Envelope` (`PlanEnvelope` \| `SlotEnvelope`), remote-capable `AsyncEnvelope` (`AsyncPlanEnvelope` \| `AsyncSlotEnvelope` \| `Envelope`), `DatasetInfo`, `WireResult`                                                                               | `packages/process/src/plan/host.ts`                  |
+| Plan — slots            | `expandSlots(slots, columns)` → `Map<slot, Spec>` (expands to the nested form, so ids match by construction; `slot#Output` picks one output), `SlotError`; types `SlotDef` (`{ op, params, in }`), `Slots`                                                                                                                                                                                                       | `packages/process/src/plan/slots.ts`                 |
+| Plan — builder          | `plan(from)` → low-level `PlanBuilder`; `process(registry, from)` → typed fluent `ProcessBuilder` (`column`, op methods, `outputs`), `BuilderError`; types `NodeHandle`, `OutputHandle`, `FluentColumnRef`, `SingleColumnNode`, `MultiColumnNode`, `ColumnSelection`, `FactRef`, `BuiltRequest`                                                                                                                  | `packages/process/src/plan/builder.ts`, `fluent.ts`  |
+| Plan — async sources    | `defineSource({ name, load })`, `createSourceRegistry()` / `SourceRegistry`, `sourceId`, `UnknownSourceError`; types `SourceRef`, `SourceParams`, `LoadedSource` (value + revision), `SourceLoadContext`, `SourceDef`                                                                                                                                                                                            | `packages/process/src/plan/source.ts`                |
+| Plan — folds            | `STANDARD_FOLDS` and the four it holds — `last`, `extremes`, `percentileRank`, `shape` — pre-registered by `createRegistry()`; each a plain `FoldDef`, so a consumer can `define` over one                                                                                                                                                                                                                       | `packages/process/src/plan/folds.ts`                 |
+| Errors                  | `ProcessError` (base), `CycleError`, `UnconnectedInputError`, `MissingOutputError`, `UnsetSourceError`                                                                                                                                                                                                                                                                                                           | `packages/process/src/errors.ts`                     |
+| Node type helpers       | `NodeSpec`, `NodeFactory`, `InletsFor`, `OutletsFor`, `OutletValue`, `SpecsForOutlets`, `DerivedOutput`                                                                                                                                                                                                                                                                                                          | `packages/process/src/node.ts`                       |
+
+Note: this package's `npm test` includes a `test:dts` step that typechecks the
+**emitted** `dist/*.d.ts` from a consumer's perspective (`test-dts/`,
+`skipLibCheck: false`). The package's own build sets `skipLibCheck: true` and
+never checks its own output, so a declaration referencing a type `stripInternal`
+deleted builds green and breaks only downstream. If you mark something
+`@internal`, confirm no public signature names it.
+
+---
+
 ## Cross-package seams (where agents most often need the joint)
 
 - **Batch → charts**: a draw layer takes a pond `series` + `column` directly;
@@ -356,3 +516,12 @@ by studies) — `packages/financial/src/kernels/rolling.ts`.
 - **Core → financial**: studies compose on core kernels; fluent methods mutate
   `TimeSeries.prototype` (runtime import of `@pond-ts/financial/fluent`
   required).
+- **Live → process**: `fromLive(liveSeries)` binds a live source as a graph
+  input. Events only mark the node dirty; the snapshot runs once at the next
+  pull, so per-event incremental work stays in the live layer and the graph
+  composes batch transforms over snapshots. The graph has **no partial
+  invalidation** — a dirty node recomputes from a whole snapshot — so for
+  windowed work bind the _aggregation_ (`fromLive(live.aggregate(...))`),
+  which materializes bucket count rather than event count (235x per pull on
+  a 50k buffer). Tradeoff: a live aggregation exposes closed buckets only,
+  so the in-progress bucket is invisible until it closes.

@@ -194,6 +194,54 @@ describe('barsFromTimeSeries', () => {
     });
     expect(() => barsFromTimeSeries(s, 'nope')).toThrow(/unknown column/);
   });
+
+  it('marks each bar with the key it came from (interval: its own begin)', () => {
+    const s = new TimeSeries({
+      name: 'iv',
+      schema: intervalSchema,
+      rows: [
+        [['a', 0, 1000], 10],
+        [['b', 1000, 3000], 20],
+      ],
+    });
+    const bs = barsFromTimeSeries(s, 'count');
+    // An interval key already *is* the span, so the mark equals the begin edge.
+    expect(bs.marks).toEqual(['0', '1000']);
+  });
+
+  it('marks a point-keyed bar with its timestamp, NOT the derived begin edge', () => {
+    // The estela case: the span is synthesized from neighbour spacing, so
+    // `begin` is `key - prevGap/2` — a caller pinning a selection by `begin`
+    // would have to re-derive that geometry. The mark is the key itself.
+    const s = new TimeSeries({
+      name: 'pt',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      rows: [
+        [100, 1],
+        [200, 2],
+        [300, 3],
+      ],
+    });
+    const bs = barsFromTimeSeries(s, 'v');
+    expect(Array.from(bs.begin)).toEqual([50, 150, 250]); // derived edges…
+    expect(bs.marks).toEqual(['100', '200', '300']); // …vs the sample keys
+  });
+
+  it('memoizes the marks (one array, built once)', () => {
+    const s = new TimeSeries({
+      name: 'pt',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      rows: [[100, 1]],
+    });
+    const bs = barsFromTimeSeries(s, 'v');
+    expect(bs.marks).toBe(bs.marks); // same identity on re-read
+  });
 });
 
 describe('fromValueSeries', () => {
@@ -423,6 +471,20 @@ describe('barsFromValueSeries', () => {
       rows: [[0, 0, 'a']],
     }).byValue('cumDist');
     expect(() => barsFromValueSeries(s, 'label')).toThrow(/must be numeric/);
+  });
+
+  it('marks each bar with its axis value — the centre, not the derived edge', () => {
+    const bs = barsFromValueSeries(segs([0, 1000, 2000]), 'mean');
+    expect(Array.from(bs.begin)).toEqual([-500, 500, 1500]); // derived edges…
+    expect(bs.marks).toEqual(['0', '1000', '2000']); // …vs the axis keys
+  });
+
+  it('marks a fractional axis value so it round-trips through String()', () => {
+    // The mark must be the string a caller gets from `String(centre)` on the
+    // same double, or a controlled selection would never match.
+    const bs = barsFromValueSeries(segs([0, 12.5, 40.25]), 'mean');
+    expect(bs.marks).toEqual(['0', '12.5', '40.25']);
+    expect(bs.marks![1]).toBe(String(12.5));
   });
 });
 

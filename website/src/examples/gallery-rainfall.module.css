@@ -1,0 +1,36 @@
+/* The hint + reset bar above the interactive rainfall chart. Fixed height so
+   enabling the reset button doesn't reflow the chart under it. */
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  min-height: 1.9rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.82rem;
+}
+
+.hint {
+  color: var(--ifm-color-emphasis-600);
+}
+
+.reset {
+  padding: 0.15rem 0.6rem;
+  font: inherit;
+  color: var(--ifm-color-emphasis-800);
+  background: var(--ifm-background-surface-color);
+  border: 1px solid var(--site-surface-border);
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.reset:hover:not(:disabled) {
+  border-color: var(--pond-viz-1);
+  color: var(--pond-viz-1);
+}
+
+.reset:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

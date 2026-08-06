@@ -16,6 +16,7 @@ import {
   type TradingTimeScale,
 } from './tradingTimeScale.js';
 import { scaleBand } from './bandScale.js';
+import { scaleElapsed } from './elapsed.js';
 import { Sequence, BoundedSequence } from 'pond-ts';
 import type { Interval, TimeRange } from 'pond-ts';
 import {
@@ -446,6 +447,35 @@ export interface ChartContainerProps {
    * `cursorFormat`.)
    */
   cursorFormat?: CursorFormat;
+  /**
+   * Label the x axis as **offsets from a zero point** instead of absolute
+   * values — the *duration* (elapsed-time) axis. A time axis reads
+   * `00:00 00:05 00:10` where it read `10:35 10:40 10:45`; a value axis reads
+   * distance-from-the-origin (`0 500 1000`) where it read absolute distance.
+   *
+   * - **`'data'`** — the start of the data (the union of the layers' x extents),
+   *   so the labels are "since the beginning of the series" and stay put as you
+   *   pan.
+   * - **a number** — an explicit zero point in axis units: a race gun, a trigger
+   *   instant, a lap marker. Ticks before it read negative (`-00:05` — the
+   *   T-minus case).
+   *
+   * Ticks are placed at round durations **measured from the origin**, not at the
+   * wall-clock boundaries the calendar ladder would pick — that's the difference
+   * between `00:00 00:05 00:10` and `00:01:43 00:06:43`. Gridlines follow them,
+   * and so does the cursor pill (one grain finer, as ever: `00:05:12`).
+   *
+   * This is a **labelling** mode, not a data transform: `range`, an annotation's
+   * `at`, an `onRegionSelect` span, `trackerPosition` are all still absolute
+   * axis units. Ignored on a category axis. An explicit `timeFormat` /
+   * `<XAxis format>` still wins — on a time axis a d3 *time* specifier can only
+   * describe an instant, so it labels the underlying wall clock (the lever for
+   * stacking a wall-clock strip under a duration strip, on shared ticks); on a
+   * value axis a number specifier formats the offset. On a trading-calendar
+   * axis the durations are **wall-clock**, so ticks spanning a collapsed session
+   * gap sit unevenly — elapsed *trading* time is not implemented.
+   */
+  origin?: number | 'data';
   /** Visual theme for all rows; defaults to {@link defaultTheme}. */
   theme?: ChartTheme;
   children?: ReactNode;
@@ -491,6 +521,7 @@ export function ChartContainer({
   snap = true,
   timeFormat,
   cursorFormat,
+  origin,
   theme,
   discontinuities,
   calendar,
@@ -911,6 +942,16 @@ export function ChartContainer({
     resolvedKind === 'time'
       ? Math.max(2, Math.floor(plotWidth / TRADING_TICK_PX))
       : TIME_TICK_COUNT;
+  // The elapsed-axis zero point (`origin`), resolved to a number: `'data'` is
+  // the start of the data, which before any layer registers falls back to the
+  // domain start (the same two-pass settle `resolvedKind` makes). A category
+  // axis has no numeric origin to offset from, and a non-finite one is ignored
+  // rather than poisoning every tick.
+  const elapsedOrigin: number | undefined = useMemo(() => {
+    if (origin === undefined || resolvedKind === 'category') return undefined;
+    const at = origin === 'data' ? (autoExtent?.[0] ?? d0) : origin;
+    return Number.isFinite(at) ? at : undefined;
+  }, [origin, resolvedKind, autoExtent, d0]);
   const { xScale, formatTime, formatReadout } = useMemo(() => {
     if (resolvedKind === 'category') {
       // Ordinal column-domain axis: a band scale over the category slots. The
@@ -931,6 +972,26 @@ export function ChartContainer({
     }
     if (resolvedKind === 'value') {
       const s = scaleLinear().domain([d0, d1]).range([0, plotWidth]);
+      if (elapsedOrigin !== undefined) {
+        // Offset (elapsed) value axis: same pixels, ticks anchored at the
+        // origin, labels reading `v - origin`. A `timeFormat` / `cursorFormat`
+        // number specifier resolves through the *offset* domain (that's what
+        // the wrapper's `tickFormat` does), so a specifier describes the number
+        // actually on show.
+        const e = scaleElapsed(s, { origin: elapsedOrigin, kind: 'value' });
+        const labels = resolveAxisFormat(e, xTickCount, timeFormat);
+        return {
+          xScale: e,
+          formatTime: labels,
+          formatReadout:
+            typeof cursorFormat === 'function'
+              ? (v: number) =>
+                  cursorFormat(v, { grain: undefined, defaultText: labels(v) })
+              : cursorFormat !== undefined
+                ? resolveAxisFormat(e, xTickCount, cursorFormat)
+                : undefined,
+        };
+      }
       const labels = resolveAxisFormat(s, xTickCount, timeFormat);
       // The value-axis readout channel: a `cursorFormat` **string** is a d3
       // *number* specifier here (resolved through the linear scale, exactly as
@@ -972,6 +1033,52 @@ export function ChartContainer({
       }
       return undefined;
     };
+    // The **elapsed** (duration) flavour of both channels — the same scale
+    // wrapped so its ticks are anchored at `at` and its labels are durations.
+    // `at` is passed rather than closed over so the caller's `!== undefined`
+    // narrowing carries in.
+    const elapsedTime = (s: TradingTimeScale, at: number) => {
+      const e = scaleElapsed(s, {
+        origin: at,
+        kind: 'time',
+        // An explicit d3 time specifier can only describe an instant, so it
+        // labels the wall clock underneath — the wall-clock-strip-under-a-
+        // duration-strip lever (see the `origin` prop docs).
+        absolute: (count, specifier) => {
+          const f = s.tickFormat(count, specifier);
+          return (v: number) => f(new Date(v));
+        },
+      });
+      // Labels: durations, unless a container `timeFormat` owns them.
+      const labels: (v: number) => string =
+        timeFormat !== undefined
+          ? resolveTimeFormat(e, xTickCount, timeFormat)
+          : e.tickFormat(xTickCount);
+      // Readout: one grain finer than the ticks (`00:05:12` under a `00:05`
+      // axis) — the elapsed twin of the calendar axis's `readoutFormat`. Set
+      // explicitly (not left `undefined` to fall back to the labels) because
+      // here the labels ARE the terse tick text: an elapsed axis runs no
+      // date-style ladder, so nothing else would restore the precision.
+      const fine = e.readoutFormat(xTickCount);
+      const readout: (v: number) => string =
+        typeof cursorFormat === 'function'
+          ? (v) =>
+              cursorFormat(v, {
+                grain: s.grain(xTickCount),
+                defaultText: fine(v),
+              })
+          : cursorFormat !== undefined
+            ? resolveTimeFormat(e, xTickCount, cursorFormat)
+            : // A container `timeFormat` shapes the readout too when no
+              // `cursorFormat` is set — its documented back-compat behaviour,
+              // and the same inversion as the `<XAxis format>` one a rung down:
+              // a custom format that owns the labels must own the pill rather
+              // than watch the elapsed default overrule it (PR #541 review).
+              timeFormat !== undefined
+              ? labels
+              : fine;
+      return { xScale: e, formatTime: labels, formatReadout: readout };
+    };
     if (xDiscontinuities !== undefined) {
       // Trading-time axis: closed-market gaps collapse, time proportional within
       // sessions. Same tickFormat surface as scaleTime, so the readout is shared.
@@ -980,6 +1087,7 @@ export function ChartContainer({
       const s = scaleTradingTime(xDiscontinuities)
         .domain([d0, d1])
         .range([0, plotWidth]);
+      if (elapsedOrigin !== undefined) return elapsedTime(s, elapsedOrigin);
       return {
         xScale: s,
         formatTime: timeLabels(s),
@@ -995,6 +1103,7 @@ export function ChartContainer({
     const s = scaleTradingTime(identityProvider())
       .domain([d0, d1])
       .range([0, plotWidth]);
+    if (elapsedOrigin !== undefined) return elapsedTime(s, elapsedOrigin);
     return {
       xScale: s,
       formatTime: timeLabels(s),
@@ -1008,6 +1117,7 @@ export function ChartContainer({
     plotWidth,
     timeFormat,
     cursorFormat,
+    elapsedOrigin,
     xDiscontinuities,
     xTickCount,
   ]);
@@ -1160,6 +1270,7 @@ export function ChartContainer({
       formatTime,
       formatReadout,
       xFormatCustom: timeFormat !== undefined,
+      xReadoutCustom: cursorFormat !== undefined,
       xTickCount,
       registerTrackerSource,
       unregisterTrackerSource,
@@ -1222,6 +1333,7 @@ export function ChartContainer({
       formatTime,
       formatReadout,
       timeFormat,
+      cursorFormat,
       xTickCount,
       registerTrackerSource,
       unregisterTrackerSource,

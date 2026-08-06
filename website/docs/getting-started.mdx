@@ -17,25 +17,38 @@ climbing, recorded at 1 Hz by a head unit with a power meter. Real data comes
 with real texture — dropouts, coasting, spikes — and that texture is most of
 what makes the next few steps worth doing.
 
-Here's what we're building. Hover it.
+Here's what we're building. Hover it, drag it, scroll to zoom.
 
-<ChartExample name="getting-started-ride" height={380}>
+<ChartExample name="getting-started-ride" height={380} collapsed>
   <GettingStartedRide />
 </ChartExample>
 
-Two charts, one dataset. On top, the ride as it happened: **raw power** (noisy,
-because power meters are), the **30-second average** riding through it, and a
-**normalized power** baseline. Underneath, the same ride keyed by _watts_
-instead of time — **where the time actually went**. That faint bar on the left
-is half an hour spent at almost no power at all: it's a descent-heavy loop, and
-you coast a lot of it. The time axis can't show you that; the value axis can.
+One dataset, several views of it. On top, the ride as it happened: **raw power**
+(noisy, because power meters are), a **2-minute average** riding through it, and
+a **normalized power** baseline — with the **elevation profile** on its own row
+beneath, sharing the same time axis. Then the four numbers a rider actually
+looks at, and the same ride keyed by _watts_ instead of time — **where the time
+actually went**. That faint bar on the left is half an hour spent at almost no
+power at all: it's a descent-heavy loop, and you coast a lot of it. The time
+axis can't show you that; the value axis can.
+
+The profile earns its row by explaining the one above it. The holes in the power
+trace aren't dropouts — they line up with the descents, and the dense, spiky
+stretch is the long climb to 400 m. Two rows in one `ChartContainer` share an x
+scale, so they pan, zoom and track the cursor together.
+
+The same **NP** line appears on both — as a horizontal baseline against time,
+and as a vertical marker across the distribution. It's worth seeing where it
+lands: 192 W, well right of the 135 W average. Normalized power is deliberately
+not the mean, because an hour spent alternating between 0 and 300 W costs you
+far more than a steady 150.
 
 Both charts make a concession to that coasting, and they're the two judgement
 calls in the whole example:
 
-- The raw trace **breaks** where you stop pedalling instead of diving to the
+- **Both traces break where you stop pedalling** rather than diving to the
   floor. Zero watts is true, but drawing it turns every descent into a picket
-  fence and buries the line you're meant to read.
+  fence and buries the line you're meant to read. Those holes are the descents.
 - The coasting bucket is drawn **faintly, and the y-axis ignores it**. It's
   three times any other bar; scaling to it would flatten the part of the
   distribution actually worth looking at. It runs off the top of the plot on
@@ -112,15 +125,22 @@ The fix is a moving average, and it's one call:
 
 ```ts
 const smoothed = ride.smooth('watts', 'movingAverage', {
-  window: '30s',
-  output: 'watts30',
+  window: '2m',
+  output: 'trend',
 });
 ```
 
 That **adds a column** rather than replacing one; the smoothed series still
 carries `watts`, so you can draw both — which is exactly what the top chart
-does. Windows are written as durations (`'30s'`, `'5m'`), not sample counts, so
+does. Windows are written as durations (`'30s'`, `'2m'`), not sample counts, so
 the result means the same thing whether your device logged at 1 Hz or 4 Hz.
+
+Two minutes is a deliberate choice. A 30-second window still carries most of the
+noise — you end up with a slightly tidier version of the same unreadable trace.
+Widen it until the line stops describing pedal strokes and starts describing
+_climbs_, and for this ride that's about two minutes. Zoom in on the chart above
+and you can watch the raw and the average disagree exactly where the terrain
+changes.
 
 ## Asking where the time went
 
@@ -194,7 +214,7 @@ bands. That's the third chart: bands on the y axis, minutes growing right. Note
 where the ride actually lived — 40% of it under 110 W, because what goes up
 comes back down.
 
-<ChartExample name="getting-started-zones" height={260}>
+<ChartExample name="getting-started-zones" height={260} collapsed>
   <GettingStartedZones />
 </ChartExample>
 
@@ -245,6 +265,10 @@ fit isn't a separate engine. Normalized power _is_ a 30-second rolling mean
 (pond's `rolling`), and the zone breakdown _is_ value-axis bucketing (the same
 `byColumn` you just used). fit supplies the domain definitions; core does the
 work.
+
+That 30 seconds is fixed by the definition of NP — it's not the two-minute
+window we picked for the trend line. One is a metric, the other is a reading
+aid.
 :::
 
 ## Drawing it
@@ -259,29 +283,47 @@ Draw layers take a **series and a column** directly — there's no adapter step,
 no reshaping into `{x, y}` objects:
 
 ```tsx
-<ChartContainer range={ride.timeRange()} width={680} cursor="crosshair">
-  <ChartRow height={200}>
+<ChartContainer
+  range={ride.timeRange()}
+  width={width}
+  cursor="crosshair"
+  origin="data"
+  panZoom="panZoom"
+  bounds={rideBounds}
+>
+  <ChartRow height={220}>
     <YAxis id="w" label="watts" min={0} />
     <Layers>
       <LineChart
-        series={ride}
-        column="watts"
+        series={traces}
+        column="pedalling"
         axis="w"
         as="muted"
         legend="power"
       />
       <LineChart
-        series={smoothed}
-        column="watts30"
+        series={traces}
+        column="trend"
         axis="w"
         as="primary"
-        legend="30 s average"
+        legend="2 min average"
       />
       <Baseline
         value={power.normalizedWatts}
         axis="w"
         label="NP 192 W"
         indicator
+      />
+    </Layers>
+  </ChartRow>
+  <ChartRow height={80}>
+    <YAxis id="ele" label="metres" pad={0.05} />
+    <Layers>
+      <AreaChart
+        series={ride}
+        column="elevation"
+        axis="ele"
+        legend="elevation"
       />
     </Layers>
   </ChartRow>
@@ -294,6 +336,17 @@ everywhere in pond charts:
 
 - **`cursor="crosshair"`** on the container is the whole hover interaction — it
   reads values off every layer at once.
+- **`panZoom="panZoom"`** adds drag-to-pan and wheel-to-zoom, and **`bounds`**
+  fences them to the ride's own extent so you can't wander off into empty time.
+  (`"pan"` if you want dragging but would rather the wheel kept scrolling the
+  page.)
+- **`width`** is a number, not a CSS length — the chart measures its container
+  with a `ResizeObserver` and passes the result down. See the
+  [responsive width recipe](recipes/responsive-width).
+- **`origin="data"`** turns the time axis into a **duration** axis: ticks read
+  `0:15`, `0:30`, `0:45` — time _into the ride_ — instead of the wall clock it
+  happened to be in 2016. It's a labelling mode, not a transform; the data is
+  still absolute timestamps, and `range` still speaks in them.
 - **`<Legend>`** takes no data. It enumerates the registered layers and draws
   each one's _resolved_ style, so the key can't drift from the plot. `legend="…"`
   names a row.
@@ -302,24 +355,27 @@ everywhere in pond charts:
   neutral grey so the `primary` moving average reads through it. That's why
   these charts follow the site's light/dark mode with no colour in this snippet.
 - **`<Baseline>`** is an annotation — a horizontal line at a value, here the
-  normalized power fit just computed.
+  normalized power fit just computed. **`<Marker>`** is its vertical twin, at an
+  x coordinate: the same NP, drawn across the histogram's watt axis.
 
 The histogram is the same components pointed at the bins, in its **own**
 container — because its x-axis is watts, not time:
 
 ```tsx
-<ChartContainer range={[100, 375]} width={680}>
+<ChartContainer range={[0, 450]} width={histogramWidth}>
   <ChartRow height={130}>
-    <YAxis id="min" label="minutes" min={0} />
+    <YAxis id="min" label="minutes" min={0} max={pedallingPeak} />
     <Layers>
       <BarChart bins={bins} column="minutes" axis="min" gap={2} />
+      <Marker at={power.normalizedWatts} label="NP 192 W" />
     </Layers>
   </ChartRow>
 </ChartContainer>
 ```
 
-Rows inside one `ChartContainer` share an x-scale (that's what makes stacked
-rows line up), so a chart on a _different_ axis is a separate container.
+Rows inside one `ChartContainer` share an x-scale — that's what lets power and
+elevation stack and stay in step. A chart on a _different_ x axis, like this
+one, is therefore a separate container.
 
 That's the whole example — the source under the chart at the top of this page is
 the real, complete thing, nothing elided.

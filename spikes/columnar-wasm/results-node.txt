@@ -1,0 +1,177 @@
+verifying parity against pond-ts… ok
+
+══════════════════════════════════════════════════════════════════════════════
+pond-ts columnar substrate — Rust/WASM spike
+══════════════════════════════════════════════════════════════════════════════
+node        v22.15.0  (v8 12.4.254.21-node.24)
+platform    darwin/arm64
+simd128     available
+timer res   0.083 µs
+
+── artifact size ───────────────────────────────────────────────────────
+  baseline (wasm MVP)        48274 B raw    17451 B gzip    14391 B brotli
+  simd128                    50098 B raw    18203 B gzip    15035 B brotli
+  baseline, opt-level=z      33658 B raw    13772 B gzip    11658 B brotli
+
+── startup ─────────────────────────────────────────────────────────────
+  validate module            0.098 ms
+  compile + instantiate      0.401 ms
+  instantiate (precompiled)  0.053 ms  (median of 20)
+
+── boundary costs ──────────────────────────────────────────────────────
+  empty JS→WASM call                                 0.3 ns/call
+  JS→WASM call, 4 args + f64 return                  2.1 ns/call
+  copy 1,000 f64 JS→WASM                             0.000 ms   58.57 GB/s
+  copy 1,000 f64 WASM→JS                             0.001 ms   7.15 GB/s
+  copy 100,000 f64 JS→WASM                           0.014 ms   57.82 GB/s
+  copy 100,000 f64 WASM→JS                           0.074 ms   10.86 GB/s
+  copy 1,000,000 f64 JS→WASM                         0.184 ms   43.45 GB/s
+  copy 1,000,000 f64 WASM→JS                         0.835 ms   9.58 GB/s
+  scan(fn) over 1,000,000 cells — JS closure         6.582 ms   6.58 ns/elem
+  scan(fn) over 1,000,000 cells — WASM→JS per cell   12.989 ms   12.99 ns/elem
+
+── A. size sweep (dense, allFinite) ────────────────────────────────────
+  op                                      n     pond-ts        wasm        ×   ns/elem (js → wasm)
+  ──────────────────────────────────────────────────────────────────────────────────────────────
+  sum                                10,000      0.009ms      0.009ms    1.00×    0.94 → 0.94
+  count                              10,000      0.000ms      0.000ms    1.37× ▲  0.00 → 0.00
+  minMax                             10,000      0.011ms      0.013ms    0.90×    1.14 → 1.27
+  mean                               10,000      0.010ms      0.010ms    0.98×    0.95 → 0.98
+  stdev                              10,000      0.052ms      0.052ms    1.00×    5.20 → 5.18
+  median                             10,000      0.518ms      0.127ms    4.09× ▲  51.75 → 12.65
+  median (quickselect)               10,000      0.501ms      0.026ms   19.05× ▲  50.05 → 2.63
+  p95                                10,000      0.496ms      0.043ms   11.65× ▲  49.58 → 4.26
+  bin(1024,'minMax')                 10,000      0.026ms      0.010ms    2.71× ▲  2.61 → 0.96
+  bin(1024,'minMaxFirstLast')        10,000      0.027ms      0.012ms    2.16× ▲  2.70 → 1.25
+  bin(1024,'mean')                   10,000      0.092ms      0.037ms    2.50× ▲  9.22 → 3.68
+  binBy(1024,'minMaxFirstLast')      10,000      0.036ms      0.019ms    1.93× ▲  3.62 → 1.88
+  gather(n/4)                        10,000      0.015ms      0.005ms    2.78× ▲  6.07 → 2.19
+  sum                               100,000      0.095ms      0.095ms    0.99×    0.95 → 0.95
+  count                             100,000      0.000ms      0.000ms    0.64× ▼  0.00 → 0.00
+  minMax                            100,000      0.113ms      0.129ms    0.88×    1.13 → 1.29
+  mean                              100,000      0.097ms      0.097ms    1.00×    0.97 → 0.97
+  stdev                             100,000      0.519ms      0.511ms    1.02×    5.19 → 5.11
+  median                            100,000      6.481ms      1.759ms    3.68× ▲  64.81 → 17.59
+  median (quickselect)              100,000      6.487ms      0.278ms   23.34× ▲  64.87 → 2.78
+  p95                               100,000      6.496ms      0.420ms   15.45× ▲  64.96 → 4.20
+  bin(1024,'minMax')                100,000      0.239ms      0.117ms    2.05× ▲  2.39 → 1.17
+  bin(1024,'minMaxFirstLast')       100,000      0.245ms      0.120ms    2.04× ▲  2.45 → 1.20
+  bin(1024,'mean')                  100,000      0.199ms      0.094ms    2.10× ▲  1.99 → 0.94
+  binBy(1024,'minMaxFirstLast')     100,000      0.368ms      0.167ms    2.20× ▲  3.68 → 1.67
+  gather(n/4)                       100,000      0.141ms      0.055ms    2.57× ▲  5.62 → 2.19
+  sum                             1,000,000      0.972ms      0.979ms    0.99×    0.97 → 0.98
+  count                           1,000,000      0.000ms      0.000ms    0.32× ▼  0.00 → 0.00
+  minMax                          1,000,000      1.135ms      1.321ms    0.86× ▼  1.14 → 1.32
+  mean                            1,000,000      0.963ms      0.980ms    0.98×    0.96 → 0.98
+  stdev                           1,000,000      5.356ms      5.319ms    1.01×    5.36 → 5.32
+  median                          1,000,000     85.127ms     20.499ms    4.15× ▲  85.13 → 20.50
+  median (quickselect)            1,000,000     85.399ms      2.966ms   28.80× ▲  85.40 → 2.97
+  p95                             1,000,000     80.286ms      3.652ms   21.99× ▲  80.29 → 3.65
+  bin(1024,'minMax')              1,000,000      1.639ms      1.267ms    1.29× ▲  1.64 → 1.27
+  bin(1024,'minMaxFirstLast')     1,000,000      1.676ms      1.316ms    1.27× ▲  1.68 → 1.32
+  bin(1024,'mean')                1,000,000      1.075ms      0.890ms    1.21× ▲  1.08 → 0.89
+  binBy(1024,'minMaxFirstLast')   1,000,000      2.632ms      1.690ms    1.56× ▲  2.63 → 1.69
+  gather(n/4)                     1,000,000      2.278ms      0.653ms    3.49× ▲  9.11 → 2.61
+  sum                            10,000,000      9.512ms      9.867ms    0.96×    0.95 → 0.99
+  count                          10,000,000      0.000ms      0.000ms    0.34× ▼  0.00 → 0.00
+  minMax                         10,000,000     11.162ms     12.822ms    0.87×    1.12 → 1.28
+  mean                           10,000,000      9.654ms      9.576ms    1.01×    0.97 → 0.96
+  stdev                          10,000,000     51.382ms     52.964ms    0.97×    5.14 → 5.30
+  median                         10,000,000    962.371ms    225.663ms    4.26× ▲  96.24 → 22.57
+  median (quickselect)           10,000,000    961.982ms     28.538ms   33.71× ▲  96.20 → 2.85
+  p95                            10,000,000    953.996ms     38.707ms   24.65× ▲  95.40 → 3.87
+  bin(1024,'minMax')             10,000,000     12.819ms     12.807ms    1.00×    1.28 → 1.28
+  bin(1024,'minMaxFirstLast')    10,000,000     12.975ms     12.732ms    1.02×    1.30 → 1.27
+  bin(1024,'mean')               10,000,000      9.835ms      9.617ms    1.02×    0.98 → 0.96
+  binBy(1024,'minMaxFirstLast')  10,000,000     22.672ms     16.806ms    1.35× ▲  2.27 → 1.68
+  gather(n/4)                    10,000,000     53.465ms     18.073ms    2.96× ▲  21.39 → 7.23
+
+── B. shape sweep (n = 1M) ─────────────────────────────────────────────
+   dense    = no validity bitmap, allFinite: true
+   gappy30  = 30% cells missing (validity path)
+   guarded  = finite data, allFinite: false (per-element isFinite guard)
+  op                                      n     pond-ts        wasm        ×   ns/elem (js → wasm)
+  ──────────────────────────────────────────────────────────────────────────────────────────────
+  sum                             1,000,000      3.209ms      2.341ms    1.37× ▲  3.21 → 2.34
+  count                           1,000,000      0.000ms      0.010ms    0.00× ▼  0.00 → 0.01
+  minMax                          1,000,000      5.054ms      2.869ms    1.76× ▲  5.05 → 2.87
+  mean                            1,000,000      3.144ms      2.799ms    1.12×    3.14 → 2.80
+  stdev                           1,000,000      3.756ms      3.620ms    1.04×    3.76 → 3.62
+  median                          1,000,000     56.274ms     16.606ms    3.39× ▲  56.27 → 16.61
+  median (quickselect)            1,000,000     56.634ms      4.863ms   11.64× ▲  56.63 → 4.86
+  p95                             1,000,000     56.679ms      5.220ms   10.86× ▲  56.68 → 5.22
+  bin(1024,'minMax')              1,000,000      4.976ms      2.970ms    1.68× ▲  4.98 → 2.97
+  bin(1024,'minMaxFirstLast')     1,000,000      4.924ms      3.422ms    1.44× ▲  4.92 → 3.42
+  bin(1024,'mean')                1,000,000      7.186ms      2.699ms    2.66× ▲  7.19 → 2.70
+  binBy(1024,'minMaxFirstLast')   1,000,000      5.991ms      3.798ms    1.58× ▲  5.99 → 3.80
+  gather(n/4)                     1,000,000      3.774ms      1.241ms    3.04× ▲  15.10 → 4.96
+  sum                             1,000,000      0.969ms      1.601ms    0.61× ▼  0.97 → 1.60
+  count                           1,000,000      1.133ms      0.326ms    3.47× ▲  1.13 → 0.33
+  minMax                          1,000,000      3.868ms      1.328ms    2.91× ▲  3.87 → 1.33
+  mean                            1,000,000      1.167ms      0.997ms    1.17× ▲  1.17 → 1.00
+  stdev                           1,000,000      5.292ms      5.121ms    1.03×    5.29 → 5.12
+  median                          1,000,000     79.448ms     20.908ms    3.80× ▲  79.45 → 20.91
+  median (quickselect)            1,000,000     80.060ms      3.458ms   23.15× ▲  80.06 → 3.46
+  p95                             1,000,000     80.637ms      4.259ms   18.93× ▲  80.64 → 4.26
+  bin(1024,'minMax')              1,000,000      3.006ms      1.848ms    1.63× ▲  3.01 → 1.85
+  bin(1024,'minMaxFirstLast')     1,000,000      2.615ms      1.856ms    1.41× ▲  2.61 → 1.86
+  bin(1024,'mean')                1,000,000      1.253ms      1.398ms    0.90×    1.25 → 1.40
+  binBy(1024,'minMaxFirstLast')   1,000,000      3.672ms      2.223ms    1.65× ▲  3.67 → 2.22
+  gather(n/4)                     1,000,000      1.952ms      0.623ms    3.13× ▲  7.81 → 2.49
+
+── C. resident vs bridged (copy-in per call) ───────────────────────────
+  op                                      n     pond-ts        wasm        ×   ns/elem (js → wasm)
+  ──────────────────────────────────────────────────────────────────────────────────────────────
+  sum [bridged]                      10,000      0.010ms      0.011ms    0.85× ▼  0.95 → 1.12
+  minMax [bridged]                   10,000      0.012ms      0.014ms    0.81× ▼  1.17 → 1.45
+  bin(1024,'minMax') [bridged]       10,000      0.022ms      0.011ms    2.00× ▲  2.25 → 1.13
+  copy-in only [bridged]             10,000      0.000ms      0.001ms    0.01× ▼  0.00 → 0.14
+  sum [bridged]                     100,000      0.098ms      0.111ms    0.88×    0.98 → 1.11
+  minMax [bridged]                  100,000      0.120ms      0.145ms    0.83× ▼  1.20 → 1.45
+  bin(1024,'minMax') [bridged]      100,000      0.235ms      0.126ms    1.87× ▲  2.35 → 1.26
+  copy-in only [bridged]            100,000      0.000ms      0.015ms    0.01× ▼  0.00 → 0.15
+  sum [bridged]                   1,000,000      0.975ms      1.146ms    0.85× ▼  0.97 → 1.15
+  minMax [bridged]                1,000,000      1.127ms      1.463ms    0.77× ▼  1.13 → 1.46
+  bin(1024,'minMax') [bridged]    1,000,000      1.685ms      1.474ms    1.14×    1.69 → 1.47
+  copy-in only [bridged]          1,000,000      0.000ms      0.318ms    0.00× ▼  0.00 → 0.32
+
+── D. simd128 build vs baseline build ──────────────────────────────────
+  sum (sequential)                  100,000      0.096ms      0.095ms    1.02×
+  sum (reassociated)                100,000      0.016ms      0.033ms    0.49×
+  minMax                            100,000      0.130ms      0.129ms    1.01×
+  minMax (lane form)                100,000      0.065ms      0.066ms    0.99×
+  bin(1024,'minMax')                100,000      0.111ms      0.111ms    1.01×
+  sum (sequential)                1,000,000      0.953ms      0.953ms    1.00×
+  sum (reassociated)              1,000,000      0.164ms      0.330ms    0.50×
+  minMax                          1,000,000      1.264ms      1.276ms    0.99×
+  minMax (lane form)              1,000,000      0.653ms      0.661ms    0.99×
+  bin(1024,'minMax')              1,000,000      1.264ms      1.253ms    1.01×
+  sum (sequential)               10,000,000      9.802ms      9.742ms    1.01×
+  sum (reassociated)             10,000,000      1.785ms      3.389ms    0.53×
+  minMax                         10,000,000     12.946ms     12.890ms    1.00×
+  minMax (lane form)             10,000,000      6.610ms      6.783ms    0.97×
+  bin(1024,'minMax')             10,000,000     13.170ms     13.169ms    1.00×
+
+── E. ingest cost (build a resident column from JS data) ───────────────
+  construct column                  100,000     0.0001ms     0.0154ms  +0.0153ms one-time
+  construct column                1,000,000     0.0001ms     0.1806ms  +0.1805ms one-time
+  construct column               10,000,000     0.0001ms     2.0075ms  +2.0073ms one-time
+
+raw results → results-node.json
+══════════════════════════════════════════════════════════════════════════════
+summary — median speedup by op (resident, dense, all sizes)
+══════════════════════════════════════════════════════════════════════════════
+  median (quickselect)            28.80×  ████████████████████████████████████████
+  p95                             21.99×  ████████████████████████████████████████
+  median                           4.15×  ████████████████████████████████████████
+  gather(n/4)                      2.96×  ███████████████████████████████████████
+  bin(1024,'mean')                 2.10×  ██████████████████████
+  bin(1024,'minMax')               2.05×  █████████████████████
+  bin(1024,'minMaxFirstLast')      2.04×  █████████████████████
+  binBy(1024,'minMaxFirstLast')    1.93×  ███████████████████
+  stdev                            1.01×  
+  mean                             1.00×  
+  sum                              0.99×  
+  minMax                           0.88×  
+  count                            0.64×  
+

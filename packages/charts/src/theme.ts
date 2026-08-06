@@ -324,6 +324,18 @@ export interface AreaStyle {
   readonly width: number;
   readonly fill: string;
   readonly fillOpacity: number;
+  /**
+   * Fill flat instead of grading to transparent at the baseline. Default
+   * (omitted / `false`) keeps the gradient — the elevation look a single area
+   * wants.
+   *
+   * Set it for **stacked** areas. A stack is drawn as overlapping cumulative
+   * bands, so a fade to transparent at the baseline lets every band below show
+   * through the one above it and the composition reads as mush. A flat fill is
+   * what makes the slabs opaque to each other. (`fillOpacity` still applies, so
+   * a stack can be uniformly translucent — just not *graded*.)
+   */
+  readonly flatFill?: boolean;
 }
 
 /**
@@ -340,6 +352,36 @@ export interface BarStyle {
   readonly gap: number;
   readonly minWidth: number;
   readonly outlineWidth: number;
+  /**
+   * Optional distinct **hover** fill, so a bar can read a three-step emphasis —
+   * `fill` at rest → `hover` under the pointer → `highlight` (+ outline) when
+   * selected. **Omitted ⇒ `highlight`**, which is the shipped behaviour: hover
+   * and select share one colour and differ only by the selected bar's outline.
+   *
+   * The scatter analogue is `outline` vs {@link ScatterStyle.selectedOutline} —
+   * bars were the less expressive layer for the same two-state interaction
+   * ([#577](https://github.com/pond-ts/pond/issues/577)). This is the *hover*
+   * half rather than a rename of `highlight`, so no existing theme changes
+   * meaning; a theme that wants the distinction opts in by adding one colour.
+   *
+   * **Where it applies.** Read by the `drawBars` single-series path, which
+   * since [PND-BARSEM] covers every **one-segment vertical** bar however it
+   * was fed — a `series` + `column` chart, a one-column `bins` histogram, or
+   * a one-entry `columns`. Still not read by:
+   *
+   * - a genuine **multi-group stack** (`columns` / a `Map` series), whose
+   *   {@link StackStyle} has no hover channel — segments in one bin would
+   *   need their own hovered identity;
+   * - **`categories`** and **horizontal** charts, which keep the transposed
+   *   stacked draw path ([PND-HCAT] tracks the categorical half);
+   * - **`binColors`** (per-bar colours), which pops each bar's *own* fill for
+   *   both states so a red/green volume bar keeps its meaning while live —
+   *   the one *design* exclusion rather than a path consequence.
+   *
+   * The **decimated** dense-bar pass also draws the flat fill only, as it
+   * already did for `highlight`.
+   */
+  readonly hover?: string;
 }
 
 /**
@@ -416,6 +458,18 @@ export const defaultTheme: ChartTheme = {
       median: '#1e3a8a',
       medianWidth: 2,
       whisker: '#aabee9',
+      whiskerWidth: 1,
+    },
+    // The warm accent box — the second series of a paired distribution (an
+    // in/out traffic list), mirroring `bar.secondary` / `line.secondary`.
+    secondary: {
+      fill: '#e8836b',
+      fillOpacity: 0.3,
+      stroke: '#d65f43',
+      strokeWidth: 1.5,
+      median: '#b4442a',
+      medianWidth: 2,
+      whisker: '#f0c2b2',
       whiskerWidth: 1,
     },
   },
@@ -568,6 +622,18 @@ export const estelaTheme: ChartTheme = {
       median: '#F1FBF9', // --es-foam
       medianWidth: 2,
       whisker: '#a4e4d9', // --es-reef
+      whiskerWidth: 1.5,
+    },
+    // The warm filament accent — the paired second distribution, mirroring
+    // `bar.secondary` / `line.hr` on the dark ground.
+    secondary: {
+      fill: '#E0B36A', // --es-filament
+      fillOpacity: 0.28,
+      stroke: '#E0B36A',
+      strokeWidth: 1.5,
+      median: '#F1FBF9', // --es-foam
+      medianWidth: 2,
+      whisker: '#EDD5A8',
       whiskerWidth: 1.5,
     },
   },

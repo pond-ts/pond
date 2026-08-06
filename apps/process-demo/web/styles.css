@@ -1,0 +1,1104 @@
+:root {
+  --bg: #14161a;
+  --panel: #1b1e24;
+  --line: #2b3038;
+  --ink: #e6e9ee;
+  --muted: #8d97a6;
+  --accent: #6fb3ff;
+  --warm: #f0b429;
+  --cold: #4fd1a5;
+  --bad: #ff7a7a;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font:
+    14px/1.5 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+code,
+pre,
+kbd {
+  font:
+    12px/1.55 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* Scoped: a bare `header` selector also caught every panel's own
+   `<header>`, laying its rows out in a row. */
+.app > header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.app > header h1 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.badge {
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 10px;
+}
+
+.badge.scripted {
+  color: var(--warm);
+  border-color: var(--warm);
+}
+
+main {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.1fr) minmax(
+      320px,
+      1.3fr
+    );
+  gap: 1px;
+  background: var(--line);
+  flex: 1;
+  min-height: 0;
+}
+
+.panel {
+  background: var(--panel);
+  padding: 12px 14px;
+  overflow: auto;
+  min-height: 0;
+}
+
+/* ── column header ─────────────────────────────────────────── */
+
+.panel-top {
+  display: block;
+  margin-bottom: 12px;
+}
+
+/* Fixed, not minimum: a column with no action button was 5px shorter
+   than one with, so the rules beneath drifted out of line. */
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 33px;
+}
+
+/* Always present, and a fixed height even when empty, so the rule below
+   lands at the same place in every column whether or not there is
+   anything to say. */
+.panel-meta {
+  margin: 2px 0 0;
+  height: 27px;
+  line-height: 18px;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-notes,
+.panel-meta {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+}
+
+.panel-notes {
+  margin-top: 8px;
+}
+
+.panel-notes:empty {
+  display: none;
+}
+
+.panel-notes .notice:last-child {
+  margin-bottom: 0;
+}
+
+.panel-tabs {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.panel h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink);
+  margin: 0 auto 0 0;
+  font-weight: 600;
+}
+
+textarea {
+  width: 100%;
+  background: #10131a;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+  resize: vertical;
+  font: inherit;
+}
+
+button {
+  background: #262b34;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 11px;
+  cursor: pointer;
+  font: inherit;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  color: var(--accent);
+}
+
+kbd {
+  opacity: 0.6;
+  margin-left: 4px;
+}
+
+form button {
+  margin-top: 8px;
+}
+
+pre {
+  background: #10131a;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0 0 10px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.notice {
+  border-left: 2px solid var(--accent);
+  padding: 4px 0 4px 10px;
+  margin: 0 0 10px;
+  color: var(--muted);
+}
+
+.notice.warn,
+.warn {
+  border-color: var(--warm);
+  color: var(--warm);
+}
+
+.notice.bad,
+.bad {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.examples,
+.history,
+.nodes,
+.skipped ul,
+.vocab ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.examples {
+  margin-top: 14px;
+}
+
+.examples li {
+  margin-bottom: 7px;
+}
+
+.history {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.history li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 6px 6px 8px;
+  border-bottom: 1px solid var(--line);
+  border-left: 2px solid transparent;
+}
+
+.history li.selected {
+  border-left-color: var(--accent);
+  background: #21262e;
+}
+
+.nodes li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+  padding: 4px 8px;
+  border-left: 2px solid var(--line);
+  margin-bottom: 3px;
+  background: #10131a;
+}
+
+.nodes li.cached {
+  border-left-color: var(--cold);
+}
+
+.nodes li.computed {
+  border-left-color: var(--warm);
+}
+
+.nodes li span {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.nodes code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skipped {
+  border: 1px solid var(--warm);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.skipped h3 {
+  font-size: 12px;
+  margin: 0 0 6px;
+  color: var(--warm);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.skipped li {
+  margin-bottom: 4px;
+}
+
+.vocab {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.vocab summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.vocab strong {
+  display: block;
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.vocab li {
+  margin-bottom: 4px;
+  color: var(--muted);
+}
+
+.vocab code {
+  color: var(--ink);
+}
+
+textarea.envelope {
+  min-height: 340px;
+  height: calc(100% - 60px);
+  font:
+    12px/1.55 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  white-space: pre;
+  overflow: auto;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+}
+
+button.tab {
+  border-radius: 0;
+  padding: 3px 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+button.tab:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+button.tab:last-child {
+  border-radius: 0 6px 6px 0;
+}
+
+button.tab.on {
+  color: var(--ink);
+  border-color: var(--accent);
+  background: #303845;
+}
+
+.viz figure {
+  margin: 0 0 14px;
+}
+
+.viz figcaption {
+  font-size: 12px;
+  color: var(--ink);
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viz button {
+  margin-top: 8px;
+}
+
+/* ── pipeline (M4) ─────────────────────────────────────────── */
+
+.flow {
+  height: 460px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #10131a;
+  margin-bottom: 10px;
+}
+
+.flow-node {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 6px;
+  background: #1b1e24;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.flow-node.idle {
+  opacity: 0.72;
+}
+
+/* Warm/cold moved off the border, which now carries identity. */
+.flow-badge.cached {
+  color: var(--cold);
+}
+
+.flow-badge.computed {
+  color: var(--warm);
+}
+
+.flow-node.source {
+  border-left-color: var(--muted);
+  border-style: dashed;
+  cursor: default;
+}
+
+.flow-node.on {
+  border-color: var(--accent);
+  border-left-color: var(--accent);
+  background: #21262e;
+}
+
+.flow-label {
+  font:
+    11px/1.35 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-badge {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.react-flow__handle {
+  width: 5px;
+  height: 5px;
+  background: var(--line);
+  border: none;
+}
+
+.react-flow__edge-path {
+  stroke: #3a424f;
+  stroke-width: 1.5;
+}
+
+/* ── fact cards (viz) ──────────────────────────────────────── */
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.fact {
+  background: #10131a;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  border-radius: 6px;
+  padding: 8px 10px 9px;
+  overflow: hidden;
+}
+
+.fact-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.fact-name {
+  flex: 1;
+  min-width: 0;
+  font:
+    11px/1.35 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Where the number came from, under the number itself. */
+.fact-lineage {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line);
+  font:
+    10px/1.3 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fact-suffix {
+  color: var(--accent);
+  margin-left: 3px;
+}
+
+.fact-value {
+  font-size: 20px;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.fact-unit {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+.fact-at {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.fact-sub {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+.fact-pair {
+  display: grid;
+  gap: 8px;
+}
+
+.fact-pair .fact-value {
+  font-size: 15px;
+}
+
+.fact-bar {
+  height: 3px;
+  background: var(--line);
+  border-radius: 2px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.fact-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.fact-reduce {
+  flex: none;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #4a5361;
+}
+
+/* ── param controls (the registry's fourth reader) ─────────── */
+
+.tune {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 11px 11px;
+  margin-bottom: 10px;
+  background: #10131a;
+}
+
+.tune-empty {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+.tune-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.tune-slot {
+  color: var(--accent);
+  font:
+    11px/1.3 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.tune-head code {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.tune-resident {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--warm);
+  white-space: nowrap;
+}
+
+.tune-row {
+  display: grid;
+  grid-template-columns: 84px 1fr 46px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.tune-label {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tune-scale {
+  margin-left: 4px;
+  font-size: 9px;
+  color: #4a5361;
+  text-transform: uppercase;
+}
+
+.tune-value {
+  text-align: right;
+  font:
+    11px/1.3 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.tune input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.tune select {
+  background: #1b1e24;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 11px;
+}
+
+/* A refresh is reported in place — never by blanking what is drawn. */
+.viz .refreshing {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0;
+  pointer-events: none;
+}
+
+.viz {
+  position: relative;
+}
+
+/* ── workbook: the derivation, top to bottom ───────────────── */
+
+.steps {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+}
+
+.step {
+  position: relative;
+  padding: 0 0 14px 26px;
+  border-left: 1px solid var(--line);
+}
+
+.step:last-child {
+  border-left-color: transparent;
+  padding-bottom: 4px;
+}
+
+.step-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 6px;
+}
+
+.step-n {
+  position: absolute;
+  left: -9px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* The step number carries the node's colour; the badge carries state. */
+.step.computed .step-badge {
+  color: var(--warm);
+}
+
+.step.cached .step-badge {
+  color: var(--cold);
+}
+
+.step-slot {
+  color: var(--accent);
+  font:
+    11px/1.3 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.step-label {
+  flex: 1;
+  min-width: 0;
+  font:
+    11px/1.3 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-badge {
+  flex: none;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.step-note {
+  font-size: 11px;
+  margin: 0;
+}
+
+.step figure {
+  margin: 0;
+}
+
+.workbook-out {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.workbook-out h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+/* React Flow ships its controls in a light theme — its own stylesheet is
+   imported for layout, so they arrive as white boxes on a dark panel. */
+.react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.react-flow__controls-button {
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+  background: var(--panel);
+  border: none;
+  border-bottom: 1px solid var(--line);
+  fill: var(--muted);
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+
+.react-flow__controls-button:hover:not(:disabled) {
+  background: #262b34;
+  fill: var(--accent);
+}
+
+.react-flow__controls-button:disabled {
+  opacity: 0.4;
+  fill: var(--line);
+}
+
+.react-flow__controls-button svg {
+  max-width: 11px;
+  max-height: 11px;
+}
+
+/* ── wiring chips: what fed a step, and with what ──────────── */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 7px;
+}
+
+.chips.columns {
+  margin-top: 2px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font:
+    10px/1.6 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--muted);
+  background: transparent;
+}
+
+.chip.param {
+  border-style: dashed;
+}
+
+button.chip {
+  cursor: pointer;
+}
+
+button.chip:hover {
+  color: var(--ink);
+}
+
+button.chip.on {
+  color: var(--ink);
+  border-color: var(--accent);
+  background: #21262e;
+}
+
+.chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+/* A source is not a computed node; it reads as the ground the
+   derivation starts from rather than a step in it. */
+.step.source {
+  border-left-style: dashed;
+  border-left-color: var(--line);
+  opacity: 0.75;
+}
+
+.step.source .step-n {
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+.step.source .step-label {
+  color: var(--muted);
+}
+
+/* The unit an input demands — why a plan gets rejected, not decoration. */
+.chip-want {
+  font-style: normal;
+  color: var(--warm);
+  opacity: 0.85;
+}
+
+.chip-want::before {
+  content: '⟨';
+  opacity: 0.6;
+}
+
+.chip-want::after {
+  content: '⟩';
+  opacity: 0.6;
+}
+
+/* ── the conversation ────────────────────────────────────────
+   The composer is a dialog: the question sits right, the reply sits
+   left, and the alternation is what makes a scrollback readable at a
+   glance. The transcript scrolls; the input stays put below it, which
+   needs the panel to be a flex column rather than the plain scrolling
+   block every other panel is — `.panel` sets `overflow: auto`, and that
+   has to move down onto the transcript so the form cannot scroll away. */
+.panel.composer {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chat {
+  list-style: none;
+  margin: 0;
+  padding: 0 2px 0 0;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* A turn is the unit of selection — clicking anywhere in it drives the
+   other two panels — so both sides dim together when it is not the one
+   on screen to the right. */
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 120ms ease;
+}
+
+.turn.selected,
+.turn:hover {
+  opacity: 1;
+}
+
+/* The question. Right-aligned and filled, so the eye can find where each
+   exchange begins without reading anything. */
+.asked {
+  align-self: flex-end;
+  max-width: 88%;
+  margin: 0;
+  padding: 7px 11px;
+  border-radius: 12px 12px 3px 12px;
+  background: color-mix(in srgb, var(--accent) 20%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+
+/* The reply. Left, and wider — it carries the substance. */
+.reply {
+  align-self: flex-start;
+  max-width: 94%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bubble {
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: 12px 12px 12px 3px;
+  background: #10131a;
+  border: 1px solid var(--line);
+}
+
+/* The selected turn's reply gets the accent edge, so "which one is the
+   panels showing" survives the dimming being subtle. */
+.turn.selected .bubble {
+  border-left: 2px solid var(--accent);
+}
+
+.bubble.working {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.bubble.notice {
+  border-radius: 12px 12px 12px 3px;
+  padding: 9px 12px;
+}
+
+.reply-text {
+  margin: 0;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.reply-cites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 9px 0 0;
+}
+
+/* The names the prose rests on — the same names the cards in Results
+   carry, which is what makes a figure checkable rather than trusted. */
+.reply-cites .cite {
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 6px;
+  color: var(--accent);
+  background: var(--bg);
+}
+
+/* Only cites we can actually show a card for invite a hover. */
+.reply-cites .cite.has-card {
+  cursor: help;
+  border-style: dashed;
+}
+
+.reply-cites .cite.has-card:hover {
+  border-style: solid;
+  border-color: var(--accent);
+}
+
+/* `fixed`, so the scrolling transcript cannot clip it. */
+.cite-card {
+  position: fixed;
+  z-index: 20;
+  width: 280px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  pointer-events: none;
+  filter: drop-shadow(0 6px 16px rgb(0 0 0 / 0.55));
+}
+
+.cite-card .fact {
+  margin: 0;
+  border-color: var(--accent);
+}
+
+.reply-meta {
+  margin: 0 0 0 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Below the transcript, and not scrolling with it. */
+.composer form {
+  flex: none;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.composer .examples {
+  flex: none;
+}
+
+.composer .vocab {
+  flex: none;
+  margin-top: 12px;
+}

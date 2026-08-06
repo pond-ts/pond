@@ -1,0 +1,215 @@
+---
+title: Grid mix
+sidebar_label: Grid mix
+---
+
+# Grid mix
+
+Where did a country's electricity come from, minute by minute? A stacked area
+answers it in one shape: the top edge is total generation, and each band's
+_thickness_ is one source's contribution to it.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryGridMix from '@site/src/examples/gallery-grid-mix';
+
+## The chart
+
+<ChartExample name="gallery-grid-mix" height={360} collapsed>
+  <GalleryGridMix width={720} height={300} legend />
+</ChartExample>
+
+Hover it and a crosshair snaps to the **nearest band edge** under the pointer,
+printing that edge's value against the axis. On a stack every edge is a
+_cumulative_ total, so the top one is total generation: run the pointer along it
+and it reads 23 GW in the small hours of Monday and 55 GW at the Sunday midday
+peak. Almost all of that difference is the solar band on top. (The pill shares
+the axis's `,.0f` tick format — one formatter serves both, by design — so it
+rounds; the fixture's own numbers are 23.36 and 54.72 GW.)
+
+## The data
+
+**Real measured data.** The German power system over Easter weekend 2025 —
+Saturday 19 to Monday 21 April, at the grid's native **15-minute** cadence
+(288 rows). From
+[energy-charts.info](https://api.energy-charts.info) (Fraunhofer ISE),
+**CC BY 4.0**, whose upstream is ENTSO-E / SMARD.
+
+Easter Sunday the 20th is the day worth plotting: it had the **lowest average
+demand of any day in 2025** (39.59 GW), and a public holiday's worth of idle
+industry met a 38.48 GW solar peak.
+
+| Column                                | Meaning                                  |
+| ------------------------------------- | ---------------------------------------- |
+| `time`                                | 15-minute instant, UTC ms                |
+| `other`, `lignite`, `hardCoal`, `gas` | Dispatchable generation, GW              |
+| `biomass`, `hydro`, `wind`, `solar`   | The rest of the mix, GW                  |
+| `load`                                | Total demand, GW (used by the next card) |
+
+The API reports **fifteen** production types. Eight bands — four thermal, four
+renewable — is what the two tonal families have steps for, so the six smallest
+(waste, pumped-storage discharge, coal-derived gas, oil, geothermal and the
+API's own "Others") are folded into `other` rather than dropped, and the two
+wind channels and the two hydro channels each merge into one band. Every
+production type lands in exactly one band, so the bands sum to _total domestic
+generation_ rather than to an arbitrary top-eight. Over the weekend they split:
+solar 31.6%, lignite 17.0%, wind 12.2%, biomass 11.9%, other 9.6%, gas 8.1%,
+hard coal 4.8%, hydro 4.7%.
+
+One honest wrinkle in that 4+4: `other` is a **residual**, not a fuel. It is
+overwhelmingly fossil and storage return, which is why it sits at the bottom of
+the thermal family — but geothermal and the renewable fraction of waste are in
+there too. The colour says "not one of the seven named sources", and on 9.6% of
+generation that is the closest true thing a single band can say.
+
+Quirks that survived on purpose:
+
+- **Solar is exactly `0.00` for 82 of the 288 samples.** Night is a real zero,
+  not a floor, and the stack has to look right when a band vanishes.
+- **Gas and hard coal collapse at the solar peak** — 1.22 GW and 0.98 GW at
+  12:30 Sunday, against weekend maxima of 4.92 and 4.64. That squeeze is the
+  merit order being pushed off the system, and it is the reason the next two
+  cards exist.
+- **There is no nuclear band.** Germany's last reactors shut down in April
+  2023, so the column simply isn't in the data.
+- The time axis renders in **your** browser's timezone; every clock time on
+  this page is CEST, the grid's own.
+
+## Build it
+
+A stacked area is not a chart type in `@pond-ts/charts` — it's a **stack of
+plain areas over cumulative columns**. Two steps, and the first one is pond,
+not charts.
+
+**1. Build the running totals.** `collapse` reduces named columns into a new
+one; `{ append: true }` keeps the originals, so each call widens the same
+series by one column:
+
+```tsx
+const stacked = gridMix()
+  .collapse(['other', 'lignite'], 's2', (v) => v.other + v.lignite, {
+    append: true,
+  })
+  .collapse(['s2', 'hardCoal'], 's3', (v) => v.s2 + v.hardCoal, {
+    append: true,
+  })
+  .collapse(['s3', 'gas'], 's4', (v) => v.s3 + v.gas, { append: true });
+// …through s8, which is total generation
+```
+
+`s4` is "everything up to and including gas". `other` is already its own
+cumulative total, so only seven `collapse` calls are needed for eight bands.
+
+**2. Draw the cumulative columns top-down.** Every area fills from `0` to its
+own cumulative total, so a later, _smaller_ one paints over the lower part of
+the one before it. What is left showing for band _k_ is exactly the slab
+between cumulative _k−1_ and cumulative _k_:
+
+```tsx
+<Layers>
+  <AreaChart series={stacked} column="s8" as="tonalB4" baseline={0} />
+  <AreaChart series={stacked} column="s7" as="tonalB3" baseline={0} />
+  {/* … */}
+  <AreaChart series={stacked} column="other" as="tonalA1" baseline={0} />
+</Layers>
+```
+
+That covering trick only works because the `tonalA*` / `tonalB*` roles fill
+**flat**. An area's default fill is a gradient that fades to transparent at the
+baseline — right for a single elevation profile, fatal for a stack, where it
+lets all eight bands show through each other. The stacking roles set
+[`AreaStyle.flatFill`](../theming.mdx) and go fully opaque for exactly this
+reason. Opacity is not an option for deriving the steps either: the slabs are
+painted over one another, so a translucent tint would compound and each band's
+apparent colour would depend on whatever sat beneath it.
+
+**3. Colour is the role, and it carries the fuel class.** Eight series is past
+the point where eight distinct hues help — `--pond-viz-1…5` is the categorical
+set and stays five wide. So the bands go **tonal**: tints stepped within brand
+hues rather than new competing colours.
+
+But tonal within _one_ hue would be the wrong encoding here. A single ramp from
+dark to light says "these are eight rungs of one ordered quantity" — which is
+true of a temperature anomaly and false of eight generation sources, which are
+categories. So the eight steps are grouped into **two families of four**, along
+the split the data actually has:
+
+| Family                                               | Roles       | Bands                          |
+| ---------------------------------------------------- | ----------- | ------------------------------ |
+| **Thermal**, on the desaturated slate `--pond-viz-5` | `tonalA1…4` | Other, Lignite, Hard coal, Gas |
+| **Renewable**, on the brand teal `--pond-viz-1`      | `tonalB1…4` | Biomass, Hydro, Wind, Solar    |
+
+Which is also the convention an energy reader already has — dull for fossil,
+green-ish for renewable — and it means the renewable share of the stack reads
+as one contiguous block rather than needing to be counted off a legend. Step 4
+is the base hue untouched; steps 3, 2 and 1 mix it 22%, 44% and 66% of the way
+toward the page colour, so each family fades toward the ground as it descends.
+That is one rule in both themes: mixing toward a white page tints, mixing
+toward a dark one shades. The steps are derived, not declared — there is no
+`--pond-viz-tonal-*` variable to drift out of step with the palette.
+
+Eight slabs is the stress case, so it is worth measuring whether they separate
+rather than asserting it. Read back off this chart's own canvas, bottom to top,
+the light theme paints
+
+`#c7ced7 #a3afbc #7f8fa2 #5b7088` · `#add9d6 #78c0bb #43a8a1 #0e8f86`
+
+and the dark theme
+
+`#3b4a52 #576876 #73859a #8fa3be` · `#1c5a52 #248277 #2cab9b #34d3c0`
+
+Across all 28 pairs the **closest two are ΔE₇₆ 10.1 apart on light and 11.9 on
+dark** (ΔE₀₀ 8.5 and 10.2) — comfortably past the just-noticeable difference
+for two adjacent large fields. Both numbers are better than the single
+eight-step ramp this chart used to draw, which bottomed out at 9.2 and 9.0.
+
+The structure shows up in the numbers too. Within a family, neighbours sit
+10–17 ΔE₇₆ apart; the **one crossing between families — Gas to Biomass — is 41**,
+about 4× the within-family step. That ratio is what makes the chart read as two
+groups of four rather than one ladder of eight: the eye gets a small tonal step
+seven times and one large break, and the break lands exactly where the fuel
+class changes.
+
+The honest caveat is that **within a family lightness is still doing the work**,
+so those four bands need to touch to be compared. Adjacent slabs read; two
+non-adjacent slabs of the same family (is that `tonalA2` or `tonalA3`?) do not.
+Across families it is easier, because hue helps — the two base hues are 77°
+apart in Lab and differ in chroma as well (C\* 34 against 16), so a slate band
+and a teal band of the same lightness still separate. That is why this chart
+carries a `<Legend>` whose row order _is_ the stack order: the legend lists
+layers in paint order, which here is top-down, so the key doubles as the
+reading guide.
+
+## Options to try
+
+| Option                          | What it does                                | Reach for it when                                                             |
+| ------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------- |
+| `legend={label}`                | Names the layer's `<Legend>` row            | Always, on a stack — `s6` means nothing to a reader                           |
+| `<Legend placement="top-left">` | Draws the key inside the plot               | The band order is the legend order, so it doubles as a reading guide          |
+| `cursor="crosshair"`            | Snaps a reticle + value pill to a band edge | Reading the top edge as a running total; `"line"` (the default) has no pill   |
+| `curve="monotone"`              | Smooths every outline                       | Coarser cadences, where 15-minute steps would read as noise                   |
+| `gaps="none"`                   | Bridges straight across missing samples     | A feed with dropouts, where a hole in the middle of a stack reads as bad data |
+| `as="tonalA1"` vs `"tonalB1"`   | Which family a band belongs to              | The grouping in your data changes — a 5+3 split, or one family for everything |
+| `as="tonalX4"` vs `"tonalX1"`   | How strong a band is within its family      | Give the step-4 base hue to the band whose thickness you most want read       |
+
+Three things a stack **can't** do here. Negative bands — a source that consumes,
+like pumped storage while pumping — have no place in a cumulative column.
+**Nothing here is clickable**: `<AreaChart>` has no `id` prop and registers no
+hit-test, so selection is a bar/scatter/candle affordance, not an area one. And
+the crosshair reads _cumulative_ totals, not per-band output; the number under
+the wind edge is "everything except solar", not wind. Getting all eight bands'
+own values at one instant means an off-chart readout fed by
+`<ChartContainer onTrackerChanged>`, with each layer given a `readout` column
+naming its raw band.
+
+## See also
+
+- [`<AreaChart>`](../types/areachart.mdx) — every prop, and the `baseline`
+  forms
+- [`<Legend>`](../interaction/legend.mdx) — the key, and the headless variant
+- [Theming](../theming.mdx) — `AreaStyle.flatFill` and the site's stacking roles
+- [Climate stripes](./climate-stripes.mdx) — the other half of the colour rule:
+  one ramp across all eight steps, because there the quantity really is ordered
+- [Renewables vs demand](./renewables-vs-demand.mdx) — the same weekend, two
+  overlapping areas instead of eight stacked ones
+- [**Storybook**](pathname:///storybook/?path=/story/charts-areachart--elevation) —
+  the systematic knob walk

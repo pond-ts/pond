@@ -11,6 +11,7 @@ import {
   drawGapBridges,
   drawGapFades,
   drawGapSteps,
+  gapUnscalable,
   DEFAULT_GAP_MODE,
   DEFAULT_GAP_CONNECTOR_OPACITY,
   type GapEdge,
@@ -50,8 +51,8 @@ export function strokeAffinePolyline(
       penDown = false;
       continue;
     }
-    const px = ax.k * xs[j]! + ax.b;
-    const py = ay.k * v + ay.b;
+    const px = (xs[j]! - ax.v0) * ax.k + ax.p0;
+    const py = (v - ay.v0) * ay.k + ay.p0;
     if (penDown) ctx.lineTo(px, py);
     else {
       ctx.moveTo(px, py);
@@ -165,6 +166,14 @@ export function drawLine(
   } else {
     cs = cullChartSeries(source, xScale);
   }
+  // Normalize any value with **no position on the y scale** (a zero or negative
+  // sample on a log axis) into the ordinary NaN gap signal, so every consumer
+  // below — the `.defined` break, `bridgeGaps`, `collectGapEdges` — treats it as
+  // the absence it is instead of emitting a dropped `lineTo(x, NaN)` that
+  // silently bridges its neighbours. A no-op on an affine (linear) y scale; see
+  // {@link gapUnscalable}.
+  const scaledY = gapUnscalable(cs.y, cs.length, yScale);
+  if (scaledY !== cs.y) cs = { ...cs, y: scaledY };
   // Split into independent index runs at each boundary; no boundary inside the
   // data ⇒ one run over the whole series (the hot path — no slicing, so the draw
   // is byte-identical to the pre-boundary single pass). When the series was

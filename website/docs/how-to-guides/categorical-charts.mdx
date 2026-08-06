@@ -78,14 +78,26 @@ The one styling channel for a category chart is `binColors` — one hue per bar,
 order:
 
 ```tsx
-<BarChart
-  categories={data}
-  binColors={['#15B3A6', '#45CDBE', '#E0B36A']}
-  gap={6}
-/>
+// A **sequential ramp** off the theme, not literals: one hue family stepping
+// lighter across the bars, and it follows dark mode because the theme does.
+const ramp = useSequentialRamp(data.length);
+
+<BarChart categories={data} binColors={ramp} gap={6} />;
 ```
 
-Omit it and every bar takes the theme's default bar fill — colour is optional.
+Omit it and every bar takes the theme's default bar fill — colour is optional,
+and for a category chart it's often noise, since the axis already names each
+bar. Reach for `binColors` when the colour _encodes_ something the label
+doesn't: rank, a threshold crossed, in/out of a group.
+
+:::note[Where the ramp comes from]
+`useSequentialRamp` is this site's own helper
+(`website/src/theme/useSiteChartTheme.ts`), reading the docs theme's
+`--pond-viz-seq-1…8`. `@pond-ts/charts` ships no palette — it ships the
+`ChartTheme` type and one renderable default, and a consumer owns its colours.
+The transferable rule: **≤ 4 series categorical, > 4 sequential**, always from
+the theme so a dark-mode toggle moves them.
+:::
 
 ## Reading a row out of a series
 
@@ -165,7 +177,7 @@ Give the layer an `id` to make the bars selectable. A click reports the
 ```tsx
 <ChartContainer onSelect={(hit) => hit && filterStore.toggle(hit.mark)}>
   …
-  <BarChart categories={data} binColors={palette} id="tickers" />
+  <BarChart categories={data} binColors={ramp} id="tickers" />
 </ChartContainer>
 ```
 

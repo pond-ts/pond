@@ -1,0 +1,128 @@
+---
+title: Drawdown
+sidebar_label: Drawdown
+---
+
+# Drawdown
+
+How far below its own running peak the price is, at every session. Zero at each
+new high, negative everywhere else — so this is an area that hangs **under** a
+fixed zero baseline rather than standing on the axis floor. It answers the
+question a price chart doesn't: not "what did it do" but "how much of the pain
+would I have sat through".
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryDrawdown from '@site/src/examples/gallery-drawdown';
+
+## The chart
+
+<ChartExample name="gallery-drawdown" height={300} collapsed>
+  <GalleryDrawdown width={640} />
+</ChartExample>
+
+The full year is in view. The curve touches zero exactly **20 times** — those
+are the new highs, and there are no more of them after 2025-12-01. It bottoms
+at **−23.5%** on 2026-04-22, 97 sessions after that peak, and finishes the year
+still 10.1% under water.
+
+## The data
+
+**The prices are modelled, not measured** — see the
+[fixture header](https://github.com/pond-ts/pond/blob/main/website/src/examples/lib/financial-fixtures.ts)
+for the process and the [candlestick page](./candlestick.mdx#the-data) for
+why. The same 251-session year as the other three finance cards.
+
+Drawdown isn't a column in that fixture; the chart derives it. Which is the
+point of this page — the interesting quantity is usually one pass away from the
+data you have, and pond keeps it a column rather than a chart feature.
+
+The shape of the result on this year:
+
+| Statistic                    | Value                                 |
+| ---------------------------- | ------------------------------------- |
+| Maximum drawdown             | −23.5%, 2025-12-01 → 2026-04-22       |
+| Peak → trough                | 97 sessions                           |
+| Sessions under water         | 231 of 251 (92%)                      |
+| Sessions more than 10% under | 134                                   |
+| Recovered to the old peak?   | No — the year ends 10.1% down from it |
+
+92% under water is not a quirk of this realization; it is what drawdown _is_.
+The series is at zero only on the day it makes a new high, and a year has
+rather few of those.
+
+## Build it
+
+One pass, carrying the running maximum. `withColumn` appends the result, so
+what comes back is still an ordinary series:
+
+```ts
+const close = bars.column('close').toFloat64Array();
+const drawdown = new Float64Array(close.length);
+let peak = -Infinity;
+for (let i = 0; i < close.length; i += 1) {
+  if (close[i] > peak) peak = close[i];
+  drawdown[i] = close[i] / peak - 1;
+}
+const series = bars.withColumn('drawdown', drawdown);
+```
+
+One caveat that comes with the territory: this is a **path-dependent**
+quantity, so the series you run it over has to start where the history starts.
+Cropping a middle slice out and computing the drawdown on that gives you the
+drawdown from the slice's own high, which is a different (and usually much
+shallower) number. The Gallery card animates by revealing a growing prefix
+rather than scanning a window for exactly this reason.
+
+Then draw it. The one prop that makes this chart the shape it is:
+
+```tsx
+<AreaChart series={series} column="drawdown" axis="dd" baseline={0} />
+```
+
+Without `baseline`, an `<AreaChart>` fills from its value line down to the
+**axis's lower bound** — the elevation-profile form, which for an all-negative
+series fills from the curve down to −25% and reads as a mountain range upside
+down. With `baseline={0}`, the fill rests on zero and hangs below it, and the
+fixed baseline is pulled into the auto-fit domain so the zero line is always on
+screen. Values on both sides of the baseline fill in both directions, which is
+the same prop the mirrored in/out traffic charts use.
+
+Two finishing touches. A percentage axis format, since a drawdown is a
+fraction:
+
+```tsx
+<YAxis id="dd" label="drawdown" side="right" format=".0%" width={62} />
+```
+
+And a colour that comes from the **theme**, not a literal:
+
+```tsx
+<AreaChart series={series} column="drawdown" axis="dd" as="out" baseline={0} />
+```
+
+`out` is the theme's below-the-baseline area role — the downward half of the
+mirrored-traffic pair. If your theme wants a dedicated loss tone, the fix is a
+role in the theme, not a hex in the chart.
+
+## Options to try
+
+| Option                                        | What it does                                         | Reach for it when                                                                          |
+| --------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Drop `baseline`                               | Fills to the axis floor instead of zero              | The quantity has no meaningful zero (an elevation profile)                                 |
+| A second row with the price                   | Price above, underwater curve below, one cursor      | Readers need to connect a dip to the price move that caused it                             |
+| `<Baseline value={-0.1}>`                     | A marked threshold across the plot                   | You have a policy line — a 10% stop, a risk limit                                          |
+| `curve="monotone"`                            | Smooths the edge without moving the points           | Dense daily data reads as noise at card size                                               |
+| A rolling window instead of the all-time peak | Drawdown from a trailing high rather than the record | You care about recent pain, not the 2007 peak                                              |
+| `gaps="none"`                                 | Bridges straight across missing rows                 | Your source has holes you'd rather not draw attention to (the honest default is `'empty'`) |
+
+## See also
+
+- [`<AreaChart>`](../types/areachart.mdx) — `baseline`, gaps, curves, the
+  mirrored two-colour composition
+- [Gaps](../gaps.mdx) — what a missing value draws, and the modes
+- [Theming](../theming.mdx) — area roles, and adding one rather than passing a
+  colour
+- [Candles on a trading calendar](./candlestick.mdx) — the price this is
+  derived from
+- [**Storybook**](pathname:///storybook/?path=/story/charts-areachart--above-below-axis)
+  — the systematic knob walk

@@ -82,7 +82,68 @@ describe('zoomRange', () => {
 
   it('clamps to minDuration (the zoom-in floor), keeping the pivot fraction', () => {
     // factor 0.001 would give a ~0.1ms span; floor is 10, pivot frac 0.25.
-    expect(zoomRange([0, 100], 25, 0.001, 10)).toEqual([22.5, 32.5]);
+    // The exact floor result is [22.5, 32.5], snapped to whole ms (below).
+    expect(zoomRange([0, 100], 25, 0.001, 10)).toEqual([23, 33]);
+  });
+});
+
+describe('view ranges are whole milliseconds', () => {
+  // A wheel-zoom derives its range from pixel positions through
+  // `xScale.invert()`, so the numbers are fractional by construction. The epoch
+  // millisecond is this model's atomic unit, and something downstream was
+  // entitled to assume it: `Temporal.Instant` refuses a non-integer epoch ms, so
+  // a calendar `cursorSequence` threw on an ordinary scroll. Rounding at the
+  // source closes the class rather than the one symptom.
+
+  it('rounds a zoomed range, so a scroll never yields a fraction', () => {
+    const [lo, hi] = zoomRange(
+      [1_700_000_000_000, 1_700_000_010_000],
+      1.7e12 + 3333.7,
+      0.5,
+    );
+    expect(Number.isInteger(lo)).toBe(true);
+    expect(Number.isInteger(hi)).toBe(true);
+  });
+
+  it('rounds a panned range', () => {
+    const [lo, hi] = panRange([1_000, 5_000], -0.37);
+    expect([lo, hi]).toEqual([1_000, 5_000]);
+    const [lo2, hi2] = panRange([1_000, 5_000], 12.6);
+    expect([lo2, hi2]).toEqual([1_013, 5_013]);
+    expect(Number.isInteger(lo2) && Number.isInteger(hi2)).toBe(true);
+  });
+
+  it('never collapses a sub-millisecond span to zero width', () => {
+    // Both ends round to 10; a zero-width range is a division by zero in every
+    // scale built from it, so the floor opens it to the 1ms atom instead.
+    const [lo, hi] = panRange([10.4, 10.6], 0);
+    expect(hi - lo).toBe(1);
+    expect([lo, hi]).toEqual([10, 11]);
+
+    // Same via zoom, with a minDuration finer than the model can represent.
+    const [zlo, zhi] = zoomRange([10.4, 10.6], 10.5, 0.5, 0.001);
+    expect(zhi - zlo).toBe(1);
+    expect(Number.isInteger(zlo) && Number.isInteger(zhi)).toBe(true);
+  });
+
+  it('preserves a minDuration of 1ms or more exactly through the snap', () => {
+    for (const min of [1, 2, 10, 1000]) {
+      // A pivot fraction that puts both ends on .5 boundaries — the worst case
+      // for a naive round-both-ends, which can drop a whole millisecond.
+      const [lo, hi] = zoomRange([0, 100], 25.5, 1e-9, min);
+      expect(hi - lo).toBeGreaterThanOrEqual(min);
+    }
+  });
+
+  it('leaves an already-integral range untouched', () => {
+    expect(zoomRange([0, 100], 50, 0.5)).toEqual([25, 75]);
+    expect(panRange([0, 100], 25)).toEqual([25, 125]);
+  });
+
+  it('passes a degenerate range through without inventing width', () => {
+    // hi === lo is not a positive span, so there is nothing to protect; widening
+    // it would fabricate a view the caller never asked for.
+    expect(panRange([10.2, 10.2], 0)).toEqual([10, 10]);
   });
 });
 

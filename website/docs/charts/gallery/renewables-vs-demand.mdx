@@ -1,0 +1,124 @@
+---
+title: Renewables vs demand
+sidebar_label: Renewables vs demand
+---
+
+# Renewables vs demand
+
+Two quantities on the same axis, and the question is where one overtakes the
+other. Overlapping translucent areas answer it better than two lines do,
+because the _gap_ between them is the thing you're reading.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryRenewables from '@site/src/examples/gallery-renewables';
+
+## The chart
+
+<ChartExample name="gallery-renewables" height={360} collapsed>
+  <GalleryRenewables width={720} height={300} legend />
+</ChartExample>
+
+Around Easter Sunday midday the teal area climbs out of the magenta one and
+stays out for **1 h 45 m** — seven consecutive 15-minute samples, 12:15 through
+13:45 CEST, peaking at **103.6%** of load. Hover through it: the crosshair
+snaps to whichever of the two curves is nearer the pointer, so nudging across
+the gap flips the pill between 42 (wind + solar) and 40 (demand) at 13:00.
+
+## The data
+
+**Real measured data**, the same fixture the
+[grid mix](./grid-mix.mdx) card draws — German generation and load over Easter
+weekend 2025 at 15-minute cadence, from
+[energy-charts.info](https://api.energy-charts.info) (Fraunhofer ISE),
+**CC BY 4.0**, upstream ENTSO-E / SMARD. Two of its columns matter here:
+
+| Column           | Meaning                                      |
+| ---------------- | -------------------------------------------- |
+| `load`           | Total demand, GW — 33.58 min, 49.04 max      |
+| `wind` + `solar` | The two weather-driven sources, added, in GW |
+
+The crossing is not a rounding artefact. At its widest, wind and solar were
+producing **41.59 GW** against **40.18 GW** of load — a **1.41 GW** surplus, at
+13:00 on Sunday. It happened on exactly one day of the weekend, and the
+conditions behind it are visible in both columns: Easter Sunday had the lowest
+average demand of any day in 2025 (39.59 GW), and solar peaked at 38.48 GW.
+
+Solar **alone** never quite gets there: its own best moment is **94.7%** of
+load, at 13:30 on Sunday. It takes wind's **3.45 GW** in that same quarter-hour
+on top to cross. That is why the chart adds the two rather than plotting solar
+by itself — a "solar vs load" chart on this weekend is a chart of a near miss.
+
+The time axis renders in **your** browser's timezone; clock times here are
+CEST.
+
+## Build it
+
+**1. One derived column.** The chart wants wind and solar as a single series,
+which is one `collapse` — the same operator the stacked card uses eight times:
+
+```tsx
+const series = gridMix().collapse(
+  ['wind', 'solar'],
+  'renewable',
+  (v) => v.wind + v.solar,
+  { append: true },
+);
+```
+
+`{ append: true }` keeps `wind`, `solar` and `load` alongside the new column,
+so one series still feeds the whole chart.
+
+**2. Two areas, and the order matters.** Layers paint in JSX order, so the
+_second_ one is on top. Put demand first: it's the larger quantity most of the
+time, and the layer on top is the one whose outline you want to follow.
+
+```tsx
+<Layers>
+  <AreaChart series={series} column="load" as="out" legend="Demand" />
+  <AreaChart series={series} column="renewable" as="in" legend="Wind + solar" />
+</Layers>
+```
+
+**3. Let the fills stay graded.** This is the exact opposite of the stacked
+card. Here both areas keep the default **graded, translucent** fill, so the
+overlap reads as a blend and you can see the demand curve _through_ the
+renewable one. A flat opaque fill would hide it. `in` / `out` are the theme's
+contrasting pair (the two-colour esnet traffic roles), which map neatly onto
+this data: power arriving from generation, power leaving to consumers.
+
+Nothing needs a `baseline` prop — both areas rest on the axis floor, which is
+`0` here because `<YAxis min={0}>` pins it.
+
+## Options to try
+
+| Option                | What it does                                     | Reach for it when                                                              |
+| --------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------ |
+| Layer order           | Which outline is unobscured                      | Swap when the smaller quantity is the subject                                  |
+| `as="in"` / `"out"`   | The two contrasting area roles                   | Any two-quantity comparison; they carry the theme's opposed hues               |
+| `cursor="crosshair"`  | A reticle + pill on the curve nearer the pointer | Reading either quantity off the chart; the default `"line"` cursor has no pill |
+| `curve="monotone"`    | Smooths both outlines                            | Hourly or coarser data, where the crossing shouldn't look like a corner        |
+| `baseline={0}`        | Pins the fill floor at zero instead of the axis  | A quantity that can go negative — see [negative prices](./negative-prices.mdx) |
+| A third `<AreaChart>` | Adds another band to the comparison              | Splitting `renewable` back into wind and solar, drawn over each other          |
+
+One sharp edge: `cursor="crosshair"` draws **one** reticle per row, snapped to
+the single nearest sample — it is not a per-series fan-out, so it never shows
+both numbers at once. Two values at one instant means an off-chart readout fed
+by `<ChartContainer onTrackerChanged>`, whose `TrackerInfo.values` carries one
+sample per layer.
+
+If you want the **difference** rather than the overlap, that's a different
+chart: `collapse` the two columns into `renewable - load` and draw one area
+with `baseline={0}`, which puts surplus above the line and deficit below.
+
+## See also
+
+- [`<AreaChart>`](../types/areachart.mdx) — every prop, and the `baseline`
+  forms
+- [Theming](../theming.mdx) — the `area.in` / `area.out` roles and their
+  `fillOpacity`
+- [Grid mix](./grid-mix.mdx) — the same weekend as an eight-band stack, where
+  the fills must be opaque instead
+- [Negative prices](./negative-prices.mdx) — what this surplus did to the
+  day-ahead auction
+- [**Storybook**](pathname:///storybook/?path=/story/charts-areachart--traffic-areas) —
+  the systematic knob walk

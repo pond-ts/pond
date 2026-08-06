@@ -1,0 +1,133 @@
+/* The interface table beside the mirrored traffic chart (Gallery A1). Every
+   colour is a `--pond-*` token, so the panel flips with the site's theme
+   exactly as the canvas does — no literals, the same rule the charts follow. */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--pond-ink);
+}
+
+.clear {
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--pond-body);
+  background: var(--pond-surface-2);
+  border: 1px solid var(--pond-viz-grid);
+  border-radius: 999px;
+  padding: 0.15rem 0.7rem;
+  cursor: pointer;
+}
+
+.clear:hover {
+  color: var(--pond-ink);
+}
+
+.clear[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  display: table;
+}
+
+.table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--pond-body);
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--pond-viz-grid);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--pond-viz-grid);
+  color: var(--pond-body);
+  white-space: nowrap;
+}
+
+.row {
+  cursor: pointer;
+}
+
+.row:hover td {
+  background: var(--pond-surface-2);
+}
+
+.row[aria-selected='true'] td {
+  background: var(--pond-surface-2);
+  color: var(--pond-ink);
+}
+
+.row[aria-selected='true'] .name {
+  font-weight: 600;
+}
+
+.name {
+  font-family: var(--ifm-font-family-monospace);
+  color: var(--pond-ink);
+}
+
+.tag {
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--pond-viz-grid);
+  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+  color: var(--pond-body);
+}
+
+/* The bullet bar: a full-width extent track, a mean-length segment, and a
+   tick at the peak — the row-level shape a per-interface panel wants, where a
+   whole chart per row would be noise. */
+.bullet {
+  position: relative;
+  width: 90px;
+  height: 10px;
+  background: var(--pond-viz-grid);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.bulletFill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 2px;
+}
+
+.bulletTick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--pond-ink);
+  opacity: 0.65;
+}
+
+.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

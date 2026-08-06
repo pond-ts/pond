@@ -7,6 +7,7 @@ import {
   withRowRange,
 } from '../../columnar/index.js';
 import type { SeriesSchema } from '../../schema/index.js';
+import { NumericOutput, packedNumericSource } from './numeric-io.js';
 
 /**
  * Successive-difference family selector. `diff` is the raw delta
@@ -92,6 +93,37 @@ export function diffRateOp<
   let result = store as unknown as ColumnarStore<ColumnSchema>;
   for (const name of cols) {
     const col: Column = store.columns.get(name)!;
+
+    // Unboxed path — [PND-BOXFREE]. Reads the source's `Float64Array`
+    // and validity bits directly rather than two `read(i)` calls per
+    // row into a boxed array. Row 0 has no predecessor and is left
+    // undefined, which `NumericOutput` gives for free by not writing it.
+    const packed = packedNumericSource(col);
+    if (packed !== null) {
+      const { values, bits } = packed;
+      const out = new NumericOutput(n);
+      for (let i = 1; i < n; i += 1) {
+        if (
+          !(bits === null || (bits[i >> 3]! & (1 << (i & 7))) !== 0) ||
+          !(bits === null || (bits[(i - 1) >> 3]! & (1 << ((i - 1) & 7))) !== 0)
+        )
+          continue;
+        const prev = values[i - 1]!;
+        const delta = values[i]! - prev;
+        if (mode === 'pctChange') {
+          if (prev !== 0) out.set(i, delta / prev);
+        } else if (mode === 'rate') {
+          const d = dt![i]!;
+          if (d !== 0) out.set(i, delta / d);
+        } else {
+          out.set(i, delta);
+        }
+      }
+      result = withColumnReplaced(result, name, out.finish());
+      continue;
+    }
+
+    // Fallback for chunked / non-numeric sources: unchanged.
     const out: (number | undefined)[] = new Array(n);
     if (n > 0) out[0] = undefined; // first row: no predecessor
     for (let i = 1; i < n; i += 1) {

@@ -4,16 +4,17 @@
   "private": true,
   "scripts": {
     "build:api-model": "node scripts/build-api-model.mjs",
-    "build:api": "npm run build:api:react && npm run build:api:fit && npm run build:api:financial",
+    "build:api": "npm run build:api:react && npm run build:api:fit && npm run build:api:financial && npm run build:api:process",
     "build:api:fit": "typedoc --options typedoc.fit.json",
+    "build:api:process": "typedoc --options typedoc.process.json",
     "build:api:financial": "typedoc --options typedoc.financial.json",
     "build:api:core": "typedoc --options typedoc.core.json",
     "build:api:react": "typedoc --options typedoc.react.json",
     "build:api:charts": "typedoc --options typedoc.charts.json",
     "docusaurus": "docusaurus",
-    "prestart": "npm run build:api && npm run build:api-model",
+    "prestart": "npm run check:gallery-links && npm run build:api && npm run build:api-model",
     "start": "docusaurus start",
-    "prebuild": "npm run build:api && npm run build:api-model",
+    "prebuild": "npm run check:gallery-links && npm run build:api && npm run build:api-model",
     "build": "docusaurus build",
     "swizzle": "docusaurus swizzle",
     "predeploy": "npm run build:api && npm run build:api-model",
@@ -22,7 +23,8 @@
     "serve": "docusaurus serve",
     "write-translations": "docusaurus write-translations",
     "write-heading-ids": "docusaurus write-heading-ids",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "check:gallery-links": "node scripts/check-gallery-links.mjs"
   },
   "dependencies": {
     "@docusaurus/core": "3.10.0",
