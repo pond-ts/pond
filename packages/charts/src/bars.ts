@@ -216,19 +216,35 @@ export interface BandLadder {
 
 /**
  * Validate + freeze a caller's threshold ladder once, at the prop boundary.
- * Returns the ascending finite breakpoints, or `null` when there is no usable
- * ladder (empty, or every entry non-finite) so the caller keeps the flat path.
+ * Returns the ascending, strictly-positive, finite breakpoints — or `null` when
+ * there is no usable ladder left, so the caller keeps the flat path.
  *
  * Sorting rather than rejecting an out-of-order ladder is deliberate — the
  * bands are defined by their boundaries, so `[2, 1]` and `[1, 2]` describe the
- * same three bands and there is no second reading to guess at. A **non-finite**
- * entry is dropped, since it would swallow every band above it.
+ * same three bands and there is no second reading to guess at.
+ *
+ * Three kinds of entry are **dropped**:
+ *
+ * - **non-finite** — would swallow every band above it;
+ * - **negative** — the ladder is walked on the *magnitude* and mirrored onto
+ *   whichever side of zero the bar is on, so a negative breakpoint has no
+ *   meaning. Left in, `[-2, -1]` silently clipped every lower band away and
+ *   painted the whole bar in the final colour — a one-colour bar that looks
+ *   deliberate (Codex adversarial review). Signed breakpoints are the
+ *   asymmetric-ladder feature deferred in [PND-BANDBAR2], not this;
+ * - **zero** — band 0 already starts at zero, so a `0` breakpoint describes an
+ *   empty band and shifts every colour by one.
+ *
+ * Dropping rather than throwing matches how the rest of this prop behaves
+ * (a short colour ladder degrades, it doesn't fail), and `BarChart` dev-warns
+ * whenever normalization removed anything — a silently-ignored breakpoint is
+ * the failure mode this whole feature exists to avoid.
  */
 export function normalizeThresholds(
   thresholds: readonly number[] | undefined,
 ): readonly number[] | null {
   if (thresholds === undefined || thresholds.length === 0) return null;
-  const clean = thresholds.filter((t) => Number.isFinite(t));
+  const clean = thresholds.filter((t) => Number.isFinite(t) && t > 0);
   if (clean.length === 0) return null;
   return clean.sort((a, b) => a - b);
 }

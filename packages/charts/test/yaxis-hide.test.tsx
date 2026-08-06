@@ -137,3 +137,62 @@ describe('<YAxis hide>', () => {
     expect(b.dom.textContent).toBe(a.dom.textContent);
   });
 });
+
+describe('a hidden axis still holds its column in a multi-row container', () => {
+  /**
+   * Found by the Codex adversarial pass. The container reserves each axis
+   * *column* at the widest across rows (`maxSlotWidths`), so a hidden axis
+   * sharing a column with a visible one is still allotted that column's width
+   * — but returning `null` rendered no box for it, so the row's plot slid left
+   * and stopped lining up with its siblings and the shared x-axis. A hidden
+   * axis must reserve nothing *of its own* while still honouring a column
+   * another row is paying for.
+   */
+  function renderTwoRows() {
+    const stub = stubCanvasContext();
+    try {
+      const { container } = render(
+        <ChartContainer width={400}>
+          <ChartRow height={80}>
+            <YAxis id="a" min={0} max={10} label="" />
+            <Layers>
+              <BarChart categories={categories} axis="a" />
+            </Layers>
+          </ChartRow>
+          <ChartRow height={80}>
+            <YAxis id="b" min={0} max={10} label="" hide />
+            <Layers>
+              <BarChart categories={categories} axis="b" />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>,
+      );
+      return container;
+    } finally {
+      stub.restore();
+    }
+  }
+
+  /** Every `flex: 0 0 Npx` reservation in the tree, in document order. */
+  const flexBasisPx = (root: HTMLElement): number[] =>
+    Array.from(root.querySelectorAll<HTMLElement>('div'))
+      .map((d) => /^0 0 ([\d.]+)px$/.exec(d.style.flex ?? '')?.[1])
+      .filter((v): v is string => v !== undefined)
+      .map(Number);
+
+  it('reserves the shared column width rather than collapsing it', () => {
+    const reservations = flexBasisPx(renderTwoRows());
+    // Two rows, one axis column of 50px: both rows must reserve 50, or their
+    // plots do not start at the same x.
+    const fifties = reservations.filter((w) => w === 50);
+    expect(fifties).toHaveLength(2);
+  });
+
+  it('still reclaims the width when no other row needs the column', () => {
+    // The single-row case must be unaffected — this is the whole point of the
+    // prop, and the multi-row fix must not quietly undo it.
+    const shown = mount(<YAxis id="v" min={0} max={10} />);
+    const hidden = mount(<YAxis id="v" min={0} max={10} hide />);
+    expect(hidden.container.plotWidth).toBe(shown.container.plotWidth + 50);
+  });
+});

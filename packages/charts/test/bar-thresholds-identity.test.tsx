@@ -188,6 +188,22 @@ describe('the ladder fails loudly rather than drawing an unbanded bar', () => {
     warn.mockRestore();
   });
 
+  it('warns when a breakpoint is dropped rather than banding on a subset', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mount(
+      <BarChart
+        categories={categories}
+        id="cap"
+        thresholds={[-1, 1, 2]}
+        bandColors={BANDS}
+      />,
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('dropped 1 breakpoint(s)'),
+    );
+    warn.mockRestore();
+  });
+
   it('warns rather than silently ignoring thresholds next to binColors', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mount(

@@ -194,8 +194,12 @@ export interface BarChartCommon<
   /**
    * **Threshold breakpoints** — colour each bar *along its length* against a
    * ladder, so a long bar shows how far through the ladder it travelled rather
-   * than only which band it ended in. Ascending magnitudes measured **from the
-   * baseline**; `n` thresholds make `n + 1` bands.
+   * than only which band it ended in. Breakpoints are **absolute data values**
+   * in the axis's own units — `[1, 2]` means "warning above 1, alarm above 2",
+   * not offsets from wherever the bar happens to rest — and `n` of them make
+   * `n + 1` bands. Each must be finite and greater than zero; anything else is
+   * dropped with a dev warning (the ladder is walked on the magnitude, so a
+   * negative breakpoint is not expressible).
    *
    * ```tsx
    * // neutral to 1, warning 1–2, alarm above 2
@@ -356,14 +360,21 @@ type BarShape =
  * domain spans zero, or on the axis floor when an explicit `<YAxis min>` sits
  * above zero (see {@link resolveBarBaseline}).
  *
- * **Baseline (stacked).** A stack is **cumulative from value 0** — the segments
- * sum upward from the zero line, so its value axis **must include 0**. The
- * auto-fit guarantees this: {@link stackValueExtent} always returns `[0, maxTotal]`.
- * An explicit `<YAxis min>` **above** 0 is therefore unsupported for a stack — it
- * would hide the bottom of the cumulative column; only the portion above the floor
- * draws (clipped cleanly at the plot floor, as any bar below an explicit floor is).
- * Segment values are assumed **non-negative** (a negative or zero segment is
- * skipped — diverging stacks are out of scope).
+ * **Baseline (stacked).** A stack is **cumulative from value 0** — so its value
+ * axis **must include 0**. The auto-fit guarantees this:
+ * {@link stackValueExtent} returns `[minNegativeTotal, maxPositiveTotal]`, both
+ * seeded at `0`. An explicit `<YAxis min>` **above** 0 is therefore unsupported
+ * for a stack — it would hide the bottom of the cumulative column; only the
+ * portion above the floor draws (clipped cleanly at the plot floor, as any bar
+ * below an explicit floor is).
+ *
+ * **Signed stacks are supported** ([PND-SIGNSTACK]): each bin keeps two running
+ * totals, so positive segments stack **up** from the zero line and negative
+ * ones stack **down** from it — the signed histogram (net flow by category,
+ * inflow/outflow, buy/sell pressure by venue). A **zero** segment is still
+ * skipped, having no extent to draw or hit-test. This changed in the
+ * threshold-banding wave: negative segments were previously dropped outright
+ * and silently, so a mixed-sign series rendered as an all-positive chart.
  *
  * **Interaction (opt-in via `id`).** Hover lights the bar / segment under the
  * cursor (hit-tested by pixel rect, so it works in both orientations); click
@@ -628,11 +639,24 @@ export function BarChart<
     if (steps === null) {
       if (isDev && thresholds !== undefined && thresholds.length > 0) {
         console.warn(
-          '<BarChart thresholds>: no finite breakpoints, so no banding was ' +
-            'applied. Bars draw in the flat fill.',
+          '<BarChart thresholds>: no usable breakpoints, so no banding was ' +
+            'applied — each must be finite and greater than zero. Bars draw ' +
+            'in the flat fill.',
         );
       }
       return undefined;
+    }
+    // Some, but not all, entries dropped. Silently banding on a subset of what
+    // the caller wrote is exactly the class of quiet wrongness this feature is
+    // meant to remove, so say so.
+    if (isDev && thresholds !== undefined && steps.length < thresholds.length) {
+      console.warn(
+        `<BarChart thresholds>: dropped ${thresholds.length - steps.length} ` +
+          'breakpoint(s) that were not finite and greater than zero. The ' +
+          'ladder is walked on the magnitude and mirrored onto whichever side ' +
+          'of zero a bar is on, so a negative breakpoint has no meaning; ' +
+          `banding on [${steps.join(', ')}].`,
+      );
     }
     const want = steps.length + 1;
     const supplied = bandColors ?? singleStyle.bands;

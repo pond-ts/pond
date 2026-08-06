@@ -240,10 +240,27 @@ export function YAxis({
   }, [registerAxis, slot, spec]);
 
   // `hide`: everything above still runs — the axis is registered, so its scale
-  // exists and layers bind to it — and everything below (the gutter DOM) does
-  // not. Placed after the last hook so the early return can't change hook
+  // exists and layers bind to it — and everything below (the gutter chrome)
+  // does not. Placed after the last hook so the early return can't change hook
   // order when `hide` is toggled at runtime.
-  if (hide) return null;
+  //
+  // It renders an **empty box at the reserved slot width**, not nothing. The
+  // container reserves each axis *column* at the widest across rows
+  // (`maxSlotWidths`), so a hidden axis sharing a column with a visible one in
+  // another row is still allotted that column's width — and drawing nothing
+  // there slides this row's plot left, out of line with its siblings and with
+  // the shared x-axis. When this axis is alone in its column the reservation is
+  // its own `width: 0`, the box is zero-wide, and the plot reclaims the space,
+  // which is the point of the prop. Both cases fall out of the same expression.
+  if (hide) {
+    const hiddenSlot = row.axisSlots.get(slot) ?? 0;
+    return hiddenSlot > 0 ? (
+      <div
+        aria-hidden="true"
+        style={{ flex: `0 0 ${hiddenSlot}px`, height: `${row.height}px` }}
+      />
+    ) : null;
+  }
 
   const { theme } = container;
   const yScale = row.yScales.get(id);

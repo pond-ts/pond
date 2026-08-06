@@ -65,6 +65,20 @@ describe('normalizeThresholds', () => {
     expect(normalizeThresholds([])).toBeNull();
     expect(normalizeThresholds([NaN, Infinity])).toBeNull();
   });
+
+  it('drops negative breakpoints, which have no meaning on a magnitude ladder', () => {
+    // Codex adversarial review: left in, `[-2, -1]` clipped every lower band
+    // away and painted the whole bar in the final colour — a one-colour bar
+    // that looks deliberate. The ladder is walked on |v| and mirrored onto the
+    // bar's own side of zero, so a negative breakpoint is not expressible.
+    expect(normalizeThresholds([-2, -1])).toBeNull();
+    expect(normalizeThresholds([-1, 2])).toEqual([2]);
+  });
+
+  it('drops a zero breakpoint, which would describe an empty band', () => {
+    // Band 0 already starts at zero; a `0` entry shifts every colour by one.
+    expect(normalizeThresholds([0, 1, 2])).toEqual([1, 2]);
+  });
 });
 
 describe('bandSpan', () => {
