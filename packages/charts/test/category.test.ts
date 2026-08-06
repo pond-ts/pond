@@ -88,8 +88,11 @@ describe('single-series (categorical) negative values', () => {
     expect(calls.filter((c) => c.name === 'fillRect').length).toBe(2);
   });
 
-  it('a true multi-group stack (G>1) still drops a negative segment', () => {
-    // Two groups → stacking; a negative segment is a gap (undefined in a stack).
+  it('a true multi-group stack (G>1) stacks a negative segment downward', () => {
+    // [PND-SIGNSTACK]. This used to assert the opposite — that the negative
+    // segment was dropped — which is what made a mixed-sign series render as a
+    // confident, wrong, all-positive chart. Positives now stack up from the
+    // baseline and negatives down from it: two running totals per bin.
     const ss: StackedBarSeries = {
       begin: new Float64Array([0]),
       end: new Float64Array([1]),
@@ -97,11 +100,12 @@ describe('single-series (categorical) negative values', () => {
       values: new Float64Array([3, -4]), // group 'down' is negative
       length: 1,
     };
-    expect(stackValueExtent(ss)).toEqual([0, 3]); // negative ignored, floor stays 0
-    // The negative segment (g=1) is a gap.
-    expect(
-      segmentRect(ss, 0, 1, 'vertical', identity, identity, 3, 0, 1),
-    ).toBeNull();
+    // The extent must reach the negative total, or the axis clips what is drawn.
+    expect(stackValueExtent(ss)).toEqual([-4, 3]);
+    // The negative segment draws, from the baseline (0) down to -4.
+    const rect = segmentRect(ss, 0, 1, 'vertical', identity, identity, 0, 0, 1);
+    expect(rect).not.toBeNull();
+    expect([rect![2], rect![3]]).toEqual([-4, 0]);
   });
 });
 
