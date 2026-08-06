@@ -7,9 +7,17 @@ import styles from './styles.module.css';
 interface GalleryCardProps {
   title: string;
   blurb: string;
-  /** Absolute pathname into the deployed Storybook, e.g.
-   *  `/storybook/?path=/story/charts-candlestick--show-ohlc`. */
-  storybookHref: string;
+  /**
+   * Absolute pathname into the deployed Storybook, e.g.
+   * `/storybook/?path=/story/charts-candlestick--show-ohlc`.
+   *
+   * Optional, because some cards demonstrate a **composition** rather than a
+   * component — a stacked area is several `<AreaChart>`s over cumulative
+   * columns, which no single story shows. Omit it rather than pointing at an
+   * approximation: a "Story ↗" that opens something else is worse than no
+   * link, and the `pageHref` walkthrough is the real destination for those.
+   */
+  storybookHref?: string;
   /**
    * Deep link to this chart's Gallery page — the build-it tutorial
    * (`/docs/charts/gallery/<slug>`). Optional while the pages land track by
@@ -126,9 +134,11 @@ export default function GalleryCard({
               Build it →
             </Link>
           ) : null}
-          <Link className={styles.link} to={storybookHref}>
-            Story ↗
-          </Link>
+          {storybookHref ? (
+            <Link className={styles.link} to={storybookHref}>
+              Story ↗
+            </Link>
+          ) : null}
         </div>
       </div>
     </div>
