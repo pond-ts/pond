@@ -432,3 +432,68 @@ export const ThemedTitle: Story = {
     </ChartContainer>
   ),
 };
+
+/**
+ * **Hidden axis** ([PND-AXISHIDE]). `hide` keeps the scale and drops the
+ * gutter: the domain still resolves, layers still bind to it by `id`, and the
+ * plot gets the 50px back. For a chart whose scale is already explained by its
+ * chrome — a fixed threshold domain with band lines, a legend, a panel header
+ * — the numbers down the side are noise.
+ */
+export const HiddenAxis: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W}>
+      <ChartRow height={200}>
+        <YAxis id="pct" min={0} max={0.6} hide />
+        <Layers>
+          <LineChart series={demo()} column="pct" axis="pct" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **Hidden vs shown, same domain.** Side by side: both rows pin `[0, 0.6]`, so
+ * the line traces an identical path — only the gutter differs, and the hidden
+ * row's plot is wider by exactly the gutter width. This is the pairing that
+ * was previously unreachable: omitting the axis would have given the second
+ * row an auto-domain and moved the line.
+ */
+export const HiddenVsShown: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W}>
+      <ChartRow height={140}>
+        <YAxis id="a" min={0} max={0.6} />
+        <Layers>
+          <LineChart series={demo()} column="pct" axis="a" />
+        </Layers>
+      </ChartRow>
+      <ChartRow height={140}>
+        <YAxis id="b" min={0} max={0.6} hide />
+        <Layers>
+          <LineChart series={demo()} column="pct" axis="b" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **Hidden axis keeps its gridlines.** They belong to the plot rather than the
+ * gutter, so `hide` leaves them alone — usually what a "the shape matters, the
+ * numbers don't" chart wants. `<ChartContainer grid={false}>` turns them off
+ * separately if you want neither.
+ */
+export const HiddenAxisWithGrid: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W} grid>
+      <ChartRow height={200}>
+        <YAxis id="pct" min={0} max={0.6} hide />
+        <Layers>
+          <LineChart series={demo()} column="pct" axis="pct" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
