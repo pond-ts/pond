@@ -19,14 +19,17 @@ import {
   barIndexAtTime,
   drawBars,
   drawStacks,
+  normalizeThresholds,
   resolveBarBaseline,
   stackAt,
   stackBinExtent,
   stackValueExtent,
+  type BandLadder,
   type Orientation,
   type StackMark,
   type StackStyle,
 } from './bars.js';
+import { isDev } from './dev.js';
 import type { NumericColumn, ValueNumericColumn } from './column-names.js';
 import type { DecimateOption } from './decimate.js';
 import {
@@ -64,6 +67,22 @@ import { useSlotKey } from './use-slot-key.js';
  *   (`Array<{ start, end, …aggregates }>`); the names are **aggregate
  *   fields** of the record, not schema columns, so they stay `string`. Pair
  *   with `ordinal` for a band axis.
+ *
+ *   **`bins` selects a *value* axis, so a time-bucketed histogram fed this way
+ *   gets decimal ticks** ([PND-TICKUNIT]). A `TimeSeries`/`Map` bins on time; a
+ *   `ValueSeries`/`bins`-array bins on a value axis — which means the tick
+ *   ladder is the plain 1-2-5 walk, not the **duration** ladder a clock
+ *   subdivides by (15s and 30s are round durations where 20s and 50s are not).
+ *   A minute-of-day histogram passed as `bins` therefore labels something like
+ *   11:40 and 13:20 — real times at a ~100-minute step — and nothing at the
+ *   call site says why.
+ *
+ *   The natural reading ("I have pre-binned buckets, so I'll pass `bins`") is
+ *   exactly what forecloses the time axis. For a **time-keyed** histogram use
+ *   the series door instead — `<BarChart series columns>` on a time-keyed wide
+ *   series — and the clock ticks are native with no workaround.
+ *   `<ChartContainer origin>` does not rescue it: it relabels a value axis but
+ *   does not re-ladder it.
  * - **`categories`** — an ordered `{ label, value }[]`, one bar per category.
  *   Takes **no** `column`/`columns` (each datum carries its own value).
  *   Vertical puts the categories on the ordinal **x** axis (the container's
@@ -172,6 +191,54 @@ export interface BarChartCommon<
    * carry many bars' colours, so every visible bar draws.
    */
   binColors?: readonly (string | undefined)[];
+  /**
+   * **Threshold breakpoints** — colour each bar *along its length* against a
+   * ladder, so a long bar shows how far through the ladder it travelled rather
+   * than only which band it ended in. Ascending magnitudes measured **from the
+   * baseline**; `n` thresholds make `n + 1` bands.
+   *
+   * ```tsx
+   * // neutral to 1, warning 1–2, alarm above 2
+   * <BarChart categories={cats} thresholds={[1, 2]} />
+   * ```
+   *
+   * Band fills come from {@link BarStyle.bands} on the resolved role
+   * (`theme.bar[as] ?? theme.bar.default`), overridden by {@link bandColors}.
+   * Breakpoints are data and live here; colour stays in the theme — the same
+   * split as `colors` over the stack's group fills.
+   *
+   * **A banded bar is still one bar.** It keeps one hit region, one stable
+   * `SelectInfo.mark` and one legend row — which is the whole difference from
+   * the N-overlaid-layers recipe this replaces, where each band was separately
+   * hittable and separately listed. Selection and hover pop the opacity and
+   * keep the band colours (as `binColors` does), outlining in the colour of the
+   * band the value actually reached.
+   *
+   * **Negatives band symmetrically**: the ladder is walked on the magnitude and
+   * re-signed, so a bar hanging below the baseline reads the same ±ladder
+   * without negative breakpoints. Out-of-order entries are sorted (the bands
+   * are defined by their boundaries, so there is no second reading) and
+   * non-finite ones dropped.
+   *
+   * Applies to any **single-value** bar — a `series`/`bins` chart, `categories`,
+   * and both orientations. On a genuine **multi-group stack** it is ignored
+   * with a dev warning: a segment that is already one slice of a total has no
+   * defined banding. Set with `binColors` it also yields (per-bar colour is the
+   * more specific answer) and warns. **Disables envelope decimation** for the
+   * same reason `binColors` does.
+   */
+  thresholds?: readonly number[];
+  /**
+   * Call-site override for the {@link thresholds} band fills — `bandColors[k]`
+   * paints the band above `thresholds[k - 1]`, so a ladder of `n` thresholds
+   * reads `n + 1` entries. Omitted ⇒ {@link BarStyle.bands} from the theme.
+   *
+   * Prefer the theme for anything a design system owns; this is the escape
+   * hatch for a one-off ladder that shouldn't mint a theme role. If neither
+   * source supplies enough entries, the shortfall falls back to the flat fill
+   * and dev-warns rather than silently drawing an unbanded bar.
+   */
+  bandColors?: readonly string[];
   /**
    * Bar growth direction (the histogram orientation). **Default `'vertical'`.**
    *
@@ -325,6 +392,8 @@ export function BarChart<
   as: semantic,
   colors,
   binColors,
+  thresholds,
+  bandColors,
   orientation = 'vertical',
   ordinal = false,
   id,
@@ -539,6 +608,78 @@ export function BarChart<
   // role — `as` is single-series only), matching how `gapPx` sources its default.
   const stackMinWidth = bar.default.minWidth;
 
+  // ── Threshold ladder ([PND-BANDBAR2]) ────────────────────────────────────
+  // Resolved once here rather than per bar per frame: normalize the breakpoints
+  // (sort, drop non-finite), then pair them with `bandColors` → the role's
+  // `BarStyle.bands`. Everything that can go wrong with the pairing is a
+  // *silent* wrong-looking chart, so each case dev-warns — this feature exists
+  // because a quietly-unbanded bar was the workaround's failure mode.
+  const bandLadder = useMemo<BandLadder | undefined>(() => {
+    const steps = normalizeThresholds(thresholds);
+    if (steps === null) {
+      if (isDev && thresholds !== undefined && thresholds.length > 0) {
+        console.warn(
+          '<BarChart thresholds>: no finite breakpoints, so no banding was ' +
+            'applied. Bars draw in the flat fill.',
+        );
+      }
+      return undefined;
+    }
+    const want = steps.length + 1;
+    const supplied = bandColors ?? singleStyle.bands;
+    if (supplied === undefined || supplied.length === 0) {
+      if (isDev) {
+        console.warn(
+          `<BarChart thresholds>: ${steps.length} breakpoint(s) need ${want} ` +
+            'band colours, but neither `bandColors` nor the theme role’s ' +
+            '`BarStyle.bands` supplies any. Bars draw in the flat fill.',
+        );
+      }
+      return undefined;
+    }
+    if (supplied.length < want && isDev) {
+      console.warn(
+        `<BarChart thresholds>: ${steps.length} breakpoint(s) need ${want} ` +
+          `band colours but only ${supplied.length} were supplied; bands ` +
+          'above the last colour fall back to the flat fill.',
+      );
+    }
+    // Pad a short ladder with the flat fill so the draw path can index freely.
+    const resolved =
+      supplied.length >= want
+        ? supplied.slice(0, want)
+        : [
+            ...supplied,
+            ...Array.from(
+              { length: want - supplied.length },
+              () => singleStyle.fill,
+            ),
+          ];
+    return { thresholds: steps, colors: resolved };
+  }, [thresholds, bandColors, singleStyle]);
+
+  // Conflicts between the ladder and the shapes it can't apply to. In an effect
+  // so a re-render doesn't re-log; each fires once per genuinely new pairing.
+  const multiGroup = shape.kind === 'stacked' && shape.ss.groups.length > 1;
+  useEffect(() => {
+    if (!isDev || bandLadder === undefined) return;
+    if (binColors !== undefined) {
+      console.warn(
+        '<BarChart>: `thresholds` and `binColors` are both set. They are two ' +
+          'answers to “what colour is this bar”; `binColors` wins as the more ' +
+          'specific one, and the threshold bands are ignored.',
+      );
+    }
+    if (multiGroup) {
+      console.warn(
+        '<BarChart>: `thresholds` is ignored on a multi-group stack — a ' +
+          'segment that is already one slice of a total has no defined ' +
+          'banding. Threshold bands apply to single-value bars (`series` / ' +
+          '`bins` / `categories`), in either orientation.',
+      );
+    }
+  }, [bandLadder, binColors, multiGroup]);
+
   // Stacked style: per-group fills (colors override → theme role → default),
   // plus the shared opacity / outline from the default bar style. Memoized on the
   // groups + colours so a selection change doesn't rebuild it.
@@ -552,6 +693,17 @@ export function BarChart<
       fills,
       opacity: base.opacity,
       outlineWidth: base.outlineWidth,
+      // [PND-CATEMPH] Forward the themed emphasis so the category / horizontal
+      // path can read the same `fill → hover → highlight` channel every other
+      // bar does, instead of accepting those theme values and ignoring them.
+      highlight: base.highlight,
+      ...(base.hover !== undefined ? { hover: base.hover } : {}),
+      ...(base.selectedOutline !== undefined
+        ? { selectedOutline: base.selectedOutline }
+        : {}),
+      ...(base.emphasisOpacity !== undefined
+        ? { emphasisOpacity: base.emphasisOpacity }
+        : {}),
       ...(binColors !== undefined ? { binFills: binColors } : {}),
     };
   }, [bar, groups, colors, binColors]);
@@ -669,6 +821,7 @@ export function BarChart<
               hover,
               decimate,
               binColors,
+              bandLadder,
             ),
         },
         axisId: axis,
@@ -751,6 +904,7 @@ export function BarChart<
             id,
             selection,
             hover,
+            bandLadder,
           ),
       },
       axisId: axis,
@@ -765,6 +919,7 @@ export function BarChart<
     singleStyle,
     stackStyle,
     binColors,
+    bandLadder,
     label,
     id,
     gapPx,

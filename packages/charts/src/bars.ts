@@ -106,6 +106,113 @@ export function barRect(
 }
 
 /**
+ * The value-space span `[lo, hi]` of **threshold band `k`** along a bar running
+ * from `base` to `v`, or `null` when the bar doesn't reach that band.
+ *
+ * A threshold ladder colours one bar **along its length** — neutral up to the
+ * first threshold, then warning, then alarm — so a long bar shows how far
+ * through the ladder it travelled rather than only which band it ended in. With
+ * `thresholds = [t0, t1]` there are three bands: `[0, t0)`, `[t0, t1)`,
+ * `[t1, ∞)`. Band `k` spans magnitudes `[thresholds[k-1] ?? 0, thresholds[k] ??
+ * ∞)`, each end clipped to the bar's own magnitude — so a bar that stops inside
+ * band 1 yields a truncated band 1 and `null` for band 2.
+ *
+ * **Measured from the baseline, on the magnitude**, then re-signed: a bar
+ * hanging *below* the baseline walks the same ladder downward, so a ±3.5
+ * diverging scale bands symmetrically without the caller supplying negative
+ * breakpoints. (An asymmetric ladder would need signed breakpoints; deferred
+ * until a consumer pulls — see [PND-BANDBAR2].)
+ *
+ * Note this is **draw-only geometry**. Hit-testing still treats the bar as one
+ * target ({@link barSlotRect} / {@link barAt}), which is the whole reason this
+ * is a mark rather than the N-layer overpaint recipe it replaces: one bar keeps
+ * one hit region, one stable `mark`, and one legend row.
+ *
+ * `thresholds` is assumed ascending and finite — {@link normalizeThresholds}
+ * enforces that once at the prop boundary rather than per bar per frame.
+ */
+export function bandSpan(
+  base: number,
+  v: number,
+  thresholds: readonly number[],
+  k: number,
+): [lo: number, hi: number] | null {
+  return bandSpanInto(base, v, thresholds, k) ? [bandLo, bandHi] : null;
+}
+
+/**
+ * The band-`k` span, written to {@link bandLo} / {@link bandHi} instead of
+ * returned — `true` when the bar reaches this band, `false` when it doesn't.
+ *
+ * This is {@link bandSpan}'s implementation, split out because the tuple
+ * mattered: a K-band ladder allocates K tuples **per bar per frame**, and the
+ * bench showed that turning a banded draw from ~44% *cheaper* than the N-layer
+ * workaround it replaces into ~44% *dearer* than it. Same arithmetic, no
+ * garbage. `bandSpan` stays as the allocating wrapper so the geometry is
+ * testable as a value.
+ *
+ * Module-scope scratch is safe here: the draw path is single-threaded and reads
+ * both fields immediately after a `true`, before any other call can run.
+ */
+let bandLo = 0;
+let bandHi = 0;
+
+function bandSpanInto(
+  base: number,
+  v: number,
+  thresholds: readonly number[],
+  k: number,
+): boolean {
+  const d = v - base;
+  const m = d < 0 ? -d : d;
+  const lo = k === 0 ? 0 : thresholds[k - 1]!;
+  const hi = k < thresholds.length ? thresholds[k]! : Infinity;
+  // Clip both ends into the bar's own reach; an empty (or inverted) result means
+  // the bar never got this far up the ladder.
+  const clipLo = lo < m ? lo : m;
+  const clipHi = hi < m ? hi : m;
+  if (clipHi <= clipLo) return false;
+  const s = d < 0 ? -1 : 1;
+  bandLo = base + s * clipLo;
+  bandHi = base + s * clipHi;
+  return true;
+}
+
+/**
+ * A resolved threshold ladder: ascending `thresholds` (from
+ * {@link normalizeThresholds}) paired with the `colors` each band draws in,
+ * `colors[k]` for the band above `thresholds[k - 1]`. Assembled by `BarChart`
+ * from `<BarChart bandColors>` → {@link BarStyle.bands}, so — like
+ * {@link StackStyle} — the draw layer stays theme-free and unit-testable.
+ *
+ * `colors` is guaranteed `thresholds.length + 1` long by the time it reaches a
+ * draw path; a short ladder is resolved (and warned about) at the boundary.
+ */
+export interface BandLadder {
+  readonly thresholds: readonly number[];
+  readonly colors: readonly string[];
+}
+
+/**
+ * Validate + freeze a caller's threshold ladder once, at the prop boundary.
+ * Returns the ascending finite breakpoints, or `null` when there is no usable
+ * ladder (empty, or every entry non-finite) so the caller keeps the flat path.
+ *
+ * Sorting rather than rejecting an out-of-order ladder is deliberate — the
+ * bands are defined by their boundaries, so `[2, 1]` and `[1, 2]` describe the
+ * same three bands and there is no second reading to guess at. A **non-finite**
+ * entry is dropped, since it would swallow every band above it.
+ */
+export function normalizeThresholds(
+  thresholds: readonly number[] | undefined,
+): readonly number[] | null {
+  if (thresholds === undefined || thresholds.length === 0) return null;
+  const clean = thresholds.filter((t) => Number.isFinite(t));
+  if (clean.length === 0) return null;
+  return clean.sort((a, b) => a - b);
+}
+
+/**
  * The narrowed selection / hover identity a **single-series** bar matches
  * against: the layer's series `id`, the sample's `key` (its `begin`), and — when
  * the series carries {@link BarSeries.marks} — the stable per-bar `mark`. The
@@ -214,6 +321,7 @@ export function drawBars(
   hovered: BarMark | null,
   decimate: DecimateOption = true,
   binFills?: readonly (string | undefined)[],
+  banding?: BandLadder,
 ): LayerDrawStats {
   ctx.save();
   ctx.globalAlpha = style.opacity;
@@ -233,9 +341,15 @@ export function drawBars(
   // it stays on the legacy path end-to-end (L2 review, PR #542).
   const fills =
     binFills !== undefined && binFills.length > 0 ? binFills : undefined;
+  // A threshold ladder is per-*bar* colour too, so it takes the same exits as
+  // `binFills`: no envelope pass (one rect can't carry a gradient), and it
+  // yields to an explicit `binFills` when a caller sets both (warned about at
+  // the prop boundary — the two are different answers to "what colour is this
+  // bar", and per-bar is the more specific one).
+  const ladder = fills === undefined ? banding : undefined;
   const k = typeof decimate === 'object' ? decimate.threshold : undefined;
   const envelope =
-    decimate !== false && fills === undefined
+    decimate !== false && fills === undefined && ladder === undefined
       ? decimateBars(cs, xScale, ctx, baseline, k, vEnd - vStart)
       : null;
   if (envelope !== null) {
@@ -304,6 +418,36 @@ export function drawBars(
       if (selected) {
         ctx.lineWidth = style.outlineWidth;
         ctx.strokeStyle = fill;
+        ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+      }
+      continue;
+    }
+    if (ladder !== undefined) {
+      // Threshold banding: one rect per band the bar reaches, sharing the bar's
+      // x-span and slicing its length at the ladder boundaries. Like `binFills`
+      // the bar keeps its own colours when live (swapping to one `highlight`
+      // would erase the very thing the bands encode) and pops the alpha
+      // instead. The whole bar stays one hit target — see `bandSpan`.
+      ctx.globalAlpha = selected || isHovered ? 1 : style.opacity;
+      const v = cs.y[i]!;
+      let topFill = ladder.colors[0]!;
+      for (let bk = 0; bk < ladder.colors.length; bk += 1) {
+        if (!bandSpanInto(baseline, v, ladder.thresholds, bk)) continue;
+        const ySpanA = yScale(bandLo);
+        const ySpanB = yScale(bandHi);
+        const bandTop = ySpanA < ySpanB ? ySpanA : ySpanB;
+        const bandBottom = ySpanA < ySpanB ? ySpanB : ySpanA;
+        ctx.fillStyle = ladder.colors[bk]!;
+        ctx.fillRect(x0, bandTop, x1 - x0, bandBottom - bandTop);
+        topFill = ladder.colors[bk]!; // the band the value actually landed in
+      }
+      drawn += 1;
+      if (selected) {
+        // Outline the whole bar (not the last band) in the colour of the band
+        // the value reached — the one colour that means something for a bar
+        // painted in several.
+        ctx.lineWidth = style.outlineWidth;
+        ctx.strokeStyle = topFill;
         ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
       }
       continue;
@@ -501,6 +645,41 @@ export interface StackStyle {
    * falls back to the group fill.
    */
   readonly binFills?: readonly (string | undefined)[];
+  /**
+   * The **selected** segment's fill, and `hover` the pointer-over one — the
+   * three-step `fill → hover → highlight` emphasis {@link BarStyle} has always
+   * carried and this path used to ignore ([PND-CATEMPH]).
+   *
+   * **Only applied when there is no meaning-carrying colour to destroy**, i.e.
+   * when {@link binFills} is unset. A per-bin-coloured bar keeps its own colour
+   * and pops {@link emphasisOpacity} instead — swapping a zone-coloured or
+   * direction-coloured bar to one highlight hue would erase what the colour
+   * encodes, which is the one *design* exclusion rather than a path accident.
+   *
+   * The friction this closes wasn't the behaviour, which is defensible: it was
+   * that `theme.bar.hover` / `.highlight` were typed, settable, documented as
+   * the emphasis channel, and silently did nothing on the most common
+   * categorical chart. A theme author set them, saw no change, and had no way
+   * to tell whether they were wrong about the colour or about the mechanism.
+   */
+  readonly highlight?: string;
+  /** See {@link highlight}. Falls back to `highlight` when unset. */
+  readonly hover?: string;
+  /**
+   * Stroke for the selected segment's outline. Defaults to the segment's own
+   * resolved fill (the shipped behaviour). Set it to give the category path a
+   * themed selection cue that works even where the fill can't change — the
+   * `binFills` case, where the alpha pop is otherwise the only signal.
+   */
+  readonly selectedOutline?: string;
+  /**
+   * The alpha a hovered / selected segment pops to. **Default `1`** (the
+   * shipped behaviour). Lower it for a subtler emphasis on a dense stack —
+   * previously the pop was hard-coded and the only tunable was the resting
+   * {@link opacity}, so a theme could not adjust the *difference* between
+   * resting and live, only the floor.
+   */
+  readonly emphasisOpacity?: number;
 }
 
 /** The narrowed selection / hover identity a stacked segment matches against:
@@ -516,21 +695,28 @@ export interface StackMark {
 
 /**
  * The `[min, max]` extent of the **value (stacked) axis**. For a true multi-group
- * stack it is `[0, maxTotal]`, where `maxTotal` is the tallest bin's summed finite
- * non-negative segments. For a **single-group** series (`G === 1` — the plain /
+ * stack it is `[minNegTotal, maxPosTotal]` — each bin's positive segments summed
+ * upward and its negative segments summed downward, tracked separately
+ * ([PND-SIGNSTACK]). For a **single-group** series (`G === 1` — the plain /
  * categorical bar case) it spans the values' own `[min, max]`, so a **negative**
  * bar's floor is in the domain (segments below the baseline stay visible). `0` is
  * always pulled in so the bars rest on a visible baseline (the bar analog of
  * {@link barExtent}). An empty / all-gap series returns `[0, 1]` so the axis still
  * has a usable domain. Feeds the y auto-fit for a vertical histogram, the x
  * auto-fit for a horizontal one.
+ *
+ * The negative half is new: this used to sum only positives, matching a draw
+ * path that dropped negative segments outright. Both halves changed together —
+ * an extent that stopped at `0` below would clip the very segments the draw
+ * path now emits.
  */
 export function stackValueExtent(ss: StackedBarSeries): [number, number] {
   const G = ss.groups.length;
   let max = 0;
   let min = 0;
   for (let b = 0; b < ss.length; b += 1) {
-    let cum = 0;
+    let cumPos = 0;
+    let cumNeg = 0;
     for (let g = 0; g < G; g += 1) {
       const v = ss.values[b * G + g]!;
       if (!Number.isFinite(v)) continue;
@@ -539,10 +725,13 @@ export function stackValueExtent(ss: StackedBarSeries): [number, number] {
         if (v > max) max = v;
         if (v < min) min = v;
       } else if (v > 0) {
-        cum += v; // True stack: sum the positive segments.
+        cumPos += v; // True stack: positives stack up from the baseline…
+      } else if (v < 0) {
+        cumNeg += v; // …negatives stack down from it.
       }
     }
-    if (cum > max) max = cum;
+    if (cumPos > max) max = cumPos;
+    if (cumNeg < min) min = cumNeg;
   }
   // Empty / all-gap / all-zero → a usable unit domain; otherwise the real extent
   // (with 0 pulled in via the `min`/`max` seeds above).
@@ -614,13 +803,22 @@ export function segmentRect(
   const G = ss.groups.length;
   const v = ss.values[b * G + g]!;
   // Skip non-finite (a gap) or zero (a zero-extent rect that can't draw or be
-  // hit-tested). A **negative** value is a gap only in a true multi-group stack
-  // (`G > 1`) — stacking a negative segment is undefined. A **single-group**
-  // series (`G === 1`) is a plain bar: it honours its sign and draws from the
-  // baseline *down* to a negative value (the categorical row-read's P&L / delta
-  // case), so negatives are kept and the `Math.min/Math.max` below normalizes the
-  // below-baseline rect.
-  if (!Number.isFinite(v) || v === 0 || (v < 0 && G > 1)) return null;
+  // hit-tested). **Negative segments are kept, whatever `G` is** — the caller
+  // passes the downward running total for them (see {@link drawStacks}), and
+  // the `Math.min/Math.max` below normalizes the below-baseline rect.
+  //
+  // A multi-group stack used to drop them here (`v < 0 && G > 1`) on the
+  // grounds that "stacking a negative segment is undefined". That is fair for a
+  // conventional stack and wrong for the **signed stacked histogram** — several
+  // series per bin whose values may be either sign, positives stacking up from
+  // a zero line and negatives down from it (net flow by category,
+  // inflow/outflow, buy/sell pressure by venue). That is a well-defined stack:
+  // two running totals per bin instead of one. And the old behaviour failed
+  // *silently* — the dropped segments didn't clamp, warn or throw, so every
+  // remaining segment stacked up as though they had never been in the data and
+  // a mixed-sign series rendered as a confident, wrong, all-positive chart
+  // ([PND-SIGNSTACK]).
+  if (!Number.isFinite(v) || v === 0) return null;
   if (orientation === 'vertical') {
     const [x0, x1] = barSpanPx(
       ss.begin[b]!,
@@ -671,14 +869,26 @@ export function drawStacks(
   seriesId: string | undefined,
   selection: StackMark | null,
   hover: StackMark | null,
+  banding?: BandLadder,
 ): void {
   const G = ss.groups.length;
   const base = stackBase(orientation, xScale, yScale);
+  // Threshold banding applies to a **plain** bar only. `G === 1` is exactly the
+  // categorical / horizontal single-value bar (`categoryStack` builds a
+  // one-group series); a genuine multi-group stack has no defined banding —
+  // each segment is already a slice of a total — so the ladder is dropped here
+  // and warned about at the prop boundary rather than half-applied.
+  const ladder = G === 1 && style.binFills === undefined ? banding : undefined;
   ctx.save();
   ctx.globalAlpha = style.opacity;
   for (let b = 0; b < ss.length; b += 1) {
-    let cum = base;
+    // Two running totals per bin ([PND-SIGNSTACK]): positives stack upward from
+    // the baseline, negatives downward from it. A conventional all-positive
+    // stack never touches `cumNeg`, so its geometry is bit-identical to before.
+    let cumPos = base;
+    let cumNeg = base;
     for (let g = 0; g < G; g += 1) {
+      const v = ss.values[b * G + g]!;
       const rect = segmentRect(
         ss,
         b,
@@ -686,12 +896,14 @@ export function drawStacks(
         orientation,
         xScale,
         yScale,
-        cum,
+        v < 0 ? cumNeg : cumPos,
         gapPx,
         minSpanPx,
       );
-      const v = ss.values[b * G + g]!;
-      if (Number.isFinite(v) && v > 0) cum += v;
+      if (Number.isFinite(v)) {
+        if (v > 0) cumPos += v;
+        else if (v < 0) cumNeg += v;
+      }
       if (rect === null) continue;
       const [x0, x1, yTop, yBottom] = rect;
       // With `marks` (the categorical axis), match on the stable per-bin name so a
@@ -706,16 +918,62 @@ export function drawStacks(
           : m.key === ss.begin[b] && m.label === ss.groups[g]);
       const selected = matches(selection);
       const isHovered = matches(hover);
-      // A hovered / selected segment pops to full opacity in its own colour; a
-      // resting one draws at the shared alpha.
-      ctx.globalAlpha = selected || isHovered ? 1 : style.opacity;
+      // A hovered / selected segment pops its alpha; a resting one draws at the
+      // shared one. `emphasisOpacity` makes the *difference* themeable, where
+      // before only the resting floor was.
+      ctx.globalAlpha =
+        selected || isHovered ? (style.emphasisOpacity ?? 1) : style.opacity;
       // A per-bin colour (the single-series band case) overrides the group fill.
       const fill = style.binFills?.[b] ?? style.fills[g]!;
-      ctx.fillStyle = fill;
+      if (ladder !== undefined) {
+        // Threshold banding on the plain / categorical / horizontal bar: slice
+        // the bar's length at the ladder boundaries, transposing on
+        // orientation — vertical bars band along y, horizontal along x, while
+        // the bin span (the other axis) is shared by every band.
+        let topFill = ladder.colors[0]!;
+        for (let bk = 0; bk < ladder.colors.length; bk += 1) {
+          if (!bandSpanInto(base, v, ladder.thresholds, bk)) continue;
+          ctx.fillStyle = ladder.colors[bk]!;
+          if (orientation === 'vertical') {
+            const a = yScale(bandLo);
+            const c = yScale(bandHi);
+            const top = a < c ? a : c;
+            ctx.fillRect(x0, top, x1 - x0, (a < c ? c : a) - top);
+          } else {
+            const a = xScale(bandLo);
+            const c = xScale(bandHi);
+            const left = a < c ? a : c;
+            ctx.fillRect(left, yTop, (a < c ? c : a) - left, yBottom - yTop);
+          }
+          topFill = ladder.colors[bk]!;
+        }
+        if (selected) {
+          ctx.lineWidth = style.outlineWidth;
+          // A themed outline if the theme sets one, else the band the value
+          // reached — the one colour that means anything on a banded bar.
+          ctx.strokeStyle = style.selectedOutline ?? topFill;
+          ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+        }
+        continue;
+      }
+      // [PND-CATEMPH] The themed three-step emphasis, applied where it can be:
+      // with no `binFills` there is no meaning-carrying colour to destroy, so a
+      // selected segment takes `highlight` and a hovered one `hover`, exactly
+      // as the single-series path does. With `binFills` the bar keeps its own
+      // colour (the design exclusion) and the alpha pop above is the signal.
+      const emphasised =
+        style.binFills === undefined
+          ? selected
+            ? (style.highlight ?? fill)
+            : isHovered
+              ? (style.hover ?? style.highlight ?? fill)
+              : fill
+          : fill;
+      ctx.fillStyle = emphasised;
       ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
       if (selected) {
         ctx.lineWidth = style.outlineWidth;
-        ctx.strokeStyle = fill;
+        ctx.strokeStyle = style.selectedOutline ?? emphasised;
         ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
       }
     }
@@ -749,8 +1007,12 @@ export function stackAt(
   const G = ss.groups.length;
   const base = stackBase(orientation, xScale, yScale);
   for (let b = 0; b < ss.length; b += 1) {
-    let cum = base;
+    // The same two accumulators `drawStacks` keeps — they must agree exactly or
+    // the hit rect drifts from the drawn one.
+    let cumPos = base;
+    let cumNeg = base;
     for (let g = 0; g < G; g += 1) {
+      const v = ss.values[b * G + g]!;
       const rect = segmentRect(
         ss,
         b,
@@ -758,12 +1020,14 @@ export function stackAt(
         orientation,
         xScale,
         yScale,
-        cum,
+        v < 0 ? cumNeg : cumPos,
         gapPx,
         minSpanPx,
       );
-      const v = ss.values[b * G + g]!;
-      if (Number.isFinite(v) && v > 0) cum += v;
+      if (Number.isFinite(v)) {
+        if (v > 0) cumPos += v;
+        else if (v < 0) cumNeg += v;
+      }
       if (rect === null) continue;
       const [x0, x1, yTop, yBottom] = rect;
       if (px >= x0 && px <= x1 && py >= yTop && py <= yBottom) {
