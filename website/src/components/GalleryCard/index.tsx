@@ -1,6 +1,7 @@
-import { type ReactNode, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode } from 'react';
 import BrowserOnly from '@docusaurus/BrowserOnly';
 import Link from '@docusaurus/Link';
+import { useMeasuredWidth } from '../useMeasuredWidth';
 import styles from './styles.module.css';
 
 interface GalleryCardProps {
@@ -22,22 +23,6 @@ interface GalleryCardProps {
    *  [responsive-width recipe](/docs/recipes/responsive-width)'s pattern,
    *  applied per-card. */
   children: (width: number) => ReactNode;
-}
-
-function useMeasuredWidth<T extends HTMLElement>() {
-  const ref = useRef<T | null>(null);
-  const [width, setWidth] = useState(0);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const measure = () =>
-      setWidth(Math.round(el.getBoundingClientRect().width));
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, width] as const;
 }
 
 function CardStage({

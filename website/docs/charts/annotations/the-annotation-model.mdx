@@ -9,13 +9,15 @@ import LearnAnnotations from '@site/src/examples/learn-07-annotations';
 # The annotation model
 
 Annotations are the marks **you** add to a chart to call out meaning — an
-incident window, a deploy, an SLA line. `@pond-ts/charts` has three
+incident window, a deploy, an SLA line. `@pond-ts/charts` has four
 primitives, all rendered as `<Layers>` children alongside the data:
 [`Region`](./region-baseline-marker.mdx#region) (a shaded x span),
-[`Marker`](./region-baseline-marker.mdx#marker) (a vertical line at an x), and
+[`Marker`](./region-baseline-marker.mdx#marker) (a vertical line at an x),
 [`Baseline`](./region-baseline-marker.mdx#baseline) (a horizontal line at a
-y). This page is the shared mental model; the next pages are the per-primitive
-props, the editing/creating surface, and axis indicators.
+y), and [`Zone`](./zone.mdx) (a shaded **y** span — `Region`'s counterpart on
+the value axis, for scales like AQI categories or heart-rate zones). This page
+is the shared mental model; the next pages are the per-primitive props, the
+editing/creating surface, and axis indicators.
 
 Chapter 7 teaches placing them; this section is the reference. See
 [Learn charts, chapter 7](../../learn-charts/marking-up-charts) for the
@@ -51,19 +53,29 @@ const theme = cssVarTheme(defaultTheme, (v) => ({
     roles: {
       atm: { color: v('--green') },
       ref: { color: v('--blue') },
-      zone: { color: v('--amber'), fillOpacity: 0.15 }, // optional per-role fill
+      span: { color: v('--amber'), fillOpacity: 0.15 }, // optional per-role fill
+      // optional per-role dash — a dashed mark reads as placed, not measured
+      target: { color: v('--slate'), dash: [6, 4] },
     },
   },
 }));
 // …
 <Baseline value={atm} role="atm" />
 <Marker at={ref} role="ref" />
-<Region from={a} to={b} role="zone" />
+<Region from={a} to={b} role="span" />
 ```
 
 A mark resolves `roles[role] ?? annotation` — an unknown or unset `role` is the
 base annotation colour. Colour stays a **theme** concern (there is no per-mark
 colour prop): the theme owns the palette, the mark just names a role.
+
+Roles carry `color`, optionally `fillOpacity`, and optionally `dash` (px on/off
+lengths for the mark's **lines** — fills are never dashed; `dash` can also be
+set once on the register to apply to every mark).
+
+This is also how a **scale** is styled: a [`Zone`](./zone.mdx) set names one
+role per band (`good`, `moderate`, …) and the theme holds the whole palette in
+one place, rather than six colours spread across call sites.
 
 ## Depth and brightness
 
@@ -114,6 +126,7 @@ axis pill reads like a tick. This is why `YAxisIndicator` (a pure pill) has no
 ## See also
 
 - [Region · Baseline · Marker](./region-baseline-marker.mdx) — the per-primitive props.
+- [Zone](./zone.mdx) — the y-span band, and why its defaults invert the family's.
 - [Editing & creating annotations](./editing-and-creating.mdx) — the interactive surface.
 - [Axis indicators & live values](./axis-indicators-and-live-values.mdx) — pinned pills and the live path.
 - [Learn charts, chapter 7](../../learn-charts/marking-up-charts) — the tutorial.
