@@ -74,9 +74,10 @@ include new features and type-level changes; patch bumps are strictly additive.
   overpainting. That produces the same pixels and loses what matters: N layers
   means N hit targets, N `SelectInfo.mark` identities and N legend rows for
   something the reader sees as one bar. Banding is **draw-only** — the hit rect
-  is untouched, so a banded bar stays one bar. It also measures **23–56%
-  cheaper** than the layered workaround across 8–2000 bars
-  (`scripts/perf-bandbar.mjs`), and costs nothing when unused.
+  is untouched, so a banded bar stays one bar. It also measures **27–49%
+  cheaper** than the layered workaround at 8–400 categories
+  (`scripts/perf-bandbar.mjs`, which interleaves the arms and prints the
+  ratios), and costs nothing when unused.
 
   Applies to any single-value bar — `series`, `bins`, `categories`, both
   orientations. Negatives band symmetrically on the magnitude, so a ± diverging
@@ -94,7 +95,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   isn't either — the labels still draw, over the plot.
 
   Gridlines are unaffected: they belong to the plot, not the gutter, and
-  `<ChartRow grid>` already governs them.
+  `<ChartContainer grid>` already governs them.
 
 - **charts: `<ChartContainer maxBandWidth>` + `bandAlign`** — cap the **slot
   pitch** on a category x axis and place the resulting block

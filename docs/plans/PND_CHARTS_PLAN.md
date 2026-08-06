@@ -1912,9 +1912,32 @@ fills from `BarStyle.bands`.
   re-run single-module and interleaved, the result reversed cleanly and matched
   the in-script bench. When two perf runs disagree, suspect the harness before
   the code — and never ship the flattering one because it agrees with you.
+- **Breakpoints are absolute data values, not offsets from the resolved
+  baseline** — corrected in review. The first cut measured the ladder from
+  `resolveBarBaseline`, so on a domain that excludes zero (`<YAxis min={10}>`)
+  a `[1, 2]` ladder silently banded at 11 and 12. A threshold means the same
+  thing everywhere else in a dashboard: an absolute value. The bands are now
+  computed from zero and the painted span clipped to the bar's drawn extent,
+  which leaves the common (baseline 0) case identical and makes the min>0 case
+  put the whole bar in the top band, correctly. Worth noting the original had
+  a *passing test asserting the wrong behaviour* — the test encoded the
+  implementation rather than the requirement.
 - **Deferred:** asymmetric ladders (signed breakpoints). Negatives band
   symmetrically on the magnitude, which covers the ± diverging case; no consumer
   has pulled for asymmetry.
+- **`bandAlign` keeps `'center'`/`'end'` by owner decision** (2026-08-06) even
+  though only left-packing has a caller: a 3-value alignment enum is a complete
+  vocabulary and the extra values share one arithmetic path with `'start'`.
+  Recorded so declining to trim it is a decision, not an oversight.
+- **A perf-methodology lesson, twice over.** Two successive measurements of the
+  same change were wrong in opposite directions — first a cross-module A/B that
+  reported banding as slower (two `dist` instances, two V8 optimization
+  states), then a table stitched from two pairwise runs that claimed a −40.6%
+  win over a figure it was 26% dearer than. The fix is structural: the script
+  now interleaves every arm in one harness and prints the ratios itself, so
+  there is nothing left to stitch. **When two perf runs disagree, suspect the
+  harness before the code, and never publish a number a committed script
+  cannot reproduce.**
 
 **[PND-AXISHIDE] `<YAxis hide>`.** Registers the spec with `width: 0` and
 returns `null` after the last hook (so toggling `hide` at runtime can't change
@@ -1962,6 +1985,15 @@ the band scale is the container's x scale.
   ask. `bins` carrying `kind: 'time'` was not built — it is a real design choice
   and no consumer has pulled for it beyond the one that has since been pointed
   at the series door.
+
+**Found in review, and worth recording as a class.** The Layer-2 pass caught
+three real defects, two of which are the *same mistake this PR is about*:
+`BarStyle.emphasisOpacity` and `.selectedOutline` were added as public theme
+fields but wired only into `drawStacks`, so the single-series path accepted and
+ignored them — [PND-CATEMPH]'s exact failure shape, reintroduced by the commit
+fixing [PND-CATEMPH]. The threshold-baseline bug was the same species: silent,
+plausible, wrong only on a domain the author didn't test. A fix for a class of
+bug does not immunise its own diff against that class.
 
 **Not done: the dev-mode warning sweep.** The report's best structural finding
 is that SIGNSTACK, CATEMPH and TICKUNIT share a failure _shape_, arguing for one

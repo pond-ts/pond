@@ -130,18 +130,21 @@ const results = [];
 
 // ── 1. Categorical scale — what this feature is actually for. ───────────────
 // A threshold ladder lives on a category chart: tens of bars, not millions.
+//
+// The three arms are **interleaved round-by-round** rather than benchmarked one
+// after another. Running them sequentially lets JIT state and thermal drift
+// land unevenly on whichever arm goes first, and the spread between repeated
+// sequential runs here was wider than the effect being measured. Interleaving
+// makes every round pay the same tax.
 for (const n of [8, 50, 400]) {
   const bars = makeBars(n);
   const x = scale(0, n, PLOT_WIDTH_CSS);
   const y = scale(0, 4, 400);
   const ctx = sizedCtx(W);
-  results.push(
-    benchmark(`cat n=${n} FLAT`, () =>
-      drawBars(ctx, bars, x, y, style, 0, 0, 'c', null, null, false),
-    ),
-  );
-  results.push(
-    benchmark(`cat n=${n} BANDED (K=3, one pass)`, () =>
+
+  const arms = {
+    FLAT: () => drawBars(ctx, bars, x, y, style, 0, 0, 'c', null, null, false),
+    BANDED: () =>
       drawBars(
         ctx,
         bars,
@@ -157,17 +160,12 @@ for (const n of [8, 50, 400]) {
         undefined,
         LADDER,
       ),
-    ),
-  );
-  results.push(
-    benchmark(`cat n=${n} WORKAROUND-BARE (K=3 passes)`, () => {
+    'WORKAROUND-BARE': () => {
       for (let k = 0; k < 3; k += 1) {
         drawBars(ctx, bars, x, y, style, 0, 0, 'c', null, null, false);
       }
-    }),
-  );
-  results.push(
-    benchmark(`cat n=${n} WORKAROUND-REAL (K=3 clipped)`, () => {
+    },
+    'WORKAROUND-REAL': () => {
       for (let k = 0; k < 3; k += 1) {
         drawBars(
           ctx,
@@ -183,8 +181,24 @@ for (const n of [8, 50, 400]) {
           false,
         );
       }
-    }),
-  );
+    },
+  };
+  const names = Object.keys(arms);
+  const samples = Object.fromEntries(names.map((k) => [k, []]));
+  for (let i = 0; i < 25; i += 1) for (const k of names) arms[k]();
+  for (let i = 0; i < 200; i += 1) {
+    for (const k of names) {
+      const t = performance.now();
+      arms[k]();
+      samples[k].push(performance.now() - t);
+    }
+  }
+  for (const k of names) {
+    results.push({
+      label: `cat n=${n} ${k}`,
+      medianMs: Number(median(samples[k]).toFixed(4)),
+    });
+  }
 }
 
 // ── 2. The unused-ladder floor: banding must cost nothing when absent. ──────
@@ -273,9 +287,32 @@ function scale(d0, d1, widthCss) {
   return scaleLinear().domain([d0, d1]).range([0, widthCss]);
 }
 
+// Emit the comparison ratios here rather than leaving a reader to stitch rows
+// together by hand. That stitching is not hypothetical: the first version of
+// this PR's perf table paired a `banded` number from one pairwise run with a
+// `workaround` number from another, and produced a row claiming a 40% win over
+// a figure it was actually 26% slower than. Same-`n` rows only, computed once.
+const byLabel = new Map(results.map((r) => [r.label, r.medianMs]));
+const comparison = [];
+for (const n of [8, 50, 400]) {
+  const bare = byLabel.get(`cat n=${n} WORKAROUND-BARE`);
+  const real = byLabel.get(`cat n=${n} WORKAROUND-REAL`);
+  const band = byLabel.get(`cat n=${n} BANDED`);
+  if (bare === undefined || real === undefined || band === undefined) continue;
+  const pct = (from) => `${(((band - from) / from) * 100).toFixed(1)}%`;
+  comparison.push({
+    n,
+    bareMs: bare,
+    realMs: real,
+    bandedMs: band,
+    bandedVsBare: pct(bare),
+    bandedVsReal: pct(real),
+  });
+}
+
 console.log(
   JSON.stringify(
-    { plotWidthCss: PLOT_WIDTH_CSS, W, ladder: LADDER, results },
+    { plotWidthCss: PLOT_WIDTH_CSS, W, ladder: LADDER, comparison, results },
     null,
     2,
   ),

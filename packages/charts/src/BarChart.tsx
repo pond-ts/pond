@@ -614,6 +614,15 @@ export function BarChart<
   // `BarStyle.bands`. Everything that can go wrong with the pairing is a
   // *silent* wrong-looking chart, so each case dev-warns — this feature exists
   // because a quietly-unbanded bar was the workaround's failure mode.
+  // Value-compare the two array props rather than relying on their identity.
+  // `thresholds={[1, 2]}` inline is the documented usage and the shape every
+  // story and doc example uses — and a fresh array each render would rebuild
+  // the ladder, hence the layer `entry` below, hence a `registerLayer` call
+  // **every render**. That is a repaint treadmill, not just a noisy warning.
+  // The same value-compare-on-registration reasoning `<YAxis ticks>` already
+  // applies.
+  const thresholdKey = thresholds === undefined ? '' : thresholds.join(',');
+  const bandColorKey = bandColors === undefined ? '' : bandColors.join(',');
   const bandLadder = useMemo<BandLadder | undefined>(() => {
     const steps = normalizeThresholds(thresholds);
     if (steps === null) {
@@ -656,14 +665,18 @@ export function BarChart<
             ),
           ];
     return { thresholds: steps, colors: resolved };
-  }, [thresholds, bandColors, singleStyle]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `thresholdKey` /
+    // `bandColorKey` are the value-compared stand-ins for the array props.
+  }, [thresholdKey, bandColorKey, singleStyle]);
 
   // Conflicts between the ladder and the shapes it can't apply to. In an effect
   // so a re-render doesn't re-log; each fires once per genuinely new pairing.
   const multiGroup = shape.kind === 'stacked' && shape.ss.groups.length > 1;
+  const hasLadder = bandLadder !== undefined;
+  const hasBinColors = binColors !== undefined;
   useEffect(() => {
-    if (!isDev || bandLadder === undefined) return;
-    if (binColors !== undefined) {
+    if (!isDev || !hasLadder) return;
+    if (hasBinColors) {
       console.warn(
         '<BarChart>: `thresholds` and `binColors` are both set. They are two ' +
           'answers to “what colour is this bar”; `binColors` wins as the more ' +
@@ -678,7 +691,7 @@ export function BarChart<
           '`bins` / `categories`), in either orientation.',
       );
     }
-  }, [bandLadder, binColors, multiGroup]);
+  }, [hasLadder, hasBinColors, multiGroup]);
 
   // Stacked style: per-group fills (colors override → theme role → default),
   // plus the shared opacity / outline from the default bar style. Memoized on the

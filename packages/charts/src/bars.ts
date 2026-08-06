@@ -117,11 +117,21 @@ export function barRect(
  * ∞)`, each end clipped to the bar's own magnitude — so a bar that stops inside
  * band 1 yields a truncated band 1 and `null` for band 2.
  *
- * **Measured from the baseline, on the magnitude**, then re-signed: a bar
- * hanging *below* the baseline walks the same ladder downward, so a ±3.5
- * diverging scale bands symmetrically without the caller supplying negative
- * breakpoints. (An asymmetric ladder would need signed breakpoints; deferred
- * until a consumer pulls — see [PND-BANDBAR2].)
+ * **Breakpoints are absolute data values, not offsets from the baseline** — a
+ * `thresholds={[1, 2]}` ladder means "warning above 1, alarm above 2" in the
+ * axis's own units, which is what a threshold means everywhere else. They are
+ * matched on the **magnitude** and applied to whichever side of zero the bar
+ * is on, so a bar hanging below the baseline walks the same ladder downward
+ * and a ±3.5 diverging scale bands symmetrically without the caller supplying
+ * negative breakpoints. (An asymmetric ladder would need signed breakpoints;
+ * deferred until a consumer pulls — see [PND-BANDBAR2].)
+ *
+ * The painted span is then **clipped to what the bar actually draws**, which
+ * is what makes a domain that excludes zero behave: with `<YAxis min={10}>` a
+ * bar rests on 10, so a `[1, 2]` ladder leaves it entirely in the top band
+ * rather than banding at 11 and 12. Measuring the ladder from the *resolved
+ * baseline* instead would silently shift every breakpoint by the axis floor —
+ * exactly the class of quiet wrongness this feature exists to remove.
  *
  * Note this is **draw-only geometry**. Hit-testing still treats the bar as one
  * target ({@link barSlotRect} / {@link barAt}), which is the whole reason this
@@ -163,18 +173,29 @@ function bandSpanInto(
   thresholds: readonly number[],
   k: number,
 ): boolean {
-  const d = v - base;
-  const m = d < 0 ? -d : d;
   const lo = k === 0 ? 0 : thresholds[k - 1]!;
   const hi = k < thresholds.length ? thresholds[k]! : Infinity;
-  // Clip both ends into the bar's own reach; an empty (or inverted) result means
-  // the bar never got this far up the ladder.
-  const clipLo = lo < m ? lo : m;
-  const clipHi = hi < m ? hi : m;
-  if (clipHi <= clipLo) return false;
-  const s = d < 0 ? -1 : 1;
-  bandLo = base + s * clipLo;
-  bandHi = base + s * clipHi;
+  // The bar's drawn extent, ascending. `resolveBarBaseline` clamps 0 into the
+  // domain, so this span never straddles zero: either it starts at 0, or the
+  // whole domain sits to one side of it.
+  const sLo = base < v ? base : v;
+  const sHi = base < v ? v : base;
+  // Band `k` covers the *absolute* values `[lo, hi)`, which is two intervals —
+  // `[lo, hi]` and `[-hi, -lo]`. Pick the one on the bar's own side of zero.
+  const positive = sHi > 0;
+  let bLo = positive ? lo : -hi;
+  // `-lo` when `lo === 0` is **negative zero**, which would escape through the
+  // exported `bandSpan` and fail any consumer's `Object.is` / `toEqual` against
+  // a plain `0`. Normalize at the source rather than letting each caller cope.
+  let bHi = positive ? hi : lo === 0 ? 0 : -lo;
+  // Clip to what the bar actually draws. An empty or inverted result means this
+  // band lies outside the bar's span — either beyond its reach, or (on a domain
+  // that excludes zero) entirely below its floor.
+  if (bLo < sLo) bLo = sLo;
+  if (bHi > sHi) bHi = sHi;
+  if (bHi <= bLo) return false;
+  bandLo = bLo;
+  bandHi = bHi;
   return true;
 }
 
@@ -411,13 +432,14 @@ export function drawBars(
       // highlight pops the alpha to 1 and outlines the selection in the bar's
       // own fill (the drawStacks binFills convention; see the header).
       const fill = fills[i] ?? style.fill;
-      ctx.globalAlpha = selected || isHovered ? 1 : style.opacity;
+      ctx.globalAlpha =
+        selected || isHovered ? (style.emphasisOpacity ?? 1) : style.opacity;
       ctx.fillStyle = fill;
       ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
       drawn += 1;
       if (selected) {
         ctx.lineWidth = style.outlineWidth;
-        ctx.strokeStyle = fill;
+        ctx.strokeStyle = style.selectedOutline ?? fill;
         ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
       }
       continue;
@@ -428,7 +450,8 @@ export function drawBars(
       // the bar keeps its own colours when live (swapping to one `highlight`
       // would erase the very thing the bands encode) and pops the alpha
       // instead. The whole bar stays one hit target — see `bandSpan`.
-      ctx.globalAlpha = selected || isHovered ? 1 : style.opacity;
+      ctx.globalAlpha =
+        selected || isHovered ? (style.emphasisOpacity ?? 1) : style.opacity;
       const v = cs.y[i]!;
       let topFill = ladder.colors[0]!;
       for (let bk = 0; bk < ladder.colors.length; bk += 1) {
@@ -447,7 +470,7 @@ export function drawBars(
         // the value reached — the one colour that means something for a bar
         // painted in several.
         ctx.lineWidth = style.outlineWidth;
-        ctx.strokeStyle = topFill;
+        ctx.strokeStyle = style.selectedOutline ?? topFill;
         ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
       }
       continue;
@@ -457,7 +480,8 @@ export function drawBars(
     // at the resting `style.opacity`, so on an alpha'd theme a hovered bar
     // (which has no outline) barely changed at all, and a selected one read
     // only by its outline (#576).
-    ctx.globalAlpha = selected || isHovered ? 1 : style.opacity;
+    ctx.globalAlpha =
+      selected || isHovered ? (style.emphasisOpacity ?? 1) : style.opacity;
     // Three-step emphasis when the theme opts in with `hover`: rest → hover →
     // selected. Selection outranks hover on a bar that is both (as the outline
     // already did). With no `hover` colour this is the shipped two-step —
@@ -477,7 +501,7 @@ export function drawBars(
       // that needs the two states clearly apart sets `BarStyle.hover` (#577);
       // the outline is the shape cue, not the whole signal.
       ctx.lineWidth = style.outlineWidth;
-      ctx.strokeStyle = style.highlight;
+      ctx.strokeStyle = style.selectedOutline ?? style.highlight;
       ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
     }
   }

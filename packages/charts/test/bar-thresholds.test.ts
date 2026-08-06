@@ -88,17 +88,29 @@ describe('bandSpan', () => {
   });
 
   it('bands a negative bar symmetrically, walking the ladder downward', () => {
-    // The ±3.5 diverging case: no negative breakpoints needed.
-    expect(bandSpan(0, -3, ladder, 0)).toEqual([0, -1]);
-    expect(bandSpan(0, -3, ladder, 1)).toEqual([-1, -2]);
-    expect(bandSpan(0, -3, ladder, 2)).toEqual([-2, -3]);
+    // The ±3.5 diverging case: no negative breakpoints needed. Spans come back
+    // ascending, as the draw paths consume them.
+    expect(bandSpan(0, -3, ladder, 0)).toEqual([-1, 0]);
+    expect(bandSpan(0, -3, ladder, 1)).toEqual([-2, -1]);
+    expect(bandSpan(0, -3, ladder, 2)).toEqual([-3, -2]);
   });
 
-  it('measures from a non-zero baseline, not from zero', () => {
-    // An explicit <YAxis min> above zero rests bars on the axis floor; the
-    // ladder is a distance travelled from wherever the bar starts.
-    expect(bandSpan(10, 12.5, ladder, 0)).toEqual([10, 11]);
-    expect(bandSpan(10, 12.5, ladder, 2)).toEqual([12, 12.5]);
+  it('reads breakpoints as absolute values, not offsets from the baseline', () => {
+    // An explicit <YAxis min={10}> rests the bar on 10. A [1, 2] ladder is
+    // entirely below that floor, so the bar sits wholly in the top band —
+    // it does NOT band at 11 and 12, which is what measuring the ladder from
+    // the resolved baseline would have done, silently.
+    expect(bandSpan(10, 12.5, ladder, 0)).toBeNull();
+    expect(bandSpan(10, 12.5, ladder, 1)).toBeNull();
+    expect(bandSpan(10, 12.5, ladder, 2)).toEqual([10, 12.5]);
+  });
+
+  it('clips a partly-below-floor ladder to the drawn span', () => {
+    // Floor at 1.5, bar to 2.5: band 1 ([1,2]) is half below the floor and
+    // shows only its visible slice; band 2 takes the rest.
+    expect(bandSpan(1.5, 2.5, ladder, 0)).toBeNull();
+    expect(bandSpan(1.5, 2.5, ladder, 1)).toEqual([1.5, 2]);
+    expect(bandSpan(1.5, 2.5, ladder, 2)).toEqual([2, 2.5]);
   });
 
   it('puts everything in the top band when the ladder is empty above it', () => {

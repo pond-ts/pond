@@ -203,3 +203,74 @@ describe('the ladder fails loudly rather than drawing an unbanded bar', () => {
     warn.mockRestore();
   });
 });
+
+describe('inline array props do not churn the layer', () => {
+  it('keeps one stable layer entry across re-renders with an inline array', () => {
+    // `thresholds={[1, 2]}` inline is the documented usage — a fresh array
+    // every render. If the ladder memo keyed on array *identity* it would
+    // rebuild each render, rebuilding the layer entry with it and re-running
+    // `registerLayer`: a repaint treadmill on any frequently-rendering chart,
+    // plus one dev warning per frame. Entry identity is the observable proxy.
+    const seen: unknown[] = [];
+    function CaptureEntry() {
+      const r = useContext(RowContext);
+      useEffect(() => {
+        if (r && r.layers[0]) seen.push(r.layers[0].layer);
+      });
+      return null;
+    }
+    const tree = () => (
+      <ChartContainer range={[0, 3]} width={300}>
+        <ChartRow height={100}>
+          <YAxis id="a" min={0} max={4} label="" />
+          <Layers>
+            <BarChart
+              categories={categories}
+              id="cap"
+              thresholds={[1, 2]}
+              bandColors={['#0a0', '#fa0', '#f00']}
+            />
+            <CaptureEntry />
+          </Layers>
+        </ChartRow>
+        <XAxis />
+      </ChartContainer>
+    );
+    const stub = stubCanvasContext();
+    try {
+      const { rerender } = render(tree());
+      for (let i = 0; i < 4; i += 1) rerender(tree());
+    } finally {
+      stub.restore();
+    }
+    // Every observation must be the same object — one entry, never rebuilt.
+    expect(seen.length).toBeGreaterThan(1);
+    expect(new Set(seen).size).toBe(1);
+  });
+
+  it('still rebuilds the ladder when the threshold VALUES change', () => {
+    // Value-comparing must not go so far as to miss a real change.
+    const a = mount(
+      <BarChart
+        categories={categories}
+        id="cap"
+        thresholds={[1, 2]}
+        bandColors={BANDS}
+      />,
+    );
+    const b = mount(
+      <BarChart
+        categories={categories}
+        id="cap"
+        thresholds={[0.5, 1]}
+        bandColors={BANDS}
+      />,
+    );
+    const fillsOf = (calls: typeof a.calls) =>
+      calls
+        .filter((c) => c.type === 'set' && c.name === 'fillStyle')
+        .map((c) => c.args[0] as string)
+        .filter((f) => BANDS.includes(f));
+    expect(fillsOf(b.calls)).not.toEqual(fillsOf(a.calls));
+  });
+});
