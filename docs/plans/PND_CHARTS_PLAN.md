@@ -1325,11 +1325,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                        _Still true; no longer felt here._ The draggable marker is gone — selection
-                        is a click — so nothing on this page is in edit mode. But it cost a design
-                        iteration to discover, and the docs still don't mention it. **The one-line
-                        fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                        row's data cursor is suppressed."
+                            _Still true; no longer felt here._ The draggable marker is gone — selection
+                            is a click — so nothing on this page is in edit mode. But it cost a design
+                            iteration to discover, and the docs still don't mention it. **The one-line
+                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                            row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -1920,7 +1920,7 @@ fills from `BarStyle.bands`.
   computed from zero and the painted span clipped to the bar's drawn extent,
   which leaves the common (baseline 0) case identical and makes the min>0 case
   put the whole bar in the top band, correctly. Worth noting the original had
-  a *passing test asserting the wrong behaviour* — the test encoded the
+  a _passing test asserting the wrong behaviour_ — the test encoded the
   implementation rather than the requirement.
 - **Deferred:** asymmetric ladders (signed breakpoints). Negatives band
   symmetrically on the magnitude, which covers the ± diverging case; no consumer
@@ -1987,13 +1987,43 @@ the band scale is the container's x scale.
   at the series door.
 
 **Found in review, and worth recording as a class.** The Layer-2 pass caught
-three real defects, two of which are the *same mistake this PR is about*:
+three real defects, two of which are the _same mistake this PR is about_:
 `BarStyle.emphasisOpacity` and `.selectedOutline` were added as public theme
 fields but wired only into `drawStacks`, so the single-series path accepted and
 ignored them — [PND-CATEMPH]'s exact failure shape, reintroduced by the commit
 fixing [PND-CATEMPH]. The threshold-baseline bug was the same species: silent,
 plausible, wrong only on a domain the author didn't test. A fix for a class of
 bug does not immunise its own diff against that class.
+
+**The Codex pass found four more, with zero overlap.** Worth recording because
+it is the clearest evidence yet for running both reviewers rather than treating
+the second as ceremony:
+
+- **`<YAxis hide>` broke alignment in a multi-row container** (the only HIGH
+  across both reviews). The container reserves each axis _column_ at the widest
+  across rows, so a hidden axis sharing a column with a visible one is still
+  allotted that width — and rendering `null` slid that row's plot left of its
+  siblings and the shared x-axis. Fixed by rendering an empty box at the
+  reserved slot width, which collapses to zero when the axis is alone in its
+  column. **Every one of my tests used a single-row container**; the story that
+  does use two rows asserts nothing. The lesson generalises: a prop about
+  _layout_ needs a multi-row case, because single-row is the one arrangement
+  where layout cannot go wrong.
+- **`normalizeThresholds` accepted negative breakpoints**, which the magnitude
+  ladder cannot express — `[-2, -1]` painted the whole bar one colour, looking
+  deliberate. Now dropped (with `0`) and dev-warned.
+- **Two doc passages the code had outgrown** — `thresholds` still documented as
+  baseline-relative after the implementation moved to absolute, and
+  `<BarChart>`'s JSDoc still saying negative stack segments are skipped and
+  diverging stacks out of scope, in the same PR that implemented signed stacks.
+  Both would have shipped as confident lies.
+
+Across the two passes: **ten findings, no duplicates.** Claude's clustered on
+the diff's internal consistency (inert fields, memo identity, wrong numbers in
+prose); Codex's on interaction with surrounding machinery (slot reservation,
+input-domain validation, stale neighbouring docs). That split is the reason the
+escalation exists, and is worth remembering the next time a medium-confidence
+rating looks like a formality.
 
 **Not done: the dev-mode warning sweep.** The report's best structural finding
 is that SIGNSTACK, CATEMPH and TICKUNIT share a failure _shape_, arguing for one
