@@ -450,6 +450,28 @@ resolution" is not a chart prop but an ordinary `aggregate`, and everything
 pond can already bin by is available for free. The reducer map is built at
 runtime because the columns are: 45 of them, one per year in the record.
 
+Two axis choices carry over unchanged from the chart above. `timeFormat="%b"`,
+because the reference year is a **carrier, not information** — without it the
+first tick reads `2001`, announcing a synthetic year the data has no opinion
+about. And the y axis names only the years the line chart names, via explicit
+ticks:
+
+```tsx
+const NAMED_TICKS = NINO34_NAMED.flatMap((n) => {
+  const row = ROWS.indexOf(yearColumn(n.year));
+  return row < 0 ? [] : [{ at: row + 0.5, label: n.label }];
+});
+
+<YAxis id="yr" ticks={NAMED_TICKS} label="" />;
+```
+
+`{ at, label }` ticks override the layer's `binCategories`, which would
+otherwise label all 45 rows into an unreadable stack. `at` is the row's
+**centre** (`row + 0.5`) because the y scale runs over unit slots, one per
+column — the same convention a category axis uses. 2015 is worth finding on
+the grid: it is the light band, and it is the same year the chart above draws
+in `highlight3`.
+
 Four things this surfaced that are worth naming:
 
 - **This grid is absolute SST, not anomaly**, so what the colour shows most

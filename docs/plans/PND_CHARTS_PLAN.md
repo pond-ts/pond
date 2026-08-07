@@ -302,6 +302,28 @@ last:
   `test/heat-identity.test.tsx`. **Worth a sweep**: any layer taking an array
   prop is exposed to the same bug.
 
+- **Hover deduped on `id + key`, so it was stuck on the y axis.**
+  `ChartContainer.setHovered` suppresses repeats so the data canvas repaints
+  only when the hovered mark changes. But `key` is the mark's position on the
+  **bin axis**, unique only for a layer with one mark per bin — a stacked bar or
+  a heat-map column stacks several, so every move _within_ a bin was swallowed.
+  On the Niño grid that presented as dragging straight down a column never
+  changing the reported cell. Now compares the full identity (`id`, `key`,
+  `label`, `mark`) — which is what the comment above it had claimed all along.
+  **This was a `<BarChart>` bug too**, not just a heat-map one: any stacked
+  column had it. `test/hover-dedupe.test.tsx`.
+- **Axis carriers leak without `timeFormat`.** The Niño day-of-year axis is a
+  synthetic reference year (2001), and the first tick renders `2001` unless the
+  container passes `timeFormat="%b"` — announcing a year the data has no opinion
+  about. The line chart above it already knew this; the heat map had to learn it
+  again, which suggests the reference-year idiom deserves a recipe rather than a
+  per-card comment.
+- **Explicit `{ at, label }` ticks are how you name _some_ rows.** With 45 rows,
+  `binCategories` labels all of them into an unreadable stack. `<YAxis ticks>`
+  overrides it, so naming the years the line chart names is three ticks at
+  `row + 0.5`. Also needs `label=""`, since the axis title otherwise defaults to
+  the axis id — the known friction pjm flagged.
+
 **Friction found, not fixed:**
 
 - **`Sequence.calendar` has no `'year'` unit** — it stops at `month`
@@ -1574,11 +1596,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                is a click — so nothing on this page is in edit mode. But it cost a design
-                                                iteration to discover, and the docs still don't mention it. **The one-line
-                                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                row's data cursor is suppressed."
+                                                    _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                    is a click — so nothing on this page is in edit mode. But it cost a design
+                                                    iteration to discover, and the docs still don't mention it. **The one-line
+                                                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                    row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires

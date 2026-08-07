@@ -60,8 +60,6 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
-## [0.57.0] — 2026-08-07
-
 ### Added
 
 - **charts: `<HeatMap>` — a grid of colour-coded cells** ([PND-HEATMAP]). Bins
@@ -100,6 +98,22 @@ include new features and type-level changes; patch bumps are strictly additive.
 
   Not built: a grouped two-level x axis, cell value labels, and 2-D region
   selection / pan-zoom.
+
+### Fixed
+
+- **charts: hover was stuck on the y axis inside a stacked column.**
+  `<ChartContainer>` deduped the hovered mark on `id + key` so the data canvas
+  repaints only when the mark changes — but `key` is the mark's position on the
+  **bin axis**, unique only for a layer with one mark per bin. A stacked
+  `<BarChart>` column or a `<HeatMap>` column stacks several, so every pointer
+  move _within_ a bin was swallowed: dragging straight down a heat-map column
+  never changed the reported cell, and `onHover` never fired. Now compares the
+  mark's full identity (`id`, `key`, `label`, `mark`). Genuine repeats are still
+  deduped, so this costs no extra repaints.
+
+## [0.57.0] — 2026-08-07
+
+### Added
 
 - **charts: `<Zone>` — a shaded y-span annotation.** The fourth annotation
   mark, and the value-axis counterpart of `<Region>`: a band between two y

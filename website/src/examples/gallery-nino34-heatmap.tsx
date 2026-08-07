@@ -15,6 +15,7 @@ import {
 } from '@site/src/theme/useSiteChartTheme';
 import {
   dayLabel,
+  NINO34_NAMED,
   NINO34_YEARS,
   NINO34_YEAR_RANGE,
   ninoWideByYear,
@@ -44,6 +45,17 @@ const ROWS = NINO34_YEARS.map(yearColumn);
 const MEAN_BY_YEAR = Object.fromEntries(
   ROWS.map((c) => [c, 'avg' as const]),
 ) as Record<string, 'avg'>;
+
+/**
+ * The rows worth naming — the same years the day-of-year chart above picks out.
+ * Explicit `{ at, label }` ticks override the layer's `binCategories`, which
+ * would otherwise label all 45 rows into an unreadable stack. `at` is the row's
+ * centre because the y scale runs over unit slots, one per column.
+ */
+const NAMED_TICKS = NINO34_NAMED.flatMap((n) => {
+  const row = ROWS.indexOf(yearColumn(n.year));
+  return row < 0 ? [] : [{ at: row + 0.5, label: n.label }];
+});
 
 /** What the hovered cell's x bin covers, in the grain that produced it. */
 function periodLabel(grain: Grain, key: number): string {
@@ -174,6 +186,11 @@ export default function GalleryNino34Heatmap({
         range={NINO34_YEAR_RANGE}
         width={width}
         theme={theme}
+        // The reference year is a carrier, not information: the axis is a
+        // day-of-year axis, so `%b` prints month abbreviations instead of
+        // leaking the synthetic year the fixture happens to be built on. Same
+        // reason, same prop, as the day-of-year chart above.
+        timeFormat="%b"
         // `onHover` reports the **cell under the pointer** — a real 2-D hit,
         // which is what a grid needs and what `onTrackerChanged` cannot give:
         // the tracker samples every row at the cursor's x and knows nothing
@@ -182,7 +199,9 @@ export default function GalleryNino34Heatmap({
         onHover={setHit}
       >
         <ChartRow height={height}>
-          <YAxis id="yr" hide />
+          {/* `label=""` because the title otherwise defaults to the axis id —
+              "yr" is plumbing, not a label. */}
+          <YAxis id="yr" ticks={NAMED_TICKS} label="" />
           <Layers>
             <HeatMap
               series={series}

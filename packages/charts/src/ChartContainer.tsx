@@ -873,10 +873,18 @@ export function ChartContainer({
 
   // Hover-highlight: the transient mark under the pointer (distinct from the
   // committed selection). Controlled (`hovered` prop) or uncontrolled (internal),
-  // mirroring selection; `onHover` notifies in both modes. Deduped by key+label
-  // so it fires — and the data canvas repaints — only when the hovered mark
-  // changes, not on every pointer move (the move itself just slides the SVG
-  // cursor, which never touches the data canvas).
+  // mirroring selection; `onHover` notifies in both modes. Deduped by the mark's
+  // full identity so it fires — and the data canvas repaints — only when the
+  // hovered mark changes, not on every pointer move (the move itself just slides
+  // the SVG cursor, which never touches the data canvas).
+  //
+  // "Full identity" means `label` and `mark` as well as `id` and `key`, and that
+  // is load-bearing rather than belt-and-braces. `key` is the mark's position on
+  // the **bin axis**, so any layer that stacks more than one mark in a bin — a
+  // stacked bar, a `<HeatMap>` column — has several marks sharing a key, and
+  // deduping on `id + key` alone silently swallows every move *within* a bin.
+  // On a heat map that reads as the hover being stuck: dragging straight down a
+  // column never changes the reported cell.
   const [internalHovered, setInternalHovered] = useState<SelectInfo | null>(
     null,
   );
@@ -898,7 +906,9 @@ export function ChartContainer({
       (prev !== null &&
         hit !== null &&
         prev.id === hit.id &&
-        prev.key === hit.key);
+        prev.key === hit.key &&
+        prev.label === hit.label &&
+        prev.mark === hit.mark);
     if (same) return;
     lastHoverRef.current = hit;
     onHoverRef.current?.(hit);
