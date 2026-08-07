@@ -204,27 +204,62 @@ export function drawHeat(
   ctx.globalAlpha = style.opacity;
   const [vStart, vEnd] = visibleSpanRange(ss.begin, ss.end, ss.length, xScale);
 
+  // The row bands, once. Each depends only on `g`, so computing them inside the
+  // cell loop re-derived the same G boundaries for every visible bin — O(V·G)
+  // scale calls where O(G) does. Kept as two flat arrays rather than tuples so
+  // the loop allocates nothing per cell. (`cellRect` still does it per call: it
+  // is the hit-test's entry point, where there is exactly one cell and nothing
+  // to amortize over. The two paths diverge on purpose — see perf-heat.mjs.)
+  const rowTop = new Float64Array(G);
+  const rowBottom = new Float64Array(G);
+  for (let g = 0; g < G; g += 1) {
+    const yA = yScale(g);
+    const yB = yScale(g + 1);
+    const top = Math.min(yA, yB);
+    const bottom = Math.max(yA, yB);
+    const inset = Math.min(
+      style.gap / 2,
+      Math.max(0, (bottom - top) / 2 - 0.5),
+    );
+    rowTop[g] = top + inset;
+    rowBottom[g] = bottom - inset;
+  }
+
+  let lastFill: string | undefined;
+
   for (let b = vStart; b < vEnd; b += 1) {
+    // The x span depends only on the BIN, so it is hoisted out of the row loop:
+    // a 45-row grid was paying two scale calls per cell for one answer per
+    // column.
+    const [x0, x1] = barSpanPx(
+      ss.begin[b]!,
+      ss.end[b]!,
+      xScale,
+      style.gap,
+      style.minWidth,
+    );
+    const base = b * G;
     for (let g = 0; g < G; g += 1) {
-      const rect = cellRect(
-        ss,
-        b,
-        g,
-        xScale,
-        yScale,
-        style.gap,
-        style.minWidth,
-      );
-      if (rect === null) continue;
+      // Gaps are skipped before any per-cell work, exactly as `cellRect` does
+      // by returning null: a hole in the record draws nothing and owns no hit
+      // region.
+      if (!Number.isFinite(ss.values[base + g]!)) continue;
       const fill = colorAt(b, g);
       if (fill === undefined) continue;
-      const [x0, x1, yTop, yBottom] = rect;
+      const yTop = rowTop[g]!;
+      const yBottom = rowBottom[g]!;
 
       const selected = matchesCell(selection, seriesId, ss, b, g);
       const live = selected || matchesCell(hovered, seriesId, ss, b, g);
 
       ctx.globalAlpha = live ? 1 : style.opacity;
-      ctx.fillStyle = fill;
+      // Assigning `fillStyle` is not free — a real canvas parses the CSS colour
+      // on every set — and a banded ramp hands out long runs of the same string,
+      // so set it only when it actually changes.
+      if (fill !== lastFill) {
+        lastFill = fill;
+        ctx.fillStyle = fill;
+      }
       ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
       if (live) {
         // Inset by half the stroke so the outline sits inside the cell rather

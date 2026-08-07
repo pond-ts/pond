@@ -166,12 +166,37 @@ describe('drawHeat', () => {
     return calls;
   };
 
+  /**
+   * The fill **in effect** at each `fillRect`, by replaying the call stream.
+   *
+   * Not `calls.filter(fillStyle).map(...)`: `drawHeat` sets `fillStyle` only
+   * when it changes, since a real canvas parses the CSS colour on every
+   * assignment and a banded ramp emits long runs of one string. Counting writes
+   * would pin that optimization rather than the guarantee, which is that every
+   * cell is painted in its own band's colour.
+   */
+  const fillsDrawn = (calls: ReturnType<typeof draw>): string[] => {
+    let current: string | undefined;
+    const out: string[] = [];
+    for (const c of calls) {
+      if (c.type === 'set' && c.name === 'fillStyle')
+        current = c.args[0] as string;
+      else if (c.name === 'fillRect' && current !== undefined)
+        out.push(current);
+    }
+    return out;
+  };
+
   it('fills every cell of the grid, banded across the ramp', () => {
-    const fills = draw(two3())
-      .filter((c) => c.type === 'set' && c.name === 'fillStyle')
-      .map((c) => c.args[0]);
     // bin0: 0,2,4 → a,c,d ; bin1: 1,3,4 → b,d,d
-    expect(fills).toEqual(['#a', '#c', '#d', '#b', '#d', '#d']);
+    expect(fillsDrawn(draw(two3()))).toEqual([
+      '#a',
+      '#c',
+      '#d',
+      '#b',
+      '#d',
+      '#d',
+    ]);
   });
 
   it('skips gap cells without disturbing their neighbours', () => {
@@ -183,10 +208,7 @@ describe('drawHeat', () => {
     // The colour is the datum — swapping it would erase the reading.
     const calls = draw(two3(), { id: 'heat', key: 0, label: 'mid' });
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(1);
-    const fills = calls
-      .filter((c) => c.type === 'set' && c.name === 'fillStyle')
-      .map((c) => c.args[0]);
-    expect(fills).toEqual(['#a', '#c', '#d', '#b', '#d', '#d']);
+    expect(fillsDrawn(calls)).toEqual(['#a', '#c', '#d', '#b', '#d', '#d']);
   });
 
   it('outlines the HOVERED cell too, more lightly than a selected one', () => {

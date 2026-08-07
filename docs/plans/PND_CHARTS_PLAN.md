@@ -336,6 +336,31 @@ last:
   symmetric domain, because the neutral band has to sit on zero and an
   auto-extent moves it silently as the binning changes.
 
+- **Perf: the draw loop did per-cell what was per-bin and per-row.**
+  `scripts/perf-heat.mjs` (six scenarios). `drawHeat` called `cellRect` per
+  cell, which recomputed the x span (two scale calls, depends only on the bin),
+  recomputed the row band (two more, depends only on the row), and allocated a
+  4-element array — O(V·G) scale calls and allocations where O(V + G) and zero
+  do. On the Niño day grid that was ~33k scale calls and ~16k short-lived arrays
+  **per frame**, and hover repaints the whole grid. Hoisting both, plus setting
+  `ctx.fillStyle` only when the colour changes, took the real workload from
+  **2.230ms → 0.798ms (−64%)** and a 200-row grid from **9.649ms → 3.682ms
+  (−62%)**. `cellRect` itself is unchanged — `heatAt` calls it once per
+  hit-test, where there is nothing to amortize over.
+
+  Two optimizations were **measured and rejected**, recorded in the script so
+  nobody re-derives them: short-circuiting `matchesCell` when nothing is live
+  (no win — the checks already exit on their first line), and caching
+  `globalAlpha` the way `fillStyle` is cached (measures a further −31% and that
+  number is an artefact — the bench's context is a `Proxy` charging a trap
+  crossing per property write, where a real canvas stores a number; `fillStyle`
+  survives the same scrutiny only because a real canvas genuinely parses the
+  colour string).
+
+  **The harness has a known bias worth carrying forward to the other charts
+  benches**: a `Proxy` context overstates any optimization whose only effect is
+  doing fewer `ctx` property writes.
+
 **Friction found, not fixed:**
 
 - **`Sequence.calendar` has no `'year'` unit** — it stops at `month`
@@ -1608,11 +1633,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                        _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                        is a click — so nothing on this page is in edit mode. But it cost a design
-                                                        iteration to discover, and the docs still don't mention it. **The one-line
-                                                        fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                        row's data cursor is suppressed."
+                                                            _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                            is a click — so nothing on this page is in edit mode. But it cost a design
+                                                            iteration to discover, and the docs still don't mention it. **The one-line
+                                                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                            row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
