@@ -450,6 +450,51 @@ resolution" is not a chart prop but an ordinary `aggregate`, and everything
 pond can already bin by is available for free. The reducer map is built at
 runtime because the columns are: 45 of them, one per year in the record.
 
+### Two more knobs, neither of them the layer
+
+**Measure** swaps the series, not the chart. The anomaly grid is assembled from
+the same per-year `anomaly` columns the line chart draws, reshaped wide:
+
+```ts
+const columns = { time: DAY_TIMES };
+for (const year of NINO34_YEARS) columns[yearColumn(year)] = anomalies(year);
+```
+
+It is worth being clear that this is a **reshape, not a recomputation** — the
+climatology has already been computed per-year for the lines, so the grid costs
+one pass over 45 cached columns. And it cross-checks the line chart: hover the
+2015 row in November on the day binning and the cell reads **+3.00 °C on
+17 November**, against the **+3.03 °C on 19 November** peak quoted at the top of
+this page.
+
+**Palette** is just the `colors` array, which is the whole point of colour being
+a prop rather than a theme slot:
+
+| Ramp          | What it is                                 | Suits                                                |
+| ------------- | ------------------------------------------ | ---------------------------------------------------- |
+| **Site**      | `useSequentialRamp()`, follows the theme   | Fitting the page; the only one that flips light/dark |
+| **Heat**      | Inferno — dark → red → orange → near-white | Absolute temperature, where the metaphor is literal  |
+| **Diverging** | ColorBrewer RdBu reversed, nine steps      | The anomaly, which straddles a meaningful zero       |
+
+Two details that are easy to get wrong. The diverging ramp has an **odd** number
+of steps so its neutral band can straddle zero — with an even count, zero falls
+on a boundary and there is no "no anomaly" colour. And it only works against a
+**pinned symmetric domain**:
+
+```tsx
+<HeatMap … colors={DIVERGING} domain={[-m, +m]} />
+```
+
+Without `domain`, the layer takes the extent of whatever is on screen, so the
+neutral band drifts off zero and every colour changes meaning as the binning
+changes — silently, because a colour scale has no tick labels to show that it
+moved. That is exactly the failure `domain` exists to prevent.
+
+The heat and diverging ramps are hard-coded hex and do **not** follow the
+light/dark toggle, unlike everything else on this site. That is deliberate: a
+heat ramp _is_ a specific set of colours, and re-tinting it per theme would
+change what the reader reads.
+
 Two axis choices carry over unchanged from the chart above. `timeFormat="%b"`,
 because the reference year is a **carrier, not information** — without it the
 first tick reads `2001`, announcing a synthetic year the data has no opinion
@@ -474,15 +519,14 @@ in `highlight3`.
 
 Four things this surfaced that are worth naming:
 
-- **This grid is absolute SST, not anomaly**, so what the colour shows most
-  loudly is the **seasonal cycle** — the vertical banding, warm through
-  April–June and cool through November–January. That is the honest reading of
-  these numbers, and it is something the 45-line chart above cannot show at a
-  glance. It also means ENSO is _not_ the dominant signal here: to get the
-  horizontal banding you'd expect, the grid would have to be built from the
-  anomaly columns, subtracting the same climatology
-  [computed above](#the-climatology-in-two-collapses). The layer would not
-  change — only the series handed to it.
+- **SST bands vertically; anomaly bands horizontally.** On absolute SST the
+  loudest thing in the grid is the **seasonal cycle** — warm through
+  April–June, cool through November–January — and ENSO is buried underneath it.
+  Switch to **Anomaly** and the vertical banding vanishes: subtracting each
+  year's own climatology removes the seasonal cycle _and_ the warming trend,
+  and what is left is horizontal, where an El Niño year is a warm row. 1997 and
+  2015 become obvious; the blue rows between them are La Niñas. Nothing about
+  the layer changes — it is the same component with a different series.
 - **`Sequence.calendar` has no `'year'` unit** — it stops at `month`. The
   whole-year bucket is therefore a fixed step (`'370d'`) anchored at 1 January
   and deliberately sized past the record's end, so exactly one bucket covers

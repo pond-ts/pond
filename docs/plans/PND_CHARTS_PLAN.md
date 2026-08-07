@@ -324,6 +324,18 @@ last:
   `row + 0.5`. Also needs `label=""`, since the axis title otherwise defaults to
   the axis id — the known friction pjm flagged.
 
+- **Measure and palette are both "hand it a different value", not layer work.**
+  The Niño grid now toggles SST vs anomaly and site/heat/diverging ramps. The
+  first is a different _series_ (the per-year `anomaly` columns reshaped wide —
+  a reshape, not a recomputation, since the line chart already computed them);
+  the second is a different `colors` array. Neither touches `<HeatMap>`, which
+  is the evidence that colour-as-a-prop was the right call: a themed
+  `theme.heat` slot could not have expressed "inferno for absolute temperature,
+  RdBu for the anomaly" without inventing a second axis of configuration.
+  It also validated `domain`: a diverging ramp is meaningless without a pinned
+  symmetric domain, because the neutral band has to sit on zero and an
+  auto-extent moves it silently as the binning changes.
+
 **Friction found, not fixed:**
 
 - **`Sequence.calendar` has no `'year'` unit** — it stops at `month`
@@ -1596,11 +1608,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                    _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                    is a click — so nothing on this page is in edit mode. But it cost a design
-                                                    iteration to discover, and the docs still don't mention it. **The one-line
-                                                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                    row's data cursor is suppressed."
+                                                        _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                        is a click — so nothing on this page is in edit mode. But it cost a design
+                                                        iteration to discover, and the docs still don't mention it. **The one-line
+                                                        fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                        row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires

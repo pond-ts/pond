@@ -15,9 +15,11 @@ import {
 } from '@site/src/theme/useSiteChartTheme';
 import {
   dayLabel,
+  NINO34_ANOMALY_DOMAIN,
   NINO34_NAMED,
   NINO34_YEARS,
   NINO34_YEAR_RANGE,
+  ninoWideAnomalyByYear,
   ninoWideByYear,
   timeToDayOfYear,
   yearColumn,
@@ -30,10 +32,78 @@ import readout from './lib/tracker-readout.module.css';
  *  binning does the work. */
 type Grain = 'day' | 'month' | 'year';
 
-const GRAINS: ReadonlyArray<{ id: Grain; label: string; cells: string }> = [
-  { id: 'day', label: 'Day', cells: '365 cells' },
-  { id: 'month', label: 'Month', cells: '12 cells' },
-  { id: 'year', label: 'Year', cells: '1 cell' },
+/** Which quantity the colour carries. */
+type Measure = 'sst' | 'anomaly';
+
+/** Which ramp the colour comes out of. */
+type Palette = 'site' | 'heat' | 'diverging';
+
+const GRAINS: ReadonlyArray<{ id: Grain; label: string }> = [
+  { id: 'day', label: 'Day' },
+  { id: 'month', label: 'Month' },
+  { id: 'year', label: 'Year' },
+];
+
+const CELLS: Record<Grain, string> = {
+  day: '365 cells',
+  month: '12 cells',
+  year: '1 cell',
+};
+
+const MEASURES: ReadonlyArray<{ id: Measure; label: string }> = [
+  { id: 'sst', label: 'SST' },
+  { id: 'anomaly', label: 'Anomaly' },
+];
+
+const PALETTES: ReadonlyArray<{ id: Palette; label: string }> = [
+  { id: 'site', label: 'Site' },
+  { id: 'heat', label: 'Heat' },
+  { id: 'diverging', label: 'Diverging' },
+];
+
+/**
+ * **Inferno** — the perceptually-uniform version of a black-body ramp, which is
+ * the traditional "heat" gradient: dark through red and orange to near-white.
+ * Worth preferring over a hand-rolled black→red→yellow→white because that one
+ * has a bright band in the middle that reads as a contour line in data that has
+ * none; inferno's lightness climbs monotonically, so equal steps in value look
+ * like equal steps in colour.
+ *
+ * Hard-coded rather than themed, and it does not flip with the light/dark
+ * toggle. That is the honest tradeoff: a heat ramp **is** a specific set of
+ * colours, and re-tinting it per theme would change what the reader reads.
+ * Starting at inferno's near-black rather than pure black keeps the dark end
+ * from disappearing into a dark page.
+ */
+const HEAT: readonly string[] = [
+  '#1b0c41',
+  '#4a0c6b',
+  '#781c6d',
+  '#a52c60',
+  '#cf4446',
+  '#ed6925',
+  '#fb9b06',
+  '#f7d13d',
+];
+
+/**
+ * **ColorBrewer RdBu, reversed** — cold blue through neutral to warm red. Nine
+ * steps, deliberately **odd**, so that with a domain pinned symmetrically about
+ * zero the middle band straddles zero and "no anomaly" reads as neutral.
+ *
+ * The right choice for a quantity that straddles a meaningful zero, which an
+ * anomaly does and an absolute temperature does not.
+ */
+const DIVERGING: readonly string[] = [
+  '#2166ac',
+  '#4393c3',
+  '#92c5de',
+  '#d1e5f0',
+  '#f7f7f7',
+  '#fddbc7',
+  '#f4a582',
+  '#d6604d',
+  '#b2182b',
 ];
 
 /** Every year column, as heat-map rows. Oldest at the bottom, so the record
@@ -57,6 +127,23 @@ const NAMED_TICKS = NINO34_NAMED.flatMap((n) => {
   return row < 0 ? [] : [{ at: row + 0.5, label: n.label }];
 });
 
+/**
+ * The anomaly colour domain, **pinned and symmetric about zero**.
+ *
+ * Two reasons it is pinned rather than left to the layer's own extent. A
+ * diverging ramp only means anything if its neutral band sits on zero, which
+ * needs `[-m, +m]`. And a colour scale has no tick labels, so a domain that
+ * re-means itself as the binning changes moves every colour with no visible
+ * announcement — the exact failure `domain` exists to prevent.
+ */
+const ANOMALY_DOMAIN: readonly [number, number] = (() => {
+  const m = Math.max(
+    Math.abs(NINO34_ANOMALY_DOMAIN[0]),
+    Math.abs(NINO34_ANOMALY_DOMAIN[1]),
+  );
+  return [-m, m];
+})();
+
 /** What the hovered cell's x bin covers, in the grain that produced it. */
 function periodLabel(grain: Grain, key: number): string {
   if (grain === 'year') return 'whole year';
@@ -66,8 +153,8 @@ function periodLabel(grain: Grain, key: number): string {
 }
 
 /**
- * **Niño 3.4 sea-surface temperature as a heat map**, with a day / month / year
- * granularity control.
+ * **Niño 3.4 sea-surface temperature as a heat map** — granularity, measure and
+ * palette all switchable, and none of them a change to the layer.
  *
  * 16,275 daily values (NOAA OISST, 1982 →) already live in this site as a
  * **wide** series: one column per year, one row per day-of-year. That shape was
@@ -75,21 +162,24 @@ function periodLabel(grain: Grain, key: number): string {
  * across year columns — and it happens to be exactly a heat map's shape too,
  * with the years as rows.
  *
- * So the granularity control is **not** a chart prop. It re-bins the *x* axis
- * with pond's ordinary `aggregate`, and the chart redraws whatever comes out:
+ * **Granularity** re-bins the *x* axis with pond's ordinary `aggregate`; the
+ * chart redraws whatever comes out. Day is the series as it stands (365 cells
+ * per row); month is `Sequence.calendar('month')` (12); year is one cell per
+ * row — climate stripes stood on end. (`Sequence.calendar` has no `'year'`
+ * unit, so that one is a fixed `'370d'` step anchored at 1 January, sized past
+ * the record's end so exactly one bucket covers it.) The rows are identical in
+ * all three: the y dimension is columns, so it is fixed by the data, and
+ * everything about resolution belongs to x where pond already owns it.
  *
- * - **Day** — the series as it stands, 365 cells per row.
- * - **Month** — `Sequence.calendar('month')`, 12 cells. Calendar, not a
- *   duration: months are 28–31 days.
- * - **Year** — one cell per row: the whole record collapses to a single column,
- *   45 cells tall, which is climate stripes stood on end. `Sequence.calendar`
- *   has no `'year'` unit, so this one is a fixed `'370d'` step anchored at
- *   1 January — deliberately longer than the year so exactly one bucket covers
- *   it.
+ * **Measure** swaps which series is handed over. Absolute SST is dominated by
+ * the seasonal cycle, so it bands **vertically** and ENSO is buried; the
+ * anomaly grid subtracts each year's own climatology and bands
+ * **horizontally**, where an El Niño year is a warm row. Same layer, same
+ * props, different series.
  *
- * The rows are identical in all three. That is the layer's constraint paying
- * off: the y dimension is columns, so it is fixed by the data, and everything
- * about resolution belongs to x where pond already owns it.
+ * **Palette** is just the `colors` array. Note which ramp suits which measure:
+ * a diverging ramp needs a meaningful zero, which the anomaly has and the
+ * absolute temperature does not.
  */
 export default function GalleryNino34Heatmap({
   width,
@@ -99,62 +189,99 @@ export default function GalleryNino34Heatmap({
   height?: number;
 }) {
   const theme = useSiteChartTheme();
-  const ramp = useSequentialRamp();
+  const siteRamp = useSequentialRamp();
   const [grain, setGrain] = useState<Grain>('month');
+  const [measure, setMeasure] = useState<Measure>('sst');
+  const [palette, setPalette] = useState<Palette>('heat');
   const [hit, setHit] = useState<SelectInfo | null>(null);
 
   const series = useMemo<TimeSeries<SeriesSchema>>(() => {
-    if (grain === 'day') return ninoWideByYear;
+    const source = measure === 'sst' ? ninoWideByYear : ninoWideAnomalyByYear();
+    if (grain === 'day') return source;
     const seq =
       grain === 'month'
         ? Sequence.calendar('month')
-        : // `Sequence.calendar` has no `'year'` unit — it stops at `month` — so
-          // the whole-year bucket is a fixed step anchored at 1 January, sized
-          // past the record's end so exactly one bucket covers it.
-          Sequence.every('370d', { anchor: NINO34_YEAR_RANGE[0] });
-    return ninoWideByYear.aggregate(seq, MEAN_BY_YEAR);
-  }, [grain]);
+        : Sequence.every('370d', { anchor: NINO34_YEAR_RANGE[0] });
+    return source.aggregate(seq, MEAN_BY_YEAR);
+  }, [grain, measure]);
+
+  const colors =
+    palette === 'site' ? siteRamp : palette === 'heat' ? HEAT : DIVERGING;
+
+  const button = (
+    active: boolean,
+    label: string,
+    onClick: () => void,
+    key: string,
+  ) => (
+    <button
+      key={key}
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      style={{
+        font: 'inherit',
+        padding: '2px 10px',
+        borderRadius: 4,
+        cursor: 'pointer',
+        border: `1px solid ${theme.axis.grid}`,
+        background: active ? theme.axis.label : 'transparent',
+        color: active ? theme.background : theme.axis.label,
+      }}
+    >
+      {label}
+    </button>
+  );
+
+  const group = (name: string, children: React.ReactNode) => (
+    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'baseline' }}>
+      <span style={{ color: theme.axis.label, opacity: 0.6 }}>{name}</span>
+      {children}
+    </span>
+  );
 
   return (
     <div style={{ width }}>
       <div
         style={{
           display: 'flex',
-          gap: 8,
+          flexWrap: 'wrap',
+          gap: '8px 18px',
           alignItems: 'baseline',
           marginBottom: 8,
           fontFamily: theme.font.family,
           fontSize: 12,
         }}
       >
-        {GRAINS.map((g) => (
-          <button
-            key={g.id}
-            type="button"
-            onClick={() => setGrain(g.id)}
-            aria-pressed={grain === g.id}
-            style={{
-              font: 'inherit',
-              padding: '2px 10px',
-              borderRadius: 4,
-              cursor: 'pointer',
-              border: `1px solid ${theme.axis.grid}`,
-              background: grain === g.id ? theme.axis.label : 'transparent',
-              color: grain === g.id ? theme.background : theme.axis.label,
-            }}
-          >
-            {g.label}
-          </button>
-        ))}
-        <span style={{ color: theme.axis.label, opacity: 0.7 }}>
-          {GRAINS.find((g) => g.id === grain)!.cells} per year
-        </span>
+        {group(
+          'bin',
+          <>
+            {GRAINS.map((g) =>
+              button(grain === g.id, g.label, () => setGrain(g.id), g.id),
+            )}
+            <span style={{ color: theme.axis.label, opacity: 0.7 }}>
+              {CELLS[grain]}
+            </span>
+          </>,
+        )}
+        {group(
+          'show',
+          MEASURES.map((m) =>
+            button(measure === m.id, m.label, () => setMeasure(m.id), m.id),
+          ),
+        )}
+        {group(
+          'ramp',
+          PALETTES.map((p) =>
+            button(palette === p.id, p.label, () => setPalette(p.id), p.id),
+          ),
+        )}
       </div>
 
       <div className={readout.readout}>
         {hit === null ? (
           <span className={readout.idle}>
-            Point at a cell to read its year, period and temperature
+            Point at a cell to read its year, period and value
           </span>
         ) : (
           <>
@@ -175,8 +302,14 @@ export default function GalleryNino34Heatmap({
               {periodLabel(grain, hit.key as number)}
             </span>
             <span className={readout.field}>
-              <span className={readout.name}>SST</span>
-              {`${hit.value.toFixed(2)} °C`}
+              <span className={readout.name}>
+                {measure === 'sst' ? 'SST' : 'anomaly'}
+              </span>
+              {measure === 'sst'
+                ? `${hit.value.toFixed(2)} °C`
+                : // An anomaly is signed and the sign is the whole reading —
+                  // "+1.28" and "1.28" are different claims.
+                  `${hit.value >= 0 ? '+' : ''}${hit.value.toFixed(2)} °C`}
             </span>
           </>
         )}
@@ -206,7 +339,11 @@ export default function GalleryNino34Heatmap({
             <HeatMap
               series={series}
               columns={ROWS}
-              colors={ramp}
+              colors={colors}
+              // Pinned for the anomaly so the diverging ramp's neutral band
+              // sits on zero; left to the layer for absolute SST, which has no
+              // meaningful centre to pin to.
+              {...(measure === 'anomaly' ? { domain: ANOMALY_DOMAIN } : {})}
               axis="yr"
               id="sst"
             />
