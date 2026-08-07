@@ -2208,6 +2208,53 @@ sets emphasis slots the active draw path cannot read, when `bins` is handed
 plausibly-time-shaped keys — rather than three isolated fixes. Scope that before
 building the individual fixes.
 
+### [PND-MULTISEL] — shipped 2026-08-07 (P0/P0/P1; P2 stays [PND-CATRANGE])
+
+The owner's ordered wave, and a deliberate **simplification of the RFC's
+model** worth recording because it changed the migration cost.
+
+`docs/rfcs/selection.md` A1.1/A1.4 has the *library* owning the set arithmetic:
+`selectionMode: 'replace' | 'add'`, and `onSelect` reporting the resulting set —
+which A1.4 flags as a breaking widen of a published prop needing the human gate
+plus a one-release shim. The owner's spec inverts it: **the library reports the
+hit plus the modifiers; the consumer computes.** Strictly less API, and once
+`selected` is widened to a *union* rather than a replacement, the whole wave is
+non-breaking. `selectionMode` becomes additive sugar later instead of a gate
+now, so nothing in the RFC is contradicted — only deferred.
+
+What shipped:
+
+- **`onSelect(hit, modifiers)`** — `{ additive, ctrlKey, metaKey, shiftKey,
+  altKey }`. This is the piece that was actually load-bearing: every consumer
+  was hardcoding `additive: false` because it *could not do otherwise*, the
+  click having already been reduced to a hit. `additive` resolves the platform
+  chord once (⌘/Ctrl) rather than leaving six consumers to get one OS wrong.
+  Deliberately **no derived `range` flag** — `shift` is already the
+  `regionSelectModifier` drag chord, and an ordinal range gesture is
+  [PND-CATRANGE], not a modifier.
+- **`selected: SelectInfo | readonly SelectInfo[] | null`**, normalized to an
+  array on the (internal, unexported) `ContainerFrame.selected`. Readers ask
+  set membership instead of each deciding what a `null` means.
+- **`BarStyle.dimmed`** — RFC A2.3's model exactly (theme carries the
+  selection-state styling, library references it by state, opt-in so an
+  un-themed chart dims nothing).
+
+**Scope limits, both flagged in code and in the PR rather than left to be
+found:** `ScatterChart` and `HeatMap` render `selected[0]` — their draw paths
+match one mark, so a set lights only its first member there; and `dimmed` is
+bars-only. Bars are the reporter's case, so the wave is useful as-is, but a
+scatter with two selected points is still visibly wrong.
+
+**A repeat of a known slip, worth naming.** `dimmed` was added to `BarStyle`
+and to both draw paths, but not forwarded from `BarChart`'s `stackStyle` — so
+it worked on plain bars and silently did nothing on `categories`, the exact
+chart it was built for. That is the **second** time this session a new theme
+field was wired into one of the two bar paths (the first was [PND-CATEMPH]'s
+own `emphasisOpacity`/`selectedOutline`, caught by the Layer-2 review). Both
+were caught, both by tests rather than by care. A structural guard — a test
+asserting every `BarStyle` colour field is reachable from both the single and
+stacked paths — would have caught both and is the obvious next move.
+
 ### Not yet scheduled — decided at the regroup
 
 - **[PND-CATRANGE]** (high, predicted) — `cursor="region"` + `onRegionSelect` is

@@ -115,6 +115,44 @@ include new features and type-level changes; patch bumps are strictly additive.
   generator must see the visible window (stretching it piled clamped ticks on
   the plot edge). Panning is clamped so the content always covers the plot.
 
+- **charts: multi-selection** ([PND-MULTISEL]) — three pieces that let a
+  consumer own a multi-valued selection. The library still applies **no set
+  arithmetic**: it reports what happened and renders what it is given, and the
+  policy stays with the consumer.
+  - **`onSelect(hit, modifiers)`** — the second argument carries the keyboard
+    modifiers the click held (`{ additive, ctrlKey, metaKey, shiftKey,
+altKey }`). `additive` is the platform-idiomatic add-to-selection chord
+    (⌘ on macOS, Ctrl elsewhere) resolved once, so every consumer doesn't
+    re-derive it and get one platform wrong. Without this a consumer could not
+    implement ⌘-click-adds **at all** — the click had already been reduced to
+    a hit, forcing every click to be a replace. `undefined` for a selection
+    with no pointer event behind it (a `<Legend>` row, a programmatic select),
+    and the argument is omitted rather than passed as `undefined`, so existing
+    `onSelect` assertions keep their arity.
+  - **`<ChartContainer selected>` accepts a set** —
+    `SelectInfo | readonly SelectInfo[] | null`. A **union, not a
+    replacement**: a single `SelectInfo` still means what it always did, so no
+    existing caller changes. (`docs/rfcs/selection.md` A1.4 proposed replacing
+    the type outright and flagged it as a breaking widen needing the human gate
+    plus a one-release shim; accepting both costs one `Array.isArray`.)
+  - **`BarStyle.dimmed`** — the fill for a bar outside a non-empty selection.
+    Opt-in by construction: a theme that sets no `dimmed` dims nothing, and
+    nothing dims while the set is empty (RFC A2.3 — the library never
+    auto-dims; the theme carries selection-state styling and the library
+    references it by state). It exists because "not in the selection" was
+    otherwise re-invented per component and drifted immediately — one consumer
+    had three charts using `color-mix` at 22%, 28% and 30% for the same
+    concept, in the same week.
+
+  **Scope limit, stated rather than implied:** the selection _set_ renders on
+  **bars**. `ScatterChart` and `HeatMap` draw the first member only
+  (`selected[0]`) — their draw paths match a single mark, and widening them is
+  separate work. `dimmed` is likewise bars-only, so a mixed chart dims its bars
+  and nothing else. `selectionMode` (RFC A1.1) stays unbuilt: it would be sugar
+  over what this ships, and adding it later is additive.
+
+### Added
+
 - **charts: `<HeatMap>` — a grid of colour-coded cells** ([PND-HEATMAP]). Bins
   along x, the series' **columns** down y, colour carrying the value. A single
   column is a stripe (climate stripes, a load band); many columns are a grid.

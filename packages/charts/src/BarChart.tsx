@@ -45,6 +45,9 @@ import {
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
+/** Stable "nothing selected" identity for the narrowed mark lists below. */
+const EMPTY_MARKS: readonly StackMark[] = [];
+
 /**
  * The **mode union** — the legal (source, columns) combinations, each a
  * separate member so an illegal mix fails to compile instead of throwing at
@@ -741,6 +744,7 @@ export function BarChart<
       ...(base.emphasisOpacity !== undefined
         ? { emphasisOpacity: base.emphasisOpacity }
         : {}),
+      ...(base.dimmed !== undefined ? { dimmed: base.dimmed } : {}),
       ...(binColors !== undefined ? { binFills: binColors } : {}),
     };
   }, [bar, groups, colors, binColors]);
@@ -750,16 +754,19 @@ export function BarChart<
   // (id, key). Read here so a change re-registers the layer → the canvas repaints.
   const selected = container.selected;
   const hoveredMark = container.hovered;
-  const selection = useMemo<StackMark | null>(
+  // The selection is a set ([PND-MULTISEL]); narrow each member to the identity
+  // the draw path matches on. `EMPTY_MARKS` keeps the no-selection case
+  // reference-stable so it doesn't re-identify the layer entry each render.
+  const selection = useMemo<readonly StackMark[]>(
     () =>
-      selected === null
-        ? null
-        : {
-            id: selected.id,
-            key: selected.key,
-            label: selected.label,
-            ...(selected.mark !== undefined ? { mark: selected.mark } : {}),
-          },
+      selected.length === 0
+        ? EMPTY_MARKS
+        : selected.map((m) => ({
+            id: m.id,
+            key: m.key,
+            label: m.label,
+            ...(m.mark !== undefined ? { mark: m.mark } : {}),
+          })),
     [selected],
   );
   const hover = useMemo<StackMark | null>(

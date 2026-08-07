@@ -192,6 +192,7 @@ export type {
   TrackerInfo,
   TrackerSample,
   SelectInfo,
+  SelectModifiers,
 } from './context.js';
 
 // Draw-stats observability — the `onDrawStats` callback's frame + per-layer line.

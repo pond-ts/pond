@@ -345,7 +345,9 @@ export function ScatterChart<
             keyAt,
             labelAt,
             font,
-            container.selected,
+            // See HeatMap: the point draw matches one mark; scatter multi-select
+            // rendering is out of [PND-MULTISEL]'s scope, so take the first.
+            container.selected[0] ?? null,
             id,
             offset,
             decimate,

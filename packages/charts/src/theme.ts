@@ -421,6 +421,23 @@ export interface BarStyle {
    * live — which is the part that reads as emphasis.
    */
   readonly emphasisOpacity?: number;
+  /**
+   * The fill for a bar that is **not** in a non-empty selection set — the
+   * "everything else recedes" state a chart used as a filter control needs
+   * ([PND-MULTISEL]).
+   *
+   * **Opt-in by construction:** a theme that sets no `dimmed` dims nothing, so
+   * existing charts are untouched (RFC `selection.md` A2.3 — the library never
+   * auto-dims; the theme carries the selection-state styling and the library
+   * references it by state). Nothing dims while the set is empty either: with
+   * no selection there is nothing to recede *from*.
+   *
+   * It exists because "not in the selection" was otherwise re-invented per
+   * component, and drifted immediately — one consumer had three charts using
+   * `color-mix` at 22%, 28% and 30% for the same concept, in the same week, for
+   * no reason. One theme value fixes that permanently.
+   */
+  readonly dimmed?: string;
 }
 
 /**

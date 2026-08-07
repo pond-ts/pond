@@ -867,7 +867,16 @@ export function Layers({ children }: LayersProps) {
       c.xScale,
       (axisId) => r.yScales.get(axisId ?? r.defaultAxisId),
     );
-    c.select(hit);
+    // Report the modifiers the click carried ([PND-MULTISEL]). The library
+    // applies no policy to them; a consumer implements ⌘/Ctrl-adds itself,
+    // which it could not do at all while the click arrived as a bare hit.
+    c.select(hit, {
+      additive: e.metaKey || e.ctrlKey,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+    });
   }, []);
 
   // Wheel-zoom — a native non-passive listener so `preventDefault` works (React's

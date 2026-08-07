@@ -343,7 +343,7 @@ describe('drawStacks', () => {
       0,
       1,
       'h',
-      null,
+      [],
       null,
     );
     // 3 finite segments (bin0 a+b, bin1 a); the NaN segment is skipped.
@@ -365,7 +365,7 @@ describe('drawStacks', () => {
       0,
       1,
       'h',
-      { id: 'h', key: 0, label: 'b' }, // bin0 (begin 0), group b
+      [{ id: 'h', key: 0, label: 'b' }], // bin0 (begin 0), group b
       null,
     );
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(1);
@@ -387,7 +387,7 @@ describe('drawStacks', () => {
       0,
       1,
       'h',
-      null,
+      [],
       { id: 'h', key: 0, label: 'a' },
     );
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
@@ -411,7 +411,7 @@ describe('drawStacks', () => {
       0,
       1,
       undefined,
-      { id: 'h', key: 0, label: 'a' },
+      [{ id: 'h', key: 0, label: 'a' }],
       { id: 'h', key: 0, label: 'a' },
     );
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
@@ -438,7 +438,7 @@ describe('drawStacks', () => {
       0,
       1,
       undefined,
-      null,
+      [],
       null,
     );
     const fillSets = calls

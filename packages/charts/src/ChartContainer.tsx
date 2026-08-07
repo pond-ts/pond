@@ -30,6 +30,7 @@ import {
   type GutterReq,
   type CursorMode,
   type SelectInfo,
+  type SelectModifiers,
   type TrackerInfo,
   type TrackerSource,
   type DrawStatsFrame,
@@ -47,6 +48,9 @@ import {
 } from './format.js';
 import { TimeAxis } from './TimeAxis.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
+
+/** Stable identity for "nothing selected" — see the normalization below. */
+const EMPTY_SELECTION: readonly SelectInfo[] = [];
 
 /** Tick count for a **continuous** (non-trading) x axis — the `ticks(count)`
  *  request `<TimeAxis>`, the x gridlines, and the cursor-time formatter share
@@ -317,16 +321,48 @@ export interface ChartContainerProps {
    * light up, and the selection survives a data update (it keys on the stable
    * `id`, not the sample `key`). A layer with no `id` renders + reads out but
    * can't be selected.
+   *
+   * **Accepts a set** ([PND-MULTISEL]): pass a `SelectInfo[]` to light several
+   * marks at once — the shape a consumer whose filter is multi-valued actually
+   * has. Insertion-ordered, `[]` means nothing selected. A single `SelectInfo`
+   * still works and means exactly what it did, so this is a **union, not a
+   * replacement**: no existing caller changes. (`docs/rfcs/selection.md` A1.4
+   * proposed replacing the type outright and flagged it as a breaking widen
+   * needing the human gate plus a one-release shim — accepting both costs one
+   * `Array.isArray` and needs neither.)
+   *
+   * The library applies **no set arithmetic**: a chart click reports the hit it
+   * found, and a consumer that wants ⌘-click-to-add reads
+   * {@link SelectModifiers.additive} off `onSelect` and drives this prop.
+   * `selectionMode` (RFC A1.1) would be sugar over exactly that, and stays
+   * unbuilt until a consumer wants it — adding it later is additive.
    */
-  selected?: SelectInfo | null;
+  selected?: SelectInfo | readonly SelectInfo[] | null;
   /**
    * Fires when a selectable layer's mark is clicked, with the hit mark, or `null`
    * when a click misses every mark (or hits a layer with no `id` — display-only,
    * so it reads as empty space). Notification only — works in both controlled and
    * uncontrolled mode. If this or `selected` is set but no layer has an `id`, a
    * dev-warning notes that nothing is selectable.
+   *
+   * The second argument carries the **keyboard modifiers** held during the click
+   * ([PND-MULTISEL]). Without them a consumer cannot implement ⌘/Ctrl-click-adds
+   * at all — the click has already been reduced to a hit — so every consumer was
+   * forced to treat every click as a replace. `modifiers` is `undefined` for a
+   * selection that didn't come from a pointer event (a `<Legend>` row, a
+   * programmatic `select`).
+   *
+   * ```tsx
+   * onSelect={(hit, mods) =>
+   *   setSelected((cur) =>
+   *     hit === null ? []
+   *     : mods?.additive ? toggle(cur, hit)
+   *     : [hit],
+   *   )
+   * }
+   * ```
    */
-  onSelect?: (hit: SelectInfo | null) => void;
+  onSelect?: (hit: SelectInfo | null, modifiers?: SelectModifiers) => void;
   /**
    * Controlled hover-highlight — the transiently lit mark (echo the `onHover` arg
    * back), or `null`. **Omitted ⇒ uncontrolled** (the pointer over a selectable
@@ -871,19 +907,40 @@ export function ChartContainer({
     null,
   );
   const controlledSelection = selected !== undefined;
-  const selectedValue = controlledSelection
-    ? (selected ?? null)
-    : internalSelected;
+  // Normalize the prop's three accepted shapes — a single mark, a set, or
+  // nothing — into the one shape the frame carries ([PND-MULTISEL]). Every
+  // reader then asks the same question ("is this mark in the set") rather than
+  // each deciding what a null means. `EMPTY_SELECTION` is a module constant so
+  // the common no-selection case keeps a stable identity and doesn't
+  // re-identify the frame on every render.
+  const selectedValue: readonly SelectInfo[] = useMemo(() => {
+    const raw = controlledSelection ? selected : internalSelected;
+    if (raw === null || raw === undefined) return EMPTY_SELECTION;
+    return Array.isArray(raw) ? raw : [raw as SelectInfo];
+  }, [controlledSelection, selected, internalSelected]);
   const onSelectRef = useRef(onSelect);
   const controlledSelectionRef = useRef(controlledSelection);
   useLayoutEffect(() => {
     onSelectRef.current = onSelect;
     controlledSelectionRef.current = controlledSelection;
   });
-  const select = useCallback((hit: SelectInfo | null) => {
-    onSelectRef.current?.(hit);
-    if (!controlledSelectionRef.current) setInternalSelected(hit);
-  }, []);
+  // The library applies no set arithmetic: it reports the hit plus the
+  // modifiers and, when uncontrolled, keeps the single-mark behaviour it always
+  // had. A consumer wanting add/toggle reads `modifiers.additive` and drives
+  // the controlled `selected` set — see `SelectModifiers`.
+  const select = useCallback(
+    (hit: SelectInfo | null, modifiers?: SelectModifiers) => {
+      // Pass the second argument only when there is one. Calling
+      // `onSelect(hit, undefined)` unconditionally would change the observed
+      // arity for every existing consumer — enough to break a
+      // `toHaveBeenCalledWith(hit)` assertion, which is a silly thing to break
+      // for a purely additive feature.
+      if (modifiers === undefined) onSelectRef.current?.(hit);
+      else onSelectRef.current?.(hit, modifiers);
+      if (!controlledSelectionRef.current) setInternalSelected(hit);
+    },
+    [],
+  );
 
   // Dev-warn: selection is wired (`selected` and/or `onSelect`) but no layer
   // carries an `id`, so nothing is selectable — `id` gates interactivity, so a
