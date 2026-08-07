@@ -57,6 +57,13 @@
 //   HOVER  365x45 one cell live     2.082ms   0.873ms     -58%
 //   GAPS   365x45 half holes        1.069ms   0.463ms     -57%
 //
+// DENSE was added after the fact and is not part of the before/after: it is the
+// open question, not a regression. 20000 bins x 45 rows all in view is 900k
+// cells painted into a plot that can only resolve ~36k of them — 48ms, ~25x
+// overdraw, and it is linear in cells (53 ns/cell, the same rate as NINO), so a
+// real canvas is worse than this, not better. See the decimation note in
+// PND_CHARTS_PLAN.md.
+//
 // STRIPE is the control and is meant to be flat: with G=1 the row loop is
 // degenerate, so there is nothing to hoist. That it did not move is the
 // evidence the win comes from the row loop and not from somewhere else.
@@ -216,6 +223,17 @@ const run = (label, ss, xScale, yScale, sel = null, hov = null) => {
       label: 'r22',
     },
   );
+}
+
+// ── Sub-pixel bins: every bin visible, far more bins than pixels. ──────────
+// `barSpanPx` widens a bin narrower than `minWidth` to 1px around its midpoint,
+// so at this density adjacent cells OVERLAP and later draws overpaint earlier
+// ones. Nothing is culled — culling only drops what is off-domain — so the layer
+// paints 20000 rects per row into an 800px-wide plot: ~25x overdraw, and what
+// survives per pixel column is whichever bin happened to be drawn last.
+{
+  const ss = makeGrid(20000, 45);
+  run('DENSE  20000x45 all visible', ss, scale(0, 20000, 0, PLOT_W), y(45));
 }
 
 // ── Gaps should be cheaper, not dearer. ────────────────────────────────────
