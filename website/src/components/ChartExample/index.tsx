@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import BrowserOnly from '@docusaurus/BrowserOnly';
 import CodeBlock from '@theme/CodeBlock';
 import { usePluginData } from '@docusaurus/useGlobalData';
+import { useMeasuredWidth } from '../useMeasuredWidth';
 import styles from './styles.module.css';
 
 interface ChartExampleProps {
@@ -12,8 +13,21 @@ interface ChartExampleProps {
    * silently, per the docs plan's "honest code fences" rule.
    */
   name: string;
-  /** The example component, statically imported and mounted by the caller. */
-  children: ReactNode;
+  /**
+   * The example component, statically imported and mounted by the caller.
+   *
+   * Two forms:
+   * - **An element** (`<MyExample width={560} />`) — a fixed-width embed,
+   *   centred in the stage. The historical default.
+   * - **A render-prop** (`{(width) => <MyExample width={width} />}`) — the
+   *   stage measures itself and hands its content width down, so the chart
+   *   **fills the page** and re-fits on resize. `<ChartContainer>` takes an
+   *   explicit pixel width (PLAN's `[PND-WIDTH]`), so this is how a docs embed
+   *   goes responsive — the same {@link useMeasuredWidth} pattern the
+   *   [responsive-width recipe](/docs/recipes/responsive-width) teaches and
+   *   `<GalleryCard>` uses.
+   */
+  children: ReactNode | ((width: number) => ReactNode);
   /** Fixed pixel height for the loading/SSR placeholder (avoids layout jump). */
   height?: number;
   /**
@@ -24,6 +38,18 @@ interface ChartExampleProps {
    * that an open fence buries the prose around it.
    */
   collapsed?: boolean;
+}
+
+/** The stage for a render-prop child: a full-width box that measures itself
+ *  and renders nothing until it has a real width (a zero-width chart would
+ *  mount, draw an empty canvas, then re-mount at the true size). */
+function FillStage({ children }: { children: (width: number) => ReactNode }) {
+  const [ref, width] = useMeasuredWidth<HTMLDivElement>();
+  return (
+    <div ref={ref} className={styles.fill}>
+      {width > 0 ? children(width) : null}
+    </div>
+  );
 }
 
 /**
@@ -64,7 +90,13 @@ export default function ChartExample({
             />
           }
         >
-          {() => children}
+          {() =>
+            typeof children === 'function' ? (
+              <FillStage>{children}</FillStage>
+            ) : (
+              children
+            )
+          }
         </BrowserOnly>
       </div>
       {collapsed ? (

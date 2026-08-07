@@ -278,12 +278,13 @@ schema columns). Because the union splits per series _kind_, a value typed as
 
 ### Components — annotations & indicators
 
-| Component        | Key props                                             | Purpose                                        | Source                                |
-| ---------------- | ----------------------------------------------------- | ---------------------------------------------- | ------------------------------------- |
-| `Region`         | `from`, `to`, `label?`, `id?`, `onChange?`            | Shaded x-span; draggable when `onChange` given | `packages/charts/src/annotations.tsx` |
-| `Baseline`       | `value`, `axis?`, `label?`, `indicator?`, `onChange?` | Horizontal value line                          | `packages/charts/src/annotations.tsx` |
-| `Marker`         | `at`, `label?`, `indicator?`, `onChange?`             | Vertical x line                                | `packages/charts/src/annotations.tsx` |
-| `YAxisIndicator` | `value?` \| `source?`, `axis?`, `format?`             | Live value pill pinned to a y-axis edge        | `packages/charts/src/indicators.tsx`  |
+| Component        | Key props                                             | Purpose                                                                                                                | Source                                |
+| ---------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| `Region`         | `from`, `to`, `label?`, `id?`, `onChange?`            | Shaded x-span; draggable when `onChange` given                                                                         | `packages/charts/src/annotations.tsx` |
+| `Baseline`       | `value`, `axis?`, `label?`, `indicator?`, `onChange?` | Horizontal value line                                                                                                  | `packages/charts/src/annotations.tsx` |
+| `Marker`         | `at`, `label?`, `indicator?`, `onChange?`             | Vertical x line                                                                                                        | `packages/charts/src/annotations.tsx` |
+| `Zone`           | `from`, `to`, `axis?`, `role?`, `label?`, `edges?`    | Shaded y-span — a value-axis scale (AQI categories, HR zones); inert + edge-less by default, `±Infinity` for open ends | `packages/charts/src/annotations.tsx` |
+| `YAxisIndicator` | `value?` \| `source?`, `axis?`, `format?`             | Live value pill pinned to a y-axis edge                                                                                | `packages/charts/src/indicators.tsx`  |
 
 ### Components — standalone row lists (DOM tables, no `<ChartContainer>`)
 

@@ -13,6 +13,14 @@
   overflow-x: auto;
 }
 
+/* A render-prop child's stage: take the row's full content width (the flex
+   parent centres a fixed-width child, which would otherwise shrink this to its
+   content) so the measured number is the space actually available. */
+.fill {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .placeholder {
   width: 100%;
   border-radius: 0.5rem;

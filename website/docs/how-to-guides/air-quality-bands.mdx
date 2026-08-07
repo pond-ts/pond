@@ -1,0 +1,510 @@
+---
+title: From a CSV to a banded chart
+sidebar_position: 6
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import ChartsAqiPlain from '@site/src/examples/charts-aqi-plain';
+import ChartsAqiZones from '@site/src/examples/charts-aqi-zones';
+
+# From a CSV to a banded chart
+
+Someone handed me a CSV and a screenshot: three days of **US EPA PM2.5 AQI**
+from two air-quality sensors in Argüelles, Madrid, and the chart their sensor
+dashboard had drawn from it. Reproduce this, they said.
+
+The lines were the easy part. What made the original chart readable was the
+thing behind the lines — horizontal green / yellow / orange / red bands, the
+EPA's own air-quality categories, turning the y axis from a column of numbers
+into a scale you can read a verdict off. pond had no primitive for that. It
+does now, and building it is most of this guide.
+
+The walk is: **look at the file → decide what's actually a series → parse it →
+check the parse → draw it → discover what's missing → build that → put it
+back together.** The parsing half generalises to any export; the charting half
+generalises to any measurement that means something only against a scale —
+heart-rate zones, SLO bands, blood pressure, spec limits on a control chart.
+
+:::note[Related]
+This guide takes the short road through ingest, because this particular CSV is
+clean. When yours isn't — mixed timestamp formats, four spellings of "missing",
+duplicate rows from retried scrapes — read
+[Ingesting messy data](./ingesting-messy-data), which is entirely about that
+problem.
+:::
+
+---
+
+## 1. Look at the file first
+
+Four columns, 432 rows, three days:
+
+```text
+"DateTime","Average","Argüelles A","Argüelles B"
+"2026-07-22 08:50:00",52.7,55,59
+"2026-07-22 09:00:00",,56,60
+"2026-07-22 09:10:00",,55,60
+…
+"2026-07-25 08:40:00",52.7,154,159
+```
+
+Before writing a parser I ran the boring checks — row count, the gap between
+consecutive timestamps, how many cells in each column are empty, and the min/max
+of each. Four minutes of looking that saved a debugging session:
+
+- **The timestamps are a perfect 10-minute grid.** All 431 gaps are exactly 600
+  seconds. No dropouts, no duplicate rows, no daylight-saving fold. (Worth
+  _checking_ rather than assuming — a regular grid is a claim about the data,
+  and it's the claim that later `rolling`/`aggregate` work leans on.)
+- **Neither sensor has a hole.** 432 readings each, A spanning 9–154, B
+  spanning 15–159.
+- **`Average` has 430 empty cells out of 432.** It's `52.7` on the first row
+  and `52.7` on the last, and blank everywhere between.
+
+That last one is the interesting one, and it's the first real decision.
+
+### The column that isn't a series
+
+`Average` is not a measurement over time. It's a single number — the mean
+across both sensors for the window — encoded as a two-point series so that a
+spreadsheet-shaped chart tool would draw a flat line across the plot. The
+screenshot confirms it: a grey dashed horizontal line at 52.7, with the value
+labelled at the right edge.
+
+That's a rendering instruction wearing a data column's clothes. Ingesting it as
+data would leave me with a column that's 99.5% missing and a chart layer with
+two points in it, and I'd have to keep explaining to the next person why. So it
+doesn't become a column. It becomes an annotation later — and since it's
+derived from the other two columns, pond can recompute it rather than trust it.
+
+**The general rule:** an exported CSV is a serialisation of somebody else's
+chart, not a description of the world. Some of its columns are measurements and
+some are chart furniture. Sort them before you build the schema, because that's
+the last cheap moment to do it.
+
+---
+
+## 2. The schema
+
+Two sensors, one clock:
+
+```ts
+import type { SeriesSchema } from 'pond-ts';
+
+export const AQI_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'a', kind: 'number', required: false },
+  { name: 'b', kind: 'number', required: false },
+] as const satisfies SeriesSchema;
+```
+
+Two notes on that:
+
+- **`required: false` even though this file has no holes.** An outdoor sensor
+  that never drops a reading is a property of three days in July, not of the
+  schema. Declaring the columns optional costs one `| undefined` downstream and
+  means the next export doesn't break the type.
+- **The accented names don't come along.** `Argüelles A` is fine as data and
+  hostile as an identifier; it becomes `a`, and the display name goes on the
+  chart layer (`legend="Argüelles A"`) where it belongs. The mapping happens
+  once, at the boundary.
+
+---
+
+## 3. Parse it
+
+Nothing exotic — the whole parser is 20 lines — but two of them are the ones
+that bite.
+
+```ts
+/** One CSV line → its cells, unquoted. */
+function cells(line: string): string[] {
+  return line.split(',').map((c) => c.trim().replace(/^"(.*)"$/, '$1'));
+}
+
+export function aqiSeries(): TimeSeries<typeof AQI_SCHEMA> {
+  const lines = AQI_CSV.trim()
+    // Strip the UTF-8 BOM: without this the first header reads "﻿DateTime"
+    // and every by-name column lookup misses.
+    .replace(/^﻿/, '')
+    .split('\n');
+  const header = cells(lines[0]!);
+  // Look the sensors up by their real (accented) names rather than trusting
+  // column order — an export that gains a column shouldn't silently re-map.
+  const ia = header.indexOf('Argüelles A');
+  const ib = header.indexOf('Argüelles B');
+  if (ia < 0 || ib < 0) throw new Error(`unexpected columns: ${header}`);
+  const rows = lines.slice(1).map((line) => {
+    const c = cells(line);
+    return [parseUtc(c[0]!), num(c[ia]!), num(c[ib]!)] as const;
+  });
+  return new TimeSeries({ name: 'pm25-aqi', schema: AQI_SCHEMA, rows });
+}
+```
+
+A split on `,` is honest **here** — no cell in this file contains a comma —
+and would be a bug on an export where one does. Check before you take that
+shortcut; reach for a real CSV parser the moment quoted commas are possible.
+
+Three details worth their own paragraphs.
+
+### The BOM
+
+The file starts with a UTF-8 byte-order mark. Read naively, the first header
+isn't `DateTime`, it's `﻿DateTime` — so `header.indexOf('DateTime')`
+returns `-1`, and depending on how defensive your code is you get either a
+loud throw or a silent column of `undefined`. Strip it once, at the top.
+
+### The timezone
+
+```ts
+function parseUtc(stamp: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(stamp);
+  if (m === null) throw new Error(`unparseable timestamp: ${stamp}`);
+  const [, y, mo, d, h, mi, s] = m;
+  return Date.UTC(+y!, +mo! - 1, +d!, +h!, +mi!, +s!);
+}
+```
+
+`new Date('2026-07-22 08:50:00')` reads that string in **the parsing machine's**
+timezone. The same CSV would then land on a different instant for a reader in
+Madrid than for CI in UTC — the whole series shifts by hours depending on who
+ran the parse, and nothing in the pipeline ever tells you. Pinning the zone at
+the boundary makes the epoch a property of the file.
+
+Which zone is _right_ is the export's business to tell you, and this one
+doesn't; UTC is the honest default for a file that doesn't say. If you know
+the readings are Madrid local time, convert deliberately at this line — it's
+the one place in the pipeline where the answer is still cheap to change.
+
+### Blank is not zero
+
+```ts
+function num(cell: string): number | undefined {
+  return cell === '' ? undefined : Number(cell);
+}
+```
+
+`Number('')` is `0`, which on an AQI chart is not a missing reading — it's a
+_perfect_ reading. Coercing blanks to zero invents clean air. (This is why the
+schema's columns are `required: false`: `undefined` has somewhere to go.)
+
+---
+
+## 4. Check the parse before you draw it
+
+Charts are forgiving of bad data in the worst way — they render something. So
+before drawing, three assertions in a REPL:
+
+```ts
+const series = aqiSeries();
+
+series.length; // 432 — every row survived
+series.timeRange(); // 2026-07-22T08:50Z → 2026-07-25T08:40Z
+```
+
+Then the good one. The export claims the window average is **52.7**; pond has
+the data to check that:
+
+```ts
+export function aqiAverage(series: TimeSeries<typeof AQI_SCHEMA>): number {
+  const s = series.reduce({
+    sumA: { from: 'a', using: 'sum' },
+    sumB: { from: 'b', using: 'sum' },
+    nA: { from: 'a', using: 'count' },
+    nB: { from: 'b', using: 'count' },
+  });
+  const n = (s.nA ?? 0) + (s.nB ?? 0);
+  if (n === 0) throw new Error('no readings to average');
+  return ((s.sumA ?? 0) + (s.sumB ?? 0)) / n;
+}
+```
+
+`52.6655…`, which is the export's `52.7` at the precision the export chose.
+The parse is right, the units are right, and nothing got shifted or dropped.
+
+Three things about that snippet:
+
+- Each `reduce` mapping reads **one** source column, so pooling two sensors is
+  sums and counts added by hand rather than `from: ['a', 'b']`.
+- Adding **totals** rather than averaging the two column means is deliberate.
+  They agree here only because both sensors have the same row count; the totals
+  version stays right when one sensor drops readings, which is exactly when
+  you'd stop noticing the difference.
+- The results are `| undefined`, because the columns are optional and reducing
+  a column with nothing in it has no answer. The `?? 0` on the sums is safe (an
+  absent sum contributes nothing); doing the same to the **counts** and
+  dividing would quietly return `NaN`, so an empty series is refused instead of
+  being turned into a number-shaped non-answer. This is the `required: false`
+  decision from step 2 arriving downstream, exactly as it should.
+
+Having recomputed it, the `Average` column has earned its way out of the
+schema. It's a derived number, and it's now a number I can regenerate on
+demand.
+
+---
+
+## 5. Draw it, and see what's missing
+
+Two lines on a shared axis:
+
+<ChartExample name="charts-aqi-plain" height={280}>
+  {(width) => <ChartsAqiPlain width={width} />}
+</ChartExample>
+
+Nothing about this is wrong. It's an accurate plot: quiet nights, a daily
+rhythm, sensor B running consistently above sensor A, and a hard climb on the
+last morning. It answers **what happened**.
+
+It cannot answer **is this bad?** — and that's the question an air-quality
+reading exists to answer. Is 60 fine? Is 154 an emergency? The chart is silent,
+because the information isn't in the traces. It's in the axis, and the axis is
+currently just numbers.
+
+That's what the original chart's coloured bands were doing, and it's why they
+were the most load-bearing thing in the screenshot.
+
+---
+
+## 6. The missing primitive
+
+pond's annotation register had three marks: `<Region>` (a shaded **x** span),
+`<Baseline>` (a horizontal line at a **y** value), and `<Marker>` (a vertical
+line at an **x**). Between them they cover "this stretch of _time_ was
+interesting" and "here's _one_ threshold".
+
+The AQI bands are neither. They're a shaded **y** span — a range of _values_,
+across all of time. That's the fourth corner of the grid, and it was empty:
+
+| Mark                   | Spans       | Reads as                      |
+| ---------------------- | ----------- | ----------------------------- |
+| `<Marker at>`          | a line on x | "at this moment"              |
+| `<Baseline value>`     | a line on y | "at this level"               |
+| `<Region from to>`     | a band on x | "during this window"          |
+| **`<Zone from to>`** ✦ | a band on y | **"in this range of values"** |
+
+So `<Zone>` is what got built. A band between two y values, spanning the full
+plot width, scaled by the row's y axis:
+
+```tsx
+<Zone from={0} to={50} axis="aqi" role="good" />
+```
+
+It's deliberately dull. No new data path, no canvas work — it's an SVG rect in
+the same annotation overlay the other three marks paint into, which means it
+inherits their depth ramp, their theming, and their per-row axis binding for
+free. The design work was all in the defaults, because a y-band's defaults
+_can't_ match the family's:
+
+- **`selectable={false}`** — the rest of the register is interactive by
+  default. A zone spans the full plot width, and a zone _set_ tiles the entire
+  row, so the pointer is always inside one. Interactive by default they'd light
+  up on every mousemove, and their hit areas would swallow the plot's own
+  clicks. A zone is background context first; you opt one in when it's genuinely
+  a thing to point at.
+- **`edges={false}`** — `<Region>` draws its side outlines by default. Zone sets
+  are usually contiguous, so every interior boundary is shared by two bands and
+  edges-on draws each one twice at double opacity. Opt in for an isolated band
+  (a target range), where an outline reads well.
+- **No auto-label.** `<Region>` labels itself `from–to`, because a time span's
+  bounds aren't otherwise legible. A zone's bounds are already written down the
+  y axis it spans. The label worth showing is a **name** — `"Good"`,
+  `"Z4 threshold"` — which only the caller has, so omitting `label` renders no
+  chip at all.
+
+And one thing it deliberately doesn't do: **`<Zone>` has no `onChange`.** The
+other marks are draggable. A drag-to-edit zone (a zone editor — drag your HR
+boundaries) is a coherent feature with no consumer yet, so the band is
+declarative until one turns up.
+
+---
+
+## 7. The palette is a theme, not six colours
+
+The obvious API would have been `<Zone color="#00e400">`. pond doesn't do that
+anywhere — colour is a theme concern, and a chart layer names a _role_ that the
+theme resolves. Zones follow the same rule, which turns out to be exactly right
+for this case: the AQI categories aren't six arbitrary colours, they're **a
+scale**, and a scale is precisely the kind of thing that should live in one
+place.
+
+```tsx
+function aqiTheme(base: ChartTheme): ChartTheme {
+  return {
+    ...base,
+    annotation: {
+      ...base.annotation!,
+      roles: {
+        good: { color: '#00e400', fillOpacity: 0.16 },
+        moderate: { color: '#ffff00', fillOpacity: 0.22 },
+        sensitive: { color: '#ff7e00', fillOpacity: 0.14 },
+        unhealthy: { color: '#ff0000', fillOpacity: 0.12 },
+        veryUnhealthy: { color: '#8f3f97', fillOpacity: 0.12 },
+        hazardous: { color: '#7e0023', fillOpacity: 0.12 },
+        // The window average — grey and dashed, so a derived reference line
+        // can't be mistaken for one of the two sensors.
+        average: { color: '#8a8f98', dash: [6, 4] },
+      },
+    },
+  };
+}
+```
+
+Those are the EPA's own hues, which are designed for filled status badges and
+are _loud_. They ride at a low `fillOpacity` so the bands stay a wash the traces
+read through rather than a block of colour competing with them. The
+per-role opacities aren't uniform because the hues aren't equally strong —
+pure yellow needs more alpha than red to register at all.
+
+The `dash` on `average` is new too: the annotation register grew an optional
+dash pattern, per-register or per-role. A dashed reference line reads as
+_placed_ rather than _measured_, which is the job the annotation register
+exists to do and which colour alone can't always carry.
+
+---
+
+## 8. The zone set
+
+The categories are a table, and the chart is a `map` over it:
+
+```ts
+export const AQI_CATEGORIES = [
+  { role: 'good', label: 'Good', from: 0, to: 50 },
+  { role: 'moderate', label: 'Moderate', from: 50, to: 100 },
+  {
+    role: 'sensitive',
+    label: 'Unhealthy for sensitive groups',
+    from: 100,
+    to: 150,
+  },
+  { role: 'unhealthy', label: 'Unhealthy', from: 150, to: 200 },
+  { role: 'veryUnhealthy', label: 'Very unhealthy', from: 200, to: 300 },
+  { role: 'hazardous', label: 'Hazardous', from: 300, to: Infinity },
+] as const;
+```
+
+```tsx
+{
+  AQI_CATEGORIES.map((c) => (
+    <Zone key={c.role} from={c.from} to={c.to} axis="aqi" role={c.role} />
+  ));
+}
+```
+
+Two things fall out of that, both on purpose.
+
+**`to: Infinity` is the real definition.** "Hazardous" is open-ended — the EPA
+doesn't cap it — and `<Zone>` resolves an infinite bound against the axis
+domain, so the band reaches the plot edge and draws no upper boundary. The
+alternative was inventing a ceiling (`to: 999`) and hoping nobody reads the
+code.
+
+**All six render, though the axis only reaches 200.** A band that runs past the
+domain is clamped to the plot; one entirely above it culls itself. So the table
+drives the chart directly, rather than the chart carrying a hand-pruned copy of
+the table that goes stale when the axis changes. Widen the axis to 300 and the
+purple band appears on its own.
+
+### Pin the axis
+
+```tsx
+const AQI_TICKS = [0, 50, 100, 150, 200].map((at) => ({
+  at,
+  label: String(at),
+}));
+
+<YAxis id="aqi" min={0} max={200} ticks={AQI_TICKS} />;
+```
+
+Both halves matter once the axis carries meaning:
+
+- **`min`/`max` pinned, not fitted.** An auto-fitted axis would hug this
+  window's 9–159 and silently redraw the band layout every time the data
+  changed — and the point of the chart is where the readings sit _within the
+  scale_. A fixed scale is what makes two of these charts comparable.
+- **Ticks on the category boundaries.** `0, 50, 100, 150, 200` are the EPA's
+  breakpoints, so every gridline is a threshold that means something instead of
+  a round number that doesn't. Explicit `ticks` drive the row's **gridlines**
+  as well as its labels, so the lines land exactly on the band edges.
+
+`ticks` takes `{ at, label }` objects rather than bare numbers — the axis never
+invents label text for a position you chose. (I passed plain numbers on the
+first attempt and got an axis with gridlines and no labels. `npm run typecheck`
+in `website/` catches it; the dev server won't.)
+
+---
+
+## 9. The average, as an annotation
+
+The column I threw away in step 1 comes back here — as what it always was:
+
+```tsx
+<Baseline
+  value={average}
+  axis="aqi"
+  role="average"
+  label={average.toFixed(1)}
+  labelSide="right"
+/>
+```
+
+Grey, dashed, labelled `52.7` at the right edge — the original chart's line,
+drawn by the mark that means "a reference level" rather than by a data layer
+with two points in it.
+
+One honest difference from the source chart: the original's legend lists
+`Average` as a third series, because to that tool it _was_ one. Here it isn't,
+so pond's `<Legend>` — which enumerates the registered **data layers** — lists
+the two sensors and not the baseline. That's the right answer for a legend
+that can't drift from the plot, and it's a real difference from the screenshot
+rather than something I'd paper over.
+
+---
+
+## 10. The finished chart
+
+<ChartExample name="charts-aqi-zones" height={330}>
+  {(width) => <ChartsAqiZones width={width} />}
+</ChartExample>
+
+Same data as step 5. Now the last morning's climb visibly crosses out of
+yellow, through orange, into red, and you can read the verdict off the chart
+without knowing a single AQI breakpoint by heart.
+
+Both charts on this page are live: **drag to pan, scroll to zoom**
+(`panZoom` on the container, with `bounds` set to the export's own span so you
+can't wander off into empty time). Zoom into the last morning and the crossing
+is unmistakable — the bands are fixed to the value axis, so they stay exactly
+where they are while the time axis moves under them.
+
+---
+
+## What generalises
+
+The specific chart is air quality. The shape isn't:
+
+- **Sort chart furniture from measurements at the boundary.** Exports carry
+  both. The `Average` column looked like data and was a rendering instruction;
+  it cost one decision in step 1 and would have cost a permanent explanation
+  otherwise.
+- **Pin the timezone where the text becomes an epoch.** It's the only cheap
+  place, and getting it wrong is invisible.
+- **Verify the parse against something the file already claims.** The
+  precomputed average was a free checksum on the whole pipeline. Most exports
+  have one somewhere — a total, a max, a count.
+- **When a measurement only means something against a scale, draw the scale.**
+  Heart-rate zones, latency SLOs, blood pressure, control-chart spec limits,
+  battery state-of-charge — all the same `<Zone>` set over a pinned axis, all
+  the same "is this bad?" that the traces alone can't answer.
+
+## Reference
+
+- [`Zone` reference](../charts/annotations/zone.mdx) — the full prop surface,
+  the bounds rules, and the sharp edges.
+- [The annotation model](../charts/annotations/the-annotation-model.mdx) —
+  registers, roles, depth; where a palette should live.
+- [Theming](../charts/theming.mdx) — building a `ChartTheme`, and the
+  `cssVarTheme` bridge the site theme above is built with.
+- [Ingesting messy data](./ingesting-messy-data) — when the CSV fights back.
+- The `Annotations/Zone` group in the `@pond-ts/charts` Storybook — one story
+  per knob (clamping, open-ended bands, dual axis, the tiled set).

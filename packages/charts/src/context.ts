@@ -366,6 +366,16 @@ export interface ContainerFrame {
 /** The kind of an annotation, and of a creation tool. */
 export type AnnotationKind = 'region' | 'marker' | 'baseline';
 
+/**
+ * The kind of a **registered** mark — wider than {@link AnnotationKind}.
+ *
+ * A `<Zone>` is a mark you place in JSX but **not** a create *tool*: there is no
+ * draw gesture for it and no {@link CreateSpec} variant, so it registers under
+ * its own kind without widening the toolbar vocabulary (which would let
+ * `creating="zone"` type-check and then silently never fire `onCreate`).
+ */
+export type AnnotationSpecKind = AnnotationKind | 'zone';
+
 /** What a completed create gesture reports to {@link ContainerFrame.onCreate} —
  *  the new mark's kind + position in axis units (+ the y-axis id for a baseline).
  *  (Which row a mark lands on is the consumer's call for now; multi-row routing is
@@ -386,14 +396,14 @@ export interface AnnotationSpec {
    *  double-click reports via {@link ContainerFrame.onSelectAnnotation}, so the
    *  consumer knows which mark to select. */
   readonly id: string | undefined;
-  readonly kind: AnnotationKind;
+  readonly kind: AnnotationSpecKind;
   /** The row it lives on (its `<ChartRow>`'s key), so a row skips its own marks
    *  when drawing guides. */
   readonly rowKey: symbol;
   /**
    * Its vertical-guide x-position(s) in **axis units** (the shared x): a marker's
-   * `[at]`, a region's `[from, to]`. Empty for a baseline — a horizontal line
-   * casts no vertical guide.
+   * `[at]`, a region's `[from, to]`. Empty for a baseline or a zone — a
+   * horizontal line (or band) casts no vertical guide.
    */
   readonly xs: readonly number[];
   /** Whether it's currently selected (controlled by the consumer). */

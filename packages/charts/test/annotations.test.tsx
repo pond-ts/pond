@@ -11,6 +11,7 @@ import {
   Region,
   Marker,
   Baseline,
+  Zone,
   computeLabelLanes,
   orderRegion,
   moveRegionByPixels,
@@ -442,6 +443,205 @@ describe('Baseline label placement', () => {
   });
 });
 
+/**
+ * `<Zone>` — the y-span band. The shared `renderAnn` frame is a 120 px row over a
+ * `[0, 100]` y axis, so the scale is exactly `y = 120 - 1.2 · value`: value 0 sits
+ * at y 120 (the floor), 50 at y 60, 100 at y 0 (the ceiling). Every geometry
+ * expectation below is that identity, which is what makes the numbers readable.
+ */
+describe('Zone — y-span geometry', () => {
+  /** The band's *fill* rects (a `DragArea` hit rect is `fill="transparent"`). */
+  const fills = (child: ReactNode) => {
+    const { container, unmount } = renderAnn(child);
+    const out = Array.from(container.querySelectorAll('svg rect'))
+      .filter((r) => r.getAttribute('fill') !== 'transparent')
+      .map((r) => ({
+        // Rounded: the rect takes the raw scale output (no pixel snapping), so
+        // 80→200 lands on 23.999999999999993 px.
+        y: Math.round(Number(r.getAttribute('y'))),
+        height: Math.round(Number(r.getAttribute('height'))),
+        fill: r.getAttribute('fill'),
+      }));
+    unmount();
+    return out;
+  };
+
+  it('spans from value to value on the row axis', () => {
+    // 0–50 is the bottom half: y 60 → 120.
+    expect(fills(<Zone from={0} to={50} axis="a" />)).toEqual([
+      { y: 60, height: 60, fill: defaultTheme.annotation!.color },
+    ]);
+  });
+
+  it('orders its bounds — from/to either way round is the same band', () => {
+    expect(fills(<Zone from={50} to={0} axis="a" />)).toEqual(
+      fills(<Zone from={0} to={50} axis="a" />),
+    );
+  });
+
+  it('clamps a band that runs past the axis domain', () => {
+    // 80–200 on a [0,100] axis: the top is cut at the plot ceiling, not drawn
+    // at a negative y (which would paint up into the axis gutter).
+    expect(fills(<Zone from={80} to={200} axis="a" />)).toEqual([
+      { y: 0, height: 24, fill: defaultTheme.annotation!.color },
+    ]);
+  });
+
+  it('supports an open-ended band (to=Infinity — the AQI "Hazardous" tail)', () => {
+    expect(fills(<Zone from={80} to={Infinity} axis="a" />)).toEqual(
+      fills(<Zone from={80} to={200} axis="a" />),
+    );
+  });
+
+  it('culls a band entirely outside the domain', () => {
+    expect(fills(<Zone from={200} to={300} axis="a" />)).toEqual([]);
+    expect(fills(<Zone from={-50} to={-10} axis="a" />)).toEqual([]);
+  });
+
+  it('culls a zero-height band', () => {
+    expect(fills(<Zone from={50} to={50} axis="a" />)).toEqual([]);
+  });
+});
+
+describe('Zone — background-context defaults', () => {
+  const lines = (child: ReactNode) => {
+    const { container, unmount } = renderAnn(child);
+    const n = container.querySelectorAll('svg line').length;
+    unmount();
+    return n;
+  };
+  const hitRects = (child: ReactNode) => {
+    const { container, unmount } = renderAnn(child);
+    const n = container.querySelectorAll('svg rect[fill="transparent"]').length;
+    unmount();
+    return n;
+  };
+
+  it('draws no boundary lines by default; edges={true} draws both', () => {
+    // Contiguous zone sets share every interior boundary — edges-on would draw
+    // each one twice, so a zone inverts <Region>'s default.
+    expect(lines(<Zone from={0} to={50} axis="a" />)).toBe(0);
+    expect(lines(<Zone from={0} to={50} axis="a" edges />)).toBe(2);
+  });
+
+  it('omits a boundary the clamp cut off (an open-ended band has no top edge)', () => {
+    expect(lines(<Zone from={80} to={Infinity} axis="a" edges />)).toBe(1);
+  });
+
+  it('is pointer-transparent by default; selectable adds the hit area', () => {
+    // A zone spans the full plot width and a set tiles the row — inert by
+    // default, or its hit rect would swallow the plot's own clicks.
+    expect(hitRects(<Zone from={0} to={50} axis="a" />)).toBe(0);
+    expect(hitRects(<Zone from={0} to={50} axis="a" selectable />)).toBe(1);
+  });
+
+  it('renders no chip unless labelled, and anchors the chip at the band centre', () => {
+    const chip = (child: ReactNode) => {
+      const { container, unmount } = renderAnn(child);
+      const el = within(container).queryByText('Good') as HTMLElement | null;
+      const style = el
+        ? { top: el.style.top, left: el.style.left, right: el.style.right }
+        : null;
+      unmount();
+      return style;
+    };
+    expect(chip(<Zone from={0} to={50} axis="a" />)).toBeNull();
+    // 0–50 spans y 60→120, so its centre is y 90.
+    expect(chip(<Zone from={0} to={50} axis="a" label="Good" />)).toEqual({
+      top: '90px',
+      left: '2px',
+      right: '',
+    });
+    expect(
+      chip(<Zone from={0} to={50} axis="a" label="Good" labelSide="right" />),
+    ).toEqual({ top: '90px', left: '', right: '2px' });
+  });
+
+  it('casts no vertical guide on other rows (like a baseline)', () => {
+    const { container } = render(
+      <ChartContainer range={[0, 4]} width={300} showAxis={false}>
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            <Zone from={0} to={50} axis="a" />
+          </Layers>
+        </ChartRow>
+        <ChartRow height={120}>
+          <YAxis id="b" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="b" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    // The cross-row guide is the dashed faint line; a y-band has no x to cast.
+    expect(
+      container.querySelectorAll('line[stroke-dasharray="2 3"]').length,
+    ).toBe(0);
+  });
+});
+
+describe('Zone — the theme role IS the palette', () => {
+  const aqiTheme: ChartTheme = {
+    ...defaultTheme,
+    annotation: {
+      color: '#808080',
+      fillOpacity: 0.1,
+      depth: [1, 0.7, 0.4],
+      roles: {
+        good: { color: '#00e400', fillOpacity: 0.25 },
+        moderate: { color: '#ffff00' },
+      },
+    },
+  };
+
+  const band = (child: ReactNode) => {
+    const { container, unmount } = render(
+      <ChartContainer
+        range={[0, 4]}
+        width={300}
+        showAxis={false}
+        theme={aqiTheme}
+      >
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            {child}
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const r = container.querySelector('svg rect');
+    const out = {
+      fill: r?.getAttribute('fill'),
+      opacity: Number(r?.getAttribute('opacity')),
+    };
+    unmount();
+    return out;
+  };
+
+  it('a role recolours the band and can set its own fill opacity', () => {
+    // Inert (level 3) ⇒ FILL_MULT is 1, so the opacity is the role's own.
+    expect(band(<Zone from={0} to={50} axis="a" role="good" />)).toEqual({
+      fill: '#00e400',
+      opacity: 0.25,
+    });
+    expect(band(<Zone from={0} to={50} axis="a" role="moderate" />)).toEqual({
+      fill: '#ffff00',
+      opacity: 0.1, // inherits the register's fillOpacity
+    });
+  });
+
+  it('an unset / unknown role falls back to the base register', () => {
+    expect(band(<Zone from={0} to={50} axis="a" />).fill).toBe('#808080');
+    expect(band(<Zone from={0} to={50} axis="a" role="nope" />).fill).toBe(
+      '#808080',
+    );
+  });
+});
+
 describe('Region edges', () => {
   const edgeCount = (child: ReactNode) => {
     const { container, unmount } = renderAnn(child);
@@ -523,5 +723,74 @@ describe('annotation theme roles (#508 item 3)', () => {
     expect(
       strokes(<Region from={1} to={3} role="band" label={false} />),
     ).toContain('#0000ff');
+  });
+});
+
+describe('annotation dash (register + per-role)', () => {
+  /** The `stroke-dasharray` of every annotation line, in a theme where the
+   *  register is solid but the `ref` role dashes. */
+  const dashes = (child: ReactNode, theme: ChartTheme): (string | null)[] => {
+    const { container, unmount } = render(
+      <ChartContainer range={[0, 4]} width={300} showAxis={false} theme={theme}>
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            {child}
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const out = Array.from(container.querySelectorAll('svg line')).map((l) =>
+      l.getAttribute('stroke-dasharray'),
+    );
+    unmount();
+    return out;
+  };
+
+  const solid: ChartTheme = {
+    ...defaultTheme,
+    annotation: {
+      color: '#808080',
+      fillOpacity: 0.1,
+      depth: [1, 0.7, 0.4],
+      roles: { ref: { color: '#808080', dash: [6, 4] } },
+    },
+  };
+  const dashed: ChartTheme = {
+    ...solid,
+    annotation: { ...solid.annotation!, dash: [2, 2] },
+  };
+
+  it('omits stroke-dasharray when the register sets no dash', () => {
+    expect(dashes(<Baseline value={50} label={false} />, solid)).toEqual([
+      null,
+    ]);
+  });
+
+  it('a role can dash while the register stays solid', () => {
+    expect(dashes(<Baseline value={50} role="ref" label={false} />, solid)) //
+      .toEqual(['6 4']);
+  });
+
+  it('a register dash applies to every mark, and a role overrides it', () => {
+    expect(dashes(<Marker at={2} label={false} />, dashed)).toEqual(['2 2']);
+    expect(dashes(<Zone from={0} to={50} axis="a" edges />, dashed)).toEqual([
+      '2 2',
+      '2 2',
+    ]);
+    expect(dashes(<Marker at={2} role="ref" label={false} />, dashed)).toEqual([
+      '6 4',
+    ]);
+  });
+
+  it('treats an empty pattern as solid', () => {
+    const empty: ChartTheme = {
+      ...solid,
+      annotation: { ...solid.annotation!, dash: [] },
+    };
+    expect(dashes(<Baseline value={50} label={false} />, empty)).toEqual([
+      null,
+    ]);
   });
 });

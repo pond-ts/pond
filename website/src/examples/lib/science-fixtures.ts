@@ -1,4 +1,5 @@
 import { TimeSeries, ValueSeries } from 'pond-ts';
+import type { ChartTheme } from '@pond-ts/charts';
 import {
   AIR_PM25,
   AIR_START_MS,
@@ -314,6 +315,71 @@ export const AQI_THRESHOLDS: ReadonlyArray<{ label: string; pm25: number }> = [
   { label: 'Unhealthy', pm25: 125.4 },
   { label: 'Very unhealthy', pm25: 225.4 },
 ];
+
+/** Theme-role name per AQI category, in {@link AQI_THRESHOLDS} order, plus the
+ *  open-ended top category the threshold list has no upper bound for. */
+const AQI_ROLES = [
+  'good',
+  'moderate',
+  'sensitive',
+  'unhealthy',
+  'veryUnhealthy',
+  'hazardous',
+] as const;
+
+/**
+ * The same categories as **bands** rather than boundaries — `[from, to)` pairs
+ * derived from {@link AQI_THRESHOLDS}, so the breakpoints stay single-source
+ * and this can't drift from them.
+ *
+ * A category is the span between one upper bound and the next; the first runs
+ * up from 0 and the last (Hazardous) is genuinely **open-ended**, which is why
+ * its `to` is `Infinity` rather than an invented ceiling — `<Zone>` resolves
+ * that against the axis domain and clamps to the plot edge.
+ */
+export const AQI_BANDS: ReadonlyArray<{
+  label: string;
+  role: string;
+  from: number;
+  to: number;
+}> = AQI_ROLES.map((role, i) => ({
+  role,
+  label: AQI_THRESHOLDS[i]?.label ?? 'Hazardous',
+  from: i === 0 ? 0 : AQI_THRESHOLDS[i - 1]!.pm25,
+  to: AQI_THRESHOLDS[i]?.pm25 ?? Infinity,
+}));
+
+/**
+ * The EPA's category **colours** for {@link AQI_BANDS}, layered onto whatever
+ * base theme the page is using.
+ *
+ * `<Zone role="good">` says *which category*; the theme says what a category
+ * looks like. It lives beside the breakpoints because the two are halves of
+ * one scale. The official hues are designed for filled status badges, so they
+ * ride at a low `fillOpacity` — a wash the trace reads through rather than a
+ * block of colour competing with it, and not uniform because the hues aren't
+ * equally strong (pure yellow needs more alpha than red to register at all).
+ */
+export function aqiBandTheme(base: ChartTheme): ChartTheme {
+  return {
+    ...base,
+    annotation: {
+      ...(base.annotation ?? {
+        color: '#14b8a6',
+        fillOpacity: 0.1,
+        depth: [1, 0.7, 0.4],
+      }),
+      roles: {
+        good: { color: '#00e400', fillOpacity: 0.16 },
+        moderate: { color: '#ffff00', fillOpacity: 0.22 },
+        sensitive: { color: '#ff7e00', fillOpacity: 0.14 },
+        unhealthy: { color: '#ff0000', fillOpacity: 0.12 },
+        veryUnhealthy: { color: '#8f3f97', fillOpacity: 0.12 },
+        hazardous: { color: '#7e0023', fillOpacity: 0.12 },
+      },
+    },
+  };
+}
 
 /** `[begin, end]` of the air-quality record, epoch ms. */
 export const AIR_RANGE: readonly [number, number] = [
