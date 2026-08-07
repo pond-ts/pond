@@ -8,24 +8,27 @@ import {
   type HeatStyle,
 } from '../src/heat.js';
 import { recordingContext } from './canvas-mock.js';
-import type { BarSeries } from '../src/data.js';
+import type { StackedBarSeries } from '../src/data.js';
 
-/** Cells from parallel begin/end/value arrays. */
-const cells = (begin: number[], end: number[], v: number[]): BarSeries => ({
+/**
+ * A grid from bin spans, row names and a row-major value block. This is
+ * `stacksFromColumns`' output shape — the heat map adds no reader, so the tests
+ * build the same thing by hand.
+ */
+const grid = (
+  begin: number[],
+  end: number[],
+  groups: string[],
+  values: number[],
+): StackedBarSeries => ({
   begin: Float64Array.from(begin),
   end: Float64Array.from(end),
-  y: Float64Array.from(v),
+  groups,
+  values: Float64Array.from(values),
   length: begin.length,
 });
 
 const identity = (v: number) => v;
-
-/** A y scale that reports a plot band, as a real row's scale does. */
-function yBand(lo: number, hi: number): (v: number) => number {
-  const f = (v: number) => v;
-  (f as unknown as { domain: () => number[] }).domain = () => [lo, hi];
-  return f;
-}
 
 const style: HeatStyle = {
   opacity: 0.9,
@@ -37,9 +40,12 @@ const style: HeatStyle = {
 
 const RAMP = ['#a', '#b', '#c', '#d'];
 
+/** Two bins × three rows. values[b * 3 + g]. */
+const two3 = () =>
+  grid([0, 10], [10, 20], ['lo', 'mid', 'hi'], [0, 2, 4, 1, 3, 4]);
+
 describe('bandedColor', () => {
   it('splits the domain into equal bands, one per ramp stop', () => {
-    // domain [0,4] over 4 colours → each band is 1 wide.
     expect(bandedColor(0.5, RAMP, 0, 4)).toBe('#a');
     expect(bandedColor(1.5, RAMP, 0, 4)).toBe('#b');
     expect(bandedColor(2.5, RAMP, 0, 4)).toBe('#c');
@@ -53,8 +59,8 @@ describe('bandedColor', () => {
   });
 
   it('clamps values outside a pinned domain to the end bands', () => {
-    // A pinned domain is narrower than the data on purpose; out-of-range
-    // values must still read, at the extreme, rather than vanish.
+    // A pinned domain is often narrower than the data; out-of-range values
+    // must read at the extreme rather than vanish.
     expect(bandedColor(-99, RAMP, 0, 4)).toBe('#a');
     expect(bandedColor(99, RAMP, 0, 4)).toBe('#d');
   });
@@ -70,59 +76,89 @@ describe('bandedColor', () => {
 });
 
 describe('heatValueExtent', () => {
-  it('spans the finite values and does NOT widen to zero', () => {
-    // Unlike barExtent: a cell's colour is read against the data's own range,
-    // so pulling 0 in would waste half the ramp on an all-positive series.
-    expect(heatValueExtent(cells([0, 1], [1, 2], [5, 9]))).toEqual([5, 9]);
+  it('spans the whole grid, so every row shares one scale', () => {
+    // Not per-row: rows are only comparable to each other if one domain
+    // covers them all.
+    expect(heatValueExtent(two3())).toEqual([0, 4]);
   });
 
-  it('ignores gaps', () => {
-    expect(heatValueExtent(cells([0, 1, 2], [1, 2, 3], [5, NaN, 9]))).toEqual([
-      5, 9,
+  it('does NOT widen to zero, unlike a bar extent', () => {
+    // A cell's colour is read against the data's own range; pulling 0 in
+    // would waste part of the ramp on an all-positive grid.
+    expect(heatValueExtent(grid([0], [1], ['r'], [5]))).toEqual([5, 5]);
+  });
+
+  it('ignores gaps, and is null when nothing is finite', () => {
+    expect(heatValueExtent(grid([0, 1], [1, 2], ['r'], [5, NaN]))).toEqual([
+      5, 5,
     ]);
-  });
-
-  it('returns null when nothing is finite', () => {
-    expect(heatValueExtent(cells([0], [1], [NaN]))).toBeNull();
+    expect(heatValueExtent(grid([0], [1], ['r'], [NaN]))).toBeNull();
   });
 });
 
 describe('cellRect', () => {
-  it('fills the row band in y, whatever the value is', () => {
-    // The defining difference from a bar: height carries no information.
-    const a = cellRect(cells([0], [10], [1]), 0, identity, 0, 100, 0, 1);
-    const b = cellRect(cells([0], [10], [99]), 0, identity, 0, 100, 0, 1);
-    expect(a).toEqual([0, 10, 0, 100]);
-    expect(b).toEqual(a); // same rect — only the colour differs
+  it('gives each row its own unit slot in y', () => {
+    const ss = two3();
+    // Row g occupies [g, g+1] through the y scale.
+    expect(cellRect(ss, 0, 0, identity, identity, 0, 1)).toEqual([0, 10, 0, 1]);
+    expect(cellRect(ss, 0, 1, identity, identity, 0, 1)).toEqual([0, 10, 1, 2]);
+    expect(cellRect(ss, 0, 2, identity, identity, 0, 1)).toEqual([0, 10, 2, 3]);
+  });
+
+  it('shares the bin span across every row', () => {
+    const ss = two3();
+    const a = cellRect(ss, 1, 0, identity, identity, 0, 1);
+    const b = cellRect(ss, 1, 2, identity, identity, 0, 1);
+    expect([a?.[0], a?.[1]]).toEqual([10, 20]);
+    expect([b?.[0], b?.[1]]).toEqual([a?.[0], a?.[1]]); // same column
   });
 
   it('returns null for a gap, so a hole reads as a hole', () => {
-    expect(
-      cellRect(cells([0], [10], [NaN]), 0, identity, 0, 100, 0, 1),
-    ).toBeNull();
+    const ss = grid([0], [10], ['r'], [NaN]);
+    expect(cellRect(ss, 0, 0, identity, identity, 0, 1)).toBeNull();
   });
 
-  it('insets by the gap', () => {
-    const r = cellRect(cells([0], [10], [1]), 0, identity, 0, 100, 4, 1);
-    expect([r?.[0], r?.[1]]).toEqual([2, 8]);
+  it('insets by the gap in both axes', () => {
+    // A realistic y scale: one unit slot per row, 100px tall. (With a 1:1
+    // scale a row is a single pixel and the floor below refuses to inset it.)
+    const tall = (v: number) => v * 100;
+    const ss = grid([0], [100], ['r'], [1]);
+    const r = cellRect(ss, 0, 0, identity, tall, 20, 1);
+    expect([r?.[0], r?.[1]]).toEqual([10, 90]); // x span inset 10 each side
+    expect([r?.[2], r?.[3]]).toEqual([10, 90]); // row band likewise
+  });
+
+  it('refuses to inset a row thinner than a pixel', () => {
+    // The floor that made the test above need a real scale: a 1px row keeps
+    // its pixel rather than vanishing into the gap.
+    const ss = grid([0], [10], ['r'], [1]);
+    expect(cellRect(ss, 0, 0, identity, identity, 4, 1)?.slice(2)).toEqual([
+      0, 1,
+    ]);
+  });
+
+  it('never lets the y gap collapse a row to nothing', () => {
+    // A gap wider than the row would invert the rect; it clamps instead.
+    const ss = grid([0], [10], ['r'], [1]);
+    const r = cellRect(ss, 0, 0, identity, identity, 50, 1);
+    expect(r![3]).toBeGreaterThan(r![2]);
   });
 });
 
 describe('drawHeat', () => {
-  const three = () => cells([0, 10, 20], [10, 20, 30], [0, 2, 4]);
   const draw = (
-    cs: BarSeries,
-    selection: { id: string; key: number } | null = null,
-    hovered: { id: string; key: number } | null = null,
+    ss: StackedBarSeries,
+    selection: { id: string; key: number; label: string } | null = null,
+    hovered: { id: string; key: number; label: string } | null = null,
   ) => {
     const { ctx, calls } = recordingContext();
     drawHeat(
       ctx,
-      cs,
+      ss,
       identity,
-      yBand(0, 100),
+      identity,
       style,
-      (i) => bandedColor(cs.y[i]!, RAMP, 0, 4),
+      (b, g) => bandedColor(ss.values[b * ss.groups.length + g]!, RAMP, 0, 4),
       'heat',
       selection,
       hovered,
@@ -130,77 +166,101 @@ describe('drawHeat', () => {
     return calls;
   };
 
-  it('fills one cell per value, banded across the ramp', () => {
-    const fills = draw(three())
+  it('fills every cell of the grid, banded across the ramp', () => {
+    const fills = draw(two3())
       .filter((c) => c.type === 'set' && c.name === 'fillStyle')
       .map((c) => c.args[0]);
-    expect(fills).toEqual(['#a', '#c', '#d']);
+    // bin0: 0,2,4 → a,c,d ; bin1: 1,3,4 → b,d,d
+    expect(fills).toEqual(['#a', '#c', '#d', '#b', '#d', '#d']);
   });
 
-  it('skips a gap cell entirely — no fill, no zero-size rect', () => {
-    const calls = draw(cells([0, 10, 20], [10, 20, 30], [0, NaN, 4]));
-    expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(2);
+  it('skips gap cells without disturbing their neighbours', () => {
+    const ss = grid([0, 10], [10, 20], ['lo', 'hi'], [0, NaN, 4, 4]);
+    expect(draw(ss).filter((c) => c.name === 'fillRect')).toHaveLength(3);
   });
 
-  it('cells tile the full plot height', () => {
-    const rect = draw(three()).find((c) => c.name === 'fillRect');
-    expect(rect?.args).toEqual([0, 0, 10, 100]); // y 0..100, the whole band
-  });
-
-  it('outlines the selected cell but keeps its own colour', () => {
-    // The colour IS the datum — swapping it for a highlight would erase the
-    // reading, so selection is signalled by the outline and full opacity.
-    const calls = draw(three(), { id: 'heat', key: 10 });
+  it('outlines the selected cell and keeps its own colour', () => {
+    // The colour is the datum — swapping it would erase the reading.
+    const calls = draw(two3(), { id: 'heat', key: 0, label: 'mid' });
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(1);
     const fills = calls
       .filter((c) => c.type === 'set' && c.name === 'fillStyle')
       .map((c) => c.args[0]);
-    expect(fills).toEqual(['#a', '#c', '#d']); // unchanged by the selection
+    expect(fills).toEqual(['#a', '#c', '#d', '#b', '#d', '#d']);
   });
 
-  it('pops the live cell to full opacity and restores the rest', () => {
-    const alphas = draw(three(), null, { id: 'heat', key: 10 })
+  it('identifies a cell by bin AND row, not bin alone', () => {
+    // Same key, different row → a different cell. This is what makes the
+    // grid's selection two-dimensional.
+    expect(
+      draw(two3(), { id: 'heat', key: 0, label: 'nope' }).filter(
+        (c) => c.name === 'strokeRect',
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('pops only the live cell to full opacity', () => {
+    const alphas = draw(two3(), null, { id: 'heat', key: 10, label: 'lo' })
       .filter((c) => c.type === 'set' && c.name === 'globalAlpha')
       .map((c) => c.args[0]);
-    expect(alphas).toEqual([style.opacity, style.opacity, 1, style.opacity]);
+    // Leading save-bracket alpha, then one per cell; bin1/'lo' is cell index 3.
+    expect(alphas).toEqual([
+      style.opacity,
+      style.opacity,
+      style.opacity,
+      style.opacity,
+      1,
+      style.opacity,
+      style.opacity,
+    ]);
   });
 
   it('does not light a cell belonging to another layer id', () => {
-    const calls = draw(three(), { id: 'other', key: 10 });
+    const calls = draw(two3(), { id: 'other', key: 0, label: 'mid' });
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
   });
 });
 
 describe('heatAt', () => {
-  const three = () => cells([0, 10, 20], [10, 20, 30], [5, 6, 7]);
-
-  it('reports the cell’s own value — the thing the bar workaround could not', () => {
-    // A constant-height bar carries no value, so the stripes card looks the
-    // number up out-of-band. A cell answers directly.
-    expect(heatAt(three(), 15, 50, identity, yBand(0, 100), 0, 1)).toEqual([
-      1, 10, 6,
+  it('reports the cell’s bin, row, name and value', () => {
+    // The value is the whole point: a constant-height bar carries none, which
+    // is why the stripes workaround looks its number up out-of-band.
+    expect(heatAt(two3(), 5, 1.5, identity, identity, 0, 1)).toEqual([
+      0,
+      1,
+      0,
+      'mid',
+      2,
     ]);
   });
 
-  it('hits anywhere in the column, since the cell is the full height', () => {
-    for (const py of [0, 1, 50, 99, 100]) {
-      expect(heatAt(three(), 15, py, identity, yBand(0, 100), 0, 1)?.[0]).toBe(
-        1,
-      );
-    }
+  it('distinguishes rows within one column', () => {
+    const ss = two3();
+    expect(heatAt(ss, 5, 0.5, identity, identity, 0, 1)?.[3]).toBe('lo');
+    expect(heatAt(ss, 5, 2.5, identity, identity, 0, 1)?.[3]).toBe('hi');
   });
 
-  it('gives a shared edge to the left cell', () => {
-    expect(heatAt(three(), 10, 50, identity, yBand(0, 100), 0, 1)?.[0]).toBe(0);
+  it('misses outside the grid on either axis', () => {
+    const ss = two3();
+    expect(heatAt(ss, 25, 1.5, identity, identity, 0, 1)).toBeNull(); // past x
+    expect(heatAt(ss, 5, 3.5, identity, identity, 0, 1)).toBeNull(); // past y
   });
 
-  it('misses outside the record', () => {
-    expect(heatAt(three(), 31, 50, identity, yBand(0, 100), 0, 1)).toBeNull();
+  it('a gap cell owns no hit region, but its neighbours do', () => {
+    const ss = grid([0], [10], ['lo', 'hi'], [NaN, 4]);
+    expect(heatAt(ss, 5, 0.5, identity, identity, 0, 1)).toBeNull();
+    expect(heatAt(ss, 5, 1.5, identity, identity, 0, 1)?.[3]).toBe('hi');
   });
 
-  it('a gap cell owns no hit region', () => {
-    const g = cells([0, 10, 20], [10, 20, 30], [5, NaN, 7]);
-    expect(heatAt(g, 15, 50, identity, yBand(0, 100), 0, 1)).toBeNull();
-    expect(heatAt(g, 5, 50, identity, yBand(0, 100), 0, 1)?.[0]).toBe(0);
+  it('a single-column grid is just a stripe', () => {
+    // G === 1 is the same path, not a special case.
+    const ss = grid([0, 10], [10, 20], ['v'], [3, 7]);
+    expect(heatAt(ss, 15, 0.5, identity, identity, 0, 1)).toEqual([
+      1,
+      0,
+      10,
+      'v',
+      7,
+    ]);
   });
 });

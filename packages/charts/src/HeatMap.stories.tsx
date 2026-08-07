@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { TimeSeries } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
@@ -13,9 +14,9 @@ const sf = sanFranciscoTemperatures();
 const begins = sf.keyColumn().begin;
 const RANGE: readonly [number, number] = [begins[0]!, begins[sf.length - 1]!];
 
-/** A sequential ramp, cool → warm, in the docs palette's own family. The rule
- *  here is one hue family rather than competing hues, so this steps lightness
- *  rather than running blue-to-red. */
+/** A sequential ramp, cool → warm, in the docs palette's own family — one hue
+ *  family rather than competing hues. Nine stops, so it reads as continuous
+ *  while staying countable against a legend. */
 const RAMP = [
   '#0b3d3a',
   '#125e57',
@@ -24,6 +25,7 @@ const RAMP = [
   '#4cc0b0',
   '#82d6c7',
   '#b6e7dd',
+  '#d5f0e9',
   '#e2f5f0',
 ];
 
@@ -36,21 +38,20 @@ export default meta;
 type Story = StoryObj;
 
 /**
- * **The stripes case.** One cell per day, tiling the axis, colour carrying the
- * daily high. No baseline, no bar heights — the whole plot is one row and the
- * colour *is* the value.
+ * **Shape 1 — a `TimeSeries`, one column.** One cell per day, tiling the time
+ * axis, colour carrying the daily high. A stripe is just `columns.length === 1`
+ * — the same draw path as the grid below, not a special case.
  *
- * Compare the workaround this replaces: the Gallery's climate-stripes card
- * builds the same picture from a `<BarChart>` with a constant column (so every
- * bar is full height) plus a caller-computed `binColors` array. Both go away.
+ * This replaces a `<BarChart>` workaround that needed a constant column (so
+ * every bar was full height) plus a caller-computed colour array. Both go.
  */
-export const Stripes: Story = {
+export const Stripe: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={720} theme={docsTheme}>
-      <ChartRow height={96}>
-        <YAxis id="v" min={0} max={1} ticks={[]} label="°F" />
+      <ChartRow height={80}>
+        <YAxis id="v" label="°F" />
         <Layers>
-          <HeatMap series={sf} column="high" colors={RAMP} />
+          <HeatMap series={sf} columns={['high']} colors={RAMP} />
         </Layers>
       </ChartRow>
     </ChartContainer>
@@ -58,14 +59,35 @@ export const Stripes: Story = {
 };
 
 /**
- * **The reason the layer exists.** Hover or click a cell and the readout shows
- * the temperature — read straight off the cell.
+ * **Shape 2 — a `TimeSeries`, several columns.** The y dimension is the
+ * series' own columns, one row each, labelled off `binCategories`. Row `0` is
+ * at the bottom, so the list reads bottom → top.
  *
- * The bar-based workaround cannot do this at all: its bars are a constant
- * height, so they carry no value, and the climate-stripes card looks the number
- * up out-of-band keyed by the year the tracker reports. Here `hitTest` and
- * `sampleAt` both return the cell's own value, and the readout pill takes the
- * cell's own colour.
+ * Both rows share **one** colour domain, which is what makes them comparable:
+ * the same colour means the same temperature in either row, so you can see the
+ * daily range open and close across the year.
+ */
+export const Grid: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={720} theme={docsTheme}>
+      <ChartRow height={120}>
+        <YAxis id="v" label="°F" />
+        <Layers>
+          <HeatMap series={sf} columns={['low', 'high']} colors={RAMP} />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **The readout is the point.** Hover or click a cell: it reports the row it is
+ * in and the value it encodes, in its own colour.
+ *
+ * A cell's identity is two-dimensional — bin **and** row — so the two rows at
+ * one instant are distinct selections. The bar-based workaround could not do
+ * this at all: constant-height bars carry no value, so the number had to be
+ * looked up out-of-band.
  */
 function SelectableDemo() {
   const [sel, setSel] = useState<SelectInfo | null>(null);
@@ -81,7 +103,7 @@ function SelectableDemo() {
         }}
       >
         {sel === null ? (
-          <span style={{ opacity: 0.5 }}>hover or click a day…</span>
+          <span style={{ opacity: 0.5 }}>hover or click a cell…</span>
         ) : (
           <span style={{ color: sel.color }}>
             {new Date(sel.key).toISOString().slice(0, 10)} · {sel.label}{' '}
@@ -96,15 +118,15 @@ function SelectableDemo() {
         onSelect={setSel}
         onHover={(h) => h && setSel(h)}
       >
-        <ChartRow height={96}>
-          <YAxis id="v" min={0} max={1} ticks={[]} label="°F" />
+        <ChartRow height={120}>
+          <YAxis id="v" label="°F" />
           <Layers>
             <HeatMap
               series={sf}
-              column="high"
+              columns={['low', 'high']}
               colors={RAMP}
-              id="high"
-              as="high"
+              id="temp"
+              gap={0.5}
             />
           </Layers>
         </ChartRow>
@@ -116,22 +138,56 @@ function SelectableDemo() {
 export const Selectable: Story = { render: () => <SelectableDemo /> };
 
 /**
- * **A pinned colour domain.** By default the ramp spans the column's own finite
- * extent, so it always uses the full palette. Pin `domain` when two heat maps
- * must be read against each other, or when the window is a slice of a longer
- * record and the colours should not re-mean themselves as it moves.
+ * **Shape 3 — a `ValueSeries`, one column.** The x axis is value intervals
+ * rather than time: here the record re-keyed onto its own daily high, so the
+ * cells bin by temperature instead of by date. Nothing about the layer
+ * changes — `xKind` is inferred from the series type, exactly as `<BarChart>`
+ * infers it.
+ */
+export const ValueAxisStripe: Story = {
+  render: () => {
+    const byHigh = sf.byValue('high');
+    const axis = byHigh.axisValues();
+    return (
+      <ChartContainer
+        range={[axis[0]!, axis[axis.length - 1]!]}
+        width={720}
+        theme={docsTheme}
+      >
+        <ChartRow height={80}>
+          <YAxis id="v" label="°F" />
+          <Layers>
+            <HeatMap series={byHigh} columns={['low']} colors={RAMP} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **A pinned colour domain.** By default the ramp spans the finite extent of
+ * the *whole grid*. Pin `domain` when two charts must be read against each
+ * other, or when the window is a slice of a longer record and the colours
+ * should not re-mean themselves as it moves — a colour scale has no tick
+ * labels to reveal that it moved.
  *
- * Here the domain is pinned wider than the data (40–100°F), so the record uses
- * only the middle of the ramp — the same reading you would get if this were one
- * city among several on a shared scale.
+ * Pinned wider than the data (40–100°F) here, so the record uses only the
+ * middle of the ramp: the reading you would get if this were one city among
+ * several on a shared scale.
  */
 export const PinnedDomain: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={720} theme={docsTheme}>
-      <ChartRow height={96}>
-        <YAxis id="v" min={0} max={1} ticks={[]} label="°F" />
+      <ChartRow height={120}>
+        <YAxis id="v" label="°F" />
         <Layers>
-          <HeatMap series={sf} column="high" colors={RAMP} domain={[40, 100]} />
+          <HeatMap
+            series={sf}
+            columns={['low', 'high']}
+            colors={RAMP}
+            domain={[40, 100]}
+          />
         </Layers>
       </ChartRow>
     </ChartContainer>
@@ -139,33 +195,61 @@ export const PinnedDomain: Story = {
 };
 
 /**
- * **Two rows, composed.** The prototype draws a single row, so a second
- * measurement is a second `<ChartRow>` rather than a second row *inside* one
- * heat map. Stacking them reads correctly and is genuinely useful — but it is
- * the workaround for the missing y dimension, not the design.
- *
- * This is the open question in [PND-HEATMAP]: a real grid puts the second
- * dimension (calendar position, category, value bucket) inside one layer, on
- * one axis, with one colour domain across both. Here each row auto-fits its own
- * domain, so the two are **not** comparable by colour — low and high use the
- * same palette for different ranges. Pin `domain` on both to fix that, which is
- * itself an argument for the grid owning the scale.
+ * **Many rows.** A synthetic five-band grid, to show the axis labelling and
+ * cell geometry holding up as rows multiply — and that a `gap` reads as a grid
+ * rather than a continuous field.
  */
-export const TwoRowsComposed: Story = {
-  render: () => (
-    <ChartContainer range={RANGE} width={720} theme={docsTheme}>
-      <ChartRow height={64}>
-        <YAxis id="hi" min={0} max={1} ticks={[]} label="high" />
-        <Layers>
-          <HeatMap series={sf} column="high" colors={RAMP} domain={[40, 100]} />
-        </Layers>
-      </ChartRow>
-      <ChartRow height={64}>
-        <YAxis id="lo" min={0} max={1} ticks={[]} label="low" />
-        <Layers>
-          <HeatMap series={sf} column="low" colors={RAMP} domain={[40, 100]} />
-        </Layers>
-      </ChartRow>
-    </ChartContainer>
-  ),
+const bands = (() => {
+  const N = 120;
+  const rows: Array<[number, number, number, number, number, number]> = [];
+  for (let i = 0; i < N; i += 1) {
+    const t = Date.UTC(2024, 0, 1) + i * 86_400_000;
+    const s = Math.sin((i / N) * Math.PI * 2);
+    rows.push([
+      t,
+      50 + 40 * s,
+      50 + 30 * Math.sin(i / 9),
+      50 + 25 * Math.cos(i / 7),
+      50 - 20 * s,
+      50 + 15 * Math.sin(i / 4),
+    ]);
+  }
+  return new TimeSeries({
+    name: 'bands',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'p50', kind: 'number' },
+      { name: 'p75', kind: 'number' },
+      { name: 'p90', kind: 'number' },
+      { name: 'p95', kind: 'number' },
+      { name: 'p99', kind: 'number' },
+    ] as const,
+    rows,
+  });
+})();
+
+export const ManyRows: Story = {
+  render: () => {
+    const b = bands.keyColumn().begin;
+    return (
+      <ChartContainer
+        range={[b[0]!, b[bands.length - 1]!]}
+        width={720}
+        theme={docsTheme}
+      >
+        <ChartRow height={200}>
+          <YAxis id="v" label="°F" />
+          <Layers>
+            <HeatMap
+              series={bands}
+              columns={['p50', 'p75', 'p90', 'p95', 'p99']}
+              colors={RAMP}
+              gap={1}
+              id="lat"
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
 };

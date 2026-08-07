@@ -148,73 +148,85 @@ when estela pulls on it.
 ### [PND-HEATMAP] — Heat-map draw layer — PROTOTYPE ON A BRANCH
 
 The write-up PLAN.md points at. **Not merged**: `feat/heatmap-prototype` carries
-a working one-row layer (`src/heat.ts`, `src/HeatMap.tsx`, 22 tests, four
-stories under `Charts/HeatMap`). It answers some of the open questions and
-sharpens the rest; it does not settle the two-dimensional grid.
+a working grid layer (`src/heat.ts`, `src/HeatMap.tsx`, 25 tests, six stories
+under `Charts/HeatMap`).
 
-**Finding 1 — a one-row heat map _is_ a bar series, geometrically.** The
-prototype adds **no reader**. It uses `barsFromTimeSeries` unchanged and reads
-`BarSeries.y` as "the value colour encodes". The same key-shape rules apply
-(interval keys use their own span; point keys tile by neighbour spacing), which
-is why a year-keyed record becomes contiguous cells with no pre-binning. What
-differs is only the draw (every cell fills the row band instead of rising to its
-value) and the readout. That is worth knowing before anyone designs a
-`HeatSeries`: for one row there is nothing to add.
+**The whole thing needs no new data type.** `StackedBarSeries` is already a heat
+map's data — `[begin, end]` spans per bin, a named second dimension in `groups`,
+a row-major `length × G` value block, plus `marks` for stable identity. And
+`stacksFromColumns(series, columns)` already accepts `TimeSeries | ValueSeries`,
+branching to `seriesSlots()` or `neighbourSpans(axisValues())`. So one existing
+reader produces every shape pond can express:
 
-**Finding 2 — the readout is the actual motivation, more than the look.** The
-climate-stripes card can already _draw_ stripes; what it cannot do is answer
-"what number is this colour". Its bars are a constant `stripe: 1` column, so
-they carry no value, and the card looks the anomaly up out-of-band keyed by the
-year the tracker reports (`anomalyAt`, whose own doc comment says exactly this).
-A cell carries its value, so `hitTest` and `sampleAt` both return it and the
-readout pill takes the cell's own colour — verified in the browser:
-`2011-03-23 · high 54.1°F`. Two workarounds delete: the constant column and the
-caller-computed `binColors`.
+| source        | columns | x axis          |              |
+| ------------- | ------- | --------------- | ------------ |
+| `TimeSeries`  | one     | time intervals  | a stripe     |
+| `TimeSeries`  | many    | time intervals  | a grid       |
+| `ValueSeries` | one     | value intervals | a bin stripe |
+| `ValueSeries` | many    | value intervals | a grid       |
 
-**Finding 3 — the colour domain wants to be a first-class prop, not an
-auto-fit.** Defaulting to the column's finite extent is right for a single
-chart, but it silently re-means every cell when the data changes underneath —
-a windowed or streaming record re-scales its own colours as it moves. `domain`
-pins it. This matters more for heat maps than for a y axis, because a colour
-scale has no tick labels to reveal that it moved.
+**The stripe is `G === 1`** — one draw path, not two. An earlier cut of this
+prototype had a separate `BarSeries` route for the single-row case; it
+collapsed away entirely.
+
+**The axis mechanism also already existed.** `RowLayer.binCategories()` — added
+for horizontal histograms — reports row names while the y axis stays a linear
+scale over unit slots `[i, i+1]`, and `<YAxis>` labels each at `i + 0.5`. So the
+layer reports `yExtent: [0, G]` + `binCategories: () => groups` and gets a
+labelled row axis with no band scale, no `CategoryAxis` variant, no new axis
+work. The PLAN framing — "category axis **or** derived calendar coordinate" —
+was a false choice: the axis is the same either way, and the real question was
+only ever where the rows come from.
+
+**Decision — the y dimension is columns, and only columns.** A month-of-year
+grid means a column per month; a per-city grid means a column per city
+(`pivotByGroup` long→wide, or `partitionBy` reshaped). This is a real
+constraint and a deliberate one: it keeps the second dimension in the data
+model, where pond's own reshaping operators produce it, rather than inventing a
+chart-level pivot. The payoff is that **x keeps the whole of pond's binning
+machinery for free** — `aggregate` over a trading calendar with sessions,
+`Sequence.calendar` buckets, `byColumn` value bands — because the layer has no
+opinion about x beyond "these are bin spans".
+
+**Decision — one colour domain across the whole grid.** `heatValueExtent` spans
+every cell, not each row, because rows are only comparable if one scale covers
+them all. `domain` pins it for cross-chart comparison or a moving window, where
+an auto-fit silently re-means every cell and a colour scale has no tick labels
+to reveal that it moved.
 
 **Decision — banded, not interpolated.** Values map to `colors.length` equal
-bands. It matches what the card does today (`anomalyStep` buckets into the
-ramp's length and can go), it is the conventional reading for stripes and
-calendar heat maps, and a banded scale is honest about resolution in a way a
-smooth gradient is not. Continuous interpolation is an obvious later option and
-nothing here forecloses it.
+bands. Matches the climate-stripes card (whose `anomalyStep` this replaces), is
+the conventional reading for stripes and calendar grids, and is honest about
+resolution; at nine-plus stops it is indistinguishable from a gradient.
 
-**Decision — selection keeps the cell's own colour.** Bars swap to `highlight`
-when live; a cell must not, because its colour _is_ the datum and swapping it
-erases the reading. A live cell pops to full opacity and a selected one gains an
-outline, both in the style's `highlight`.
+**Decision — a live cell keeps its own colour.** Bars swap to `highlight`; a
+cell must not, because its colour _is_ the datum. Full opacity plus an outline
+on selection. Cell identity is two-dimensional — bin **and** row — reusing
+`StackMark` so bars and cells share one selection vocabulary.
 
-**Deferred — no `theme.heat` slot.** The layer borrows `opacity` / `highlight` /
-`outlineWidth` / `minWidth` from `theme.bar[as] ?? theme.bar.default`.
-`ChartTheme`'s slots are **required**, so adding one is a breaking change for
-every custom theme, and the M5 "theme tokens optional-with-default" gate
-([PND-PARITY]) has to land first. Borrowing keeps the prototype non-breaking and
-defers the decision rather than pre-empting it.
+**Deferred — no `theme.heat` slot.** Geometry is borrowed from
+`theme.bar[as] ?? theme.bar.default`. `ChartTheme`'s slots are required, so
+adding one is breaking for every custom theme; the M5 optional-with-default
+gate ([PND-PARITY]) lands first.
 
-**Still open — the second dimension, which is the actual [PND-HEATMAP].**
-`yExtent` is the degenerate `[0, 1]`, one band filling the plot. `heat.ts` takes
-its row band as an explicit `[y0, y1]` so rows can be added without changing the
-geometry's call shape, but nothing else is built. The `TwoRowsComposed` story
-shows the workaround — one `<ChartRow>` per measurement — and why it is not the
-design: each row auto-fits its own colour domain, so the rows are **not**
-comparable by colour unless every one is pinned by hand. That is an argument for
-the grid owning a single scale across its rows.
+**Friction found, not fixed:** `<YAxis>` titles itself `label ?? id`, so an
+omitted label renders the axis _id_ as a rotated glyph. Harmless on a value
+axis where the id is often the measure; wrong on a categorical row axis, where
+the rows are already labelled and the title should be the unit or nothing. The
+stories pass an explicit label. Pre-existing behaviour, affecting every chart
+that omits `label`.
 
-Also unanswered: whether the y dimension is a category axis (reusing the shipped
-band scale) or a derived calendar coordinate; and whether the day/month/year
-granularity toggle is a prop (the layer owns `Sequence.calendar` binning) or a
-re-binned series the caller passes (every other pond layer takes data
-already-shaped, which argues for the caller).
+**Still open:**
 
-**Next**, in order: convert the climate-stripes card to the layer, which is the
-real test of finding 2 and will surface the granularity question honestly; then
-decide the y dimension against a second real case rather than in the abstract.
+- **Cell value labels** (the reference "heat map with labels"): draw the
+  formatted value centred when it fits. Small; the fiddly part is text colour
+  staying legible against both ends of the ramp.
+- **A grouped two-level x axis** (quarters nested under years). Genuinely axis
+  work — it would serve bars equally — so it belongs with [PND-AXES], not here.
+- **Continuous interpolation** as an alternative to banding, if a consumer wants
+  it. Nothing forecloses it.
+- **Converting the climate-stripes card**, which is the real test of the readout
+  claim and the honest place to answer the day/month/year granularity question.
 
 ### [PND-BARMARK] — Stable per-bar identity for single-series bars — DONE
 
@@ -1479,11 +1491,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                            _Still true; no longer felt here._ The draggable marker is gone — selection
-                            is a click — so nothing on this page is in edit mode. But it cost a design
-                            iteration to discover, and the docs still don't mention it. **The one-line
-                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                            row's data cursor is suppressed."
+                                _Still true; no longer felt here._ The draggable marker is gone — selection
+                                is a click — so nothing on this page is in edit mode. But it cost a design
+                                iteration to discover, and the docs still don't mention it. **The one-line
+                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires

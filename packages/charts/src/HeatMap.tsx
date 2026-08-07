@@ -1,6 +1,7 @@
 import { useContext, useEffect, useMemo } from 'react';
-import type { SeriesSchema, TimeSeries } from 'pond-ts';
-import { barsFromTimeSeries } from './data.js';
+import { ValueSeries } from 'pond-ts';
+import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
+import { stacksFromColumns } from './data.js';
 import {
   bandedColor,
   drawHeat,
@@ -16,87 +17,105 @@ import {
 } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
-export interface HeatMapProps<S extends SeriesSchema = SeriesSchema> {
+export interface HeatMapProps<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> {
   /**
-   * The source series. An **interval / timeRange** key uses its own span per
-   * cell; a **point** key tiles by neighbour spacing — so a year-keyed record
-   * becomes contiguous year cells with no pre-binning, which is exactly the
-   * climate-stripes shape.
+   * The source series. A **`TimeSeries`** puts time intervals on x, a
+   * **`ValueSeries`** puts value intervals on x — inferred, no axis-kind prop,
+   * the same rule `<BarChart>` uses.
+   *
+   * Because the cell spans are the ordinary bin spans, the whole of pond's
+   * binning machinery applies unchanged: `aggregate` over a trading calendar
+   * with sessions, `Sequence.calendar` day/week/month buckets, `byColumn` value
+   * bands. The heat map inherits all of it by having no opinion about x.
    */
-  series: TimeSeries<S>;
+  series: TimeSeries<S> | ValueSeries<VS>;
   /**
-   * The numeric column the cell's **colour encodes** — and the value the cursor
-   * and a click report. One column, two jobs, which is the point: in the
-   * bar-based workaround the colour came from a caller-computed array while the
-   * height came from a constant column, so nothing could answer "what number is
-   * this cell".
+   * The numeric columns forming the **rows**, bottom → top — one row per
+   * column. Give one column for a single-row **stripe**; a stripe is just
+   * `columns.length === 1`, drawn by the same path.
+   *
+   * The y dimension must be columns, which is the layer's one real constraint.
+   * A month-of-year grid means a column per month; a per-city grid means a
+   * column per city (`pivotByGroup`'s long→wide output, or `partitionBy`
+   * reshaped). That keeps the second dimension in the data model, where pond's
+   * own reshaping operators can produce it, rather than inventing a
+   * chart-level pivot.
+   *
+   * Row `0` is at the **bottom**, matching the band-axis convention; reverse
+   * the list to read top-down.
    */
-  column: string;
+  columns: readonly string[];
   /**
-   * The colour ramp, low → high. The value domain is split into
-   * `colors.length` equal bands and a cell takes the colour of its band (see
-   * {@link bandedColor} for why banded rather than interpolated).
+   * The colour ramp, low → high. The value domain splits into `colors.length`
+   * equal bands and a cell takes its band's colour (see {@link bandedColor}).
+   * A diverging ramp is just a ramp whose middle is pale.
    */
   colors: readonly string[];
   /**
-   * Pin the colour domain as `[lo, hi]`. **Omitted ⇒ the column's own finite
-   * extent**, so the ramp always spans the data present.
+   * Pin the colour domain as `[lo, hi]`. **Omitted ⇒ the finite extent across
+   * the whole grid**, so every row is read against one scale and rows are
+   * comparable to each other.
    *
-   * Pin it when several heat maps must be read against each other, or when the
-   * visible window is a slice of a longer record and the colours should not
-   * re-scale as it moves — an auto-fit domain silently re-meanings every cell
-   * when the data changes under it.
+   * Pin it when two charts must be read against each other, or when the window
+   * is a slice of a longer record and the colours should not re-mean themselves
+   * as it moves — a colour scale has no tick labels to reveal that it moved.
    */
   domain?: readonly [number, number];
-  /** Semantic identifier — picks the geometry defaults off `theme.bar[as]`.
-   *  See the note on styling in the component doc. */
+  /** Semantic identifier — picks geometry defaults off `theme.bar[as]`. */
   as?: string;
   /** Which `<YAxis>` (by `id`) this layer scales against. */
   axis?: string;
-  /** Px inset between adjacent cells. **Omitted ⇒ `0`** — cells tile flush,
-   *  which is the stripes look; bars default to the theme's gap instead. */
+  /** Px inset around each cell. **Omitted ⇒ `0`**, tiling flush. */
   gap?: number;
-  /** Stable identity — **gates selection + hover**, as every other layer's does. */
+  /** Stable identity — **gates selection + hover**, as every layer's does. */
   id?: string;
   /** @internal Declaration position, injected by `Layers`. Do not set. */
   index?: number;
 }
 
 /**
- * A **heat-map draw layer**: a row of cells tiling the x axis, each filled by
- * the colour its value maps to ([PND-HEATMAP], prototype).
+ * A **heat-map draw layer**: a grid of cells, bins along x and the series'
+ * columns down y, colour carrying the aggregate ([PND-HEATMAP]).
  *
  * ```tsx
- * <HeatMap series={gistemp} column="anomaly" colors={ramp} id="anomaly" />
+ * // A stripe — one column.
+ * <HeatMap series={hourly} columns={['count']} colors={ramp} id="load" />
+ *
+ * // A grid — one column per row.
+ * <HeatMap series={byCity} columns={['London', 'Paris', 'Berlin']} colors={ramp} />
  * ```
  *
- * **What it replaces.** The climate-stripes card builds this by hand from a
- * `<BarChart>`: a constant `stripe: 1` column so every bar is full height, and
- * a caller-computed `binColors` array carrying the encoding. Both disappear —
- * and with them the card's biggest limitation, that the number behind a stripe
- * had to be looked up out-of-band because a constant-height bar carries no
- * value. Here the cell *is* the value, so hover and click report it.
+ * **No reader of its own.** It builds on `stacksFromColumns`, whose output is
+ * already a heat map's data shape — bin spans, named rows, a row-major value
+ * grid. That covers all four shapes pond can express today (`TimeSeries` or
+ * `ValueSeries` × one column or many), and the stripe is simply `G === 1`, so
+ * there is one draw path rather than two.
  *
- * **Prototype scope, stated plainly.** One row. `yExtent` is the degenerate
- * `[0, 1]` — a single band filling the plot — so this is the stripes case and
- * the "colour a time series" case, not yet the two-dimensional grid
- * [PND-HEATMAP] describes. The second dimension (calendar position, category,
- * value bucket) and the day/month/year granularity toggle are the open design
- * questions; `heat.ts` takes its row band as an explicit `[y0, y1]` so adding
- * rows does not change the geometry's call shape.
+ * **The readout is the point.** A cell carries its value, so hover and click
+ * report it and the readout pill takes the cell's own colour. The bar-based
+ * workaround this replaces cannot: its bars are a constant-height column
+ * carrying no value, so the number has to be looked up out-of-band.
  *
- * **Styling.** Colour is data, so it comes from `colors` — not the theme. The
- * geometry and the selected-cell treatment (`opacity`, `highlight`,
- * `outlineWidth`, `minWidth`) are borrowed from `theme.bar[as] ?? theme.bar.default`
- * rather than a new `theme.heat` slot: `ChartTheme`'s slots are required, so
- * adding one is a breaking change for every custom theme, and the M5
- * "theme tokens optional-with-default" gate has to land first. Borrowing keeps
- * the prototype non-breaking and defers that decision honestly instead of
- * pre-empting it.
+ * **Styling.** Colour is data and comes from `colors`, not the theme. Geometry
+ * and the selected-cell treatment are borrowed from
+ * `theme.bar[as] ?? theme.bar.default` rather than a new `theme.heat` slot:
+ * `ChartTheme`'s slots are required, so adding one is breaking for every custom
+ * theme, and the M5 "theme tokens optional-with-default" gate has to land
+ * first. Borrowing defers that decision instead of pre-empting it.
+ *
+ * **Not built:** a grouped two-level x axis, and cell value labels. The former
+ * is axis work that would serve bars equally; the latter is small and
+ * independent.
  */
-export function HeatMap<S extends SeriesSchema = SeriesSchema>({
+export function HeatMap<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+>({
   series,
-  column,
+  columns,
   colors,
   domain,
   as: semantic,
@@ -104,7 +123,7 @@ export function HeatMap<S extends SeriesSchema = SeriesSchema>({
   gap = 0,
   id,
   index = 0,
-}: HeatMapProps<S>) {
+}: HeatMapProps<S, VS>) {
   const container = useContext(ContainerContext);
   if (container === null) {
     throw new Error('<HeatMap> must be rendered inside a <ChartContainer>');
@@ -113,15 +132,15 @@ export function HeatMap<S extends SeriesSchema = SeriesSchema>({
   if (layers === null) {
     throw new Error('<HeatMap> must be rendered inside a <Layers>');
   }
+  if (columns.length === 0) {
+    throw new Error('<HeatMap> needs at least one column (one row per column)');
+  }
 
-  // Same reader as bars: a one-row heat map is a bar series geometrically, and
-  // reusing it means cells and bars tile identically (see heat.ts).
-  const cs = useMemo(
-    () => barsFromTimeSeries(series, column),
-    [series, column],
+  const ss = useMemo(
+    () => stacksFromColumns(series, columns),
+    [series, columns],
   );
 
-  const label = semantic ?? column;
   const { bar } = container.theme;
   const base =
     (semantic !== undefined ? bar[semantic] : undefined) ?? bar.default;
@@ -136,15 +155,16 @@ export function HeatMap<S extends SeriesSchema = SeriesSchema>({
     [base, gap],
   );
 
-  // The colour domain: pinned, or the column's own finite extent.
-  const [lo, hi] = useMemo(() => {
-    if (domain !== undefined) return domain;
-    return heatValueExtent(cs) ?? [0, 1];
-  }, [domain, cs]);
-
+  // One colour domain across the whole grid, so rows are comparable.
+  const [lo, hi] = useMemo(
+    () => domain ?? heatValueExtent(ss) ?? [0, 1],
+    [domain, ss],
+  );
+  const G = ss.groups.length;
   const colorAt = useMemo(
-    () => (i: number) => bandedColor(cs.y[i]!, colors, lo, hi),
-    [cs, colors, lo, hi],
+    () => (b: number, g: number) =>
+      bandedColor(ss.values[b * G + g]!, colors, lo, hi),
+    [ss, G, colors, lo, hi],
   );
 
   const selected = container.selected;
@@ -156,6 +176,7 @@ export function HeatMap<S extends SeriesSchema = SeriesSchema>({
         : {
             id: selected.id,
             key: selected.key,
+            label: selected.label,
             ...(selected.mark !== undefined ? { mark: selected.mark } : {}),
           },
     [selected],
@@ -167,6 +188,7 @@ export function HeatMap<S extends SeriesSchema = SeriesSchema>({
         : {
             id: hoveredMark.id,
             key: hoveredMark.key,
+            label: hoveredMark.label,
             ...(hoveredMark.mark !== undefined
               ? { mark: hoveredMark.mark }
               : {}),
@@ -178,27 +200,30 @@ export function HeatMap<S extends SeriesSchema = SeriesSchema>({
     () => ({
       layer: {
         as: semantic,
-        xKind: 'time',
+        // Inferred, exactly as BarChart does it — no axis-kind prop.
+        xKind: series instanceof ValueSeries ? 'value' : 'time',
         xExtent: () =>
-          cs.length === 0 ? null : [cs.begin[0]!, cs.end[cs.length - 1]!],
-        // One row filling the plot. Rows will subdivide this span.
-        yExtent: () => [0, 1],
-        sampleAt: (time) => {
-          // The readout the workaround could not produce: the cell's own value,
-          // straight from the data, coloured as it is drawn.
-          for (let i = 0; i < cs.length; i += 1) {
-            if (time >= cs.begin[i]! && time <= cs.end[i]!) {
-              const v = cs.y[i]!;
-              if (!Number.isFinite(v)) return [];
-              return [
-                {
-                  x: (cs.begin[i]! + cs.end[i]!) / 2,
-                  value: v,
-                  color: colorAt(i) ?? style.highlight,
-                  label,
-                },
-              ];
+          ss.length === 0 ? null : [ss.begin[0]!, ss.end[ss.length - 1]!],
+        // Unit slots, one per row; `binCategories` labels each at its centre.
+        yExtent: () => [0, G],
+        binCategories: () => ss.groups,
+        sampleAt: (x) => {
+          // Every row's value at the cursor — the whole column of the grid,
+          // which is what an off-chart readout wants from a heat map.
+          for (let b = 0; b < ss.length; b += 1) {
+            if (x < ss.begin[b]! || x > ss.end[b]!) continue;
+            const out = [];
+            for (let g = 0; g < G; g += 1) {
+              const v = ss.values[b * G + g]!;
+              if (!Number.isFinite(v)) continue;
+              out.push({
+                x: (ss.begin[b]! + ss.end[b]!) / 2,
+                value: v,
+                color: colorAt(b, g) ?? style.highlight,
+                label: ss.groups[g]!,
+              });
             }
+            return out;
           }
           return [];
         },
@@ -207,7 +232,7 @@ export function HeatMap<S extends SeriesSchema = SeriesSchema>({
           : {
               hitTest: (px, py, xScale, yScale): SelectInfo | null => {
                 const hit = heatAt(
-                  cs,
+                  ss,
                   px,
                   py,
                   xScale,
@@ -216,14 +241,14 @@ export function HeatMap<S extends SeriesSchema = SeriesSchema>({
                   style.minWidth,
                 );
                 if (hit === null) return null;
-                const [ci, begin, value] = hit;
-                const mark = cs.marks?.[ci];
+                const [b, g, begin, name, value] = hit;
+                const mark = ss.marks?.[b];
                 return {
                   id,
                   key: begin,
                   value,
-                  color: colorAt(ci) ?? style.highlight,
-                  label,
+                  color: colorAt(b, g) ?? style.highlight,
+                  label: name,
                   ...(mark !== undefined ? { mark } : {}),
                 };
               },
@@ -231,7 +256,7 @@ export function HeatMap<S extends SeriesSchema = SeriesSchema>({
         draw: (ctx, xScale, yScale) =>
           drawHeat(
             ctx,
-            cs,
+            ss,
             xScale,
             yScale,
             style,
@@ -244,7 +269,19 @@ export function HeatMap<S extends SeriesSchema = SeriesSchema>({
       axisId: axis,
       index,
     }),
-    [cs, style, colorAt, label, semantic, id, axis, index, selection, hover],
+    [
+      ss,
+      G,
+      style,
+      colorAt,
+      semantic,
+      series,
+      id,
+      axis,
+      index,
+      selection,
+      hover,
+    ],
   );
 
   const slot = useSlotKey();
