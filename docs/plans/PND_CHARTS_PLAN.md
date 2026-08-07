@@ -23,6 +23,51 @@ split has shipped too (notes:
 
 ## Tasks
 
+### [PND-ANNROLE] — Annotation **roles**: a resting mark's alpha is a role question
+
+`theme.annotation.depth` is `[1, 0.7, 0.4]`, so a **resting** annotation draws
+at 0.4 alpha. That is a level, and the evidence says the thing it is trying to
+express is a **role**.
+
+**Two consumers overrode it in opposite directions in the same week**, each
+locally, neither reporting it until asked:
+
+| consumer                       | what annotations are for them                             | override                                    |
+| ------------------------------ | --------------------------------------------------------- | ------------------------------------------- |
+| measles gallery card (pond-ts) | the three vaccine dates **are** the argument              | crimson `#d81e5b`, `depth: [1, 0.95, 0.85]` |
+| estela                         | a **focus wash** behind data when a lap/split is selected | `fillOpacity: 0.07`, foam                   |
+
+That is the whole case. No single resting alpha serves both, because they are
+not the same _kind_ of mark: one is an argument the reader must not miss, the
+other is a wash that must not compete with the data on top of it. A level can
+only be wrong for one of them.
+
+`<Marker role>` / `<Zone role>` already exist and read
+`theme.annotation.roles[role]` (`color`, optionally `fillOpacity`) — but the
+**site theme defines no roles**, so `role` currently has nothing to select and
+both consumers fell back to patching `theme.annotation` wholesale.
+
+**The work:** define an annotation role vocabulary in the shipped themes with
+its own depth ramp per role — at minimum a _wash_ (quiet, sits behind data) and
+an _argument_ (loud, resting stays legible) — and extend `roles[role]` to carry
+`depth` rather than only `color` / `fillOpacity`. Estela says it would adopt
+immediately and drop its local override; the measles card would drop its
+per-chart theme spread.
+
+Two things to get right rather than assume:
+
+- **Naming by intent, not by loudness.** `wash` / `argument` survives a theme
+  change; `subtle` / `strong` becomes a lie the moment a theme rebalances.
+- **The default has to stay put.** `[1, 0.7, 0.4]` is right for the common case
+  (annotations secondary to a line), so an unrolled mark must not move.
+
+Related friction from the same exchange, **not yet tracked**: estela reserves
+x-axis height by hand (`ChartRow height={h - X_AXIS_H}` plus a matching
+`<XAxis height>`), got the arithmetic wrong once, and shipped labels overlapping
+its own controls. Their framing is the right one — the axis should participate
+in row layout rather than the consumer subtracting for it, which makes that
+whole class of mismeasurement unrepresentable. Estela is filing it.
+
 ### [PND-CATAX] — Land categorical axis Phase 1
 
 The three PRs (band-scale foundation, `transposeRow` reader, per-column
@@ -1692,11 +1737,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                    _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                    is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                    iteration to discover, and the docs still don't mention it. **The one-line
-                                                                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                    row's data cursor is suppressed."
+                                                                        _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                        is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                        iteration to discover, and the docs still don't mention it. **The one-line
+                                                                        fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                        row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
