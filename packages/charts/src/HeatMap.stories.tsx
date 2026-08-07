@@ -47,7 +47,7 @@ type Story = StoryObj;
  */
 export const Stripe: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={720} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={720} theme={docsTheme} cursor="none">
       <ChartRow height={80}>
         <YAxis id="v" label="°F" />
         <Layers>
@@ -69,7 +69,7 @@ export const Stripe: Story = {
  */
 export const Grid: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={720} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={720} theme={docsTheme} cursor="none">
       <ChartRow height={120}>
         <YAxis id="v" label="°F" />
         <Layers>
@@ -115,6 +115,7 @@ function SelectableDemo() {
         range={RANGE}
         width={720}
         theme={docsTheme}
+        cursor="none"
         onSelect={setSel}
         onHover={(h) => h && setSel(h)}
       >
@@ -153,6 +154,7 @@ export const ValueAxisStripe: Story = {
         range={[axis[0]!, axis[axis.length - 1]!]}
         width={720}
         theme={docsTheme}
+        cursor="none"
       >
         <ChartRow height={80}>
           <YAxis id="v" label="°F" />
@@ -178,7 +180,7 @@ export const ValueAxisStripe: Story = {
  */
 export const PinnedDomain: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={720} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={720} theme={docsTheme} cursor="none">
       <ChartRow height={120}>
         <YAxis id="v" label="°F" />
         <Layers>
@@ -236,6 +238,7 @@ export const ManyRows: Story = {
         range={[b[0]!, b[bands.length - 1]!]}
         width={720}
         theme={docsTheme}
+        cursor="none"
       >
         <ChartRow height={200}>
           <YAxis id="v" label="°F" />
@@ -304,7 +307,12 @@ function ExpressionGrid({ panZoom }: { panZoom?: 'none' | 'panZoomY' }) {
   // scale from the columns the layer reports. The bin axis is y, and its
   // extent is pinned on the <YAxis> instead.
   return (
-    <ChartContainer width={440} theme={docsTheme} panZoom={panZoom ?? 'none'}>
+    <ChartContainer
+      width={440}
+      theme={docsTheme}
+      cursor="none"
+      panZoom={panZoom ?? 'none'}
+    >
       <ChartRow height={420}>
         <YAxis id="rank" label="gene rank" min={0} max={N} />
         <Layers>

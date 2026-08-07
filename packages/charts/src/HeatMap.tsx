@@ -9,6 +9,8 @@ import {
   drawHeat,
   heatAt,
   heatValueExtent,
+  type HeatNoData,
+  type HeatScale,
   type HeatStyle,
 } from './heat.js';
 import {
@@ -90,6 +92,36 @@ export interface HeatMapProps<
   /** Px inset around each cell. **Omitted ⇒ `0`**, tiling flush. */
   gap?: number;
   /**
+   * How value maps onto the ramp's bands. **Omitted ⇒ `'linear'`** — equal-width
+   * bands across the domain.
+   *
+   * `'log'` gives equal-*ratio* bands, which is what a quantity spanning orders
+   * of magnitude needs. US measles incidence runs from ~2,900 per 100k before
+   * the vaccine to under 1 after it; linear banding over eight colours puts
+   * everything below ~360 into a single band — the entire post-1965 record,
+   * which is the half of that chart carrying the finding.
+   *
+   * Bands on `log1p` of the offset from the domain's floor, so a value **at**
+   * the floor is a real band rather than `-Infinity`. Zero is the case that
+   * needs it: an incidence grid is mostly zeros once a disease is eliminated,
+   * and those cells are the point.
+   */
+  scale?: HeatScale;
+  /**
+   * How a cell with no value is drawn. **Omitted ⇒ `'blank'`** — nothing is
+   * painted and the background shows through, which is right when a hole simply
+   * means "outside the record".
+   *
+   * `'hatch'` draws diagonal lines in the theme's grid colour. Reach for it when
+   * *missing* and *low* would otherwise be indistinguishable — on a pale ramp
+   * "draw nothing" reads as the bottom of the scale, so a state with no
+   * surveillance yet looks exactly like a state reporting zero cases. No ramp
+   * colour can be mistaken for hatching, which is why it is the convention.
+   *
+   * Suppressed while decimated: an aggregated cell is not a hole.
+   */
+  noData?: HeatNoData;
+  /**
    * Viewport decimation — **on by default**, and a perf knob rather than a
    * rendering-style one.
    *
@@ -146,6 +178,13 @@ export interface HeatMapProps<
  * theme, and the M5 "theme tokens optional-with-default" gate has to land
  * first. Borrowing defers that decision instead of pre-empting it.
  *
+ * **Pair it with `<ChartContainer cursor="none">`.** The container's default is
+ * the shared vertical line, and on a grid that is a *second, weaker* cursor
+ * competing with the one that already works: the cell under the pointer takes an
+ * outline, which says both axes at once. The line says only x, and a heat map's
+ * x position is rarely the question. The pointer's own crosshair shape plus the
+ * cell outline is the whole affordance.
+ *
  * **Not built:** a grouped two-level x axis, and cell value labels. The former
  * is axis work that would serve bars equally; the latter is small and
  * independent.
@@ -162,6 +201,8 @@ export function HeatMap<
   as: semantic,
   axis,
   gap = 0,
+  scale = 'linear',
+  noData = 'blank',
   decimate = true,
   id,
   index = 0,
@@ -206,8 +247,9 @@ export function HeatMap<
       outlineWidth: base.outlineWidth,
       gap,
       minWidth: base.minWidth,
+      gridColor: container.theme.axis.grid,
     }),
-    [base, gap],
+    [base, gap, container.theme.axis.grid],
   );
 
   // One colour domain across the whole grid, so rows are comparable.
@@ -221,8 +263,8 @@ export function HeatMap<
   // so the closure takes one. It also lets a decimated pixel column, which has
   // no source `(b, g)`, be coloured by the same ramp.
   const colorOf = useMemo(
-    () => (value: number) => bandedColor(value, colors, lo, hi),
-    [colorsKey, lo, hi],
+    () => (value: number) => bandedColor(value, colors, lo, hi, scale),
+    [colorsKey, lo, hi, scale],
   );
 
   const selected = container.selected;
@@ -357,6 +399,7 @@ export function HeatMap<
             hover,
             decimate,
             orientation,
+            noData,
           ),
       },
       axisId: axis,
@@ -369,6 +412,7 @@ export function HeatMap<
       colorOf,
       decimate,
       orientation,
+      noData,
       vertical,
       semantic,
       series,

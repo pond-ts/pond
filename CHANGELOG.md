@@ -62,6 +62,28 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: `<HeatMap scale="log">` and `noData="hatch"`.** Both come from the
+  same chart — US measles incidence by state and year — and both are about a
+  cell meaning what it looks like.
+
+  **`scale="log"`** bands the ramp by equal _ratio_ rather than equal width.
+  Measles incidence runs from ~2,900 per 100k before the vaccine to under 1
+  after it; linear banding over eight colours puts everything below ~360 into a
+  single band — the entire post-1965 record, which is the half of the chart that
+  carries the finding. Bands on `log1p` of the offset from the domain floor, so
+  a value **at** the floor is a real band rather than `-Infinity`; zero is the
+  case that needs it, since an eliminated disease's grid is mostly zeros and
+  those cells are the point.
+
+  **`noData="hatch"`** draws diagonal lines in the theme's grid colour where a
+  cell has no value. The default stays `'blank'`, which is right when a hole
+  just means "outside the record" — but on a pale ramp, painting nothing reads
+  as the _bottom of the scale_, so a state with no surveillance yet looks
+  exactly like a state reporting zero cases. That distinction is the whole late
+  period of the measles chart. Hatching is the convention because no ramp colour
+  can be mistaken for it. Suppressed while decimated: an aggregated cell is not
+  a hole.
+
 - **charts: `panZoom` names its axes — `panZoomX` / `panZoomY` / `panZoomXY`.**
   The mode was x-only, so a chart wanting to zoom any other axis had nothing.
 
