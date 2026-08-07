@@ -415,3 +415,39 @@ export const ValueAxisFlag: Story = {
     );
   },
 };
+
+/**
+ * **`panZoom="panZoomXY"` on a scatter** — wheel zooms both axes about the
+ * cursor, drag pans both, and the aspect ratio holds.
+ *
+ * A scatter is arguably the mode's most natural home: unlike a line or a bar,
+ * both of its axes carry a measured value, so zooming only x answers half the
+ * question. The container prop is layer-agnostic — the y half is a transform on
+ * the row's y scales, so nothing in `<ScatterChart>` knows it is happening.
+ */
+export const PanZoomXY: Story = {
+  render: () => {
+    const t = trades();
+    return (
+      <ChartContainer
+        range={TIME_RANGE}
+        width={620}
+        theme={docsTheme}
+        panZoom="panZoomXY"
+      >
+        <ChartRow height={300}>
+          <YAxis id="price" label="price" />
+          <Layers>
+            <ScatterChart
+              series={t}
+              column="price"
+              radius={{ column: 'volume', range: [3, 16] }}
+              color={{ column: 'change', range: ['#E0B36A', '#15B3A6'] }}
+              id="pt"
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};

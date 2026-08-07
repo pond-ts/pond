@@ -976,6 +976,18 @@ argument for the rest.
   its cost, in
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-sparcfric--sparc-charts-friction-2026-08).
 
+- **[PND-ANNROLE] — annotation roles.** `theme.annotation.depth` draws a
+  resting mark at 0.4 alpha, and **two consumers overrode that in opposite
+  directions in one week**: the measles gallery card went louder (the vaccine
+  dates _are_ the argument), estela went much quieter (`fillOpacity: 0.07`, a
+  focus wash behind selected data). Both patched `theme.annotation` wholesale
+  because the shipped themes define no `roles`, so the existing `<Marker role>`
+  / `<Zone role>` had nothing to select. A single resting alpha cannot serve
+  both — it is a role question, not a level question. Define a role vocabulary
+  (at minimum _wash_ and _argument_) carrying its own depth ramp. Estela would
+  adopt immediately and drop its override. Detail in
+  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-annrole--annotation-roles-a-resting-marks-alpha-is-a-role-question).
+
 ---
 
 ## Cross-cutting work
