@@ -25,6 +25,15 @@ split has shipped too (notes:
 
 ### [PND-LISTHOVER] — `<BarList>` has selection but no hover — [#608]
 
+**Confirmed by a built migration spike**, not analysis: estela ran `<BarList>`
+against its real Queen K splits — 124 rows, its own `--es-*` theme — and
+everything else fitted on the first try. Its theme applied, the shared magnitude
+`domain` auto-fitted, `sortBy`-less gave chronological input order, `after`
+cells aligned, `renderExpanded` took its detail panel, `selected` / `onRowClick`
+carried the lock, and the generic `R extends ListRow` carried its extra
+`values` fields through to `renderExpanded` fully typed with a clean typecheck.
+Row hover is the single thing between them and deleting their custom list.
+
 Filed by the estela agent from an actual `<BarList>` migration, which is the
 most valuable kind of report: everything else fitted. `selected` +
 `onRowClick` carried its lock in both directions, `renderExpanded` covered its
