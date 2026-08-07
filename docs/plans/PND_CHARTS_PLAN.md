@@ -61,7 +61,21 @@ the interaction has two states. This is the list having one channel for the same
 reason. Worth asking whether anything else in the package assumes selection is
 the only controllable interaction state.
 
+**Orthogonal to the multi-select wave — safe to land independently.** Raised by
+estela while [#606] ([PND-MULTISEL]) is in flight. Checked, and they do not
+collide: #606 widens _selection_ into a set on the **canvas layers**
+(`selected: SelectInfo | SelectInfo[]`, `onSelect(hit, modifiers)`,
+`BarStyle.dimmed`) and does not touch the list family, while
+`docs/rfcs/selection.md` L247 already settles the question this would otherwise
+raise — **"`hovered` stays singular — hover is inherently one mark under the
+pointer; only committed selection is a set."**
+
+So the singular `hovered?: string | null` is the _deliberate_ shape, not a thing
+to widen later: it composes with a future list multi-select rather than
+competing with it (select is the set, hover is the one under the pointer).
+
 [#608]: https://github.com/pond-ts/pond/issues/608
+[#606]: https://github.com/pond-ts/pond/pull/606
 [#577]: https://github.com/pond-ts/pond/issues/577
 
 ### [PND-AXISGUT] — The X-axis strip doesn't participate in layout — [#607]
