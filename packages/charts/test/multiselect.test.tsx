@@ -470,3 +470,87 @@ describe('precedence is the same on both draw paths', () => {
     expect(fills).toContain('#DIM');
   });
 });
+
+/**
+ * **Interaction with the region cursor's drag-to-select.**
+ *
+ * `SelectModifiers` reports `shiftKey` raw, and `shift` is already the
+ * `regionSelectModifier` chord — so the obvious worry is that a shift gesture
+ * now means two things at once. It doesn't, and these pin why: the two are
+ * separated by *movement*, not by the modifier.
+ *
+ * A drag past `DRAG_SLOP` makes the click handler bail, so `onRegionSelect`
+ * fires and `onSelect` does not. A shift-click that never moves is not a drag,
+ * so it selects and commits no region. This is also the reason the library
+ * exposes `shiftKey` but derives no `range` flag from it — a range gesture is
+ * a drag ([PND-CATRANGE]), not a modifier.
+ */
+describe('shift does not collide with the region cursor', () => {
+  function scenario() {
+    const onSelect = vi.fn();
+    const onRegionSelect = vi.fn();
+    const stub = stubCanvasContext();
+    let dom: HTMLElement;
+    try {
+      dom = render(
+        <ChartContainer
+          range={[0, 3]}
+          width={300}
+          cursor="region"
+          panZoom
+          regionSelectModifier="shift"
+          onRegionSelect={onRegionSelect}
+          onSelect={onSelect}
+        >
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={4} label="" />
+            <Layers>
+              <BarChart categories={categories} id="cap" />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>,
+      ).container;
+    } finally {
+      stub.restore();
+    }
+    return {
+      onSelect,
+      onRegionSelect,
+      surface: dom.querySelector('canvas')!.parentElement!,
+    };
+  }
+
+  it('a shift-CLICK selects and commits no region', () => {
+    const { onSelect, onRegionSelect, surface } = scenario();
+    fireEvent.pointerDown(surface, {
+      clientX: 40,
+      clientY: 60,
+      shiftKey: true,
+    });
+    fireEvent.pointerUp(surface, { clientX: 40, clientY: 60, shiftKey: true });
+    fireEvent.click(surface, { clientX: 40, clientY: 60, shiftKey: true });
+    expect(onSelect).toHaveBeenCalled();
+    expect(onSelect.mock.calls.at(-1)![1]).toMatchObject({ shiftKey: true });
+    expect(onRegionSelect).not.toHaveBeenCalled();
+  });
+
+  it('a shift-DRAG commits a region and does not select', () => {
+    // Past DRAG_SLOP, so the click that ends the drag is ignored — the two
+    // gestures are separated by movement, not by the modifier.
+    const { onSelect, onRegionSelect, surface } = scenario();
+    fireEvent.pointerDown(surface, {
+      clientX: 40,
+      clientY: 60,
+      shiftKey: true,
+    });
+    fireEvent.pointerMove(surface, {
+      clientX: 160,
+      clientY: 60,
+      shiftKey: true,
+      buttons: 1,
+    });
+    fireEvent.pointerUp(surface, { clientX: 160, clientY: 60, shiftKey: true });
+    fireEvent.click(surface, { clientX: 160, clientY: 60, shiftKey: true });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+});
