@@ -488,3 +488,128 @@ the human-approval gate the RFC flagged for the public-type change. Shipped in
 → readonly SelectInfo[]` widen + `selectionMode` (multi-select); `LineChart.hitTest`
 threshold nearest-point; the `snapToClosest | snapToClosestSelected` prop; the
 theme-referenced dim state.
+
+## Amendment 4 (2026-08-07) — what shipped, and drag-to-select
+
+> _pond-ts library agent (Claude), recording what [PND-MULTISEL] landed as
+> (PR #606) and the design conversation with pjm17971 that followed it._
+
+### A4.1 What shipped, and where it diverged from A1
+
+The multi-select half of A1/A2.6 is **no longer deferred** — it landed in #606.
+Two deliberate divergences, both of which made it cheaper than A1 predicted:
+
+- **`selected` was widened as a _union_, not a replacement.**
+  `SelectInfo | readonly SelectInfo[] | null`. A1.4 proposed replacing the type
+  and (with the correction note) flagged it as a real breaking change to a
+  published, multi-consumer prop, needing the human gate plus a required
+  one-release `SelectInfo → [it]` shim. Accepting **both** shapes costs one
+  `Array.isArray` at the prop boundary and needs neither: every existing
+  single-selection caller means exactly what it meant. The frame field
+  (`ContainerFrame.selected`, not exported) is the normalized array, so readers
+  ask set membership and nothing downstream sees two representations.
+
+- **The library owns no set arithmetic.** A1.1 gave it `selectionMode:
+'replace' | 'add'` and had `onSelect` report the **resulting set**. What
+  shipped inverts that: **`onSelect(hit, modifiers)` reports what happened, the
+  consumer computes.** `SelectModifiers` is `{ additive, ctrlKey, metaKey,
+shiftKey, altKey }`, where `additive` resolves the platform chord (⌘/Ctrl)
+  once so six consumers don't each get one OS wrong.
+
+  The forcing observation was consumer-side: **every interactive chart was
+  hardcoding `additive: false`, because it could not do otherwise** — the click
+  had already been reduced to a hit by the time the callback saw it, so a
+  modifier policy was unexpressible, not merely unimplemented. Handing over the
+  modifiers removes the impossibility; `selectionMode` becomes additive sugar
+  over the same primitive and stays unbuilt until someone wants it. A1.6 Q7
+  ("prop vs modifier vs both") is therefore resolved as **neither, yet** —
+  report the raw state, let policy live where A1.2 already put it.
+
+- **Dim shipped as A2.3 specified** — `BarStyle.dimmed`, theme-carried,
+  referenced by state, opt-in so an un-themed chart dims nothing. The
+  motivation turned out to be sharper than "compare": a consumer had **three
+  charts using `color-mix` at 22%, 28% and 30%** for the same concept, in the
+  same week. One theme value ends that permanently.
+
+**Known scope limits as shipped:** the selection _set_ renders on bars.
+`ScatterChart`, `HeatMap` and `BoxPlot` draw the first member only — their draw
+paths match a single mark — and `dimmed` is bars-only.
+
+### A4.2 Drag-to-select — a `<Select>` mark (supersedes the CATRANGE exclusion)
+
+pjm17971, 2026-08-07: **drag-to-select is a commercial driver and must be
+supported.** §3/A1 never covered it, and `[PND-CATRANGE]` recorded the
+consumer-side complaint that `cursor="region"` is gated to continuous axes.
+This section is the design direction; the open questions below are genuinely
+open.
+
+**The shape.** A `<Select>` component — a sibling of `<Region>` / `<Zone>` in
+the annotation family, so it renders like a region and themes through the same
+register — that reports **selection state as it drags and on release**.
+
+**The load-bearing choice: it reports _marks_, not a _range_.** This is what
+dissolves the CATRANGE exclusion rather than working around it. §3 excluded
+category axes because "an ordinal-slot select is a different gesture — it snaps
+to whole slots and should report category names rather than a numeric range."
+That is only true while the callback's currency is a **range**. If the sweep
+reports `SelectInfo[]` — the marks it touched — then ordinal and continuous are
+the _same_ gesture, the slot-snapping stops being a special case because nobody
+sees slot indices, and the consumer never re-implements the inverse of the band
+scale (which is the actual friction PND-CATRANGE names). **[PND-CATRANGE]
+therefore folds into this rather than being built separately.**
+
+**Zoom vs select — narrower than it looks.** A **category** axis cannot zoom
+(its domain is ordinal `[0, n]`; the container already special-cases it), so on
+the driving case there is no competing gesture and a plain drag can simply
+select. On a continuous axis the conflict is real, and the proposal is to make
+it **declarative rather than modal**: which gesture a drag performs follows
+from _what is mounted_ (`<Select>` vs `panZoom`), with the existing
+`regionSelectModifier` precedent settling the both-mounted case. A
+`dragAction: 'zoom' | 'select'` enum on the container is explicitly **not**
+proposed — mounted components already express this, as `<Zone>`/`<Region>` do.
+
+**Hover becomes plural — and this supersedes A1.4.** A1.4 said "`hovered` stays
+singular — hover is inherently one mark under the pointer". That reasoning
+assumed hover _means pointer position_. Under a sweep it means "would be
+selected if you released now", which is plural: the bars under the drag should
+show the hover treatment, several at once. pjm17971's call is to **reuse
+`hovered` widened to a set** rather than mint a third `preview` state — a theme
+would style preview identically to hover nine times in ten, and the precedence
+chain (`selected > hovered > dimmed > rest`, unified in #606) already handles
+it. The honest cost: `hovered` becomes plural _everywhere_, including plain
+pointer-over where it always holds 0 or 1 members.
+
+**Modifiers on release.** The commit reports the modifiers held, so shift-drag
+can extend an existing set rather than replace it — the same "library reports,
+consumer decides" contract A4.1 establishes for clicks.
+
+**Why shift-drag doesn't already collide** (verified, `multiselect.test.tsx`):
+the region cursor and click-select are separated by **movement**, not by the
+modifier. A drag past `DRAG_SLOP` makes the click handler bail, so
+`onRegionSelect` fires and `onSelect` does not; a shift-click that never moves
+selects and commits no region. This is also why #606 exposes `shiftKey` raw but
+derives **no** `range` flag from it — a `range` boolean would imply shift-click
+is a legitimate range chord, when the real range gesture is a drag.
+
+### A4.3 Sequencing
+
+1. **Widen `hovered` to a set** — small (4 readers, the same refactor
+   `selected` just had), independently useful, and de-risks the rest.
+2. **`<Select>`** — the sweep, the live preview, the commit.
+
+### A4.4 Open questions
+
+12. **Live callback shape.** Report during the drag _and_ on release implies two
+    callbacks (`onSelecting(marks)` + `onSelect(marks, modifiers)`). The live one
+    fires per pointermove; a consumer doing React state work on it will feel it.
+    Debounce, ref-based, or make the live preview library-internal and only emit
+    on commit?
+13. **Multi-layer sweeps.** Several bar layers under one sweep — union of all
+    hits, or nearest-axis only?
+14. **Sweep geometry.** x-only (like `<Region>`) or a 2-D rubber band? x-only is
+    right for bars; scatter wants a lasso, which is a materially bigger thing and
+    probably its own RFC.
+15. **Does `<Select>` subsume `onRegionSelect`?** Both are "drag a span and tell
+    me". If `<Select>` reports marks and `onRegionSelect` reports a numeric
+    range, they are different enough to coexist — but two drag gestures on one
+    chart needs a precedence rule, and shipping both may be one too many.
