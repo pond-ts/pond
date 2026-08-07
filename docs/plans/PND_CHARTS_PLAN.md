@@ -23,6 +23,38 @@ split has shipped too (notes:
 
 ## Tasks
 
+### [PND-AXISGUT] — The X-axis strip doesn't participate in layout — [#607]
+
+Filed by the estela agent after it shipped overlapping labels, and its framing
+is why this is worth fixing rather than documenting: **layout reservation is
+asymmetric between the two axis dimensions.**
+
+- **Y axis, horizontal — automatic.** `ChartContainer` collects each row's
+  per-slot gutter widths and reserves each slot's max, so a `<YAxis>` never has
+  to be measured by the consumer.
+- **X axis, vertical — manual.** A bottom `<XAxis>` does not participate, so the
+  consumer hand-subtracts (`ChartRow height={containerHeight - X_AXIS_H}`) and
+  keeps a matching `<XAxis height>` in sync with that constant.
+
+Two numbers that must agree, maintained by hand, in two components. Estela got
+them out of sync and shipped x-axis labels overlapping its own chart controls —
+a bug that reached production before pjm caught it.
+
+We have the same footgun documented from the inside: `<GalleryCard height>`
+carries a comment warning that it "must budget for the auto-rendered time-axis
+strip… the stage clips anything taller, silently cutting off axis labels". We
+wrote a warning where the layout should have made the error unrepresentable.
+
+**Proposed:** an auto-height mode where a declared bottom `<XAxis>` reserves its
+strip the way Y gutters already reserve their widths, explicit `height` kept as
+an override. The mechanism exists and only points one way round.
+
+Care needed: this is a layout change on `ChartContainer` / `ChartRow`, and an
+auto mode that silently double-reserves would shrink every chart already doing
+the subtraction. Opt-in, or stand down when an explicit `height` is present.
+
+[#607]: https://github.com/pond-ts/pond/issues/607
+
 ### [PND-ANNROLE] — Annotation **roles**: a resting mark's alpha is a role question
 
 `theme.annotation.depth` is `[1, 0.7, 0.4]`, so a **resting** annotation draws
