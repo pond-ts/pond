@@ -350,3 +350,77 @@ export const Horizontal: Story = { render: () => <ExpressionGrid /> };
 export const PanZoomY: Story = {
   render: () => <ExpressionGrid panZoom="panZoomY" />,
 };
+
+/**
+ * **`panZoom="panZoomXY"`** — wheel zooms **both** axes about the cursor, drag
+ * pans both, and the aspect ratio holds.
+ *
+ * Both axes have to be continuous for `XY` to mean anything, which is why this
+ * is a separate story from `PanZoomY` rather than a prop flip on it: that one
+ * has eight sample *categories* across x, so naming `XY` there would name an
+ * axis that cannot move. Here x is a real time axis and y is 60 rows, so there
+ * is something to zoom in both directions.
+ *
+ * What to check, since one factor drives both axes:
+ *
+ * - A cell that looks square stays square as you zoom. That is the aspect lock,
+ *   and it is the difference between `panZoomXY` and asking for each axis
+ *   separately.
+ * - Zoom about a corner and that corner stays put — the pivot is the cursor, not
+ *   the plot centre.
+ * - Drag past the end and it stops at the data rather than running into blank
+ *   canvas.
+ */
+export const PanZoomXY: Story = {
+  render: () => {
+    const N = 300;
+    const ROWS = Array.from({ length: 60 }, (_, i) => `r${i}`);
+    const columns: Record<string, number[]> = {
+      time: Array.from({ length: N }, (_, i) => Date.UTC(2024, 0, 1 + i)),
+    };
+    ROWS.forEach((r, g) => {
+      // Diagonal banding, so a shear or a squash is obvious the moment the
+      // aspect ratio slips.
+      columns[r] = Array.from(
+        { length: N },
+        (_, i) => 50 + 45 * Math.sin((i / 9 + g / 5) * 0.7),
+      );
+    });
+    const series = TimeSeries.fromColumns({
+      name: 'grid',
+      schema: [
+        { name: 'time', kind: 'time' },
+        ...ROWS.map((r) => ({ name: r, kind: 'number' as const })),
+      ] as const,
+      columns,
+    });
+    const t = columns.time!;
+    return (
+      <ChartContainer
+        range={[t[0]!, t[N - 1]!]}
+        width={620}
+        theme={docsTheme}
+        cursor="none"
+        panZoom="panZoomXY"
+      >
+        <ChartRow height={420}>
+          {/* Explicit ticks rather than the layer's `binCategories`: 60 rows in
+              420px is 7px each, so labelling every one smears them together.
+              Sparse numbers also make the y zoom legible — you can watch the
+              span narrow. */}
+          <YAxis
+            id="v"
+            label="row"
+            ticks={[0, 15, 30, 45, 60].map((n) => ({
+              at: n,
+              label: String(n),
+            }))}
+          />
+          <Layers>
+            <HeatMap series={series} columns={ROWS} colors={RAMP} axis="v" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};

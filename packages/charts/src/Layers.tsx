@@ -889,7 +889,40 @@ export function Layers({ children }: LayersProps) {
       const rect = el.getBoundingClientRect();
       const localX = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
       const pivot = +c.xScale.invert(localX);
-      const factor = Math.exp(e.deltaY * ZOOM_SENSITIVITY);
+      let factor = Math.exp(e.deltaY * ZOOM_SENSITIVITY);
+
+      const nextRange = (f: number) =>
+        c.discontinuities
+          ? // minDuration is the zoom-in floor; on a trading-time axis it caps
+            // the minimum visible *trading* time (ms of open-market time)
+            // rather than wall-clock ms — the sensible meaning for this axis.
+            zoomRangeTrading(
+              c.timeRange,
+              pivot,
+              f,
+              c.discontinuities,
+              c.minDuration,
+            )
+          : zoomRange(c.timeRange, pivot, f, c.minDuration);
+
+      // ── The aspect lock has to be NEGOTIATED, not asserted ────────────────
+      // Both axes zooming by "the same factor" only holds the ratio while both
+      // can actually take that factor. Each has its own limit — y cannot zoom
+      // out past its natural fit (`k >= 1`), x cannot zoom in past
+      // `minDuration` — and if either clamps on its own, the other carries on
+      // and the picture shears. That is visible as soon as you zoom out to an
+      // edge: y stops at `k = 1` and x keeps widening.
+      //
+      // So agree one factor first: cap it at what y can take, then ask x what
+      // it would actually do with that and adopt the answer.
+      const both = doX && c.zoomY;
+      let range: readonly [number, number] | null = null;
+      if (doX) {
+        if (both) factor = Math.min(factor, c.yTransform.k);
+        range = nextRange(factor);
+        const span = c.timeRange[1] - c.timeRange[0];
+        if (both && span > 0) factor = (range[1] - range[0]) / span;
+      }
 
       if (c.zoomY) {
         // `factor` scales the DOMAIN span, so factor > 1 is zoom *out*; the
@@ -906,21 +939,7 @@ export function Layers({ children }: LayersProps) {
           ty: clampPanY(nk, localY * (1 - z) + ty * z, rowRef.current.height),
         });
       }
-      if (!doX) return;
-      c.applyRange(
-        c.discontinuities
-          ? // minDuration is the zoom-in floor; on a trading-time axis it caps
-            // the minimum visible *trading* time (ms of open-market time) rather
-            // than wall-clock ms — the sensible meaning for this axis.
-            zoomRangeTrading(
-              c.timeRange,
-              pivot,
-              factor,
-              c.discontinuities,
-              c.minDuration,
-            )
-          : zoomRange(c.timeRange, pivot, factor, c.minDuration),
-      );
+      if (range !== null) c.applyRange(range);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
