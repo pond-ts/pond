@@ -2257,7 +2257,16 @@ stacked paths — would have caught both and is the obvious next move.
 
 ### Not yet scheduled — decided at the regroup
 
-- **[PND-CATRANGE]** (high, predicted) — `cursor="region"` + `onRegionSelect` is
+- **[PND-CATRANGE]** — **folded into the `<Select>` drag-to-select design**
+  (`docs/rfcs/selection.md` **A4.2**, 2026-08-07). Not cancelled: subsumed. A
+  sweep that reports **marks** rather than a numeric range makes ordinal and
+  continuous the _same_ gesture, so the "an ordinal-slot select is a different
+  gesture" exclusion this entry was written against stops applying — and the
+  consumer never re-implements the inverse of the band scale, which is the
+  friction the entry actually names. Build it there, not here. Sequencing (A4.3):
+  widen `hovered` to a set first, then `<Select>`.
+
+  The original entry, for the record — `cursor="region"` + `onRegionSelect` is
   gated to continuous axes; the 0.53.0 notes state it directly ("a **category**
   axis stays excluded — an ordinal-slot select is a different gesture"). For a
   ranked category chart, dragging across a run of bars is the primary
