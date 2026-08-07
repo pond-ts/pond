@@ -411,6 +411,72 @@ identify here. It is the same door the
 [climate stripes](./climate-stripes.mdx) card goes through, for the same
 reason.
 
+## The same data as a heat map
+
+The wide series built in [One axis for 45 years](#one-axis-for-45-years) — a
+column per year, a row per day-of-year — was shaped for the climatology
+`collapse`. It happens to be **exactly a heat map's shape as well**, with the
+year columns as rows. So the same 16,275 values, re-encoded:
+
+import GalleryNino34Heatmap from '@site/src/examples/gallery-nino34-heatmap';
+
+<ChartExample name="gallery-nino34-heatmap" height={500} collapsed>
+  <GalleryNino34Heatmap width={640} />
+</ChartExample>
+
+The three buttons change **only the x binning**. The rows are the same 45 years
+in all three, because rows are columns and the columns are fixed by the data:
+
+```tsx
+const ROWS = NINO34_YEARS.map(yearColumn); // ['y1982', … 'y2026']
+const MEAN_BY_YEAR = Object.fromEntries(ROWS.map((c) => [c, 'avg']));
+
+const series =
+  grain === 'day'
+    ? wide // 365 cells per row, as built
+    : wide.aggregate(
+        grain === 'month'
+          ? Sequence.calendar('month') // 12 cells
+          : Sequence.every('370d', { anchor: YEAR_START }), // 1 cell
+        MEAN_BY_YEAR,
+      );
+
+<HeatMap series={series} columns={ROWS} colors={ramp} axis="yr" />;
+```
+
+That is the layer's constraint paying for itself. `<HeatMap>` has **no opinion
+about x** — it draws whatever bins the series arrives with — so "change the
+resolution" is not a chart prop but an ordinary `aggregate`, and everything
+pond can already bin by is available for free. The reducer map is built at
+runtime because the columns are: 45 of them, one per year in the record.
+
+Four things this surfaced that are worth naming:
+
+- **This grid is absolute SST, not anomaly**, so what the colour shows most
+  loudly is the **seasonal cycle** — the vertical banding, warm through
+  April–June and cool through November–January. That is the honest reading of
+  these numbers, and it is something the 45-line chart above cannot show at a
+  glance. It also means ENSO is _not_ the dominant signal here: to get the
+  horizontal banding you'd expect, the grid would have to be built from the
+  anomaly columns, subtracting the same climatology
+  [computed above](#the-climatology-in-two-collapses). The layer would not
+  change — only the series handed to it.
+- **`Sequence.calendar` has no `'year'` unit** — it stops at `month`. The
+  whole-year bucket is therefore a fixed step (`'370d'`) anchored at 1 January
+  and deliberately sized past the record's end, so exactly one bucket covers
+  it. It works, but it is a workaround: a calendar year is not a fixed number
+  of days.
+- **The top row is short in every mode.** 2026 is still in progress, so its
+  column runs out partway along — the same partial-year honesty the line chart
+  gets [for free](#the-partial-year-takes-care-of-itself), and for the same
+  reason: the value simply isn't there, so nothing is drawn.
+- **Year mode is the climate-stripes chart stood on end** — one cell per row,
+  45 rows, colour carrying the value. Same layer, same props, transposed
+  because the data was.
+
+Compare it with [climate stripes](./climate-stripes.mdx), which is the
+single-row case (`columns.length === 1`) of this same layer.
+
 ## Options to try
 
 | Option                                       | What it does                                                     | Reach for it when                                                                       |

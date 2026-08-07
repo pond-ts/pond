@@ -140,7 +140,11 @@ export function dayLabel(d: number): string {
 // The wide series — one column per year, one row per day of the year
 // ---------------------------------------------------------------------------
 
-const YEAR_COLUMN = (year: number) => `y${year}`;
+/** The wide series' column name for a year — `1982` -> `y1982`. Exported so a
+ *  consumer can name the columns it wants as heat-map rows. */
+export const yearColumn = (year: number) => `y${year}`;
+
+const YEAR_COLUMN = yearColumn;
 
 /**
  * The wide series' schema, **declared rather than inferred**.
@@ -171,7 +175,7 @@ type NinoSchema = readonly [
  * The current year's column is `null` past the end of the record. Those rows
  * are genuinely unknown, not zero, and they are what makes its line stop.
  */
-const wide: TimeSeries<NinoSchema> = (() => {
+export const ninoWideByYear: TimeSeries<NinoSchema> = (() => {
   const schema: NinoSchema = [
     { name: 'time', kind: 'time' },
     ...NINO34_YEARS.map((year) => ({
@@ -255,7 +259,7 @@ function climatologyWindow(year: number): readonly number[] {
 function buildAnomaly(year: number) {
   const own = YEAR_COLUMN(year);
   const base = climatologyWindow(year).map(YEAR_COLUMN);
-  return wide
+  return ninoWideByYear
     .collapse(
       base,
       'clim',

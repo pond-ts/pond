@@ -189,6 +189,40 @@ describe('drawHeat', () => {
     expect(fills).toEqual(['#a', '#c', '#d', '#b', '#d', '#d']);
   });
 
+  it('outlines the HOVERED cell too, more lightly than a selected one', () => {
+    // A bar says "live" by popping alpha; a heat cell cannot, because its fill
+    // is the datum. Without a stroke, hover on a full-opacity ramp is invisible
+    // — which is what the Nino 3.4 grid surfaced. Weight is what separates the
+    // two states, since they share `highlight` (see #577).
+    const hov = draw(two3(), null, { id: 'heat', key: 0, label: 'mid' });
+    const hovStrokes = hov.filter((c) => c.name === 'strokeRect');
+    expect(hovStrokes).toHaveLength(1);
+
+    const sel = draw(two3(), { id: 'heat', key: 0, label: 'mid' });
+    const selStrokes = sel.filter((c) => c.name === 'strokeRect');
+    expect(selStrokes).toHaveLength(1);
+
+    const widthOf = (calls: ReturnType<typeof draw>) =>
+      calls.filter((c) => c.type === 'set' && c.name === 'lineWidth').pop()
+        ?.args[0] as number;
+    expect(widthOf(hov)).toBe(style.outlineWidth);
+    expect(widthOf(sel)).toBe(style.outlineWidth * 2);
+  });
+
+  it('insets the outline so it cannot bleed onto the neighbouring cell', () => {
+    // On a flush grid (`gap: 0`) a centred stroke would straddle the shared
+    // edge and paint over half of the next cell — misreporting its colour.
+    const w = style.outlineWidth;
+    const stroke = draw(two3(), null, { id: 'heat', key: 0, label: 'lo' })
+      .filter((c) => c.name === 'strokeRect')
+      .pop()!;
+    const cell = draw(two3())
+      .filter((c) => c.name === 'fillRect')
+      .find((c) => c.args[1] === stroke.args[1] - w / 2)!;
+    const [fx, fy, fw, fh] = cell.args as number[];
+    expect(stroke.args).toEqual([fx + w / 2, fy + w / 2, fw - w, fh - w]);
+  });
+
   it('identifies a cell by bin AND row, not bin alone', () => {
     // Same key, different row → a different cell. This is what makes the
     // grid's selection two-dimensional.

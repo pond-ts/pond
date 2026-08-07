@@ -243,11 +243,17 @@ continuous case, or banding becomes one shared primitive both layers call.
 **Asked for, not built — the 2-D interaction set.** pjm's follow-ups, hardest
 last:
 
-- **2-D readout.** `sampleAt` already returns one sample per row at the cursor,
-  so an off-chart readout can show the whole column. A true 2-D readout wants
-  the cell _under the pointer_ — `hitTest`'s job, not the x-scrub tracker's.
-  The two channels answer different questions ("what is at this x" vs "what is
-  under this pointer"), and a grid is the first layer where that gap shows.
+- **2-D readout — DONE, and it needed no new API.** The answer was that
+  `onHover` (and `onSelect`) already carry a `SelectInfo` resolved on **both**
+  axes by `hitTest`, so a grid readout is `onHover={setHit}` and reading
+  `label` (the row), `key` (the bin) and `value` off it. The tracker is the
+  wrong channel and cannot be made right: `sampleAt` samples every row at the
+  cursor's x and knows nothing about y, so any single number picked out of it
+  is a guess at which row was meant. The Niño 3.4 grid proved this the hard
+  way — a first cut reported the warmest row under the pointer, which reads as
+  nonsense because the year it names is not the year you are pointing at.
+  **The rule: x-scrub questions go to the tracker, "what is under the pointer"
+  goes to hover/select.**
 - **2-D region selection.** The region cursor snaps to `binIntervals` on x
   only; a grid wants a rectangle across bins **and** rows. The x half exists;
   the y half needs the row band to become a snap dimension.
@@ -264,8 +270,46 @@ last:
   work — it would serve bars equally — so it belongs with [PND-AXES], not here.
 - **Continuous interpolation** as an alternative to banding, if a consumer wants
   it. Nothing forecloses it.
-- **Converting the climate-stripes card**, which is the real test of the readout
-  claim and the honest place to answer the day/month/year granularity question.
+  **Shipped since the prototype write-up above:**
+
+- **The climate-stripes card is converted** — `columns={['anomaly']}`, one row,
+  same draw path. It is the `G === 1` case in production.
+- **The Niño 3.4 grid answers the granularity question** — and the answer is
+  that granularity is **not a chart prop**. The site's existing wide series
+  (a column per year, a row per day-of-year, built for the climatology
+  `collapse`) is already a heat map's shape, so day / month / year is three
+  `aggregate` calls on x with the rows untouched:
+  `wide` → `Sequence.calendar('month')` → a whole-year bucket. 45 rows in all
+  three; only the x bin width moves. That is the layer's y-must-be-columns
+  constraint paying for itself — resolution belongs to x, where pond already
+  owns it.
+- **Live cells are outlined, not alpha-popped.** The bar layers say "live" by
+  popping `opacity` to 1, which a heat map cannot use: on a full-opacity ramp
+  it is invisible, and where it isn't, dimming a cell shifts where the reader
+  places it on the colour scale. So hover strokes at `outlineWidth` and
+  selection at twice that, both in `style.highlight`, inset by half the stroke
+  so a flush (`gap: 0`) grid cannot bleed over its neighbour. Hover and select
+  still share one colour deliberately — whether they should diverge is #577,
+  and this layer shouldn't pre-empt it.
+- **The array props are compared by value, not identity.** `columns`, `colors`
+  and `domain` are all naturally written fresh per render (a JSX literal, a
+  `.map()`, a theme hook like the docs site's `useSequentialRamp()`). Keyed by
+  identity each rebuilds the layer entry every render, hence `registerLayer`
+  every render — which on a chart that re-renders from its own hover state is
+  not a treadmill but an **infinite update loop**, and that is exactly how it
+  surfaced. `<BarChart thresholds>` had already learned this ([PND-BANDBAR2]);
+  the heat map now keys on NUL-joined content, pinned by
+  `test/heat-identity.test.tsx`. **Worth a sweep**: any layer taking an array
+  prop is exposed to the same bug.
+
+**Friction found, not fixed:**
+
+- **`Sequence.calendar` has no `'year'` unit** — it stops at `month`
+  (`CalendarUnit = 'day' | 'week' | 'month'`). A whole-year bucket has to be
+  faked with a fixed step (`Sequence.every('370d', { anchor })`) sized past the
+  record's end, which works but is wrong in general: a calendar year is not a
+  fixed number of days. Adding `'year'` (and arguably `'quarter'`) is a small
+  core change with an obvious caller.
 
 ### [PND-BARMARK] — Stable per-bar identity for single-series bars — DONE
 
@@ -1530,11 +1574,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                            _Still true; no longer felt here._ The draggable marker is gone — selection
-                                            is a click — so nothing on this page is in edit mode. But it cost a design
-                                            iteration to discover, and the docs still don't mention it. **The one-line
-                                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                            row's data cursor is suppressed."
+                                                _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                is a click — so nothing on this page is in edit mode. But it cost a design
+                                                iteration to discover, and the docs still don't mention it. **The one-line
+                                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires

@@ -170,10 +170,21 @@ function matchesCell(
 /**
  * Fill one rectangle per cell, coloured by `colorAt(b, g)`. A gap is skipped.
  *
- * A live cell keeps its **own** colour and pops to full opacity; a selected one
- * additionally gains an outline. The colour is never swapped for a highlight,
- * because that colour *is* the datum — replacing it would erase the reading the
- * chart exists to give.
+ * A live cell keeps its **own** colour. The colour is never swapped for a
+ * highlight, because that colour *is* the datum — replacing it would erase the
+ * reading the chart exists to give.
+ *
+ * That rules out the bar layers' usual affordance too. A bar says "live" by
+ * popping from `opacity` to 1, which on a heat map is both invisible (a ramp is
+ * normally drawn at full opacity already) and, where it isn't, actively
+ * misleading — dimming a cell shifts where the reader places it on the colour
+ * scale. So a live cell is marked by an **outline** instead: `outlineWidth` for
+ * hover, twice that for selection, both in `style.highlight`. The alpha pop is
+ * kept as well, so a theme that does draw cells translucent still behaves like
+ * its bars.
+ *
+ * Hover and selection share one colour deliberately — whether they should
+ * diverge is the open question in #577, and this layer should not pre-empt it.
  *
  * O(visible × G) after viewport culling on the bin axis.
  */
@@ -215,10 +226,15 @@ export function drawHeat(
       ctx.globalAlpha = live ? 1 : style.opacity;
       ctx.fillStyle = fill;
       ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
-      if (selected) {
-        ctx.lineWidth = style.outlineWidth;
+      if (live) {
+        // Inset by half the stroke so the outline sits inside the cell rather
+        // than straddling its edge and bleeding over the neighbour — which on a
+        // flush grid (`gap: 0`) would misreport the neighbour's colour.
+        const w = selected ? style.outlineWidth * 2 : style.outlineWidth;
+        const i = w / 2;
+        ctx.lineWidth = w;
         ctx.strokeStyle = style.highlight;
-        ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+        ctx.strokeRect(x0 + i, yTop + i, x1 - x0 - w, yBottom - yTop - w);
       }
     }
   }

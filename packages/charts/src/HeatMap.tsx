@@ -136,9 +136,22 @@ export function HeatMap<
     throw new Error('<HeatMap> needs at least one column (one row per column)');
   }
 
+  // `columns`, `colors` and `domain` are **array** props, and the natural way to
+  // write every one of them is a fresh array per render — a JSX literal, a
+  // `.map()`, or a theme hook like the docs site's `useSequentialRamp()`. Keyed
+  // by identity they would rebuild the layer `entry` every render, hence a
+  // `registerLayer` every render: a repaint treadmill, not a noisy warning. So
+  // memoize on **content**, exactly as `<BarChart thresholds>` does. The joiner
+  // is NUL rather than a comma because a column name may contain a comma, and
+  // `['a,b']` must not key the same as `['a', 'b']`.
+  const columnsKey = columns.join('\u0000');
+  const colorsKey = colors.join('\u0000');
+  const domainKey =
+    domain === undefined ? '' : `${domain[0]}\u0000${domain[1]}`;
+
   const ss = useMemo(
     () => stacksFromColumns(series, columns),
-    [series, columns],
+    [series, columnsKey],
   );
 
   const { bar } = container.theme;
@@ -158,13 +171,13 @@ export function HeatMap<
   // One colour domain across the whole grid, so rows are comparable.
   const [lo, hi] = useMemo(
     () => domain ?? heatValueExtent(ss) ?? [0, 1],
-    [domain, ss],
+    [domainKey, ss],
   );
   const G = ss.groups.length;
   const colorAt = useMemo(
     () => (b: number, g: number) =>
       bandedColor(ss.values[b * G + g]!, colors, lo, hi),
-    [ss, G, colors, lo, hi],
+    [ss, G, colorsKey, lo, hi],
   );
 
   const selected = container.selected;
