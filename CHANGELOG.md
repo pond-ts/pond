@@ -60,6 +60,57 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts: `<HeatMap>` — a grid of colour-coded cells** ([PND-HEATMAP]). Bins
+  along x, the series' **columns** down y, colour carrying the value. A single
+  column is a stripe (climate stripes, a load band); many columns are a grid.
+
+  ```tsx
+  <HeatMap series={byMonth} columns={ROWS} colors={ramp} axis="yr" id="sst" />
+  ```
+
+  It adds **no reader of its own** — it builds on `stacksFromColumns`, whose
+  output is already a heat map's shape, so all four series shapes pond can
+  express today (`TimeSeries` or `ValueSeries` × one column or many) work
+  unchanged. That also means it has **no opinion about x**: cell spans are
+  ordinary bin spans, so `aggregate` over a trading calendar, `Sequence.calendar`
+  buckets and `byColumn` value bands all apply, and changing resolution is a
+  re-bin of the series rather than a chart prop.
+
+  The y dimension **must be columns** — a month-of-year grid means a column per
+  month. That keeps the second dimension in the data model, where pond's own
+  reshaping operators (`pivotByGroup`, `partitionBy`) can produce it, instead of
+  inventing a chart-level pivot.
+
+  A cell **carries its value**, so hover and click report it and the readout
+  takes the cell's own colour — the bar-based workaround this replaces cannot,
+  since its bars are a constant-height column carrying no value. Note that a
+  `TrackerSample`'s `value` is where the cursor _draws_, so the cell's number
+  rides `readout`; read it as `readout ?? value`. For a grid, prefer
+  `onHover`/`onSelect`, which resolve **both** axes — the tracker knows only x.
+
+  Colour is data and comes from `colors`, not the theme; geometry and the
+  live-cell treatment borrow `theme.bar[as] ?? theme.bar.default`. A live cell
+  keeps its own colour and gains an **outline** (hover `outlineWidth`, selection
+  twice that) rather than the bar layers' alpha pop, which on a colour scale is
+  both usually invisible and misleading.
+
+  Not built: a grouped two-level x axis, cell value labels, and 2-D region
+  selection / pan-zoom.
+
+### Fixed
+
+- **charts: hover was stuck on the y axis inside a stacked column.**
+  `<ChartContainer>` deduped the hovered mark on `id + key` so the data canvas
+  repaints only when the mark changes — but `key` is the mark's position on the
+  **bin axis**, unique only for a layer with one mark per bin. A stacked
+  `<BarChart>` column or a `<HeatMap>` column stacks several, so every pointer
+  move _within_ a bin was swallowed: dragging straight down a heat-map column
+  never changed the reported cell, and `onHover` never fired. Now compares the
+  mark's full identity (`id`, `key`, `label`, `mark`). Genuine repeats are still
+  deduped, so this costs no extra repaints.
+
 ## [0.57.0] — 2026-08-07
 
 ### Added

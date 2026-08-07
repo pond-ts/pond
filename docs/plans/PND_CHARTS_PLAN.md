@@ -145,6 +145,206 @@ rather than naming one in advance. Deliberately a separate change: it widens
 core (`TimeSeries`), where `readout` is charts-local. Promote to a PLAN.md task
 when estela pulls on it.
 
+### [PND-HEATMAP] — Heat-map draw layer — PROTOTYPE ON A BRANCH
+
+The write-up PLAN.md points at. **Not merged**: `feat/heatmap-prototype` carries
+a working grid layer (`src/heat.ts`, `src/HeatMap.tsx`, 25 tests, six stories
+under `Charts/HeatMap`).
+
+**The whole thing needs no new data type.** `StackedBarSeries` is already a heat
+map's data — `[begin, end]` spans per bin, a named second dimension in `groups`,
+a row-major `length × G` value block, plus `marks` for stable identity. And
+`stacksFromColumns(series, columns)` already accepts `TimeSeries | ValueSeries`,
+branching to `seriesSlots()` or `neighbourSpans(axisValues())`. So one existing
+reader produces every shape pond can express:
+
+| source        | columns | x axis          |              |
+| ------------- | ------- | --------------- | ------------ |
+| `TimeSeries`  | one     | time intervals  | a stripe     |
+| `TimeSeries`  | many    | time intervals  | a grid       |
+| `ValueSeries` | one     | value intervals | a bin stripe |
+| `ValueSeries` | many    | value intervals | a grid       |
+
+**The stripe is `G === 1`** — one draw path, not two. An earlier cut of this
+prototype had a separate `BarSeries` route for the single-row case; it
+collapsed away entirely.
+
+**The axis mechanism also already existed.** `RowLayer.binCategories()` — added
+for horizontal histograms — reports row names while the y axis stays a linear
+scale over unit slots `[i, i+1]`, and `<YAxis>` labels each at `i + 0.5`. So the
+layer reports `yExtent: [0, G]` + `binCategories: () => groups` and gets a
+labelled row axis with no band scale, no `CategoryAxis` variant, no new axis
+work. The PLAN framing — "category axis **or** derived calendar coordinate" —
+was a false choice: the axis is the same either way, and the real question was
+only ever where the rows come from.
+
+**Decision — the y dimension is columns, and only columns.** A month-of-year
+grid means a column per month; a per-city grid means a column per city
+(`pivotByGroup` long→wide, or `partitionBy` reshaped). This is a real
+constraint and a deliberate one: it keeps the second dimension in the data
+model, where pond's own reshaping operators produce it, rather than inventing a
+chart-level pivot. The payoff is that **x keeps the whole of pond's binning
+machinery for free** — `aggregate` over a trading calendar with sessions,
+`Sequence.calendar` buckets, `byColumn` value bands — because the layer has no
+opinion about x beyond "these are bin spans".
+
+**Decision — one colour domain across the whole grid.** `heatValueExtent` spans
+every cell, not each row, because rows are only comparable if one scale covers
+them all. `domain` pins it for cross-chart comparison or a moving window, where
+an auto-fit silently re-means every cell and a colour scale has no tick labels
+to reveal that it moved.
+
+**Decision — banded, not interpolated.** Values map to `colors.length` equal
+bands. Matches the climate-stripes card (whose `anomalyStep` this replaces), is
+the conventional reading for stripes and calendar grids, and is honest about
+resolution; at nine-plus stops it is indistinguishable from a gradient.
+
+**Decision — a live cell keeps its own colour.** Bars swap to `highlight`; a
+cell must not, because its colour _is_ the datum. Full opacity plus an outline
+on selection. Cell identity is two-dimensional — bin **and** row — reusing
+`StackMark` so bars and cells share one selection vocabulary.
+
+**Deferred — no `theme.heat` slot.** Geometry is borrowed from
+`theme.bar[as] ?? theme.bar.default`. `ChartTheme`'s slots are required, so
+adding one is breaking for every custom theme; the M5 optional-with-default
+gate ([PND-PARITY]) lands first.
+
+**Overlaps [PND-SPARCFRIC] (PR #599), which lands first.** That PR was blocked
+on the CI outage and carries two things this prototype touches:
+
+- **`<YAxis hide>`** ([PND-AXISHIDE]) — the right way to drop the axis for a
+  single unnamed row. The stripes card currently does it the old way
+  (`width={0}` + empty `ticks`); switch when #599 merges. Its sibling friction,
+  `<YAxis>` titling itself `label ?? id`, is likewise already tracked there, so
+  it is not re-raised here.
+- **Threshold-banded bars** — `<BarChart thresholds={[t0, t1]}>` colours a bar
+  by the band its value lands in, with fills from a new **`BarStyle.bands`**
+  theme slot, overridable per chart via **`bandColors`**.
+
+**That second one is a genuine vocabulary collision and needs reconciling
+before either ships as public API.** Two agents arrived at colour banding
+independently with different answers:
+
+|                  | #599 (bars)                                              | this prototype (heat map)                         |
+| ---------------- | -------------------------------------------------------- | ------------------------------------------------- |
+| bands from       | explicit `thresholds` breakpoints                        | domain split into `colors.length` equal bands     |
+| colours from     | the **theme** (`BarStyle.bands`), `bandColors` overrides | a **required `colors` prop**                      |
+| stated principle | "breakpoints are data, colour stays in the theme"        | colour _is_ the data, so it cannot be theme-owned |
+
+Neither is obviously wrong — a bar's banding is a _classification_ (good /
+warn / crit belongs to the theme's semantics), whereas a heat map's ramp _is_
+the quantitative channel and has no meaning without the data. But shipping
+`bandColors` and `colors` as neighbouring props, and `BarStyle.bands` beside a
+prop-only ramp, would be two ways to say one thing. Worth deciding deliberately:
+either the heat map adopts `thresholds` for the explicit-breakpoint case (AQI
+categories, Beaufort, HR zones all want it) and keeps `colors` for the
+continuous case, or banding becomes one shared primitive both layers call.
+
+**Asked for, not built — the 2-D interaction set.** pjm's follow-ups, hardest
+last:
+
+- **2-D readout — DONE, and it needed no new API.** The answer was that
+  `onHover` (and `onSelect`) already carry a `SelectInfo` resolved on **both**
+  axes by `hitTest`, so a grid readout is `onHover={setHit}` and reading
+  `label` (the row), `key` (the bin) and `value` off it. The tracker is the
+  wrong channel and cannot be made right: `sampleAt` samples every row at the
+  cursor's x and knows nothing about y, so any single number picked out of it
+  is a guess at which row was meant. The Niño 3.4 grid proved this the hard
+  way — a first cut reported the warmest row under the pointer, which reads as
+  nonsense because the year it names is not the year you are pointing at.
+  **The rule: x-scrub questions go to the tracker, "what is under the pointer"
+  goes to hover/select.**
+- **2-D region selection.** The region cursor snaps to `binIntervals` on x
+  only; a grid wants a rectangle across bins **and** rows. The x half exists;
+  the y half needs the row band to become a snap dimension.
+- **2-D pan and zoom.** Pan/zoom is an x-domain operation today. A grid with
+  many rows wants both axes — a container-level change well beyond this layer,
+  and the first real driver for it.
+
+**Still open:**
+
+- **Cell value labels** (the reference "heat map with labels"): draw the
+  formatted value centred when it fits. Small; the fiddly part is text colour
+  staying legible against both ends of the ramp.
+- **A grouped two-level x axis** (quarters nested under years). Genuinely axis
+  work — it would serve bars equally — so it belongs with [PND-AXES], not here.
+- **Continuous interpolation** as an alternative to banding, if a consumer wants
+  it. Nothing forecloses it.
+  **Shipped since the prototype write-up above:**
+
+- **The climate-stripes card is converted** — `columns={['anomaly']}`, one row,
+  same draw path. It is the `G === 1` case in production.
+- **The Niño 3.4 grid answers the granularity question** — and the answer is
+  that granularity is **not a chart prop**. The site's existing wide series
+  (a column per year, a row per day-of-year, built for the climatology
+  `collapse`) is already a heat map's shape, so day / month / year is three
+  `aggregate` calls on x with the rows untouched:
+  `wide` → `Sequence.calendar('month')` → a whole-year bucket. 45 rows in all
+  three; only the x bin width moves. That is the layer's y-must-be-columns
+  constraint paying for itself — resolution belongs to x, where pond already
+  owns it.
+- **Live cells are outlined, not alpha-popped.** The bar layers say "live" by
+  popping `opacity` to 1, which a heat map cannot use: on a full-opacity ramp
+  it is invisible, and where it isn't, dimming a cell shifts where the reader
+  places it on the colour scale. So hover strokes at `outlineWidth` and
+  selection at twice that, both in `style.highlight`, inset by half the stroke
+  so a flush (`gap: 0`) grid cannot bleed over its neighbour. Hover and select
+  still share one colour deliberately — whether they should diverge is #577,
+  and this layer shouldn't pre-empt it.
+- **The array props are compared by value, not identity.** `columns`, `colors`
+  and `domain` are all naturally written fresh per render (a JSX literal, a
+  `.map()`, a theme hook like the docs site's `useSequentialRamp()`). Keyed by
+  identity each rebuilds the layer entry every render, hence `registerLayer`
+  every render — which on a chart that re-renders from its own hover state is
+  not a treadmill but an **infinite update loop**, and that is exactly how it
+  surfaced. `<BarChart thresholds>` had already learned this ([PND-BANDBAR2]);
+  the heat map now keys on NUL-joined content, pinned by
+  `test/heat-identity.test.tsx`. **Worth a sweep**: any layer taking an array
+  prop is exposed to the same bug.
+
+- **Hover deduped on `id + key`, so it was stuck on the y axis.**
+  `ChartContainer.setHovered` suppresses repeats so the data canvas repaints
+  only when the hovered mark changes. But `key` is the mark's position on the
+  **bin axis**, unique only for a layer with one mark per bin — a stacked bar or
+  a heat-map column stacks several, so every move _within_ a bin was swallowed.
+  On the Niño grid that presented as dragging straight down a column never
+  changing the reported cell. Now compares the full identity (`id`, `key`,
+  `label`, `mark`) — which is what the comment above it had claimed all along.
+  **This was a `<BarChart>` bug too**, not just a heat-map one: any stacked
+  column had it. `test/hover-dedupe.test.tsx`.
+- **Axis carriers leak without `timeFormat`.** The Niño day-of-year axis is a
+  synthetic reference year (2001), and the first tick renders `2001` unless the
+  container passes `timeFormat="%b"` — announcing a year the data has no opinion
+  about. The line chart above it already knew this; the heat map had to learn it
+  again, which suggests the reference-year idiom deserves a recipe rather than a
+  per-card comment.
+- **Explicit `{ at, label }` ticks are how you name _some_ rows.** With 45 rows,
+  `binCategories` labels all of them into an unreadable stack. `<YAxis ticks>`
+  overrides it, so naming the years the line chart names is three ticks at
+  `row + 0.5`. Also needs `label=""`, since the axis title otherwise defaults to
+  the axis id — the known friction pjm flagged.
+
+- **Measure and palette are both "hand it a different value", not layer work.**
+  The Niño grid now toggles SST vs anomaly and site/heat/diverging ramps. The
+  first is a different _series_ (the per-year `anomaly` columns reshaped wide —
+  a reshape, not a recomputation, since the line chart already computed them);
+  the second is a different `colors` array. Neither touches `<HeatMap>`, which
+  is the evidence that colour-as-a-prop was the right call: a themed
+  `theme.heat` slot could not have expressed "inferno for absolute temperature,
+  RdBu for the anomaly" without inventing a second axis of configuration.
+  It also validated `domain`: a diverging ramp is meaningless without a pinned
+  symmetric domain, because the neutral band has to sit on zero and an
+  auto-extent moves it silently as the binning changes.
+
+**Friction found, not fixed:**
+
+- **`Sequence.calendar` has no `'year'` unit** — it stops at `month`
+  (`CalendarUnit = 'day' | 'week' | 'month'`). A whole-year bucket has to be
+  faked with a fixed step (`Sequence.every('370d', { anchor })`) sized past the
+  record's end, which works but is wrong in general: a calendar year is not a
+  fixed number of days. Adding `'year'` (and arguably `'quarter'`) is a small
+  core change with an obvious caller.
+
 ### [PND-BARMARK] — Stable per-bar identity for single-series bars — DONE
 
 **Shipped ([Unreleased]).** The categorical stack's `(id, mark)` selection
@@ -1408,11 +1608,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                            _Still true; no longer felt here._ The draggable marker is gone — selection
-                            is a click — so nothing on this page is in edit mode. But it cost a design
-                            iteration to discover, and the docs still don't mention it. **The one-line
-                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                            row's data cursor is suppressed."
+                                                        _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                        is a click — so nothing on this page is in edit mode. But it cost a design
+                                                        iteration to discover, and the docs still don't mention it. **The one-line
+                                                        fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                        row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires

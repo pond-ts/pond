@@ -1,0 +1,277 @@
+import { barSpanPx } from './range.js';
+import type { StackedBarSeries } from './data.js';
+import type { Scale } from './line.js';
+import type { StackMark } from './bars.js';
+import { visibleSpanRange } from './culling.js';
+
+/**
+ * Heat-map geometry: a grid of cells, each filled by the colour its **value**
+ * maps to. Bins run along x, the series' **columns** run down y, and colour
+ * carries the aggregate.
+ *
+ * **Why this reuses {@link StackedBarSeries}.** That type is already exactly a
+ * heat map's data: `[begin, end]` spans per bin, a named second dimension in
+ * `groups`, and a row-major `length × groups.length` grid of `values`. So a heat
+ * map needs **no reader of its own** — `stacksFromColumns(series, columns)`
+ * produces all four shapes pond can express today:
+ *
+ * | source | columns | x axis |
+ * | --- | --- | --- |
+ * | `TimeSeries` | one | time intervals — a stripe |
+ * | `TimeSeries` | many | time intervals — a grid |
+ * | `ValueSeries` | one | value intervals — a bin stripe |
+ * | `ValueSeries` | many | value intervals — a grid |
+ *
+ * The stripe is just `groups.length === 1`, so there is one draw path, not two.
+ *
+ * **What that buys on x.** Because the spans are the ordinary bin spans, the
+ * whole of pond's binning machinery applies unchanged — `aggregate` over a
+ * trading calendar with sessions, `Sequence.calendar` day/week/month buckets,
+ * `byColumn` value bands. The heat map inherits all of it by not having an
+ * opinion.
+ *
+ * **What it costs on y.** The y dimension **must be columns**. A month-of-year
+ * grid means building a column per month; a per-city grid means a column per
+ * city (`pivotByGroup`'s long→wide output, or `partitionBy` reshaped). That is
+ * a real constraint, and a deliberate one: it keeps the second dimension in the
+ * data model, where pond's own reshaping operators can produce it, instead of
+ * inventing a chart-level pivot.
+ */
+
+/** Cell styling. Colour is data and comes from the caller's ramp, so this is
+ *  only the geometry and the live-cell treatment. */
+export interface HeatStyle {
+  /** Alpha for a resting cell. A live cell pops to 1, as bars do. */
+  readonly opacity: number;
+  /** Outline colour for the selected cell. */
+  readonly highlight: string;
+  /** Selected-cell stroke width in px. */
+  readonly outlineWidth: number;
+  /** Px inset around each cell, in both axes. `0` tiles them flush. */
+  readonly gap: number;
+  /** Px floor on a cell's width, so a thin bin stays visible. */
+  readonly minWidth: number;
+}
+
+/**
+ * Map a value onto a **banded** ramp: `colors` split `[lo, hi]` into equal
+ * steps and a value takes the colour of the band it falls in.
+ *
+ * Banded rather than interpolated on purpose. It is what the climate-stripes
+ * card does today (its `anomalyStep` buckets into the ramp's length, which this
+ * replaces), it is the conventional reading for stripes and calendar heat maps,
+ * and a banded scale is honest about resolution in a way a smooth gradient is
+ * not — you can count the steps and read a cell against a legend. With nine or
+ * more stops it is visually indistinguishable from a gradient anyway.
+ *
+ * A non-finite value, or an empty ramp, yields `undefined` — the caller decides
+ * whether that is a skipped cell or a fallback fill.
+ */
+export function bandedColor(
+  value: number,
+  colors: readonly string[],
+  lo: number,
+  hi: number,
+): string | undefined {
+  if (!Number.isFinite(value) || colors.length === 0) return undefined;
+  if (!(hi > lo)) return colors[colors.length - 1]; // degenerate domain: one band
+  const t = (value - lo) / (hi - lo);
+  const band = Math.floor(t * colors.length);
+  // Clamp so the domain's own endpoints land in the first / last band rather
+  // than falling off (t === 1 would index one past the end), and so a value
+  // outside a *pinned* domain reads at the extreme instead of vanishing.
+  return colors[Math.min(colors.length - 1, Math.max(0, band))];
+}
+
+/**
+ * The `[min, max]` of the finite values across **every** cell — the colour
+ * domain when the caller does not pin one. `null` when nothing is finite.
+ *
+ * Deliberately **not** widened to include `0`, unlike `barExtent`: a bar's
+ * height is measured from a baseline so zero must be in the domain, but a
+ * cell's colour is measured against the data's own range. Widening would waste
+ * half the ramp on an all-positive grid.
+ *
+ * Note this spans the **whole grid**, not each row — every row is read against
+ * one scale, which is what makes rows comparable to each other.
+ */
+export function heatValueExtent(ss: StackedBarSeries): [number, number] | null {
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < ss.values.length; i += 1) {
+    const v = ss.values[i]!;
+    if (Number.isFinite(v)) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+  return min === Infinity ? null : [min, max];
+}
+
+/**
+ * The pixel rect of the cell at bin `b`, row `g` — `[x0, x1, yTop, yBottom]`,
+ * ascending on both axes — or `null` for a gap (non-finite value), which draws
+ * nothing and owns no hit region so a hole in the record reads as a hole.
+ *
+ * x comes from the bin's own span via {@link barSpanPx}, shared with bars so
+ * cells and bars tile identically. y is the row's **unit slot** `[g, g+1]`
+ * through the y scale, which is why the layer reports `yExtent` as `[0, G]` and
+ * labels rows via `binCategories` at each slot centre.
+ *
+ * **Row order follows the y scale**, so with the usual inverted pixel range row
+ * `0` sits at the *bottom*. That matches the existing band-axis convention
+ * (a horizontal histogram's first bin is its lowest), and a caller who wants
+ * the first column at the top reverses the column list.
+ */
+export function cellRect(
+  ss: StackedBarSeries,
+  b: number,
+  g: number,
+  xScale: Scale,
+  yScale: Scale,
+  gapPx: number,
+  minWidthPx: number,
+): [x0: number, x1: number, yTop: number, yBottom: number] | null {
+  const G = ss.groups.length;
+  if (!Number.isFinite(ss.values[b * G + g]!)) return null;
+  const [x0, x1] = barSpanPx(
+    ss.begin[b]!,
+    ss.end[b]!,
+    xScale,
+    gapPx,
+    minWidthPx,
+  );
+  const yA = yScale(g);
+  const yB = yScale(g + 1);
+  const top = Math.min(yA, yB);
+  const bottom = Math.max(yA, yB);
+  // Inset the row band by the same gap, but never past collapsing it.
+  const inset = Math.min(gapPx / 2, Math.max(0, (bottom - top) / 2 - 0.5));
+  return [x0, x1, top + inset, bottom - inset];
+}
+
+/** Does `m` identify the cell at (`b`, `g`)? The stacked rule, unchanged: the
+ *  layer `id` plus either the stable per-bin `mark` or the bin `key` + row
+ *  `label`. Sharing it keeps one selection vocabulary across bars and cells. */
+function matchesCell(
+  m: StackMark | null,
+  seriesId: string | undefined,
+  ss: StackedBarSeries,
+  b: number,
+  g: number,
+): boolean {
+  if (m === null || m.id !== seriesId) return false;
+  const stable = ss.marks?.[b];
+  return stable !== undefined
+    ? m.mark === stable && m.label === ss.groups[g]
+    : m.key === ss.begin[b] && m.label === ss.groups[g];
+}
+
+/**
+ * Fill one rectangle per cell, coloured by `colorAt(b, g)`. A gap is skipped.
+ *
+ * A live cell keeps its **own** colour. The colour is never swapped for a
+ * highlight, because that colour *is* the datum — replacing it would erase the
+ * reading the chart exists to give.
+ *
+ * That rules out the bar layers' usual affordance too. A bar says "live" by
+ * popping from `opacity` to 1, which on a heat map is both invisible (a ramp is
+ * normally drawn at full opacity already) and, where it isn't, actively
+ * misleading — dimming a cell shifts where the reader places it on the colour
+ * scale. So a live cell is marked by an **outline** instead: `outlineWidth` for
+ * hover, twice that for selection, both in `style.highlight`. The alpha pop is
+ * kept as well, so a theme that does draw cells translucent still behaves like
+ * its bars.
+ *
+ * Hover and selection share one colour deliberately — whether they should
+ * diverge is the open question in #577, and this layer should not pre-empt it.
+ *
+ * O(visible × G) after viewport culling on the bin axis.
+ */
+export function drawHeat(
+  ctx: CanvasRenderingContext2D,
+  ss: StackedBarSeries,
+  xScale: Scale,
+  yScale: Scale,
+  style: HeatStyle,
+  colorAt: (b: number, g: number) => string | undefined,
+  seriesId: string | undefined,
+  selection: StackMark | null,
+  hovered: StackMark | null,
+): void {
+  const G = ss.groups.length;
+  ctx.save();
+  ctx.globalAlpha = style.opacity;
+  const [vStart, vEnd] = visibleSpanRange(ss.begin, ss.end, ss.length, xScale);
+
+  for (let b = vStart; b < vEnd; b += 1) {
+    for (let g = 0; g < G; g += 1) {
+      const rect = cellRect(
+        ss,
+        b,
+        g,
+        xScale,
+        yScale,
+        style.gap,
+        style.minWidth,
+      );
+      if (rect === null) continue;
+      const fill = colorAt(b, g);
+      if (fill === undefined) continue;
+      const [x0, x1, yTop, yBottom] = rect;
+
+      const selected = matchesCell(selection, seriesId, ss, b, g);
+      const live = selected || matchesCell(hovered, seriesId, ss, b, g);
+
+      ctx.globalAlpha = live ? 1 : style.opacity;
+      ctx.fillStyle = fill;
+      ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
+      if (live) {
+        // Inset by half the stroke so the outline sits inside the cell rather
+        // than straddling its edge and bleeding over the neighbour — which on a
+        // flush grid (`gap: 0`) would misreport the neighbour's colour.
+        const w = selected ? style.outlineWidth * 2 : style.outlineWidth;
+        const i = w / 2;
+        ctx.lineWidth = w;
+        ctx.strokeStyle = style.highlight;
+        ctx.strokeRect(x0 + i, yTop + i, x1 - x0 - w, yBottom - yTop - w);
+      }
+    }
+  }
+  ctx.restore();
+}
+
+/**
+ * Hit-test plot-pixel `(px, py)` against the grid — the first cell whose rect
+ * contains the point, or `null`. Returns `[bin, row, begin, rowName, value]`.
+ *
+ * The **value** is the whole point of the layer. A constant-height bar carries
+ * none, which is why the climate-stripes card looks its number up out-of-band;
+ * a cell answers directly, and so can the cursor.
+ *
+ * O(N × G), as `stackAt` is: bin and row counts are view-scale, clicks are rare.
+ */
+export function heatAt(
+  ss: StackedBarSeries,
+  px: number,
+  py: number,
+  xScale: Scale,
+  yScale: Scale,
+  gapPx: number,
+  minWidthPx: number,
+):
+  | [bin: number, row: number, begin: number, name: string, value: number]
+  | null {
+  const G = ss.groups.length;
+  for (let b = 0; b < ss.length; b += 1) {
+    for (let g = 0; g < G; g += 1) {
+      const rect = cellRect(ss, b, g, xScale, yScale, gapPx, minWidthPx);
+      if (rect === null) continue;
+      const [x0, x1, yTop, yBottom] = rect;
+      if (px >= x0 && px <= x1 && py >= yTop && py <= yBottom) {
+        return [b, g, ss.begin[b]!, ss.groups[g]!, ss.values[b * G + g]!];
+      }
+    }
+  }
+  return null;
+}

@@ -5,11 +5,11 @@ sidebar_label: Climate stripes
 
 # Climate stripes
 
-146 bars, all exactly the same height, where **the colour is the value**. It's
+146 cells, all exactly the same height, where **the colour is the value**. It's
 the inverse of every other chart in this gallery: position carries nothing but
 time, and the entire quantitative channel is hue. The form is Ed Hawkins'
-"warming stripes" (University of Reading, 2018); the technique underneath it is
-`binColors`, and it works for anything you'd otherwise draw as a heat strip.
+"warming stripes" (University of Reading, 2018); the layer underneath it is
+`<HeatMap>`, and it works for anything you'd otherwise draw as a heat strip.
 
 import ChartExample from '@site/src/components/ChartExample';
 import GalleryClimateStripes from '@site/src/examples/gallery-climate-stripes';
@@ -22,9 +22,11 @@ import GalleryClimateStripes from '@site/src/examples/gallery-climate-stripes';
 
 Point at a stripe and the strip above the chart names its year and its anomaly.
 That readout **is this chart's legend** — with the value encoded as colour and
-no y-axis to read, it's the only way to get a number back out. The in-chart
-cursor can't do it; [Build it](#build-it) explains why, and it's the most
-transferable thing on this page.
+no y-axis to read, it is where a number comes back out. It used to be the
+_only_ place one could: the bars carried no value at all, so the anomaly had to
+be fetched from the fixture by year. `<HeatMap>` changed that — the cell
+reports itself — and [Build it](#build-it) explains why the strip stays beside
+the plot anyway, which is the most transferable thing on this page.
 
 What the shape says is one-way traffic across the ramp. The darkest of the
 eight steps has not appeared since **1933**; the darkest two, not since
@@ -43,7 +45,7 @@ this page gives it. Retrieved by
 which runs by hand and commits its output.
 
 ```ts
-[time, anomaly, stripe]; // year start, °C vs the 1951–1980 mean, constant 1
+[time, anomaly]; // year start, °C vs the 1951–1980 mean
 ```
 
 - **146 complete years, 1880–2025.** Only complete years are kept, so the
@@ -56,82 +58,92 @@ which runs by hand and commits its output.
 - **GISTEMP revises history.** As station records are homogenised, older values
   move slightly. That's why the fixture header records a retrieval date; a
   regenerated fixture will not be bit-identical to this one.
-- **`stripe` is a constant `1`** — a column that exists only so every year gets
-  a full-height slot. It carries no information at all, which turns out to have
-  consequences for the cursor.
+- **One value column is all it needs.** `<HeatMap>` reads `anomaly` as both the
+  colour and the number it reports. This schema used to carry a constant
+  `stripe: 1` column too, so that the _bars_ drawing the stripes were full
+  height — a column carrying no information, which had consequences for the
+  cursor. The heat map removed the need for it.
 
 ## Build it
 
-Start with the encoding, because it's the part that isn't a chart prop.
-`binColors` takes **one colour per bar, in series order**, so the job is to map
-each year's anomaly onto a step of the ramp:
-
-```ts
-const ramp = useSequentialRamp(); // 8 theme colours, dark → light
-
-const colors = Array.from(series.column('anomaly').toFloat64Array(), (a) => {
-  const t = (a - MIN) / (MAX - MIN); // MIN = -0.49, MAX = 1.28
-  return ramp[Math.min(7, Math.max(0, Math.floor(t * 8)))]!;
-});
-```
-
-Eight steps across a 1.77 °C spread — each step is 0.22 °C wide. The colours
-come from `useSequentialRamp()`, the site's own eight-step ramp, so they follow
-the light/dark toggle; swapping in Hawkins' blue-to-red diverging scale is the
-same one line, and for a quantity that straddles zero a diverging scale is
-arguably the better choice. The rule this site follows is one hue family rather
-than competing hues, so it steps through the sequential ramp instead.
-
-Then the chart, which is mostly an exercise in taking things away:
+The encoding is the layer's job now, so there is no per-bar colour array to
+build. Hand `<HeatMap>` the column and the ramp:
 
 ```tsx
+const ramp = useSequentialRamp(); // 8 theme colours, dark → light
+
 <ChartContainer range={[FIRST, LAST]} width={640} theme={theme}>
   <ChartRow height={200}>
-    {/* Pin the axis and erase it: a constant column has no extent to
-        auto-fit to, and "0.0 … 1.0" would be a scale for a quantity this
-        chart isn't showing. */}
-    <YAxis id="stripe" min={0} max={1} width={0} ticks={[]} />
+    {/* One row, so the layer's own [0, 1] extent is the whole plot. Empty
+        `ticks` and zero width take the axis off the canvas: a single unnamed
+        row needs no scale drawn. */}
+    <YAxis id="stripe" width={0} ticks={[]} />
     <Layers>
-      <BarChart
+      <HeatMap
         series={series}
-        column="stripe"
+        columns={['anomaly']}
+        colors={ramp}
         axis="stripe"
-        binColors={colors}
         gap={0}
       />
     </Layers>
   </ChartRow>
-</ChartContainer>
+</ChartContainer>;
 ```
 
-`gap={0}` is what makes it a continuous strip rather than a bar chart — the
-bars take their width from the spacing of their neighbours, so they tile edge
+`columns` is the y dimension: one column per row, so a single name is a
+single-row **stripe**. The value domain is split into `ramp.length` equal bands
+and each cell takes its band's colour — eight steps across the record's
+1.77 °C spread, so each step is about 0.22 °C. The colours come from
+`useSequentialRamp()`, the site's own ramp, so they follow the light/dark
+toggle; swapping in Hawkins' blue-to-red diverging scale is the same one line,
+and for a quantity that straddles zero a diverging scale is arguably the better
+choice. The rule this site follows is one hue family rather than competing
+hues.
+
+`gap={0}` is what makes it a continuous strip rather than a grid of tiles — the
+cells take their width from the spacing of their neighbours, so they tile edge
 to edge with no seams.
 
-### Why the readout is off-chart
+### Why the readout is still off-chart
 
-The obvious move is `cursor="crosshair"`, and it's wrong here. The crosshair's
-value pill reads **the column the layer draws** — which is `stripe`, the
-constant. Every bar in the chart would report `1.0`. So the cursor stays at its
-`'line'` default (a bare vertical line) and the number comes out of the
-container's tracker instead:
+This card reads its number out beside the plot rather than in a cursor pill,
+and the reason changed when it became a heat map.
+
+It used to be that it _couldn't_: the crosshair's pill reads the column the
+layer draws, which was the constant `stripe`, so every bar reported `1.0`. The
+anomaly had to be fetched from the fixture by year.
+
+Now the cell carries its value, and `onTrackerChanged` hands it over directly:
 
 ```tsx
-const [year, setYear] = useState<number | null>(null);
+const [hit, setHit] = useState<{ year: number; anomaly: number } | null>(null);
 
 <ChartContainer
-  range={[FIRST, LAST]}
-  width={640}
-  theme={theme}
-  onTrackerChanged={(info) =>
-    setYear(info === null ? null : new Date(info.time).getUTCFullYear())
-  }
+  onTrackerChanged={(info) => {
+    const sample = info?.values[0];
+    setHit(
+      info === null || sample === undefined
+        ? null
+        : {
+            year: new Date(info.time).getUTCFullYear(),
+            anomaly: sample.readout ?? sample.value,
+          },
+    );
+  }}
 >
 ```
 
-`onTrackerChanged` hands you `{ time, values }` — and `time` is enough, because
-the anomaly can be looked up from the same fixture the colours came from. The
-strip above the chart is that lookup, rendered outside the plot.
+Note `readout ?? value`. A `TrackerSample`'s `value` is **where the cursor
+draws** — the pill is placed at `yScale(value)` — and a cell's number is not a
+y coordinate: the y axis here is one unit-high row, so placing a pill at
+`yScale(-0.02)` would put it outside the plot. So the heat map reports the row's
+centre as `value` and the cell's number as `readout`, which is exactly the split
+`readout` was added for.
+
+That is why the strip stays outside the plot: not because the number is
+unavailable any more, but because it is a **legend** for a colour scale, and a
+legend belongs next to the chart rather than chasing the pointer.
 
 This generalises past climate stripes. **Any time the visual channel isn't the
 column you want to read** — a colour encoding, a categorical mark, a chart

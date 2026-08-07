@@ -156,16 +156,16 @@ export const SEA_WETTEST_MM = SEA_PRCP_MM.reduce<number>(
 export const SEA_DAILY_CEILING_MM = Math.ceil(SEA_WETTEST_MM / 5) * 5;
 
 // ---------------------------------------------------------------------------
-// Climate stripes — the global record, one bar per year
+// Climate stripes — the global record, one cell per year
 // ---------------------------------------------------------------------------
 
 export const STRIPES_SCHEMA = [
   { name: 'time', kind: 'time' },
   { name: 'anomaly', kind: 'number' },
-  // Every stripe is the same height: in this chart the *colour* is the value,
-  // and a constant column is how you say "draw a full-height slot here". The
-  // anomaly is still on the row, so the cursor can read it out.
-  { name: 'stripe', kind: 'number' },
+  // One numeric column, and the chart colours by it: `<HeatMap>` reads
+  // `anomaly` as both the colour and the value it reports. This schema used to
+  // carry a constant `stripe: 1` column as well, purely so the bars drawing
+  // the stripes were full height — the heat map made it unnecessary.
 ] as const;
 
 function buildStripes() {
@@ -173,11 +173,10 @@ function buildStripes() {
     name: 'gistemp',
     schema: STRIPES_SCHEMA,
     columns: {
-      // Keyed at 1 January of each year; the bars take their width from the
+      // Keyed at 1 January of each year; the cells take their width from the
       // spacing of their neighbours, so they tile with no gaps.
       time: GISTEMP_ANOMALY_C.map((_, i) => Date.UTC(GISTEMP_YEAR0 + i, 0, 1)),
       anomaly: GISTEMP_ANOMALY_C,
-      stripe: GISTEMP_ANOMALY_C.map(() => 1),
     },
   });
 }
@@ -201,30 +200,6 @@ export const STRIPES_EXTENT: readonly [number, number] = [
   Math.min(...GISTEMP_ANOMALY_C),
   Math.max(...GISTEMP_ANOMALY_C),
 ];
-
-/**
- * One calendar year's anomaly in °C, or `null` for a year off the record.
- *
- * The stripes chart draws a *constant* column — the colour is the value — so
- * the number behind a stripe can't come from the cursor's own readout. It
- * comes from here, keyed by the year the tracker reports.
- */
-export function anomalyAt(year: number): number | null {
-  return GISTEMP_ANOMALY_C[year - GISTEMP_YEAR0] ?? null;
-}
-
-/**
- * Which ramp step an anomaly falls in — `0` (coldest) to `steps - 1`
- * (warmest), spread linearly across {@link STRIPES_EXTENT}.
- *
- * The colour *is* the data here, so this is the encoding, not decoration:
- * feed the result into a ramp and hand the ramp to `<BarChart binColors>`.
- */
-export function anomalyStep(anomaly: number, steps: number): number {
-  const [min, max] = STRIPES_EXTENT;
-  const t = (anomaly - min) / (max - min);
-  return Math.min(steps - 1, Math.max(0, Math.floor(t * steps)));
-}
 
 // ---------------------------------------------------------------------------
 // Wind — the hourly record as a categorical series, and the rose it counts to

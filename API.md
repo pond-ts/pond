@@ -265,16 +265,17 @@ this work), and `bins` names stay `string` (they name aggregate fields, not
 schema columns). Because the union splits per series _kind_, a value typed as
 **either** kind must be narrowed or cast at the call site.
 
-| Component      | Data props                                                                                   | Purpose                                            | Source                                 |
-| -------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------- |
-| `LineChart`    | `column`, `gaps?`, `sessionBreaks?`                                                          | Gap-aware line                                     | `packages/charts/src/LineChart.tsx`    |
-| `AreaChart`    | `column`, `baseline?`, `gaps?`                                                               | Filled area                                        | `packages/charts/src/AreaChart.tsx`    |
-| `BandChart`    | `lower`, `upper`                                                                             | Variance-band envelope                             | `packages/charts/src/BandChart.tsx`    |
-| `ScatterChart` | `column`, `id?` (selection), radius/color encodings                                          | Points; data-driven size/colour                    | `packages/charts/src/ScatterChart.tsx` |
-| `BarChart`     | `column` \| `columns` \| `bins` \| `categories`, `orientation?`, `thresholds?`/`bandColors?` | Bars, stacked bars, histograms, categorical        | `packages/charts/src/BarChart.tsx`     |
-| `BoxPlot`      | `lower`/`q1?`/`median?`/`q3?`/`upper`, `shape?`                                              | Box-and-whisker from quantile columns              | `packages/charts/src/BoxPlot.tsx`      |
-| `Candlestick`  | OHLC columns, `variant?`, `colorBy?`, `showOHLC?`                                            | First-class OHLC candles (TimeSeries only)         | `packages/charts/src/Candlestick.tsx`  |
-| `Legend`       | `placement?`, `items?`, `onRowClick?`, `onRowHover?`                                         | Series key from registered layers' resolved styles | `packages/charts/src/Legend.tsx`       |
+| Component      | Data props                                                                                   | Purpose                                             | Source                                 |
+| -------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------- |
+| `LineChart`    | `column`, `gaps?`, `sessionBreaks?`                                                          | Gap-aware line                                      | `packages/charts/src/LineChart.tsx`    |
+| `AreaChart`    | `column`, `baseline?`, `gaps?`                                                               | Filled area                                         | `packages/charts/src/AreaChart.tsx`    |
+| `BandChart`    | `lower`, `upper`                                                                             | Variance-band envelope                              | `packages/charts/src/BandChart.tsx`    |
+| `ScatterChart` | `column`, `id?` (selection), radius/color encodings                                          | Points; data-driven size/colour                     | `packages/charts/src/ScatterChart.tsx` |
+| `BarChart`     | `column` \| `columns` \| `bins` \| `categories`, `orientation?`, `thresholds?`/`bandColors?` | Bars, stacked bars, histograms, categorical         | `packages/charts/src/BarChart.tsx`     |
+| `HeatMap`      | `series`, `columns` (rows), `colors`, `domain?`, `gap?`                                      | Grid of colour-coded cells; bins on x, columns on y | `packages/charts/src/HeatMap.tsx`      |
+| `BoxPlot`      | `lower`/`q1?`/`median?`/`q3?`/`upper`, `shape?`                                              | Box-and-whisker from quantile columns               | `packages/charts/src/BoxPlot.tsx`      |
+| `Candlestick`  | OHLC columns, `variant?`, `colorBy?`, `showOHLC?`                                            | First-class OHLC candles (TimeSeries only)          | `packages/charts/src/Candlestick.tsx`  |
+| `Legend`       | `placement?`, `items?`, `onRowClick?`, `onRowHover?`                                         | Series key from registered layers' resolved styles  | `packages/charts/src/Legend.tsx`       |
 
 ### Components — annotations & indicators
 
@@ -313,19 +314,21 @@ consumers writing custom draw code; no shipped layer needs their output.
 The ValueSeries siblings (`fromValueSeries` etc.) are deliberately
 **unexported** (adapters are internal; see [PND-VSADAPT]).
 
-| Export               | Signature gist                                         | Feeds                                                   |
-| -------------------- | ------------------------------------------------------ | ------------------------------------------------------- |
-| `fromTimeSeries`     | `(series, column) → ChartSeries`                       | Line/Area/Scatter                                       |
-| `bandFromTimeSeries` | `(series, lower, upper) → BandSeries`                  | BandChart                                               |
-| `boxFromTimeSeries`  | `(series, BoxColumns) → BoxSeries`                     | BoxPlot                                                 |
-| `barsFromTimeSeries` | `(series, column) → BarSeries`                         | BarChart                                                |
-| `ohlcFromTimeSeries` | `(series, OhlcColumns) → OhlcSeries`                   | Candlestick                                             |
-| `stacksFromGroups`   | `(Map<string, TimeSeries>, column) → StackedBarSeries` | Stacked bars from grouped series                        |
-| `stacksFromColumns`  | `(series, columns[]) → StackedBarSeries`               | Stacked bars from wide columns                          |
-| `barsFromBins`       | `(bins, column, opts?) → BarSeries`                    | One-column histogram (single-series path, [PND-BARSEM]) |
-| `stacksFromBins`     | `(bins, columns[], opts?) → StackedBarSeries`          | Multi-column histograms from `byColumn` output          |
-| `categoryStack`      | `(CategoryDatum[]) → StackedBarSeries`                 | Categorical bars                                        |
-| `transposeRow`       | `(series, opts?) → CategoryDatum[]`                    | One row read across as categories                       |
+| Export               | Signature gist                                         | Feeds                                                     |
+| -------------------- | ------------------------------------------------------ | --------------------------------------------------------- |
+| `fromTimeSeries`     | `(series, column) → ChartSeries`                       | Line/Area/Scatter                                         |
+| `bandFromTimeSeries` | `(series, lower, upper) → BandSeries`                  | BandChart                                                 |
+| `boxFromTimeSeries`  | `(series, BoxColumns) → BoxSeries`                     | BoxPlot                                                   |
+| `barsFromTimeSeries` | `(series, column) → BarSeries`                         | BarChart                                                  |
+| `ohlcFromTimeSeries` | `(series, OhlcColumns) → OhlcSeries`                   | Candlestick                                               |
+| `stacksFromGroups`   | `(Map<string, TimeSeries>, column) → StackedBarSeries` | Stacked bars from grouped series                          |
+| `stacksFromColumns`  | `(series, columns[]) → StackedBarSeries`               | Stacked bars from wide columns                            |
+| `barsFromBins`       | `(bins, column, opts?) → BarSeries`                    | One-column histogram (single-series path, [PND-BARSEM])   |
+| `stacksFromBins`     | `(bins, columns[], opts?) → StackedBarSeries`          | Multi-column histograms from `byColumn` output            |
+| `categoryStack`      | `(CategoryDatum[]) → StackedBarSeries`                 | Categorical bars                                          |
+| `bandedColor`        | `(value, colors[], lo, hi) → string \| undefined`      | The heat map's own banding — for a matching legend        |
+| `heatValueExtent`    | `(StackedBarSeries) → [lo, hi] \| null`                | Finite extent across a grid; `<HeatMap>`'s domain default |
+| `transposeRow`       | `(series, opts?) → CategoryDatum[]`                    | One row read across as categories                         |
 
 Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 `BarSeries`, `OhlcSeries`, `StackedBarSeries`; option types `BoxColumns`,

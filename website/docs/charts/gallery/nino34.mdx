@@ -411,6 +411,138 @@ identify here. It is the same door the
 [climate stripes](./climate-stripes.mdx) card goes through, for the same
 reason.
 
+## The same data as a heat map
+
+The wide series built in [One axis for 45 years](#one-axis-for-45-years) — a
+column per year, a row per day-of-year — was shaped for the climatology
+`collapse`. It happens to be **exactly a heat map's shape as well**, with the
+year columns as rows. So the same 16,275 values, re-encoded:
+
+import GalleryNino34Heatmap from '@site/src/examples/gallery-nino34-heatmap';
+
+<ChartExample name="gallery-nino34-heatmap" height={500} collapsed>
+  <GalleryNino34Heatmap width={640} />
+</ChartExample>
+
+The three buttons change **only the x binning**. The rows are the same 45 years
+in all three, because rows are columns and the columns are fixed by the data:
+
+```tsx
+const ROWS = NINO34_YEARS.map(yearColumn); // ['y1982', … 'y2026']
+const MEAN_BY_YEAR = Object.fromEntries(ROWS.map((c) => [c, 'avg']));
+
+const series =
+  grain === 'day'
+    ? wide // 365 cells per row, as built
+    : wide.aggregate(
+        grain === 'month'
+          ? Sequence.calendar('month') // 12 cells
+          : Sequence.every('370d', { anchor: YEAR_START }), // 1 cell
+        MEAN_BY_YEAR,
+      );
+
+<HeatMap series={series} columns={ROWS} colors={ramp} axis="yr" />;
+```
+
+That is the layer's constraint paying for itself. `<HeatMap>` has **no opinion
+about x** — it draws whatever bins the series arrives with — so "change the
+resolution" is not a chart prop but an ordinary `aggregate`, and everything
+pond can already bin by is available for free. The reducer map is built at
+runtime because the columns are: 45 of them, one per year in the record.
+
+### Two more knobs, neither of them the layer
+
+**Measure** swaps the series, not the chart. The anomaly grid is assembled from
+the same per-year `anomaly` columns the line chart draws, reshaped wide:
+
+```ts
+const columns = { time: DAY_TIMES };
+for (const year of NINO34_YEARS) columns[yearColumn(year)] = anomalies(year);
+```
+
+It is worth being clear that this is a **reshape, not a recomputation** — the
+climatology has already been computed per-year for the lines, so the grid costs
+one pass over 45 cached columns. And it cross-checks the line chart: hover the
+2015 row in November on the day binning and the cell reads **+3.00 °C on
+17 November**, against the **+3.03 °C on 19 November** peak quoted at the top of
+this page.
+
+**Palette** is just the `colors` array, which is the whole point of colour being
+a prop rather than a theme slot:
+
+| Ramp          | What it is                                 | Suits                                                |
+| ------------- | ------------------------------------------ | ---------------------------------------------------- |
+| **Site**      | `useSequentialRamp()`, follows the theme   | Fitting the page; the only one that flips light/dark |
+| **Heat**      | Inferno — dark → red → orange → near-white | Absolute temperature, where the metaphor is literal  |
+| **Diverging** | ColorBrewer RdBu reversed, nine steps      | The anomaly, which straddles a meaningful zero       |
+
+Two details that are easy to get wrong. The diverging ramp has an **odd** number
+of steps so its neutral band can straddle zero — with an even count, zero falls
+on a boundary and there is no "no anomaly" colour. And it only works against a
+**pinned symmetric domain**:
+
+```tsx
+<HeatMap … colors={DIVERGING} domain={[-m, +m]} />
+```
+
+Without `domain`, the layer takes the extent of whatever is on screen, so the
+neutral band drifts off zero and every colour changes meaning as the binning
+changes — silently, because a colour scale has no tick labels to show that it
+moved. That is exactly the failure `domain` exists to prevent.
+
+The heat and diverging ramps are hard-coded hex and do **not** follow the
+light/dark toggle, unlike everything else on this site. That is deliberate: a
+heat ramp _is_ a specific set of colours, and re-tinting it per theme would
+change what the reader reads.
+
+Two axis choices carry over unchanged from the chart above. `timeFormat="%b"`,
+because the reference year is a **carrier, not information** — without it the
+first tick reads `2001`, announcing a synthetic year the data has no opinion
+about. And the y axis names only the years the line chart names, via explicit
+ticks:
+
+```tsx
+const NAMED_TICKS = NINO34_NAMED.flatMap((n) => {
+  const row = ROWS.indexOf(yearColumn(n.year));
+  return row < 0 ? [] : [{ at: row + 0.5, label: n.label }];
+});
+
+<YAxis id="yr" ticks={NAMED_TICKS} label="" />;
+```
+
+`{ at, label }` ticks override the layer's `binCategories`, which would
+otherwise label all 45 rows into an unreadable stack. `at` is the row's
+**centre** (`row + 0.5`) because the y scale runs over unit slots, one per
+column — the same convention a category axis uses. 2015 is worth finding on
+the grid: it is the light band, and it is the same year the chart above draws
+in `highlight3`.
+
+Four things this surfaced that are worth naming:
+
+- **SST bands vertically; anomaly bands horizontally.** On absolute SST the
+  loudest thing in the grid is the **seasonal cycle** — warm through
+  April–June, cool through November–January — and ENSO is buried underneath it.
+  Switch to **Anomaly** and the vertical banding vanishes: subtracting each
+  year's own climatology removes the seasonal cycle _and_ the warming trend,
+  and what is left is horizontal, where an El Niño year is a warm row. 1997 and
+  2015 become obvious; the blue rows between them are La Niñas. Nothing about
+  the layer changes — it is the same component with a different series.
+- **`Sequence.calendar` has no `'year'` unit** — it stops at `month`. The
+  whole-year bucket is therefore a fixed step (`'370d'`) anchored at 1 January
+  and deliberately sized past the record's end, so exactly one bucket covers
+  it. It works, but it is a workaround: a calendar year is not a fixed number
+  of days.
+- **The top row is short in every mode.** 2026 is still in progress, so its
+  column runs out partway along — the same partial-year honesty the line chart
+  gets [for free](#the-partial-year-takes-care-of-itself), and for the same
+  reason: the value simply isn't there, so nothing is drawn.
+- **Year mode is the climate-stripes chart stood on end** — one cell per row,
+  45 rows, colour carrying the value. Same layer, same props, transposed
+  because the data was.
+
+Compare it with [climate stripes](./climate-stripes.mdx), which is the
+single-row case (`columns.length === 1`) of this same layer.
+
 ## Options to try
 
 | Option                                       | What it does                                                     | Reach for it when                                                                       |

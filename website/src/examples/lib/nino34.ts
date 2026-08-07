@@ -140,7 +140,11 @@ export function dayLabel(d: number): string {
 // The wide series — one column per year, one row per day of the year
 // ---------------------------------------------------------------------------
 
-const YEAR_COLUMN = (year: number) => `y${year}`;
+/** The wide series' column name for a year — `1982` -> `y1982`. Exported so a
+ *  consumer can name the columns it wants as heat-map rows. */
+export const yearColumn = (year: number) => `y${year}`;
+
+const YEAR_COLUMN = yearColumn;
 
 /**
  * The wide series' schema, **declared rather than inferred**.
@@ -171,14 +175,16 @@ type NinoSchema = readonly [
  * The current year's column is `null` past the end of the record. Those rows
  * are genuinely unknown, not zero, and they are what makes its line stop.
  */
-const wide: TimeSeries<NinoSchema> = (() => {
-  const schema: NinoSchema = [
-    { name: 'time', kind: 'time' },
-    ...NINO34_YEARS.map((year) => ({
-      name: YEAR_COLUMN(year),
-      kind: 'number' as const,
-    })),
-  ];
+/** Shared by both wide grids — SST and anomaly have identical shapes. */
+const WIDE_SCHEMA: NinoSchema = [
+  { name: 'time', kind: 'time' },
+  ...NINO34_YEARS.map((year) => ({
+    name: YEAR_COLUMN(year),
+    kind: 'number' as const,
+  })),
+];
+
+export const ninoWideByYear: TimeSeries<NinoSchema> = (() => {
   const columns: Record<string, (number | null)[]> = {
     time: Array.from({ length: NINO34_YEAR_DAYS }, (_, d) => dayOfYearTime(d)),
   };
@@ -191,7 +197,7 @@ const wide: TimeSeries<NinoSchema> = (() => {
   });
   return TimeSeries.fromColumns<NinoSchema>({
     name: 'nino34-sst',
-    schema,
+    schema: WIDE_SCHEMA,
     columns,
   });
 })();
@@ -255,7 +261,7 @@ function climatologyWindow(year: number): readonly number[] {
 function buildAnomaly(year: number) {
   const own = YEAR_COLUMN(year);
   const base = climatologyWindow(year).map(YEAR_COLUMN);
-  return wide
+  return ninoWideByYear
     .collapse(
       base,
       'clim',
@@ -323,6 +329,45 @@ export const NINO34_ANOMALY_DOMAIN: readonly [number, number] = (() => {
   }
   return [Math.floor(lo * 2) / 2, Math.ceil(hi * 2) / 2];
 })();
+
+/**
+ * The wide series again, but **anomaly** instead of absolute SST: one column
+ * per year (`y1982` …), one row per day-of-year, on the same shared axis. The
+ * heat-map counterpart of {@link ninoWideByYear}.
+ *
+ * This exists because the two grids answer different questions. Absolute SST is
+ * dominated by the **seasonal cycle** — the Niño 3.4 box swings about 2 °C
+ * between April and December — so a heat map of it shows the seasons, banded
+ * vertically, and ENSO is buried underneath. Subtracting each year's own
+ * climatology removes both the seasonal cycle and the warming trend, and what
+ * is left bands **horizontally**: an El Niño year is a warm row.
+ *
+ * It is assembled from the per-year {@link anomalySeries}, not recomputed, so
+ * it costs one pass over 45 already-cached columns. Lazy behind a cache all the
+ * same — a page that only draws lines should not pay for it.
+ */
+let wideAnomaly: TimeSeries<NinoSchema> | null = null;
+export function ninoWideAnomalyByYear(): TimeSeries<NinoSchema> {
+  if (wideAnomaly !== null) return wideAnomaly;
+  const columns: Record<string, (number | null)[]> = {
+    time: Array.from({ length: NINO34_YEAR_DAYS }, (_, d) => dayOfYearTime(d)),
+  };
+  for (const year of NINO34_YEARS) {
+    const values = anomalies(year);
+    columns[YEAR_COLUMN(year)] = Array.from(
+      { length: NINO34_YEAR_DAYS },
+      // `NaN` past the end of the record is how the source spells "no value";
+      // `null` is what `fromColumns` wants, and what leaves the cell undrawn.
+      (_, d) => (Number.isNaN(values[d]!) ? null : values[d]!),
+    );
+  }
+  wideAnomaly = TimeSeries.fromColumns<NinoSchema>({
+    name: 'nino34-anomaly',
+    schema: WIDE_SCHEMA,
+    columns,
+  });
+  return wideAnomaly;
+}
 
 /**
  * The four El Niño strength thresholds, in °C of anomaly.

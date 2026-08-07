@@ -37,6 +37,13 @@ export type { XAxisProps } from './XAxis.js';
 export type { AxisTransform } from './derivedTicks.js';
 export { TimeAxis } from './TimeAxis.js';
 export { CategoryAxis } from './CategoryAxis.js';
+// Heat map — a grid of cells, bins on x and the series' columns as rows,
+// colour encoding the value ([PND-HEATMAP]). A single column is a stripe,
+// drawn by the same path.
+export { HeatMap } from './HeatMap.js';
+export type { HeatMapProps } from './HeatMap.js';
+export { bandedColor, heatValueExtent } from './heat.js';
+export type { HeatStyle } from './heat.js';
 export type { AxisFormat, CursorFormat } from './format.js';
 export { LineChart } from './LineChart.js';
 export type { LineChartProps } from './LineChart.js';
