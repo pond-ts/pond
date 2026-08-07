@@ -57,6 +57,7 @@ import GallerySeismograph from '@site/src/examples/gallery-seismograph';
 import GalleryTides from '@site/src/examples/gallery-tides';
 import GalleryAirQuality from '@site/src/examples/gallery-air-quality';
 import GalleryNino34 from '@site/src/examples/gallery-nino34';
+import GalleryMeasles from '@site/src/examples/gallery-measles';
 
 {/* ------------------------------------------------------------------ */}
 {/* Each domain section below is owned by one track (gallery plan §4). */}
@@ -513,6 +514,16 @@ and the year that isn't finished yet.
   height={230}
 >
   {(width) => <GalleryNino34 width={width} height={196} compact />}
+</GalleryCard>
+
+<GalleryCard
+  title="Measles and the vaccine"
+  blurb="Fifty states, eighty-one years, colour carrying cases per 100,000 on a log scale — and one vertical discontinuity in 1963."
+  storybookHref="pathname:///storybook/?path=/story/charts-heatmap--grid"
+  pageHref="/docs/charts/gallery/measles"
+  height={230}
+>
+  {(width) => <GalleryMeasles width={width} height={196} />}
 </GalleryCard>
 
 {/* TRACK F — append science & measurement cards above this line. */}

@@ -150,6 +150,7 @@ const sidebars: SidebarsConfig = {
             'charts/gallery/negative-prices',
             // Track F — science & measurement.
             'charts/gallery/nino34',
+            'charts/gallery/measles',
           ],
         },
         {
