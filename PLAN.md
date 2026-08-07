@@ -952,6 +952,30 @@ argument for the rest.
   re-binned series the caller passes. Write-up in
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md).
 
+- **[PND-SPARCFRIC]** — A **17-item friction survey** from an external consumer
+  planning the replacement of seven hand-rolled SVG charts with pond
+  compositions, assessed against 0.56.2 and written to be taken upstream as-is.
+  Four items are corroborating second reports of work already tracked
+  ([PND-SELECT], [PND-WIDTH], [PND-CHFRIC]'s `<YAxis label>` default, [PND-AXES]
+  for symlog + a mirrored axis), which is itself signal on their priority. The
+  owner's ordering for the rest: **(1) [PND-BANDBAR2]** first-class threshold
+  banding along one bar's length, **(2) [PND-AXISHIDE]** `<YAxis hide>`,
+  **(3) [PND-BANDPACK]** `maxBandWidth` + `bandAlign`, then **(4)** the three
+  items that **mislead rather than merely block** — [PND-SIGNSTACK]
+  (mixed-sign stacks silently render all-positive), [PND-CATEMPH] (the theme
+  accepts emphasis colours the category path never reads), [PND-TICKUNIT]
+  (`bins` silently forecloses the duration tick ladder). That last grouping is
+  the report's own best finding: three independent items where the library did
+  something defensible, the chart rendered, and the consumer had no way to see
+  which branch was taken. **All four groups are now shipped** (see the breakout
+  plan for what each landed as); what remains is the "decided at the regroup"
+  set — [PND-CATRANGE], [PND-CATSTACK], [PND-THEMEBASE], [PND-BINSWATCH],
+  [PND-TICKCENSUS], [PND-BARCAP] — plus the deferred **dev-mode warning
+  sweep**, which the trio argued for as one pass rather than three fixes and
+  which only [PND-BANDBAR2] actually got. Itemised, with each workaround and
+  its cost, in
+  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-sparcfric--sparc-charts-friction-2026-08).
+
 ---
 
 ## Cross-cutting work

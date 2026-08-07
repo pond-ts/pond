@@ -109,6 +109,33 @@ export interface YAxisProps {
   /** Gutter width in CSS pixels (default 50). */
   width?: number;
   /**
+   * **Keep the scale, draw no gutter.** The axis still registers its domain
+   * (`min`/`max`/`scale`/`pad`) and layers still bind to it by `id`, but it
+   * renders nothing and reserves **no width** — the plot gets the space.
+   *
+   * A `<YAxis>` does two jobs: it *holds the scale* and it *renders a gutter*.
+   * Without this there was no way to ask for the first without the second, so a
+   * chart with a **fixed** domain whose scale is already explained by its
+   * chrome (threshold band lines, a legend, a panel header) had two reachable
+   * options and needed a third:
+   *
+   * | | auto domain | explicit domain |
+   * |---|---|---|
+   * | **gutter** | `<YAxis />` | `<YAxis min max />` |
+   * | **no gutter** | omit the axis | ← this prop |
+   *
+   * Omitting the axis is not the same thing: the row then supplies an implicit
+   * auto-domain axis, and the fixed domain is exactly what must not be given
+   * up. `width={0}` is not it either — the labels still draw, now over the
+   * plot.
+   *
+   * **Gridlines are unaffected.** They belong to the plot, not the gutter, and
+   * `<ChartContainer grid>` already controls them — so a hidden axis can still rule
+   * its own gridlines, which is usually what a "the shape matters, the numbers
+   * don't" chart wants. Turn them off there if you want neither.
+   */
+  hide?: boolean;
+  /**
    * This axis instance's colour — tick labels and the axis title take it,
    * overriding the theme's `axis.label` / `axis.title.color`. The multi-axis
    * convention of colouring each y axis to match its series (`color`
@@ -150,6 +177,7 @@ export function YAxis({
   pad = 0,
   boundaryLabels = true,
   width = DEFAULT_WIDTH,
+  hide = false,
   labelPlacement = 'rotated',
   color,
   index = 0,
@@ -167,7 +195,11 @@ export function YAxis({
     () => ({
       id,
       side,
-      width,
+      // A hidden axis reserves no gutter — the row's slot placement reads this
+      // width, so zeroing it here is what gives the space back to the plot.
+      // Everything else about the spec is unchanged: the domain still resolves
+      // and layers still bind to it, which is the whole point of the prop.
+      width: hide ? 0 : width,
       scale,
       min,
       max,
@@ -182,6 +214,7 @@ export function YAxis({
       id,
       side,
       width,
+      hide,
       scale,
       min,
       max,
@@ -205,6 +238,29 @@ export function YAxis({
   useEffect(() => {
     registerAxis(slot, spec);
   }, [registerAxis, slot, spec]);
+
+  // `hide`: everything above still runs — the axis is registered, so its scale
+  // exists and layers bind to it — and everything below (the gutter chrome)
+  // does not. Placed after the last hook so the early return can't change hook
+  // order when `hide` is toggled at runtime.
+  //
+  // It renders an **empty box at the reserved slot width**, not nothing. The
+  // container reserves each axis *column* at the widest across rows
+  // (`maxSlotWidths`), so a hidden axis sharing a column with a visible one in
+  // another row is still allotted that column's width — and drawing nothing
+  // there slides this row's plot left, out of line with its siblings and with
+  // the shared x-axis. When this axis is alone in its column the reservation is
+  // its own `width: 0`, the box is zero-wide, and the plot reclaims the space,
+  // which is the point of the prop. Both cases fall out of the same expression.
+  if (hide) {
+    const hiddenSlot = row.axisSlots.get(slot) ?? 0;
+    return hiddenSlot > 0 ? (
+      <div
+        aria-hidden="true"
+        style={{ flex: `0 0 ${hiddenSlot}px`, height: `${row.height}px` }}
+      />
+    ) : null;
+  }
 
   const { theme } = container;
   const yScale = row.yScales.get(id);

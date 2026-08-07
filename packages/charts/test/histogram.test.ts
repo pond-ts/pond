@@ -164,12 +164,32 @@ describe('stackValueExtent', () => {
     expect(stackValueExtent(ss)).toEqual([0, 9]);
   });
 
-  it('skips gap / negative segments in the total', () => {
+  it('skips gaps but sums negatives downward ([PND-SIGNSTACK])', () => {
+    // Two totals per bin: +5 up, -3 down. This asserted `[0, 5]` while the draw
+    // path dropped negatives; an extent stopping at 0 would now clip a segment
+    // that gets drawn.
     const ss = stacksFromBins(mk({ start: 0, end: 1, x: 5, y: -3 }), [
       'x',
       'y',
     ]);
-    expect(stackValueExtent(ss)).toEqual([0, 5]);
+    expect(stackValueExtent(ss)).toEqual([-3, 5]);
+  });
+
+  it('accumulates each sign separately across several segments', () => {
+    const ss = stacksFromBins(
+      mk({ start: 0, end: 1, a: 4, b: -2, c: 3, d: -6 }),
+      ['a', 'b', 'c', 'd'],
+    );
+    expect(stackValueExtent(ss)).toEqual([-8, 7]);
+  });
+
+  it('ignores a gap in either direction', () => {
+    const ss = stacksFromBins(mk({ start: 0, end: 1, a: 4, b: NaN, c: -2 }), [
+      'a',
+      'b',
+      'c',
+    ]);
+    expect(stackValueExtent(ss)).toEqual([-2, 4]);
   });
 
   it('returns [0, 1] for an all-gap / empty series', () => {
@@ -213,23 +233,26 @@ describe('segmentRect', () => {
     ).toEqual([10, 30, 0, 2]);
   });
 
-  it('returns null for a gap / negative / zero segment', () => {
+  it('returns null for a gap or zero segment, but NOT a negative one', () => {
     const g = stacksFromBins(mk({ start: 0, end: 2, a: NaN, b: -1, c: 0 }), [
       'a',
       'b',
       'c',
     ]);
-    // NaN, negative, and zero all skip — a zero segment would draw a wasted
-    // zero-extent rect and can't be hit-tested.
+    // NaN and zero still skip — a zero segment would draw a wasted zero-extent
+    // rect and can't be hit-tested.
     expect(
       segmentRect(g, 0, 0, 'vertical', identity, identity, 0, 0, 1),
     ).toBeNull();
     expect(
-      segmentRect(g, 0, 1, 'vertical', identity, identity, 0, 0, 1),
-    ).toBeNull();
-    expect(
       segmentRect(g, 0, 2, 'vertical', identity, identity, 0, 0, 1),
     ).toBeNull();
+    // The negative one draws, below the baseline ([PND-SIGNSTACK]) — this used
+    // to assert `toBeNull()`, which is the assertion that let a mixed-sign
+    // stack render as an all-positive chart.
+    const neg = segmentRect(g, 0, 1, 'vertical', identity, identity, 0, 0, 1);
+    expect(neg).not.toBeNull();
+    expect([neg![2], neg![3]]).toEqual([-1, 0]);
   });
 
   it('anchors the stack baseline at value 0, not at the axis floor', () => {

@@ -346,3 +346,128 @@ export const HorizontalFunnel: Story = {
     </ChartContainer>
   ),
 };
+
+/**
+ * **Pitch cap** ([PND-BANDPACK]). `maxBandWidth` caps the **slot** so bar width
+ * stops depending on how many categories the data happened to return. Six
+ * tickers that would otherwise be ~100px each are 44px, packed from the left;
+ * the empty space is itself information — it shows the set is small.
+ */
+export const MaxBandWidth: Story = {
+  render: () => (
+    <ChartContainer width={640} theme={docsTheme} maxBandWidth={44}>
+      <ChartRow height={240}>
+        <YAxis id="v" label="net Δ" min={0} pad={0.08} />
+        <Layers>
+          <BarChart categories={TICKERS} binColors={PALETTE} gap={6} />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **Pitch stability is the point.** The same `maxBandWidth`, three categories
+ * against six — the bars are the *same width* in both, which is what makes a
+ * live chart comparable to itself a minute ago. Without the cap the upper
+ * chart's bars would be twice the lower's.
+ *
+ * Two **containers**, not two rows: one container shares one category x-scale,
+ * so rows within it must agree on the category set (mixing them is a thrown
+ * error, not a silent misalignment). Different `n` therefore means different
+ * containers — which is also how the live case actually arrives, as the same
+ * chart re-rendered later.
+ */
+export const StablePitch: Story = {
+  render: () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <ChartContainer width={640} theme={docsTheme} maxBandWidth={44}>
+        <ChartRow height={130}>
+          <YAxis id="a" label="" min={0} pad={0.08} />
+          <Layers>
+            <BarChart
+              categories={TICKERS.slice(0, 3)}
+              binColors={PALETTE}
+              gap={6}
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+      <ChartContainer width={640} theme={docsTheme} maxBandWidth={44}>
+        <ChartRow height={130}>
+          <YAxis id="b" label="" min={0} pad={0.08} />
+          <Layers>
+            <BarChart categories={TICKERS} binColors={PALETTE} gap={6} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    </div>
+  ),
+};
+
+/**
+ * **`bandAlign="center"`.** Where the capped block sits. `'start'` (the
+ * default) packs left; `'end'` packs right.
+ */
+export const BandAlignCenter: Story = {
+  render: () => (
+    <ChartContainer
+      width={640}
+      theme={docsTheme}
+      maxBandWidth={44}
+      bandAlign="center"
+    >
+      <ChartRow height={240}>
+        <YAxis id="v" label="net Δ" min={0} pad={0.08} />
+        <Layers>
+          <BarChart categories={TICKERS} binColors={PALETTE} gap={6} />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **`bandAlign="end"`.** The same block flush against the right edge.
+ */
+export const BandAlignEnd: Story = {
+  render: () => (
+    <ChartContainer
+      width={640}
+      theme={docsTheme}
+      maxBandWidth={44}
+      bandAlign="end"
+    >
+      <ChartRow height={240}>
+        <YAxis id="v" label="net Δ" min={0} pad={0.08} />
+        <Layers>
+          <BarChart categories={TICKERS} binColors={PALETTE} gap={6} />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **The cap stops binding as categories accumulate.** Forty categories at a
+ * 44px cap would need 1760px, so the slots fill the plot exactly as they did
+ * before the cap existed — it degrades correctly rather than clipping.
+ */
+export const CapDoesNotBind: Story = {
+  render: () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({
+      label: `c${i}`,
+      value: 10 + 40 * Math.abs(Math.sin(i)),
+    }));
+    return (
+      <ChartContainer width={640} theme={docsTheme} maxBandWidth={44}>
+        <ChartRow height={240}>
+          <YAxis id="v" label="" min={0} pad={0.08} />
+          <Layers>
+            <BarChart categories={many} gap={1} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};

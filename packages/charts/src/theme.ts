@@ -382,6 +382,45 @@ export interface BarStyle {
    * already did for `highlight`.
    */
   readonly hover?: string;
+  /**
+   * The **threshold-band ladder** — ordered fills for a bar coloured *along its
+   * length* against `<BarChart thresholds>`: `bands[0]` up to the first
+   * threshold, `bands[1]` between the first and second, and so on. A ladder of
+   * `n` thresholds reads `n + 1` entries.
+   *
+   * This lives on `BarStyle` rather than as a `theme.bar.bands` sibling because
+   * `theme.bar` is a semantic **map** (`{ default, [semantic]: BarStyle }`) — a
+   * top-level key would collide with a role of that name. Per-role is also the
+   * more useful shape: `bar.default.bands` and `bar.capacity.bands` can differ,
+   * and the ladder resolves through the same `bar[semantic] ?? bar.default`
+   * lookup as every other bar colour.
+   *
+   * **Overridden by `<BarChart bandColors>`** at the call site. If neither
+   * resolves enough entries for the ladder, the bar falls back to its flat
+   * {@link fill} and (in dev) warns — a silently-unbanded bar is exactly the
+   * failure mode [PND-BANDBAR2] exists to remove.
+   *
+   * Read by the single-series `drawBars` path and by the `G === 1` stacked path
+   * (which is where `categories` and every horizontal bar live). A genuine
+   * **multi-group stack** ignores it and warns: banding a segment that is
+   * already one slice of a total has no defined meaning.
+   */
+  readonly bands?: readonly string[];
+  /**
+   * Stroke for a **selected** bar's outline, where the default is the bar's own
+   * resolved fill. The one selection cue that still works when the fill cannot
+   * change — a `binColors` bar keeps its own colour by design, so without this
+   * the alpha pop was the whole signal and nothing about it was themeable
+   * ([PND-CATEMPH]).
+   */
+  readonly selectedOutline?: string;
+  /**
+   * The alpha a hovered / selected bar pops to. **Default `1`** (the shipped
+   * behaviour). Previously the pop was hard-coded, so a theme could set the
+   * resting {@link opacity} floor but not the *difference* between resting and
+   * live — which is the part that reads as emphasis.
+   */
+  readonly emphasisOpacity?: number;
 }
 
 /**
@@ -495,6 +534,11 @@ export const defaultTheme: ChartTheme = {
       gap: 1,
       minWidth: 1,
       outlineWidth: 1.5,
+      // The default threshold ladder: the bar's own blue as the in-range band,
+      // then amber, then red. Three entries serves the common two-threshold
+      // ok/warning/alarm ladder out of the box; a longer `thresholds` needs a
+      // longer ladder from the theme or `bandColors`.
+      bands: ['#2563eb', '#e8a13c', '#d64545'],
     },
     secondary: {
       fill: '#e8836b',

@@ -1408,11 +1408,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                        _Still true; no longer felt here._ The draggable marker is gone — selection
-                        is a click — so nothing on this page is in edit mode. But it cost a design
-                        iteration to discover, and the docs still don't mention it. **The one-line
-                        fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                        row's data cursor is suppressed."
+                            _Still true; no longer felt here._ The draggable marker is gone — selection
+                            is a click — so nothing on this page is in edit mode. But it cost a design
+                            iteration to discover, and the docs still don't mention it. **The one-line
+                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                            row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -1705,3 +1705,413 @@ was the easy half.
   `Jan / Apr / Jul / Oct`. Page prose claiming "`Jan … Dec`" was written and had
   to be corrected against the rendered DOM. Counting the axis labels is a
   one-line check and worth doing on any axis whose labels the prose describes.
+
+---
+
+## [PND-SPARCFRIC] — SPARC charts friction (2026-08)
+
+A 17-item survey from an external consumer planning the replacement of seven
+hand-rolled SVG chart components with pond compositions. Assessed against
+`@pond-ts/charts@0.56.2` read from `origin/main` (the reporter notes a local
+checkout 137 commits behind gave a materially wrong answer on four items — worth
+remembering when triaging any consumer report). Items marked **confirmed** were
+hit while building; **predicted** ones were found by reading source.
+
+The report is unusually well-disciplined: it retracts one of its own items
+([PND-TICKUNIT]) and closes another ([PND-BANDBAR]) rather than leaving both as
+asks. Both retractions are preserved below because in each case the mistake is
+more instructive than the finding.
+
+### Verified against `main` before triage
+
+Spot-checked rather than taken on trust:
+
+- `bars.ts:623` does carry `(v < 0 && G > 1)` — the negative-segment drop is real.
+- `maxBandWidth`, `bandAlign`, `symlog`, `selectedKeys`, `selectionMode` return
+  zero hits across `packages/charts/src` — all four gaps are real.
+- `thinCategoryLabels` is at `XAxis.tsx:44` and does drop tick and label together.
+
+Nothing checked was overstated.
+
+### Already tracked — corroborating second reports, not new work
+
+That an independent consumer hit these unprompted is signal on their priority,
+which is the main reason to record them rather than just closing them:
+
+| Report item                    | Existing entry | What the second report adds                                                                                                                                                                                                                     |
+| ------------------------------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [PND-MULTISEL]                 | [PND-SELECT]   | Multi-select must **compose with `binColors`**, not exclude it the way the current highlight model does                                                                                                                                         |
+| [PND-AUTOSIZE]                 | [PND-WIDTH]    | Third consumer. Adds the failure mode: `ResizeObserver` fires after paint, so the obvious `useEffect` version flickers on every mount; the fix is `useLayoutEffect` + a synchronous first `getBoundingClientRect`                               |
+| [PND-AXISTITLE]                | [PND-CHFRIC]   | Independent second hit on `<YAxis label>` defaulting to the binding `id`. Same root as [PND-AXISHIDE]: the axis draws things the consumer cannot decline, because the scale and its presentation are one object                                 |
+| [PND-SYMLOG], [PND-AXISMIRROR] | [PND-AXES]     | Symlog re-scored low → medium. Worth recording the reason: it was low only because the one caller was expected to be retired, and that call reversed. A severity resting on a _consumer's_ roadmap is not a stable basis for a library priority |
+
+### Owner's priority ordering
+
+**(1) [PND-BANDBAR2] — first-class threshold banding along one bar's length.**
+One bar coloured in segments against a threshold ladder — neutral to the first
+threshold, then warning, then alarm — so a long bar shows how far through the
+ladder it travelled, not merely which band it ended in.
+
+The reporter **closed** this as `[PND-BANDBAR]`, "resolved, no library change":
+a bar grows from the baseline rather than from its own band's floor, so N layers
+drawn outermost-first composite the gradient by overpainting. **The owner
+re-opened it** — the workaround is real but keeps recurring, and it is a common
+bar use case, vertical and (separately raised) horizontal.
+
+What the N-layer workaround cannot give, and why this is a mark rather than a
+recipe: **one bar should stay one thing**. N layers means N hit targets, N
+`SelectInfo.mark` identities, and N legend rows for what the reader sees as a
+single bar. Decided API (owner, 2026-08-06):
+
+```tsx
+<BarChart categories={cats} thresholds={[1, 2]} />
+// band fills default from a new ordered `theme.bar.bands`;
+// `bandColors={[...]}` overrides at the call site.
+```
+
+Breakpoints are data and go in a prop; colour comes from the theme with a prop
+override — mirroring the existing `StackStyle` precedent exactly (theme supplies
+group fills, `colors` overrides). Two alternatives were considered and declined:
+a single self-contained `thresholds={[{upTo, color}, …]}` prop (reads well in
+isolation, but puts the colour arithmetic back at the call site, which is what
+the theme exists to remove), and a theme-slot-only version with no override (no
+escape hatch for a one-off ladder short of wrapping the theme). Negatives band
+symmetrically on `|v|`, matching the ±3.5 diverging case; an asymmetric ladder
+can come later via signed breakpoints if a consumer pulls.
+
+**It also un-narrows [PND-CATSTACK].** The reporter argued that the nested case
+was solved by layering, leaving only _co-existing_ segments (several sub-series
+summing to a bin total) genuinely unserved. Re-opening the nested case restores
+both halves as real asks — though they remain different features, and this one
+is the smaller.
+
+**(2) [PND-AXISHIDE] — `<YAxis hide>`.** Confirmed; it blocked a change outright
+rather than costing a workaround. A `<YAxis>` does two jobs — it **holds the
+scale** (`min`/`max`/`scale`/`pad`) and it **renders a gutter** — and there is no
+way to ask for the first without the second. So a consumer can express "auto
+domain, no gutter" (omit the axis) and "explicit domain, with a gutter", but not
+the combination a fixed-domain chart needs. `width={0}` does not help: the labels
+still draw, now over the plot. The owner notes many visualizations where the
+scale numbers do not matter at all, only relative category values.
+
+**(3) [PND-BANDPACK] — `maxBandWidth` + `bandAlign`.** Confirmed twice: eight
+categories in a 693px plot gave ~70px bars (about 3× the hand-rolled chart being
+replaced), then eleven categories became eleven ~65px blocks reading as a
+waterfall rather than a bar chart. A band scale spreads its categories across the
+full plot width, so the same chart in the same panel reads differently depending
+on how many categories the data returned — fine for a fixed domain, wrong for a
+**live** one, where bar width becomes a meaningless variable that moves on its
+own.
+
+The two halves are **not** alternatives:
+
+- **Width** is recoverable through `gap` (`gap = plotWidth / n - targetBarWidth`,
+  floored) — confirmed working, and it degrades correctly. That the workaround
+  exists is still the argument that the geometry belongs in the library: `gap` is
+  expressed as "how much to inset" rather than "how wide may a bar be", so every
+  consumer inverts it themselves against a width they must measure.
+- **Alignment has no viable workaround.** Packing from one edge means padding the
+  _domain_ with blank trailing categories; those are real domain, so they sit in
+  the scale and on the axis and interact with `gap` in undocumented ways. The
+  reporter's attempt produced bars that got _wider_ rather than packed — recorded
+  as a failed attempt, not a recipe.
+
+**(4) The three that mislead.** Grouped by the owner because they share a failure
+shape rather than a subsystem:
+
+- **[PND-SIGNSTACK]** (high, confirmed) — `bars.ts:623` skips any negative
+  segment of a multi-group stack. The comment is explicit that this is
+  intentional, and for a conventional stack that is fair; but it rules out the
+  **signed stacked histogram**, where positives stack up from a zero line and
+  negatives stack down (net flow by category, inflow/outflow, buy/sell pressure
+  by venue). That is a well-defined stack — two running totals per bin instead of
+  one. The failure mode is the problem: the negatives do not clamp, warn or
+  throw, so mixed-sign data renders as a confident, wrong, all-positive chart.
+  The fix is in the accumulator, not the renderer — the geometry below already
+  normalizes an inverted rect via `Math.min`/`Math.max`. Splitting into two
+  layers does **not** work as a workaround: the negative layer is still `G > 1`,
+  so it is dropped too.
+
+  Worth recording independently of the fix: the categorical-axis RFC (§1)
+  surveyed this same consumer and concluded that signed stacking was "a
+  phantom… item 6 (threshold colour) + a signed bar", and dropped it as a
+  requirement. That conclusion was drawn from the consumer's **diverging** chart,
+  which is indeed a signed single bar. It missed the **histogram**, which is a
+  genuine signed multi-series stack — six of that consumer's eleven histogram
+  configurations use it. A requirement was dropped on the basis of a survey that
+  had not looked at the one chart that needed it.
+
+- **[PND-CATEMPH]** (medium, confirmed) — `BarStyle` carries
+  `fill` → `hover` → `highlight`, and the **category** path reads none of it:
+  `categories` routes through the transposed stacked draw path, whose
+  `StackStyle` has only `fills`/`opacity`/`outlineWidth`/`binFills`. The
+  _behaviour_ is defensible and arguably the better default — a
+  per-category-coloured bar that swapped to one highlight colour would lose the
+  meaning its colour encodes. The friction is that **the theme accepts values it
+  will not use**: `bar.hover`/`bar.highlight` are typed, settable and documented
+  as the emphasis channel, and silently do nothing on the most common categorical
+  chart. A theme author sets them, sees no change, and cannot tell whether they
+  are wrong about the colour or about the mechanism. There is also no way to
+  _tune_ the emphasis that does apply. Ask: give the stacked/category path a
+  themed emphasis of its own, so it is expressible where it applies rather than
+  only excluded where it doesn't.
+
+- **[PND-TICKUNIT]** (low, **substantially retracted**) — the original claim was
+  that nice-tick selection is decimal-only, so a time-like domain must hand-place
+  ticks. False: pond already has the duration ladder, and `elapsed.ts` explains
+  it in exactly the terms the reporter was reaching for. It was unreachable for
+  two composable reasons: the duration ladder is used for `kind: 'time'` (so
+  `<ChartContainer origin>` on a value axis relabels but does not re-ladder), and
+  a **`bins` array is hard-wired to a value axis**. So feeding a histogram from
+  `bins` _guarantees_ the decimal ladder whatever the data means, and the correct
+  composition for a time-of-day histogram is a time-keyed wide series
+  (`<BarChart series columns>`). What survives is much narrower: nothing at the
+  call site says that `bins` selects a value axis, and the natural reading — "I
+  have pre-binned buckets, so I'll pass `bins`" — quietly forecloses the time
+  axis. Ask: say so in the `bins` prop docs and point a time-bucketed caller at
+  the series door; optionally let `bins` carry `kind: 'time'`.
+
+**The unifying finding.** All three render successfully and are simply not what
+the caller asked for. Three independent items of that shape in one survey looks
+like a theme rather than three coincidences, and argues for **one dev-mode
+warning pass** — warn when a multi-group stack is handed a negative, when a theme
+sets emphasis slots the active draw path cannot read, when `bins` is handed
+plausibly-time-shaped keys — rather than three isolated fixes. Scope that before
+building the individual fixes.
+
+### Not yet scheduled — decided at the regroup
+
+- **[PND-CATRANGE]** (high, predicted) — `cursor="region"` + `onRegionSelect` is
+  gated to continuous axes; the 0.53.0 notes state it directly ("a **category**
+  axis stays excluded — an ordinal-slot select is a different gesture"). For a
+  ranked category chart, dragging across a run of bars is the primary
+  interaction: "select the top twelve" is one gesture with a lasso and twelve
+  ctrl-clicks without one. The workaround re-implements the inverse of the band
+  scale the library already owns and exports, in a second place, so the two can
+  disagree about which bar the pointer is on. The gesture genuinely _is_
+  different — it snaps to whole slots and should report category names rather
+  than a numeric range — but that is an argument for the library owning it, not
+  for excluding it; the continuous version already handles drag state, the
+  modifier conflict with pan, and one-shot commit on release.
+
+- **[PND-CATSTACK]** (high, predicted) — co-existing segments on the first-class
+  category axis (see the un-narrowing note under [PND-BANDBAR2] above).
+  `<BarChart categories>` is single-value and `categoryStack` builds a one-group
+  `StackedBarSeries`. The workaround is the ordinal-index hack the categorical-axis
+  RFC itself names, and it costs label thinning, ellipsis, and the stable
+  `SelectInfo.mark` identity. Precedent: pond removed the _same_ workaround for
+  horizontal category charts in 0.55.0 ([PND-HCAT]), whose release notes describe
+  it in almost these words.
+
+- **[PND-THEMEBASE]** (medium, confirmed on the first themed chart) — the natural
+  way to build a theme is `{ ...defaultTheme, bar: …, axis: … }`, and it silently
+  keeps pond's default colours in every unspread slot: `#2563eb` across
+  `line`/`band`/`area`/`scatter`/`box`, the teal annotation register, a white
+  `legend` card and chip. On a dark-panel consumer that is ~20 unreviewed hexes
+  sitting in the object whose whole purpose is to be the single colour channel,
+  and nothing surfaces them until someone adds a `<LineChart>` and gets brand
+  blue. Ask: a structure-only `blankTheme` to build from, or a dev-mode warning
+  naming the slots still carrying library defaults. Note this interacts with
+  [PND-BANDBAR2], which adds a new `theme.bar.bands` slot to the blast radius.
+
+- **[PND-BINSWATCH]** (medium, confirmed — the legend rendered near-white squares
+  for a yellow and a red series) — `useChartLegend` serves each row a resolved
+  `swatch`, and the reason to prefer it over passing colours down is that the key
+  then agrees with the plot **by construction**. For a `binColors` layer that
+  guarantee does not hold: the row reports the layer's base theme fill. It is
+  documented, and defensible for the case it was written for (a red/green volume
+  series has no single legend colour); it is wrong for the more common case of a
+  layer that is per-bin-coloured because **every bin is the same colour** and
+  `binColors` was the only way to express selection dimming. Ask: when every
+  entry in `binColors` is equal, report _that_ colour; better, let a layer set
+  its legend swatch explicitly.
+
+  **Note how this compounds** — and this is the sharpest structural observation
+  in the report: [PND-MULTISEL] forces `binColors` on any chart used as a filter,
+  and `binColors` then opts the layer out of themed emphasis ([PND-CATEMPH])
+  **and** out of a truthful legend swatch. One missing feature quietly disables
+  two others.
+
+- **[PND-TICKCENSUS]** (medium, predicted) — `thinCategoryLabels` keeps every
+  `stride`-th tick and drops the rest entirely, tick mark and label together.
+  There is a distinction worth preserving between _labelling_ and _counting_: a
+  dense axis can only name a fraction of its categories but can still show how
+  many there are, and thinning both makes a 400-category axis and a 12-category
+  axis look identical. Ask: thin labels, keep ticks — either independent
+  label/tick density controls, or a minor/major distinction where minors are
+  unlabelled. Adjacent to [PND-CHFRIC]'s existing finding that the thinning
+  glyph-width estimate lands on the wrong side at Gallery-card width.
+
+- **[PND-BARCAP]** (low) — a bar drawn as a low-opacity body from the baseline
+  plus a bright 2–3px cap at the value, so at high density the caps form a
+  legible profile while the bodies stay quiet. The reporter recommends
+  **declining** it: it reads as a house mark and two layers compose it
+  legitimately. Recorded so that declining is a decision rather than an
+  oversight; if it recurs across consumers, an optional cap treatment on
+  `BarStyle` is a small addition to an existing slot rather than a new mark.
+
+### What the reporter says pond already does well
+
+Recorded because it is the other half of an honest friction report, and because
+each of these directly replaced hand-written code: the categorical x-axis with a
+real band scale and per-category colour; **whole-slot hit testing** (0.55.0),
+whose absence is exactly the bug hand-rolled charts ship with and patch later
+with an ad-hoc click pad; the bar-snapping region cursor with `onRegionSelect`,
+including drag-versus-click discrimination; the typed theme's three-step
+rest/hover/selected emphasis; `SelectInfo.mark` stable identity that survives a
+reorder (hand-rolled charts key on slot index and break on every re-sort); and
+canvas rendering with decimation, so density stops being the consumer's problem.
+
+### Shipped 2026-08-06 — the owner's first four groups
+
+Landed together on `claude/pond-charts-friction-545b3b`. Design decisions worth
+keeping, beyond what the CHANGELOG records:
+
+**[PND-BANDBAR2] threshold banding.** `<BarChart thresholds>` + `bandColors`,
+fills from `BarStyle.bands`.
+
+- **The ladder lives on `BarStyle`, not as a `theme.bar.bands` sibling.** The
+  chosen API was described as "`theme.bar.bands`", but `theme.bar` is a semantic
+  **map** (`{ default, [semantic]: BarStyle }`) — a top-level key would collide
+  with a role of that name and would not typecheck against the index signature.
+  Per-role turned out to be the better shape anyway: `bar.default.bands` and
+  `bar.capacity.bands` can differ, and the ladder resolves through the same
+  `bar[semantic] ?? bar.default` lookup as every other bar colour.
+- **Two alternatives declined**: a single self-contained
+  `thresholds={[{upTo, color}, …]}` (reads well in isolation, but puts colour
+  arithmetic back at the call site, which is what the theme exists to remove),
+  and theme-slot-only with no override (no escape hatch for a one-off ladder
+  short of wrapping the theme).
+- **The perf lesson is the durable part.** The first cut had `bandSpan` return a
+  `[lo, hi]` tuple. K tuples per bar per frame was the difference between
+  banding measuring **~44% cheaper** than the N-layer workaround and **~44%
+  dearer** than it. Split into a scratch-writing `bandSpanInto` with `bandSpan`
+  as the allocating wrapper for tests; final numbers are **23–56% cheaper**
+  than the workaround across 8–2000 bars, and free when unused.
+- **A methodology note worth more than the number.** The first A/B compared a
+  freshly-built `dist` against a stashed-build `dist` imported as two separate
+  modules, and reported banding as _slower_ at every categorical size. That was
+  a confound (two module instances, two independent V8 optimization states);
+  re-run single-module and interleaved, the result reversed cleanly and matched
+  the in-script bench. When two perf runs disagree, suspect the harness before
+  the code — and never ship the flattering one because it agrees with you.
+- **Breakpoints are absolute data values, not offsets from the resolved
+  baseline** — corrected in review. The first cut measured the ladder from
+  `resolveBarBaseline`, so on a domain that excludes zero (`<YAxis min={10}>`)
+  a `[1, 2]` ladder silently banded at 11 and 12. A threshold means the same
+  thing everywhere else in a dashboard: an absolute value. The bands are now
+  computed from zero and the painted span clipped to the bar's drawn extent,
+  which leaves the common (baseline 0) case identical and makes the min>0 case
+  put the whole bar in the top band, correctly. Worth noting the original had
+  a _passing test asserting the wrong behaviour_ — the test encoded the
+  implementation rather than the requirement.
+- **Deferred:** asymmetric ladders (signed breakpoints). Negatives band
+  symmetrically on the magnitude, which covers the ± diverging case; no consumer
+  has pulled for asymmetry.
+- **`bandAlign` keeps `'center'`/`'end'` by owner decision** (2026-08-06) even
+  though only left-packing has a caller: a 3-value alignment enum is a complete
+  vocabulary and the extra values share one arithmetic path with `'start'`.
+  Recorded so declining to trim it is a decision, not an oversight.
+- **A perf-methodology lesson, twice over.** Two successive measurements of the
+  same change were wrong in opposite directions — first a cross-module A/B that
+  reported banding as slower (two `dist` instances, two V8 optimization
+  states), then a table stitched from two pairwise runs that claimed a −40.6%
+  win over a figure it was 26% dearer than. The fix is structural: the script
+  now interleaves every arm in one harness and prints the ratios itself, so
+  there is nothing left to stitch. **When two perf runs disagree, suspect the
+  harness before the code, and never publish a number a committed script
+  cannot reproduce.**
+
+**[PND-AXISHIDE] `<YAxis hide>`.** Registers the spec with `width: 0` and
+returns `null` after the last hook (so toggling `hide` at runtime can't change
+hook order). **Gridlines deliberately unaffected** — they belong to the plot,
+not the gutter, and `<ChartRow grid>` already governs them, so a hidden axis can
+still rule its own gridlines. That is usually what a "the shape matters, the
+numbers don't" chart wants.
+
+**[PND-BANDPACK] `maxBandWidth` + `bandAlign`.** On `<ChartContainer>`, since
+the band scale is the container's x scale.
+
+- **Deviated from the requested `bandAlign: 'fill' | 'start'`.** `maxBandWidth`
+  caps the **slot pitch**, and `bandAlign: 'start' | 'center' | 'end'` places
+  the resulting block. There is no `'fill'` member because "fill" is what
+  _omitting_ `maxBandWidth` means — a `fill` value alongside a pitch cap is a
+  contradiction rather than a choice. The requested behaviour is fully
+  expressible; the state space is smaller and has no unreachable combination.
+- **`maxBandWidth` caps the slot, `<BarChart gap>` insets the bar.** One knob
+  for pitch, one for ink, neither doing the other's job. The report's `gap`
+  workaround was inverting an ink knob to get a pitch effect.
+- **Not covered: horizontal.** A `orientation="horizontal"` categorical chart
+  puts its categories on the **y** axis as unit slots — a different mechanism
+  (`ChartRow`'s y scale, not the container's band scale) — and is _not_ capped.
+  Flagged in the prop docs and CHANGELOG rather than left to be discovered.
+- A story written for this (`StablePitch`) initially violated a real
+  constraint: one container shares one category x-scale, so two rows cannot hold
+  different category sets — it throws rather than misaligning silently. The
+  demo needs two containers, which is also how the live case arrives.
+
+**[PND-SIGNSTACK] / [PND-CATEMPH] / [PND-TICKUNIT] — the misleading trio.**
+
+- **SIGNSTACK is a visible behaviour change**, and deliberately not opt-in: an
+  opt-in fix preserves the silent wrongness by default, and a chart currently
+  feeding negatives into a multi-group stack is already rendering a wrong
+  picture. Three existing tests _pinned the old behaviour_ and were rewritten —
+  worth noting, because a suite that asserts a silent-failure mode is part of
+  what keeps it alive. An all-positive stack is bit-identical.
+- **CATEMPH's fix is narrower than "add an emphasis channel".** The real defect
+  was that `bar.hover` / `.highlight` were accepted and ignored, so the fix is
+  to _use_ them wherever there is no meaning-carrying colour to destroy — i.e.
+  whenever `binFills` is unset. The `binColors` exclusion stays and is now the
+  only one; `selectedOutline` + `emphasisOpacity` make the emphasis tunable
+  where the fill genuinely cannot change.
+- **TICKUNIT shipped as docs only**, matching the retracted entry's narrowed
+  ask. `bins` carrying `kind: 'time'` was not built — it is a real design choice
+  and no consumer has pulled for it beyond the one that has since been pointed
+  at the series door.
+
+**Found in review, and worth recording as a class.** The Layer-2 pass caught
+three real defects, two of which are the _same mistake this PR is about_:
+`BarStyle.emphasisOpacity` and `.selectedOutline` were added as public theme
+fields but wired only into `drawStacks`, so the single-series path accepted and
+ignored them — [PND-CATEMPH]'s exact failure shape, reintroduced by the commit
+fixing [PND-CATEMPH]. The threshold-baseline bug was the same species: silent,
+plausible, wrong only on a domain the author didn't test. A fix for a class of
+bug does not immunise its own diff against that class.
+
+**The Codex pass found four more, with zero overlap.** Worth recording because
+it is the clearest evidence yet for running both reviewers rather than treating
+the second as ceremony:
+
+- **`<YAxis hide>` broke alignment in a multi-row container** (the only HIGH
+  across both reviews). The container reserves each axis _column_ at the widest
+  across rows, so a hidden axis sharing a column with a visible one is still
+  allotted that width — and rendering `null` slid that row's plot left of its
+  siblings and the shared x-axis. Fixed by rendering an empty box at the
+  reserved slot width, which collapses to zero when the axis is alone in its
+  column. **Every one of my tests used a single-row container**; the story that
+  does use two rows asserts nothing. The lesson generalises: a prop about
+  _layout_ needs a multi-row case, because single-row is the one arrangement
+  where layout cannot go wrong.
+- **`normalizeThresholds` accepted negative breakpoints**, which the magnitude
+  ladder cannot express — `[-2, -1]` painted the whole bar one colour, looking
+  deliberate. Now dropped (with `0`) and dev-warned.
+- **Two doc passages the code had outgrown** — `thresholds` still documented as
+  baseline-relative after the implementation moved to absolute, and
+  `<BarChart>`'s JSDoc still saying negative stack segments are skipped and
+  diverging stacks out of scope, in the same PR that implemented signed stacks.
+  Both would have shipped as confident lies.
+
+Across the two passes: **ten findings, no duplicates.** Claude's clustered on
+the diff's internal consistency (inert fields, memo identity, wrong numbers in
+prose); Codex's on interaction with surrounding machinery (slot reservation,
+input-domain validation, stale neighbouring docs). That split is the reason the
+escalation exists, and is worth remembering the next time a medium-confidence
+rating looks like a formality.
+
+**Not done: the dev-mode warning sweep.** The report's best structural finding
+is that SIGNSTACK, CATEMPH and TICKUNIT share a failure _shape_, arguing for one
+warning pass rather than three fixes. Only [PND-BANDBAR2] got dev warnings (short
+ladder, no colours, `binColors` conflict, multi-group stack). The sweep across
+the rest — warn when a theme sets slots the active draw path cannot read, when
+`bins` is handed plausibly-time-shaped keys — is still open and is the highest-
+value item left from this report.
