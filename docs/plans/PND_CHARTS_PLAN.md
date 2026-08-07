@@ -838,6 +838,23 @@ Residue tracked as **[PND-APIREV-REST]** in PLAN.md.
      silently accepted anything. The lesson generalises: on type-level work,
      _compiling_ is not evidence of _checking_; only a negative test is.
 
+     **What it left undocumented — [PND-CASTDOC].** The union-per-series-kind
+     shape is correct, but it means a consumer with a loosely-typed series must
+     write a cast at the boundary, and that cast has **no prose anywhere in the
+     charts docs**. Estela hit it bumping 0.54 → 0.57 (its only adaptation, all
+     three bar asks otherwise landing clean) and reverse-engineered it from
+     `DurationAxis.stories.tsx:98`:
+
+     ```tsx
+     <LineChart series={series as ReturnType<typeof ride>} … />
+     ```
+
+     A Storybook story is the systematic knob reference, not somewhere a
+     consumer searches when the compiler rejects their series. "Here is the one
+     cast you need at the seam, and here is why the constraint is a union per
+     series kind" belongs in the charts docs, findable. Cheap to write and it
+     removes the only friction a real migration reported.
+
      Cost accepted by the owner: a union-typed series value must be narrowed
      or cast. The alternative (one generic over the series type) is verified in
      `spikes/charts-type-seam/REPORT.md` if that ever bites.
