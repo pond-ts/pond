@@ -1,0 +1,131 @@
+---
+title: Zone
+sidebar_position: 3
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import ChartsAnnotationZone from '@site/src/examples/charts-annotation-zone';
+
+# `Zone`
+
+A shaded band between two **y values**, spanning the full plot width — the
+value-axis counterpart of [`Region`](./region-baseline-marker.mdx#region).
+
+Where the other three marks say "at this moment", "at this level" and "during
+this window", a `Zone` says **"in this range of values"**. It's the mark for a
+_classification of the value axis_: US EPA AQI categories, heart-rate or power
+zones, an SLO band, a control chart's spec limits — anywhere a reading only
+means something read against a scale.
+
+<ChartExample name="charts-annotation-zone" height={240}>
+  {(width) => <ChartsAnnotationZone width={width} />}
+</ChartExample>
+
+Drag to pan the time axis and scroll to zoom — the bands stay put, because
+they're anchored to the **value** axis, which is the whole point of them.
+
+```tsx
+<Zone from={0.85} to={Infinity} axis="pct" role="critical" label="critical" />
+```
+
+## Props
+
+| Prop         | Type                | Default       | Purpose                                                                            |
+| ------------ | ------------------- | ------------- | ---------------------------------------------------------------------------------- |
+| `from`       | `number`            | —             | One bound in the linked y axis's units.                                            |
+| `to`         | `number`            | —             | The other bound. Order doesn't matter; either may be `±Infinity` (open-ended).     |
+| `axis`       | `string`            | row's default | Which `<YAxis>` (by `id`) to scale against.                                        |
+| `label`      | `string`            | none          | Chip at the band's vertical centre. **Omit ⇒ no chip** (a zone never auto-labels). |
+| `labelSide`  | `'left' \| 'right'` | `'left'`      | Which edge the chip sits against.                                                  |
+| `edges`      | `boolean`           | `false`       | Draw the horizontal boundary lines at `from`/`to`.                                 |
+| `role`       | `string`            | —             | Theme role — `annotation.roles[role]` supplies `color` / `fillOpacity` / `dash`.   |
+| `selectable` | `boolean`           | `false`       | Respond to hover + click-select.                                                   |
+| `selected`   | `boolean`           | `false`       | Controlled selection (brightens to the front). Needs `selectable`.                 |
+| `hovered`    | `boolean`           | —             | Controlled hover, OR'd with pointer hover. Needs `selectable`.                     |
+| `id`         | `string`            | —             | Stable id reported by `onSelectAnnotation`. Needs `selectable`.                    |
+
+## Three defaults that invert the family's
+
+`Zone` deliberately departs from `Region` / `Baseline` / `Marker` on its
+defaults, because a y-band is a different animal: it spans the **full plot
+width**, and a zone _set_ tiles the **whole row**.
+
+- **`selectable={false}`** — the rest of the register is interactive by
+  default. Since the pointer is always inside some zone, interactive-by-default
+  bands would light up on every mousemove, and their hit areas would swallow
+  the plot's own clicks. A zone is background context first (drawn at depth
+  level 3, pointer-transparent). Opt one in when a band is genuinely a thing to
+  point at.
+- **`edges={false}`** — `Region` outlines its span by default. Zone sets are
+  usually contiguous, so every interior boundary is shared by two bands and
+  edges-on draws each one twice at double opacity. Turn it on for an isolated
+  band (a target range), where an outline reads well.
+- **No auto-label.** `Region` labels itself `from–to` because a time span's
+  bounds aren't otherwise legible; a zone's bounds are already written down the
+  y axis it spans. The label worth showing is a **name** (`"Good"`,
+  `"Z4 threshold"`), which only you have — so omitting `label` renders no chip.
+
+## Bounds: ordering, clamping, open ends
+
+- **Order-free.** `from`/`to` are ordered internally; high-to-low is the same
+  band.
+- **Clamped to the plot.** A band running past the axis domain is cut at the
+  plot edge rather than painting into the axis gutter, and a band entirely
+  outside culls itself. This means you can render a **whole category table**
+  and let the axis decide which bands are visible, instead of maintaining a
+  hand-pruned copy that goes stale when the axis changes.
+- **`±Infinity` for open ends.** `to={Infinity}` is the honest spelling of a
+  top band with no ceiling (AQI's "Hazardous", a "critical and above" alert
+  band). It resolves against the axis domain, reaches the plot edge, and —
+  having no real upper bound — draws no upper boundary even with `edges` on.
+  The same goes for a clamped bound: a boundary line is only drawn where the
+  band has a real, in-plot edge.
+
+## Colour: the role _is_ the scale
+
+There is no colour prop. A band names a **role** and the theme resolves it —
+which is exactly right here, because a zone set's colours aren't six arbitrary
+choices, they're a scale, and a scale belongs in one place:
+
+```tsx
+const theme = {
+  ...base,
+  annotation: {
+    ...base.annotation!,
+    roles: {
+      good: { color: '#00e400', fillOpacity: 0.16 },
+      moderate: { color: '#ffff00', fillOpacity: 0.22 },
+      unhealthy: { color: '#ff0000', fillOpacity: 0.12 },
+    },
+  },
+};
+```
+
+Keep the fills light. A zone paints in the annotation overlay **above** the
+data canvas (as every mark does), so the register's `fillOpacity` — around
+0.1–0.2 — is what lets the traces read cleanly through it. Per-role opacities
+usually aren't uniform, because the hues aren't equally strong: pure yellow
+needs more alpha than red to register at all.
+
+## Sharp edges
+
+- **A zone is not editable.** Unlike the other three marks it has no
+  `onChange`. A drag-to-edit zone (a zone editor) is a coherent feature with no
+  consumer yet, so the band stays declarative until one turns up.
+- **The fill sits over the data, not under it.** At the intended opacities this
+  reads as a wash behind the story; at high opacity it will visibly tint the
+  traces. That's a property of the shared annotation overlay, not of `Zone`.
+- **A selectable zone takes the plot's clicks** in its band, the same way a
+  `Region` does in its span. This is why `selectable` is opt-in.
+- **No cross-row guide.** Like `Baseline`, a horizontal mark casts no vertical
+  guideline on other rows, and is not a drag-snap target.
+
+## See also
+
+- [The annotation model](./the-annotation-model.mdx) — registers, roles, depth.
+- [Region · Baseline · Marker](./region-baseline-marker.mdx) — the other three marks.
+- [From a CSV to a banded chart](../../how-to-guides/air-quality-bands.mdx) — a
+  worked end-to-end build: an air-quality export, the EPA category bands, and
+  why the palette is a theme.
+- Storybook: [`Annotations/Zone`](pathname:///storybook/?path=/story/annotations-zone--default)
+  — one story per prop and state (clamping, open ends, dual axis, the tiled set).

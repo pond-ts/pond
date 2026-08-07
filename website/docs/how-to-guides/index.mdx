@@ -45,6 +45,14 @@ Available:
   candle / box), and the honest ceilings — the `three`-at-1M render floor
   and the data-side ceiling that hits first for live streams.
 
+- [**From a CSV to a banded chart**](./air-quality-bands) — an air-quality
+  export (US EPA PM2.5 AQI, two sensors, three days) taken from raw file to
+  finished chart: telling measurements from chart furniture, the BOM /
+  timezone / blank-is-not-zero parsing traps, verifying a parse against a
+  number the file already claims, and then `<Zone>` — the y-span band that
+  turns a value axis into a scale you can read a verdict off. Generalises to
+  heart-rate zones, SLO bands, and control-chart spec limits.
+
 In flight:
 
 - A gRPC stream-processor guide once that experimental work surfaces

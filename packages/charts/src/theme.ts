@@ -176,19 +176,35 @@ export interface ChartTheme {
     readonly fillOpacity: number;
     readonly depth: readonly [number, number, number];
     /**
+     * Optional dash pattern for the register's **lines** — px on/off lengths,
+     * the same shape as {@link LineStyle.dash} (`[6, 4]` = 6 on, 4 off). Omit or
+     * `[]` for solid strokes. Applies to a marker's / baseline's line and to
+     * region + zone boundaries; fills are never dashed.
+     *
+     * Worth reaching for when marks share a plot with data lines: a *dashed*
+     * reference line reads as placed rather than measured, doing the "this isn't
+     * data" work that colour alone can't when the register hue is near a series
+     * hue. Set it per {@link roles | role} to dash one kind of mark only.
+     */
+    readonly dash?: readonly number[];
+    /**
      * **Optional per-role overrides** — a small map from a role name to its
-     * `color` (and optionally `fillOpacity`), so distinct marks can be styled
-     * at once without splitting the whole register: a `<Baseline role="atm">`
-     * green, a `<Marker role="ref">` in another hue, each still drawn through
+     * `color` (and optionally `fillOpacity` / `dash`), so distinct marks can be
+     * styled at once without splitting the whole register: a `<Baseline
+     * role="atm">` green, a `<Marker role="ref">` in another hue, a `<Zone
+     * role="good">` per band of a value-axis scale — each still drawn through
      * the shared {@link depth} ramp. A mark's `role` resolves
-     * `roles[role] ?? { color, fillOpacity }` (an unknown/unset role is the
-     * base register). Colour stays a **theme** concern — there is no per-mark
-     * colour prop (the one-styling-channel discipline).
+     * `roles[role] ?? { color, fillOpacity, dash }` (an unknown/unset role is
+     * the base register). Colour stays a **theme** concern — there is no
+     * per-mark colour prop (the one-styling-channel discipline), which is why a
+     * *scale* of bands (AQI categories, HR zones) is a role map and not six
+     * colours at the call site.
      */
     readonly roles?: {
       readonly [role: string]: {
         readonly color: string;
         readonly fillOpacity?: number;
+        readonly dash?: readonly number[];
       };
     };
   };

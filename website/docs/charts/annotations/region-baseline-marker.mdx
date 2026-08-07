@@ -86,7 +86,7 @@ the `indicator` pill always shows the formatted `at`, never the custom `label`
 
 All three take an optional **`role`** — a name into the theme's
 `annotation.roles` map — to recolour that mark (its `color`, and optionally
-`fillOpacity`) while staying in the annotation register. See
+`fillOpacity` and `dash`) while staying in the annotation register. See
 [Roles within the register](./the-annotation-model.mdx#roles-within-the-register).
 There is no per-mark colour prop; the theme owns the palette.
 
@@ -102,6 +102,9 @@ All three share the same `label` convention:
 
 ## See also
 
+- [Zone](./zone.mdx) — the fourth mark: a shaded **y** span (`Region`'s
+  counterpart on the value axis), for AQI categories, HR zones, SLO bands. Its
+  defaults deliberately invert this page's.
 - [The annotation model](./the-annotation-model.mdx) — registers, depth, the indicator law.
 - [Editing & creating annotations](./editing-and-creating.mdx) — the shared `selected`/`editing`/`onChange` surface and the container orchestration.
 - Storybook: [`Annotations/Region`](pathname:///storybook/?path=/story/annotations-region--default),
