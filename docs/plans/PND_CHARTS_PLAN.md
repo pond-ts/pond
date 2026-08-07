@@ -209,13 +209,36 @@ on selection. Cell identity is two-dimensional — bin **and** row — reusing
 adding one is breaking for every custom theme; the M5 optional-with-default
 gate ([PND-PARITY]) lands first.
 
-**Axis friction — already tracked elsewhere, not re-raised here.** `<YAxis>`
-titles itself `label ?? id`, which is wrong for a categorical row axis whose
-rows are already labelled; pjm reports this is recorded and being fixed by
-another agent. A `<YAxis hide>` is also reportedly done, which is the right
-answer for a single unnamed row — but it is **not on `main` or in any fetched
-branch** as of this prototype, so the stripes card still hides its axis the old
-way (`width={0}` + empty `ticks`). Switch to `hide` when it lands.
+**Overlaps [PND-SPARCFRIC] (PR #599), which lands first.** That PR was blocked
+on the CI outage and carries two things this prototype touches:
+
+- **`<YAxis hide>`** ([PND-AXISHIDE]) — the right way to drop the axis for a
+  single unnamed row. The stripes card currently does it the old way
+  (`width={0}` + empty `ticks`); switch when #599 merges. Its sibling friction,
+  `<YAxis>` titling itself `label ?? id`, is likewise already tracked there, so
+  it is not re-raised here.
+- **Threshold-banded bars** — `<BarChart thresholds={[t0, t1]}>` colours a bar
+  by the band its value lands in, with fills from a new **`BarStyle.bands`**
+  theme slot, overridable per chart via **`bandColors`**.
+
+**That second one is a genuine vocabulary collision and needs reconciling
+before either ships as public API.** Two agents arrived at colour banding
+independently with different answers:
+
+|                  | #599 (bars)                                              | this prototype (heat map)                         |
+| ---------------- | -------------------------------------------------------- | ------------------------------------------------- |
+| bands from       | explicit `thresholds` breakpoints                        | domain split into `colors.length` equal bands     |
+| colours from     | the **theme** (`BarStyle.bands`), `bandColors` overrides | a **required `colors` prop**                      |
+| stated principle | "breakpoints are data, colour stays in the theme"        | colour _is_ the data, so it cannot be theme-owned |
+
+Neither is obviously wrong — a bar's banding is a _classification_ (good /
+warn / crit belongs to the theme's semantics), whereas a heat map's ramp _is_
+the quantitative channel and has no meaning without the data. But shipping
+`bandColors` and `colors` as neighbouring props, and `BarStyle.bands` beside a
+prop-only ramp, would be two ways to say one thing. Worth deciding deliberately:
+either the heat map adopts `thresholds` for the explicit-breakpoint case (AQI
+categories, Beaufort, HR zones all want it) and keeps `colors` for the
+continuous case, or banding becomes one shared primitive both layers call.
 
 **Asked for, not built — the 2-D interaction set.** pjm's follow-ups, hardest
 last:
@@ -1507,11 +1530,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                        _Still true; no longer felt here._ The draggable marker is gone — selection
-                                        is a click — so nothing on this page is in edit mode. But it cost a design
-                                        iteration to discover, and the docs still don't mention it. **The one-line
-                                        fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                        row's data cursor is suppressed."
+                                            _Still true; no longer felt here._ The draggable marker is gone — selection
+                                            is a click — so nothing on this page is in edit mode. But it cost a design
+                                            iteration to discover, and the docs still don't mention it. **The one-line
+                                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                            row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
