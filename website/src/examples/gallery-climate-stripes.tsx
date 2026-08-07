@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
-  BarChart,
   ChartContainer,
   ChartRow,
+  HeatMap,
   Layers,
   YAxis,
 } from '@pond-ts/charts';
@@ -10,12 +10,7 @@ import {
   useSiteChartTheme,
   useSequentialRamp,
 } from '@site/src/theme/useSiteChartTheme';
-import {
-  STRIPES_BOUNDS,
-  anomalyAt,
-  anomalyStep,
-  climateStripes,
-} from './lib/weather-fixtures';
+import { STRIPES_BOUNDS, climateStripes } from './lib/weather-fixtures';
 import readout from './lib/tracker-readout.module.css';
 
 const YEAR_MS = 365.2425 * 86_400_000;
@@ -24,9 +19,12 @@ const YEAR_MS = 365.2425 * 86_400_000;
 const NO_TICKS: ReadonlyArray<{ at: number; label: string }> = [];
 
 /** Climate stripes: 146 years of global temperature anomaly, one bar per year,
- *  every bar the same height. The **colour is the value** — the bars carry a
- *  constant `stripe` column purely so each year gets a full-height slot, and
- *  `binColors` does the encoding off the anomaly.
+ *  every cell the same height. The **colour is the value**, which is what a
+ *  `<HeatMap>` is for: one cell per year, `anomaly` encoded as colour and
+ *  reported as the value. This card used to be a `<BarChart>` with a constant
+ *  `stripe` column (so every bar was full height) plus a caller-computed
+ *  `binColors` array; both are gone, and so is the out-of-band lookup the
+ *  readout needed.
  *
  *  Ed Hawkins' original uses a diverging blue-to-red scale; this one steps
  *  through the site's own sequential ramp, dark to light, because the palette
@@ -50,15 +48,10 @@ export default function GalleryClimateStripes({
   const theme = useSiteChartTheme();
   const ramp = useSequentialRamp();
   const series = climateStripes();
-  const [year, setYear] = useState<number | null>(null);
-
-  const colors = useMemo(
-    () =>
-      Array.from(
-        series.column('anomaly').toFloat64Array(),
-        (anomaly) => ramp[anomalyStep(anomaly, ramp.length)],
-      ),
-    [series, ramp],
+  // The cell reports its own value now, so the readout holds both together
+  // rather than looking the number up by year.
+  const [hit, setHit] = useState<{ year: number; anomaly: number } | null>(
+    null,
   );
 
   const [first, last] = STRIPES_BOUNDS;
@@ -68,32 +61,27 @@ export default function GalleryClimateStripes({
     phase === undefined ? 1 : phase < 0.5 ? phase * 2 : (1 - phase) * 2;
   const span = 60 * YEAR_MS + grow * (last - first - 60 * YEAR_MS);
 
-  const anomaly = year === null ? null : anomalyAt(year);
-
   return (
     // A single block, not a fragment: `<ChartExample>`'s stage is a flex row,
     // so two siblings would land side by side rather than stacked.
     <div style={{ width }}>
-      {/* The readout IS this chart's legend. When colour carries the value,
-          an in-chart pill can't help: `cursor="crosshair"` would read the
-          drawn column, which is the constant `stripe` — "1.0" on every bar.
-          So the cursor stays at its `'line'` default and `onTrackerChanged`
-          surfaces the year and its anomaly outside the plot, which is the
-          division of labour `<ChartContainer cursor>` documents. */}
+      {/* The readout IS this chart's legend, and it now reads the chart. The
+          bar version could not: a crosshair would have read the drawn column,
+          the constant `stripe` — "1.0" on every bar — so the anomaly had to be
+          fetched from the fixture by year. A heat-map cell carries its value,
+          so `onTrackerChanged` hands over the real number. */}
       {showReadout && (
         <div className={readout.readout}>
-          {year === null ? (
+          {hit === null ? (
             <span className={readout.idle}>
               Point at a stripe to read its year and anomaly
             </span>
           ) : (
             <>
-              <span className={readout.date}>{year}</span>
+              <span className={readout.date}>{hit.year}</span>
               <span className={readout.field}>
                 <span className={readout.name}>anomaly</span>
-                {anomaly === null
-                  ? '—'
-                  : `${anomaly > 0 ? '+' : ''}${anomaly.toFixed(2)} °C`}
+                {`${hit.anomaly > 0 ? '+' : ''}${hit.anomaly.toFixed(2)} °C`}
               </span>
             </>
           )}
@@ -103,23 +91,32 @@ export default function GalleryClimateStripes({
         range={[first, first + span]}
         width={width}
         theme={theme}
-        onTrackerChanged={(info) =>
-          setYear(info === null ? null : new Date(info.time).getUTCFullYear())
-        }
+        onTrackerChanged={(info) => {
+          const sample = info?.values[0];
+          setHit(
+            info === null || sample === undefined
+              ? null
+              : {
+                  year: new Date(info.time).getUTCFullYear(),
+                  // `value` is where the cursor would draw (the row
+                  // centre); `readout` is the cell's number. See the page.
+                  anomaly: sample.readout ?? sample.value,
+                },
+          );
+        }}
       >
         <ChartRow height={200}>
-          {/* The value axis exists only to give every stripe the same height.
-              `min`/`max` pin it (a constant column has no extent of its own to
-              fit to); `ticks={[]}` and zero width take it off the canvas
-              entirely, because "0.0 … 1.0" would be a scale for a quantity
-              this chart isn't showing. */}
-          <YAxis id="stripe" min={0} max={1} width={0} ticks={NO_TICKS} />
+          {/* One row, so the layer's own `[0, 1]` extent is the whole plot —
+              no `min`/`max` needed any more. Explicit empty `ticks` still beat
+              the row label the layer offers, and zero width takes the axis off
+              the canvas: a single unnamed row needs no scale drawn. */}
+          <YAxis id="stripe" width={0} ticks={NO_TICKS} />
           <Layers>
-            <BarChart
+            <HeatMap
               series={series}
-              column="stripe"
+              columns={['anomaly']}
+              colors={ramp}
               axis="stripe"
-              binColors={colors}
               gap={0}
               id="stripes"
             />

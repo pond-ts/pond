@@ -218,7 +218,14 @@ export function HeatMap<
               if (!Number.isFinite(v)) continue;
               out.push({
                 x: (ss.begin[b]! + ss.end[b]!) / 2,
-                value: v,
+                // `value` is where the cursor *draws* — `yScale(value)` — so
+                // it must be a y coordinate, and for a cell that is its row's
+                // centre, not its number. The number rides `readout`, which
+                // an off-chart consumer shows as `readout ?? value`. Without
+                // the split the dot would be placed at `yScale(anomaly)` on a
+                // unit-slot axis and land outside the plot entirely.
+                value: g + 0.5,
+                readout: v,
                 color: colorAt(b, g) ?? style.highlight,
                 label: ss.groups[g]!,
               });

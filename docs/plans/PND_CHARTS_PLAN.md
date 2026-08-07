@@ -209,12 +209,28 @@ on selection. Cell identity is two-dimensional — bin **and** row — reusing
 adding one is breaking for every custom theme; the M5 optional-with-default
 gate ([PND-PARITY]) lands first.
 
-**Friction found, not fixed:** `<YAxis>` titles itself `label ?? id`, so an
-omitted label renders the axis _id_ as a rotated glyph. Harmless on a value
-axis where the id is often the measure; wrong on a categorical row axis, where
-the rows are already labelled and the title should be the unit or nothing. The
-stories pass an explicit label. Pre-existing behaviour, affecting every chart
-that omits `label`.
+**Axis friction — already tracked elsewhere, not re-raised here.** `<YAxis>`
+titles itself `label ?? id`, which is wrong for a categorical row axis whose
+rows are already labelled; pjm reports this is recorded and being fixed by
+another agent. A `<YAxis hide>` is also reportedly done, which is the right
+answer for a single unnamed row — but it is **not on `main` or in any fetched
+branch** as of this prototype, so the stripes card still hides its axis the old
+way (`width={0}` + empty `ticks`). Switch to `hide` when it lands.
+
+**Asked for, not built — the 2-D interaction set.** pjm's follow-ups, hardest
+last:
+
+- **2-D readout.** `sampleAt` already returns one sample per row at the cursor,
+  so an off-chart readout can show the whole column. A true 2-D readout wants
+  the cell _under the pointer_ — `hitTest`'s job, not the x-scrub tracker's.
+  The two channels answer different questions ("what is at this x" vs "what is
+  under this pointer"), and a grid is the first layer where that gap shows.
+- **2-D region selection.** The region cursor snaps to `binIntervals` on x
+  only; a grid wants a rectangle across bins **and** rows. The x half exists;
+  the y half needs the row band to become a snap dimension.
+- **2-D pan and zoom.** Pan/zoom is an x-domain operation today. A grid with
+  many rows wants both axes — a container-level change well beyond this layer,
+  and the first real driver for it.
 
 **Still open:**
 
@@ -1491,11 +1507,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                _Still true; no longer felt here._ The draggable marker is gone — selection
-                                is a click — so nothing on this page is in edit mode. But it cost a design
-                                iteration to discover, and the docs still don't mention it. **The one-line
-                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                row's data cursor is suppressed."
+                                        _Still true; no longer felt here._ The draggable marker is gone — selection
+                                        is a click — so nothing on this page is in edit mode. But it cost a design
+                                        iteration to discover, and the docs still don't mention it. **The one-line
+                                        fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                        row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
