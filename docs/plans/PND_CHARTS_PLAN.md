@@ -23,6 +23,47 @@ split has shipped too (notes:
 
 ## Tasks
 
+### [PND-LISTHOVER] — `<BarList>` has selection but no hover — [#608]
+
+Filed by the estela agent from an actual `<BarList>` migration, which is the
+most valuable kind of report: everything else fitted. `selected` +
+`onRowClick` carried its lock in both directions, `renderExpanded` covered its
+per-row detail panel, `columns` / `after` mapped straight onto its magnitude bar
+and speed/climb cells. **Only hover blocked it.**
+
+Verified against the code:
+
+- `ListTable.tsx:80` holds `useState<string | null>` for hover and consumes it
+  at L211 purely for its own row affordance.
+- `BarListCommon` exposes `selected` (L79) and `onRowClick` (L81) — and no
+  hover prop in either direction.
+
+So hover exists, works, and is sealed in. A consumer can neither read it nor
+drive it.
+
+**Why that is a blocker rather than a nice-to-have.** estela's list is
+_bidirectionally_ hover-linked: row hover lights a map preview and the matching
+chart bar; chart-bar hover lights the row. Migrating with only `selected`
+carries the lock but drops hover — a regression against a behaviour its owner
+had just asked to make _more_ prominent. `data-list-row={key}` lets them fake
+the **out** direction by event delegation; the **in** direction has no path at
+all, because the internal state is uncontrollable.
+
+**The shape is already decided elsewhere, which is the argument.** The canvas
+layers carry `hovered` / `onHover` _alongside_ `selected` / `onSelect` — a
+consumer wiring a `<BarChart>` already knows this vocabulary. `<BarList>` is the
+same two-state interaction one level up and should say it the same way:
+`hovered?: string | null` in, `onRowHover?: (row | null) => void` out, on
+`BarListCommon`.
+
+It is also the [#577] shape repeating: that was bars having one channel where
+the interaction has two states. This is the list having one channel for the same
+reason. Worth asking whether anything else in the package assumes selection is
+the only controllable interaction state.
+
+[#608]: https://github.com/pond-ts/pond/issues/608
+[#577]: https://github.com/pond-ts/pond/issues/577
+
 ### [PND-AXISGUT] — The X-axis strip doesn't participate in layout — [#607]
 
 Filed by the estela agent after it shipped overlapping labels, and its framing
