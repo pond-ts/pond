@@ -361,6 +361,38 @@ last:
   benches**: a `Proxy` context overstates any optimization whose only effect is
   doing fewer `ctx` property writes.
 
+- **Decimation: the mean per pixel column, on by default.** pjm's push — "the
+  library shouldn't ever hit 48ms for a layer, and you can statistically say
+  what 16 pixels of different levels resolves to at a distance" — and he was
+  right on both counts. The write-up above had argued for a dev warning that
+  pushed callers to `aggregate`, on the grounds that collapsing cells is a
+  statistical claim only the caller can make. **That was wrong**, for a reason
+  worth keeping: collapsing cells for _display_ is a **resampling** question,
+  not a statistical one, and resampling has a correct answer. Cells do not form
+  a silhouette the way bars do — they **composite** — so what a column of N
+  cells delivers to the eye is their area-weighted mean. The layer is not
+  imposing a statistic by taking it; it is computing what the full-resolution
+  draw already resolves to.
+
+  The argument that it was a statistic also missed that the undecimated path was
+  _already_ making one, and a worse one: sub-pixel cells are widened to
+  `minWidth` about their midpoints, so they overlap and later draws overpaint
+  earlier ones. Every column already showed one source cell out of N, chosen by
+  loop order. **48.0ms → 5.7ms** on 20000×45, with every below-gate scenario
+  byte-identical.
+
+  This is also the one place a heat map can go where `decimateBars` explicitly
+  cannot: that function bails when `binFills` is set, because its reduction is a
+  geometric `[min, max]` envelope with no honest colour across differently
+  coloured bars. Reducing the **value** and letting the ramp colour it sidesteps
+  that entirely — worth remembering if per-cell colour ever comes to another
+  layer.
+
+  What it loses is a lone extreme among N, exactly as any image downsample does.
+  `aggregate` with `max` remains the tool for a reader hunting rare spikes, and
+  is unaffected. Follows the bar precedent on interaction: per-cell outlines
+  suppressed while decimated, hit-testing still on the source grid.
+
 **Friction found, not fixed:**
 
 - **`Sequence.calendar` has no `'year'` unit** — it stops at `month`
@@ -1633,11 +1665,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                            _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                            is a click — so nothing on this page is in edit mode. But it cost a design
-                                                            iteration to discover, and the docs still don't mention it. **The one-line
-                                                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                            row's data cursor is suppressed."
+                                                                _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                iteration to discover, and the docs still don't mention it. **The one-line
+                                                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires

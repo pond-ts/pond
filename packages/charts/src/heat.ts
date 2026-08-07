@@ -3,6 +3,7 @@ import type { StackedBarSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { StackMark } from './bars.js';
 import { visibleSpanRange } from './culling.js';
+import { decimateHeat, type DecimateOption } from './decimate.js';
 
 /**
  * Heat-map geometry: a grid of cells, each filled by the colour its **value**
@@ -194,15 +195,48 @@ export function drawHeat(
   xScale: Scale,
   yScale: Scale,
   style: HeatStyle,
-  colorAt: (b: number, g: number) => string | undefined,
+  colorOf: (value: number) => string | undefined,
   seriesId: string | undefined,
   selection: StackMark | null,
   hovered: StackMark | null,
+  decimate: DecimateOption = true,
 ): void {
-  const G = ss.groups.length;
   ctx.save();
   ctx.globalAlpha = style.opacity;
-  const [vStart, vEnd] = visibleSpanRange(ss.begin, ss.end, ss.length, xScale);
+  const [srcStart, srcEnd] = visibleSpanRange(
+    ss.begin,
+    ss.end,
+    ss.length,
+    xScale,
+  );
+
+  // Once the visible cells are denser than ~2 per device pixel they overlap and
+  // overpaint each other, so the picture is already a reduction — just a bad
+  // one, picked by loop order. Replace it with the mean per pixel column, which
+  // is what the overdrawn version resolves to at this size and costs O(W·G)
+  // rects instead of O(V·G). See `decimateHeat` for why a heat map can do this
+  // where a per-bar-coloured `<BarChart>` cannot.
+  const thinned =
+    decimate === false
+      ? null
+      : decimateHeat(
+          ss,
+          xScale,
+          ctx,
+          typeof decimate === 'object' ? (decimate.threshold ?? 2) : 2,
+          srcStart,
+          srcEnd,
+        );
+  const grid = thinned ?? ss;
+  const G = grid.groups.length;
+  const [vStart, vEnd] = thinned
+    ? [0, thinned.length]
+    : ([srcStart, srcEnd] as const);
+  // A pixel column aggregates many source bins, so it has no per-bin identity to
+  // match against — and a live cell's outline at <1px would not be visible
+  // anyway. Interaction still reads the source grid via `heatAt`.
+  const sel = thinned ? null : selection;
+  const hov = thinned ? null : hovered;
 
   // The row bands, once. Each depends only on `g`, so computing them inside the
   // cell loop re-derived the same G boundaries for every visible bin — O(V·G)
@@ -232,8 +266,8 @@ export function drawHeat(
     // a 45-row grid was paying two scale calls per cell for one answer per
     // column.
     const [x0, x1] = barSpanPx(
-      ss.begin[b]!,
-      ss.end[b]!,
+      grid.begin[b]!,
+      grid.end[b]!,
       xScale,
       style.gap,
       style.minWidth,
@@ -243,14 +277,15 @@ export function drawHeat(
       // Gaps are skipped before any per-cell work, exactly as `cellRect` does
       // by returning null: a hole in the record draws nothing and owns no hit
       // region.
-      if (!Number.isFinite(ss.values[base + g]!)) continue;
-      const fill = colorAt(b, g);
+      const value = grid.values[base + g]!;
+      if (!Number.isFinite(value)) continue;
+      const fill = colorOf(value);
       if (fill === undefined) continue;
       const yTop = rowTop[g]!;
       const yBottom = rowBottom[g]!;
 
-      const selected = matchesCell(selection, seriesId, ss, b, g);
-      const live = selected || matchesCell(hovered, seriesId, ss, b, g);
+      const selected = matchesCell(sel, seriesId, grid, b, g);
+      const live = selected || matchesCell(hov, seriesId, grid, b, g);
 
       ctx.globalAlpha = live ? 1 : style.opacity;
       // Assigning `fillStyle` is not free — a real canvas parses the CSS colour

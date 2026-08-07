@@ -53,6 +53,7 @@ import type {
   OhlcSeries,
   BoxSeries,
   BarSeries,
+  StackedBarSeries,
 } from './data.js';
 import type { Scale } from './line.js';
 import { affineOf } from './affine.js';
@@ -758,6 +759,98 @@ export function decimateBars(
     }
   }
   return { begin, end, lo, hi, length: W };
+}
+
+/**
+ * Decimate a heat-map grid to **one cell per pixel column per row**, each the
+ * **mean** of the source cells that fall in it ([PND-HEATMAP]).
+ *
+ * **Why the mean, and why a heat map can decimate where a coloured bar cannot.**
+ * {@link decimateBars} deliberately gives up when `binFills` is set: its
+ * reduction is a *geometric* union (`[min, max]` per column), and one rect
+ * spanning many differently-coloured bars has no honest colour. A heat map is
+ * not in that bind, because its reduction is not geometric. Cells do not form a
+ * silhouette — they **composite**: each one covers its own patch of the column,
+ * so what the eye receives from a column holding N cells is their area-weighted
+ * average. Taking the mean of the *values* and letting the existing ramp colour
+ * it is therefore not a statistical choice imposed on the reader; it is what the
+ * full-resolution draw already resolves to at this size. Banding the mean also
+ * keeps the result **inside the ramp**, so it stays a colour the legend defines
+ * (averaging the colours instead would invent off-ramp shades, and would need
+ * linear-light care to avoid the usual downsampling darkening).
+ *
+ * What this **replaces** is worse than it: undecimated, sub-pixel cells are
+ * widened to `minWidth` about their midpoints, so they overlap and later draws
+ * overpaint earlier ones. The column already showed one cell out of N — chosen
+ * by loop order. The mean is both cheaper and more honest than that.
+ *
+ * **What it loses:** a lone extreme cell among N averages away, exactly as it
+ * would in any image downsample. A reader hunting rare spikes should bin the
+ * *series* coarsely with `aggregate` and a reducer that says so (`max`), which
+ * is the tool that makes the claim explicit and is unaffected by this.
+ *
+ * Gates on the **visible** cell columns (`visibleCount`), like the bar path.
+ * Returns `null` when decimation doesn't apply — below the density threshold, a
+ * domainless or non-invertible scale, or no canvas width — and the caller then
+ * draws every visible cell. The result carries **no `marks`**: a pixel column
+ * aggregates many source bins and so has no stable per-bin identity, which is
+ * also why the caller suppresses the live-cell outline while decimated and
+ * keeps hit-testing against the source grid ({@link decimateBars} does the same).
+ */
+export function decimateHeat(
+  ss: StackedBarSeries,
+  xScale: Scale,
+  ctx: CanvasRenderingContext2D,
+  k = 2,
+  vStart = 0,
+  vEnd = ss.length,
+): StackedBarSeries | null {
+  const visibleCount = vEnd - vStart;
+  if (!shouldDecimateCount(visibleCount, ctx, k)) return null;
+  const dom = scaleDomain(xScale);
+  if (dom === null || dom[1] <= dom[0]) return null;
+  const invert = scaleInvert(xScale);
+  const plotWidthCss = scaleRangeWidth(xScale);
+  if (invert === null || plotWidthCss === null) return null;
+  const W = deviceBucketCount(ctx);
+  if (W <= 0) return null;
+  const edges = pixelEdges(invert, plotWidthCss, W);
+
+  const G = ss.groups.length;
+  const sum = new Float64Array(W * G);
+  const count = new Float64Array(W * G);
+
+  // `ss.begin` is ascending and so are `edges`, so the column advances
+  // monotonically — one O(V + W) sweep rather than a search per bin.
+  let col = 0;
+  for (let b = vStart; b < vEnd; b += 1) {
+    const key = ss.begin[b]!;
+    while (col < W - 1 && key >= edges[col + 1]!) col += 1;
+    const src = b * G;
+    const dst = col * G;
+    for (let g = 0; g < G; g += 1) {
+      const v = ss.values[src + g]!;
+      // A hole contributes nothing rather than dragging the mean to zero; a
+      // column of nothing but holes stays a hole.
+      if (!Number.isFinite(v)) continue;
+      sum[dst + g]! += v;
+      count[dst + g]! += 1;
+    }
+  }
+
+  const begin = new Float64Array(W);
+  const end = new Float64Array(W);
+  const values = new Float64Array(W * G);
+  for (let c = 0; c < W; c += 1) {
+    begin[c] = edges[c]!;
+    end[c] = edges[c + 1]!;
+    const dst = c * G;
+    for (let g = 0; g < G; g += 1) {
+      const n = count[dst + g]!;
+      values[dst + g] = n > 0 ? sum[dst + g]! / n : NaN;
+    }
+  }
+  return { begin, end, values, groups: ss.groups, length: W };
 }
 
 /**

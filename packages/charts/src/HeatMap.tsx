@@ -2,6 +2,7 @@ import { useContext, useEffect, useMemo } from 'react';
 import { ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import { stacksFromColumns } from './data.js';
+import type { DecimateOption } from './decimate.js';
 import {
   bandedColor,
   drawHeat,
@@ -70,6 +71,27 @@ export interface HeatMapProps<
   axis?: string;
   /** Px inset around each cell. **Omitted ⇒ `0`**, tiling flush. */
   gap?: number;
+  /**
+   * Viewport decimation — **on by default**, and a perf knob rather than a
+   * rendering-style one.
+   *
+   * Once the visible cells are denser than ~2 per device pixel they overlap and
+   * overpaint each other, so what you see is already one cell per column picked
+   * by draw order. Decimation replaces that with the **mean** per pixel column
+   * — what the overdrawn picture resolves to at that size — from `O(W·G)` rects
+   * instead of `O(V·G)`. A 20,000-bin grid over an 800px plot goes from ~48ms
+   * to a fraction of it.
+   *
+   * `{ threshold }` moves the cells-per-pixel gate (default `2`). `false` draws
+   * every visible cell — reach for it if you are screenshotting at a device
+   * pixel ratio the gate can't see, not to "keep the data honest": undecimated
+   * at this density is the less honest picture.
+   *
+   * While decimated, per-cell selection and hover outlines are suppressed (a
+   * sub-pixel ring isn't visible anyway) and interaction still reads the source
+   * grid.
+   */
+  decimate?: DecimateOption;
   /** Stable identity — **gates selection + hover**, as every layer's does. */
   id?: string;
   /** @internal Declaration position, injected by `Layers`. Do not set. */
@@ -121,6 +143,7 @@ export function HeatMap<
   as: semantic,
   axis,
   gap = 0,
+  decimate = true,
   id,
   index = 0,
 }: HeatMapProps<S, VS>) {
@@ -174,10 +197,12 @@ export function HeatMap<
     [domainKey, ss],
   );
   const G = ss.groups.length;
-  const colorAt = useMemo(
-    () => (b: number, g: number) =>
-      bandedColor(ss.values[b * G + g]!, colors, lo, hi),
-    [ss, G, colorsKey, lo, hi],
+  // Colour is a function of the **value**, which is the layer's whole model —
+  // so the closure takes one. It also lets a decimated pixel column, which has
+  // no source `(b, g)`, be coloured by the same ramp.
+  const colorOf = useMemo(
+    () => (value: number) => bandedColor(value, colors, lo, hi),
+    [colorsKey, lo, hi],
   );
 
   const selected = container.selected;
@@ -239,7 +264,7 @@ export function HeatMap<
                 // unit-slot axis and land outside the plot entirely.
                 value: g + 0.5,
                 readout: v,
-                color: colorAt(b, g) ?? style.highlight,
+                color: colorOf(v) ?? style.highlight,
                 label: ss.groups[g]!,
               });
             }
@@ -267,7 +292,7 @@ export function HeatMap<
                   id,
                   key: begin,
                   value,
-                  color: colorAt(b, g) ?? style.highlight,
+                  color: colorOf(value) ?? style.highlight,
                   label: name,
                   ...(mark !== undefined ? { mark } : {}),
                 };
@@ -280,10 +305,11 @@ export function HeatMap<
             xScale,
             yScale,
             style,
-            colorAt,
+            colorOf,
             id,
             selection,
             hover,
+            decimate,
           ),
       },
       axisId: axis,
@@ -293,7 +319,8 @@ export function HeatMap<
       ss,
       G,
       style,
-      colorAt,
+      colorOf,
+      decimate,
       semantic,
       series,
       id,

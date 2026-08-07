@@ -158,10 +158,14 @@ describe('drawHeat', () => {
       identity,
       identity,
       style,
-      (b, g) => bandedColor(ss.values[b * ss.groups.length + g]!, RAMP, 0, 4),
+      (value: number) => bandedColor(value, RAMP, 0, 4),
       'heat',
       selection,
       hovered,
+      // These fixtures are two bins wide against a headless ctx with no canvas
+      // width, so decimation never engages — but pin it off so a future change
+      // to the gate cannot quietly rewrite what these assertions are reading.
+      false,
     );
     return calls;
   };

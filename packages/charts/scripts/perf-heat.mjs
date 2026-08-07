@@ -134,9 +134,8 @@ function makeGrid(bins, rows, gapEvery = 0) {
 
 /** The layer's own colour closure, banded across the ramp — the per-cell work
  *  `<HeatMap>` actually hands `drawHeat`, not a precomputed lookup. */
-function colorFor(ss, lo, hi) {
-  const G = ss.groups.length;
-  return (b, g) => bandedColor(ss.values[b * G + g], RAMP, lo, hi);
+function colorFor(lo, hi) {
+  return (value) => bandedColor(value, RAMP, lo, hi);
 }
 
 function sizedCtx(widthPx) {
@@ -174,10 +173,18 @@ const ctx = sizedCtx(PLOT_W * 2);
 const y = (rows) => scale(0, rows, PLOT_H, 0);
 
 const results = [];
-const run = (label, ss, xScale, yScale, sel = null, hov = null) => {
-  const colorAt = colorFor(ss, 0, 4);
+const run = (
+  label,
+  ss,
+  xScale,
+  yScale,
+  sel = null,
+  hov = null,
+  decimate = true,
+) => {
+  const colorOf = colorFor(0, 4);
   const r = benchmark(label, () =>
-    drawHeat(ctx, ss, xScale, yScale, style, colorAt, 'h', sel, hov),
+    drawHeat(ctx, ss, xScale, yScale, style, colorOf, 'h', sel, hov, decimate),
   );
   const cells = ss.length * ss.groups.length;
   results.push({

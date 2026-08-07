@@ -96,6 +96,23 @@ include new features and type-level changes; patch bumps are strictly additive.
   twice that) rather than the bar layers' alpha pop, which on a colour scale is
   both usually invisible and misleading.
 
+  **Viewport decimation, on by default.** Once the visible cells are denser than
+  ~2 per device pixel they overlap and overpaint each other, so the picture is
+  already one cell per column picked by draw order. `<HeatMap>` replaces that
+  with the **mean** per pixel column — what the overdrawn version resolves to at
+  that size — from `O(W·G)` rects instead of `O(V·G)`. A 20,000-bin × 45-row
+  grid over an 800px plot goes from **48ms to 5.7ms**. Below the gate nothing
+  changes at all. `decimate={false}` draws every visible cell; `{ threshold }`
+  moves the gate. While decimated, per-cell outlines are suppressed and
+  interaction still reads the source grid.
+
+  Note this is a move a per-bar-coloured `<BarChart>` deliberately does _not_
+  make: its reduction is a geometric `[min, max]` envelope, which has no honest
+  colour when it spans differently-coloured bars. A heat map's cells composite
+  rather than forming a silhouette, so reducing the **value** and letting the
+  existing ramp colour it is a resampling answer, not a statistic imposed on the
+  reader.
+
   Not built: a grouped two-level x axis, cell value labels, and 2-D region
   selection / pan-zoom.
 
