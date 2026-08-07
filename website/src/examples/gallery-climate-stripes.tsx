@@ -15,9 +15,6 @@ import readout from './lib/tracker-readout.module.css';
 
 const YEAR_MS = 365.2425 * 86_400_000;
 
-/** Hoisted so the axis doesn't re-register on every animation frame. */
-const NO_TICKS: ReadonlyArray<{ at: number; label: string }> = [];
-
 /** Climate stripes: 146 years of global temperature anomaly, one bar per year,
  *  every cell the same height. The **colour is the value**, which is what a
  *  `<HeatMap>` is for: one cell per year, `anomaly` encoded as colour and
@@ -106,11 +103,10 @@ export default function GalleryClimateStripes({
         }}
       >
         <ChartRow height={200}>
-          {/* One row, so the layer's own `[0, 1]` extent is the whole plot —
-              no `min`/`max` needed any more. Explicit empty `ticks` still beat
-              the row label the layer offers, and zero width takes the axis off
-              the canvas: a single unnamed row needs no scale drawn. */}
-          <YAxis id="stripe" width={0} ticks={NO_TICKS} />
+          {/* One row, so the layer's own `[0, 1]` extent is the whole plot.
+              `hide` takes the axis off the canvas entirely ([PND-AXISHIDE]):
+              a single unnamed row has no scale worth drawing. */}
+          <YAxis id="stripe" hide />
           <Layers>
             <HeatMap
               series={series}

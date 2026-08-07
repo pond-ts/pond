@@ -22,9 +22,11 @@ import GalleryClimateStripes from '@site/src/examples/gallery-climate-stripes';
 
 Point at a stripe and the strip above the chart names its year and its anomaly.
 That readout **is this chart's legend** — with the value encoded as colour and
-no y-axis to read, it's the only way to get a number back out. The in-chart
-cursor can't do it; [Build it](#build-it) explains why, and it's the most
-transferable thing on this page.
+no y-axis to read, it is where a number comes back out. It used to be the
+_only_ place one could: the bars carried no value at all, so the anomaly had to
+be fetched from the fixture by year. `<HeatMap>` changed that — the cell
+reports itself — and [Build it](#build-it) explains why the strip stays beside
+the plot anyway, which is the most transferable thing on this page.
 
 What the shape says is one-way traffic across the ramp. The darkest of the
 eight steps has not appeared since **1933**; the darkest two, not since
