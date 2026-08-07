@@ -2103,16 +2103,56 @@ building the individual fixes.
   horizontal category charts in 0.55.0 ([PND-HCAT]), whose release notes describe
   it in almost these words.
 
-- **[PND-THEMEBASE]** (medium, confirmed on the first themed chart) — the natural
-  way to build a theme is `{ ...defaultTheme, bar: …, axis: … }`, and it silently
-  keeps pond's default colours in every unspread slot: `#2563eb` across
+- **[PND-THEMEBASE]** — **DECLINED 2026-08-07 (owner).** Kept here with its
+  reasoning so it isn't re-litigated from the report's framing.
+
+  _The report's case:_ `{ ...defaultTheme, bar: …, axis: … }` silently keeps
+  pond's default colours in every unspread slot — `#2563eb` across
   `line`/`band`/`area`/`scatter`/`box`, the teal annotation register, a white
   `legend` card and chip. On a dark-panel consumer that is ~20 unreviewed hexes
-  sitting in the object whose whole purpose is to be the single colour channel,
-  and nothing surfaces them until someone adds a `<LineChart>` and gets brand
-  blue. Ask: a structure-only `blankTheme` to build from, or a dev-mode warning
-  naming the slots still carrying library defaults. Note this interacts with
-  [PND-BANDBAR2], which adds a new `theme.bar.bands` slot to the blast radius.
+  in the object whose whole purpose is to be the single colour channel, and
+  nothing surfaces them until someone adds a `<LineChart>` and gets brand blue.
+  Asked for a structure-only `blankTheme`, or a dev-mode warning naming the
+  slots still carrying defaults.
+
+  _Why declined._ **`blankTheme` is incoherent as specified**: a `<LineChart>`
+  needs a stroke, so any base ships _some_ palette — "neutral grey" is just a
+  different one, not an absence. And **the warning would fire on correct
+  usage**: spread-and-override is the designed workflow, not a mistake. Take
+  the defaults, change the one or two things that are yours, done — most
+  consumers like what they see and want their brand primary on the line and
+  nothing else. Scoping the warning to _drawn_ slots narrows the noise but
+  doesn't fix the category error: spread the default, override `bar`, add a
+  `<BandChart>` later, and you'd be warned for using the API as intended.
+
+  The population this actually bites — a design system that must own every
+  colour — is narrow, and is also the population most likely to already own a
+  palette lint. This reporter wrote one, and said themselves it was "worth
+  having regardless". If you need a full theme top to bottom, owning that is
+  the client's job.
+
+  _Considered and also declined:_ shipping the reporter's lint as a helper
+  (`inheritedSlots(theme, base)`). Cheap and harmless, but they already have
+  it, and a ~20-line test isn't a library's problem to solve.
+
+  _What shipped instead:_ one sentence on `defaultTheme`'s docstring saying
+  spreading inherits unoverridden slots and pointing a design-system consumer
+  at their own test. That closes the honest half of the complaint ("nothing
+  surfaces it") at the weight it deserves.
+
+  _One argument for the item that turned out to be weak_, recorded because it
+  was made in this repo and shouldn't be reused: that [PND-BANDBAR2] widened
+  the blast radius by adding `theme.bar.bands`. It doesn't, materially — those
+  three hexes only render if the caller passes `thresholds`, and a caller who
+  opted into banding sees the colours immediately. That is not the
+  `line.default` failure mode, which appears in a layer you weren't thinking
+  about.
+
+  **Consequence for the dev-warning sweep:** THEMEBASE is out of its scope. The
+  sweep is about the genuine silent-failure class — a negative dropped from a
+  stack, emphasis slots the active draw path can't read, `bins` foreclosing the
+  duration tick ladder — where the library picks a branch the caller cannot
+  see. A theme slot the caller declined to set is not that; they made a choice.
 
 - **[PND-BINSWATCH]** (medium, confirmed — the legend rendered near-white squares
   for a yellow and a red series) — `useChartLegend` serves each row a resolved

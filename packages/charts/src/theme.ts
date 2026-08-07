@@ -429,6 +429,14 @@ export interface BarStyle {
  * renders. `primary` / `secondary` / `context` are a built-in generic role
  * vocabulary; an unrecognised (e.g. domain-specific) identifier falls back to
  * `default`.
+ *
+ * **Spreading this inherits every slot you don't override** — including colours
+ * for layers you haven't added yet, so a `{ ...defaultTheme, bar: … }` theme
+ * paints this blue the first time someone drops in a `<LineChart>`. That is the
+ * intended workflow, not a trap: take the defaults, change the one or two things
+ * that are yours. A design system that must own *every* colour should assert on
+ * that in its own test rather than catch it in review — walk the resolved theme
+ * for values outside your palette ([PND-THEMEBASE]).
  */
 export const defaultTheme: ChartTheme = {
   line: {
