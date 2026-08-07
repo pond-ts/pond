@@ -799,22 +799,43 @@ export function decimateBars(
  */
 export function decimateHeat(
   ss: StackedBarSeries,
-  xScale: Scale,
+  binScale: Scale,
   ctx: CanvasRenderingContext2D,
   k = 2,
   vStart = 0,
   vEnd = ss.length,
+  /**
+   * The bin axis' extent, when it is **not** the x axis. A horizontal heat map
+   * puts its bins on y, where the shared helpers do not apply: `scaleRangeWidth`
+   * reads `range()[last]`, which is `0` for the usual inverted y range, and
+   * `deviceBucketCount` reads the canvas' *width*. Omitted ⇒ the x-axis
+   * defaults, which is every other caller.
+   */
+  axis?: { deviceCount: number; spanCss: number },
 ): StackedBarSeries | null {
   const visibleCount = vEnd - vStart;
-  if (!shouldDecimateCount(visibleCount, ctx, k)) return null;
-  const dom = scaleDomain(xScale);
+  if (
+    axis === undefined
+      ? !shouldDecimateCount(visibleCount, ctx, k)
+      : visibleCount < k * axis.deviceCount
+  )
+    return null;
+  const dom = scaleDomain(binScale);
   if (dom === null || dom[1] <= dom[0]) return null;
-  const invert = scaleInvert(xScale);
-  const plotWidthCss = scaleRangeWidth(xScale);
-  if (invert === null || plotWidthCss === null) return null;
-  const W = deviceBucketCount(ctx);
+  const invert = scaleInvert(binScale);
+  const plotWidthCss = axis?.spanCss ?? scaleRangeWidth(binScale);
+  if (invert === null || plotWidthCss === null || plotWidthCss <= 0)
+    return null;
+  const W = axis?.deviceCount ?? deviceBucketCount(ctx);
   if (W <= 0) return null;
-  const edges = pixelEdges(invert, plotWidthCss, W);
+  const raw = pixelEdges(invert, plotWidthCss, W);
+  // `pixelEdges` walks pixels ascending, so on an **inverted** axis — the usual
+  // y range `[h, 0]`, which a horizontal heat map's bin axis uses — the key-space
+  // edges come back descending. The sweep below and the emitted `begin`/`end`
+  // both want ascending key order, and the draw maps back through the scale
+  // anyway, so normalize here rather than special-casing two directions.
+  const edges =
+    raw[0]! <= raw[W]! ? raw : (raw.slice().reverse() as Float64Array);
 
   const G = ss.groups.length;
   const sum = new Float64Array(W * G);

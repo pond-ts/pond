@@ -333,3 +333,80 @@ describe('heatAt', () => {
     ]);
   });
 });
+
+describe('orientation="horizontal" transposes and nothing else', () => {
+  // A heat map has two POSITION axes and no value axis, which is what makes its
+  // transpose a relabelling rather than a reworking: the same bin span and the
+  // same unit slots, swapped over which one runs across the canvas.
+  const twoBinsThreeRows = () =>
+    grid([0, 10], [10, 20], ['lo', 'mid', 'hi'], [0, 2, 4, 1, 3, 4]);
+
+  const rectsOf = (orientation: 'vertical' | 'horizontal') => {
+    const { ctx, calls } = recordingContext();
+    drawHeat(
+      ctx,
+      twoBinsThreeRows(),
+      identity,
+      identity,
+      style,
+      (v: number) => bandedColor(v, RAMP, 0, 4),
+      'heat',
+      null,
+      null,
+      false,
+      orientation,
+    );
+    return calls
+      .filter((c) => c.name === 'fillRect')
+      .map((c) => c.args as unknown as [number, number, number, number]);
+  };
+
+  it('swaps each cell rect across the diagonal', () => {
+    const v = rectsOf('vertical');
+    const h = rectsOf('horizontal');
+    expect(h).toHaveLength(v.length);
+    for (let i = 0; i < v.length; i += 1) {
+      const [x, y, w, hh] = v[i]!;
+      expect(h[i]).toEqual([y, x, hh, w]);
+    }
+  });
+
+  it('draws exactly the same cells, in the same order', () => {
+    // The transpose is geometry only — the value grid is not re-walked, so a
+    // gap stays a gap and the fills are identical.
+    const fills = (orientation: 'vertical' | 'horizontal') => {
+      const { ctx, calls } = recordingContext();
+      drawHeat(
+        ctx,
+        twoBinsThreeRows(),
+        identity,
+        identity,
+        style,
+        (v: number) => bandedColor(v, RAMP, 0, 4),
+        'heat',
+        null,
+        null,
+        false,
+        orientation,
+      );
+      return calls
+        .filter((c) => c.type === 'set' && c.name === 'fillStyle')
+        .map((c) => c.args[0]);
+    };
+    expect(fills('horizontal')).toEqual(fills('vertical'));
+  });
+
+  it('hit-tests the transposed geometry', () => {
+    const ss = twoBinsThreeRows();
+    // Vertical: x is the bin (5 -> bin 0), y is the row slot (2.5 -> 'hi').
+    expect(heatAt(ss, 5, 2.5, identity, identity, 0, 1)?.[3]).toBe('hi');
+    // Horizontal: the same cell is found with the coordinates swapped.
+    expect(
+      heatAt(ss, 2.5, 5, identity, identity, 0, 1, 'horizontal')?.[3],
+    ).toBe('hi');
+    // …and the un-swapped point now misses, since 5 is past three unit slots.
+    expect(
+      heatAt(ss, 5, 2.5, identity, identity, 0, 1, 'horizontal'),
+    ).toBeNull();
+  });
+});

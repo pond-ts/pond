@@ -113,6 +113,19 @@ include new features and type-level changes; patch bumps are strictly additive.
   existing ramp colour it is a resampling answer, not a statistic imposed on the
   reader.
 
+  **`orientation="horizontal"`** transposes the grid: bins run down **y** and
+  the columns become the categories across **x**. Cheaper than the same move on
+  `<BarChart>`, because a heat map has two _position_ axes and no value axis —
+  nothing changes which scale it is measured against, only which one is
+  horizontal on the canvas.
+
+  This is the orientation gene-expression heat maps are drawn in, and it is what
+  makes the layer's y-must-be-columns constraint work rather than fight. Put the
+  long dimension on the **key** axis — one row per gene — and pond's ordinary
+  binning buckets it: `series.byColumn('rank', { width: 20 }, avg)` is "10,000
+  sorted genes into 500 buckets of 20", and `stacksFromBins` hands the result
+  straight to the layer. The few samples become the categories across the top.
+
   Not built: a grouped two-level x axis, cell value labels, and 2-D region
   selection / pan-zoom.
 

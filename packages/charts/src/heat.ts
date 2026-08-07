@@ -1,7 +1,7 @@
 import { barSpanPx } from './range.js';
 import type { StackedBarSeries } from './data.js';
 import type { Scale } from './line.js';
-import type { StackMark } from './bars.js';
+import type { Orientation, StackMark } from './bars.js';
 import { visibleSpanRange } from './culling.js';
 import {
   decimateHeat,
@@ -136,23 +136,43 @@ export function cellRect(
   yScale: Scale,
   gapPx: number,
   minWidthPx: number,
+  orientation: Orientation = 'vertical',
 ): [x0: number, x1: number, yTop: number, yBottom: number] | null {
   const G = ss.groups.length;
   if (!Number.isFinite(ss.values[b * G + g]!)) return null;
-  const [x0, x1] = barSpanPx(
+  const vertical = orientation === 'vertical';
+  // Two position axes, neither of them a value axis — which is what makes a heat
+  // map's transpose simpler than a bar's. `'horizontal'` swaps which scale
+  // carries the bins and which carries the group slots; nothing else moves.
+  const binScale = vertical ? xScale : yScale;
+  const groupScale = vertical ? yScale : xScale;
+  const [spanLo, spanHi] = barSpanPx(
     ss.begin[b]!,
     ss.end[b]!,
-    xScale,
+    binScale,
     gapPx,
     minWidthPx,
   );
-  const yA = yScale(g);
-  const yB = yScale(g + 1);
-  const top = Math.min(yA, yB);
-  const bottom = Math.max(yA, yB);
-  // Inset the row band by the same gap, but never past collapsing it.
-  const inset = Math.min(gapPx / 2, Math.max(0, (bottom - top) / 2 - 0.5));
-  return [x0, x1, top + inset, bottom - inset];
+  const [bandLo, bandHi] = slotBandPx(groupScale, g, g + 1, gapPx);
+  return vertical
+    ? [spanLo, spanHi, bandLo, bandHi]
+    : [bandLo, bandHi, spanLo, spanHi];
+}
+
+/** The pixel band of unit slots `[a, b)` on the group axis, ascending, inset by
+ *  the gap but never past collapsing. Shared by the draw loop and `cellRect`. */
+function slotBandPx(
+  groupScale: Scale,
+  a: number,
+  b: number,
+  gapPx: number,
+): [lo: number, hi: number] {
+  const p0 = groupScale(a);
+  const p1 = groupScale(b);
+  const lo = Math.min(p0, p1);
+  const hi = Math.max(p0, p1);
+  const inset = Math.min(gapPx / 2, Math.max(0, (hi - lo) / 2 - 0.5));
+  return [lo + inset, hi - inset];
 }
 
 /** Does `m` identify the cell at (`b`, `g`)? The stacked rule, unchanged: the
@@ -219,15 +239,25 @@ export function drawHeat(
   selection: StackMark | null,
   hovered: StackMark | null,
   decimate: DecimateOption = true,
+  orientation: Orientation = 'vertical',
 ): void {
+  const vertical = orientation === 'vertical';
+  const binScale = vertical ? xScale : yScale;
+  const groupScale = vertical ? yScale : xScale;
   ctx.save();
   ctx.globalAlpha = style.opacity;
   const [srcStart, srcEnd] = visibleSpanRange(
     ss.begin,
     ss.end,
     ss.length,
-    xScale,
+    binScale,
   );
+
+  // Both decimators work along whichever axis they reduce, so each needs that
+  // axis' extent in DEVICE pixels. The ratio is isotropic, so it is recovered
+  // once from x and applied to both.
+  const dpr = devicePixelRatioOf(ctx, xScale);
+  const spanCss = (s: Scale, a: number, b: number) => Math.abs(s(b) - s(a));
 
   // Once the visible cells are denser than ~2 per device pixel they overlap and
   // overpaint each other, so the picture is already a reduction — just a bad
@@ -240,11 +270,21 @@ export function drawHeat(
       ? null
       : decimateHeat(
           ss,
-          xScale,
+          binScale,
           ctx,
           typeof decimate === 'object' ? (decimate.threshold ?? 2) : 2,
           srcStart,
           srcEnd,
+          vertical
+            ? undefined
+            : (() => {
+                const dom = [ss.begin[0] ?? 0, ss.end[ss.length - 1] ?? 0];
+                const css = spanCss(binScale, dom[0]!, dom[1]!);
+                return {
+                  deviceCount: Math.max(1, Math.round(css * dpr)),
+                  spanCss: css,
+                };
+              })(),
         );
   const grid = thinned ?? ss;
   const srcRows = grid.groups.length;
@@ -261,17 +301,13 @@ export function drawHeat(
   const rowsThinned =
     decimate === false
       ? null
-      : (() => {
-          const dpr = devicePixelRatioOf(ctx, xScale);
-          const heightCss = Math.abs(yScale(srcRows) - yScale(0));
-          return decimateHeatRows(
-            thinned ? grid.values : ss.values,
-            thinned ? grid.length : ss.length,
-            srcRows,
-            Math.max(1, Math.floor(heightCss * dpr)),
-            k,
-          );
-        })();
+      : decimateHeatRows(
+          thinned ? grid.values : ss.values,
+          thinned ? grid.length : ss.length,
+          srcRows,
+          Math.max(1, Math.floor(spanCss(groupScale, 0, srcRows) * dpr)),
+          k,
+        );
 
   const values = rowsThinned ? rowsThinned.values : grid.values;
   const G = rowsThinned ? rowsThinned.rows : srcRows;
@@ -293,19 +329,17 @@ export function drawHeat(
   // the loop allocates nothing per cell. (`cellRect` still does it per call: it
   // is the hit-test's entry point, where there is exactly one cell and nothing
   // to amortize over. The two paths diverge on purpose — see perf-heat.mjs.)
-  const rowTop = new Float64Array(G);
-  const rowBottom = new Float64Array(G);
+  const bandLo = new Float64Array(G);
+  const bandHi = new Float64Array(G);
   for (let g = 0; g < G; g += 1) {
-    const yA = yScale(g * stride);
-    const yB = yScale(Math.min((g + 1) * stride, srcRows));
-    const top = Math.min(yA, yB);
-    const bottom = Math.max(yA, yB);
-    const inset = Math.min(
-      style.gap / 2,
-      Math.max(0, (bottom - top) / 2 - 0.5),
+    const [lo, hi] = slotBandPx(
+      groupScale,
+      g * stride,
+      Math.min((g + 1) * stride, srcRows),
+      style.gap,
     );
-    rowTop[g] = top + inset;
-    rowBottom[g] = bottom - inset;
+    bandLo[g] = lo;
+    bandHi[g] = hi;
   }
 
   let lastFill: string | undefined;
@@ -314,10 +348,10 @@ export function drawHeat(
     // The x span depends only on the BIN, so it is hoisted out of the row loop:
     // a 45-row grid was paying two scale calls per cell for one answer per
     // column.
-    const [x0, x1] = barSpanPx(
+    const [spanLo, spanHi] = barSpanPx(
       grid.begin[b]!,
       grid.end[b]!,
-      xScale,
+      binScale,
       style.gap,
       style.minWidth,
     );
@@ -330,8 +364,12 @@ export function drawHeat(
       if (!Number.isFinite(value)) continue;
       const fill = colorOf(value);
       if (fill === undefined) continue;
-      const yTop = rowTop[g]!;
-      const yBottom = rowBottom[g]!;
+      // The transpose, and the only place orientation reaches the geometry:
+      // which of the two spans is horizontal on the canvas.
+      const x0 = vertical ? spanLo : bandLo[g]!;
+      const x1 = vertical ? spanHi : bandHi[g]!;
+      const yTop = vertical ? bandLo[g]! : spanLo;
+      const yBottom = vertical ? bandHi[g]! : spanHi;
 
       const selected = matchesCell(sel, seriesId, ss, b, g);
       const live = selected || matchesCell(hov, seriesId, ss, b, g);
@@ -378,13 +416,23 @@ export function heatAt(
   yScale: Scale,
   gapPx: number,
   minWidthPx: number,
+  orientation: Orientation = 'vertical',
 ):
   | [bin: number, row: number, begin: number, name: string, value: number]
   | null {
   const G = ss.groups.length;
   for (let b = 0; b < ss.length; b += 1) {
     for (let g = 0; g < G; g += 1) {
-      const rect = cellRect(ss, b, g, xScale, yScale, gapPx, minWidthPx);
+      const rect = cellRect(
+        ss,
+        b,
+        g,
+        xScale,
+        yScale,
+        gapPx,
+        minWidthPx,
+        orientation,
+      );
       if (rect === null) continue;
       const [x0, x1, yTop, yBottom] = rect;
       if (px >= x0 && px <= x1 && py >= yTop && py <= yBottom) {

@@ -393,6 +393,33 @@ last:
   is unaffected. Follows the bar precedent on interaction: per-cell outlines
   suppressed while decimated, hit-testing still on the source grid.
 
+- **`orientation="horizontal"`, and the mapping mistake that found it.** A real
+  10,000-gene x 8-sample matrix went through the layer badly at first because
+  **I mapped genes onto the column axis**, which meant a 10,000-column series,
+  a 21ms construction, 80,000 cells, and a "y-binning has no pond expression"
+  friction note that was **wrong**. pjm caught it: genes are the _key_ axis —
+  one record per gene — so it is 10,000 rows x 8 columns, and bucketing them is
+  `byColumn('rank', { width: 20 }, avg)` → `stacksFromBins`, a path the library
+  already had. Measured end to end on the real file: 500 buckets x 8 samples =
+  **4,000 cells**, and no decimation fires at all.
+
+  **The lesson generalises past this dataset.** When a heat map feels like it
+  needs thousands of columns, the data is almost certainly mapped the wrong way
+  round: the many-dimension belongs on the key axis where pond's binning lives,
+  and the few-dimension in the columns. The layer's constraint is a signpost,
+  not an obstacle.
+
+  What that leaves is a real gap, which this shipped: the pond-native mapping
+  puts the long axis on **x**, while the convention for expression data (and
+  Codex's reference rendering) runs genes down **y**. `<BarChart>` already had
+  `orientation`; the heat map now does too. The transpose is genuinely cheap
+  here — two _position_ axes and no value axis, so `cellRect` just swaps which
+  scale carries bins and which carries slots, and `heatAt` inherits it for free.
+  On the layer contract, `binCategories` (y) becomes `xCategories` (x), which
+  puts the container in its `'category'` kind exactly as a categorical
+  `<BarChart>` does, and `sampleAt` returns nothing because the x-scrub tracker
+  only means something when x is the bin axis.
+
 **Friction found, not fixed:**
 
 - **`Sequence.calendar` has no `'year'` unit** — it stops at `month`
@@ -1665,11 +1692,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                iteration to discover, and the docs still don't mention it. **The one-line
-                                                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                row's data cursor is suppressed."
+                                                                    _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                    is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                    iteration to discover, and the docs still don't mention it. **The one-line
+                                                                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                    row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires

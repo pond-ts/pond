@@ -3,6 +3,7 @@ import { ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import { stacksFromColumns } from './data.js';
 import type { DecimateOption } from './decimate.js';
+import type { Orientation } from './bars.js';
 import {
   bandedColor,
   drawHeat,
@@ -65,6 +66,23 @@ export interface HeatMapProps<
    * as it moves — a colour scale has no tick labels to reveal that it moved.
    */
   domain?: readonly [number, number];
+  /**
+   * Which axis carries the **bins**. `'vertical'` (the default) puts them on
+   * **x** with the columns as rows down y; `'horizontal'` transposes — bins run
+   * down **y** and the columns become the categories along x.
+   *
+   * The transpose is cheaper here than for `<BarChart>`, because a heat map has
+   * two *position* axes and no value axis: nothing has to change which scale it
+   * is measured against, only which one is horizontal on the canvas.
+   *
+   * Reach for `'horizontal'` when the binned dimension is the long one and the
+   * columns are few — a gene-expression matrix (thousands of gene buckets, a
+   * handful of samples) is the canonical case, and it is the orientation that
+   * literature draws. Note that the bins still come from the **key** axis, so
+   * the genes must be the series' rows and the samples its columns; the
+   * ordinary binning operators (`byColumn`, `aggregate`) then bucket them.
+   */
+  orientation?: Orientation;
   /** Semantic identifier — picks geometry defaults off `theme.bar[as]`. */
   as?: string;
   /** Which `<YAxis>` (by `id`) this layer scales against. */
@@ -140,6 +158,7 @@ export function HeatMap<
   columns,
   colors,
   domain,
+  orientation = 'vertical',
   as: semantic,
   axis,
   gap = 0,
@@ -197,6 +216,7 @@ export function HeatMap<
     [domainKey, ss],
   );
   const G = ss.groups.length;
+  const vertical = orientation === 'vertical';
   // Colour is a function of the **value**, which is the layer's whole model —
   // so the closure takes one. It also lets a decimated pixel column, which has
   // no source `(b, g)`, be coloured by the same ramp.
@@ -239,13 +259,38 @@ export function HeatMap<
       layer: {
         as: semantic,
         // Inferred, exactly as BarChart does it — no axis-kind prop.
-        xKind: series instanceof ValueSeries ? 'value' : 'time',
+        // Horizontal moves the bins to y, so x becomes the categories the
+        // columns name — which is the container's `'category'` kind, exactly as
+        // a categorical `<BarChart>` reports it.
+        xKind: vertical
+          ? series instanceof ValueSeries
+            ? 'value'
+            : 'time'
+          : 'category',
         xExtent: () =>
-          ss.length === 0 ? null : [ss.begin[0]!, ss.end[ss.length - 1]!],
-        // Unit slots, one per row; `binCategories` labels each at its centre.
-        yExtent: () => [0, G],
-        binCategories: () => ss.groups,
+          vertical
+            ? ss.length === 0
+              ? null
+              : [ss.begin[0]!, ss.end[ss.length - 1]!]
+            : [0, G],
+        yExtent: () =>
+          vertical
+            ? [0, G]
+            : ss.length === 0
+              ? null
+              : [ss.begin[0]!, ss.end[ss.length - 1]!],
+        // Unit slots, one per column, labelled at each centre — on whichever
+        // axis they landed. `binCategories` is the y-axis channel and
+        // `xCategories` the x-axis one ([PND-HCAT]).
+        ...(vertical
+          ? { binCategories: () => ss.groups }
+          : { xCategories: () => ss.groups }),
+        // The x-scrub tracker samples along x, which is the bin axis only when
+        // vertical. A horizontal grid answers through `onHover` / `onSelect`
+        // instead, which resolve both axes — the same split the 2-D readout
+        // already forced.
         sampleAt: (x) => {
+          if (!vertical) return [];
           // Every row's value at the cursor — the whole column of the grid,
           // which is what an off-chart readout wants from a heat map.
           for (let b = 0; b < ss.length; b += 1) {
@@ -284,6 +329,7 @@ export function HeatMap<
                   yScale,
                   style.gap,
                   style.minWidth,
+                  orientation,
                 );
                 if (hit === null) return null;
                 const [b, g, begin, name, value] = hit;
@@ -310,6 +356,7 @@ export function HeatMap<
             selection,
             hover,
             decimate,
+            orientation,
           ),
       },
       axisId: axis,
@@ -321,6 +368,8 @@ export function HeatMap<
       style,
       colorOf,
       decimate,
+      orientation,
+      vertical,
       semantic,
       series,
       id,

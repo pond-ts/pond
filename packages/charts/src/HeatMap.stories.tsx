@@ -253,3 +253,74 @@ export const ManyRows: Story = {
     );
   },
 };
+
+/**
+ * **`orientation="horizontal"`** — the bins run down **y** and the columns
+ * become the categories across **x**.
+ *
+ * This is the shape gene-expression heat maps are drawn in, and it is the
+ * orientation that makes the constraint work rather than fight: the long
+ * dimension (thousands of gene buckets) is the **key** axis, so pond's ordinary
+ * binning operators — `byColumn`, `aggregate` — bucket it, and the few columns
+ * become the handful of category rows across the top.
+ *
+ * The mock below stands in for that: 400 buckets down y against 8 samples
+ * across x, with a signal that reverses between the first four columns and the
+ * last four so the two blocks read as opposites.
+ */
+export const Horizontal: Story = {
+  render: () => {
+    const SAMPLES = [
+      'Control 1',
+      'Control 2',
+      'Exp 1',
+      'Exp 2',
+      'Exp 3',
+      'Exp 4',
+      'Exp 5',
+      'Exp 6',
+    ];
+    const N = 400;
+    const columns: Record<string, number[]> = {
+      time: Array.from({ length: N }, (_, i) => i),
+    };
+    SAMPLES.forEach((s, si) => {
+      const control = si < 2 ? 1 : -1;
+      columns[s] = Array.from({ length: N }, (_, i) => {
+        // Rank 0 is experimental-high, rank N-1 control-high, plus a little
+        // per-sample noise so the columns are not identical.
+        const shift = 1 - (2 * i) / (N - 1);
+        return -control * shift + Math.sin(i / 7 + si) * 0.18;
+      });
+    });
+    const series = TimeSeries.fromColumns({
+      name: 'expression',
+      schema: [
+        { name: 'time', kind: 'time' },
+        ...SAMPLES.map((s) => ({ name: s, kind: 'number' as const })),
+      ] as const,
+      columns,
+    });
+    // No `range`: x is the CATEGORY axis here, so the container builds its band
+    // scale from the columns the layer reports. The bin axis is y, and its
+    // extent is pinned on the <YAxis> instead.
+    return (
+      <ChartContainer width={440} theme={docsTheme}>
+        <ChartRow height={420}>
+          <YAxis id="rank" label="gene rank" min={0} max={N} />
+          <Layers>
+            <HeatMap
+              series={series}
+              columns={SAMPLES}
+              colors={RAMP}
+              orientation="horizontal"
+              domain={[-1.2, 1.2]}
+              axis="rank"
+              id="expr"
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
