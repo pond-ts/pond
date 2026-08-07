@@ -158,20 +158,49 @@ describe('drawHeat', () => {
       identity,
       identity,
       style,
-      (b, g) => bandedColor(ss.values[b * ss.groups.length + g]!, RAMP, 0, 4),
+      (value: number) => bandedColor(value, RAMP, 0, 4),
       'heat',
       selection,
       hovered,
+      // These fixtures are two bins wide against a headless ctx with no canvas
+      // width, so decimation never engages — but pin it off so a future change
+      // to the gate cannot quietly rewrite what these assertions are reading.
+      false,
     );
     return calls;
   };
 
+  /**
+   * The fill **in effect** at each `fillRect`, by replaying the call stream.
+   *
+   * Not `calls.filter(fillStyle).map(...)`: `drawHeat` sets `fillStyle` only
+   * when it changes, since a real canvas parses the CSS colour on every
+   * assignment and a banded ramp emits long runs of one string. Counting writes
+   * would pin that optimization rather than the guarantee, which is that every
+   * cell is painted in its own band's colour.
+   */
+  const fillsDrawn = (calls: ReturnType<typeof draw>): string[] => {
+    let current: string | undefined;
+    const out: string[] = [];
+    for (const c of calls) {
+      if (c.type === 'set' && c.name === 'fillStyle')
+        current = c.args[0] as string;
+      else if (c.name === 'fillRect' && current !== undefined)
+        out.push(current);
+    }
+    return out;
+  };
+
   it('fills every cell of the grid, banded across the ramp', () => {
-    const fills = draw(two3())
-      .filter((c) => c.type === 'set' && c.name === 'fillStyle')
-      .map((c) => c.args[0]);
     // bin0: 0,2,4 → a,c,d ; bin1: 1,3,4 → b,d,d
-    expect(fills).toEqual(['#a', '#c', '#d', '#b', '#d', '#d']);
+    expect(fillsDrawn(draw(two3()))).toEqual([
+      '#a',
+      '#c',
+      '#d',
+      '#b',
+      '#d',
+      '#d',
+    ]);
   });
 
   it('skips gap cells without disturbing their neighbours', () => {
@@ -183,10 +212,7 @@ describe('drawHeat', () => {
     // The colour is the datum — swapping it would erase the reading.
     const calls = draw(two3(), { id: 'heat', key: 0, label: 'mid' });
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(1);
-    const fills = calls
-      .filter((c) => c.type === 'set' && c.name === 'fillStyle')
-      .map((c) => c.args[0]);
-    expect(fills).toEqual(['#a', '#c', '#d', '#b', '#d', '#d']);
+    expect(fillsDrawn(calls)).toEqual(['#a', '#c', '#d', '#b', '#d', '#d']);
   });
 
   it('outlines the HOVERED cell too, more lightly than a selected one', () => {
@@ -305,5 +331,82 @@ describe('heatAt', () => {
       'v',
       7,
     ]);
+  });
+});
+
+describe('orientation="horizontal" transposes and nothing else', () => {
+  // A heat map has two POSITION axes and no value axis, which is what makes its
+  // transpose a relabelling rather than a reworking: the same bin span and the
+  // same unit slots, swapped over which one runs across the canvas.
+  const twoBinsThreeRows = () =>
+    grid([0, 10], [10, 20], ['lo', 'mid', 'hi'], [0, 2, 4, 1, 3, 4]);
+
+  const rectsOf = (orientation: 'vertical' | 'horizontal') => {
+    const { ctx, calls } = recordingContext();
+    drawHeat(
+      ctx,
+      twoBinsThreeRows(),
+      identity,
+      identity,
+      style,
+      (v: number) => bandedColor(v, RAMP, 0, 4),
+      'heat',
+      null,
+      null,
+      false,
+      orientation,
+    );
+    return calls
+      .filter((c) => c.name === 'fillRect')
+      .map((c) => c.args as unknown as [number, number, number, number]);
+  };
+
+  it('swaps each cell rect across the diagonal', () => {
+    const v = rectsOf('vertical');
+    const h = rectsOf('horizontal');
+    expect(h).toHaveLength(v.length);
+    for (let i = 0; i < v.length; i += 1) {
+      const [x, y, w, hh] = v[i]!;
+      expect(h[i]).toEqual([y, x, hh, w]);
+    }
+  });
+
+  it('draws exactly the same cells, in the same order', () => {
+    // The transpose is geometry only — the value grid is not re-walked, so a
+    // gap stays a gap and the fills are identical.
+    const fills = (orientation: 'vertical' | 'horizontal') => {
+      const { ctx, calls } = recordingContext();
+      drawHeat(
+        ctx,
+        twoBinsThreeRows(),
+        identity,
+        identity,
+        style,
+        (v: number) => bandedColor(v, RAMP, 0, 4),
+        'heat',
+        null,
+        null,
+        false,
+        orientation,
+      );
+      return calls
+        .filter((c) => c.type === 'set' && c.name === 'fillStyle')
+        .map((c) => c.args[0]);
+    };
+    expect(fills('horizontal')).toEqual(fills('vertical'));
+  });
+
+  it('hit-tests the transposed geometry', () => {
+    const ss = twoBinsThreeRows();
+    // Vertical: x is the bin (5 -> bin 0), y is the row slot (2.5 -> 'hi').
+    expect(heatAt(ss, 5, 2.5, identity, identity, 0, 1)?.[3]).toBe('hi');
+    // Horizontal: the same cell is found with the coordinates swapped.
+    expect(
+      heatAt(ss, 2.5, 5, identity, identity, 0, 1, 'horizontal')?.[3],
+    ).toBe('hi');
+    // …and the un-swapped point now misses, since 5 is past three unit slots.
+    expect(
+      heatAt(ss, 5, 2.5, identity, identity, 0, 1, 'horizontal'),
+    ).toBeNull();
   });
 });

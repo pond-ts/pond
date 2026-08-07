@@ -272,7 +272,7 @@ schema columns). Because the union splits per series _kind_, a value typed as
 | `BandChart`    | `lower`, `upper`                                                                             | Variance-band envelope                              | `packages/charts/src/BandChart.tsx`    |
 | `ScatterChart` | `column`, `id?` (selection), radius/color encodings                                          | Points; data-driven size/colour                     | `packages/charts/src/ScatterChart.tsx` |
 | `BarChart`     | `column` \| `columns` \| `bins` \| `categories`, `orientation?`, `thresholds?`/`bandColors?` | Bars, stacked bars, histograms, categorical         | `packages/charts/src/BarChart.tsx`     |
-| `HeatMap`      | `series`, `columns` (rows), `colors`, `domain?`, `gap?`                                      | Grid of colour-coded cells; bins on x, columns on y | `packages/charts/src/HeatMap.tsx`      |
+| `HeatMap`      | `series`, `columns` (rows), `colors`, `domain?`, `gap?`, `decimate?`, `orientation?`         | Grid of colour-coded cells; bins on x, columns on y | `packages/charts/src/HeatMap.tsx`      |
 | `BoxPlot`      | `lower`/`q1?`/`median?`/`q3?`/`upper`, `shape?`                                              | Box-and-whisker from quantile columns               | `packages/charts/src/BoxPlot.tsx`      |
 | `Candlestick`  | OHLC columns, `variant?`, `colorBy?`, `showOHLC?`                                            | First-class OHLC candles (TimeSeries only)          | `packages/charts/src/Candlestick.tsx`  |
 | `Legend`       | `placement?`, `items?`, `onRowClick?`, `onRowHover?`                                         | Series key from registered layers' resolved styles  | `packages/charts/src/Legend.tsx`       |

@@ -62,6 +62,37 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: `panZoom` names its axes — `panZoomX` / `panZoomY` / `panZoomXY`.**
+  The mode was x-only, so a chart wanting to zoom any other axis had nothing.
+
+  ```tsx
+  <ChartContainer panZoom="panZoomY">   // wheel zooms y, drag pans y
+  ```
+
+  **Pan follows zoom's degrees of freedom**: an axis that can be zoomed can be
+  panned, because a zoomed axis shows less than all of itself and the reader
+  needs to reach the rest. `'pan'` stays the one exception — pan with no zoom,
+  x-only, unchanged. `'panZoom'` and `true` are `'panZoomX'`, so nothing that
+  exists moves.
+
+  **`panZoomXY` zooms both axes by one factor about the cursor, holding the
+  aspect ratio** — a feature that looked square stays square. A single-axis zoom
+  changes the ratio, which is the point of asking for one.
+
+  Naming the axes is load-bearing rather than tidiness. A first cut had a single
+  `panZoom2D` that claimed both axes and then silently fell back to y-only
+  wherever x was a **category** axis: the ratio changed and nothing said so.
+  Spelling the axes out makes that the caller's choice. It also means a
+  horizontal `<HeatMap>` — categories on x, bins on y — can pan and zoom at all,
+  where both gesture handlers previously bailed on `xKind === 'category'`.
+
+  Carried as a pixel-space transform on the container, applied by narrowing each
+  y axis' **domain** to the window it makes visible. Pixels because they are
+  axis-independent, so one gesture serves a row whatever its axes' units;
+  narrowing the domain rather than stretching the range because the tick
+  generator must see the visible window (stretching it piled clamped ticks on
+  the plot edge). Panning is clamped so the content always covers the plot.
+
 - **charts: `<HeatMap>` — a grid of colour-coded cells** ([PND-HEATMAP]). Bins
   along x, the series' **columns** down y, colour carrying the value. A single
   column is a stripe (climate stripes, a load band); many columns are a grid.
@@ -95,6 +126,36 @@ include new features and type-level changes; patch bumps are strictly additive.
   keeps its own colour and gains an **outline** (hover `outlineWidth`, selection
   twice that) rather than the bar layers' alpha pop, which on a colour scale is
   both usually invisible and misleading.
+
+  **Viewport decimation, on by default.** Once the visible cells are denser than
+  ~2 per device pixel they overlap and overpaint each other, so the picture is
+  already one cell per column picked by draw order. `<HeatMap>` replaces that
+  with the **mean** per pixel column — what the overdrawn version resolves to at
+  that size — from `O(W·G)` rects instead of `O(V·G)`. A 20,000-bin × 45-row
+  grid over an 800px plot goes from **48ms to 5.7ms**. Below the gate nothing
+  changes at all. `decimate={false}` draws every visible cell; `{ threshold }`
+  moves the gate. While decimated, per-cell outlines are suppressed and
+  interaction still reads the source grid.
+
+  Note this is a move a per-bar-coloured `<BarChart>` deliberately does _not_
+  make: its reduction is a geometric `[min, max]` envelope, which has no honest
+  colour when it spans differently-coloured bars. A heat map's cells composite
+  rather than forming a silhouette, so reducing the **value** and letting the
+  existing ramp colour it is a resampling answer, not a statistic imposed on the
+  reader.
+
+  **`orientation="horizontal"`** transposes the grid: bins run down **y** and
+  the columns become the categories across **x**. Cheaper than the same move on
+  `<BarChart>`, because a heat map has two _position_ axes and no value axis —
+  nothing changes which scale it is measured against, only which one is
+  horizontal on the canvas.
+
+  This is the orientation gene-expression heat maps are drawn in, and it is what
+  makes the layer's y-must-be-columns constraint work rather than fight. Put the
+  long dimension on the **key** axis — one row per gene — and pond's ordinary
+  binning buckets it: `series.byColumn('rank', { width: 20 }, avg)` is "10,000
+  sorted genes into 500 buckets of 20", and `stacksFromBins` hands the result
+  straight to the layer. The few samples become the categories across the top.
 
   Not built: a grouped two-level x axis, cell value labels, and 2-D region
   selection / pan-zoom.

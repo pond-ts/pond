@@ -336,6 +336,90 @@ last:
   symmetric domain, because the neutral band has to sit on zero and an
   auto-extent moves it silently as the binning changes.
 
+- **Perf: the draw loop did per-cell what was per-bin and per-row.**
+  `scripts/perf-heat.mjs` (six scenarios). `drawHeat` called `cellRect` per
+  cell, which recomputed the x span (two scale calls, depends only on the bin),
+  recomputed the row band (two more, depends only on the row), and allocated a
+  4-element array — O(V·G) scale calls and allocations where O(V + G) and zero
+  do. On the Niño day grid that was ~33k scale calls and ~16k short-lived arrays
+  **per frame**, and hover repaints the whole grid. Hoisting both, plus setting
+  `ctx.fillStyle` only when the colour changes, took the real workload from
+  **2.230ms → 0.798ms (−64%)** and a 200-row grid from **9.649ms → 3.682ms
+  (−62%)**. `cellRect` itself is unchanged — `heatAt` calls it once per
+  hit-test, where there is nothing to amortize over.
+
+  Two optimizations were **measured and rejected**, recorded in the script so
+  nobody re-derives them: short-circuiting `matchesCell` when nothing is live
+  (no win — the checks already exit on their first line), and caching
+  `globalAlpha` the way `fillStyle` is cached (measures a further −31% and that
+  number is an artefact — the bench's context is a `Proxy` charging a trap
+  crossing per property write, where a real canvas stores a number; `fillStyle`
+  survives the same scrutiny only because a real canvas genuinely parses the
+  colour string).
+
+  **The harness has a known bias worth carrying forward to the other charts
+  benches**: a `Proxy` context overstates any optimization whose only effect is
+  doing fewer `ctx` property writes.
+
+- **Decimation: the mean per pixel column, on by default.** pjm's push — "the
+  library shouldn't ever hit 48ms for a layer, and you can statistically say
+  what 16 pixels of different levels resolves to at a distance" — and he was
+  right on both counts. The write-up above had argued for a dev warning that
+  pushed callers to `aggregate`, on the grounds that collapsing cells is a
+  statistical claim only the caller can make. **That was wrong**, for a reason
+  worth keeping: collapsing cells for _display_ is a **resampling** question,
+  not a statistical one, and resampling has a correct answer. Cells do not form
+  a silhouette the way bars do — they **composite** — so what a column of N
+  cells delivers to the eye is their area-weighted mean. The layer is not
+  imposing a statistic by taking it; it is computing what the full-resolution
+  draw already resolves to.
+
+  The argument that it was a statistic also missed that the undecimated path was
+  _already_ making one, and a worse one: sub-pixel cells are widened to
+  `minWidth` about their midpoints, so they overlap and later draws overpaint
+  earlier ones. Every column already showed one source cell out of N, chosen by
+  loop order. **48.0ms → 5.7ms** on 20000×45, with every below-gate scenario
+  byte-identical.
+
+  This is also the one place a heat map can go where `decimateBars` explicitly
+  cannot: that function bails when `binFills` is set, because its reduction is a
+  geometric `[min, max]` envelope with no honest colour across differently
+  coloured bars. Reducing the **value** and letting the ramp colour it sidesteps
+  that entirely — worth remembering if per-cell colour ever comes to another
+  layer.
+
+  What it loses is a lone extreme among N, exactly as any image downsample does.
+  `aggregate` with `max` remains the tool for a reader hunting rare spikes, and
+  is unaffected. Follows the bar precedent on interaction: per-cell outlines
+  suppressed while decimated, hit-testing still on the source grid.
+
+- **`orientation="horizontal"`, and the mapping mistake that found it.** A real
+  10,000-gene x 8-sample matrix went through the layer badly at first because
+  **I mapped genes onto the column axis**, which meant a 10,000-column series,
+  a 21ms construction, 80,000 cells, and a "y-binning has no pond expression"
+  friction note that was **wrong**. pjm caught it: genes are the _key_ axis —
+  one record per gene — so it is 10,000 rows x 8 columns, and bucketing them is
+  `byColumn('rank', { width: 20 }, avg)` → `stacksFromBins`, a path the library
+  already had. Measured end to end on the real file: 500 buckets x 8 samples =
+  **4,000 cells**, and no decimation fires at all.
+
+  **The lesson generalises past this dataset.** When a heat map feels like it
+  needs thousands of columns, the data is almost certainly mapped the wrong way
+  round: the many-dimension belongs on the key axis where pond's binning lives,
+  and the few-dimension in the columns. The layer's constraint is a signpost,
+  not an obstacle.
+
+  What that leaves is a real gap, which this shipped: the pond-native mapping
+  puts the long axis on **x**, while the convention for expression data (and
+  Codex's reference rendering) runs genes down **y**. `<BarChart>` already had
+  `orientation`; the heat map now does too. The transpose is genuinely cheap
+  here — two _position_ axes and no value axis, so `cellRect` just swaps which
+  scale carries bins and which carries slots, and `heatAt` inherits it for free.
+  On the layer contract, `binCategories` (y) becomes `xCategories` (x), which
+  puts the container in its `'category'` kind exactly as a categorical
+  `<BarChart>` does, and `sampleAt` returns nothing because the x-scrub tracker
+  only means something when x is the bin axis.
+
 **Friction found, not fixed:**
 
 - **`Sequence.calendar` has no `'year'` unit** — it stops at `month`
@@ -1608,11 +1692,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                        _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                        is a click — so nothing on this page is in edit mode. But it cost a design
-                                                        iteration to discover, and the docs still don't mention it. **The one-line
-                                                        fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                        row's data cursor is suppressed."
+                                                                    _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                    is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                    iteration to discover, and the docs still don't mention it. **The one-line
+                                                                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                    row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires

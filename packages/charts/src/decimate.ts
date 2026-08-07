@@ -53,6 +53,7 @@ import type {
   OhlcSeries,
   BoxSeries,
   BarSeries,
+  StackedBarSeries,
 } from './data.js';
 import type { Scale } from './line.js';
 import { affineOf } from './affine.js';
@@ -758,6 +759,177 @@ export function decimateBars(
     }
   }
   return { begin, end, lo, hi, length: W };
+}
+
+/**
+ * Decimate a heat-map grid to **one cell per pixel column per row**, each the
+ * **mean** of the source cells that fall in it ([PND-HEATMAP]).
+ *
+ * **Why the mean, and why a heat map can decimate where a coloured bar cannot.**
+ * {@link decimateBars} deliberately gives up when `binFills` is set: its
+ * reduction is a *geometric* union (`[min, max]` per column), and one rect
+ * spanning many differently-coloured bars has no honest colour. A heat map is
+ * not in that bind, because its reduction is not geometric. Cells do not form a
+ * silhouette — they **composite**: each one covers its own patch of the column,
+ * so what the eye receives from a column holding N cells is their area-weighted
+ * average. Taking the mean of the *values* and letting the existing ramp colour
+ * it is therefore not a statistical choice imposed on the reader; it is what the
+ * full-resolution draw already resolves to at this size. Banding the mean also
+ * keeps the result **inside the ramp**, so it stays a colour the legend defines
+ * (averaging the colours instead would invent off-ramp shades, and would need
+ * linear-light care to avoid the usual downsampling darkening).
+ *
+ * What this **replaces** is worse than it: undecimated, sub-pixel cells are
+ * widened to `minWidth` about their midpoints, so they overlap and later draws
+ * overpaint earlier ones. The column already showed one cell out of N — chosen
+ * by loop order. The mean is both cheaper and more honest than that.
+ *
+ * **What it loses:** a lone extreme cell among N averages away, exactly as it
+ * would in any image downsample. A reader hunting rare spikes should bin the
+ * *series* coarsely with `aggregate` and a reducer that says so (`max`), which
+ * is the tool that makes the claim explicit and is unaffected by this.
+ *
+ * Gates on the **visible** cell columns (`visibleCount`), like the bar path.
+ * Returns `null` when decimation doesn't apply — below the density threshold, a
+ * domainless or non-invertible scale, or no canvas width — and the caller then
+ * draws every visible cell. The result carries **no `marks`**: a pixel column
+ * aggregates many source bins and so has no stable per-bin identity, which is
+ * also why the caller suppresses the live-cell outline while decimated and
+ * keeps hit-testing against the source grid ({@link decimateBars} does the same).
+ */
+export function decimateHeat(
+  ss: StackedBarSeries,
+  binScale: Scale,
+  ctx: CanvasRenderingContext2D,
+  k = 2,
+  vStart = 0,
+  vEnd = ss.length,
+  /**
+   * The bin axis' extent, when it is **not** the x axis. A horizontal heat map
+   * puts its bins on y, where the shared helpers do not apply: `scaleRangeWidth`
+   * reads `range()[last]`, which is `0` for the usual inverted y range, and
+   * `deviceBucketCount` reads the canvas' *width*. Omitted ⇒ the x-axis
+   * defaults, which is every other caller.
+   */
+  axis?: { deviceCount: number; spanCss: number },
+): StackedBarSeries | null {
+  const visibleCount = vEnd - vStart;
+  if (
+    axis === undefined
+      ? !shouldDecimateCount(visibleCount, ctx, k)
+      : visibleCount < k * axis.deviceCount
+  )
+    return null;
+  const dom = scaleDomain(binScale);
+  if (dom === null || dom[1] <= dom[0]) return null;
+  const invert = scaleInvert(binScale);
+  const plotWidthCss = axis?.spanCss ?? scaleRangeWidth(binScale);
+  if (invert === null || plotWidthCss === null || plotWidthCss <= 0)
+    return null;
+  const W = axis?.deviceCount ?? deviceBucketCount(ctx);
+  if (W <= 0) return null;
+  const raw = pixelEdges(invert, plotWidthCss, W);
+  // `pixelEdges` walks pixels ascending, so on an **inverted** axis — the usual
+  // y range `[h, 0]`, which a horizontal heat map's bin axis uses — the key-space
+  // edges come back descending. The sweep below and the emitted `begin`/`end`
+  // both want ascending key order, and the draw maps back through the scale
+  // anyway, so normalize here rather than special-casing two directions.
+  const edges =
+    raw[0]! <= raw[W]! ? raw : (raw.slice().reverse() as Float64Array);
+
+  const G = ss.groups.length;
+  const sum = new Float64Array(W * G);
+  const count = new Float64Array(W * G);
+
+  // `ss.begin` is ascending and so are `edges`, so the column advances
+  // monotonically — one O(V + W) sweep rather than a search per bin.
+  let col = 0;
+  for (let b = vStart; b < vEnd; b += 1) {
+    const key = ss.begin[b]!;
+    while (col < W - 1 && key >= edges[col + 1]!) col += 1;
+    const src = b * G;
+    const dst = col * G;
+    for (let g = 0; g < G; g += 1) {
+      const v = ss.values[src + g]!;
+      // A hole contributes nothing rather than dragging the mean to zero; a
+      // column of nothing but holes stays a hole.
+      if (!Number.isFinite(v)) continue;
+      sum[dst + g]! += v;
+      count[dst + g]! += 1;
+    }
+  }
+
+  const begin = new Float64Array(W);
+  const end = new Float64Array(W);
+  const values = new Float64Array(W * G);
+  for (let c = 0; c < W; c += 1) {
+    begin[c] = edges[c]!;
+    end[c] = edges[c + 1]!;
+    const dst = c * G;
+    for (let g = 0; g < G; g += 1) {
+      const n = count[dst + g]!;
+      values[dst + g] = n > 0 ? sum[dst + g]! / n : NaN;
+    }
+  }
+  return { begin, end, values, groups: ss.groups, length: W };
+}
+
+/**
+ * The **y half** of heat-map decimation: collapse runs of `stride` rows into one,
+ * each the mean of the rows it covers ([PND-HEATMAP]).
+ *
+ * The x half ({@link decimateHeat}) is not enough on its own, and a gene
+ * expression matrix is the case that proves it: 10,000 genes x 8 samples is
+ * **16.7 rows per pixel row** and only 8 bins, so the column decimator declines
+ * and every one of the 80,000 cells is drawn to show ~4,800 distinguishable
+ * ones. Whichever axis is oversampled, the argument is the same — rows sharing a
+ * pixel row composite, so what the eye receives is their mean.
+ *
+ * **A fixed integer stride, not a pixel-edge walk.** Source rows are *unit
+ * slots* (`[g, g+1]`, which is what lets `binCategories` label them), so they
+ * are already uniform in row-index space; a run of `stride` of them is exactly
+ * `[r·stride, (r+1)·stride]`. That keeps the y coordinate space **unchanged** —
+ * which is load-bearing, because `<YAxis>` scales over `[0, G]` and explicit
+ * `{ at, label }` ticks are in those units. Rewriting the row bands the way the
+ * x half rewrites bin spans would silently slide every axis label.
+ *
+ * Returns `null` below the gate (`stride < k` — fewer than `k` rows per device
+ * row, where drawing every row is honest and the reduction would not pay), so
+ * the caller draws the source rows. The final run is short when `rows` is not a
+ * multiple of `stride`; it averages what is there.
+ */
+export function decimateHeatRows(
+  values: Float64Array,
+  bins: number,
+  rows: number,
+  deviceRows: number,
+  k = 2,
+): { values: Float64Array; rows: number; stride: number } | null {
+  if (!(deviceRows > 0) || !(rows > 0)) return null;
+  const stride = Math.ceil(rows / deviceRows);
+  if (stride < k) return null;
+  const out = Math.ceil(rows / stride);
+  const reduced = new Float64Array(bins * out);
+  for (let b = 0; b < bins; b += 1) {
+    const src = b * rows;
+    const dst = b * out;
+    for (let r = 0; r < out; r += 1) {
+      const g0 = r * stride;
+      const g1 = Math.min(g0 + stride, rows);
+      let sum = 0;
+      let n = 0;
+      for (let g = g0; g < g1; g += 1) {
+        const v = values[src + g]!;
+        // A hole contributes nothing rather than pulling the mean toward zero;
+        // a run of nothing but holes stays a hole.
+        if (!Number.isFinite(v)) continue;
+        sum += v;
+        n += 1;
+      }
+      reduced[dst + r] = n > 0 ? sum / n : NaN;
+    }
+  }
+  return { values: reduced, rows: out, stride };
 }
 
 /**
