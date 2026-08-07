@@ -285,8 +285,11 @@ export function BoxPlot<
   // the canvas repaints the outline. A no-`id` layer never matches.
   const sel = container.selected;
   const hov = container.hovered;
-  // Every selected key belonging to this series ([PND-MULTISEL]). `null` when
-  // none, preserving the single-selection reader below.
+  // The **first** selected key belonging to this series. `BoxPlot`'s draw path
+  // matches one key, so a multi-member set lights only its first box here —
+  // the same documented scope limit as `ScatterChart` / `HeatMap`
+  // ([PND-MULTISEL]). Widening the box draw path is separate work; the comment
+  // says `find` because the code does `find`.
   const selectedKey =
     id !== undefined ? (sel.find((m) => m.id === id)?.key ?? null) : null;
   const hoveredKey =

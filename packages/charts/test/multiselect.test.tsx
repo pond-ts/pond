@@ -5,6 +5,7 @@ import { ChartContainer } from '../src/ChartContainer.js';
 import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { BarChart } from '../src/BarChart.js';
+import { TimeSeries } from 'pond-ts';
 import { YAxis } from '../src/YAxis.js';
 import { defaultTheme } from '../src/theme.js';
 import {
@@ -306,5 +307,166 @@ describe('a consumer can implement ⌘-click-adds with what is now exposed', () 
 
     click(140, { metaKey: true }); // ⌘-click it again → toggle off
     expect(out()).toBe(first);
+  });
+});
+
+/**
+ * **The single-series (`drawBars`) path.**
+ *
+ * Everything above uses `categories`, which resolves to `kind: 'stacked'` and
+ * therefore only ever exercises `drawStacks`. The fresh-eyes review found that
+ * `drawBars`' threshold-ladder branch never applied `dimmed` at all — and the
+ * reason it survived is precisely that no test reached that function. A suite
+ * that can only see one of two draw paths is not covering the feature; these
+ * tests drive the other one, through a time-keyed `series` + `column`.
+ */
+describe('the single-series draw path dims too', () => {
+  // **Interval**-keyed, so each bar's `begin` is the literal 0 / 1 / 2 a
+  // selection can name. A point-keyed series derives `begin` from neighbour
+  // spacing, and a `key: 0` selection would match nothing — which is a real
+  // trap, but not the one under test here.
+  const series = new TimeSeries({
+    name: 's',
+    schema: [
+      { name: 'timeRange', kind: 'timeRange' },
+      { name: 'v', kind: 'number' },
+    ] as const,
+    rows: [
+      [[0, 1], 3],
+      [[1, 2], 2],
+      [[2, 3], 1],
+    ] as never,
+  });
+
+  const dimTheme = {
+    ...defaultTheme,
+    bar: {
+      ...defaultTheme.bar,
+      default: {
+        ...defaultTheme.bar.default,
+        highlight: '#SEL',
+        dimmed: '#DIM',
+        bands: ['#B0', '#B1'],
+      },
+    },
+  };
+
+  /** Draw a single-series bar chart and collect its fills. */
+  function fillsFor(
+    props: {
+      selected?: readonly SelectInfo[];
+      thresholds?: readonly number[];
+    },
+    theme = dimTheme,
+  ) {
+    // `thresholds` belongs to <BarChart>, `selected` to <ChartContainer> —
+    // spreading both onto the container silently drops the ladder.
+    const { thresholds, ...containerProps } = props;
+    let cf: ContainerFrame | null = null;
+    let rf: RowFrame | null = null;
+    function Capture() {
+      const c = useContext(ContainerContext);
+      const r = useContext(RowContext);
+      useEffect(() => {
+        if (c) cf = c;
+        if (r) rf = r;
+      });
+      return null;
+    }
+    const stub = stubCanvasContext();
+    try {
+      render(
+        <ChartContainer
+          range={[0, 3]}
+          width={300}
+          theme={theme}
+          {...containerProps}
+        >
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={4} label="" />
+            <Layers>
+              <BarChart
+                series={series}
+                column="v"
+                id="cap"
+                decimate={false}
+                {...(thresholds ? { thresholds } : {})}
+              />
+              <Capture />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>,
+      );
+    } finally {
+      stub.restore();
+    }
+    const { ctx, calls } = recordingContext();
+    rf!.layers[0]!.layer.draw(ctx, cf!.xScale, rf!.yScales.get('a')!);
+    return calls
+      .filter((c) => c.type === 'set' && c.name === 'fillStyle')
+      .map((c) => c.args[0] as string);
+  }
+
+  const sel = (key: number): SelectInfo => ({
+    id: 'cap',
+    key,
+    value: 0,
+    color: '#000',
+    label: 'v',
+  });
+
+  it('dims the flat path outside the selection', () => {
+    const fills = fillsFor({ selected: [sel(0)] });
+    expect(fills).toContain('#SEL');
+    expect(fills.filter((f) => f === '#DIM')).toHaveLength(2);
+  });
+
+  it('dims the THRESHOLD-BANDED path too — the branch the review caught', () => {
+    // Before the fix this branch painted the full ladder for every bar,
+    // ignoring `dimmed` entirely, while the stacked path dimmed correctly.
+    const fills = fillsFor({ selected: [sel(0)], thresholds: [1.5] });
+    expect(fills.filter((f) => f === '#DIM')).toHaveLength(2);
+  });
+
+  it('dims nothing on the banded path with an empty selection', () => {
+    const fills = fillsFor({ selected: [], thresholds: [1.5] });
+    expect(fills).not.toContain('#DIM');
+    expect(fills).toContain('#B0');
+  });
+
+  it('lights several selected bars on the single path', () => {
+    // `barMatchesAny` with more than one member — also never exercised before.
+    const fills = fillsFor({ selected: [sel(0), sel(2)] });
+    expect(fills.filter((f) => f === '#SEL')).toHaveLength(2);
+    expect(fills.filter((f) => f === '#DIM')).toHaveLength(1);
+  });
+});
+
+describe('precedence is the same on both draw paths', () => {
+  // The review found `drawBars` letting hover win over dim while `drawStacks`
+  // let dim win. Hover wins in both now: dim means "not in your selection",
+  // hover means "your pointer is here", and suppressing live pointer feedback
+  // to keep a bar receded makes the chart feel broken.
+  const dimTheme = {
+    ...defaultTheme,
+    bar: {
+      ...defaultTheme.bar,
+      default: {
+        ...defaultTheme.bar.default,
+        highlight: '#SEL',
+        hover: '#HOV',
+        dimmed: '#DIM',
+      },
+    },
+  };
+
+  it('hovering an unselected bar shows hover, not dim (stacked path)', () => {
+    const { fills } = mount(
+      { selected: [mark('alpha')], hovered: mark('beta') },
+      dimTheme,
+    );
+    expect(fills).toContain('#HOV');
+    // 'gamma' is neither selected nor hovered, so it still recedes.
+    expect(fills).toContain('#DIM');
   });
 });

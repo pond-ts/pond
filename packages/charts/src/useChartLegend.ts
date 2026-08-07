@@ -159,9 +159,17 @@ export function buildChartLegend(
     },
     select: (row) => {
       if (row.id === undefined) return;
-      // Toggle: clicking an already-selected row clears it. No modifiers here —
-      // a legend click has no pointer event in this path, so `onSelect` receives
-      // `undefined` modifiers and a consumer treats it as a plain select.
+      // Toggle: clicking an already-selected row reports `null`, which a
+      // consumer reads as "clear".
+      //
+      // **Known limitation ([PND-MULTISEL]).** With a multi-member set that
+      // clears *everything*, not just this row — the callback's vocabulary is
+      // one hit, and "remove this one member" has no representation in it. A
+      // legend click also carries no modifiers (see below), so ⌘-click-adds
+      // can't be driven from a legend either. Both want the legend row to hand
+      // over its own event + identity; that is a legend-surface change rather
+      // than part of this wave, and is recorded in the plan. Single-selection
+      // behaviour — the only shipped behaviour before this — is unchanged.
       container.select(
         container.selected.some((m) => m.id === row.id)
           ? null

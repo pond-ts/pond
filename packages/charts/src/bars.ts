@@ -473,7 +473,9 @@ export function drawBars(
       // highlight pops the alpha to 1 and outlines the selection in the bar's
       // own fill (the drawStacks binFills convention; see the header).
       const fill =
-        dimming && !selected ? style.dimmed! : (fills[i] ?? style.fill);
+        dimming && !selected && !isHovered
+          ? style.dimmed!
+          : (fills[i] ?? style.fill);
       ctx.globalAlpha =
         selected || isHovered ? (style.emphasisOpacity ?? 1) : style.opacity;
       ctx.fillStyle = fill;
@@ -495,6 +497,15 @@ export function drawBars(
       ctx.globalAlpha =
         selected || isHovered ? (style.emphasisOpacity ?? 1) : style.opacity;
       const v = cs.y[i]!;
+      if (dimming && !selected && !isHovered) {
+        // A dimmed banded bar draws flat: the ladder encodes *where the value
+        // sits*, which is exactly what a receded bar should stop competing
+        // over. Painting a dim gradient just lowers its voice.
+        ctx.fillStyle = style.dimmed!;
+        ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
+        drawn += 1;
+        continue;
+      }
       let topFill = ladder.colors[0]!;
       for (let bk = 0; bk < ladder.colors.length; bk += 1) {
         if (!bandSpanInto(baseline, v, ladder.thresholds, bk)) continue;
@@ -528,11 +539,15 @@ export function drawBars(
     // selected. Selection outranks hover on a bar that is both (as the outline
     // already did). With no `hover` colour this is the shipped two-step —
     // `highlight` for either state (see BarStyle.hover).
+    // Precedence, shared with `drawStacks`: selected > hovered > dimmed > rest.
+    // Hover outranks dim deliberately — dim says "this is not in your
+    // selection", hover says "your pointer is here now", and suppressing live
+    // pointer feedback to keep a bar receded makes the chart feel broken.
     ctx.fillStyle = selected
       ? style.highlight
       : isHovered
         ? (style.hover ?? style.highlight)
-        : dimming && !selected
+        : dimming
           ? style.dimmed!
           : style.fill;
     ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
@@ -995,7 +1010,15 @@ export function drawStacks(
         (stableMark !== undefined
           ? m.mark === stableMark
           : m.key === ss.begin[b] && m.label === ss.groups[g]);
-      const selected = selection.some((m) => matches(m));
+      // Indexed rather than `.some(cb)` — this is the inner loop of the draw,
+      // and a closure per segment per frame is avoidable garbage.
+      let selected = false;
+      for (let si = 0; si < selection.length; si += 1) {
+        if (matches(selection[si]!)) {
+          selected = true;
+          break;
+        }
+      }
       const isHovered = matches(hover);
       // A hovered / selected segment pops its alpha; a resting one draws at the
       // shared one. `emphasisOpacity` makes the *difference* themeable, where
@@ -1009,7 +1032,7 @@ export function drawStacks(
         // the bar's length at the ladder boundaries, transposing on
         // orientation — vertical bars band along y, horizontal along x, while
         // the bin span (the other axis) is shared by every band.
-        if (dimming && !selected) {
+        if (dimming && !selected && !isHovered) {
           ctx.fillStyle = style.dimmed!;
           ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
           continue;
@@ -1045,8 +1068,9 @@ export function drawStacks(
       // selected segment takes `highlight` and a hovered one `hover`, exactly
       // as the single-series path does. With `binFills` the bar keeps its own
       // colour (the design exclusion) and the alpha pop above is the signal.
+      // Same precedence as `drawBars`: selected > hovered > dimmed > rest.
       const emphasised =
-        dimming && !selected
+        dimming && !selected && !isHovered
           ? style.dimmed!
           : style.binFills === undefined
             ? selected

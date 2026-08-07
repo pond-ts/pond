@@ -360,6 +360,7 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 | `TrackerInfo` / `TrackerSample`            | Hover readout payload (`onTrackerChanged`)                                       | `packages/charts/src/context.ts`          |
 | `AnnotationKind` / `CreateSpec`            | Annotation identity + draw-gesture payload (`onCreate`)                          | `packages/charts/src/context.ts`          |
 | `SelectInfo`                               | Selection/hover payload (`ChartContainer` `onSelect`/`onHover`)                  | `packages/charts/src/context.ts`          |
+| `SelectModifiers`                          | Keyboard modifiers on a click, 2nd arg to `onSelect`                             | `packages/charts/src/context.ts`          |
 | `DrawStatsFrame` / `LayerDrawInfo`         | Per-repaint draw-cost + decimation stats (`ChartContainer` `onDrawStats`)        | `packages/charts/src/context.ts`          |
 | `TimeGrain`                                | Coarse time unit for grain-aware formatting                                      | `packages/charts/src/tickLadder.ts`       |
 | `SwatchSpec` / `LegendItemInput`           | Legend swatch vocabulary + explicit-rows input (`<Legend items>`)                | `packages/charts/src/swatch.ts`           |
