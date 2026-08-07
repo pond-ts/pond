@@ -45,6 +45,21 @@ import {
 
 /** Cell styling. Colour is data and comes from the caller's ramp, so this is
  *  only the geometry and the live-cell treatment. */
+/**
+ * How value maps onto the ramp's bands.
+ *
+ * `'linear'` splits the domain into equal-width bands. `'log'` splits it into
+ * equal-*ratio* bands, which is what a quantity spanning orders of magnitude
+ * needs: US measles incidence runs from ~2,900 per 100k before the vaccine to
+ * under 1 after it, and linear banding over eight colours puts everything below
+ * ~360 in one band — the whole post-1965 record, which is the half the chart
+ * exists to show.
+ */
+export type HeatScale = 'linear' | 'log';
+
+/** How a cell with no value is drawn. */
+export type HeatNoData = 'blank' | 'hatch';
+
 export interface HeatStyle {
   /** Alpha for a resting cell. A live cell pops to 1, as bars do. */
   readonly opacity: number;
@@ -56,6 +71,9 @@ export interface HeatStyle {
   readonly gap: number;
   /** Px floor on a cell's width, so a thin bin stays visible. */
   readonly minWidth: number;
+  /** Stroke for the `'hatch'` no-data fill — the theme's grid colour, so it
+   *  reads as chart furniture rather than as a value. */
+  readonly gridColor: string;
 }
 
 /**
@@ -77,10 +95,19 @@ export function bandedColor(
   colors: readonly string[],
   lo: number,
   hi: number,
+  scale: HeatScale = 'linear',
 ): string | undefined {
   if (!Number.isFinite(value) || colors.length === 0) return undefined;
   if (!(hi > lo)) return colors[colors.length - 1]; // degenerate domain: one band
-  const t = (value - lo) / (hi - lo);
+  // `log` bands on `log1p` of the offset from `lo`, not on `log`, so that a
+  // value **at** `lo` is a real band rather than `-Infinity`. Zero is the common
+  // case that needs it — an incidence grid is mostly zeros once a disease is
+  // eliminated, and those cells are the point of the chart, not an edge case.
+  const clamped = Math.min(hi, Math.max(lo, value));
+  const t =
+    scale === 'log'
+      ? Math.log1p(clamped - lo) / Math.log1p(hi - lo)
+      : (value - lo) / (hi - lo);
   const band = Math.floor(t * colors.length);
   // Clamp so the domain's own endpoints land in the first / last band rather
   // than falling off (t === 1 would index one past the end), and so a value
@@ -192,6 +219,41 @@ function matchesCell(
     : m.key === ss.begin[b] && m.label === ss.groups[g];
 }
 
+/**
+ * Fill one cell with diagonal hatching — the no-data mark.
+ *
+ * Drawn as clipped strokes per cell rather than a `createPattern` fill, because
+ * a pattern needs a second canvas to build and this runs in headless contexts
+ * (tests, SSR) that have no `document`. The cost is a few strokes per hole, and
+ * holes are by definition the cells with nothing else to draw; a decimated grid
+ * skips them entirely, since an aggregated cell is not a hole.
+ */
+function hatchCell(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  color: string,
+): void {
+  if (!(w > 0) || !(h > 0)) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  // 45° lines every 4px. Sweeping from `-h` covers the corners the diagonal
+  // would otherwise leave bare.
+  for (let d = -h; d < w; d += 4) {
+    ctx.moveTo(x + d, y + h);
+    ctx.lineTo(x + d + h, y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 /** The canvas' backing-buffer width over the x scale's CSS pixel width — the
  *  device pixel ratio, recovered rather than read from `window` so a headless
  *  context (no canvas, no range) degrades to `1` instead of throwing. */
@@ -240,6 +302,7 @@ export function drawHeat(
   hovered: StackMark | null,
   decimate: DecimateOption = true,
   orientation: Orientation = 'vertical',
+  noData: HeatNoData = 'blank',
 ): void {
   const vertical = orientation === 'vertical';
   const binScale = vertical ? xScale : yScale;
@@ -361,7 +424,25 @@ export function drawHeat(
       // by returning null: a hole in the record draws nothing and owns no hit
       // region.
       const value = values[base + g]!;
-      if (!Number.isFinite(value)) continue;
+      if (!Number.isFinite(value)) {
+        // A hole is not a low value, and on a pale ramp "draw nothing" reads as
+        // exactly that — the background shows through at the bottom of the
+        // scale. Where the distinction carries meaning (a state with no
+        // surveillance yet, against a record whose late years are real zeros)
+        // the cell must say so, and hatching is the convention because no ramp
+        // colour can be mistaken for it.
+        if (noData === 'hatch' && !reduced) {
+          hatchCell(
+            ctx,
+            vertical ? spanLo : bandLo[g]!,
+            vertical ? bandLo[g]! : spanLo,
+            vertical ? spanHi - spanLo : bandHi[g]! - bandLo[g]!,
+            vertical ? bandHi[g]! - bandLo[g]! : spanHi - spanLo,
+            style.gridColor,
+          );
+        }
+        continue;
+      }
       const fill = colorOf(value);
       if (fill === undefined) continue;
       // The transpose, and the only place orientation reaches the geometry:

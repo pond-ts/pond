@@ -36,6 +36,7 @@ const style: HeatStyle = {
   outlineWidth: 2,
   gap: 0,
   minWidth: 1,
+  gridColor: '#ccc',
 };
 
 const RAMP = ['#a', '#b', '#c', '#d'];
@@ -408,5 +409,92 @@ describe('orientation="horizontal" transposes and nothing else', () => {
     expect(
       heatAt(ss, 5, 2.5, identity, identity, 0, 1, 'horizontal'),
     ).toBeNull();
+  });
+});
+
+describe('scale="log" — equal-ratio bands', () => {
+  // The case this exists for: incidence spanning ~2900 down to 0. Linear
+  // banding over 4 colours puts everything below 725 in one band, which on the
+  // measles grid is the entire post-1965 record.
+  const RAMP4 = ['#a', '#b', '#c', '#d'];
+  const band = (v: number, scale?: 'linear' | 'log') =>
+    bandedColor(v, RAMP4, 0, 2900, scale);
+
+  it('linear banding collapses four orders of magnitude into one band', () => {
+    expect([0, 1, 10, 100, 700].map((v) => band(v))).toEqual([
+      '#a',
+      '#a',
+      '#a',
+      '#a',
+      '#a',
+    ]);
+  });
+
+  it('log banding separates them', () => {
+    const got = [0, 1, 10, 100, 700].map((v) => band(v, 'log'));
+    expect(new Set(got).size).toBeGreaterThan(1);
+    // Monotonic: a bigger value never lands in an earlier band.
+    const idx = got.map((c) => RAMP4.indexOf(c!));
+    expect(idx).toEqual([...idx].sort((a, b) => a - b));
+  });
+
+  it('puts a value AT the floor in a real band, not off the scale', () => {
+    // `log(0)` is -Infinity; banding on `log1p` of the offset is what keeps the
+    // zeros — which on an eliminated-disease grid are most of the cells.
+    expect(band(0, 'log')).toBe('#a');
+  });
+
+  it('still clamps past either end of a pinned domain', () => {
+    expect(band(-50, 'log')).toBe('#a');
+    expect(band(99999, 'log')).toBe('#d');
+  });
+
+  it('agrees with linear at the domain endpoints', () => {
+    for (const v of [0, 2900]) expect(band(v, 'log')).toBe(band(v));
+  });
+});
+
+describe('noData="hatch"', () => {
+  const holed = () => grid([0, 10], [10, 20], ['lo', 'hi'], [NaN, 4, 1, 2]);
+  const draw = (noData: 'blank' | 'hatch') => {
+    const { ctx, calls } = recordingContext();
+    drawHeat(
+      ctx,
+      holed(),
+      identity,
+      identity,
+      style,
+      (v: number) => bandedColor(v, RAMP, 0, 4),
+      'heat',
+      null,
+      null,
+      false,
+      'vertical',
+      noData,
+    );
+    return calls;
+  };
+
+  it('draws nothing for a hole by default', () => {
+    const c = draw('blank');
+    expect(c.filter((x) => x.name === 'fillRect')).toHaveLength(3);
+    expect(c.filter((x) => x.name === 'stroke')).toHaveLength(0);
+  });
+
+  it('strokes the hole when asked, without filling it', () => {
+    // Filling would put a colour on the cell, and any colour can be read as a
+    // value. Hatching cannot.
+    const c = draw('hatch');
+    expect(c.filter((x) => x.name === 'fillRect')).toHaveLength(3);
+    expect(c.filter((x) => x.name === 'stroke').length).toBeGreaterThan(0);
+    expect(c.filter((x) => x.name === 'clip').length).toBe(1);
+  });
+
+  it('hatches in the grid colour, not the ramp', () => {
+    const strokes = draw('hatch')
+      .filter((x) => x.type === 'set' && x.name === 'strokeStyle')
+      .map((x) => x.args[0]);
+    expect(strokes).toContain(style.gridColor);
+    expect(strokes.some((s) => RAMP.includes(s as string))).toBe(false);
   });
 });
