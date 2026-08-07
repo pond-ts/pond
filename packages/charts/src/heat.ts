@@ -3,7 +3,11 @@ import type { StackedBarSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { StackMark } from './bars.js';
 import { visibleSpanRange } from './culling.js';
-import { decimateHeat, type DecimateOption } from './decimate.js';
+import {
+  decimateHeat,
+  decimateHeatRows,
+  type DecimateOption,
+} from './decimate.js';
 
 /**
  * Heat-map geometry: a grid of cells, each filled by the colour its **value**
@@ -168,6 +172,21 @@ function matchesCell(
     : m.key === ss.begin[b] && m.label === ss.groups[g];
 }
 
+/** The canvas' backing-buffer width over the x scale's CSS pixel width — the
+ *  device pixel ratio, recovered rather than read from `window` so a headless
+ *  context (no canvas, no range) degrades to `1` instead of throwing. */
+function devicePixelRatioOf(
+  ctx: CanvasRenderingContext2D,
+  xScale: Scale,
+): number {
+  const w = (ctx as unknown as { canvas?: { width?: number } }).canvas?.width;
+  const r = (xScale as unknown as { range?: () => number[] }).range?.();
+  if (typeof w !== 'number' || w <= 0 || r === undefined || r.length < 2)
+    return 1;
+  const css = Math.abs(+r[r.length - 1]! - +r[0]!);
+  return css > 0 ? w / css : 1;
+}
+
 /**
  * Fill one rectangle per cell, coloured by `colorAt(b, g)`. A gap is skipped.
  *
@@ -228,15 +247,45 @@ export function drawHeat(
           srcEnd,
         );
   const grid = thinned ?? ss;
-  const G = grid.groups.length;
+  const srcRows = grid.groups.length;
   const [vStart, vEnd] = thinned
     ? [0, thinned.length]
     : ([srcStart, srcEnd] as const);
-  // A pixel column aggregates many source bins, so it has no per-bin identity to
-  // match against — and a live cell's outline at <1px would not be visible
-  // anyway. Interaction still reads the source grid via `heatAt`.
-  const sel = thinned ? null : selection;
-  const hov = thinned ? null : hovered;
+
+  // The y half. Whichever axis is oversampled the argument is identical, and a
+  // gene matrix (10,000 rows x 8 samples) is oversampled on the axis the column
+  // decimator above cannot touch. `deviceRows` is the plot height in *device*
+  // pixels: the DPR is recovered from the x scale, since a canvas' backing width
+  // over its CSS width is the same ratio in both directions.
+  const k = typeof decimate === 'object' ? (decimate.threshold ?? 2) : 2;
+  const rowsThinned =
+    decimate === false
+      ? null
+      : (() => {
+          const dpr = devicePixelRatioOf(ctx, xScale);
+          const heightCss = Math.abs(yScale(srcRows) - yScale(0));
+          return decimateHeatRows(
+            thinned ? grid.values : ss.values,
+            thinned ? grid.length : ss.length,
+            srcRows,
+            Math.max(1, Math.floor(heightCss * dpr)),
+            k,
+          );
+        })();
+
+  const values = rowsThinned ? rowsThinned.values : grid.values;
+  const G = rowsThinned ? rowsThinned.rows : srcRows;
+  // Row `r` of a thinned grid covers source rows `[r·stride, (r+1)·stride]`, so
+  // its band is read off the UNCHANGED y scale — the coordinate space, and every
+  // axis tick in it, is untouched by the reduction.
+  const stride = rowsThinned ? rowsThinned.stride : 1;
+
+  // An aggregated column or row has no per-cell identity to match against, and a
+  // sub-pixel outline would not be visible anyway. Interaction still reads the
+  // source grid via `heatAt`.
+  const reduced = thinned !== null || rowsThinned !== null;
+  const sel = reduced ? null : selection;
+  const hov = reduced ? null : hovered;
 
   // The row bands, once. Each depends only on `g`, so computing them inside the
   // cell loop re-derived the same G boundaries for every visible bin — O(V·G)
@@ -247,8 +296,8 @@ export function drawHeat(
   const rowTop = new Float64Array(G);
   const rowBottom = new Float64Array(G);
   for (let g = 0; g < G; g += 1) {
-    const yA = yScale(g);
-    const yB = yScale(g + 1);
+    const yA = yScale(g * stride);
+    const yB = yScale(Math.min((g + 1) * stride, srcRows));
     const top = Math.min(yA, yB);
     const bottom = Math.max(yA, yB);
     const inset = Math.min(
@@ -277,15 +326,15 @@ export function drawHeat(
       // Gaps are skipped before any per-cell work, exactly as `cellRect` does
       // by returning null: a hole in the record draws nothing and owns no hit
       // region.
-      const value = grid.values[base + g]!;
+      const value = values[base + g]!;
       if (!Number.isFinite(value)) continue;
       const fill = colorOf(value);
       if (fill === undefined) continue;
       const yTop = rowTop[g]!;
       const yBottom = rowBottom[g]!;
 
-      const selected = matchesCell(sel, seriesId, grid, b, g);
-      const live = selected || matchesCell(hov, seriesId, grid, b, g);
+      const selected = matchesCell(sel, seriesId, ss, b, g);
+      const live = selected || matchesCell(hov, seriesId, ss, b, g);
 
       ctx.globalAlpha = live ? 1 : style.opacity;
       // Assigning `fillStyle` is not free — a real canvas parses the CSS colour

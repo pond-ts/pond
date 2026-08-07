@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { scaleLinear } from 'd3-scale';
-import { decimateHeat } from '../src/decimate.js';
+import { decimateHeat, decimateHeatRows } from '../src/decimate.js';
 import { drawHeat, bandedColor } from '../src/heat.js';
 import type { StackedBarSeries } from '../src/data.js';
 import { recordingContext } from './canvas-mock.js';
@@ -175,5 +175,126 @@ describe('drawHeat with decimation', () => {
     // the default cannot quietly change what an ordinary chart draws.
     const ss = grid(20, 3, (b) => b * 20);
     expect(draw(ss, 400)).toEqual(draw(ss, 400, false));
+  });
+});
+
+describe('decimateHeatRows — the y half', () => {
+  /** `bins × rows` row-major, value = the row index, so a mean over a stride is
+   *  the mean of the row indices it covers and nothing else can fake it. */
+  const byRow = (bins: number, rows: number) => {
+    const v = new Float64Array(bins * rows);
+    for (let b = 0; b < bins; b += 1)
+      for (let g = 0; g < rows; g += 1) v[b * rows + g] = g;
+    return v;
+  };
+
+  it('declines when there is a device row per source row', () => {
+    expect(decimateHeatRows(byRow(4, 100), 4, 100, 600, 2)).toBeNull();
+    expect(decimateHeatRows(byRow(4, 100), 4, 100, 100, 2)).toBeNull();
+  });
+
+  it('fires once a device row holds k source rows', () => {
+    expect(decimateHeatRows(byRow(4, 100), 4, 100, 50, 2)).not.toBeNull();
+  });
+
+  it('averages the rows in each stride', () => {
+    // 100 rows into 10 device rows ⇒ stride 10. Row 0 covers source 0..9 (mean
+    // 4.5), row 1 covers 10..19 (14.5). First-wins would give 0/10, last 9/19.
+    const out = decimateHeatRows(byRow(2, 100), 2, 100, 10, 2)!;
+    expect(out.stride).toBe(10);
+    expect(out.rows).toBe(10);
+    expect(out.values[0]).toBe(4.5);
+    expect(out.values[1]).toBe(14.5);
+  });
+
+  it('keeps bins independent', () => {
+    const v = byRow(2, 100);
+    for (let g = 0; g < 100; g += 1) v[100 + g] = 1000 + g;
+    const out = decimateHeatRows(v, 2, 100, 10, 2)!;
+    expect(out.values[0]).toBe(4.5);
+    expect(out.values[out.rows]).toBe(1004.5);
+  });
+
+  it('averages a short final run over what is actually there', () => {
+    // Averaging the tail over a full stride would drag it toward zero.
+    const out = decimateHeatRows(byRow(1, 25), 1, 25, 3, 2)!;
+    expect(out.rows).toBe(Math.ceil(25 / out.stride));
+    const g0 = (out.rows - 1) * out.stride;
+    let sum = 0;
+    for (let g = g0; g < 25; g += 1) sum += g;
+    expect(out.values[out.rows - 1]).toBeCloseTo(sum / (25 - g0), 10);
+  });
+
+  it('lets holes contribute nothing, and keeps an all-hole run a hole', () => {
+    const v = new Float64Array(20);
+    for (let g = 0; g < 20; g += 1) v[g] = g < 10 ? NaN : 7;
+    const out = decimateHeatRows(v, 1, 20, 2, 2)!;
+    expect(Number.isNaN(out.values[0]!)).toBe(true);
+    expect(out.values[1]).toBe(7);
+  });
+});
+
+describe('y decimation leaves the coordinate space alone', () => {
+  // The guarantee that matters most. `<YAxis>` scales over `[0, G]` and explicit
+  // `{ at, label }` ticks are in those units, so a reduction that rewrote the row
+  // bands the way the x half rewrites bin spans would slide every axis label.
+  const drawRows = (rows: number, decimate: boolean) => {
+    const ss = grid(4, rows, (_b, g) => g);
+    const { ctx, calls } = ctxOfWidth(8);
+    drawHeat(
+      ctx,
+      ss,
+      xOver(4, 4),
+      scaleLinear().domain([0, rows]).range([300, 0]),
+      { opacity: 1, highlight: '#fff', outlineWidth: 1, gap: 0, minWidth: 1 },
+      (v: number) => bandedColor(v, RAMP, 0, rows),
+      'heat',
+      null,
+      null,
+      decimate,
+    );
+    const rects = calls
+      .filter((c) => c.name === 'fillRect')
+      .map((c) => c.args as unknown as [number, number, number, number]);
+    return {
+      n: rects.length,
+      top: Math.min(...rects.map((r) => r[1])),
+      bottom: Math.max(...rects.map((r) => r[1] + r[3])),
+    };
+  };
+
+  it('spans exactly the same pixels, with far fewer rects', () => {
+    const thin = drawRows(2000, true);
+    const full = drawRows(2000, false);
+    expect(thin.n).toBeLessThan(full.n / 2);
+    expect(thin.top).toBeCloseTo(full.top, 6);
+    expect(thin.bottom).toBeCloseTo(full.bottom, 6);
+  });
+
+  it('tiles without gaps or overlaps between reduced rows', () => {
+    // Each band must start where the previous ended, or the grid grows hairlines
+    // the source data does not have.
+    const ss = grid(1, 2000, (_b, g) => g);
+    const { ctx, calls } = ctxOfWidth(8);
+    drawHeat(
+      ctx,
+      ss,
+      xOver(1, 4),
+      scaleLinear().domain([0, 2000]).range([300, 0]),
+      { opacity: 1, highlight: '#fff', outlineWidth: 1, gap: 0, minWidth: 1 },
+      () => '#a',
+      'heat',
+      null,
+      null,
+      true,
+    );
+    const rects = calls
+      .filter((c) => c.name === 'fillRect')
+      .map((c) => c.args as unknown as [number, number, number, number])
+      .sort((a, b) => a[1] - b[1]);
+    expect(rects.length).toBeGreaterThan(1);
+    for (let i = 1; i < rects.length; i += 1) {
+      expect(rects[i]![1]).toBeCloseTo(rects[i - 1]![1] + rects[i - 1]![3], 6);
+    }
   });
 });

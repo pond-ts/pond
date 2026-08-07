@@ -854,6 +854,64 @@ export function decimateHeat(
 }
 
 /**
+ * The **y half** of heat-map decimation: collapse runs of `stride` rows into one,
+ * each the mean of the rows it covers ([PND-HEATMAP]).
+ *
+ * The x half ({@link decimateHeat}) is not enough on its own, and a gene
+ * expression matrix is the case that proves it: 10,000 genes x 8 samples is
+ * **16.7 rows per pixel row** and only 8 bins, so the column decimator declines
+ * and every one of the 80,000 cells is drawn to show ~4,800 distinguishable
+ * ones. Whichever axis is oversampled, the argument is the same — rows sharing a
+ * pixel row composite, so what the eye receives is their mean.
+ *
+ * **A fixed integer stride, not a pixel-edge walk.** Source rows are *unit
+ * slots* (`[g, g+1]`, which is what lets `binCategories` label them), so they
+ * are already uniform in row-index space; a run of `stride` of them is exactly
+ * `[r·stride, (r+1)·stride]`. That keeps the y coordinate space **unchanged** —
+ * which is load-bearing, because `<YAxis>` scales over `[0, G]` and explicit
+ * `{ at, label }` ticks are in those units. Rewriting the row bands the way the
+ * x half rewrites bin spans would silently slide every axis label.
+ *
+ * Returns `null` below the gate (`stride < k` — fewer than `k` rows per device
+ * row, where drawing every row is honest and the reduction would not pay), so
+ * the caller draws the source rows. The final run is short when `rows` is not a
+ * multiple of `stride`; it averages what is there.
+ */
+export function decimateHeatRows(
+  values: Float64Array,
+  bins: number,
+  rows: number,
+  deviceRows: number,
+  k = 2,
+): { values: Float64Array; rows: number; stride: number } | null {
+  if (!(deviceRows > 0) || !(rows > 0)) return null;
+  const stride = Math.ceil(rows / deviceRows);
+  if (stride < k) return null;
+  const out = Math.ceil(rows / stride);
+  const reduced = new Float64Array(bins * out);
+  for (let b = 0; b < bins; b += 1) {
+    const src = b * rows;
+    const dst = b * out;
+    for (let r = 0; r < out; r += 1) {
+      const g0 = r * stride;
+      const g1 = Math.min(g0 + stride, rows);
+      let sum = 0;
+      let n = 0;
+      for (let g = g0; g < g1; g += 1) {
+        const v = values[src + g]!;
+        // A hole contributes nothing rather than pulling the mean toward zero;
+        // a run of nothing but holes stays a hole.
+        if (!Number.isFinite(v)) continue;
+        sum += v;
+        n += 1;
+      }
+      reduced[dst + r] = n > 0 ? sum / n : NaN;
+    }
+  }
+  return { values: reduced, rows: out, stride };
+}
+
+/**
  * Decimate a **uniform** scatter to one representative mark per occupied
  * **pixel cell** ([PND-MARKDEC] scatter half) — the marks analog of
  * {@link decimateBars}, but **2D**: scatter has no fill, so a line/bar's
