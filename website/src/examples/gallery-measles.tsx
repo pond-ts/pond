@@ -101,8 +101,28 @@ export default function GalleryMeasles({
   width: number;
   height?: number;
 }) {
-  const theme = useSiteChartTheme();
+  const siteTheme = useSiteChartTheme();
   const [hit, setHit] = useState<SelectInfo | null>(null);
+
+  // The three dates ARE the argument, so they have to survive a field of
+  // saturated blue. Two things were making them recede: the site's annotation
+  // colour is a warm orange that sits close to the ramp's pale end, and the
+  // depth ramp draws a resting mark at 0.4 alpha — sensible when annotations
+  // are secondary to a line, wrong when they carry the finding. A crimson is
+  // the most separable hue available against a yellow-to-blue ramp, and the
+  // flatter ramp keeps a resting marker legible while still letting a
+  // selected one step forward.
+  const theme = useMemo(
+    () => ({
+      ...siteTheme,
+      annotation: {
+        ...siteTheme.annotation,
+        color: '#d81e5b',
+        depth: [1, 0.95, 0.85] as [number, number, number],
+      },
+    }),
+    [siteTheme],
+  );
 
   const series = useMemo<TimeSeries<SeriesSchema>>(() => {
     const columns: Record<string, (number | null)[]> = {
