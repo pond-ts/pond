@@ -601,7 +601,29 @@ To cut a release from `main`:
    unmet-peer errors on a clean install. (Missed during the v0.54.0 prep, which
    is why this step now names the field, the count, and the reason.)
 
-3. **Promote the `## [Unreleased]` section** to a new `## [X.Y.Z] — YYYY-MM-DD`
+3. **Regenerate `package-lock.json`** — `npm install --package-lock-only`, then
+   sanity-check it before committing:
+
+   ```
+   grep -c '"version": "0.<previous-minor>' package-lock.json   # want 0
+   rm -rf node_modules && npm ci                                 # must succeed
+   ```
+
+   **Why it must be done:** the lock records each **workspace** package's own
+   version, so bumping the six manifests leaves it stale — and CI installs with
+   `npm ci`, which fails outright on a lock that disagrees with the manifests
+   rather than quietly repairing it. That would red the publish workflow *after*
+   the tag is pushed, which is the worst moment to find out: the tag is already
+   public, so recovering means either force-moving it or burning a patch
+   version.
+
+   This step is easy to miss because nothing local surfaces it — `npm run
+   verify` passes fine against a stale lock, since it runs on the
+   already-installed tree. It shows up only under a clean `npm ci`. (Not listed
+   here until v0.57.0, though the v0.56.2 bump did include the lock; the diff
+   should be ~12 lines, two per workspace package.)
+
+4. **Promote the `## [Unreleased]` section** to a new `## [X.Y.Z] — YYYY-MM-DD`
    heading (leaving a fresh empty `## [Unreleased]` above it), and update the
    compare-link footnotes. Entries should already be there — each feature PR
    adds its own as it lands (see "Before opening a PR"). **Still sweep**
@@ -626,9 +648,9 @@ To cut a release from `main`:
    Consumers upgrading between versions rely on this; skipping it compounds
    every release.
 
-4. Commit with a message like `chore: bump to vX.Y.Z`.
-5. Tag the commit: `git tag vX.Y.Z`.
-6. Push the branch, then push the tag:
+5. Commit with a message like `chore: bump to vX.Y.Z`.
+6. Tag the commit: `git tag vX.Y.Z`.
+7. Push the branch, then push the tag:
    ```
    git push origin main
    git push origin vX.Y.Z
