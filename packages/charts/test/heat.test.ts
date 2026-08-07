@@ -212,15 +212,24 @@ describe('drawHeat', () => {
   it('insets the outline so it cannot bleed onto the neighbouring cell', () => {
     // On a flush grid (`gap: 0`) a centred stroke would straddle the shared
     // edge and paint over half of the next cell — misreporting its colour.
+    // A rect call's four args, as a tuple — `args` is `unknown[]`, and a plain
+    // `as number[]` still indexes to `number | undefined` under
+    // `noUncheckedIndexedAccess`, which will not take arithmetic.
+    const rectOf = (c: { args: unknown[] }) =>
+      c.args as [number, number, number, number];
+
     const w = style.outlineWidth;
-    const stroke = draw(two3(), null, { id: 'heat', key: 0, label: 'lo' })
-      .filter((c) => c.name === 'strokeRect')
-      .pop()!;
-    const cell = draw(two3())
-      .filter((c) => c.name === 'fillRect')
-      .find((c) => c.args[1] === stroke.args[1] - w / 2)!;
-    const [fx, fy, fw, fh] = cell.args as number[];
-    expect(stroke.args).toEqual([fx + w / 2, fy + w / 2, fw - w, fh - w]);
+    const stroke = rectOf(
+      draw(two3(), null, { id: 'heat', key: 0, label: 'lo' })
+        .filter((c) => c.name === 'strokeRect')
+        .pop()!,
+    );
+    const [fx, fy, fw, fh] = rectOf(
+      draw(two3())
+        .filter((c) => c.name === 'fillRect')
+        .find((c) => rectOf(c)[1] === stroke[1] - w / 2)!,
+    );
+    expect(stroke).toEqual([fx + w / 2, fy + w / 2, fw - w, fh - w]);
   });
 
   it('identifies a cell by bin AND row, not bin alone', () => {
