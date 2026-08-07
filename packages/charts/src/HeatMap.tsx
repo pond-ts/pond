@@ -182,16 +182,15 @@ export function HeatMap<
 
   const selected = container.selected;
   const hoveredMark = container.hovered;
+  // The selection is a set ([PND-MULTISEL]); a cell matches any member.
   const selection = useMemo(
     () =>
-      selected === null
-        ? null
-        : {
-            id: selected.id,
-            key: selected.key,
-            label: selected.label,
-            ...(selected.mark !== undefined ? { mark: selected.mark } : {}),
-          },
+      selected.map((m) => ({
+        id: m.id,
+        key: m.key,
+        label: m.label,
+        ...(m.mark !== undefined ? { mark: m.mark } : {}),
+      })),
     [selected],
   );
   const hover = useMemo(
@@ -282,7 +281,11 @@ export function HeatMap<
             style,
             colorAt,
             id,
-            selection,
+            // A cell draw matches one mark. Multi-cell selection rendering is
+            // not part of [PND-MULTISEL]'s bar-focused scope, so the first
+            // member wins — which is exactly the previous behaviour for the
+            // single-selection callers that are the only ones today.
+            selection[0] ?? null,
             hover,
           ),
       },

@@ -285,8 +285,10 @@ export function BoxPlot<
   // the canvas repaints the outline. A no-`id` layer never matches.
   const sel = container.selected;
   const hov = container.hovered;
+  // Every selected key belonging to this series ([PND-MULTISEL]). `null` when
+  // none, preserving the single-selection reader below.
   const selectedKey =
-    id !== undefined && sel !== null && sel.id === id ? sel.key : null;
+    id !== undefined ? (sel.find((m) => m.id === id)?.key ?? null) : null;
   const hoveredKey =
     id !== undefined && hov !== null && hov.id === id ? hov.key : null;
   const entry = useMemo<LayerEntry>(

@@ -45,7 +45,7 @@ function draw(style: StackStyle, selected = false, hovered = false) {
     0,
     1,
     'c',
-    selected ? sel : null,
+    selected ? [sel] : [],
     hovered ? sel : null,
   );
   return calls;

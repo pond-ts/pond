@@ -58,7 +58,7 @@ describe('two running totals per bin', () => {
       0,
       1,
       undefined,
-      null,
+      [],
       null,
     );
     expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(3);

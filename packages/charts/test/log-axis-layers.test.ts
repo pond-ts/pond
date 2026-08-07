@@ -96,7 +96,7 @@ describe('stacked bars on a log axis', () => {
       0,
       1,
       'traffic',
-      null,
+      [],
       null,
     );
     const rects = argsOf(calls, 'fillRect');

@@ -294,6 +294,27 @@ function barMatches(
 }
 
 /**
+ * Does **any** member of the selection set identify this bar? The set form of
+ * {@link barMatches} ([PND-MULTISEL]).
+ *
+ * Linear over the set on purpose: a selection is a handful of marks a person
+ * clicked, not a data structure — building a Set per draw would cost more than
+ * it saves at these sizes, and the common cases are 0 or 1 members, which this
+ * short-circuits on.
+ */
+function barMatchesAny(
+  sel: readonly BarMark[],
+  seriesId: string | undefined,
+  stable: string | undefined,
+  begin: number,
+): boolean {
+  for (let i = 0; i < sel.length; i += 1) {
+    if (barMatches(sel[i]!, seriesId, stable, begin)) return true;
+  }
+  return false;
+}
+
+/**
  * Fill one rectangle per bar in `cs`, each spanning its key's `[begin, end]`
  * (inset by `gapPx`) from the resolved `baseline` to the value.
  *
@@ -354,7 +375,7 @@ export function drawBars(
   baseline: number,
   gapPx: number,
   seriesId: string | undefined,
-  selection: BarMark | null,
+  selection: readonly BarMark[],
   hovered: BarMark | null,
   decimate: DecimateOption = true,
   binFills?: readonly (string | undefined)[],
@@ -368,6 +389,10 @@ export function drawBars(
   // the `begin[i]` selection/hover match stays correct; full range when `xScale`
   // has no domain (a test stub). A selected/hovered bar off-screen isn't drawn
   // (its highlight would be off-screen anyway).
+  // Dim only when a selection actually exists AND the theme opted in: with an
+  // empty set there is nothing to recede from, and with no `dimmed` value the
+  // library never invents one (RFC A2.3).
+  const dimming = style.dimmed !== undefined && selection.length > 0;
   const [vStart, vEnd] = visibleSpanRange(cs.begin, cs.end, cs.length, xScale);
   // Decimate the visible bars to per-column envelope rects once dense (see the
   // header). `null` below the visible-density threshold ⇒ the full per-bar loop.
@@ -417,7 +442,7 @@ export function drawBars(
   // every pointer move. See BarSeries.marks — this hoist keeps the draw path
   // clean, it doesn't make the channel free.)
   const marks =
-    selection?.mark !== undefined || hovered?.mark !== undefined
+    selection.some((m) => m.mark !== undefined) || hovered?.mark !== undefined
       ? cs.marks
       : undefined;
   let drawn = 0;
@@ -441,13 +466,14 @@ export function drawBars(
     // sets one and `highlight` otherwise, always without the outline — so hover
     // reads as a lighter "this bar is live" and select as the committed pick.
     const stable = marks?.[i];
-    const selected = barMatches(selection, seriesId, stable, cs.begin[i]!);
+    const selected = barMatchesAny(selection, seriesId, stable, cs.begin[i]!);
     const isHovered = barMatches(hovered, seriesId, stable, cs.begin[i]!);
     if (fills !== undefined) {
       // Per-bar fills: the bar keeps its own colour under hover / selection —
       // highlight pops the alpha to 1 and outlines the selection in the bar's
       // own fill (the drawStacks binFills convention; see the header).
-      const fill = fills[i] ?? style.fill;
+      const fill =
+        dimming && !selected ? style.dimmed! : (fills[i] ?? style.fill);
       ctx.globalAlpha =
         selected || isHovered ? (style.emphasisOpacity ?? 1) : style.opacity;
       ctx.fillStyle = fill;
@@ -506,7 +532,9 @@ export function drawBars(
       ? style.highlight
       : isHovered
         ? (style.hover ?? style.highlight)
-        : style.fill;
+        : dimming && !selected
+          ? style.dimmed!
+          : style.fill;
     ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
     drawn += 1;
     if (selected) {
@@ -720,6 +748,15 @@ export interface StackStyle {
    * resting and live, only the floor.
    */
   readonly emphasisOpacity?: number;
+  /**
+   * Fill for a segment **not** in a non-empty selection set — the themed
+   * de-emphasis ([PND-MULTISEL], RFC A2.3). Unset ⇒ nothing dims, so this is
+   * opt-in and back-compatible. Unlike {@link highlight}, this **does** apply
+   * over {@link binFills}: dimming is about recession, not identity, so a
+   * zone-coloured bar can recede without its colour changing meaning — the
+   * dimmed value simply replaces it while it is out of the set.
+   */
+  readonly dimmed?: string;
 }
 
 /** The narrowed selection / hover identity a stacked segment matches against:
@@ -907,7 +944,7 @@ export function drawStacks(
   gapPx: number,
   minSpanPx: number,
   seriesId: string | undefined,
-  selection: StackMark | null,
+  selection: readonly StackMark[],
   hover: StackMark | null,
   banding?: BandLadder,
 ): void {
@@ -919,6 +956,8 @@ export function drawStacks(
   // each segment is already a slice of a total — so the ladder is dropped here
   // and warned about at the prop boundary rather than half-applied.
   const ladder = G === 1 && style.binFills === undefined ? banding : undefined;
+  // See `drawBars` — dim only with a real selection and an opted-in theme.
+  const dimming = style.dimmed !== undefined && selection.length > 0;
   ctx.save();
   ctx.globalAlpha = style.opacity;
   for (let b = 0; b < ss.length; b += 1) {
@@ -956,7 +995,7 @@ export function drawStacks(
         (stableMark !== undefined
           ? m.mark === stableMark
           : m.key === ss.begin[b] && m.label === ss.groups[g]);
-      const selected = matches(selection);
+      const selected = selection.some((m) => matches(m));
       const isHovered = matches(hover);
       // A hovered / selected segment pops its alpha; a resting one draws at the
       // shared one. `emphasisOpacity` makes the *difference* themeable, where
@@ -970,6 +1009,11 @@ export function drawStacks(
         // the bar's length at the ladder boundaries, transposing on
         // orientation — vertical bars band along y, horizontal along x, while
         // the bin span (the other axis) is shared by every band.
+        if (dimming && !selected) {
+          ctx.fillStyle = style.dimmed!;
+          ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
+          continue;
+        }
         let topFill = ladder.colors[0]!;
         for (let bk = 0; bk < ladder.colors.length; bk += 1) {
           if (!bandSpanInto(base, v, ladder.thresholds, bk)) continue;
@@ -1002,13 +1046,15 @@ export function drawStacks(
       // as the single-series path does. With `binFills` the bar keeps its own
       // colour (the design exclusion) and the alpha pop above is the signal.
       const emphasised =
-        style.binFills === undefined
-          ? selected
-            ? (style.highlight ?? fill)
-            : isHovered
-              ? (style.hover ?? style.highlight ?? fill)
-              : fill
-          : fill;
+        dimming && !selected
+          ? style.dimmed!
+          : style.binFills === undefined
+            ? selected
+              ? (style.highlight ?? fill)
+              : isHovered
+                ? (style.hover ?? style.highlight ?? fill)
+                : fill
+            : fill;
       ctx.fillStyle = emphasised;
       ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
       if (selected) {

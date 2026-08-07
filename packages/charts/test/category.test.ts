@@ -81,7 +81,7 @@ describe('single-series (categorical) negative values', () => {
       0,
       1,
       undefined,
-      null,
+      [],
       null,
     );
     // Both bars fill — the negative one is not silently skipped.
@@ -125,7 +125,7 @@ describe('drawStacks — stable per-mark selection (categorical axis)', () => {
       0,
       1,
       'chart', // the layer id
-      { id: 'chart', key: -1, label: 'ignored', mark: sel.mark },
+      [{ id: 'chart', key: -1, label: 'ignored', mark: sel.mark }],
       null,
     );
     // The outlined bar is the selected one — count its strokeRect.
@@ -164,7 +164,7 @@ describe('drawStacks — stable per-mark selection (categorical axis)', () => {
       0,
       1,
       'chart',
-      { id: 'other', key: -1, label: 'x', mark: 'AAPL' }, // right mark, wrong layer
+      [{ id: 'other', key: -1, label: 'x', mark: 'AAPL' }], // right mark, wrong layer
       null,
     );
     expect(calls.filter((c) => c.name === 'strokeRect').length).toBe(0);

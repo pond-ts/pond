@@ -112,14 +112,21 @@ export interface ContainerFrame {
    */
   readonly regionSelectModifier: 'shift' | undefined;
   /**
-   * The selected mark, or `null`. Shared across rows (single selection). A layer
-   * highlights the mark matching the selection's series **`id`** and the clicked
-   * sample `key` (epoch ms) — the `id` picks the series (so two series sharing a
-   * timestamp don't both light up), the `key` picks the mark within it. A
-   * controlled `selected` prop pins it; otherwise a click on a selectable layer
-   * (one with an `id`) sets it.
+   * The selected marks — **empty when nothing is selected**, never `null`.
+   * Shared across rows, insertion-ordered. A layer highlights every mark
+   * matching a member's series **`id`** and clicked sample `key` (epoch ms) —
+   * the `id` picks the series (so two series sharing a timestamp don't both
+   * light up), the `key` picks the mark within it. A controlled `selected` prop
+   * pins the set; otherwise a click on a selectable layer (one with an `id`)
+   * sets it.
+   *
+   * **A set, not a single mark, since [PND-MULTISEL].** The container prop
+   * accepts either shape and normalizes here, so a single-selection consumer is
+   * unaffected; this frame field is internal (not exported from `index.ts`), so
+   * widening it breaks nobody. A layer that only ever wants one mark can read
+   * `selected[0]`, but membership is the honest test — see `isSelected`.
    */
-  readonly selected: SelectInfo | null;
+  readonly selected: readonly SelectInfo[];
   /**
    * Select a mark, or `null` to clear — a row's click surface calls this after
    * hit-testing its layers. Always fires `onSelect`; manages the internal
@@ -128,7 +135,7 @@ export interface ContainerFrame {
    * `onTrackerChanged` notification — not `applyRange`, which is controlled by
    * the presence of a *callback*.
    */
-  select(hit: SelectInfo | null): void;
+  select(hit: SelectInfo | null, modifiers?: SelectModifiers): void;
   /**
    * The **hovered** mark, or `null` — the transient hover-highlight, distinct
    * from the committed `selected`. A row's pointer-move surface hit-tests its
@@ -726,6 +733,44 @@ export interface TrackerSource {
  * a selection survives a streaming data update where a sample `key` would go
  * stale. Only layers that carry an `id` are selectable (see {@link RowLayer.hitTest}).
  */
+/**
+ * The keyboard modifiers held during the click that produced a selection —
+ * handed to `<ChartContainer onSelect>` alongside the hit ([PND-MULTISEL]).
+ *
+ * **Why the library reports these instead of acting on them.** A consumer with
+ * a multi-valued filter needs ⌘/Ctrl-click to mean "add to the selection", and
+ * without the modifier state on the callback it simply cannot: the click has
+ * already been reduced to a hit by the time it arrives, so every consumer is
+ * forced to treat every click as a replace. Reporting the modifiers keeps the
+ * *policy* with the consumer (which is where `docs/rfcs/selection.md` A1.2 puts
+ * set arithmetic) while removing the thing that made the policy unexpressible.
+ *
+ * The library itself still applies no modifier semantics — a chart click sets
+ * the single hit as it always has. A consumer that wants add/toggle reads
+ * {@link additive} and drives the controlled `selected` set itself.
+ */
+export interface SelectModifiers {
+  /**
+   * The platform-idiomatic **"add to selection"** chord — `metaKey` on macOS,
+   * `ctrlKey` elsewhere, surfaced as one boolean so every consumer doesn't
+   * re-derive the same platform rule (and get it wrong on one of the two).
+   * Prefer this over the raw keys unless you specifically want one of them.
+   */
+  readonly additive: boolean;
+  readonly ctrlKey: boolean;
+  readonly metaKey: boolean;
+  /**
+   * **Note the conflict:** `shift` is already the drag chord for
+   * `<ChartContainer regionSelectModifier="shift">` on a continuous axis, so a
+   * shift-click there may also be the start of a region drag. Reported for
+   * completeness; think before you give it a second meaning. (There is
+   * deliberately no derived `range` flag for this reason — an ordinal range
+   * gesture is [PND-CATRANGE], not a modifier.)
+   */
+  readonly shiftKey: boolean;
+  readonly altKey: boolean;
+}
+
 export interface SelectInfo {
   /**
    * The **series identity** — the layer's `id` prop. The selection / dedup /

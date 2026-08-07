@@ -129,7 +129,9 @@ export function buildChartLegend(
       label: spec.label,
       swatch: spec.swatch,
       ...(spec.id !== undefined ? { id: spec.id } : {}),
-      selected: spec.id !== undefined && container.selected?.id === spec.id,
+      selected:
+        spec.id !== undefined &&
+        container.selected.some((m) => m.id === spec.id),
       hovered: spec.id !== undefined && container.hovered?.id === spec.id,
     };
     const last = rows[rows.length - 1];
@@ -157,8 +159,13 @@ export function buildChartLegend(
     },
     select: (row) => {
       if (row.id === undefined) return;
+      // Toggle: clicking an already-selected row clears it. No modifiers here —
+      // a legend click has no pointer event in this path, so `onSelect` receives
+      // `undefined` modifiers and a consumer treats it as a plain select.
       container.select(
-        container.selected?.id === row.id ? null : seriesSelectInfo(row),
+        container.selected.some((m) => m.id === row.id)
+          ? null
+          : seriesSelectInfo(row),
       );
     },
   };

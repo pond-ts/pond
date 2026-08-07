@@ -258,9 +258,12 @@ export function Legend({
   // dulls (the ticker-compare treatment) — quieter and clearer than
   // decorating the selected item itself. Only when the selection points at an
   // item of THIS legend, so selecting an off-legend mark dulls nothing.
-  const selectedId = container?.selected?.id;
-  const anySelected =
-    selectedId !== undefined && entries.some((it) => it.id === selectedId);
+  // Any member of the selection set that names an item of THIS legend
+  // ([PND-MULTISEL]); selecting an off-legend mark still dulls nothing.
+  const selectedIds = container?.selected ?? [];
+  const anySelected = entries.some(
+    (it) => it.id !== undefined && selectedIds.some((m) => m.id === it.id),
+  );
 
   const enter = (item: LegendItemInput) => {
     if (onRowHover) return onRowHover(item);
@@ -310,7 +313,8 @@ export function Legend({
           onRowHover !== undefined ||
           (item.id !== undefined && container !== null);
         const selected =
-          item.id !== undefined && container?.selected?.id === item.id;
+          item.id !== undefined &&
+          (container?.selected ?? []).some((m) => m.id === item.id);
         const hovered =
           item.id !== undefined && container?.hovered?.id === item.id;
         return (

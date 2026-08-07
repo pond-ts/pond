@@ -1,0 +1,310 @@
+import { useContext, useEffect, useState } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render } from '@testing-library/react';
+import { ChartContainer } from '../src/ChartContainer.js';
+import { ChartRow } from '../src/ChartRow.js';
+import { Layers } from '../src/Layers.js';
+import { BarChart } from '../src/BarChart.js';
+import { YAxis } from '../src/YAxis.js';
+import { defaultTheme } from '../src/theme.js';
+import {
+  ContainerContext,
+  RowContext,
+  type ContainerFrame,
+  type RowFrame,
+  type SelectInfo,
+} from '../src/context.js';
+import { recordingContext, stubCanvasContext } from './canvas-mock.js';
+
+afterEach(cleanup);
+
+/**
+ * [PND-MULTISEL] — the three pieces that let a consumer own a multi-valued
+ * selection: modifier state on the callback, a `selected` prop that takes a
+ * set, and a themed de-emphasis for everything out of it.
+ *
+ * The through-line worth stating: **the library reports, the consumer decides.**
+ * It applies no set arithmetic — no `selectionMode`, no built-in toggle. What
+ * it previously withheld was the *information* needed to implement a policy
+ * (the click arrived as a bare hit, so every consumer was forced to treat every
+ * click as a replace) and the *ability to render* the result (a single mark).
+ * Those are the two things fixed here.
+ */
+
+const categories = [
+  { label: 'alpha', value: 3 },
+  { label: 'beta', value: 2 },
+  { label: 'gamma', value: 1 },
+];
+
+const mark = (m: string): SelectInfo => ({
+  id: 'cap',
+  key: 0,
+  value: 1,
+  color: '#000',
+  label: m,
+  mark: m,
+});
+
+function mount(props: Record<string, unknown> = {}, theme = defaultTheme) {
+  let cf: ContainerFrame | null = null;
+  let rf: RowFrame | null = null;
+  function Capture() {
+    const c = useContext(ContainerContext);
+    const r = useContext(RowContext);
+    useEffect(() => {
+      if (c) cf = c;
+      if (r) rf = r;
+    });
+    return null;
+  }
+  const stub = stubCanvasContext();
+  let dom: HTMLElement;
+  try {
+    const res = render(
+      <ChartContainer width={300} theme={theme} {...props}>
+        <ChartRow height={100}>
+          <YAxis id="a" min={0} max={4} label="" />
+          <Layers>
+            <BarChart categories={categories} id="cap" />
+            <Capture />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    dom = res.container;
+  } finally {
+    stub.restore();
+  }
+  const { ctx, calls } = recordingContext();
+  rf!.layers[0]!.layer.draw(ctx, cf!.xScale, rf!.yScales.get('a')!);
+  const fills = calls
+    .filter((c) => c.type === 'set' && c.name === 'fillStyle')
+    .map((c) => c.args[0] as string);
+  return { frame: cf!, dom, fills };
+}
+
+describe('modifier state reaches onSelect', () => {
+  /** Click the plot surface with the given modifiers. */
+  function clickWith(init: Partial<MouseEventInit>) {
+    const onSelect = vi.fn();
+    const stub = stubCanvasContext();
+    let dom: HTMLElement;
+    try {
+      const res = render(
+        <ChartContainer width={300} onSelect={onSelect}>
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={4} label="" />
+            <Layers>
+              <BarChart categories={categories} id="cap" />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>,
+      );
+      dom = res.container;
+    } finally {
+      stub.restore();
+    }
+    const surface = dom.querySelector('canvas')!.parentElement!;
+    // The selection is committed on `click`, after the pointer pair has
+    // established that this wasn't a drag — firing only pointerup selects
+    // nothing.
+    fireEvent.pointerDown(surface, { clientX: 40, clientY: 40 });
+    fireEvent.pointerUp(surface, { clientX: 40, clientY: 40 });
+    fireEvent.click(surface, { clientX: 40, clientY: 40, ...init });
+    return onSelect;
+  }
+
+  it('reports metaKey as additive — the macOS add-to-selection chord', () => {
+    const onSelect = clickWith({ metaKey: true });
+    expect(onSelect).toHaveBeenCalled();
+    const mods = onSelect.mock.calls.at(-1)![1];
+    expect(mods).toMatchObject({ additive: true, metaKey: true });
+  });
+
+  it('reports ctrlKey as additive — the same chord elsewhere', () => {
+    const mods = clickWith({ ctrlKey: true }).mock.calls.at(-1)![1];
+    expect(mods).toMatchObject({ additive: true, ctrlKey: true });
+  });
+
+  it('is not additive for a plain click', () => {
+    const mods = clickWith({}).mock.calls.at(-1)![1];
+    expect(mods).toMatchObject({
+      additive: false,
+      ctrlKey: false,
+      metaKey: false,
+    });
+  });
+
+  it('reports shift and alt without deriving a meaning for them', () => {
+    // `shift` is already the region-drag chord, so the library deliberately
+    // exposes it raw rather than minting a `range` flag that would collide.
+    const mods = clickWith({ shiftKey: true, altKey: true }).mock.calls.at(
+      -1,
+    )![1];
+    expect(mods).toMatchObject({ shiftKey: true, altKey: true });
+    expect(mods).not.toHaveProperty('range');
+  });
+
+  it('keeps the callback arity for a non-pointer selection', () => {
+    // A legend row / programmatic select has no event. Passing an explicit
+    // `undefined` second argument would break existing
+    // `toHaveBeenCalledWith(hit)` assertions for a purely additive feature.
+    const onSelect = vi.fn();
+    const stub = stubCanvasContext();
+    let frame: ContainerFrame | null = null;
+    function Grab() {
+      const c = useContext(ContainerContext);
+      useEffect(() => {
+        if (c) frame = c;
+      });
+      return null;
+    }
+    try {
+      render(
+        <ChartContainer width={300} onSelect={onSelect}>
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={4} label="" />
+            <Layers>
+              <BarChart categories={categories} id="cap" />
+              <Grab />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>,
+      );
+    } finally {
+      stub.restore();
+    }
+    frame!.select(null);
+    expect(onSelect).toHaveBeenCalledWith(null);
+  });
+});
+
+describe('`selected` accepts a set', () => {
+  it('normalizes a single mark to a one-member set', () => {
+    // The union is what makes this non-breaking: every existing caller passes
+    // a single `SelectInfo` and means exactly what it always did.
+    const { frame } = mount({ selected: mark('alpha') });
+    expect(frame.selected).toHaveLength(1);
+    expect(frame.selected[0]!.mark).toBe('alpha');
+  });
+
+  it('normalizes null and omission to an empty set, never null', () => {
+    expect(mount({ selected: null }).frame.selected).toEqual([]);
+    expect(mount({}).frame.selected).toEqual([]);
+  });
+
+  it('carries an array through in order', () => {
+    const { frame } = mount({ selected: [mark('gamma'), mark('alpha')] });
+    expect(frame.selected.map((m) => m.mark)).toEqual(['gamma', 'alpha']);
+  });
+
+  it('lights every member, not just the first', () => {
+    // The actual point: two selected bars both draw as selected. Before the
+    // widening the second could not be expressed at all.
+    const themed = {
+      ...defaultTheme,
+      bar: {
+        ...defaultTheme.bar,
+        default: { ...defaultTheme.bar.default, highlight: '#SEL' },
+      },
+    };
+    const { fills } = mount(
+      { selected: [mark('alpha'), mark('gamma')] },
+      themed,
+    );
+    expect(fills.filter((f) => f === '#SEL')).toHaveLength(2);
+  });
+});
+
+describe('BarStyle.dimmed — the themed de-emphasis', () => {
+  const dimTheme = {
+    ...defaultTheme,
+    bar: {
+      ...defaultTheme.bar,
+      default: {
+        ...defaultTheme.bar.default,
+        highlight: '#SEL',
+        dimmed: '#DIM',
+      },
+    },
+  };
+
+  it('dims the bars outside a non-empty selection', () => {
+    const { fills } = mount({ selected: [mark('alpha')] }, dimTheme);
+    expect(fills.filter((f) => f === '#SEL')).toHaveLength(1);
+    expect(fills.filter((f) => f === '#DIM')).toHaveLength(2);
+  });
+
+  it('dims nothing while the selection is empty', () => {
+    // With no selection there is nothing to recede from.
+    const { fills } = mount({ selected: [] }, dimTheme);
+    expect(fills).not.toContain('#DIM');
+  });
+
+  it('is opt-in — a theme with no dimmed value dims nothing', () => {
+    // Back-compat by construction (RFC A2.3): the library never invents a dim.
+    const { fills } = mount({ selected: [mark('alpha')] }, defaultTheme);
+    expect(fills).not.toContain('#DIM');
+  });
+});
+
+describe('a consumer can implement ⌘-click-adds with what is now exposed', () => {
+  it('accumulates and toggles a set across additive clicks', () => {
+    // The end-to-end claim of the wave, exercised as a consumer would: the
+    // library hands over the modifiers, the consumer owns the arithmetic, and
+    // the container renders whatever set comes back.
+    function App() {
+      const [sel, setSel] = useState<readonly SelectInfo[]>([]);
+      return (
+        <>
+          <ChartContainer
+            width={300}
+            selected={sel}
+            onSelect={(hit, mods) =>
+              setSel((cur) => {
+                if (hit === null) return [];
+                if (!mods?.additive) return [hit];
+                return cur.some((m) => m.mark === hit.mark)
+                  ? cur.filter((m) => m.mark !== hit.mark)
+                  : [...cur, hit];
+              })
+            }
+          >
+            <ChartRow height={100}>
+              <YAxis id="a" min={0} max={4} label="" />
+              <Layers>
+                <BarChart categories={categories} id="cap" />
+              </Layers>
+            </ChartRow>
+          </ChartContainer>
+          <output>{sel.map((m) => m.mark).join(',')}</output>
+        </>
+      );
+    }
+    const stub = stubCanvasContext();
+    let dom: HTMLElement;
+    try {
+      dom = render(<App />).container;
+    } finally {
+      stub.restore();
+    }
+    const surface = dom.querySelector('canvas')!.parentElement!;
+    const out = () => dom.querySelector('output')!.textContent;
+    const click = (x: number, init: Partial<MouseEventInit> = {}) => {
+      fireEvent.pointerDown(surface, { clientX: x, clientY: 50 });
+      fireEvent.pointerUp(surface, { clientX: x, clientY: 50 });
+      fireEvent.click(surface, { clientX: x, clientY: 50, ...init });
+    };
+
+    click(40); // plain click on the first bar → replace
+    const first = out();
+    expect(first).not.toBe('');
+
+    click(140, { metaKey: true }); // ⌘-click a second → accumulate
+    expect(out()!.split(',').length).toBe(2);
+
+    click(140, { metaKey: true }); // ⌘-click it again → toggle off
+    expect(out()).toBe(first);
+  });
+});
