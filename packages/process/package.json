@@ -1,6 +1,6 @@
 {
   "name": "@pond-ts/process",
-  "version": "0.56.2",
+  "version": "0.57.0",
   "description": "Computations as data over pond-ts: processing graphs authored fluently or composed as JSON, resolved against a declared op vocabulary with content-addressed caching, provenance, and per-node timings. Experimental, pre-1.0.",
   "license": "MIT",
   "repository": {
@@ -41,7 +41,7 @@
     "verify": "npm run format:check && npm run build && npm test"
   },
   "peerDependencies": {
-    "pond-ts": "^0.56.2"
+    "pond-ts": "^0.57.0"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
