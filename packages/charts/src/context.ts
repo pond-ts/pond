@@ -298,6 +298,28 @@ export interface ContainerFrame {
    */
   applyRange(range: readonly [number, number]): void;
   /**
+   * The **y view transform** for 2-D pan/zoom (`panZoom="panZoom2D"`), in
+   * *pixel* space: a y scale's range becomes `ty + k · basePixel`. Identity is
+   * `{ k: 1, ty: 0 }`.
+   *
+   * Pixel space rather than domain space is what makes this axis-independent.
+   * A row may carry several y axes with unrelated domains (left price, right
+   * volume), and the question "which one does a vertical gesture own?" has no
+   * good answer — but a uniform pixel transform sidesteps it: every axis zooms
+   * by the same factor about its own pivot, which is also exactly what keeps
+   * the **aspect ratio** fixed. The x half stays in domain space, where
+   * `bounds`, `minDuration` and the trading-calendar zoom maths live.
+   */
+  /** Which axes the gestures own; pan follows zoom's degrees of freedom. */
+  readonly zoomX: boolean;
+  readonly zoomY: boolean;
+  readonly panX: boolean;
+  readonly panY: boolean;
+  /** True only when both axes zoom — one factor, so the ratio is fixed. */
+  readonly aspectLocked: boolean;
+  readonly yTransform: { readonly k: number; readonly ty: number };
+  applyYTransform(next: { k: number; ty: number }): void;
+  /**
    * A row reports its per-slot gutter widths each side; the container reserves
    * each slot's max so every row's plot left-aligns. Returns an unregister fn.
    */

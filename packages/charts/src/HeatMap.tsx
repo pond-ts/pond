@@ -2,11 +2,15 @@ import { useContext, useEffect, useMemo } from 'react';
 import { ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import { stacksFromColumns } from './data.js';
+import type { DecimateOption } from './decimate.js';
+import type { Orientation } from './bars.js';
 import {
   bandedColor,
   drawHeat,
   heatAt,
   heatValueExtent,
+  type HeatNoData,
+  type HeatScale,
   type HeatStyle,
 } from './heat.js';
 import {
@@ -64,12 +68,80 @@ export interface HeatMapProps<
    * as it moves — a colour scale has no tick labels to reveal that it moved.
    */
   domain?: readonly [number, number];
+  /**
+   * Which axis carries the **bins**. `'vertical'` (the default) puts them on
+   * **x** with the columns as rows down y; `'horizontal'` transposes — bins run
+   * down **y** and the columns become the categories along x.
+   *
+   * The transpose is cheaper here than for `<BarChart>`, because a heat map has
+   * two *position* axes and no value axis: nothing has to change which scale it
+   * is measured against, only which one is horizontal on the canvas.
+   *
+   * Reach for `'horizontal'` when the binned dimension is the long one and the
+   * columns are few — a gene-expression matrix (thousands of gene buckets, a
+   * handful of samples) is the canonical case, and it is the orientation that
+   * literature draws. Note that the bins still come from the **key** axis, so
+   * the genes must be the series' rows and the samples its columns; the
+   * ordinary binning operators (`byColumn`, `aggregate`) then bucket them.
+   */
+  orientation?: Orientation;
   /** Semantic identifier — picks geometry defaults off `theme.bar[as]`. */
   as?: string;
   /** Which `<YAxis>` (by `id`) this layer scales against. */
   axis?: string;
   /** Px inset around each cell. **Omitted ⇒ `0`**, tiling flush. */
   gap?: number;
+  /**
+   * How value maps onto the ramp's bands. **Omitted ⇒ `'linear'`** — equal-width
+   * bands across the domain.
+   *
+   * `'log'` gives equal-*ratio* bands, which is what a quantity spanning orders
+   * of magnitude needs. US measles incidence runs from ~2,900 per 100k before
+   * the vaccine to under 1 after it; linear banding over eight colours puts
+   * everything below ~360 into a single band — the entire post-1965 record,
+   * which is the half of that chart carrying the finding.
+   *
+   * Bands on `log1p` of the offset from the domain's floor, so a value **at**
+   * the floor is a real band rather than `-Infinity`. Zero is the case that
+   * needs it: an incidence grid is mostly zeros once a disease is eliminated,
+   * and those cells are the point.
+   */
+  scale?: HeatScale;
+  /**
+   * How a cell with no value is drawn. **Omitted ⇒ `'blank'`** — nothing is
+   * painted and the background shows through, which is right when a hole simply
+   * means "outside the record".
+   *
+   * `'hatch'` draws diagonal lines in the theme's grid colour. Reach for it when
+   * *missing* and *low* would otherwise be indistinguishable — on a pale ramp
+   * "draw nothing" reads as the bottom of the scale, so a state with no
+   * surveillance yet looks exactly like a state reporting zero cases. No ramp
+   * colour can be mistaken for hatching, which is why it is the convention.
+   *
+   * Suppressed while decimated: an aggregated cell is not a hole.
+   */
+  noData?: HeatNoData;
+  /**
+   * Viewport decimation — **on by default**, and a perf knob rather than a
+   * rendering-style one.
+   *
+   * Once the visible cells are denser than ~2 per device pixel they overlap and
+   * overpaint each other, so what you see is already one cell per column picked
+   * by draw order. Decimation replaces that with the **mean** per pixel column
+   * — what the overdrawn picture resolves to at that size — from `O(W·G)` rects
+   * instead of `O(V·G)`. A 20,000-bin grid over an 800px plot goes from ~48ms
+   * to a fraction of it.
+   *
+   * `{ threshold }` moves the cells-per-pixel gate (default `2`). `false` draws
+   * every visible cell — reach for it if you are screenshotting at a device
+   * pixel ratio the gate can't see, not to "keep the data honest": undecimated
+   * at this density is the less honest picture.
+   *
+   * While decimated, per-cell selection and hover outlines are suppressed (a
+   * sub-pixel ring isn't visible anyway) and interaction still reads the source
+   * grid.
+   */
+  decimate?: DecimateOption;
   /** Stable identity — **gates selection + hover**, as every layer's does. */
   id?: string;
   /** @internal Declaration position, injected by `Layers`. Do not set. */
@@ -106,6 +178,13 @@ export interface HeatMapProps<
  * theme, and the M5 "theme tokens optional-with-default" gate has to land
  * first. Borrowing defers that decision instead of pre-empting it.
  *
+ * **Pair it with `<ChartContainer cursor="none">`.** The container's default is
+ * the shared vertical line, and on a grid that is a *second, weaker* cursor
+ * competing with the one that already works: the cell under the pointer takes an
+ * outline, which says both axes at once. The line says only x, and a heat map's
+ * x position is rarely the question. The pointer's own crosshair shape plus the
+ * cell outline is the whole affordance.
+ *
  * **Not built:** a grouped two-level x axis, and cell value labels. The former
  * is axis work that would serve bars equally; the latter is small and
  * independent.
@@ -118,9 +197,13 @@ export function HeatMap<
   columns,
   colors,
   domain,
+  orientation = 'vertical',
   as: semantic,
   axis,
   gap = 0,
+  scale = 'linear',
+  noData = 'blank',
+  decimate = true,
   id,
   index = 0,
 }: HeatMapProps<S, VS>) {
@@ -164,8 +247,9 @@ export function HeatMap<
       outlineWidth: base.outlineWidth,
       gap,
       minWidth: base.minWidth,
+      gridColor: container.theme.axis.grid,
     }),
-    [base, gap],
+    [base, gap, container.theme.axis.grid],
   );
 
   // One colour domain across the whole grid, so rows are comparable.
@@ -174,10 +258,13 @@ export function HeatMap<
     [domainKey, ss],
   );
   const G = ss.groups.length;
-  const colorAt = useMemo(
-    () => (b: number, g: number) =>
-      bandedColor(ss.values[b * G + g]!, colors, lo, hi),
-    [ss, G, colorsKey, lo, hi],
+  const vertical = orientation === 'vertical';
+  // Colour is a function of the **value**, which is the layer's whole model —
+  // so the closure takes one. It also lets a decimated pixel column, which has
+  // no source `(b, g)`, be coloured by the same ramp.
+  const colorOf = useMemo(
+    () => (value: number) => bandedColor(value, colors, lo, hi, scale),
+    [colorsKey, lo, hi, scale],
   );
 
   const selected = container.selected;
@@ -213,13 +300,38 @@ export function HeatMap<
       layer: {
         as: semantic,
         // Inferred, exactly as BarChart does it — no axis-kind prop.
-        xKind: series instanceof ValueSeries ? 'value' : 'time',
+        // Horizontal moves the bins to y, so x becomes the categories the
+        // columns name — which is the container's `'category'` kind, exactly as
+        // a categorical `<BarChart>` reports it.
+        xKind: vertical
+          ? series instanceof ValueSeries
+            ? 'value'
+            : 'time'
+          : 'category',
         xExtent: () =>
-          ss.length === 0 ? null : [ss.begin[0]!, ss.end[ss.length - 1]!],
-        // Unit slots, one per row; `binCategories` labels each at its centre.
-        yExtent: () => [0, G],
-        binCategories: () => ss.groups,
+          vertical
+            ? ss.length === 0
+              ? null
+              : [ss.begin[0]!, ss.end[ss.length - 1]!]
+            : [0, G],
+        yExtent: () =>
+          vertical
+            ? [0, G]
+            : ss.length === 0
+              ? null
+              : [ss.begin[0]!, ss.end[ss.length - 1]!],
+        // Unit slots, one per column, labelled at each centre — on whichever
+        // axis they landed. `binCategories` is the y-axis channel and
+        // `xCategories` the x-axis one ([PND-HCAT]).
+        ...(vertical
+          ? { binCategories: () => ss.groups }
+          : { xCategories: () => ss.groups }),
+        // The x-scrub tracker samples along x, which is the bin axis only when
+        // vertical. A horizontal grid answers through `onHover` / `onSelect`
+        // instead, which resolve both axes — the same split the 2-D readout
+        // already forced.
         sampleAt: (x) => {
+          if (!vertical) return [];
           // Every row's value at the cursor — the whole column of the grid,
           // which is what an off-chart readout wants from a heat map.
           for (let b = 0; b < ss.length; b += 1) {
@@ -238,7 +350,7 @@ export function HeatMap<
                 // unit-slot axis and land outside the plot entirely.
                 value: g + 0.5,
                 readout: v,
-                color: colorAt(b, g) ?? style.highlight,
+                color: colorOf(v) ?? style.highlight,
                 label: ss.groups[g]!,
               });
             }
@@ -258,6 +370,7 @@ export function HeatMap<
                   yScale,
                   style.gap,
                   style.minWidth,
+                  orientation,
                 );
                 if (hit === null) return null;
                 const [b, g, begin, name, value] = hit;
@@ -266,7 +379,7 @@ export function HeatMap<
                   id,
                   key: begin,
                   value,
-                  color: colorAt(b, g) ?? style.highlight,
+                  color: colorOf(value) ?? style.highlight,
                   label: name,
                   ...(mark !== undefined ? { mark } : {}),
                 };
@@ -279,7 +392,7 @@ export function HeatMap<
             xScale,
             yScale,
             style,
-            colorAt,
+            colorOf,
             id,
             // A cell draw matches one mark. Multi-cell selection rendering is
             // not part of [PND-MULTISEL]'s bar-focused scope, so the first
@@ -287,6 +400,9 @@ export function HeatMap<
             // single-selection callers that are the only ones today.
             selection[0] ?? null,
             hover,
+            decimate,
+            orientation,
+            noData,
           ),
       },
       axisId: axis,
@@ -296,7 +412,11 @@ export function HeatMap<
       ss,
       G,
       style,
-      colorAt,
+      colorOf,
+      decimate,
+      orientation,
+      noData,
+      vertical,
       semantic,
       series,
       id,

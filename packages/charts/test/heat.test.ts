@@ -36,6 +36,7 @@ const style: HeatStyle = {
   outlineWidth: 2,
   gap: 0,
   minWidth: 1,
+  gridColor: '#ccc',
 };
 
 const RAMP = ['#a', '#b', '#c', '#d'];
@@ -158,20 +159,49 @@ describe('drawHeat', () => {
       identity,
       identity,
       style,
-      (b, g) => bandedColor(ss.values[b * ss.groups.length + g]!, RAMP, 0, 4),
+      (value: number) => bandedColor(value, RAMP, 0, 4),
       'heat',
       selection,
       hovered,
+      // These fixtures are two bins wide against a headless ctx with no canvas
+      // width, so decimation never engages — but pin it off so a future change
+      // to the gate cannot quietly rewrite what these assertions are reading.
+      false,
     );
     return calls;
   };
 
+  /**
+   * The fill **in effect** at each `fillRect`, by replaying the call stream.
+   *
+   * Not `calls.filter(fillStyle).map(...)`: `drawHeat` sets `fillStyle` only
+   * when it changes, since a real canvas parses the CSS colour on every
+   * assignment and a banded ramp emits long runs of one string. Counting writes
+   * would pin that optimization rather than the guarantee, which is that every
+   * cell is painted in its own band's colour.
+   */
+  const fillsDrawn = (calls: ReturnType<typeof draw>): string[] => {
+    let current: string | undefined;
+    const out: string[] = [];
+    for (const c of calls) {
+      if (c.type === 'set' && c.name === 'fillStyle')
+        current = c.args[0] as string;
+      else if (c.name === 'fillRect' && current !== undefined)
+        out.push(current);
+    }
+    return out;
+  };
+
   it('fills every cell of the grid, banded across the ramp', () => {
-    const fills = draw(two3())
-      .filter((c) => c.type === 'set' && c.name === 'fillStyle')
-      .map((c) => c.args[0]);
     // bin0: 0,2,4 → a,c,d ; bin1: 1,3,4 → b,d,d
-    expect(fills).toEqual(['#a', '#c', '#d', '#b', '#d', '#d']);
+    expect(fillsDrawn(draw(two3()))).toEqual([
+      '#a',
+      '#c',
+      '#d',
+      '#b',
+      '#d',
+      '#d',
+    ]);
   });
 
   it('skips gap cells without disturbing their neighbours', () => {
@@ -183,10 +213,7 @@ describe('drawHeat', () => {
     // The colour is the datum — swapping it would erase the reading.
     const calls = draw(two3(), { id: 'heat', key: 0, label: 'mid' });
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(1);
-    const fills = calls
-      .filter((c) => c.type === 'set' && c.name === 'fillStyle')
-      .map((c) => c.args[0]);
-    expect(fills).toEqual(['#a', '#c', '#d', '#b', '#d', '#d']);
+    expect(fillsDrawn(calls)).toEqual(['#a', '#c', '#d', '#b', '#d', '#d']);
   });
 
   it('outlines the HOVERED cell too, more lightly than a selected one', () => {
@@ -305,5 +332,169 @@ describe('heatAt', () => {
       'v',
       7,
     ]);
+  });
+});
+
+describe('orientation="horizontal" transposes and nothing else', () => {
+  // A heat map has two POSITION axes and no value axis, which is what makes its
+  // transpose a relabelling rather than a reworking: the same bin span and the
+  // same unit slots, swapped over which one runs across the canvas.
+  const twoBinsThreeRows = () =>
+    grid([0, 10], [10, 20], ['lo', 'mid', 'hi'], [0, 2, 4, 1, 3, 4]);
+
+  const rectsOf = (orientation: 'vertical' | 'horizontal') => {
+    const { ctx, calls } = recordingContext();
+    drawHeat(
+      ctx,
+      twoBinsThreeRows(),
+      identity,
+      identity,
+      style,
+      (v: number) => bandedColor(v, RAMP, 0, 4),
+      'heat',
+      null,
+      null,
+      false,
+      orientation,
+    );
+    return calls
+      .filter((c) => c.name === 'fillRect')
+      .map((c) => c.args as unknown as [number, number, number, number]);
+  };
+
+  it('swaps each cell rect across the diagonal', () => {
+    const v = rectsOf('vertical');
+    const h = rectsOf('horizontal');
+    expect(h).toHaveLength(v.length);
+    for (let i = 0; i < v.length; i += 1) {
+      const [x, y, w, hh] = v[i]!;
+      expect(h[i]).toEqual([y, x, hh, w]);
+    }
+  });
+
+  it('draws exactly the same cells, in the same order', () => {
+    // The transpose is geometry only — the value grid is not re-walked, so a
+    // gap stays a gap and the fills are identical.
+    const fills = (orientation: 'vertical' | 'horizontal') => {
+      const { ctx, calls } = recordingContext();
+      drawHeat(
+        ctx,
+        twoBinsThreeRows(),
+        identity,
+        identity,
+        style,
+        (v: number) => bandedColor(v, RAMP, 0, 4),
+        'heat',
+        null,
+        null,
+        false,
+        orientation,
+      );
+      return calls
+        .filter((c) => c.type === 'set' && c.name === 'fillStyle')
+        .map((c) => c.args[0]);
+    };
+    expect(fills('horizontal')).toEqual(fills('vertical'));
+  });
+
+  it('hit-tests the transposed geometry', () => {
+    const ss = twoBinsThreeRows();
+    // Vertical: x is the bin (5 -> bin 0), y is the row slot (2.5 -> 'hi').
+    expect(heatAt(ss, 5, 2.5, identity, identity, 0, 1)?.[3]).toBe('hi');
+    // Horizontal: the same cell is found with the coordinates swapped.
+    expect(
+      heatAt(ss, 2.5, 5, identity, identity, 0, 1, 'horizontal')?.[3],
+    ).toBe('hi');
+    // …and the un-swapped point now misses, since 5 is past three unit slots.
+    expect(
+      heatAt(ss, 5, 2.5, identity, identity, 0, 1, 'horizontal'),
+    ).toBeNull();
+  });
+});
+
+describe('scale="log" — equal-ratio bands', () => {
+  // The case this exists for: incidence spanning ~2900 down to 0. Linear
+  // banding over 4 colours puts everything below 725 in one band, which on the
+  // measles grid is the entire post-1965 record.
+  const RAMP4 = ['#a', '#b', '#c', '#d'];
+  const band = (v: number, scale?: 'linear' | 'log') =>
+    bandedColor(v, RAMP4, 0, 2900, scale);
+
+  it('linear banding collapses four orders of magnitude into one band', () => {
+    expect([0, 1, 10, 100, 700].map((v) => band(v))).toEqual([
+      '#a',
+      '#a',
+      '#a',
+      '#a',
+      '#a',
+    ]);
+  });
+
+  it('log banding separates them', () => {
+    const got = [0, 1, 10, 100, 700].map((v) => band(v, 'log'));
+    expect(new Set(got).size).toBeGreaterThan(1);
+    // Monotonic: a bigger value never lands in an earlier band.
+    const idx = got.map((c) => RAMP4.indexOf(c!));
+    expect(idx).toEqual([...idx].sort((a, b) => a - b));
+  });
+
+  it('puts a value AT the floor in a real band, not off the scale', () => {
+    // `log(0)` is -Infinity; banding on `log1p` of the offset is what keeps the
+    // zeros — which on an eliminated-disease grid are most of the cells.
+    expect(band(0, 'log')).toBe('#a');
+  });
+
+  it('still clamps past either end of a pinned domain', () => {
+    expect(band(-50, 'log')).toBe('#a');
+    expect(band(99999, 'log')).toBe('#d');
+  });
+
+  it('agrees with linear at the domain endpoints', () => {
+    for (const v of [0, 2900]) expect(band(v, 'log')).toBe(band(v));
+  });
+});
+
+describe('noData="hatch"', () => {
+  const holed = () => grid([0, 10], [10, 20], ['lo', 'hi'], [NaN, 4, 1, 2]);
+  const draw = (noData: 'blank' | 'hatch') => {
+    const { ctx, calls } = recordingContext();
+    drawHeat(
+      ctx,
+      holed(),
+      identity,
+      identity,
+      style,
+      (v: number) => bandedColor(v, RAMP, 0, 4),
+      'heat',
+      null,
+      null,
+      false,
+      'vertical',
+      noData,
+    );
+    return calls;
+  };
+
+  it('draws nothing for a hole by default', () => {
+    const c = draw('blank');
+    expect(c.filter((x) => x.name === 'fillRect')).toHaveLength(3);
+    expect(c.filter((x) => x.name === 'stroke')).toHaveLength(0);
+  });
+
+  it('strokes the hole when asked, without filling it', () => {
+    // Filling would put a colour on the cell, and any colour can be read as a
+    // value. Hatching cannot.
+    const c = draw('hatch');
+    expect(c.filter((x) => x.name === 'fillRect')).toHaveLength(3);
+    expect(c.filter((x) => x.name === 'stroke').length).toBeGreaterThan(0);
+    expect(c.filter((x) => x.name === 'clip').length).toBe(1);
+  });
+
+  it('hatches in the grid colour, not the ramp', () => {
+    const strokes = draw('hatch')
+      .filter((x) => x.type === 'set' && x.name === 'strokeStyle')
+      .map((x) => x.args[0]);
+    expect(strokes).toContain(style.gridColor);
+    expect(strokes.some((s) => RAMP.includes(s as string))).toBe(false);
   });
 });

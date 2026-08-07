@@ -402,7 +402,14 @@ export interface ChartContainerProps {
    * `false` ⇒ `'none'`). Bound the reachable range with {@link bounds}
    * (zoom-out / pan extent) and {@link minDuration} (zoom-in floor).
    */
-  panZoom?: boolean | 'none' | 'pan' | 'panZoom';
+  panZoom?:
+    | boolean
+    | 'none'
+    | 'pan'
+    | 'panZoom'
+    | 'panZoomX'
+    | 'panZoomY'
+    | 'panZoomXY';
   /**
    * **Outer pan/zoom extent** — `[min, max]` (same units as {@link range}) the
    * view can never move outside. Panning into an edge stops there (the window
@@ -611,14 +618,43 @@ export function ChartContainer({
   sessionDividers = 'none',
   children,
 }: ChartContainerProps) {
-  // Normalize the `panZoom` mode (boolean shorthand or the three-way string)
-  // into the two gesture flags the event surface reads. `true` ⇒ both; `'pan'`
-  // ⇒ drag only; `false`/`'none'` ⇒ neither. Zoom implies pan (there is no
-  // zoom-without-pan mode), so `interactive` (holds an internal view) tracks
-  // whichever is on.
-  const panEnabled =
-    panZoom === true || panZoom === 'pan' || panZoom === 'panZoom';
-  const zoomEnabled = panZoom === true || panZoom === 'panZoom';
+  // Which axes the gestures own. **Pan follows zoom's degrees of freedom**: an
+  // axis that can be zoomed can be panned, because a zoomed axis shows less than
+  // all of itself and the reader needs to reach the rest. `'pan'` is the one
+  // exception — pan with no zoom — and it stays x-only, which is what it has
+  // always meant. `'panZoom'` and `true` are `'panZoomX'`: the original
+  // behaviour, now named for the axis it acts on.
+  const zoomX =
+    panZoom === true ||
+    panZoom === 'panZoom' ||
+    panZoom === 'panZoomX' ||
+    panZoom === 'panZoomXY';
+  const zoomY = panZoom === 'panZoomY' || panZoom === 'panZoomXY';
+  const panX = zoomX || panZoom === 'pan';
+  const panY = zoomY;
+  const panEnabled = panX || panY;
+  const zoomEnabled = zoomX || zoomY;
+  // **The aspect ratio is fixed only when BOTH axes zoom** — one factor about
+  // the cursor, so a feature that looked square stays square. A single-axis zoom
+  // necessarily changes the ratio, which is the whole point of asking for one.
+  //
+  // This is why the modes name their axes. An earlier cut had a single
+  // `panZoom2D` that claimed both and then silently fell back to y-only wherever
+  // x was a category axis: the ratio changed and nothing said so. Spelling out
+  // the axes makes that the caller's choice instead of a hidden one.
+  const aspectLocked = zoomX && zoomY;
+  const [yTransform, setYTransform] = useState<{ k: number; ty: number }>({
+    k: 1,
+    ty: 0,
+  });
+  const applyYTransform = useCallback((next: { k: number; ty: number }) => {
+    // `k < 1` would zoom out past the axis' natural fit, leaving blank bands the
+    // reader cannot interpret; clamping at 1 makes the un-zoomed view the floor.
+    const k = Math.max(1, next.k);
+    setYTransform((prev) =>
+      prev.k === k && prev.ty === next.ty ? prev : { k, ty: next.ty },
+    );
+  }, []);
   const interactive = panEnabled || zoomEnabled;
 
   // The explicit base domain from `range` (a tuple or a TimeRange). `undefined`
@@ -1423,6 +1459,13 @@ export function ChartContainer({
       zoomEnabled,
       minDuration,
       applyRange,
+      zoomX,
+      zoomY,
+      panX,
+      panY,
+      aspectLocked,
+      yTransform,
+      applyYTransform,
       registerGutter,
       registerRow,
       firstRowKey,
@@ -1486,6 +1529,13 @@ export function ChartContainer({
       zoomEnabled,
       minDuration,
       applyRange,
+      zoomX,
+      zoomY,
+      panX,
+      panY,
+      aspectLocked,
+      yTransform,
+      applyYTransform,
       registerGutter,
       registerRow,
       firstRowKey,

@@ -47,7 +47,7 @@ type Story = StoryObj;
  */
 export const Stripe: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={720} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={720} theme={docsTheme} cursor="none">
       <ChartRow height={80}>
         <YAxis id="v" label="°F" />
         <Layers>
@@ -69,7 +69,7 @@ export const Stripe: Story = {
  */
 export const Grid: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={720} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={720} theme={docsTheme} cursor="none">
       <ChartRow height={120}>
         <YAxis id="v" label="°F" />
         <Layers>
@@ -115,6 +115,7 @@ function SelectableDemo() {
         range={RANGE}
         width={720}
         theme={docsTheme}
+        cursor="none"
         onSelect={setSel}
         onHover={(h) => h && setSel(h)}
       >
@@ -153,6 +154,7 @@ export const ValueAxisStripe: Story = {
         range={[axis[0]!, axis[axis.length - 1]!]}
         width={720}
         theme={docsTheme}
+        cursor="none"
       >
         <ChartRow height={80}>
           <YAxis id="v" label="°F" />
@@ -178,7 +180,7 @@ export const ValueAxisStripe: Story = {
  */
 export const PinnedDomain: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={720} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={720} theme={docsTheme} cursor="none">
       <ChartRow height={120}>
         <YAxis id="v" label="°F" />
         <Layers>
@@ -236,6 +238,7 @@ export const ManyRows: Story = {
         range={[b[0]!, b[bands.length - 1]!]}
         width={720}
         theme={docsTheme}
+        cursor="none"
       >
         <ChartRow height={200}>
           <YAxis id="v" label="°F" />
@@ -247,6 +250,174 @@ export const ManyRows: Story = {
               gap={1}
               id="lat"
             />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **`orientation="horizontal"`** — the bins run down **y** and the columns
+ * become the categories across **x**.
+ *
+ * This is the shape gene-expression heat maps are drawn in, and it is the
+ * orientation that makes the constraint work rather than fight: the long
+ * dimension (thousands of gene buckets) is the **key** axis, so pond's ordinary
+ * binning operators — `byColumn`, `aggregate` — bucket it, and the few columns
+ * become the handful of category rows across the top.
+ *
+ * The mock below stands in for that: 400 buckets down y against 8 samples
+ * across x, with a signal that reverses between the first four columns and the
+ * last four so the two blocks read as opposites.
+ */
+function ExpressionGrid({ panZoom }: { panZoom?: 'none' | 'panZoomY' }) {
+  const SAMPLES = [
+    'Control 1',
+    'Control 2',
+    'Exp 1',
+    'Exp 2',
+    'Exp 3',
+    'Exp 4',
+    'Exp 5',
+    'Exp 6',
+  ];
+  const N = 400;
+  const columns: Record<string, number[]> = {
+    time: Array.from({ length: N }, (_, i) => i),
+  };
+  SAMPLES.forEach((s, si) => {
+    const control = si < 2 ? 1 : -1;
+    columns[s] = Array.from({ length: N }, (_, i) => {
+      // Rank 0 is experimental-high, rank N-1 control-high, plus a little
+      // per-sample noise so the columns are not identical.
+      const shift = 1 - (2 * i) / (N - 1);
+      return -control * shift + Math.sin(i / 7 + si) * 0.18;
+    });
+  });
+  const series = TimeSeries.fromColumns({
+    name: 'expression',
+    schema: [
+      { name: 'time', kind: 'time' },
+      ...SAMPLES.map((s) => ({ name: s, kind: 'number' as const })),
+    ] as const,
+    columns,
+  });
+  // No `range`: x is the CATEGORY axis here, so the container builds its band
+  // scale from the columns the layer reports. The bin axis is y, and its
+  // extent is pinned on the <YAxis> instead.
+  return (
+    <ChartContainer
+      width={440}
+      theme={docsTheme}
+      cursor="none"
+      panZoom={panZoom ?? 'none'}
+    >
+      <ChartRow height={420}>
+        <YAxis id="rank" label="gene rank" min={0} max={N} />
+        <Layers>
+          <HeatMap
+            series={series}
+            columns={SAMPLES}
+            colors={RAMP}
+            orientation="horizontal"
+            domain={[-1.2, 1.2]}
+            axis="rank"
+            id="expr"
+          />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  );
+}
+
+/** The transpose on its own — bins down y, columns as categories across x. */
+export const Horizontal: Story = { render: () => <ExpressionGrid /> };
+
+/**
+ * **`panZoom="panZoomY"`** — wheel to zoom the bin axis, drag to pan it.
+ *
+ * `panZoomY` and not `panZoomXY`, because x here is a **category** axis: eight
+ * samples, with no continuous domain to zoom. Asking for `panZoomXY` would name
+ * an axis that cannot move, the aspect ratio would change anyway, and nothing
+ * would say so — which is exactly what the earlier single `panZoom2D` mode did
+ * before the modes spelled out their axes.
+ *
+ * So the ratio changing here is correct and declared. Reach for `panZoomXY` when
+ * both axes really are continuous — a scatter, or a heat map binned on both —
+ * and it holds the ratio with one factor about the cursor.
+ */
+export const PanZoomY: Story = {
+  render: () => <ExpressionGrid panZoom="panZoomY" />,
+};
+
+/**
+ * **`panZoom="panZoomXY"`** — wheel zooms **both** axes about the cursor, drag
+ * pans both, and the aspect ratio holds.
+ *
+ * Both axes have to be continuous for `XY` to mean anything, which is why this
+ * is a separate story from `PanZoomY` rather than a prop flip on it: that one
+ * has eight sample *categories* across x, so naming `XY` there would name an
+ * axis that cannot move. Here x is a real time axis and y is 60 rows, so there
+ * is something to zoom in both directions.
+ *
+ * What to check, since one factor drives both axes:
+ *
+ * - A cell that looks square stays square as you zoom. That is the aspect lock,
+ *   and it is the difference between `panZoomXY` and asking for each axis
+ *   separately.
+ * - Zoom about a corner and that corner stays put — the pivot is the cursor, not
+ *   the plot centre.
+ * - Drag past the end and it stops at the data rather than running into blank
+ *   canvas.
+ */
+export const PanZoomXY: Story = {
+  render: () => {
+    const N = 300;
+    const ROWS = Array.from({ length: 60 }, (_, i) => `r${i}`);
+    const columns: Record<string, number[]> = {
+      time: Array.from({ length: N }, (_, i) => Date.UTC(2024, 0, 1 + i)),
+    };
+    ROWS.forEach((r, g) => {
+      // Diagonal banding, so a shear or a squash is obvious the moment the
+      // aspect ratio slips.
+      columns[r] = Array.from(
+        { length: N },
+        (_, i) => 50 + 45 * Math.sin((i / 9 + g / 5) * 0.7),
+      );
+    });
+    const series = TimeSeries.fromColumns({
+      name: 'grid',
+      schema: [
+        { name: 'time', kind: 'time' },
+        ...ROWS.map((r) => ({ name: r, kind: 'number' as const })),
+      ] as const,
+      columns,
+    });
+    const t = columns.time!;
+    return (
+      <ChartContainer
+        range={[t[0]!, t[N - 1]!]}
+        width={620}
+        theme={docsTheme}
+        cursor="none"
+        panZoom="panZoomXY"
+      >
+        <ChartRow height={420}>
+          {/* Explicit ticks rather than the layer's `binCategories`: 60 rows in
+              420px is 7px each, so labelling every one smears them together.
+              Sparse numbers also make the y zoom legible — you can watch the
+              span narrow. */}
+          <YAxis
+            id="v"
+            label="row"
+            ticks={[0, 15, 30, 45, 60].map((n) => ({
+              at: n,
+              label: String(n),
+            }))}
+          />
+          <Layers>
+            <HeatMap series={series} columns={ROWS} colors={RAMP} axis="v" />
           </Layers>
         </ChartRow>
       </ChartContainer>

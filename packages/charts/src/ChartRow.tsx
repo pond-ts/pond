@@ -294,6 +294,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
   // One y-scale per axis. A layer counts toward an axis when its (late-resolved)
   // axis id matches; `resolveYDomain` handles the auto-fit + empty/flat/inverted
   // edges. yExtent() is O(points), so only walk the layers when a bound auto-fits.
+  const { k: yk, ty: yty } = container.yTransform;
   const yScales = useMemo(() => {
     const map = new Map<string, YScale>();
     for (const ax of effectiveAxes) {
@@ -317,10 +318,27 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       // surface every consumer uses (see `YScale`), so choosing between them
       // here is the whole of log support — no draw layer branches on it.
       const base = ax.scale === 'log' ? scaleLog() : scaleLinear();
-      map.set(ax.id, base.domain([lo, hi]).range([height, topHeader]));
+      const s = base.domain([lo, hi]).range([height, topHeader]);
+      // 2-D pan/zoom is carried as a **pixel** transform (`k`, `ty`) so one
+      // gesture serves every axis in the row whatever its units, and all of them
+      // zoom by the same factor — which is what fixes the aspect ratio. But it is
+      // applied by narrowing the **domain** to the window that transform makes
+      // visible, not by stretching the range.
+      //
+      // That distinction is not cosmetic. Stretching the range leaves the tick
+      // generator working on the FULL domain, so ticks outside the view get
+      // clamped onto the plot edge and pile up — 350 and 400 printed on top of
+      // each other in the first cut. Narrowing the domain means ticks, padding
+      // and every downstream reader see an ordinary axis over the visible
+      // window, and none of them need to know a transform exists.
+      if (yk !== 1 || yty !== 0) {
+        const at = (px: number) => +s.invert((px - yty) / yk);
+        s.domain([at(height), at(topHeader)]);
+      }
+      map.set(ax.id, s);
     }
     return map;
-  }, [effectiveAxes, layerList, height, defaultAxisId, topHeader]);
+  }, [effectiveAxes, layerList, height, defaultAxisId, topHeader, yk, yty]);
 
   // Dev-mode diagnostics for a `scale="log"` axis (see `logAxisWarning`). Three
   // things about *where* this sits are load-bearing, each of them a bug the

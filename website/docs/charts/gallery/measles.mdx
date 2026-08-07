@@ -1,0 +1,256 @@
+---
+title: Measles and the vaccine
+sidebar_label: Measles and the vaccine
+---
+
+# Measles and the vaccine
+
+Fifty rows, eighty-one columns, and one vertical discontinuity in 1963. This is
+the form Tynan DeBold and Dov Friedman published in the Wall Street Journal in
+2015, and it is the strongest argument a heat map has ever made: **the colour is
+an incidence rate, and the argument is that it changes all the way down the
+chart at once.**
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryMeasles from '@site/src/examples/gallery-measles';
+
+## The chart
+
+<ChartExample name="gallery-measles" height={680} collapsed>
+  <GalleryMeasles width={700} />
+</ChartExample>
+
+Point at a cell and the strip above names the state, the year and the rate.
+Nothing in the drawing is doing rhetorical work — no annotation arrows, no
+highlighted states. The four markers are dates, and everything else is 3,500
+measured numbers. Three of the dates are interventions; the fourth,
+[1989](#the-one-place-the-record-goes-the-wrong-way), is the one moment the
+record moves the wrong way.
+
+This is a reconstruction, not a reproduction: the record here runs **1921–2001**,
+which is what Project Tycho covers. Our World in Data's version runs to 2022 by
+splicing CDC data on top, and starts at 1929.
+
+## The data
+
+**Real, measured, freely licensed.** Case counts are
+[Project Tycho](https://zenodo.org/records/11452259)'s digitisation of the US
+Nationally Notifiable Disease Surveillance System — 436,932 weekly rows,
+CC BY 4.0. Populations are decennial census counts from
+[Wikipedia](https://en.wikipedia.org/wiki/List_of_U.S._states_and_territories_by_historical_population),
+CC BY-SA 4.0. Both are pulled and reduced by
+[`website/scripts/fixtures/measles.mjs`](https://github.com/pond-ts/pond/blob/main/website/scripts/fixtures/measles.mjs),
+which runs by hand and commits a 28 KB fixture.
+
+The reduction is where all the judgement is, and every rule changes the picture:
+
+- **State-level rows only.** 238,827 of the 436,932 rows are _city_ rows nested
+  inside their state's rows. Summing naively double-counts every state that had
+  a reporting city.
+- **Non-cumulative rows only.** A further 84,414 restate a running total.
+- **An absent week is a zero, not a hole** — see below, because this one is
+  genuinely counter-intuitive.
+- **Fifty states.** Territories are dropped, which also removes a Virgin Islands
+  1975 figure — 53,009 cases from 8 reported weeks, against a population near
+  60,000 — that cannot be right.
+
+### Why "how complete is this year?" is the wrong question
+
+The obvious quality check is to count how many of a year's 52 weeks a state
+reported, and throw away the thin ones. Summing a 37-week year next to a 52-week
+year makes a thin year look like a **quiet** year, and Texas 1964 reports 37
+weeks and 39,353 cases.
+
+That rule is wrong, and it fails in the most damaging possible way. Only **836
+of the 113,691** surviving rows carry an explicit zero — a week with no cases is
+simply absent from the file. So weeks-reported tracks the disease, not the
+surveillance:
+
+| era       | median weeks reported | median cases/year |
+| --------- | --------------------- | ----------------- |
+| 1928–1939 | 49                    | 3,726             |
+| 1950–1962 | 48                    | 4,239             |
+| 1971–1980 | 24.5                  | 160               |
+| 1991–2001 | 2                     | 4                 |
+
+A ≥40-week completeness rule reads the disease's own disappearance as missing
+data and **deletes the entire post-1990 record** — the half of the chart that
+carries the finding. Applied here it dropped coverage to 47.6% and left nothing
+at all after 1995.
+
+What works instead is the **reporting span**: a state is under surveillance from
+its first reported year to its last, silent weeks inside that span are zeros, and
+years outside it are no data. Coverage goes to 87.8%, and the 400 remaining holes
+are real — which is what puts Alaska's and Hawaii's pre-statehood gaps on the
+chart without special-casing them.
+
+The cost, stated: in the pre-vaccine era a silent week may be a lost report
+rather than a genuine zero, so those years can undercount. Texas 1964 is at worst
+~30% low — comfortably inside one band of a log ramp.
+
+### Why fifty rows, when they all say the same thing
+
+A fair objection: every row does the same thing at the same time, so what is the
+second dimension buying? A single national line would show the same cliff.
+
+**The uniformity is the evidence.** A national line is one observation, and one
+observation invites the obvious alternative explanations — sanitation, nutrition,
+a change in how cases were reported, the natural multi-year cycling of an
+epidemic disease. Fifty jurisdictions with different climates, demographics,
+health systems and economies, all breaking at the same vertical line, is a
+natural experiment repeated fifty times. Comparing each state's mean incidence
+before the vaccine with its own mean after:
+
+| 1955–62 → 1966–73, 48 states with both windows |               |
+| ---------------------------------------------- | ------------- |
+| states whose incidence fell                    | **48 / 48**   |
+| fell by more than 2×                           | **47 / 48**   |
+| median drop                                    | **9.1×**      |
+| range                                          | 1.7× to 34.9× |
+
+The rows are not there to show you difference. They are there to show you there
+isn't any — which is a claim a line chart cannot make.
+
+**And then the second era flips it.** 73% of the 1989–91 resurgence sits in five
+states (California, Texas, Ohio, Pennsylvania, Puerto Rico), and you can only
+see that because the rows are separated. The same chart is doing two opposite
+jobs in its two halves: proving an effect is universal, then showing that a
+later failure was not.
+
+### The one place the record goes the wrong way
+
+Three of the four markers are interventions. The fourth, **1989**, is the
+counter-example — and it is the most interesting thing on the chart, because it
+is the moment the trend reverses.
+
+| year     | reported cases |
+| -------- | -------------- |
+| 1988     | 2,812          |
+| **1989** | **10,062**     |
+| **1990** | **16,261**     |
+| 1991     | 5,668          |
+| 1992     | 1,776          |
+| 1993     | 391            |
+
+A six-fold jump off the 1988 floor, peaking in 1990, gone by 1993. It shows up
+on the chart as a scatter of blue-green cells reappearing in the pale field,
+heaviest in California, Texas, Ohio and Pennsylvania.
+
+Two distinct things were happening at once, and it is worth not conflating them:
+
+- **A coverage hole.** The resurgence was concentrated in **preschool-aged
+  children in poor urban areas who had never received a first dose**. The 1980
+  school-entry mandates — the third marker — worked so well for school-age
+  children that they masked the fact that under-fives in inner-city
+  neighbourhoods were not being reached. The mandate bit at kindergarten; the
+  outbreak was in the years before it. CDC reports incidence among children
+  under five running some 15 times the 1981–88 median at the 1990 peak, and
+  several times higher again among American Indian, Hispanic and Black children
+  than among non-Hispanic white children.
+- **A small rate of primary vaccine failure.** Separately, outbreaks among
+  _already-vaccinated_ school-age children showed one dose was not quite enough
+  — tolerable at high coverage, not tolerable once susceptibles accumulate. That
+  is what prompted the **two-dose MMR schedule**, not the preschool outbreak.
+
+The near-flatline from 1993 onward is the response working: two doses, plus a
+concerted push on first-dose coverage in exactly the populations the 1980
+mandates had missed.
+
+**References.** CDC,
+[History of Measles](https://www.cdc.gov/measles/about/history.html), which puts
+the episode at over 55,000 cases and 123 deaths; MMWR,
+[Public-Sector Vaccination Efforts in Response to the Resurgence of Measles
+Among Preschool-Aged Children — United States, 1989–1991](https://www.cdc.gov/mmwr/preview/mmwrhtml/00017268.htm);
+and Atkinson WL et al., "The resurgence of measles in the United States,
+1989–1990", _Annual Review of Medicine_ 1992
+([PMID 1580601](https://pubmed.ncbi.nlm.nih.gov/1580601/)).
+
+### These are provisional counts, and they run low
+
+Worth knowing before reading any absolute number off this chart. CDC puts
+1989–91 at **over 55,000 cases**; the weekly reports underlying this chart sum
+to **31,991** — about 58%.
+
+That is not a cleaning error. Project Tycho digitises the **weekly provisional**
+notifiable-disease reports, and those are systematically lower than the final
+annual figures published after late reports and reconciliation. Every cell here
+is a provisional count.
+
+It matters for what you can ask the chart. Comparisons _within_ it — this state
+against that one, this decade against that one — are what the drawing is for and
+are unaffected by a roughly consistent shortfall. An absolute rate read off a
+single cell is a floor, not a measurement.
+
+## Build it
+
+Two props carry this chart, and both exist because of it.
+
+```tsx
+<HeatMap
+  series={series}
+  columns={ROWS} // 50 states, one row each
+  colors={RAMP} // YlGnBu reversed, 8 stops
+  scale="log"
+  noData="hatch"
+  domain={[0, 3000]}
+/>
+```
+
+### `scale="log"`, or the chart says nothing
+
+Incidence runs from about **2,900 per 100,000** before the vaccine to **under 1**
+after it. Linear banding over eight colours makes each band 360 wide — so every
+value below 360 lands in the same band, and that is the whole record after 1965.
+The chart would be a dark block, a cliff, and then a uniform pale field with no
+structure in it.
+
+`scale="log"` bands by equal **ratio** instead: eight bands over four orders of
+magnitude, each a factor of ~3.7. Bands are taken on `log1p` of the offset from
+the domain floor rather than on `log`, so a value **at** the floor is a real band
+instead of `-Infinity` — and zero is not an edge case here, it is most of the
+1990s.
+
+### `noData="hatch"`, or missing reads as zero
+
+400 state-years have no data. Painting nothing leaves the background showing
+through, and on a ramp whose floor is pale that reads as _the bottom of the
+scale_ — so a state that had not begun reporting looks exactly like a state
+reporting zero cases. In the late record, which is full of genuine zeros, those
+two must not look alike.
+
+`noData="hatch"` strokes diagonals in the theme's grid colour. It strokes rather
+than fills on purpose: any fill colour can be read as a value, and the point is
+to say _this is not a value_.
+
+### Incidence is computed in the page, not baked into the fixture
+
+The fixture ships raw **case counts** plus decennial census populations, and the
+page divides:
+
+```ts
+const p = populationAt(state, year); // geometric between census anchors
+return p === null ? null : (n / p) * 100_000;
+```
+
+Populations are interpolated **geometrically** — a population multiplies rather
+than adding a fixed number of people a year, and a straight line visibly
+undershoots mid-decade in fast-growing states. Decennial anchors are enough
+precisely _because_ the scale is log: each band is a factor of ~3.7, and a few
+percent of interpolation error cannot move a cell across one.
+
+## Options to try
+
+| Option                          | What it does                   | Reach for it when                                                                                  |
+| ------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `scale="linear"`                | Equal-width bands              | Never on this data — it is the failure the log scale exists to prevent, and worth looking at once  |
+| `noData="blank"`                | Holes show the background      | A hole means "outside the record" and cannot be confused with a low value                          |
+| `domain` unpinned               | Ramp spans the visible extent  | Never with a colour scale you want stable — it re-means every colour as the window moves, silently |
+| Raw counts instead of incidence | Colour carries cases, not rate | You want to see outbreak _size_; California will dominate every year                               |
+| `orientation="horizontal"`      | States across x, years down y  | Rarely — 50 categories across is unreadable, and this is the orientation the form settled on       |
+
+## See also
+
+- [**Storybook**](pathname:///storybook/?path=/story/charts-heatmap--grid) — `<HeatMap>`'s systematic knob walk, until it has a reference page of its own
+- [Niño 3.4 as a heat map](./nino34.mdx#the-same-data-as-a-heat-map) — the same layer on a continuous key axis
+- [Climate stripes](./climate-stripes.mdx) — the single-row case
+- [Ingesting messy data](../../how-to-guides/ingesting-messy-data.mdx) — the general version of this page's data section
