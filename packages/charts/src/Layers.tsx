@@ -471,8 +471,27 @@ export function Layers({ children }: LayersProps) {
     containerRef.current = container;
   });
   const plotRef = useRef<HTMLDivElement>(null);
+  /**
+   * Clamp a 2-D pan offset so the zoomed content still covers the plot.
+   *
+   * The y counterpart of `bounds` on x. With `k ≥ 1` the transformed band
+   * `[k·0 + ty, k·height + ty]` is at least as tall as the plot, so it can cover
+   * it — but nothing stopped `ty` sliding until the data left the viewport, which
+   * showed up as an axis reading past the end of the record with blank canvas
+   * under it. Requiring both edges to stay outside the plot pins it.
+   */
+  function clampPanY(k: number, ty: number, height: number): number {
+    const lo = height * (1 - k); // bottom edge at or below the plot bottom
+    const hi = 0; // top edge at or above the plot top
+    return Math.min(hi, Math.max(lo, ty));
+  }
+
   const dragRef = useRef<{
     startX: number;
+    /** Pointer y at press, and the y transform's offset then — 2-D pan moves
+     *  `ty` by the pointer's y delta, so both must be anchored. */
+    startY: number;
+    startTy: number;
     startRange: [number, number];
     // Whether the pan has committed (moved past the slop) and so claimed the
     // pointer. Deferred from press → first real move so a click doesn't capture;
@@ -559,7 +578,9 @@ export function Layers({ children }: LayersProps) {
         }
         // Modifier required but not held → fall through to pan.
       }
-      if (!c.panEnabled || c.xKind === 'category') return;
+      // As with the wheel: a category x has nothing to pan, but 2-D mode still
+      // pans y.
+      if (!c.panEnabled || (c.xKind === 'category' && !c.zoom2D)) return;
       const r = c.timeRange;
       // Arm a potential pan: record the anchor, but DON'T capture the pointer or
       // hide the tracker yet. Capturing on press retargets the eventual `click`
@@ -575,7 +596,9 @@ export function Layers({ children }: LayersProps) {
       // captures then.
       dragRef.current = {
         startX: e.clientX,
+        startY: e.clientY,
         startRange: [r[0], r[1]],
+        startTy: c.yTransform.ty,
         captured: false,
       };
     },
@@ -613,9 +636,12 @@ export function Layers({ children }: LayersProps) {
       if (drag) {
         // Pan from the start range by the total drag — right → earlier (−dt).
         const dx = e.clientX - drag.startX;
+        const dy = e.clientY - drag.startY;
         // Don't pan until past the slop, so a click's 1–4px jitter neither moves
-        // the view nor shifts the scale the click then hit-tests against.
-        if (Math.abs(dx) <= DRAG_SLOP) return;
+        // the view nor shifts the scale the click then hit-tests against. In 2-D
+        // the slop is on the *distance*, so a purely vertical drag arms it too.
+        const moved = c.zoom2D ? Math.hypot(dx, dy) : Math.abs(dx);
+        if (moved <= DRAG_SLOP) return;
         // First move past the slop ⇒ this is a real pan, not a click. Commit it
         // now (deferred from press, see handlePointerDown): hide the tracker and
         // claim the pointer so the pan keeps tracking outside the plot. Capturing
@@ -632,6 +658,20 @@ export function Layers({ children }: LayersProps) {
             /* ignore (synthetic / already-released pointer) */
           }
         }
+        // 2-D pan is a straight pixel shift of the y transform — no domain
+        // maths, because the transform is already in pixel space.
+        if (c.zoom2D)
+          c.applyYTransform({
+            k: c.yTransform.k,
+            ty: clampPanY(
+              c.yTransform.k,
+              drag.startTy + dy,
+              rowRef.current.height,
+            ),
+          });
+        // A category x has no continuous domain to pan; the y half above is the
+        // whole gesture for a horizontal heat map.
+        if (c.xKind === 'category') return;
         if (c.discontinuities) {
           // Trading-time axis: pan by an equal amount of *trading* time so the
           // drag feels uniform across collapsed gaps (a raw-ms shift jumps).
@@ -834,12 +874,35 @@ export function Layers({ children }: LayersProps) {
     if (el === null) return;
     const onWheel = (e: WheelEvent) => {
       const c = containerRef.current;
-      if (!c.zoomEnabled || c.xKind === 'category') return;
+      if (!c.zoomEnabled) return;
+      // A category x axis has no continuous domain to zoom, so the x half is
+      // skipped — but in 2-D mode the **y** half still applies, which is the
+      // whole reason a horizontal heat map (categories on x, bins on y) can
+      // pan and zoom at all.
+      const skipX = c.xKind === 'category';
+      if (skipX && !c.zoom2D) return;
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       const localX = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
       const pivot = +c.xScale.invert(localX);
       const factor = Math.exp(e.deltaY * ZOOM_SENSITIVITY);
+
+      if (c.zoom2D) {
+        // `factor` scales the DOMAIN span, so factor > 1 is zoom *out*; the
+        // pixel-space zoom is its reciprocal. One factor for both axes is what
+        // fixes the aspect ratio.
+        const z = 1 / factor;
+        const localY = e.clientY - rect.top;
+        const { k, ty } = c.yTransform;
+        // Zoom about the cursor: p' = localY + (p − localY)·z, expanded through
+        // the existing transform p = ty + k·base.
+        const nk = Math.max(1, k * z);
+        c.applyYTransform({
+          k: nk,
+          ty: clampPanY(nk, localY * (1 - z) + ty * z, rowRef.current.height),
+        });
+      }
+      if (skipX) return;
       c.applyRange(
         c.discontinuities
           ? // minDuration is the zoom-in floor; on a trading-time axis it caps

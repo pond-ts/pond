@@ -366,7 +366,7 @@ export interface ChartContainerProps {
    * `false` ⇒ `'none'`). Bound the reachable range with {@link bounds}
    * (zoom-out / pan extent) and {@link minDuration} (zoom-in floor).
    */
-  panZoom?: boolean | 'none' | 'pan' | 'panZoom';
+  panZoom?: boolean | 'none' | 'pan' | 'panZoom' | 'panZoom2D';
   /**
    * **Outer pan/zoom extent** — `[min, max]` (same units as {@link range}) the
    * view can never move outside. Panning into an edge stops there (the window
@@ -581,8 +581,30 @@ export function ChartContainer({
   // zoom-without-pan mode), so `interactive` (holds an internal view) tracks
   // whichever is on.
   const panEnabled =
-    panZoom === true || panZoom === 'pan' || panZoom === 'panZoom';
-  const zoomEnabled = panZoom === true || panZoom === 'panZoom';
+    panZoom === true ||
+    panZoom === 'pan' ||
+    panZoom === 'panZoom' ||
+    panZoom === 'panZoom2D';
+  const zoomEnabled =
+    panZoom === true || panZoom === 'panZoom' || panZoom === 'panZoom2D';
+  // 2-D mode zooms both axes by ONE factor about the cursor, so the picture
+  // scales uniformly and a feature that looked square stays square. It is the
+  // mode a heat map or a scatter wants, and it is what lets a chart whose x is a
+  // *category* axis — a horizontal heat map — pan and zoom at all, since the y
+  // half does not care what kind x is.
+  const zoom2D = panZoom === 'panZoom2D';
+  const [yTransform, setYTransform] = useState<{ k: number; ty: number }>({
+    k: 1,
+    ty: 0,
+  });
+  const applyYTransform = useCallback((next: { k: number; ty: number }) => {
+    // `k < 1` would zoom out past the axis' natural fit, leaving blank bands the
+    // reader cannot interpret; clamping at 1 makes the un-zoomed view the floor.
+    const k = Math.max(1, next.k);
+    setYTransform((prev) =>
+      prev.k === k && prev.ty === next.ty ? prev : { k, ty: next.ty },
+    );
+  }, []);
   const interactive = panEnabled || zoomEnabled;
 
   // The explicit base domain from `range` (a tuple or a TimeRange). `undefined`
@@ -1366,6 +1388,9 @@ export function ChartContainer({
       zoomEnabled,
       minDuration,
       applyRange,
+      zoom2D,
+      yTransform,
+      applyYTransform,
       registerGutter,
       registerRow,
       firstRowKey,
@@ -1429,6 +1454,9 @@ export function ChartContainer({
       zoomEnabled,
       minDuration,
       applyRange,
+      zoom2D,
+      yTransform,
+      applyYTransform,
       registerGutter,
       registerRow,
       firstRowKey,

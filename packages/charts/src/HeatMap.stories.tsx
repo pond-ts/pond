@@ -305,7 +305,7 @@ export const Horizontal: Story = {
     // scale from the columns the layer reports. The bin axis is y, and its
     // extent is pinned on the <YAxis> instead.
     return (
-      <ChartContainer width={440} theme={docsTheme}>
+      <ChartContainer width={440} theme={docsTheme} panZoom="panZoom2D">
         <ChartRow height={420}>
           <YAxis id="rank" label="gene rank" min={0} max={N} />
           <Layers>
