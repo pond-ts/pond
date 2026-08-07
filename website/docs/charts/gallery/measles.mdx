@@ -22,8 +22,10 @@ import GalleryMeasles from '@site/src/examples/gallery-measles';
 
 Point at a cell and the strip above names the state, the year and the rate.
 Nothing in the drawing is doing rhetorical work — no annotation arrows, no
-highlighted states. The three markers are dates, and everything else is 3,500
-measured numbers.
+highlighted states. The four markers are dates, and everything else is 3,500
+measured numbers. Three of the dates are interventions; the fourth,
+[1989](#the-one-place-the-record-goes-the-wrong-way), is the one moment the
+record moves the wrong way.
 
 This is a reconstruction, not a reproduction: the record here runs **1921–2001**,
 which is what Project Tycho covers. Our World in Data's version runs to 2022 by
@@ -85,6 +87,70 @@ chart without special-casing them.
 The cost, stated: in the pre-vaccine era a silent week may be a lost report
 rather than a genuine zero, so those years can undercount. Texas 1964 is at worst
 ~30% low — comfortably inside one band of a log ramp.
+
+### The one place the record goes the wrong way
+
+Three of the four markers are interventions. The fourth, **1989**, is the
+counter-example — and it is the most interesting thing on the chart, because it
+is the moment the trend reverses.
+
+| year     | reported cases |
+| -------- | -------------- |
+| 1988     | 2,812          |
+| **1989** | **10,062**     |
+| **1990** | **16,261**     |
+| 1991     | 5,668          |
+| 1992     | 1,776          |
+| 1993     | 391            |
+
+A six-fold jump off the 1988 floor, peaking in 1990, gone by 1993. It shows up
+on the chart as a scatter of blue-green cells reappearing in the pale field,
+heaviest in California, Texas, Ohio and Pennsylvania.
+
+Two distinct things were happening at once, and it is worth not conflating them:
+
+- **A coverage hole.** The resurgence was concentrated in **preschool-aged
+  children in poor urban areas who had never received a first dose**. The 1980
+  school-entry mandates — the third marker — worked so well for school-age
+  children that they masked the fact that under-fives in inner-city
+  neighbourhoods were not being reached. The mandate bit at kindergarten; the
+  outbreak was in the years before it. CDC reports incidence among children
+  under five running some 15 times the 1981–88 median at the 1990 peak, and
+  several times higher again among American Indian, Hispanic and Black children
+  than among non-Hispanic white children.
+- **A small rate of primary vaccine failure.** Separately, outbreaks among
+  _already-vaccinated_ school-age children showed one dose was not quite enough
+  — tolerable at high coverage, not tolerable once susceptibles accumulate. That
+  is what prompted the **two-dose MMR schedule**, not the preschool outbreak.
+
+The near-flatline from 1993 onward is the response working: two doses, plus a
+concerted push on first-dose coverage in exactly the populations the 1980
+mandates had missed.
+
+**References.** CDC,
+[History of Measles](https://www.cdc.gov/measles/about/history.html), which puts
+the episode at over 55,000 cases and 123 deaths; MMWR,
+[Public-Sector Vaccination Efforts in Response to the Resurgence of Measles
+Among Preschool-Aged Children — United States, 1989–1991](https://www.cdc.gov/mmwr/preview/mmwrhtml/00017268.htm);
+and Atkinson WL et al., "The resurgence of measles in the United States,
+1989–1990", _Annual Review of Medicine_ 1992
+([PMID 1580601](https://pubmed.ncbi.nlm.nih.gov/1580601/)).
+
+### These are provisional counts, and they run low
+
+Worth knowing before reading any absolute number off this chart. CDC puts
+1989–91 at **over 55,000 cases**; the weekly reports underlying this chart sum
+to **31,991** — about 58%.
+
+That is not a cleaning error. Project Tycho digitises the **weekly provisional**
+notifiable-disease reports, and those are systematically lower than the final
+annual figures published after late reports and reconciliation. Every cell here
+is a provisional count.
+
+It matters for what you can ask the chart. Comparisons _within_ it — this state
+against that one, this decade against that one — are what the drawing is for and
+are unaffected by a roughly consistent shortfall. An absolute rate read off a
+single cell is a floor, not a measurement.
 
 ## Build it
 
