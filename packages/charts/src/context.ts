@@ -303,7 +303,13 @@ export interface ContainerFrame {
    * the **aspect ratio** fixed. The x half stays in domain space, where
    * `bounds`, `minDuration` and the trading-calendar zoom maths live.
    */
-  readonly zoom2D: boolean;
+  /** Which axes the gestures own; pan follows zoom's degrees of freedom. */
+  readonly zoomX: boolean;
+  readonly zoomY: boolean;
+  readonly panX: boolean;
+  readonly panY: boolean;
+  /** True only when both axes zoom — one factor, so the ratio is fixed. */
+  readonly aspectLocked: boolean;
   readonly yTransform: { readonly k: number; readonly ty: number };
   applyYTransform(next: { k: number; ty: number }): void;
   /**

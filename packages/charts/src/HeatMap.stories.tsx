@@ -268,59 +268,77 @@ export const ManyRows: Story = {
  * across x, with a signal that reverses between the first four columns and the
  * last four so the two blocks read as opposites.
  */
-export const Horizontal: Story = {
-  render: () => {
-    const SAMPLES = [
-      'Control 1',
-      'Control 2',
-      'Exp 1',
-      'Exp 2',
-      'Exp 3',
-      'Exp 4',
-      'Exp 5',
-      'Exp 6',
-    ];
-    const N = 400;
-    const columns: Record<string, number[]> = {
-      time: Array.from({ length: N }, (_, i) => i),
-    };
-    SAMPLES.forEach((s, si) => {
-      const control = si < 2 ? 1 : -1;
-      columns[s] = Array.from({ length: N }, (_, i) => {
-        // Rank 0 is experimental-high, rank N-1 control-high, plus a little
-        // per-sample noise so the columns are not identical.
-        const shift = 1 - (2 * i) / (N - 1);
-        return -control * shift + Math.sin(i / 7 + si) * 0.18;
-      });
+function ExpressionGrid({ panZoom }: { panZoom?: 'none' | 'panZoomY' }) {
+  const SAMPLES = [
+    'Control 1',
+    'Control 2',
+    'Exp 1',
+    'Exp 2',
+    'Exp 3',
+    'Exp 4',
+    'Exp 5',
+    'Exp 6',
+  ];
+  const N = 400;
+  const columns: Record<string, number[]> = {
+    time: Array.from({ length: N }, (_, i) => i),
+  };
+  SAMPLES.forEach((s, si) => {
+    const control = si < 2 ? 1 : -1;
+    columns[s] = Array.from({ length: N }, (_, i) => {
+      // Rank 0 is experimental-high, rank N-1 control-high, plus a little
+      // per-sample noise so the columns are not identical.
+      const shift = 1 - (2 * i) / (N - 1);
+      return -control * shift + Math.sin(i / 7 + si) * 0.18;
     });
-    const series = TimeSeries.fromColumns({
-      name: 'expression',
-      schema: [
-        { name: 'time', kind: 'time' },
-        ...SAMPLES.map((s) => ({ name: s, kind: 'number' as const })),
-      ] as const,
-      columns,
-    });
-    // No `range`: x is the CATEGORY axis here, so the container builds its band
-    // scale from the columns the layer reports. The bin axis is y, and its
-    // extent is pinned on the <YAxis> instead.
-    return (
-      <ChartContainer width={440} theme={docsTheme} panZoom="panZoom2D">
-        <ChartRow height={420}>
-          <YAxis id="rank" label="gene rank" min={0} max={N} />
-          <Layers>
-            <HeatMap
-              series={series}
-              columns={SAMPLES}
-              colors={RAMP}
-              orientation="horizontal"
-              domain={[-1.2, 1.2]}
-              axis="rank"
-              id="expr"
-            />
-          </Layers>
-        </ChartRow>
-      </ChartContainer>
-    );
-  },
+  });
+  const series = TimeSeries.fromColumns({
+    name: 'expression',
+    schema: [
+      { name: 'time', kind: 'time' },
+      ...SAMPLES.map((s) => ({ name: s, kind: 'number' as const })),
+    ] as const,
+    columns,
+  });
+  // No `range`: x is the CATEGORY axis here, so the container builds its band
+  // scale from the columns the layer reports. The bin axis is y, and its
+  // extent is pinned on the <YAxis> instead.
+  return (
+    <ChartContainer width={440} theme={docsTheme} panZoom={panZoom ?? 'none'}>
+      <ChartRow height={420}>
+        <YAxis id="rank" label="gene rank" min={0} max={N} />
+        <Layers>
+          <HeatMap
+            series={series}
+            columns={SAMPLES}
+            colors={RAMP}
+            orientation="horizontal"
+            domain={[-1.2, 1.2]}
+            axis="rank"
+            id="expr"
+          />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  );
+}
+
+/** The transpose on its own — bins down y, columns as categories across x. */
+export const Horizontal: Story = { render: () => <ExpressionGrid /> };
+
+/**
+ * **`panZoom="panZoomY"`** — wheel to zoom the bin axis, drag to pan it.
+ *
+ * `panZoomY` and not `panZoomXY`, because x here is a **category** axis: eight
+ * samples, with no continuous domain to zoom. Asking for `panZoomXY` would name
+ * an axis that cannot move, the aspect ratio would change anyway, and nothing
+ * would say so — which is exactly what the earlier single `panZoom2D` mode did
+ * before the modes spelled out their axes.
+ *
+ * So the ratio changing here is correct and declared. Reach for `panZoomXY` when
+ * both axes really are continuous — a scatter, or a heat map binned on both —
+ * and it holds the ratio with one factor about the cursor.
+ */
+export const PanZoomY: Story = {
+  render: () => <ExpressionGrid panZoom="panZoomY" />,
 };

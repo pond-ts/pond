@@ -62,6 +62,37 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: `panZoom` names its axes — `panZoomX` / `panZoomY` / `panZoomXY`.**
+  The mode was x-only, so a chart wanting to zoom any other axis had nothing.
+
+  ```tsx
+  <ChartContainer panZoom="panZoomY">   // wheel zooms y, drag pans y
+  ```
+
+  **Pan follows zoom's degrees of freedom**: an axis that can be zoomed can be
+  panned, because a zoomed axis shows less than all of itself and the reader
+  needs to reach the rest. `'pan'` stays the one exception — pan with no zoom,
+  x-only, unchanged. `'panZoom'` and `true` are `'panZoomX'`, so nothing that
+  exists moves.
+
+  **`panZoomXY` zooms both axes by one factor about the cursor, holding the
+  aspect ratio** — a feature that looked square stays square. A single-axis zoom
+  changes the ratio, which is the point of asking for one.
+
+  Naming the axes is load-bearing rather than tidiness. A first cut had a single
+  `panZoom2D` that claimed both axes and then silently fell back to y-only
+  wherever x was a **category** axis: the ratio changed and nothing said so.
+  Spelling the axes out makes that the caller's choice. It also means a
+  horizontal `<HeatMap>` — categories on x, bins on y — can pan and zoom at all,
+  where both gesture handlers previously bailed on `xKind === 'category'`.
+
+  Carried as a pixel-space transform on the container, applied by narrowing each
+  y axis' **domain** to the window it makes visible. Pixels because they are
+  axis-independent, so one gesture serves a row whatever its axes' units;
+  narrowing the domain rather than stretching the range because the tick
+  generator must see the visible window (stretching it piled clamped ticks on
+  the plot edge). Panning is clamped so the content always covers the plot.
+
 - **charts: `<HeatMap>` — a grid of colour-coded cells** ([PND-HEATMAP]). Bins
   along x, the series' **columns** down y, colour carrying the value. A single
   column is a stripe (climate stripes, a load band); many columns are a grid.
