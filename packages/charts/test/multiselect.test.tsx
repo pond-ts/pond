@@ -16,6 +16,9 @@ import {
   type SelectInfo,
 } from '../src/context.js';
 import { recordingContext, stubCanvasContext } from './canvas-mock.js';
+import { drawBars } from '../src/bars.js';
+import type { BarSeries } from '../src/data.js';
+import type { BarStyle } from '../src/theme.js';
 
 afterEach(cleanup);
 
@@ -605,5 +608,83 @@ describe('hovered accepts a set', () => {
   it('leaves plain single-mark hover unchanged', () => {
     const { fills } = mount({ hovered: mark('beta') }, hoverTheme);
     expect(fills.filter((f) => f === '#HOV')).toHaveLength(1);
+  });
+
+  /**
+   * The `drawBars` path, pinned separately — flagged by the Layer-2 review of
+   * #616 and *not* a hypothetical gap. Every test above mounts `<BarChart
+   * categories>`, which routes through **`drawStacks`**; plain time-keyed bars
+   * take **`drawBars`**, a different function with its own membership check.
+   * The multiselect wave shipped a bug of exactly this shape — `drawBars` never
+   * applied `dimmed` because no test or story exercised it — so the two paths
+   * get pinned independently or they drift again.
+   */
+  describe('the drawBars path (plain bars, not categories)', () => {
+    const barStyle: BarStyle = {
+      fill: '#BASE',
+      opacity: 1,
+      highlight: '#SEL',
+      hover: '#HOV',
+      gap: 0,
+      minWidth: 1,
+      outlineWidth: 2,
+    };
+    const series: BarSeries = {
+      begin: Float64Array.from([0, 10, 20]),
+      end: Float64Array.from([10, 20, 30]),
+      y: Float64Array.from([1, 2, 3]),
+      length: 3,
+    };
+    const id = (v: number) => v;
+    /** Fill colours drawn for `hovered` (and optionally `selected`). */
+    const fillsFor = (
+      hovered: readonly { id: string; key: number }[],
+      selected: readonly { id: string; key: number }[] = [],
+    ): string[] => {
+      const { ctx, calls } = recordingContext();
+      drawBars(
+        ctx,
+        series,
+        id,
+        id,
+        barStyle,
+        0,
+        0,
+        'bars',
+        selected.map((m) => ({ ...m, label: 'x' })),
+        hovered.map((m) => ({ ...m, label: 'x' })),
+      );
+      return calls
+        .filter((c) => c.type === 'set' && c.name === 'fillStyle')
+        .map((c) => String(c.args?.[0]));
+    };
+
+    it('lights EVERY hovered bar, not just the first', () => {
+      // Fails if the implementation matches only `hovered[0]` — which is what
+      // the pre-widening code did, and what a `.some()`-less port would leave.
+      const fills = fillsFor([
+        { id: 'bars', key: 0 },
+        { id: 'bars', key: 20 },
+      ]);
+      expect(fills.filter((f) => f === '#HOV')).toHaveLength(2);
+      expect(fills.filter((f) => f === '#BASE')).toHaveLength(1);
+    });
+
+    it('keeps selection outranking hover here too', () => {
+      const fills = fillsFor(
+        [
+          { id: 'bars', key: 0 },
+          { id: 'bars', key: 10 },
+        ],
+        [{ id: 'bars', key: 0 }],
+      );
+      expect(fills.filter((f) => f === '#SEL')).toHaveLength(1);
+      expect(fills.filter((f) => f === '#HOV')).toHaveLength(1);
+    });
+
+    it('ignores a hovered mark belonging to another layer id', () => {
+      const fills = fillsFor([{ id: 'other', key: 0 }]);
+      expect(fills.filter((f) => f === '#HOV')).toHaveLength(0);
+    });
   });
 });

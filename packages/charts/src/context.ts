@@ -137,10 +137,11 @@ export interface ContainerFrame {
    */
   select(hit: SelectInfo | null, modifiers?: SelectModifiers): void;
   /**
-   * The **hovered** mark, or `null` — the transient hover-highlight, distinct
-   * from the committed `selected`. A row's pointer-move surface hit-tests its
-   * selectable layers and sets it; a layer that supports hover-highlight (Bar)
-   * draws the matching mark lit (a lighter treatment than `selected`'s outline).
+   * The **hovered** marks — **empty when nothing is hovered, never `null`** —
+   * the transient hover-highlight, distinct from the committed `selected`. A
+   * row's pointer-move surface hit-tests its selectable layers and sets it; a
+   * layer that supports hover-highlight (Bar) draws every matching mark lit (a
+   * lighter treatment than `selected`'s outline).
    *
    * **A set, not one mark, since RFC `selection.md` A4.2.** A1.4 argued hover
    * "is inherently one mark under the pointer" — true while hover *means*

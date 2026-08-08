@@ -364,13 +364,19 @@ export interface ChartContainerProps {
    */
   onSelect?: (hit: SelectInfo | null, modifiers?: SelectModifiers) => void;
   /**
-   * Controlled hover-highlight — the transiently lit mark (echo the `onHover` arg
-   * back), or `null`. **Omitted ⇒ uncontrolled** (the pointer over a selectable
-   * layer manages it internally). The hover analog of {@link selected}: pass it to
-   * **pin** a lit mark from outside the chart (e.g. hovering a legend / list row
-   * lights the matching {@link BarChart} bar). Only layers with a hover-highlight
-   * (currently `BarChart`) render it; keyed by the same {@link SelectInfo} identity
-   * as selection.
+   * Controlled hover-highlight — the transiently lit mark(s) (echo the `onHover`
+   * arg back), or `null`. **Omitted ⇒ uncontrolled** (the pointer over a
+   * selectable layer manages it internally). The hover analog of
+   * {@link selected}: pass it to **pin** lit marks from outside the chart (e.g.
+   * hovering a legend / list row lights the matching {@link BarChart} bar). Only
+   * layers with a hover-highlight (currently `BarChart`) render it; keyed by the
+   * same {@link SelectInfo} identity as selection.
+   *
+   * **Accepts a single mark or a set** — the same union {@link selected} takes,
+   * so passing one `SelectInfo` still works unchanged. Plural because a drag
+   * sweep lights several marks at once ("would be selected if you released
+   * now"); plain pointer-over carries 0 or 1. See RFC `selection.md` A4.2, which
+   * supersedes A1.4's "hover is inherently one mark".
    */
   hovered?: SelectInfo | readonly SelectInfo[] | null;
   /**
