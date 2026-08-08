@@ -60,6 +60,34 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **charts: `<ScatterChart>` and `<BoxPlot>` light every selected / hovered
+  mark, not just the first.** `ContainerFrame.selected` has been a set since
+  [PND-MULTISEL] and `hovered` since RFC A4.3, but both layers narrowed it back
+  to one mark on the way into their draw — the scatter with `selected[0]`, the
+  box with a `find` on its own series id. A consumer pinning three marks got one
+  ring (or one outline), no warning, and no error.
+
+  Both now match **any** member of either set, the way the bar paths already do
+  (`barMatchesAny`), keeping the linear scan those document: a selection is a
+  handful of marks a person clicked, so a `Set` per draw would cost more than it
+  saves. Precedence is the shared one — **selected > hovered > rest** — so a
+  mark in both sets draws its selected cue only, never two.
+
+  `<ScatterChart>` gains a **hover cue** in the process: it had a hover
+  hit-test but never rendered one. A hovered point takes the style's highlight
+  ring at half strength, the same two-step signal `<BoxPlot>` uses, so no new
+  theme token is invented. Both layers still suppress every highlight while
+  **decimated**, unchanged — a sub-pixel ring isn't visible and interaction
+  still reads the source marks.
+
+  This supersedes the "`BoxPlot` and `HeatMap` read the first hovered member
+  only" note under _Changed_ below, for `BoxPlot`. **`<HeatMap>` still reads
+  only the first member of each set** — it maps both sets but passes
+  `selection[0]` / `hover[0]` into `drawHeat`, which takes a single mark. Same
+  bug, not fixed here.
+
 ### Added
 
 - **charts: the list family gets the canvas's hover channel.**

@@ -99,7 +99,8 @@ describe('drawScatter', () => {
       keyAt(s),
       undefined,
       font,
-      null,
+      [],
+      [],
       'v',
     );
     expect(calls.filter((c) => c.name === 'arc')).toHaveLength(3);
@@ -120,7 +121,8 @@ describe('drawScatter', () => {
       keyAt(s),
       undefined,
       font,
-      null,
+      [],
+      [],
       'v',
     );
     expect(calls.filter((c) => c.name === 'arc')).toHaveLength(2);
@@ -139,7 +141,8 @@ describe('drawScatter', () => {
       keyAt(s),
       undefined,
       font,
-      null,
+      [],
+      [],
       'v',
     );
     const arcs = calls.filter((c) => c.name === 'arc');
@@ -160,7 +163,8 @@ describe('drawScatter', () => {
       keyAt(s),
       undefined,
       font,
-      null,
+      [],
+      [],
       'v',
     );
     const seq = calls.filter((c) => c.type === 'call').map((c) => c.name);
@@ -188,7 +192,8 @@ describe('drawScatter', () => {
       keyAt(s),
       undefined,
       font,
-      selected,
+      [selected],
+      [],
       'v',
     );
     // 3 base outlines + 1 highlight ring = 4 strokes; the last stroke uses the
@@ -225,10 +230,122 @@ describe('drawScatter', () => {
       keyAt(s),
       undefined,
       font,
-      selected,
+      [selected],
+      [],
       'v',
     );
     expect(calls.filter((c) => c.name === 'stroke')).toHaveLength(2); // outlines only
+  });
+
+  // ── Plural selection / hover ([PND-MULTISEL] / RFC A4.3) ──
+  //
+  // `container.selected` has been a set since #606 and `container.hovered`
+  // since #616, but this draw kept reading one mark, so every member past the
+  // first was silently dropped. Each case below counts `arc`s: the base pass
+  // emits one per finite point, and every ring adds one more — so "how many
+  // marks lit" is directly readable, and a single-member regression shows up as
+  // an off-by-N rather than as nothing at all.
+  const at = (key: number, id = 'v'): SelectInfo => ({
+    id,
+    key,
+    value: 0,
+    color: '#abc',
+    label: id,
+  });
+  /** `arc` calls beyond the one-per-point base pass — i.e. highlight rings. */
+  const ringCount = (calls: readonly { name: string }[], points: number) =>
+    calls.filter((c) => c.name === 'arc').length - points;
+
+  it('rings EVERY selected point of this series, not just the first', () => {
+    const { ctx, calls } = recordingContext();
+    const s = cs([0, 10, 20, 30], [1, 2, 3, 4]);
+    drawScatter(
+      ctx,
+      s,
+      identity,
+      identity,
+      style,
+      fixed(4),
+      keyAt(s),
+      undefined,
+      font,
+      [at(0), at(20), at(30)],
+      [],
+      'v',
+    );
+    expect(ringCount(calls, 4)).toBe(3);
+    // 4 base outlines + 3 rings.
+    expect(calls.filter((c) => c.name === 'stroke')).toHaveLength(7);
+  });
+
+  it('rings EVERY hovered point, at the fainter hover alpha', () => {
+    const { ctx, calls } = recordingContext();
+    const s = cs([0, 10, 20, 30], [1, 2, 3, 4]);
+    drawScatter(
+      ctx,
+      s,
+      identity,
+      identity,
+      style,
+      fixed(4),
+      keyAt(s),
+      undefined,
+      font,
+      [],
+      [at(10), at(30)],
+      'v',
+    );
+    expect(ringCount(calls, 4)).toBe(2);
+    // The hover ring is the selection ring at half strength — a ScatterStyle
+    // carries no hover token, so this is how the two states stay apart.
+    const alphas = calls
+      .filter((c) => c.type === 'set' && c.name === 'globalAlpha')
+      .map((c) => c.args[0]);
+    expect(alphas).toContain(0.5);
+  });
+
+  it('ignores members of either set that name another series', () => {
+    const { ctx, calls } = recordingContext();
+    const s = cs([0, 10, 20], [1, 2, 3]);
+    drawScatter(
+      ctx,
+      s,
+      identity,
+      identity,
+      style,
+      fixed(4),
+      keyAt(s),
+      undefined,
+      font,
+      [at(0, 'other'), at(10)],
+      [at(20, 'other')],
+      'v',
+    );
+    // Only the one member naming `v` lights — a mixed-layer selection set must
+    // not leak across layers just because a key happens to coincide.
+    expect(ringCount(calls, 3)).toBe(1);
+  });
+
+  it('draws one ring for a point in BOTH sets — selected outranks hovered', () => {
+    const { ctx, calls } = recordingContext();
+    const s = cs([0, 10, 20, 30], [1, 2, 3, 4]);
+    drawScatter(
+      ctx,
+      s,
+      identity,
+      identity,
+      style,
+      fixed(4),
+      keyAt(s),
+      undefined,
+      font,
+      [at(0), at(10)],
+      [at(10), at(20)],
+      'v',
+    );
+    // 3 distinct live points (0, 10, 20) ⇒ 3 rings, not 4: the doubly-live
+    // point at key 10 draws its selected ring only.
+    expect(ringCount(calls, 4)).toBe(3);
   });
 
   it('draws per-point labels via fillText when a label accessor is given', () => {
@@ -244,7 +361,8 @@ describe('drawScatter', () => {
       keyAt(s),
       (i) => (i === 0 ? 'A' : undefined), // only the first point is labelled
       font,
-      null,
+      [],
+      [],
       'v',
     );
     const texts = calls.filter((c) => c.name === 'fillText');
@@ -265,7 +383,8 @@ describe('drawScatter', () => {
       keyAt(s),
       undefined,
       font,
-      null,
+      [],
+      [],
       'v',
     );
     expect(calls.filter((c) => c.name === 'arc')).toEqual([]);
@@ -308,7 +427,8 @@ describe('drawScatter radius-aware culling', () => {
       keyAt(s),
       undefined,
       font,
-      null,
+      [],
+      [],
       'v',
     );
     const xs = arcXs(calls);
@@ -330,7 +450,8 @@ describe('drawScatter radius-aware culling', () => {
       keyAt(s),
       undefined,
       font,
-      null,
+      [],
+      [],
       'v',
     );
     expect(arcXs(calls)).toEqual([15, 40, 85]);
@@ -351,7 +472,8 @@ describe('drawScatter radius-aware culling', () => {
       keyAt(s),
       undefined,
       font,
-      null,
+      [],
+      [],
       'v',
       12, // offsetPx
     );
@@ -591,7 +713,8 @@ describe('drawScatter — viewport culling (Phase 2)', () => {
       keyAt(s),
       undefined,
       font,
-      null,
+      [],
+      [],
       'v',
     );
     expect(calls.filter((c) => c.name === 'arc')).toHaveLength(5);
@@ -617,7 +740,8 @@ describe('drawScatter — viewport culling (Phase 2)', () => {
       keyAt(s),
       undefined,
       font,
-      null,
+      [],
+      [],
       'v',
     );
     const fills = calls
@@ -639,7 +763,8 @@ describe('drawScatter — viewport culling (Phase 2)', () => {
       keyAt(s),
       undefined,
       font,
-      null,
+      [],
+      [],
       'v',
     );
     expect(calls.filter((c) => c.name === 'arc')).toHaveLength(10);
@@ -682,7 +807,8 @@ describe('drawScatter — decimation gate ([PND-MARKDEC] scatter half)', () => {
       keyAt(dense),
       undefined,
       font,
-      null,
+      [],
+      [],
       undefined,
       0,
       decimate as never,
@@ -712,6 +838,46 @@ describe('drawScatter — decimation gate ([PND-MARKDEC] scatter half)', () => {
     expect(r.drawnCount).toBe(4000);
   });
 
+  // The second draw path. `drawScatter` returns before the ring pass once it
+  // decimates, so a plural selection must be suppressed there exactly as a
+  // single one always was — not partially honoured, and not crash the early
+  // return. Asserted on the *count* so a future ring pass leaking into the
+  // decimated branch shows up here rather than as stray ink at 4000 points.
+  it('suppresses every ring while decimated, plural sets included', () => {
+    const recording = recordingContext();
+    (recording.ctx as unknown as { canvas: { width: number } }).canvas = {
+      width: 800,
+    };
+    const live = [0, 1, 2, 3].map((k) => ({
+      id: 'v',
+      key: k,
+      value: 0.5,
+      color: '#abc',
+      label: 'v',
+    }));
+    const r = drawScatter(
+      recording.ctx,
+      dense,
+      xS,
+      yS,
+      style,
+      fixed(4),
+      keyAt(dense),
+      undefined,
+      font,
+      live,
+      live,
+      'v',
+      0,
+      true,
+    );
+    expect(r.decimated).toBe(true);
+    // Exactly one arc per drawn representative — no ring got through.
+    expect(recording.calls.filter((c) => c.name === 'arc')).toHaveLength(
+      r.drawnCount,
+    );
+  });
+
   it('does NOT decimate below the density threshold (sparse series)', () => {
     const sparse = cs([0, 1, 2], [0.5, 0.5, 0.5]);
     const r = drawScatter(
@@ -724,7 +890,8 @@ describe('drawScatter — decimation gate ([PND-MARKDEC] scatter half)', () => {
       keyAt(sparse),
       undefined,
       font,
-      null,
+      [],
+      [],
       undefined,
       0,
       true,
@@ -758,7 +925,8 @@ describe('drawScatter — decimation gate ([PND-MARKDEC] scatter half)', () => {
       keyAt(gappy),
       undefined,
       font,
-      null,
+      [],
+      [],
       undefined,
       0,
       true,

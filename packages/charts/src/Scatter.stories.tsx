@@ -236,6 +236,126 @@ export const ControlledSelect: Story = {
 };
 
 // ---------------------------------------------------------------------------
+// Plural selection / hover — `selected` and `hovered` are sets.
+// ---------------------------------------------------------------------------
+
+/** The `trades` price at index `i` — the same closed form the fixture uses, so
+ *  a pinned mark's `value` matches the point it names. */
+const priceAt = (i: number) =>
+  100 + 18 * Math.sin(i / 6) + 6 * Math.sin(i / 1.7);
+
+/** A `SelectInfo` naming the `trades` point at index `i`. A scatter point's
+ *  identity is its key (its event `begin`) — it reports no `mark`. */
+const tradeMark = (i: number): SelectInfo => ({
+  id: 'trades',
+  key: BASE + i * STEP,
+  value: priceAt(i),
+  color: '#15B3A6',
+  label: 'price',
+});
+
+/**
+ * **Several points selected at once.** `selected` takes a **set**, and every
+ * member naming this layer gets its own highlight ring — three here, not just
+ * the set's first. (The layer used to read `selected[0]`, so a consumer pinning
+ * a group saw one ring and no error.) A point's identity is its key, so the set
+ * is just the keys the consumer decided on: the library applies no set
+ * arithmetic of its own.
+ */
+export const MultiSelected: Story = {
+  render: () => {
+    const t = trades();
+    return (
+      <ChartContainer
+        range={TIME_RANGE}
+        width={620}
+        theme={docsTheme}
+        selected={[tradeMark(8), tradeMark(24), tradeMark(40)]}
+      >
+        <ChartRow height={300}>
+          <YAxis id="price" label="price" />
+          <Layers>
+            <ScatterChart
+              series={t}
+              column="price"
+              id="trades"
+              radius={{ column: 'volume', range: [3, 16] }}
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **Several points hovered at once** — what a drag-sweep looks like mid-gesture
+ * ("would be selected if you released now", RFC A4.2). `hovered` is a set for
+ * exactly this, and every member rings at the fainter hover strength: a
+ * `ScatterStyle` carries one highlight ring and no hover token, so hover reads
+ * as a lighter version of the committed cue rather than a second colour.
+ */
+export const MultiHovered: Story = {
+  render: () => {
+    const t = trades();
+    return (
+      <ChartContainer
+        range={TIME_RANGE}
+        width={620}
+        theme={docsTheme}
+        hovered={[20, 21, 22, 23, 24].map(tradeMark)}
+      >
+        <ChartRow height={300}>
+          <YAxis id="price" label="price" />
+          <Layers>
+            <ScatterChart
+              series={t}
+              column="price"
+              id="trades"
+              radius={{ column: 'volume', range: [3, 16] }}
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **Both sets at once, and the precedence between them.** Two points are
+ * selected (full-strength rings) while a sweep hovers three — one of which is
+ * already selected. That overlapping point rings **once**, as selected:
+ * `selected > hovered` is the precedence every mark layer shares (`drawBars`,
+ * `drawStacks`, `drawBox`), so a mark never carries two competing cues.
+ */
+export const MultiSelectedAndHovered: Story = {
+  render: () => {
+    const t = trades();
+    return (
+      <ChartContainer
+        range={TIME_RANGE}
+        width={620}
+        theme={docsTheme}
+        selected={[tradeMark(8), tradeMark(24)]}
+        hovered={[tradeMark(24), tradeMark(32), tradeMark(40)]}
+      >
+        <ChartRow height={300}>
+          <YAxis id="price" label="price" />
+          <Layers>
+            <ScatterChart
+              series={t}
+              column="price"
+              id="trades"
+              radius={{ column: 'volume', range: [3, 16] }}
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Value axis — scatter on a ValueSeries (strike / distance / frequency on x).
 // ---------------------------------------------------------------------------
 

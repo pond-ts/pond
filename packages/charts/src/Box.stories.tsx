@@ -6,6 +6,7 @@ import { Layers } from './Layers.js';
 import { BoxPlot } from './BoxPlot.js';
 import { YAxis } from './YAxis.js';
 import { docsTheme } from './docs-theme.fixture.js';
+import type { SelectInfo } from './context.js';
 
 const BASE = Date.UTC(2026, 0, 1, 12, 0, 0);
 
@@ -400,6 +401,98 @@ export const Selectable: Story = {
           color: '#000',
           label: 'iv',
         }}
+      >
+        <ChartRow height={260}>
+          <YAxis id="iv" label="IV" />
+          <Layers>
+            <BoxPlot series={s} lower="bid" upper="ask" as="iv" id="smile" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * A `SelectInfo` naming the smile box at `key`. A box's identity is its **x** —
+ * the neighbour-spaced span begin, i.e. halfway back to the previous strike — so
+ * the 90 / 100 / 110 strikes key at 85 / 95 / 105 (see `Selectable`).
+ */
+const smileMark = (key: number): SelectInfo => ({
+  id: 'smile',
+  key,
+  value: 0.26,
+  color: '#000',
+  label: 'iv',
+});
+
+/**
+ * **Several boxes selected at once.** `selected` is a **set**, and every box
+ * whose key a member names is outlined — three here. (This layer used to take
+ * the *first* selection matching its series id, so a multi-box pin outlined one
+ * box and silently dropped the rest.)
+ */
+export const MultiSelected: Story = {
+  render: () => {
+    const s = smile();
+    return (
+      <ChartContainer
+        width={620}
+        theme={docsTheme}
+        selected={[smileMark(85), smileMark(105), smileMark(125)]}
+      >
+        <ChartRow height={260}>
+          <YAxis id="iv" label="IV" />
+          <Layers>
+            <BoxPlot series={s} lower="bid" upper="ask" as="iv" id="smile" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **Several boxes hovered at once** — a drag-sweep mid-gesture (RFC A4.2).
+ * `hovered` is the same set shape, drawn at the fainter half-strength outline so
+ * "would be selected if you released now" stays visibly weaker than a committed
+ * pick.
+ */
+export const MultiHovered: Story = {
+  render: () => {
+    const s = smile();
+    return (
+      <ChartContainer
+        width={620}
+        theme={docsTheme}
+        hovered={[smileMark(95), smileMark(105), smileMark(115)]}
+      >
+        <ChartRow height={260}>
+          <YAxis id="iv" label="IV" />
+          <Layers>
+            <BoxPlot series={s} lower="bid" upper="ask" as="iv" id="smile" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **Both sets at once, and the precedence between them.** Two boxes are
+ * selected and three hovered, with the 95 box in both — it draws the
+ * full-strength selected outline only. `selected > hovered` is the precedence
+ * shared by every mark layer, so a box never carries two competing cues.
+ */
+export const MultiSelectedAndHovered: Story = {
+  render: () => {
+    const s = smile();
+    return (
+      <ChartContainer
+        width={620}
+        theme={docsTheme}
+        selected={[smileMark(85), smileMark(95)]}
+        hovered={[smileMark(95), smileMark(105), smileMark(115)]}
       >
         <ChartRow height={260}>
           <YAxis id="iv" label="IV" />

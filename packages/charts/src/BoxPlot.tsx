@@ -93,7 +93,8 @@ export interface BoxPlotCommon<
    * contract `<BarChart>` / `<ScatterChart>` carry. With an `id`, a click on a
    * box (body or whisker — a range-only bid→ask segment included) selects it
    * (`selected`/`onSelect`) and pointer-over lights it (`hovered`/`onHover`);
-   * the box matching the selection's `(id, key)` outlines. **Omitted ⇒
+   * **every** box matching a selection member's `(id, key)` outlines, so a
+   * multi-mark `selected` set lights all of it. **Omitted ⇒
    * display-only** (a click resolves to empty space). `key` is the box's `x`
    * (its `begin`).
    */
@@ -195,6 +196,33 @@ export type BoxPlotProps<
 /** Whisker collapse floor (px) — a too-thin box still draws a 1px mark. */
 const MIN_BOX_WIDTH_PX = 1;
 
+/** Stable identity for "no keys of ours in this set" — the resting case, so the
+ *  layer doesn't re-register (and the canvas doesn't repaint) every time some
+ *  *other* layer's selection changes. */
+const NO_KEYS: readonly number[] = [];
+
+/**
+ * The keys of every member of `set` naming this layer (`m.id === id`) — the
+ * narrowing that keeps `box.ts` free of the selection identity, exactly as
+ * `barAt` / `boxAt` keep it free of the theme.
+ *
+ * A box's identity within its series is its `x` (its `begin`), so the key is the
+ * whole match; a `SelectInfo.mark` is `undefined` for a box (see its docs) and
+ * has nothing to add here. Linear over the set — see `includesKey` in `box.ts`.
+ */
+function keysOf(
+  set: readonly SelectInfo[],
+  id: string | undefined,
+): readonly number[] {
+  if (id === undefined || set.length === 0) return NO_KEYS;
+  const out: number[] = [];
+  for (let i = 0; i < set.length; i += 1) {
+    const m = set[i]!;
+    if (m.id === id) out.push(m.key);
+  }
+  return out.length === 0 ? NO_KEYS : out;
+}
+
 /**
  * A discrete box-and-whisker draw layer — the bar-chart analog of the variance
  * band. Reads **pre-computed quantile columns** of `series` (typically a
@@ -280,22 +308,17 @@ export function BoxPlot<
   // The series identity for selection/legend: the `as` role, else the range
   // columns as a span (matches the legend row's label).
   const label = semantic ?? `${lower}–${upper}`;
-  // Current selection / hover narrowed to this layer's box key (its `x`), or
-  // `null` — matched by the series `id`, so a change re-registers the layer and
-  // the canvas repaints the outline. A no-`id` layer never matches.
+  // Current selection / hover narrowed to this layer's box keys (each box's
+  // `x`) — matched by the series `id`, so a change re-registers the layer and
+  // the canvas repaints the outlines. A no-`id` layer never matches.
   const sel = container.selected;
   const hov = container.hovered;
-  // The **first** selected key belonging to this series. `BoxPlot`'s draw path
-  // matches one key, so a multi-member set lights only its first box here —
-  // the same documented scope limit as `ScatterChart` / `HeatMap`
-  // ([PND-MULTISEL]). Widening the box draw path is separate work; the comment
-  // says `find` because the code does `find`.
-  const selectedKey =
-    id !== undefined ? (sel.find((m) => m.id === id)?.key ?? null) : null;
-  // First hovered key for this series — `BoxPlot` matches one, the same
-  // documented limit its selection reader carries (RFC A4.1).
-  const hoveredKey =
-    id !== undefined ? (hov.find((m) => m.id === id)?.key ?? null) : null;
+  // **Every** selected key belonging to this series, not just the first: the
+  // container's `selected` has been a set since [PND-MULTISEL] and `hovered`
+  // since RFC A4.3, and a draw path that reads `[0]` silently drops the rest —
+  // a consumer pinning three boxes saw one outline and no error.
+  const selectedKeys = useMemo(() => keysOf(sel, id), [sel, id]);
+  const hoveredKeys = useMemo(() => keysOf(hov, id), [hov, id]);
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
@@ -392,8 +415,8 @@ export function BoxPlot<
             showMedian,
             offset,
             capWidth,
-            selectedKey,
-            hoveredKey,
+            selectedKeys,
+            hoveredKeys,
             decimate,
           ),
       },
@@ -418,8 +441,8 @@ export function BoxPlot<
       capWidth,
       id,
       label,
-      selectedKey,
-      hoveredKey,
+      selectedKeys,
+      hoveredKeys,
       decimate,
       axis,
       index,

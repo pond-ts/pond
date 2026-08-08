@@ -7,7 +7,7 @@ import {
   drawBox,
   isFiniteBox,
 } from '../src/box.js';
-import { recordingContext } from './canvas-mock.js';
+import { recordingContext, type CtxCall } from './canvas-mock.js';
 import type { BoxSeries } from '../src/data.js';
 
 /**
@@ -153,8 +153,8 @@ describe('drawBox — selection / hover outline (#508 item 5)', () => {
       true,
       0,
       undefined,
-      rangeBox().x[0]!,
-      null,
+      [rangeBox().x[0]!],
+      [],
     );
     expect(sel.calls.some((c) => c.name === 'strokeRect')).toBe(true);
 
@@ -172,10 +172,105 @@ describe('drawBox — selection / hover outline (#508 item 5)', () => {
       true,
       0,
       undefined,
-      null,
-      null,
+      [],
+      [],
     );
     expect(none.calls.some((c) => c.name === 'strokeRect')).toBe(false);
+  });
+
+  // ── Plural selection / hover ([PND-MULTISEL] / RFC A4.3) ──
+  //
+  // A range-only box draws no body outline, so `strokeRect` counts highlights
+  // and nothing else — which makes "how many boxes lit" directly assertable.
+  // The keys are the boxes' own `x` (neighbour-spaced begins).
+  /** Three range-only boxes at x = 0, 10, 20 (xEnd = x + 10). */
+  const threeBoxes = (): BoxSeries => ({
+    x: Float64Array.from([0, 10, 20]),
+    xEnd: Float64Array.from([10, 20, 30]),
+    lower: Float64Array.from([1, 2, 3]),
+    q1: Float64Array.from([NaN, NaN, NaN]),
+    median: Float64Array.from([NaN, NaN, NaN]),
+    q3: Float64Array.from([NaN, NaN, NaN]),
+    upper: Float64Array.from([5, 6, 7]),
+    length: 3,
+    hasBox: false,
+    hasMedian: false,
+  });
+  /** Every `strokeRect`'s preceding globalAlpha — 1 for selected, 0.5 hovered. */
+  const highlightAlphas = (calls: readonly CtxCall[]): unknown[] => {
+    const out: unknown[] = [];
+    let alpha: unknown;
+    for (const c of calls) {
+      if (c.type === 'set' && c.name === 'globalAlpha') alpha = c.args[0];
+      if (c.name === 'strokeRect') out.push(alpha);
+    }
+    return out;
+  };
+
+  it('outlines EVERY selected key, not just the first', () => {
+    const { ctx, calls } = recordingContext();
+    drawBox(
+      ctx,
+      threeBoxes(),
+      identity,
+      identity,
+      style,
+      0,
+      1,
+      'whisker',
+      true,
+      0,
+      undefined,
+      [0, 20],
+      [],
+    );
+    expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(2);
+    expect(highlightAlphas(calls)).toEqual([1, 1]);
+  });
+
+  it('outlines EVERY hovered key, at the fainter hover alpha', () => {
+    const { ctx, calls } = recordingContext();
+    drawBox(
+      ctx,
+      threeBoxes(),
+      identity,
+      identity,
+      style,
+      0,
+      1,
+      'whisker',
+      true,
+      0,
+      undefined,
+      [],
+      [0, 10, 20],
+    );
+    expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(3);
+    expect(highlightAlphas(calls)).toEqual([0.5, 0.5, 0.5]);
+  });
+
+  it('draws one outline for a key in BOTH sets — selected outranks hovered', () => {
+    const { ctx, calls } = recordingContext();
+    drawBox(
+      ctx,
+      threeBoxes(),
+      identity,
+      identity,
+      style,
+      0,
+      1,
+      'whisker',
+      true,
+      0,
+      undefined,
+      [10],
+      [10, 20],
+    );
+    // Two lit boxes, not three strokes: key 10 is selected (full strength) and
+    // key 20 hovered (faint). The doubly-live box never double-strokes.
+    const alphas = highlightAlphas(calls);
+    expect(alphas).toHaveLength(2);
+    expect(alphas).toEqual([1, 0.5]);
   });
 });
 

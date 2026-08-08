@@ -10,7 +10,9 @@ afterEach(cleanup);
  * Render smoke test for the BoxPlot stories: each must mount without throwing.
  * This exercises the whole layer end-to-end headless — including the value-axis
  * widening (`VolSmile` / `VolSmileWithMid` on a `ValueSeries`), the range-only
- * box (omitted `q1`/`q3`/`median`), and the `offset` pairing (`CallPutPair`).
+ * box (omitted `q1`/`q3`/`median`), the `offset` pairing (`CallPutPair`), and
+ * the plural `selected` / `hovered` sets (`Multi*`). What each *paints* is
+ * asserted in `plural-mark-highlight.test.tsx`; this only pins that they mount.
  */
 describe('BoxPlot stories render', () => {
   const entries = Object.entries(stories).filter(
@@ -22,6 +24,9 @@ describe('BoxPlot stories render', () => {
     expect(entries.map(([n]) => n).sort()).toEqual([
       'CallPutPair',
       'CursorFlag',
+      'MultiHovered',
+      'MultiSelected',
+      'MultiSelectedAndHovered',
       'Percentiles',
       'Selectable',
       'Solid',

@@ -176,8 +176,9 @@ type FieldReader = { get(field: string): unknown };
  * the nearest-point readout. Scatter reuses the shared tracker rather than
  * adding a separate `onNearest` channel, so a scatter reads out exactly like a
  * line. Click selection hit-tests each point's disc (`hitTest`) — **opt-in via
- * `id`**; the selected point (matching the selection's series `id` and the sample
- * `key`) gets a highlight ring. Without an `id` the scatter is display-only.
+ * `id`**; every selected point (matching a selection member's series `id` and
+ * the sample `key`) gets a highlight ring, and every hovered one a fainter
+ * version of it. Without an `id` the scatter is display-only.
  *
  * ```tsx
  * <Layers>
@@ -345,9 +346,12 @@ export function ScatterChart<
             keyAt,
             labelAt,
             font,
-            // See HeatMap: the point draw matches one mark; scatter multi-select
-            // rendering is out of [PND-MULTISEL]'s scope, so take the first.
-            container.selected[0] ?? null,
+            // Both sets whole. `selected` has been plural since [PND-MULTISEL]
+            // and `hovered` since RFC A4.3, and the draw rings every member
+            // naming this layer — reading `[0]` here quietly showed one ring
+            // for a three-mark selection.
+            container.selected,
+            container.hovered,
             id,
             offset,
             decimate,
@@ -368,6 +372,7 @@ export function ScatterChart<
       labelAt,
       font,
       container.selected,
+      container.hovered,
       offset,
       decimate,
       axis,

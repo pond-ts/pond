@@ -9,6 +9,26 @@ import { decimateBox, type DecimateOption } from './decimate.js';
 /** Fraction of the box width the whisker end-caps span (centred on the stem). */
 const WHISKER_CAP_FRACTION = 0.5;
 
+/** Stable identity for "no keys" — the common resting case, so a caller that
+ *  narrows an empty set doesn't hand `drawBox` a fresh array every frame. */
+const NO_KEYS: readonly number[] = [];
+
+/**
+ * Is `key` one of `keys`? The set form of the `key === selectedKey` check
+ * {@link drawBox} used to make ([PND-MULTISEL] / RFC A4.3).
+ *
+ * Linear over the set on purpose, the same reasoning `barMatchesAny` records: a
+ * selection is a handful of marks a person clicked, not a data structure, so
+ * building a `Set` per draw would cost more than it saves — and the common cases
+ * (0 or 1 members) short-circuit immediately.
+ */
+function includesKey(keys: readonly number[], key: number): boolean {
+  for (let i = 0; i < keys.length; i += 1) {
+    if (keys[i] === key) return true;
+  }
+  return false;
+}
+
 /**
  * The `[min, max]` vertical extent of the **drawn** boxes — the lowest `lower`
  * whisker and highest `upper` whisker over the keys {@link isFiniteBox} draws
@@ -149,11 +169,15 @@ export function drawBox(
   offsetPx = 0,
   capWidthPx?: number,
   // Selection / hover highlight, keyed by the box's `x` (its `begin`, matched to
-  // the container selection's `key` by the caller). `null` ⇒ none. A selected
-  // box gets a full-strength bounding outline; a hovered one a fainter one —
-  // the box analog of the bar highlight, drawn without a new theme token.
-  selectedKey: number | null = null,
-  hoveredKey: number | null = null,
+  // the container selection's `key` by the caller). **Sets** — every box whose
+  // key is named lights, so a multi-mark selection or a drag-sweep hover shows
+  // all of it, not just its first member ([PND-MULTISEL] / RFC A4.3). Empty ⇒
+  // none. A selected box gets a full-strength bounding outline; a hovered one a
+  // fainter one — the box analog of the bar highlight, drawn without a new theme
+  // token. A box in **both** sets reads as selected (selected outranks hovered,
+  // the precedence `drawBars` / `drawStacks` share).
+  selectedKeys: readonly number[] = NO_KEYS,
+  hoveredKeys: readonly number[] = NO_KEYS,
   decimate: DecimateOption = true,
 ): LayerDrawStats {
   const sourceCount = box.length; // pre-cull, pre-decimation (for draw stats)
@@ -271,14 +295,19 @@ export function drawBox(
 
     // Selection / hover: outline the whole mark (x-slot × whisker extent) so a
     // click / pointer-over reads back on the canvas. Selected = full strength;
-    // hovered = fainter. Bracketed so alpha/width don't leak to the next box.
+    // hovered = fainter. **Every** named box lights, not only the first — so a
+    // set of pinned boxes, or a sweep hovering several at once, all read back.
+    // Bracketed so alpha/width don't leak to the next box.
     const key = box.x[i]!;
-    if (key === selectedKey || key === hoveredKey) {
+    const isSelected = includesKey(selectedKeys, key);
+    // Selected outranks hovered on a box that is both — the same precedence the
+    // bar paths document, and what the `key === selectedKey` test did before.
+    const isHovered = !isSelected && includesKey(hoveredKeys, key);
+    if (isSelected || isHovered) {
       ctx.save();
       ctx.strokeStyle = style.stroke;
-      ctx.lineWidth =
-        key === selectedKey ? style.strokeWidth + 1 : style.strokeWidth;
-      ctx.globalAlpha = key === selectedKey ? 1 : 0.5;
+      ctx.lineWidth = isSelected ? style.strokeWidth + 1 : style.strokeWidth;
+      ctx.globalAlpha = isSelected ? 1 : 0.5;
       ctx.strokeRect(x0, yUpper, x1 - x0, yLower - yUpper);
       ctx.restore();
     }
