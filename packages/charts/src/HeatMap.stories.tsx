@@ -8,7 +8,7 @@ import { HeatMap } from './HeatMap.js';
 import { YAxis } from './YAxis.js';
 import { stacksFromColumns } from './data.js';
 import { sanFranciscoTemperatures } from './sf-temperatures.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
+import { defaultTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
 
 const sf = sanFranciscoTemperatures();
@@ -48,7 +48,7 @@ type Story = StoryObj;
  */
 export const Stripe: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={720} theme={docsTheme} cursor="none">
+    <ChartContainer range={RANGE} width={720} cursor="none">
       <ChartRow height={80}>
         <YAxis id="v" label="°F" />
         <Layers>
@@ -70,7 +70,7 @@ export const Stripe: Story = {
  */
 export const Grid: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={720} theme={docsTheme} cursor="none">
+    <ChartContainer range={RANGE} width={720} cursor="none">
       <ChartRow height={120}>
         <YAxis id="v" label="°F" />
         <Layers>
@@ -98,9 +98,9 @@ function SelectableDemo() {
         style={{
           height: 18,
           marginBottom: 8,
-          fontFamily: docsTheme.font.family,
+          fontFamily: defaultTheme.font.family,
           fontSize: 12,
-          color: docsTheme.axis.label,
+          color: defaultTheme.axis.label,
         }}
       >
         {sel === null ? (
@@ -115,7 +115,6 @@ function SelectableDemo() {
       <ChartContainer
         range={RANGE}
         width={720}
-        theme={docsTheme}
         cursor="none"
         onSelect={setSel}
         onHover={(h) => h && setSel(h)}
@@ -175,7 +174,6 @@ export const MultiSelected: Story = {
     <ChartContainer
       range={RANGE}
       width={720}
-      theme={docsTheme}
       cursor="none"
       selected={[
         tempCell(40, 'low'),
@@ -213,7 +211,6 @@ export const MultiHovered: Story = {
     <ChartContainer
       range={RANGE}
       width={720}
-      theme={docsTheme}
       cursor="none"
       hovered={[100, 101, 102, 103, 104, 105].flatMap((i) => [
         tempCell(i, 'low'),
@@ -247,7 +244,6 @@ export const MultiSelectedAndHovered: Story = {
     <ChartContainer
       range={RANGE}
       width={720}
-      theme={docsTheme}
       cursor="none"
       selected={[tempCell(60, 'low'), tempCell(150, 'high')]}
       hovered={[
@@ -313,7 +309,6 @@ export const ValueAxisStripe: Story = {
       <ChartContainer
         range={[axis[0]!, axis[axis.length - 1]!]}
         width={720}
-        theme={docsTheme}
         cursor="none"
       >
         <ChartRow height={80}>
@@ -340,7 +335,7 @@ export const ValueAxisStripe: Story = {
  */
 export const PinnedDomain: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={720} theme={docsTheme} cursor="none">
+    <ChartContainer range={RANGE} width={720} cursor="none">
       <ChartRow height={120}>
         <YAxis id="v" label="°F" />
         <Layers>
@@ -397,7 +392,6 @@ export const ManyRows: Story = {
       <ChartContainer
         range={[b[0]!, b[bands.length - 1]!]}
         width={720}
-        theme={docsTheme}
         cursor="none"
       >
         <ChartRow height={200}>
@@ -467,12 +461,7 @@ function ExpressionGrid({ panZoom }: { panZoom?: 'none' | 'panZoomY' }) {
   // scale from the columns the layer reports. The bin axis is y, and its
   // extent is pinned on the <YAxis> instead.
   return (
-    <ChartContainer
-      width={440}
-      theme={docsTheme}
-      cursor="none"
-      panZoom={panZoom ?? 'none'}
-    >
+    <ChartContainer width={440} cursor="none" panZoom={panZoom ?? 'none'}>
       <ChartRow height={420}>
         <YAxis id="rank" label="gene rank" min={0} max={N} />
         <Layers>
@@ -559,7 +548,6 @@ export const PanZoomXY: Story = {
       <ChartContainer
         range={[t[0]!, t[N - 1]!]}
         width={620}
-        theme={docsTheme}
         cursor="none"
         panZoom="panZoomXY"
       >

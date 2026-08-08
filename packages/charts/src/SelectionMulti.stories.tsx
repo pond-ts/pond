@@ -5,8 +5,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
-import { docsTheme } from './docs-theme.fixture.js';
-import type { ChartTheme } from './theme.js';
+import { defaultTheme, type ChartTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
 
 /**
@@ -44,19 +43,6 @@ const SERVICES = [
   { label: 'search', value: 0.3 },
 ];
 
-/** `docsTheme` plus an explicit de-emphasis for out-of-selection bars. */
-const dimTheme: ChartTheme = {
-  ...docsTheme,
-  bar: {
-    ...docsTheme.bar,
-    default: {
-      ...docsTheme.bar.default,
-      highlight: '#2f6fb5',
-      dimmed: '#dfe4ea',
-    },
-  },
-};
-
 /** The whole consumer-side policy: replace, or ⌘/Ctrl-click to accumulate. */
 function applyClick(
   cur: readonly SelectInfo[],
@@ -74,7 +60,7 @@ function Demo({
   theme,
   caption,
 }: {
-  theme: ChartTheme;
+  theme?: ChartTheme;
   caption: string;
 }): React.ReactElement {
   const [sel, setSel] = useState<readonly SelectInfo[]>([]);
@@ -82,7 +68,7 @@ function Demo({
     <div>
       <ChartContainer
         width={640}
-        theme={theme}
+        {...(theme !== undefined ? { theme } : {})}
         selected={sel}
         onSelect={(hit, mods) =>
           setSel((cur) => applyClick(cur, hit, mods?.additive ?? false))
@@ -112,31 +98,31 @@ function Demo({
  */
 export const AdditiveClick: Story = {
   render: () => (
-    <Demo
-      theme={docsTheme}
-      caption="Click to select · ⌘/Ctrl-click to add or remove · click away to clear."
-    />
+    <Demo caption="Click to select · ⌘/Ctrl-click to add or remove · click away to clear." />
   ),
 };
 
 /**
- * **With a themed de-emphasis.** The same interaction against a theme that
- * defines `bar.default.dimmed`. Everything outside a non-empty selection
- * recedes to one themed colour — the state that was previously re-invented per
- * component (one consumer had three charts using `color-mix` at 22%, 28% and
- * 30% for this, in the same week).
+ * **The themed de-emphasis.** `defaultTheme.bar.default` defines `dimmed`, so
+ * everything outside a non-empty selection recedes to one themed colour — the
+ * state that was previously re-invented per component (one consumer had three
+ * charts using `color-mix` at 22%, 28% and 30% for this, in the same week).
  *
  * Nothing dims while the selection is empty: with nothing selected there is
  * nothing to recede from.
  */
 export const DimmedOutOfSelection: Story = {
   render: () => (
-    <Demo
-      theme={dimTheme}
-      caption="Select some bars — the rest recede to theme.bar.default.dimmed."
-    />
+    <Demo caption="Select some bars — the rest recede to theme.bar.default.dimmed." />
   ),
 };
+
+/** `defaultTheme` with its `dimmed` slot stripped — a theme that says nothing
+ *  about de-emphasis, for the opt-in story below. */
+const noDimTheme: ChartTheme = (() => {
+  const { dimmed: _dropped, ...noDim } = defaultTheme.bar.default;
+  return { ...defaultTheme, bar: { ...defaultTheme.bar, default: noDim } };
+})();
 
 /**
  * **Opt-in by construction.** The identical chart on a theme with no `dimmed`
@@ -147,7 +133,7 @@ export const DimmedOutOfSelection: Story = {
 export const DimmingIsOptIn: Story = {
   render: () => (
     <Demo
-      theme={docsTheme}
+      theme={noDimTheme}
       caption="Same chart, a theme with no `dimmed` — selection lights, nothing recedes."
     />
   ),
@@ -193,7 +179,6 @@ function ExternalDemo(): React.ReactElement {
       </div>
       <ChartContainer
         width={640}
-        theme={dimTheme}
         selected={sel}
         onSelect={(hit, mods) =>
           setSel((cur) => applyClick(cur, hit, mods?.additive ?? false))
@@ -224,7 +209,6 @@ export const SingleMarkStillWorks: Story = {
   render: () => (
     <ChartContainer
       width={640}
-      theme={docsTheme}
       selected={{
         id: 'svc',
         key: 0,

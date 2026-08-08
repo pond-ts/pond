@@ -8,7 +8,7 @@ import { BarChart } from './BarChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
 import { transposeRow } from './data.js';
-import { docsTheme } from './docs-theme.fixture.js';
+import { defaultTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
 
 /**
@@ -53,7 +53,7 @@ const PALETTE = [
  */
 export const Tickers: Story = {
   render: () => (
-    <ChartContainer width={640} theme={docsTheme}>
+    <ChartContainer width={640}>
       <ChartRow height={240}>
         <YAxis id="v" label="net Δ" min={0} pad={0.08} />
         <Layers>
@@ -70,7 +70,7 @@ export const Tickers: Story = {
  */
 export const SingleHue: Story = {
   render: () => (
-    <ChartContainer width={640} theme={docsTheme}>
+    <ChartContainer width={640}>
       <ChartRow height={240}>
         <YAxis id="v" label="net Δ" min={0} pad={0.08} />
         <Layers>
@@ -93,7 +93,7 @@ export const HighCardinality: Story = {
       value: Math.round(10 + 40 * Math.abs(Math.sin((i / 30) * Math.PI))),
     }));
     return (
-      <ChartContainer width={720} theme={docsTheme}>
+      <ChartContainer width={720}>
         <ChartRow height={240}>
           <YAxis id="v" label="count" min={0} pad={0.08} />
           <Layers>
@@ -118,7 +118,7 @@ export const CrowdedLabels: Story = {
       value: Math.round(15 + 35 * Math.abs(Math.sin((i / 20) * Math.PI + 0.4))),
     }));
     return (
-      <ChartContainer width={720} theme={docsTheme}>
+      <ChartContainer width={720}>
         <ChartRow height={240}>
           <YAxis id="v" label="orders" min={0} pad={0.08} />
           <Layers>
@@ -144,9 +144,9 @@ function SelectDemo() {
         style={{
           height: 18,
           marginBottom: 8,
-          fontFamily: docsTheme.font.family,
+          fontFamily: defaultTheme.font.family,
           fontSize: 12,
-          color: docsTheme.axis.label,
+          color: defaultTheme.axis.label,
         }}
       >
         {sel === null ? (
@@ -157,7 +157,7 @@ function SelectDemo() {
           </span>
         )}
       </div>
-      <ChartContainer width={640} theme={docsTheme} onSelect={setSel}>
+      <ChartContainer width={640} onSelect={setSel}>
         <ChartRow height={240}>
           <YAxis id="v" label="net Δ" min={0} pad={0.08} />
           <Layers>
@@ -194,7 +194,7 @@ export const Signed: Story = {
       { label: 'META', value: -7 },
     ];
     return (
-      <ChartContainer width={640} theme={docsTheme}>
+      <ChartContainer width={640}>
         <ChartRow height={240}>
           <YAxis id="v" label="day P&L" pad={0.1} />
           <Layers>
@@ -247,7 +247,7 @@ export const Transpose: Story = {
   render: () => {
     const data = transposeRow(wideSeries(), { at: 'last' });
     return (
-      <ChartContainer width={640} theme={docsTheme}>
+      <ChartContainer width={640}>
         <ChartRow height={240}>
           <YAxis id="v" label="value" min={0} pad={0.08} />
           <Layers>
@@ -278,9 +278,9 @@ function ScrubDemo() {
           display: 'flex',
           gap: 12,
           alignItems: 'center',
-          fontFamily: docsTheme.font.family,
+          fontFamily: defaultTheme.font.family,
           fontSize: 12,
-          color: docsTheme.axis.label,
+          color: defaultTheme.axis.label,
         }}
       >
         <span>
@@ -295,7 +295,7 @@ function ScrubDemo() {
           onChange={(e) => setRow(Number(e.target.value))}
         />
       </div>
-      <ChartContainer width={640} theme={docsTheme}>
+      <ChartContainer width={640}>
         <ChartRow height={240}>
           <YAxis id="v" label="value" min={0} pad={0.08} />
           <Layers>
@@ -323,7 +323,7 @@ export const HorizontalFunnel: Story = {
   render: () => (
     // `showAxis={false}` because the explicit <XAxis> below carries the label;
     // leaving the default on would render the shared axis twice.
-    <ChartContainer width={560} theme={docsTheme} showAxis={false}>
+    <ChartContainer width={560} showAxis={false}>
       <ChartRow height={200}>
         {/* A wider gutter: the derived category labels are words, not numbers. */}
         <YAxis id="stage" width={96} />
@@ -355,7 +355,7 @@ export const HorizontalFunnel: Story = {
  */
 export const MaxBandWidth: Story = {
   render: () => (
-    <ChartContainer width={640} theme={docsTheme} maxBandWidth={44}>
+    <ChartContainer width={640} maxBandWidth={44}>
       <ChartRow height={240}>
         <YAxis id="v" label="net Δ" min={0} pad={0.08} />
         <Layers>
@@ -381,7 +381,7 @@ export const MaxBandWidth: Story = {
 export const StablePitch: Story = {
   render: () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <ChartContainer width={640} theme={docsTheme} maxBandWidth={44}>
+      <ChartContainer width={640} maxBandWidth={44}>
         <ChartRow height={130}>
           <YAxis id="a" label="" min={0} pad={0.08} />
           <Layers>
@@ -393,7 +393,7 @@ export const StablePitch: Story = {
           </Layers>
         </ChartRow>
       </ChartContainer>
-      <ChartContainer width={640} theme={docsTheme} maxBandWidth={44}>
+      <ChartContainer width={640} maxBandWidth={44}>
         <ChartRow height={130}>
           <YAxis id="b" label="" min={0} pad={0.08} />
           <Layers>
@@ -411,12 +411,7 @@ export const StablePitch: Story = {
  */
 export const BandAlignCenter: Story = {
   render: () => (
-    <ChartContainer
-      width={640}
-      theme={docsTheme}
-      maxBandWidth={44}
-      bandAlign="center"
-    >
+    <ChartContainer width={640} maxBandWidth={44} bandAlign="center">
       <ChartRow height={240}>
         <YAxis id="v" label="net Δ" min={0} pad={0.08} />
         <Layers>
@@ -432,12 +427,7 @@ export const BandAlignCenter: Story = {
  */
 export const BandAlignEnd: Story = {
   render: () => (
-    <ChartContainer
-      width={640}
-      theme={docsTheme}
-      maxBandWidth={44}
-      bandAlign="end"
-    >
+    <ChartContainer width={640} maxBandWidth={44} bandAlign="end">
       <ChartRow height={240}>
         <YAxis id="v" label="net Δ" min={0} pad={0.08} />
         <Layers>
@@ -460,7 +450,7 @@ export const CapDoesNotBind: Story = {
       value: 10 + 40 * Math.abs(Math.sin(i)),
     }));
     return (
-      <ChartContainer width={640} theme={docsTheme} maxBandWidth={44}>
+      <ChartContainer width={640} maxBandWidth={44}>
         <ChartRow height={240}>
           <YAxis id="v" label="" min={0} pad={0.08} />
           <Layers>

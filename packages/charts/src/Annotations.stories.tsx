@@ -10,7 +10,7 @@ import { YAxis } from './YAxis.js';
 import { Region } from './annotations.js';
 import { Baseline } from './annotations.js';
 import { Marker } from './annotations.js';
-import { docsTheme } from './docs-theme.fixture.js';
+import { defaultTheme } from './theme.js';
 
 /** A 40-minute interval on a 1-minute grid (5:00–5:40), so the x is wall-clock. */
 const BASE = Date.UTC(2026, 0, 1, 5, 0, 0);
@@ -82,7 +82,7 @@ type Story = StoryObj;
 
 /**
  * **In context** — the data stays in the data register, the marks you place are
- * **turquoise**: a selected `<Region>` (5:15–5:35, forward at level 1), a
+ * **amber**: a selected `<Region>` (5:15–5:35, forward at level 1), a
  * `<Baseline>` at 225 W, and a `<Marker>` at 5:28, both resting at the back (level
  * 3). **Brightness is depth** — hover a mark to bring it mid (level 2). They paint
  * above the data but let pan/zoom read through. Grab-handles are an edit-mode
@@ -90,7 +90,7 @@ type Story = StoryObj;
  */
 export const InContext: Story = {
   render: () => (
-    <ChartContainer range={INTERVAL} width={680} theme={docsTheme}>
+    <ChartContainer range={INTERVAL} width={680}>
       <ChartRow height={280}>
         <YAxis id="power" label="W" min={0} max={300} />
         <Layers>
@@ -119,7 +119,7 @@ export const ValueAxis: Story = {
   render: () => {
     const ride = rideByDistance();
     return (
-      <ChartContainer width={680} theme={docsTheme} timeFormat=",.0f">
+      <ChartContainer width={680} timeFormat=",.0f">
         <ChartRow height={260}>
           <YAxis id="hr" label="bpm" />
           <Layers>
@@ -147,12 +147,7 @@ export const Selectable: Story = {
     // switch; click empty plot to clear.
     const [sel, setSel] = useState<string | null>('interval');
     return (
-      <ChartContainer
-        range={INTERVAL}
-        width={680}
-        theme={docsTheme}
-        onSelectAnnotation={setSel}
-      >
+      <ChartContainer range={INTERVAL} width={680} onSelectAnnotation={setSel}>
         <ChartRow height={260}>
           <YAxis id="power" label="W" min={0} max={300} />
           <Layers>
@@ -187,7 +182,7 @@ export const Selectable: Story = {
  */
 export const Highlight: Story = {
   render: () => (
-    <ChartContainer range={INTERVAL} width={680} theme={docsTheme}>
+    <ChartContainer range={INTERVAL} width={680}>
       <ChartRow height={260}>
         <YAxis id="power" label="W" min={0} max={300} />
         <Layers>
@@ -220,7 +215,7 @@ export const Highlight: Story = {
  */
 export const BackgroundZones: Story = {
   render: () => (
-    <ChartContainer range={INTERVAL} width={680} theme={docsTheme}>
+    <ChartContainer range={INTERVAL} width={680}>
       <ChartRow height={260}>
         <YAxis id="power" label="W" min={0} max={300} />
         <Layers>
@@ -261,12 +256,7 @@ export const Editable: Story = {
     });
     const [threshold, setThreshold] = useState(225);
     return (
-      <ChartContainer
-        range={INTERVAL}
-        width={680}
-        theme={docsTheme}
-        editAnnotations
-      >
+      <ChartContainer range={INTERVAL} width={680} editAnnotations>
         <ChartRow height={280}>
           <YAxis id="power" label="W" min={0} max={300} />
           <Layers>
@@ -345,7 +335,6 @@ export const Select: Story = {
         <ChartContainer
           range={INTERVAL}
           width={680}
-          theme={docsTheme}
           editAnnotations={edit}
           onSelectAnnotation={(id) => {
             setSelectedId(id);
@@ -538,12 +527,7 @@ export const MultiRow: Story = {
       to: BASE + 36 * STEP,
     });
     return (
-      <ChartContainer
-        range={INTERVAL}
-        width={680}
-        theme={docsTheme}
-        editAnnotations
-      >
+      <ChartContainer range={INTERVAL} width={680} editAnnotations>
         <ChartRow height={170}>
           <YAxis id="power" label="W" min={0} max={300} />
           <Layers>
@@ -598,12 +582,7 @@ export const MultiRowMarkers: Story = {
     const pLabels = ['lap 1', 'lap 2', 'finish'];
     const hLabels = ['z1', 'z2', 'max'];
     return (
-      <ChartContainer
-        range={INTERVAL}
-        width={680}
-        theme={docsTheme}
-        editAnnotations
-      >
+      <ChartContainer range={INTERVAL} width={680} editAnnotations>
         <ChartRow height={170}>
           <YAxis id="power" label="W" min={0} max={300} />
           <Layers>
@@ -698,7 +677,6 @@ export const Create: Story = {
         <ChartContainer
           range={INTERVAL}
           width={680}
-          theme={docsTheme}
           editAnnotations
           creating={tool}
           snap={snap}
@@ -810,7 +788,6 @@ export const PanZoomSelect: Story = {
         <ChartContainer
           range={range}
           width={680}
-          theme={docsTheme}
           panZoom={panZoom}
           onTimeRangeChange={setRange}
           onSelectAnnotation={setSelectedId}
@@ -839,21 +816,21 @@ export const PanZoomSelect: Story = {
  * **Theme roles — distinct mark colours in one register.** `theme.annotation.roles`
  * maps a role name to a `color` (and optional `fillOpacity`); a mark's `role`
  * prop picks one, keeping the shared depth ramp. Here an **ATM** baseline reads
- * green, a **reference** marker blue, and a **zone** region amber — all placed
+ * green, a **reference** marker violet, and a **zone** region amber — all placed
  * at once, none dragging the others' hue (the vol-smile ask). Colour stays a
  * theme concern: there's no per-mark colour prop.
  */
 export const Roles: Story = {
   render: () => {
     const theme = {
-      ...docsTheme,
+      ...defaultTheme,
       annotation: {
-        color: docsTheme.annotation?.color ?? '#0d9488',
-        fillOpacity: docsTheme.annotation?.fillOpacity ?? 0.1,
-        depth: docsTheme.annotation?.depth ?? ([1, 0.7, 0.4] as const),
+        color: defaultTheme.annotation?.color ?? '#b45309',
+        fillOpacity: defaultTheme.annotation?.fillOpacity ?? 0.1,
+        depth: defaultTheme.annotation?.depth ?? ([1, 0.7, 0.4] as const),
         roles: {
           atm: { color: '#16a34a' }, // green
-          ref: { color: '#2563eb' }, // blue
+          ref: { color: '#7c3aed' }, // violet
           zone: { color: '#f59e0b', fillOpacity: 0.15 }, // amber, softer fill
         },
       },

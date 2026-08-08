@@ -20,7 +20,6 @@ import {
   STEP,
   RANGE,
 } from './story-data.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * **Cursor components** — the mounted-preset successors of the `cursor` string
@@ -52,11 +51,11 @@ type Story = StoryObj;
  *  component form). Hover to see it track. */
 export const Line: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <LineCursor />
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -67,17 +66,12 @@ export const Line: Story = {
 /** `<PointCursor />` — a dot on each series at the cursor, no line. */
 export const Point: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      trackerPosition={PIN}
-      theme={docsTheme}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
       <PointCursor />
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
-          <LineChart series={s} column="slow" as="slow" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+          <LineChart series={s} column="slow" as="secondary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -88,17 +82,12 @@ export const Point: Story = {
 /** `<InlineCursor />` — dots + a value chip beside each. */
 export const Inline: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      trackerPosition={PIN}
-      theme={docsTheme}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
       <InlineCursor />
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
-          <LineChart series={s} column="slow" as="slow" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+          <LineChart series={s} column="slow" as="secondary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -110,17 +99,12 @@ export const Inline: Story = {
  *  shared time atop the stack (`showTime`, the `cursorTime` successor). */
 export const Flag: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      trackerPosition={PIN}
-      theme={docsTheme}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
       <FlagCursor showTime />
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
-          <LineChart series={s} column="slow" as="slow" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+          <LineChart series={s} column="slow" as="secondary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -132,16 +116,11 @@ export const Flag: Story = {
  *  value pinned to its y axis, the time pinned to the x axis. Snap default. */
 export const Crosshair: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      trackerPosition={PIN}
-      theme={docsTheme}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
       <CrosshairCursor />
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -154,11 +133,11 @@ export const Crosshair: Story = {
  *  Hover-driven — hover the plot to see it. */
 export const CrosshairFree: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <CrosshairCursor snap={false} />
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -171,11 +150,11 @@ export const CrosshairFree: Story = {
  *  `cursorSequence` successor). The drag lands in the next step. */
 export const Range: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <RangeCursor sequence={Sequence.every('15m')} />
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -187,11 +166,11 @@ export const Range: Story = {
  *  plain line on hover (a drag would shade the raw span). */
 export const RangeFreeform: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <RangeCursor />
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -203,11 +182,11 @@ export const RangeFreeform: Story = {
  *  once, on the first row (the `cursorTime` successor). */
 export const ShowTime: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <LineCursor showTime />
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -219,16 +198,11 @@ export const ShowTime: Story = {
  *  row-scoped: the single-row form of the per-row override. */
 export const MountedInRow: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      trackerPosition={PIN}
-      theme={docsTheme}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
       <ChartRow height={220}>
         <InlineCursor />
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -244,11 +218,11 @@ export const MountedInRow: Story = {
  *  row: the plain line, no pill. */
 export const RowOverride: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <LineCursor />
       <ChartRow height={150}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -268,18 +242,13 @@ export const RowOverride: Story = {
  *  gesture-owning cursors (crosshair, range) are one-per-scope. */
 export const StackedRenderOnly: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      trackerPosition={PIN}
-      theme={docsTheme}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
       <LineCursor />
       <PointCursor />
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
-          <LineChart series={s} column="slow" as="slow" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+          <LineChart series={s} column="slow" as="secondary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -292,10 +261,10 @@ export const StackedRenderOnly: Story = {
  *  once the window closes, mounting nothing IS the no-cursor case. */
 export const NoCursor: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} cursor="none" theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W} cursor="none">
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>

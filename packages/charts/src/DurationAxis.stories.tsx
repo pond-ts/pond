@@ -8,7 +8,6 @@ import { LineChart } from './LineChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
 import { Marker } from './annotations.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * The **duration (elapsed) x axis** — `<ChartContainer origin>`. One story per
@@ -89,7 +88,7 @@ const chart = (
   ),
   axis = <XAxis />,
 ) => (
-  <ChartContainer width={W} theme={docsTheme} showAxis={false} {...props}>
+  <ChartContainer width={W} showAxis={false} {...props}>
     <ChartRow height={180}>
       <YAxis id="hr" label="bpm" />
       <Layers>
@@ -197,7 +196,7 @@ export const CrosshairReadout: Story = {
  *  language — elapsed, like every other readout on it. */
 export const MarkerIndicator: Story = {
   render: () => (
-    <ChartContainer width={W} theme={docsTheme} origin="data" showAxis={false}>
+    <ChartContainer width={W} origin="data" showAxis={false}>
       <ChartRow height={180}>
         <YAxis id="hr" label="bpm" />
         <Layers>

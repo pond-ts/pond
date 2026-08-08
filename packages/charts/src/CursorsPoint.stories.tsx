@@ -5,7 +5,6 @@ import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { twoSeries, BASE, STEP, RANGE } from './story-data.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * `cursor="point"` — a dot rides each series at the cursor, **no line and no
@@ -28,11 +27,11 @@ type Story = StoryObj;
  *  line, no chip. The other stories pin a controlled position for a static shot. */
 export const Interactive: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} cursor="point" theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W} cursor="point">
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
-          <LineChart series={s} column="slow" as="slow" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+          <LineChart series={s} column="slow" as="secondary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -48,11 +47,10 @@ export const SingleSeries: Story = {
       width={W}
       cursor="point"
       trackerPosition={BASE + 45 * STEP}
-      theme={docsTheme}
     >
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -68,12 +66,11 @@ export const MultipleSeries: Story = {
       width={W}
       cursor="point"
       trackerPosition={BASE + 45 * STEP}
-      theme={docsTheme}
     >
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
-          <LineChart series={s} column="slow" as="slow" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+          <LineChart series={s} column="slow" as="secondary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>

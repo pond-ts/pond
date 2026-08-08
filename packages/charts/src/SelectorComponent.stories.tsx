@@ -6,8 +6,6 @@ import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
 import { Selector } from './selectors.js';
-import { docsTheme } from './docs-theme.fixture.js';
-import type { ChartTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
 
 /**
@@ -61,19 +59,6 @@ const ERRORS = [
   { label: 'search', value: 0.8 },
 ];
 
-/** `docsTheme` plus an explicit de-emphasis, so the selection reads clearly. */
-const dimTheme: ChartTheme = {
-  ...docsTheme,
-  bar: {
-    ...docsTheme.bar,
-    default: {
-      ...docsTheme.bar.default,
-      highlight: '#2f6fb5',
-      dimmed: '#dfe4ea',
-    },
-  },
-};
-
 const caption = {
   font: '13px system-ui',
   color: '#667',
@@ -102,7 +87,7 @@ export const MountedAtContainer: Story = {
     const [sel, setSel] = useState<readonly SelectInfo[]>([]);
     return (
       <div>
-        <ChartContainer width={W} theme={dimTheme} selected={sel}>
+        <ChartContainer width={W} selected={sel}>
           <Selector onSelect={(hit) => setSel(hit === null ? [] : [hit])} />
           <ChartRow height={240}>
             <YAxis id="v" label="" min={0} max={3.6} />
@@ -131,7 +116,7 @@ export const MountedInRow: Story = {
     const [sel, setSel] = useState<readonly SelectInfo[]>([]);
     return (
       <div>
-        <ChartContainer width={W} theme={dimTheme} selected={sel}>
+        <ChartContainer width={W} selected={sel}>
           <ChartRow height={150}>
             <YAxis id="v" label="latency" min={0} max={3.6} />
             <Selector onSelect={(hit) => setSel(hit === null ? [] : [hit])} />
@@ -170,7 +155,7 @@ export const MountedInRow: Story = {
 export const NoSelector: Story = {
   render: () => (
     <div>
-      <ChartContainer width={W} theme={dimTheme}>
+      <ChartContainer width={W}>
         <ChartRow height={240}>
           <YAxis id="v" label="" min={0} max={3.6} />
           <Layers>
@@ -225,7 +210,7 @@ export const ControlledNoSelector: Story = {
             </button>
           ))}
         </div>
-        <ChartContainer width={W} theme={dimTheme} selected={sel}>
+        <ChartContainer width={W} selected={sel}>
           <ChartRow height={240}>
             <YAxis id="v" label="" min={0} max={3.6} />
             <Layers>
@@ -258,7 +243,7 @@ export const ModifiersReported: Story = {
     const [last, setLast] = useState('—');
     return (
       <div>
-        <ChartContainer width={W} theme={dimTheme} selected={sel}>
+        <ChartContainer width={W} selected={sel}>
           <Selector
             onSelect={(hit, mods) => {
               setLast(
@@ -306,7 +291,7 @@ export const HoverOnly: Story = {
     const [hov, setHov] = useState<SelectInfo | null>(null);
     return (
       <div>
-        <ChartContainer width={W} theme={dimTheme} hovered={hov}>
+        <ChartContainer width={W} hovered={hov}>
           <Selector onHover={setHov} />
           <ChartRow height={240}>
             <YAxis id="v" label="" min={0} max={3.6} />
@@ -333,7 +318,7 @@ export const HoverOnly: Story = {
 export const BareSelector: Story = {
   render: () => (
     <div>
-      <ChartContainer width={W} theme={dimTheme}>
+      <ChartContainer width={W}>
         <Selector />
         <ChartRow height={240}>
           <YAxis id="v" label="" min={0} max={3.6} />
@@ -363,7 +348,6 @@ export const LegacyContainerProps: Story = {
       <div>
         <ChartContainer
           width={W}
-          theme={dimTheme}
           selected={sel}
           onSelect={(hit) => setSel(hit === null ? [] : [hit])}
         >

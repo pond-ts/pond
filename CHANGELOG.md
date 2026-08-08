@@ -94,6 +94,41 @@ include new features and type-level changes; patch bumps are strictly additive.
   `defaultTheme`, and `estelaTheme` plus any hand-built theme are untouched.
   To keep the old look, override `bar.default` with the old-column values.
 
+- **charts: `defaultTheme`'s data blue and annotation register re-hued — the
+  two colour collisions the new bar palette created are fixed.** The old
+  annotation turquoise (`#0d9488`) sat ~ΔE 4 from the bar palette's resting
+  teal (`#2A9D8F`), so a placed mark over default-theme bars read as data; the
+  old royal data blue (`#2563eb`) sat ~ΔE 5 from the new _selection_ blue
+  (`#3F5BE0`), so a line drawn over bars read as nearly the selection colour.
+
+  | `defaultTheme`                                                 | old       | new       |
+  | -------------------------------------------------------------- | --------- | --------- |
+  | data blue (`line`/`band`/`area`/`scatter`/`box`/candle rising) | `#2563eb` | `#0284c7` |
+  | dark accents (box `median`, candle rising `wick`)              | `#1e3a8a` | `#075985` |
+  | box `whisker`                                                  | `#aabee9` | `#a3cde5` |
+  | `annotation.color`                                             | `#0d9488` | `#b45309` |
+
+  The whole `#2563eb` family moves together so the theme keeps one data blue
+  (a line and its variance band must stay one hue). The register's new burnt
+  amber is a deliberately warm outlier — nearest data hue ΔE2000 ≈ 18, most
+  40+ — restoring "a placed mark never reads as data" for the whole palette.
+  Both rules are now pinned by `test/default-theme-collisions.test.ts`, so a
+  future palette edit that re-introduces a collision fails CI. The teal
+  fallbacks a theme _without_ an annotation register gets (`#14b8a6` /
+  `#0d9488` built-ins) are unchanged.
+
+- **charts (dev): Storybook unified on the shipped `defaultTheme`.** All ~280
+  `theme={docsTheme}` / `theme={estelaTheme}` props are gone from the stories,
+  so every story now exercises the `theme ?? defaultTheme` fallback a
+  themeless consumer hits — previously nothing in the repo rendered the
+  default theme at all, which is how both collisions above went unseen.
+  Theming-as-a-feature lives in a curated set: the new `Theming/Showcase`
+  group (docs light/dark, estela dark), `Theming/CssVars`, and the handful of
+  stories whose subject is the theme channel itself (custom line themes, list
+  estela restyles, per-role bar/box/annotation maps — now based on
+  `defaultTheme`). Story-local `dimmed`/`highlight` overrides that predated
+  the default palette's own interaction states are dropped.
+
 ### Added
 
 - **charts: `ChartTheme.brush` — the drag band is now themeable.** The live

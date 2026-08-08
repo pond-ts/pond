@@ -17,7 +17,6 @@ import {
   sessionSeq,
   weekdaySessions,
 } from './tradingAxis.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * Interaction coverage for the **trading-time (discontinuous) axis** — the
@@ -50,7 +49,6 @@ export const CrosshairSnap: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        theme={docsTheme}
         cursor="crosshair"
       >
         <ChartRow height={260}>
@@ -76,7 +74,6 @@ export const CrosshairFree: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        theme={docsTheme}
         cursor="crosshair"
         crosshairSnap={false}
       >
@@ -103,7 +100,6 @@ export const FlagOnCandles: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        theme={docsTheme}
         cursor="flag"
         cursorTime
       >
@@ -133,7 +129,6 @@ export const RegionAcrossSessions: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        theme={docsTheme}
       >
         <ChartRow height={260}>
           <YAxis id="p" side="right" />
@@ -160,7 +155,6 @@ function EditableRegionDemo() {
       width={WIDTH}
       range={rangeOf(s)}
       discontinuities={provider(s)}
-      theme={docsTheme}
       editAnnotations
     >
       <ChartRow height={260}>
@@ -197,7 +191,6 @@ function SnappingDemo() {
       width={WIDTH}
       range={rangeOf(s)}
       discontinuities={provider(s)}
-      theme={docsTheme}
       editAnnotations
     >
       <ChartRow height={260}>
@@ -233,7 +226,6 @@ export const PanZoom: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        theme={docsTheme}
         panZoom
         minDuration={30 * MIN}
       >

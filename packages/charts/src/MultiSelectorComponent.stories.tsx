@@ -8,8 +8,6 @@ import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
 import { MultiSelector } from './selectors.js';
 import { selectionContains } from './span.js';
-import { docsTheme } from './docs-theme.fixture.js';
-import type { ChartTheme } from './theme.js';
 import type { SelectInfo, SelectionEntry, SpanSelection } from './context.js';
 
 /**
@@ -65,19 +63,6 @@ const sixHourly = () =>
     ]) as [[number, number], number][],
   });
 
-/** `docsTheme` plus a dimmed slot, so an active selection recedes the rest. */
-const dimTheme: ChartTheme = {
-  ...docsTheme,
-  bar: {
-    ...docsTheme.bar,
-    default: {
-      ...docsTheme.bar.default,
-      highlight: '#2f6fb5',
-      dimmed: '#dfe4ea',
-    },
-  },
-};
-
 const captionStyle = {
   font: '13px system-ui',
   color: '#667',
@@ -114,12 +99,7 @@ export const SweepBars: Story = {
     const [count, setCount] = useState(0);
     return (
       <div>
-        <ChartContainer
-          width={640}
-          theme={dimTheme}
-          selected={sel}
-          range={[D0, D0 + 30 * DAY]}
-        >
+        <ChartContainer width={640} selected={sel} range={[D0, D0 + 30 * DAY]}>
           <MultiSelector
             onSelect={(hits, _mods, span) => {
               setCount(hits.length);
@@ -158,12 +138,7 @@ export const SweepWithSequence: Story = {
     const [sel, setSel] = useState<readonly SelectionEntry[]>([]);
     return (
       <div>
-        <ChartContainer
-          width={640}
-          theme={dimTheme}
-          selected={sel}
-          range={[D0, D0 + 10 * DAY]}
-        >
+        <ChartContainer width={640} selected={sel} range={[D0, D0 + 10 * DAY]}>
           <MultiSelector
             sequence={Sequence.calendar('day')}
             onSelect={(_hits, _mods, span) =>
@@ -198,12 +173,7 @@ export const SweepAdditive: Story = {
     const [sel, setSel] = useState<readonly SelectionEntry[]>([]);
     return (
       <div>
-        <ChartContainer
-          width={640}
-          theme={dimTheme}
-          selected={sel}
-          range={[D0, D0 + 30 * DAY]}
-        >
+        <ChartContainer width={640} selected={sel} range={[D0, D0 + 30 * DAY]}>
           <MultiSelector
             onSelect={(_hits, mods, span) =>
               setSel((cur) =>
@@ -242,12 +212,7 @@ export const ClickStillSelectsOne: Story = {
     const [last, setLast] = useState('—');
     return (
       <div>
-        <ChartContainer
-          width={640}
-          theme={dimTheme}
-          selected={sel}
-          range={[D0, D0 + 30 * DAY]}
-        >
+        <ChartContainer width={640} selected={sel} range={[D0, D0 + 30 * DAY]}>
           <MultiSelector
             onSelect={(hits, _mods, span) => {
               setLast(
@@ -290,11 +255,7 @@ export const LivePreviewDuringDrag: Story = {
     const [committed, setCommitted] = useState(0);
     return (
       <div>
-        <ChartContainer
-          width={640}
-          theme={docsTheme}
-          range={[D0, D0 + 30 * DAY]}
-        >
+        <ChartContainer width={640} range={[D0, D0 + 30 * DAY]}>
           <MultiSelector
             onHover={setPreview}
             onSelect={(hits) => setCommitted(hits.length)}
@@ -331,12 +292,7 @@ export const DemoteOnEdit: Story = {
     const [stash, setStash] = useState<readonly SelectInfo[]>([]);
     return (
       <div>
-        <ChartContainer
-          width={640}
-          theme={dimTheme}
-          selected={sel}
-          range={[D0, D0 + 30 * DAY]}
-        >
+        <ChartContainer width={640} selected={sel} range={[D0, D0 + 30 * DAY]}>
           <MultiSelector
             onSelect={(hits, mods, span) => {
               if (span !== null) {
@@ -411,7 +367,7 @@ export const CategorySweep: Story = {
     ];
     return (
       <div>
-        <ChartContainer width={640} theme={dimTheme} selected={sel}>
+        <ChartContainer width={640} selected={sel}>
           <MultiSelector
             onSelect={(hits, _mods, span) => {
               setNames(hits.map((h) => h.label));

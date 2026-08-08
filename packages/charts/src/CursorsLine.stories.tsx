@@ -11,7 +11,6 @@ import {
   STEP,
   RANGE,
 } from './story-data.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * `cursor="line"` (the **default**) — a single synced vertical line at the
@@ -36,11 +35,11 @@ type Story = StoryObj;
  *  marks on the data. `cursorTime` adds the time chip at the axis. */
 export const Interactive: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} cursorTime theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W} cursorTime>
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
-          <LineChart series={s} column="slow" as="slow" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+          <LineChart series={s} column="slow" as="secondary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -52,17 +51,17 @@ export const Interactive: Story = {
  *  common x, the time chip shows once at the bottom. */
 export const MultiRowSync: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} cursorTime theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W} cursorTime>
       <ChartRow height={150}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
-          <LineChart series={s} column="slow" as="slow" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+          <LineChart series={s} column="slow" as="secondary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
       <ChartRow height={150}>
         <Layers>
-          <LineChart series={hr} column="bpm" as="fast" axis="bpm" />
+          <LineChart series={hr} column="bpm" as="primary" axis="bpm" />
         </Layers>
         <YAxis id="bpm" side="right" format=",.0f" />
       </ChartRow>
@@ -80,12 +79,11 @@ export const Controlled: Story = {
       width={W}
       cursorTime
       trackerPosition={BASE + 45 * STEP}
-      theme={docsTheme}
     >
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
-          <LineChart series={s} column="slow" as="slow" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+          <LineChart series={s} column="slow" as="secondary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>

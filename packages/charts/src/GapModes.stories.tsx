@@ -6,7 +6,6 @@ import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { AreaChart } from './AreaChart.js';
 import { YAxis } from './YAxis.js';
-import { docsTheme } from './docs-theme.fixture.js';
 import { type GapMode } from './gaps.js';
 
 const N = 48;
@@ -49,7 +48,7 @@ type Story = StoryObj;
 
 /**
  * The shared gap-rendering modes on a **line**, stacked top→bottom in the order
- * `none, empty, dashed, step, fade`, all on `docsTheme`. Each row is the same
+ * `none, empty, dashed, step, fade`, all on the default theme. Each row is the same
  * sine with the same coast (indices 14–19, on a falling slope); only `gaps`
  * differs — so the five renderings of one gap sit directly comparable:
  *
@@ -66,7 +65,7 @@ export const Line: Story = {
   render: () => {
     const s = sineWithGap();
     return (
-      <ChartContainer range={TIME_RANGE} width={520} theme={docsTheme}>
+      <ChartContainer range={TIME_RANGE} width={520}>
         {MODES.map((mode) => (
           <ChartRow key={mode} height={90}>
             <YAxis id="v" label={mode} min={0} max={100} />
@@ -90,7 +89,7 @@ export const Area: Story = {
   render: () => {
     const s = sineWithGap();
     return (
-      <ChartContainer range={TIME_RANGE} width={520} theme={docsTheme}>
+      <ChartContainer range={TIME_RANGE} width={520}>
         {MODES.map((mode) => (
           <ChartRow key={mode} height={90}>
             <YAxis id="v" label={mode} min={0} max={100} />

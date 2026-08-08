@@ -18,7 +18,6 @@ import {
   tickSchema,
   weekdaySessions,
 } from './tradingAxis.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * The logical tick ladder, walked rung by rung — one story per grain
@@ -73,7 +72,6 @@ function tradingStory(
           width={width}
           range={rangeOf(s)}
           discontinuities={provider(s)}
-          theme={docsTheme}
           showAxis={false}
         >
           <ChartRow height={220}>
@@ -99,7 +97,6 @@ function tradingDailyStory(sessionCount: number, width: number): Story {
           width={width}
           range={rangeOf(s)}
           discontinuities={provider(s)}
-          theme={docsTheme}
           showAxis={false}
         >
           <ChartRow height={220}>
@@ -169,7 +166,7 @@ export const ContinuousYear: Story = {
     const start = new Date(2025, 5, 23).getTime();
     const series = continuousSeries(start, 365, 24 * 60 * MIN);
     return (
-      <ChartContainer width={900} theme={docsTheme} showAxis={false}>
+      <ChartContainer width={900} showAxis={false}>
         <ChartRow height={220}>
           <YAxis id="p" />
           <Layers>
@@ -189,7 +186,7 @@ export const ContinuousIntraday: Story = {
     const start = new Date(2026, 0, 5, 9, 13).getTime();
     const series = continuousSeries(start, 460, MIN);
     return (
-      <ChartContainer width={WIDTH} theme={docsTheme} showAxis={false}>
+      <ChartContainer width={WIDTH} showAxis={false}>
         <ChartRow height={220}>
           <YAxis id="p" />
           <Layers>

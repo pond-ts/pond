@@ -464,11 +464,13 @@ export interface BarStyle {
 }
 
 /**
- * The neutral default theme. `default` / `primary` match the M1 `LineChart`
- * colour (`#2563eb`) so adopting the theme channel doesn't shift existing
- * renders. `primary` / `secondary` / `context` are a built-in generic role
- * vocabulary; an unrecognised (e.g. domain-specific) identifier falls back to
- * `default`.
+ * The neutral default theme. The shared data hue is a cerulean (`#0284c7`)
+ * across `line` / `band` / `area` / `scatter` / `box` / candle-rising, chosen
+ * to clear the bar palette's *selection* blue (`#3F5BE0`) — the original M1
+ * royal blue (`#2563eb`) sat ~ΔE 5 from it, so a line drawn over bars read as
+ * nearly the selection colour. `primary` / `secondary` / `context` are a
+ * built-in generic role vocabulary; an unrecognised (e.g. domain-specific)
+ * identifier falls back to `default`.
  *
  * **Spreading this inherits every slot you don't override** — including colours
  * for layers you haven't added yet, so a `{ ...defaultTheme, bar: … }` theme
@@ -487,34 +489,34 @@ export interface BarStyle {
  */
 export const defaultTheme: ChartTheme = {
   line: {
-    default: { color: '#2563eb', width: 1.5 },
-    primary: { color: '#2563eb', width: 1.5 },
+    default: { color: '#0284c7', width: 1.5 },
+    primary: { color: '#0284c7', width: 1.5 },
     secondary: { color: '#e8836b', width: 1.5 },
     context: { color: '#5eb5a6', width: 1.5 },
   },
   band: {
-    default: { fill: '#2563eb', opacity: 0.15 },
-    outer: { fill: '#2563eb', opacity: 0.1 },
-    inner: { fill: '#2563eb', opacity: 0.2 },
+    default: { fill: '#0284c7', opacity: 0.15 },
+    outer: { fill: '#0284c7', opacity: 0.1 },
+    inner: { fill: '#0284c7', opacity: 0.2 },
   },
   area: {
     // Outline at the line colour; graded fill from it. `in`/`out` are the
     // above/below-axis roles (esnet traffic), composed as two layers.
     default: {
-      color: '#2563eb',
+      color: '#0284c7',
       width: 1.5,
-      fill: '#2563eb',
+      fill: '#0284c7',
       fillOpacity: 0.3,
     },
-    in: { color: '#2563eb', width: 1.5, fill: '#2563eb', fillOpacity: 0.3 },
+    in: { color: '#0284c7', width: 1.5, fill: '#0284c7', fillOpacity: 0.3 },
     out: { color: '#e8836b', width: 1.5, fill: '#e8836b', fillOpacity: 0.3 },
   },
   scatter: {
-    // Brand blue fill with a white ring (legible on a busy plot); the selected
-    // point gets a darker, wider ring. `primary`/`secondary` mirror the line
-    // roles so a scatter overlaid on a line can share its identity.
+    // The data cerulean with a white ring (legible on a busy plot); the
+    // selected point gets a darker, wider ring. `primary`/`secondary` mirror
+    // the line roles so a scatter overlaid on a line can share its identity.
     default: {
-      color: '#2563eb',
+      color: '#0284c7',
       radius: 4,
       outline: '#ffffff',
       outlineWidth: 1,
@@ -523,7 +525,7 @@ export const defaultTheme: ChartTheme = {
       label: '#334155',
     },
     primary: {
-      color: '#2563eb',
+      color: '#0284c7',
       radius: 4,
       outline: '#ffffff',
       outlineWidth: 1,
@@ -542,16 +544,16 @@ export const defaultTheme: ChartTheme = {
     },
   },
   box: {
-    // The blue brand box: a translucent fill outlined in the line colour, a
+    // The cerulean data box: a translucent fill outlined in the line colour, a
     // bolder median, and matching whiskers.
     default: {
-      fill: '#2563eb',
+      fill: '#0284c7',
       fillOpacity: 0.3,
-      stroke: '#2563eb',
+      stroke: '#0284c7',
       strokeWidth: 1.5,
-      median: '#1e3a8a',
+      median: '#075985',
       medianWidth: 2,
-      whisker: '#aabee9',
+      whisker: '#a3cde5',
       whiskerWidth: 1,
     },
     // The warm accent box — the second series of a paired distribution (an
@@ -569,10 +571,10 @@ export const defaultTheme: ChartTheme = {
   },
   candle: {
     // Neutral / unbranded up-down pair — *not* market green/red (a consumer
-    // supplies that via cssVarTheme). Rising reuses the brand blue; falling the
-    // warm secondary accent — distinguishable at a glance on the light ground.
+    // supplies that via cssVarTheme). Rising reuses the data cerulean; falling
+    // the warm secondary accent — distinguishable at a glance on light ground.
     default: {
-      rising: { body: '#2563eb', wick: '#1e3a8a' },
+      rising: { body: '#0284c7', wick: '#075985' },
       falling: { body: '#e8836b', wick: '#b4442a' },
       neutral: { body: '#94a3b8', wick: '#64748b' },
       bodyWidth: 0.7,
@@ -632,16 +634,16 @@ export const defaultTheme: ChartTheme = {
   brush: { fill: 'rgba(63,91,224,0.07)', edge: 'rgba(63,91,224,0.45)' },
   chip: { background: '#ffffff' },
   gap: { connectorOpacity: 0.5 },
-  // Teal marks register — reads on the light ground, and distinct from the
-  // blue `line`/`area`/`scatter`/`box` data. **Known collision:** it is *not*
-  // distinct from the bar palette's resting teal (`#0d9488` vs `#2A9D8F` is
-  // ~ΔE 4), so a chart that puts annotations over default-theme bars should
-  // move one of the two — the "a placed mark never reads as data" rule can't
-  // hold for both slots on one built-in palette. Left as-is deliberately: the
-  // register is shared by every layer, and re-hueing it to suit bars would
-  // trade this collision for a different one.
+  // Burnt-amber marks register — a deliberately warm outlier against every
+  // data hue, so a placed mark never reads as data (the same rule the docs
+  // brand's `vizMark` encodes). Verified against the whole palette: its
+  // nearest data neighbours are the threshold-ladder red `#d64545` (ΔE2000
+  // ≈ 18) and the warm secondary accent `#e8836b` (ΔE2000 ≈ 21); everything
+  // else — bar teal, hover teal, selection blue, the data cerulean — clears
+  // ΔE2000 40+. (The previous turquoise `#0d9488` sat ~ΔE 4 from the bar
+  // palette's resting teal `#2A9D8F` — indistinguishable at a glance.)
   annotation: {
-    color: '#0d9488',
+    color: '#b45309',
     fillOpacity: 0.1,
     depth: [1, 0.7, 0.4],
   },

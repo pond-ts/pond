@@ -7,8 +7,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
-import { estelaTheme, type ChartTheme } from './theme.js';
-import { docsTheme } from './docs-theme.fixture.js';
+import { defaultTheme, estelaTheme, type ChartTheme } from './theme.js';
 import type { CursorMode, TrackerInfo } from './context.js';
 
 const schema = [
@@ -88,7 +87,7 @@ interface LiveSineArgs {
   windowSize: number;
   /** Cursor method: in-chart `line`/`point`/`inline`/`flag`, or a panel `outside`. */
   cursor: CursorMode | 'outside';
-  theme: 'docs' | 'estela' | 'light';
+  theme: 'default' | 'estela' | 'light';
 }
 
 /**
@@ -112,7 +111,7 @@ function LiveSineMonitor({
       ? lightTheme
       : themeName === 'estela'
         ? estelaTheme
-        : docsTheme;
+        : defaultTheme;
   const outside = cursor === 'outside';
   const [info, setInfo] = useState<TrackerInfo | null>(null);
 
@@ -218,7 +217,7 @@ const meta = {
     pushMs: 16,
     windowSize: 240,
     cursor: 'line',
-    theme: 'docs',
+    theme: 'default',
   },
   argTypes: {
     amplitude: { control: { type: 'range', min: 5, max: 50, step: 1 } },
@@ -241,7 +240,7 @@ const meta = {
       description:
         'Cursor method — in-chart line/point/inline/flag, or a panel outside.',
     },
-    theme: { control: 'inline-radio', options: ['docs', 'estela', 'light'] },
+    theme: { control: 'inline-radio', options: ['default', 'estela', 'light'] },
   },
 } satisfies Meta<typeof LiveSineMonitor>;
 
