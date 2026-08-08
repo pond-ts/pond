@@ -127,7 +127,8 @@ export const FiveBands: Story = {
 /**
  * **Themed, no `bandColors`.** The ladder resolves from
  * `theme.bar.default.bands` — the design-system path. This story uses the
- * library default theme, whose ladder is the bar's own blue → amber → red.
+ * library default theme, whose ladder is the bar's own **teal** (the resting
+ * fill of the interaction-state palette) → amber → red.
  */
 export const FromTheme: Story = {
   render: () => (

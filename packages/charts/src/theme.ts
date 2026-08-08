@@ -144,6 +144,29 @@ export interface ChartTheme {
   /** Crosshair / tracker stroke colour. Falls back to {@link axis.label} if unset. */
   readonly cursor?: string;
   /**
+   * The **drag band** — the live region the shared brush paints while a drag
+   * is in flight (`<RangeCursor>`'s band and `<MultiSelector>`'s sweep are the
+   * same pixels; see `renderBrushBand`). `fill` washes the covered span and
+   * `edge` hairlines its two boundaries at 1px, so the band has a readable
+   * start/end while the gesture is still live.
+   *
+   * **Optional, and back-compatible when omitted:** with no `brush` the band
+   * falls back to the cursor ink at 0.12 with no edges — byte-for-byte what
+   * every theme drew before this token existed. `defaultTheme` opts in with
+   * the *selection* blue at 7%: the band is about to become a selection, so it
+   * should be the same hue as one (whereas the resting bars are teal).
+   */
+  readonly brush?: {
+    /**
+     * The band's wash. Drawn at **full element opacity**, so carry the alpha
+     * in the colour (`rgba(…, 0.07)`) — a solid hex here paints over the marks
+     * the band is supposed to be previewing.
+     */
+    readonly fill: string;
+    /** Stroke for the band's 1px start/end edges. Omit for a fill-only band. */
+    readonly edge?: string;
+  };
+  /**
    * Readout chip background (the `flag` / `inline` tracker modes). The value text
    * is the series colour; this is the panel behind it. Falls back to the plot
    * background if unset.
@@ -454,6 +477,13 @@ export interface BarStyle {
  * that are yours. A design system that must own *every* colour should assert on
  * that in its own test rather than catch it in review — walk the resolved theme
  * for values outside your palette ([PND-THEMEBASE]).
+ *
+ * **The `bar` slot is the exception to "one blue".** Bars carry an interaction
+ * state (rest / hover / selected / dimmed), and encoding four states as four
+ * shades of one hue is unreadable — so `bar.default` runs its own
+ * **interaction-state palette**: teal at rest, blue when selected, brighter
+ * teal on hover. See the comment on that slot, and `brush` for the matching
+ * drag band.
  */
 export const defaultTheme: ChartTheme = {
   line: {
@@ -550,20 +580,27 @@ export const defaultTheme: ChartTheme = {
     },
   },
   bar: {
-    // Flat blue fill; the selected bar brightens + outlines. `secondary` reuses
-    // the line's warm accent for a second series.
+    // The **interaction-state palette**: state is a *hue* difference, not a
+    // shade of one colour. Rest is teal; a committed selection is blue; hover
+    // is a *brighter teal* — deliberately not blue, because blue is reserved
+    // for "committed". Out-of-selection bars recede to the same teal at 0.32.
+    // The shared drag band (`brush` below) is the selection blue at 7%, so the
+    // live region reads as the same act as the selection it is about to make.
+    // `secondary` reuses the line's warm accent for a second series.
     default: {
-      fill: '#2563eb',
-      opacity: 0.85,
-      highlight: '#1d4ed8',
+      fill: '#2A9D8F', // rest — teal, full opacity
+      opacity: 1,
+      highlight: '#3F5BE0', // selected — blue; committed state
+      hover: '#3FBFAE', // hover — brighter teal, never blue
+      dimmed: 'rgba(42,157,143,0.32)', // outside an active selection
       gap: 1,
       minWidth: 1,
       outlineWidth: 1.5,
-      // The default threshold ladder: the bar's own blue as the in-range band,
+      // The default threshold ladder: the bar's own teal as the in-range band,
       // then amber, then red. Three entries serves the common two-threshold
       // ok/warning/alarm ladder out of the box; a longer `thresholds` needs a
       // longer ladder from the theme or `bandColors`.
-      bands: ['#2563eb', '#e8a13c', '#d64545'],
+      bands: ['#2A9D8F', '#e8a13c', '#d64545'],
     },
     secondary: {
       fill: '#e8836b',
@@ -590,9 +627,19 @@ export const defaultTheme: ChartTheme = {
     size: 11,
   },
   cursor: '#64748b',
+  // The drag band in the bar palette's selection blue at 7%, edged at 1px —
+  // the live region reads as the selection it is about to commit.
+  brush: { fill: 'rgba(63,91,224,0.07)', edge: 'rgba(63,91,224,0.45)' },
   chip: { background: '#ffffff' },
   gap: { connectorOpacity: 0.5 },
-  // Teal marks register — distinct from the blue data, reads on the light ground.
+  // Teal marks register — reads on the light ground, and distinct from the
+  // blue `line`/`area`/`scatter`/`box` data. **Known collision:** it is *not*
+  // distinct from the bar palette's resting teal (`#0d9488` vs `#2A9D8F` is
+  // ~ΔE 4), so a chart that puts annotations over default-theme bars should
+  // move one of the two — the "a placed mark never reads as data" rule can't
+  // hold for both slots on one built-in palette. Left as-is deliberately: the
+  // register is shared by every layer, and re-hueing it to suit bars would
+  // trade this collision for a different one.
   annotation: {
     color: '#0d9488',
     fillOpacity: 0.1,

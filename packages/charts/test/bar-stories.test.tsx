@@ -26,6 +26,7 @@ describe('BarChart stories render', () => {
       'BinColors',
       'Buckets',
       'ControlledSelection',
+      'DefaultThemeStates',
       'Diverging',
       'HoverSelect',
       'HoverVsSelectColours',
@@ -35,8 +36,11 @@ describe('BarChart stories render', () => {
 
   for (const [name, story] of entries) {
     it(`${name} mounts without throwing`, () => {
-      const el = (story.render as () => ReactElement)();
-      expect(() => render(el)).not.toThrow();
+      // Mount the render fn as a **component**, not by calling it — a story
+      // that holds its own `useState` (DefaultThemeStates) is an invalid hook
+      // call otherwise. Matches the `selector-stories` harness.
+      const Render = story.render as () => ReactElement;
+      expect(() => render(<Render />)).not.toThrow();
     });
   }
 
@@ -50,7 +54,8 @@ describe('BarChart stories render', () => {
     it(`${name} paints a selection outline`, () => {
       const stub = stubCanvasContext();
       try {
-        render((stories[name].render as () => ReactElement)());
+        const Render = stories[name].render as () => ReactElement;
+        render(<Render />);
         expect(
           stub.calls.filter((c) => c.name === 'strokeRect').length,
         ).toBeGreaterThan(0);

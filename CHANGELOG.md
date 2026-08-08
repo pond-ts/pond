@@ -60,7 +60,52 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **charts: `defaultTheme` bars look different. This is a visible change to
+  every chart that uses the default theme** — a new **bar interaction-state
+  palette** in which state is a _hue_ difference rather than a shade of one
+  colour. Previously `fill: '#2563eb'` and `highlight: '#1d4ed8'` were two
+  shades of one blue, so a selected bar read as "the same bar, slightly
+  darker". Now rest is teal and a committed selection is blue.
+
+  | `defaultTheme.bar.default` | old       | new                     |
+  | -------------------------- | --------- | ----------------------- |
+  | `fill` (rest)              | `#2563eb` | `#2A9D8F`               |
+  | `opacity` (rest)           | `0.85`    | `1`                     |
+  | `highlight` (selected)     | `#1d4ed8` | `#3F5BE0`               |
+  | `hover`                    | _(unset)_ | `#3FBFAE`               |
+  | `dimmed`                   | _(unset)_ | `rgba(42,157,143,0.32)` |
+  | `bands[0]` (in-range)      | `#2563eb` | `#2A9D8F`               |
+
+  `hover` is a _brighter teal_ and deliberately **not** blue: blue stays
+  reserved for committed selection, so a passing pointer and a real selection
+  never read as the same act. `bands[0]` follows `fill` because it is the
+  in-range band — a bar under its first threshold must not change colour.
+
+  Two behaviour notes beyond the colours. `defaultTheme` now ships a `dimmed`
+  value, so on the default theme **bars outside a non-empty selection now
+  recede** where before nothing did (opting in was previously the consumer's
+  job). And the resting `opacity` of `1` means gridlines no longer show
+  faintly through a bar. `emphasisOpacity` is unchanged — still unset, still
+  defaulting to `1`.
+
+  Nothing about this is forced on a custom theme: every value above lives in
+  `defaultTheme`, and `estelaTheme` plus any hand-built theme are untouched.
+  To keep the old look, override `bar.default` with the old-column values.
+
 ### Added
+
+- **charts: `ChartTheme.brush` — the drag band is now themeable.** The live
+  region a brush drag paints (`<RangeCursor>`'s band and `<MultiSelector>`'s
+  sweep, which share one renderer) takes `{ fill, edge? }` — a wash plus 1px
+  start/end hairlines, so a band has a readable extent while the gesture is
+  still live. `defaultTheme` sets it to the bar palette's _selection_ blue at
+  7% (`rgba(63,91,224,0.07)`, edged `rgba(63,91,224,0.45)`): a live sweep is a
+  selection being made, so it reads in the hue it is about to commit to.
+  **Optional and back-compatible** — a theme that sets no `brush` draws the
+  cursor ink at `0.12` with no edges, byte-for-byte what every theme drew
+  before.
 
 - **charts: `<Selector>` — click-select is now something you mount**
   (interaction RFC §7, step 4 of the wave). Mount it as a child of
