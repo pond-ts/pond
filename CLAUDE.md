@@ -272,6 +272,36 @@ Baseline`, `Cursors/Crosshair`, `Indicators/Y Axis`), and within each, a story
   interactive examples (see `docs/rfcs/` living-examples); Storybook is the
   systematic reference + regression net.
 
+### Stories render `defaultTheme` — the control the fan-out is reviewed against
+
+**Do not pass a `theme` prop in a story unless theming is what the story is
+about.** `ChartContainer` resolves `theme ?? defaultTheme`, so omitting it is
+the change — stories then exercise exactly what a consumer who passes no theme
+gets.
+
+Two reasons, and the second is the load-bearing one:
+
+- **`defaultTheme` ships to every consumer who passes no theme, and nothing
+  else in the repo renders it.** It was invisible for a long time, and the proof
+  arrived by accident: a change that replaced the default bar fill, hover
+  colour, selection colour, dimmed state _and_ brush band moved **zero** of the
+  74 visual baselines, because every story and therefore every screenshot ran a
+  different theme. An untested default is a shipped default nobody has seen.
+- **A varying theme destroys the control the fan-out depends on.** The
+  systematic walk is a _review technique_ (above), and a review needs a fixed
+  reference: you cannot look at a bar and judge "that's the hover colour" if
+  each file carries a different palette — you'd have to remember which of three
+  themes that story used. This matters most exactly where colour **is** the
+  semantics: selection, hover, dimmed, the drag band.
+
+**The exception is genuine and narrow:** stories whose subject _is_ theming —
+the CSS-variable story, a brand-fixture showcase, a dark-ground showcase. Keep
+those explicitly themed and grouped so it reads as deliberate.
+
+If a story needs something only a brand fixture has (a multi-series colour ramp,
+role maps), that is a signal `defaultTheme` may be missing a capability — raise
+it rather than quietly reaching for the fixture.
+
 Applies to any package with stories; `@pond-ts/charts` is the worked example.
 
 ## Performance check for new operators on large data
@@ -612,13 +642,13 @@ To cut a release from `main`:
    **Why it must be done:** the lock records each **workspace** package's own
    version, so bumping the six manifests leaves it stale — and CI installs with
    `npm ci`, which fails outright on a lock that disagrees with the manifests
-   rather than quietly repairing it. That would red the publish workflow *after*
+   rather than quietly repairing it. That would red the publish workflow _after_
    the tag is pushed, which is the worst moment to find out: the tag is already
    public, so recovering means either force-moving it or burning a patch
    version.
 
    This step is easy to miss because nothing local surfaces it — `npm run
-   verify` passes fine against a stale lock, since it runs on the
+verify` passes fine against a stale lock, since it runs on the
    already-installed tree. It shows up only under a clean `npm ci`. (Not listed
    here until v0.57.0, though the v0.56.2 bump did include the lock; the diff
    should be ~12 lines, two per workspace package.)
