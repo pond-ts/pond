@@ -63,8 +63,20 @@ export interface BoxListCommon<R extends ListRow = ListRow> {
   onExpandToggle?: (key: string, expanded: boolean) => void;
   /** The selected row's `key` (inset accent edge). Pair with `onRowClick`. */
   selected?: string | null;
-  /** Row click (also gates the hover affordance). */
+  /** Row click (also gates the pointer affordance). */
   onRowClick?: (row: R) => void;
+  /**
+   * Controlled **hover-highlight** — the lit row key(s), or `null`; **omitted
+   * ⇒ uncontrolled**. Accepts one key or a set, the same union
+   * `<ChartContainer hovered>` takes, so an external hover (a chart mark, a
+   * map segment) lights rows from outside. See `<BarList>`'s `hovered` for the
+   * full note.
+   */
+  hovered?: string | readonly string[] | null;
+  /** Hover out: the entered row, or `null` on leaving the rows — deduped by
+   *  row key, fires controlled or uncontrolled. Pair with {@link hovered} to
+   *  sync hover both ways. */
+  onHover?: (row: R | null) => void;
   /** Each box line's height in px. **Omitted ⇒ `10`.** */
   barHeight?: number;
   /** Rule between rows. **Omitted ⇒ `true`.** */
@@ -160,6 +172,8 @@ export function BoxList<
     onExpandToggle,
     selected,
     onRowClick,
+    hovered,
+    onHover,
     markers,
     barHeight = 10,
     divided,
@@ -227,6 +241,8 @@ export function BoxList<
       onExpandToggle={onExpandToggle}
       selected={selected}
       onRowClick={onRowClick}
+      hovered={hovered}
+      onHover={onHover}
       divided={divided}
       baseline={baseline}
       theme={theme}

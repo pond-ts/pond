@@ -11,13 +11,28 @@
  * Not exported from the package: the public surface is the two sisters, so the
  * shared shell can evolve without a compatibility contract.
  */
-import { Fragment, useState, type CSSProperties, type ReactNode } from 'react';
+import {
+  Fragment,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from 'react';
 import type { ListCellSpec, ListRow } from './list.js';
 import type { ChartTheme } from './theme.js';
 
 /** The turquoise the selected-row edge falls back to when the theme has no
  *  annotation register — the same built-in the annotation layer uses. */
 const FALLBACK_ACCENT = '#0d9488';
+
+/**
+ * Stable identity for "nothing hovered" — the same module-constant trick
+ * `ChartContainer` uses for `EMPTY_SELECTION`, so the (overwhelmingly common)
+ * no-hover case doesn't mint a fresh set on every render.
+ */
+const EMPTY_HOVER: ReadonlySet<string> = new Set<string>();
 
 export interface ListTableProps<R extends ListRow> {
   /** Rows in display order (the caller sorts). */
@@ -35,6 +50,12 @@ export interface ListTableProps<R extends ListRow> {
     | undefined;
   readonly selected?: string | null | undefined;
   readonly onRowClick?: ((row: R) => void) | undefined;
+  /** Controlled hover — one row key, a set of them, or nothing. Omitted ⇒
+   *  uncontrolled (the shell tracks the pointer itself, as it always has). */
+  readonly hovered?: string | readonly string[] | null | undefined;
+  /** Hover out: the entered row, or `null` on leaving every row. Fires in
+   *  controlled and uncontrolled mode alike, deduped by row key. */
+  readonly onHover?: ((row: R | null) => void) | undefined;
   readonly divided?: boolean | undefined;
   /** Draw the vertical **baseline rule** at the scale origin (the glyph
    *  cell's left edge) — the shared reference the eye aligns rows against. */
@@ -68,6 +89,8 @@ export function ListTable<R extends ListRow>({
   onExpandToggle,
   selected,
   onRowClick,
+  hovered,
+  onHover,
   divided = true,
   baseline = false,
   markers = [],
@@ -77,8 +100,52 @@ export function ListTable<R extends ListRow>({
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(
     () => new Set(defaultExpanded ?? []),
   );
-  const [hovered, setHovered] = useState<string | null>(null);
   const interactive = onRowClick !== undefined;
+
+  // Hover: controlled (`hovered`) or uncontrolled (internal), mirroring the
+  // canvas layers' channel on `ChartContainer` (RFC `interaction.md` A3.1 —
+  // the list family speaks the same vocabulary, not a parallel one).
+  const [internalHovered, setInternalHovered] = useState<string | null>(null);
+  const controlledHover = hovered !== undefined;
+  // Rows track + light hover when there's a click affordance (as they always
+  // have) or when the consumer wired either half of the hover channel.
+  const hoverWired = controlledHover || onHover !== undefined;
+  const tracksHover = interactive || hoverWired;
+  // Normalize the prop's three accepted shapes — one key, a set, or nothing —
+  // into the single shape the render asks its question in ("is this row in the
+  // hovered set"), the same normalization `ChartContainer` does for its
+  // `SelectInfo` union. `EMPTY_HOVER` keeps the empty case identity-stable.
+  const hoveredKeys: ReadonlySet<string> = useMemo(() => {
+    const raw = controlledHover ? hovered : internalHovered;
+    if (raw === null || raw === undefined) return EMPTY_HOVER;
+    return new Set(typeof raw === 'string' ? [raw] : raw);
+  }, [controlledHover, hovered, internalHovered]);
+
+  const rowByKey = useMemo(
+    () => new Map(rows.map((row) => [row.key, row])),
+    [rows],
+  );
+  // The last key we reported, so `onHover` fires on a row transition rather
+  // than on every pointer move within a row — the canvas `onHover` dedup rule.
+  // A ref (not state): it must not drive a render of its own.
+  const lastHoverRef = useRef<string | null>(null);
+  const reportHover = (key: string | null) => {
+    if (lastHoverRef.current === key) return;
+    lastHoverRef.current = key;
+    if (!controlledHover) setInternalHovered(key);
+    onHover?.(key === null ? null : (rowByKey.get(key) ?? null));
+  };
+  // Delegated at the table rather than per-row, so moving from one row to its
+  // neighbour reports the new row once — per-row enter/leave would emit a
+  // spurious `null` in between, which the canvas channel never does.
+  const handlePointerOver = (e: ReactPointerEvent<HTMLTableElement>) => {
+    const rowEl = (e.target as Element | null)?.closest('[data-list-row]');
+    // A row of a NESTED list (an expanded detail may hold one) is not ours to
+    // report — only rows belonging to this table's own `data-list` count.
+    const own =
+      rowEl != null && rowEl.closest('[data-list]') === e.currentTarget;
+    reportHover(own ? rowEl.getAttribute('data-list-row') : null);
+  };
 
   const toggle = (key: string) => {
     const open = !expanded.has(key);
@@ -122,6 +189,8 @@ export function ListTable<R extends ListRow>({
   return (
     <table
       data-list={kind}
+      onPointerOver={tracksHover ? handlePointerOver : undefined}
+      onPointerLeave={tracksHover ? () => reportHover(null) : undefined}
       style={{
         width: '100%',
         borderCollapse: 'collapse',
@@ -176,12 +245,14 @@ export function ListTable<R extends ListRow>({
         )}
         {rows.map((row, i) => {
           const isSelected = selected != null && selected === row.key;
+          const isHovered = hoveredKeys.has(row.key);
           const isOpen = renderExpanded !== undefined && expanded.has(row.key);
           return (
             <Fragment key={row.key}>
               <tr
                 data-list-row={row.key}
                 {...(isSelected ? { 'data-selected': '' } : {})}
+                {...(isHovered ? { 'data-hovered': '' } : {})}
                 onClick={
                   onRowClick === undefined ? undefined : () => onRowClick(row)
                 }
@@ -198,19 +269,12 @@ export function ListTable<R extends ListRow>({
                         }
                       }
                 }
-                onPointerEnter={
-                  interactive ? () => setHovered(row.key) : undefined
-                }
-                onPointerLeave={
-                  interactive ? () => setHovered(null) : undefined
-                }
                 style={{
                   borderTop: i > 0 ? divider : undefined,
                   cursor: interactive ? 'pointer' : undefined,
-                  background:
-                    interactive && hovered === row.key
-                      ? (theme.legend?.border ?? theme.axis.grid)
-                      : undefined,
+                  background: isHovered
+                    ? (theme.legend?.border ?? theme.axis.grid)
+                    : undefined,
                   // The selection accent: an inset edge in the annotation
                   // register (a *user's* mark, so it takes the marks colour,
                   // not a data hue) — reads on any ground, moves no layout.

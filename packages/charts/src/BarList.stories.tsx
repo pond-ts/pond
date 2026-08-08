@@ -158,6 +158,104 @@ export const SelectedRow: Story = {
   },
 };
 
+/**
+ * **Controlled hover** — the pin, not the pointer. `hovered` names the lit row
+ * key, so something *outside* the list (a chart bar, a map segment, a sibling
+ * table) can light a row without the cursor ever entering it. Nothing here
+ * moves: that is the point.
+ */
+export const HoveredRow: Story = {
+  render: () => (
+    <BarList
+      rows={hosts.slice(0, 4)}
+      columns={[{ column: 'in' }]}
+      hovered="db-1"
+    />
+  ),
+};
+
+/**
+ * **Plural hover** — `hovered` takes a *set* of keys as well as a single one
+ * (the same union `<ChartContainer hovered>` takes), so a sweep, or a filter
+ * that matched several entities, lights every one of them at once.
+ */
+export const HoveredRows: Story = {
+  render: () => (
+    <BarList
+      rows={hosts.slice(0, 4)}
+      columns={[{ column: 'in' }]}
+      hovered={['web-2', 'cache-1']}
+    />
+  ),
+};
+
+/**
+ * **Uncontrolled hover** — omit `hovered` and the list tracks its own pointer,
+ * exactly as it always has. `onHover` still reports out (into the readout
+ * below), and wiring *only* the callback adds no click affordance: hover is
+ * not a click.
+ */
+export const UncontrolledHover: Story = {
+  render: function UncontrolledHoverStory() {
+    const [row, setRow] = useState<ListRow | null>(null);
+    return (
+      <div>
+        <BarList
+          rows={hosts.slice(0, 4)}
+          columns={[{ column: 'in' }]}
+          onHover={(r) => setRow(r)}
+        />
+        <div style={{ font: '12px system-ui', color: '#64748b', padding: 12 }}>
+          onHover → {row === null ? 'null' : row.key}
+        </div>
+      </div>
+    );
+  },
+};
+
+/**
+ * **Hover mirrored from an external control** — the driving case of #608 with
+ * the buttons standing in for the chart: hovering a button lights the row, and
+ * hovering the row lights the button, both through one piece of consumer-owned
+ * state. The library reports and renders; the consumer decides. (The real list
+ * ↔ chart version is `Lists/Scenarios` → `HoverLinkedChart`.)
+ */
+export const HoverMirrored: Story = {
+  render: function HoverMirroredStory() {
+    const [key, setKey] = useState<string | null>(null);
+    return (
+      <div>
+        <div style={{ display: 'flex', gap: 8, padding: '0 12px 12px' }}>
+          {hosts.slice(0, 4).map((h) => (
+            <button
+              key={h.key}
+              type="button"
+              onPointerEnter={() => setKey(h.key)}
+              onPointerLeave={() => setKey(null)}
+              style={{
+                font: '12px system-ui',
+                padding: '4px 10px',
+                borderRadius: 4,
+                cursor: 'pointer',
+                border: '1px solid #cbd5e1',
+                background: key === h.key ? '#e2e8f0' : 'transparent',
+              }}
+            >
+              {h.key}
+            </button>
+          ))}
+        </div>
+        <BarList
+          rows={hosts.slice(0, 4)}
+          columns={[{ column: 'in' }]}
+          hovered={key}
+          onHover={(r) => setKey(r?.key ?? null)}
+        />
+      </div>
+    );
+  },
+};
+
 /** A missing value is a gap: an empty track (never a zero-length bar), and it
  *  sorts last in either direction (`batch-1` here, despite sortBy asc). */
 export const MissingData: Story = {

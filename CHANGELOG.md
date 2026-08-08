@@ -60,6 +60,32 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts: the list family gets the canvas's hover channel.**
+  `<BarList>` / `<BoxList>` now take a controlled **`hovered`** prop —
+  one row key or a **set** of them (`string | readonly string[] | null`),
+  mirroring the plural shape `<ChartContainer hovered>` carries — plus an
+  **`onHover(row | null)`** callback. Together they make hover bidirectional
+  the way selection already was, which is what a hover-linked list ↔ chart ↔
+  map view needs: hovering a row lights the matching bar, hovering the bar
+  lights the row.
+
+  Before this, `ListTable` held hover in internal component state that a
+  consumer could neither read nor drive, so the list family was the
+  less-expressive sibling for the same two-state interaction (#608). RFC
+  `interaction.md` A3.1 rules that a conformance item, not a standalone
+  feature: the lists speak the canvas's vocabulary, not a parallel one.
+
+  **Strictly additive** — omit both and the list behaves exactly as it did
+  (a clickable list tracks its own pointer). `onHover` is notification-only,
+  fires in controlled and uncontrolled mode alike, and is deduped by row key,
+  so moving from one row straight to the next reports the new row with no
+  `null` in between. The library holds no set and applies no arithmetic: it
+  reports what the pointer is over and renders what it's handed. Hovered rows
+  also carry a `data-hovered` attribute, alongside the existing
+  `data-selected`.
+
 ### Changed
 
 - **charts: `hovered` is a set.** `<ChartContainer hovered>` accepts

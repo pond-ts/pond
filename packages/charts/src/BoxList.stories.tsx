@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { BoxList } from './BoxList.js';
 import { estelaTheme } from './theme.js';
@@ -160,6 +161,41 @@ export const Markers: Story = {
  *  shared origin is what relates rows); `baseline={false}` drops the rule. */
 export const NoBaseline: Story = {
   render: () => <BoxList rows={services} columns={[FULL]} baseline={false} />,
+};
+
+/** **Controlled hover** — `<BoxList>` shares the list family's hover channel
+ *  ([PND-INTERACTCONF]): `hovered` names the lit row key, so an external hover
+ *  lights a row without the pointer. */
+export const HoveredRow: Story = {
+  render: () => <BoxList rows={services} columns={[FULL]} hovered="search" />,
+};
+
+/** **Plural hover** — the prop takes a set as well as a key, so several rows
+ *  light at once (a sweep, or a multi-valued filter). */
+export const HoveredRows: Story = {
+  render: () => (
+    <BoxList rows={services} columns={[FULL]} hovered={['api', 'billing']} />
+  ),
+};
+
+/** **Uncontrolled hover** — omit `hovered` and the list tracks its own
+ *  pointer; `onHover` reports the entered row (or `null`) either way. */
+export const UncontrolledHover: Story = {
+  render: function UncontrolledHoverStory() {
+    const [key, setKey] = useState<string | null>(null);
+    return (
+      <div>
+        <BoxList
+          rows={services}
+          columns={[FULL]}
+          onHover={(r) => setKey(r?.key ?? null)}
+        />
+        <div style={{ font: '12px system-ui', color: '#64748b', padding: 12 }}>
+          onHover → {key ?? 'null'}
+        </div>
+      </div>
+    );
+  },
 };
 
 /** A row with no data keeps its slot as an empty line — absence, not zero. */
