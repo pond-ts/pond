@@ -179,6 +179,13 @@ export function renderBrushBand(f: ResolvedCursorFrame): ReactNode {
   // The cursor ink — the theme's cursor colour, else the axis label colour
   // (same resolution as the cursor presets' `cursorInk`).
   const ink = f.theme.cursor ?? f.theme.axis.label;
+  // The band's own colours come from `theme.brush` when the theme sets it.
+  // With no `brush` this is the pre-token look exactly: cursor ink at 0.12,
+  // no edges — so an existing hand-built theme's band does not shift.
+  const brush = f.theme.brush;
+  const bandFill = brush?.fill ?? ink;
+  const bandOpacity = brush === undefined ? 0.12 : 1;
+  const edge = brush?.edge;
   return (
     <>
       {f.band !== null && (
@@ -187,10 +194,24 @@ export function renderBrushBand(f: ResolvedCursorFrame): ReactNode {
           y={0}
           width={f.band.x1 - f.band.x0}
           height={f.rowHeight}
-          fill={ink}
-          opacity={0.12}
+          fill={bandFill}
+          opacity={bandOpacity}
         />
       )}
+      {f.band !== null &&
+        edge !== undefined &&
+        [f.band.x0, f.band.x1].map((x, i) => (
+          <line
+            key={i}
+            x1={Math.round(x)}
+            y1={0}
+            x2={Math.round(x)}
+            y2={f.rowHeight}
+            stroke={edge}
+            strokeWidth={1}
+            shapeRendering="crispEdges"
+          />
+        ))}
       {f.bandLine && f.cursorX !== null && (
         <line
           x1={Math.round(f.cursorX)}

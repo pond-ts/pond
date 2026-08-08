@@ -94,12 +94,13 @@ so a chart always renders even for an unnamed identifier.
 | `area`                                                       | yes         | `{ color, width, fill, fillOpacity }` (`fill` must be **CSS hex**)                                                             |
 | `band`                                                       | yes         | `{ fill, opacity }`                                                                                                            |
 | `scatter`                                                    | yes         | `{ color, radius, outline, outlineWidth, selectedOutline, selectedWidth, label }`                                              |
-| `bar`                                                        | yes         | `{ fill, opacity, highlight, gap, minWidth, outlineWidth, hover? }`                                                            |
+| `bar`                                                        | yes         | `{ fill, opacity, highlight, gap, minWidth, outlineWidth, hover?, dimmed?, emphasisOpacity?, selectedOutline?, bands? }`       |
 | `box`                                                        | yes         | `{ fill, fillOpacity, stroke, strokeWidth, median, medianWidth, whisker, whiskerWidth }`                                       |
 | `candle`                                                     | yes         | `{ rising:{body,wick}, falling:{body,wick}, neutral?:{…}, bodyWidth?, wickWidth }` — a direction **pair**, not a single colour |
 | `axis`                                                       | no          | `{ label, grid, gridDash, sessionDivider?, band?, title? }`                                                                    |
 | `font`                                                       | no          | `{ family, size }`                                                                                                             |
 | `background?` / `cursor?` / `chip?` / `gap?` / `annotation?` | no          | `string` / `string` / `{ background }` / `{ connectorOpacity }` / `{ color, fillOpacity, depth:[n,n,n] }`                      |
+| `brush?`                                                     | no          | `{ fill, edge? }` — the drag band (see [below](#bar-interaction-states))                                                       |
 
 Two built-ins ship: **`defaultTheme`** (a neutral light base) and
 **`estelaTheme`** (`@estela/ui`'s palette on a dark ground — the "restyle by
@@ -130,6 +131,62 @@ const darkTheme: ChartTheme = {
 Ship your own theme with your app — `@pond-ts/charts` provides `defaultTheme` as
 a neutral base plus the `ChartTheme` type; per-brand themes live in your code,
 not the library.
+
+## Bar interaction states
+
+A bar is the one mark that carries an **interaction state** — it can be at
+rest, under the pointer, selected, or outside somebody else's selection. Four
+states cannot be read as four shades of one colour, so `defaultTheme`'s `bar`
+slot is a small palette in which **state is a hue difference**:
+
+| State     | `BarStyle` field            | `defaultTheme` value                                       | Reads as                       |
+| --------- | --------------------------- | ---------------------------------------------------------- | ------------------------------ |
+| Rest      | `fill` (at `opacity`)       | `#2A9D8F`, `opacity: 1`                                    | teal — the resting data colour |
+| Hover     | `hover`                     | `#3FBFAE`                                                  | a _brighter_ teal, never blue  |
+| Selected  | `highlight` (+ the outline) | `#3F5BE0`                                                  | blue — the committed state     |
+| Dimmed    | `dimmed`                    | `rgba(42,157,143,0.32)`                                    | the resting teal, receded      |
+| Drag band | `theme.brush`               | `rgba(63,91,224,0.07)` + a `rgba(63,91,224,0.45)` 1px edge | the selection blue, in flight  |
+
+The reservation is the point: **blue means _committed selection_**, so hover is
+a brighter teal rather than a pale blue — otherwise a passing pointer and a
+real selection read as the same act. The drag band is that same blue at 7%
+for the mirror-image reason: a live sweep _is_ a selection being made, so it
+should be the selection's hue before it commits.
+
+Precedence when a bar is in more than one state: \*\*selected > hovered > dimmed
+
+> rest\*\*. `emphasisOpacity` (default `1`) is the alpha a live bar pops to;
+> with a resting `opacity` of `1` the default palette carries all of its emphasis
+> in hue, and none in alpha.
+
+`hover`, `dimmed`, `selectedOutline` and `emphasisOpacity` are all **optional**.
+A theme that sets no `dimmed` dims nothing (nothing is auto-dimmed — the
+library renders the state, the theme supplies the colour), and a theme with no
+`hover` falls back to `highlight`, which is the pre-palette two-step. So a
+hand-built theme keeps its own behaviour; only `defaultTheme` opts in to the
+full ladder.
+
+```ts
+const theme: ChartTheme = {
+  ...defaultTheme,
+  bar: {
+    ...defaultTheme.bar,
+    default: {
+      ...defaultTheme.bar.default,
+      fill: '#4a7fb5',
+      hover: '#6fa3d6',
+      highlight: '#d4753a',
+      dimmed: 'rgba(74,127,181,0.3)',
+    },
+  },
+  brush: { fill: 'rgba(212,117,58,0.08)', edge: 'rgba(212,117,58,0.45)' },
+};
+```
+
+`brush` styles the **shared drag band** — the live region `<RangeCursor>` and
+`<MultiSelector>` both paint while a drag is in flight (one renderer, so the
+two can never drift). Omit it and the band falls back to the cursor ink at
+`0.12` with no edges.
 
 ## Per-series line style: `dash`
 

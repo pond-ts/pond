@@ -6,8 +6,10 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
+import { MultiSelector } from './selectors.js';
 import { docsTheme } from './docs-theme.fixture.js';
-import type { SelectInfo } from './context.js';
+import { defaultTheme } from './theme.js';
+import type { SelectInfo, SelectionEntry } from './context.js';
 
 const N = 24;
 /** Fixed base epoch (2026-01-01 00:00 UTC) + hourly buckets → deterministic. */
@@ -354,6 +356,72 @@ export const HoverVsSelectColours: Story = {
           </Layers>
         </ChartRow>
       </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **The default theme's interaction-state palette.** Every other story on this
+ * page themes off `docsTheme` (the project's own brand look), so none of them
+ * show what a consumer who passes no `theme` — or spreads `defaultTheme` —
+ * actually gets. This one does.
+ *
+ * `defaultTheme.bar.default` encodes bar state as a **hue** difference, not as
+ * shades of one colour:
+ *
+ * | state     | value                                    |
+ * | --------- | ---------------------------------------- |
+ * | rest      | `#2A9D8F` (teal), α 1                    |
+ * | hover     | `#3FBFAE` (brighter teal)                |
+ * | selected  | `#3F5BE0` (blue) + outline               |
+ * | dimmed    | `rgba(42,157,143,0.32)`                  |
+ * | drag band | `theme.brush` — that blue at 7%, 1px edges |
+ *
+ * Blue is reserved for *committed* selection, which is why hover is a brighter
+ * teal rather than a pale blue: a passing pointer and a real selection must not
+ * read as the same act. The shared drag band is that same blue at 7% for the
+ * mirror-image reason — a live sweep **is** a selection being made.
+ *
+ * A `<MultiSelector>` is mounted so all five states are reachable: hover for
+ * the middle step, click for the third (everything else recedes to `dimmed`),
+ * drag for the band.
+ */
+export const DefaultThemeStates: Story = {
+  render: function DefaultThemeStatesStory() {
+    const v = hourlyVolume();
+    const [sel, setSel] = useState<readonly SelectionEntry[]>([]);
+    return (
+      <div>
+        <ChartContainer
+          range={TIME_RANGE}
+          width={640}
+          theme={defaultTheme}
+          selected={sel}
+        >
+          <MultiSelector
+            onSelect={(hits, _mods, span) =>
+              setSel(span !== null ? [span] : hits.slice(0, 1))
+            }
+          />
+          <ChartRow height={240}>
+            <YAxis id="count" label="req" min={0} />
+            <Layers>
+              <BarChart series={v} column="count" id="count" gap={3} />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>
+        <p
+          style={{
+            font: '13px system-ui',
+            color: '#667',
+            marginTop: 4,
+            maxWidth: 640,
+          }}
+        >
+          Hover for the brighter teal · click a bar to select it (blue; the rest
+          recede) · drag for the band · click away to clear.
+        </p>
+      </div>
     );
   },
 };
