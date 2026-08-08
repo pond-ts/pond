@@ -43,9 +43,15 @@
 > which resolves Q11. Systematic Storybook coverage of the full combination is a
 > **shipping gate** on every step.
 >
+> **Amendment 4 (2026-08-08)** settles the names — `<Selector>` /
+> `<MultiSelector>` / `<RangeCursor>`, with `Region` staying the annotation —
+> and **consolidates the whole decided surface into A4.2**, which is what an
+> implementer should read. Three questions remain open and all three gate the
+> sweep: span-minus-point, the 2-D descriptor shape, and grid indexing.
+>
 > Reading order for the interaction surface: `cursor.md` (what cursors draw) →
-> `selection.md` v1 → its A1–A5 → this RFC §1–§12 → A1 → A2 → **A3 is current on
-> API shape**.
+> `selection.md` v1 → its A1–A5 → this RFC §1–§12 → A1 → A2 → A3 → **A4 is
+> current on API shape**.
 
 ## 1. The question
 
@@ -1085,3 +1091,140 @@ degrading on a category axis (A2.2) is the local proof.
 
 Nothing above changes §1–§7. The split, the mounted model, picking over
 composing, and A1.2's state-on-the-container all stand as written.
+
+## Amendment 4 (2026-08-08) — names settled, and the document wrapped
+
+> _Naming dispositions by pjm17971, who reserves the right to decide it was a
+> bad call later. This amendment closes Q6 and Q10 and consolidates four
+> amendments' worth of decisions into one implementable surface — A4.2 is what
+> an implementer should read; §1–§12 and A1–A3 are the reasoning behind it.
+> Reading order: §1–§12 → A1 → A2 → A3 → **A4 is current**._
+
+### A4.1 Q6 / Q10 resolved — the names
+
+| component         | gesture                 | reports                                  |
+| ----------------- | ----------------------- | ---------------------------------------- |
+| `<Selector>`      | click (+ modifiers)     | **one** `SelectInfo \| null` + modifiers |
+| `<MultiSelector>` | drag across, 1-D or 2-D | **many** `SelectInfo[]` + modifiers      |
+| `<RangeCursor>`   | hover, and drag         | a **range** (`{ x, y? }`)                |
+
+**`Region` stays the annotation.** The collision is resolved by moving the two
+**new** names rather than renaming the incumbent — which was Q10's cheapest
+option and needs no migration for anyone.
+
+**Why `<RangeCursor>` is the strongest name in the set:** it is named for what
+it emits, and what it emits is the shape the container already accepts —
+`ChartContainer.range` is `readonly [number, number] | TimeRange`. Drag-to-zoom
+becomes `onDragRelease={setRange}`. It also draws a real semantic line against
+the annotation: **`Region` is a fixed mark at data coordinates; `Range` is a
+live extent.**
+
+**`<Selector>` / `<MultiSelector>` are named for payload cardinality** — one hit
+versus many — which is the RFC's own naming principle (the one that dissolved
+CATRANGE: name the payload, not the geometry). Recorded because it was
+contested: an earlier round argued for `<SweepSelector>` on the grounds that the
+gesture is invariant while a result count is not, and that `MultiSelector`
+might read as a capability boundary — implying `<Selector>` cannot participate
+in multi-selection, when a consumer building a multi-selection from
+`<Selector>` + ⌘ is exactly what #606 shipped. **That misreading is a docs
+problem, not a naming one**, and the payload difference is real: `<Selector>`
+genuinely reports one hit, `<MultiSelector>` genuinely reports a list.
+
+> **Cursor presets keep flat `*Cursor` names** (A3.2, no namespacing):
+> `<LineCursor>`, `<PointCursor>`, `<InlineCursor>`, `<FlagCursor>`,
+> `<CrosshairCursor>`, `<RangeCursor>`. The 1:1 parity with the mode strings
+> they deprecate is what §9's migration table leans on.
+
+### A4.2 The decided surface — read this, then the reasoning
+
+Everything settled across §1–§12 and A1–A4, in one place:
+
+```tsx
+<ChartContainer
+  range={view}                              // view window — unchanged
+  selected={sel}                            // consumer-owned state (A1.2)
+  hovered={hov}                             //   ⤷ NOT moved onto the selectors
+  trackerPosition={t}                       // cross-chart sync — stays (Q4)
+  onTrackerChanged={setT}
+>
+  {/* CURSORS — pick one, mount at container or in a row */}
+  <CrosshairCursor snap showTime />
+  <RangeCursor
+    sequence={daily}                        // bucket shape + snap; omit ⇒ freeform
+    enableDrag                              // defaults to !!onDragRelease; the OFF switch
+    dragModifier="shift"                    // only enforced while pan is on
+    onDragRelease={setRange}                // {x, y?} — y only on a 2-D drag
+  />
+
+  {/* SELECTORS — pick one; mounting is what enables the plot gesture (§7.1) */}
+  <Selector      onHover={(hit)  => …} onSelect={(hit,  mods) => …} />
+  <MultiSelector onHover={(hits) => …} onSelect={(hits, mods) => …} sequence={daily} />
+
+  <ChartRow>
+    <YAxis … />
+    <Layers><BarChart id="a" … /></Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+**The rules that govern it:**
+
+1. **Mounting enables the gesture; the container holds the state.** A
+   `<Selector>` must be mounted for a plot click to do anything (§7.1) —
+   controlled highlighting via `selected`/`hovered` keeps working without one
+   (A1.2). The dev warning suppresses when `selected` is supplied (A2.6).
+2. **The library reports; the consumer decides.** One hit or many, plus the
+   modifiers held. pond applies no policy to ⌘ or shift and holds no set (A4.1
+   of `selection.md`).
+3. **A layer `id` is identity; the mount is enablement.** An untagged layer is
+   never hit-tested, so `SelectInfo.id` is never undefined — "nothing here" is a
+   null hit (Q8).
+4. **Cursors are picked, not composed** (§4), with a documented contract for the
+   one you have to build yourself (§5 / A2.3) — render slots, resolved
+   geometry, **declared** snap. Container resolves; slots draw.
+5. **One cursor owns snap and gesture**, resolved to the hovered row's innermost
+   mount; render-only presets may stack (A2.5). A layer drawing its own live
+   treatment is **not** a cursor (A3.4).
+6. **Dimensionality follows the layer**: 1-D for bars, lines, candles and lists;
+   2-D for scatter and heat map — for both zoom and select (A3.3).
+7. **The layer owns the treatment**: heat map outlines the covered rect, scatter
+   dims what is not covered, bars use the `selected > hovered > dimmed > rest`
+   chain. Same state, per-layer vocabulary (A3.4).
+8. **One brush engine owns every drag claim** — pan included — rather than
+   today's ad-hoc ordering in `handlePointerDown` (A1.5 / A2.7).
+9. **The whole API speaks this**, lists included (A3.1).
+
+### A4.3 Still open — and what each one blocks
+
+| #       | question                                                                                                                                                                                                                                                                 | blocks        |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------- |
+| **Q12** | **Span-minus-point.** ⌘-clicking a mark _out_ of a span selection is not representable in `(SelectInfo \| SpanSelection)[]` without an exclusion channel or a documented replace-after-sweep rule. Decides whether the descriptor can be the round-trip currency at all. | A2.4 → step 5 |
+| **Q13** | **The 2-D descriptor shape.** `{ x, y? }` is proposed (A3.3) for both the payload and `SpanSelection`; unvalidated.                                                                                                                                                      | step 5        |
+| **Q14** | **Grid indexing.** Confirmed required, not hypothetical — the 16,425-cell case (A2.4/A3.3).                                                                                                                                                                              | step 5        |
+| Q2      | Multiple render-only cursors — allowed, with one gesture owner (A2.5). Formulation settled; unexercised.                                                                                                                                                                 | —             |
+| Q3      | When the cursor contract goes public. Litmus order adopted (A2.3): flag cursor → our crosshair with zero mode-string gates → SR's.                                                                                                                                       | step 6        |
+| Q4      | Do the tracker props follow the cursors out? Proposed **no**.                                                                                                                                                                                                            | —             |
+
+Q12 is one decision, not a project, and it is the critical path. Q13 and Q14
+are design work that cannot start until it lands.
+
+### A4.4 Order of work
+
+1. **`hovered` widened to a set** — written and pushed, unblocked by everything
+   above.
+2. **Cursor components + the deprecation shim** — mechanical; presets register
+   the specs `Layers` already reads. Deletes the `<XAxis>` string-gate seam
+   (A2.2) as a side effect.
+3. **`<RangeCursor>`** — absorbs the drag props with honest names.
+4. **`<Selector>`** — the #606 surface re-homed, plus §7.1's warning.
+5. **`<MultiSelector>`** — the genuinely new capability. **Blocked on
+   Q12 → Q13 → Q14.**
+6. **Publish the cursor contract** — after our own cursors are written against
+   it (Q3).
+7. **Conformance pass** — the list family (A3.1) and the two layers still
+   reading a single selection (Q7).
+
+**Every step carries its slice of the Storybook matrix** (A3.5) — cursor preset
+× mount point × selector × dimensionality × gesture × surface. A step without
+its stories is not landed. Steps 2–4 are each shippable behind the shim, which
+is what turns one breaking release into several additive ones.

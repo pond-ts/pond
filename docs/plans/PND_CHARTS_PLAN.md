@@ -2266,6 +2266,79 @@ stacked paths — would have caught both and is the obvious next move.
   friction the entry actually names. Build it there, not here. Sequencing (A4.3):
   widen `hovered` to a set first, then `<Select>`.
 
+### [PND-INTERACT] / [PND-INTERACT2D] / [PND-INTERACTCONF] — the interaction surface
+
+Adopted from `docs/rfcs/interaction.md` on 2026-08-08, after a four-reviewer
+red-team on [#611](https://github.com/pond-ts/pond/discussions/611) (Codex, a
+Fable agent, and two consumers — the `<HeatMap>`/gallery build and estela's
+chart ↔ list ↔ map surface). **RFC A4.2 is the decided surface**; read it before
+starting. Everything below is the ordering, not the design.
+
+**Why this exists.** Interaction occupied thirteen `ChartContainer` props plus
+`ChartRow.cursor`, four of them mode-conditional — inert unless a sibling prop
+held a particular string. The tell was `onRegionSelect`: a *selection* callback
+living on a *cursor* mode. Cursors read; selectors report. They are now
+components you mount.
+
+**The load-bearing decisions, with where the reasoning lives:**
+
+- **Cursors are picked, not composed** (§4). An earlier draft proposed
+  composable parts; rejected because `cursorParts`' `crosshair` case already
+  escapes the decomposition (`line: false, dots: false` for the mode that
+  visibly has both), and because composition puts the library on the hook for
+  combinations nobody asked for. `panZoom2D` silently degrading to y-only on a
+  category axis is the local proof that enumerating catches what composing
+  hides.
+- **The container keeps `selected`/`hovered`** (A1.2). Mounting is right for the
+  **gesture** and wrong for the **state** — estela's chart is usually *not* the
+  gesture origin, and requiring a mounted `<Selector>` for controlled
+  highlighting would break every multi-surface consumer.
+- **A region is a cursor *and* a drag** (A1.5, held against review). Two public
+  components, **one** brush recognizer and **one** band renderer underneath, and
+  that engine owns *every* drag claim including pan.
+- **The library owns state, the layer owns treatment** (A3.4). Heat map outlines
+  the covered rect; scatter dims what is not covered. Resolves the "where does a
+  layer's own hover affordance sit" question in the layer's favour.
+
+**Ordered work** (RFC A4.4). Each step carries its slice of the Storybook
+matrix — cursor preset × mount point × selector × dimensionality × gesture ×
+surface. A step without its stories is not landed.
+
+1. **`hovered` widened to a set** — written and pushed on
+   `feat/charts-hovered-set`, unblocked by everything else here.
+2. **Cursor components + deprecation shim.** Mechanical: presets register the
+   specs `Layers` already reads. Deletes a real seam as a side effect — the
+   crosshair's x-time pill is gated on `container.cursor === 'crosshair'`, the
+   *container default*, so a per-row crosshair has no time pill today.
+3. **`<RangeCursor>`** — absorbs the drag props with honest names.
+   `onDragRelease` emits the shape `ChartContainer.range` already accepts.
+4. **`<Selector>`** — the #606 surface re-homed, plus §7.1's dev warning
+   (suppressed when `selected` is supplied, or it fires at the endorsed setup).
+5. **`<MultiSelector>`** — the new capability. **Blocked on Q12 → Q13 → Q14.**
+6. **Publish the cursor contract** — after our own cursors are written against
+   it, with zero mode-string gates left (Q3's litmus).
+7. **Conformance pass** — the list family and the two single-selection layers.
+
+**The blocking question, [PND-INTERACT2D]'s critical path.** RFC **Q12**:
+⌘-clicking a mark *out* of a span selection is not representable in
+`(SelectInfo | SpanSelection)[]` without either an exclusion channel or a
+documented rule that any click after a sweep replaces. It decides whether a
+descriptor can be the round-trip currency at all — which matters because
+membership testing is linear over `selected` per mark *by documented design*
+(`bars.ts`: "a selection is a handful of marks a person clicked, not a data
+structure"), and a half-sweep of a 16,425-cell grid is ~10⁸ comparisons per
+repaint. One decision, not a project, and nothing in step 5 can start without
+it.
+
+**Deferred but considered:** namespaced component names (`Cursor.Crosshair`,
+`Selection.Brush`) — rejected, nothing in the package exports a namespaced
+compound today and flat names keep 1:1 parity with the mode strings they
+deprecate. `<SweepSelector>` over `<MultiSelector>` — argued on the grounds that
+the gesture is invariant while a result count is not; `<MultiSelector>` chosen
+for payload cardinality, with the "does this imply `<Selector>` is
+single-select?" misreading treated as a docs problem. Renaming the annotation
+`<Region>` — unnecessary once the two *new* names moved instead.
+
   **Re-homed 2026-08-08 → `docs/rfcs/interaction.md`** (§8, as
   `<RegionSelector>`). The marks-not-a-range choice above is unchanged and is
   still what subsumes this entry; what moved is where the component lives — with

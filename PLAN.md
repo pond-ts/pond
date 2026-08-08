@@ -44,6 +44,36 @@ milestone. Plan:
   already publishes pre-parity). Faithful `DataChart` reproduction on real
   activity data, no regressions. Gates: statistical bands, theme tokens
   optional-with-default, shared axis-headroom policy.
+- **[PND-INTERACT]** — **The interaction surface: cursors and selectors as
+  mounted components.** Replaces thirteen `ChartContainer` props plus
+  `ChartRow.cursor` with `<LineCursor>` / `<PointCursor>` / `<InlineCursor>` /
+  `<FlagCursor>` / `<CrosshairCursor>` / `<RangeCursor>` and `<Selector>` /
+  `<MultiSelector>`; `Region` stays the annotation. Mounting enables the
+  gesture, the container keeps `selected`/`hovered`, and the library reports
+  rather than deciding. **Breaking** — implicit click-select goes inert without
+  a mounted `<Selector>` (deliberate, dev-warned, suppressed when `selected` is
+  supplied). Red-teamed by Codex, a Fable agent, and two consumers
+  ([#611](https://github.com/pond-ts/pond/discussions/611)); the decided
+  surface is RFC **A4.2**. Ordered work in the breakout plan. RFC:
+  [interaction.md](docs/rfcs/interaction.md).
+- **[PND-INTERACT2D]** — **2-D region select and zoom on scatter + heat map.**
+  A sweep is an x-span on bars/lines/candles/lists and an **x+y rect** on the
+  two layers whose marks live in two dimensions — for both `<RangeCursor>`
+  (zoom) and `<MultiSelector>` (select). Widens the payload from a bare pair to
+  `{ x, y? }`, needs the same on the selection descriptor, and requires grid
+  indexing the package does not have (the 16,425-cell case). **Blocked on the
+  RFC's Q12** (span-minus-point) — that decision settles whether a descriptor
+  can be the round-trip currency, and Q13/Q14 cannot start until it does.
+  Subsumes `[PND-CATRANGE]`.
+- **[PND-INTERACTCONF]** — **Conformance pass: one interaction vocabulary
+  across the whole API.** The list family (`<BarList>`/`<BoxList>`) joins the
+  same `hovered`/`onHover` channel rather than holding hover in `ListTable`
+  internal state ([#608](https://github.com/pond-ts/pond/issues/608) is a
+  conformance item, not a standalone request — and the mirror target is
+  **plural** hover), plus `ScatterChart` and `BoxPlot`, which still read a
+  single selection from a set that has been plural since #606. Gated by the
+  systematic Storybook matrix: cursor preset × mount point × selector ×
+  dimensionality × gesture × surface.
 - **[PND-SELECT]** — Selection Phase 2: multi-select widen + `selectionMode`,
   `LineChart.hitTest`, snap-follows-selection prop, theme-referenced dim.
   Breaking widen → human gate. RFC: [selection.md](docs/rfcs/selection.md).
