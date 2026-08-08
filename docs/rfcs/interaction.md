@@ -68,9 +68,16 @@
 > spatial index, and nothing persists outside a drag. **No design question in
 > this RFC is now unanswered.**
 >
+> **Amendment 8 (2026-08-08)** closes the build. Steps 1–5 and the span
+> currency are on `main`. A8 collects every finding from actually building it —
+> chiefly that **we priced the sweep's emission and never its repaint**, which
+> cost 6.2 s/frame at the extreme until it was fixed — plus the corrections that
+> §7.1's gate is on the _plot surface_ not `select()`, and that A2.7's brush
+> engine owns the _claim ordering_, not pan's session.
+>
 > Reading order for the interaction surface: `cursor.md` (what cursors draw) →
-> `selection.md` v1 → its A1–A5 → this RFC §1–§12 → A1 → A2 → A3 → A4 → A5 → A6
-> → **A7 is current on API shape**.
+> `selection.md` v1 → its A1–A5 → this RFC §1–§12 → A1 → … → A7 → **A8 is
+> current on API shape**.
 
 ## 1. The question
 
@@ -1625,3 +1632,149 @@ when it arrives.
 is build order, plus **Q10's narrow half** (which `Region` moves) and **Q3**
 (when the contract publishes — now governed by A7.1's litmus rather than by
 argument).
+
+## Amendment 8 (2026-08-08) — what the whole build taught
+
+> _One pass covering every finding from actually building steps 2–5 and the
+> span foundation, rather than an amendment per PR. Grouped by what needs
+> deciding, not by which PR found it. **The wave is built**: §10 steps 1–5 plus
+> the span currency are on `main`. Reading order: §1–§12 → A1 → … → A7 →
+> **A8 is current**._
+
+### A8.1 The correction that matters most: we priced emission, never repaint
+
+**A1.4 and A7.7 costed what the sweep _emits_. A5.2 costed per-repaint
+membership for _span_ entries. Nobody costed the preview _marks_ — which is
+where it actually bites.**
+
+A3.4 lights the live preview through plural `hovered`. That hands the draw paths
+the first genuinely **large** mark sets the library has ever seen — and the bar
+draws' membership test is a linear scan, deliberately, with a comment saying so:
+_"a selection is a handful of marks a person clicked, not a data structure."_
+That assumption was true when it was written and **this feature is what makes it
+false.**
+
+Measured, before the fix:
+
+| case                                 | per frame   |
+| ------------------------------------ | ----------- |
+| 2.6k visible bars, 2.6k-mark preview | 4.46 ms     |
+| 10k bars, 10k preview                | 64.0 ms     |
+| **100k bars, 100k preview**          | **6207 ms** |
+
+Fixed by building a set index once per frame past 16 entries — the same pairwise
+match rule, pinned by scan-vs-index equivalence tests. After: 0.34 / 1.48 /
+18.0 ms, with the no-hover draw floor unchanged at 0.15 ms.
+
+**The lesson generalises past this fix:** a documented performance assumption is
+a **precondition**, and a new feature that violates it must re-price every
+consumer of that assumption, not just its own path. The 2-D layers inherit this
+directly — [PND-INTERACT2D] must re-check the same scans before it lights a grid
+preview.
+
+### A8.2 §7.1's gate is on the **plot surface**, not on `select()`
+
+§7.1 said "mounting enables the plot gesture" and never said what happens to the
+_other_ caller of `select()`. `useChartLegend` calls it for a legend chip;
+gating that too would have taken the legend inert — outside the break and
+outside its justification, since an explicit `select()` is already intentional.
+
+**Resolved:** the gate keys on `rowKey` — present ⇒ plot gesture ⇒ gated; absent
+⇒ programmatic ⇒ ungated. Mounting gates the **plot**, not an explicit call.
+
+Three related gaps, all settled in the build:
+
+- **Hover has no gate.** §7 moves `onHover` onto `<Selector>`, but the hover
+  _highlight_ is container state under A1.2. Gating it would be a second, larger
+  visual break nobody asked for. Hover is **scoped, not gated** — with nothing
+  registered there is simply nobody to report to.
+- **A bare `<Selector />` enables the gesture**, per A4.2 rule 1 (the mount is
+  the enablement). The alternative reading — that the callbacks are the
+  enablement — was equally available from the text and is now closed.
+- **A2.6's suppression rule never covered the shim.** A chart on the deprecated
+  container `onSelect` must not trip the inert-click warning; it isn't inert.
+  That only holds if **the shim registers nothing when neither prop is set** —
+  a clause load-bearing for the whole break that appeared nowhere in the RFC.
+
+### A8.3 A2.7 overclaimed: the engine owns the **claim**, not the session
+
+A2.7 said the single brush engine should own **all** drag claims, pan included.
+What shipped owns the **ordering** — `create > sweep > range > pan`, written
+down once — which is the part that becomes public API when claimants become
+components. **Pan's session mechanics** (slop arming, deferred capture,
+trading-time math) stay in `Layers`, unchanged.
+
+That was the right call: extracting them would have been a large
+behaviour-preserving diff for zero observable gain. But A2.7 as written reads as
+done and **isn't**. The honest statement: _the recognizer owns which claimant
+wins at the press; each claimant still owns its own gesture._
+
+**If a future claimant needs to interleave with pan _mid_-gesture rather than at
+the press, that extraction becomes real work.** Recorded so it is a known cost
+rather than a surprise.
+
+### A8.4 Shape and scope corrections
+
+- **`RangeSpan`, not `RegionSpan`.** A3.3 named the payload before A4.1 renamed
+  the components to `Range*`; the interface was never revisited. `RangeCursor`
+  emits a `RangeSpan`.
+- **A5.2's signature never reconciled with §8's click superset.** A
+  `<MultiSelector>` click has no span, so `span` is `SpanSelection | null` and
+  `modifiers` is optional (programmatic selects carry none, matching
+  `<Selector>`).
+- **One span, but multi-layer rows exist.** `SpanSelection` carries one layer
+  `id`, so a row with two sweep-capable layers cannot fit a single-span release.
+  Shipped **topmost-wins**, the z-order rule clicks already follow. **Decide
+  spans-plural-or-topmost before [PND-INTERACT2D] copies the shape.**
+- **"1-D for bars" is wrong for _horizontal_ bars.** The pointer sweeps the
+  shared x, which on a horizontal chart is the **value** axis — a window there
+  says nothing about bins. A horizontal bin cut is a y-window, i.e. 2-D
+  machinery. `beginSweep` is wired **vertical-only** and documented. This is a
+  real gap against the original friction report, which named horizontal bars.
+- **"Freeform" is not freeform over bars.** A bar/histogram layer's
+  `binIntervals` feed the shared snap channel, so a sweep or drag with no
+  `sequence` still bin-snaps. Cohesive behaviour, wrong word in §6/§8.
+- **`enableDrag={false}` × the legacy props** was undefined for the migration
+  window. Shipped: frozen suppresses the legacy fallback too; a `<RangeCursor>`
+  with no `onDragRelease` leaves the legacy drag live.
+- **`<MultiSelector>` has no `dragModifier`**, so mounting it makes plain
+  drag-to-pan unreachable on that surface. `<RangeCursor>` grew one for exactly
+  this sharing; expect the same pull.
+- **The legacy region gate was never row-aware** — `<ChartRow cursor="region">`
+  plus a container `onRegionSelect` never dragged, while the reverse did. Both
+  quirks are preserved by the shim and die with it; the component path is
+  properly row-scoped.
+- **`format` is a container-wide channel**, not per-cursor — the readout also
+  feeds marker indicators and annotation auto-labels. First mount wins
+  container-wide; a conformance-pass item.
+
+### A8.5 A method note: cover the seam, not the piece
+
+Three separate bugs this wave sat in **component wiring above** a correct pure
+function, where draw-level unit tests stay green. The discipline that caught
+them, and that every step of this wave was held to:
+
+**Revert-verification at two levels.** Break the helper, confirm red, restore.
+Then break the **wiring** instead, and confirm red again. Across four
+consecutive steps the wiring mutation caught **more** tests than the helper
+mutation — that inversion is the signal that the tests cover the seam. A suite
+where only the helper mutation goes red is a suite that would have shipped every
+one of this wave's bugs.
+
+Worth keeping as the standard for the remaining work.
+
+### A8.6 What is left
+
+**Built:** §10 steps 1–5, the span currency, and the conformance work on
+`<ScatterChart>`, `<BoxPlot>`, `<HeatMap>` and the list family.
+
+**Remaining:**
+
+1. **[PND-INTERACT2D]** — the 2-D rect on scatter and heat map, which also
+   closes horizontal-bar sweeps (A8.4). Q14's design (A7.6/A7.7) is ready; it
+   must inherit A8.1's repaint lesson and settle the multi-layer span question.
+2. **Q3 — publish the cursor contract**, under A7.1's litmus: every built-in and
+   the SR gapped crosshair written against it, nothing needing a new slot.
+3. **The conformance tail** — `<BoxPlot>` and the list family joining the sweep,
+   plus `format`'s container-wide scope.
+4. **Remove the shims** one minor after the deprecations land.
