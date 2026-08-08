@@ -206,6 +206,11 @@ export type {
   CrosshairCursorProps,
   RangeCursorProps,
 } from './cursors.js';
+// Click-select as a mounted component (interaction RFC §7): mounting
+// `<Selector>` is what enables a plot click at all — `selected` / `hovered`
+// stay on `<ChartContainer>` (A1.2), so controlled highlighting needs none.
+export { Selector } from './selectors.js';
+export type { SelectorProps } from './selectors.js';
 
 // Public interaction types — the callback params for the tracker + selection
 // (`onTrackerChanged`, `onSelect`) and the `cursor` mode.

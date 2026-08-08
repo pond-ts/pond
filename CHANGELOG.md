@@ -60,6 +60,55 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts: `<Selector>` — click-select is now something you mount**
+  (interaction RFC §7, step 4 of the wave). Mount it as a child of
+  `<ChartContainer>` (every row) or inside a `<ChartRow>` (that row only):
+
+  ```tsx
+  <ChartContainer selected={sel} hovered={hov}>
+    <Selector onSelect={(hit, mods) => setSel(next(sel, hit, mods))} />
+    <ChartRow>…</ChartRow>
+  </ChartContainer>
+  ```
+
+  It reports and holds nothing. `modifiers` carries `additive` (⌘ on macOS,
+  Ctrl elsewhere) plus the raw keys; pond applies **no** policy to them and
+  holds no set — the consumer computes the next selection and feeds it back.
+
+### Changed
+
+- **charts: BREAKING — a plot click does nothing unless a `<Selector>` is
+  mounted.** Click-select used to be _implicit_: any layer with an `id` was
+  selectable, and the container maintained an uncontrolled `selected` whether or
+  not anything was wired. Every chart that highlighted on click goes inert on
+  upgrade until a `<Selector>` is mounted — a regression no type error catches,
+  accepted deliberately (RFC §7.1) because selection turned out to be a whole
+  subsystem (modifiers, a set, a de-emphasis slot, a sweep gesture, precedence
+  against hover) and a subsystem that large should not switch itself on because
+  a layer happened to be given an `id`.
+
+  **What is _not_ affected:** `selected` / `hovered` stay on `<ChartContainer>`
+  (RFC A1.2), so **controlled highlighting keeps working with no `<Selector>`
+  mounted** — a legend chip or an external filter list driving the chart is
+  untouched. So does the hover _highlight_, and so does a programmatic
+  `select()` from `useChartLegend`. The break is precisely the plot gesture.
+
+  Softening the landing: a dev build warns **once** when a click resolves to a
+  mark and no `<Selector>` is mounted — and **suppresses that warning when
+  `selected` is supplied** (RFC A2.6), because after A1.2 that is the signature
+  of the _endorsed_ controlled-highlight setup rather than of a lost click. The
+  warning is scoped to the deprecation window: an `id` without a `<Selector>` is
+  a legitimate configuration afterwards (identity without enablement).
+
+- **charts: `<ChartContainer onSelect>` / `onHover` are deprecated** in favour
+  of `<Selector onSelect>` / `onHover`. They keep working for one more minor —
+  the container synthesizes an equivalent registration internally, so an
+  existing chart keeps its click _and_ stays out of the warning above — and
+  dev-warn once naming the replacement. A mounted `<Selector>` in the same scope
+  overrides them.
+
 ### Fixed
 
 - **charts: `<ScatterChart>` and `<BoxPlot>` light every selected / hovered

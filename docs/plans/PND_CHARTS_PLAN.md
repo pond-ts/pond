@@ -2314,6 +2314,28 @@ surface. A step without its stories is not landed.
    `onDragRelease` emits the shape `ChartContainer.range` already accepts.
 4. **`<Selector>`** — the #606 surface re-homed, plus §7.1's dev warning
    (suppressed when `selected` is supplied, or it fires at the endorsed setup).
+   **Shipped** on `feat/charts-selector-component`. Decisions taken while
+   building, recorded here because the RFC did not settle them:
+   - **The gate lives on `select()`, keyed by an optional `rowKey`.** The RFC
+     says "mounting enables the plot gesture" but the container's `select()` has
+     two callers — `Layers.handleClick` (the plot) and `useChartLegend` (a chip)
+     — and gating both would have taken the legend inert too, which is outside
+     §7.1's break and outside its justification (an explicit `select()` call is
+     already intentional by construction). `rowKey` present ⇒ plot gesture ⇒
+     gated; absent ⇒ programmatic ⇒ ungated. The parameter is the scope resolver
+     *and* the gesture discriminator, which is why it isn't a boolean.
+   - **Hover is not gated, only scoped.** `onHover` moves onto `<Selector>`, but
+     the hover *highlight* is container state (A1.2) and keeps working with none
+     mounted. No gate is needed to arrange this: with nothing registered there
+     is nobody to report to. Gating it would have been a second, larger break
+     the RFC never asked for.
+   - **A bare `<Selector />` enables the gesture.** The mount is the enablement,
+     not the callback — so a consumer happy with the container's uncontrolled
+     highlight mounts one with no props and stops.
+   - **The entry memoizes on which callbacks are *present*, not their
+     identity**, with the functions read through a ref. Consumers pass inline
+     arrows; re-registering per render would thrash a `useState`-backed
+     registry.
 5. **`<MultiSelector>`** — the new capability. **Blocked on Q12 → Q13 → Q14.**
 6. **Publish the cursor contract** — after our own cursors are written against
    it, with zero mode-string gates left (Q3's litmus).

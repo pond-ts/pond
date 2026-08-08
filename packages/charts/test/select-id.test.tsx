@@ -48,11 +48,17 @@ describe('selection dev-warn: wired but no selectable layer', () => {
     </ChartContainer>
   );
 
+  // `onSelect` on the container is deprecated in favour of a mounted
+  // `<Selector>` (interaction RFC §7), so wiring it now also emits the
+  // migration warning. These cases are about the *no-selectable-layer* warning,
+  // so they count that one rather than every `console.warn`.
+  const noIdWarnings = (warn: { mock: { calls: unknown[][] } }) =>
+    warn.mock.calls.filter((c) => /no layer has an `id`/.test(String(c[0])));
+
   it('warns when `onSelect` is wired but no layer has an `id`', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     render(tree({ onSelect: () => {} }));
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]![0]).toMatch(/no layer has an `id`/);
+    expect(noIdWarnings(warn)).toHaveLength(1);
     warn.mockRestore();
   });
 
@@ -66,7 +72,7 @@ describe('selection dev-warn: wired but no selectable layer', () => {
   it('does NOT warn when a layer carries an `id`', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     render(tree({ onSelect: () => {} }, 'v'));
-    expect(warn).not.toHaveBeenCalled();
+    expect(noIdWarnings(warn)).toHaveLength(0);
     warn.mockRestore();
   });
 
