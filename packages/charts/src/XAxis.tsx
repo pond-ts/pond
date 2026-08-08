@@ -2,7 +2,12 @@ import { Fragment, useContext } from 'react';
 import { scaleLinear } from 'd3-scale';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import { derivedTicks, type AxisTransform } from './derivedTicks.js';
-import { ContainerContext, CursorContext } from './context.js';
+import {
+  ContainerContext,
+  CursorContext,
+  type ResolvedCursorFrame,
+} from './context.js';
+import { xAxisCursorEntries } from './cursors.js';
 import { axisPillStyle } from './chip.js';
 import type { TradingTimeScale } from './tradingTimeScale.js';
 import {
@@ -188,17 +193,23 @@ export function XAxis({
     xTickCount,
   } = container;
 
-  // The crosshair's x-time pill: when the container cursor is `'crosshair'` and a
-  // cursor is live in-bounds, pin the hovered time to this axis (covering the
-  // tick behind it), matching the on-axis y value pills the rows draw. Gated on
-  // the container default, so a per-row `cursor` override doesn't reach here.
+  // The cursor's x-axis slot: did the mounted cursor in effect register one
+  // (`renderXAxis` — the crosshair's time pill)? While hovering, that is the
+  // **hovered row's** effective cursor — so a per-row override reaches this
+  // axis, which the old `container.cursor === 'crosshair'` string gate never
+  // let it do (a row-level crosshair had no time pill); with no live pointer
+  // (a controlled `trackerPosition`), any scope's effective cursor keeps its
+  // pill. The slot renders below when the cursor is live in-bounds.
   const cursorX = cursor.cursorX;
+  const xSlotEntries = xAxisCursorEntries(
+    container.cursors,
+    cursor.cursorRowKey,
+  ).filter((e) => e.spec.renderXAxis !== undefined);
   const showCursorTag =
-    container.cursor === 'crosshair' &&
+    xSlotEntries.length > 0 &&
     cursorX !== null &&
     cursorX >= 0 &&
     cursorX <= plotWidth;
-  const cursorColor = theme.cursor ?? theme.axis.label;
 
   const annotationColor = theme.annotation?.color ?? '#0d9488';
 
@@ -637,35 +648,33 @@ export function XAxis({
           </Fragment>
         );
       })}
-      {showCursorTag && (
-        <Fragment>
-          {/* Connector bridging the crosshair's vertical line (ending at the
-              plot's bottom edge = this strip's plot-facing edge) to its time
-              pill, so the two read as one. */}
-          <div
-            style={{
-              position: 'absolute',
-              left: `${cursorX}px`,
-              [onTop ? 'bottom' : 'top']: 0,
-              width: '1px',
-              height: `${pillOffset}px`,
-              background: cursorColor,
-              zIndex: 3,
-            }}
-          />
-          <div
-            style={{
-              ...axisPillStyle(theme, cursorColor),
-              left: `${cursorX}px`,
-              transform: 'translateX(-50%)',
-              [onTop ? 'bottom' : 'top']: `${pillOffset}px`,
-              zIndex: 3,
-            }}
-          >
-            {readoutFmt(+xScale.invert(cursorX!))}
-          </div>
-        </Fragment>
-      )}
+      {showCursorTag &&
+        (() => {
+          // The x-axis {@link ResolvedCursorFrame}: no row, no samples — the
+          // slot draws a pill from the resolved cursor x + the axis's own
+          // readout-formatted time (this axis's precedence chain, `readoutFmt`),
+          // placed per the strip's side + tick-label offset.
+          const f: ResolvedCursorFrame = {
+            cursorX,
+            cursorY: null,
+            rowKey: null,
+            hoveredRowKey: cursor.cursorRowKey,
+            samples: [],
+            flags: [],
+            pointer: null,
+            band: null,
+            bandLine: false,
+            formattedTime: readoutFmt(+xScale.invert(cursorX!)),
+            plotWidth,
+            rowHeight: 0,
+            isFirstRow: false,
+            theme,
+            xAxis: { onTop, pillOffset },
+          };
+          return xSlotEntries.map((e, i) => (
+            <Fragment key={`cursor-${i}`}>{e.spec.renderXAxis!(f)}</Fragment>
+          ));
+        })()}
     </div>
   );
 }

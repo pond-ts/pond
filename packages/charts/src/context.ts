@@ -1,11 +1,11 @@
-import { createContext } from 'react';
+import { createContext, type ReactNode } from 'react';
 import type { ScaleContinuousNumeric, ScaleLinear, ScaleTime } from 'd3-scale';
 import type { ChartTheme } from './theme.js';
-import type { AxisFormat } from './format.js';
+import type { AxisFormat, CursorFormat } from './format.js';
 // Type-only (erased at runtime): swatch.ts imports RowContext from here, so a
 // value import in this direction would be a cycle; a type import is not.
 import type { LegendItemSpec } from './swatch.js';
-import type { Interval } from 'pond-ts';
+import type { Interval, Sequence, BoundedSequence } from 'pond-ts';
 import type {
   TradingTimeScale,
   DiscontinuityProvider,
@@ -342,6 +342,19 @@ export interface ContainerFrame {
   registerRow(key: symbol): () => void;
   /** The first (topmost) row's key, or `null` before any row has registered. */
   readonly firstRowKey: symbol | null;
+  /**
+   * Register a mounted **cursor** ({@link CursorEntry}) — the `<LineCursor>` /
+   * `<CrosshairCursor>` / … presets (and the deprecation shim synthesizing them
+   * from the legacy string props) call this, keyed by the component's
+   * per-instance slot key. The container resolves the per-row effective set
+   * (row mounts override container mounts — see `effectiveCursorEntries`) and
+   * the rows/`<XAxis>` render the registered slots. Update is in place;
+   * unregister on unmount.
+   */
+  registerCursor(key: symbol, entry: CursorEntry): void;
+  unregisterCursor(key: symbol): void;
+  /** Every registered cursor, in mount order (see {@link registerCursor}). */
+  readonly cursors: readonly CursorEntry[];
   /**
    * Register an annotation (`<Region>`/`<Marker>`/`<Baseline>`) so the container
    * can coordinate what a mark can't do in isolation: draw each mark's **guide
@@ -878,6 +891,183 @@ export type CursorMode =
   | 'flag'
   | 'crosshair'
   | 'region';
+
+/**
+ * How a cursor wants the shared `cursorX` snapped, **declared, resolved by the
+ * container** (interaction RFC A2.3). The x-snap consults each layer's
+ * `sampleAt` in the hovered row and writes the result into the shared
+ * {@link CursorFrame.cursorX} every other row reads — a cursor component has
+ * neither the layers nor the right to write that value, so it declares the
+ * policy and the container resolves it. Container resolves; slots draw.
+ *
+ * - `'none'` — the raw pointer x.
+ * - `'sample'` — snap to the nearest data sample's x (the crosshair).
+ * - `'sequence'` — bucket-shaped: the *rendering* snaps to the realized
+ *   sequence buckets (the range cursor's band); `cursorX` itself stays raw.
+ */
+export type CursorSnapX = 'none' | 'sample' | 'sequence';
+
+/**
+ * One resolved per-series measurement at the cursor — **finished numbers, not
+ * raw materials** (interaction RFC A2.3): the sample's plot pixels, the axis it
+ * scales against (id + side, so a pill can hug the right gutter), and its value
+ * already formatted by that axis's formatter. A cursor slot draws these; it
+ * never sees a scale, a format map, or an axis-side map.
+ */
+export interface ResolvedCursorSample {
+  readonly px: number;
+  readonly py: number;
+  readonly axisId: string;
+  readonly side: 'left' | 'right';
+  readonly formatted: string;
+  readonly color: string;
+  readonly label: string;
+}
+
+/** A resolved consolidated multi-value flag (a {@link RowLayer.cursorFlag}
+ *  layer — the BoxPlot): its anchor pixels + the formatted, coloured lines. */
+export interface ResolvedCursorFlag {
+  readonly px: number;
+  readonly topPy: number;
+  readonly lines: readonly { readonly text: string; readonly color: string }[];
+}
+
+/**
+ * The frame handed to a {@link CursorSpec}'s render slots — resolved geometry
+ * and finished measurements (RFC A2.3), never scales or format maps.
+ *
+ * **Internal for now** (deliberately not exported from `index.ts`): RFC Q3
+ * publishes the cursor contract only after every built-in preset — and the SR
+ * gapped crosshair — is written against it. The presets in `cursors.tsx` are
+ * that litmus; until it passes, this shape may still move.
+ */
+export interface ResolvedCursorFrame {
+  /** The shared plot-pixel x ({@link CursorFrame.cursorX}) — may be out of
+   *  `[0, plotWidth]` (a controlled tracker extrapolated); slots gate. */
+  readonly cursorX: number | null;
+  /** The hovered plot-pixel y (row-local; see {@link CursorFrame.cursorY}). */
+  readonly cursorY: number | null;
+  /** The **renderer's own** row, `null` in the x-axis slot… */
+  readonly rowKey: symbol | null;
+  /** …alongside the **hovered** row (A1.3: a slot needs both to know whether
+   *  it is drawing in the row the pointer is in). */
+  readonly hoveredRowKey: symbol | null;
+  /** Per-series resolved measurements at the cursor time (empty when the
+   *  effective cursors declared no need for them, or nothing is hovered). */
+  readonly samples: readonly ResolvedCursorSample[];
+  /** Resolved consolidated flags (BoxPlot) — the flag cursor's one-chip form. */
+  readonly flags: readonly ResolvedCursorFlag[];
+  /**
+   * The **raw pointer**'s y resolved against the row's default axis — position,
+   * formatted value, and axis side — or `null` when this row isn't hovered.
+   * The free (non-snapping) crosshair reads this; it is resolved here because a
+   * slot has no `yScale.invert` to do it itself.
+   */
+  readonly pointer: {
+    readonly py: number;
+    readonly formatted: string;
+    readonly side: 'left' | 'right';
+  } | null;
+  /** The range cursor's **band** under the pointer (bucket-snapped via the
+   *  declared sequence, else the drag span), as clamped plot pixels; `null`
+   *  when nothing to shade. Resolved by the container from `regionSpan`. */
+  readonly band: { readonly x0: number; readonly x1: number } | null;
+  /** Degenerate range cursor (no buckets, not mid-drag): draw a plain line. */
+  readonly bandLine: boolean;
+  /** The cursor time, formatted by the container's readout channel
+   *  (`formatReadout ?? formatTime` in a row; the axis's own resolved readout
+   *  formatter in the x-axis slot). `null` when out of bounds / not wanted. */
+  readonly formattedTime: string | null;
+  readonly plotWidth: number;
+  /** The renderer's row height (`0` in the x-axis slot). */
+  readonly rowHeight: number;
+  /** Whether this row is the topmost — the shared time chip shows once, here. */
+  readonly isFirstRow: boolean;
+  readonly theme: ChartTheme;
+  /** X-axis slot placement (set only when invoking {@link CursorSpec.renderXAxis}):
+   *  which side the axis strip is on and the pill's tick-label offset. */
+  readonly xAxis: {
+    readonly onTop: boolean;
+    readonly pillOffset: number;
+  } | null;
+}
+
+/**
+ * A mounted cursor's contract with the container (interaction RFC A2.3):
+ * **declared** snap plus up to three render slots taking resolved geometry.
+ * The container resolves (`cursorX` snapping, per-sample measurements, the
+ * band); the slots draw. Registered via {@link ContainerFrame.registerCursor}
+ * — the same idiom as `registerAxis` / `registerLayer`.
+ *
+ * Internal for now, like {@link ResolvedCursorFrame} (RFC Q3).
+ */
+export interface CursorSpec {
+  /** How the shared `cursorX` snaps while this cursor owns the hovered row. */
+  readonly snapX?: CursorSnapX;
+  /** SVG into the row's cursor overlay (above the data canvas — hovering never
+   *  repaints the canvas). */
+  renderPlot?(f: ResolvedCursorFrame): ReactNode;
+  /**
+   * DOM into the row's overlay, above the SVG — the value chips (inline /
+   * flag) and the in-plot time readout. NOT in RFC A2.3's three-slot shape:
+   * the production flag/inline cursors are DOM chips positioned in plot space,
+   * which "SVG into the overlay" cannot express — the same gap A1.3 called on
+   * §5. Kept internal; the published contract must resolve this (see the
+   * step-2 notes in the charts plan).
+   */
+  renderPlotHtml?(f: ResolvedCursorFrame): ReactNode;
+  /** DOM, per row: the axis-edge **value pill** (positioned via `axisPillX`,
+   *  overflowing the plot into its axis gutter). */
+  renderYGutter?(f: ResolvedCursorFrame): ReactNode;
+  /** DOM, on the shared x axis: the **time pill** (+ its connector). `<XAxis>`
+   *  shows it whenever the hovered row's effective cursor registers this slot
+   *  — the mount is the gate, not a mode string. */
+  renderXAxis?(f: ResolvedCursorFrame): ReactNode;
+}
+
+/** What a cursor needs the container to resolve per pointer move — declared at
+ *  registration so a line-only cursor never pays for per-sample measurement. */
+export interface CursorWants {
+  /** Per-series {@link ResolvedCursorSample}s (dots, chips, the reticle pick). */
+  readonly samples: boolean;
+  /** Consolidated {@link ResolvedCursorFlag}s (the flag cursor only). */
+  readonly flags: boolean;
+  /** The range band (+ the degenerate band line). */
+  readonly band: boolean;
+  /** The raw-pointer readout (the free crosshair). */
+  readonly pointer: boolean;
+  /** The formatted in-plot cursor time (`showTime` presets). */
+  readonly time: boolean;
+}
+
+/**
+ * A registered cursor as the container holds it: the {@link CursorSpec} plus
+ * the resolution inputs that must live on the registration rather than the
+ * spec — scope, gesture ownership, and the declared needs.
+ */
+export interface CursorEntry {
+  readonly spec: CursorSpec;
+  /** Mount scope: a row's key when mounted inside a `<ChartRow>` (the per-row
+   *  override), `null` when mounted at the container (the default for all rows). */
+  readonly rowKey: symbol | null;
+  /** Synthesized by the deprecation shim from the legacy string props. A scope
+   *  with any non-legacy (component-mounted) cursor drops its legacy entries —
+   *  mounting a component overrides the string prop during the window. */
+  readonly legacy: boolean;
+  /**
+   * Whether this cursor owns **snap and gesture** (RFC A2.5): at most one per
+   * scope (dev-warned otherwise), resolved to the hovered row's innermost
+   * mount. Render-only presets (line/point/inline/flag) stack freely.
+   */
+  readonly ownsGesture: boolean;
+  readonly wants: CursorWants;
+  /** The range cursor's bucket sequence (realized by the container into the
+   *  shared snap buckets — the `cursorSequence` successor). */
+  readonly sequence?: Sequence | BoundedSequence | undefined;
+  /** The cursor's readout format (the `cursorFormat` successor) — resolved by
+   *  the container into the shared readout channel. */
+  readonly format?: CursorFormat | undefined;
+}
 
 /** A registered layer plus the axis id it draws against. */
 export interface LayerEntry {

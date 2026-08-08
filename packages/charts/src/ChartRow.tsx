@@ -18,6 +18,7 @@ import { resolveAxisFormat } from './format.js';
 import { resolveYTickCount } from './yticks.js';
 import { placeAxisSlots, type SlotAxis } from './slots.js';
 import { useSlotKey } from './use-slot-key.js';
+import { LegacyCursor } from './cursors.js';
 import { YAxis } from './YAxis.js';
 import {
   ContainerContext,
@@ -107,8 +108,15 @@ const TOP_LABEL_HEADER = 16;
 export interface ChartRowProps {
   /** Row height in CSS pixels. */
   height: number;
-  /** Cursor presentation for this row, overriding the container's default
-   *  ({@link ChartContainerProps.cursor}). Omit to inherit. See {@link CursorMode}. */
+  /**
+   * Cursor presentation for this row, overriding the container's default
+   * ({@link ChartContainerProps.cursor}). Omit to inherit. See {@link CursorMode}.
+   *
+   * @deprecated Mount a cursor component **inside the row** instead
+   * (`<ChartRow><CrosshairCursor /> …</ChartRow>`) — the per-row override with
+   * the same nearest-mount-wins semantics. Works for one more minor; a mounted
+   * cursor in the row overrides this prop.
+   */
   cursor?: CursorMode;
   children?: ReactNode;
 }
@@ -142,6 +150,20 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
   const { registerRow } = container;
   useEffect(() => registerRow(rowKey), [registerRow, rowKey]);
   const isFirstRow = container.firstRowKey === rowKey;
+
+  // Deprecation notice for the legacy `cursor` prop (dev, once per row): the
+  // per-row override is now a cursor component mounted inside the row. The
+  // prop keeps working via the shim rendered below.
+  const warnedCursorRef = useRef(false);
+  useEffect(() => {
+    if (!isDev || cursor === undefined || warnedCursorRef.current) return;
+    warnedCursorRef.current = true;
+    console.warn(
+      `[pond-charts] <ChartRow cursor="${cursor}"> is deprecated (it keeps ` +
+        'working this minor, removed next) — mount the cursor component ' +
+        'inside the row instead (docs/rfcs/interaction.md §9).',
+    );
+  }, [cursor]);
 
   // Keyed by a stable per-instance id (Map preserves insertion order; setting an
   // existing key updates in place). So a re-register on a prop change keeps the
@@ -501,6 +523,16 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
 
   return (
     <RowContext.Provider value={frame}>
+      {/* The deprecation shim for the legacy row-level `cursor` override:
+          synthesized inside the row's context so it registers row-scoped. A
+          cursor component mounted in this row overrides it. */}
+      {cursor !== undefined && (
+        <LegacyCursor
+          mode={cursor}
+          showTime={container.cursorTime}
+          snap={container.crosshairSnap}
+        />
+      )}
       <div
         style={{
           display: 'flex',

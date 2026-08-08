@@ -1,6 +1,7 @@
 import {
   Children,
   cloneElement,
+  Fragment,
   isValidElement,
   useCallback,
   useContext,
@@ -17,7 +18,8 @@ import {
 } from 'react';
 import { Canvas } from './Canvas.js';
 import { drawGrid, drawDividers, dividerAlphas, thinPixels } from './grid.js';
-import { cursorParts, bandRect, regionSpan } from './tracker.js';
+import { bandRect, regionSpan } from './tracker.js';
+import { effectiveCursorEntries, gestureOwner } from './cursors.js';
 import { resolveSelection } from './select.js';
 import {
   panRange,
@@ -26,7 +28,6 @@ import {
   zoomRangeTrading,
 } from './viewport.js';
 import { yTickValues } from './yticks.js';
-import { flagChipStyle, flagChipX, axisPillX, axisPillStyle } from './chip.js';
 import {
   ContainerContext,
   CursorContext,
@@ -34,6 +35,9 @@ import {
   RowContext,
   type LayerRegistry,
   type LayerDrawInfo,
+  type ResolvedCursorFlag,
+  type ResolvedCursorFrame,
+  type ResolvedCursorSample,
 } from './context.js';
 
 /** Fallback **y**-gridline tick count, used only before the row publishes its
@@ -76,10 +80,6 @@ const ZOOM_SENSITIVITY = 0.0015;
  *  it still selects. One threshold for both so a click never also nudges the pan
  *  (and never hit-tests against a shifted scale). */
 const DRAG_SLOP = 4;
-
-/** Past this fraction of the plot, a readout label flips left of its dot so it
- *  doesn't overflow the right edge. */
-const LABEL_FLIP_FRACTION = 0.85;
 
 export interface LayersProps {
   children?: ReactNode;
@@ -353,20 +353,29 @@ export function Layers({ children }: LayersProps) {
   // pointer is over — syncs the cursor across every row for free. cursorX is a
   // *pixel*, so it stays put while a live window slides; the time + values under
   // it derive from the current xScale.
-  const { cursorTime: showCursorTime, formatTime } = container;
+  const { formatTime } = container;
   const { cursorX } = cursor;
-  // Cursor mode: the row's override, else the container default. One mode per
-  // row (the synced vertical line is shared across rows); each layer renders the
-  // mode in its own way. `parts` decomposes it into {line, dots, chip}.
+  // The cursors in effect for THIS row: its own mounts (the per-row override —
+  // a component mounted in the row, or the `<ChartRow cursor>` shim), else the
+  // container's. Each registered a spec whose slots this overlay renders; what
+  // the container must resolve per move is the union of their declared needs.
   // Editing suppresses the data cursor — the marks get the surface (hover/drag),
   // and a crosshair would just be noise. True in global edit mode *and* while a
   // single annotation is being edited (the double-click target).
   const editingActive =
     container.editAnnotations || container.annotations.some((a) => a.editing);
-  const parts = editingActive
-    ? cursorParts('none')
-    : cursorParts(row.cursor ?? container.cursor);
-  const cursorColor = container.theme.cursor ?? container.theme.axis.label;
+  const cursorEntries = useMemo(
+    () =>
+      editingActive
+        ? []
+        : effectiveCursorEntries(container.cursors, row.rowKey),
+    [editingActive, container.cursors, row.rowKey],
+  );
+  const wantsSamples = cursorEntries.some((e) => e.wants.samples);
+  const wantsFlags = cursorEntries.some((e) => e.wants.flags);
+  const wantsBand = cursorEntries.some((e) => e.wants.band);
+  const wantsPointer = cursorEntries.some((e) => e.wants.pointer);
+  const wantsTime = cursorEntries.some((e) => e.wants.time);
   // Only read a time when the cursor is within the plot. An out-of-bounds
   // controlled trackerPosition hides the cursor, so the dots + chips hide too —
   // gating cursorTime makes trackerSamples empty, which drives both the SVG marks
@@ -376,23 +385,16 @@ export function Layers({ children }: LayersProps) {
       ? +xScale.invert(cursorX)
       : null;
 
-  // Per-layer readout samples at the cursor time (nearest data point) — pixel
-  // position + value + colour. Drives the overlay dots and the DOM value labels;
-  // recomputes as the cursor moves or the window slides under it. Empty when not
-  // hovering, so the data canvas is never touched.
-  const trackerSamples = useMemo(() => {
-    // Only needed for the in-chart dots / chips; skip the per-layer walk when the
-    // mode shows neither (the off-chart readout fans in separately on the container).
-    if (cursorTime === null || (!parts.dots && parts.chip === 'none'))
-      return [];
-    const out: {
-      px: number;
-      py: number;
-      value: number;
-      color: string;
-      format: (v: number) => string;
-      side: 'left' | 'right';
-    }[] = [];
+  // Per-layer readout samples at the cursor time (nearest data point) —
+  // **finished measurements** (RFC A2.3): pixel position, axis id + side, and
+  // the value already formatted by that axis's formatter. Drives the cursor
+  // slots' dots and value labels; recomputes as the cursor moves or the window
+  // slides under it. Empty when not hovering — or when no effective cursor
+  // declared a need — so the data canvas is never touched and a line-only
+  // cursor never pays the per-layer walk.
+  const trackerSamples = useMemo<readonly ResolvedCursorSample[]>(() => {
+    if (cursorTime === null || !wantsSamples) return [];
+    const out: ResolvedCursorSample[] = [];
     for (const entry of layers) {
       // A layer with a consolidated flag (BoxPlot) renders that, not per-sample
       // dots/chips — skip it here (its values still fan to the off-chart readout
@@ -410,37 +412,32 @@ export function Layers({ children }: LayersProps) {
         out.push({
           px: xScale(s.x),
           py: yScale(s.value),
-          value: s.value,
-          color: s.color,
-          format: fmt,
+          axisId,
           side,
+          formatted: fmt(s.value),
+          color: s.color,
+          label: s.label,
         });
       }
     }
     return out;
   }, [
     cursorTime,
+    wantsSamples,
     layers,
     yScales,
     formats,
     axisSides,
     xScale,
     defaultAxisId,
-    parts.dots,
-    parts.chip,
   ]);
 
-  // Consolidated multi-value flags (BoxPlot) — one flag per such layer, only in
-  // `flag` mode: all the box's values on one chip, anchored at its top-centre
-  // (`px`, `topPy`). Rendered as one staff + one multi-line chip (vs the
-  // per-sample dots/chips above), the values each coloured to their box piece.
-  const trackerFlags = useMemo(() => {
-    if (cursorTime === null || parts.chip !== 'flag') return [];
-    const out: {
-      px: number;
-      topPy: number;
-      lines: { text: string; color: string }[];
-    }[] = [];
+  // Consolidated multi-value flags (BoxPlot) — one flag per such layer, wanted
+  // by the flag cursor only: all the box's values on one chip, anchored at its
+  // top-centre (`px`, `topPy`), each line formatted + coloured to its piece.
+  const trackerFlags = useMemo<readonly ResolvedCursorFlag[]>(() => {
+    if (cursorTime === null || !wantsFlags) return [];
+    const out: ResolvedCursorFlag[] = [];
     for (const entry of layers) {
       const flagOf = entry.layer.cursorFlag;
       if (flagOf === undefined) continue;
@@ -459,7 +456,7 @@ export function Layers({ children }: LayersProps) {
       });
     }
     return out;
-  }, [cursorTime, layers, yScales, formats, xScale, defaultAxisId, parts.chip]);
+  }, [cursorTime, wantsFlags, layers, yScales, formats, xScale, defaultAxisId]);
 
   // Pan/zoom + tracker share the plot's event surface. Container fields are read
   // through a ref so the handlers + the (once-attached) wheel listener always see
@@ -694,16 +691,18 @@ export function Layers({ children }: LayersProps) {
       const r = rowRef.current;
       const rawX = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
       const py = Math.max(0, Math.min(r.height, e.clientY - rect.top));
-      // Crosshair with `crosshairSnap` (default): snap the shared vertical line to
-      // the nearest sample's x, so the reticle centres on a real data point (and
-      // stays aligned across rows on a shared grid). Free mode keeps the raw x.
-      // Crosshair always snaps the shared vertical line (and so the x-time pill)
-      // to the nearest sample's x — the reticle rides the data grid on x, giving a
-      // clean time readout (a raw pointer time formats to unreadable sub-second
-      // precision). `crosshairSnap` only governs the *y* (snap to the value vs a
-      // free horizontal line at the pointer). This is ChartIQ's model.
+      // The declared x-snap, resolved BY the container (RFC A2.3): the hovered
+      // row's gesture-owning cursor (its innermost mount — A2.5) declares
+      // `snapX`, and `'sample'` snaps the shared vertical line to the nearest
+      // sample's x so the reticle centres on a real data point (and stays
+      // aligned across rows on a shared grid). The crosshair declares it
+      // unconditionally — x always rides the data grid for a clean time
+      // readout; its `snap` prop only governs the *y* (ChartIQ's model). A
+      // cursor component could never do this itself: it has neither the
+      // layers nor the right to write the shared cursorX.
       let px = rawX;
-      if ((r.cursor ?? c.cursor) === 'crosshair') {
+      const owner = gestureOwner(effectiveCursorEntries(c.cursors, r.rowKey));
+      if (owner?.spec.snapX === 'sample') {
         const t = +c.xScale.invert(rawX);
         for (const entry of r.layers) {
           if (entry.layer.cursorFlag) continue;
@@ -954,101 +953,56 @@ export function Layers({ children }: LayersProps) {
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
-  // Cursor presentation is a DOM/SVG overlay (no cursor canvas): an SVG holds the
-  // line / dots / flag staffs; these value chips (DOM, crisp text) sit beside each
-  // dot ('inline', clamped within the row) or stack at the top of the flag staff
-  // ('flag'). line / point / none draw no chips — surface values off-chart.
-  const flagLineHeight = container.theme.font.size + 5;
-  // Cursor chips share the annotation label look (filled, no outline) — one
-  // source of truth so a flag and a placed label read as the same object.
-  const chipStyle = flagChipStyle(container.theme);
-  // Show the cursor's time atop the readout (opt-in via `cursorTime`), whenever
-  // the cursor is active (any mode that draws marks). A single chip at the cursor
-  // x, top of the row; for `flag` it sits above the value chips (which shift down).
-  // The time is shared across rows (one cursor, one time), so it shows **once**,
-  // atop the first row — not repeated per row. (Gating it here also drops the
-  // top-of-stack space reservation on the other rows, see `flagBase`.)
-  // Crosshair (`chip: 'axis'`) is excluded: it pins the time to the shared x-axis
-  // pill (`<XAxis>`), so a per-row chip here would double it (and land wrong on a
-  // stacked row).
-  const showTime =
-    showCursorTime &&
-    cursorTime !== null &&
-    (parts.line || parts.dots) &&
-    parts.chip !== 'axis' &&
-    row.isFirstRow;
-  // Flag geometry: each value flies as a flag from the top of its own staff — the
-  // chip's top sits at `flagBase` (just below the time chip when shown) and the
-  // staff drops from there to the dot. (Chips share that top and spread by x, so
-  // near-coincident flags can overlap — a de-overlap heuristic is a follow-up.)
-  const flagTop = 2;
-  const flagBase = flagTop + (showTime ? flagLineHeight : 0);
-  // The cursor-time chip caps the readout. In `flag` mode it tops the flag stack,
-  // so anchor it to the stack's x (the nearest sample's point) so time + flag +
-  // staff + dot read as one column; otherwise it labels the cursor line at cursorX.
-  const timeX =
-    parts.chip === 'flag' && trackerSamples.length > 0
-      ? trackerSamples[0]!.px
-      : cursorX;
+  // ── The resolved cursor frame (RFC A2.3) — finished measurements for the
+  // effective cursors' render slots. Everything below is *resolution*: the
+  // slots (in cursors.tsx, or eventually user-authored) only draw.
 
-  // Crosshair reticle (`chip: 'axis'`): a single centre for THIS row — the
-  // horizontal line + centre dot + value pill anchor to `center.py` (the vertical
-  // line is the shared `cursorX`, drawn in every row). Snap: the sample nearest
-  // the pointer y in the hovered row (or the first sample when nothing's hovered,
-  // e.g. a pinned demo — so every row shows a reticle then). Free: the raw pointer
-  // y in the hovered row, its value via `yScale.invert`. `null` ⇒ vertical only.
-  const cursorInBounds =
-    cursorX !== null && cursorX >= 0 && cursorX <= plotWidth;
-  const reticle: {
-    py: number;
-    value: number;
-    format: (v: number) => string;
-    side: 'left' | 'right';
-  } | null = (() => {
-    if (parts.chip !== 'axis' || !cursorInBounds) return null;
-    const hoveredRow = cursor.cursorRowKey === row.rowKey;
-    const cy = cursor.cursorY;
-    if (container.crosshairSnap) {
-      if (trackerSamples.length === 0) return null;
-      const pick =
-        hoveredRow && cy !== null
-          ? trackerSamples.reduce((a, b) =>
-              Math.abs(b.py - cy) < Math.abs(a.py - cy) ? b : a,
-            )
-          : cursor.cursorRowKey === null
-            ? trackerSamples[0]!
-            : null;
-      return pick
-        ? {
-            py: pick.py,
-            value: pick.value,
-            format: pick.format,
-            side: pick.side,
-          }
-        : null;
-    }
-    // Free reticle — the raw pointer y in the hovered row.
-    if (!hoveredRow || cy === null) return null;
+  // The raw pointer's y resolved against the row's default axis — the free
+  // (non-snapping) crosshair's centre. Only in the hovered row, and only when
+  // an effective cursor declared the need; a slot has no `yScale.invert` of
+  // its own, which is exactly why this is resolved here.
+  const pointer = useMemo<ResolvedCursorFrame['pointer']>(() => {
+    if (!wantsPointer) return null;
+    if (cursor.cursorRowKey !== row.rowKey || cursor.cursorY === null)
+      return null;
     const ys = yScales.get(defaultAxisId);
     if (ys === undefined) return null;
+    const fmt = formats.get(defaultAxisId) ?? String;
     return {
-      py: cy,
-      value: ys.invert(cy),
-      format: formats.get(defaultAxisId) ?? String,
+      py: cursor.cursorY,
+      formatted: fmt(ys.invert(cursor.cursorY)),
       side: axisSides.get(defaultAxisId) ?? 'left',
     };
-  })();
+  }, [
+    wantsPointer,
+    cursor.cursorRowKey,
+    cursor.cursorY,
+    row.rowKey,
+    yScales,
+    formats,
+    axisSides,
+    defaultAxisId,
+  ]);
 
-  // `region` cursor (continuous x axis — time or value): shade the span under the
-  // pointer. With a `cursorSequence` (time axis only) the band snaps to the bucket
-  // (and extends bucket by bucket under a drag); with none — always the case on a
-  // value axis — it's the **freeform** case: a bare hover draws a plain line
-  // (`regionLine`), a drag shades the raw `[anchor, pointer]`. Edges map through
-  // `xScale`, so on a trading-time axis the band crops to live time.
-  const regionActive =
-    parts.band && (container.xKind === 'time' || container.xKind === 'value');
+  // The in-plot cursor time, readout-formatted — the `showTime` presets' chip
+  // text. The time is shared across rows (one cursor, one time), so the chip
+  // itself shows once, atop the first row; formatting is skipped entirely when
+  // no effective cursor wants it.
+  const formattedTime =
+    wantsTime && cursorTime !== null
+      ? (container.formatReadout ?? formatTime)(cursorTime)
+      : null;
+
+  // The range cursor's band (continuous x axis — time or value): shade the
+  // span under the pointer. With snap buckets (a sequence / a histogram's
+  // bins) the band snaps to the bucket (and extends bucket by bucket under a
+  // legacy drag); with none it's the **freeform** case — a bare hover draws a
+  // plain line (`bandLine`), a drag shades the raw `[anchor, pointer]`. Edges
+  // map through `xScale`, so on a trading-time axis the band crops to live time.
+  const bandActive =
+    wantsBand && (container.xKind === 'time' || container.xKind === 'value');
   const band: { x0: number; x1: number } | null =
-    regionActive && cursorTime !== null
+    bandActive && cursorTime !== null
       ? bandRect(
           container.cursorBuckets ?? [],
           cursorTime,
@@ -1057,14 +1011,32 @@ export function Layers({ children }: LayersProps) {
           container.regionAnchor ?? undefined,
         )
       : null;
-  // Degenerate region cursor (no sequence, not mid-drag): a plain vertical line.
-  const regionLine =
-    regionActive &&
+  // Degenerate range cursor (no buckets, not mid-drag): a plain vertical line.
+  const bandLine =
+    bandActive &&
     container.cursorBuckets === undefined &&
     container.regionAnchor === null &&
     cursorX !== null &&
     cursorX >= 0 &&
     cursorX <= plotWidth;
+
+  const cursorRenderFrame: ResolvedCursorFrame = {
+    cursorX,
+    cursorY: cursor.cursorY,
+    rowKey: row.rowKey,
+    hoveredRowKey: cursor.cursorRowKey,
+    samples: trackerSamples,
+    flags: trackerFlags,
+    pointer,
+    band,
+    bandLine,
+    formattedTime,
+    plotWidth,
+    rowHeight: row.height,
+    isFirstRow: row.isFirstRow,
+    theme: container.theme,
+    xAxis: null,
+  };
 
   // Cross-row guide lines: the x-positions of annotations on the OTHER rows
   // (markers + region edges), so a mark on one row reads against this row's data +
@@ -1250,9 +1222,11 @@ export function Layers({ children }: LayersProps) {
             register through LayersContext. Inside the plot div so annotations
             share its 0..plotWidth × 0..height coordinate space. */}
         {indexedChildren}
-        {/* Cursor overlay (SVG, above the data canvas): the synced line, the
-            per-series dots, and the flag staffs — all crisp + positioned in plot
-            space, no second canvas. Value chips are DOM divs below. */}
+        {/* Cursor overlay (SVG, above the data canvas): each effective
+            cursor's `renderPlot` slot draws here — the synced line, the
+            per-series dots, the flag staffs, the reticle — all crisp +
+            positioned in plot space, no second canvas. Stacked render-only
+            presets render in mount order (RFC A2.5). */}
         <svg
           width={plotWidth}
           height={row.height}
@@ -1263,240 +1237,32 @@ export function Layers({ children }: LayersProps) {
             pointerEvents: 'none',
           }}
         >
-          {band !== null && (
-            <rect
-              x={band.x0}
-              y={0}
-              width={band.x1 - band.x0}
-              height={row.height}
-              fill={cursorColor}
-              opacity={0.12}
-            />
+          {cursorEntries.map((e, i) =>
+            e.spec.renderPlot ? (
+              <Fragment key={`cursor-plot-${i}`}>
+                {e.spec.renderPlot(cursorRenderFrame)}
+              </Fragment>
+            ) : null,
           )}
-          {regionLine && cursorX !== null && (
-            <line
-              x1={Math.round(cursorX)}
-              y1={0}
-              x2={Math.round(cursorX)}
-              y2={row.height}
-              stroke={cursorColor}
-              strokeWidth={1}
-              shapeRendering="crispEdges"
-            />
-          )}
-          {parts.line &&
-            cursorX !== null &&
-            cursorX >= 0 &&
-            cursorX <= plotWidth && (
-              <line
-                x1={Math.round(cursorX)}
-                y1={0}
-                x2={Math.round(cursorX)}
-                y2={row.height}
-                stroke={cursorColor}
-                strokeWidth={1}
-                shapeRendering="crispEdges"
-              />
-            )}
-          {/* Flag staffs: a faint pole from the flag's top (`flagBase`) down to
-              each dot (skipped when the dot is above that top). */}
-          {parts.chip === 'flag' &&
-            trackerSamples.map((s, i) =>
-              s.py > flagBase ? (
-                <line
-                  key={`staff-${i}`}
-                  x1={s.px}
-                  y1={flagBase}
-                  x2={s.px}
-                  y2={s.py}
-                  stroke={cursorColor}
-                  strokeWidth={1}
-                  opacity={0.5}
-                />
-              ) : null,
-            )}
-          {/* Box flags: one staff per consolidated-flag layer, from the flag's
-              top (`flagBase`) down to the mark's top-centre (skipped when the
-              mark top is above the flag). */}
-          {parts.chip === 'flag' &&
-            trackerFlags.map((f, i) =>
-              f.topPy > flagBase ? (
-                <line
-                  key={`boxstaff-${i}`}
-                  x1={f.px}
-                  y1={flagBase}
-                  x2={f.px}
-                  y2={f.topPy}
-                  stroke={cursorColor}
-                  strokeWidth={1}
-                  opacity={0.5}
-                />
-              ) : null,
-            )}
-          {/* Crosshair reticle: a full-height dashed vertical line (the shared
-              cursor x, in every row) + — in the row with a centre — a full-width
-              dashed horizontal line and a centre dot at the value. */}
-          {parts.chip === 'axis' &&
-            cursorX !== null &&
-            cursorX >= 0 &&
-            cursorX <= plotWidth && (
-              <>
-                <line
-                  x1={Math.round(cursorX)}
-                  y1={0}
-                  x2={Math.round(cursorX)}
-                  y2={row.height}
-                  stroke={cursorColor}
-                  strokeWidth={1}
-                  strokeDasharray="3 3"
-                  shapeRendering="crispEdges"
-                />
-                {reticle && (
-                  <>
-                    <line
-                      x1={0}
-                      y1={Math.round(reticle.py)}
-                      x2={plotWidth}
-                      y2={Math.round(reticle.py)}
-                      stroke={cursorColor}
-                      strokeWidth={1}
-                      strokeDasharray="3 3"
-                      shapeRendering="crispEdges"
-                    />
-                    <circle
-                      cx={cursorX}
-                      cy={reticle.py}
-                      r={3}
-                      fill={cursorColor}
-                      stroke={background}
-                      strokeWidth={background ? 1 : 0}
-                    />
-                  </>
-                )}
-              </>
-            )}
-          {parts.dots &&
-            trackerSamples.map((s, i) => (
-              <circle
-                key={`dot-${i}`}
-                cx={s.px}
-                cy={s.py}
-                r={3}
-                fill={s.color}
-                stroke={background}
-                strokeWidth={background ? 1 : 0}
-              />
-            ))}
         </svg>
-        {/* Cursor time atop the readout (opt-in); the `!== null` checks gate to
-            an in-bounds, active cursor and narrow the types. The time is **plain
-            text, no chip background** — only the value flags below it are filled
-            panels. */}
-        {showTime && timeX !== null && cursorTime !== null && (
-          <div
-            style={{
-              ...chipStyle,
-              background: 'transparent',
-              padding: 0,
-              top: `${flagTop}px`,
-              left:
-                timeX > plotWidth * LABEL_FLIP_FRACTION
-                  ? undefined
-                  : `${timeX + 4}px`,
-              right:
-                timeX > plotWidth * LABEL_FLIP_FRACTION
-                  ? `${plotWidth - timeX + 4}px`
-                  : undefined,
-              color: cursorColor,
-            }}
-          >
-            {(container.formatReadout ?? formatTime)(cursorTime)}
-          </div>
+        {/* The cursors' DOM slots, above the SVG: the in-plot chips
+            (`renderPlotHtml` — value chips, the time readout) and the
+            axis-edge value pills (`renderYGutter` — positioned to overflow
+            into the axis gutter, zIndex over the sibling axis column). */}
+        {cursorEntries.map((e, i) =>
+          e.spec.renderPlotHtml ? (
+            <Fragment key={`cursor-html-${i}`}>
+              {e.spec.renderPlotHtml(cursorRenderFrame)}
+            </Fragment>
+          ) : null,
         )}
-        {parts.chip === 'inline' &&
-          trackerSamples.map((s, i) => {
-            // Flip the chip left of its dot near the right edge so it stays in-plot.
-            const flip = s.px > plotWidth * LABEL_FLIP_FRACTION;
-            // Clamp within the row so a chip near the top/bottom isn't clipped by
-            // (or spilling into) the neighbouring row. Chip-vs-chip de-overlap is
-            // a later refinement; this keeps each chip inside its own row.
-            const top = Math.max(
-              flagLineHeight / 2,
-              Math.min(row.height - flagLineHeight / 2, s.py),
-            );
-            return (
-              <div
-                key={i}
-                style={{
-                  ...chipStyle,
-                  top: `${top}px`,
-                  transform: 'translateY(-50%)',
-                  left: flip ? undefined : `${s.px + 8}px`,
-                  right: flip ? `${plotWidth - s.px + 8}px` : undefined,
-                  color: s.color,
-                }}
-              >
-                {s.format(s.value)}
-              </div>
-            );
-          })}
-        {/* Crosshair value pill: the reticle's centre value, on the axis gutter
-            (`zIndex` over the sibling axis column — the same placement as
-            YAxisIndicator's default), clamped inside the row. */}
-        {reticle && (
-          <div
-            style={{
-              ...axisPillStyle(container.theme, cursorColor),
-              top: `${Math.max(
-                flagLineHeight / 2,
-                Math.min(row.height - flagLineHeight / 2, reticle.py),
-              )}px`,
-              transform: 'translateY(-50%)',
-              ...axisPillX(reticle.side, plotWidth),
-            }}
-          >
-            {reticle.format(reticle.value)}
-          </div>
+        {cursorEntries.map((e, i) =>
+          e.spec.renderYGutter ? (
+            <Fragment key={`cursor-gutter-${i}`}>
+              {e.spec.renderYGutter(cursorRenderFrame)}
+            </Fragment>
+          ) : null,
         )}
-        {parts.chip === 'flag' &&
-          cursorX !== null &&
-          trackerSamples.map((s, i) => (
-            // The flag flies from the top of its staff — chip top at the staff top
-            // (`flagBase`), beside the pole at the point's x (shared `flagChipX`).
-            <div
-              key={i}
-              style={{
-                ...chipStyle,
-                top: `${flagBase}px`,
-                ...flagChipX(s.px, plotWidth),
-                color: s.color,
-              }}
-            >
-              {s.format(s.value)}
-            </div>
-          ))}
-        {/* Box flag: one chip listing all the box's values, each coloured to its
-            piece, anchored at the box's centre x (atop its staff). */}
-        {parts.chip === 'flag' &&
-          trackerFlags.map((f, i) => (
-            <div
-              key={`boxflag-${i}`}
-              style={{
-                ...chipStyle,
-                top: `${flagBase}px`,
-                ...flagChipX(f.px, plotWidth),
-                display: 'flex',
-                flexDirection: 'row',
-                gap: '6px',
-              }}
-            >
-              {f.lines.map((l, j) => (
-                <span key={j} style={{ color: l.color }}>
-                  {l.text}
-                </span>
-              ))}
-            </div>
-          ))}
       </div>
     </LayersContext.Provider>
   );

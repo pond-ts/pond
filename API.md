@@ -242,7 +242,7 @@ Types: `UseSnapshotOptions`, `SnapshotSource` (structural — covers
 | Component                   | Key props                                                                                                                                                                                                     | Purpose                                          | Source                                                 |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------ |
 | `ChartContainer`            | `width`, `range?`, `theme?`, `cursor?`, `panZoom?`, `bounds?`, `showAxis?`, `calendar?`, `origin?`, `maxBandWidth?`/`bandAlign?`, `selected?` (mark \| set), `onSelect?`, `onTrackerChanged?`, `onDrawStats?` | Root: shared x-scale, interactions, annotations  | `packages/charts/src/ChartContainer.tsx`               |
-| `ChartRow`                  | `height`, `cursor?`                                                                                                                                                                                           | One stacked plot band; owns its y-axes           | `packages/charts/src/ChartRow.tsx`                     |
+| `ChartRow`                  | `height`, `cursor?` (deprecated — mount a cursor in the row)                                                                                                                                                  | One stacked plot band; owns its y-axes           | `packages/charts/src/ChartRow.tsx`                     |
 | `Layers`                    | children                                                                                                                                                                                                      | Mandatory z-stack inside a row (back-to-front)   | `packages/charts/src/Layers.tsx`                       |
 | `YAxis`                     | `id` (req), `side?`, `scale?` (`'linear'` \| `'log'`), `min?`/`max?`, `format?`, `width?`, `hide?`                                                                                                            | Y-axis gutter; layers bind via their `axis` prop | `packages/charts/src/YAxis.tsx`                        |
 | `XAxis`                     | `side?`, `label?`, `format?`, `ticks?`, `transform?`, `dateStyle?`                                                                                                                                            | Placeable x-axis strip; kind inferred from data  | `packages/charts/src/XAxis.tsx`                        |
@@ -286,6 +286,25 @@ schema columns). Because the union splits per series _kind_, a value typed as
 | `Marker`         | `at`, `label?`, `indicator?`, `onChange?`             | Vertical x line                                                                                                        | `packages/charts/src/annotations.tsx` |
 | `Zone`           | `from`, `to`, `axis?`, `role?`, `label?`, `edges?`    | Shaded y-span — a value-axis scale (AQI categories, HR zones); inert + edge-less by default, `±Infinity` for open ends | `packages/charts/src/annotations.tsx` |
 | `YAxisIndicator` | `value?` \| `source?`, `axis?`, `format?`             | Live value pill pinned to a y-axis edge                                                                                | `packages/charts/src/indicators.tsx`  |
+
+### Components — cursors (mounted presets)
+
+The `cursor` string modes as components (interaction RFC §4/A4.1) — mount one
+as a child of `<ChartContainer>` (the default for every row) or inside a
+`<ChartRow>` (the per-row override). Render-only presets stack; one
+gesture-owning cursor (`Crosshair`/`Range`) per scope. The `cursor` /
+`cursorTime` / `crosshairSnap` / `cursorFormat` / `cursorSequence` props (and
+`<ChartRow cursor>`) are **deprecated** — they keep working for one minor via
+an internal shim. The underlying `CursorSpec` contract stays unpublished (Q3).
+
+| Component         | Key props                       | Purpose                                                                             | Source                            |
+| ----------------- | ------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------- |
+| `LineCursor`      | `showTime?`                     | The synced vertical line (`cursor="line"`, the legacy default)                      | `packages/charts/src/cursors.tsx` |
+| `PointCursor`     | `showTime?`                     | A dot on each series at the cursor (`"point"`)                                      | `packages/charts/src/cursors.tsx` |
+| `InlineCursor`    | `showTime?`                     | Dots + a value chip beside each (`"inline"`)                                        | `packages/charts/src/cursors.tsx` |
+| `FlagCursor`      | `showTime?`                     | Dots + staffed value flags stacked at the top (`"flag"`)                            | `packages/charts/src/cursors.tsx` |
+| `CrosshairCursor` | `snap?`, `showTime?`, `format?` | The inspection reticle: dashed cross, y value pill, x time pill (`"crosshair"`)     | `packages/charts/src/cursors.tsx` |
+| `RangeCursor`     | `sequence?`                     | The hover-time band over the bucket under the pointer (`"region"`); drag lands next | `packages/charts/src/cursors.tsx` |
 
 ### Components — standalone row lists (DOM tables, no `<ChartContainer>`)
 

@@ -185,6 +185,28 @@ export type { ChartThemeOverrides, VarReader } from './css-theme.js';
 export { useChartTheme } from './useChartTheme.js';
 export type { UseChartThemeOptions } from './useChartTheme.js';
 
+// Cursor presets — the mounted-component successors of the `cursor` string
+// modes (interaction RFC §4/A4.1): mount one as a child of <ChartContainer>
+// (the default for every row) or inside a <ChartRow> (the per-row override).
+// The underlying CursorSpec / ResolvedCursorFrame contract stays unpublished
+// until the presets have proven it (RFC Q3).
+export {
+  LineCursor,
+  PointCursor,
+  InlineCursor,
+  FlagCursor,
+  CrosshairCursor,
+  RangeCursor,
+} from './cursors.js';
+export type {
+  LineCursorProps,
+  PointCursorProps,
+  InlineCursorProps,
+  FlagCursorProps,
+  CrosshairCursorProps,
+  RangeCursorProps,
+} from './cursors.js';
+
 // Public interaction types — the callback params for the tracker + selection
 // (`onTrackerChanged`, `onSelect`) and the `cursor` mode.
 export type {

@@ -94,6 +94,12 @@ export const DEFAULT_CURSOR_MODE: CursorMode = 'line';
  * presets — `line` is line-only, `point` / `inline` / `flag` are dot-based with
  * no line, `none` draws nothing. `flag` raises a staff from each point to a
  * value flag stacked near the top of the row (drawn in `Layers`).
+ *
+ * **Superseded by the mounted cursor presets** (`cursors.tsx` — each mode's
+ * drawing now lives in its component's registered spec): `Layers` no longer
+ * reads this. Kept, with its tests, for the life of the `cursor` string-prop
+ * deprecation window as the pinned record of what each mode drew; delete both
+ * when the modes go.
  */
 export function cursorParts(mode: CursorMode): {
   readonly line: boolean;
