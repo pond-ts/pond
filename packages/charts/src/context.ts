@@ -128,14 +128,26 @@ export interface ContainerFrame {
    */
   readonly selected: readonly SelectInfo[];
   /**
-   * Select a mark, or `null` to clear — a row's click surface calls this after
-   * hit-testing its layers. Always fires `onSelect`; manages the internal
-   * selection only when uncontrolled (no `selectedKey` prop). The split mirrors
-   * the tracker's `trackerPosition` (controlled by a *value* prop) + its
-   * `onTrackerChanged` notification — not `applyRange`, which is controlled by
-   * the presence of a *callback*.
+   * Select a mark, or `null` to clear. Reports the hit to the `<Selector>`s in
+   * scope and manages the internal selection only when uncontrolled (no
+   * `selected` prop). The split mirrors the tracker's `trackerPosition`
+   * (controlled by a *value* prop) + its `onTrackerChanged` notification — not
+   * `applyRange`, which is controlled by the presence of a *callback*.
+   *
+   * **`rowKey` distinguishes the two callers, and it is load-bearing**
+   * (interaction RFC §7.1). Pass a row's key for a **plot gesture** — the row's
+   * click surface, after hit-testing — and the call is *gated on a mounted
+   * `<Selector>`*: with none in scope it does nothing at all (the deliberate
+   * break), and dev-warns on the hit that went nowhere. Omit it for a
+   * **programmatic** select (a `<Legend>` chip, a consumer's own control),
+   * which reports to the container-scoped selectors and commits as it always
+   * has — mounting gates the *plot*, not an explicit call.
    */
-  select(hit: SelectInfo | null, modifiers?: SelectModifiers): void;
+  select(
+    hit: SelectInfo | null,
+    modifiers?: SelectModifiers,
+    rowKey?: symbol,
+  ): void;
   /**
    * The **hovered** marks — **empty when nothing is hovered, never `null`** —
    * the transient hover-highlight, distinct from the committed `selected`. A
@@ -154,10 +166,19 @@ export interface ContainerFrame {
    * repaints only on a mark transition, not every pointer move.
    */
   readonly hovered: readonly SelectInfo[];
-  /** Set the hovered mark (or `null` to clear) from a pointer-move hit-test;
-   *  deduped by series `id` + sample `key`, so an unchanged mark is a no-op
-   *  (no repaint). */
-  setHovered(hit: SelectInfo | null): void;
+  /**
+   * Set the hovered mark (or `null` to clear) from a pointer-move hit-test;
+   * deduped by series `id` + sample `key`, so an unchanged mark is a no-op (no
+   * repaint). `rowKey` scopes which `<Selector>`s hear about it (a row's own
+   * mounts, else the container's) exactly as {@link select} does; omit it for a
+   * programmatic hover (a `<Legend>` chip).
+   *
+   * **Not gated on a mounted `<Selector>`, unlike {@link select}.** The
+   * hover-*highlight* is internal state, and RFC A1.2 keeps state on the
+   * container; with no selector mounted there is simply nobody to report to,
+   * which needs no gate to arrange.
+   */
+  setHovered(hit: SelectInfo | null, rowKey?: symbol): void;
   /** The default in-chart cursor presentation for all rows ({@link CursorMode});
    *  a row may override it via its own `cursor`. */
   readonly cursor: CursorMode;
@@ -226,6 +247,25 @@ export interface ContainerFrame {
    */
   registerSelectable(key: symbol): void;
   unregisterSelectable(key: symbol): void;
+  /**
+   * Register a mounted **selector** ({@link SelectorEntry}) — `<Selector>` (and
+   * the deprecation shim synthesizing one from the container's legacy
+   * `onSelect`/`onHover` props) calls this, keyed by the component's
+   * per-instance slot key. The same idiom as `registerCursor` / `registerAxis`
+   * / `registerLayer`: update in place, unregister on unmount.
+   *
+   * **The registration is the enablement** (interaction RFC §7.1): a plot click
+   * resolves the selectors in scope (`effectiveSelectorEntries`) and does
+   * nothing when there are none.
+   *
+   * The registry itself is deliberately **not** exposed on the frame (unlike
+   * `cursors`, which the rows and `<XAxis>` render): nothing outside the
+   * container reads it — `select` / `setHovered` resolve the scope internally —
+   * and publishing it would re-identify the whole frame on every selector
+   * mount. Same shape as `registerSelectable`, which also keeps its set private.
+   */
+  registerSelector(key: symbol, entry: SelectorEntry): void;
+  unregisterSelector(key: symbol): void;
   /**
    * Register this layer's **legend row** — its display label + resolved
    * {@link SwatchSpec} (and selection `id` when it has one) — keyed by the
@@ -813,6 +853,33 @@ export interface SelectModifiers {
    */
   readonly shiftKey: boolean;
   readonly altKey: boolean;
+}
+
+/**
+ * A mounted `<Selector>` as the container holds it — the reporting callbacks
+ * plus the mount scope (interaction RFC §7 / A4.2). **A selector reports; it
+ * holds no state**: `selected` / `hovered` stay on `<ChartContainer>` (A1.2),
+ * and the consumer feeds the next set back through them.
+ *
+ * Registered via {@link ContainerFrame.registerSelector}, the same idiom as
+ * `registerCursor`. Internal (not exported from `index.ts`) — `<Selector>`'s
+ * props are the public surface.
+ */
+export interface SelectorEntry {
+  /** Report the mark under the pointer (`null` on leaving every mark). */
+  readonly onHover: ((hit: SelectInfo | null) => void) | undefined;
+  /** Report the clicked mark plus the modifiers held. The library applies no
+   *  policy to them and holds no set — see {@link SelectModifiers}. */
+  readonly onSelect:
+    | ((hit: SelectInfo | null, modifiers?: SelectModifiers) => void)
+    | undefined;
+  /** Mount scope: a row's key when mounted inside a `<ChartRow>` (that row's
+   *  clicks only), `null` when mounted at the container (every row). */
+  readonly rowKey: symbol | null;
+  /** Synthesized by the deprecation shim from the container's legacy
+   *  `onSelect`/`onHover` props. A scope with a real `<Selector>` mounted drops
+   *  its legacy entry — mounting overrides the prop during the window. */
+  readonly legacy: boolean;
 }
 
 export interface SelectInfo {

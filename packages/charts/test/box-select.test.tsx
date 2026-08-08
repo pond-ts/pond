@@ -128,13 +128,17 @@ describe('<BoxPlot id> — selection (#508 item 5)', () => {
 
   it('dev-warns when onSelect is wired but the box has no id; not when it does', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Counts the *no-selectable-layer* warning specifically: wiring the
+    // (now-deprecated) container `onSelect` also emits the `<Selector>`
+    // migration warning — interaction RFC §7.
+    const noId = () =>
+      warn.mock.calls.filter((c) => /no layer has an `id`/.test(String(c[0])));
     try {
       mount({ onSelect: () => {} });
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0]![0]).toMatch(/no layer has an `id`/);
+      expect(noId()).toHaveLength(1);
       warn.mockClear();
       mount({ onSelect: () => {}, id: 'smile' });
-      expect(warn).not.toHaveBeenCalled();
+      expect(noId()).toHaveLength(0);
     } finally {
       warn.mockRestore();
     }

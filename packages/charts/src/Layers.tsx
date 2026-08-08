@@ -651,7 +651,7 @@ export function Layers({ children }: LayersProps) {
           drag.captured = true;
           c.setHoverX(null); // hide the tracker while panning
           c.setHoverY(null, null);
-          c.setHovered(null); // and drop any hover-highlight
+          c.setHovered(null, rowRef.current.rowKey); // drop any hover-highlight
           try {
             e.currentTarget.setPointerCapture(e.pointerId);
           } catch {
@@ -723,7 +723,9 @@ export function Layers({ children }: LayersProps) {
       const hit = resolveSelection(r.layers, rawX, py, c.xScale, (axisId) =>
         r.yScales.get(axisId ?? r.defaultAxisId),
       );
-      c.setHovered(hit);
+      // The row key scopes which `<Selector>`s hear it (a row's own mounts, else
+      // the container's) — the hover *highlight* is unscoped container state.
+      c.setHovered(hit, r.rowKey);
     },
     [],
   );
@@ -831,7 +833,7 @@ export function Layers({ children }: LayersProps) {
     if (c.regionAnchor !== null) c.setRegionAnchor(null);
     c.setHoverX(null);
     c.setHoverY(null, null);
-    c.setHovered(null);
+    c.setHovered(null, rowRef.current.rowKey);
   }, []);
   // Click selection: ignore the click that ends a drag/pan (moved past a few px),
   // else hit-test the row's layers top-down and select — or clear on a miss.
@@ -869,13 +871,21 @@ export function Layers({ children }: LayersProps) {
     // Report the modifiers the click carried ([PND-MULTISEL]). The library
     // applies no policy to them; a consumer implements ⌘/Ctrl-adds itself,
     // which it could not do at all while the click arrived as a bare hit.
-    c.select(hit, {
-      additive: e.metaKey || e.ctrlKey,
-      ctrlKey: e.ctrlKey,
-      metaKey: e.metaKey,
-      shiftKey: e.shiftKey,
-      altKey: e.altKey,
-    });
+    //
+    // Passing the row key marks this as a **plot gesture**, which the container
+    // gates on a mounted `<Selector>` (interaction RFC §7.1): with none in
+    // scope this whole click is inert, deliberately.
+    c.select(
+      hit,
+      {
+        additive: e.metaKey || e.ctrlKey,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+      },
+      r.rowKey,
+    );
   }, []);
 
   // Wheel-zoom — a native non-passive listener so `preventDefault` works (React's
