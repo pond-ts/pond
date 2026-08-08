@@ -613,3 +613,31 @@ is a legitimate range chord, when the real range gesture is a drag.
     me". If `<Select>` reports marks and `onRegionSelect` reports a numeric
     range, they are different enough to coexist — but two drag gestures on one
     chart needs a precedence rule, and shipping both may be one too many.
+
+## Amendment 5 (2026-08-08) — A4 is re-homed into `interaction.md`
+
+A4 designed drag-to-select as `<Select>`, "a sibling of `<Region>` / `<Zone>` in
+the annotation family." Pressing on how that interacts with the region cursor
+opened a larger question — that **cursors and selectors are two subsystems
+sharing one undifferentiated pile of `ChartContainer` props** — and the answer
+is its own RFC: **[`interaction.md`](./interaction.md)**, which is current on
+the API shape of both.
+
+**What carries forward unchanged.** A4.2's load-bearing choice — **the sweep
+reports marks, not a range**, which is what folds `[PND-CATRANGE]` in rather
+than working around it — plus plural hover, modifiers-on-release, and the
+`DRAG_SLOP` movement argument for why the gestures don't collide. A4.1's
+"library reports, consumer decides" contract is untouched and explicitly
+reaffirmed there.
+
+**What changed.** The component is re-homed: it belongs with the interaction
+primitives as a direct child of `<ChartContainer>` (as `<RegionSelector>`), not
+with the annotations — and it gains a sibling, `<Selector>`, which is the
+click-select surface #606 shipped, re-expressed as something you mount.
+**Mounting is now required**, a deliberate breaking change to selection
+behaviour; the reasoning is in `interaction.md` §7.1. A4.4's Q15 ("does
+`<Select>` subsume `onRegionSelect`?") is carried over as that RFC's Q5, still
+open. Q12–Q14 remain open here and are unaffected.
+
+**A4.3's sequencing survives**: widening `hovered` to a set is still step 1 and
+is unaffected by every open question in the new RFC.

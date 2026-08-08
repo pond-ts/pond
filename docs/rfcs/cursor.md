@@ -123,6 +123,19 @@ the time line atop each readout.
 
 ### Crosshair-line: resolved — container default + per-row override
 
+> **Superseded on API shape (2026-08-08) by
+> [`interaction.md`](./interaction.md).** The decision below — cursor as a
+> **string prop** on the container, overridden by a string prop on the row —
+> shipped as `CursorMode`, and `interaction.md` proposes replacing it with
+> **mounted components** (`<CrosshairCursor />`, `<RegionCursor />`, …), where a
+> per-row cursor is a matter of _where you mount it_ and `cursor="none"` becomes
+> mounting nothing. The reasoning below still holds on the substance it was
+> deciding — one synced line per container, one cursor per **row** rather than
+> per layer — which the component model preserves. **Everything else in this
+> RFC stands**: the per-chart-type taxonomy, the flag staff geometry, and the
+> axis-matched formatting are unaffected, and `interaction.md` defers to this
+> document on what each cursor _draws_.
+
 _(Decided with pjm17971, 2026-06-21.)_ The cursor is enabled at the
 **container** level and all rows get the **single synced line** by default; a
 **per-row `cursor`** overrides it. Not per-layer — within a multi-layer row,

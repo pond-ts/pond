@@ -2266,6 +2266,14 @@ stacked paths — would have caught both and is the obvious next move.
   friction the entry actually names. Build it there, not here. Sequencing (A4.3):
   widen `hovered` to a set first, then `<Select>`.
 
+  **Re-homed 2026-08-08 → `docs/rfcs/interaction.md`** (§8, as
+  `<RegionSelector>`). The marks-not-a-range choice above is unchanged and is
+  still what subsumes this entry; what moved is where the component lives — with
+  the interaction primitives rather than the annotation family — and it now
+  arrives alongside a cursor/selector split that makes mounting a selector
+  **required**. That RFC is out for red-team and is **not** a commitment; A4.3's
+  sequencing (widen `hovered`, then build the sweep) survives it either way.
+
   The original entry, for the record — `cursor="region"` + `onRegionSelect` is
   gated to continuous axes; the 0.53.0 notes state it directly ("a **category**
   axis stays excluded — an ordinal-slot select is a different gesture"). For a
