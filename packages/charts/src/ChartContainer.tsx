@@ -372,7 +372,7 @@ export interface ChartContainerProps {
    * (currently `BarChart`) render it; keyed by the same {@link SelectInfo} identity
    * as selection.
    */
-  hovered?: SelectInfo | null;
+  hovered?: SelectInfo | readonly SelectInfo[] | null;
   /**
    * Fires when the pointer enters a selectable layer's mark (the hit mark) or
    * leaves every mark (`null`) — the hover analog of {@link onSelect}. Notification
@@ -982,7 +982,14 @@ export function ChartContainer({
     null,
   );
   const controlledHover = hovered !== undefined;
-  const hoveredValue = controlledHover ? (hovered ?? null) : internalHovered;
+  // Same three-shape normalization `selected` does — a single mark, a set, or
+  // nothing — so a pointer-driven hover (always one mark) and a sweep-driven
+  // one (several) reach the draw paths in the same shape (RFC A4.2).
+  const hoveredValue: readonly SelectInfo[] = useMemo(() => {
+    const raw = controlledHover ? hovered : internalHovered;
+    if (raw === null || raw === undefined) return EMPTY_SELECTION;
+    return Array.isArray(raw) ? raw : [raw as SelectInfo];
+  }, [controlledHover, hovered, internalHovered]);
   const onHoverRef = useRef(onHover);
   const controlledHoverRef = useRef(controlledHover);
   // The last mark we reported — so the callback dedups across pointer moves even

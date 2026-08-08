@@ -376,7 +376,7 @@ export function drawBars(
   gapPx: number,
   seriesId: string | undefined,
   selection: readonly BarMark[],
-  hovered: BarMark | null,
+  hovered: readonly BarMark[],
   decimate: DecimateOption = true,
   binFills?: readonly (string | undefined)[],
   banding?: BandLadder,
@@ -442,7 +442,8 @@ export function drawBars(
   // every pointer move. See BarSeries.marks — this hoist keeps the draw path
   // clean, it doesn't make the channel free.)
   const marks =
-    selection.some((m) => m.mark !== undefined) || hovered?.mark !== undefined
+    selection.some((m) => m.mark !== undefined) ||
+    hovered.some((m) => m.mark !== undefined)
       ? cs.marks
       : undefined;
   let drawn = 0;
@@ -467,7 +468,7 @@ export function drawBars(
     // reads as a lighter "this bar is live" and select as the committed pick.
     const stable = marks?.[i];
     const selected = barMatchesAny(selection, seriesId, stable, cs.begin[i]!);
-    const isHovered = barMatches(hovered, seriesId, stable, cs.begin[i]!);
+    const isHovered = barMatchesAny(hovered, seriesId, stable, cs.begin[i]!);
     if (fills !== undefined) {
       // Per-bar fills: the bar keeps its own colour under hover / selection —
       // highlight pops the alpha to 1 and outlines the selection in the bar's
@@ -960,7 +961,7 @@ export function drawStacks(
   minSpanPx: number,
   seriesId: string | undefined,
   selection: readonly StackMark[],
-  hover: StackMark | null,
+  hover: readonly StackMark[],
   banding?: BandLadder,
 ): void {
   const G = ss.groups.length;
@@ -1019,7 +1020,13 @@ export function drawStacks(
           break;
         }
       }
-      const isHovered = matches(hover);
+      let isHovered = false;
+      for (let hi = 0; hi < hover.length; hi += 1) {
+        if (matches(hover[hi]!)) {
+          isHovered = true;
+          break;
+        }
+      }
       // A hovered / selected segment pops its alpha; a resting one draws at the
       // shared one. `emphasisOpacity` makes the *difference* themeable, where
       // before only the resting floor was.

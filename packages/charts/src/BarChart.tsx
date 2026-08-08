@@ -769,18 +769,16 @@ export function BarChart<
           })),
     [selected],
   );
-  const hover = useMemo<StackMark | null>(
+  const hover = useMemo<readonly StackMark[]>(
     () =>
-      hoveredMark === null
-        ? null
-        : {
-            id: hoveredMark.id,
-            key: hoveredMark.key,
-            label: hoveredMark.label,
-            ...(hoveredMark.mark !== undefined
-              ? { mark: hoveredMark.mark }
-              : {}),
-          },
+      hoveredMark.length === 0
+        ? EMPTY_MARKS
+        : hoveredMark.map((m) => ({
+            id: m.id,
+            key: m.key,
+            label: m.label,
+            ...(m.mark !== undefined ? { mark: m.mark } : {}),
+          })),
     [hoveredMark],
   );
 

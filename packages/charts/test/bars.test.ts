@@ -132,7 +132,7 @@ describe('drawBars', () => {
       0,
       'count',
       [],
-      null,
+      [],
     );
     // two finite bars → two fillRect; the NaN bar is skipped.
     expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(2);
@@ -154,7 +154,7 @@ describe('drawBars', () => {
       0,
       'count',
       [],
-      null,
+      [],
     );
     expect(
       calls.find((c) => c.type === 'set' && c.name === 'globalAlpha')?.args,
@@ -176,7 +176,7 @@ describe('drawBars', () => {
       0,
       'count',
       [],
-      null,
+      [],
     );
     // x: [0*2, 10*2] = [0,20] → x0=0, width=20. y: value=100-40=60, base=100-0=100
     // → yTop=60, height=40.
@@ -196,7 +196,7 @@ describe('drawBars', () => {
       0,
       'count', // this layer's series id
       [{ key: 1, id: 'count' }], // selects the second bar of this series
-      null,
+      [],
     );
     // the highlighted bar fills with the highlight colour and gets a strokeRect.
     expect(calls.some((c) => c.type === 'set' && c.args[0] === '#fff')).toBe(
@@ -217,7 +217,7 @@ describe('drawBars', () => {
       0,
       'count',
       [{ key: 1, id: 'other' }], // same key, different series id → no highlight
-      null,
+      [],
     );
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
     expect(calls.some((c) => c.type === 'set' && c.args[0] === '#fff')).toBe(
@@ -237,7 +237,7 @@ describe('drawBars', () => {
       0,
       undefined, // no id → not selectable
       [{ key: 1, id: 'count' }], // a selection exists, but this layer can't match
-      { key: 1, id: 'count' },
+      [{ key: 1, id: 'count' }],
     );
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
     expect(calls.some((c) => c.type === 'set' && c.args[0] === '#fff')).toBe(
@@ -257,7 +257,7 @@ describe('drawBars', () => {
       0,
       'count',
       [], // nothing selected
-      { key: 1, id: 'count' }, // hover the second bar
+      [{ key: 1, id: 'count' }], // hover the second bar
     );
     // hovered bar fills with the highlight colour...
     expect(calls.some((c) => c.type === 'set' && c.args[0] === '#fff')).toBe(
@@ -279,7 +279,7 @@ describe('drawBars', () => {
       0,
       'count',
       [{ key: 1, id: 'count' }], // selected...
-      { key: 1, id: 'count' }, // ...and hovered — the same bar
+      [{ key: 1, id: 'count' }], // ...and hovered — the same bar
     );
     // highlight fill + the select outline (the select branch still draws it).
     expect(calls.some((c) => c.type === 'set' && c.args[0] === '#fff')).toBe(
@@ -323,7 +323,7 @@ describe('drawBars — stable per-bar mark selection', () => {
       0,
       'count',
       selection === null ? [] : [selection],
-      hovered,
+      hovered === null ? [] : [hovered],
       false, // no decimation — the per-bar highlight path
     );
     return calls;
@@ -444,7 +444,7 @@ describe('drawBars — highlight fill alpha (single series)', () => {
       0,
       'count',
       selection === null ? [] : [selection],
-      hovered,
+      hovered === null ? [] : [hovered],
       false, // no decimation — the per-bar highlight path
     );
     return calls;
@@ -516,7 +516,7 @@ describe('drawBars — highlight fill alpha (single series)', () => {
       0,
       'count',
       [],
-      { key: 0, id: 'count' },
+      [{ key: 0, id: 'count' }],
       false,
     );
     const fills = calls
@@ -587,7 +587,7 @@ describe('drawBars — distinct hover colour (BarStyle.hover)', () => {
       0,
       'count',
       selection === null ? [] : [selection],
-      hovered,
+      hovered === null ? [] : [hovered],
       false,
     );
     return calls
@@ -654,7 +654,7 @@ describe('drawBars — distinct hover colour (BarStyle.hover)', () => {
       0,
       'count',
       [],
-      { key: 1, id: 'count' },
+      [{ key: 1, id: 'count' }],
       false,
       ['#r', '#g', '#b'],
     );
@@ -694,7 +694,7 @@ describe('drawStacks — no hover channel (the BarStyle.hover exclusion)', () =>
       1,
       'count',
       [],
-      { id: 'count', key: 1, label: 'value' },
+      [{ id: 'count', key: 1, label: 'value' }],
     );
     const fills = calls
       .filter((c) => c.type === 'set' && c.name === 'fillStyle')
@@ -859,7 +859,7 @@ describe('drawBars — viewport culling (Phase 2)', () => {
       0,
       'count',
       [],
-      null,
+      [],
     );
     expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(4);
   });
@@ -878,7 +878,7 @@ describe('drawBars — viewport culling (Phase 2)', () => {
       0,
       'count',
       [{ key: 30, id: 'count' }],
-      null,
+      [],
     );
     // The selected bar strokes an outline; a mis-keyed cull would miss it.
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(1);
@@ -886,7 +886,7 @@ describe('drawBars — viewport culling (Phase 2)', () => {
 
   it('fills all bars when the scale has no domain (test stub)', () => {
     const { ctx, calls } = recordingContext();
-    drawBars(ctx, ramp(), identity, identity, style, 0, 0, 'count', [], null);
+    drawBars(ctx, ramp(), identity, identity, style, 0, 0, 'count', [], []);
     expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(6);
   });
 });
@@ -931,7 +931,7 @@ describe('drawBars — M4 column decimation', () => {
       0,
       'count',
       [],
-      null,
+      [],
     );
     expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(4);
     expect(stats).toEqual({ sourceCount: 100, drawnCount: 4, decimated: true });
@@ -949,7 +949,7 @@ describe('drawBars — M4 column decimation', () => {
       0,
       'count',
       [],
-      null,
+      [],
     );
     expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(100);
     expect(stats).toEqual({
@@ -973,7 +973,7 @@ describe('drawBars — M4 column decimation', () => {
       0,
       'count',
       [],
-      null,
+      [],
       { threshold: 30 },
     );
     expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(100);
@@ -992,7 +992,7 @@ describe('drawBars — M4 column decimation', () => {
       0,
       'count',
       [],
-      null,
+      [],
       false, // decimate off
     );
     expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(100);
@@ -1013,7 +1013,7 @@ describe('drawBars — M4 column decimation', () => {
       0,
       'count',
       [{ key: 42, id: 'count' }],
-      null,
+      [],
     );
     expect(calls.some((c) => c.name === 'strokeRect')).toBe(false);
     // The envelope fill uses the flat `fill`, never the `highlight`.
@@ -1060,7 +1060,7 @@ describe('drawBars — per-bar fills (binFills)', () => {
       0,
       'count',
       [],
-      null,
+      [],
       true,
       ['#r', '#g', '#b'],
     );
@@ -1079,7 +1079,7 @@ describe('drawBars — per-bar fills (binFills)', () => {
       0,
       'count',
       [],
-      null,
+      [],
       true,
       ['#r', undefined], // bar 1 explicit undefined; bar 2 beyond the array
     );
@@ -1098,7 +1098,7 @@ describe('drawBars — per-bar fills (binFills)', () => {
       0,
       'count',
       [],
-      null,
+      [],
       true,
       ['#r', '#g', '#b'],
     );
@@ -1118,7 +1118,7 @@ describe('drawBars — per-bar fills (binFills)', () => {
       0,
       'count',
       [],
-      { key: 1, id: 'count' }, // hover the middle bar
+      [{ key: 1, id: 'count' }], // hover the middle bar
       true,
       ['#r', '#g', '#b'],
     );
@@ -1154,7 +1154,7 @@ describe('drawBars — per-bar fills (binFills)', () => {
       0,
       'count',
       [{ key: 1, id: 'count' }], // select the middle bar
-      null,
+      [],
       true,
       ['#r', '#g', '#b'],
     );
@@ -1201,7 +1201,7 @@ describe('drawBars — per-bar fills (binFills)', () => {
       0,
       'count',
       [],
-      null,
+      [],
     );
     expect(cStats.decimated).toBe(true);
     expect(control.calls.filter((c) => c.name === 'fillRect')).toHaveLength(4);
@@ -1220,7 +1220,7 @@ describe('drawBars — per-bar fills (binFills)', () => {
       0,
       'count',
       [],
-      null,
+      [],
       true,
       fills,
     );
@@ -1245,7 +1245,7 @@ describe('drawBars — per-bar fills (binFills)', () => {
       0,
       'count',
       [],
-      null,
+      [],
       true,
       ['#0', '#1', '#2', '#3', '#4', '#5'],
     );
@@ -1279,7 +1279,7 @@ describe('drawBars — per-bar fills (binFills)', () => {
       0,
       'count',
       [],
-      null,
+      [],
       true,
       [],
     );
@@ -1298,7 +1298,7 @@ describe('drawBars — per-bar fills (binFills)', () => {
       0,
       'count',
       [],
-      { key: 1, id: 'count' },
+      [{ key: 1, id: 'count' }],
       true,
       [],
     );

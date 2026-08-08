@@ -282,16 +282,14 @@ export function HeatMap<
   );
   const hover = useMemo(
     () =>
-      hoveredMark === null
-        ? null
-        : {
-            id: hoveredMark.id,
-            key: hoveredMark.key,
-            label: hoveredMark.label,
-            ...(hoveredMark.mark !== undefined
-              ? { mark: hoveredMark.mark }
-              : {}),
-          },
+      hoveredMark.length === 0
+        ? []
+        : hoveredMark.map((m) => ({
+            id: m.id,
+            key: m.key,
+            label: m.label,
+            ...(m.mark !== undefined ? { mark: m.mark } : {}),
+          })),
     [hoveredMark],
   );
 
@@ -399,7 +397,7 @@ export function HeatMap<
             // member wins — which is exactly the previous behaviour for the
             // single-selection callers that are the only ones today.
             selection[0] ?? null,
-            hover,
+            hover[0] ?? null,
             decimate,
             orientation,
             noData,

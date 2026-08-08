@@ -141,10 +141,18 @@ export interface ContainerFrame {
    * from the committed `selected`. A row's pointer-move surface hit-tests its
    * selectable layers and sets it; a layer that supports hover-highlight (Bar)
    * draws the matching mark lit (a lighter treatment than `selected`'s outline).
+   *
+   * **A set, not one mark, since RFC `selection.md` A4.2.** A1.4 argued hover
+   * "is inherently one mark under the pointer" — true while hover *means*
+   * pointer position, and false under a drag sweep, where it means "would be
+   * selected if you released now" and several marks are lit at once. Plain
+   * pointer-over therefore carries 0 or 1 members; that slightly odd type for
+   * the common case is the accepted cost of not minting a third `preview`
+   * state a theme would style identically anyway.
    * Set-on-change (deduped by the series `id` + sample `key`) so the data canvas
    * repaints only on a mark transition, not every pointer move.
    */
-  readonly hovered: SelectInfo | null;
+  readonly hovered: readonly SelectInfo[];
   /** Set the hovered mark (or `null` to clear) from a pointer-move hit-test;
    *  deduped by series `id` + sample `key`, so an unchanged mark is a no-op
    *  (no repaint). */

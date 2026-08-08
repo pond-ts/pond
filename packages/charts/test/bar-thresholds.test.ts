@@ -151,7 +151,7 @@ describe('drawBars with a threshold ladder', () => {
       0,
       undefined,
       [],
-      null,
+      [],
       false,
       undefined,
       ladder,
@@ -176,7 +176,7 @@ describe('drawBars with a threshold ladder', () => {
       0,
       undefined,
       [],
-      null,
+      [],
       false,
       undefined,
       ladder,
@@ -196,7 +196,7 @@ describe('drawBars with a threshold ladder', () => {
       0,
       undefined,
       [],
-      null,
+      [],
       false,
       ['#perbar'],
       ladder,
@@ -220,7 +220,7 @@ describe('drawBars with a threshold ladder', () => {
       0,
       undefined,
       [],
-      null,
+      [],
       true,
       undefined,
       ladder,
@@ -241,7 +241,7 @@ describe('drawBars with a threshold ladder', () => {
       0,
       'sid',
       [{ id: 'sid', key: 0 }],
-      null,
+      [],
       false,
       undefined,
       ladder,
@@ -264,7 +264,7 @@ describe('drawBars with a threshold ladder', () => {
       0,
       undefined,
       [],
-      null,
+      [],
       false,
     );
     expect(paints(calls).map((q) => q.fill)).toEqual(['#flat']);
@@ -300,7 +300,7 @@ describe('drawStacks with a threshold ladder', () => {
       1,
       undefined,
       [],
-      null,
+      [],
       ladder,
     );
     const p = paints(calls);
@@ -324,7 +324,7 @@ describe('drawStacks with a threshold ladder', () => {
       1,
       undefined,
       [],
-      null,
+      [],
       ladder,
     );
     const p = paints(calls);
@@ -357,7 +357,7 @@ describe('drawStacks with a threshold ladder', () => {
       1,
       undefined,
       [],
-      null,
+      [],
       ladder,
     );
     expect(paints(calls).map((q) => q.fill)).toEqual(['#a', '#b']);
@@ -376,7 +376,7 @@ describe('drawStacks with a threshold ladder', () => {
       1,
       undefined,
       [],
-      null,
+      [],
       ladder,
     );
     expect(paints(calls).map((q) => q.fill)).toEqual(['#perbin']);

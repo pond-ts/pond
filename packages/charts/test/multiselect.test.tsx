@@ -554,3 +554,56 @@ describe('shift does not collide with the region cursor', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * **`hovered` is a set** (RFC `selection.md` A4.2, sequencing step 1).
+ *
+ * A1.4 argued hover "is inherently one mark under the pointer". That holds
+ * while hover *means* pointer position, and fails under a drag sweep, where it
+ * means "would be selected if you released now" and several marks light at
+ * once. Widening it is the prerequisite for `<Select>`; these pin the shape and
+ * that a pointer-driven hover (0 or 1 members) is unaffected.
+ */
+describe('hovered accepts a set', () => {
+  const hoverTheme = {
+    ...defaultTheme,
+    bar: {
+      ...defaultTheme.bar,
+      default: {
+        ...defaultTheme.bar.default,
+        highlight: '#SEL',
+        hover: '#HOV',
+      },
+    },
+  };
+
+  it('normalizes a single mark, null and omission exactly as `selected` does', () => {
+    expect(mount({ hovered: mark('alpha') }).frame.hovered).toHaveLength(1);
+    expect(mount({ hovered: null }).frame.hovered).toEqual([]);
+    expect(mount({}).frame.hovered).toEqual([]);
+  });
+
+  it('lights EVERY hovered mark — the sweep-preview case', () => {
+    // The behaviour `<Select>` needs: several bars lit at once while a drag is
+    // in flight. Impossible to express before the widening.
+    const { fills } = mount(
+      { hovered: [mark('alpha'), mark('gamma')] },
+      hoverTheme,
+    );
+    expect(fills.filter((f) => f === '#HOV')).toHaveLength(2);
+  });
+
+  it('keeps selection outranking hover on a mark that is both', () => {
+    const { fills } = mount(
+      { selected: [mark('alpha')], hovered: [mark('alpha'), mark('beta')] },
+      hoverTheme,
+    );
+    expect(fills).toContain('#SEL'); // alpha reads as selected
+    expect(fills).toContain('#HOV'); // beta reads as hovered
+  });
+
+  it('leaves plain single-mark hover unchanged', () => {
+    const { fills } = mount({ hovered: mark('beta') }, hoverTheme);
+    expect(fills.filter((f) => f === '#HOV')).toHaveLength(1);
+  });
+});
