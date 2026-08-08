@@ -316,7 +316,8 @@ export function Legend({
           item.id !== undefined &&
           (container?.selected ?? []).some((m) => m.id === item.id);
         const hovered =
-          item.id !== undefined && container?.hovered?.id === item.id;
+          item.id !== undefined &&
+          (container?.hovered ?? []).some((m) => m.id === item.id);
         return (
           <div
             // Composite key: a multi-group layer (a stack) gives every segment

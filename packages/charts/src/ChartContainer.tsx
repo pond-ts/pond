@@ -364,15 +364,21 @@ export interface ChartContainerProps {
    */
   onSelect?: (hit: SelectInfo | null, modifiers?: SelectModifiers) => void;
   /**
-   * Controlled hover-highlight — the transiently lit mark (echo the `onHover` arg
-   * back), or `null`. **Omitted ⇒ uncontrolled** (the pointer over a selectable
-   * layer manages it internally). The hover analog of {@link selected}: pass it to
-   * **pin** a lit mark from outside the chart (e.g. hovering a legend / list row
-   * lights the matching {@link BarChart} bar). Only layers with a hover-highlight
-   * (currently `BarChart`) render it; keyed by the same {@link SelectInfo} identity
-   * as selection.
+   * Controlled hover-highlight — the transiently lit mark(s) (echo the `onHover`
+   * arg back), or `null`. **Omitted ⇒ uncontrolled** (the pointer over a
+   * selectable layer manages it internally). The hover analog of
+   * {@link selected}: pass it to **pin** lit marks from outside the chart (e.g.
+   * hovering a legend / list row lights the matching {@link BarChart} bar). Only
+   * layers with a hover-highlight (currently `BarChart`) render it; keyed by the
+   * same {@link SelectInfo} identity as selection.
+   *
+   * **Accepts a single mark or a set** — the same union {@link selected} takes,
+   * so passing one `SelectInfo` still works unchanged. Plural because a drag
+   * sweep lights several marks at once ("would be selected if you released
+   * now"); plain pointer-over carries 0 or 1. See RFC `selection.md` A4.2, which
+   * supersedes A1.4's "hover is inherently one mark".
    */
-  hovered?: SelectInfo | null;
+  hovered?: SelectInfo | readonly SelectInfo[] | null;
   /**
    * Fires when the pointer enters a selectable layer's mark (the hit mark) or
    * leaves every mark (`null`) — the hover analog of {@link onSelect}. Notification
@@ -982,7 +988,14 @@ export function ChartContainer({
     null,
   );
   const controlledHover = hovered !== undefined;
-  const hoveredValue = controlledHover ? (hovered ?? null) : internalHovered;
+  // Same three-shape normalization `selected` does — a single mark, a set, or
+  // nothing — so a pointer-driven hover (always one mark) and a sweep-driven
+  // one (several) reach the draw paths in the same shape (RFC A4.2).
+  const hoveredValue: readonly SelectInfo[] = useMemo(() => {
+    const raw = controlledHover ? hovered : internalHovered;
+    if (raw === null || raw === undefined) return EMPTY_SELECTION;
+    return Array.isArray(raw) ? raw : [raw as SelectInfo];
+  }, [controlledHover, hovered, internalHovered]);
   const onHoverRef = useRef(onHover);
   const controlledHoverRef = useRef(controlledHover);
   // The last mark we reported — so the callback dedups across pointer moves even

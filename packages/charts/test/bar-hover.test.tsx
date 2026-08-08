@@ -67,11 +67,11 @@ describe('controlled bar hover (hovered / onHover)', () => {
     const onHover = vi.fn();
     const { ui, get } = tree({ onHover });
     render(ui);
-    expect(get().hovered).toBeNull();
+    expect(get().hovered).toEqual([]); // a set, empty when nothing is hovered
 
     act(() => get().setHovered(hitA));
     expect(onHover).toHaveBeenCalledWith(hitA);
-    expect(get().hovered).toEqual(hitA); // internal state reflects it
+    expect(get().hovered).toEqual([hitA]); // internal state reflects it
   });
 
   it('deduped: an unchanged mark (same id+key) does not re-fire onHover', () => {
@@ -105,13 +105,13 @@ describe('controlled bar hover (hovered / onHover)', () => {
     // `hovered` prop pins bar B (e.g. a legend row is hovered).
     const { ui, get } = tree({ hovered: hitB, onHover });
     render(ui);
-    expect(get().hovered).toEqual(hitB);
+    expect(get().hovered).toEqual([hitB]);
 
     // A bar-originated hover fires the callback but doesn't move the displayed
     // highlight — the controlling parent decides what to pin.
     act(() => get().setHovered(hitA));
     expect(onHover).toHaveBeenCalledWith(hitA);
-    expect(get().hovered).toEqual(hitB); // still the pinned prop
+    expect(get().hovered).toEqual([hitB]); // still the pinned prop
 
     // Dedup holds in controlled mode too (via lastHoverRef, since there's no
     // internal state to diff against): the same mark again is a no-op.

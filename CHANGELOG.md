@@ -60,6 +60,23 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **charts: `hovered` is a set.** `<ChartContainer hovered>` accepts
+  `SelectInfo | readonly SelectInfo[] | null` (a union, so nothing existing
+  changes), and the frame carries the normalized array. Several marks can now
+  be lit at once.
+
+  RFC `selection.md` A1.4 argued hover "is inherently one mark under the
+  pointer" — true while hover _means_ pointer position, and false under a drag
+  sweep, where it means "would be selected if you released now" and several
+  marks light together. This is step 1 of A4.3's sequencing and the
+  prerequisite for `<Select>` drag-to-select; plain pointer-over is unaffected
+  and simply carries 0 or 1 members.
+
+  `BoxPlot` and `HeatMap` read the first hovered member only, matching the
+  limits their selection readers already carry.
+
 ### Added
 
 - **charts: `<HeatMap scale="log">` and `noData="hatch"`.** Both come from the

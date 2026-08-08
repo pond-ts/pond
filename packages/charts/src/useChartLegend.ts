@@ -132,7 +132,9 @@ export function buildChartLegend(
       selected:
         spec.id !== undefined &&
         container.selected.some((m) => m.id === spec.id),
-      hovered: spec.id !== undefined && container.hovered?.id === spec.id,
+      hovered:
+        spec.id !== undefined &&
+        container.hovered.some((m) => m.id === spec.id),
     };
     const last = rows[rows.length - 1];
     if (last !== undefined && last.rowKey === spec.rowKey) {

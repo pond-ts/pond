@@ -97,7 +97,7 @@ describe('stacked bars on a log axis', () => {
       1,
       'traffic',
       [],
-      null,
+      [],
     );
     const rects = argsOf(calls, 'fillRect');
     expect(rects).toHaveLength(4); // 2 bins × 2 groups — none dropped

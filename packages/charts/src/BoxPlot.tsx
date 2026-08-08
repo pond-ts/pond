@@ -292,8 +292,10 @@ export function BoxPlot<
   // says `find` because the code does `find`.
   const selectedKey =
     id !== undefined ? (sel.find((m) => m.id === id)?.key ?? null) : null;
+  // First hovered key for this series — `BoxPlot` matches one, the same
+  // documented limit its selection reader carries (RFC A4.1).
   const hoveredKey =
-    id !== undefined && hov !== null && hov.id === id ? hov.key : null;
+    id !== undefined ? (hov.find((m) => m.id === id)?.key ?? null) : null;
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
