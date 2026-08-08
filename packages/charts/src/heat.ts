@@ -202,21 +202,78 @@ function slotBandPx(
   return [lo + inset, hi - inset];
 }
 
-/** Does `m` identify the cell at (`b`, `g`)? The stacked rule, unchanged: the
- *  layer `id` plus either the stable per-bin `mark` or the bin `key` + row
- *  `label`. Sharing it keeps one selection vocabulary across bars and cells. */
-function matchesCell(
-  m: StackMark | null,
+/** Stable identity for "no marks" — the resting case, so a caller narrowing an
+ *  empty set never hands `drawHeat` a fresh array, and the default argument is
+ *  one allocation for the module rather than one per call. */
+const NO_MARKS: readonly StackMark[] = [];
+
+/**
+ * Collect into `out` the **row labels** of every member of `set` naming bin `b`
+ * of this series ([PND-MULTISEL] / RFC A4.3).
+ *
+ * **The identity rule is unchanged** from when this layer matched one mark: a
+ * member identifies the cell at (`b`, `g`) when its layer `id` matches, its bin
+ * half matches (the stable per-bin `mark` where the series carries one, else the
+ * bin `key`), and its `label` is the row's group. Keeping that rule is what
+ * keeps one selection vocabulary across bars and cells. This function applies
+ * the first two, and leaves the row loop the `label` compare.
+ *
+ * **Why it splits there.** The bin half depends only on `b`, so scanning the
+ * whole set per *cell* would be O(V·G·|set|); scanning it per *bin* and leaving
+ * the row loop a label compare against the handful that survive is
+ * O(V·|set| + V·G·k), where k is 0 for almost every bin. On a 365×45 grid with
+ * eight marks live that is ~3k member compares instead of ~130k, and it is why
+ * a heat-map repaint under a plural pin costs what it did under a single one
+ * (`scripts/perf-heat.mjs`).
+ *
+ * Linear over the set rather than indexed, the reasoning `barMatchesAny`
+ * records: a selection is a handful of cells a person clicked, not a data
+ * structure. `out` is the caller's reused scratch array, so this allocates
+ * nothing.
+ */
+function binLabelsInto(
+  out: string[],
+  set: readonly StackMark[],
   seriesId: string | undefined,
   ss: StackedBarSeries,
   b: number,
-  g: number,
-): boolean {
-  if (m === null || m.id !== seriesId) return false;
+): void {
+  out.length = 0;
   const stable = ss.marks?.[b];
-  return stable !== undefined
-    ? m.mark === stable && m.label === ss.groups[g]
-    : m.key === ss.begin[b] && m.label === ss.groups[g];
+  const begin = ss.begin[b];
+  for (let i = 0; i < set.length; i += 1) {
+    const m = set[i]!;
+    if (m.id !== seriesId) continue;
+    if (stable !== undefined ? m.mark === stable : m.key === begin)
+      out.push(m.label);
+  }
+}
+
+/** Is `label` one of the (usually zero or one) labels {@link binLabelsInto}
+ *  gathered for this bin? Indexed rather than `includes` — this is the draw's
+ *  inner loop. */
+function hasLabel(labels: readonly string[], label: string): boolean {
+  for (let i = 0; i < labels.length; i += 1) {
+    if (labels[i] === label) return true;
+  }
+  return false;
+}
+
+/**
+ * Does any member of `set` name this series at all? A cheap once-per-draw gate
+ * so a grid whose selection belongs to some *other* layer — the common case on a
+ * multi-layer row — never pays the per-cell scan, and a resting draw pays
+ * nothing beyond the two `length === 0` checks it always did.
+ */
+function namesSeries(
+  set: readonly StackMark[],
+  seriesId: string | undefined,
+): boolean {
+  if (seriesId === undefined) return false; // a no-id layer is never selectable
+  for (let i = 0; i < set.length; i += 1) {
+    if (set[i]!.id === seriesId) return true;
+  }
+  return false;
 }
 
 /**
@@ -288,7 +345,16 @@ function devicePixelRatioOf(
  * Hover and selection share one colour deliberately — whether they should
  * diverge is the open question in #577, and this layer should not pre-empt it.
  *
- * O(visible × G) after viewport culling on the bin axis.
+ * Both `selection` and `hovered` are **sets**: `ContainerFrame.selected` has
+ * been one since [PND-MULTISEL] and `hovered` since RFC A4.3, so **every** cell
+ * a member names lights — a pinned group of cells, or a drag-sweep hovering
+ * several at once, all read back rather than only the set's first member. A cell
+ * in **both** sets reads as selected (selected outranks hovered, the precedence
+ * `drawBars` / `drawStacks` / `drawBox` share) and takes one outline, never two.
+ *
+ * O(visible × G) after viewport culling on the bin axis, plus O(|set|) per
+ * visible **bin** (not per cell — see {@link binLabelsInto}) and only when a set
+ * names this layer at all, so a resting draw costs exactly what it did.
  */
 export function drawHeat(
   ctx: CanvasRenderingContext2D,
@@ -298,8 +364,8 @@ export function drawHeat(
   style: HeatStyle,
   colorOf: (value: number) => string | undefined,
   seriesId: string | undefined,
-  selection: StackMark | null,
-  hovered: StackMark | null,
+  selection: readonly StackMark[] = NO_MARKS,
+  hovered: readonly StackMark[] = NO_MARKS,
   decimate: DecimateOption = true,
   orientation: Orientation = 'vertical',
   noData: HeatNoData = 'blank',
@@ -383,8 +449,19 @@ export function drawHeat(
   // sub-pixel outline would not be visible anyway. Interaction still reads the
   // source grid via `heatAt`.
   const reduced = thinned !== null || rowsThinned !== null;
-  const sel = reduced ? null : selection;
-  const hov = reduced ? null : hovered;
+  const sel = reduced ? NO_MARKS : selection;
+  const hov = reduced ? NO_MARKS : hovered;
+  // Whether either set names *this* layer, settled once so the cell loop skips
+  // the per-cell scan entirely when neither does — which is every draw on a row
+  // whose selection belongs to a different layer, and every resting draw.
+  const anySelected = namesSeries(sel, seriesId);
+  const anyHovered = namesSeries(hov, seriesId);
+  // Scratch for the per-bin narrowing below: one array each, allocated **only**
+  // when a set actually names this layer and then reused across every bin — so
+  // the resting frame allocates nothing per draw, which is the property this
+  // path had when it matched a lone mark. `null` ⇒ that set is not in play.
+  const selLabels: string[] | null = anySelected ? [] : null;
+  const hovLabels: string[] | null = anyHovered ? [] : null;
 
   // The row bands, once. Each depends only on `g`, so computing them inside the
   // cell loop re-derived the same G boundaries for every visible bin — O(V·G)
@@ -418,6 +495,15 @@ export function drawHeat(
       style.gap,
       style.minWidth,
     );
+    // The selection / hover match narrowed to this bin, once per column rather
+    // than once per cell: what is left for the row loop is a label compare
+    // against the handful (usually none) that name this bin at all. `sel`/`hov`
+    // are empty whenever the grid is reduced, so `grid === ss` here.
+    if (selLabels !== null) binLabelsInto(selLabels, sel, seriesId, ss, b);
+    if (hovLabels !== null) binLabelsInto(hovLabels, hov, seriesId, ss, b);
+    const binIsLive =
+      (selLabels !== null && selLabels.length > 0) ||
+      (hovLabels !== null && hovLabels.length > 0);
     const base = b * G;
     for (let g = 0; g < G; g += 1) {
       // Gaps are skipped before any per-cell work, exactly as `cellRect` does
@@ -452,8 +538,18 @@ export function drawHeat(
       const yTop = vertical ? bandLo[g]! : spanLo;
       const yBottom = vertical ? bandHi[g]! : spanHi;
 
-      const selected = matchesCell(sel, seriesId, ss, b, g);
-      const live = selected || matchesCell(hov, seriesId, ss, b, g);
+      // **Every** named cell lights, not only the first of each set. Selection
+      // is tested first and wins outright, so a cell in both draws the selected
+      // weight once rather than stacking two strokes. `binIsLive` short-circuits
+      // the whole test for the columns nothing names, which is nearly all of
+      // them.
+      let selected = false;
+      let live = false;
+      if (binIsLive) {
+        const group = ss.groups[g]!;
+        selected = selLabels !== null && hasLabel(selLabels, group);
+        live = selected || (hovLabels !== null && hasLabel(hovLabels, group));
+      }
 
       ctx.globalAlpha = live ? 1 : style.opacity;
       // Assigning `fillStyle` is not free — a real canvas parses the CSS colour

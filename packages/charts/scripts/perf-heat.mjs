@@ -178,8 +178,10 @@ const run = (
   ss,
   xScale,
   yScale,
-  sel = null,
-  hov = null,
+  // Both channels are SETS ([PND-MULTISEL] / RFC A4.3) — a heat cell matches any
+  // member, so the interactive scenarios below measure the per-cell scan too.
+  sel = [],
+  hov = [],
   decimate = true,
 ) => {
   const colorOf = colorFor(0, 4);
@@ -223,12 +225,24 @@ const run = (
     ss,
     scale(0, 365, 0, PLOT_W),
     y(45),
-    null,
-    {
-      id: 'h',
-      key: 200,
-      label: 'r22',
-    },
+    [],
+    [{ id: 'h', key: 200, label: 'r22' }],
+  );
+}
+
+// ── The same repaint under a PLURAL pin: does matching any member cost? ─────
+// A selection is a handful of cells a person clicked, which is why the match is
+// a linear scan rather than a Set — this is the scenario that says whether that
+// reasoning holds at the size selections actually reach.
+{
+  const ss = makeGrid(365, 45);
+  run(
+    'HOVER  365x45 eight cells live',
+    ss,
+    scale(0, 365, 0, PLOT_W),
+    y(45),
+    [0, 1, 2, 3].map((i) => ({ id: 'h', key: 100 + i, label: 'r10' })),
+    [0, 1, 2, 3].map((i) => ({ id: 'h', key: 200 + i, label: 'r22' })),
   );
 }
 

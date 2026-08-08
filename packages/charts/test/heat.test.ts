@@ -149,8 +149,8 @@ describe('cellRect', () => {
 describe('drawHeat', () => {
   const draw = (
     ss: StackedBarSeries,
-    selection: { id: string; key: number; label: string } | null = null,
-    hovered: { id: string; key: number; label: string } | null = null,
+    selection: readonly { id: string; key: number; label: string }[] = [],
+    hovered: readonly { id: string; key: number; label: string }[] = [],
   ) => {
     const { ctx, calls } = recordingContext();
     drawHeat(
@@ -211,7 +211,7 @@ describe('drawHeat', () => {
 
   it('outlines the selected cell and keeps its own colour', () => {
     // The colour is the datum — swapping it would erase the reading.
-    const calls = draw(two3(), { id: 'heat', key: 0, label: 'mid' });
+    const calls = draw(two3(), [{ id: 'heat', key: 0, label: 'mid' }]);
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(1);
     expect(fillsDrawn(calls)).toEqual(['#a', '#c', '#d', '#b', '#d', '#d']);
   });
@@ -221,11 +221,11 @@ describe('drawHeat', () => {
     // is the datum. Without a stroke, hover on a full-opacity ramp is invisible
     // — which is what the Nino 3.4 grid surfaced. Weight is what separates the
     // two states, since they share `highlight` (see #577).
-    const hov = draw(two3(), null, { id: 'heat', key: 0, label: 'mid' });
+    const hov = draw(two3(), [], [{ id: 'heat', key: 0, label: 'mid' }]);
     const hovStrokes = hov.filter((c) => c.name === 'strokeRect');
     expect(hovStrokes).toHaveLength(1);
 
-    const sel = draw(two3(), { id: 'heat', key: 0, label: 'mid' });
+    const sel = draw(two3(), [{ id: 'heat', key: 0, label: 'mid' }]);
     const selStrokes = sel.filter((c) => c.name === 'strokeRect');
     expect(selStrokes).toHaveLength(1);
 
@@ -247,7 +247,7 @@ describe('drawHeat', () => {
 
     const w = style.outlineWidth;
     const stroke = rectOf(
-      draw(two3(), null, { id: 'heat', key: 0, label: 'lo' })
+      draw(two3(), [], [{ id: 'heat', key: 0, label: 'lo' }])
         .filter((c) => c.name === 'strokeRect')
         .pop()!,
     );
@@ -263,14 +263,14 @@ describe('drawHeat', () => {
     // Same key, different row → a different cell. This is what makes the
     // grid's selection two-dimensional.
     expect(
-      draw(two3(), { id: 'heat', key: 0, label: 'nope' }).filter(
+      draw(two3(), [{ id: 'heat', key: 0, label: 'nope' }]).filter(
         (c) => c.name === 'strokeRect',
       ),
     ).toHaveLength(0);
   });
 
   it('pops only the live cell to full opacity', () => {
-    const alphas = draw(two3(), null, { id: 'heat', key: 10, label: 'lo' })
+    const alphas = draw(two3(), [], [{ id: 'heat', key: 10, label: 'lo' }])
       .filter((c) => c.type === 'set' && c.name === 'globalAlpha')
       .map((c) => c.args[0]);
     // Leading save-bracket alpha, then one per cell; bin1/'lo' is cell index 3.
@@ -286,8 +286,107 @@ describe('drawHeat', () => {
   });
 
   it('does not light a cell belonging to another layer id', () => {
-    const calls = draw(two3(), { id: 'other', key: 0, label: 'mid' });
+    const calls = draw(two3(), [{ id: 'other', key: 0, label: 'mid' }]);
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
+  });
+
+  // ── Plural selection / hover ([PND-MULTISEL] / RFC A4.3) ──
+  //
+  // `ContainerFrame.selected` has been a set since #606 and `hovered` since
+  // #616, and `drawHeat` took a single mark of each until #620 — so every
+  // member past the first was silently dropped. `strokeRect` is emitted only
+  // for a live cell, so its count is exactly "how many cells lit", and the live
+  // `lineWidth` says which state each one is in (`outlineWidth` hovered, twice
+  // that selected).
+  /** The `lineWidth` in effect at each `strokeRect`, by replaying the stream. */
+  const outlineWidths = (calls: ReturnType<typeof draw>): unknown[] => {
+    const out: unknown[] = [];
+    let w: unknown;
+    for (const c of calls) {
+      if (c.type === 'set' && c.name === 'lineWidth') w = c.args[0];
+      else if (c.name === 'strokeRect') out.push(w);
+    }
+    return out;
+  };
+
+  it('outlines EVERY selected cell, not just the first', () => {
+    const calls = draw(two3(), [
+      { id: 'heat', key: 0, label: 'lo' },
+      { id: 'heat', key: 0, label: 'hi' },
+      { id: 'heat', key: 10, label: 'mid' },
+    ]);
+    expect(outlineWidths(calls)).toEqual([
+      style.outlineWidth * 2,
+      style.outlineWidth * 2,
+      style.outlineWidth * 2,
+    ]);
+  });
+
+  it('outlines EVERY hovered cell, at the lighter hover weight', () => {
+    const calls = draw(
+      two3(),
+      [],
+      [
+        { id: 'heat', key: 0, label: 'mid' },
+        { id: 'heat', key: 10, label: 'mid' },
+      ],
+    );
+    expect(outlineWidths(calls)).toEqual([
+      style.outlineWidth,
+      style.outlineWidth,
+    ]);
+  });
+
+  it('draws one outline for a cell in BOTH sets — selected outranks hovered', () => {
+    const calls = draw(
+      two3(),
+      [{ id: 'heat', key: 0, label: 'mid' }],
+      [
+        { id: 'heat', key: 0, label: 'mid' },
+        { id: 'heat', key: 10, label: 'hi' },
+      ],
+    );
+    // Two lit cells, not three strokes: the doubly-live cell takes the selected
+    // weight once rather than stacking a hover stroke under it.
+    expect(outlineWidths(calls)).toEqual([
+      style.outlineWidth * 2,
+      style.outlineWidth,
+    ]);
+  });
+
+  it('ignores members of either set that name another layer', () => {
+    const calls = draw(
+      two3(),
+      [
+        { id: 'other', key: 0, label: 'lo' },
+        { id: 'heat', key: 0, label: 'hi' },
+      ],
+      [{ id: 'other', key: 10, label: 'mid' }],
+    );
+    // A mixed-layer set must not leak across layers just because a key and a
+    // row name happen to coincide.
+    expect(outlineWidths(calls)).toEqual([style.outlineWidth * 2]);
+  });
+
+  it('pops every live cell to full opacity, not only the first', () => {
+    const alphas = draw(
+      two3(),
+      [{ id: 'heat', key: 0, label: 'lo' }],
+      [{ id: 'heat', key: 10, label: 'hi' }],
+    )
+      .filter((c) => c.type === 'set' && c.name === 'globalAlpha')
+      .map((c) => c.args[0]);
+    // Leading save-bracket alpha, then one per cell: bin0/'lo' is cell 0 and
+    // bin1/'hi' cell 5.
+    expect(alphas).toEqual([
+      style.opacity,
+      1,
+      style.opacity,
+      style.opacity,
+      style.opacity,
+      style.opacity,
+      1,
+    ]);
   });
 });
 
@@ -352,8 +451,8 @@ describe('orientation="horizontal" transposes and nothing else', () => {
       style,
       (v: number) => bandedColor(v, RAMP, 0, 4),
       'heat',
-      null,
-      null,
+      [],
+      [],
       false,
       orientation,
     );
@@ -385,8 +484,8 @@ describe('orientation="horizontal" transposes and nothing else', () => {
         style,
         (v: number) => bandedColor(v, RAMP, 0, 4),
         'heat',
-        null,
-        null,
+        [],
+        [],
         false,
         orientation,
       );
@@ -466,8 +565,8 @@ describe('noData="hatch"', () => {
       style,
       (v: number) => bandedColor(v, RAMP, 0, 4),
       'heat',
-      null,
-      null,
+      [],
+      [],
       false,
       'vertical',
       noData,

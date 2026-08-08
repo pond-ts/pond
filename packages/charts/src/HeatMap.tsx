@@ -3,7 +3,7 @@ import { ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import { stacksFromColumns } from './data.js';
 import type { DecimateOption } from './decimate.js';
-import type { Orientation } from './bars.js';
+import type { Orientation, StackMark } from './bars.js';
 import {
   bandedColor,
   drawHeat,
@@ -142,10 +142,41 @@ export interface HeatMapProps<
    * grid.
    */
   decimate?: DecimateOption;
-  /** Stable identity — **gates selection + hover**, as every layer's does. */
+  /**
+   * Stable identity — **gates selection + hover**, as every layer's does. Both
+   * channels are sets, and **every** cell a member names outlines (bin `key` —
+   * or the stable per-bin `mark` — plus the row `label`), so a multi-cell pin or
+   * a drag-sweep hover lights all of it. A cell in both reads as selected.
+   */
   id?: string;
   /** @internal Declaration position, injected by `Layers`. Do not set. */
   index?: number;
+}
+
+/** Stable identity for "nothing in this set" — the resting case, so the layer
+ *  doesn't rebuild its `entry` (and the canvas doesn't repaint) merely because
+ *  the container handed out a fresh empty array. */
+const NO_MARKS: readonly StackMark[] = [];
+
+/**
+ * The cell identity of every member of `set` — the layer `id`, the bin `key`
+ * (or the stable per-bin `mark` where the series carries one) and the row
+ * `label`, which is the whole of what {@link drawHeat} matches on.
+ *
+ * Deliberately **not** filtered to this layer's own `id` — the draw matches on
+ * it anyway, and gates its per-bin scan on whether either set names this layer
+ * at all, so a component-side filter would buy nothing and add a second place
+ * the id rule lives. What this *does* drop is the `SelectInfo` presentation
+ * fields (`value`, `color`), which the draw has no business reading.
+ */
+function marksOf(set: readonly SelectInfo[]): readonly StackMark[] {
+  if (set.length === 0) return NO_MARKS;
+  return set.map((m) => ({
+    id: m.id,
+    key: m.key,
+    label: m.label,
+    ...(m.mark !== undefined ? { mark: m.mark } : {}),
+  }));
 }
 
 /**
@@ -269,29 +300,13 @@ export function HeatMap<
 
   const selected = container.selected;
   const hoveredMark = container.hovered;
-  // The selection is a set ([PND-MULTISEL]); a cell matches any member.
-  const selection = useMemo(
-    () =>
-      selected.map((m) => ({
-        id: m.id,
-        key: m.key,
-        label: m.label,
-        ...(m.mark !== undefined ? { mark: m.mark } : {}),
-      })),
-    [selected],
-  );
-  const hover = useMemo(
-    () =>
-      hoveredMark.length === 0
-        ? []
-        : hoveredMark.map((m) => ({
-            id: m.id,
-            key: m.key,
-            label: m.label,
-            ...(m.mark !== undefined ? { mark: m.mark } : {}),
-          })),
-    [hoveredMark],
-  );
+  // Both channels are **sets** — `selected` since [PND-MULTISEL], `hovered`
+  // since RFC A4.3 — and both reach `drawHeat` whole, which lights every cell a
+  // member names. Narrowed here only from `SelectInfo` down to the cell identity
+  // (`id` + `key`/`mark` + row `label`), so `heat.ts` stays free of the
+  // selection's presentation fields exactly as it is free of the theme.
+  const selection = useMemo(() => marksOf(selected), [selected]);
+  const hover = useMemo(() => marksOf(hoveredMark), [hoveredMark]);
 
   const entry = useMemo<LayerEntry>(
     () => ({
@@ -392,12 +407,11 @@ export function HeatMap<
             style,
             colorOf,
             id,
-            // A cell draw matches one mark. Multi-cell selection rendering is
-            // not part of [PND-MULTISEL]'s bar-focused scope, so the first
-            // member wins — which is exactly the previous behaviour for the
-            // single-selection callers that are the only ones today.
-            selection[0] ?? null,
-            hover[0] ?? null,
+            // Both sets whole. Passing `selection[0]` here quietly showed one
+            // outline for a three-cell selection — the memos above were plural
+            // long before the draw was.
+            selection,
+            hover,
             decimate,
             orientation,
             noData,

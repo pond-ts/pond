@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { TimeSeries } from 'pond-ts';
+import { TimeSeries, ValueSeries } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { HeatMap } from './HeatMap.js';
 import { YAxis } from './YAxis.js';
+import { stacksFromColumns } from './data.js';
 import { sanFranciscoTemperatures } from './sf-temperatures.fixture.js';
 import { docsTheme } from './docs-theme.fixture.js';
 import type { SelectInfo } from './context.js';
@@ -138,16 +139,175 @@ function SelectableDemo() {
 
 export const Selectable: Story = { render: () => <SelectableDemo /> };
 
+// ---------------------------------------------------------------------------
+// Plural selection / hover — `selected` and `hovered` are sets.
+// ---------------------------------------------------------------------------
+
+/**
+ * The grid's cell **keys**, which are the bin `begin`s. On a point-keyed daily
+ * series those are neighbour-spaced edges (`t − half a day`), *not* the sample
+ * times, so they come from the reader the layer itself uses rather than from
+ * `keyColumn().begin`. Getting this wrong is silent — a key that names no cell
+ * simply lights nothing.
+ */
+const CELL_KEYS = stacksFromColumns(sf, ['low', 'high']).begin;
+
+/** A `SelectInfo` naming the cell in bin `i`, row `row`. */
+const tempCell = (i: number, row: 'low' | 'high'): SelectInfo => ({
+  id: 'temp',
+  key: CELL_KEYS[i]!,
+  value: 0,
+  color: RAMP[4]!,
+  label: row,
+});
+
+/**
+ * **Several cells selected at once.** `selected` is a **set**, and every cell a
+ * member names takes the full-strength outline — five here, across both rows.
+ * (This layer used to hand its draw `selection[0]`, so a multi-cell pin outlined
+ * one cell and silently dropped the rest.)
+ *
+ * A cell's identity is two-dimensional — bin **and** row — so the two rows at
+ * one instant are two distinct members, which is what the last pair below shows.
+ */
+export const MultiSelected: Story = {
+  render: () => (
+    <ChartContainer
+      range={RANGE}
+      width={720}
+      theme={docsTheme}
+      cursor="none"
+      selected={[
+        tempCell(40, 'low'),
+        tempCell(120, 'high'),
+        tempCell(200, 'low'),
+        tempCell(280, 'low'),
+        tempCell(280, 'high'),
+      ]}
+    >
+      <ChartRow height={120}>
+        <YAxis id="v" label="°F" />
+        <Layers>
+          <HeatMap
+            series={sf}
+            columns={['low', 'high']}
+            colors={RAMP}
+            id="temp"
+            gap={0.5}
+          />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **Several cells hovered at once** — a drag-sweep mid-gesture (RFC A4.2).
+ * `hovered` is the same set shape, drawn at the *lighter* outline weight so
+ * "would be selected if you released now" stays visibly weaker than a committed
+ * pick. Weight is what separates the two states, because a heat cell cannot pop
+ * its colour: the colour is the datum.
+ */
+export const MultiHovered: Story = {
+  render: () => (
+    <ChartContainer
+      range={RANGE}
+      width={720}
+      theme={docsTheme}
+      cursor="none"
+      hovered={[100, 101, 102, 103, 104, 105].flatMap((i) => [
+        tempCell(i, 'low'),
+        tempCell(i, 'high'),
+      ])}
+    >
+      <ChartRow height={120}>
+        <YAxis id="v" label="°F" />
+        <Layers>
+          <HeatMap
+            series={sf}
+            columns={['low', 'high']}
+            colors={RAMP}
+            id="temp"
+            gap={0.5}
+          />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **Both sets at once, and the precedence between them.** Two cells are selected
+ * and four hovered, with one cell in both — it draws the full-strength selected
+ * outline only. `selected > hovered` is the precedence every mark layer shares,
+ * so a cell never carries two stacked strokes.
+ */
+export const MultiSelectedAndHovered: Story = {
+  render: () => (
+    <ChartContainer
+      range={RANGE}
+      width={720}
+      theme={docsTheme}
+      cursor="none"
+      selected={[tempCell(60, 'low'), tempCell(150, 'high')]}
+      hovered={[
+        tempCell(150, 'high'),
+        tempCell(151, 'high'),
+        tempCell(152, 'high'),
+        tempCell(153, 'high'),
+      ]}
+    >
+      <ChartRow height={120}>
+        <YAxis id="v" label="°F" />
+        <Layers>
+          <HeatMap
+            series={sf}
+            columns={['low', 'high']}
+            colors={RAMP}
+            id="temp"
+            gap={0.5}
+          />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
 /**
  * **Shape 3 — a `ValueSeries`, one column.** The x axis is value intervals
  * rather than time: here the record re-keyed onto its own daily high, so the
  * cells bin by temperature instead of by date. Nothing about the layer
  * changes — `xKind` is inferred from the series type, exactly as `<BarChart>`
  * infers it.
+ *
+ * The rows are **sorted by high** first. A value axis must be non-decreasing —
+ * it is the key — so `sf.byValue('high')` on the record in *date* order throws
+ * (`byValue: axis 'high' must be non-decreasing`), which is what this story used
+ * to do before it had a render smoke test to notice. Re-keying is a projection,
+ * not a sort; the caller owns the ordering.
  */
+const byHighAscending = (() => {
+  const high = sf.column('high');
+  const low = sf.column('low');
+  const order = Array.from({ length: sf.length }, (_, i) => i).sort(
+    (a, b) => (high.read(a) ?? NaN) - (high.read(b) ?? NaN),
+  );
+  return ValueSeries.fromColumns({
+    name: 'byHigh',
+    schema: [
+      { name: 'high', kind: 'value' },
+      { name: 'low', kind: 'number' },
+    ] as const,
+    columns: {
+      high: order.map((i) => high.read(i)!),
+      low: order.map((i) => low.read(i)!),
+    },
+  });
+})();
+
 export const ValueAxisStripe: Story = {
   render: () => {
-    const byHigh = sf.byValue('high');
+    const byHigh = byHighAscending;
     const axis = byHigh.axisValues();
     return (
       <ChartContainer

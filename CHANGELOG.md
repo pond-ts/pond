@@ -83,10 +83,43 @@ include new features and type-level changes; patch bumps are strictly additive.
   still reads the source marks.
 
   This supersedes the "`BoxPlot` and `HeatMap` read the first hovered member
-  only" note under _Changed_ below, for `BoxPlot`. **`<HeatMap>` still reads
-  only the first member of each set** — it maps both sets but passes
-  `selection[0]` / `hover[0]` into `drawHeat`, which takes a single mark. Same
-  bug, not fixed here.
+  only" note under _Changed_ below, for `BoxPlot`. `<HeatMap>` had the identical
+  bug and is fixed in the entry below — it was scoped out of this change on a
+  mistaken reading of its source (it maps both sets into plural memos, then
+  passed `selection[0]` into a single-mark `drawHeat` a hundred lines later).
+
+- **charts: `<HeatMap>` lights every selected / hovered cell, not just the
+  first.** `ContainerFrame.selected` has been a set since [PND-MULTISEL] and
+  `hovered` since RFC A4.3. `<HeatMap>` mapped **both** into plural memoized
+  arrays — which is exactly what made the layer read as already-correct — and
+  then handed `drawHeat` `selection[0] ?? null` / `hover[0] ?? null`, whose
+  parameters were `StackMark | null`. A consumer pinning three cells got one
+  outline, with no warning and no error.
+
+  `drawHeat` now takes both sets (`readonly StackMark[]`, defaulting to empty)
+  and outlines **any** cell a member names, keeping the linear scan
+  `barMatchesAny` documents: a selection is a handful of cells a person clicked,
+  so a `Set` per draw would cost more than it saves. Precedence is the shared one
+  — **selected > hovered > rest** — so a cell in both sets takes the
+  full-strength outline once rather than stacking a hover stroke under it. The
+  per-cell scan is gated on either set naming this layer, so a resting draw and a
+  draw whose selection belongs to another layer cost exactly what they did
+  before, and nothing extra is allocated per frame.
+
+  `<HeatMap>` still suppresses every per-cell outline while **decimated**,
+  unchanged — an aggregated column has no per-cell identity to match and a
+  sub-pixel ring isn't visible — now pinned by tests under a plural set.
+
+  This supersedes the "`ScatterChart` and `HeatMap` draw the first member only"
+  scope limit and the "`BoxPlot` and `HeatMap` read the first hovered member
+  only" note below, for `HeatMap`.
+
+- **charts: the `<HeatMap>` `ValueAxisStripe` story threw on mount.** It called
+  `sf.byValue('high')` on the temperature record in _date_ order, and a value
+  axis must be non-decreasing — it is the key — so the story had never rendered.
+  It now sorts by `high` before re-keying. Found by the story render smoke test
+  added alongside the fix above; `<HeatMap>` had no such net, which is how a
+  broken story went unnoticed.
 
 ### Added
 
@@ -128,8 +161,8 @@ include new features and type-level changes; patch bumps are strictly additive.
   prerequisite for `<Select>` drag-to-select; plain pointer-over is unaffected
   and simply carries 0 or 1 members.
 
-  `BoxPlot` and `HeatMap` read the first hovered member only, matching the
-  limits their selection readers already carry.
+  `BoxPlot` reads the first hovered member only, matching the limit its
+  selection reader already carries. (`HeatMap` did too; see _Fixed_ above.)
 
 ### Added
 
@@ -218,7 +251,7 @@ altKey }`). `additive` is the platform-idiomatic add-to-selection chord
   **Scope limit, stated rather than implied:** the selection _set_ renders on
   **bars**. `ScatterChart` and `HeatMap` draw the first member only
   (`selected[0]`) — their draw paths match a single mark, and widening them is
-  separate work. `dimmed` is likewise bars-only, so a mixed chart dims its bars
+  separate work. (Since done for `HeatMap` — see _Fixed_ above.) `dimmed` is likewise bars-only, so a mixed chart dims its bars
   and nothing else. `selectionMode` (RFC A1.1) stays unbuilt: it would be sugar
   over what this ships, and adding it later is additive.
 
