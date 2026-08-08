@@ -20,8 +20,16 @@
 > A4.2's reasoning about CATRANGE, plural hover, and modifier-on-release carries
 > forward unchanged.
 >
+> **Amendment 1 (2026-08-08)** records the Codex red-team ([Discussion
+> #611](https://github.com/pond-ts/pond/discussions/611)) and its dispositions.
+> It corrects five factual errors in §1/§2/§9/§12/Q7, moves `selected` /
+> `hovered` **back onto the container** (selectors report; the consumer owns the
+> state), and marks §5's cursor contract and §8's sweep algorithm as **owing
+> another pass** before they can be scheduled.
+>
 > Reading order for the interaction surface: `cursor.md` (what cursors draw) →
-> `selection.md` v1 → A1 → A2 → A3 → A4 → **this RFC is current on API shape**.
+> `selection.md` v1 → its A1–A5 → this RFC §1–§12 → **this RFC's Amendment 1 is
+> current on API shape**.
 
 ## 1. The question
 
@@ -29,9 +37,12 @@
 times, for different reasons, and have never been named as different things:
 
 - **Cursors** — data-aware marks that _read_. They follow the pointer, snap to
-  data, and display an x and/or y. They hold no state; they commit nothing.
-- **Selectors** — gestures that _build state_. They interpret clicks and drags,
-  report what the user picked, and hand the consumer something to keep.
+  data, and display an x and/or y. They hold no state of their own. _(One
+  documented exception: a region cursor also produces a range on drag-release —
+  §6, and A1.5 on why the exception is kept rather than designed away.)_
+- **Selectors** — gestures that _report_. They interpret clicks and drags and
+  hand back what the user picked. They hold no state either: the **consumer**
+  keeps the selection and feeds it back to the container (A1.2).
 
 Today both are expressed as **props on `<ChartContainer>`**, which is why they
 blur. The tell is a single prop name: **`onRegionSelect`** — a selection
@@ -40,7 +51,7 @@ exists, the reason `region` is the only mode with a gesture, and the reason
 "how do you select a cursor" has two unrelated answers.
 
 The cost is concentrated in one place. Interaction currently occupies
-**twelve props on `ChartContainer` plus one on `ChartRow`** — most of the
+**thirteen props on `ChartContainer` plus one on `ChartRow`** — most of the
 container's public interaction surface — with no structure indicating which
 belong together:
 
@@ -56,6 +67,7 @@ belong together:
 | `selected`                     | selection                  |
 | `hovered`                      | selection                  |
 | `onSelect`                     | selection                  |
+| `onHover`                      | selection                  |
 | `trackerPosition`              | readout / cross-chart sync |
 | `onTrackerChanged`             | readout / cross-chart sync |
 
@@ -84,23 +96,26 @@ apologize for, and every one of them currently does.
   `ChartContainer`'s `select()` updates internal state whether or not an
   `onSelect` prop exists. **Nothing is mounted to enable it.** §7 has to decide
   deliberately whether this survives.
-- **`selected` and `hovered` are sets** as of #606 / the `hovered` widening —
+- **`selected` is a set; `hovered` is not.** #606 widened `selected` to
   `readonly SelectInfo[]` on the frame, accepting a single `SelectInfo`, an
-  array, or `null` as a prop.
+  array, or `null` as a prop. **`hovered` is still `SelectInfo | null`**
+  (`context.ts`) — the widening is written and pushed but **unmerged** (§10
+  step 1). _(Corrected in A1.1; the original text cited the widening as though
+  it had shipped.)_
 - **The library performs no set arithmetic** (A4.1). It reports the hit and the
   modifiers; the consumer computes the next set. That contract is settled and
   this RFC does not revisit it.
 
 ## 3. The split
 
-|                   | **Cursor**                             | **Selector**                    |
-| ----------------- | -------------------------------------- | ------------------------------- |
-| purpose           | reads                                  | commits                         |
-| state             | none — ephemeral, follows the pointer  | builds state the consumer keeps |
-| data awareness    | snaps x, snaps to points, displays x/y | hit-tests marks                 |
-| draws             | line, dot, chip, flag, band            | (borrows a cursor's look)       |
-| callback currency | a position / a range                   | `SelectInfo[]` + modifiers      |
-| how many mounted  | one                                    | one                             |
+|                   | **Cursor**                             | **Selector**                   |
+| ----------------- | -------------------------------------- | ------------------------------ |
+| purpose           | reads                                  | reports what was picked        |
+| state             | none — ephemeral, follows the pointer  | none — the _consumer_ keeps it |
+| data awareness    | snaps x, snaps to points, displays x/y | hit-tests marks                |
+| draws             | line, dot, chip, flag, band            | (borrows a cursor's look)      |
+| callback currency | a position / a range                   | `SelectInfo[]` + modifiers     |
+| how many mounted  | one                                    | one                            |
 
 Both become **mounted components**, children of `<ChartContainer>`:
 
@@ -370,21 +385,22 @@ that never moves selects and commits no region. This is also why #606 exposes
 
 ## 9. Migration — the eggs
 
-| today                  | becomes                         |
-| ---------------------- | ------------------------------- |
-| `cursor`               | mount a cursor component        |
-| `ChartRow.cursor`      | mount it inside the row         |
-| `cursorSequence`       | `<RegionCursor sequence>`       |
-| `cursorTime`           | `showTime` on the cursor        |
-| `cursorFormat`         | `format` on the cursor          |
-| `crosshairSnap`        | `<CrosshairCursor snap>`        |
-| `onRegionSelect`       | `<RegionCursor onDragRelease>`  |
-| `regionSelectModifier` | `<RegionCursor dragModifier>`   |
-| `onSelect`             | `<Selector onSelect>`           |
-| `selected`             | `<Selector selected>`           |
-| `hovered`              | `<Selector hovered>`            |
-| `trackerPosition`      | **stays on the container** (Q4) |
-| `onTrackerChanged`     | **stays on the container** (Q4) |
+| today                  | becomes                           |
+| ---------------------- | --------------------------------- |
+| `cursor`               | mount a cursor component          |
+| `ChartRow.cursor`      | mount it inside the row           |
+| `cursorSequence`       | `<RegionCursor sequence>`         |
+| `cursorTime`           | `showTime` on the cursor          |
+| `cursorFormat`         | `format` on the cursor            |
+| `crosshairSnap`        | `<CrosshairCursor snap>`          |
+| `onRegionSelect`       | `<RegionCursor onDragRelease>`    |
+| `regionSelectModifier` | `<RegionCursor dragModifier>`     |
+| `onSelect`             | `<Selector onSelect>`             |
+| `onHover`              | `<Selector onHover>`              |
+| `selected`             | **stays on the container** (A1.2) |
+| `hovered`              | **stays on the container** (A1.2) |
+| `trackerPosition`      | **stays on the container** (Q4)   |
+| `onTrackerChanged`     | **stays on the container** (Q4)   |
 
 **The frame does not move.** `ContainerFrame.selected` / `.hovered` /
 `.cursorBuckets` / `CursorFrame` stay exactly where they are; only the
@@ -462,9 +478,13 @@ suffix disambiguates against the annotation family, which already owns
 `<Region>` and `<Zone>` — and `<RegionCursor>` / `<RegionSelector>` / `<Region>`
 (annotation) in one namespace is a genuine collision risk.
 
-**Q7 — do the scatter/heatmap/boxplot layers get fixed here?** They currently
-read `selected[0]`, ignoring the rest of the set — a known gap from #606. It is
-independent of this RFC, but a reader will assume "selectors" fixed it.
+**Q7 — do the scatter/boxplot layers get fixed here?** _(Corrected in A1.1 —
+the original claimed all three read `selected[0]`, which is wrong for two of
+them.)_ **`ScatterChart`** does read `selected[0]`, ignoring the rest.
+**`BoxPlot`** takes the first selection matching its own series id — narrower
+than `selected[0]` but still single. **`HeatMap` already maps the full set** and
+needs nothing. So it is two layers, not three. Independent of this RFC, but a
+reader will assume "selectors" fixed it.
 
 **Q8 — what does a layer `id` mean once `<Selector>` is required? Resolved
 (pjm17971, 2026-08-08): nothing changes.** _If you want to know what you
@@ -472,6 +492,12 @@ hovered or selected, give the layer an `id` and we'll tell you._ A3's rule
 stands as written; mounting a `<Selector>` and tagging a layer are not two
 gates on one capability, they are enablement and identity, and both were
 already required.
+
+_(A1.2 corrects two errors here: the original said mounting and tagging "were
+both already required", which contradicts §7.1 — mounting is **new**; and it
+justified id-without-`<Selector>` by pointing at a controlled `selected` prop
+that §9 had moved onto the absent `<Selector>`. That circularity is gone now
+that `selected`/`hovered` stay on the container.)_
 
 Worth recording _why_ this needs no new machinery, because the alternatives
 both have a cost and neither has to be paid. Making `id` **mandatory** is wrong
@@ -496,10 +522,163 @@ plot clicks), so warning on it permanently would flag a supported setup.
   theme slots are settled (#606) and untouched.
 - **Not set arithmetic in the library.** A4.1's contract holds: pond reports the
   hit and the modifiers, the consumer computes the set.
-- **Not new hit-testing.** Layers implement `hitTest` as they do today; the
-  sweep calls it more often, that is all.
+- ~~**Not new hit-testing.** Layers implement `hitTest` as they do today; the
+  sweep calls it more often, that is all.~~ **Withdrawn — this was wrong.**
+  `RowLayer.hitTest(px, py)` answers about **one point**; enumerating the marks
+  under a swept band is a **range query**, which no layer implements. The sweep
+  _does_ need new hit-testing. See **A1.4**.
 - **Not a change to what cursors draw.** `cursor.md`'s per-chart-type taxonomy,
   the flag staff geometry, and axis-matched formatting all stand. This is an
   API-shape RFC.
 - **Not a new layer or draw path.** Cursors remain a DOM/SVG overlay above the
   data canvas, so hovering still never repaints the data.
+
+## Amendment 1 (2026-08-08) — the Codex audit, and where it lands
+
+> _Red-team by Codex ([Discussion
+> #611](https://github.com/pond-ts/pond/discussions/611)), verified against the
+> source by the pond-ts library agent (Claude); dispositions by pjm17971. The
+> review reported **high** confidence and was right on **every** factual claim
+> it made — five source-checkable corrections, all confirmed. Reading order:
+> §1–§12 → **A1 is current**._
+
+### A1.1 Factual corrections (all verified, all fixed in place)
+
+The audit caught five errors in a document whose §2 claims to be "verified
+against the source". All five are now corrected in the body; recorded here so
+the failure mode is visible rather than quietly patched.
+
+1. **`hovered` is not yet a set.** §2 cited the widening as shipped. It is
+   written and pushed but **unmerged** — `context.ts` on `main` still has
+   `hovered: SelectInfo | null`. The RFC was reading its own branch.
+2. **`onHover` was missed entirely** — so the surface is **thirteen** container
+   props, not twelve, and §9's migration table was short a row. It was missed
+   because the prop inventory was gathered by grepping for the names already
+   known, which cannot discover a name you have forgotten.
+3. **Q7 was wrong about two of three layers.** `ScatterChart` does read
+   `selected[0]`; `BoxPlot` takes the first selection matching **its own series
+   id** (narrower, still single); **`HeatMap` already maps the full set.** Two
+   layers need fixing, not three.
+4. **The §12 "not new hit-testing" bullet was false** — withdrawn, see A1.4.
+5. **Two internal contradictions in Q8** — "both were already required"
+   contradicted §7.1, and the justification for id-without-`<Selector>` leaned
+   on a controlled `selected` prop that §9 had moved onto the very component
+   that isn't mounted. Both resolved by A1.2.
+
+### A1.2 `selected` / `hovered` stay on the container — selectors only report
+
+**Accepted (pjm17971, 2026-08-08), and it was always the intended API**; §9 got
+it wrong by sweeping the state props along with the gesture props.
+
+> Selectors hit-test and report. The consumer manages selection and hover
+> change. The consumer sets selection and hover **on the container**.
+
+The audit reached the same place from the other direction, proposing it as the
+"third option" §7.1 had not seen: keep the state on the container, and let
+`<Selector>` gate only plot hit-testing and callbacks.
+
+**Why this is right and not merely a smaller break.** _What is selected_ is not
+a gesture. Conflating them is what produced Q8's circularity — a rule that
+justified itself by pointing at a prop the same document had relocated. Once
+state lives on the container and gestures are what you mount, the two questions
+separate cleanly and Q8 stops needing an argument at all.
+
+**§7.1 survives intact.** Selection behaviour is still intentional; mounting is
+still required for a click on the plot to do anything. What changes is that
+**controlled highlighting keeps working without a `<Selector>`** — a legend chip
+or an external filter can still light marks up, which is exactly the
+`id`-without-`<Selector>` configuration Q8 wanted to call legitimate. The break
+narrows to precisely the thing being made intentional: the plot gesture.
+
+### A1.3 The cursor contract is under-specified — §5 fails its own example
+
+**Accepted.** The contract as sketched **cannot reproduce the built-in
+crosshair**, which makes the gapped-crosshair claim unsupported.
+
+The audit's finding: the production crosshair spans **three surfaces** — the SVG
+reticle in `Layers`, the DOM value pill in the y gutter, and the DOM time pill
+on `<XAxis>`. "A cursor returns SVG into the overlay" cannot express that. A
+_raw-pointer_ gapped crosshair is buildable from §5; the **snapped, multi-axis
+production** one is not.
+
+`CursorRenderProps` is also thin where it needs to be specific: `CursorSample`
+is sketched with no axis id and no resolved `px` / `py` / `format` / `side`;
+`rowKey` names the hovered row but a renderer also needs **its own** row key;
+and the x-axis kind and formatter are absent entirely.
+
+**Disposition:** either expose resolved reticle geometry, per-sample axis
+metadata, and explicit **render slots** for the gutter and the x-axis — or
+narrow §5's claim to what a single overlay surface can honestly deliver. This
+strengthens Q3's answer: the contract must not be published until every
+built-in **and** the SR gapped crosshair are written against it. If our own
+crosshair cannot be expressed in it, it is not a contract, it is a wish.
+
+### A1.4 The sweep needs a range query, not more point hit-tests
+
+**Accepted; §12's bullet is withdrawn.** `RowLayer.hitTest(px, py)` answers one
+point. Enumerating the marks under a swept band is a **range/spatial query**,
+and no layer implements one. This is new work the RFC claimed was free.
+
+The cost is worse than the missing query. Materializing and emitting up to
+100k `SelectInfo` objects **per pointermove** is per-frame allocation the
+consumer then has to process; an indexed `O(log n + k)` query fixes the lookup
+but not the payload.
+
+**Direction:** keep the live preview **internal**, coalesce to animation frames,
+and update by **crossed-mark deltas** rather than re-emitting the set. The
+committed selection may be materialized once on release — but for large
+continuous sets the result should be able to carry a compact **extent/query
+descriptor** instead of forcing eager enumeration. That descriptor is a new
+design question this RFC did not open, and it should be settled before
+`<RegionSelector>` is scheduled.
+
+### A1.5 `<RegionCursor>` keeps its drag — held, with the factoring taken
+
+**Held (pjm17971, 2026-08-08): "I see the alternatives as worse."** The audit
+argued that a cursor which commits contradicts the RFC's own definition, and
+that sharing bucket realization is an internal factoring problem rather than a
+reason to erase the boundary. The public shape stands: a region is deliberately
+a cursor **and** a drag that fires and resets, and `<RegionCursor>` /
+`<RegionSelector>` remain two components (§8.1).
+
+**What is taken from the finding — the implementation half, which is
+uncontroversial:**
+
+- **One brush recognizer**, not two. Both components drive the same gesture
+  engine; only what it emits on release differs (a range vs. marks).
+- **One shared band renderer**, so the two cannot visually drift — which §8.1's
+  whole argument depends on.
+- **A precedence rule**, or a dev error, when both are mounted. §8.1 explains
+  why they look alike; it does not arbitrate two components claiming the same
+  drag, and the audit was right that docs cannot cover that gap.
+
+**The definition is corrected rather than the design.** §1 and §3 now state that
+a region cursor is the **documented exception** to "cursors commit nothing",
+instead of asserting a purity the design does not have. **This partially
+resolves Q5**: one engine internally, two components publicly.
+
+### A1.6 Recorded opinions on the open questions
+
+Codex's positions, kept for the next reader; **not** adopted except where
+stated above:
+
+- **Q2** — allow multiple _render-only_ cursor presets with deterministic DOM
+  order, but only **one gesture/snapping owner per row**. This is a sharper
+  formulation than the RFC's "pick one" and probably supersedes it.
+- **Q3** — publish only after every built-in **and** the SR gapped crosshair use
+  the exact contract. Adopted in A1.3.
+- **Q4** — keep the sync state on the container/frame; it exists without cursor
+  presentation. Suggests a less visual name before 1.0.
+- **Q5** — one brush engine. Adopted as A1.5's implementation half; the
+  two-component public surface is not.
+- **Q6** — namespaced roles (`Cursor.Crosshair`, `Cursor.Region`,
+  `Selection.Click`, `Selection.Brush`), keeping the annotation `Region`. Open.
+- **Q7** — fix `ScatterChart` and `BoxPlot` before advertising plural or sweep
+  selection; `HeatMap` needs nothing.
+
+**Verdict recorded:** _"Proceed with mounted presets and the cursor/selector
+distinction, but not this contract. The direction is 1.0-worthy; the
+state/gesture boundary, sweep algorithm, and extension surface need another
+pass first."_ A1.2 settles the state/gesture boundary. A1.3 and A1.4 are the
+two passes still owed, and both must land before §10's steps 4 and 5 are
+scheduled.
