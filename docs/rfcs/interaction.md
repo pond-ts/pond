@@ -62,9 +62,15 @@
 > false — the check looked only for confirming evidence — and that the error
 > reached an implementation brief before it was caught.
 >
+> **Amendment 7 (2026-08-08)** carries what _building_ step 2 taught — the
+> cursor contract's surface count has now been found short **twice**, which
+> governs when Q3 may publish it — and closes **Q14**: neither 2-D layer needs a
+> spatial index, and nothing persists outside a drag. **No design question in
+> this RFC is now unanswered.**
+>
 > Reading order for the interaction surface: `cursor.md` (what cursors draw) →
-> `selection.md` v1 → its A1–A5 → this RFC §1–§12 → A1 → A2 → A3 → A4 → A5 →
-> **A6 is current on API shape**.
+> `selection.md` v1 → its A1–A5 → this RFC §1–§12 → A1 → A2 → A3 → A4 → A5 → A6
+> → **A7 is current on API shape**.
 
 ## 1. The question
 
@@ -1459,3 +1465,163 @@ was untested; here, both the draw path and the state were tested but the
 **join** between them was not. **Coverage of the pieces is not coverage of the
 seam** — so tests for this class of bug must drive the real component, and
 sabotage must be applied at the wiring, not only at the helper.
+
+## Amendment 7 (2026-08-08) — what building it taught, and Q14 closed
+
+> _Two inputs: the **implementation** of step 2 (cursor components, #621), which
+> found seven places the contract was underspecified; and a **Fable** design note
+> settling **Q14**, the last open design question. Reading order: §1–§12 → A1 →
+> … → A6 → **A7 is current**._
+
+### A7.1 The contract's surface count has now been wrong twice
+
+A1.3 corrected §5: "a cursor returns SVG into the overlay" could not express the
+production crosshair, which spans **three** surfaces. A2.3 proposed exactly
+three slots. **Building it found a fourth.**
+
+The inline/flag value chips are **DOM positioned in plot space** — not SVG
+(`renderPlot`), not the gutter pill (`renderYGutter`), not the axis
+(`renderXAxis`). Step 2 added an internal `renderPlotHtml`; the published
+contract must either sanction it or redraw the chips as SVG.
+
+**The pattern matters more than the fix.** Twice now the surface count has been
+set by reasoning about the crosshair and found short by an actual cursor. The
+lesson for **Q3**: the contract does not publish on the strength of an argument
+that it is sufficient — it publishes when every built-in **and** the SR gapped
+crosshair are written against it and nothing needed a new slot. A2.3's litmus
+order stands; A7.1 is the reason it is not optional.
+
+### A7.2 The container cannot resolve everything for everyone
+
+A2.3 said "container resolves; slots draw", which is right, and silent on
+**how much** it resolves. Resolving per-sample measurements on every pointer
+move for a **line-only** cursor would regress hover cost — the thing
+[PND-HOVCTX] was opened to protect.
+
+Step 2 gives each registration an internal `CursorWants` declaration
+(samples / flags / band / pointer / time), so the container resolves only what
+the mounted cursor asked for. **The public contract needs a position on this**,
+because it is the difference between a cheap cursor and an expensive one, and a
+user-authored cursor that over-declares silently taxes every pointer move.
+
+### A7.3 Three more measurements A2.3's list missed
+
+- **The raw pointer, inverted and formatted.** A free (non-snapping) reticle
+  needs the pointer's y as a _value_ — and a slot has no `yScale.invert`, by
+  design. Added as `frame.pointer`.
+- **A resolved `flags` array**, for `BoxPlot`'s consolidated `cursorFlag`
+  channel (one flag listing q1/median/q3/whiskers, each coloured to its piece).
+- **Axis-local placement context** for the x-axis slot — strip side, pill
+  offset. Added as `frame.xAxis`; a published contract has to name it.
+
+### A7.4 Decisions the string surface never had to make
+
+- **`<CrosshairCursor showTime>`** was undefined: today's crosshair _always_
+  pins the time and ignores `cursorTime` entirely. Now defaults `true` and
+  toggles the x-axis pill — back-compatible, and an **opt-out the string
+  surface never offered**.
+- **`format` is container-wide, not per-cursor.** The shared readout also feeds
+  marker indicators and annotation auto-labels, so a per-row cursor `format`
+  cannot be honoured per-row without reworking that plumbing. First
+  component-mounted `format` wins container-wide. A candidate for the conformance
+  pass, not for step 2.
+- **"Mount nothing = no cursor" is unreachable during the shim window.** Mounting
+  nothing leaves the legacy `'line'` default in force, so disabling the cursor
+  this minor still requires the deprecated `cursor="none"`. Inherent to any
+  deprecation window; documented in the `NoCursor` story so it doesn't read as a
+  bug.
+
+### A7.5 The `<XAxis>` seam, closed — and its mirror image
+
+A2.2's finding is fixed: `<XAxis>` asks whether the hovered row's effective
+cursor registered an x-axis slot, instead of `container.cursor === 'crosshair'`.
+**A row-level crosshair now gets its time pill.**
+
+The same fix changes behaviour in the other direction: hovering a row that
+overrides _away_ from a container crosshair no longer shows the pill. Nothing
+pinned the old behaviour, and it is the correct half of the same bug — recorded
+because it is a behaviour change no test demanded.
+
+### A7.6 Q14 resolved — no spatial index, on either layer
+
+The last open design question. **Neither 2-D layer needs a tree, and neither
+needs a persistent index.** The two are different problems that happen to share
+a rectangle.
+
+**Heat map — two binary searches and arithmetic.** Bins are **not uniform**
+(calendar buckets, trading sessions, `byColumn` bands), so `(t − t0)/w` is out —
+and unnecessary, because `begin`/`end` are sorted by construction. The x side is
+the `lowerBound`/`upperBound` pair `culling.ts` already uses (~9 probes at
+B = 365, gap-safe). The y side is closed form: rows are unit slots on a linear
+scale, so `g = clamp(floor(invert(py)))` per edge.
+
+The covered set is then **four integers**. A3.4's live treatment — outline the
+covered rect — is **one `strokeRect`** snapped to bin/row edges: _zero per-cell
+work per frame_. Commit enumerates the cross product once, skipping non-finite
+cells so holes own no membership. Committed membership is two compares plus a
+row-`Set` lookup.
+
+**Scatter — sorted-x cut, then scan.** `cs.x` is the sorted time axis, so the
+x-window is two binary searches and y filters linearly inside it. Worst case (a
+sweep spanning the view) is the full 100k, and the honest number is that **this
+is fine**: two compares per point over two `Float64Array`s is ~0.1–0.3 ms
+against a 16 ms frame in which the layer is _already repainting those same
+points_ through `arc`/`fill`, an order of magnitude dearer. **The sweep maths
+cannot be the bottleneck before the draw is.** Test centre-in-rect at the drawn
+position, not disc-intersects-rect.
+
+**The complement is free.** "Dim what is not covered" (A3.4) is the else-branch:
+the covered test runs inline in the existing draw loop and picks full alpha vs.
+dimmed. No set consulted, nothing allocated.
+
+### A7.7 What "crossed-mark deltas" concretely means — and where it doesn't hold
+
+A1.4 asked for delta-based preview. Made concrete via a per-drag **session**
+(owned by A1.5's single brush engine, via an optional layer capability
+`beginSweep(scales) → { update(rectPx), count, commit() }`):
+
+- **Heat map:** four indices plus a count. A moved edge changes whole
+  bin-columns or row-bands; the delta is a strip scan. **Genuinely O(Δ).**
+- **Scatter:** a `Uint8Array(N)` bitmap plus a count; per frame, walk the union
+  of old and new x-windows and flip differing bits. An **x-edge move is a true
+  O(Δ) strip; a y-edge move is O(window)**, because nothing is sorted on y.
+
+That second half is stated plainly rather than papered over: **on scatter,
+deltas bound the emission, not the asymptotics.** The O(window) floor is
+affordable by A7.6's numbers, and the bitmap's real job is different — it is what
+makes **A5.2's "the hits are free" claim actually true.** At release, `commit()`
+is one bit-scan collecting indices, so the hits _are_ the materialised preview
+rather than a fresh range query. Nothing crosses the public boundary until
+release.
+
+**Nothing persists.** No structure exists outside a drag. The session allocates
+on the `pointerdown` that survives `DRAG_SLOP` under a mounted `<MultiSelector>`
+— four integers for heat, one N-byte bitmap for scatter (100 KB at 100k, freed
+at release). **Consumers who never sweep pay literally zero**: no build on data
+change, no memory, no draw-path branch. Mid-drag invalidation (live data,
+pan/zoom) keys on series identity and the scales, and re-runs one full rect pass
+— one frame's work, no bookkeeping.
+
+**Declined, deliberately:** any tree (quad/KD/R) — build cost lands on every
+data change or every gesture, to win in a regime drawing cannot reach; a
+per-gesture y-sort to make scatter's y-deltas O(Δ) — O(N log N) per drag to save
+fractions of a millisecond, and it dies under live data; a generic
+`rangeQuery(rect): SelectInfo[]` layer method — materialised arrays per frame is
+A1.4's emission bug re-imported; a persistent x-bucket index — sorted x already
+gives the cut.
+
+**Edge rule, stated once:** capture uses _intersects_; the span stores the
+snapped-outward edges, so `selectionContains`' containment test agrees with
+commit-time enumeration exactly.
+
+**Left unsettled:** a future **value × value** scatter would have unsorted x, so
+the binary-search cut degrades to a full scan. The numbers say that still holds
+at 100k — the design survives, the margin narrows — and that layer should say so
+when it arrives.
+
+### A7.8 Where this leaves the open questions
+
+**Q14 closed.** No design question in this RFC is now unanswered. What remains
+is build order, plus **Q10's narrow half** (which `Region` moves) and **Q3**
+(when the contract publishes — now governed by A7.1's litmus rather than by
+argument).
