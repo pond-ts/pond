@@ -34,6 +34,54 @@ function isPoint(cs: ChartSeries, i: number): boolean {
 }
 
 /**
+ * The alpha a **hovered** point's ring draws at, against the selected ring's
+ * full strength. Same two-step signal `drawBox` uses, and for the same reason:
+ * a {@link ScatterStyle} carries one highlight ring (`selectedOutline` /
+ * `selectedWidth`) and no hover token, so hover reads as a fainter version of
+ * the same ring rather than inventing a theme value the library would have to
+ * pick a colour for.
+ */
+const HOVER_RING_ALPHA = 0.5;
+
+/**
+ * Does **any** member of `set` name this series at all? A cheap gate so a draw
+ * with a selection belonging to some other layer — the common case on a
+ * multi-layer row — never pays the per-point key lookup.
+ */
+function namesSeries(
+  set: readonly SelectInfo[],
+  seriesId: string | undefined,
+): boolean {
+  if (seriesId === undefined) return false; // a no-id layer is never selectable
+  for (let i = 0; i < set.length; i += 1) {
+    if (set[i]!.id === seriesId) return true;
+  }
+  return false;
+}
+
+/**
+ * Does any member of `set` identify the point of `seriesId` keyed `key`? The set
+ * form of the single `selected.key === keyAt(i)` test this draw used to make
+ * ([PND-MULTISEL] / RFC A4.3).
+ *
+ * A point's identity within its series **is** its key (a scatter reports no
+ * `SelectInfo.mark`), so `(id, key)` is the whole match. Linear over the set for
+ * the reason `barMatchesAny` records: a selection is a handful of marks a person
+ * clicked, and a `Set` per draw would cost more than it saves.
+ */
+function marksPoint(
+  set: readonly SelectInfo[],
+  seriesId: string | undefined,
+  key: number,
+): boolean {
+  for (let i = 0; i < set.length; i += 1) {
+    const m = set[i]!;
+    if (m.id === seriesId && m.key === key) return true;
+  }
+  return false;
+}
+
+/**
  * Index of the point in `cs` **nearest** `time` by `|x − time|`, restricted to
  * finite points, or `-1` if none. `cs.x` is the sorted time axis, so a binary
  * search finds the insertion point in O(log N); the two straddling rows are then
@@ -107,11 +155,18 @@ export function scatterExtent(cs: ChartSeries): [number, number] | null {
  * coloured by `encoding` (data-driven radius / colour) over `style`. A gap
  * (non-finite y) draws nothing — points are discrete, there is no path to break.
  *
- * The **selected** point (when `selected` matches this layer's `label` *and* a
- * point's `begin` key) is restroked with the style's wider highlight ring after
- * the base pass, so it lifts above its neighbours regardless of draw order.
- * Matching on both key and label is what keeps two series sharing a timestamp
- * from both lighting up (the container's selection contract).
+ * **Every selected** point (each `selected` member matching this layer's
+ * `seriesId` *and* a point's `begin` key) is restroked with the style's wider
+ * highlight ring after the base pass, so it lifts above its neighbours
+ * regardless of draw order; every **hovered** point takes the same ring at
+ * {@link HOVER_RING_ALPHA}. Matching on both key and series id is what keeps two
+ * series sharing a timestamp from both lighting up (the container's selection
+ * contract). A point in both sets reads as **selected** — the precedence
+ * `drawBars` / `drawStacks` / `drawBox` share.
+ *
+ * Both are **sets**: `selected` has been one since [PND-MULTISEL] and `hovered`
+ * since RFC A4.3, so a pinned group of points, or a drag-sweep lighting several
+ * at once, rings all of them rather than only the set's first member.
  *
  * Each circle is its own `beginPath`/`arc`/`fill`/`stroke`; `save`/`restore`
  * brackets the whole pass so fill/stroke state doesn't leak into later layers.
@@ -122,10 +177,11 @@ export function scatterExtent(cs: ChartSeries): [number, number] | null {
  *                usually `(i) => cs.x[i]`.
  * @param labelAt optional per-point text label; `undefined` ⇒ no labels drawn.
  * @param font    `theme.font` (family + size) for label text.
- * @param selected the container's current selection (or `null`).
+ * @param selected the container's current selection set (empty ⇒ none).
+ * @param hovered  the container's current hover set (empty ⇒ none).
  * @param seriesId this layer's stable series identity (its `id` prop, or
  *                `undefined` when the layer isn't selectable) — the series half
- *                of the selection match. A point lights only when the selection's
+ *                of the selection match. A point lights only when a member's
  *                `id` matches, keyed to the sample by its `key`.
  */
 export function drawScatter(
@@ -138,20 +194,25 @@ export function drawScatter(
   keyAt: (i: number) => number,
   labelAt: ((i: number) => string | undefined) | undefined,
   font: { readonly family: string; readonly size: number },
-  selected: SelectInfo | null,
+  selected: readonly SelectInfo[],
+  hovered: readonly SelectInfo[],
   seriesId: string | undefined,
   offsetPx = 0,
   decimate: DecimateOption = true,
 ): LayerDrawStats {
   ctx.save();
-  // The selection only lights up a point of *this* series; resolve the key once.
-  // A no-id (non-selectable) layer passes `undefined` and never matches.
-  const selectedKey =
-    selected !== null && selected.id === seriesId ? selected.key : null;
-  let selPx = 0;
-  let selPy = 0;
-  let selR = 0;
-  let selHit = false;
+  // Either set only lights up points of *this* series; settle that once so the
+  // point loop can skip the key lookup entirely when neither names us. A no-id
+  // (non-selectable) layer passes `undefined` and never matches.
+  const anySelected = namesSeries(selected, seriesId);
+  const anyHovered = namesSeries(hovered, seriesId);
+  // Ring geometry, deferred to a pass after the marks so a highlight is never
+  // overpainted by a neighbour drawn later. Flat `[px, py, r, …]` triples, and
+  // **allocated only on the first hit** — the resting frame (nothing selected,
+  // nothing hovered) still allocates nothing per draw, which is the property the
+  // old pair of scalars had and the reason this isn't an array of objects.
+  let selRings: number[] | null = null;
+  let hovRings: number[] | null = null;
 
   // Viewport culling (Phase 2): draw only the marks in the visible x-window
   // (+1 each side). The loop keeps the **original** index `i`, so the index-keyed
@@ -191,9 +252,10 @@ export function drawScatter(
   // overlapping cluster to one representative per mark-radius cell (2D
   // occupancy — {@link decimateScatter}). Visually lossless at that density, and
   // O(visible). Interaction is unaffected ({@link hitTestScatter} still walks
-  // every source point); the selection ring and per-point labels are dropped on
-  // this path — both are illegible under a dense blob — matching the decimated
-  // bar path. Data-driven size/colour (`!encoding.uniform`) or a translucent
+  // every source point); the selection / hover rings and per-point labels are
+  // dropped on this path — all are illegible under a dense blob — matching the
+  // decimated bar path (and `drawHeat`, which suppresses its cell outlines for
+  // the same reason). Data-driven size/colour (`!encoding.uniform`) or a translucent
   // fill (density-encoded, where overlap *should* build up) keep the full draw.
   const visibleCount = vEnd - vStart;
   const k =
@@ -265,23 +327,34 @@ export function drawScatter(
       ctx.strokeStyle = style.outline;
       ctx.stroke();
     }
-    // Defer the selected point's highlight ring to a second pass so it sits on
-    // top of any neighbour drawn after it.
-    if (selectedKey !== null && keyAt(i) === selectedKey) {
-      selPx = px;
-      selPy = py;
-      selR = r;
-      selHit = true;
+    // Defer each live point's highlight ring to a second pass so it sits on
+    // top of any neighbour drawn after it. Selection is tested first and wins
+    // outright, so a point that is both never draws two rings.
+    if (anySelected || anyHovered) {
+      const key = keyAt(i);
+      if (anySelected && marksPoint(selected, seriesId, key)) {
+        (selRings ??= []).push(px, py, r);
+      } else if (anyHovered && marksPoint(hovered, seriesId, key)) {
+        (hovRings ??= []).push(px, py, r);
+      }
     }
   }
 
-  // Highlight ring for the selected point (after the base pass — always on top).
-  if (selHit) {
-    ctx.beginPath();
-    ctx.arc(selPx, selPy, selR, 0, Math.PI * 2);
+  // Highlight rings, after the base pass — always on top. Hover first, then
+  // selection over it: both use the one ring the style carries, so the fainter
+  // state must not paint over the committed one where two marks overlap.
+  if (hovRings !== null) {
+    ctx.save();
+    ctx.globalAlpha = HOVER_RING_ALPHA;
     ctx.lineWidth = style.selectedWidth;
     ctx.strokeStyle = style.selectedOutline;
-    ctx.stroke();
+    strokeRings(ctx, hovRings);
+    ctx.restore();
+  }
+  if (selRings !== null) {
+    ctx.lineWidth = style.selectedWidth;
+    ctx.strokeStyle = style.selectedOutline;
+    strokeRings(ctx, selRings);
   }
 
   // Optional per-point labels, after all marks so text isn't overpainted.
@@ -311,6 +384,17 @@ export function drawScatter(
 
 /** Gap (px) between a point's edge and its label text. */
 const LABEL_GAP = 4;
+
+/** Stroke one circle per `[px, py, r]` triple of `rings`. The caller owns the
+ *  stroke state (colour / width / alpha), so both highlight passes set it once
+ *  rather than per ring. */
+function strokeRings(ctx: CanvasRenderingContext2D, rings: readonly number[]) {
+  for (let j = 0; j < rings.length; j += 3) {
+    ctx.beginPath();
+    ctx.arc(rings[j]!, rings[j + 1]!, rings[j + 2]!, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
 
 /**
  * Hit-test plot-pixel `(qx, qy)` against the scatter's points — the topmost
