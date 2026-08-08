@@ -8,7 +8,6 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * `<YAxis scale="log">`, one story per state.
@@ -122,7 +121,7 @@ const W = 560;
 const H = 220;
 
 const chart = (axis: React.ReactNode, layers: React.ReactNode, grid = true) => (
-  <ChartContainer range={RANGE} width={W} theme={docsTheme} grid={grid}>
+  <ChartContainer range={RANGE} width={W} grid={grid}>
     <ChartRow height={H}>
       {axis}
       <Layers>{layers}</Layers>
@@ -332,7 +331,7 @@ export const StackedOnLog: Story = {
  *  knowing. */
 export const LogAndLinearTogether: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={H}>
         <YAxis id="log" scale="log" side="left" format=".2s" width={64} />
         <YAxis id="lin" side="right" format=".2s" width={64} />

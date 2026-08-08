@@ -13,7 +13,6 @@ import { useChartLegend } from './useChartLegend.js';
 import { YAxis } from './YAxis.js';
 import type { SelectInfo } from './context.js';
 import { twoSeries, hrSeries, RANGE } from './story-data.fixture.js';
-import { defaultTheme } from './theme.js';
 
 /**
  * `<Legend>` — the series key, rendered from the layers' own registrations:
@@ -42,8 +41,8 @@ export const Default: Story = {
       <ChartRow height={200}>
         <YAxis id="v" min={140} max={230} />
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="v" />
-          <LineChart series={s} column="slow" as="slow" axis="v" />
+          <LineChart series={s} column="fast" as="primary" axis="v" />
+          <LineChart series={s} column="slow" as="secondary" axis="v" />
         </Layers>
       </ChartRow>
       <Legend />
@@ -68,8 +67,8 @@ export const MixedMarkSwatches: Story = {
             axis="v"
           />
           <AreaChart series={hrSeries()} column="bpm" as="bpm" axis="v" />
-          <LineChart series={s} column="fast" as="fast" axis="v" />
-          <ScatterChart series={s} column="slow" as="slow" axis="v" />
+          <LineChart series={s} column="fast" as="primary" axis="v" />
+          <ScatterChart series={s} column="slow" as="secondary" axis="v" />
         </Layers>
       </ChartRow>
       <Legend />
@@ -106,7 +105,7 @@ export const PlacementTopLeft: Story = {
       <ChartRow height={180}>
         <YAxis id="v" min={140} max={230} />
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="v" />
+          <LineChart series={s} column="fast" as="primary" axis="v" />
         </Layers>
       </ChartRow>
       <Legend placement="top-left" />
@@ -121,7 +120,7 @@ export const PlacementBottomLeft: Story = {
       <ChartRow height={180}>
         <YAxis id="v" min={140} max={230} />
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="v" />
+          <LineChart series={s} column="fast" as="primary" axis="v" />
         </Layers>
       </ChartRow>
       <Legend placement="bottom-left" />
@@ -136,7 +135,7 @@ export const PlacementBottomRight: Story = {
       <ChartRow height={180}>
         <YAxis id="v" min={140} max={230} />
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="v" />
+          <LineChart series={s} column="fast" as="primary" axis="v" />
         </Layers>
       </ChartRow>
       <Legend placement="bottom-right" />
@@ -155,14 +154,14 @@ export const OptOutAndRename: Story = {
           <LineChart
             series={s}
             column="fast"
-            as="fast"
+            as="primary"
             axis="v"
             legend="Fast (bpm)"
           />
           <LineChart
             series={s}
             column="slow"
-            as="slow"
+            as="secondary"
             axis="v"
             legend={false}
           />
@@ -200,8 +199,8 @@ export const ScopedPerRow: Story = {
       <ChartRow height={130}>
         <YAxis id="v" min={140} max={230} />
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="v" />
-          <LineChart series={s} column="slow" as="slow" axis="v" />
+          <LineChart series={s} column="fast" as="primary" axis="v" />
+          <LineChart series={s} column="slow" as="secondary" axis="v" />
           <Legend placement="top-right" />
         </Layers>
       </ChartRow>
@@ -224,7 +223,7 @@ export const MultiRowOrder: Story = {
       <ChartRow height={140}>
         <YAxis id="v" min={140} max={230} />
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="v" />
+          <LineChart series={s} column="fast" as="primary" axis="v" />
         </Layers>
       </ChartRow>
       <ChartRow height={140}>
@@ -256,14 +255,14 @@ export const InteractiveSelect: Story = {
                 series={s}
                 column="fast"
                 id="fast"
-                as="fast"
+                as="primary"
                 axis="v"
               />
               <ScatterChart
                 series={s}
                 column="slow"
                 id="slow"
-                as="slow"
+                as="secondary"
                 axis="v"
               />
               <LineChart series={hrSeries()} column="bpm" as="bpm" axis="v" />
@@ -367,17 +366,11 @@ export const HeadlessCustomLegend: Story = {
         </div>
       );
     }
-    // Distinct theme roles per series (the one styling channel): `slow` gets
-    // an amber scatter style; the chips inherit both resolved colours.
-    const theme = {
-      ...defaultTheme,
-      scatter: {
-        ...defaultTheme.scatter,
-        slow: { ...defaultTheme.scatter.default, color: '#f59e0b' },
-      },
-    };
+    // Distinct theme roles per series (the one styling channel): `secondary`
+    // resolves the default theme's warm scatter style; the chips inherit both
+    // resolved colours.
     return (
-      <ChartContainer range={RANGE} width={W} theme={theme}>
+      <ChartContainer range={RANGE} width={W}>
         {/* Declared before the row ⇒ the chips sit ABOVE the plot. */}
         <ChipRow />
         <ChartRow height={200}>
@@ -387,14 +380,14 @@ export const HeadlessCustomLegend: Story = {
               series={s}
               column="fast"
               id="fast"
-              as="fast"
+              as="primary"
               axis="v"
             />
             <ScatterChart
               series={s}
               column="slow"
               id="slow"
-              as="slow"
+              as="secondary"
               axis="v"
             />
           </Layers>
@@ -413,7 +406,7 @@ export const StandaloneItems: Story = {
       items={[
         {
           label: 'observed',
-          swatch: { kind: 'line', color: '#2563eb', width: 2 },
+          swatch: { kind: 'line', color: '#0284c7', width: 2 },
         },
         {
           label: 'forecast',

@@ -7,7 +7,6 @@ import { LineChart } from './LineChart.js';
 import { ScatterChart } from './ScatterChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * **Dual x-axes** — two tick layouts on **one shared scale** (never two
@@ -126,7 +125,7 @@ export const SigmaWithDeltaStrip: Story = {
   render: () => {
     const series = sigmaSmile();
     return (
-      <ChartContainer showAxis={false} width={1100} theme={docsTheme}>
+      <ChartContainer showAxis={false} width={1100}>
         <ChartRow height={260}>
           <YAxis id="iv" label="Volatility" format=".1f" />
           <Layers>
@@ -152,7 +151,7 @@ export const SeriesColoredAxes: Story = {
   render: () => {
     const series = sigmaSmile();
     return (
-      <ChartContainer showAxis={false} width={700} theme={docsTheme}>
+      <ChartContainer showAxis={false} width={700}>
         <ChartRow height={220}>
           {/* Each y axis takes its series' colour — the theme's primary /
               secondary role colours, matched by hand. */}
@@ -198,7 +197,7 @@ export const MoneynessTopAxis: Story = {
       columns: { strike: strikes, fair },
     });
     return (
-      <ChartContainer showAxis={false} width={620} theme={docsTheme}>
+      <ChartContainer showAxis={false} width={620}>
         <XAxis
           side="top"
           transform={{ to: (k) => k / spot, from: (m) => m * spot }}

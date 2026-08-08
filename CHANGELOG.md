@@ -60,6 +60,50 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **charts: six `<MultiSelector>` polish bugs found walking the Storybook
+  stories.**
+  - **A live sweep no longer draws the data cursor over its band.** The
+    default `line` preset (and any mounted cursor) kept painting its solid
+    vertical rule at the raw pointer for the whole drag, so the sweep read as
+    "a line" while the band (7% wash) sat underneath. A live sweep now
+    suppresses the row's cursor slots exactly as annotation editing does; the
+    shared brush band still renders, so a sweep looks like a `<RangeCursor>`
+    drag (RFC §8.1's identical pixels).
+  - **Adjacent selected bars keep their gap.** The selection outline was a
+    centred `strokeRect`, painting `outlineWidth / 2` outside each bar — with
+    the default `gap: 1` that bridged the whole gap from both sides, fusing a
+    swept run into one solid block. The outline now strokes _inside_ the ink
+    (both draw paths, `drawBars` and `drawStacks`); a mark too thin to contain
+    its outline skips it.
+  - **Clicking the empty space above the bars deselects.** Bar slots tile the
+    full plot height (the continuous hover model of #582), so a click could
+    never resolve to "no mark" — RFC §7's empty-commit deselect path was
+    unreachable on a full-range bar chart. The click hit-test now requires
+    the pointer within the bar's drawn ink vertically (the slot keeps its
+    full interval width, so the gap between columns still selects). Hover is
+    deliberately unchanged: the highlight keeps tracking the full slot like
+    the readout. No new callback needed — the existing
+    `([], modifiers, null)` empty commit is the deselect signal.
+  - **A bucket-snapped sweep lights its whole first bucket from the moment
+    the drag starts.** The move that commits the sweep now runs the covered
+    cut synchronously (later moves stay frame-coalesced per RFC A1.4), and
+    the preview is pinned to agree with the commit exactly under a
+    `sequence`.
+  - **The `SweepAdditive` story's policy handled only spans** — any click
+    (⌘ held or not) cleared the whole selection, so the A5.2 headline flow
+    ("sweep, then ⌘-click to extend") deleted it instead. The library
+    reported `(hits, modifiers, null)` correctly all along; the story-side
+    set arithmetic was wrong and is fixed (a story-driven test now pins it).
+  - **A category sweep's band snaps to the slots' outer edges.** The band
+    scale's `invert` returns slot centres, so the freeform band ran
+    centre-to-centre while capture and the committed span snapped outward
+    (RFC A7.6's edge rule) — the drawn band disagreed with the selection by
+    half a slot at each end. The vertical categorical bar layer now publishes
+    its unit slots as snap buckets and the band extends slot-edge to
+    slot-edge.
+
 ### Changed
 
 - **charts: `defaultTheme` bars look different. This is a visible change to
@@ -93,6 +137,41 @@ include new features and type-level changes; patch bumps are strictly additive.
   Nothing about this is forced on a custom theme: every value above lives in
   `defaultTheme`, and `estelaTheme` plus any hand-built theme are untouched.
   To keep the old look, override `bar.default` with the old-column values.
+
+- **charts: `defaultTheme`'s data blue and annotation register re-hued — the
+  two colour collisions the new bar palette created are fixed.** The old
+  annotation turquoise (`#0d9488`) sat ~ΔE 4 from the bar palette's resting
+  teal (`#2A9D8F`), so a placed mark over default-theme bars read as data; the
+  old royal data blue (`#2563eb`) sat ~ΔE 5 from the new _selection_ blue
+  (`#3F5BE0`), so a line drawn over bars read as nearly the selection colour.
+
+  | `defaultTheme`                                                 | old       | new       |
+  | -------------------------------------------------------------- | --------- | --------- |
+  | data blue (`line`/`band`/`area`/`scatter`/`box`/candle rising) | `#2563eb` | `#0284c7` |
+  | dark accents (box `median`, candle rising `wick`)              | `#1e3a8a` | `#075985` |
+  | box `whisker`                                                  | `#aabee9` | `#a3cde5` |
+  | `annotation.color`                                             | `#0d9488` | `#b45309` |
+
+  The whole `#2563eb` family moves together so the theme keeps one data blue
+  (a line and its variance band must stay one hue). The register's new burnt
+  amber is a deliberately warm outlier — nearest data hue ΔE2000 ≈ 18, most
+  40+ — restoring "a placed mark never reads as data" for the whole palette.
+  Both rules are now pinned by `test/default-theme-collisions.test.ts`, so a
+  future palette edit that re-introduces a collision fails CI. The teal
+  fallbacks a theme _without_ an annotation register gets (`#14b8a6` /
+  `#0d9488` built-ins) are unchanged.
+
+- **charts (dev): Storybook unified on the shipped `defaultTheme`.** All ~280
+  `theme={docsTheme}` / `theme={estelaTheme}` props are gone from the stories,
+  so every story now exercises the `theme ?? defaultTheme` fallback a
+  themeless consumer hits — previously nothing in the repo rendered the
+  default theme at all, which is how both collisions above went unseen.
+  Theming-as-a-feature lives in a curated set: the new `Theming/Showcase`
+  group (docs light/dark, estela dark), `Theming/CssVars`, and the handful of
+  stories whose subject is the theme channel itself (custom line themes, list
+  estela restyles, per-role bar/box/annotation maps — now based on
+  `defaultTheme`). Story-local `dimmed`/`highlight` overrides that predated
+  the default palette's own interaction states are dropped.
 
 ### Added
 

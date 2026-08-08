@@ -7,7 +7,7 @@ import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import type { ChartTheme } from './theme.js';
-import { docsTheme } from './docs-theme.fixture.js';
+import { defaultTheme } from './theme.js';
 
 /**
  * A **full multi-panel layout** the way a financial tool assembles it (the Tidal
@@ -84,15 +84,16 @@ function buildSeries(): TimeSeries<typeof SCHEMA> {
 // per-series line style lands; today LineStyle is { color, width } only, so it's
 // a distinct hue instead. That gap is the sibling ask to this story.)
 const chartTheme: ChartTheme = {
-  ...docsTheme,
+  ...defaultTheme,
   line: {
-    ...docsTheme.line,
-    // The docs viz ramp, by role: viz1 / viz2 / viz3 / viz4 — all four stay
-    // in the data register (never vizMark, which is annotations-only).
-    atm: { color: docsTheme.line.primary!.color, width: 1.3 },
-    realized: { color: docsTheme.line.secondary!.color, width: 1.3 },
-    garch: { color: docsTheme.line.context!.color, width: 1.3 },
-    price: { color: docsTheme.line.slow!.color, width: 1.6 },
+    ...defaultTheme.line,
+    // The default theme's three generic data roles, by name; `price` sits on
+    // its own panel so it takes a neutral slate rather than a fourth data hue
+    // (defaultTheme's role vocabulary stops at primary/secondary/context).
+    atm: { color: defaultTheme.line.primary!.color, width: 1.3 },
+    realized: { color: defaultTheme.line.secondary!.color, width: 1.3 },
+    garch: { color: defaultTheme.line.context!.color, width: 1.3 },
+    price: { color: '#475569', width: 1.6 },
   },
 };
 

@@ -8,7 +8,6 @@ import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
 import { cssVarTheme } from './css-theme.js';
 import { defaultTheme, estelaTheme } from './theme.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 const BASE = Date.UTC(2026, 0, 1);
 const DAY = 86_400_000;
@@ -75,13 +74,14 @@ const N = 60;
 // ── Variants ────────────────────────────────────────────────────────────────
 
 /** **`variant='candle'` (default).** Filled `open→close` body + `high–low` wick,
- *  direction-coloured off the theme's rising / falling pair (the docs theme, a
- *  consumer, uses a market-style pair; the library's `defaultTheme` stays neutral). */
+ *  direction-coloured off the theme's rising / falling pair (the library's
+ *  `defaultTheme` stays deliberately neutral — cerulean up, warm down, not
+ *  market green/red; a consumer overlays its own pair, see the CssVars story). */
 export const Candle: Story = {
   render: () => {
     const d = dailyOHLC(N);
     return (
-      <ChartContainer range={dayRange(N)} width={640} theme={docsTheme}>
+      <ChartContainer range={dayRange(N)} width={640}>
         <ChartRow height={280}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -99,7 +99,7 @@ export const Bar: Story = {
   render: () => {
     const d = dailyOHLC(N);
     return (
-      <ChartContainer range={dayRange(N)} width={640} theme={docsTheme}>
+      <ChartContainer range={dayRange(N)} width={640}>
         <ChartRow height={280}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -117,7 +117,7 @@ export const Hollow: Story = {
   render: () => {
     const d = dailyOHLC(N);
     return (
-      <ChartContainer range={dayRange(N)} width={640} theme={docsTheme}>
+      <ChartContainer range={dayRange(N)} width={640}>
         <ChartRow height={280}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -138,7 +138,7 @@ export const ColorBySeries: Story = {
   render: () => {
     const d = dailyOHLC(N);
     return (
-      <ChartContainer range={dayRange(N)} width={640} theme={docsTheme}>
+      <ChartContainer range={dayRange(N)} width={640}>
         <ChartRow height={280}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -205,7 +205,7 @@ export const Doji: Story = {
     }
     const d = new TimeSeries({ name: 'doji', schema: ohlcSchema, rows });
     return (
-      <ChartContainer range={dayRange(24)} width={560} theme={docsTheme}>
+      <ChartContainer range={dayRange(24)} width={560}>
         <ChartRow height={260}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -225,7 +225,7 @@ export const Gap: Story = {
   render: () => {
     const d = dailyOHLC(N);
     return (
-      <ChartContainer range={dayRange(N)} width={640} theme={docsTheme}>
+      <ChartContainer range={dayRange(N)} width={640}>
         <ChartRow height={280}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -246,7 +246,7 @@ export const PointKeyed: Story = {
   render: () => {
     const d = dailyOHLC(N);
     return (
-      <ChartContainer range={dayRange(N)} width={640} theme={docsTheme}>
+      <ChartContainer range={dayRange(N)} width={640}>
         <ChartRow height={280}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -266,11 +266,7 @@ export const IntervalKeyed: Story = {
     const w = weeklyOHLC(dailyOHLC(N));
     const k = w.keyColumn();
     return (
-      <ChartContainer
-        range={[k.begin[0]!, k.end[w.length - 1]!]}
-        width={640}
-        theme={docsTheme}
-      >
+      <ChartContainer range={[k.begin[0]!, k.end[w.length - 1]!]} width={640}>
         <ChartRow height={280}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -291,12 +287,7 @@ export const Crosshair: Story = {
   render: () => {
     const d = dailyOHLC(N);
     return (
-      <ChartContainer
-        range={dayRange(N)}
-        width={640}
-        theme={docsTheme}
-        cursor="crosshair"
-      >
+      <ChartContainer range={dayRange(N)} width={640} cursor="crosshair">
         <ChartRow height={280}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -314,12 +305,7 @@ export const ShowOHLC: Story = {
   render: () => {
     const d = dailyOHLC(N);
     return (
-      <ChartContainer
-        range={dayRange(N)}
-        width={640}
-        theme={docsTheme}
-        cursor="crosshair"
-      >
+      <ChartContainer range={dayRange(N)} width={640} cursor="crosshair">
         <ChartRow height={280}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -362,14 +348,14 @@ export const Estela: Story = {
 export const ScenarioPriceVolume: Story = {
   render: () => {
     const d = dailyOHLC(N);
-    const { rising, falling } = docsTheme.candle.default;
+    const { rising, falling } = defaultTheme.candle.default;
     const open = d.column('open');
     const close = d.column('close');
     const byDirection = Array.from({ length: d.length }, (_, i) =>
       (close.at(i) ?? 0) >= (open.at(i) ?? 0) ? rising.body : falling.body,
     );
     return (
-      <ChartContainer range={dayRange(N)} width={720} theme={docsTheme}>
+      <ChartContainer range={dayRange(N)} width={720}>
         <ChartRow height={260}>
           <YAxis id="price" label="price" />
           <Layers>

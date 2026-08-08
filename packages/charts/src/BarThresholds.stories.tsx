@@ -7,7 +7,6 @@ import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
-import { docsTheme } from './docs-theme.fixture.js';
 import { defaultTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
 
@@ -65,7 +64,7 @@ const BANDS = ['#2f9e6e', '#e0a13c', '#d05353'];
  */
 export const Default: Story = {
   render: () => (
-    <ChartContainer width={640} theme={docsTheme}>
+    <ChartContainer width={640}>
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -86,7 +85,7 @@ export const Default: Story = {
  */
 export const SingleThreshold: Story = {
   render: () => (
-    <ChartContainer width={640} theme={docsTheme}>
+    <ChartContainer width={640}>
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -108,7 +107,7 @@ export const SingleThreshold: Story = {
  */
 export const FiveBands: Story = {
   render: () => (
-    <ChartContainer width={640} theme={docsTheme}>
+    <ChartContainer width={640}>
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -126,13 +125,13 @@ export const FiveBands: Story = {
 
 /**
  * **Themed, no `bandColors`.** The ladder resolves from
- * `theme.bar.default.bands` — the design-system path. This story uses the
- * library default theme, whose ladder is the bar's own **teal** (the resting
- * fill of the interaction-state palette) → amber → red.
+ * `theme.bar.default.bands` — the design-system path. The library default
+ * theme's ladder is the bar's own **teal** (the resting fill of the
+ * interaction-state palette) → amber → red.
  */
 export const FromTheme: Story = {
   render: () => (
-    <ChartContainer width={640} theme={defaultTheme}>
+    <ChartContainer width={640}>
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -151,11 +150,11 @@ export const FromTheme: Story = {
 export const PerRoleLadder: Story = {
   render: () => {
     const theme = {
-      ...docsTheme,
+      ...defaultTheme,
       bar: {
-        ...docsTheme.bar,
+        ...defaultTheme.bar,
         capacity: {
-          ...docsTheme.bar.default,
+          ...defaultTheme.bar.default,
           bands: ['#4a7fb5', '#e0a13c', '#d05353'],
         },
       },
@@ -185,7 +184,7 @@ export const PerRoleLadder: Story = {
  */
 export const Signed: Story = {
   render: () => (
-    <ChartContainer width={640} theme={docsTheme}>
+    <ChartContainer width={640}>
       <ChartRow height={260}>
         <YAxis id="v" label="" min={-3.6} max={3.6} />
         <Layers>
@@ -209,7 +208,7 @@ export const Horizontal: Story = {
   render: () => (
     // `showAxis={false}` because the explicit <XAxis> below is the value axis;
     // leaving the container's implicit one on renders the ticks twice.
-    <ChartContainer width={640} theme={docsTheme} showAxis={false}>
+    <ChartContainer width={640} showAxis={false}>
       <ChartRow height={260}>
         <YAxis id="v" label="" />
         <Layers>
@@ -254,7 +253,6 @@ export const TimeSeriesBars: Story = {
       <ChartContainer
         range={[BASE, BASE + 24 * HOUR]}
         width={640}
-        theme={docsTheme}
         showAxis={false}
       >
         <ChartRow height={220}>
@@ -284,12 +282,7 @@ function SelectDemo() {
   const [sel, setSel] = useState<SelectInfo | null>(null);
   return (
     <div>
-      <ChartContainer
-        width={640}
-        theme={docsTheme}
-        selected={sel}
-        onSelect={setSel}
-      >
+      <ChartContainer width={640} selected={sel} onSelect={setSel}>
         <ChartRow height={240}>
           <YAxis id="v" label="" min={0} max={3.6} />
           <Layers>
@@ -320,7 +313,7 @@ export const Selectable: Story = { render: () => <SelectDemo /> };
  */
 export const YieldsToBinColors: Story = {
   render: () => (
-    <ChartContainer width={640} theme={docsTheme}>
+    <ChartContainer width={640}>
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -351,7 +344,7 @@ export const YieldsToBinColors: Story = {
  */
 export const UnsortedThresholds: Story = {
   render: () => (
-    <ChartContainer width={640} theme={docsTheme}>
+    <ChartContainer width={640}>
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>

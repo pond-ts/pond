@@ -5,7 +5,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { BoxPlot } from './BoxPlot.js';
 import { YAxis } from './YAxis.js';
-import { docsTheme } from './docs-theme.fixture.js';
+import { defaultTheme, type ChartTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
 
 const BASE = Date.UTC(2026, 0, 1, 12, 0, 0);
@@ -112,7 +112,7 @@ export default meta;
 type Story = StoryObj;
 
 /**
- * The headline: per-bucket latency percentiles as boxes on the docs theme.
+ * The headline: per-bucket latency percentiles as boxes on the default theme.
  * Five columns (`p5`/`p25`/`p50`/`p75`/`p95`) map to the lower whisker / box /
  * median / box / upper whisker. `gap` insets adjacent boxes so they breathe.
  */
@@ -120,7 +120,7 @@ export const Percentiles: Story = {
   render: () => {
     const q = percentileBuckets();
     return (
-      <ChartContainer range={rangeOf(q)} width={620} theme={docsTheme}>
+      <ChartContainer range={rangeOf(q)} width={620}>
         <ChartRow height={260}>
           <YAxis id="ms" label="ms" />
           <Layers>
@@ -151,12 +151,7 @@ export const CursorFlag: Story = {
   render: () => {
     const q = percentileBuckets();
     return (
-      <ChartContainer
-        range={rangeOf(q)}
-        width={620}
-        theme={docsTheme}
-        cursor="flag"
-      >
+      <ChartContainer range={rangeOf(q)} width={620} cursor="flag">
         <ChartRow height={260}>
           <YAxis id="ms" label="ms" />
           <Layers>
@@ -187,7 +182,7 @@ export const Solid: Story = {
   render: () => {
     const q = percentileBuckets();
     return (
-      <ChartContainer range={rangeOf(q)} width={620} theme={docsTheme}>
+      <ChartContainer range={rangeOf(q)} width={620}>
         <ChartRow height={260}>
           <YAxis id="ms" label="ms" />
           <Layers>
@@ -215,7 +210,7 @@ export const WithGap: Story = {
   render: () => {
     const g = bucketsWithGap();
     return (
-      <ChartContainer range={rangeOf(g)} width={520} theme={docsTheme}>
+      <ChartContainer range={rangeOf(g)} width={520}>
         <ChartRow height={220}>
           <YAxis id="v" label="v" min={0} max={80} />
           <Layers>
@@ -235,13 +230,28 @@ export const WithGap: Story = {
   },
 };
 
-/** The same percentile pipeline styled entirely by the theme's `box.default`
- *  token (no `as` role named at the call site). */
+/** The same percentile pipeline restyled entirely through the theme's
+ *  `box.default` token — no `as` role at the call site, no per-chart style
+ *  props: swap the token and every default box follows. */
+const tealBoxTheme: ChartTheme = {
+  ...defaultTheme,
+  box: {
+    ...defaultTheme.box,
+    default: {
+      ...defaultTheme.box.default,
+      fill: '#5eb5a6',
+      stroke: '#2f8577',
+      median: '#134e4a',
+      whisker: '#9ed3c8',
+    },
+  },
+};
+
 export const Themed: Story = {
   render: () => {
     const q = percentileBuckets();
     return (
-      <ChartContainer range={rangeOf(q)} width={620} theme={docsTheme}>
+      <ChartContainer range={rangeOf(q)} width={620} theme={tealBoxTheme}>
         <ChartRow height={260}>
           <YAxis id="ms" label="ms" />
           <Layers>
@@ -295,7 +305,7 @@ export const VolSmile: Story = {
   render: () => {
     const s = smile();
     return (
-      <ChartContainer width={620} theme={docsTheme}>
+      <ChartContainer width={620}>
         <ChartRow height={260}>
           <YAxis id="iv" label="IV" />
           <Layers>
@@ -316,7 +326,7 @@ export const VolSmileWithMid: Story = {
   render: () => {
     const s = smile();
     return (
-      <ChartContainer width={620} theme={docsTheme}>
+      <ChartContainer width={620}>
         <ChartRow height={260}>
           <YAxis id="iv" label="IV" />
           <Layers>
@@ -353,7 +363,7 @@ export const CallPutPair: Story = {
       },
     });
     return (
-      <ChartContainer width={620} theme={docsTheme}>
+      <ChartContainer width={620}>
         <ChartRow height={260}>
           <YAxis id="iv" label="IV" />
           <Layers>
@@ -393,7 +403,6 @@ export const Selectable: Story = {
     return (
       <ChartContainer
         width={620}
-        theme={docsTheme}
         selected={{
           id: 'smile',
           key: 95,
@@ -438,7 +447,6 @@ export const MultiSelected: Story = {
     return (
       <ChartContainer
         width={620}
-        theme={docsTheme}
         selected={[smileMark(85), smileMark(105), smileMark(125)]}
       >
         <ChartRow height={260}>
@@ -464,7 +472,6 @@ export const MultiHovered: Story = {
     return (
       <ChartContainer
         width={620}
-        theme={docsTheme}
         hovered={[smileMark(95), smileMark(105), smileMark(115)]}
       >
         <ChartRow height={260}>
@@ -490,7 +497,6 @@ export const MultiSelectedAndHovered: Story = {
     return (
       <ChartContainer
         width={620}
-        theme={docsTheme}
         selected={[smileMark(85), smileMark(95)]}
         hovered={[smileMark(95), smileMark(105), smileMark(115)]}
       >

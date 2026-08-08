@@ -7,10 +7,9 @@ import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { Baseline } from './annotations.js';
 import { priceSeries, RANGE } from './story-data.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
- * `<Baseline>` — a horizontal value line on a chart, in the turquoise annotation
+ * `<Baseline>` — a horizontal value line on a chart, in the amber annotation
  * register. These stories fan out its props one axis at a time: **label**
  * (auto / custom / off), the **indicator** axis-pill opt-in, **selection /
  * depth**, and **dual-axis** binding. Interaction demos (drag-to-edit, create)
@@ -22,7 +21,7 @@ const H = 220;
 /** One price row with a right-hand USD axis; children are the annotation(s). */
 function Chart({ children }: { children: ReactNode }) {
   return (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={H}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -160,7 +159,7 @@ export const Multiple: Story = {
  *  units — USD vs %). */
 export const DualAxis: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={H}>
         <YAxis id="usd" side="left" min={150} max={220} format=",.0f" />
         <Layers>
@@ -179,7 +178,7 @@ export const DualAxis: Story = {
  *  labels), instead of overflowing above the plot. */
 export const DomainExtreme: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={H}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />

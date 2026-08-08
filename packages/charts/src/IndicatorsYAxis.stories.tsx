@@ -7,7 +7,6 @@ import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { YAxisIndicator, createLiveValue } from './indicators.js';
 import { priceSeries, RANGE } from './story-data.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * `<YAxisIndicator>` — a value pill pinned to a y-axis edge (the ChartIQ /
@@ -31,7 +30,7 @@ type Story = StoryObj;
  *  pill on the gutter (covering the tick), with the dashed `line` across the plot. */
 export const StaticValue: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -53,7 +52,7 @@ export const StaticValue: Story = {
  *  pointing into the plot at the value (a callout tab). */
 export const Pointer: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -76,7 +75,7 @@ export const Pointer: Story = {
  *  `<YAxis>` (the conventional pairing — the pill sits on top of that gutter). */
 export const SideRight: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -98,7 +97,7 @@ export const SideRight: Story = {
  *  left-side `<YAxis>` so it lands on that gutter rather than floating over the plot. */
 export const SideLeft: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -120,7 +119,7 @@ export const SideLeft: Story = {
  *  formatter, so it reads exactly like a tick (coarse, `,.0f` here). */
 export const DefaultFormat: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -136,7 +135,7 @@ export const DefaultFormat: Story = {
  *  rounding (`,.2f` cents vs the axis's whole-dollar `,.0f` ticks). */
 export const CustomFormat: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -157,7 +156,7 @@ export const CustomFormat: Story = {
  *  label the d3 mini-language can't express (a `$` prefix here). */
 export const FunctionFormat: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -178,7 +177,7 @@ export const FunctionFormat: Story = {
  *  uncluttered when the eye only needs the edge value. */
 export const LineOff: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -199,7 +198,7 @@ export const LineOff: Story = {
  *  (the ChartIQ "price line"), tying the pill back to the series it tracks. */
 export const LineOn: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -221,7 +220,7 @@ export const LineOn: Story = {
  *  colour (`theme.axis.label`), so it reads as neutral axis chrome. */
 export const DefaultColor: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -237,7 +236,7 @@ export const DefaultColor: Story = {
  *  independent of the axis's own (neutral) label colour. */
 export const CustomColor: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -277,7 +276,7 @@ function LiveDemo() {
     return () => clearInterval(id);
   }, [live]);
   return (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -317,7 +316,7 @@ function SourceOverridesValueDemo() {
     return () => clearInterval(id);
   }, [live]);
   return (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -356,7 +355,7 @@ function DualLiveDemo() {
     return () => clearInterval(id);
   }, [bid, ask]);
   return (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />

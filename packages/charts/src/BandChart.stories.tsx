@@ -7,7 +7,6 @@ import { BandChart } from './BandChart.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
-import { docsTheme } from './docs-theme.fixture.js';
 import { sanFranciscoTemperatures } from './sf-temperatures.fixture.js';
 
 const N = 60;
@@ -89,7 +88,7 @@ export const TwoTone: Story = {
   render: () => {
     const v = variance();
     return (
-      <ChartContainer range={TIME_RANGE} width={560} theme={docsTheme}>
+      <ChartContainer range={TIME_RANGE} width={560}>
         <ChartRow height={240}>
           <YAxis id="v" label="v" min={0} max={100} />
           <Layers>
@@ -108,7 +107,7 @@ export const WithGap: Story = {
   render: () => {
     const g = bandWithGap();
     return (
-      <ChartContainer range={TIME_RANGE} width={480} theme={docsTheme}>
+      <ChartContainer range={TIME_RANGE} width={480}>
         <ChartRow height={200}>
           <YAxis id="v" label="v" min={0} max={100} />
           <Layers>
@@ -195,7 +194,7 @@ export const RollingPercentiles: Story = {
     const begins = b.keyColumn().begin;
     const timeRange: [number, number] = [begins[0]!, begins[b.length - 1]!];
     return (
-      <ChartContainer range={timeRange} width={560} theme={docsTheme}>
+      <ChartContainer range={timeRange} width={560}>
         <ChartRow height={240}>
           <YAxis id="v" label="v" />
           <Layers>

@@ -8,7 +8,6 @@ import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { RangeCursor } from './cursors.js';
 import { priceSeries, RANGE } from './story-data.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * **`<RangeCursor>` drag** — step 3 of the interaction wave (RFC §6 / A4.2):
@@ -53,7 +52,7 @@ function Chart({
   Parameters<typeof ChartContainer>[0]
 >) {
   return (
-    <ChartContainer width={W} range={RANGE} theme={docsTheme} {...props}>
+    <ChartContainer width={W} range={RANGE} {...props}>
       {children}
       <ChartRow height={220}>
         <Layers>

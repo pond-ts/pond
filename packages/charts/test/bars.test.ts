@@ -22,6 +22,10 @@ const bars = (begin: number[], end: number[], y: number[]): BarSeries => ({
 });
 
 const identity = (v: number) => v;
+/** Ten px per key unit — wide enough that a selected bar's outline draws (an
+ *  inset stroke skips marks thinner than the line width; see
+ *  strokeSelectedOutline). */
+const x10 = (v: number) => v * 10;
 const style: BarStyle = {
   fill: '#abc',
   opacity: 0.85,
@@ -189,7 +193,7 @@ describe('drawBars', () => {
     drawBars(
       ctx,
       bars([0, 1], [1, 2], [10, 20]),
-      identity,
+      x10,
       identity,
       style,
       0,
@@ -203,6 +207,65 @@ describe('drawBars', () => {
       true,
     );
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(1);
+  });
+
+  it('the outline strokes INSIDE the ink, so adjacent selected bars keep the gap', () => {
+    // Two contiguous selected bars: a centred strokeRect would paint
+    // lineWidth/2 past each edge and bridge the gap between them — a swept
+    // run fused into one block (the "cannot see how many are selected" bug).
+    // The stroke insets by half the line width instead, so every stroked
+    // pixel stays within the bar's own fill.
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1], [1, 2], [10, 20]),
+      x10,
+      identity,
+      style,
+      0,
+      2, // a visible gap: each bar insets 1px per side
+      'count',
+      [
+        { key: 0, id: 'count' },
+        { key: 1, id: 'count' },
+      ],
+      [],
+    );
+    const fills = calls.filter((c) => c.name === 'fillRect');
+    const strokes = calls.filter((c) => c.name === 'strokeRect');
+    expect(fills).toHaveLength(2);
+    expect(strokes).toHaveLength(2);
+    const lw = style.outlineWidth;
+    for (let i = 0; i < 2; i += 1) {
+      const [fx, fy, fw, fh] = fills[i]!.args as number[];
+      const [sx, sy, sw, sh] = strokes[i]!.args as number[];
+      // Inset by half the line width on every edge: the stroke's OUTER edge
+      // (path ± lw/2) lands exactly on the fill's edge, never past it.
+      expect(sx).toBeCloseTo(fx! + lw / 2);
+      expect(sy).toBeCloseTo(fy! + lw / 2);
+      expect(sw).toBeCloseTo(fw! - lw);
+      expect(sh).toBeCloseTo(fh! - lw);
+    }
+  });
+
+  it('skips the outline on a bar too thin to contain it', () => {
+    // A 1px-wide bar cannot hold a 2px inset stroke — drawing one anyway
+    // would smear into the neighbours; the highlight fill is the signal.
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1], [1, 2], [10, 20]),
+      identity, // 1px per key unit — bars thinner than the outline
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      [{ key: 1, id: 'count' }],
+      [],
+    );
+    expect(calls.some((c) => c.args[0] === '#fff')).toBe(true); // fill pops
+    expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
   });
 
   it('does NOT highlight a key match with a different series id (other series)', () => {
@@ -272,7 +335,7 @@ describe('drawBars', () => {
     drawBars(
       ctx,
       bars([0, 1], [1, 2], [10, 20]),
-      identity,
+      x10,
       identity,
       style,
       0,
@@ -437,7 +500,7 @@ describe('drawBars — highlight fill alpha (single series)', () => {
     drawBars(
       ctx,
       three(),
-      identity,
+      x10, // wide enough for the selected outline to draw
       identity,
       style,
       0,
@@ -1147,7 +1210,7 @@ describe('drawBars — per-bar fills (binFills)', () => {
     drawBars(
       ctx,
       bars([0, 1, 2], [1, 2, 3], [10, 20, 30]),
-      identity,
+      x10,
       identity,
       style,
       0,

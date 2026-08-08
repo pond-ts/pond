@@ -12,7 +12,6 @@ import {
   STEP,
   RANGE,
 } from './story-data.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * **X-axis indicators** — a value pinned to the x-axis edge as an on-axis pill.
@@ -43,7 +42,7 @@ type Story = StoryObj;
  *  the marker's time pinned to the x-axis. */
 export const MarkerPill: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -60,7 +59,7 @@ export const MarkerPill: Story = {
  *  axis pill. Compare with `MarkerPill` (`label={false}`, chip suppressed). */
 export const MarkerPillWithChip: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -77,7 +76,7 @@ export const MarkerPillWithChip: Story = {
  *  pill. */
 export const MarkerPillLabelled: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -93,7 +92,7 @@ export const MarkerPillLabelled: Story = {
  *  far enough apart that each pill sits in the base lane. */
 export const MultipleMarkerPills: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -112,7 +111,7 @@ export const MultipleMarkerPills: Story = {
  *  colliding. */
 export const StackedPills: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -131,7 +130,7 @@ export const StackedPills: Story = {
  *  indicator surfaces on the one shared `<XAxis>` beneath both rows. */
 export const MarkerPillOnSecondRow: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={150}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -159,7 +158,6 @@ export const CrosshairTime: Story = {
       width={W}
       cursor="crosshair"
       trackerPosition={at(40)}
-      theme={docsTheme}
     >
       <ChartRow height={220}>
         <Layers>

@@ -329,6 +329,36 @@ function barMatchesAny(
 const MARK_INDEX_THRESHOLD = 16;
 
 /**
+ * Stroke a selected mark's outline **inside** its ink rect. Canvas strokes
+ * centre on the path, so a plain `strokeRect(x0, yTop, …)` paints
+ * `lineWidth / 2` *outside* the rect — which, with the default
+ * `outlineWidth: 1.5` against the default `gap: 1`, is enough to bridge the
+ * whole inter-bar gap from both sides: a swept run of selected bars fused
+ * into one unreadable block (you could not count them). Insetting the path by
+ * half the line width keeps every stroked pixel within the bar's own ink, so
+ * adjacent selected marks stay separated by exactly the gap the resting bars
+ * show. A mark too thin to contain its outline (either dimension
+ * `<= lineWidth`) skips the stroke — the highlight fill is already the
+ * signal, and an outline wider than the bar would only smear into the
+ * neighbours this exists to keep distinct.
+ */
+export function strokeSelectedOutline(
+  ctx: CanvasRenderingContext2D,
+  x0: number,
+  x1: number,
+  yTop: number,
+  yBottom: number,
+  lineWidth: number,
+): void {
+  const w = x1 - x0;
+  const h = yBottom - yTop;
+  if (w <= lineWidth || h <= lineWidth) return;
+  const inset = lineWidth / 2;
+  ctx.lineWidth = lineWidth;
+  ctx.strokeRect(x0 + inset, yTop + inset, w - lineWidth, h - lineWidth);
+}
+
+/**
  * {@link barMatchesAny} in set form, for large entry sets — three O(C) sets
  * built once per draw, O(1) per bar, encoding exactly the pairwise rule:
  * an entry and a bar that BOTH carry a mark compare marks; either side
@@ -568,9 +598,8 @@ export function drawBars(
       ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
       drawn += 1;
       if (selected) {
-        ctx.lineWidth = style.outlineWidth;
         ctx.strokeStyle = style.selectedOutline ?? fill;
-        ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+        strokeSelectedOutline(ctx, x0, x1, yTop, yBottom, style.outlineWidth);
       }
       continue;
     }
@@ -608,9 +637,8 @@ export function drawBars(
         // Outline the whole bar (not the last band) in the colour of the band
         // the value reached — the one colour that means something for a bar
         // painted in several.
-        ctx.lineWidth = style.outlineWidth;
         ctx.strokeStyle = style.selectedOutline ?? topFill;
-        ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+        strokeSelectedOutline(ctx, x0, x1, yTop, yBottom, style.outlineWidth);
       }
       continue;
     }
@@ -645,9 +673,8 @@ export function drawBars(
       // fill, so only the half-stroke falling outside the rect reads. A theme
       // that needs the two states clearly apart sets `BarStyle.hover` (#577);
       // the outline is the shape cue, not the whole signal.
-      ctx.lineWidth = style.outlineWidth;
       ctx.strokeStyle = style.selectedOutline ?? style.highlight;
-      ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+      strokeSelectedOutline(ctx, x0, x1, yTop, yBottom, style.outlineWidth);
     }
   }
   ctx.restore();
@@ -1245,11 +1272,10 @@ export function drawStacks(
           topFill = ladder.colors[bk]!;
         }
         if (selected) {
-          ctx.lineWidth = style.outlineWidth;
           // A themed outline if the theme sets one, else the band the value
           // reached — the one colour that means anything on a banded bar.
           ctx.strokeStyle = style.selectedOutline ?? topFill;
-          ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+          strokeSelectedOutline(ctx, x0, x1, yTop, yBottom, style.outlineWidth);
         }
         continue;
       }
@@ -1272,9 +1298,8 @@ export function drawStacks(
       ctx.fillStyle = emphasised;
       ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
       if (selected) {
-        ctx.lineWidth = style.outlineWidth;
         ctx.strokeStyle = style.selectedOutline ?? emphasised;
-        ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+        strokeSelectedOutline(ctx, x0, x1, yTop, yBottom, style.outlineWidth);
       }
     }
   }

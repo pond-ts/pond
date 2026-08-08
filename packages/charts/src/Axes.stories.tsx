@@ -7,7 +7,6 @@ import { LineChart } from './LineChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
 import { defaultTheme } from './theme.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * Axis behaviours, one per story, so we can eyeball each in isolation — the
@@ -56,7 +55,7 @@ const W = 560;
 /** Left y-axis (the default side). */
 export const LeftAxis: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={200}>
         <YAxis id="pct" format=".0%" />
         <Layers>
@@ -70,7 +69,7 @@ export const LeftAxis: Story = {
 /** Right y-axis. */
 export const RightAxis: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={200}>
         <YAxis id="price" side="right" format="$,.0f" />
         <Layers>
@@ -84,7 +83,7 @@ export const RightAxis: Story = {
 /** Dual axes — left + right, one series each, independent scales. */
 export const DualAxis: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <YAxis id="pct" side="left" format=".0%" />
         <YAxis id="price" side="right" format="$,.0f" />
@@ -110,7 +109,7 @@ export const DualAxis: Story = {
  */
 export const AxisLabels: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <YAxis
           id="pct"
@@ -136,7 +135,7 @@ export const AxisLabels: Story = {
 /** Explicit `{ at, label }` ticks — drives both the labels and the gridlines. */
 export const ExplicitTicks: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={200}>
         <YAxis
           id="pct"
@@ -163,7 +162,7 @@ export const ExplicitTicks: Story = {
  */
 export const TickCount: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={260}>
         <YAxis id="pct" label="%" tickCount={3} />
         <Layers>
@@ -183,7 +182,7 @@ export const TickCount: Story = {
  */
 export const HeightDerivedDensity: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={240}>
         <YAxis id="pct" label="tall" />
         <Layers>
@@ -209,7 +208,7 @@ export const HeightDerivedDensity: Story = {
  */
 export const DomainAutoVsExplicit: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={200}>
         <YAxis id="auto" side="left" format=".3f" />
         <YAxis id="tight" side="right" min={0.137} max={0.263} format=".3f" />
@@ -229,7 +228,7 @@ export const DomainAutoVsExplicit: Story = {
  */
 export const PaddedDomain: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={200}>
         <YAxis id="tight" side="left" min={0.137} max={0.263} format=".3f" />
         <YAxis
@@ -261,7 +260,7 @@ export const PaddedDomain: Story = {
  */
 export const SuppressBoundaryLabels: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={200}>
         <YAxis id="all" side="left" format=".0%" />
         <YAxis id="trimmed" side="right" boundaryLabels={false} format=".0%" />
@@ -282,7 +281,7 @@ export const SuppressBoundaryLabels: Story = {
 /** X-axis on the bottom (default) with a label. */
 export const XAxisBottom: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} showAxis={false} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W} showAxis={false}>
       <ChartRow height={180}>
         <YAxis id="pct" format=".0%" />
         <Layers>
@@ -297,7 +296,7 @@ export const XAxisBottom: Story = {
 /** X-axis on top. */
 export const XAxisTop: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} showAxis={false} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W} showAxis={false}>
       <XAxis side="top" label="Time" />
       <ChartRow height={180}>
         <YAxis id="pct" format=".0%" />
@@ -316,7 +315,7 @@ export const XAxisTop: Story = {
  *  offset flips to the top edge). */
 export const XAxisTopRightAlign: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} showAxis={false} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W} showAxis={false}>
       <XAxis side="top" align="right" />
       <ChartRow height={180}>
         <YAxis id="pct" format=".0%" />
@@ -340,12 +339,7 @@ function AlignExample({ align }: { align: 'auto' | 'center' | 'right' }) {
       >
         align="{align}"
       </div>
-      <ChartContainer
-        range={RANGE}
-        width={W}
-        showAxis={false}
-        theme={docsTheme}
-      >
+      <ChartContainer range={RANGE} width={W} showAxis={false}>
         <ChartRow height={120}>
           <YAxis id="pct" format=".0%" />
           <Layers>
@@ -382,7 +376,7 @@ export const XTickAlignment: Story = {
  */
 export const HorizontalLabel: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={200}>
         <YAxis id="pct" label="IV %" labelPlacement="top" format=".0%" />
         <YAxis
@@ -419,7 +413,7 @@ export const ThemedTitle: Story = {
         ...defaultTheme,
         axis: {
           ...defaultTheme.axis,
-          title: { color: '#2563eb', size: 14, opacity: 1 },
+          title: { color: '#0284c7', size: 14, opacity: 1 },
         },
       }}
     >

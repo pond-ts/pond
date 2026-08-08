@@ -14,7 +14,6 @@ import { ScatterChart } from './ScatterChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
 import type { DrawStatsFrame } from './context.js';
-import { docsTheme } from './docs-theme.fixture.js';
 import {
   WIDTH,
   provider,
@@ -130,7 +129,7 @@ const cloud = bigScatter(N);
 /** Auto-decimation (default) — 200k points drawn from the per-pixel M4 buckets. */
 export const Default: Story = {
   render: () => (
-    <ChartContainer width={720} theme={docsTheme} panZoom>
+    <ChartContainer width={720} panZoom>
       <ChartRow height={260}>
         <Layers>
           <LineChart series={series} column="v" as="power" />
@@ -145,7 +144,7 @@ export const Default: Story = {
  *  side-by-side visual check that auto-decimation is lossless. */
 export const Off: Story = {
   render: () => (
-    <ChartContainer width={720} theme={docsTheme} panZoom>
+    <ChartContainer width={720} panZoom>
       <ChartRow height={260}>
         <Layers>
           <LineChart series={series} column="v" as="power" decimate={false} />
@@ -164,7 +163,7 @@ export const Off: Story = {
  *  translucent fill would keep the full draw — the density signal must survive.) */
 export const Scatter: Story = {
   render: () => (
-    <ChartContainer width={720} theme={docsTheme} panZoom>
+    <ChartContainer width={720} panZoom>
       <ChartRow height={260}>
         <Layers>
           <ScatterChart series={cloud} column="v" />
@@ -179,7 +178,7 @@ export const Scatter: Story = {
  *  side-by-side check that the occupancy collapse is lossless at this density. */
 export const ScatterOff: Story = {
   render: () => (
-    <ChartContainer width={720} theme={docsTheme} panZoom>
+    <ChartContainer width={720} panZoom>
       <ChartRow height={260}>
         <Layers>
           <ScatterChart series={cloud} column="v" decimate={false} />
@@ -194,7 +193,7 @@ export const ScatterOff: Story = {
  *  anomaly still reads (the property that rules LTTB out as the default). */
 export const SpikePreserved: Story = {
   render: () => (
-    <ChartContainer width={720} theme={docsTheme} panZoom>
+    <ChartContainer width={720} panZoom>
       <ChartRow height={260}>
         <Layers>
           <LineChart series={spiky} column="v" as="power" />
@@ -209,7 +208,7 @@ export const SpikePreserved: Story = {
  *  union makes the gap break precisely and the dashed connector still bridges it. */
 export const GappyDashed: Story = {
   render: () => (
-    <ChartContainer width={720} theme={docsTheme} panZoom>
+    <ChartContainer width={720} panZoom>
       <ChartRow height={260}>
         <Layers>
           <LineChart series={gappy} column="v" as="power" gaps="dashed" />
@@ -224,7 +223,7 @@ export const GappyDashed: Story = {
  *  fill follows it under the full-series gradient). */
 export const Area: Story = {
   render: () => (
-    <ChartContainer width={720} theme={docsTheme} panZoom>
+    <ChartContainer width={720} panZoom>
       <ChartRow height={260}>
         <Layers>
           <AreaChart series={series} column="v" as="power" />
@@ -239,7 +238,7 @@ export const Area: Story = {
  *  max-upper envelope, with the median line over it. */
 export const Band: Story = {
   render: () => (
-    <ChartContainer width={720} theme={docsTheme} panZoom>
+    <ChartContainer width={720} panZoom>
       <ChartRow height={260}>
         <Layers>
           <BandChart series={bandSeries} lower="lo" upper="hi" />
@@ -266,7 +265,6 @@ export const TradingSessionBreaks: Story = {
       width={WIDTH}
       range={rangeOf(tradingSessions)}
       discontinuities={provider(tradingSessions)}
-      theme={docsTheme}
       panZoom
     >
       <ChartRow height={260}>
@@ -317,7 +315,7 @@ const candleSeries = bigCandles(60_000);
  *  (open=first, high=max, low=min, close=last — a coarser-timeframe candle). */
 export const Candles: Story = {
   render: () => (
-    <ChartContainer width={720} theme={docsTheme} panZoom>
+    <ChartContainer width={720} panZoom>
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -335,12 +333,7 @@ export const Candles: Story = {
  *  is on how many candles are *on screen*, not the 60k total. */
 export const CandlesZoomed: Story = {
   render: () => (
-    <ChartContainer
-      width={720}
-      theme={docsTheme}
-      range={[BASE, BASE + 40 * STEP]}
-      panZoom
-    >
+    <ChartContainer width={720} range={[BASE, BASE + 40 * STEP]} panZoom>
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -356,7 +349,7 @@ export const CandlesZoomed: Story = {
  *  (sub-pixel mush at this density; the reason decimation is the default). */
 export const CandlesOff: Story = {
   render: () => (
-    <ChartContainer width={720} theme={docsTheme} panZoom>
+    <ChartContainer width={720} panZoom>
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -406,7 +399,7 @@ const boxSeries = bigBoxes(20_000);
  *  min(lower)/max(upper), body min(q1)/max(q3), first median). */
 export const Boxes: Story = {
   render: () => (
-    <ChartContainer width={720} theme={docsTheme} panZoom>
+    <ChartContainer width={720} panZoom>
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -431,12 +424,7 @@ export const Boxes: Story = {
  *  visible-count gate, the box analog of `CandlesZoomed`). */
 export const BoxesZoomed: Story = {
   render: () => (
-    <ChartContainer
-      width={720}
-      theme={docsTheme}
-      range={[BASE, BASE + 40 * STEP]}
-      panZoom
-    >
+    <ChartContainer width={720} range={[BASE, BASE + 40 * STEP]} panZoom>
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -460,7 +448,7 @@ export const BoxesZoomed: Story = {
  *  mush at this density; the reason decimation is the default). */
 export const BoxesOff: Story = {
   render: () => (
-    <ChartContainer width={720} theme={docsTheme} panZoom>
+    <ChartContainer width={720} panZoom>
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -508,7 +496,7 @@ const barSeries = bigBars(100_000);
  *  `[min, max]` union widened to the baseline) — the column analog of `Boxes`. */
 export const Bars: Story = {
   render: () => (
-    <ChartContainer width={720} theme={docsTheme} panZoom>
+    <ChartContainer width={720} panZoom>
       <ChartRow height={260}>
         <Layers>
           <BarChart series={barSeries} column="v" as="power" />
@@ -523,7 +511,7 @@ export const Bars: Story = {
  *  (sub-pixel mush, the reason column decimation is the default). */
 export const BarsOff: Story = {
   render: () => (
-    <ChartContainer width={720} theme={docsTheme} panZoom>
+    <ChartContainer width={720} panZoom>
       <ChartRow height={260}>
         <Layers>
           <BarChart series={barSeries} column="v" as="power" decimate={false} />
@@ -542,12 +530,7 @@ function DrawStatsPanel() {
   const [frame, setFrame] = useState<DrawStatsFrame | null>(null);
   return (
     <div>
-      <ChartContainer
-        width={720}
-        theme={docsTheme}
-        onDrawStats={setFrame}
-        panZoom
-      >
+      <ChartContainer width={720} onDrawStats={setFrame} panZoom>
         <ChartRow height={220}>
           <Layers>
             <LineChart series={series} column="v" as="power" />

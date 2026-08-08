@@ -7,7 +7,6 @@ import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
 import { MultiSelector } from './selectors.js';
-import { docsTheme } from './docs-theme.fixture.js';
 import { defaultTheme } from './theme.js';
 import type { SelectInfo, SelectionEntry } from './context.js';
 
@@ -99,7 +98,7 @@ export const Buckets: Story = {
   render: () => {
     const v = hourlyVolume();
     return (
-      <ChartContainer range={TIME_RANGE} width={640} theme={docsTheme}>
+      <ChartContainer range={TIME_RANGE} width={640}>
         <ChartRow height={240}>
           <YAxis id="count" label="req" min={0} />
           <Layers>
@@ -121,7 +120,7 @@ export const Diverging: Story = {
   render: () => {
     const f = netFlow();
     return (
-      <ChartContainer range={TIME_RANGE} width={640} theme={docsTheme}>
+      <ChartContainer range={TIME_RANGE} width={640}>
         <ChartRow height={240}>
           <YAxis id="flow" label="net" />
           <Layers>
@@ -152,7 +151,7 @@ export const BinColors: Story = {
       (count.at(i) ?? 0) >= 0 ? '#15B3A6' : '#C96A5B',
     );
     return (
-      <ChartContainer range={TIME_RANGE} width={640} theme={docsTheme}>
+      <ChartContainer range={TIME_RANGE} width={640}>
         <ChartRow height={240}>
           <YAxis id="flow" label="net" />
           <Layers>
@@ -192,9 +191,9 @@ function HoverSelectDemo() {
           marginBottom: '8px',
           display: 'flex',
           gap: '16px',
-          fontFamily: docsTheme.font.family,
+          fontFamily: defaultTheme.font.family,
           fontSize: '12px',
-          color: docsTheme.axis.label,
+          color: defaultTheme.axis.label,
         }}
       >
         {sel === null ? (
@@ -208,7 +207,6 @@ function HoverSelectDemo() {
       <ChartContainer
         range={TIME_RANGE}
         width={640}
-        theme={docsTheme}
         cursor="flag"
         onSelect={setSel}
       >
@@ -243,16 +241,11 @@ export const ControlledSelection: Story = {
       id: 'count',
       key,
       value,
-      color: docsTheme.bar.default.fill,
+      color: defaultTheme.bar.default.fill,
       label: 'count',
     };
     return (
-      <ChartContainer
-        range={TIME_RANGE}
-        width={640}
-        theme={docsTheme}
-        selected={pinned}
-      >
+      <ChartContainer range={TIME_RANGE} width={640} selected={pinned}>
         <ChartRow height={240}>
           <YAxis id="count" label="req" min={0} />
           <Layers>
@@ -286,17 +279,12 @@ export const MarkSelection: Story = {
       id: 'count',
       key, // provenance — the sample's own time, not the bar's begin edge
       value,
-      color: docsTheme.bar.default.fill,
+      color: defaultTheme.bar.default.fill,
       label: 'count',
       mark: String(key), // the identity the highlight matches on
     };
     return (
-      <ChartContainer
-        range={TIME_RANGE}
-        width={640}
-        theme={docsTheme}
-        selected={pinned}
-      >
+      <ChartContainer range={TIME_RANGE} width={640} selected={pinned}>
         <ChartRow height={240}>
           <YAxis id="count" label="req" min={0} />
           <Layers>
@@ -318,37 +306,24 @@ export const MarkSelection: Story = {
  * is teal at rest → preview on hover → foam on select).
  *
  * Hover a bar to see the middle step; click one for the third. Bar 12:00 is
- * pinned selected so all three are visible at once. `hover` is optional and
- * falls back to `highlight`, so the other stories on this page — which don't
- * set it — render exactly as before.
+ * pinned selected so all three are visible at once. The default theme sets
+ * `hover` (the brighter teal), so this renders with no theme override; a theme
+ * that omits `hover` falls back to `highlight` and reads two-step instead.
  */
 export const HoverVsSelectColours: Story = {
   render: () => {
     const v = hourlyVolume();
     const key = BASE + 12 * HOUR;
     const value = v.nearest(key)!.get('count') as number;
-    // Same theme, plus the middle step.
-    const threeStep = {
-      ...docsTheme,
-      bar: {
-        ...docsTheme.bar,
-        default: { ...docsTheme.bar.default, hover: '#8354cc' },
-      },
-    };
     const pinned: SelectInfo = {
       id: 'count',
       key,
       value,
-      color: docsTheme.bar.default.fill,
+      color: defaultTheme.bar.default.fill,
       label: 'count',
     };
     return (
-      <ChartContainer
-        range={TIME_RANGE}
-        width={640}
-        theme={threeStep}
-        selected={pinned}
-      >
+      <ChartContainer range={TIME_RANGE} width={640} selected={pinned}>
         <ChartRow height={240}>
           <YAxis id="count" label="req" min={0} />
           <Layers>
@@ -361,10 +336,9 @@ export const HoverVsSelectColours: Story = {
 };
 
 /**
- * **The default theme's interaction-state palette.** Every other story on this
- * page themes off `docsTheme` (the project's own brand look), so none of them
- * show what a consumer who passes no `theme` — or spreads `defaultTheme` —
- * actually gets. This one does.
+ * **The default theme's interaction-state palette**, all five states in one
+ * walkthrough — what a consumer who passes no `theme` (or spreads
+ * `defaultTheme`) actually gets.
  *
  * `defaultTheme.bar.default` encodes bar state as a **hue** difference, not as
  * shades of one colour:
@@ -392,12 +366,7 @@ export const DefaultThemeStates: Story = {
     const [sel, setSel] = useState<readonly SelectionEntry[]>([]);
     return (
       <div>
-        <ChartContainer
-          range={TIME_RANGE}
-          width={640}
-          theme={defaultTheme}
-          selected={sel}
-        >
+        <ChartContainer range={TIME_RANGE} width={640} selected={sel}>
           <MultiSelector
             onSelect={(hits, _mods, span) =>
               setSel(span !== null ? [span] : hits.slice(0, 1))
