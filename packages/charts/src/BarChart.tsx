@@ -38,7 +38,9 @@ import {
   LayersContext,
   type LayerEntry,
   type SelectInfo,
+  type SweepSession,
 } from './context.js';
+import { sweep1D } from './sweep.js';
 import {
   legendLabelFor,
   useLegendItems,
@@ -864,6 +866,41 @@ export function BarChart<
                     ...(stableMark !== undefined ? { mark: stableMark } : {}),
                   };
                 },
+                // The <MultiSelector> sweep's range query (RFC A7.6): bars
+                // are sorted, non-overlapping intervals, so the covered set
+                // is a contiguous run — sweep1D's two binary searches. Each
+                // materialised hit is EXACTLY what hitTest reports for that
+                // bar, so a swept bar and a clicked bar are the same currency.
+                beginSweep: (): SweepSession | null =>
+                  bs.length === 0
+                    ? null
+                    : sweep1D({
+                        id,
+                        begin: bs.begin,
+                        end: bs.end,
+                        length: bs.length,
+                        // A gap bar (non-finite value) owns no membership.
+                        selectable: (i) => Number.isFinite(bs.y[i]!),
+                        materialize: (lo, hi) => {
+                          const out: SelectInfo[] = [];
+                          for (let i = lo; i < hi; i += 1) {
+                            const v = bs.y[i]!;
+                            if (!Number.isFinite(v)) continue;
+                            const stableMark = bs.marks?.[i];
+                            out.push({
+                              id,
+                              key: bs.begin[i]!,
+                              value: v,
+                              color: binColors?.[i] ?? singleStyle.fill,
+                              label,
+                              ...(stableMark !== undefined
+                                ? { mark: stableMark }
+                                : {}),
+                            });
+                          }
+                          return out;
+                        },
+                      }),
               }),
           draw: (ctx, xScale, yScale) =>
             drawBars(
@@ -949,6 +986,59 @@ export function BarChart<
                   ...(stableMark !== undefined ? { mark: stableMark } : {}),
                 };
               },
+              // The sweep, on the binned/stacked/categorical path — but only
+              // when the BIN axis is the shared x (vertical): the pointer
+              // sweeps in x-axis units, and a horizontal chart's x is the
+              // VALUE axis, whose window says nothing about which bins are
+              // covered (the bin cut there is a y-window — [PND-INTERACT2D]'s
+              // territory, with scatter's). A covered bin materialises every
+              // drawn segment (finite, non-zero — the marks hitTest can hit),
+              // assembled exactly as hitTest assembles them.
+              ...(vertical
+                ? {
+                    beginSweep: (): SweepSession | null => {
+                      const G = ss.groups.length;
+                      if (ss.length === 0 || G === 0) return null;
+                      const drawn = (b: number, g: number) => {
+                        const v = ss.values[b * G + g]!;
+                        return Number.isFinite(v) && v !== 0;
+                      };
+                      return sweep1D({
+                        id,
+                        begin: ss.begin,
+                        end: ss.end,
+                        length: ss.length,
+                        selectable: (b) => {
+                          for (let g = 0; g < G; g += 1)
+                            if (drawn(b, g)) return true;
+                          return false;
+                        },
+                        materialize: (lo, hi) => {
+                          const out: SelectInfo[] = [];
+                          for (let b = lo; b < hi; b += 1) {
+                            const stableMark = ss.marks?.[b];
+                            for (let g = 0; g < G; g += 1) {
+                              if (!drawn(b, g)) continue;
+                              out.push({
+                                id,
+                                key: ss.begin[b]!,
+                                value: ss.values[b * G + g]!,
+                                color:
+                                  stackStyle.binFills?.[b] ??
+                                  stackStyle.fills[g]!,
+                                label: stableMark ?? ss.groups[g]!,
+                                ...(stableMark !== undefined
+                                  ? { mark: stableMark }
+                                  : {}),
+                              });
+                            }
+                          }
+                          return out;
+                        },
+                      });
+                    },
+                  }
+                : {}),
             }),
         draw: (ctx, xScale, yScale) =>
           drawStacks(

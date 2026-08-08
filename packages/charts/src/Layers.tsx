@@ -20,8 +20,14 @@ import { Canvas } from './Canvas.js';
 import { drawGrid, drawDividers, dividerAlphas, thinPixels } from './grid.js';
 import { bandRect, regionSpan } from './tracker.js';
 import { effectiveCursorEntries, gestureOwner } from './cursors.js';
-import { resolveBrushClaim, resolveRangeDrag } from './brush.js';
+import {
+  renderBrushBand,
+  resolveBrushClaim,
+  resolveRangeDrag,
+  warnSweepShadowsRangeDrag,
+} from './brush.js';
 import { resolveSelection } from './select.js';
+import { isDev } from './dev.js';
 import {
   panRange,
   zoomRange,
@@ -39,6 +45,9 @@ import {
   type ResolvedCursorFlag,
   type ResolvedCursorFrame,
   type ResolvedCursorSample,
+  type SelectModifiers,
+  type SweepGesture,
+  type SweepSession,
 } from './context.js';
 
 /** Fallback **y**-gridline tick count, used only before the row publishes its
@@ -528,28 +537,136 @@ export function Layers({ children }: LayersProps) {
     anchor: number;
     release: (start: number, end: number) => void;
   } | null>(null);
+  // The live sweep session (a mounted <MultiSelector> — RFC §8 / A7.7): the
+  // anchor + the topmost capable layer's per-drag session + the container's
+  // preview/commit sinks, resolved at press. Same ref-not-state discipline as
+  // `rangeDragRef` (the gesture must never read a state mirror that may not
+  // have committed — #508 item 7). `committed` arms past DRAG_SLOP, mirroring
+  // pan's deferred capture, so a click stays a click and selects one mark
+  // (§8.1: movement separates the two, not a modifier). The live preview is
+  // **coalesced to animation frames** (RFC A1.4): pointermove only records
+  // `pendingT` and schedules `raf`; the frame re-cuts the session and, only
+  // when the covered set changed, lights the hits through plural `hovered`.
+  const sweepRef = useRef<{
+    anchor: number;
+    session: SweepSession;
+    gesture: SweepGesture;
+    committed: boolean;
+    raf: number;
+    pendingT: number | null;
+  } | null>(null);
+  // Paint-only mirror of "a sweep is live": renders the shared brush band from
+  // this row when no band-wanting cursor is mounted to draw it (§8.1 — one
+  // renderer either way, so the two visuals cannot drift).
+  const [sweeping, setSweeping] = useState(false);
+  // A1.5's arbitration, surfaced: warn once when a press found both claimants.
+  const warnedSweepShadowRef = useRef(false);
+
+  /** Re-cut the sweep to the latest pointer (bucket-snapped through the shared
+   *  `cursorBuckets`, freeform without) and light the changed preview. */
+  const flushSweep = useCallback(() => {
+    const sw = sweepRef.current;
+    if (sw === null || !sw.committed || sw.pendingT === null) return;
+    const c = containerRef.current;
+    const span = regionSpan(c.cursorBuckets ?? [], sw.anchor, sw.pendingT);
+    if (span === null) return;
+    if (sw.session.update(span.start, span.end))
+      sw.gesture.preview(sw.session.hits());
+  }, []);
+  const scheduleSweepFrame = useCallback(() => {
+    const sw = sweepRef.current;
+    if (sw === null || sw.raf !== 0) return;
+    sw.raf = requestAnimationFrame(() => {
+      sw.raf = 0;
+      flushSweep();
+    });
+  }, [flushSweep]);
+  /** Drop a live sweep without committing (leave / lost buttons / unmount). */
+  const cancelSweep = useCallback(() => {
+    const sw = sweepRef.current;
+    if (sw === null) return;
+    sweepRef.current = null;
+    if (sw.raf !== 0) cancelAnimationFrame(sw.raf);
+    if (sw.committed) {
+      setSweeping(false);
+      containerRef.current.setRegionAnchor(null);
+      sw.gesture.preview([]); // un-light the preview; nothing commits
+    }
+  }, []);
+  // A sweep interrupted by unmount must not leave the preview lit.
+  useEffect(() => cancelSweep, [cancelSweep]);
 
   const handlePointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       clickStartRef.current = { x: e.clientX, y: e.clientY };
       const c = containerRef.current;
+      const r = rowRef.current;
+      // The sweep's two resolved facts (RFC §8): a <MultiSelector> in scope
+      // (the container arbitrates, registry stays private), and a
+      // sweep-capable layer in THIS row — topmost wins, the z-order rule a
+      // click already follows. Both must hold for the sweep to claim; a
+      // selector over a row of untagged/lines-only layers deliberately claims
+      // nothing (Q8's identity-gates-interactivity, range form).
+      const sweepGesture = c.resolveSweep(r.rowKey);
+      let sweepSession: SweepSession | null = null;
+      if (sweepGesture !== null) {
+        for (let i = r.layers.length - 1; i >= 0; i -= 1) {
+          const entry = r.layers[i]!;
+          const ys = r.yScales.get(entry.axisId ?? r.defaultAxisId);
+          if (ys === undefined) continue;
+          const s =
+            entry.layer.beginSweep?.(
+              (v) => c.xScale(v),
+              (v) => ys(v),
+            ) ?? null;
+          if (s !== null) {
+            sweepSession = s;
+            break;
+          }
+        }
+      }
+      const drag = resolveRangeDrag(
+        c,
+        gestureOwner(effectiveCursorEntries(c.cursors, r.rowKey)),
+      );
       // ONE brush recognizer arbitrates every drag claim — annotation-create,
-      // the range drag (component or legacy), pan — in a documented order
-      // (RFC A1.5 / A2.7; see brush.tsx). This handler only routes.
+      // the sweep, the range drag (component or legacy), pan — in a
+      // documented order (RFC A1.5 / A2.7; see brush.tsx). This handler only
+      // routes.
       const claim = resolveBrushClaim({
         creating: c.creating !== null,
-        drag: resolveRangeDrag(
-          c,
-          gestureOwner(
-            effectiveCursorEntries(c.cursors, rowRef.current.rowKey),
-          ),
-        ),
+        sweep: sweepSession !== null,
+        drag,
         shiftKey: e.shiftKey,
         panEnabled: c.panEnabled,
         // As with the wheel: a category x has nothing to pan, but a y-panning
         // mode still has work to do.
         canPan: (c.panX && c.xKind !== 'category') || c.panY,
       });
+      // Sweep (a mounted <MultiSelector> over a sweepable row): record the
+      // press, but arm NOTHING yet — no capture, no anchor, no preview. The
+      // gesture commits on the first move past DRAG_SLOP (handlePointerMove);
+      // a press that stays put remains a click and selects one mark (§8.1).
+      if (claim.kind === 'sweep') {
+        if (isDev && drag !== null)
+          warnSweepShadowsRangeDrag(warnedSweepShadowRef);
+        const px = Math.max(
+          0,
+          Math.min(
+            c.plotWidth,
+            e.clientX - e.currentTarget.getBoundingClientRect().left,
+          ),
+        );
+        sweepRef.current = {
+          anchor: +c.xScale.invert(px),
+          session: sweepSession!,
+          gesture: sweepGesture!,
+          committed: false,
+          raf: 0,
+          pendingT: null,
+        };
+        return;
+      }
       if (claim.kind === 'create') {
         // Armed: a region presses to fix its start edge; a line just tracks until
         // release. Capture so the draw can continue outside the plot.
@@ -591,7 +708,7 @@ export function Layers({ children }: LayersProps) {
         return;
       }
       if (claim.kind === 'none') return;
-      const r = c.timeRange;
+      const tr = c.timeRange;
       // Arm a potential pan: record the anchor, but DON'T capture the pointer or
       // hide the tracker yet. Capturing on press retargets the eventual `click`
       // to the plot (Pointer Events spec: a captured pointer's compatibility
@@ -607,7 +724,7 @@ export function Layers({ children }: LayersProps) {
       dragRef.current = {
         startX: e.clientX,
         startY: e.clientY,
-        startRange: [r[0], r[1]],
+        startRange: [tr[0], tr[1]],
         startTy: c.yTransform.ty,
         captured: false,
       };
@@ -632,6 +749,42 @@ export function Layers({ children }: LayersProps) {
         const rect = e.currentTarget.getBoundingClientRect();
         c.setHoverX(Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left)));
         return;
+      }
+      // A pressed <MultiSelector> sweep. Below the slop it is still a
+      // potential click (same deferral as pan — see the dragRef branch); past
+      // it the sweep commits: capture, anchor the band, and from then on each
+      // move records the pointer and schedules one animation frame — the
+      // session re-cut + preview run there, not per event (RFC A1.4).
+      const sw = sweepRef.current;
+      if (sw !== null) {
+        // Lost buttons ⇒ the press ended off-plot without a pointerup here
+        // (the sub-slop path never captured) — drop it, as dragRef does.
+        if (e.buttons === 0) {
+          cancelSweep();
+        } else {
+          const rect = e.currentTarget.getBoundingClientRect();
+          const px = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
+          if (!sw.committed) {
+            const start = clickStartRef.current;
+            // The sweep is an x-gesture: slop on |dx|, so a vertical wobble
+            // under a still x stays a click.
+            if (start === null || Math.abs(e.clientX - start.x) <= DRAG_SLOP)
+              return;
+            sw.committed = true;
+            setSweeping(true);
+            c.setRegionAnchor(sw.anchor); // paint-only mirror (the band)
+            c.setHovered(null, rowRef.current.rowKey); // plural preview owns hover now
+            try {
+              e.currentTarget.setPointerCapture(e.pointerId);
+            } catch {
+              /* ignore */
+            }
+          }
+          c.setHoverX(px);
+          sw.pendingT = +c.xScale.invert(px);
+          scheduleSweepFrame();
+          return;
+        }
       }
       // A pan is only live while a button is held. A move with no buttons means
       // the press already ended without us seeing the pointerup — which the
@@ -745,6 +898,57 @@ export function Layers({ children }: LayersProps) {
   const handlePointerUp = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       const c = containerRef.current;
+      // End a sweep: one final synchronous re-cut at the release pointer (the
+      // last move's animation frame may not have run), then commit
+      // `(hits, modifiers, span)` to the <MultiSelector>s the press resolved
+      // (RFC A5.2). The hits ARE the materialised preview — `session.hits()`
+      // reads the same cached array the last preview lit, never a fresh range
+      // query (A7.7) — and the span is the covered marks' snapped-outward
+      // extent (A7.6's edge rule), `null` when the sweep covered nothing (the
+      // swept-empty analog of a deselect click). A sub-slop press never
+      // committed: it stays a click, and the click handler selects one mark.
+      const sw = sweepRef.current;
+      if (sw !== null) {
+        sweepRef.current = null;
+        if (sw.raf !== 0) cancelAnimationFrame(sw.raf);
+        if (!sw.committed) return; // a click — handleClick owns it
+        const px = Math.max(
+          0,
+          Math.min(
+            c.plotWidth,
+            e.clientX - e.currentTarget.getBoundingClientRect().left,
+          ),
+        );
+        const span = regionSpan(
+          c.cursorBuckets ?? [],
+          sw.anchor,
+          +c.xScale.invert(px),
+        );
+        if (span !== null) sw.session.update(span.start, span.end);
+        setSweeping(false);
+        c.setRegionAnchor(null); // the band reverts, as the range drag's does
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        const extent = sw.session.extent();
+        const modifiers: SelectModifiers = {
+          additive: e.metaKey || e.ctrlKey,
+          ctrlKey: e.ctrlKey,
+          metaKey: e.metaKey,
+          shiftKey: e.shiftKey,
+          altKey: e.altKey,
+        };
+        sw.gesture.commit(
+          sw.session.hits(),
+          modifiers,
+          extent === null
+            ? null
+            : { kind: 'span', id: sw.session.id, x: extent },
+        );
+        return;
+      }
       // End a range drag: commit the anchor→pointer span as a one-shot range —
       // to the sink the press resolved (`<RangeCursor onDragRelease>`'s
       // `{ x: [lo, hi] }`, or the legacy `onRegionSelect` bare pair) — then
@@ -845,11 +1049,13 @@ export function Layers({ children }: LayersProps) {
     // Cancel a range-drag on leave (no commit) — a safety net for the rare case
     // where the pointer capture didn't take, so the anchor can't get stuck.
     rangeDragRef.current = null;
+    // Same net for a sweep: no commit, preview un-lit, band cleared.
+    cancelSweep();
     if (c.regionAnchor !== null) c.setRegionAnchor(null);
     c.setHoverX(null);
     c.setHoverY(null, null);
     c.setHovered(null, rowRef.current.rowKey);
-  }, []);
+  }, [cancelSweep]);
   // Click selection: ignore the click that ends a drag/pan (moved past a few px),
   // else hit-test the row's layers top-down and select — or clear on a miss.
   const handleClick = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
@@ -1024,8 +1230,14 @@ export function Layers({ children }: LayersProps) {
   // legacy drag); with none it's the **freeform** case — a bare hover draws a
   // plain line (`bandLine`), a drag shades the raw `[anchor, pointer]`. Edges
   // map through `xScale`, so on a trading-time axis the band crops to live time.
+  // A live <MultiSelector> sweep shades the same band. It is NOT gated to a
+  // continuous axis: the marks currency is what folds the category axis into
+  // the gesture (RFC §8 / A4.2 — nobody sees a numeric range), and the band
+  // maps slot units through the shared band scale like any other span.
   const bandActive =
-    wantsBand && (container.xKind === 'time' || container.xKind === 'value');
+    (wantsBand &&
+      (container.xKind === 'time' || container.xKind === 'value')) ||
+    sweeping;
   const band: { x0: number; x1: number } | null =
     bandActive && cursorTime !== null
       ? bandRect(
@@ -1039,6 +1251,7 @@ export function Layers({ children }: LayersProps) {
   // Degenerate range cursor (no buckets, not mid-drag): a plain vertical line.
   const bandLine =
     bandActive &&
+    !sweeping &&
     container.cursorBuckets === undefined &&
     container.regionAnchor === null &&
     cursorX !== null &&
@@ -1269,6 +1482,12 @@ export function Layers({ children }: LayersProps) {
               </Fragment>
             ) : null,
           )}
+          {/* A live <MultiSelector> sweep with no band-wanting cursor mounted:
+              draw the SAME shared band renderer <RangeCursor> uses (§8.1 —
+              one function, so the two brush visuals cannot drift). When a
+              band cursor IS mounted, its own slot above already painted the
+              identical band from the same resolved frame. */}
+          {sweeping && !wantsBand && renderBrushBand(cursorRenderFrame)}
         </svg>
         {/* The cursors' DOM slots, above the SVG: the in-plot chips
             (`renderPlotHtml` — value chips, the time readout) and the

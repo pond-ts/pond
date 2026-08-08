@@ -1312,3 +1312,189 @@ describe('drawBars — per-bar fills (binFills)', () => {
     ).toBe(true);
   });
 });
+
+/**
+ * The large-set mark index ([PND-INTERACT] step 5's perf fix): past 16
+ * entries the draw paths switch from the linear `barMatchesAny` scan to a
+ * per-draw set index — a `<MultiSelector>` sweep preview can put every
+ * visible bar in `hovered`, where V·C scans measured 6.2 s/frame at 100k.
+ * The index must encode EXACTLY the pairwise match rule, so each case here
+ * draws the same series twice — once with the meaningful entries alone (the
+ * scan path) and once padded past the threshold (the index path) — and pins
+ * that the emitted fill sequences are identical.
+ */
+describe('the large-set mark index matches exactly like the scan', () => {
+  /** The fill in effect for each fillRect, in draw order. */
+  const fillSeq = (calls: CtxCall[]): string[] => {
+    const fills: string[] = [];
+    let last = '';
+    for (const c of calls) {
+      if (c.type === 'set' && c.name === 'fillStyle') last = String(c.args[0]);
+      else if (c.type === 'call' && c.name === 'fillRect') fills.push(last);
+    }
+    return fills;
+  };
+  const N = 20;
+  const series = (marks?: string[]): BarSeries => ({
+    begin: Float64Array.from(Array.from({ length: N }, (_, i) => i)),
+    end: Float64Array.from(Array.from({ length: N }, (_, i) => i + 1)),
+    y: Float64Array.from(Array.from({ length: N }, () => 10)),
+    length: N,
+    ...(marks !== undefined ? { marks } : {}),
+  });
+  /** Pad a meaningful entry list past the index threshold with entries of a
+   *  FOREIGN series id — they must keep matching nothing (the id filter). */
+  const pad = <T extends { id: string; key: number }>(
+    entries: readonly T[],
+  ): T[] => [
+    ...entries,
+    ...Array.from({ length: 17 }, (_, i) => ({
+      ...(entries[0] as T),
+      id: 'other',
+      key: 1000 + i,
+    })),
+  ];
+
+  it('drawBars — key-fallback entries (no marks anywhere)', () => {
+    const meaningful = [
+      { id: 'count', key: 3 },
+      { id: 'count', key: 7 },
+    ];
+    const draw = (sel: { id: string; key: number }[]) => {
+      const { ctx, calls } = recordingContext();
+      drawBars(
+        ctx,
+        series(),
+        identity,
+        identity,
+        style,
+        0,
+        0,
+        'count',
+        sel,
+        [],
+        false,
+      );
+      return fillSeq(calls);
+    };
+    const scan = draw(meaningful);
+    const indexed = draw(pad(meaningful));
+    expect(indexed).toEqual(scan);
+    // …and the expectation is not vacuous: bars 3 and 7 highlight.
+    expect(scan.filter((f) => f === style.highlight)).toHaveLength(2);
+    expect(scan[3]).toBe(style.highlight);
+    expect(scan[7]).toBe(style.highlight);
+  });
+
+  it('drawBars — the mark-vs-key pairwise rule survives the index', () => {
+    const marks = Array.from({ length: N }, (_, i) => `m${i}`);
+    const meaningful = [
+      // A marked entry against a marked series: the mark decides — the bogus
+      // key must not light anything by key.
+      { id: 'count', key: 999, mark: 'm2' },
+      // A markless entry against a marked series: falls back to the key.
+      { id: 'count', key: 4 },
+    ];
+    const draw = (sel: { id: string; key: number; mark?: string }[]) => {
+      const { ctx, calls } = recordingContext();
+      drawBars(
+        ctx,
+        series(marks),
+        identity,
+        identity,
+        style,
+        0,
+        0,
+        'count',
+        sel,
+        [],
+        false,
+      );
+      return fillSeq(calls);
+    };
+    const scan = draw(meaningful);
+    const indexed = draw(pad(meaningful));
+    expect(indexed).toEqual(scan);
+    expect(scan[2]).toBe(style.highlight); // by mark
+    expect(scan[4]).toBe(style.highlight); // by key fallback
+    expect(scan.filter((f) => f === style.highlight)).toHaveLength(2);
+  });
+
+  it('drawBars — the hover channel indexes the same way', () => {
+    const meaningful = [{ id: 'count', key: 5 }];
+    const hoverStyle: BarStyle = { ...style, hover: '#ff0' };
+    const draw = (hov: { id: string; key: number }[]) => {
+      const { ctx, calls } = recordingContext();
+      drawBars(
+        ctx,
+        series(),
+        identity,
+        identity,
+        hoverStyle,
+        0,
+        0,
+        'count',
+        [],
+        hov,
+        false,
+      );
+      return fillSeq(calls);
+    };
+    const scan = draw(meaningful);
+    const indexed = draw(pad(meaningful));
+    expect(indexed).toEqual(scan);
+    expect(scan[5]).toBe('#ff0');
+  });
+
+  it('drawStacks — (key, label) segments and marked bins index identically', () => {
+    const G = 2;
+    const stack = (marks?: string[]): StackedBarSeries => ({
+      begin: Float64Array.from(Array.from({ length: N }, (_, i) => i)),
+      end: Float64Array.from(Array.from({ length: N }, (_, i) => i + 1)),
+      groups: ['a', 'b'],
+      values: Float64Array.from(
+        Array.from({ length: N * G }, (_, i) => 5 + (i % G)),
+      ),
+      length: N,
+      ...(marks !== undefined ? { marks } : {}),
+    });
+    const stackStyle = {
+      fills: ['#0a0', '#00a'],
+      opacity: 0.85,
+      outlineWidth: 2,
+      highlight: '#fff',
+    };
+    const draw = (
+      ss: StackedBarSeries,
+      sel: { id: string; key: number; label: string; mark?: string }[],
+    ) => {
+      const { ctx, calls } = recordingContext();
+      drawStacks(
+        ctx,
+        ss,
+        'vertical',
+        identity,
+        identity,
+        stackStyle,
+        0,
+        1,
+        's',
+        sel,
+        [],
+      );
+      return fillSeq(calls);
+    };
+    // Unmarked: one segment by (key, label) — only bin 5's group 'b'.
+    const plain = [{ id: 's', key: 5, label: 'b' }];
+    expect(draw(stack(), pad(plain))).toEqual(draw(stack(), plain));
+    expect(draw(stack(), plain).filter((f) => f === '#fff')).toHaveLength(1);
+    // Marked (categorical): the mark decides for the whole bin.
+    const marks = Array.from({ length: N }, (_, i) => `c${i}`);
+    const marked = [{ id: 's', key: 999, label: 'a', mark: 'c3' }];
+    expect(draw(stack(marks), pad(marked))).toEqual(draw(stack(marks), marked));
+    // Both of bin 3's segments light (the mark names the bin).
+    expect(draw(stack(marks), marked).filter((f) => f === '#fff')).toHaveLength(
+      2,
+    );
+  });
+});

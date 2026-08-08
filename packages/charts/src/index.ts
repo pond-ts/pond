@@ -209,8 +209,10 @@ export type {
 // Click-select as a mounted component (interaction RFC §7): mounting
 // `<Selector>` is what enables a plot click at all — `selected` / `hovered`
 // stay on `<ChartContainer>` (A1.2), so controlled highlighting needs none.
-export { Selector } from './selectors.js';
-export type { SelectorProps } from './selectors.js';
+// `<MultiSelector>` (RFC §8) is its sweep superset: a click still selects one
+// mark, a drag sweeps many and releases `(hits, modifiers, span)` (A5.2).
+export { Selector, MultiSelector } from './selectors.js';
+export type { SelectorProps, MultiSelectorProps } from './selectors.js';
 
 // Public interaction types — the callback params for the tracker + selection
 // (`onTrackerChanged`, `onSelect`), the `cursor` mode, and the span a
