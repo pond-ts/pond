@@ -64,7 +64,13 @@ milestone. Plan:
   indexing the package does not have (the 16,425-cell case). **Blocked on the
   RFC's Q12** (span-minus-point) — that decision settles whether a descriptor
   can be the round-trip currency, and Q13/Q14 cannot start until it does.
-  Subsumes `[PND-CATRANGE]`.
+  Subsumes `[PND-CATRANGE]`. **Q12 resolved (A5)** — the sweep reports both
+  marks and a `SpanSelection`; a span is edited by demoting it to its marks. The
+  descriptor is **separable from the gesture** (`SelectionEntry`,
+  `selectionContains`, span-aware layer membership) and lands as its own step,
+  testable through the controlled `selected` prop before `<MultiSelector>`
+  exists. Q14 (grid indexing for the heat map's binned-x × ordinal-rows range
+  query) is the remaining open piece.
 - **[PND-INTERACTCONF]** — **Conformance pass: one interaction vocabulary
   across the whole API.** The list family (`<BarList>`/`<BoxList>`) joins the
   same `hovered`/`onHover` channel rather than holding hover in `ListTable`
