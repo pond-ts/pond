@@ -130,7 +130,14 @@ describe('decimateHeat', () => {
 });
 
 describe('drawHeat with decimation', () => {
-  const draw = (ss: StackedBarSeries, width: number, decimate = true) => {
+  type Mark = { id: string; key: number; label: string };
+  const draw = (
+    ss: StackedBarSeries,
+    width: number,
+    decimate = true,
+    selection: readonly Mark[] = [],
+    hovered: readonly Mark[] = [{ id: 'heat', key: 0, label: 'r0' }],
+  ) => {
     const { ctx, calls } = ctxOfWidth(width);
     drawHeat(
       ctx,
@@ -147,8 +154,8 @@ describe('drawHeat with decimation', () => {
       },
       (v: number) => bandedColor(v, RAMP, 0, 400),
       'heat',
-      null,
-      { id: 'heat', key: 0, label: 'r0' },
+      selection,
+      hovered,
       decimate,
     );
     return calls;
@@ -175,6 +182,34 @@ describe('drawHeat with decimation', () => {
     expect(
       draw(ss, 100, false).filter((c) => c.name === 'strokeRect').length,
     ).toBeGreaterThan(0);
+  });
+
+  it('suppresses EVERY outline while decimated, plural sets included', () => {
+    // The second draw path ([PND-MULTISEL] / RFC A4.3). `drawHeat` blanks both
+    // sets once it reduces, so a *set* of pinned cells must be suppressed
+    // exactly as a single one always was — not partially honoured, and not
+    // leaking a stroke per member. Asserted against the undecimated count so a
+    // future change that lets the sets through the reduced branch fails here
+    // rather than as stray ink on a 4000-bin grid.
+    const ss = grid(4000, 3, (b) => b);
+    const selection = [0, 1, 2].map((b) => ({
+      id: 'heat',
+      key: b,
+      label: 'r0',
+    }));
+    const hovered = [3, 4, 5].map((b) => ({ id: 'heat', key: b, label: 'r1' }));
+    expect(
+      draw(ss, 100, true, selection, hovered).filter(
+        (c) => c.name === 'strokeRect',
+      ),
+    ).toHaveLength(0);
+    // The same sets undecimated light all six, so the suppression above is the
+    // decimation and not a set that never matched anything.
+    expect(
+      draw(ss, 100, false, selection, hovered).filter(
+        (c) => c.name === 'strokeRect',
+      ),
+    ).toHaveLength(6);
   });
 
   it('leaves a sparse grid completely alone', () => {
@@ -263,8 +298,8 @@ describe('y decimation leaves the coordinate space alone', () => {
       },
       (v: number) => bandedColor(v, RAMP, 0, rows),
       'heat',
-      null,
-      null,
+      [],
+      [],
       decimate,
     );
     const rects = calls
@@ -305,8 +340,8 @@ describe('y decimation leaves the coordinate space alone', () => {
       },
       () => '#a',
       'heat',
-      null,
-      null,
+      [],
+      [],
       true,
     );
     const rects = calls
