@@ -248,8 +248,27 @@ describe('BarStyle.dimmed — the themed de-emphasis', () => {
 
   it('is opt-in — a theme with no dimmed value dims nothing', () => {
     // Back-compat by construction (RFC A2.3): the library never invents a dim.
-    const { fills } = mount({ selected: [mark('alpha')] }, defaultTheme);
-    expect(fills).not.toContain('#DIM');
+    //
+    // This must build a theme that genuinely has NO `dimmed`. It used to pass
+    // `defaultTheme` — which was dimless until the bar interaction-state
+    // palette landed and gave it one, at which point the assertion (`fills`
+    // lacks the *literal* '#DIM') still passed while testing nothing. The
+    // property under test is "the library invents no dim", so the theme has to
+    // be dimless by construction, not by happenstance.
+    // (The destructure is the guarantee — `noDim`'s *type* no longer carries
+    // `dimmed`, so re-adding one here would be a compile error, not a silent
+    // pass.)
+    const { dimmed: _dropped, ...noDim } = defaultTheme.bar.default;
+    const dimlessTheme = {
+      ...defaultTheme,
+      bar: { ...defaultTheme.bar, default: noDim },
+    };
+    const { fills } = mount({ selected: [mark('alpha')] }, dimlessTheme);
+    // Every unselected bar keeps the resting fill — nothing receded.
+    expect(
+      fills.filter((f) => f === defaultTheme.bar.default.fill),
+    ).toHaveLength(2);
+    expect(fills).not.toContain(defaultTheme.bar.default.dimmed);
   });
 });
 
