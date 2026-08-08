@@ -44,42 +44,36 @@ milestone. Plan:
   already publishes pre-parity). Faithful `DataChart` reproduction on real
   activity data, no regressions. Gates: statistical bands, theme tokens
   optional-with-default, shared axis-headroom policy.
-- **[PND-INTERACT]** — **The interaction surface: cursors and selectors as
-  mounted components.** Replaces thirteen `ChartContainer` props plus
-  `ChartRow.cursor` with `<LineCursor>` / `<PointCursor>` / `<InlineCursor>` /
-  `<FlagCursor>` / `<CrosshairCursor>` / `<RangeCursor>` and `<Selector>` /
-  `<MultiSelector>`; `Region` stays the annotation. Mounting enables the
-  gesture, the container keeps `selected`/`hovered`, and the library reports
-  rather than deciding. **Breaking** — implicit click-select goes inert without
-  a mounted `<Selector>` (deliberate, dev-warned, suppressed when `selected` is
-  supplied). Red-teamed by Codex, a Fable agent, and two consumers
-  ([#611](https://github.com/pond-ts/pond/discussions/611)); the decided
-  surface is RFC **A4.2**. Ordered work in the breakout plan. RFC:
-  [interaction.md](docs/rfcs/interaction.md).
+- **[PND-INTERACT]** — **SHIPPED 2026-08-08.** The interaction surface is now
+  mounted components: six flat cursor presets, `<Selector>` / `<MultiSelector>`,
+  `<RangeCursor>` with its drag, one brush recognizer owning the claim ordering,
+  and the `SpanSelection` currency — all behind deprecation shims that keep the
+  thirteen old props working for one minor. `[PND-CATRANGE]` folded in as
+  designed: category axes sweep in slot units. Red-teamed by Codex, a Fable
+  agent and two consumers ([#611](https://github.com/pond-ts/pond/discussions/611));
+  RFC **A8** records everything building it taught. Remaining tail below.
 - **[PND-INTERACT2D]** — **2-D region select and zoom on scatter + heat map.**
-  A sweep is an x-span on bars/lines/candles/lists and an **x+y rect** on the
-  two layers whose marks live in two dimensions — for both `<RangeCursor>`
-  (zoom) and `<MultiSelector>` (select). Widens the payload from a bare pair to
-  `{ x, y? }`, needs the same on the selection descriptor, and requires grid
-  indexing the package does not have (the 16,425-cell case). **Blocked on the
-  RFC's Q12** (span-minus-point) — that decision settles whether a descriptor
-  can be the round-trip currency, and Q13/Q14 cannot start until it does.
-  Subsumes `[PND-CATRANGE]`. **Q12 resolved (A5)** — the sweep reports both
-  marks and a `SpanSelection`; a span is edited by demoting it to its marks. The
-  descriptor is **separable from the gesture** (`SelectionEntry`,
-  `selectionContains`, span-aware layer membership) and lands as its own step,
-  testable through the controlled `selected` prop before `<MultiSelector>`
-  exists. Q14 (grid indexing for the heat map's binned-x × ordinal-rows range
-  query) is the remaining open piece.
-- **[PND-INTERACTCONF]** — **Conformance pass: one interaction vocabulary
-  across the whole API.** The list family (`<BarList>`/`<BoxList>`) joins the
-  same `hovered`/`onHover` channel rather than holding hover in `ListTable`
-  internal state ([#608](https://github.com/pond-ts/pond/issues/608) is a
-  conformance item, not a standalone request — and the mirror target is
-  **plural** hover), plus `ScatterChart` and `BoxPlot`, which still read a
-  single selection from a set that has been plural since #606. Gated by the
-  systematic Storybook matrix: cursor preset × mount point × selector ×
-  dimensionality × gesture × surface.
+  The rect on the two layers whose marks live in two dimensions, for both
+  `<RangeCursor>` (zoom) and `<MultiSelector>` (select). Q14's design is settled
+  (RFC A7.6/A7.7): **no spatial index on either layer** — the heat map is two
+  binary searches plus closed-form row slots, scatter is a sorted-x cut plus a
+  scan — and nothing persists outside a drag. Three things it must carry:
+  **inherit A8.1's repaint lesson** (re-price every membership scan before
+  lighting a grid preview — the 1-D case cost 6.2 s/frame before it was fixed);
+  **settle spans-plural-or-topmost** before copying `SpanSelection`'s
+  single-`id` shape; and it **also closes horizontal-bar sweeps**, which are a
+  y-window and therefore 2-D machinery (A8.4).
+- **[PND-INTERACTCONF]** — **The conformance tail.** `<BoxPlot>` and the list
+  family join the sweep (both ride here by plan; `BoxPlot`'s pixel `offset`
+  complicates its key-space cut). `format` is a container-wide channel and
+  cannot be honoured per-row without reworking the readout plumbing (A8.4).
+  Then **remove the deprecation shims** one minor after they land.
+- **[PND-CURSORAPI]** — **Publish the cursor contract** (RFC Q3), under A7.1's
+  litmus rather than by argument: every built-in **and** SpiderRock's gapped
+  crosshair written against it with nothing needing a new slot. The surface
+  count has already been found short **twice** — three slots became four when
+  the inline/flag chips turned out to be DOM in plot space — so the contract
+  publishes on evidence, not on a claim of sufficiency.
 - **[PND-SELECT]** — Selection Phase 2: multi-select widen + `selectionMode`,
   `LineChart.hitTest`, snap-follows-selection prop, theme-referenced dim.
   Breaking widen → human gate. RFC: [selection.md](docs/rfcs/selection.md).
