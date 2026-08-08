@@ -108,6 +108,33 @@ include new features and type-level changes; patch bumps are strictly additive.
   existing chart keeps its click _and_ stays out of the warning above — and
   dev-warn once naming the replacement. A mounted `<Selector>` in the same scope
   overrides them.
+- **charts: `<RangeCursor>` gets its drag — `onDragRelease`, `enableDrag`,
+  `dragModifier` — on a single brush recognizer** (interaction RFC §6 / A4.2,
+  step 3 of A4.4). Wiring `onDragRelease` makes the cursor draggable: the band
+  extends bucket by bucket over the cursor's `sequence` (or a histogram's
+  bins; freeform without either), fires **once** on release, and the cursor
+  **reverts** to the single-bucket highlight — it does not keep the range.
+  The payload is a new exported **`RangeSpan`** — `{ x: [lo, hi], y? }` in
+  axis units, not the legacy bare pair: one uniform shape whose optional `y`
+  the 2-D drag (scatter / heat map, RFC A3.3) will populate additively.
+  `span.x` is exactly what `ChartContainer.range` accepts, so drag-to-zoom is
+  `onDragRelease={(s) => setRange(s.x)}`. `enableDrag` defaults to
+  `!!onDragRelease` and is the **OFF** switch — set it `false` to freeze the
+  gesture without unwiring the callback; `dragModifier="shift"` shares the
+  surface with pan (plain drag pans, shift-drag selects) and is only enforced
+  while pan is enabled.
+
+  Structurally, **one brush recognizer now arbitrates every drag claim on the
+  plot** — annotation-create capture, the range drag (component or legacy),
+  and pan — in a documented precedence order (`packages/charts/src/brush.tsx`,
+  RFC A1.5 / A2.7), replacing the ad-hoc ordering inside
+  `Layers.handlePointerDown`; the band visual is one shared renderer
+  (`renderBrushBand`) so `<RangeCursor>` and the future `<MultiSelector>`
+  cannot drift apart. Observable behaviour is unchanged — every existing
+  interaction test passes as-is. The legacy `cursor="region"` +
+  `onRegionSelect` + `regionSelectModifier` surface keeps working for one more
+  minor (now with the dev deprecation notice naming the replacements); a
+  mounted `<RangeCursor onDragRelease>` takes the gesture over it.
 
 ### Fixed
 

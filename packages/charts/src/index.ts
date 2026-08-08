@@ -213,13 +213,16 @@ export { Selector } from './selectors.js';
 export type { SelectorProps } from './selectors.js';
 
 // Public interaction types — the callback params for the tracker + selection
-// (`onTrackerChanged`, `onSelect`) and the `cursor` mode.
+// (`onTrackerChanged`, `onSelect`), the `cursor` mode, and the span a
+// `<RangeCursor>` drag releases (`onDragRelease` — `{ x: [lo, hi], y? }`,
+// RFC A3.3's uniform 1-D/2-D shape).
 export type {
   CursorMode,
   TrackerInfo,
   TrackerSample,
   SelectInfo,
   SelectModifiers,
+  RangeSpan,
 } from './context.js';
 
 // Draw-stats observability — the `onDrawStats` callback's frame + per-layer line.

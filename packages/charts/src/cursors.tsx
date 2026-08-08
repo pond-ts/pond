@@ -6,8 +6,10 @@ import {
   type CursorEntry,
   type CursorMode,
   type CursorWants,
+  type RangeSpan,
   type ResolvedCursorFrame,
 } from './context.js';
+import { renderBrushBand } from './brush.js';
 import type { ChartTheme } from './theme.js';
 import type { CursorFormat } from './format.js';
 import { flagChipStyle, flagChipX, axisPillStyle, axisPillX } from './chip.js';
@@ -125,6 +127,9 @@ interface BuiltCursor {
   readonly ownsGesture: boolean;
   readonly sequence?: Sequence | BoundedSequence | undefined;
   readonly format?: CursorFormat | undefined;
+  readonly onDragRelease?: ((span: RangeSpan) => void) | undefined;
+  readonly enableDrag?: boolean | undefined;
+  readonly dragModifier?: 'shift' | undefined;
 }
 
 const NO_WANTS: CursorWants = {
@@ -461,47 +466,29 @@ function buildCrosshairCursor(o: {
 
 /** `cursor="region"` as a spec: the hover-time **band** — the bucket under the
  *  pointer (sequence-snapped; freeform = a plain line until a drag shades the
- *  raw span). The container resolves the band; this slot only draws it. The
- *  drag itself (`enableDrag` / `onDragRelease`) is the next step of the RFC's
- *  A4.4 order — this spec is the seam it lands on. */
+ *  raw span) — plus the drag registration the brush recognizer reads
+ *  (`resolveRangeDrag`). The container resolves the band; the shared
+ *  `renderBrushBand` slot only draws it (one renderer for every brush-driven
+ *  component, RFC A1.5 — `<MultiSelector>` plugs into the same one).
+ *  `enableDrag` is resolved here (`?? !!onDragRelease`) so the registered
+ *  entry carries the effective switch, not the raw prop. */
 function buildRangeCursor(o: {
   sequence?: Sequence | BoundedSequence | undefined;
+  onDragRelease?: ((span: RangeSpan) => void) | undefined;
+  enableDrag?: boolean | undefined;
+  dragModifier?: 'shift' | undefined;
 }): BuiltCursor {
   return {
     spec: {
       snapX: o.sequence !== undefined ? 'sequence' : 'none',
-      renderPlot: (f) => {
-        const ink = cursorInk(f.theme);
-        return (
-          <>
-            {f.band !== null && (
-              <rect
-                x={f.band.x0}
-                y={0}
-                width={f.band.x1 - f.band.x0}
-                height={f.rowHeight}
-                fill={ink}
-                opacity={0.12}
-              />
-            )}
-            {f.bandLine && f.cursorX !== null && (
-              <line
-                x1={Math.round(f.cursorX)}
-                y1={0}
-                x2={Math.round(f.cursorX)}
-                y2={f.rowHeight}
-                stroke={ink}
-                strokeWidth={1}
-                shapeRendering="crispEdges"
-              />
-            )}
-          </>
-        );
-      },
+      renderPlot: renderBrushBand,
     },
     wants: { ...NO_WANTS, band: true },
     ownsGesture: true,
     sequence: o.sequence,
+    onDragRelease: o.onDragRelease,
+    enableDrag: o.enableDrag ?? o.onDragRelease !== undefined,
+    dragModifier: o.dragModifier,
   };
 }
 
@@ -532,6 +519,9 @@ function useCursorMount(built: BuiltCursor | null, legacy: boolean): void {
             ownsGesture: built.ownsGesture,
             sequence: built.sequence,
             format: built.format,
+            onDragRelease: built.onDragRelease,
+            enableDrag: built.enableDrag,
+            dragModifier: built.dragModifier,
             rowKey,
             legacy,
           },
@@ -646,26 +636,75 @@ export function CrosshairCursor({
 
 export interface RangeCursorProps {
   /**
-   * The bucketing for the hover band — a pond `Sequence` (realized over the
-   * view) or `BoundedSequence` (used as-is; a trading calendar's sessions).
-   * **Omit ⇒ freeform**: the cursor renders as a plain line (a bar layer's
-   * bins still snap it when present). Time axis only, like `cursorSequence`.
-   * Pass a stable reference (the buckets memoize on it).
+   * The bucketing for the hover band **and the drag's snap** — a pond
+   * `Sequence` (realized over the view) or `BoundedSequence` (used as-is; a
+   * trading calendar's sessions). A drag extends **bucket by bucket** over
+   * these. **Omit ⇒ freeform**: the cursor renders as a plain line and a drag
+   * spans the raw `[lo, hi]` (a bar/histogram layer's bins still snap both
+   * when present). Time axis only, like `cursorSequence`. Pass a stable
+   * reference (the buckets memoize on it).
    */
   sequence?: Sequence | BoundedSequence;
+  /**
+   * Makes the cursor **draggable**: drag across the plot and the band extends
+   * (bucket by bucket with a {@link sequence}, freeform without); on release
+   * this fires **once** with the selected {@link RangeSpan}, and the cursor
+   * **reverts** to the single-bucket highlight — it does not keep the range.
+   *
+   * The payload is `{ x: [lo, hi], y? }` in axis units — epoch ms on a time
+   * axis, the axis value on a value axis. `y` is absent on today's 1-D
+   * layers; the 2-D drag (scatter / heat map) will populate it additively
+   * (RFC A3.3). `span.x` feeds `ChartContainer.range` directly — the
+   * name-level coherence: a **Range**Cursor emits what `range` accepts —
+   * so drag-to-zoom is `onDragRelease={(s) => setRange(s.x)}`.
+   *
+   * The drag **preempts pan** unless {@link dragModifier} shares the gesture.
+   * Continuous x only (a category axis is excluded, as for the legacy
+   * `onRegionSelect`).
+   */
+  onDragRelease?: (span: RangeSpan) => void;
+  /**
+   * **The OFF switch, not the on switch** (RFC §6, resolved). The drag is
+   * already enabled by wiring {@link onDragRelease} — this defaults to
+   * `!!onDragRelease`, so you never need to set it to turn the drag on. Set
+   * it to `false` to **freeze the gesture without unwiring the callback**
+   * (otherwise a `useCallback` dance): the band stays hover-only and the
+   * plot's drag goes back to pan (or nothing). Without `onDragRelease` there
+   * is nothing to fire, so `enableDrag` alone never starts a gesture.
+   */
+  enableDrag?: boolean;
+  /**
+   * Which modifier the drag needs — set `'shift'` when pan is also enabled
+   * and you want **plain drag to pan, shift-drag to select**. **Only
+   * enforced while pan is enabled** (with pan off there is no gesture
+   * conflict, so either drag selects). Omitted ⇒ the drag preempts pan.
+   * The `regionSelectModifier` successor.
+   */
+  dragModifier?: 'shift';
 }
 
 /**
  * The **range** cursor — `cursor="region"` as a component (RFC A4.1 renames
- * it for what it emits: a live extent, against the annotation `<Region>`'s
- * fixed mark). This step ships the hover-time band — the bucket under the
- * pointer; the drag (`enableDrag` / `dragModifier` / `onDragRelease`) lands
- * in the next step of the RFC A4.4 order (`onRegionSelect` keeps working via
- * the container props meanwhile).
+ * it for what it emits: a live extent — and, dragged, exactly what
+ * `ChartContainer.range` accepts — against the annotation `<Region>`'s fixed
+ * mark). Hover shades the bucket under the pointer; wiring
+ * {@link RangeCursorProps.onDragRelease} adds the drag, which fires once on
+ * release and reverts (RFC §6: a region is deliberately a cursor **and** a
+ * drag that fires and resets). The gesture rides the shared brush recognizer
+ * (`brush.tsx`) — one engine arbitrating every drag claim on the plot.
  */
-export function RangeCursor({ sequence }: RangeCursorProps = {}) {
+export function RangeCursor({
+  sequence,
+  onDragRelease,
+  enableDrag,
+  dragModifier,
+}: RangeCursorProps = {}) {
   useCursorMount(
-    useMemo(() => buildRangeCursor({ sequence }), [sequence]),
+    useMemo(
+      () =>
+        buildRangeCursor({ sequence, onDragRelease, enableDrag, dragModifier }),
+      [sequence, onDragRelease, enableDrag, dragModifier],
+    ),
     false,
   );
   return null;

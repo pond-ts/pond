@@ -20,6 +20,7 @@ import { Canvas } from './Canvas.js';
 import { drawGrid, drawDividers, dividerAlphas, thinPixels } from './grid.js';
 import { bandRect, regionSpan } from './tracker.js';
 import { effectiveCursorEntries, gestureOwner } from './cursors.js';
+import { resolveBrushClaim, resolveRangeDrag } from './brush.js';
 import { resolveSelection } from './select.js';
 import {
   panRange,
@@ -511,22 +512,45 @@ export function Layers({ children }: LayersProps) {
   );
   const [drawFrom, setDrawFrom] = useState<number | null>(null);
   const drawFromRef = useRef<number | null>(null);
-  // The region-select drag anchor, mirrored for the gesture handlers (the same
-  // ref+state discipline as `drawFromRef`): the container's `regionAnchor`
-  // STATE is only how the rows paint the band; the gesture logic must never
-  // read it back, because a batched pointer stream (automation, jsdom, a very
-  // fast flick under load) delivers down→up before the down's setState commits
-  // — the up would see `regionAnchor === null`, silently drop the select, and
-  // the late-committing anchor would then stick (#508 item 7). Trusted
-  // human-paced input hides this (React flushes trusted discrete events
-  // synchronously); the ref is correct under both.
-  const regionAnchorRef = useRef<number | null>(null);
+  // The live range-drag session — the anchor (axis units) plus the release
+  // sink the brush claim resolved at press — mirrored for the gesture
+  // handlers (the same ref+state discipline as `drawFromRef`): the
+  // container's `regionAnchor` STATE is only how the rows paint the band; the
+  // gesture logic must never read it back, because a batched pointer stream
+  // (automation, jsdom, a very fast flick under load) delivers down→up before
+  // the down's setState commits — the up would see `regionAnchor === null`,
+  // silently drop the select, and the late-committing anchor would then stick
+  // (#508 item 7). Trusted human-paced input hides this (React flushes
+  // trusted discrete events synchronously); the ref is correct under both.
+  // The release sink rides the ref too, so what fires is what the press
+  // resolved — a `<RangeCursor onDragRelease>` or the legacy `onRegionSelect`.
+  const rangeDragRef = useRef<{
+    anchor: number;
+    release: (start: number, end: number) => void;
+  } | null>(null);
 
   const handlePointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       clickStartRef.current = { x: e.clientX, y: e.clientY };
       const c = containerRef.current;
-      if (c.creating !== null) {
+      // ONE brush recognizer arbitrates every drag claim — annotation-create,
+      // the range drag (component or legacy), pan — in a documented order
+      // (RFC A1.5 / A2.7; see brush.tsx). This handler only routes.
+      const claim = resolveBrushClaim({
+        creating: c.creating !== null,
+        drag: resolveRangeDrag(
+          c,
+          gestureOwner(
+            effectiveCursorEntries(c.cursors, rowRef.current.rowKey),
+          ),
+        ),
+        shiftKey: e.shiftKey,
+        panEnabled: c.panEnabled,
+        // As with the wheel: a category x has nothing to pan, but a y-panning
+        // mode still has work to do.
+        canPan: (c.panX && c.xKind !== 'category') || c.panY,
+      });
+      if (claim.kind === 'create') {
         // Armed: a region presses to fix its start edge; a line just tracks until
         // release. Capture so the draw can continue outside the plot.
         if (c.creating === 'region') {
@@ -541,44 +565,32 @@ export function Layers({ children }: LayersProps) {
         }
         return;
       }
-      // Region-cursor drag-select (opt-in via `onRegionSelect`): anchor the
-      // selection at the press; the band then extends as the pointer moves (bucket
-      // by bucket with a sequence, freeform without), and release commits the span.
-      // Works on a continuous x axis — time **or** value (a category axis is
-      // excluded; its ordinal-slot select is a different gesture). A
-      // `regionSelectModifier` (only while `panZoom` is on) gates it behind the key
-      // so plain drag can still pan; otherwise it preempts pan (returns before the
-      // pan is armed below).
-      if (
-        c.cursor === 'region' &&
-        c.onRegionSelect &&
-        (c.xKind === 'time' || c.xKind === 'value')
-      ) {
-        const needsShift = c.regionSelectModifier === 'shift' && c.panEnabled;
-        if (!needsShift || e.shiftKey) {
-          const px = Math.max(
-            0,
-            Math.min(
-              c.plotWidth,
-              e.clientX - e.currentTarget.getBoundingClientRect().left,
-            ),
-          );
-          regionAnchorRef.current = +c.xScale.invert(px);
-          c.setRegionAnchor(regionAnchorRef.current); // paint-only mirror
-          c.setHoverX(px);
-          try {
-            e.currentTarget.setPointerCapture(e.pointerId);
-          } catch {
-            /* ignore */
-          }
-          return;
+      // Range drag (a drag-enabled <RangeCursor>, or the legacy
+      // `cursor="region"` + `onRegionSelect`): anchor the selection at the
+      // press; the band then extends as the pointer moves (bucket by bucket
+      // with a sequence, freeform without), and release commits the span to
+      // whichever sink the claim resolved. Continuous x only, and gated
+      // behind the drag modifier while pan is on — all decided in the claim.
+      if (claim.kind === 'range') {
+        const px = Math.max(
+          0,
+          Math.min(
+            c.plotWidth,
+            e.clientX - e.currentTarget.getBoundingClientRect().left,
+          ),
+        );
+        const anchor = +c.xScale.invert(px);
+        rangeDragRef.current = { anchor, release: claim.drag.release };
+        c.setRegionAnchor(anchor); // paint-only mirror
+        c.setHoverX(px);
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
         }
-        // Modifier required but not held → fall through to pan.
+        return;
       }
-      // As with the wheel: a category x has nothing to pan, but a y-panning mode
-      // still has work to do.
-      const canPanX = c.panX && c.xKind !== 'category';
-      if (!canPanX && !c.panY) return;
+      if (claim.kind === 'none') return;
       const r = c.timeRange;
       // Arm a potential pan: record the anchor, but DON'T capture the pointer or
       // hide the tracker yet. Capturing on press retargets the eventual `click`
@@ -613,10 +625,10 @@ export function Layers({ children }: LayersProps) {
         c.setHoverX(px); // share the preview x so other rows draw a guide there
         return;
       }
-      // Region drag in progress: just track the pointer x (the band spans from the
+      // Range drag in progress: just track the pointer x (the band spans from the
       // anchor bucket to here); no pan, no hover hit-test. Gesture truth is the
-      // ref — the state mirror may not have committed yet (see regionAnchorRef).
-      if (regionAnchorRef.current !== null) {
+      // ref — the state mirror may not have committed yet (see rangeDragRef).
+      if (rangeDragRef.current !== null) {
         const rect = e.currentTarget.getBoundingClientRect();
         c.setHoverX(Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left)));
         return;
@@ -733,14 +745,17 @@ export function Layers({ children }: LayersProps) {
   const handlePointerUp = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       const c = containerRef.current;
-      // End a region drag: commit the anchor→pointer span as a one-shot range,
-      // then clear the anchor (the cursor reverts to the single-bucket highlight).
-      // The anchor is read from the ref, never the state mirror — under a batched
-      // pointer stream the state hasn't committed yet and the select would be
-      // silently dropped (and the anchor stuck). See regionAnchorRef.
-      if (regionAnchorRef.current !== null) {
-        const anchor = regionAnchorRef.current;
-        regionAnchorRef.current = null;
+      // End a range drag: commit the anchor→pointer span as a one-shot range —
+      // to the sink the press resolved (`<RangeCursor onDragRelease>`'s
+      // `{ x: [lo, hi] }`, or the legacy `onRegionSelect` bare pair) — then
+      // clear the anchor: the cursor **reverts** to the single-bucket
+      // highlight (it does not keep the range). The anchor is read from the
+      // ref, never the state mirror — under a batched pointer stream the
+      // state hasn't committed yet and the select would be silently dropped
+      // (and the anchor stuck). See rangeDragRef.
+      if (rangeDragRef.current !== null) {
+        const { anchor, release } = rangeDragRef.current;
+        rangeDragRef.current = null;
         const px = Math.max(
           0,
           Math.min(
@@ -759,7 +774,7 @@ export function Layers({ children }: LayersProps) {
         } catch {
           /* ignore */
         }
-        if (span) c.onRegionSelect?.([span.start, span.end]);
+        if (span) release(span.start, span.end);
         return;
       }
       if (c.creating !== null) {
@@ -827,9 +842,9 @@ export function Layers({ children }: LayersProps) {
       c.setHoverY(null, null);
       return;
     }
-    // Cancel a region-drag on leave (no commit) — a safety net for the rare case
+    // Cancel a range-drag on leave (no commit) — a safety net for the rare case
     // where the pointer capture didn't take, so the anchor can't get stuck.
-    regionAnchorRef.current = null;
+    rangeDragRef.current = null;
     if (c.regionAnchor !== null) c.setRegionAnchor(null);
     c.setHoverX(null);
     c.setHoverY(null, null);
