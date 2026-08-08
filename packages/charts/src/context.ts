@@ -706,13 +706,15 @@ export interface RowLayer {
   binCategories?(): readonly string[] | null;
   /**
    * A bar/histogram layer's bar `[begin, end)` spans, as pond `Interval`s — the
-   * **region cursor's snap buckets**. When present (and no `cursorSequence` is
-   * set), a region drag snaps bar by bar and a hover highlights the bar under the
-   * pointer, so a histogram gets bin-aligned selection for free. Only a
-   * **vertical** bar layer on a **continuous** (time / value) x axis publishes
-   * them — a horizontal chart puts the value on x (snapping counts is meaningless)
-   * and a **category** (ordinal-slot) axis is excluded from the region cursor.
-   * `null` / absent otherwise.
+   * **shared snap buckets**. When present (and no `cursorSequence` is set), a
+   * region drag snaps bar by bar and a `<MultiSelector>` sweep's band extends
+   * bar by bar, so a histogram gets bin-aligned selection for free. Only a
+   * **vertical** bar layer publishes them — a horizontal chart puts the value
+   * on x (snapping counts is meaningless). On a **category** axis they are
+   * the unit slots `[i, i+1)`: the region cursor still ignores them (its band
+   * gates on a continuous axis), but the sweep band snaps over them to the
+   * slots' outer edges (RFC A7.6's edge rule — the band must agree with the
+   * span the release commits). `null` / absent otherwise.
    */
   binIntervals?(): readonly Interval[] | null;
   /**
@@ -741,12 +743,24 @@ export interface RowLayer {
    * so they render + read out but never select/hover (a click on them resolves
    * to empty space ⇒ deselect). `xScale`/`yScale` map data→pixels (the row
    * resolves the layer's axis scale, as for `draw`).
+   *
+   * `mode` says which gesture is asking, and a layer whose hover target is
+   * generous may narrow the *select* one. The single-series bar path does:
+   * **hover** attributes the bar's whole slot (full interval width, full plot
+   * height — the continuous model #582 asked for, so the highlight tracks
+   * like the readout), while **select** additionally requires the pointer to
+   * be within the bar's drawn ink vertically. Without that narrowing, slots
+   * tile the entire plot and a click can never resolve to `null` — RFC §7's
+   * empty-click deselect path becomes unreachable on any full-range bar
+   * chart. Layers whose hit target is already the drawn mark (stacks,
+   * scatter, boxes, heat cells) ignore `mode`.
    */
   hitTest?(
     px: number,
     py: number,
     xScale: (value: number) => number,
     yScale: (value: number) => number,
+    mode?: 'hover' | 'select',
   ): SelectInfo | null;
   /**
    * Begin a **sweep session** over this layer's marks — `<MultiSelector>`'s

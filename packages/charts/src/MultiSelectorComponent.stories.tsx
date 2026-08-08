@@ -164,9 +164,19 @@ export const SweepWithSequence: Story = {
 
 /**
  * **Sweep + modifier.** pond reports the modifiers and applies no policy
- * (A4.1): this consumer unions — a plain sweep replaces the selection, a
- * ⌘/Ctrl-sweep **adds** another span to it. The whole policy is the ternary
- * in `onSelect`.
+ * (A4.1): this consumer unions — a plain gesture replaces the selection, a
+ * ⌘/Ctrl gesture **adds** to it, sweep and click alike (a ⌘-click after a
+ * sweep extends the selection by that mark — A5.2's headline flow). Only an
+ * empty click (no mark) clears. The whole policy is the few lines in
+ * `onSelect`.
+ *
+ * An earlier revision of this story handled only spans — `span === null`
+ * returned `[]` — so ANY click, ⌘ held or not, silently threw the whole
+ * selection away. The library was reporting `(hits, modifiers, null)`
+ * correctly the entire time; the consumer-side arithmetic dropped it. Worth
+ * remembering when copying this pattern: the click and the sweep arrive
+ * through ONE callback, and a policy that forgets the click case deletes the
+ * user's selection on the very gesture that was meant to extend it.
  */
 export const SweepAdditive: Story = {
   render: function SweepAdditiveStory() {
@@ -175,10 +185,16 @@ export const SweepAdditive: Story = {
       <div>
         <ChartContainer width={640} selected={sel} range={[D0, D0 + 30 * DAY]}>
           <MultiSelector
-            onSelect={(_hits, mods, span) =>
-              setSel((cur) =>
-                span === null ? [] : mods?.additive ? [...cur, span] : [span],
-              )
+            onSelect={(hits, mods, span) =>
+              setSel((cur) => {
+                // A sweep: its compact span joins (⌘) or replaces the set.
+                if (span !== null)
+                  return mods?.additive ? [...cur, span] : [span];
+                // A click: one mark (or none — the empty-commit deselect).
+                const hit = hits[0] ?? null;
+                if (hit === null) return [];
+                return mods?.additive ? [...cur, hit] : [hit];
+              })
             }
           />
           <ChartRow height={220}>
@@ -189,8 +205,8 @@ export const SweepAdditive: Story = {
           </ChartRow>
         </ChartContainer>
         <p style={captionStyle}>
-          Sweep to select a run · hold ⌘/Ctrl and sweep again to add another ·
-          click away to clear.
+          Sweep to select a run · hold ⌘/Ctrl and sweep (or click) to add to it
+          · click away to clear.
           <br />
           <strong>selected:</strong> {describeSelection(sel)}
         </p>
