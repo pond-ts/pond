@@ -1,7 +1,8 @@
 import type { BoxSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { BoxStyle } from './theme.js';
-import type { LayerDrawStats } from './context.js';
+import type { LayerDrawStats, SpanSelection } from './context.js';
+import { NO_SPANS, spanMatchesAny } from './span.js';
 import { barSpanPx } from './range.js';
 import { visibleSpanRange } from './culling.js';
 import { decimateBox, type DecimateOption } from './decimate.js';
@@ -179,6 +180,14 @@ export function drawBox(
   selectedKeys: readonly number[] = NO_KEYS,
   hoveredKeys: readonly number[] = NO_KEYS,
   decimate: DecimateOption = true,
+  // Span descriptors covering this layer (interaction RFC A5.2), already
+  // narrowed to its `id` (and constant-label `rows` resolved) by the component
+  // — see `spansForLayer`. A box is selected when its key is named OR a span
+  // contains it: the O(1) half-open test of its `x` (its key) against the
+  // span's `x`, and — mirroring the hit's `value` provenance — its `upper`
+  // against `y` when present. Suppressed while decimated, like the key match:
+  // an aggregate column is not a source box and must not light as one.
+  spans: readonly SpanSelection[] = NO_SPANS,
 ): LayerDrawStats {
   const sourceCount = box.length; // pre-cull, pre-decimation (for draw stats)
   // Viewport cull first (Phase 2): the [vStart, vEnd) boxes whose span overlaps
@@ -299,7 +308,15 @@ export function drawBox(
     // set of pinned boxes, or a sweep hovering several at once, all read back.
     // Bracketed so alpha/width don't leak to the next box.
     const key = box.x[i]!;
-    const isSelected = includesKey(selectedKeys, key);
+    // A decimated aggregate box carries synthetic keys a mark entry can't name
+    // — but a span's interval WOULD contain them, so it is gated off explicitly
+    // (per-box highlight is meaningless at decimation density, and lighting an
+    // aggregate column would claim marks the selection never held).
+    const isSelected =
+      includesKey(selectedKeys, key) ||
+      (!decimated &&
+        spans.length > 0 &&
+        spanMatchesAny(spans, key, box.upper[i]!));
     // Selected outranks hovered on a box that is both — the same precedence the
     // bar paths document, and what the `key === selectedKey` test did before.
     const isHovered = !isSelected && includesKey(hoveredKeys, key);

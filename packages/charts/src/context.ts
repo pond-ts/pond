@@ -128,6 +128,20 @@ export interface ContainerFrame {
    */
   readonly selected: readonly SelectInfo[];
   /**
+   * The **span** entries of the controlled `selected` prop — **empty when it
+   * carries none**, never `null`. The container splits the prop's mixed
+   * `SelectionEntry` array into per-mark entries ({@link selected}) and range
+   * descriptors (this field) once at the boundary, so every existing reader of
+   * {@link selected} keeps its exact shape (and cost) while span-aware layers
+   * read this **additionally** — the union of the two fields is the selection
+   * (interaction RFC A5.2). Like `selected`, this frame field is internal (not
+   * exported from `index.ts`).
+   *
+   * Only the controlled prop can populate it: clicks produce marks, so the
+   * uncontrolled path never holds a span.
+   */
+  readonly selectedSpans: readonly SpanSelection[];
+  /**
    * Select a mark, or `null` to clear. Reports the hit to the `<Selector>`s in
    * scope and manages the internal selection only when uncontrolled (no
    * `selected` prop). The split mirrors the tracker's `trackerPosition`
@@ -950,6 +964,79 @@ export interface SelectInfo {
    */
   readonly mark?: string;
 }
+
+/**
+ * A **span selection** — a compact range descriptor over one layer's marks, the
+ * second currency `selected` accepts beside per-mark {@link SelectInfo} entries
+ * (interaction RFC A5.2). Where a mark entry names one mark, a span names
+ * *every* mark of layer {@link id} inside its extent — the shape a sweep
+ * gesture commits, and the shape a consumer with a range-valued filter already
+ * has. Membership is evaluated per draw against the mark's own channels, so a
+ * span costs O(1) per mark however many marks it covers.
+ *
+ * **The containment rule, stated once** (evaluated by `selectionContains` and,
+ * identically, by every layer's draw): a mark is inside a span when the span's
+ * `id` is the mark's layer, the mark's **key** (its `SelectInfo.key` — the bin
+ * axis position in axis units) lies in the **half-open** interval
+ * `x[0] <= key < x[1]`, the mark's **value** (its `SelectInfo.value`) lies in
+ * `y[0] <= value < y[1]` when {@link y} is present, and the mark's **label**
+ * (its `SelectInfo.label` — the row/group name on a 2-D-ordinal layer) is a
+ * member of {@link rows} when present.
+ *
+ * **Half-open, deliberately** — the pond bucket convention (`[begin, end)`),
+ * and the half the edge rule needs: contiguous interval marks share edges
+ * (`end[i] === begin[i+1]`), so a sweep that captures marks `i..j` by
+ * *intersection* stores the snapped-outward edges `[begin(i), end(j)]`, and the
+ * half-open key test then reproduces exactly the captured set — `begin(j+1) ===
+ * end(j)` falls out on the open side (RFC A7.6). A closed test would light the
+ * first mark *past* the sweep on every shared edge.
+ *
+ * **Two optional second dimensions, not one** (RFC A5.3): {@link y} is a
+ * numeric interval for a continuous × continuous layer (scatter), where the
+ * second coordinate is the mark's plotted value. {@link rows} is a label set
+ * for a continuous × ordinal layer (heat map), whose second coordinate is an
+ * ordinal row **name** — a numeric y-interval there would be untestable from a
+ * hit (the hit carries no slot number) and unstable under a row reorder. Do not
+ * conflate them.
+ */
+export interface SpanSelection {
+  /** Discriminant against {@link SelectInfo} (which has no `kind`). */
+  readonly kind: 'span';
+  /** The **layer** whose marks the span covers — a layer `id`, exactly as
+   *  {@link SelectInfo.id}. A span never matches marks of another layer. */
+  readonly id: string;
+  /**
+   * The key-axis extent in **axis units** (epoch ms on a time axis, the axis
+   * value on a value axis), half-open `[lo, hi)` against each mark's
+   * {@link SelectInfo.key}. This is the layer's **bin/key axis** whatever the
+   * orientation — a horizontal heat map's bins run down the screen, but their
+   * keys (and so this interval) stay in bin-axis units. Must be ordered
+   * `lo <= hi`; a reversed or empty pair matches nothing.
+   */
+  readonly x: readonly [number, number];
+  /**
+   * Optional **value-axis** interval, half-open against each mark's
+   * {@link SelectInfo.value} — the continuous second dimension of a 2-D sweep
+   * on a scatter (RFC A3.3/A5.3). Omit for 1-D layers.
+   */
+  readonly y?: readonly [number, number];
+  /**
+   * Optional **row label set**, matched against each mark's
+   * {@link SelectInfo.label} — the ordinal second dimension of a 2-D sweep on
+   * a heat map (RFC A5.3), stable under a row reorder because it names rows
+   * rather than numbering slots. Omit for 1-D layers.
+   */
+  readonly rows?: readonly string[];
+}
+
+/**
+ * One entry of a plural `selected` — a single mark ({@link SelectInfo}) or a
+ * whole range of one layer's marks ({@link SpanSelection}). The two currencies
+ * of interaction RFC A5.2: clicks produce marks, sweeps produce a span (plus
+ * the marks it covered, for demote-on-edit). Discriminate with
+ * `isSpanSelection` / the `kind` field.
+ */
+export type SelectionEntry = SelectInfo | SpanSelection;
 
 /** The hover snapshot handed to `onTrackerChanged` — the cursor time + every
  *  series' value there, so a consumer can render the readout outside the chart. */

@@ -2,6 +2,8 @@ import { barSpanPx } from './range.js';
 import type { StackedBarSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { Orientation, StackMark } from './bars.js';
+import type { SpanSelection } from './context.js';
+import { NO_SPANS, spanContainsPoint } from './span.js';
 import { visibleSpanRange } from './culling.js';
 import {
   decimateHeat,
@@ -369,6 +371,17 @@ export function drawHeat(
   decimate: DecimateOption = true,
   orientation: Orientation = 'vertical',
   noData: HeatNoData = 'blank',
+  // Span descriptors covering this layer (interaction RFC A5.2), already
+  // narrowed to its `id` by the component (`spansForLayer`). A cell is
+  // selected when a mark entry names it OR a span contains it — the bin
+  // `begin` in the half-open `x` interval, its **row name** in `rows` when
+  // present (the ordinal second dimension, RFC A5.3 — never a numeric row
+  // interval, which a reorder would invalidate), and the cell value in `y`
+  // when present. The x half is narrowed once per *bin* (the same shape as
+  // `binLabelsInto`'s hoist), so the row loop tests only the spans that cover
+  // the column at all. Suppressed while decimated, like the mark match — an
+  // aggregated cell has no per-cell identity.
+  spans: readonly SpanSelection[] = NO_SPANS,
 ): void {
   const vertical = orientation === 'vertical';
   const binScale = vertical ? xScale : yScale;
@@ -451,6 +464,7 @@ export function drawHeat(
   const reduced = thinned !== null || rowsThinned !== null;
   const sel = reduced ? NO_MARKS : selection;
   const hov = reduced ? NO_MARKS : hovered;
+  const spanSet = reduced ? NO_SPANS : spans;
   // Whether either set names *this* layer, settled once so the cell loop skips
   // the per-cell scan entirely when neither does — which is every draw on a row
   // whose selection belongs to a different layer, and every resting draw.
@@ -462,6 +476,10 @@ export function drawHeat(
   // path had when it matched a lone mark. `null` ⇒ that set is not in play.
   const selLabels: string[] | null = anySelected ? [] : null;
   const hovLabels: string[] | null = anyHovered ? [] : null;
+  // Scratch for the per-bin span narrowing — the spans whose `x` contains the
+  // current bin, reused across bins so the resting frame (and any spanless
+  // frame) allocates nothing. `null` ⇒ spans are not in play at all.
+  const binSpans: SpanSelection[] | null = spanSet.length > 0 ? [] : null;
 
   // The row bands, once. Each depends only on `g`, so computing them inside the
   // cell loop re-derived the same G boundaries for every visible bin — O(V·G)
@@ -501,9 +519,22 @@ export function drawHeat(
     // are empty whenever the grid is reduced, so `grid === ss` here.
     if (selLabels !== null) binLabelsInto(selLabels, sel, seriesId, ss, b);
     if (hovLabels !== null) binLabelsInto(hovLabels, hov, seriesId, ss, b);
+    // The span x half, once per bin: keep only the spans whose half-open `x`
+    // contains this bin's `begin` — the row loop then tests just their `rows` /
+    // `y` channels against the handful that survive. `spanSet` is empty
+    // whenever the grid is reduced, so `grid === ss` here.
+    if (binSpans !== null) {
+      binSpans.length = 0;
+      const begin = ss.begin[b]!;
+      for (let s = 0; s < spanSet.length; s += 1) {
+        const sp = spanSet[s]!;
+        if (begin >= sp.x[0] && begin < sp.x[1]) binSpans.push(sp);
+      }
+    }
     const binIsLive =
       (selLabels !== null && selLabels.length > 0) ||
-      (hovLabels !== null && hovLabels.length > 0);
+      (hovLabels !== null && hovLabels.length > 0) ||
+      (binSpans !== null && binSpans.length > 0);
     const base = b * G;
     for (let g = 0; g < G; g += 1) {
       // Gaps are skipped before any per-cell work, exactly as `cellRect` does
@@ -548,6 +579,19 @@ export function drawHeat(
       if (binIsLive) {
         const group = ss.groups[g]!;
         selected = selLabels !== null && hasLabel(selLabels, group);
+        // The spans that cover this bin, against the cell's remaining channels
+        // — the row name (`rows`) and the value (`y`). `spanContainsPoint` is
+        // the single containment rule (its x re-test is two compares on an
+        // already-passing bin), so this cannot drift from `selectionContains`.
+        if (!selected && binSpans !== null && binSpans.length > 0) {
+          const begin = ss.begin[b]!;
+          for (let s = 0; s < binSpans.length; s += 1) {
+            if (spanContainsPoint(binSpans[s]!, begin, value, group)) {
+              selected = true;
+              break;
+            }
+          }
+        }
         live = selected || (hovLabels !== null && hasLabel(hovLabels, group));
       }
 

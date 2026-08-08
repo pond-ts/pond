@@ -2,9 +2,10 @@ import { barSpanPx } from './range.js';
 import type { BarSeries, StackedBarSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { BarStyle } from './theme.js';
-import type { LayerDrawStats } from './context.js';
+import type { LayerDrawStats, SpanSelection } from './context.js';
 import { visibleSpanRange } from './culling.js';
 import { decimateBars, type DecimateOption } from './decimate.js';
+import { NO_SPANS, spanMatchesAny } from './span.js';
 
 /**
  * Bar growth direction — the histogram orientation. `'vertical'` bars grow **up**
@@ -380,6 +381,15 @@ export function drawBars(
   decimate: DecimateOption = true,
   binFills?: readonly (string | undefined)[],
   banding?: BandLadder,
+  // Span descriptors covering this layer (interaction RFC A5.2), already
+  // narrowed to its `id` (and constant-label `rows` resolved) by the component
+  // — see `spansForLayer`. A bar is selected when a mark entry names it OR a
+  // span covers it: an O(1)-per-bar half-open test of `begin` against the
+  // span's `x` (and the bar's value against `y` when present), so a span over
+  // ten thousand bars costs each one interval test, not a scan. Like the mark
+  // highlight, spans are ignored on the decimated envelope path (aggregate
+  // columns have no per-bar identity).
+  spans: readonly SpanSelection[] = NO_SPANS,
 ): LayerDrawStats {
   ctx.save();
   ctx.globalAlpha = style.opacity;
@@ -391,8 +401,11 @@ export function drawBars(
   // (its highlight would be off-screen anyway).
   // Dim only when a selection actually exists AND the theme opted in: with an
   // empty set there is nothing to recede from, and with no `dimmed` value the
-  // library never invents one (RFC A2.3).
-  const dimming = style.dimmed !== undefined && selection.length > 0;
+  // library never invents one (RFC A2.3). A span is a selection too — a swept
+  // range recedes the bars outside it exactly as a clicked set does.
+  const hasSpans = spans.length > 0;
+  const dimming =
+    style.dimmed !== undefined && (selection.length > 0 || hasSpans);
   const [vStart, vEnd] = visibleSpanRange(cs.begin, cs.end, cs.length, xScale);
   // Decimate the visible bars to per-column envelope rects once dense (see the
   // header). `null` below the visible-density threshold ⇒ the full per-bar loop.
@@ -467,7 +480,9 @@ export function drawBars(
     // sets one and `highlight` otherwise, always without the outline — so hover
     // reads as a lighter "this bar is live" and select as the committed pick.
     const stable = marks?.[i];
-    const selected = barMatchesAny(selection, seriesId, stable, cs.begin[i]!);
+    const selected =
+      barMatchesAny(selection, seriesId, stable, cs.begin[i]!) ||
+      (hasSpans && spanMatchesAny(spans, cs.begin[i]!, cs.y[i]!));
     const isHovered = barMatchesAny(hovered, seriesId, stable, cs.begin[i]!);
     if (fills !== undefined) {
       // Per-bar fills: the bar keeps its own colour under hover / selection —
@@ -963,6 +978,14 @@ export function drawStacks(
   selection: readonly StackMark[],
   hover: readonly StackMark[],
   banding?: BandLadder,
+  // Span descriptors covering this layer (interaction RFC A5.2), already
+  // narrowed to its `id` by the component (`spansForLayer`). A segment is
+  // selected when a mark entry names it OR a span covers it — the O(1) test of
+  // the bin `begin` against the half-open `x` interval, the segment's own
+  // value against `y` when present, and its group against `rows` when present
+  // (the group is this layer's label channel, so `rows` stays testable per
+  // segment where `drawBars`' constant label lets the component resolve it).
+  spans: readonly SpanSelection[] = NO_SPANS,
 ): void {
   const G = ss.groups.length;
   const base = stackBase(orientation, xScale, yScale);
@@ -972,8 +995,11 @@ export function drawStacks(
   // each segment is already a slice of a total — so the ladder is dropped here
   // and warned about at the prop boundary rather than half-applied.
   const ladder = G === 1 && style.binFills === undefined ? banding : undefined;
-  // See `drawBars` — dim only with a real selection and an opted-in theme.
-  const dimming = style.dimmed !== undefined && selection.length > 0;
+  // See `drawBars` — dim only with a real selection (marks or spans) and an
+  // opted-in theme.
+  const hasSpans = spans.length > 0;
+  const dimming =
+    style.dimmed !== undefined && (selection.length > 0 || hasSpans);
   ctx.save();
   ctx.globalAlpha = style.opacity;
   for (let b = 0; b < ss.length; b += 1) {
@@ -1019,6 +1045,21 @@ export function drawStacks(
           selected = true;
           break;
         }
+      }
+      // A span covers this segment when the bin's `begin` is inside its
+      // half-open `x` (and its `y` / `rows` channels pass — see the param doc).
+      // The label channel is what the hit reports: the stable per-bin `mark`
+      // (a categorical bar's category name) when the series carries marks,
+      // else the group — `hitTest` builds `label: stableMark ?? name`, and the
+      // span test must read the same field or `selectionContains` and the
+      // canvas disagree on every categorical bar.
+      if (!selected && hasSpans) {
+        selected = spanMatchesAny(
+          spans,
+          ss.begin[b]!,
+          v,
+          stableMark ?? ss.groups[g]!,
+        );
       }
       let isHovered = false;
       for (let hi = 0; hi < hover.length; hi += 1) {
