@@ -49,8 +49,15 @@
 > implementer should read. Three questions remain open and all three gate the
 > sweep: span-minus-point, the 2-D descriptor shape, and grid indexing.
 >
+> **Amendment 5 (2026-08-08)** closes **Q12**, the critical path. Both options
+> the RFC had named turn out to be unusable — the exclusion channel is
+> _incorrect_ under overlapping sweeps, and replace-after-sweep fails the
+> workload that motivated sweeps. Adopted instead: the sweep reports **both**
+> marks and a span, and a span is edited by **demoting** it to its marks. This
+> also corrects A3.3 — the heat map's second axis is ordinal, not an interval.
+>
 > Reading order for the interaction surface: `cursor.md` (what cursors draw) →
-> `selection.md` v1 → its A1–A5 → this RFC §1–§12 → A1 → A2 → A3 → **A4 is
+> `selection.md` v1 → its A1–A5 → this RFC §1–§12 → A1 → A2 → A3 → A4 → **A5 is
 > current on API shape**.
 
 ## 1. The question
@@ -1228,3 +1235,121 @@ are design work that cannot start until it lands.
 × mount point × selector × dimensionality × gesture × surface. A step without
 its stories is not landed. Steps 2–4 are each shippable behind the shim, which
 is what turns one breaking release into several additive ones.
+
+## Amendment 5 (2026-08-08) — Q12 resolved: both currencies, demote on edit
+
+> _Analysis by a **Fable agent**, commissioned to settle Q12; adopted by
+> pjm17971. Q12 was the critical path — it decided whether a compact descriptor
+> can be the round-trip currency for sweeps. Reading order: §1–§12 → A1 → A2 →
+> A3 → A4 → **A5 is current**._
+
+### A5.1 The two options the RFC named were both wrong
+
+**(a) The exclusion channel is _incorrect_, not merely costly.** A2.4 and A4.3
+offered `SpanSelection.exclude?: SelectInfo[]` as a live candidate. It fails on
+**overlapping additive sweeps**: a mark excluded from span A is still inside
+span B, so union semantics silently re-include it. Per-span exclusion is
+therefore wrong, and the repair — a single global exclude list — turns
+`selected` into an **include/exclude algebra pond has to evaluate**, which is
+set arithmetic encoded in the data structure and against A4.1's grain. Follow it
+one step further (⌘-drag to remove a _range_) and the type goes recursive.
+
+It also reintroduces the very friction the marks-currency was built to kill: the
+consumer has to work out **which** span contains the clicked mark,
+re-implementing the interval test in axis units — the inverse-band-scale problem
+that `selection.md` A4.2 named as the whole reason to report marks. Killing it
+on the click path and reinstating it on the edit path is no improvement.
+
+**(b) "Replace after a sweep" fails the workload that motivated sweeps.** Under
+A4.1 pond cannot _enforce_ replace anyway — it would be documentation asking
+consumers not to want the thing. And the driving case wants exactly the thing: a
+terminal sweeps a session of bars, then knocks two outliers out of the
+selection. Replace vaporises the sweep on the first ⌘-click.
+
+### A5.2 Adopted: (d) both currencies, demote on edit
+
+The sweep's commit reports **the marks and the span**. A span is editable **only
+as a whole**; to edit _inside_ one, the consumer swaps the span entry for the
+hits it stashed at commit time and filters — plain array arithmetic, no algebra,
+and pond still computes no policy.
+
+```ts
+interface SpanSelection {
+  readonly kind: 'span';
+  readonly id: string; // the layer, as ever
+  readonly x: readonly [number, number]; // axis units
+  readonly y?: readonly [number, number]; // continuous 2-D (scatter)
+  readonly rows?: readonly string[]; // ordinal 2-D (heat map)
+}
+type SelectionEntry = SelectInfo | SpanSelection;
+
+// ChartContainer — the union widens once more, still non-breaking
+selected?: SelectInfo | readonly SelectionEntry[] | null;
+
+// <MultiSelector> — marks stay the currency (A4.2); the span rides along
+onSelect?: (
+  hits: readonly SelectInfo[],
+  modifiers: SelectModifiers,
+  span: SpanSelection,
+) => void;
+
+// exported: the same predicate the layers run, so consumers never
+// re-implement the interval test
+function selectionContains(
+  sel: readonly SelectionEntry[],
+  hit: SelectInfo,
+): boolean;
+```
+
+**The hits are free at commit time.** A1.4's delta-tracked live preview _is_ the
+materialised set, so emitting them on release costs an array copy rather than a
+range query. Consumers who never sweep see no change at all — the 0-1-mark case
+keeps the existing linear short-circuit.
+
+**Per-repaint cost:** a span entry is one or two interval tests, O(1) per mark;
+mark entries keep today's linear scan, whose `bars.ts` comment ("a selection is
+a handful of marks a person clicked, not a data structure") stays true because
+sweeps no longer produce mark entries.
+
+### A5.3 This corrects A3.3 — the heat map's second axis is not an interval
+
+A3.3 proposed a uniform `{ x, y? }` for both 2-D layers. **That is wrong for the
+heat map**, and the mistake was assuming "2-D" names one shape.
+
+A heat-map cell's second coordinate in `SelectInfo` is its **ordinal `label`** —
+`heat.ts` matches on `mark`/`label`, not a slot index. A numeric y-interval would
+therefore be **untestable from a hit** (there is no number on the hit to test)
+and **unstable under reorder** (slot indices renumber; the whole point of
+mark-identity is that they don't). Hence the third field, `rows?: readonly
+string[]`.
+
+So: **scatter is continuous × continuous and fits an interval; the heat map is
+continuous × ordinal and does not.** Only the first of the two 2-D layers takes
+`y`.
+
+### A5.4 What this forecloses — stated before it bites
+
+- **Live durability across an edit.** A demoted span is frozen marks, so bars
+  streaming into the original range are **not** selected. Only an exclusion
+  algebra keeps "this range, minus these prints" live under new data, and A5.1
+  is the reason we are not having one. A streaming consumer must re-sweep or
+  re-derive.
+- **Richer shapes as round-trip currency.** Every new entry `kind` is a
+  membership test **every** layer must implement; that conformance matrix should
+  stay at two. A future lasso commits marks, not a `LassoSelection`.
+- **Eager hits on release.** The signature pins the preview machinery to
+  maintaining a materialised set. A million-point canvas wanting a
+  never-enumerate release path would need a breaking lazy accessor.
+
+### A5.5 What it unblocks
+
+**Q12 closed. Q13 closed** — A5.2's types are the 2-D descriptor shape, with
+A5.3's correction. **Q14 (grid indexing) remains open** and is now concrete
+rather than hypothetical: the heat map needs a range query over binned-x ×
+ordinal-rows, against the 16,425-cell case.
+
+The descriptor is also **separable from the gesture**: `SelectionEntry`,
+`selectionContains`, the container normalisation, and each layer's span-aware
+membership test can land **before** `<MultiSelector>` exists, tested by passing
+spans through the controlled `selected` prop. That makes it a step of its own,
+between §10's steps 4 and 5.
