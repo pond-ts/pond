@@ -191,8 +191,22 @@ export interface ContainerFrame {
    * hover-*highlight* is internal state, and RFC A1.2 keeps state on the
    * container; with no selector mounted there is simply nobody to report to,
    * which needs no gate to arrange.
+   *
+   * `block` — the **resting block preview** under a mounted `<MultiSelector>`
+   * (the marks of the snap block the pointer is in — exactly the set a drag
+   * begun and released there would select). When present it becomes the
+   * hovered *state* (every mark in the block lights) and what
+   * `<MultiSelector onHover>` hears, deduped by the block array's identity
+   * (the caller keeps it reference-stable per block, so within-block mark
+   * transitions re-render nothing). `<Selector onHover>` keeps its per-mark
+   * currency — `hit` still reports per mark transition. Omitted ⇒ the
+   * plain single-mark hover, exactly as before.
    */
-  setHovered(hit: SelectInfo | null, rowKey?: symbol): void;
+  setHovered(
+    hit: SelectInfo | null,
+    rowKey?: symbol,
+    block?: readonly SelectInfo[],
+  ): void;
   /** The default in-chart cursor presentation for all rows ({@link CursorMode});
    *  a row may override it via its own `cursor`. */
   readonly cursor: CursorMode;
@@ -291,6 +305,16 @@ export interface ContainerFrame {
    * {@link registerSelector}.
    */
   resolveSweep(rowKey: symbol): SweepGesture | null;
+  /**
+   * Whether a `<MultiSelector>` is in scope for this row — the *render-time*
+   * fact behind {@link resolveSweep} (which builds the per-drag gesture and is
+   * for the pointer-down path). Rows read this to decide the **resting block
+   * preview**: with one in scope over a sweep-capable row, the shared brush
+   * band becomes the resting cursor (replacing the implicit line shim) and
+   * hover lights the whole snap block a drag would select. Identity changes
+   * when the selector registry does, so it is safe in render memos.
+   */
+  hasMultiSelector(rowKey: symbol): boolean;
   /**
    * Register this layer's **legend row** — its display label + resolved
    * {@link SwatchSpec} (and selection `id` when it has one) — keyed by the
@@ -1358,6 +1382,14 @@ export interface CursorEntry {
    *  with any non-legacy (component-mounted) cursor drops its legacy entries —
    *  mounting a component overrides the string prop during the window. */
   readonly legacy: boolean;
+  /**
+   * The shim entry nobody asked for: the container's `'line'` **default**,
+   * synthesized with no `cursor` prop set. A mounted `<MultiSelector>`'s
+   * resting block preview (the brush band as the resting cursor) replaces
+   * only these — an explicitly chosen cursor, component-mounted or via the
+   * legacy string prop, still wins.
+   */
+  readonly implicit?: boolean;
   /**
    * Whether this cursor owns **snap and gesture** (RFC A2.5): at most one per
    * scope (dev-warned otherwise), resolved to the hovered row's innermost

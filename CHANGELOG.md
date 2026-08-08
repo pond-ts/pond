@@ -60,6 +60,35 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **charts: mounting `<MultiSelector>` now changes the row's RESTING state —
+  the band and the hover become a live preview of the block a drag would
+  select.** Two halves, one requirement ("the grey cursor and the hover
+  highlighting are a preview for the block a drag will select"):
+  - **The brush band is the resting cursor.** With a `<MultiSelector>` in
+    scope over a sweep-capable row, the shared brush band (`<RangeCursor>`'s
+    renderer — one function, so the visuals cannot drift) spans the **snap
+    block under the pointer**: the `sequence` bucket where one is set, else
+    the layer's own bin/slot. It replaces the container's **implicit**
+    `'line'` default; an explicitly chosen cursor — a mounted component or a
+    legacy `cursor` string the consumer actually set — still wins the
+    surface.
+  - **Hover is block-scoped.** Pointing at any one mark of a block lights
+    (and reports through `onHover`) **every mark in the block** — e.g. all
+    four six-hour bars of a day under `sequence={Sequence.calendar('day')}`
+    — reported once per block transition, with within-block moves
+    re-rendering nothing. A co-mounted `<Selector onHover>` keeps its
+    per-mark currency.
+
+  Rest and drag share one code path (the same snap buckets, the same layer
+  sweep session), so what the rest previews and what a drag commits cannot
+  disagree — the drag just grows the same band, and release selects exactly
+  what was lit. **This is new semantics, not a bug fix**: the interaction RFC
+  had hover meaning "the mark under the pointer" (A4.2) and the sweep preview
+  meaning "what would be selected"; a mounted snapping `<MultiSelector>` now
+  unifies them at rest.
+
 ### Fixed
 
 - **charts: six `<MultiSelector>` polish bugs found walking the Storybook

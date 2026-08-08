@@ -40,11 +40,14 @@ import {
   CursorContext,
   LayersContext,
   RowContext,
+  type ContainerFrame,
   type LayerRegistry,
   type LayerDrawInfo,
   type ResolvedCursorFlag,
   type ResolvedCursorFrame,
   type ResolvedCursorSample,
+  type RowFrame,
+  type SelectInfo,
   type SelectModifiers,
   type SweepGesture,
   type SweepSession,
@@ -90,6 +93,52 @@ const ZOOM_SENSITIVITY = 0.0015;
  *  it still selects. One threshold for both so a click never also nudges the pan
  *  (and never hit-tests against a shifted scale). */
 const DRAG_SLOP = 4;
+
+/**
+ * The topmost sweep-capable layer's fresh {@link SweepSession} (RFC §8's
+ * z-order rule — the same rule a click follows), or `null` when the row has
+ * none. **The one resolution** behind both the pointer-down sweep claim and
+ * the resting block preview, so what hover previews and what a drag captures
+ * cannot come from different layers.
+ */
+function beginTopmostSweep(
+  c: Pick<ContainerFrame, 'xScale'>,
+  r: Pick<RowFrame, 'layers' | 'yScales' | 'defaultAxisId'>,
+): SweepSession | null {
+  for (let i = r.layers.length - 1; i >= 0; i -= 1) {
+    const entry = r.layers[i]!;
+    const ys = r.yScales.get(entry.axisId ?? r.defaultAxisId);
+    if (ys === undefined) continue;
+    const s =
+      entry.layer.beginSweep?.(
+        (v) => c.xScale(v),
+        (v) => ys(v),
+      ) ?? null;
+    if (s !== null) return s;
+  }
+  return null;
+}
+
+/** Same marks, by full identity — so a recomputed resting block can keep the
+ *  CACHED array's reference when nothing actually changed. The layer registry
+ *  re-identifies on every hover commit (the entries close over the hovered
+ *  set), so an identity-keyed cache alone would re-mint the block each move
+ *  and defeat the container's identity-based block dedup. O(block). */
+function sameHits(a: readonly SelectInfo[], b: readonly SelectInfo[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const x = a[i]!;
+    const y = b[i]!;
+    if (
+      x.id !== y.id ||
+      x.key !== y.key ||
+      x.label !== y.label ||
+      x.mark !== y.mark
+    )
+      return false;
+  }
+  return true;
+}
 
 export interface LayersProps {
   children?: ReactNode;
@@ -385,12 +434,34 @@ export function Layers({ children }: LayersProps) {
   // below — from the same resolved frame, so the sweep looks exactly like a
   // <RangeCursor> drag.
   const [sweeping, setSweeping] = useState(false);
+  // The **resting block preview**: a `<MultiSelector>` in scope over a
+  // sweep-capable row changes the RESTING state, not just the drag — the grey
+  // band and the block-scoped hover are a preview of exactly what a drag
+  // begun here would select. Two halves, resolved here:
+  //
+  // - `blockPreview` — the fact ("this row previews blocks"). It also scopes
+  //   the resting hover to the snap block (handlePointerMove).
+  // - `restingBand` — the brush band is this row's resting CURSOR, replacing
+  //   the shim's un-asked-for `'line'` default. Any *explicitly chosen*
+  //   cursor still wins: a mounted component, or a legacy `cursor` string the
+  //   consumer actually set — both register non-`implicit` entries and keep
+  //   their own slots (a mounted `<RangeCursor>` already draws this same
+  //   band; a `<CrosshairCursor>` keeps its crosshair).
+  const blockPreview =
+    container.hasMultiSelector(row.rowKey) &&
+    layers.some((e) => e.layer.beginSweep !== undefined);
+  const restingBand =
+    blockPreview &&
+    !editingActive &&
+    effectiveCursorEntries(container.cursors, row.rowKey).every(
+      (e) => e.implicit === true,
+    );
   const cursorEntries = useMemo(
     () =>
-      editingActive || sweeping
+      editingActive || sweeping || restingBand
         ? []
         : effectiveCursorEntries(container.cursors, row.rowKey),
-    [editingActive, sweeping, container.cursors, row.rowKey],
+    [editingActive, sweeping, restingBand, container.cursors, row.rowKey],
   );
   const wantsSamples = cursorEntries.some((e) => e.wants.samples);
   const wantsFlags = cursorEntries.some((e) => e.wants.flags);
@@ -570,6 +641,18 @@ export function Layers({ children }: LayersProps) {
   // with the cursor resolution, which it suppresses. It also renders the
   // shared brush band from this row: §8.1 — one renderer either way, so the
   // two visuals cannot drift.)
+  // The resting block preview's per-block cache: the materialised hits of the
+  // snap block the pointer is in, keyed on the block extent AND the row's
+  // layer registry identity (a data / selection change re-registers layers,
+  // which must invalidate the cached marks). One small session per block
+  // TRANSITION, nothing per move — and the stable `hits` array is what makes
+  // the container's identity-based block dedup work.
+  const restingBlockRef = useRef<{
+    layers: readonly unknown[];
+    start: number;
+    end: number;
+    hits: readonly SelectInfo[];
+  } | null>(null);
   // A1.5's arbitration, surfaced: warn once when a press found both claimants.
   const warnedSweepShadowRef = useRef(false);
 
@@ -619,23 +702,8 @@ export function Layers({ children }: LayersProps) {
       // selector over a row of untagged/lines-only layers deliberately claims
       // nothing (Q8's identity-gates-interactivity, range form).
       const sweepGesture = c.resolveSweep(r.rowKey);
-      let sweepSession: SweepSession | null = null;
-      if (sweepGesture !== null) {
-        for (let i = r.layers.length - 1; i >= 0; i -= 1) {
-          const entry = r.layers[i]!;
-          const ys = r.yScales.get(entry.axisId ?? r.defaultAxisId);
-          if (ys === undefined) continue;
-          const s =
-            entry.layer.beginSweep?.(
-              (v) => c.xScale(v),
-              (v) => ys(v),
-            ) ?? null;
-          if (s !== null) {
-            sweepSession = s;
-            break;
-          }
-        }
-      }
+      const sweepSession: SweepSession | null =
+        sweepGesture !== null ? beginTopmostSweep(c, r) : null;
       const drag = resolveRangeDrag(
         c,
         gestureOwner(effectiveCursorEntries(c.cursors, r.rowKey)),
@@ -908,9 +976,59 @@ export function Layers({ children }: LayersProps) {
       const hit = resolveSelection(r.layers, rawX, py, c.xScale, (axisId) =>
         r.yScales.get(axisId ?? r.defaultAxisId),
       );
+      // The resting BLOCK preview (a mounted <MultiSelector>): hover lights
+      // every mark in the snap block under the pointer — exactly the set a
+      // drag begun and released here would select, from exactly the sweep's
+      // own machinery (the shared snap buckets through `regionSpan`, the
+      // topmost layer's session), so the preview and a drag cannot disagree.
+      // Cached per block (and per layer registry), so within-block moves
+      // re-materialise nothing and hand the container the SAME array back —
+      // its identity is the block-level hover dedup.
+      let block: readonly SelectInfo[] | undefined;
+      if (c.hasMultiSelector(r.rowKey)) {
+        const span = regionSpan(c.cursorBuckets ?? [], +c.xScale.invert(rawX));
+        if (span !== null) {
+          const cached = restingBlockRef.current;
+          if (
+            cached !== null &&
+            cached.layers === r.layers &&
+            cached.start === span.start &&
+            cached.end === span.end
+          ) {
+            block = cached.hits;
+          } else {
+            const session = beginTopmostSweep(c, r);
+            if (session !== null) {
+              session.update(span.start, span.end);
+              let hits = session.hits();
+              // Same block, same marks after a registry re-identification
+              // (every hover commit re-registers the layers): keep the CACHED
+              // array's reference, or the identity-based block dedup would
+              // re-fire on every within-block move.
+              if (
+                cached !== null &&
+                cached.start === span.start &&
+                cached.end === span.end &&
+                sameHits(cached.hits, hits)
+              )
+                hits = cached.hits;
+              restingBlockRef.current = {
+                layers: r.layers,
+                start: span.start,
+                end: span.end,
+                hits,
+              };
+              block = hits;
+            }
+          }
+          // An all-gap block owns no membership (A7.6's "holes own no
+          // membership") — fall back to the plain single-mark hover.
+          if (block !== undefined && block.length === 0) block = undefined;
+        }
+      }
       // The row key scopes which `<Selector>`s hear it (a row's own mounts, else
       // the container's) — the hover *highlight* is unscoped container state.
-      c.setHovered(hit, r.rowKey);
+      c.setHovered(hit, r.rowKey, block);
     },
     [],
   );
@@ -1254,14 +1372,18 @@ export function Layers({ children }: LayersProps) {
   // legacy drag); with none it's the **freeform** case — a bare hover draws a
   // plain line (`bandLine`), a drag shades the raw `[anchor, pointer]`. Edges
   // map through `xScale`, so on a trading-time axis the band crops to live time.
-  // A live <MultiSelector> sweep shades the same band. It is NOT gated to a
-  // continuous axis: the marks currency is what folds the category axis into
-  // the gesture (RFC §8 / A4.2 — nobody sees a numeric range), and the band
-  // maps slot units through the shared band scale like any other span.
+  // A live <MultiSelector> sweep shades the same band — and so does its
+  // RESTING state (`restingBand`): the band over the snap block under the
+  // pointer is the row's resting cursor, previewing the block a drag would
+  // select. Neither is gated to a continuous axis: the marks currency is what
+  // folds the category axis into the gesture (RFC §8 / A4.2 — nobody sees a
+  // numeric range), and the band maps slot units through the shared band
+  // scale like any other span.
   const bandActive =
     (wantsBand &&
       (container.xKind === 'time' || container.xKind === 'value')) ||
-    sweeping;
+    sweeping ||
+    restingBand;
   const band: { x0: number; x1: number } | null =
     bandActive && cursorTime !== null
       ? bandRect(
@@ -1272,9 +1394,14 @@ export function Layers({ children }: LayersProps) {
           container.regionAnchor ?? undefined,
         )
       : null;
-  // Degenerate range cursor (no buckets, not mid-drag): a plain vertical line.
+  // Degenerate range cursor (no buckets, not mid-drag): a plain vertical
+  // line. Deliberately NOT extended to `restingBand` — the resting preview is
+  // "a region-like cursor, not a line", so with no snap block under the
+  // pointer it shows nothing rather than degenerating to the rule it exists
+  // to replace.
   const bandLine =
-    bandActive &&
+    wantsBand &&
+    (container.xKind === 'time' || container.xKind === 'value') &&
     !sweeping &&
     container.cursorBuckets === undefined &&
     container.regionAnchor === null &&
@@ -1506,12 +1633,15 @@ export function Layers({ children }: LayersProps) {
               </Fragment>
             ) : null,
           )}
-          {/* A live <MultiSelector> sweep with no band-wanting cursor mounted:
-              draw the SAME shared band renderer <RangeCursor> uses (§8.1 —
-              one function, so the two brush visuals cannot drift). When a
-              band cursor IS mounted, its own slot above already painted the
-              identical band from the same resolved frame. */}
-          {sweeping && !wantsBand && renderBrushBand(cursorRenderFrame)}
+          {/* A live <MultiSelector> sweep — or its RESTING block preview —
+              with no band-wanting cursor mounted: draw the SAME shared band
+              renderer <RangeCursor> uses (§8.1 — one function, so the brush
+              visuals cannot drift). When a band cursor IS mounted, its own
+              slot above already painted the identical band from the same
+              resolved frame. */}
+          {(sweeping || restingBand) &&
+            !wantsBand &&
+            renderBrushBand(cursorRenderFrame)}
         </svg>
         {/* The cursors' DOM slots, above the SVG: the in-plot chips
             (`renderPlotHtml` — value chips, the time readout) and the

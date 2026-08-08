@@ -1299,33 +1299,59 @@ export function ChartContainer({
   useLayoutEffect(() => {
     controlledHoverRef.current = controlledHover;
   });
+  // The last resting BLOCK we reported (identity — the row keeps the array
+  // reference-stable per block), so <MultiSelector onHover> hears one call per
+  // block transition and within-block mark transitions re-render nothing.
+  const lastHoverBlockRef = useRef<readonly SelectInfo[] | null>(null);
   // Unlike `select`, this is **not** gated on a mounted `<Selector>`: the
   // hover-highlight is container state (A1.2) and keeps working with none
   // mounted; with none mounted there is simply no `onHover` to fire.
-  const setHovered = useCallback((hit: SelectInfo | null, rowKey?: symbol) => {
-    const prev = lastHoverRef.current;
-    const same =
-      prev === hit ||
-      (prev !== null &&
-        hit !== null &&
-        prev.id === hit.id &&
-        prev.key === hit.key &&
-        prev.label === hit.label &&
-        prev.mark === hit.mark);
-    if (same) return;
-    lastHoverRef.current = hit;
-    for (const e of effectiveSelectorEntries(
-      selectorsRef.current,
-      rowKey ?? null,
-    )) {
-      e.onHover?.(hit);
-      // A mounted <MultiSelector> hears pointer hover in its own plural
-      // currency — 0/1 hits outside a drag (a sweep reports through
-      // `resolveSweep`'s preview instead, several at once).
-      e.onHoverMany?.(hit === null ? EMPTY_SELECTION : [hit]);
-    }
-    if (!controlledHoverRef.current) setInternalHovered(hit);
-  }, []);
+  const setHovered = useCallback(
+    (
+      hit: SelectInfo | null,
+      rowKey?: symbol,
+      block?: readonly SelectInfo[],
+    ) => {
+      const prev = lastHoverRef.current;
+      const sameMark =
+        prev === hit ||
+        (prev !== null &&
+          hit !== null &&
+          prev.id === hit.id &&
+          prev.key === hit.key &&
+          prev.label === hit.label &&
+          prev.mark === hit.mark);
+      const blockNow = block ?? null;
+      const sameBlock = lastHoverBlockRef.current === blockNow;
+      if (sameMark && sameBlock) return;
+      lastHoverRef.current = hit;
+      lastHoverBlockRef.current = blockNow;
+      for (const e of effectiveSelectorEntries(
+        selectorsRef.current,
+        rowKey ?? null,
+      )) {
+        // <Selector onHover> keeps its per-mark currency regardless of any
+        // block — the mark under the pointer, per mark transition.
+        if (!sameMark) e.onHover?.(hit);
+        // A mounted <MultiSelector> hears hover in its own plural currency:
+        // the resting BLOCK preview when there is one (per block transition —
+        // the marks a drag begun and released here would select), else 0/1
+        // hits per mark transition. A live sweep reports through
+        // `resolveSweep`'s preview instead, several at once.
+        if (blockNow !== null) {
+          if (!sameBlock) e.onHoverMany?.(blockNow);
+        } else if (!sameMark) {
+          e.onHoverMany?.(hit === null ? EMPTY_SELECTION : [hit]);
+        }
+      }
+      // The block (reference-stable per block) is the hovered STATE when
+      // present, so every mark in it lights — and a within-block mark
+      // transition hands React the same value back (no re-render, no
+      // repaint), which is the block-level analog of the single-mark dedup.
+      if (!controlledHoverRef.current) setInternalHovered(blockNow ?? hit);
+    },
+    [],
+  );
 
   // The sweep gesture's container half (interaction RFC §8 / A5.2): resolve a
   // row's press against the mounted <MultiSelector>s in scope and hand the
@@ -1341,9 +1367,10 @@ export function ChartContainer({
     if (entries.length === 0) return null;
     return {
       preview: (hits: readonly SelectInfo[]) => {
-        // The single-hit dedup state is meaningless mid-sweep; reset it so the
-        // first post-sweep pointer hover always reports.
+        // The single-hit / resting-block dedup state is meaningless mid-sweep;
+        // reset both so the first post-sweep pointer hover always reports.
         lastHoverRef.current = null;
+        lastHoverBlockRef.current = null;
         for (const e of entries) e.onHoverMany?.(hits);
         if (!controlledHoverRef.current) setInternalHovered(hits);
       },
@@ -1360,10 +1387,22 @@ export function ChartContainer({
         if (!controlledSelectionRef.current)
           setInternalSelected(span === null ? null : [span]);
         lastHoverRef.current = null;
+        lastHoverBlockRef.current = null;
         if (!controlledHoverRef.current) setInternalHovered(null);
       },
     };
   }, []);
+
+  // The render-time "is a <MultiSelector> in scope for this row" fact, for the
+  // resting block preview (frame doc in context.ts). Unlike `resolveSweep` —
+  // a []-stable callback over the selectors REF, correct at pointer-down — a
+  // row reads this during render to pick its resting cursor, so it derives
+  // from the selectors STATE and re-identifies when the registry changes.
+  const hasMultiSelector = useCallback(
+    (rowKey: symbol) =>
+      effectiveSelectorEntries(selectors, rowKey).some((e) => e.multi),
+    [selectors],
+  );
 
   // Rows report their per-slot gutter widths; we reserve each slot's max.
   const [gutters, setGutters] = useState<readonly GutterReq[]>([]);
@@ -1809,6 +1848,7 @@ export function ChartContainer({
       registerSelector,
       unregisterSelector,
       resolveSweep,
+      hasMultiSelector,
       registerAnnotation,
       unregisterAnnotation,
       registerLegendItem,
@@ -1886,6 +1926,7 @@ export function ChartContainer({
       registerSelector,
       unregisterSelector,
       resolveSweep,
+      hasMultiSelector,
       registerAnnotation,
       unregisterAnnotation,
       registerLegendItem,
@@ -1928,6 +1969,10 @@ export function ChartContainer({
           showTime={cursorTime}
           snap={crosshairSnap}
           sequence={cursorSequenceProp}
+          // The 'line' default nobody asked for is IMPLICIT — the one cursor a
+          // <MultiSelector>'s resting block preview may replace with the
+          // brush band. An explicit `cursor` prop (any mode) still wins.
+          implicit={cursorProp === undefined}
         />
         {/* The deprecation shim: the legacy `onSelect`/`onHover` props,
             synthesized as a container-scoped `<Selector>` registration so a

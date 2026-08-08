@@ -21,8 +21,8 @@ import { Layers } from '../src/Layers.js';
 import { BarChart } from '../src/BarChart.js';
 import { LineChart } from '../src/LineChart.js';
 import { YAxis } from '../src/YAxis.js';
-import { MultiSelector } from '../src/selectors.js';
-import { RangeCursor } from '../src/cursors.js';
+import { MultiSelector, Selector } from '../src/selectors.js';
+import { CrosshairCursor, RangeCursor } from '../src/cursors.js';
 import { resolveBrushClaim } from '../src/brush.js';
 import { selectionContains } from '../src/span.js';
 import {
@@ -400,18 +400,37 @@ describe('the live preview', () => {
     act(() => surface.dispatchEvent(pointer('pointermove', pxAt(350), 1)));
     expect(frame().regionAnchor).not.toBeNull();
     expect(dom.querySelector('svg rect')).not.toBeNull();
+    // Release: the anchor clears, and the band REVERTS to the resting block
+    // preview — the one-bucket band under the pointer, not nothing (the band
+    // is the <MultiSelector>'s resting cursor).
     act(() => surface.dispatchEvent(pointer('pointerup', pxAt(350), 0)));
+    expect(frame().regionAnchor).toBeNull();
+    const resting = dom.querySelector('svg rect')!;
+    expect(resting).not.toBeNull();
+    expect(Number(resting.getAttribute('width'))).toBeCloseTo(
+      pxAt(400) - pxAt(300), // the release-point bar's bin, snapped
+      6,
+    );
+    // Leaving the plot clears it (React delegates onPointerLeave through
+    // pointerout with a relatedTarget outside the element).
+    act(() =>
+      surface.dispatchEvent(
+        new PointerEvent('pointerout', {
+          bubbles: true,
+          relatedTarget: document.body,
+        }),
+      ),
+    );
     expect(dom.querySelector('svg rect')).toBeNull();
   });
 
-  it('a live sweep suppresses the data cursor — the band shows, not a line over it', () => {
+  it('the sweep and the rest both suppress the data cursor — a band, never a line', () => {
     // With no cursor mounted the deprecation shim's default `line` preset is
-    // in effect, and it kept painting its solid vertical rule at the raw
-    // pointer OVER the brush band for the whole drag — the sweep read as "a
-    // line", not as the region being swept. A live sweep now suppresses the
-    // row's cursor slots exactly as annotation editing does; the shared band
-    // still renders (the assertion above), so the sweep looks like a
-    // <RangeCursor> drag (§8.1's identical pixels).
+    // in effect, and it painted its solid vertical rule at the raw pointer —
+    // over the band during a drag, and as the whole resting cursor before
+    // one. Under a mounted <MultiSelector> the rule never draws: the brush
+    // band IS the resting cursor (the block a drag would select), and the
+    // drag grows the same band (§8.1's identical pixels).
     const { surface, pxAt, dom } = mount({
       children: <MultiSelector />,
     });
@@ -419,18 +438,20 @@ describe('the live preview', () => {
       Array.from(dom.querySelectorAll('svg line')).filter(
         (l) => l.getAttribute('stroke') === '#64748b', // the cursor ink
       );
-    // Plain hover: the default line cursor draws its rule.
+    // Rest: the band over the hovered bar's bin, no line.
     act(() => surface.dispatchEvent(pointer('pointermove', pxAt(150), 0)));
-    expect(cursorLines().length).toBeGreaterThan(0);
-    // Mid-sweep: the band is up, the cursor rule is gone.
+    expect(dom.querySelector('svg rect')).not.toBeNull();
+    expect(cursorLines()).toHaveLength(0);
+    // Mid-sweep: the band is up, still no line.
     act(() => surface.dispatchEvent(pointer('pointerdown', pxAt(150), 1)));
     act(() => surface.dispatchEvent(pointer('pointermove', pxAt(350), 1)));
     expect(dom.querySelector('svg rect')).not.toBeNull();
     expect(cursorLines()).toHaveLength(0);
-    // Release: the cursor comes back with ordinary hover.
+    // Release: back to the resting band — never the line.
     act(() => surface.dispatchEvent(pointer('pointerup', pxAt(350), 0)));
     act(() => surface.dispatchEvent(pointer('pointermove', pxAt(500), 0)));
-    expect(cursorLines().length).toBeGreaterThan(0);
+    expect(dom.querySelector('svg rect')).not.toBeNull();
+    expect(cursorLines()).toHaveLength(0);
   });
 });
 
@@ -933,5 +954,243 @@ describe('demote on edit (RFC A5.2) — sweep, then ⌘-click one out', () => {
     expect(selectionContains(latest, probe(100, 2))).toBe(true);
     expect(selectionContains(latest, probe(200, 3))).toBe(false);
     expect(selectionContains(latest, probe(300, 4))).toBe(true);
+  });
+});
+
+// ── The resting block preview — the band and hover ARE the drag's preview ───
+
+describe('the resting block preview (band as resting cursor, block-scoped hover)', () => {
+  const DAY = 86_400_000;
+  const D0 = Date.UTC(2026, 0, 5);
+  const D1 = D0 + 5 * DAY;
+
+  /** Four 6h bars per day over 5 days (values 1..20) — a day-snapped resting
+   *  hover must light whole days, not the one bar under the pointer. */
+  const sixHourBars = () =>
+    new TimeSeries({
+      name: 'q',
+      schema: [
+        { name: 'timeRange', kind: 'timeRange' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      rows: Array.from({ length: 20 }, (_, i) => [
+        [D0 + i * (DAY / 4), D0 + (i + 1) * (DAY / 4)],
+        i + 1,
+      ]) as [[number, number], number][],
+    });
+
+  const seqMount = (children: ReactNode) =>
+    mount({
+      children,
+      layers: <BarChart series={sixHourBars()} column="v" axis="a" id="q" />,
+      range: [D0, D1],
+    });
+
+  it('hovering ONE bar lights the whole sequence block — the set a drag would select', () => {
+    const onHover = vi.fn();
+    const { surface, pxAt, frame } = seqMount(
+      <MultiSelector sequence={Sequence.calendar('day')} onHover={onHover} />,
+    );
+    // Rest the pointer inside day 1's THIRD bar (no buttons — pure hover).
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.6 * DAY), 0)),
+    );
+    // All four bars of day 1 light — including the three not under the pointer.
+    expect(frame().hovered.map((h) => h.value)).toEqual([5, 6, 7, 8]);
+    // …and <MultiSelector onHover> heard exactly that block.
+    expect(onHover).toHaveBeenCalledTimes(1);
+    expect(
+      (onHover.mock.calls[0]![0] as readonly SelectInfo[]).map((h) => h.value),
+    ).toEqual([5, 6, 7, 8]);
+  });
+
+  it('within-block moves re-report nothing; crossing into the next block re-fires', () => {
+    const onHover = vi.fn();
+    const { surface, pxAt, frame } = seqMount(
+      <MultiSelector sequence={Sequence.calendar('day')} onHover={onHover} />,
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.3 * DAY), 0)),
+    );
+    const firstState = frame().hovered;
+    // A second move inside the SAME day (a different bar of it): no new
+    // report, and the hovered state keeps the same identity — no repaint.
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.8 * DAY), 0)),
+    );
+    expect(onHover).toHaveBeenCalledTimes(1);
+    expect(frame().hovered).toBe(firstState);
+    // Crossing into day 2 re-fires with the next four bars.
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 2.2 * DAY), 0)),
+    );
+    expect(onHover).toHaveBeenCalledTimes(2);
+    expect(
+      (onHover.mock.calls[1]![0] as readonly SelectInfo[]).map((h) => h.value),
+    ).toEqual([9, 10, 11, 12]);
+  });
+
+  it('the resting band spans the sequence block, and the shim line never draws', () => {
+    const { surface, pxAt, dom } = seqMount(
+      <MultiSelector sequence={Sequence.calendar('day')} />,
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.6 * DAY), 0)),
+    );
+    const band = dom.querySelector('svg rect')!;
+    expect(band).not.toBeNull();
+    expect(Number(band.getAttribute('x'))).toBeCloseTo(pxAt(D0 + 1 * DAY), 6);
+    expect(Number(band.getAttribute('width'))).toBeCloseTo(
+      pxAt(D0 + 2 * DAY) - pxAt(D0 + 1 * DAY),
+      6,
+    );
+    expect(
+      Array.from(dom.querySelectorAll('svg line')).filter(
+        (l) => l.getAttribute('stroke') === '#64748b',
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('a co-mounted <Selector> keeps its per-mark hover currency', () => {
+    const single = vi.fn();
+    const { surface, pxAt } = seqMount(
+      <>
+        <MultiSelector sequence={Sequence.calendar('day')} />
+        <Selector onHover={single} />
+      </>,
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.3 * DAY), 0)),
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.8 * DAY), 0)),
+    );
+    // Two different bars of one block: the single currency reports each mark.
+    expect(single).toHaveBeenCalledTimes(2);
+    expect((single.mock.calls[0]![0] as SelectInfo).value).toBe(6);
+    expect((single.mock.calls[1]![0] as SelectInfo).value).toBe(8);
+  });
+
+  it('with no sequence the block is the snap bin — hover is one bar, banded', () => {
+    // The bins-only case (SweepBars): the block is the bar's own bin, so the
+    // hovered set is that one bar and the resting band is its bin.
+    const { surface, pxAt, frame, dom } = mount({
+      children: <MultiSelector />,
+    });
+    act(() => surface.dispatchEvent(pointer('pointermove', pxAt(150), 0)));
+    expect(frame().hovered.map((h) => h.value)).toEqual([2]);
+    const band = dom.querySelector('svg rect')!;
+    expect(band).not.toBeNull();
+    expect(Number(band.getAttribute('x'))).toBeCloseTo(pxAt(100), 6);
+    expect(Number(band.getAttribute('width'))).toBeCloseTo(
+      pxAt(200) - pxAt(100),
+      6,
+    );
+  });
+
+  it('rest flows into the drag unchanged — the same block, then grown', () => {
+    const { surface, pxAt, frame } = seqMount(
+      <MultiSelector sequence={Sequence.calendar('day')} />,
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.4 * DAY), 0)),
+    );
+    expect(frame().hovered.map((h) => h.value)).toEqual([5, 6, 7, 8]);
+    // Press and cross the slop inside the SAME day: the preview is the same
+    // four bars (one code path — the resting block IS the drag's first cut).
+    act(() =>
+      surface.dispatchEvent(pointer('pointerdown', pxAt(D0 + 1.4 * DAY), 1)),
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.55 * DAY), 1)),
+    );
+    expect(frame().hovered.map((h) => h.value)).toEqual([5, 6, 7, 8]);
+    // Drag into day 2: the block grows to eight.
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 2.5 * DAY), 1)),
+    );
+    flushFrames();
+    expect(frame().hovered.map((h) => h.value)).toEqual([
+      5, 6, 7, 8, 9, 10, 11, 12,
+    ]);
+    act(() =>
+      surface.dispatchEvent(pointer('pointerup', pxAt(D0 + 2.5 * DAY), 0)),
+    );
+  });
+
+  it('an explicitly mounted cursor wins the surface — no resting band, hover still block-scoped', () => {
+    const { surface, pxAt, frame, dom } = seqMount(
+      <>
+        <MultiSelector sequence={Sequence.calendar('day')} />
+        <CrosshairCursor />
+      </>,
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.6 * DAY), 0)),
+    );
+    // The crosshair keeps its slots (its reticle draws lines)…
+    expect(Array.from(dom.querySelectorAll('svg line')).length).toBeGreaterThan(
+      0,
+    );
+    // …and the brush band does not replace it.
+    expect(
+      dom.querySelector('svg rect[fill="rgba(63,91,224,0.07)"]'),
+    ).toBeNull();
+    // The hover PREVIEW is about the selection, not the cursor: still the block.
+    expect(frame().hovered.map((h) => h.value)).toEqual([5, 6, 7, 8]);
+  });
+
+  it('an explicitly chosen legacy cursor string also wins', () => {
+    const { surface, pxAt, dom } = seqMount(
+      <MultiSelector sequence={Sequence.calendar('day')} />,
+    );
+    // Contrast case: same mount but with `cursor="line"` SET on the container.
+    const explicit = mount({
+      children: <MultiSelector sequence={Sequence.calendar('day')} />,
+      layers: <BarChart series={sixHourBars()} column="v" axis="a" id="q" />,
+      range: [D0, D1],
+      props: { cursor: 'line' },
+    });
+    const lines = (d: HTMLElement) =>
+      Array.from(d.querySelectorAll('svg line')).filter(
+        (l) => l.getAttribute('stroke') === '#64748b',
+      );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.6 * DAY), 0)),
+    );
+    act(() =>
+      explicit.surface.dispatchEvent(
+        pointer('pointermove', explicit.pxAt(D0 + 1.6 * DAY), 0),
+      ),
+    );
+    // Implicit default: band, no line. Explicit `cursor="line"`: the line.
+    expect(lines(dom as HTMLElement)).toHaveLength(0);
+    expect(dom.querySelector('svg rect')).not.toBeNull();
+    expect(lines(explicit.dom as HTMLElement).length).toBeGreaterThan(0);
+    expect(explicit.dom.querySelector('svg rect')).toBeNull();
+  });
+
+  it('the category block previews at rest too — band on the slot edges', () => {
+    const categories = [
+      { label: 'api', value: 3 },
+      { label: 'auth', value: 2 },
+      { label: 'cache', value: 1 },
+      { label: 'db', value: 4 },
+      { label: 'queue', value: 2 },
+    ];
+    const { surface, frame, dom } = mount({
+      children: <MultiSelector />,
+      layers: <BarChart categories={categories} id="svc" />,
+    });
+    const w = () => frame().plotWidth;
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', (1.4 / 5) * w(), 0)),
+    );
+    // Hover anywhere in slot 1 lights its bar and bands its outer edges.
+    expect(frame().hovered.map((h) => h.label)).toEqual(['auth']);
+    const band = dom.querySelector('svg rect')!;
+    expect(band).not.toBeNull();
+    expect(Number(band.getAttribute('x'))).toBeCloseTo((1 / 5) * w(), 6);
+    expect(Number(band.getAttribute('width'))).toBeCloseTo((1 / 5) * w(), 6);
   });
 });
