@@ -27,9 +27,17 @@
 > state), and marks §5's cursor contract and §8's sweep algorithm as **owing
 > another pass** before they can be scheduled.
 >
+> **Amendment 2 (2026-08-08)** records three further reviews — two **consumers**
+> (the `<HeatMap>`/gallery build, and estela's chart ↔ list ↔ map surface) and a
+> fresh **Fable** red-team. The split survives all of them. A2 corrects two
+> claims in the reviews themselves, gives A1.3 and A1.4 concrete **shapes**, and
+> opens four questions (Q9–Q12), two of which are **scope calls**: whether the
+> list family shares this vocabulary, and whether the annotation `<Region>` is
+> the name that should move.
+>
 > Reading order for the interaction surface: `cursor.md` (what cursors draw) →
-> `selection.md` v1 → its A1–A5 → this RFC §1–§12 → **this RFC's Amendment 1 is
-> current on API shape**.
+> `selection.md` v1 → its A1–A5 → this RFC §1–§12 → A1 → **A2 is current on API
+> shape**.
 
 ## 1. The question
 
@@ -682,3 +690,227 @@ state/gesture boundary, sweep algorithm, and extension surface need another
 pass first."_ A1.2 settles the state/gesture boundary. A1.3 and A1.4 are the
 two passes still owed, and both must land before §10's steps 4 and 5 are
 scheduled.
+
+## Amendment 2 (2026-08-08) — three more reviews: two consumers and a fresh red-team
+
+> _Reviews on [Discussion #611](https://github.com/pond-ts/pond/discussions/611)
+> by the **Claude use-case agent** (consumer — built `<HeatMap>` and the gallery
+> cards against this surface), the **Estela agent** (consumer — a chart ↔ list ↔
+> map surface driving controlled `selected`/`hovered` externally), and the
+> **Fable agent** (fresh red-team, Claude Fable 5). Source claims verified by the
+> pond-ts library agent (Claude). Reading order: §1–§12 → A1 → **A2 is
+> current**._
+
+**The split survived a third and fourth read.** Nothing in these reviews
+weakens §1, §4, §7 or §8's architecture; all three endorse the direction. What
+they add is evidence, two proposed shapes for the passes A1 said were owed, and
+four new open questions — two of which are scope calls this RFC cannot make for
+itself.
+
+### A2.1 Corrections to the reviews (verified against the source)
+
+Two review claims are wrong. Recorded because both would propagate if left.
+
+1. **`<HeatMap>` does not read `selected` singular.** The use-case review
+   reports having shipped it that way. It didn't: `HeatMap.tsx` maps the **full
+   set**, with a `[PND-MULTISEL]` comment saying so. What _is_ singular there is
+   **`hovered`** — and that is correct on `main` today, because the hover
+   widening is unmerged (A1.1). So it is not a defect, it is §10 step 1 pending.
+   **Codex's Q7 correction stands unchanged: two layers, not three**
+   (`ScatterChart`, `BoxPlot`).
+
+2. **"Hover is singular, selection is a set" is not the current rule.** The
+   use-case review cites `selection.md` L247 for it. That line is **A1.4 of
+   `selection.md`**, and **A4.2 explicitly supersedes it** — hover became plural
+   precisely because a sweep preview is plural. The current rule is **both are
+   sets**.
+
+   This **inverts** the review's conclusion about
+   [#608](https://github.com/pond-ts/pond/issues/608): `<BarList>`'s hover should
+   mirror a **plural** canvas hover, not a singular one. Worth stating loudly,
+   because "one rule with four exceptions" was the right observation attached to
+   the wrong rule.
+
+### A2.2 New evidence for the direction (accepted; no change needed)
+
+- **The `<XAxis>` seam (Fable) — the strongest argument for mounting, and the
+  RFC missed it.** The crosshair's x-time pill is drawn by `<XAxis>`, gated on
+  `container.cursor === 'crosshair'` — the **container default**, which a
+  per-row override never reaches, so **a row-level crosshair has no time
+  pill**. Verified; and the code comment states it outright ("Gated on the
+  container default, so a per-row `cursor` override doesn't reach here"), so
+  this is a **documented** limitation rather than an undiscovered bug. Either
+  way the point lands: one cursor's parts are spread across three files
+  coordinating by string equality. A registered spec makes them local again and
+  deletes this seam as a side effect.
+- **Turning the cursor _off_ (use-case) — an argument for §7 the RFC doesn't
+  make.** Every shipped heat map sets `cursor="none"`, because on a grid the
+  cell outline answers both axes while a shared vertical line answers only x —
+  a weaker second cursor competing with the one that works. Under the mounted
+  model that stops being a magic string and becomes _not mounting a cursor_,
+  visible in the JSX.
+- **`panZoom2D` (use-case) — dated evidence for §4.** The mode replaced by
+  `panZoomX`/`panZoomY`/`panZoomXY` claimed both axes and then silently fell
+  back to y-only wherever x was a category axis. A composed API would have let
+  that combination be built; **enumerating is what caught it.**
+- **estela hand-coded the disambiguation.** Its drag-to-zoom is
+  `cursor="region"` + `onRegionSelect`, and it **disables region entirely in bar
+  mode** (`regionOn = !!onRegionSelect && !barMode`) because "drag over bars"
+  has two legitimate meanings the prop pile could not express. `<RegionCursor>`
+  / `<RegionSelector>` is that workaround, promoted into the API.
+- **A1.2 confirmed load-bearing by a multi-surface consumer.** estela drives the
+  chart's `selected`/`hovered` from external state — a locked list row, a map
+  hover — so **the chart is usually not the gesture origin**. Had controlled
+  highlighting required a mounted `<Selector>`, that wiring would break. Both
+  reviews independently reached A1.2's formulation: mounting is right for the
+  **gesture**, wrong for the **state**.
+
+### A2.3 A1.3 has a shape: render slots, resolved geometry, declared snap
+
+**Adopted as the working shape** (Fable's proposal; the author flags it as a
+shape to attack, not a validated design).
+
+Three optional render slots on a registered `CursorSpec` — the axis/layer
+registration idiom rather than a render-prop bag:
+
+```ts
+interface CursorSpec {
+  readonly snapX?: 'none' | 'sample' | 'sequence'; // resolved BY the container
+  renderPlot?(f: ResolvedCursorFrame): ReactNode; // SVG overlay, per row
+  renderYGutter?(f: ResolvedCursorFrame): ReactNode; // DOM, per row + axis
+  renderXAxis?(f: ResolvedCursorFrame): ReactNode; // DOM, on the axis
+}
+```
+
+`<XAxis>` then stops asking "is the mode `crosshair`?" and asks "did the mounted
+cursor register an x-axis slot?" — which is A2.2's seam closing.
+
+Two departures from §5, both improvements:
+
+- **No scales, formats or side maps in the contract.** §5 handed raw materials
+  (`xScale`, `yScales`, `formats`, `axisSides`) and then worried — correctly —
+  that this publishes a slice of `Layers`. Hand **finished measurements**
+  instead: per-sample `{ px, py, axisId, side, formatted, color, label }`, plus
+  the renderer's own row key alongside the hovered one. Strictly smaller public
+  surface, same expressive power **for a cursor** — a thing that draws at the
+  pointer. A thing that draws at arbitrary data positions is an annotation and
+  has its own family.
+- **Snap must be _declared_, not implemented.** This is the structural finding,
+  and it explains why §5 could never have worked: the x-snap consults each
+  layer's `sampleAt` in the hovered row and writes the result into the
+  **shared** `cursorX` every other row reads. A user-authored component has
+  neither the layers nor the right to write that value. **Container resolves;
+  slots draw.** §5 put resolution on the wrong side of the contract.
+
+**Q3's litmus order, adopted:** the flag cursor first (stacked flags are the
+layout-heaviest slot body), then our own crosshair with **zero mode-string gates
+left** in `Layers` / `XAxis`, then SR's gapped one. The rewrite is not
+validation overhead — it is the commit that deletes the cross-file string
+coupling.
+
+### A2.4 A1.4 has a shape, and the question that decides it
+
+A1.4 addressed **emission**. Fable identifies the half it missed: **the return
+path**. The committed set comes back through `selected`, and every draw-path
+membership test is linear over that set per mark — **by documented design**
+(`bars.ts`: _"a selection is a handful of marks a person clicked, not a data
+structure"_). The sweep is precisely the feature that ends that assumption.
+
+The use-case review supplies the magnitude, and it is worse than §8's "100k
+points on a continuous axis" because **a grid multiplies**: the shipped measles
+card is 50 × 81 = 4,050 cells; the Niño grid at day resolution is 365 × 45 =
+16,425. A half-sweep is ~8k `SelectInfo`, and per-cell scans against that are
+~10⁸ comparisons **per repaint** — after the emission fix, because this is the
+feedback path.
+
+**Proposed currency** — the descriptor must be something `selected` _accepts_,
+not merely something `onSelect` reports:
+
+```ts
+type SelectionEntry = SelectInfo | SpanSelection;
+interface SpanSelection {
+  readonly id: string; // the layer, as ever
+  readonly span: readonly [number, number]; // axis units — the pair §6 already reports
+}
+```
+
+Membership for a span entry is an **interval test** on the mark's key — O(1) per
+mark, nothing to scan. Enumeration stays available and is O(log n + k) on a
+time-sorted series. This also right-sizes the withdrawn §12 bullet: the **1-D
+continuous** range query is nearly free _because events are sorted_; the
+genuinely new indexing work is the **2-D grid** case. **Category axes keep marks
+as the currency** — slot counts are bounded, so §8's CATRANGE argument survives
+untouched.
+
+**estela's constraint, accepted:** keep the range path range-shaped. The
+zoom case wants a cheap `[start, end]` and never the swept points enumerated —
+so the marks-payload problem must stay inside `<RegionSelector>` and not push a
+descriptor onto `<RegionCursor>`'s range.
+
+### A2.5 Q2 corrected — the snap owner is per-**container**, not per-row
+
+A1.6 recorded Codex's "one gesture/snapping owner per **row**". Fable corrects
+it against the source and is right: `cursorX` is **one shared container value**,
+written by whichever row the pointer is in after consulting that row's layers.
+Today's rule is nearest-mount-wins (`row.cursor ?? container.cursor`) with the
+**hovered row's** policy deciding the shared line for everyone — and that is the
+semantics to keep. **Stack render-only presets freely; snap and gesture resolve
+to the hovered row's innermost mount; dev-warn on two gesture-owning cursors in
+one scope.**
+
+### A2.6 §7.1's dev warning can't tell its two populations apart
+
+**Accepted — small and clearly right.** After A1.2, "id-bearing layer + click
+resolves + no `<Selector>`" is _also_ the exact runtime signature of the
+**endorsed** controlled-highlight setup. Fix: **suppress the warning when
+`selected` is supplied.** Otherwise the deprecation window spends its loudness
+on the people already doing the right thing.
+
+### A2.7 A1.5's precedence rule is bigger than the two bands
+
+**Accepted.** A drag already has multiple claimants resolved by ad-hoc ordering
+in `handlePointerDown`: annotation-create capture, then the region gesture
+(preempting pan, or hiding behind shift _only while pan is on_), then pan armed
+behind slop — with mark-edit's `DragArea` layered above. **Turning claimants
+into components makes that implicit ordering public API.** So A1.5's single
+brush engine should own **all** drag claims, pan included, not merely arbitrate
+`<RegionCursor>` vs `<RegionSelector>`.
+
+### A2.8 New open questions
+
+**Q9 — is the list family (`<BarList>` / `<BoxList>`) in scope for this
+interaction model?** Raised by estela, which wants an explicit in-or-out call
+rather than discovering the inconsistency post-1.0. `<BarList>` is a DOM table
+with its own `selected` + `onRowClick` and, per #608, **no hover in either
+direction** — `ListTable` holds hover in internal state a consumer can neither
+read nor drive. If 1.0 declares "the interaction surface", the list should not
+be the one surface speaking a different dialect when it freezes. Note A2.1's
+correction: the mirror target is **plural** hover.
+
+**Q10 — should the _annotation_ `<Region>` be renamed instead?** Two of the
+three colliding names (`RegionCursor`, `RegionSelector`, `Region`) are **new**,
+so the cheapest fix may be renaming the incumbent while pre-1.0 still allows it.
+Fable also argues against Codex's namespaced `Cursor.Region` on the grounds that
+**nothing in `@pond-ts/charts` exports a namespaced compound today** — the
+annotation family is flat — so it would introduce a new idiom to solve a naming
+problem, and flat `*Cursor` names keep the 1:1 parity with the mode strings that
+§9's migration table leans on. The use-case review widens the scope: **`mark` is
+already overloaded three ways** (`<Marker>` the annotation, `SelectInfo.mark`
+the reorder-stable identity, `StackMark` the internal one), so Q6/Q10 is a
+chance to fix an existing overload rather than a naming choice local to regions.
+
+**Q11 — where does a layer's own hover affordance sit in the model?** The
+use-case review's case is "**no cursor**, plus a layer-drawn live treatment" —
+the heat-map cell outline, which is doing the cursor's job on both axes. If Q2
+stays "one cursor", the model must say **explicitly** that a layer drawing its
+own live treatment is not a cursor, or the next person doing this reads the
+restriction as forbidding it.
+
+**Q12 — span-minus-point: the question inside A1.4's question.** A4.1 keeps set
+arithmetic with the consumer, and spans make exactly one operation hard:
+⌘-clicking a mark **out** of a span selection. Span-minus-point is not
+representable in `(SelectInfo | SpanSelection)[]` without either an exclusion
+channel (`SpanSelection.exclude?`) or a documented rule that **any click after a
+sweep replaces**. Either is defensible; neither is written down; **and the
+answer decides whether the descriptor can be the round-trip currency at all.**
+This blocks A2.4, which blocks §10 step 5.
