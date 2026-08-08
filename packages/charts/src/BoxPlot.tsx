@@ -11,6 +11,7 @@ import {
   isFiniteBox,
   type BoxShape,
 } from './box.js';
+import { spansForLayer } from './span.js';
 import type { DecimateOption } from './decimate.js';
 import {
   ContainerContext,
@@ -319,6 +320,14 @@ export function BoxPlot<
   // a consumer pinning three boxes saw one outline and no error.
   const selectedKeys = useMemo(() => keysOf(sel, id), [sel, id]);
   const hoveredKeys = useMemo(() => keysOf(hov, id), [hov, id]);
+  // The selection's span entries, narrowed to this layer (interaction RFC
+  // A5.2). Every box shares one label (the series label), so a span's `rows`
+  // channel resolves here once; `x`/`y` ride through for the draw's per-box
+  // test. Reference-stable when empty — see `keysOf`.
+  const layerSpans = useMemo(
+    () => spansForLayer(container.selectedSpans, id, label),
+    [container.selectedSpans, id, label],
+  );
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
@@ -418,6 +427,7 @@ export function BoxPlot<
             selectedKeys,
             hoveredKeys,
             decimate,
+            layerSpans,
           ),
       },
       axisId: axis,
@@ -443,6 +453,7 @@ export function BoxPlot<
       label,
       selectedKeys,
       hoveredKeys,
+      layerSpans,
       decimate,
       axis,
       index,

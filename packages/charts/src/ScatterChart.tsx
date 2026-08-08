@@ -20,6 +20,7 @@ import {
   type RadiusEncoding,
 } from './encoding.js';
 import type { DecimateOption } from './decimate.js';
+import { spansForLayer } from './span.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import {
   legendLabelFor,
@@ -284,6 +285,16 @@ export function ScatterChart<
   // column's begin buffer. Used for selection identity.
   const keyAt = useMemo(() => (i: number) => cs.x[i]!, [cs]);
 
+  // The selection's span entries, narrowed to this layer (interaction RFC
+  // A5.2). Every point shares one label (the series label), so a span's `rows`
+  // channel resolves here once; the `x`/`y` intervals ride through for the
+  // draw's per-point test. Reference-stable when empty, so other layers' spans
+  // never re-register (or repaint) this one.
+  const layerSpans = useMemo(
+    () => spansForLayer(container.selectedSpans, id, seriesLabel),
+    [container.selectedSpans, id, seriesLabel],
+  );
+
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
@@ -355,6 +366,7 @@ export function ScatterChart<
             id,
             offset,
             decimate,
+            layerSpans,
           ),
       },
       axisId: axis,
@@ -373,6 +385,7 @@ export function ScatterChart<
       font,
       container.selected,
       container.hovered,
+      layerSpans,
       offset,
       decimate,
       axis,

@@ -13,6 +13,7 @@ import {
   type HeatScale,
   type HeatStyle,
 } from './heat.js';
+import { spansForLayer } from './span.js';
 import {
   ContainerContext,
   LayersContext,
@@ -307,6 +308,15 @@ export function HeatMap<
   // selection's presentation fields exactly as it is free of the theme.
   const selection = useMemo(() => marksOf(selected), [selected]);
   const hover = useMemo(() => marksOf(hoveredMark), [hoveredMark]);
+  // The selection's span entries, narrowed to this layer (interaction RFC
+  // A5.2). A heat map's labels vary per cell (the row names — the ordinal
+  // second dimension a span addresses via `rows`, RFC A5.3), so no label is
+  // passed and the `rows` channel rides through for `drawHeat` to test per
+  // cell. Reference-stable when empty, like the mark memos above.
+  const layerSpans = useMemo(
+    () => spansForLayer(container.selectedSpans, id),
+    [container.selectedSpans, id],
+  );
 
   const entry = useMemo<LayerEntry>(
     () => ({
@@ -415,6 +425,7 @@ export function HeatMap<
             decimate,
             orientation,
             noData,
+            layerSpans,
           ),
       },
       axisId: axis,
@@ -436,6 +447,7 @@ export function HeatMap<
       index,
       selection,
       hover,
+      layerSpans,
     ],
   );
 

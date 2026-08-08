@@ -29,6 +29,7 @@ import {
   type StackMark,
   type StackStyle,
 } from './bars.js';
+import { spansForLayer } from './span.js';
 import { isDev } from './dev.js';
 import type { NumericColumn, ValueNumericColumn } from './column-names.js';
 import type { DecimateOption } from './decimate.js';
@@ -781,6 +782,21 @@ export function BarChart<
           })),
     [hoveredMark],
   );
+  // The selection's span entries, narrowed to this layer (interaction RFC
+  // A5.2). On the single-series path every mark shares one label, so a span's
+  // `rows` channel resolves here (once) rather than per bar; the stacked path's
+  // labels vary per segment (group / category), so `rows` rides through for
+  // `drawStacks` to test. Empty (and reference-stable) when no span names us —
+  // this layer neither re-registers nor repaints for other layers' spans.
+  const layerSpans = useMemo(
+    () =>
+      spansForLayer(
+        container.selectedSpans,
+        id,
+        shape.kind === 'single' ? label : undefined,
+      ),
+    [container.selectedSpans, id, shape.kind, label],
+  );
 
   const entry = useMemo<LayerEntry>(() => {
     // ── Single-series, vertical: the original bar path, pixels unchanged. ──
@@ -864,6 +880,7 @@ export function BarChart<
               decimate,
               binColors,
               bandLadder,
+              layerSpans,
             ),
         },
         axisId: axis,
@@ -947,6 +964,7 @@ export function BarChart<
             selection,
             hover,
             bandLadder,
+            layerSpans,
           ),
       },
       axisId: axis,
@@ -969,6 +987,7 @@ export function BarChart<
     stackMinWidth,
     selection,
     hover,
+    layerSpans,
     axis,
     index,
   ]);

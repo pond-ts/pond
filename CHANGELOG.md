@@ -136,6 +136,27 @@ include new features and type-level changes; patch bumps are strictly additive.
   minor (now with the dev deprecation notice naming the replacements); a
   mounted `<RangeCursor onDragRelease>` takes the gesture over it.
 
+- **charts: span selections — `SpanSelection` entries in `selected`, and
+  `selectionContains`** (interaction RFC A5.2/A5.3/A7.6). The controlled
+  `selected` prop's array form now accepts `SelectionEntry =
+SelectInfo | SpanSelection`: a span names **every** mark of one layer inside
+  a range — `{ kind: 'span', id, x: [lo, hi) }` plus `y` (a scatter's
+  continuous second dimension) or `rows` (a heat map's ordinal row names) — so
+  a swept session of ten thousand bars is one entry, not ten thousand, at an
+  O(1)-per-mark membership test in every selection-aware layer (`BarChart`
+  single + stacked, `ScatterChart`, `BoxPlot`, `HeatMap`). Containment is
+  **half-open** on `x`/`y` (the pond bucket convention, and what makes a
+  sweep's snapped-outward edges agree exactly with the marks it captured —
+  RFC A7.6's edge rule); `rows` is label-set membership, stable under a row
+  reorder. The exported `selectionContains(sel, hit)` runs the **same**
+  predicate the layers do, so consumers implementing click policy over a mixed
+  selection never re-implement the interval test; `isSpanSelection` narrows an
+  entry for A5.2's demote-on-edit flow. The union widens **non-breaking**: a
+  bare `SelectInfo` or plain `SelectInfo[]` means exactly what it did, and a
+  spanless render costs nothing new. The sweep gesture itself
+  (`<MultiSelector>`) is a later step; spans are fully exercisable through the
+  controlled prop today.
+
 ### Fixed
 
 - **charts: `<ScatterChart>` and `<BoxPlot>` light every selected / hovered

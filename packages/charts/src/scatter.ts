@@ -2,8 +2,9 @@ import type { ChartSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { ScatterStyle } from './theme.js';
 import type { ResolvedEncoding } from './encoding.js';
-import type { SelectInfo, LayerDrawStats } from './context.js';
+import type { SelectInfo, LayerDrawStats, SpanSelection } from './context.js';
 import { visiblePointRange } from './culling.js';
+import { NO_SPANS, spanMatchesAny } from './span.js';
 import {
   shouldDecimateCount,
   decimateScatter,
@@ -199,13 +200,23 @@ export function drawScatter(
   seriesId: string | undefined,
   offsetPx = 0,
   decimate: DecimateOption = true,
+  // Span descriptors covering this layer (interaction RFC A5.2), already
+  // narrowed to its `id` (and constant-label `rows` resolved) by the component
+  // — see `spansForLayer`. A point is selected when a mark entry names it OR a
+  // span contains it: the O(1) half-open test of its key against `x` and — the
+  // continuous 2-D case, RFC A3.3/A5.3 — its value against `y` when present.
+  // Tested at the point's data position, per A7.6: centre-in-rect, not
+  // disc-intersects-rect. Ignored on the decimated path, like the mark rings.
+  spans: readonly SpanSelection[] = NO_SPANS,
 ): LayerDrawStats {
   ctx.save();
   // Either set only lights up points of *this* series; settle that once so the
   // point loop can skip the key lookup entirely when neither names us. A no-id
-  // (non-selectable) layer passes `undefined` and never matches.
+  // (non-selectable) layer passes `undefined` and never matches (`spans` is
+  // narrowed to this layer before the call, so its gate is just "any").
   const anySelected = namesSeries(selected, seriesId);
   const anyHovered = namesSeries(hovered, seriesId);
+  const anySpan = spans.length > 0;
   // Ring geometry, deferred to a pass after the marks so a highlight is never
   // overpainted by a neighbour drawn later. Flat `[px, py, r, …]` triples, and
   // **allocated only on the first hit** — the resting frame (nothing selected,
@@ -328,11 +339,15 @@ export function drawScatter(
       ctx.stroke();
     }
     // Defer each live point's highlight ring to a second pass so it sits on
-    // top of any neighbour drawn after it. Selection is tested first and wins
-    // outright, so a point that is both never draws two rings.
-    if (anySelected || anyHovered) {
+    // top of any neighbour drawn after it. Selection (a mark entry naming the
+    // point, or a span containing it) is tested first and wins outright, so a
+    // point that is both never draws two rings.
+    if (anySelected || anyHovered || anySpan) {
       const key = keyAt(i);
-      if (anySelected && marksPoint(selected, seriesId, key)) {
+      if (
+        (anySelected && marksPoint(selected, seriesId, key)) ||
+        (anySpan && spanMatchesAny(spans, key, cs.y[i]!))
+      ) {
         (selRings ??= []).push(px, py, r);
       } else if (anyHovered && marksPoint(hovered, seriesId, key)) {
         (hovRings ??= []).push(px, py, r);

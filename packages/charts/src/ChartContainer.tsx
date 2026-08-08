@@ -31,6 +31,8 @@ import {
   type CursorEntry,
   type CursorMode,
   type SelectInfo,
+  type SelectionEntry,
+  type SpanSelection,
   type SelectModifiers,
   type SelectorEntry,
   type TrackerInfo,
@@ -63,6 +65,7 @@ import {
 } from './format.js';
 import { TimeAxis } from './TimeAxis.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
+import { isSpanSelection, NO_SPANS } from './span.js';
 
 /** Stable identity for "nothing selected" — see the normalization below. */
 const EMPTY_SELECTION: readonly SelectInfo[] = [];
@@ -371,8 +374,20 @@ export interface ChartContainerProps {
    * {@link SelectModifiers.additive} off `onSelect` and drives this prop.
    * `selectionMode` (RFC A1.1) would be sugar over exactly that, and stays
    * unbuilt until a consumer wants it — adding it later is additive.
+   *
+   * **Array entries may also be spans** (interaction RFC A5.2): a
+   * {@link SpanSelection} names *every* mark of one layer inside a range —
+   * `{ kind: 'span', id, x: [lo, hi) }`, plus `y` (scatter's continuous second
+   * dimension) or `rows` (a heat map's ordinal row names) — so a swept session
+   * of ten thousand bars is one entry, not ten thousand. Membership follows
+   * the containment rule documented on {@link SpanSelection} (half-open
+   * intervals, snapped-outward edges), and the exported `selectionContains`
+   * runs the **same** predicate the layers do, so click policy over a mixed
+   * selection never re-implements the interval test. The union widens once
+   * more and stays **non-breaking**: a bare `SelectInfo` and a plain
+   * `SelectInfo[]` mean exactly what they always did.
    */
-  selected?: SelectInfo | readonly SelectInfo[] | null;
+  selected?: SelectInfo | readonly SelectionEntry[] | null;
   /**
    * Fires when a selectable layer's mark is clicked, with the hit mark, or `null`
    * when a click misses every mark (or hits a layer with no `id` — display-only,
@@ -1112,15 +1127,51 @@ export function ChartContainer({
   );
   const controlledSelection = selected !== undefined;
   // Normalize the prop's three accepted shapes — a single mark, a set, or
-  // nothing — into the one shape the frame carries ([PND-MULTISEL]). Every
-  // reader then asks the same question ("is this mark in the set") rather than
-  // each deciding what a null means. `EMPTY_SELECTION` is a module constant so
-  // the common no-selection case keeps a stable identity and doesn't
+  // nothing — into the shapes the frame carries ([PND-MULTISEL] / RFC A5.2).
+  // A mixed `SelectionEntry` array is split ONCE here into its mark entries
+  // (`selected`, the exact field every pre-span reader keeps consuming
+  // unchanged) and its span descriptors (`selectedSpans`, which only the
+  // span-aware layers read) — so a consumer who never passes a span pays
+  // nothing anywhere: the marks array is the prop's own array (no copy), the
+  // spans field is the module constant, and every downstream `length === 0`
+  // gate short-circuits as before. `EMPTY_SELECTION` / `NO_SPANS` are module
+  // constants so the common cases keep stable identities and don't
   // re-identify the frame on every render.
-  const selectedValue: readonly SelectInfo[] = useMemo(() => {
+  const { selectedValue, selectedSpans } = useMemo<{
+    selectedValue: readonly SelectInfo[];
+    selectedSpans: readonly SpanSelection[];
+  }>(() => {
     const raw = controlledSelection ? selected : internalSelected;
-    if (raw === null || raw === undefined) return EMPTY_SELECTION;
-    return Array.isArray(raw) ? raw : [raw as SelectInfo];
+    if (raw === null || raw === undefined)
+      return { selectedValue: EMPTY_SELECTION, selectedSpans: NO_SPANS };
+    if (!Array.isArray(raw))
+      return {
+        selectedValue: [raw as SelectInfo],
+        selectedSpans: NO_SPANS,
+      };
+    const entries = raw as readonly SelectionEntry[];
+    // The overwhelmingly common case — no span entries — returns the caller's
+    // array as-is rather than partitioning into fresh ones.
+    let spanCount = 0;
+    for (let i = 0; i < entries.length; i += 1) {
+      if (isSpanSelection(entries[i]!)) spanCount += 1;
+    }
+    if (spanCount === 0)
+      return {
+        selectedValue: entries as readonly SelectInfo[],
+        selectedSpans: NO_SPANS,
+      };
+    const marks: SelectInfo[] = [];
+    const spans: SpanSelection[] = [];
+    for (let i = 0; i < entries.length; i += 1) {
+      const e = entries[i]!;
+      if (isSpanSelection(e)) spans.push(e);
+      else marks.push(e);
+    }
+    return {
+      selectedValue: marks.length === 0 ? EMPTY_SELECTION : marks,
+      selectedSpans: spans,
+    };
   }, [controlledSelection, selected, internalSelected]);
   const controlledSelectionRef = useRef(controlledSelection);
   useLayoutEffect(() => {
@@ -1662,6 +1713,7 @@ export function ChartContainer({
       draggingKey,
       setDragging,
       selected: selectedValue,
+      selectedSpans,
       select,
       hovered: hoveredValue,
       setHovered,
@@ -1737,6 +1789,7 @@ export function ChartContainer({
       draggingKey,
       setDragging,
       selectedValue,
+      selectedSpans,
       select,
       hoveredValue,
       setHovered,
