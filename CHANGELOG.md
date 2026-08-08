@@ -147,6 +147,33 @@ include new features and type-level changes; patch bumps are strictly additive.
   also carry a `data-hovered` attribute, alongside the existing
   `data-selected`.
 
+### Added
+
+- **charts: cursor components.** The `cursor` string modes are now mounted
+  presets — `<LineCursor>`, `<PointCursor>`, `<InlineCursor>`, `<FlagCursor>`,
+  `<CrosshairCursor snap showTime format>`, `<RangeCursor sequence>` — mounted
+  as a child of `<ChartContainer>` (the default for all rows) or inside a
+  `<ChartRow>` (the per-row override). Each mode-conditional prop moved onto
+  the component that uses it, where it is always meaningful (interaction RFC
+  §4/A4.1). Render-only presets stack; one gesture-owning cursor
+  (crosshair/range) per scope, dev-warned otherwise. Internally each preset
+  registers a `CursorSpec` — declared snap, render slots taking resolved
+  geometry — with the container resolving and the slots drawing (RFC A2.3);
+  the spec type stays unpublished until the presets have proven it (Q3).
+
+  **Deprecated** (working for one more minor via an internal shim, with a dev
+  warning naming the replacement): `ChartContainer`'s `cursor`, `cursorTime`,
+  `crosshairSnap`, `cursorFormat`, `cursorSequence`, and `<ChartRow cursor>`.
+  `<RangeCursor>` ships the hover band only — its drag (and `onRegionSelect`'s
+  successor) is the next step.
+
+  **Bug fixed by the seam deletion:** a row-level crosshair now gets its
+  x-axis time pill. The pill was gated on the _container_ `cursor` string,
+  which a per-row override never reached (the code comment admitted it);
+  `<XAxis>` now asks whether the **hovered row's** mounted cursor registered
+  an x-axis slot, so a crosshair mounted in (or set on) one row of a multi-row
+  chart shows its pill when that row is hovered — and only then.
+
 ### Changed
 
 - **charts: `hovered` is a set.** `<ChartContainer hovered>` accepts

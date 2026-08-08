@@ -28,6 +28,7 @@ import {
   type ContainerFrame,
   type CreateSpec,
   type GutterReq,
+  type CursorEntry,
   type CursorMode,
   type SelectInfo,
   type SelectModifiers,
@@ -35,6 +36,13 @@ import {
   type TrackerSource,
   type DrawStatsFrame,
 } from './context.js';
+import {
+  LegacyCursor,
+  legacyCursorWarning,
+  presetNameFor,
+  warnOnDuplicateGestureOwners,
+} from './cursors.js';
+import { isDev } from './dev.js';
 import type { LegendItemSpec } from './swatch.js';
 import { maxSlotWidths, sum } from './slots.js';
 import { computeLabelLanes } from './annotations.js';
@@ -239,6 +247,13 @@ export interface ChartContainerProps {
    * `'point'` / `'inline'` / `'flag'` add per-series marks; `'none'` hides it.
    * `'region'` shades the bucket under the pointer (needs {@link cursorSequence}).
    * See {@link CursorMode}.
+   *
+   * @deprecated Mount a **cursor component** instead — `<LineCursor>` /
+   * `<PointCursor>` / `<InlineCursor>` / `<FlagCursor>` / `<CrosshairCursor>` /
+   * `<RangeCursor>` as a child of the container (or inside a `<ChartRow>` for
+   * the per-row override); mount nothing for `'none'`. This prop keeps working
+   * for one more minor by synthesizing the equivalent preset internally; a
+   * mounted cursor component overrides it. See `docs/rfcs/interaction.md` §9.
    */
   cursor?: CursorMode;
   /**
@@ -261,6 +276,10 @@ export interface ChartContainerProps {
    * re-realizes the buckets on each pointer move (harmless for a coarse
    * day/session sequence, wasteful for a fine one over a wide view) — hoist it or
    * `useMemo` it.
+   *
+   * @deprecated Use `<RangeCursor sequence={…}>` — the prop moved onto the
+   * component that uses it, where it is no longer mode-conditional. Works for
+   * one more minor; a mounted `<RangeCursor>`'s sequence wins over this.
    */
   cursorSequence?: Sequence | BoundedSequence;
   /**
@@ -446,6 +465,10 @@ export interface ChartContainerProps {
    * Show the cursor's time atop the in-chart readout (when a row's `cursor` draws
    * one). **Default `false`.** Formatted by {@link timeFormat} to match the time
    * axis.
+   *
+   * @deprecated Use `showTime` on the mounted cursor component
+   * (`<LineCursor showTime>` / `<FlagCursor showTime>` / …). Works for one
+   * more minor via the shim.
    */
   cursorTime?: boolean;
   /**
@@ -456,6 +479,10 @@ export interface ChartContainerProps {
    * the vertical line snaps its **x** to the data grid (so the time readout is
    * clean), and both draw a full-height dashed vertical + full-width dashed
    * horizontal line.
+   *
+   * @deprecated Use `<CrosshairCursor snap={…}>` — the prop moved onto the
+   * component, where it is no longer mode-conditional. Works for one more
+   * minor via the shim.
    */
   crosshairSnap?: boolean;
   /**
@@ -537,6 +564,11 @@ export interface ChartContainerProps {
    * {@link timeFormat} owns the labels. (A category axis reads names, and a
    * `transform`ed axis's pill speaks its derived unit — neither consults
    * `cursorFormat`.)
+   *
+   * @deprecated Use `format` on the mounted cursor (`<CrosshairCursor
+   * format={…}>`) — it feeds the same shared readout channel (marker
+   * indicators and annotation auto-labels included). Works for one more
+   * minor; a mounted cursor's `format` wins over this.
    */
   cursorFormat?: CursorFormat;
   /**
@@ -600,12 +632,12 @@ export function ChartContainer({
   bounds,
   onTimeRangeChange,
   minDuration = 1,
-  cursor = DEFAULT_CURSOR_MODE,
-  cursorSequence,
+  cursor: cursorProp,
+  cursorSequence: cursorSequenceProp,
   onRegionSelect,
   regionSelectModifier,
-  cursorTime = false,
-  crosshairSnap = true,
+  cursorTime: cursorTimeProp,
+  crosshairSnap: crosshairSnapProp,
   editAnnotations = false,
   creating = null,
   onCreate,
@@ -614,7 +646,7 @@ export function ChartContainer({
   onEditAnnotation,
   snap = true,
   timeFormat,
-  cursorFormat,
+  cursorFormat: cursorFormatProp,
   origin,
   theme,
   discontinuities,
@@ -624,6 +656,91 @@ export function ChartContainer({
   sessionDividers = 'none',
   children,
 }: ChartContainerProps) {
+  // ── Legacy cursor props (deprecated) ───────────────────────────────────────
+  // The string surface keeps working for one minor: the resolved mode is
+  // synthesized into the equivalent mounted preset below (`<LegacyCursor>`),
+  // and a dev warning names the replacement whenever any of the props is
+  // *explicitly* set (never on the defaults). Mounted cursor components in the
+  // same scope override the shim. See docs/rfcs/interaction.md §9 / A4.4.
+  const cursor = cursorProp ?? DEFAULT_CURSOR_MODE;
+  const cursorTime = cursorTimeProp ?? false;
+  const crosshairSnap = crosshairSnapProp ?? true;
+  const warnedLegacyRef = useRef(false);
+  useEffect(() => {
+    if (!isDev || warnedLegacyRef.current) return;
+    const legacy: string[] = [];
+    if (cursorProp !== undefined)
+      legacy.push(
+        `cursor="${cursorProp}" → mount ${presetNameFor(cursorProp)}`,
+      );
+    if (crosshairSnapProp !== undefined)
+      legacy.push('crosshairSnap → <CrosshairCursor snap>');
+    if (cursorTimeProp !== undefined)
+      legacy.push('cursorTime → showTime on the mounted cursor');
+    if (cursorFormatProp !== undefined)
+      legacy.push('cursorFormat → format on <CrosshairCursor>');
+    if (cursorSequenceProp !== undefined)
+      legacy.push('cursorSequence → <RangeCursor sequence>');
+    if (legacy.length === 0) return;
+    warnedLegacyRef.current = true;
+    console.warn(legacyCursorWarning(legacy));
+  }, [
+    cursorProp,
+    crosshairSnapProp,
+    cursorTimeProp,
+    cursorFormatProp,
+    cursorSequenceProp,
+  ]);
+
+  // Mounted-cursor registry ({@link ContainerFrame.registerCursor}): the
+  // presets (and the legacy shim) register their specs here; rows and
+  // `<XAxis>` render the effective set. Same per-instance-slot discipline as
+  // the tracker sources; register is idempotent under reference equality (the
+  // presets memoize their entries on props).
+  const [cursorMap, setCursorMap] = useState<ReadonlyMap<symbol, CursorEntry>>(
+    () => new Map(),
+  );
+  const registerCursor = useCallback((key: symbol, entry: CursorEntry) => {
+    setCursorMap((m) =>
+      m.get(key) === entry ? m : new Map(m).set(key, entry),
+    );
+  }, []);
+  const unregisterCursor = useCallback((key: symbol) => {
+    setCursorMap((m) => {
+      if (!m.has(key)) return m;
+      const next = new Map(m);
+      next.delete(key);
+      return next;
+    });
+  }, []);
+  const cursors = useMemo(() => Array.from(cursorMap.values()), [cursorMap]);
+  // RFC A2.5: one snap/gesture owner per scope — warn (dev, once) on two.
+  const warnedGestureRef = useRef(false);
+  useEffect(() => {
+    warnOnDuplicateGestureOwners(cursors, warnedGestureRef);
+  }, [cursors]);
+
+  // The registered cursors' resolution inputs, folded into the legacy
+  // channels: a mounted `<RangeCursor sequence>` feeds the shared snap
+  // buckets, a mounted `<CrosshairCursor format>` the shared readout channel —
+  // both exactly where `cursorSequence` / `cursorFormat` fed them. First
+  // **component-mounted** entry wins (the shim registers before the children
+  // mount, so a bare first-wins would let the legacy synthesis shadow a real
+  // mount); the legacy prop is the fallback during the window.
+  const cursorSequence = useMemo(
+    () =>
+      cursors.find((e) => !e.legacy && e.sequence !== undefined)?.sequence ??
+      cursors.find((e) => e.sequence !== undefined)?.sequence ??
+      cursorSequenceProp,
+    [cursors, cursorSequenceProp],
+  );
+  const cursorFormat = useMemo(
+    () =>
+      cursors.find((e) => !e.legacy && e.format !== undefined)?.format ??
+      cursorFormatProp,
+    [cursors, cursorFormatProp],
+  );
+
   // Which axes the gestures own. **Pan follows zoom's degrees of freedom**: an
   // axis that can be zoomed can be panned, because a zoomed axis shows less than
   // all of itself and the reader needs to reach the rest. `'pan'` is the one
@@ -1455,6 +1572,9 @@ export function ChartContainer({
       unregisterTrackerSource,
       registerSelectable,
       unregisterSelectable,
+      registerCursor,
+      unregisterCursor,
+      cursors,
       registerAnnotation,
       unregisterAnnotation,
       registerLegendItem,
@@ -1525,6 +1645,9 @@ export function ChartContainer({
       unregisterTrackerSource,
       registerSelectable,
       unregisterSelectable,
+      registerCursor,
+      unregisterCursor,
+      cursors,
       registerAnnotation,
       unregisterAnnotation,
       registerLegendItem,
@@ -1558,6 +1681,16 @@ export function ChartContainer({
   return (
     <ContainerContext.Provider value={frame}>
       <CursorContext.Provider value={cursorFrame}>
+        {/* The deprecation shim: the container-level legacy `cursor` string
+            (or its `'line'` default), synthesized as the equivalent mounted
+            preset. Registers as `legacy`, so mounting a cursor component
+            overrides it; rows synthesize their own for `<ChartRow cursor>`. */}
+        <LegacyCursor
+          mode={cursor}
+          showTime={cursorTime}
+          snap={crosshairSnap}
+          sequence={cursorSequenceProp}
+        />
         <div style={{ width: `${width}px` }}>
           <div
             style={{
