@@ -56,9 +56,15 @@
 > marks and a span, and a span is edited by **demoting** it to its marks. This
 > also corrects A3.3 — the heat map's second axis is ordinal, not an interval.
 >
+> **Amendment 6 (2026-08-08)** corrects A2.1: its `<HeatMap>` "correction" was
+> itself wrong. **Q7 is three layers, not two**, and the use-case reviewer it
+> contradicted was right. A6 also records how a claim marked _verified_ was
+> false — the check looked only for confirming evidence — and that the error
+> reached an implementation brief before it was caught.
+>
 > Reading order for the interaction surface: `cursor.md` (what cursors draw) →
-> `selection.md` v1 → its A1–A5 → this RFC §1–§12 → A1 → A2 → A3 → A4 → **A5 is
-> current on API shape**.
+> `selection.md` v1 → its A1–A5 → this RFC §1–§12 → A1 → A2 → A3 → A4 → A5 →
+> **A6 is current on API shape**.
 
 ## 1. The question
 
@@ -732,7 +738,10 @@ itself.
 
 Two review claims are wrong. Recorded because both would propagate if left.
 
-1. **`<HeatMap>` does not read `selected` singular.** The use-case review
+1. **~~`<HeatMap>` does not read `selected` singular.~~ STRUCK — see A6. This
+   "correction" was itself wrong; the use-case review was right and `<HeatMap>`
+   does highlight only one cell. Q7 is three layers. The original text
+   follows.** ~~`<HeatMap>` does not read `selected` singular.~~ The use-case review
    reports having shipped it that way. It didn't: `HeatMap.tsx` maps the **full
    set**, with a `[PND-MULTISEL]` comment saying so. What _is_ singular there is
    **`hovered`** — and that is correct on `main` today, because the hover
@@ -1353,3 +1362,100 @@ The descriptor is also **separable from the gesture**: `SelectionEntry`,
 membership test can land **before** `<MultiSelector>` exists, tested by passing
 spans through the controlled `selected` prop. That makes it a step of its own,
 between §10's steps 4 and 5.
+
+## Amendment 6 (2026-08-08) — A2.1's `<HeatMap>` correction was itself wrong
+
+> _A correction of a correction. A2.1 told a reviewer they were mistaken about
+> `<HeatMap>`; they were right and the RFC was wrong. Recorded at length because
+> the **way** it went wrong is reusable, and because it changed implementation
+> scope before it was caught. Reading order: §1–§12 → A1 → … → A5 → **A6 is
+> current**._
+
+### A6.1 What A2.1 claimed, and what is true
+
+**A2.1 stated:** "`<HeatMap>` does not read `selected` singular… it maps the
+**full set**, with a `[PND-MULTISEL]` comment saying so. **Codex's Q7
+correction stands unchanged: two layers, not three.**"
+
+**That is false.** `HeatMap.tsx` maps both container sets into memoized arrays
+— and then, roughly a hundred lines below, hands the draw only the first member
+of each:
+
+```ts
+selection[0] ?? null,
+hover[0] ?? null,
+```
+
+`drawHeat` declares those parameters as `selection: StackMark | null, hovered:
+StackMark | null`. **One cell highlights.** The call site even carries a comment
+conceding it ("Multi-cell selection rendering is not part of [PND-MULTISEL]'s
+bar-focused scope, so the first member wins").
+
+**It is three layers, not two:** `ScatterChart`, `BoxPlot` **and** `HeatMap`.
+The **use-case review was correct** and both the Codex review and this RFC were
+wrong to say otherwise. Q7 and A2.1 are amended accordingly.
+
+### A6.2 How a "verified" claim was wrong — the reusable part
+
+The plural memo is real. It just feeds a singular parameter, and the two are far
+enough apart in the file that each looks decisive on its own.
+
+The verification searched for the pattern that would **confirm** the claim under
+review, found `selected.map(...)`, and stopped. Nothing looked for the pattern
+that would **falsify** it, which was `selection[0]` a hundred lines further
+down. A check that can only return "confirmed" is not a check.
+
+Two aggravating factors worth naming:
+
+- **Two independent reviewers agreed with each other and were both wrong.**
+  Codex asserted it; this RFC "verified" it. Agreement between reviewers looked
+  like corroboration when it was a shared blind spot — both read the same
+  convincing fragment.
+- **It was written as a correction _of a reviewer_**, which is the highest-stakes
+  place to be wrong: it does not merely record an error, it instructs the person
+  who was right to stop believing something true.
+
+### A6.3 It changed scope before it was caught
+
+The error did not stay in the document. The implementation brief for the
+plural-selection fix said, in as many words, _"`HeatMap.tsx` already maps the
+full set and needs NO changes — do not touch it."_ So `<HeatMap>` was
+deliberately excluded from the fix on the strength of a false claim, and the
+agent doing that work found the truth, respected the instruction, and flagged
+it. The fix is a follow-up that should not have been needed.
+
+**The general shape:** an unverified claim in an RFC becomes a constraint in a
+task brief, and by then it is no longer being questioned — it reads as settled
+context. RFC statements about **what the code currently does** should be
+falsifiable from a line reference, and A2.1's was not.
+
+### A6.4 What this changes
+
+- **Q7 is three layers.** `ScatterChart` and `BoxPlot` are fixed (#619);
+  `<HeatMap>` is a follow-up.
+- **A2.1's first correction is struck.** Its second (that "hover is singular,
+  selection is a set" cites a superseded line) is unaffected and stands —
+  re-verified.
+- **`[PND-INTERACTCONF]` grows a third layer.**
+
+### A6.5 The finding that came with it — cover the seam, not the piece
+
+The agent that fixed the other two layers sabotage-verified **twice**, and the
+second pass is the durable lesson:
+
+1. Membership helpers clamped to element 0 → **16 tests red.**
+2. Helpers restored; the **component wiring** re-narrowed instead
+   (`container.selected.slice(0,1)`) → **only the 9 component-level tests red.
+   Every draw-function unit test stayed green.**
+
+The bug was never in `drawScatter` / `drawBox`. It was two lines of wiring above
+them — which is precisely where `<HeatMap>`'s still is. **A layer can have
+thorough unit coverage of its draw path and still ship this**, and a grep of
+that draw path will report it healthy.
+
+This is the same lesson as the `drawBars`-vs-`drawStacks` gap found in #616's
+review, arriving from the other direction: there, one of two sibling draw paths
+was untested; here, both the draw path and the state were tested but the
+**join** between them was not. **Coverage of the pieces is not coverage of the
+seam** — so tests for this class of bug must drive the real component, and
+sabotage must be applied at the wiring, not only at the helper.
