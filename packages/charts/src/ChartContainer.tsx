@@ -1680,19 +1680,22 @@ export function ChartContainer({
     }
     // No sequence → snap to a bar/histogram layer's bins, if any (a value axis,
     // or a time-axis histogram with no explicit sequence). `binIntervals` is only
-    // published by a vertical bar layer on a continuous axis, so this is a no-op
-    // for line/area/scatter rows and for a category axis.
+    // published by a vertical bar layer, so this is a no-op for
+    // line/area/scatter rows. On a **category** axis the bins are the unit
+    // slots `[i, i+1)`: the region cursor never reads them (its band gates on
+    // a continuous axis), but the `<MultiSelector>` sweep's band snaps over
+    // them so it runs slot-edge to slot-edge — the band scale's `invert`
+    // returns slot *centres*, and a centre-to-centre band disagreed with the
+    // snapped-outward span the release commits (RFC A7.6's edge rule).
     //
     // **First bar layer wins** — deliberately non-fatal, unlike `xCategories`
     // (which *throws* when category rows disagree, because a mismatched slot order
     // corrupts the shared band scale). Two overlaid histograms with different bins
     // is a degenerate layout the region cursor just snaps to whichever registered
     // first; a wrong snap grid is harmless where a wrong axis is not.
-    if (resolvedKind === 'time' || resolvedKind === 'value') {
-      for (const s of sources.values()) {
-        const bins = s.binIntervals?.() ?? null;
-        if (bins && bins.length > 0) return bins;
-      }
+    for (const s of sources.values()) {
+      const bins = s.binIntervals?.() ?? null;
+      if (bins && bins.length > 0) return bins;
     }
     return undefined;
   }, [cursorSequence, d0, d1, resolvedKind, sources]);

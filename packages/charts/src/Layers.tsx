@@ -374,12 +374,23 @@ export function Layers({ children }: LayersProps) {
   // single annotation is being edited (the double-click target).
   const editingActive =
     container.editAnnotations || container.annotations.some((a) => a.editing);
+  // Paint-only mirror of "a <MultiSelector> sweep is live in THIS row"
+  // (declared here, ahead of the gesture machinery below, because the cursor
+  // resolution needs it). A live sweep suppresses the row's cursor slots the
+  // same way editing does: the gesture owns the surface, and the default
+  // line preset otherwise keeps painting its solid vertical rule at the raw
+  // pointer OVER the brush band — which reads as "a line", not as the region
+  // being swept (the §8.1 identical-pixels promise, broken by an overlay).
+  // The shared band still renders while suppressed — `sweeping && !wantsBand`
+  // below — from the same resolved frame, so the sweep looks exactly like a
+  // <RangeCursor> drag.
+  const [sweeping, setSweeping] = useState(false);
   const cursorEntries = useMemo(
     () =>
-      editingActive
+      editingActive || sweeping
         ? []
         : effectiveCursorEntries(container.cursors, row.rowKey),
-    [editingActive, container.cursors, row.rowKey],
+    [editingActive, sweeping, container.cursors, row.rowKey],
   );
   const wantsSamples = cursorEntries.some((e) => e.wants.samples);
   const wantsFlags = cursorEntries.some((e) => e.wants.flags);
@@ -555,10 +566,10 @@ export function Layers({ children }: LayersProps) {
     raf: number;
     pendingT: number | null;
   } | null>(null);
-  // Paint-only mirror of "a sweep is live": renders the shared brush band from
-  // this row when no band-wanting cursor is mounted to draw it (§8.1 — one
-  // renderer either way, so the two visuals cannot drift).
-  const [sweeping, setSweeping] = useState(false);
+  // (`sweeping` — the paint-only mirror of "a sweep is live" — is declared up
+  // with the cursor resolution, which it suppresses. It also renders the
+  // shared brush band from this row: §8.1 — one renderer either way, so the
+  // two visuals cannot drift.)
   // A1.5's arbitration, surfaced: warn once when a press found both claimants.
   const warnedSweepShadowRef = useRef(false);
 
@@ -764,6 +775,7 @@ export function Layers({ children }: LayersProps) {
         } else {
           const rect = e.currentTarget.getBoundingClientRect();
           const px = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
+          let justCommitted = false;
           if (!sw.committed) {
             const start = clickStartRef.current;
             // The sweep is an x-gesture: slop on |dx|, so a vertical wobble
@@ -771,6 +783,7 @@ export function Layers({ children }: LayersProps) {
             if (start === null || Math.abs(e.clientX - start.x) <= DRAG_SLOP)
               return;
             sw.committed = true;
+            justCommitted = true;
             setSweeping(true);
             c.setRegionAnchor(sw.anchor); // paint-only mirror (the band)
             c.setHovered(null, rowRef.current.rowKey); // plural preview owns hover now
@@ -782,7 +795,14 @@ export function Layers({ children }: LayersProps) {
           }
           c.setHoverX(px);
           sw.pendingT = +c.xScale.invert(px);
-          scheduleSweepFrame();
+          // The move that COMMITS the sweep cuts synchronously: the band and
+          // the covered marks appear in the same event turn, so a
+          // bucket-snapped sweep lights its whole first bucket from the
+          // moment the drag starts — not an animation frame later, with the
+          // single-mark hover already cleared and nothing lit in between.
+          // Every later move stays frame-coalesced (RFC A1.4).
+          if (justCommitted) flushSweep();
+          else scheduleSweepFrame();
           return;
         }
       }
@@ -1082,12 +1102,16 @@ export function Layers({ children }: LayersProps) {
     }
     const r = rowRef.current;
     const rect = e.currentTarget.getBoundingClientRect();
+    // 'select', not 'hover': a click must be able to resolve to NO mark —
+    // that null is the deselect signal (the empty commit) — so layers whose
+    // hover target is generous (a bar's full-height slot) narrow it here.
     const hit = resolveSelection(
       r.layers,
       e.clientX - rect.left,
       e.clientY - rect.top,
       c.xScale,
       (axisId) => r.yScales.get(axisId ?? r.defaultAxisId),
+      'select',
     );
     // Report the modifiers the click carried ([PND-MULTISEL]). The library
     // applies no policy to them; a consumer implements ⌘/Ctrl-adds itself,

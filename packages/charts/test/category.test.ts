@@ -119,7 +119,7 @@ describe('drawStacks — stable per-mark selection (categorical axis)', () => {
       ctx,
       ss,
       'vertical',
-      identity,
+      (v: number) => v * 10, // slots wide enough for the inset outline to draw
       identity,
       style(['#0a0']),
       0,

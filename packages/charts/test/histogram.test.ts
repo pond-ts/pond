@@ -359,7 +359,7 @@ describe('drawStacks', () => {
       ctx,
       ss,
       'vertical',
-      identity,
+      (v: number) => v * 10, // bins wide enough for the inset outline to draw
       identity,
       stackStyle(['#a00', '#0a0']),
       0,
@@ -373,6 +373,45 @@ describe('drawStacks', () => {
     expect(calls.some((c) => c.type === 'set' && c.args[0] === '#0a0')).toBe(
       true,
     );
+  });
+
+  it('the outline strokes INSIDE the segment ink — adjacent selected bins keep the gap', () => {
+    // The stacked sibling of drawBars' inset-outline pin: a centred stroke
+    // painted lineWidth/2 past each edge, so a swept run of selected bins
+    // fused into one block across the gaps (and stacked segments across
+    // their shared edges). Both draw paths carry the fix — this repo has
+    // shipped one-path-only fixes before.
+    const { ctx, calls } = recordingContext();
+    drawStacks(
+      ctx,
+      ss,
+      'vertical',
+      (v: number) => v * 10,
+      identity,
+      stackStyle(['#a00', '#0a0']),
+      0,
+      1,
+      'h',
+      [
+        { id: 'h', key: 0, label: 'a' },
+        { id: 'h', key: 0, label: 'b' },
+        { id: 'h', key: 2, label: 'a' }, // bin1 begins at 2
+      ],
+      [],
+    );
+    const fills = calls.filter((c) => c.name === 'fillRect');
+    const strokes = calls.filter((c) => c.name === 'strokeRect');
+    expect(fills).toHaveLength(3);
+    expect(strokes).toHaveLength(3);
+    const lw = 2; // stackStyle's outlineWidth
+    for (let i = 0; i < 3; i += 1) {
+      const [fx, fy, fw, fh] = fills[i]!.args as number[];
+      const [sx, sy, sw, sh] = strokes[i]!.args as number[];
+      expect(sx).toBeCloseTo(fx! + lw / 2);
+      expect(sy).toBeCloseTo(fy! + lw / 2);
+      expect(sw).toBeCloseTo(fw! - lw);
+      expect(sh).toBeCloseTo(fh! - lw);
+    }
   });
 
   it('does not outline a hovered segment (fill pop only)', () => {
