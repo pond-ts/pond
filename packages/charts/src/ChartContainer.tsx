@@ -774,19 +774,13 @@ export function ChartContainer({
   }, [cursors]);
 
   // The registered cursors' resolution inputs, folded into the legacy
-  // channels: a mounted `<RangeCursor sequence>` feeds the shared snap
-  // buckets, a mounted `<CrosshairCursor format>` the shared readout channel —
-  // both exactly where `cursorSequence` / `cursorFormat` fed them. First
-  // **component-mounted** entry wins (the shim registers before the children
-  // mount, so a bare first-wins would let the legacy synthesis shadow a real
-  // mount); the legacy prop is the fallback during the window.
-  const cursorSequence = useMemo(
-    () =>
-      cursors.find((e) => !e.legacy && e.sequence !== undefined)?.sequence ??
-      cursors.find((e) => e.sequence !== undefined)?.sequence ??
-      cursorSequenceProp,
-    [cursors, cursorSequenceProp],
-  );
+  // channels: a mounted `<CrosshairCursor format>` feeds the shared readout
+  // channel exactly where `cursorFormat` fed it. First **component-mounted**
+  // entry wins (the shim registers before the children mount, so a bare
+  // first-wins would let the legacy synthesis shadow a real mount); the
+  // legacy prop is the fallback during the window. (`sequence` resolves the
+  // same way, below the selector registry — a `<MultiSelector sequence>`
+  // feeds the same channel.)
   const cursorFormat = useMemo(
     () =>
       cursors.find((e) => !e.legacy && e.format !== undefined)?.format ??
@@ -978,6 +972,19 @@ export function ChartContainer({
     [selectorMap],
   );
   const selectorsRef = useRef(selectors);
+  // The shared snap-bucket sequence, folded into the legacy channel exactly as
+  // `cursorFormat` is above: a component-mounted `<RangeCursor sequence>`
+  // wins, then a mounted `<MultiSelector sequence>` (its sweep extends bucket
+  // by bucket over the same realized buckets — one channel, so the band and
+  // the sweep can never snap differently), then the legacy shim / prop.
+  const cursorSequence = useMemo(
+    () =>
+      cursors.find((e) => !e.legacy && e.sequence !== undefined)?.sequence ??
+      selectors.find((e) => e.sequence !== undefined)?.sequence ??
+      cursors.find((e) => e.sequence !== undefined)?.sequence ??
+      cursorSequenceProp,
+    [cursors, selectors, cursorSequenceProp],
+  );
   // …and the matching deprecation warning, once, naming the replacement. The
   // *state* props (`selected` / `hovered`) are not deprecated and are not
   // listed here — RFC A1.2 keeps them on the container deliberately.
@@ -1122,9 +1129,13 @@ export function ChartContainer({
   // distinct. Refs written after commit (not in render) so the click handler
   // never reads a callback / mode from a frame abandoned under concurrent
   // rendering.
-  const [internalSelected, setInternalSelected] = useState<SelectInfo | null>(
-    null,
-  );
+  // Widened past a single mark for the sweep (RFC A5.2): an uncontrolled
+  // `<MultiSelector>` release commits its compact span descriptor here, so the
+  // swept bars stay lit with no controlled prop — the sweep analog of the
+  // uncontrolled click highlight. Clicks still store the single hit.
+  const [internalSelected, setInternalSelected] = useState<
+    SelectInfo | readonly SelectionEntry[] | null
+  >(null);
   const controlledSelection = selected !== undefined;
   // Normalize the prop's three accepted shapes — a single mark, a set, or
   // nothing — into the shapes the frame carries ([PND-MULTISEL] / RFC A5.2).
@@ -1212,6 +1223,14 @@ export function ChartContainer({
       for (const e of entries) {
         if (modifiers === undefined) e.onSelect?.(hit);
         else e.onSelect?.(hit, modifiers);
+        // A mounted <MultiSelector> hears the same click in its own currency
+        // (RFC §8: everything <Selector> does): 0/1 hits, no span — a click
+        // produces marks, only a sweep produces a span (A5.2).
+        e.onSelectMany?.(
+          hit === null ? EMPTY_SELECTION : [hit],
+          modifiers,
+          null,
+        );
       }
       if (!controlledSelectionRef.current) setInternalSelected(hit);
     },
@@ -1258,9 +1277,12 @@ export function ChartContainer({
   // deduping on `id + key` alone silently swallows every move *within* a bin.
   // On a heat map that reads as the hover being stuck: dragging straight down a
   // column never changes the reported cell.
-  const [internalHovered, setInternalHovered] = useState<SelectInfo | null>(
-    null,
-  );
+  // Widened past a single mark for the sweep's live preview (RFC A1.4/A3.4):
+  // a drag under a mounted <MultiSelector> lights every covered mark at once
+  // through this same field — the reason `hovered` became a set.
+  const [internalHovered, setInternalHovered] = useState<
+    SelectInfo | readonly SelectInfo[] | null
+  >(null);
   const controlledHover = hovered !== undefined;
   // Same three-shape normalization `selected` does — a single mark, a set, or
   // nothing — so a pointer-driven hover (always one mark) and a sweep-driven
@@ -1295,9 +1317,52 @@ export function ChartContainer({
     for (const e of effectiveSelectorEntries(
       selectorsRef.current,
       rowKey ?? null,
-    ))
+    )) {
       e.onHover?.(hit);
+      // A mounted <MultiSelector> hears pointer hover in its own plural
+      // currency — 0/1 hits outside a drag (a sweep reports through
+      // `resolveSweep`'s preview instead, several at once).
+      e.onHoverMany?.(hit === null ? EMPTY_SELECTION : [hit]);
+    }
     if (!controlledHoverRef.current) setInternalHovered(hit);
+  }, []);
+
+  // The sweep gesture's container half (interaction RFC §8 / A5.2): resolve a
+  // row's press against the mounted <MultiSelector>s in scope and hand the
+  // gesture engine its two sinks. Presence is the arm switch — `null` means no
+  // sweep can claim the drag (§7.1's mounting-is-enablement, extended). The
+  // entries are captured at the press and live for that one drag, matching the
+  // ref-not-state discipline of the range drag (#508 item 7).
+  const resolveSweep = useCallback((rowKey: symbol) => {
+    const entries = effectiveSelectorEntries(
+      selectorsRef.current,
+      rowKey,
+    ).filter((e) => e.multi);
+    if (entries.length === 0) return null;
+    return {
+      preview: (hits: readonly SelectInfo[]) => {
+        // The single-hit dedup state is meaningless mid-sweep; reset it so the
+        // first post-sweep pointer hover always reports.
+        lastHoverRef.current = null;
+        for (const e of entries) e.onHoverMany?.(hits);
+        if (!controlledHoverRef.current) setInternalHovered(hits);
+      },
+      commit: (
+        hits: readonly SelectInfo[],
+        modifiers: SelectModifiers,
+        span: SpanSelection | null,
+      ) => {
+        for (const e of entries) e.onSelectMany?.(hits, modifiers, span);
+        // Uncontrolled: the compact span descriptor IS the selection (A5.2's
+        // second currency) — the swept marks stay lit via the same membership
+        // test a controlled span would use. The preview clears; the committed
+        // highlight takes over.
+        if (!controlledSelectionRef.current)
+          setInternalSelected(span === null ? null : [span]);
+        lastHoverRef.current = null;
+        if (!controlledHoverRef.current) setInternalHovered(null);
+      },
+    };
   }, []);
 
   // Rows report their per-slot gutter widths; we reserve each slot's max.
@@ -1740,6 +1805,7 @@ export function ChartContainer({
       cursors,
       registerSelector,
       unregisterSelector,
+      resolveSweep,
       registerAnnotation,
       unregisterAnnotation,
       registerLegendItem,
@@ -1816,6 +1882,7 @@ export function ChartContainer({
       cursors,
       registerSelector,
       unregisterSelector,
+      resolveSweep,
       registerAnnotation,
       unregisterAnnotation,
       registerLegendItem,

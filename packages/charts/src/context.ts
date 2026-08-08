@@ -281,6 +281,17 @@ export interface ContainerFrame {
   registerSelector(key: symbol, entry: SelectorEntry): void;
   unregisterSelector(key: symbol): void;
   /**
+   * Resolve a row's press against the mounted `<MultiSelector>`s in scope
+   * (interaction RFC §8): the {@link SweepGesture} sinks when at least one is
+   * in scope, else `null` — which is how the brush recognizer learns whether a
+   * sweep can claim the drag at all (mounting arms the gesture, §7.1's rule
+   * extended to the sweep). Scope resolution mirrors {@link select}'s: the
+   * row's own mounts when it has any, else the container's. The selector
+   * registry itself stays private, for the reason documented on
+   * {@link registerSelector}.
+   */
+  resolveSweep(rowKey: symbol): SweepGesture | null;
+  /**
    * Register this layer's **legend row** — its display label + resolved
    * {@link SwatchSpec} (and selection `id` when it has one) — keyed by the
    * layer's per-instance slot; unregister on unmount (see
@@ -738,6 +749,24 @@ export interface RowLayer {
     yScale: (value: number) => number,
   ): SelectInfo | null;
   /**
+   * Begin a **sweep session** over this layer's marks — `<MultiSelector>`'s
+   * range query (interaction RFC A7.6/A7.7), the range analog of
+   * {@link hitTest} and gated exactly like it: only a layer with an `id` (and
+   * discrete selectable marks) wires it, so an untagged layer is never swept.
+   * Called on the pointer-down that survives `DRAG_SLOP` under a mounted
+   * `<MultiSelector>`; the session lives for that one drag and nothing
+   * persists outside it. Returns `null` when there is nothing sweepable.
+   *
+   * `xScale`/`yScale` are the resolved scales (as for `draw`/`hitTest`) —
+   * unused by the 1-D layers, but part of the seam so the 2-D sessions
+   * (scatter's y-window, the heat map's row cut — [PND-INTERACT2D]) can be
+   * added without redesigning the shape (RFC A7.6).
+   */
+  beginSweep?(
+    xScale: (value: number) => number,
+    yScale: (value: number) => number,
+  ): SweepSession | null;
+  /**
    * Draw into the plot canvas. `xScale`/`yScale` map data→pixels. May return
    * {@link LayerDrawStats} (source/drawn counts + whether decimation engaged) so
    * the container can surface them via {@link ContainerProps.onDrawStats}; a
@@ -748,6 +777,65 @@ export interface RowLayer {
     xScale: (value: number) => number,
     yScale: (value: number) => number,
   ): LayerDrawStats | void;
+}
+
+/**
+ * A layer's per-drag **sweep session** ({@link RowLayer.beginSweep} — RFC
+ * A7.7's `beginSweep(scales) → session` shape, 1-D form). The gesture engine
+ * drives it: `update` per coalesced frame with the swept key-window,
+ * {@link hits} for the frame-gated live preview, and — at release — the same
+ * `hits()` again as the commit payload plus {@link extent} for the span, so
+ * the committed hits ARE the materialised preview rather than a fresh range
+ * query (RFC A5.2's "the hits are free"). Internal, like `RowLayer` itself.
+ */
+export interface SweepSession {
+  /** The layer's `id` — what the committed {@link SpanSelection} carries. */
+  readonly id: string;
+  /**
+   * Re-cut the covered set to the marks intersecting the half-open window
+   * `[x0, x1)` (key-axis units, `x0 <= x1`). Returns whether the covered set
+   * changed — the delta gate: an unchanged frame re-materialises nothing.
+   */
+  update(x0: number, x1: number): boolean;
+  /**
+   * The covered marks, materialised (and cached until the next change) — the
+   * live preview `hovered` lights, and verbatim the release payload.
+   */
+  hits(): readonly SelectInfo[];
+  /**
+   * The covered marks' snapped-outward key extent `[begin(first), end(last))`
+   * — {@link SpanSelection.x} per RFC A7.6's edge rule, so the span's
+   * half-open containment test reproduces exactly the captured set. `null`
+   * when nothing is covered.
+   */
+  extent(): readonly [number, number] | null;
+}
+
+/**
+ * What the container resolves for a row's press under a mounted
+ * `<MultiSelector>` ({@link ContainerFrame.resolveSweep}): the two sinks of
+ * the sweep gesture, with the selector registry kept private (the same reason
+ * `select` resolves scope internally). Both operate on the entries that were
+ * in scope at the press, for the lifetime of that one drag.
+ */
+export interface SweepGesture {
+  /**
+   * The frame-coalesced **live preview**: light `hits` through the plural
+   * `hovered` (RFC A3.4 — the library owns the state, each layer renders its
+   * own hover treatment) and report them to the `<MultiSelector>`s in scope.
+   * Nothing else crosses the public boundary until release (RFC A1.4).
+   */
+  preview(hits: readonly SelectInfo[]): void;
+  /**
+   * The release: report `(hits, modifiers, span)` to the `<MultiSelector>`s in
+   * scope (RFC A5.2), clear the preview, and — when `selected` is
+   * uncontrolled — commit the compact span descriptor as the selection.
+   */
+  commit(
+    hits: readonly SelectInfo[],
+    modifiers: SelectModifiers,
+    span: SpanSelection | null,
+  ): void;
 }
 
 /** One tracker readout point — a dot + value the overlay draws at the cursor. */
@@ -887,6 +975,30 @@ export interface SelectorEntry {
   readonly onSelect:
     | ((hit: SelectInfo | null, modifiers?: SelectModifiers) => void)
     | undefined;
+  /**
+   * Whether this entry is a mounted `<MultiSelector>` (RFC §8) — the flag the
+   * sweep gesture resolves on: **mounting one is what arms the sweep drag** on
+   * the plot, exactly as mounting any selector is what arms the click (§7.1).
+   * `<Selector>` and the legacy shim register `false`.
+   */
+  readonly multi: boolean;
+  /** `<MultiSelector onHover>` — the marks a live sweep covers (0/1 outside a
+   *  drag, mirroring the single-hit channel). Plural entries only. */
+  readonly onHoverMany?: ((hits: readonly SelectInfo[]) => void) | undefined;
+  /** `<MultiSelector onSelect>` — RFC A5.2's `(hits, modifiers, span)`. A
+   *  plain click reports `([hit] | [], modifiers, null)`; a sweep release
+   *  reports the covered marks plus the span they demote to. Plural entries
+   *  only. */
+  readonly onSelectMany?:
+    | ((
+        hits: readonly SelectInfo[],
+        modifiers: SelectModifiers | undefined,
+        span: SpanSelection | null,
+      ) => void)
+    | undefined;
+  /** `<MultiSelector sequence>` — the sweep's bucket snap, folded into the
+   *  container's shared snap-bucket channel (as `<RangeCursor sequence>` is). */
+  readonly sequence?: Sequence | BoundedSequence | undefined;
   /** Mount scope: a row's key when mounted inside a `<ChartRow>` (that row's
    *  clicks only), `null` when mounted at the container (every row). */
   readonly rowKey: symbol | null;

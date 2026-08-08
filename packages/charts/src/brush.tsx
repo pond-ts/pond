@@ -23,22 +23,31 @@ import type {
  *    place; it is not a case this resolver returns.
  * 1. **Annotation-create capture** — an armed `creating` tool owns the whole
  *    surface (the press starts a draw, never a pan or a range drag).
- * 2. **The range drag** ({@link resolveRangeDrag}) — a drag-enabled
+ * 2. **The sweep** — a mounted `<MultiSelector>` in scope (RFC §8), when the
+ *    row has a sweep-capable layer. A *selection* gesture is the most
+ *    specific intent a drag can carry (the selector was deliberately
+ *    mounted), so it preempts both the range drag and pan; a drag-enabled
+ *    `<RangeCursor>` competing in the same scope is shadowed, and
+ *    {@link warnSweepShadowsRangeDrag} says so (A1.5 asked for the
+ *    arbitration to be written down, not implied). The sweep arms behind
+ *    `DRAG_SLOP` — a plain click stays a click and selects one mark (§8.1:
+ *    the two are separated by movement, not modifier).
+ * 3. **The range drag** ({@link resolveRangeDrag}) — a drag-enabled
  *    `<RangeCursor>` in the hovered row's effective cursor set, else the
  *    legacy `cursor="region"` + `onRegionSelect` container props. Preempts
  *    pan — unless a `dragModifier` is declared **and pan is enabled**, in
  *    which case a plain drag falls through to pan and only a modifier-held
  *    drag brushes. (With pan off there is no gesture to share, so the
  *    modifier is not enforced.)
- * 3. **Pan** — armed behind `DRAG_SLOP`, so a click never nudges the view.
- * 4. **Nothing** — the press is a potential click; hover/select handle it.
+ * 4. **Pan** — armed behind `DRAG_SLOP`, so a click never nudges the view.
+ * 5. **Nothing** — the press is a potential click; hover/select handle it.
  *
  * The recognizer resolves the claim **at pointer-down**; the per-claim
- * sessions (create preview, range anchor, pan anchor) stay in `Layers`, keyed
- * off the refs the claim seeds. `<RangeCursor>` and the future
- * `<MultiSelector>` both drive the same range-drag session — only what fires
- * on release differs (a span vs. marks), which is A1.5's "one brush engine,
- * two components".
+ * sessions (create preview, range anchor, sweep session, pan anchor) stay in
+ * `Layers`, keyed off the refs the claim seeds. `<RangeCursor>` and
+ * `<MultiSelector>` both drive the same range-drag session — anchor, bucket
+ * snap, the shared band — only what fires on release differs (a span vs.
+ * marks), which is A1.5's "one brush engine, two components".
  */
 
 /** What a completed range drag calls with the released `[start, end]`
@@ -101,6 +110,7 @@ export function resolveRangeDrag(
  *  precedence order). `'none'` = the press is a potential click only. */
 export type BrushClaim =
   | { readonly kind: 'create' }
+  | { readonly kind: 'sweep' }
   | { readonly kind: 'range'; readonly drag: RangeDrag }
   | { readonly kind: 'pan' }
   | { readonly kind: 'none' };
@@ -110,19 +120,25 @@ export type BrushClaim =
  * testable without a DOM. Inputs are the already-resolved facts:
  *
  * - `creating` — an annotation tool is armed (claim 1).
- * - `drag` — {@link resolveRangeDrag}'s answer (claim 2), whose `modifier`
+ * - `sweep` — a mounted `<MultiSelector>` is in scope AND the row has a
+ *   sweep-capable layer (claim 2). The sweep preempts the range drag and pan
+ *   unconditionally — mounting the selector is the intent, and it carries no
+ *   modifier gate of its own.
+ * - `drag` — {@link resolveRangeDrag}'s answer (claim 3), whose `modifier`
  *   gates it behind the key **only while pan is enabled**.
- * - `canPan` — this surface has a pan to arm (claim 3): x-pan on a
+ * - `canPan` — this surface has a pan to arm (claim 4): x-pan on a
  *   continuous axis, or any y-pan.
  */
 export function resolveBrushClaim(opts: {
   readonly creating: boolean;
+  readonly sweep?: boolean;
   readonly drag: RangeDrag | null;
   readonly shiftKey: boolean;
   readonly panEnabled: boolean;
   readonly canPan: boolean;
 }): BrushClaim {
   if (opts.creating) return { kind: 'create' };
+  if (opts.sweep === true) return { kind: 'sweep' };
   if (opts.drag !== null) {
     const needsShift = opts.drag.modifier === 'shift' && opts.panEnabled;
     if (!needsShift || opts.shiftKey) return { kind: 'range', drag: opts.drag };
@@ -133,12 +149,31 @@ export function resolveBrushClaim(opts: {
 }
 
 /**
+ * Dev-warn (once per plot surface) when a press found BOTH a mounted
+ * `<MultiSelector>` and a live range drag (a drag-enabled `<RangeCursor>`, or
+ * the legacy region props) competing for it — the sweep wins (see the module
+ * doc's precedence), and a silent shadow would hide the loser exactly the way
+ * A1.5 said docs alone couldn't.
+ */
+export function warnSweepShadowsRangeDrag(warned: { current: boolean }): void {
+  if (warned.current) return;
+  warned.current = true;
+  console.warn(
+    '[pond-charts] a <MultiSelector> and a drag-enabled <RangeCursor> (or ' +
+      'the legacy onRegionSelect props) are both in scope for this plot — ' +
+      'the sweep claims the drag and the range drag never fires. Mount one ' +
+      'drag owner per scope, or freeze the cursor with enableDrag={false}. ' +
+      'See docs/rfcs/interaction.md A1.5 / §8.1.',
+  );
+}
+
+/**
  * The **shared band renderer** — the brush's one visual, so the components
  * driving the engine cannot drift apart (RFC A1.5): `<RangeCursor>` renders
- * it today; `<MultiSelector>`'s sweep plugs in here when it lands
- * ([PND-INTERACT2D] / RFC step 5) by using this as (part of) its
- * `renderPlot` slot. The container resolves `f.band` / `f.bandLine`; this
- * only draws them.
+ * it via its spec's `renderPlot` slot, and `<MultiSelector>`'s sweep renders
+ * the *same function* from `Layers` while a sweep is live (§8.1 — identical
+ * pixels is the design, so there is exactly one place that draws them). The
+ * container resolves `f.band` / `f.bandLine`; this only draws them.
  */
 export function renderBrushBand(f: ResolvedCursorFrame): ReactNode {
   // The cursor ink — the theme's cursor colour, else the axis label colour

@@ -302,6 +302,14 @@ function barMatches(
  * clicked, not a data structure — building a Set per draw would cost more than
  * it saves at these sizes, and the common cases are 0 or 1 members, which this
  * short-circuits on.
+ *
+ * **The `<MultiSelector>` sweep broke that assumption for large sets** (RFC
+ * §8): a live preview can put every visible bar in `hovered`, and a
+ * demoted-on-edit selection can hold as many mark entries — V visible bars ×
+ * C entries is quadratic-shaped (measured: 2.6k×2.6k ≈ 4.5 ms/frame, 10k×10k
+ * ≈ 64 ms). Past {@link MARK_INDEX_THRESHOLD} the draw builds
+ * {@link buildBarMarkIndex} once — the *same* match, O(1) per bar — and small
+ * sets keep this scan (cheaper than a Set at click sizes).
  */
 function barMatchesAny(
   sel: readonly BarMark[],
@@ -313,6 +321,53 @@ function barMatchesAny(
     if (barMatches(sel[i]!, seriesId, stable, begin)) return true;
   }
   return false;
+}
+
+/** Past this many entries, a per-draw set index beats the linear scan. Small
+ *  enough that a sweep preview always indexes; big enough that a clicked
+ *  handful never pays a Set build. */
+const MARK_INDEX_THRESHOLD = 16;
+
+/**
+ * {@link barMatchesAny} in set form, for large entry sets — three O(C) sets
+ * built once per draw, O(1) per bar, encoding exactly the pairwise rule:
+ * an entry and a bar that BOTH carry a mark compare marks; either side
+ * missing one falls back to the sample key.
+ */
+interface BarMarkIndex {
+  /** Marks of entries that carry one (compared against a marked bar). */
+  readonly marks: ReadonlySet<string>;
+  /** Keys of entries with NO mark (their key-fallback against a marked bar). */
+  readonly keysMarkless: ReadonlySet<number>;
+  /** Keys of every entry (the fallback for an unmarked bar). */
+  readonly keysAll: ReadonlySet<number>;
+}
+
+function buildBarMarkIndex(
+  sel: readonly BarMark[],
+  seriesId: string | undefined,
+): BarMarkIndex {
+  const marks = new Set<string>();
+  const keysMarkless = new Set<number>();
+  const keysAll = new Set<number>();
+  for (let i = 0; i < sel.length; i += 1) {
+    const m = sel[i]!;
+    if (m.id !== seriesId) continue;
+    keysAll.add(m.key);
+    if (m.mark !== undefined) marks.add(m.mark);
+    else keysMarkless.add(m.key);
+  }
+  return { marks, keysMarkless, keysAll };
+}
+
+function indexMatches(
+  ix: BarMarkIndex,
+  stable: string | undefined,
+  begin: number,
+): boolean {
+  return stable !== undefined
+    ? ix.marks.has(stable) || ix.keysMarkless.has(begin)
+    : ix.keysAll.has(begin);
 }
 
 /**
@@ -459,6 +514,16 @@ export function drawBars(
     hovered.some((m) => m.mark !== undefined)
       ? cs.marks
       : undefined;
+  // Large sets (a sweep preview in `hovered`, a demoted sweep in `selection`)
+  // switch to the O(1)-per-bar set index; a clicked handful keeps the scan.
+  const selIndex =
+    selection.length > MARK_INDEX_THRESHOLD
+      ? buildBarMarkIndex(selection, seriesId)
+      : null;
+  const hovIndex =
+    hovered.length > MARK_INDEX_THRESHOLD
+      ? buildBarMarkIndex(hovered, seriesId)
+      : null;
   let drawn = 0;
   for (let i = vStart; i < vEnd; i += 1) {
     const rect = barRect(
@@ -481,9 +546,14 @@ export function drawBars(
     // reads as a lighter "this bar is live" and select as the committed pick.
     const stable = marks?.[i];
     const selected =
-      barMatchesAny(selection, seriesId, stable, cs.begin[i]!) ||
+      (selIndex !== null
+        ? indexMatches(selIndex, stable, cs.begin[i]!)
+        : barMatchesAny(selection, seriesId, stable, cs.begin[i]!)) ||
       (hasSpans && spanMatchesAny(spans, cs.begin[i]!, cs.y[i]!));
-    const isHovered = barMatchesAny(hovered, seriesId, stable, cs.begin[i]!);
+    const isHovered =
+      hovIndex !== null
+        ? indexMatches(hovIndex, stable, cs.begin[i]!)
+        : barMatchesAny(hovered, seriesId, stable, cs.begin[i]!);
     if (fills !== undefined) {
       // Per-bar fills: the bar keeps its own colour under hover / selection —
       // highlight pops the alpha to 1 and outlines the selection in the bar's
@@ -802,6 +872,50 @@ export interface StackMark {
 }
 
 /**
+ * The stacked analog of {@link BarMarkIndex} — the same large-set switch for
+ * {@link drawStacks}, encoding ITS pairwise rule (which switches on the
+ * series carrying marks, not per pair — see {@link barMatches}' doc): a
+ * marked bin matches on the stable mark; an unmarked bin matches on
+ * `(key, label)`.
+ */
+interface StackMarkIndex {
+  readonly marks: ReadonlySet<string>;
+  /** For the unmarked-bin fallback: entry key → the entry labels at it. */
+  readonly labelsByKey: ReadonlyMap<number, ReadonlySet<string>>;
+}
+
+function buildStackMarkIndex(
+  sel: readonly StackMark[],
+  seriesId: string | undefined,
+): StackMarkIndex {
+  const marks = new Set<string>();
+  const labelsByKey = new Map<number, Set<string>>();
+  for (let i = 0; i < sel.length; i += 1) {
+    const m = sel[i]!;
+    if (m.id !== seriesId) continue;
+    if (m.mark !== undefined) marks.add(m.mark);
+    let labels = labelsByKey.get(m.key);
+    if (labels === undefined) {
+      labels = new Set<string>();
+      labelsByKey.set(m.key, labels);
+    }
+    labels.add(m.label);
+  }
+  return { marks, labelsByKey };
+}
+
+function stackIndexMatches(
+  ix: StackMarkIndex,
+  stableMark: string | undefined,
+  begin: number,
+  group: string,
+): boolean {
+  return stableMark !== undefined
+    ? ix.marks.has(stableMark)
+    : (ix.labelsByKey.get(begin)?.has(group) ?? false);
+}
+
+/**
  * The `[min, max]` extent of the **value (stacked) axis**. For a true multi-group
  * stack it is `[minNegTotal, maxPosTotal]` — each bin's positive segments summed
  * upward and its negative segments summed downward, tracked separately
@@ -1000,6 +1114,16 @@ export function drawStacks(
   const hasSpans = spans.length > 0;
   const dimming =
     style.dimmed !== undefined && (selection.length > 0 || hasSpans);
+  // The large-set switch (see barMatchesAny): a sweep preview / demoted sweep
+  // indexes once, a clicked handful keeps the linear scan.
+  const selIndex =
+    selection.length > MARK_INDEX_THRESHOLD
+      ? buildStackMarkIndex(selection, seriesId)
+      : null;
+  const hovIndex =
+    hover.length > MARK_INDEX_THRESHOLD
+      ? buildStackMarkIndex(hover, seriesId)
+      : null;
   ctx.save();
   ctx.globalAlpha = style.opacity;
   for (let b = 0; b < ss.length; b += 1) {
@@ -1040,10 +1164,19 @@ export function drawStacks(
       // Indexed rather than `.some(cb)` — this is the inner loop of the draw,
       // and a closure per segment per frame is avoidable garbage.
       let selected = false;
-      for (let si = 0; si < selection.length; si += 1) {
-        if (matches(selection[si]!)) {
-          selected = true;
-          break;
+      if (selIndex !== null) {
+        selected = stackIndexMatches(
+          selIndex,
+          stableMark,
+          ss.begin[b]!,
+          ss.groups[g]!,
+        );
+      } else {
+        for (let si = 0; si < selection.length; si += 1) {
+          if (matches(selection[si]!)) {
+            selected = true;
+            break;
+          }
         }
       }
       // A span covers this segment when the bin's `begin` is inside its
@@ -1062,10 +1195,19 @@ export function drawStacks(
         );
       }
       let isHovered = false;
-      for (let hi = 0; hi < hover.length; hi += 1) {
-        if (matches(hover[hi]!)) {
-          isHovered = true;
-          break;
+      if (hovIndex !== null) {
+        isHovered = stackIndexMatches(
+          hovIndex,
+          stableMark,
+          ss.begin[b]!,
+          ss.groups[g]!,
+        );
+      } else {
+        for (let hi = 0; hi < hover.length; hi += 1) {
+          if (matches(hover[hi]!)) {
+            isHovered = true;
+            break;
+          }
         }
       }
       // A hovered / selected segment pops its alpha; a resting one draws at the

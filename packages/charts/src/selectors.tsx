@@ -1,10 +1,12 @@
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import type { Sequence, BoundedSequence } from 'pond-ts';
 import {
   ContainerContext,
   RowContext,
   type SelectInfo,
   type SelectModifiers,
   type SelectorEntry,
+  type SpanSelection,
 } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
@@ -31,11 +33,20 @@ import { useSlotKey } from './use-slot-key.js';
  */
 
 /** The reporting callbacks, held in a ref so a consumer's inline arrow doesn't
- *  re-register the entry on every render. */
+ *  re-register the entry on every render. The plural pair is `<MultiSelector>`'s
+ *  (RFC §8 / A5.2); the singular pair is `<Selector>`'s and the shim's. */
 interface SelectorCallbacks {
   readonly onHover: ((hit: SelectInfo | null) => void) | undefined;
   readonly onSelect:
     | ((hit: SelectInfo | null, modifiers?: SelectModifiers) => void)
+    | undefined;
+  readonly onHoverMany?: ((hits: readonly SelectInfo[]) => void) | undefined;
+  readonly onSelectMany?:
+    | ((
+        hits: readonly SelectInfo[],
+        modifiers: SelectModifiers | undefined,
+        span: SpanSelection | null,
+      ) => void)
     | undefined;
 }
 
@@ -55,6 +66,10 @@ function useSelectorMount(
   /** `false` registers nothing — the shim's "neither legacy prop is set" case,
    *  which is what makes "no selector mounted" detectable at all. */
   enabled: boolean,
+  /** A `<MultiSelector>` mount — arms the sweep drag alongside the click. */
+  multi = false,
+  /** `<MultiSelector sequence>` — the sweep's bucket snap. */
+  sequence?: Sequence | BoundedSequence,
 ): void {
   const container = useContext(ContainerContext);
   if (container === null) {
@@ -72,6 +87,8 @@ function useSelectorMount(
   });
   const hasHover = cb.onHover !== undefined;
   const hasSelect = cb.onSelect !== undefined;
+  const hasHoverMany = cb.onHoverMany !== undefined;
+  const hasSelectMany = cb.onSelectMany !== undefined;
   const entry = useMemo<SelectorEntry | null>(
     () =>
       enabled
@@ -89,11 +106,30 @@ function useSelectorMount(
                   else cbRef.current.onSelect?.(hit, modifiers);
                 }
               : undefined,
+            multi,
+            onHoverMany: hasHoverMany
+              ? (hits) => cbRef.current.onHoverMany?.(hits)
+              : undefined,
+            onSelectMany: hasSelectMany
+              ? (hits, modifiers, span) =>
+                  cbRef.current.onSelectMany?.(hits, modifiers, span)
+              : undefined,
+            sequence,
             rowKey,
             legacy,
           }
         : null,
-    [enabled, hasHover, hasSelect, rowKey, legacy],
+    [
+      enabled,
+      hasHover,
+      hasSelect,
+      hasHoverMany,
+      hasSelectMany,
+      multi,
+      sequence,
+      rowKey,
+      legacy,
+    ],
   );
   const { registerSelector, unregisterSelector } = container;
   useEffect(() => {
@@ -162,6 +198,103 @@ export function Selector({ onHover, onSelect }: SelectorProps = {}) {
   // so a bare `<Selector />` is the honest way to say "clicks select" while the
   // container drives its own uncontrolled highlight.
   useSelectorMount({ onHover, onSelect }, false, true);
+  return null;
+}
+
+export interface MultiSelectorProps {
+  /**
+   * Snap the sweep to buckets — a pond `Sequence` (realized over the view) or
+   * `BoundedSequence` (used as-is; a trading calendar's sessions). A drag
+   * extends **bucket by bucket** over these, capturing every mark the snapped
+   * window covers. **Omit ⇒ freeform**: the sweep covers the raw drag span (a
+   * bar/histogram layer's bins still snap it when present — the same shared
+   * snap-bucket channel `<RangeCursor sequence>` feeds). Pass a stable
+   * reference (the realized buckets memoize on it).
+   */
+  sequence?: Sequence | BoundedSequence;
+  /**
+   * The marks the gesture currently covers — **live during a sweep** (updated
+   * as the drag crosses marks, coalesced to animation frames) and, outside
+   * one, the plural mirror of `<Selector onHover>` (0 or 1 hits, deduped by
+   * mark transition). Echo it back as `<ChartContainer hovered>` only when
+   * you control hover — uncontrolled, the covered marks already light through
+   * the container's own hover state (RFC A3.4: the library owns the state,
+   * each layer draws its own hover treatment).
+   */
+  onHover?: (hits: readonly SelectInfo[]) => void;
+  /**
+   * The committed selection, on release (RFC A5.2's signature):
+   *
+   * - **A sweep** reports every covered mark, the modifiers held, and the
+   *   {@link SpanSelection} the coverage demotes to — `hits` are the
+   *   materialised live preview (no fresh range query), `span` is the
+   *   snapped-outward extent whose `selectionContains` test reproduces
+   *   exactly `hits`. Feed `[...others, span]` back as `selected` and stash
+   *   `hits` for A5.2's demote-on-edit: to edit *inside* the span later, swap
+   *   the span entry for the stashed hits and filter — plain array
+   *   arithmetic, no interval math.
+   * - **A click** (no movement past the drag slop) is `<Selector>`'s gesture
+   *   in this currency: one hit (or none — the deselect path), the modifiers,
+   *   and `span: null`. Clicks produce marks; only sweeps produce a span.
+   *
+   * `modifiers` is absent for a **programmatic** select (a `<Legend>` chip),
+   * as on `<Selector onSelect>`. **The library reports; you decide** — pond
+   * applies no policy to the modifiers and holds no set.
+   */
+  onSelect?: (
+    hits: readonly SelectInfo[],
+    modifiers: SelectModifiers | undefined,
+    span: SpanSelection | null,
+  ) => void;
+}
+
+/**
+ * `<MultiSelector>` — **sweep-select as a mounted component** (interaction RFC
+ * §8 / A4.2), a superset of `<Selector>`: a click still selects one mark, and
+ * a drag past the slop **sweeps** — the band extends (bucket by bucket with a
+ * {@link MultiSelectorProps.sequence}, freeform without), every covered mark
+ * lights through the plural `hovered` as the drag moves, and release commits
+ * `(hits, modifiers, span)` once. The gesture rides the shared brush
+ * recognizer (`brush.tsx`) and draws the same band `<RangeCursor>` does —
+ * identical pixels, different currency (§8.1): the range cursor releases an
+ * extent, this releases **marks** (which is what folds the category axis in —
+ * ordinal and continuous are the same gesture when nobody sees a numeric
+ * range).
+ *
+ * ```tsx
+ * <ChartContainer selected={sel}>
+ *   <MultiSelector
+ *     sequence={daily}
+ *     onSelect={(hits, mods, span) => …}
+ *   />
+ *   <ChartRow>…</ChartRow>
+ * </ChartContainer>
+ * ```
+ *
+ * Mount it as a child of `<ChartContainer>` (every row) or inside a
+ * `<ChartRow>` (that row only). Like `<Selector>` it renders nothing and holds
+ * nothing — `selected` / `hovered` stay on the container (A1.2). The sweep
+ * captures marks from the row's **topmost** sweep-capable layer (the z-order
+ * rule a click already follows); a layer without an `id` is never swept (Q8).
+ */
+export function MultiSelector({
+  sequence,
+  onHover,
+  onSelect,
+}: MultiSelectorProps = {}) {
+  // As <Selector>: the mount is the enablement — of the click AND the sweep.
+  useSelectorMount(
+    {
+      onHover: undefined,
+      onSelect: undefined,
+      onHoverMany: onHover,
+      onSelectMany: onSelect,
+    },
+    false,
+    true,
+    true,
+    sequence,
+  );
   return null;
 }
 

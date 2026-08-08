@@ -77,6 +77,39 @@ include new features and type-level changes; patch bumps are strictly additive.
   Ctrl elsewhere) plus the raw keys; pond applies **no** policy to them and
   holds no set — the consumer computes the next selection and feeds it back.
 
+- **charts: `<MultiSelector>` — sweep-select** (interaction RFC §8 / A5.2,
+  step 5 of the wave), the superset of `<Selector>`: a click still selects one
+  mark, and a drag past the slop **sweeps** — the shared brush band extends
+  (bucket by bucket with a `sequence`, freeform without), every covered mark
+  lights live through the plural `hovered` (frame-coalesced, delta-gated), and
+  release fires once with **both currencies**:
+
+  ```tsx
+  <MultiSelector
+    sequence={daily}
+    onHover={(hits) => …}                  // live, as the sweep moves
+    onSelect={(hits, modifiers, span) => …} // marks + the span they demote to
+  />
+  ```
+
+  `hits` is the materialised live preview (release runs no fresh range query);
+  `span` is a `SpanSelection` with the covered marks' snapped-outward extent,
+  so `selectionContains([span], hit)` agrees with `hits` exactly — feed the
+  span back as `selected` and stash the hits for A5.2's demote-on-edit. Works
+  on **category axes too** (the `[PND-CATRANGE]` fold-in): ordinal and
+  continuous are the same gesture when the payload is marks. 1-D layers in
+  this release (bars — single, stacked, categorical); the 2-D rect for
+  scatter / heat map is `[PND-INTERACT2D]`. The sweep preempts pan and a
+  drag-enabled `<RangeCursor>` in the same scope (dev-warned — one drag owner
+  per scope).
+
+- **charts: large selection / hover sets no longer scan linearly in the bar
+  draws.** A sweep preview (or a demoted sweep echoed back as marks) can put
+  thousands of entries in `hovered` / `selected`, where the per-bar linear
+  match measured 6.2 s/frame at 100k undecimated bars; past 16 entries the
+  draw now builds a set index once (exact same match rule) — 18 ms on that
+  case, unchanged at click sizes.
+
 ### Changed
 
 - **charts: BREAKING — a plot click does nothing unless a `<Selector>` is
