@@ -77,8 +77,37 @@ export interface BarListCommon<R extends ListRow = ListRow> {
    * state: pair with `onRowClick`. `null` / omitted ⇒ none.
    */
   selected?: string | null;
-  /** Row click (rows show hover + pointer affordances only when provided). */
+  /** Row click (rows show the pointer affordance only when provided). */
   onRowClick?: (row: R) => void;
+  /**
+   * Controlled **hover-highlight** — the transiently lit row key(s), or `null`.
+   * **Omitted ⇒ uncontrolled** (the list tracks its own pointer, as it always
+   * has). The hover analog of {@link selected}: pass it to light rows from
+   * _outside_ the list — the chart bar the pointer is on, a map segment, a
+   * sibling list.
+   *
+   * **Accepts one key or a set**, the same union `<ChartContainer hovered>`
+   * takes ([PND-INTERACTCONF] / RFC `interaction.md` A3.1 — the list family
+   * speaks the canvas's interaction vocabulary, not a parallel one). Plural
+   * because a sweep lights several marks at once; a plain pointer-over carries
+   * 0 or 1, so passing a bare key still means exactly what it looks like.
+   *
+   * The library applies **no set arithmetic** — it reports what the pointer is
+   * over and renders what you hand back.
+   */
+  hovered?: string | readonly string[] | null;
+  /**
+   * Fires when the pointer enters a row (with that row) or leaves every row
+   * (`null`) — the hover analog of `onRowClick`, and the list's half of the
+   * bidirectional channel: mirror it out to light the matching chart bar,
+   * pairing with {@link hovered} to sync hover both ways.
+   *
+   * Notification only (fires controlled or uncontrolled) and **deduped by row
+   * key**, so it reports a row transition, not every pointer move. Moving from
+   * one row straight to the next reports the new row — no `null` in between;
+   * `null` means the pointer genuinely left the rows.
+   */
+  onHover?: (row: R | null) => void;
   /** Each bar line's height in px. **Omitted ⇒ `8`.** */
   barHeight?: number;
   /** Rule between rows (`theme.axis.grid`). **Omitted ⇒ `true`.** */
@@ -178,6 +207,8 @@ export function BarList<
     onExpandToggle,
     selected,
     onRowClick,
+    hovered,
+    onHover,
     markers,
     barHeight = 8,
     divided,
@@ -240,6 +271,8 @@ export function BarList<
       onExpandToggle={onExpandToggle}
       selected={selected}
       onRowClick={onRowClick}
+      hovered={hovered}
+      onHover={onHover}
       divided={divided}
       baseline={baseline}
       theme={theme}

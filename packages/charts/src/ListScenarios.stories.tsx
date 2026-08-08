@@ -2,7 +2,12 @@ import { useMemo, useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { TimeSeries } from 'pond-ts';
 import { BarList } from './BarList.js';
+import { BarChart } from './BarChart.js';
 import { BoxList } from './BoxList.js';
+import { ChartContainer } from './ChartContainer.js';
+import { ChartRow } from './ChartRow.js';
+import { Layers } from './Layers.js';
+import { YAxis } from './YAxis.js';
 import { defaultTheme, estelaTheme } from './theme.js';
 import type { ChartTheme } from './theme.js';
 import type { ListRow } from './list.js';
@@ -181,6 +186,9 @@ const fmtPace = (mph: number) => {
 const fmtTime = (sec: number) =>
   `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
 
+/** The split series' own window, for the linked-chart scenario's x range. */
+const SPLIT_RANGE: readonly [number, number] = [BASE, BASE + 3_500_000];
+
 /** Seven one-mile splits — the per-split rollup a run produces upstream. */
 function splitSeries() {
   return new TimeSeries({
@@ -274,6 +282,79 @@ export const Splits: StoryObj = {
             );
           }}
           defaultExpanded={[String(SPLIT2_TS)]}
+        />
+      </div>
+    );
+  },
+};
+
+/**
+ * **Hover-linked list ↔ chart** — the case #608 was filed for, and the reason
+ * the list family now speaks the canvas's `hovered` / `onHover` vocabulary
+ * (RFC `interaction.md` A3.1).
+ *
+ * One piece of consumer-owned state — the hovered split's key — is fed to
+ * **both** surfaces, and **both** report back into it:
+ *
+ * - hovering a **row** lights the matching **bar** (the list's `onHover` sets
+ *   the key; the chart's `hovered` reads it),
+ * - hovering a **bar** lights the matching **row** (the chart's `onHover` sets
+ *   it from the mark; the list's `hovered` reads it).
+ *
+ * The library holds nothing and decides nothing: it reports what the pointer
+ * is over and renders what it is handed. Note the two identities meeting —
+ * the list row's `key` is the split's timestamp as a string, which is exactly
+ * what a point-keyed `<BarChart>` reports as `SelectInfo.mark`, so the join is
+ * `String(t)` on both sides with no geometry in between.
+ */
+export const HoverLinkedChart: StoryObj = {
+  render: function HoverLinkedChartStory() {
+    const series = useMemo(splitSeries, []);
+    const [key, setKey] = useState<string | null>(null);
+    // The chart's half of the shared state: the same row key, re-dressed as
+    // the `SelectInfo` the canvas channel speaks (matched on `mark`).
+    const pinned =
+      key === null
+        ? null
+        : {
+            id: 'speed',
+            key: Number(key),
+            value: series.nearest(Number(key))?.get('speed') as number,
+            color: defaultTheme.bar.default.fill,
+            label: 'speed',
+            mark: key,
+          };
+    return (
+      <div style={{ width: 760 }}>
+        <h3 style={{ font: '600 14px system-ui', color: '#334155' }}>
+          Splits — hover either surface
+        </h3>
+        <ChartContainer
+          range={SPLIT_RANGE}
+          width={760}
+          hovered={pinned}
+          onHover={(hit) => setKey(hit?.mark ?? null)}
+        >
+          <ChartRow height={160}>
+            <YAxis id="speed" label="mph" min={0} />
+            <Layers>
+              <BarChart series={series} column="speed" id="speed" gap={3} />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>
+        <BarList
+          series={series}
+          label={(i) => `${i + 1}`}
+          columns={[{ column: 'speed' }]}
+          hovered={key}
+          onHover={(r) => setKey(r?.key ?? null)}
+          after={[
+            {
+              key: 'speed',
+              align: 'right',
+              render: (r) => `${(r.values.speed as number).toFixed(1)} mph`,
+            },
+          ]}
         />
       </div>
     );
