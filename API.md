@@ -294,18 +294,21 @@ The `cursor` string modes as components (interaction RFC §4/A4.1) — mount one
 as a child of `<ChartContainer>` (the default for every row) or inside a
 `<ChartRow>` (the per-row override). Render-only presets stack; one
 gesture-owning cursor (`Crosshair`/`Range`) per scope. The `cursor` /
-`cursorTime` / `crosshairSnap` / `cursorFormat` / `cursorSequence` props (and
-`<ChartRow cursor>`) are **deprecated** — they keep working for one minor via
-an internal shim. The underlying `CursorSpec` contract stays unpublished (Q3).
+`cursorTime` / `crosshairSnap` / `cursorFormat` / `cursorSequence` /
+`onRegionSelect` / `regionSelectModifier` props (and `<ChartRow cursor>`) are
+**deprecated** — they keep working for one minor via an internal shim. The
+underlying `CursorSpec` contract stays unpublished (Q3); every drag claim on
+the plot (annotation-create, the range drag, pan) is arbitrated by one brush
+recognizer with a documented precedence (`src/brush.tsx`, RFC A1.5/A2.7).
 
-| Component         | Key props                       | Purpose                                                                             | Source                            |
-| ----------------- | ------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------- |
-| `LineCursor`      | `showTime?`                     | The synced vertical line (`cursor="line"`, the legacy default)                      | `packages/charts/src/cursors.tsx` |
-| `PointCursor`     | `showTime?`                     | A dot on each series at the cursor (`"point"`)                                      | `packages/charts/src/cursors.tsx` |
-| `InlineCursor`    | `showTime?`                     | Dots + a value chip beside each (`"inline"`)                                        | `packages/charts/src/cursors.tsx` |
-| `FlagCursor`      | `showTime?`                     | Dots + staffed value flags stacked at the top (`"flag"`)                            | `packages/charts/src/cursors.tsx` |
-| `CrosshairCursor` | `snap?`, `showTime?`, `format?` | The inspection reticle: dashed cross, y value pill, x time pill (`"crosshair"`)     | `packages/charts/src/cursors.tsx` |
-| `RangeCursor`     | `sequence?`                     | The hover-time band over the bucket under the pointer (`"region"`); drag lands next | `packages/charts/src/cursors.tsx` |
+| Component         | Key props                                                     | Purpose                                                                                                                       | Source                            |
+| ----------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| `LineCursor`      | `showTime?`                                                   | The synced vertical line (`cursor="line"`, the legacy default)                                                                | `packages/charts/src/cursors.tsx` |
+| `PointCursor`     | `showTime?`                                                   | A dot on each series at the cursor (`"point"`)                                                                                | `packages/charts/src/cursors.tsx` |
+| `InlineCursor`    | `showTime?`                                                   | Dots + a value chip beside each (`"inline"`)                                                                                  | `packages/charts/src/cursors.tsx` |
+| `FlagCursor`      | `showTime?`                                                   | Dots + staffed value flags stacked at the top (`"flag"`)                                                                      | `packages/charts/src/cursors.tsx` |
+| `CrosshairCursor` | `snap?`, `showTime?`, `format?`                               | The inspection reticle: dashed cross, y value pill, x time pill (`"crosshair"`)                                               | `packages/charts/src/cursors.tsx` |
+| `RangeCursor`     | `sequence?`, `onDragRelease?`, `enableDrag?`, `dragModifier?` | The hover-time band + the drag: release fires once with a `RangeSpan`, then reverts (`"region"` + `onRegionSelect` successor) | `packages/charts/src/cursors.tsx` |
 
 ### Components — standalone row lists (DOM tables, no `<ChartContainer>`)
 
@@ -382,6 +385,7 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 | `SelectInfo`                               | Selection/hover payload (`ChartContainer` `onSelect`/`onHover`)                  | `packages/charts/src/context.ts`          |
 | `SelectModifiers`                          | Keyboard modifiers on a click, 2nd arg to `onSelect`                             | `packages/charts/src/context.ts`          |
 | `SelectorProps`                            | `<Selector>`'s props — `onSelect?` / `onHover?`                                  | `packages/charts/src/selectors.tsx`       |
+| `RangeSpan`                                | `<RangeCursor onDragRelease>` payload — `{ x: [lo, hi], y? }` in axis units      | `packages/charts/src/context.ts`          |
 | `DrawStatsFrame` / `LayerDrawInfo`         | Per-repaint draw-cost + decimation stats (`ChartContainer` `onDrawStats`)        | `packages/charts/src/context.ts`          |
 | `TimeGrain`                                | Coarse time unit for grain-aware formatting                                      | `packages/charts/src/tickLadder.ts`       |
 | `SwatchSpec` / `LegendItemInput`           | Legend swatch vocabulary + explicit-rows input (`<Legend items>`)                | `packages/charts/src/swatch.ts`           |

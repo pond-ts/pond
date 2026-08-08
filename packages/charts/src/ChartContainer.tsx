@@ -309,6 +309,12 @@ export interface ChartContainerProps {
    * domain is meaningless), so a **value** axis is always freeform. No-op unless
    * `cursor="region"` on a **time** or **value** x-axis (a **category** axis is
    * excluded — an ordinal-slot select is a different gesture).
+   *
+   * @deprecated Use `<RangeCursor onDragRelease>` — the drag moved onto the
+   * component, and the payload becomes `{ x: [lo, hi] }` (a {@link RangeSpan},
+   * forward-compatible with the 2-D drag's optional `y`) instead of the bare
+   * pair. Works for one more minor; a mounted `<RangeCursor onDragRelease>`
+   * takes over the gesture.
    */
   onRegionSelect?: (range: readonly [number, number]) => void;
   /**
@@ -319,6 +325,9 @@ export interface ChartContainerProps {
    * selects). **Omitted** ⇒ a region-drag
    * **preempts** pan (drag always selects; document that precedence for users).
    * Wheel-zoom is unaffected in every case.
+   *
+   * @deprecated Use `<RangeCursor dragModifier>` — the prop moved onto the
+   * component alongside `onDragRelease`. Works for one more minor.
    */
   regionSelectModifier?: 'shift';
   /**
@@ -701,6 +710,13 @@ export function ChartContainer({
       legacy.push('cursorFormat → format on <CrosshairCursor>');
     if (cursorSequenceProp !== undefined)
       legacy.push('cursorSequence → <RangeCursor sequence>');
+    if (onRegionSelect !== undefined)
+      legacy.push(
+        'onRegionSelect → <RangeCursor onDragRelease> (the payload becomes ' +
+          '{ x: [lo, hi] })',
+      );
+    if (regionSelectModifier !== undefined)
+      legacy.push('regionSelectModifier → <RangeCursor dragModifier>');
     if (legacy.length === 0) return;
     warnedLegacyRef.current = true;
     console.warn(legacyCursorWarning(legacy));
@@ -710,6 +726,8 @@ export function ChartContainer({
     cursorTimeProp,
     cursorFormatProp,
     cursorSequenceProp,
+    onRegionSelect,
+    regionSelectModifier,
   ]);
 
   // Mounted-cursor registry ({@link ContainerFrame.registerCursor}): the

@@ -882,6 +882,30 @@ export interface SelectorEntry {
   readonly legacy: boolean;
 }
 
+/**
+ * The span a completed `<RangeCursor>` drag reports to `onDragRelease` —
+ * **one uniform shape with an optional y** (interaction RFC A3.3), not the
+ * bare pair the legacy `onRegionSelect` used, and not a polymorphic union a
+ * consumer must narrow.
+ *
+ * `x` is `[lo, hi]` in **axis units** — epoch ms on a time axis, the axis
+ * value (strike, distance, …) on a value axis — snapped to the cursor's
+ * buckets when it has a `sequence` (or a histogram's bins), else the raw drag
+ * span. `y` is **absent on today's 1-D layers**; the 2-D drag (scatter / heat
+ * map — [PND-INTERACT2D]) will populate it *without a breaking change*, which
+ * is the whole reason the 1-D payload is already an object.
+ *
+ * The x pair feeds `ChartContainer.range` directly (it accepts a
+ * `readonly [number, number]`), so drag-to-zoom is
+ * `onDragRelease={(s) => setRange(s.x)}`; a time-axis consumer who wants a
+ * `TimeRange` constructs one from the pair.
+ */
+export interface RangeSpan {
+  readonly x: readonly [number, number];
+  /** Present only on a 2-D drag (scatter / heat map) — not yet emitted. */
+  readonly y?: readonly [number, number];
+}
+
 export interface SelectInfo {
   /**
    * The **series identity** — the layer's `id` prop. The selection / dedup /
@@ -1131,6 +1155,17 @@ export interface CursorEntry {
   /** The range cursor's bucket sequence (realized by the container into the
    *  shared snap buckets — the `cursorSequence` successor). */
   readonly sequence?: Sequence | BoundedSequence | undefined;
+  /** The range cursor's drag-release callback (the `onRegionSelect`
+   *  successor) — read by the brush recognizer (`resolveRangeDrag`), which
+   *  wraps it into the range-drag session. Only a `<RangeCursor>` sets it. */
+  readonly onDragRelease?: ((span: RangeSpan) => void) | undefined;
+  /** Whether the range drag is live — **resolved** at build time
+   *  (`enableDrag ?? !!onDragRelease`), so `false` here means frozen: the
+   *  gesture is off even though the callback is wired (§6's OFF switch). */
+  readonly enableDrag?: boolean | undefined;
+  /** The modifier the range drag needs (the `regionSelectModifier`
+   *  successor) — only enforced while pan is enabled. */
+  readonly dragModifier?: 'shift' | undefined;
   /** The cursor's readout format (the `cursorFormat` successor) — resolved by
    *  the container into the shared readout channel. */
   readonly format?: CursorFormat | undefined;
