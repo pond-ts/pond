@@ -35,9 +35,17 @@
 > list family shares this vocabulary, and whether the annotation `<Region>` is
 > the name that should move.
 >
+> **Amendment 3 (2026-08-08)** takes A2's two scope calls — the **list family is
+> in scope** (one interaction vocabulary across the whole API) and **no
+> namespacing** — and records a requirement that materially widens §8: the region
+> is **2-D on scatter and heat map**, 1-D everywhere else, for both zoom and
+> select. The drag treatment is **per-layer** (heat map outlines, scatter dims),
+> which resolves Q11. Systematic Storybook coverage of the full combination is a
+> **shipping gate** on every step.
+>
 > Reading order for the interaction surface: `cursor.md` (what cursors draw) →
-> `selection.md` v1 → its A1–A5 → this RFC §1–§12 → A1 → **A2 is current on API
-> shape**.
+> `selection.md` v1 → its A1–A5 → this RFC §1–§12 → A1 → A2 → **A3 is current on
+> API shape**.
 
 ## 1. The question
 
@@ -914,3 +922,166 @@ channel (`SpanSelection.exclude?`) or a documented rule that **any click after a
 sweep replaces**. Either is defensible; neither is written down; **and the
 answer decides whether the descriptor can be the round-trip currency at all.**
 This blocks A2.4, which blocks §10 step 5.
+
+## Amendment 3 (2026-08-08) — scope calls, and the region is 2-D
+
+> _Dispositions by pjm17971 in response to A2's Q9/Q10, plus new requirements
+> that materially widen §8. Reading order: §1–§12 → A1 → A2 → **A3 is
+> current**._
+
+### A3.1 Q9 resolved — the list family is **in scope**
+
+> _"Lists are in scope, it should work the same way across the whole API."_
+
+`<BarList>` / `<BoxList>` share this interaction vocabulary. Not a parallel
+model, not an island that freezes with a different dialect at 1.0 — **the same
+one**. Concretely, that means [#608](https://github.com/pond-ts/pond/issues/608)
+is not a standalone list feature request but a **conformance item** under this
+RFC: `ListTable`'s hover moves out of internal state and onto the same
+`hovered` / `onHover` channel the canvas layers use.
+
+Carry A2.1's correction through: the mirror target is **plural** hover, not the
+singular rule the review cited from a superseded line.
+
+**Consequence for §10:** a conformance pass across every interactive surface
+joins the sequencing — the canvas layers, the list family, and (per Q7) the two
+layers still reading a single selection.
+
+### A3.2 Q10 partly resolved — no namespacing
+
+> _"No namespacing."_
+
+Codex's `Cursor.Crosshair` / `Selection.Brush` compound proposal is **rejected**.
+Flat names, consistent with Fable's argument: nothing in `@pond-ts/charts`
+exports a namespaced compound today (the annotation family is flat `Region` /
+`Marker` / `Zone`), so it would introduce a new idiom to solve a naming problem,
+and flat `*Cursor` names keep the 1:1 parity with the mode strings §9's
+migration table leans on.
+
+**Still open:** flat names settle the _form_ but not the **collision**.
+`RegionCursor` / `RegionSelector` / `Region` (annotation) remain three flat names
+in one namespace, and `mark` is still overloaded three ways (`<Marker>` the
+annotation, `SelectInfo.mark` the identity, `StackMark` the internal). Since two
+of the three colliding region names are **new**, renaming the incumbent
+annotation is still the cheapest fix available while pre-1.0 allows it. **Q10
+stays open on that narrower question.**
+
+### A3.3 The region is **2-D** on scatter and heat map — this widens §8
+
+> _"Scatter chart region select is 2d, so is heat map… drag to zoom behavior (2d
+> on scatter and heatmap), 1d elsewhere."_
+
+§8 assumed a sweep is an **x-span**. That is true for bars, lines, candles and
+the list family, and **false for the two layers whose marks live in two
+dimensions**. `selection.md` A4.4 Q14 flagged this as an open question ("x-only
+or a 2-D rubber band?") and guessed it would be "a materially bigger thing and
+probably its own RFC." It isn't a separate RFC — it is a **requirement of this
+one**, and it lands on both region components:
+
+|                    | 1-D (bars, lines, candles, lists) | 2-D (scatter, heat map)   |
+| ------------------ | --------------------------------- | ------------------------- |
+| `<RegionCursor>`   | x-span → zoom the view            | x+y rect → zoom both axes |
+| `<RegionSelector>` | marks whose x falls in the span   | marks inside the rect     |
+
+**The payload can no longer be a bare pair.** `onRegionSelect` reports
+`readonly [number, number]` today (§6 preserves it). A 2-D region has no
+faithful encoding in that shape. Proposed: **one uniform shape with an optional
+y**, rather than a polymorphic union a consumer has to narrow —
+
+```ts
+interface RegionSpan {
+  readonly x: readonly [number, number]; // axis units, as today
+  readonly y?: readonly [number, number]; // present only on a 2-D drag
+}
+```
+
+**And A2.4's descriptor needs the same treatment.** `SpanSelection` as proposed
+carries a single `span`; a rect needs both axes, and the membership test becomes
+two interval tests instead of one — still O(1) per mark, which is the property
+that made the descriptor worth proposing:
+
+```ts
+interface SpanSelection {
+  readonly id: string;
+  readonly x: readonly [number, number];
+  readonly y?: readonly [number, number];
+}
+```
+
+**Two dimensions is not one thing, either.** Scatter is continuous × continuous;
+a heat map is **binned x × ordinal rows**. The rect test is the same shape but
+the indexing is not, and A2.4 already named the 2-D grid case as "the genuinely
+new indexing work". This confirms it as **required rather than hypothetical** —
+and the use-case review's arithmetic (the Niño grid at 365 × 45 = 16,425 cells)
+is the case it has to survive.
+
+**estela's constraint still holds and now matters more:** the 1-D zoom path
+wants a cheap span and no enumeration. A 2-D rect must not drag a descriptor
+into the 1-D path that never needed one.
+
+### A3.4 The drag treatment is **per-layer** — which resolves Q11
+
+> _"Heat map outlines a rect, scatter dims, as the region is dragged over it."_
+
+Two layers, two idioms, same state. This settles **Q11** — the use-case review's
+"where does a layer's own hover affordance sit?" — and it settles it in the
+layer's favour:
+
+**The library owns the _state_; the layer owns the _treatment_.** The frame
+carries plural `hovered` (the marks a release would commit); each layer renders
+that in its own vocabulary. A heat map outlines the covered rect because
+[HeatMap.tsx](../../packages/charts/src/HeatMap.tsx) already reasons that "the
+cell under the pointer takes an outline, which says both axes at once… the cell
+outline is the whole affordance." A scatter **dims what is not covered**,
+because with hundreds of overlapping discs, marking the excluded set reads
+better than outlining the included one.
+
+This is the existing `selected > hovered > dimmed > rest` precedence chain
+(#606) applied per layer — not new machinery. What A2.8's Q11 asked for is the
+**statement**, and it is this: a layer drawing its own live treatment is **not a
+cursor** and does not compete with the pick-one rule. It is a layer rendering
+container state, exactly as it already renders `selected`.
+
+**It also retires the last of A4.2's phrasing.** "The bars under the sweep show
+the hover treatment" was right about the state and too specific about the look —
+there is no single sweep treatment to specify, only a per-layer one to theme.
+
+### A3.5 Systematic Storybook coverage is a **shipping gate**, not a follow-up
+
+> _"The implementation should be done with systematic storybooks demoing the full
+> combination: selections and cursors, drag to zoom behavior (2d on scatter and
+> heatmap), 1d elsewhere and so on across the whole api surface."_
+
+This is CLAUDE.md's "Storybook stories: systematic feature coverage" rule
+applied to the widest surface it has yet had to cover — and the rule earns its
+keep here for exactly the reason it was written: the charts #325 → #326 fan-out
+"immediately surfaced a dozen-plus real bugs that spot-check examples had
+hidden." A combination this large is where a knob with no dedicated story is a
+knob nobody discovers.
+
+The matrix is the product of, at minimum:
+
+- **cursor** — each preset × mounted-at-container vs mounted-in-row × none
+- **selector** — none / `<Selector>` / `<RegionSelector>`
+- **dimensionality** — 1-D (bars, lines, candles, lists) × 2-D (scatter, heat
+  map)
+- **gesture** — click, sweep, sweep + modifier, drag-to-zoom, and each against
+  pan enabled and disabled
+- **surface** — canvas layers **and** the list family (A3.1)
+
+**No step of §10 counts as landed without its slice of that matrix.** The stories
+are not documentation of the feature; on a combination surface they are the
+review technique that finds the combination bugs — and `panZoom2D` silently
+degrading on a category axis (A2.2) is the local proof.
+
+### A3.6 Consequences for the sequencing
+
+- **§8 / §10 step 5 widens** to cover 2-D. It was already blocked on Q12
+  (span-minus-point); it is now additionally blocked on the 2-D descriptor shape
+  and the grid indexing A3.3 confirms is required.
+- **A conformance pass joins §10** — the list family (A3.1) plus the two layers
+  from Q7 — so that "the same way across the whole API" is true when it freezes.
+- **The Storybook matrix (A3.5) gates every step**, not the end of the project.
+
+Nothing above changes §1–§7. The split, the mounted model, picking over
+composing, and A1.2's state-on-the-container all stand as written.
