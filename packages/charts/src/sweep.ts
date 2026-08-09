@@ -126,3 +126,108 @@ export function sweep1D(opts: {
     },
   };
 }
+
+/**
+ * A **2-D** sweep session — the rect gesture, for layers whose marks do not
+ * reduce to a run of columns ([PND-INTERACT2D], RFC A7.6/A7.7).
+ *
+ * The x half is {@link sweep1D}'s exactly: two binary-search probes over the
+ * sorted, non-overlapping key spans. A **point** layer passes `begin === end`
+ * (a position has no span either side of it), which makes the same cut mean
+ * "keys within the window". The y half is the layer's own business — it
+ * arrives as a window and the layer's `materialize` applies it, because a
+ * scatter filters a continuous value while a heat map picks whole row slots.
+ *
+ * **No spatial index, deliberately** (Q14): the x cut is `O(log N)` and the y
+ * filter is a scan of that run, so nothing persists outside a drag. The
+ * delta-gate below is what keeps that affordable — a pointer move that changes
+ * neither the run nor the y window re-materialises nothing, which is the
+ * lesson A8.1 cost 6.2 s/frame to learn on the 1-D preview.
+ */
+export function sweep2D(opts: {
+  readonly id: string;
+  /** Key-axis begins, ascending. Equal to `end` for a point layer. */
+  readonly begin: ArrayLike<number>;
+  /** Key-axis ends, ascending. Equal to `begin` for a point layer. */
+  readonly end: ArrayLike<number>;
+  readonly length: number;
+  /** The marks in key-run `[lo, hi)` that also fall inside `[y0, y1]`. */
+  materialize(
+    lo: number,
+    hi: number,
+    y0: number,
+    y1: number,
+  ): readonly SelectInfo[];
+  /** The captured set's second-dimension channels — see
+   *  {@link SweepSession.extent2D}. */
+  channels(
+    hits: readonly SelectInfo[],
+    y0: number,
+    y1: number,
+  ): {
+    readonly y?: readonly [number, number];
+    readonly rows?: readonly string[];
+  } | null;
+}): SweepSession {
+  const { id, begin, end, length, materialize, channels } = opts;
+  let curLo = 0;
+  let curHi = 0;
+  // The y window is part of the gate: moving the pointer vertically changes
+  // the covered set without moving the x run at all.
+  let curY0 = 0;
+  let curY1 = 0;
+  let cache: readonly SelectInfo[] = NO_HITS;
+  let dirty = false;
+  return {
+    id,
+    twoD: true,
+    update(x0: number, x1: number, y0 = 0, y1 = 0): boolean {
+      let lo = firstAbove(end, length, x0);
+      let hi = firstAtOrAbove(begin, length, x1);
+      if (hi < lo) hi = lo;
+      // A point layer's `end === begin`, so a mark sitting exactly on `x0` is
+      // excluded by `firstAbove`. Pull it back in: the press pixel is inside
+      // the rect the user is drawing, not outside it.
+      while (lo > 0 && begin[lo - 1] === x0) lo -= 1;
+      const [ylo, yhi] = y0 <= y1 ? [y0, y1] : [y1, y0];
+      if (lo === curLo && hi === curHi && ylo === curY0 && yhi === curY1) {
+        return false;
+      }
+      curLo = lo;
+      curHi = hi;
+      curY0 = ylo;
+      curY1 = yhi;
+      dirty = true;
+      return true;
+    },
+    hits(): readonly SelectInfo[] {
+      if (dirty) {
+        cache =
+          curHi > curLo ? materialize(curLo, curHi, curY0, curY1) : NO_HITS;
+        dirty = false;
+      }
+      return cache;
+    },
+    extent(): readonly [number, number] | null {
+      // Snapped outward exactly as 1-D — but over the marks the **y filter
+      // kept**, not the whole x run. A column whose cells all fell outside the
+      // rect must not widen the span, or replaying that span would re-select
+      // marks the drag never covered.
+      //
+      // Every mark's `key` IS its `begin` on both 2-D layers, and `materialize`
+      // walks the run in index order, so the surviving edges are the first and
+      // last hit keys — the right edge found with one `O(log N)` probe rather
+      // than a scan.
+      const hs = this.hits();
+      if (hs.length === 0) return null;
+      const lo = hs[0]!.key;
+      const last = hs[hs.length - 1]!.key;
+      const i = firstAtOrAbove(begin, length, last);
+      return [lo, i < length && begin[i] === last ? end[i]! : last];
+    },
+    extent2D() {
+      const hs = this.hits();
+      return hs.length === 0 ? null : channels(hs, curY0, curY1);
+    },
+  };
+}

@@ -19,8 +19,10 @@ import {
   LayersContext,
   type LayerEntry,
   type SelectInfo,
+  type SweepSession,
 } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
+import { sweep2D } from './sweep.js';
 
 export interface HeatMapProps<
   S extends SeriesSchema = SeriesSchema,
@@ -406,6 +408,60 @@ export function HeatMap<
                   label: name,
                   ...(mark !== undefined ? { mark } : {}),
                 };
+              },
+              /**
+               * The **snapped rect** ([PND-INTERACT2D]). Both dimensions snap:
+               * x to whole bin columns (`sweep2D`'s cut, as every column mark
+               * does) and y **outward to whole row slots** — a vertical heat
+               * map's rows own the unit intervals `[g, g+1)` of its value axis
+               * (see `yExtent`), so a window is floored and ceiled onto them.
+               *
+               * Snapping both is what makes the selection a contiguous
+               * rectangle of cells, which in turn is why the region can carry
+               * **one** perimeter rather than a border per cell.
+               */
+              beginSweep: (): SweepSession | null => {
+                if (!vertical || ss.length === 0 || G === 0) return null;
+                /** The window's covering row-slot run, snapped outward. */
+                const rowRun = (y0: number, y1: number): [number, number] => {
+                  const g0 = Math.max(0, Math.floor(y0));
+                  const g1 = Math.min(G, Math.ceil(y1));
+                  return [g0, g1 > g0 ? g1 : g0];
+                };
+                return sweep2D({
+                  id,
+                  begin: ss.begin,
+                  end: ss.end,
+                  length: ss.length,
+                  materialize: (lo, hi, y0, y1) => {
+                    const [g0, g1] = rowRun(y0, y1);
+                    const out: SelectInfo[] = [];
+                    for (let b = lo; b < hi; b += 1) {
+                      const mark = ss.marks?.[b];
+                      for (let g = g0; g < g1; g += 1) {
+                        const v = ss.values[b * G + g]!;
+                        // A gap cell draws nothing and owns no membership —
+                        // the rule `hitTest` already applies.
+                        if (!Number.isFinite(v)) continue;
+                        out.push({
+                          id,
+                          key: ss.begin[b]!,
+                          value: v,
+                          color: colorOf(v) ?? style.highlight,
+                          label: ss.groups[g]!,
+                          ...(mark !== undefined ? { mark } : {}),
+                        });
+                      }
+                    }
+                    return out;
+                  },
+                  // `rows` names the rows rather than numbering slots, so a
+                  // committed selection survives a row reorder (RFC A5.3).
+                  channels: (_hits, y0, y1) => {
+                    const [g0, g1] = rowRun(y0, y1);
+                    return { rows: ss.groups.slice(g0, g1) };
+                  },
+                });
               },
             }),
         draw: (ctx, xScale, yScale) =>

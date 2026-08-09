@@ -847,6 +847,24 @@ export interface SweepSession {
    * when nothing is covered.
    */
   extent(): readonly [number, number] | null;
+  /**
+   * **Set by a layer whose marks live in two dimensions** — a scatter (a point
+   * is a position, not a column) or a heat map (a grid of cells). The gesture
+   * reads this to decide whether to track a y window alongside x and to draw a
+   * rect rather than a band: dimensionality is a property of the *layer*, so a
+   * consumer mounts the same `<MultiSelector>` either way (RFC Q14).
+   */
+  readonly twoD?: boolean;
+  /**
+   * The captured set's **second-dimension** channels, for a `twoD` session —
+   * whichever of {@link SpanSelection.y} (a scatter's continuous window) and
+   * {@link SpanSelection.rows} (a heat map's ordinal row set) the layer uses.
+   * `null` when nothing is covered. Absent on a 1-D session.
+   */
+  extent2D?(): {
+    readonly y?: readonly [number, number];
+    readonly rows?: readonly string[];
+  } | null;
 }
 
 /**

@@ -21,13 +21,20 @@ import {
 } from './encoding.js';
 import type { DecimateOption } from './decimate.js';
 import { spansForLayer } from './span.js';
-import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
+import {
+  ContainerContext,
+  LayersContext,
+  type LayerEntry,
+  type SelectInfo,
+  type SweepSession,
+} from './context.js';
 import {
   legendLabelFor,
   useLegendItems,
   type LegendItemInput,
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
+import { sweep2D } from './sweep.js';
 
 export interface ScatterChartCommon<
   S extends SeriesSchema = SeriesSchema,
@@ -345,6 +352,51 @@ export function ScatterChart<
                   seriesLabel,
                   offset,
                 ),
+              /**
+               * The **free rect** ([PND-INTERACT2D]). A point is a position,
+               * not a column, so `sweep2D` gets `begin === end` and its x cut
+               * means "keys inside the window"; the y half is a plain scan of
+               * that run, because a scatter's second dimension is continuous
+               * and has nothing to snap to.
+               *
+               * Each materialised hit is exactly what `hitTestScatter` reports
+               * for that point, so a swept point and a clicked one are the
+               * same currency.
+               */
+              beginSweep: (): SweepSession | null =>
+                cs.length === 0
+                  ? null
+                  : sweep2D({
+                      id,
+                      // A point layer: no span either side of the key.
+                      begin: cs.x,
+                      end: cs.x,
+                      length: cs.length,
+                      materialize: (lo, hi, y0, y1) => {
+                        const out: SelectInfo[] = [];
+                        for (let i = lo; i < hi; i += 1) {
+                          const v = cs.y[i]!;
+                          // Half-open in y, matching `SpanSelection.y`'s own
+                          // containment test — so replaying the committed span
+                          // reproduces exactly this set.
+                          if (!Number.isFinite(v) || v < y0 || v >= y1)
+                            continue;
+                          out.push({
+                            id,
+                            key: keyAt(i),
+                            value: v,
+                            color: encoding.colorAt(i),
+                            label: seriesLabel,
+                          });
+                        }
+                        return out;
+                      },
+                      // The committed window is the drag's own, not the
+                      // points' tight bounds: the rect is what the user drew,
+                      // and a tightened box would quietly exclude a point that
+                      // arrives later inside the same region.
+                      channels: (_hits, y0, y1) => ({ y: [y0, y1] }),
+                    }),
             }),
         draw: (ctx, xScale, yScale) =>
           drawScatter(
