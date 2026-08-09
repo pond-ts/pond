@@ -6,6 +6,13 @@ import * as selectorCategorical from '../src/SelectorCategorical.stories.js';
 import * as selectorBarChart from '../src/SelectorBarChart.stories.js';
 import * as multiCategorical from '../src/MultiSelectorCategorical.stories.js';
 import * as multiBarChart from '../src/MultiSelectorBarChart.stories.js';
+import * as multiTradingSessions from '../src/MultiSelectorTradingSessions.stories.js';
+import { makeSessionStories } from '../src/selection-stories.js';
+import {
+  categoricalBars,
+  timeBars,
+  tradingSessions,
+} from '../src/selection-fixtures.js';
 
 afterEach(cleanup);
 
@@ -62,6 +69,26 @@ describe('the selection matrix covers the same features in every column', () => 
     expect(namesOf(multiBarChart)).toEqual(
       [...MULTI_FEATURES, 'SweepWithSequence'].sort(),
     );
+    // The trading column adds the session pair on top of the sequence cell —
+    // the *only* column whose axis has seams for a block to respect or cross,
+    // so these two have nothing to be compared against elsewhere.
+    expect(namesOf(multiTradingSessions)).toEqual(
+      [
+        ...MULTI_FEATURES,
+        'SweepWithSequence',
+        'SequenceConformsToSessions',
+        'SequenceCrossesSessions',
+      ].sort(),
+    );
+  });
+
+  it('the session pair is generated only where the axis has seams', () => {
+    // A fixture that declares no `sessions` gets no session stories — the
+    // capability is declared, not assumed, so a column can never carry a cell
+    // that silently demonstrates nothing (the rule `rangeCursor` earned).
+    expect(makeSessionStories(categoricalBars)).toBeNull();
+    expect(makeSessionStories(timeBars)).toBeNull();
+    expect(makeSessionStories(tradingSessions)).not.toBeNull();
   });
 });
 
@@ -70,6 +97,7 @@ describe.each([
   ['Selector/BarChart', selectorBarChart],
   ['MultiSelector/Categorical', multiCategorical],
   ['MultiSelector/BarChart', multiBarChart],
+  ['MultiSelector/TradingSessions', multiTradingSessions],
 ])('%s stories render', (_group, mod) => {
   for (const [name, story] of Object.entries(mod).filter(
     ([n, v]) =>

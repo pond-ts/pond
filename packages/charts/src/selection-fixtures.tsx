@@ -1,8 +1,15 @@
 import type { ReactNode } from 'react';
-import { Sequence, TimeSeries } from 'pond-ts';
+import { BoundedSequence, Sequence, TimeSeries } from 'pond-ts';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
 import type { SelectInfo } from './context.js';
+import {
+  H,
+  calendarOf,
+  sessionSeq,
+  weekdaySessions,
+  type Session,
+} from './tradingAxis.fixture.js';
 
 /**
  * **Chart fixtures for the selection matrix** (`Interactions/Selector/*`,
@@ -49,11 +56,26 @@ export interface ChartFixture {
   /** How a hit reads in a caption. */
   describe(hit: SelectInfo): string;
   /** A snapping sequence, where the axis has one. Ordinal axes do not. */
-  readonly sequence?: () => Sequence;
+  readonly sequence?: () => Sequence | BoundedSequence;
   /** Whether `<RangeCursor>` draws here — it gates on a continuous x
    *  (`brush.tsx`), so mounting one on a category axis is not just inert, it
    *  takes the row's cursor with it. */
   readonly rangeCursor: boolean;
+  /**
+   * Present only where the x axis **collapses closed-market time**, which is
+   * what makes a snap block's relationship to the session grid a question at
+   * all. Supplies the two bucketings that answer it — see the pair of stories
+   * `makeSessionStories` generates.
+   */
+  readonly sessions?: {
+    /** A bucketing that **agrees** with the session grid: one block per
+     *  session, so a block's edges land exactly on the dividers. */
+    conforming: () => BoundedSequence;
+    /** A bucketing that **doesn't**: a wall-clock period whose boundaries fall
+     *  mid-session, so a block starts inside one session, crosses the collapsed
+     *  gap, and ends inside the next. */
+    crossing: () => Sequence;
+  };
 }
 
 const DAY = 86_400_000;
@@ -178,8 +200,124 @@ export const timeBars: ChartFixture = {
   rangeCursor: true,
 };
 
+// ── Trading sessions (a discontinuous time axis) ───────────────────────────
+
+/** Six weekday sessions (09:30–16:00 UTC) from a Monday — five overnight seams
+ *  plus a **weekend** one, which is the widest collapse in view. */
+const SESSIONS: Session[] = weekdaySessions(6);
+const MON_OPEN = SESSIONS[0]!.open;
+
+/** Hourly interval bars inside each session, the last one clipped at the close.
+ *  Seven bars per session (09:30 … 15:30), so a block is countable by eye. */
+const sessionBars = (amp: number, phase: number) => {
+  const rows: [[number, number], number][] = [];
+  let i = 0;
+  for (const s of SESSIONS) {
+    for (let t = s.open; t < s.close; t += H, i++) {
+      rows.push([
+        [t, Math.min(t + H, s.close)],
+        6 + amp * Math.sin(i / 3 + phase) + 1.2 * Math.sin(i * 1.7),
+      ]);
+    }
+  }
+  return new TimeSeries({
+    name: 'session',
+    schema: [
+      { name: 'timeRange', kind: 'timeRange' },
+      { name: 'v', kind: 'number' },
+    ] as const,
+    rows,
+  });
+};
+
+const stamp = (t: number) =>
+  new Date(t).toISOString().slice(5, 16).replace('T', ' ');
+
+/**
+ * **A trading-time axis** — closed-market time collapsed, session dividers
+ * drawn. Selection on a *continuous* axis never has to ask where a block's
+ * edges fall relative to the data's own structure; here it does, because the
+ * axis has seams and a wall-clock bucketing knows nothing about them.
+ *
+ * `sessionDividers: 'all'` is part of the fixture rather than of one story:
+ * every cell in this column is about the session grid, so the grid should be
+ * visible in all of them.
+ */
+export const tradingSessions: ChartFixture = {
+  name: 'TradingSessions',
+  container: {
+    /**
+     * Wider than the other columns — 42 bars across 6 sessions.
+     *
+     * **The x labels still crowd, and that is a defect this column found.**
+     * The trading axis budgets `TRADING_TICK_PX` (65px) of plot per tick and
+     * picks the finest grain that fits; here that is 12 hours. But a `00:00`
+     * anchor is not *inside* any session, so the collapse relocates it to the
+     * session open (09:30) — 2.5h into a 6.5h session, ~33px from that
+     * session's `12:00` label. The budget bounds spacing in wall-clock time
+     * and the axis draws in trading time, so it does not bound what it thinks
+     * it bounds. Widening moves the labels from overlapping to merely
+     * abutting, which is why 820 rather than the shared 640.
+     *
+     * Left visible on purpose: it is orthogonal to selection, and papering
+     * over it (fewer sessions, one bar per session) would cost the weekend
+     * seam the crossing story is built on.
+     */
+    width: 820,
+    range: [MON_OPEN, SESSIONS[SESSIONS.length - 1]!.close],
+    // The high-level sugar; the container derives the provider itself. Built
+    // once at module scope because the prop must be a *stable* reference.
+    calendar: calendarOf(SESSIONS),
+    sessionDividers: 'all',
+  },
+  axis: { id: 'v', min: 0, max: 12, label: '' },
+  renderLayer: (id) => (
+    <BarChart series={sessionBars(4, 0)} column="v" axis="v" id={id} />
+  ),
+  secondary: {
+    axis: { id: 'e', min: 0, max: 12, label: 'errors' },
+    renderLayer: (id) => (
+      <BarChart
+        series={sessionBars(2.2, 1.1)}
+        column="v"
+        axis="e"
+        id={id}
+        as="warn"
+      />
+    ),
+  },
+  picks: [0, 3, 8].map((i) => ({
+    label: stamp(MON_OPEN + i * H),
+    info: {
+      id: 'svc',
+      key: MON_OPEN + i * H,
+      value: 0,
+      color: '#000',
+      label: 'v',
+    },
+  })),
+  describe: (hit) => stamp(hit.key),
+  // The column's ordinary `SweepWithSequence` cell snaps to whole sessions —
+  // the same bucketing `sessions.conforming` names, so the generated story and
+  // the session pair below agree about what "conforming" means.
+  sequence: () => sessionSeq(SESSIONS),
+  rangeCursor: true,
+  sessions: {
+    conforming: () => sessionSeq(SESSIONS),
+    /**
+     * **Noon-thirty to noon-thirty.** A wall-clock day bucket anchored inside
+     * the session, so no boundary can coincide with an open or a close: every
+     * block takes the afternoon of one session and the morning of the next.
+     * 12:30 is deliberately a *bar* edge — the block straddling a seam is the
+     * subject, and a bucket boundary bisecting a bar would be a second,
+     * unrelated question.
+     */
+    crossing: () => Sequence.every('1d', { anchor: MON_OPEN + 3 * H }),
+  },
+};
+
 /** Every column of the matrix, in tree order. */
-export const FIXTURES = [categoricalBars, timeBars] as const;
+export const FIXTURES = [categoricalBars, timeBars, tradingSessions] as const;
 
 /** Shared caption styling, so every cell reads identically. */
 export const caption = {

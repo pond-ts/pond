@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import type { StoryObj } from '@storybook/react-vite';
+import type { BoundedSequence, Sequence } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
@@ -527,4 +528,101 @@ export function makeMultiSelectorStories(
   }
 
   return stories;
+}
+
+// ── Session breaks ─────────────────────────────────────────────────────────
+
+/**
+ * **The two session-break cells** — generated only for a fixture whose axis
+ * collapses closed-market time (`fx.sessions`).
+ *
+ * Every other cell in the matrix runs on an axis with no internal structure,
+ * where a snap block is just an interval. A trading-time axis has **seams**,
+ * and a wall-clock bucketing knows nothing about them — so "what does a
+ * selection block do at a session break?" becomes a real question with two
+ * answers worth seeing side by side. Both stories draw `sessionDividers`, so
+ * the grid a block either respects or ignores is on screen.
+ *
+ * These live in one column by construction: there is nothing to compare them
+ * against in a column whose axis has no seams.
+ */
+export interface SessionStories {
+  SequenceConformsToSessions: Story;
+  SequenceCrossesSessions: Story;
+}
+
+export function makeSessionStories(fx: ChartFixture): SessionStories | null {
+  const sessions = fx.sessions;
+  if (sessions === undefined) return null;
+
+  /** Both cells are the same chart under a different bucketing — the only
+   *  variable is the sequence, which is the whole comparison. */
+  const cell = (sequence: () => Sequence | BoundedSequence, note: ReactNode) =>
+    ({
+      render: function Render() {
+        const [sel, setSel] = useState<readonly SelectionEntry[]>([]);
+        const [count, setCount] = useState(0);
+        const [preview, setPreview] = useState(0);
+        const seq = useMemo(sequence, []);
+        return (
+          <div>
+            <Chart fx={fx} selected={sel} height={220}>
+              <MultiSelector
+                sequence={seq}
+                onHover={(hits) => setPreview(hits.length)}
+                onSelect={(hits, _mods, span) => {
+                  setCount(hits.length);
+                  setSel(span !== null ? [span] : hits);
+                }}
+              />
+            </Chart>
+            <p style={caption}>
+              {note}
+              <br />
+              <strong>previewing:</strong> {preview} bars ·{' '}
+              <strong>selected:</strong> {describeEntries(fx, sel)} ({count}{' '}
+              bars)
+            </p>
+          </div>
+        );
+      },
+    }) satisfies Story;
+
+  return {
+    /** **The bucketing agrees with the sessions.** One block per session, so
+     *  every block edge lands exactly on a divider and no block spans a
+     *  collapsed gap. Hover a bar and its whole session lights; a click
+     *  commits that session. */
+    SequenceConformsToSessions: cell(
+      sessions.conforming,
+      <>
+        One bucket <em>per session</em>: the band's edges land on the dividers,
+        and no block ever spans a break.
+      </>,
+    ),
+
+    /**
+     * **The bucketing doesn't.** A wall-clock day anchored mid-session, so a
+     * block is the afternoon of one session plus the morning of the next, and
+     * the band crosses a divider. The collapsed gap has zero width, so the
+     * block still draws as one rectangle — what it *contains* is two runs of
+     * bars from different days.
+     *
+     * The weekend is where that stops being cosmetic. Wall-clock buckets keep
+     * marching through Saturday and Sunday while the axis has no sessions to
+     * give them, so the uniform run of 7-bar blocks breaks into **4, then an
+     * empty bucket with no trading time in it at all, then 3** — a bucketing
+     * that ignores the session grid cannot keep its blocks the same size.
+     */
+    SequenceCrossesSessions: cell(
+      sessions.crossing,
+      <>
+        A wall-clock day anchored <em>mid-session</em>: each block takes one
+        afternoon plus the next morning, so the band crosses a divider. Hover
+        either side of the <strong>weekend</strong> divider — the blocks there
+        are 4 bars and 3, not 7, and the bucket between them holds no trading
+        time at all.
+      </>,
+    ),
+  };
 }
