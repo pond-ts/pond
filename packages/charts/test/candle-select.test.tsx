@@ -192,11 +192,18 @@ describe('a candle carries state in weight and alpha — never in hue', () => {
     }
   });
 
-  it('outlines a live candle in its OWN colour, at the live weight', () => {
-    const { strokes, widths } = mount({ selected: [mark(0)] });
-    // Candle 0 rises, so its outline is the rising body colour.
-    expect(strokes).toContain(candle.rising.body);
-    expect(widths).toContain(candle.liveWickWidth);
+  it('GROWS a live candle — its body stroked in its own colour', () => {
+    // Not an outline around the slot: that redraws the mark's whole footprint
+    // and invents a rectangle the chart never otherwise shows. The body is
+    // stroked in the colour it is already filled with, so the mark just gets
+    // a little heavier.
+    const rest = mount();
+    const sel = mount({ selected: [mark(0)] });
+    // Candle 0 rises, so the growth stroke is the rising body colour.
+    expect(sel.strokes).toContain(candle.rising.body);
+    expect(sel.widths).toContain(candle.liveWickWidth);
+    // …and a resting chart strokes no body at all (only wicks).
+    expect(sel.strokes.length).toBeGreaterThan(rest.strokes.length);
   });
 
   it('thickens on HOVER too — a candle has no ladder to move instead', () => {

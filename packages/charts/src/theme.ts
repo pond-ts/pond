@@ -401,9 +401,11 @@ export interface CandleStyle {
    * at all*, not even for its outline. Every cue here is a change of weight or
    * of alpha:
    *
-   * - **Live** (hovered *or* selected) — the candle gains an outline around
-   *   its slot, drawn in **its own body colour**, and its lines thicken to
-   *   {@link liveWickWidth}. Nothing is recoloured.
+   * - **Live** (hovered *or* selected) — the candle **grows**: its body is
+   *   stroked in its own colour and its lines thicken to
+   *   {@link liveWickWidth}, so the mark gets a little heavier and nothing
+   *   else about it changes. Nothing is recoloured, and nothing is added that
+   *   the chart doesn't otherwise draw.
    * - **Selected** — the same, plus the rest of the field recedes to
    *   {@link dimmedOpacity}. The dimming is what separates a committed
    *   selection from a passing hover, since the lit mark looks identical
@@ -416,8 +418,8 @@ export interface CandleStyle {
    */
   readonly dimmedOpacity?: number;
   /**
-   * Line weight for a **live** (hovered or selected) candle — its wick, its
-   * hollow body stroke, and the slot outline.
+   * Line weight for a **live** (hovered or selected) candle — its wick, and
+   * the stroke around its body that makes the mark grow.
    *
    * Unlike {@link BoxStyle.selectedStrokeWidth}, which only selection triggers,
    * this fires on hover too: a box announces hover by moving its tint ladder,
@@ -740,9 +742,9 @@ export const defaultTheme: ChartTheme = {
       bodyWidth: 0.7,
       wickWidth: 1,
       // No state colour at all — the direction hue owns that channel. A live
-      // candle gains a slot outline in its own colour and heavier lines; a
-      // selection additionally recedes the field to `.32`, the same step every
-      // other mark uses.
+      // candle simply grows (its body stroked in its own colour, lines
+      // heavier); a selection additionally recedes the field to `.32`, the
+      // same step every other mark uses.
       dimmedOpacity: 0.32,
       liveWickWidth: 1.5,
     },

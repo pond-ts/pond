@@ -146,27 +146,6 @@ export function resolveCandleStyle(
  * drawn pixels would make most candles unclickable. (That the box layer makes
  * the same choice *without* saying so is [PND-BOXHIT].)
  */
-/**
- * The live outline — around the candle's **slot**, on the outside of the mark
- * and in the mark's own colour. Outside on purpose: an outline over the body
- * would sit on top of the one channel carrying the candle's direction.
- */
-function strokeSlot(
-  ctx: CanvasRenderingContext2D,
-  color: string,
-  width: number,
-  x0: number,
-  x1: number,
-  yHigh: number,
-  yLow: number,
-): void {
-  const top = Math.min(yHigh, yLow);
-  const bottom = Math.max(yHigh, yLow);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = width;
-  ctx.strokeRect(x0 - 1, top - 1, x1 - x0 + 2, bottom - top + 2);
-}
-
 export function ohlcAt(
   ohlc: OhlcSeries,
   px: number,
@@ -284,15 +263,15 @@ export function drawCandles(
       live && style.liveWickWidth !== undefined
         ? style.liveWickWidth
         : style.wickWidth;
-    // The outline is the candle's **own** body colour. Introducing a state hue
-    // here would put a second colour on the one mark whose colour is already
-    // saying something.
-    const outline =
-      live && style.liveWickWidth !== undefined ? body : undefined;
-    // One bracket per candle when anything is live, so the alpha and the
-    // outline cannot leak into the next one — and none at all when nothing is,
-    // keeping a display-only candle's op stream exactly as it was.
-    const bracketed = recede || outline !== undefined;
+    // A live candle **grows** rather than gaining anything new: its body is
+    // stroked in its own colour, so the mark thickens by the stroke and
+    // nothing else changes. An outline around the *slot* was the first attempt
+    // and it redraws the mark's whole footprint — far too loud for a hover,
+    // and it invents a rectangle the chart otherwise never shows.
+    const grow = live && style.liveWickWidth !== undefined;
+    // Bracket only when the field recedes, so a chart with no selection emits
+    // exactly the op stream it always did.
+    const bracketed = recede;
     if (bracketed) {
       ctx.save();
       if (recede) ctx.globalAlpha = style.dimmedOpacity!;
@@ -311,8 +290,8 @@ export function drawCandles(
       ctx.moveTo(mid, yClose); // close tick (points right)
       ctx.lineTo(mid + bodyHalf, yClose);
       ctx.stroke();
-      if (outline !== undefined)
-        strokeSlot(ctx, outline, wickW, x0, x1, yHigh, yLow);
+      // The `bar` variant has no body to grow; its lines already thickened
+      // above, which is the whole cue there.
       if (bracketed) ctx.restore();
       continue;
     }
@@ -338,15 +317,19 @@ export function drawCandles(
     // so a doji's fill and its colour agree.
     const hollow = variant === 'hollow' && close > open;
     if (hollow) {
+      // Already an outline — `wickW` is the growth.
       ctx.strokeStyle = body;
       ctx.lineWidth = wickW;
       ctx.strokeRect(bx0, top, bodyW, h);
     } else {
       ctx.fillStyle = body;
       ctx.fillRect(bx0, top, bodyW, h);
+      if (grow) {
+        ctx.strokeStyle = body;
+        ctx.lineWidth = wickW;
+        ctx.strokeRect(bx0, top, bodyW, h);
+      }
     }
-    if (outline !== undefined)
-      strokeSlot(ctx, outline, wickW, x0, x1, yHigh, yLow);
     if (bracketed) ctx.restore();
   }
   // `drawnCount` = candle slots iterated (visible span, or the aggregate set when
