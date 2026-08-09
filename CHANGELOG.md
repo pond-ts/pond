@@ -89,6 +89,21 @@ include new features and type-level changes; patch bumps are strictly additive.
   meaning "what would be selected"; a mounted snapping `<MultiSelector>` now
   unifies them at rest.
 
+- **charts: under a snapping `<MultiSelector>`, a click commits the whole
+  block it previewed** — not the single mark under the pointer. This is the
+  third state falling in behind the two above: with a `sequence` set, the
+  band spans the block, hover lights the block, and a click now selects the
+  block, so the three no longer disagree about what "the thing under the
+  pointer" means. The commit carries the same `{ kind: 'span', … }`
+  descriptor a sweep of that block would produce, so a consumer needs no
+  click-versus-drag branch.
+
+  **Without a `sequence` nothing changes**: the block _is_ the single bin, so
+  a click still reports one mark with a null span and stays distinguishable
+  from a sweep (RFC §8). Setting a `sequence` is the consumer declaring that
+  selection happens in bucket units, and that declaration is what widens the
+  click.
+
 ### Fixed
 
 - **charts: six `<MultiSelector>` polish bugs found walking the Storybook

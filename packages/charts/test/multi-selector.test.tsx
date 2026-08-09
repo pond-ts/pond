@@ -1194,3 +1194,69 @@ describe('the resting block preview (band as resting cursor, block-scoped hover)
     expect(Number(band.getAttribute('width'))).toBeCloseTo((1 / 5) * w(), 6);
   });
 });
+
+// ── A click commits the block it previewed ─────────────────────────────────
+
+/**
+ * **The click commits the same block the resting preview lit.**
+ *
+ * Found by walking the matrix: under a `sequence`, hovering previewed a whole
+ * bucket (band + every covered mark) and then a *click* selected exactly one
+ * mark — so the preview lied for the gesture most people try first. Three
+ * states disagreed: hover said the block, click said one mark, sweep said the
+ * block.
+ *
+ * The rule is one line and needs no special case: **a click commits the
+ * block.** With no `sequence` the block is the single bin under the pointer,
+ * so a click stays one mark with a `null` span — which is what keeps a click
+ * distinguishable from a sweep (RFC §8). A `sequence` declares that selection
+ * happens in bucket units, and that is what earns the wider commit.
+ */
+describe('a click commits the block it previewed (sequence-snapped)', () => {
+  /** Four 250-unit bars over [0,1000]; a 500-unit sequence buckets them 2 + 2. */
+  const twoPerBucket = () => Sequence.every(500, { anchor: 0 });
+
+  it('under a sequence, a click reports the whole bucket and a span', () => {
+    const seen: {
+      hits: readonly SelectInfo[];
+      span: SpanSelection | null;
+    }[] = [];
+    const { click, pxAt } = mount({
+      children: (
+        <MultiSelector
+          sequence={twoPerBucket()}
+          onSelect={(hits, _m, span) => seen.push({ hits, span })}
+        />
+      ),
+    });
+    // A click inside the FIRST bucket — one bar's ink, not a drag.
+    act(() => click(pxAt(120)));
+
+    expect(seen).toHaveLength(1);
+    // The bucket holds two bars, so the click commits both — not the one hit.
+    expect(seen[0]!.hits.length).toBeGreaterThan(1);
+    // …and reports a span, because the gesture snapped to a bucket.
+    expect(seen[0]!.span).not.toBeNull();
+    expect(seen[0]!.span!.x[0]).toBe(0);
+    expect(seen[0]!.span!.x[1]).toBe(500);
+  });
+
+  it('with NO sequence a click is still one mark with a null span (RFC §8)', () => {
+    const seen: {
+      hits: readonly SelectInfo[];
+      span: SpanSelection | null;
+    }[] = [];
+    const { click, pxAt } = mount({
+      children: (
+        <MultiSelector
+          onSelect={(hits, _m, span) => seen.push({ hits, span })}
+        />
+      ),
+    });
+    act(() => click(pxAt(120)));
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.hits).toHaveLength(1);
+    expect(seen[0]!.span).toBeNull();
+  });
+});

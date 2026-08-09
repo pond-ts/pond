@@ -1231,6 +1231,50 @@ export function Layers({ children }: LayersProps) {
       (axisId) => r.yScales.get(axisId ?? r.defaultAxisId),
       'select',
     );
+    const modifiers: SelectModifiers = {
+      additive: e.metaKey || e.ctrlKey,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+    };
+
+    // **A click commits the block it previewed.** Under a mounted
+    // `<MultiSelector>` the resting preview lights the whole snap block a
+    // gesture begun here would select (the band + every covered mark); a click
+    // that then selected only the mark under the pointer would make that
+    // preview a lie for the gesture most people try first. So the click
+    // commits the same block, through the same session the drag uses — one
+    // code path, so rest, click and sweep cannot disagree.
+    //
+    // **Only when snapping actually widens it.** With no `sequence` the block
+    // is the single bin under the pointer, and this falls through to the
+    // one-mark `select` below unchanged — which is what keeps a click
+    // distinguishable from a sweep by its `null` span (RFC §8: a click is a
+    // click). A `sequence` is an explicit declaration that selection happens
+    // in bucket units, and *that* is what earns the wider commit.
+    if (hit !== null && c.hasMultiSelector(r.rowKey)) {
+      const px = e.clientX - rect.left;
+      const span = regionSpan(c.cursorBuckets ?? [], +c.xScale.invert(px));
+      const gesture = span === null ? null : c.resolveSweep(r.rowKey);
+      if (span !== null && gesture !== null) {
+        const session = beginTopmostSweep(c, r);
+        if (session !== null) {
+          session.update(span.start, span.end);
+          const hits = session.hits();
+          const extent = session.extent();
+          if (hits.length > 1 && extent !== null) {
+            gesture.commit(hits, modifiers, {
+              kind: 'span',
+              id: session.id,
+              x: extent,
+            });
+            return;
+          }
+        }
+      }
+    }
+
     // Report the modifiers the click carried ([PND-MULTISEL]). The library
     // applies no policy to them; a consumer implements ⌘/Ctrl-adds itself,
     // which it could not do at all while the click arrived as a bare hit.
@@ -1238,17 +1282,7 @@ export function Layers({ children }: LayersProps) {
     // Passing the row key marks this as a **plot gesture**, which the container
     // gates on a mounted `<Selector>` (interaction RFC §7.1): with none in
     // scope this whole click is inert, deliberately.
-    c.select(
-      hit,
-      {
-        additive: e.metaKey || e.ctrlKey,
-        ctrlKey: e.ctrlKey,
-        metaKey: e.metaKey,
-        shiftKey: e.shiftKey,
-        altKey: e.altKey,
-      },
-      r.rowKey,
-    );
+    c.select(hit, modifiers, r.rowKey);
   }, []);
 
   // Wheel-zoom — a native non-passive listener so `preventDefault` works (React's
