@@ -391,6 +391,39 @@ export interface CandleStyle {
   readonly rising: { readonly body: string; readonly wick: string };
   /** Falling candle (close < open) — body + wick colours. */
   readonly falling: { readonly body: string; readonly wick: string };
+  /**
+   * The **interaction state** cues — and note what is *missing* from them.
+   *
+   * A `bar` swaps its fill and a `box` rotates its whole tint ladder, because
+   * on those marks hue is free: the meaning lives in position and in lightness
+   * ordering. **A candle's hue is its meaning** — rising vs falling is the
+   * first thing anyone reads off it — so a candle introduces *no state colour
+   * at all*, not even for its outline. Every cue here is a change of weight or
+   * of alpha:
+   *
+   * - **Live** (hovered *or* selected) — the candle gains an outline around
+   *   its slot, drawn in **its own body colour**, and its lines thicken to
+   *   {@link liveWickWidth}. Nothing is recoloured.
+   * - **Selected** — the same, plus the rest of the field recedes to
+   *   {@link dimmedOpacity}. The dimming is what separates a committed
+   *   selection from a passing hover, since the lit mark looks identical
+   *   either way.
+   *
+   * That last point is deliberate but worth knowing: hover and selection are
+   * distinguished by what happens to the *other* candles, not by this one.
+   *
+   * Both optional; unset ⇒ a display-only candle exactly as before.
+   */
+  readonly dimmedOpacity?: number;
+  /**
+   * Line weight for a **live** (hovered or selected) candle — its wick, its
+   * hollow body stroke, and the slot outline.
+   *
+   * Unlike {@link BoxStyle.selectedStrokeWidth}, which only selection triggers,
+   * this fires on hover too: a box announces hover by moving its tint ladder,
+   * and a candle has no ladder to move.
+   */
+  readonly liveWickWidth?: number;
   /** Doji (open === close) — body + wick colours; falls back to `rising` if unset. */
   readonly neutral?: { readonly body: string; readonly wick: string };
   /** Body width as a fraction of the candle slot (0–1). Omitted ⇒ `0.8`. */
@@ -706,6 +739,12 @@ export const defaultTheme: ChartTheme = {
       neutral: { body: '#94a3b8', wick: '#64748b' },
       bodyWidth: 0.7,
       wickWidth: 1,
+      // No state colour at all — the direction hue owns that channel. A live
+      // candle gains a slot outline in its own colour and heavier lines; a
+      // selection additionally recedes the field to `.32`, the same step every
+      // other mark uses.
+      dimmedOpacity: 0.32,
+      liveWickWidth: 1.5,
     },
   },
   bar: {

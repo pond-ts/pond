@@ -11,6 +11,8 @@ import * as selectorBoxWhisker from '../src/SelectorBoxWhisker.stories.js';
 import * as selectorBoxSolid from '../src/SelectorBoxSolid.stories.js';
 import * as multiBoxWhisker from '../src/MultiSelectorBoxWhisker.stories.js';
 import * as multiBoxSolid from '../src/MultiSelectorBoxSolid.stories.js';
+import * as selectorCandlestick from '../src/SelectorCandlestick.stories.js';
+import * as multiCandlestick from '../src/MultiSelectorCandlestick.stories.js';
 import * as multiStacked from '../src/MultiSelectorStacked.stories.js';
 import * as multiTradingSessions from '../src/MultiSelectorTradingSessions.stories.js';
 import {
@@ -73,6 +75,7 @@ describe('the selection matrix covers the same features in every column', () => 
     expect(namesOf(selectorStacked)).toEqual(SELECTOR_FEATURES);
     expect(namesOf(selectorBoxWhisker)).toEqual(SELECTOR_FEATURES);
     expect(namesOf(selectorBoxSolid)).toEqual(SELECTOR_FEATURES);
+    expect(namesOf(selectorCandlestick)).toEqual(SELECTOR_FEATURES);
   });
 
   it('<MultiSelector>: identical except the declared sequence gap', () => {
@@ -90,6 +93,9 @@ describe('the selection matrix covers the same features in every column', () => 
       [...MULTI_FEATURES, 'SweepWithSequence'].sort(),
     );
     expect(namesOf(multiBoxSolid)).toEqual(
+      [...MULTI_FEATURES, 'SweepWithSequence'].sort(),
+    );
+    expect(namesOf(multiCandlestick)).toEqual(
       [...MULTI_FEATURES, 'SweepWithSequence'].sort(),
     );
     // The trading column adds the session pair on top of the sequence cell —
@@ -127,6 +133,7 @@ describe('the selection matrix covers the same features in every column', () => 
         multiStacked,
         multiBoxWhisker,
         multiBoxSolid,
+        multiCandlestick,
         multiTradingSessions,
       ].map((m) => (m.default as { title: string }).title.split('/').pop()),
     );
@@ -155,6 +162,8 @@ describe.each([
   ['MultiSelector/Stacked', multiStacked],
   ['MultiSelector/BoxWhisker', multiBoxWhisker],
   ['MultiSelector/BoxSolid', multiBoxSolid],
+  ['Selector/Candlestick', selectorCandlestick],
+  ['MultiSelector/Candlestick', multiCandlestick],
   ['MultiSelector/TradingSessions', multiTradingSessions],
 ])('%s stories render', (_group, mod) => {
   for (const [name, story] of Object.entries(mod).filter(

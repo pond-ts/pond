@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { BoundedSequence, Sequence, TimeSeries } from 'pond-ts';
 import { BarChart } from './BarChart.js';
 import { BoxPlot } from './BoxPlot.js';
+import { Candlestick } from './Candlestick.js';
 import { YAxis } from './YAxis.js';
 import type { SelectInfo } from './context.js';
 import {
@@ -58,10 +59,14 @@ export interface ChartFixture {
   describe(hit: SelectInfo): string;
   /**
    * Whether the layer publishes `beginSweep` — i.e. whether it can be
-   * **swept at all**. `<BoxPlot>` hit-tests and selects but has no sweep yet
-   * ([PND-INTERACTCONF]), and without one a mounted `<MultiSelector>` has
-   * neither a drag nor a resting block preview: every cell of that column
-   * would render a chart that quietly ignores the component under test.
+   * **swept at all**. Without one a mounted `<MultiSelector>` has neither a
+   * drag nor a resting block preview, so every cell of that column would
+   * render a chart that quietly ignores the component under test.
+   *
+   * Every fixture declares `true` today; the flag stays because the *list*
+   * family still owes the sweep ([PND-INTERACTCONF]), and because reading an
+   * absent column as "declared gap" rather than "forgotten cell file" is only
+   * safe while something declares it.
    */
   readonly sweep: boolean;
   /** A snapping sequence, where the axis has one. Ordinal axes do not. */
@@ -419,6 +424,78 @@ export const boxWhisker: ChartFixture = boxFixture(
  *  whole p5→p95 span rather than a body plus two thin stems. */
 export const boxSolid: ChartFixture = boxFixture('BoxSolid', 'solid', 'solid');
 
+// ── Candlesticks (a mark whose HUE is its meaning) ─────────────────────────
+
+/** Twenty daily OHLC bars, deterministic, with real direction changes so both
+ *  the rising and falling colours are on screen in every state. */
+const ohlc = () => {
+  const rows: [number, number, number, number, number][] = [];
+  let px = 100;
+  for (let i = 0; i < 20; i += 1) {
+    const drift = 2.2 * Math.sin(i / 2.4) + 1.1 * Math.sin(i * 1.7);
+    const open = px;
+    const close = px + drift;
+    const wick = 0.8 + Math.abs(Math.sin(i * 2.3));
+    rows.push([
+      D0 + i * DAY,
+      open,
+      Math.max(open, close) + wick,
+      Math.min(open, close) - wick,
+      close,
+    ]);
+    px = close;
+  }
+  return new TimeSeries({
+    name: 'ohlc',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'open', kind: 'number' },
+      { name: 'high', kind: 'number' },
+      { name: 'low', kind: 'number' },
+      { name: 'close', kind: 'number' },
+    ] as const,
+    rows,
+  });
+};
+
+/**
+ * **A candlestick column** — the mark whose *hue is its meaning*.
+ *
+ * Every other column is free to recolour on selection: a bar swaps its fill, a
+ * box rotates its whole tint ladder. A candle cannot. Rising vs falling is the
+ * first thing anyone reads off it, and that read lives in exactly the channel
+ * the other marks use to announce state — so this column exists to check that
+ * a selected candle still says which way the price went.
+ *
+ * It sweeps like the rest: a candle owns one `[x, xEnd)` column, same as a box.
+ */
+export const candles: ChartFixture = {
+  name: 'Candlestick',
+  container: { range: [D0, D0 + 20 * DAY] },
+  axis: { id: 'v', min: 88, max: 116, label: '' },
+  renderLayer: (id) => <Candlestick series={ohlc()} axis="v" gap={6} id={id} />,
+  secondary: {
+    axis: { id: 'e', min: 88, max: 116, label: 'bar' },
+    renderLayer: (id) => (
+      <Candlestick series={ohlc()} axis="e" gap={6} variant="bar" id={id} />
+    ),
+  },
+  picks: [0, 5, 11].map((i) => ({
+    label: isoDay(D0 + i * DAY),
+    info: {
+      id: 'svc',
+      key: D0 + i * DAY,
+      value: 0,
+      color: '#000',
+      label: 'close',
+    },
+  })),
+  describe: (hit) => isoDay(hit.key),
+  sweep: true,
+  sequence: () => Sequence.every('5d', { anchor: D0 }),
+  rangeCursor: true,
+};
+
 // ── Trading sessions (a discontinuous time axis) ───────────────────────────
 
 /** Six weekday sessions (09:30–16:00 UTC) from a Monday — five overnight seams
@@ -543,6 +620,7 @@ export const FIXTURES = [
   stackedBars,
   boxWhisker,
   boxSolid,
+  candles,
   tradingSessions,
 ] as const;
 

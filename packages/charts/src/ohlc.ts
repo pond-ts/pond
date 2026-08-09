@@ -5,6 +5,19 @@ import type { LayerDrawStats } from './context.js';
 import { barSpanPx } from './range.js';
 import { visibleSpanRange } from './culling.js';
 import { decimateOhlc, type DecimateOption } from './decimate.js';
+import { spanMatchesAny } from './span.js';
+import type { SpanSelection } from './context.js';
+
+const NO_KEYS: readonly number[] = [];
+const NO_SPANS: readonly SpanSelection[] = [];
+
+/** Linear scan — a selected/hovered set is a handful, not a collection. */
+function includesKey(keys: readonly number[], key: number): boolean {
+  for (let i = 0; i < keys.length; i += 1) {
+    if (keys[i] === key) return true;
+  }
+  return false;
+}
 
 /**
  * How an OHLC mark renders (pjm17971's fork 2 — bundled as one component, like
@@ -124,6 +137,65 @@ export function resolveCandleStyle(
  * O(N) over the keys, a fixed number of path ops each — no per-key allocation
  * beyond the `barSpanPx` tuple.
  */
+/**
+ * The candle whose **slot** contains `(px, py)` — the same rect-containment
+ * `boxAt` does, over the candle's full `[x0, x1] × [high, low]` extent.
+ *
+ * Deliberately the slot and not the ink. A candle's body can be a doji a
+ * pixel tall and its wick is a hairline; requiring the pointer to land on
+ * drawn pixels would make most candles unclickable. (That the box layer makes
+ * the same choice *without* saying so is [PND-BOXHIT].)
+ */
+/**
+ * The live outline — around the candle's **slot**, on the outside of the mark
+ * and in the mark's own colour. Outside on purpose: an outline over the body
+ * would sit on top of the one channel carrying the candle's direction.
+ */
+function strokeSlot(
+  ctx: CanvasRenderingContext2D,
+  color: string,
+  width: number,
+  x0: number,
+  x1: number,
+  yHigh: number,
+  yLow: number,
+): void {
+  const top = Math.min(yHigh, yLow);
+  const bottom = Math.max(yHigh, yLow);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.strokeRect(x0 - 1, top - 1, x1 - x0 + 2, bottom - top + 2);
+}
+
+export function ohlcAt(
+  ohlc: OhlcSeries,
+  px: number,
+  py: number,
+  xScale: Scale,
+  yScale: Scale,
+  gapPx: number,
+  minWidthPx: number,
+): [index: number, begin: number, close: number] | null {
+  for (let i = 0; i < ohlc.length; i += 1) {
+    if (!isFiniteOhlc(ohlc, i)) continue;
+    const [x0, x1] = barSpanPx(
+      ohlc.x[i]!,
+      ohlc.xEnd[i]!,
+      xScale,
+      gapPx,
+      minWidthPx,
+    );
+    if (px < x0 || px > x1) continue;
+    const yHigh = yScale(ohlc.high[i]!);
+    const yLow = yScale(ohlc.low[i]!);
+    const top = Math.min(yHigh, yLow);
+    const bottom = Math.max(yHigh, yLow);
+    if (py < top || py > bottom) continue;
+    return [i, ohlc.x[i]!, ohlc.close[i]!];
+  }
+  return null;
+}
+
 export function drawCandles(
   ctx: CanvasRenderingContext2D,
   ohlc: OhlcSeries,
@@ -135,6 +207,12 @@ export function drawCandles(
   gapPx = 0,
   minWidthPx = 1,
   decimate: DecimateOption = true,
+  /** Candle keys (each candle's `x`) currently selected / hovered, and the
+   *  selection's span entries — the same three channels the bar and box draws
+   *  take. Empty ⇒ a display-only candle, byte-identical to before. */
+  selectedKeys: readonly number[] = NO_KEYS,
+  hoveredKeys: readonly number[] = NO_KEYS,
+  spans: readonly SpanSelection[] = NO_SPANS,
 ): LayerDrawStats {
   const bodyFraction = style.bodyWidth ?? DEFAULT_BODY_WIDTH;
   const sourceCount = ohlc.length; // pre-cull, pre-decimation (for draw stats)
@@ -180,11 +258,51 @@ export function drawCandles(
     const yClose = yScale(close);
     const { body, wick } = resolveCandleStyle(style, open, close, colorBy);
 
+    // **State without hue.** A candle's colour *is* its direction, so a
+    // selected candle keeps its own body/wick and takes an outline around the
+    // slot instead; the field recedes by opacity, and the wick — the mark's
+    // hairline — gains weight. A decimated aggregate candle carries synthetic
+    // keys no mark entry can name, so per-candle state is gated off there (as
+    // the box draw does) rather than lighting a column the selection never
+    // held.
+    const key = ohlc.x[i]!;
+    const isSelected =
+      !decimated &&
+      (includesKey(selectedKeys, key) ||
+        (spans.length > 0 && spanMatchesAny(spans, key, close)));
+    const isHovered =
+      !decimated && !isSelected && includesKey(hoveredKeys, key);
+    const dimming =
+      style.dimmedOpacity !== undefined &&
+      !decimated &&
+      (selectedKeys.length > 0 || spans.length > 0);
+    const recede = dimming && !isSelected && !isHovered;
+    // Live = hovered or selected. Both look the same on the mark itself; what
+    // separates them is that a *selection* recedes everything else.
+    const live = isSelected || isHovered;
+    const wickW =
+      live && style.liveWickWidth !== undefined
+        ? style.liveWickWidth
+        : style.wickWidth;
+    // The outline is the candle's **own** body colour. Introducing a state hue
+    // here would put a second colour on the one mark whose colour is already
+    // saying something.
+    const outline =
+      live && style.liveWickWidth !== undefined ? body : undefined;
+    // One bracket per candle when anything is live, so the alpha and the
+    // outline cannot leak into the next one — and none at all when nothing is,
+    // keeping a display-only candle's op stream exactly as it was.
+    const bracketed = recede || outline !== undefined;
+    if (bracketed) {
+      ctx.save();
+      if (recede) ctx.globalAlpha = style.dimmedOpacity!;
+    }
+
     if (variant === 'bar') {
       // OHLC bar: a high–low stem, a left tick at open, a right tick at close —
       // all one colour (the `body` role), no filled body.
       ctx.strokeStyle = body;
-      ctx.lineWidth = style.wickWidth;
+      ctx.lineWidth = wickW;
       ctx.beginPath();
       ctx.moveTo(mid, yHigh); // stem
       ctx.lineTo(mid, yLow);
@@ -193,13 +311,16 @@ export function drawCandles(
       ctx.moveTo(mid, yClose); // close tick (points right)
       ctx.lineTo(mid + bodyHalf, yClose);
       ctx.stroke();
+      if (outline !== undefined)
+        strokeSlot(ctx, outline, wickW, x0, x1, yHigh, yLow);
+      if (bracketed) ctx.restore();
       continue;
     }
 
     // candle / hollow: the high–low wick first (so the body overlaps it), then
     // the open→close body.
     ctx.strokeStyle = wick;
-    ctx.lineWidth = style.wickWidth;
+    ctx.lineWidth = wickW;
     ctx.beginPath();
     ctx.moveTo(mid, yHigh);
     ctx.lineTo(mid, yLow);
@@ -218,12 +339,15 @@ export function drawCandles(
     const hollow = variant === 'hollow' && close > open;
     if (hollow) {
       ctx.strokeStyle = body;
-      ctx.lineWidth = style.wickWidth;
+      ctx.lineWidth = wickW;
       ctx.strokeRect(bx0, top, bodyW, h);
     } else {
       ctx.fillStyle = body;
       ctx.fillRect(bx0, top, bodyW, h);
     }
+    if (outline !== undefined)
+      strokeSlot(ctx, outline, wickW, x0, x1, yHigh, yLow);
+    if (bracketed) ctx.restore();
   }
   // `drawnCount` = candle slots iterated (visible span, or the aggregate set when
   // decimation engaged); `sourceCount` = the raw candle count it started from.

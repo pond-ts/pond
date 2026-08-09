@@ -62,6 +62,31 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: `<Candlestick>` gains the id-gated interaction surface** — `id`,
+  `hitTest`, `beginSweep` and `binIntervals`, so a candle selects, hovers and
+  sweeps like every other column mark. A candle is an aggregation owning one
+  `[x, xEnd)` slot; hits are rect containment over that slot (a doji body is a
+  pixel tall and a wick is a hairline, so requiring drawn ink would make most
+  candles unclickable), `key` is its `x` and `value` its `close`.
+
+- **charts: a candle carries its state in weight and alpha — never in hue.**
+  New optional `theme.candle.*` tokens `liveWickWidth` and `dimmedOpacity`.
+  Where a bar swaps its fill and a box rotates its tint ladder, **a candle's
+  hue is its meaning** — rising vs falling is the first thing read off it — so
+  a candle introduces no state colour at all:
+  - **Live** (hovered _or_ selected): an outline around the slot in the
+    candle's **own body colour**, and lines thickened to `liveWickWidth`.
+  - **Selected**: the same, plus the rest of the field receding to
+    `dimmedOpacity`.
+
+  So hover and selection look identical _on the mark_ and differ in what
+  happens to the others — a deliberate consequence of hue being unavailable.
+  It also means the weight bump fires on hover here, unlike
+  `BoxStyle.selectedStrokeWidth`, which only selection triggers because a box
+  announces hover by moving its ladder.
+
+  Both tokens optional; unset ⇒ a display-only candle exactly as before.
+
 - **charts: `<BoxPlot>` joins the sweep — it publishes `binIntervals` and
   `beginSweep`, so a `<MultiSelector>` selects boxes by column.** A box is an
   **aggregation**: it owns one `[begin, end)` interval of the key axis, and the
