@@ -62,6 +62,23 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: `<ScatterChart>` and `<HeatMap>` index a large selection set
+  instead of scanning it** — the live-preview repaint on both goes from
+  seconds to milliseconds. `bars.ts` grew a per-draw set index at 16 entries
+  because a sweep preview puts the whole covered run in `hovered` and the
+  linear scan measured 6.2 s/frame at 100k; neither 2-D layer had the fix, and
+  a rect fills that set faster than a band can. Measured by the new
+  `scripts/perf-interact2d.mjs`:
+
+  | scenario                              | before  | after   |
+  | ------------------------------------- | ------- | ------- |
+  | scatter, 100k points, 10k covered     | 1424 ms | 13.2 ms |
+  | scatter, 100k points, 50k covered     | 4042 ms | 14.7 ms |
+  | heat map, 365×45, 2,783 cells covered | 2.64 ms | 1.01 ms |
+
+  Below the threshold nothing changes: a clicked handful still scans, and
+  still allocates nothing.
+
 - **charts: a heat map's selection is one outline around the region, not one
   per cell** — new optional `theme.heat` slot (`HeatStates`: `veil`,
   `hoverRing`, `ringWidth`, `perimeter`, `perimeterWidth`). Absent, the

@@ -212,10 +212,34 @@ milestone. Plan:
   grid is precomputed one column wider than the culling window, so a
   selection running off-screen grows no false edge at the viewport boundary.
 
+  **Also shipped — the perf gate** (`scripts/perf-interact2d.mjs`, 18
+  scenarios). It found what it was written to look for and one thing it was
+  not:
+  - **The A8.1 shape, unfixed on both 2-D layers.** A sweep lights its covered
+    marks through the plural `hovered`, so the draw's membership test runs
+    once per visible mark over the whole set — 100k points with 50k covered
+    measured **4.0 s per frame**. `bars.ts` solved this with a per-draw set
+    index at 16 entries; scatter and the heat map never got one. They have one
+    now: **4042 ms → 14.7 ms** (scatter) and **2.64 ms → 1.01 ms** (heat).
+  - **The heat map recomputed what its neighbour grid already knew** — the
+    cell loop redid the label compare and the span test per cell even though
+    the perimeter pre-pass had answered them. Reading the grid back: −10% on a
+    45,000-cell selected repaint.
+  - **A "floor" scenario that was measuring the worst case.** `CUT-GATED`
+    wiggled the pointer across an exact key, and the press-edge pullback
+    flipped the covered run on every other move — 9,999 re-cuts out of 10,000
+    while claiming to be the delta-gated floor. Caught by instrumenting rather
+    than by reading the number, which looked plausible. Fixed, it is 25 ns per
+    gated move.
+
+  What remains costed, not fixed: the states path adds ~70–90% to a _selected_
+  heat repaint (1.4 ms at 365×45, 4.6 ms at 45,000 cells) — the veil is one
+  extra `fillRect` per unselected cell. That is inside frame budget and only
+  happens when there is a selection, so it is documented in the bench header
+  rather than optimised away.
+
   What is left: the **at-rest small grey crosshair** (the drag pair exists;
-  the resting one is cursor work); and the **perf gate** — a rect preview lights far
-  more marks per pointer move than the 1-D band that cost 6.2 s/frame before
-  its membership scan was re-priced (A8.1).
+  the resting one is cursor work).
 
 - **[PND-INTERACTCONF]** — **The conformance tail.** The **list family** joins
   the sweep. (`<BoxPlot>` has now joined: a box is an aggregation owning one

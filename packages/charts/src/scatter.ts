@@ -83,6 +83,36 @@ function marksPoint(
 }
 
 /**
+ * Past this many entries a per-draw key index beats the linear scan above.
+ * Mirrors `bars.ts`'s threshold, and exists for the same reason: `marksPoint`
+ * is written for "a handful of marks a person clicked", and a **sweep
+ * preview is not that**. A rect drag lights its whole covered region through
+ * the plural `hovered`, so the scan becomes O(V · |hovered|) — the A8.1 shape
+ * that measured **4.0 s per frame** here at 100k points with 50k covered,
+ * against the 1-D band's 6.2 s that motivated the bar index in the first
+ * place. Small enough that a sweep always indexes; big enough that a clicked
+ * handful never pays the Set build.
+ */
+const MARK_INDEX_THRESHOLD = 16;
+
+/**
+ * {@link marksPoint} in set form. A point's identity within its series **is**
+ * its key (a scatter reports no `SelectInfo.mark`), so unlike the bar index
+ * this is one set, not three.
+ */
+function buildKeyIndex(
+  set: readonly SelectInfo[],
+  seriesId: string | undefined,
+): ReadonlySet<number> {
+  const keys = new Set<number>();
+  for (let i = 0; i < set.length; i += 1) {
+    const m = set[i]!;
+    if (m.id === seriesId) keys.add(m.key);
+  }
+  return keys;
+}
+
+/**
  * Index of the point in `cs` **nearest** `time` by `|x − time|`, restricted to
  * finite points, or `-1` if none. `cs.x` is the sorted time axis, so a binary
  * search finds the insertion point in O(log N); the two straddling rows are then
@@ -216,6 +246,17 @@ export function drawScatter(
   // narrowed to this layer before the call, so its gate is just "any").
   const anySelected = namesSeries(selected, seriesId);
   const anyHovered = namesSeries(hovered, seriesId);
+  // Index the big sets once per draw, scan the small ones — see
+  // `MARK_INDEX_THRESHOLD`. Only the live-preview path ever reaches the
+  // threshold, so a clicked selection still allocates nothing.
+  const selIx =
+    anySelected && selected.length > MARK_INDEX_THRESHOLD
+      ? buildKeyIndex(selected, seriesId)
+      : null;
+  const hovIx =
+    anyHovered && hovered.length > MARK_INDEX_THRESHOLD
+      ? buildKeyIndex(hovered, seriesId)
+      : null;
   const anySpan = spans.length > 0;
   // Ring geometry, deferred to a pass after the marks so a highlight is never
   // overpainted by a neighbour drawn later. Flat `[px, py, r, …]` triples, and
@@ -359,11 +400,17 @@ export function drawScatter(
     if (anySelected || anyHovered || anySpan) {
       const key = keyAt(i);
       if (
-        (anySelected && marksPoint(selected, seriesId, key)) ||
+        (anySelected &&
+          (selIx !== null
+            ? selIx.has(key)
+            : marksPoint(selected, seriesId, key))) ||
         (anySpan && spanMatchesAny(spans, key, cs.y[i]!))
       ) {
         live = 2;
-      } else if (anyHovered && marksPoint(hovered, seriesId, key)) {
+      } else if (
+        anyHovered &&
+        (hovIx !== null ? hovIx.has(key) : marksPoint(hovered, seriesId, key))
+      ) {
         live = 1;
       }
     }

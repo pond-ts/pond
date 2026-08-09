@@ -259,6 +259,66 @@ function binLabelsInto(
   }
 }
 
+/**
+ * Past this many entries a per-draw index beats {@link binLabelsInto}'s scan.
+ * The scan runs once per **bin** over the whole set, so it is O(W · |set|) —
+ * fine for the handful of cells a person clicks, and not fine for a rect
+ * preview, which lights its whole covered region through `hovered`. Same
+ * threshold and same reasoning as `bars.ts` / `scatter.ts`.
+ */
+const MARK_INDEX_THRESHOLD = 16;
+
+/**
+ * {@link binLabelsInto} in map form: bin identity → the labels named on it.
+ *
+ * Two maps rather than one, because the pairwise rule is asymmetric exactly
+ * as the bar index's is. A bin with a **stable mark** matches only entries
+ * carrying that mark; a bin without one matches by key, and then an entry's
+ * own mark is irrelevant. So marked entries go in `byMark` and *every* entry
+ * goes in `byKey`.
+ */
+interface BinLabelIndex {
+  readonly byMark: ReadonlyMap<string, string[]>;
+  readonly byKey: ReadonlyMap<number, string[]>;
+}
+
+function buildBinLabelIndex(
+  set: readonly StackMark[],
+  seriesId: string | undefined,
+): BinLabelIndex {
+  const byMark = new Map<string, string[]>();
+  const byKey = new Map<number, string[]>();
+  for (let i = 0; i < set.length; i += 1) {
+    const m = set[i]!;
+    if (m.id !== seriesId) continue;
+    if (m.mark !== undefined) {
+      const at = byMark.get(m.mark);
+      if (at) at.push(m.label);
+      else byMark.set(m.mark, [m.label]);
+    }
+    const at = byKey.get(m.key);
+    if (at) at.push(m.label);
+    else byKey.set(m.key, [m.label]);
+  }
+  return { byMark, byKey };
+}
+
+const NO_LABELS: readonly string[] = [];
+
+/** The labels named on bin `b`, through the index. */
+function indexedBinLabels(
+  ix: BinLabelIndex,
+  ss: StackedBarSeries,
+  b: number,
+): readonly string[] {
+  const stable = ss.marks?.[b];
+  return (
+    (stable !== undefined
+      ? ix.byMark.get(stable)
+      : ix.byKey.get(ss.begin[b]!)) ?? NO_LABELS
+  );
+}
+
 /** Is `label` one of the (usually zero or one) labels {@link binLabelsInto}
  *  gathered for this bin? Indexed rather than `includes` — this is the draw's
  *  inner loop. */
@@ -484,6 +544,17 @@ export function drawHeat(
   // path had when it matched a lone mark. `null` ⇒ that set is not in play.
   const selLabels: string[] | null = anySelected ? [] : null;
   const hovLabels: string[] | null = anyHovered ? [] : null;
+  // …and the index form for a big set, built once per draw — see
+  // `MARK_INDEX_THRESHOLD`. Only a sweep preview ever reaches it, so a
+  // clicked handful still pays nothing but the scan it always paid.
+  const selIx =
+    anySelected && sel.length > MARK_INDEX_THRESHOLD
+      ? buildBinLabelIndex(sel, seriesId)
+      : null;
+  const hovIx =
+    anyHovered && hov.length > MARK_INDEX_THRESHOLD
+      ? buildBinLabelIndex(hov, seriesId)
+      : null;
   // Scratch for the per-bin span narrowing — the spans whose `x` contains the
   // current bin, reused across bins so the resting frame (and any spanless
   // frame) allocates nothing. `null` ⇒ spans are not in play at all.
@@ -526,10 +597,15 @@ export function drawHeat(
   const pEnd = Math.min(grid.length, vEnd + 1);
   const selGrid = perimeter ? new Uint8Array((pEnd - pStart) * G) : null;
   if (selGrid !== null) {
-    const labels: string[] = [];
+    const scratch: string[] = [];
     const covering: SpanSelection[] = [];
     for (let b = pStart; b < pEnd; b += 1) {
-      if (anySelected) binLabelsInto(labels, sel, seriesId, ss, b);
+      let labels: readonly string[] = NO_LABELS;
+      if (selIx !== null) labels = indexedBinLabels(selIx, ss, b);
+      else if (anySelected) {
+        binLabelsInto(scratch, sel, seriesId, ss, b);
+        labels = scratch;
+      }
       covering.length = 0;
       const begin = ss.begin[b]!;
       for (let s = 0; s < spanSet.length; s += 1) {
@@ -580,8 +656,18 @@ export function drawHeat(
     // than once per cell: what is left for the row loop is a label compare
     // against the handful (usually none) that name this bin at all. `sel`/`hov`
     // are empty whenever the grid is reduced, so `grid === ss` here.
-    if (selLabels !== null) binLabelsInto(selLabels, sel, seriesId, ss, b);
-    if (hovLabels !== null) binLabelsInto(hovLabels, hov, seriesId, ss, b);
+    let selNames: readonly string[] | null = null;
+    let hovNames: readonly string[] | null = null;
+    if (selIx !== null) selNames = indexedBinLabels(selIx, ss, b);
+    else if (selLabels !== null) {
+      binLabelsInto(selLabels, sel, seriesId, ss, b);
+      selNames = selLabels;
+    }
+    if (hovIx !== null) hovNames = indexedBinLabels(hovIx, ss, b);
+    else if (hovLabels !== null) {
+      binLabelsInto(hovLabels, hov, seriesId, ss, b);
+      hovNames = hovLabels;
+    }
     // The span x half, once per bin: keep only the spans whose half-open `x`
     // contains this bin's `begin` — the row loop then tests just their `rows` /
     // `y` channels against the handful that survive. `spanSet` is empty
@@ -595,10 +681,12 @@ export function drawHeat(
       }
     }
     const binIsLive =
-      (selLabels !== null && selLabels.length > 0) ||
-      (hovLabels !== null && hovLabels.length > 0) ||
+      (selNames !== null && selNames.length > 0) ||
+      (hovNames !== null && hovNames.length > 0) ||
       (binSpans !== null && binSpans.length > 0);
     const base = b * G;
+    // This bin's row in the neighbour grid, or `-1` when there is none.
+    const selRow = selGrid !== null ? (b - pStart) * G : -1;
     for (let g = 0; g < G; g += 1) {
       // Gaps are skipped before any per-cell work, exactly as `cellRect` does
       // by returning null: a hole in the record draws nothing and owns no hit
@@ -641,21 +729,30 @@ export function drawHeat(
       let live = false;
       if (binIsLive) {
         const group = ss.groups[g]!;
-        selected = selLabels !== null && hasLabel(selLabels, group);
-        // The spans that cover this bin, against the cell's remaining channels
-        // — the row name (`rows`) and the value (`y`). `spanContainsPoint` is
-        // the single containment rule (its x re-test is two compares on an
-        // already-passing bin), so this cannot drift from `selectionContains`.
-        if (!selected && binSpans !== null && binSpans.length > 0) {
-          const begin = ss.begin[b]!;
-          for (let s = 0; s < binSpans.length; s += 1) {
-            if (spanContainsPoint(binSpans[s]!, begin, value, group)) {
-              selected = true;
-              break;
+        if (selRow >= 0) {
+          // The neighbour grid already answered this, for every cell in the
+          // window — reading it back is the point of having built it. Redoing
+          // the label compare and the span test here would pay for the same
+          // answer twice on every selected frame.
+          selected = selGrid![selRow + g] === 1;
+        } else {
+          selected = selNames !== null && hasLabel(selNames, group);
+          // The spans that cover this bin, against the cell's remaining
+          // channels — the row name (`rows`) and the value (`y`).
+          // `spanContainsPoint` is the single containment rule (its x re-test
+          // is two compares on an already-passing bin), so this cannot drift
+          // from `selectionContains`.
+          if (!selected && binSpans !== null && binSpans.length > 0) {
+            const begin = ss.begin[b]!;
+            for (let s = 0; s < binSpans.length; s += 1) {
+              if (spanContainsPoint(binSpans[s]!, begin, value, group)) {
+                selected = true;
+                break;
+              }
             }
           }
         }
-        live = selected || (hovLabels !== null && hasLabel(hovLabels, group));
+        live = selected || (hovNames !== null && hasLabel(hovNames, group));
       }
 
       // Under `states` there is no alpha pop: a live cell is marked by chrome,
