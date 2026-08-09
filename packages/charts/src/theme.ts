@@ -90,6 +90,24 @@ export interface ChartTheme {
     readonly [semantic: string]: CandleStyle;
   };
   /**
+   * Map from a heat map's semantic identifier to its **interaction states**
+   * ({@link HeatMap}). Optional throughout; with no `heat` slot a live cell
+   * takes the pre-states treatment (one outline per cell, in
+   * `bar.highlight`).
+   *
+   * **Only the states, and deliberately so.** A heat map's *geometry* is
+   * bar-family — the slot gap, the minimum bin width, the outline weight —
+   * and it reads all of it from `bar[semantic] ?? bar.default`, which is
+   * right: a cell is a bar's slot with colour instead of height. What it
+   * cannot share is state styling, because a bar's fill is free and a cell's
+   * fill **is the datum** (see {@link HeatStates}). So the split is between
+   * the two things, not an accident of where the tokens landed.
+   */
+  readonly heat?: {
+    readonly default: HeatStates;
+    readonly [semantic: string]: HeatStates;
+  };
+  /**
    * Map from a bar's semantic identifier to its style — the fill, the
    * selected-bar highlight, and the slot gap / minimum width ({@link BarChart}).
    * `default` is the fallback; a bar resolves `bar[semantic] ?? bar.default`.
@@ -346,6 +364,66 @@ export interface ScatterStates {
   readonly dimmedRadius: number;
   /** Alpha of a point outside a non-empty selection. */
   readonly dimmedOpacity: number;
+}
+
+/**
+ * A heat map's **interaction states** ({@link ChartTheme.heat}).
+ *
+ * A cell has no spare channel at all. A bar's fill is free, so a bar swaps it;
+ * a point's colour encodes nothing by default, so a point recolours *and*
+ * resizes. A cell's colour **is** its value, and its rect is the grid — so
+ * every state here is **chrome added around the cell** or a transform applied
+ * uniformly to all of them, and none of them repaints a cell in a colour the
+ * ramp could also have produced.
+ */
+export interface HeatStates {
+  /**
+   * The flat overlay painted over a cell **outside a non-empty selection** —
+   * carry the alpha in the colour (`rgba(255,255,255,0.62)`), because it is
+   * composited over the cell, not applied as one.
+   *
+   * **A flat overlay, not `globalAlpha`, and the difference is the whole
+   * point.** Alpha and value are the same channel on a ramp, so fading a cell
+   * slides it along the scale — a dimmed dark cell becomes a resting mid one.
+   * An overlay is *uniform and monotonic*: every cell moves by the same
+   * transform, so the ramp's **order survives inside the veiled set** and only
+   * the cross-set comparison is ambiguous — which is exactly what the
+   * {@link perimeter} is there to disambiguate.
+   *
+   * It is also why this is a colour and not a number: opacity composites with
+   * whatever is *behind* the cell (a gridline, a non-white background, another
+   * layer), so the same value would veil to different colours in different
+   * charts. An overlay is a property of the cell.
+   */
+  readonly veil: string;
+  /**
+   * The hovered cell's **double ring**, outer colour first — two concentric
+   * rings of {@link ringWidth}, both inside the cell.
+   *
+   * A single ring cannot work against a ramp: a light ring vanishes at the
+   * pale end and a dark one at the dark end, and a cell can be anywhere on the
+   * scale. The pair guarantees one of the two reads wherever the cell happens
+   * to sit. (The same problem `bar.binFills` has, and a better answer than
+   * picking one colour and hoping.)
+   */
+  readonly hoverRing: readonly [string, string];
+  /** Width of each of the two hover rings, in px. */
+  readonly ringWidth: number;
+  /**
+   * The selected region's **perimeter** — one outline around the union of
+   * selected cells, not one per cell.
+   *
+   * Per-cell outlines are what this replaces, and the reason is legible in any
+   * screenshot of them: a bordered grid is mostly border, and every interior
+   * line says nothing, because it is interior to the selection. Drawn by
+   * suppressing each cell edge whose neighbour is also selected, so a
+   * selection in several disconnected pieces gets one outline **per piece**,
+   * and a hole in the middle of one gets its own — no connectivity pass, and
+   * no assumption that a selection is a single rectangle.
+   */
+  readonly perimeter: string;
+  /** Perimeter stroke width, in px. */
+  readonly perimeterWidth: number;
 }
 
 /**
@@ -777,6 +855,21 @@ export const defaultTheme: ChartTheme = {
         dimmedRadius: 2.5,
         dimmedOpacity: 0.34,
       },
+    },
+  },
+  heat: {
+    // A cell's colour is its value, so every state here is chrome around the
+    // cell (or one uniform transform over all of them) — see `HeatStates`.
+    default: {
+      veil: 'rgba(255,255,255,0.62)',
+      // White outside, dark teal inside: one of the pair reads wherever on
+      // the ramp the cell happens to sit.
+      hoverRing: ['#ffffff', '#12564E'],
+      ringWidth: 2,
+      // The shared selection blue — a selected region beside a selected bar
+      // reads as one act.
+      perimeter: '#3F5BE0',
+      perimeterWidth: 2,
     },
   },
   box: {

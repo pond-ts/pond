@@ -467,11 +467,39 @@ function mountHeat(
   return { calls };
 }
 
-/** The rect (x, y) of every `strokeRect` — a heat cell only strokes when live. */
-function strokeRects(calls: readonly CtxCall[]): Array<[number, number]> {
-  return calls
-    .filter((c) => c.name === 'strokeRect')
-    .map((c) => [c.args[0] as number, c.args[1] as number]);
+/**
+ * The top-left corner of every cell that contributed to the **selection
+ * perimeter** — one entry per selected cell, in draw order.
+ *
+ * A selected cell no longer strokes its own rect: `theme.heat`'s states draw
+ * one outline around the *union*, so each cell emits only the edges it does
+ * not share with a selected neighbour. Its identity is therefore the bounding
+ * corner of the path it contributed, which is still the cell's own rect — the
+ * edges are inset inside it.
+ */
+function selectedCells(calls: readonly CtxCall[]): Array<[number, number]> {
+  const ink = defaultTheme.heat!.default.perimeter;
+  const out: Array<[number, number]> = [];
+  let stroke: unknown;
+  let minX = Infinity;
+  let minY = Infinity;
+  let any = false;
+  for (const c of calls) {
+    if (c.type === 'set' && c.name === 'strokeStyle') stroke = c.args[0];
+    else if (c.name === 'beginPath') {
+      minX = Infinity;
+      minY = Infinity;
+      any = false;
+    } else if (c.name === 'moveTo' || c.name === 'lineTo') {
+      any = true;
+      minX = Math.min(minX, c.args[0] as number);
+      minY = Math.min(minY, c.args[1] as number);
+    } else if (c.name === 'stroke' && any && stroke === ink) {
+      out.push([minX, minY]);
+      any = false;
+    }
+  }
+  return out;
 }
 
 const heatSpan = (over: Partial<SpanSelection> = {}): SpanSelection => ({
@@ -484,14 +512,14 @@ const heatSpan = (over: Partial<SpanSelection> = {}): SpanSelection => ({
 describe('<HeatMap> — a heat-map span uses `rows` (RFC A5.3)', () => {
   it('a rows-less span selects every row of the covered bins', () => {
     const { calls } = mountHeat({ selected: [heatSpan()] });
-    expect(strokeRects(calls)).toHaveLength(4); // 2 bins × 2 rows
+    expect(selectedCells(calls)).toHaveLength(4); // 2 bins × 2 rows
   });
 
   it('rows narrows to the named rows — a label set, not an interval', () => {
     const { calls } = mountHeat({
       selected: [heatSpan({ rows: ['hi'] })],
     });
-    expect(strokeRects(calls)).toHaveLength(2); // (0, hi), (1, hi)
+    expect(selectedCells(calls)).toHaveLength(2); // (0, hi), (1, hi)
   });
 
   it('the selection survives a row reorder — it names rows, not slots', () => {
@@ -499,10 +527,10 @@ describe('<HeatMap> — a heat-map span uses `rows` (RFC A5.3)', () => {
     // the other band of the plot; the SAME cells must light. A numeric
     // y-interval (A3.3's rejected shape) would keep the old band instead —
     // which is exactly why the descriptor carries labels.
-    const before = strokeRects(
+    const before = selectedCells(
       mountHeat({ selected: [heatSpan({ rows: ['hi'] })] }, ['lo', 'hi']).calls,
     );
-    const after = strokeRects(
+    const after = selectedCells(
       mountHeat({ selected: [heatSpan({ rows: ['hi'] })] }, ['hi', 'lo']).calls,
     );
     expect(before).toHaveLength(2);
@@ -516,7 +544,7 @@ describe('<HeatMap> — a heat-map span uses `rows` (RFC A5.3)', () => {
     const { calls } = mountHeat({
       selected: [heatSpan({ id: 'other' })],
     });
-    expect(strokeRects(calls)).toHaveLength(0);
+    expect(selectedCells(calls)).toHaveLength(0);
   });
 
   it('a span and a cell mark light their union', () => {
@@ -532,7 +560,7 @@ describe('<HeatMap> — a heat-map span uses `rows` (RFC A5.3)', () => {
         },
       ],
     });
-    expect(strokeRects(calls)).toHaveLength(2); // (0, lo) + (2, hi)
+    expect(selectedCells(calls)).toHaveLength(2); // (0, lo) + (2, hi)
   });
 });
 

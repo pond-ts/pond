@@ -62,6 +62,29 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: a heat map's selection is one outline around the region, not one
+  per cell** — new optional `theme.heat` slot (`HeatStates`: `veil`,
+  `hoverRing`, `ringWidth`, `perimeter`, `perimeterWidth`). Absent, the
+  pre-states treatment is unchanged. The _geometry_ still comes from
+  `theme.bar` — a cell is a bar's slot with colour instead of height — and
+  only the state styling is new, because a bar's fill is free while a cell's
+  fill **is the datum**.
+  - **The perimeter is drawn by suppressing each cell edge whose neighbour is
+    also selected.** Summed over the region that is exactly its outline, with
+    no connectivity pass — so a selection in several disconnected pieces gets
+    one outline **per piece**, a hole in the middle of a piece gets its own,
+    and nothing assumes a selection is a single rectangle. A selection running
+    off-screen grows no false edge at the viewport boundary either.
+  - **An unselected cell recedes under a flat overlay, not `globalAlpha`.**
+    Alpha and value are the same channel on a ramp, so fading a cell slides it
+    along the scale; an overlay is uniform and monotonic, so the ramp's order
+    survives inside the receded set. It is a colour rather than a number
+    because opacity composites with whatever is _behind_ the cell, which would
+    veil the same value to different colours in different charts.
+  - **The hover ring is a pair** — a light ring outside and a dark one inside,
+    both within the cell. A single ring cannot work against a ramp: the light
+    one vanishes at the pale end and the dark one at the dark end.
+
 - **charts: a scatter point carries its state in colour AND size** — new
   optional `theme.scatter.*.states` (`hover` / `hoverRadius` / `selected` /
   `halo` / `haloWidth` / `dimmedRadius` / `dimmedOpacity`). Unset ⇒ the

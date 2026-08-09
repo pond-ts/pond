@@ -3,6 +3,7 @@ import type { StackedBarSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { Orientation, StackMark } from './bars.js';
 import type { SpanSelection } from './context.js';
+import type { HeatStates } from './theme.js';
 import { NO_SPANS, spanContainsPoint } from './span.js';
 import { visibleSpanRange } from './culling.js';
 import {
@@ -76,6 +77,13 @@ export interface HeatStyle {
   /** Stroke for the `'hatch'` no-data fill — the theme's grid colour, so it
    *  reads as chart furniture rather than as a value. */
   readonly gridColor: string;
+  /**
+   * The **interaction states** ({@link HeatStates}), from `theme.heat`. Unset
+   * ⇒ the pre-states treatment exactly: a live cell gets one outline of its
+   * own in {@link highlight}, `outlineWidth` for hover and twice that for
+   * selection, and nothing recedes.
+   */
+  readonly states?: HeatStates;
 }
 
 /**
@@ -500,6 +508,61 @@ export function drawHeat(
     bandHi[g] = hi;
   }
 
+  // ── The selected-cell grid, for the union perimeter ────────────────────
+  // `states` draws ONE outline around the union of selected cells, which is
+  // done by suppressing each cell edge whose neighbour is also selected. That
+  // needs a membership answer for a cell's four neighbours — including the
+  // ones in the columns either side, which the streaming per-bin narrowing
+  // below cannot give while it is standing on a different column.
+  //
+  // So it is precomputed here for `[vStart - 1, vEnd]` — the window plus one
+  // column each side, so a selection running off-screen does NOT grow a false
+  // edge at the viewport boundary. O(W·G), the same order as the draw itself,
+  // and skipped entirely when nothing is selected (the resting frame, and any
+  // decimated one).
+  const st = style.states;
+  const perimeter = st !== undefined && (anySelected || spanSet.length > 0);
+  const pStart = Math.max(0, vStart - 1);
+  const pEnd = Math.min(grid.length, vEnd + 1);
+  const selGrid = perimeter ? new Uint8Array((pEnd - pStart) * G) : null;
+  if (selGrid !== null) {
+    const labels: string[] = [];
+    const covering: SpanSelection[] = [];
+    for (let b = pStart; b < pEnd; b += 1) {
+      if (anySelected) binLabelsInto(labels, sel, seriesId, ss, b);
+      covering.length = 0;
+      const begin = ss.begin[b]!;
+      for (let s = 0; s < spanSet.length; s += 1) {
+        const sp = spanSet[s]!;
+        if (begin >= sp.x[0] && begin < sp.x[1]) covering.push(sp);
+      }
+      if (labels.length === 0 && covering.length === 0) continue;
+      const base = b * G;
+      const out = (b - pStart) * G;
+      for (let g = 0; g < G; g += 1) {
+        const value = values[base + g]!;
+        if (!Number.isFinite(value)) continue;
+        const group = ss.groups[g]!;
+        let hit = hasLabel(labels, group);
+        for (let s = 0; !hit && s < covering.length; s += 1) {
+          hit = spanContainsPoint(covering[s]!, begin, value, group);
+        }
+        if (hit) selGrid[out + g] = 1;
+      }
+    }
+  }
+  /** Is cell `(b, g)` selected? Off-grid answers `false`; outside the
+   *  precomputed window it is unknowable, so it also answers `false` — which
+   *  cannot happen, because the window is padded by exactly the one column a
+   *  neighbour test can reach. */
+  const isSel = (b: number, g: number): boolean =>
+    selGrid !== null &&
+    b >= pStart &&
+    b < pEnd &&
+    g >= 0 &&
+    g < G &&
+    selGrid[(b - pStart) * G + g] === 1;
+
   let lastFill: string | undefined;
 
   for (let b = vStart; b < vEnd; b += 1) {
@@ -595,7 +658,10 @@ export function drawHeat(
         live = selected || (hovLabels !== null && hasLabel(hovLabels, group));
       }
 
-      ctx.globalAlpha = live ? 1 : style.opacity;
+      // Under `states` there is no alpha pop: a live cell is marked by chrome,
+      // so `opacity` stays what it is — the LAYER's base alpha — instead of
+      // quietly becoming a state and being overridden to 1.
+      ctx.globalAlpha = live && st === undefined ? 1 : style.opacity;
       // Assigning `fillStyle` is not free — a real canvas parses the CSS colour
       // on every set — and a banded ramp hands out long runs of the same string,
       // so set it only when it actually changes.
@@ -604,15 +670,79 @@ export function drawHeat(
         ctx.fillStyle = fill;
       }
       ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
-      if (live) {
-        // Inset by half the stroke so the outline sits inside the cell rather
-        // than straddling its edge and bleeding over the neighbour — which on a
-        // flush grid (`gap: 0`) would misreport the neighbour's colour.
-        const w = selected ? style.outlineWidth * 2 : style.outlineWidth;
+      if (st === undefined) {
+        if (live) {
+          // Inset by half the stroke so the outline sits inside the cell rather
+          // than straddling its edge and bleeding over the neighbour — which on a
+          // flush grid (`gap: 0`) would misreport the neighbour's colour.
+          const w = selected ? style.outlineWidth * 2 : style.outlineWidth;
+          const i = w / 2;
+          ctx.lineWidth = w;
+          ctx.strokeStyle = style.highlight;
+          ctx.strokeRect(x0 + i, yTop + i, x1 - x0 - w, yBottom - yTop - w);
+        }
+        continue;
+      }
+      // ── The states path ────────────────────────────────────────────────
+      // Recede: a flat overlay composited over the cell, NOT an alpha — see
+      // `HeatStates.veil`. Only a committed selection recedes the field; a
+      // hovered cell keeps its value even while the rest is veiled.
+      if (perimeter && !live) {
+        lastFill = st.veil;
+        ctx.fillStyle = st.veil;
+        ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
+      }
+      if (live && !selected) {
+        // The double ring, both inside the cell so both sit on its colour.
+        const w = st.ringWidth;
+        ctx.lineWidth = w;
+        for (let ring = 0; ring < 2; ring += 1) {
+          const i = w / 2 + ring * w;
+          ctx.strokeStyle = st.hoverRing[ring]!;
+          ctx.strokeRect(
+            x0 + i,
+            yTop + i,
+            x1 - x0 - 2 * i,
+            yBottom - yTop - 2 * i,
+          );
+        }
+      }
+      if (selected) {
+        // **One outline around the union**, drawn as the edges this cell does
+        // not share with another selected cell. Summed over the region that
+        // is exactly its perimeter — and it costs no connectivity pass, so
+        // several disconnected pieces get one outline each and a hole in the
+        // middle of a piece gets its own.
+        //
+        // Safe to draw in the cell loop rather than deferring: every edge is
+        // inset INSIDE its own cell, so no neighbour's fill (or veil) drawn
+        // later can paint over it.
+        const w = st.perimeterWidth;
         const i = w / 2;
         ctx.lineWidth = w;
-        ctx.strokeStyle = style.highlight;
-        ctx.strokeRect(x0 + i, yTop + i, x1 - x0 - w, yBottom - yTop - w);
+        ctx.strokeStyle = st.perimeter;
+        ctx.beginPath();
+        // Which cell sits on each side of this one **on screen**. The two
+        // orientations disagree about all four: transposing swaps the axes,
+        // and the y scale descends — so a higher ROW index is further up on a
+        // vertical grid, while a later BIN is further up on a horizontal one.
+        if (!(vertical ? isSel(b - 1, g) : isSel(b, g - 1))) {
+          ctx.moveTo(x0 + i, yTop);
+          ctx.lineTo(x0 + i, yBottom);
+        }
+        if (!(vertical ? isSel(b + 1, g) : isSel(b, g + 1))) {
+          ctx.moveTo(x1 - i, yTop);
+          ctx.lineTo(x1 - i, yBottom);
+        }
+        if (!(vertical ? isSel(b, g + 1) : isSel(b + 1, g))) {
+          ctx.moveTo(x0, yTop + i);
+          ctx.lineTo(x1, yTop + i);
+        }
+        if (!(vertical ? isSel(b, g - 1) : isSel(b - 1, g))) {
+          ctx.moveTo(x0, yBottom - i);
+          ctx.lineTo(x1, yBottom - i);
+        }
+        ctx.stroke();
       }
     }
   }

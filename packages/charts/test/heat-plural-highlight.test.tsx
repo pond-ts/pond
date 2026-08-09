@@ -59,6 +59,24 @@ const BEGINS = stacksFromColumns(SERIES, ['lo', 'hi']).begin;
 
 const RAMP = ['#111', '#555', '#999', '#ddd'];
 
+/** Nine bins × two rows — wide enough that a narrowed viewport genuinely
+ *  culls, which the three-bin grid above never does (the culling window
+ *  carries a ±1-bin margin of its own). */
+const WIDE = TimeSeries.fromColumns({
+  name: 'wide',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'lo', kind: 'number' },
+    { name: 'hi', kind: 'number' },
+  ] as const,
+  columns: {
+    time: Array.from({ length: 9 }, (_, i) => i * 1000),
+    lo: Array.from({ length: 9 }, (_, i) => i + 1),
+    hi: Array.from({ length: 9 }, (_, i) => i + 10),
+  },
+});
+const WIDE_BEGINS = stacksFromColumns(WIDE, ['lo', 'hi']).begin;
+
 /** A `SelectInfo` naming the cell in bin `b`, row `label`. */
 const cell = (b: number, label: 'lo' | 'hi', id = 'temp'): SelectInfo => ({
   id,
@@ -73,7 +91,12 @@ const cell = (b: number, label: 'lo' | 'hi', id = 'temp'): SelectInfo => ({
  * against a recording context — the same call the row's canvas makes, so what
  * is asserted is what would be painted.
  */
-function mountHeat(containerProps: Record<string, unknown>) {
+function mountHeat(
+  containerProps: Record<string, unknown>,
+  /** Replay domain — narrow it to push bins outside the culling window. */
+  domain: readonly [number, number] = [0, 3000],
+  series: TimeSeries<never> | typeof SERIES = SERIES,
+) {
   let rf: RowFrame | null = null;
   function Capture() {
     const r = useContext(RowContext);
@@ -90,7 +113,7 @@ function mountHeat(containerProps: Record<string, unknown>) {
           <YAxis id="a" />
           <Layers>
             <HeatMap
-              series={SERIES}
+              series={series}
               columns={['lo', 'hi']}
               colors={RAMP}
               id="temp"
@@ -109,58 +132,153 @@ function mountHeat(containerProps: Record<string, unknown>) {
   }
   const r = rf!;
   const { ctx, calls } = recordingContext();
-  const xScale = scaleLinear().domain([0, 3000]).range([0, 300]) as never;
+  const xScale = scaleLinear()
+    .domain([domain[0], domain[1]])
+    .range([0, 300]) as never;
   r.layers[0]!.layer.draw(ctx, xScale, r.yScales.get('a')!);
   return { calls };
 }
 
+/** The heat states off the default theme the mount uses, so a theme change
+ *  moves the expectations with it rather than silently passing. */
+const ST = defaultTheme.heat!.default;
+
 /**
- * The `lineWidth` in effect at each `strokeRect`. A heat cell only strokes when
- * it is live, so this is one entry per lit cell — the hover weight is the
- * theme's `outlineWidth`, selection twice it, which is how the two states are
- * told apart without a second theme token (#577).
+ * The **live cells, in draw order** — `'selected'` or `'hover'` per cell.
+ *
+ * A live cell no longer strokes its own rect. A hovered one draws a double
+ * ring (two `strokeRect`s, counted once here via the outer colour) and a
+ * selected one contributes its share of the region perimeter as one stroked
+ * path, so what identifies a state is now the **colour**, not a line weight.
  */
-function outlineWidths(calls: readonly CtxCall[]): number[] {
-  const out: number[] = [];
-  let w: unknown;
+function liveCells(calls: readonly CtxCall[]): string[] {
+  const out: string[] = [];
+  let ink: unknown;
   for (const c of calls) {
-    if (c.type === 'set' && c.name === 'lineWidth') w = c.args[0];
-    else if (c.name === 'strokeRect') out.push(w as number);
+    if (c.type === 'set' && c.name === 'strokeStyle') ink = c.args[0];
+    else if (c.name === 'strokeRect' && ink === ST.hoverRing[0])
+      out.push('hover');
+    else if (c.name === 'stroke' && ink === ST.perimeter) out.push('selected');
   }
   return out;
 }
 
-/** The two live weights, off the default theme the mount uses — `outlineWidth`
- *  for hover, twice it for selection. Read from the theme rather than hard-coded
- *  so a theme change moves the expectations with it. */
-const HOVER_W = defaultTheme.bar.default.outlineWidth;
-const SELECTED_W = HOVER_W * 2;
+/** One `lineTo` per cell edge the perimeter actually draws — the measure of
+ *  "one outline around the union" rather than one per cell. */
+const edges = (calls: readonly CtxCall[]) =>
+  calls.filter((c) => c.name === 'lineTo').length;
+
+const SEL = 'selected';
+const HOV = 'hover';
 
 describe('<HeatMap> — the whole selection / hover set reaches the draw', () => {
-  it('the two live weights differ, so the assertions below can tell them apart', () => {
-    // Guards every `toEqual([SELECTED_W, HOVER_W])` below from passing on a
-    // theme where the two states are indistinguishable.
-    expect(SELECTED_W).not.toBe(HOVER_W);
-    expect(outlineWidths(mountHeat({ selected: cell(0, 'lo') }).calls)).toEqual(
-      [SELECTED_W],
-    );
-    expect(outlineWidths(mountHeat({ hovered: cell(0, 'lo') }).calls)).toEqual([
-      HOVER_W,
+  it('the two live inks differ, so the assertions below can tell them apart', () => {
+    // Guards every `toEqual([SEL, HOV])` below from passing on a theme where
+    // the two states are indistinguishable.
+    expect(ST.perimeter).not.toBe(ST.hoverRing[0]);
+    expect(liveCells(mountHeat({ selected: cell(0, 'lo') }).calls)).toEqual([
+      SEL,
     ]);
+    expect(liveCells(mountHeat({ hovered: cell(0, 'lo') }).calls)).toEqual([
+      HOV,
+    ]);
+  });
+
+  it('a selected BLOCK draws its union perimeter, not one outline per cell', () => {
+    // The whole grid: 3 bins × 2 rows. Per cell that is 24 edges; the union's
+    // perimeter is 2·3 + 2·2 = 10, and every one of the 14 suppressed edges
+    // was interior to the selection and said nothing.
+    const { calls } = mountHeat({
+      selected: [
+        cell(0, 'lo'),
+        cell(1, 'lo'),
+        cell(2, 'lo'),
+        cell(0, 'hi'),
+        cell(1, 'hi'),
+        cell(2, 'hi'),
+      ],
+    });
+    expect(liveCells(calls)).toEqual(Array(6).fill(SEL));
+    expect(edges(calls)).toBe(10);
+  });
+
+  it('a selection running OFF-SCREEN grows no edge at the viewport boundary', () => {
+    // Nine bins, all selected, with the viewport over the middle few. The
+    // cells at the ends of the DRAWN window have selected neighbours just
+    // outside it, so those vertical edges must stay suppressed — the outline
+    // belongs to the region, not to the part of it that happens to be on
+    // screen.
+    //
+    // This is what the one-column pad on the neighbour grid buys. Without it
+    // an off-window neighbour reads as "not selected" and a pan drags a false
+    // vertical rule down each side of the plot.
+    const all = ['lo', 'hi'].flatMap((row) =>
+      Array.from(WIDE_BEGINS).map((key) => ({
+        id: 'temp',
+        key,
+        value: 0,
+        color: '#abc',
+        label: row,
+      })),
+    );
+    // The container range must cover the whole grid — the layer narrows to
+    // it before registering, and the culling under test is the REPLAY scale's.
+    const { calls } = mountHeat(
+      { selected: all, range: [-500, 8500] },
+      [3500, 5500],
+      WIDE,
+    );
+    const lit = liveCells(calls).length;
+    expect(lit).toBeGreaterThan(0);
+    expect(lit).toBeLessThan(all.length); // genuinely culled
+    // Every drawn cell contributes exactly ONE edge — its top or its bottom.
+    // Nothing vertical: neither the interior seams nor the window's own two
+    // ends, which is the case the pad exists for.
+    expect(edges(calls)).toBe(lit);
+  });
+
+  it('two disconnected blocks get one outline each — no connectivity pass', () => {
+    // Bins 0 and 2, both rows: two 1×2 columns with an unselected column
+    // between them. 2·(2·1 + 2·2) = 12 edges — each block closed on all four
+    // sides, which is what falls out of suppressing only SHARED edges.
+    const { calls } = mountHeat({
+      selected: [cell(0, 'lo'), cell(0, 'hi'), cell(2, 'lo'), cell(2, 'hi')],
+    });
+    expect(edges(calls)).toBe(12);
+  });
+
+  it('the unselected field recedes under a flat veil, not an alpha', () => {
+    // Alpha and value are the same channel on a ramp — fading a cell slides
+    // it along the scale. The veil is composited over the cell instead, so
+    // the ramp's order survives inside the receded set.
+    const { calls } = mountHeat({ selected: cell(0, 'lo') });
+    const veils = calls.filter(
+      (c, i) =>
+        c.type === 'set' &&
+        c.name === 'fillStyle' &&
+        c.args[0] === ST.veil &&
+        i >= 0,
+    );
+    expect(veils.length).toBeGreaterThan(0);
+    // …and nothing recedes while the selection is empty.
+    const rest = mountHeat({}).calls;
+    expect(
+      rest.some((c) => c.name === 'fillStyle' && c.args[0] === ST.veil),
+    ).toBe(false);
   });
 
   it('outlines every member of a multi-cell `selected`', () => {
     const { calls } = mountHeat({
       selected: [cell(0, 'lo'), cell(2, 'hi')],
     });
-    expect(outlineWidths(calls)).toEqual([SELECTED_W, SELECTED_W]);
+    expect(liveCells(calls)).toEqual([SEL, SEL]);
   });
 
   it('outlines a three-cell selection — no cap at one', () => {
     const { calls } = mountHeat({
       selected: [cell(0, 'lo'), cell(1, 'hi'), cell(2, 'lo')],
     });
-    expect(outlineWidths(calls)).toEqual([SELECTED_W, SELECTED_W, SELECTED_W]);
+    expect(liveCells(calls)).toEqual([SEL, SEL, SEL]);
   });
 
   it('outlines both rows of one bin — a cell identity is bin AND row', () => {
@@ -169,21 +287,41 @@ describe('<HeatMap> — the whole selection / hover set reaches the draw', () =>
     const { calls } = mountHeat({
       selected: [cell(1, 'lo'), cell(1, 'hi')],
     });
-    expect(outlineWidths(calls)).toEqual([SELECTED_W, SELECTED_W]);
+    expect(liveCells(calls)).toEqual([SEL, SEL]);
+    // One bin, both rows: a 1-wide, 2-tall block — six edges, not eight.
+    expect(edges(calls)).toBe(6);
   });
 
   it('still outlines exactly one for a single-mark selection (unchanged)', () => {
     // `selected` accepts a lone `SelectInfo` too, which is what every shipped
     // caller passes; widening the reader must not change what they see.
     const { calls } = mountHeat({ selected: cell(0, 'lo') });
-    expect(outlineWidths(calls)).toEqual([SELECTED_W]);
+    expect(liveCells(calls)).toEqual([SEL]);
+  });
+
+  it('the hover ring is a PAIR, one inside the other', () => {
+    // A single ring cannot work against a ramp: a light one vanishes at the
+    // pale end and a dark one at the dark end, and a cell can sit anywhere on
+    // the scale. Two concentric rings guarantee one of them reads — so this
+    // pins both colours AND that the second is inset by a full ring width,
+    // which is what keeps them distinguishable rather than overdrawn.
+    let ink: unknown;
+    const drawn: Array<[unknown, number, number]> = [];
+    for (const c of mountHeat({ hovered: cell(0, 'lo') }).calls) {
+      if (c.type === 'set' && c.name === 'strokeStyle') ink = c.args[0];
+      else if (c.name === 'strokeRect')
+        drawn.push([ink, c.args[0] as number, c.args[1] as number]);
+    }
+    expect(drawn.map(([i]) => i)).toEqual([ST.hoverRing[0], ST.hoverRing[1]]);
+    expect(drawn[1]![1] - drawn[0]![1]).toBeCloseTo(ST.ringWidth);
+    expect(drawn[1]![2] - drawn[0]![2]).toBeCloseTo(ST.ringWidth);
   });
 
   it('outlines every member of a multi-cell `hovered`, at the hover weight', () => {
     const { calls } = mountHeat({
       hovered: [cell(0, 'hi'), cell(1, 'hi'), cell(2, 'hi')],
     });
-    expect(outlineWidths(calls)).toEqual([HOVER_W, HOVER_W, HOVER_W]);
+    expect(liveCells(calls)).toEqual([HOV, HOV, HOV]);
   });
 
   it('outlines selection and hover together, selection winning the overlap', () => {
@@ -192,8 +330,8 @@ describe('<HeatMap> — the whole selection / hover set reaches the draw', () =>
       hovered: [cell(1, 'lo'), cell(2, 'lo')],
     });
     // Three distinct live cells, not four strokes: the cell in both sets takes
-    // its selected weight only.
-    expect(outlineWidths(calls)).toEqual([SELECTED_W, SELECTED_W, HOVER_W]);
+    // the selected treatment only.
+    expect(liveCells(calls)).toEqual([SEL, SEL, HOV]);
   });
 
   it('ignores set members naming another layer', () => {
@@ -201,11 +339,11 @@ describe('<HeatMap> — the whole selection / hover set reaches the draw', () =>
       selected: [cell(0, 'lo', 'elsewhere'), cell(2, 'lo')],
       hovered: [cell(1, 'lo', 'elsewhere')],
     });
-    expect(outlineWidths(calls)).toEqual([SELECTED_W]);
+    expect(liveCells(calls)).toEqual([SEL]);
   });
 
   it('outlines nothing when both sets are empty', () => {
-    expect(outlineWidths(mountHeat({}).calls)).toEqual([]);
+    expect(liveCells(mountHeat({}).calls)).toEqual([]);
   });
 
   it('outlines nothing while decimated, however many cells are pinned', () => {

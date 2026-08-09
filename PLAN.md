@@ -202,9 +202,18 @@ milestone. Plan:
   are applied as the **ratio** to the base radius, so a data-driven `radius`
   encoding is not flattened to one size the moment a point goes live.
 
+  **Also shipped — the heat map states.** A new optional `theme.heat` slot
+  carrying only the states (the geometry still comes from `theme.bar`, which
+  is right: a cell is a bar's slot with colour instead of height). The
+  perimeter falls out of **suppressing each cell edge whose neighbour is also
+  selected** — no connectivity pass, so disconnected pieces get one outline
+  each and a hole gets its own, and a non-rectangular union (a mid-row run
+  with a low block hanging under part of it) traces correctly. The neighbour
+  grid is precomputed one column wider than the culling window, so a
+  selection running off-screen grows no false edge at the viewport boundary.
+
   What is left: the **at-rest small grey crosshair** (the drag pair exists;
-  the resting one is cursor work); the **heat map's single-perimeter
-  selection** and white-veil ghosting; and the **perf gate** — a rect preview lights far
+  the resting one is cursor work); and the **perf gate** — a rect preview lights far
   more marks per pointer move than the 1-D band that cost 6.2 s/frame before
   its membership scan was re-priced (A8.1).
 

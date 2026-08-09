@@ -274,6 +274,14 @@ export function HeatMap<
   const { bar } = container.theme;
   const base =
     (semantic !== undefined ? bar[semantic] : undefined) ?? bar.default;
+  // The geometry comes from the BAR slot (a cell is a bar's slot with colour
+  // instead of height); the interaction states come from `theme.heat`, which
+  // exists because a bar's fill is free and a cell's fill is the datum — see
+  // `HeatStates`. Absent, the pre-states treatment is unchanged.
+  const heatStates = container.theme.heat;
+  const states =
+    (semantic !== undefined ? heatStates?.[semantic] : undefined) ??
+    heatStates?.default;
   const style = useMemo<HeatStyle>(
     () => ({
       opacity: base.opacity,
@@ -282,8 +290,9 @@ export function HeatMap<
       gap,
       minWidth: base.minWidth,
       gridColor: container.theme.axis.grid,
+      ...(states !== undefined ? { states } : {}),
     }),
-    [base, gap, container.theme.axis.grid],
+    [base, gap, container.theme.axis.grid, states],
   );
 
   // One colour domain across the whole grid, so rows are comparable.
