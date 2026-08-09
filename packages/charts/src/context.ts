@@ -1302,6 +1302,17 @@ export interface ResolvedCursorFrame {
   readonly band: { readonly x0: number; readonly x1: number } | null;
   /** Degenerate range cursor (no buckets, not mid-drag): draw a plain line. */
   readonly bandLine: boolean;
+  /**
+   * Whether the band's extent is being **dragged** right now — a range drag
+   * anchored, or a `<MultiSelector>` sweep past its slop — rather than merely
+   * previewing the block under the pointer.
+   *
+   * The band renders in both states; this is what separates them. The edges
+   * are the gesture's grabbed boundary, so they draw only while there is a
+   * gesture: at rest the band is a *preview*, and edging a preview reads as a
+   * committed range the user hasn't made yet.
+   */
+  readonly bandDragging: boolean;
   /** The cursor time, formatted by the container's readout channel
    *  (`formatReadout ?? formatTime` in a row; the axis's own resolved readout
    *  formatter in the x-axis slot). `null` when out of bounds / not wanted. */

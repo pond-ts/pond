@@ -69,9 +69,16 @@ describe('defaultTheme.bar.default — the interaction-state palette', () => {
 
 // ── the drag band ───────────────────────────────────────────────────────────
 
-/** The minimum `ResolvedCursorFrame` `renderBrushBand` reads. */
-function frame(theme: ChartTheme, band: { x0: number; x1: number } | null) {
+/** The minimum `ResolvedCursorFrame` `renderBrushBand` reads. `dragging`
+ *  defaults to true — the band's edged form is the one a theme is describing,
+ *  and the resting form is the deliberate exception each caller opts into. */
+function frame(
+  theme: ChartTheme,
+  band: { x0: number; x1: number } | null,
+  dragging = true,
+) {
   return {
+    bandDragging: dragging,
     cursorX: 40,
     cursorY: null,
     rowKey: null,
@@ -131,6 +138,23 @@ describe('theme.brush — the drag band routes through the theme', () => {
       <svg>{renderBrushBand(frame(defaultTheme, null))}</svg>,
     );
     expect(container.querySelectorAll('rect')).toHaveLength(0);
+    expect(container.querySelectorAll('line')).toHaveLength(0);
+  });
+
+  it('a RESTING band is the wash alone — the edges belong to the gesture', () => {
+    // The band renders in two states: previewing the block a drag would
+    // select, and tracking a drag in flight. The edges are what separate
+    // them — they mark a boundary the pointer has actually grabbed, so
+    // drawing them at rest would assert a range nobody has made.
+    const { container } = render(
+      <svg>
+        {renderBrushBand(frame(defaultTheme, { x0: 20, x1: 80 }, false))}
+      </svg>,
+    );
+    // The wash still paints, identically — only the edges are withheld.
+    const rect = container.querySelector('rect')!;
+    expect(rect.getAttribute('fill')).toBe('rgba(63,91,224,0.07)');
+    expect(rect.getAttribute('opacity')).toBe('1');
     expect(container.querySelectorAll('line')).toHaveLength(0);
   });
 });

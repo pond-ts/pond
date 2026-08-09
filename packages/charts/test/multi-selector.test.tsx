@@ -453,6 +453,38 @@ describe('the live preview', () => {
     expect(dom.querySelector('svg rect')).not.toBeNull();
     expect(cursorLines()).toHaveLength(0);
   });
+
+  it('the band edges appear only once a drag is in flight', () => {
+    // The band has two states — previewing the block a drag would select, and
+    // tracking a drag in flight — and the wash alone cannot tell them apart.
+    // The edges are the gesture's grabbed boundary, so they are what
+    // distinguishes them: at rest, edging the preview would assert a range
+    // nobody has made yet.
+    const { surface, pxAt, dom } = mount({ children: <MultiSelector /> });
+    const edges = () =>
+      Array.from(dom.querySelectorAll('svg line')).filter(
+        (l) => l.getAttribute('stroke') === 'rgba(63,91,224,0.45)', // brush.edge
+      );
+
+    // Rest: the block preview is up — the wash, no edges.
+    act(() => surface.dispatchEvent(pointer('pointermove', pxAt(150), 0)));
+    expect(dom.querySelector('svg rect')).not.toBeNull();
+    expect(edges()).toHaveLength(0);
+
+    // Pressed but under the slop is still a *click* candidate, not a drag —
+    // so a click never flashes edges on its way to committing a block.
+    act(() => surface.dispatchEvent(pointer('pointerdown', pxAt(150), 1)));
+    expect(edges()).toHaveLength(0);
+
+    // Past the slop the sweep anchors: now there is a grabbed boundary.
+    act(() => surface.dispatchEvent(pointer('pointermove', pxAt(350), 1)));
+    expect(edges()).toHaveLength(2);
+
+    // Release reverts to the resting preview — the wash alone, again.
+    act(() => surface.dispatchEvent(pointer('pointerup', pxAt(350), 0)));
+    expect(dom.querySelector('svg rect')).not.toBeNull();
+    expect(edges()).toHaveLength(0);
+  });
 });
 
 // ── The deselect path: a click above the ink resolves to NO mark ────────────

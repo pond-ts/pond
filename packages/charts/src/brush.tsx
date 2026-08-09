@@ -198,7 +198,12 @@ export function renderBrushBand(f: ResolvedCursorFrame): ReactNode {
           opacity={bandOpacity}
         />
       )}
+      {/* The edges are the **gesture's** grabbed boundary, so they draw only
+          while one is in flight. A resting band is a preview of the block a
+          drag would select; edging it would assert a range the user has not
+          made yet, and the two states would read alike. */}
       {f.band !== null &&
+        f.bandDragging &&
         edge !== undefined &&
         [f.band.x0, f.band.x1].map((x, i) => (
           <line

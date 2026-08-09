@@ -104,6 +104,21 @@ include new features and type-level changes; patch bumps are strictly additive.
   selection happens in bucket units, and that declaration is what widens the
   click.
 
+- **charts: the brush band's edge rules now draw only while a drag is in
+  flight.** The band renders in two states — previewing the block a drag
+  _would_ select, and tracking a drag actually in progress — and since the
+  resting preview landed, the wash alone could not tell them apart. The edges
+  mark the boundary the gesture has **grabbed**, so at rest there is nothing
+  for them to mark: edging a preview asserts a range the user hasn't made yet,
+  and makes the two states read alike.
+
+  Applies to both band-drawing surfaces, `<MultiSelector>`'s sweep and a
+  snapping `<RangeCursor>`, from the one shared renderer. The wash is
+  unchanged in both states, and a _click_ never flashes the edges on its way
+  to committing a block — the sweep only anchors once it crosses `DRAG_SLOP`.
+  Themes that set no `theme.brush` drew no edges to begin with and are
+  unaffected.
+
 ### Fixed
 
 - **charts: six `<MultiSelector>` polish bugs found walking the Storybook

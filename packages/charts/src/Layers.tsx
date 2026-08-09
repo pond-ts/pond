@@ -1433,6 +1433,10 @@ export function Layers({ children }: LayersProps) {
   // "a region-like cursor, not a line", so with no snap block under the
   // pointer it shows nothing rather than degenerating to the rule it exists
   // to replace.
+  // A drag owns the band's extent exactly while an anchor is set — the range
+  // drag sets it on pointerdown, the sweep when it crosses `DRAG_SLOP` (so a
+  // click never flashes the edges on its way to committing a block).
+  const bandDragging = container.regionAnchor !== null;
   const bandLine =
     wantsBand &&
     (container.xKind === 'time' || container.xKind === 'value') &&
@@ -1453,6 +1457,7 @@ export function Layers({ children }: LayersProps) {
     pointer,
     band,
     bandLine,
+    bandDragging,
     formattedTime,
     plotWidth,
     rowHeight: row.height,
