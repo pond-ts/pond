@@ -13,6 +13,8 @@ import * as multiBoxWhisker from '../src/MultiSelectorBoxWhisker.stories.js';
 import * as multiBoxSolid from '../src/MultiSelectorBoxSolid.stories.js';
 import * as selectorCandlestick from '../src/SelectorCandlestick.stories.js';
 import * as multiCandlestick from '../src/MultiSelectorCandlestick.stories.js';
+import * as selectorScatter from '../src/SelectorScatter.stories.js';
+import * as selectorHeatMap from '../src/SelectorHeatMap.stories.js';
 import * as multiStacked from '../src/MultiSelectorStacked.stories.js';
 import * as multiTradingSessions from '../src/MultiSelectorTradingSessions.stories.js';
 import {
@@ -76,6 +78,8 @@ describe('the selection matrix covers the same features in every column', () => 
     expect(namesOf(selectorBoxWhisker)).toEqual(SELECTOR_FEATURES);
     expect(namesOf(selectorBoxSolid)).toEqual(SELECTOR_FEATURES);
     expect(namesOf(selectorCandlestick)).toEqual(SELECTOR_FEATURES);
+    expect(namesOf(selectorScatter)).toEqual(SELECTOR_FEATURES);
+    expect(namesOf(selectorHeatMap)).toEqual(SELECTOR_FEATURES);
   });
 
   it('<MultiSelector>: identical except the declared sequence gap', () => {
@@ -164,6 +168,8 @@ describe.each([
   ['MultiSelector/BoxSolid', multiBoxSolid],
   ['Selector/Candlestick', selectorCandlestick],
   ['MultiSelector/Candlestick', multiCandlestick],
+  ['Selector/Scatter', selectorScatter],
+  ['Selector/HeatMap', selectorHeatMap],
   ['MultiSelector/TradingSessions', multiTradingSessions],
 ])('%s stories render', (_group, mod) => {
   for (const [name, story] of Object.entries(mod).filter(

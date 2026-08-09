@@ -3,6 +3,8 @@ import { BoundedSequence, Sequence, TimeSeries } from 'pond-ts';
 import { BarChart } from './BarChart.js';
 import { BoxPlot } from './BoxPlot.js';
 import { Candlestick } from './Candlestick.js';
+import { HeatMap } from './HeatMap.js';
+import { ScatterChart } from './ScatterChart.js';
 import { YAxis } from './YAxis.js';
 import type { SelectInfo } from './context.js';
 import {
@@ -63,10 +65,10 @@ export interface ChartFixture {
    * drag nor a resting block preview, so every cell of that column would
    * render a chart that quietly ignores the component under test.
    *
-   * Every fixture declares `true` today; the flag stays because the *list*
-   * family still owes the sweep ([PND-INTERACTCONF]), and because reading an
-   * absent column as "declared gap" rather than "forgotten cell file" is only
-   * safe while something declares it.
+   * `false` on the **2-D family** — scatter and heat map — whose marks do not
+   * reduce to a run of columns, so the gesture they need is
+   * [PND-INTERACT2D]'s rect rather than this one on a new layer. The list
+   * family still owes the sweep too ([PND-INTERACTCONF]).
    */
   readonly sweep: boolean;
   /** A snapping sequence, where the axis has one. Ordinal axes do not. */
@@ -496,6 +498,142 @@ export const candles: ChartFixture = {
   rangeCursor: true,
 };
 
+// ── The 2-D family: scatter and heat map ──────────────────────────────────
+
+/** Forty points on a time axis — a scatter's marks live at `(x, y)`, not in a
+ *  column, which is the whole distinction this pair of columns exists to make. */
+const points = () =>
+  new TimeSeries({
+    name: 'pts',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number' },
+      { name: 'w', kind: 'number' },
+    ] as const,
+    rows: Array.from({ length: 40 }, (_, i) => [
+      D0 + i * (DAY / 2),
+      6 + 3.4 * Math.sin(i / 3.1) + 1.8 * Math.sin(i * 2.3),
+      1 + Math.abs(Math.sin(i * 1.7)),
+    ]) as [number, number, number][],
+  });
+
+/** Three rows × twenty daily bins — a grid of cells. */
+const grid = () =>
+  new TimeSeries({
+    name: 'grid',
+    schema: [
+      { name: 'timeRange', kind: 'timeRange' },
+      { name: 'low', kind: 'number' },
+      { name: 'mid', kind: 'number' },
+      { name: 'high', kind: 'number' },
+    ] as const,
+    rows: Array.from({ length: 20 }, (_, i) => [
+      [D0 + i * DAY, D0 + (i + 1) * DAY],
+      2 + 2 * Math.sin(i / 2.2),
+      5 + 3 * Math.sin(i / 3.3 + 1),
+      8 + 3 * Math.sin(i / 1.9 + 2),
+    ]) as [[number, number], number, number, number][],
+  });
+
+const HEAT_RAMP = ['#e0f2f1', '#7FC8BF', '#2A9D8F', '#1F7A6F'];
+
+/**
+ * **A scatter column** — the first mark that does *not* own a column.
+ *
+ * Every fixture before this one is an interval on the key axis: a bar, a
+ * stacked bin, a box, a candle. A scatter point is a position, `(x, y)`, with
+ * no span either side of it — so "the marks between here and there" is a
+ * question about a **region**, not about a run of columns, and `sweep1D`'s
+ * two binary searches have nothing to cut.
+ *
+ * Hence `sweep: false`, and hence [PND-INTERACT2D] rather than a quick wiring
+ * job: the 2-D rect is a different gesture, not the same one on a new layer.
+ */
+export const scatterPoints: ChartFixture = {
+  name: 'Scatter',
+  container: { range: [D0, D0 + 20 * DAY] },
+  axis: { id: 'v', min: 0, max: 12, label: '' },
+  renderLayer: (id) => (
+    <ScatterChart series={points()} column="v" axis="v" id={id} />
+  ),
+  secondary: {
+    axis: { id: 'e', min: 0, max: 3, label: 'w' },
+    renderLayer: (id) => (
+      <ScatterChart series={points()} column="w" axis="e" id={id} as="warn" />
+    ),
+  },
+  picks: [0, 8, 17].map((i) => ({
+    label: isoDay(D0 + i * (DAY / 2)),
+    info: {
+      id: 'svc',
+      key: D0 + i * (DAY / 2),
+      value: 0,
+      color: '#000',
+      label: 'v',
+    },
+  })),
+  describe: (hit) => isoDay(hit.key),
+  sweep: false,
+  rangeCursor: true,
+};
+
+/**
+ * **A heat-map column** — a *grid* of cells, `(bin × row)`.
+ *
+ * A heat map's bins do own columns, so an x-only sweep would be well defined —
+ * and it would also be the wrong gesture. Selecting every row of a covered bin
+ * ignores the y dimension the mark exists to show, and the rect that reads it
+ * is [PND-INTERACT2D]'s, so this declares `sweep: false` rather than shipping
+ * the half of the gesture that happens to be easy.
+ */
+export const heatGrid: ChartFixture = {
+  name: 'HeatMap',
+  container: { range: [D0, D0 + 20 * DAY] },
+  axis: { id: 'v', min: 0, max: 3, label: '' },
+  renderLayer: (id) => (
+    <HeatMap
+      series={grid()}
+      columns={['low', 'mid', 'high']}
+      colors={HEAT_RAMP}
+      axis="v"
+      id={id}
+    />
+  ),
+  secondary: {
+    axis: { id: 'e', min: 0, max: 3, label: 'again' },
+    renderLayer: (id) => (
+      <HeatMap
+        series={grid()}
+        columns={['low', 'mid', 'high']}
+        colors={HEAT_RAMP}
+        axis="e"
+        id={id}
+      />
+    ),
+  },
+  // A cell's identity is `(key = bin begin, label = row)`, the stack's rule.
+  picks: [
+    { day: 2, row: 'low' },
+    { day: 7, row: 'mid' },
+    { day: 13, row: 'high' },
+  ].map(({ day, row }) => ({
+    label: `${isoDay(D0 + day * DAY)}·${row}`,
+    info: {
+      id: 'svc',
+      key: D0 + day * DAY,
+      value: 0,
+      color: '#000',
+      label: row,
+    },
+  })),
+  describe: (hit) =>
+    hit.label === undefined
+      ? isoDay(hit.key)
+      : `${isoDay(hit.key)}·${hit.label}`,
+  sweep: false,
+  rangeCursor: true,
+};
+
 // ── Trading sessions (a discontinuous time axis) ───────────────────────────
 
 /** Six weekday sessions (09:30–16:00 UTC) from a Monday — five overnight seams
@@ -621,6 +759,8 @@ export const FIXTURES = [
   boxWhisker,
   boxSolid,
   candles,
+  scatterPoints,
+  heatGrid,
   tradingSessions,
 ] as const;
 

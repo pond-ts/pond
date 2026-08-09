@@ -62,7 +62,11 @@ milestone. Plan:
   lighting a grid preview — the 1-D case cost 6.2 s/frame before it was fixed);
   **settle spans-plural-or-topmost** before copying `SpanSelection`'s
   single-`id` shape; and it **also closes horizontal-bar sweeps**, which are a
-  y-window and therefore 2-D machinery (A8.4).
+  y-window and therefore 2-D machinery (A8.4). Both layers now have
+  `Selector/{Scatter,HeatMap}` matrix columns, so the click/hover half is
+  covered and walkable; their fixtures declare `sweep: false`, which is what
+  keeps the missing gesture visible as a **declared** gap rather than an
+  absent story.
 - **[PND-INTERACTCONF]** — **The conformance tail.** The **list family** joins
   the sweep. (`<BoxPlot>` has now joined: a box is an aggregation owning one
   `[begin, end)` column, so it publishes `binIntervals` + `beginSweep` and
