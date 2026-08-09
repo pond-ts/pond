@@ -94,6 +94,16 @@ milestone. Plan:
   px `offset` for same-x pairs, line-only shape, join the cursor x-snap, and
   selection `id` via rect-containment `hitTest` (#508 item 5; Candlestick
   takes the same geometry helper).
+- **[PND-BOXHIT]** — **`<BoxPlot>`'s hit area is the mark's bounding box, not
+  its ink — and on `shape="whisker"` those differ by 25×.** Measured at box
+  centre: with the solid shape, ink and hit are both ~50px wide everywhere
+  (they agree). With the whisker shape, in the p75→p95 region the drawn stem is
+  **2px** while the hit is **50px** — so clicking visually empty plot beside a
+  stem selects the box. That directly contradicts the bar rule shipped this
+  same wave, where a click above the ink is the _deselect_ path, so the two
+  layers now disagree about what empty space means. Sharpest under `offset`
+  (paired call/put boxes), where two ±4px-shifted boxes have near-identical hit
+  rects and layer order decides the winner.
 - **[PND-HITMODE]** — **The stacked/categorical `hitTest` ignores `mode`, so
   hover is ink-only there.** The single-series path takes `(px, py, xScale,
 yScale, mode)` and uses `mode` to let hover claim the whole slot while

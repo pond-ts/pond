@@ -1370,6 +1370,61 @@ bin-mates look dimmed. They are not: sampled from the canvas they are
 `42,157,143`, identical to a neighbouring bar. It is simultaneous contrast
 against the adjacent hover colour. The screenshot is convincing and wrong.
 
+### [PND-BOXHIT] — a box's hit area is its bounding box, not its ink
+
+Found by adding the box-plot columns as a **pair** (`Selector/BoxWhisker` and
+`Selector/BoxSolid` — same data, same feature set, `shape` the only variable).
+The pairing is what makes it legible: `solid` is the control where the ink
+fills the mark's bounds, `whisker` is where they come apart.
+
+Measured on box 4 (`p5 37.1 · p25 48.4 · p50 55.0 · p75 63.6 · p95 73.1`),
+probing down the box centre in 2px steps and across the slot at fixed heights:
+
+| shape     | at the body (v≈55)  | in the whisker (v≈68)      |
+| --------- | ------------------- | -------------------------- |
+| `solid`   | ink 49px · hit 50px | ink 49px · hit 50px        |
+| `whisker` | ink 51px · hit 50px | ink **2px** · hit **50px** |
+
+Vertically the hit band is `72.4 → 37.6` in **both** shapes — i.e. p95→p5, the
+full range, contiguous with no gaps. So `hitTest` is rect containment over the
+mark's overall bounds. For `solid` that is exactly the drawn ink. For
+`whisker` it claims a 50px-wide column where a 2px stem is drawn, and the
+hover treatment draws that bounding rect too, so the over-claim is visible in
+the feedback as well as in the hit.
+
+**Why this is worth deciding rather than shrugging at.**
+
+- **It contradicts a rule shipped in this same wave.** `<BarChart>`'s click
+  hit-test was tightened to require the pointer within the drawn ink,
+  precisely so a click on empty plot above a short bar reaches RFC §7's
+  deselect path. On a whisker box, clicking visually empty plot beside a stem
+  _selects_. Two layers, opposite answers to "what does empty space mean".
+- **`offset` makes it sharp.** The pixel `offset` exists for pairing marks at
+  one key (a call and a put at the same strike, `-4` / `+4`). Their hit rects
+  are ~50px wide and shifted 8px apart, so they overlap almost entirely and
+  layer order decides which one a click resolves to, not pointer position.
+  `[PND-BOXPLT]` already notes `offset` complicates the key-space cut; this is
+  the hit-space half of the same problem.
+- **The prop doc implies the ink.** `<BoxPlot id>` says "a click on a box
+  (body or whisker — a range-only bid→ask segment included) selects it",
+  which reads as "the whisker is a target", not "the bounding rect is".
+
+**The counter-argument, which is real:** a 2px stem is not hittable in
+practice, so a generous target is good UX. If that is the answer, it should be
+_stated_ — and then the bar rule is the one that looks inconsistent, since a
+1px-wide bar has the same problem. The two layers should at least agree.
+
+Options: tighten to per-component containment (body rect ∪ stem rect ∪ caps);
+keep bounding-box hits but document them and give `offset`ed pairs a
+tie-break; or split the difference — bounding box for _hover_ (forgiving
+readout, matching the bar's whole-slot hover) and ink for _select_ (so the
+deselect path stays reachable), which is exactly the `mode` distinction
+[PND-HITMODE] is about adding to the stacked path. That last option would make
+one rule for all three layers, which is the reason to prefer it.
+
+**Done when:** bar, stack and box agree on what clicking empty space does, or
+each difference is documented with its reason.
+
 ### [PND-HITMODE] — the stacked/categorical `hitTest` ignores `mode`
 
 Two `hitTest` registrations in
@@ -1870,11 +1925,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                            _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                            is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                            iteration to discover, and the docs still don't mention it. **The one-line
-                                                                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                            row's data cursor is suppressed."
+                                                                                _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                                is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                                iteration to discover, and the docs still don't mention it. **The one-line
+                                                                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                                row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires

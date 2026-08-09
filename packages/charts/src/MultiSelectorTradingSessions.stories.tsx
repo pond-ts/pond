@@ -26,7 +26,7 @@ const meta = {
 } satisfies Meta;
 export default meta;
 
-const s = makeMultiSelectorStories(tradingSessions);
+const s = makeMultiSelectorStories(tradingSessions)!;
 const sessions = makeSessionStories(tradingSessions)!;
 
 export const SweepMarks = s.SweepMarks;

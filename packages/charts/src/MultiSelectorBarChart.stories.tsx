@@ -18,7 +18,7 @@ const meta = {
 } satisfies Meta;
 export default meta;
 
-const s = makeMultiSelectorStories(timeBars);
+const s = makeMultiSelectorStories(timeBars)!;
 
 export const SweepMarks = s.SweepMarks;
 export const ClickStillSelectsOne = s.ClickStillSelectsOne;

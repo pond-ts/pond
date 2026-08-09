@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { BoundedSequence, Sequence, TimeSeries } from 'pond-ts';
 import { BarChart } from './BarChart.js';
+import { BoxPlot } from './BoxPlot.js';
 import { YAxis } from './YAxis.js';
 import type { SelectInfo } from './context.js';
 import {
@@ -55,6 +56,14 @@ export interface ChartFixture {
   readonly picks: readonly { label: string; info: SelectInfo }[];
   /** How a hit reads in a caption. */
   describe(hit: SelectInfo): string;
+  /**
+   * Whether the layer publishes `beginSweep` — i.e. whether it can be
+   * **swept at all**. `<BoxPlot>` hit-tests and selects but has no sweep yet
+   * ([PND-INTERACTCONF]), and without one a mounted `<MultiSelector>` has
+   * neither a drag nor a resting block preview: every cell of that column
+   * would render a chart that quietly ignores the component under test.
+   */
+  readonly sweep: boolean;
   /** A snapping sequence, where the axis has one. Ordinal axes do not. */
   readonly sequence?: () => Sequence | BoundedSequence;
   /** Whether `<RangeCursor>` draws here — it gates on a continuous x
@@ -129,6 +138,7 @@ export const categoricalBars: ChartFixture = {
   // No `sequence`: a time bucketing over ordinal slots is meaningless.
   // No `rangeCursor`: it gates on a continuous x.
   rangeCursor: false,
+  sweep: true,
 };
 
 // ── Time axis ──────────────────────────────────────────────────────────────
@@ -198,6 +208,7 @@ export const timeBars: ChartFixture = {
    */
   sequence: () => Sequence.every('7d', { anchor: D0 }),
   rangeCursor: true,
+  sweep: true,
 };
 
 // ── Stacked bars (many marks per bin) ──────────────────────────────────────
@@ -276,7 +287,135 @@ export const stackedBars: ChartFixture = {
       : `${isoDay(hit.key)}·${hit.label}`,
   sequence: () => Sequence.every('7d', { anchor: D0 }),
   rangeCursor: true,
+  sweep: true,
 };
+
+// ── Box plots (a mark with internal structure) ─────────────────────────────
+
+const BOX_BASE = Date.UTC(2026, 6, 1, 12, 0, 0);
+const BOX_BUCKET = 600_000; // 10 minutes
+const BOX_COUNT = 10;
+
+/**
+ * Ten percentile buckets through pond's own `aggregate` — the reducers do the
+ * quantiles, the fixture just reads the columns (the idiom `Box.stories.tsx`
+ * established). Deterministic samples, so the boxes are stable across runs.
+ */
+const boxes = (phase = 0) => {
+  const STEP = 5_000; // one raw sample / 5s
+  const N = (BOX_COUNT * BOX_BUCKET) / STEP;
+  const rows: [number, number][] = Array.from({ length: N }, (_, i) => [
+    BOX_BASE + i * STEP,
+    60 +
+      18 * Math.sin(i / 70 + phase) +
+      9 * Math.sin(i * 1.3) +
+      5 * Math.sin(i * 2.7) +
+      3 * Math.sin(i * 0.7),
+  ]);
+  return new TimeSeries({
+    name: 'raw',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'latency', kind: 'number' },
+    ] as const,
+    rows,
+  }).aggregate(Sequence.every('10m'), {
+    p5: { from: 'latency', using: 'p5' },
+    p25: { from: 'latency', using: 'p25' },
+    p50: { from: 'latency', using: 'p50' },
+    p75: { from: 'latency', using: 'p75' },
+    p95: { from: 'latency', using: 'p95' },
+  });
+};
+
+/** **Local** time, because the axis renders local — a UTC caption beside a
+ *  local axis reads as an off-by-hours bug in the hit test, which is exactly
+ *  the kind of false lead a review story must not plant. */
+const clock = (t: number) => new Date(t).toTimeString().slice(0, 5);
+
+/**
+ * **A box plot column** — the first fixture whose mark has *internal
+ * structure*. Everything before it is one filled rect per x; a box is a body,
+ * a median rule and (depending on `shape`) stems and caps, and `hitTest` is
+ * rect containment over that composite. So the question this column asks is
+ * **what counts as the mark for hit purposes**, and the answer is allowed to
+ * differ by shape — which is why it ships as two columns rather than one.
+ *
+ * It also declares `sweep: false`. `<BoxPlot>` publishes `hitTest` but no
+ * `beginSweep` ([PND-INTERACTCONF] tracks joining the sweep), so there is no
+ * `<MultiSelector>` column here at all rather than one that renders charts
+ * ignoring the component under test.
+ */
+const boxFixture = (
+  name: string,
+  shape: 'whisker' | 'solid',
+  note: string,
+): ChartFixture => ({
+  name,
+  container: { range: [BOX_BASE, BOX_BASE + BOX_COUNT * BOX_BUCKET] },
+  axis: { id: 'v', min: 0, max: 110, label: note },
+  renderLayer: (id) => (
+    <BoxPlot
+      series={boxes()}
+      lower="p5"
+      q1="p25"
+      median="p50"
+      q3="p75"
+      upper="p95"
+      axis="v"
+      shape={shape}
+      gap={10}
+      id={id}
+    />
+  ),
+  secondary: {
+    axis: { id: 'e', min: 0, max: 110, label: 'p95 (b)' },
+    renderLayer: (id) => (
+      <BoxPlot
+        series={boxes(2.1)}
+        lower="p5"
+        q1="p25"
+        median="p50"
+        q3="p75"
+        upper="p95"
+        axis="e"
+        shape={shape}
+        gap={10}
+        as="warn"
+        id={id}
+      />
+    ),
+  },
+  // A box's `key` is its `x` (the bucket begin), same identity rule the
+  // time-axis bar column uses.
+  picks: [0, 3, 7].map((i) => ({
+    label: clock(BOX_BASE + i * BOX_BUCKET),
+    info: {
+      id: 'svc',
+      key: BOX_BASE + i * BOX_BUCKET,
+      value: 0,
+      color: '#000',
+      label: 'latency',
+    },
+  })),
+  describe: (hit) => clock(hit.key),
+  // No `sequence`: it feeds the sweep, and there is no sweep here.
+  sweep: false,
+  rangeCursor: true,
+});
+
+/** The default shape: a q1→q3 body with thin stems and end caps. The stems are
+ *  the interesting part for selection — they are drawn ink far from the body. */
+export const boxWhisker: ChartFixture = boxFixture(
+  'BoxWhisker',
+  'whisker',
+  'whisker',
+);
+
+/** The candlestick look: a light outer bar over the full range, a darker inner
+ *  body, no stems. The mark is one solid rect, so the hittable area is the
+ *  whole p5→p95 span rather than a body plus two thin stems. */
+export const boxSolid: ChartFixture = boxFixture('BoxSolid', 'solid', 'solid');
 
 // ── Trading sessions (a discontinuous time axis) ───────────────────────────
 
@@ -380,6 +519,7 @@ export const tradingSessions: ChartFixture = {
   // the session pair below agree about what "conforming" means.
   sequence: () => sessionSeq(SESSIONS),
   rangeCursor: true,
+  sweep: true,
   sessions: {
     conforming: () => sessionSeq(SESSIONS),
     /**
@@ -399,6 +539,8 @@ export const FIXTURES = [
   categoricalBars,
   timeBars,
   stackedBars,
+  boxWhisker,
+  boxSolid,
   tradingSessions,
 ] as const;
 

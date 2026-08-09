@@ -311,6 +311,11 @@ const describeEntries = (
  * generated only where the fixture declares a `sequence` — an ordinal axis has
  * no time bucketing, so that cell is a **gap in the matrix rather than a story
  * that quietly does nothing**.
+ *
+ * The whole set is `null` for a fixture whose layer cannot sweep (`sweep:
+ * false`): with no `beginSweep` a mounted `<MultiSelector>` has neither a drag
+ * nor a resting preview, so every cell would render a chart that ignores the
+ * component it is named after.
  */
 export interface MultiSelectorStories {
   SweepMarks: Story;
@@ -324,7 +329,8 @@ export interface MultiSelectorStories {
 
 export function makeMultiSelectorStories(
   fx: ChartFixture,
-): MultiSelectorStories {
+): MultiSelectorStories | null {
+  if (!fx.sweep) return null;
   const stories: MultiSelectorStories = {
     /** **Sweep, freeform.** Drag across the marks: the shared brush band
      *  tracks the drag (bin-snapped — a bar layer's own bins feed the snap
