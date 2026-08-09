@@ -129,28 +129,50 @@ milestone. Plan:
   a bordered grid of cells is mostly border, and the interior lines say
   nothing — every one of them is interior to the selection.
 
-  **And the heat map does not ghost.** The outline is the whole cue; unselected
-  cells keep their ramp colour at full strength. Not a preference — on a heat
-  map **alpha and value are the same channel**, so dimming does not merely mute
-  the grid, it moves cells along the ramp: a ghosted dark cell and a resting
-  mid cell can render as the same colour, and the reader has no way to tell
-  which they are looking at. Every other layer can spend alpha because alpha
-  carries nothing there.
+  **The heat map ghosts with a flat overlay, not opacity.** Unselected cells
+  take a **white veil at 62%**; the selected region takes one perimeter.
 
-  **The rule underneath all of this, which the wave has now hit five times:**
-  _state may only use a channel the mark is not already using for data._
+  This corrects an earlier note here that said the heat map must not ghost at
+  all, on the grounds that alpha and value are the same channel so dimming
+  moves cells along the ramp. The concern is real but the conclusion was too
+  strong, and the design answers it: a **flat overlay is uniform and
+  monotonic**, so every cell lightens by the same transform and the ramp's
+  _order_ survives inside the ghosted set. What remains is only a cross-set
+  ambiguity — a veiled dark cell can match a resting mid one — and the
+  perimeter is what tells you which set you are reading.
 
-  | layer    | channel the data owns      | so state uses                 |
-  | -------- | -------------------------- | ----------------------------- |
-  | bar      | — (position only)          | fill swap + dim               |
-  | stack    | hue (group identity)       | per-group ramps + dim         |
-  | box      | lightness (quantile order) | the whole ladder shifts + dim |
-  | candle   | hue (direction)            | weight + dim only             |
-  | heat map | **colour ramp (value)**    | outline only — no dim         |
-  | scatter  | — (colour is free)         | recolour + grow + ghost       |
+  "Not opacity" is load-bearing beyond the arithmetic: on a white ground the
+  two are numerically close, but opacity composites with whatever is _behind_
+  the cell (gridlines, a non-white background, another layer), so the same
+  value would veil to different colours in different charts. A flat overlay
+  is a property of the cell.
 
-  Read down the last column and every decision in this wave falls out of the
-  one before it.
+  Full state table:
+
+  | mark                | rest                  | dimmed                        | hover                                     | selected                                              |
+  | ------------------- | --------------------- | ----------------------------- | ----------------------------------------- | ----------------------------------------------------- |
+  | **heat map cell**   | ramp value, no chrome | white veil 62%                | 2px white **+** 2px `#12564E` double ring | — (the _region_ carries it)                           |
+  | **heat map region** | —                     | —                             | —                                         | 2px `#3F5BE0` perimeter, one outline around the union |
+  | **scatter point**   | 9px `#2A9D8F`         | 5px · opacity `.34` (shrinks) | 11px `#4FD0BE` + 2px halo                 | 9px `#3F5BE0` + 2px halo                              |
+
+  Three details in that table are decisions, not values:
+  - **The cell hover is a double ring** — white _and_ dark teal, 2px each. A
+    single ring cannot work on a ramp: white vanishes at the light end and dark
+    teal at the dark end, so the pair guarantees one of them reads wherever the
+    cell happens to sit. This is the same problem `binFills` bars have and a
+    better answer than theirs.
+  - **A dimmed point shrinks (9px → 5px) as well as fading.** Alpha alone at
+    `.34` would thin the cloud to near-nothing; shrinking keeps its _shape_
+    readable, which is the thing a scatter's unselected field is for.
+  - **Hover grows (11px) and selection does not (9px).** Size carries hover
+    because it is the channel a lone pointer-over can afford to spend; the
+    committed state spends hue instead and keeps its resting size, so a
+    selection does not reflow the cloud. Both take a 2px halo, which is what
+    keeps overlapping points countable once they are the same colour.
+
+  The point palette is the shared one again: `#2A9D8F` is the bar's resting
+  teal and `#3F5BE0` its selection blue, so a selected point beside a selected
+  bar reads as one act.
 
   What is actually left: `SweepSession` is x-only (`update(x0, x1)` /
   `extent()`), so it needs a 2-D counterpart; `beginSweep` on the two layers
