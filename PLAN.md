@@ -276,6 +276,27 @@ milestone. Plan:
   boxes' hit rects overlap.) `format` is a container-wide channel and
   cannot be honoured per-row without reworking the readout plumbing (A8.4).
   Then **remove the deprecation shims** one minor after they land.
+
+  **The four columns [PND-INTERACT2D] did not reach** (owner, 2026-08-10).
+  The wave took the column marks (bar, stack, box, candle) and the two 2-D
+  layers (scatter, heat map); these are what is left, and they split into two
+  quite different problems:
+  - **`<BoxList>` and `<BarList>`** — the list family. Same currency as the
+    rest (discrete marks with an `id`), so this is conformance rather than
+    design: publish `hitTest` + `beginSweep`, add the matrix columns, walk
+    the fan-out. The open question is what a sweep even means on a list,
+    whose "axis" is a stack of rows rather than a scale — most likely a 1-D
+    cut over the row order, which would make it the first ORDINAL sweep and
+    is worth settling before writing code.
+  - **`<LineChart>` and `<AreaChart>`** — a continuous trace has **no marks
+    to select**, which is why they have no `id` gate today and why
+    `LineChart.hitTest` still sits in `[PND-SELECT]` Phase 2. So "join the
+    matrix" is not yet a well-posed task for them: it needs a decision on
+    what a selection on a trace _is_ (the samples in an x range? the range
+    itself, as a `SpanSelection` with no marks? a point on the path?) before
+    any of the interaction surface applies. Do not treat these as the same
+    kind of gap as the list family.
+
 - **[PND-CURSORAPI]** — **Publish the cursor contract** (RFC Q3), under A7.1's
   litmus rather than by argument: every built-in **and** SpiderRock's gapped
   crosshair written against it with nothing needing a new slot. The surface
