@@ -67,6 +67,33 @@ milestone. Plan:
   covered and walkable; their fixtures declare `sweep: false`, which is what
   keeps the missing gesture visible as a **declared** gap rather than an
   absent story.
+
+  **Owner decisions, 2026-08-09** — these settle the shape, so the remaining
+  work is implementation rather than design:
+  - **It is the same `<MultiSelector>`, not a new component.** "Yes it's
+    different but to a user it's natural" — a drag draws a rectangle, and the
+    _layer_ declares whether it reads one or two dimensions. Nothing new is
+    mounted and no prop is added; the consumer's markup for a scatter is the
+    markup for a bar.
+  - **The heat map snaps in both dimensions** — bin columns on x, row slots on
+    y, so the rect lands on cell edges exactly as the 1-D band lands on bin
+    edges (A7.6's edge rule, in two axes).
+  - **Scatter is free** — an unsnapped rect in data space, because a point has
+    no cell to snap to.
+
+  With the layer declaring its own dimensionality, **spans-plural-or-topmost
+  resolves the way the 1-D case already does**: the topmost sweep-capable layer
+  claims the drag, and the commit carries that layer's `id`. The descriptor
+  needs nothing new either — `SpanSelection.y` (scatter's continuous window)
+  and `.rows` (the heat map's ordinal set) already exist and
+  `spanMatchesAny` already tests them.
+
+  What is actually left: `SweepSession` is x-only (`update(x0, x1)` /
+  `extent()`), so it needs a 2-D counterpart; `beginSweep` on the two layers
+  (it already receives **both** scale functions, so the signature was built for
+  this); the gesture tracking y alongside x; and a rect band where the brush
+  currently draws a vertical strip.
+
 - **[PND-INTERACTCONF]** — **The conformance tail.** The **list family** joins
   the sweep. (`<BoxPlot>` has now joined: a box is an aggregation owning one
   `[begin, end)` column, so it publishes `binIntervals` + `beginSweep` and
