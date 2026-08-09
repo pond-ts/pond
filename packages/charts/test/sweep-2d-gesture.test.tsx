@@ -140,15 +140,19 @@ function mount(opts: {
   layers: ReactNode;
   axisMax?: number;
   onSelect?: MultiSelectorProps['onSelect'];
+  onHover?: MultiSelectorProps['onHover'];
 }) {
-  const { layers, axisMax = AX_MAX, onSelect } = opts;
+  const { layers, axisMax = AX_MAX, onSelect, onHover } = opts;
   let frame: ContainerFrame | null = null;
   const stub = stubCanvasContext();
   let dom: HTMLElement;
   try {
     const res = render(
       <ChartContainer range={[0, 1000]} width={320}>
-        <MultiSelector {...(onSelect === undefined ? {} : { onSelect })} />
+        <MultiSelector
+          {...(onSelect === undefined ? {} : { onSelect })}
+          {...(onHover === undefined ? {} : { onHover })}
+        />
         <ChartRow height={ROW_H}>
           <YAxis id="a" min={0} max={axisMax} />
           <Layers>{layers}</Layers>
@@ -177,7 +181,16 @@ function mount(opts: {
     act(() => surface.dispatchEvent(pointer('pointermove', x1, y1, 1)));
     flushFrames();
   };
-  return { surface, frame: f, pxAt, drag, dragTo, dom };
+  const svgRects = () =>
+    Array.from(dom.querySelectorAll('svg rect'))
+      .map((r) => ({
+        x: Number(r.getAttribute('x')),
+        y: Number(r.getAttribute('y')),
+        w: Number(r.getAttribute('width')),
+        h: Number(r.getAttribute('height')),
+      }))
+      .filter((r) => r.w > 0 && r.h > 0);
+  return { surface, frame: f, pxAt, drag, dragTo, dom, svgRects };
 }
 
 type Call = [readonly SelectInfo[], SelectModifiers, SpanSelection | null];
@@ -329,6 +342,91 @@ describe('a heat-map sweep snaps both dimensions', () => {
     expect(span!.rows).toEqual(['high']);
     expect(hits.map((h) => h.label)).toEqual(['high', 'high', 'high']);
     expect(hits.map((h) => h.value)).toEqual([12, 22, 32]);
+  });
+});
+
+// ── The brush previews what the release will take ───────────────────────────
+
+describe('a snapping layer’s brush shows the SNAPPED region', () => {
+  const heat = (
+    <HeatMap
+      series={grid()}
+      columns={['low', 'mid', 'high']}
+      colors={['#eee', '#999', '#333']}
+      axis="a"
+      id="h"
+    />
+  );
+
+  it('the heat-map rect lands on cell edges, not on the pointer', () => {
+    // Both ends stop deliberately mid-cell. The cut snaps outward in both
+    // axes, so a rect drawn at the pointer would promise a different set than
+    // the release delivers — and it disagrees exactly while the user is
+    // deciding where to let go.
+    const t = mount({ layers: heat, axisMax: 3 });
+    const rowH = ROW_H / 3;
+    /** The pixel of a fractional ROW SLOT — the axis is `[0, 3]` and the y
+     *  scale descends, so slot 0 is the bottom of the plot. */
+    const slotPx = (slot: number) => ROW_H - (slot / 3) * ROW_H;
+    // Stops mid-cell at both ends: slots 1.4 → 2.6, inside rows 1 and 2.
+    t.dragTo(t.pxAt(140), slotPx(1.4), t.pxAt(360), slotPx(2.6));
+    const [box] = t.svgRects();
+    expect(box).toBeDefined();
+    // Two whole rows tall (rows 1 and 2), not the 1.8 rows the pointer spanned.
+    expect(box!.h).toBeCloseTo(rowH * 2, 5);
+    // …and a whole number of bins wide.
+    const binW = t.frame().plotWidth / 10;
+    expect(box!.w / binW).toBeCloseTo(Math.round(box!.w / binW), 5);
+  });
+
+  it('the scatter rect stays on the pointer — a free cut has nothing to snap to', () => {
+    const t = mount({
+      layers: <ScatterChart series={points()} column="v" axis="a" id="p" />,
+    });
+    t.dragTo(t.pxAt(140), yPx(2.5), t.pxAt(360), yPx(8.5));
+    const [box] = t.svgRects();
+    expect(box).toBeDefined();
+    expect(box!.h).toBeCloseTo(Math.abs(yPx(8.5) - yPx(2.5)), 5);
+  });
+});
+
+describe('the preview reports without lighting where the brush already says it', () => {
+  it('a heat-map sweep reports its cells but leaves `hovered` empty', () => {
+    // The hover treatment is a ring around THE cell under the pointer; during
+    // a sweep there is no such cell, and a ring on each covered one turns the
+    // region into the mostly-border grid inside a rect already saying the
+    // same thing. The consumer still hears the whole set.
+    const seen: number[] = [];
+    const t = mount({
+      layers: (
+        <HeatMap
+          series={grid()}
+          columns={['low', 'mid', 'high']}
+          colors={['#eee', '#999', '#333']}
+          axis="a"
+          id="h"
+        />
+      ),
+      axisMax: 3,
+      onHover: (hits) => seen.push(hits.length),
+    });
+    t.dragTo(t.pxAt(140), ROW_H * 0.55, t.pxAt(360), ROW_H * 0.2);
+    expect(seen.at(-1)).toBeGreaterThan(1); // reported
+    expect(t.frame().hovered).toHaveLength(0); // not lit
+  });
+
+  it('a scatter sweep DOES light — its brush outlines nothing', () => {
+    // The pair that keeps the rule about the brush rather than about size: a
+    // free rect encloses points without marking which ones it caught, so the
+    // points themselves have to show it.
+    const seen: number[] = [];
+    const t = mount({
+      layers: <ScatterChart series={points()} column="v" axis="a" id="p" />,
+      onHover: (hits) => seen.push(hits.length),
+    });
+    t.dragTo(t.pxAt(100), yPx(1), t.pxAt(600), yPx(11));
+    expect(seen.at(-1)).toBe(3);
+    expect(t.frame().hovered).toHaveLength(3);
   });
 });
 

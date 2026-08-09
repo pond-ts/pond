@@ -173,6 +173,25 @@ export function sweep2D(opts: {
     y0: number,
     y1: number,
   ): readonly SelectInfo[];
+  /**
+   * The cut's **snapped rect in axis units** — `x` in key units, `y` in the
+   * layer's own y-axis units — or omitted when the layer's cut is free.
+   *
+   * This is for the BRUSH, not for the commit: a layer that snaps should draw
+   * the rect it is actually going to take, not the raw pointer rectangle,
+   * or the preview promises a different set than the release delivers. A
+   * scatter omits it and keeps the pointer rect, which is honest there
+   * because a free cut takes exactly what the pointer enclosed.
+   */
+  snap?(
+    lo: number,
+    hi: number,
+    y0: number,
+    y1: number,
+  ): {
+    readonly x: readonly [number, number];
+    readonly y: readonly [number, number];
+  } | null;
   /** The captured set's second-dimension channels — see
    *  {@link SweepSession.extent2D}. */
   channels(
@@ -184,7 +203,8 @@ export function sweep2D(opts: {
     readonly rows?: readonly string[];
   } | null;
 }): SweepSession {
-  const { id, begin, end, length, spanFrom, materialize, channels } = opts;
+  const { id, begin, end, length, spanFrom, snap, materialize, channels } =
+    opts;
   let curLo = 0;
   let curHi = 0;
   // The y window is part of the gate: moving the pointer vertically changes
@@ -248,6 +268,11 @@ export function sweep2D(opts: {
       const last = hs[hs.length - 1]!.key;
       const i = firstAtOrAbove(begin, length, last);
       return [lo, i < length && begin[i] === last ? end[i]! : last];
+    },
+    snappedRect() {
+      return curHi > curLo
+        ? (snap?.(curLo, curHi, curY0, curY1) ?? null)
+        : null;
     },
     extent2D() {
       const hs = this.hits();

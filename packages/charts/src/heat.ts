@@ -319,47 +319,6 @@ function indexedBinLabels(
   );
 }
 
-/**
- * The **consecutive row run** a span covers in this grid — `[g0, g1)` — or
- * `null` when it covers none, or when the rows it names are not consecutive.
- *
- * A rect sweep snaps outward to whole rows, so its `rows` are always a run
- * and the span is a rectangle of cells: one box, one outline. A hand-built
- * descriptor may name any set (`rows: ['low', 'high']` skipping `mid`), and
- * there is no honest box for that — those cells fall back to the union
- * perimeter, which can draw the shape they actually make.
- */
-function rowRunOf(
-  span: SpanSelection,
-  groups: readonly string[],
-  G: number,
-): readonly [number, number] | null {
-  if (span.rows === undefined) return G > 0 ? [0, G] : null;
-  let lo = Infinity;
-  let hi = -Infinity;
-  let n = 0;
-  for (let g = 0; g < G; g += 1) {
-    if (!hasLabel(span.rows, groups[g]!)) continue;
-    n += 1;
-    if (g < lo) lo = g;
-    if (g > hi) hi = g;
-  }
-  // `n` short of the span means a row it names sits between two it does not.
-  return n > 0 && hi - lo + 1 === n ? [lo, hi + 1] : null;
-}
-
-/** Does `sp` own a box? Linear over `boxed`, which holds one entry per span
- *  in the selection — the handful a person swept, not a data structure. */
-function isBoxed(
-  boxed: ReadonlyArray<{ readonly sp: SpanSelection }>,
-  sp: SpanSelection,
-): boolean {
-  for (let i = 0; i < boxed.length; i += 1) {
-    if (boxed[i]!.sp === sp) return true;
-  }
-  return false;
-}
-
 /** Is `label` one of the (usually zero or one) labels {@link binLabelsInto}
  *  gathered for this bin? Indexed rather than `includes` — this is the draw's
  *  inner loop. */
@@ -596,6 +555,7 @@ export function drawHeat(
     anyHovered && hov.length > MARK_INDEX_THRESHOLD
       ? buildBinLabelIndex(hov, seriesId)
       : null;
+
   // Scratch for the per-bin span narrowing — the spans whose `x` contains the
   // current bin, reused across bins so the resting frame (and any spanless
   // frame) allocates nothing. `null` ⇒ spans are not in play at all.
@@ -620,40 +580,23 @@ export function drawHeat(
     bandHi[g] = hi;
   }
 
-  // ── What each selection ENTRY outlines ─────────────────────────────────
-  // **One outline per act, and acts do not merge.** A sweep releases a
-  // grid-snapped rect, and that rect keeps its own outline for as long as it
-  // is selected — two overlapping sweeps stay two overlapping rectangles
-  // rather than fusing into the L-shape of their union. The outline then says
-  // what was *done*, which is the thing a reader can undo, rather than
-  // describing a merged set nobody selected in one go.
+  // ── The selected-cell grid, for the union perimeter ────────────────────
+  // A **committed** selection is one region however it was assembled: the
+  // outline merges. That is the other half of the live drag's sentence — the
+  // brush shows the snapped rect it is about to take, and only on release
+  // does that rect join what is already selected (`SweepSession.snap`).
   //
-  // A span is a rectangle by construction — the sweep snaps outward in BOTH
-  // axes — so its outline is just its own box: `boxedSpans` below. What is
-  // left over (individual cell marks, and the rare span whose `rows` are not
-  // consecutive in THIS grid) has no box, so it falls back to the **union
-  // perimeter**: each cell draws only the edges it does not share with
-  // another leftover cell. That is what keeps a demoted region readable — one
-  // outline round the remainder plus a small one round the knocked-out cell —
-  // instead of the "mostly border" grid a per-cell outline gives.
+  // So: one outline around the union, drawn by suppressing each cell edge
+  // whose neighbour is also selected. No connectivity pass falls out of that
+  // — disconnected pieces get one outline each, and a hole in the middle of
+  // one gets its own, which is what keeps a demoted region readable instead
+  // of the "mostly border" grid a per-cell outline gives.
+  //
+  // The grid is padded one column either side of the window, because a
+  // neighbour test reaches exactly that far and an unpadded answer would draw
+  // a false edge wherever a selection runs off-screen.
   const st = style.states;
   const perimeter = st !== undefined && (anySelected || spanSet.length > 0);
-  // The spans that own a box: their `rows` name a CONSECUTIVE run of this
-  // grid's rows (a rect sweep always does; a hand-built descriptor might
-  // not). `null` rows means the whole column.
-  const boxed: Array<{ readonly sp: SpanSelection; g0: number; g1: number }> =
-    [];
-  if (perimeter) {
-    for (let i = 0; i < spanSet.length; i += 1) {
-      const sp = spanSet[i]!;
-      const run = rowRunOf(sp, ss.groups, G);
-      if (run !== null) boxed.push({ sp, g0: run[0], g1: run[1] });
-    }
-  }
-  // The cell grid: `2` inside a boxed span (already outlined by its box), `1`
-  // selected but boxless (the union perimeter's business), `0` unselected.
-  // Padded one column either side of the window, so a leftover region running
-  // off-screen grows no false edge at the viewport boundary.
   const pStart = Math.max(0, vStart - 1);
   const pEnd = Math.min(grid.length, vEnd + 1);
   const selGrid = perimeter ? new Uint8Array((pEnd - pStart) * G) : null;
@@ -680,24 +623,17 @@ export function drawHeat(
         const value = values[base + g]!;
         if (!Number.isFinite(value)) continue;
         const group = ss.groups[g]!;
-        let flag = hasLabel(labels, group) ? 1 : 0;
-        for (let s = 0; s < covering.length; s += 1) {
-          const sp = covering[s]!;
-          if (!spanContainsPoint(sp, begin, value, group)) continue;
-          // A boxed span's cells are covered by its own outline, so they must
-          // not also contribute edges to the leftover perimeter — that is how
-          // two overlapping sweeps would fuse.
-          flag = isBoxed(boxed, sp) ? 2 : Math.max(flag, 1);
-          if (flag === 2) break;
+        let hit = hasLabel(labels, group);
+        for (let s = 0; !hit && s < covering.length; s += 1) {
+          hit = spanContainsPoint(covering[s]!, begin, value, group);
         }
-        if (flag !== 0) selGrid[out + g] = flag;
+        if (hit) selGrid[out + g] = 1;
       }
     }
   }
-  /** Is cell `(b, g)` a **boxless** selected cell — the union perimeter's
-   *  currency? Off-grid answers `false`; outside the precomputed window it is
-   *  unknowable, which cannot happen because the window is padded by exactly
-   *  the one column a neighbour test can reach. */
+  /** Is cell `(b, g)` selected? Off-grid answers `false`; outside the
+   *  precomputed window it is unknowable, which cannot happen because the
+   *  window is padded by exactly the one column a neighbour test can reach. */
   const isSel = (b: number, g: number): boolean =>
     selGrid !== null &&
     b >= pStart &&
@@ -801,7 +737,7 @@ export function drawHeat(
           // window — reading it back is the point of having built it. Redoing
           // the label compare and the span test here would pay for the same
           // answer twice on every selected frame.
-          selected = selGrid![selRow + g] !== 0;
+          selected = selGrid![selRow + g] === 1;
         } else {
           selected = selNames !== null && hasLabel(selNames, group);
           // The spans that cover this bin, against the cell's remaining
@@ -871,20 +807,14 @@ export function drawHeat(
           );
         }
       }
-      // The **leftover** perimeter — boxless selected cells only (`isSel`),
-      // because a boxed span's cells are outlined by their own box below and
-      // adding their edges here is exactly how two overlapping sweeps would
-      // fuse into one L-shape.
-      //
-      // One outline around whatever the leftovers make, drawn as the edges a
-      // cell does not share with another leftover. Summed over a region that
-      // is exactly its perimeter — no connectivity pass, so disconnected
-      // pieces get one outline each and a hole gets its own.
+      // **One outline around the union**, drawn as the edges this cell does
+      // not share with a selected neighbour. Summed over the region that is
+      // exactly its perimeter.
       //
       // Safe in the cell loop rather than deferred: every edge is inset
       // INSIDE its own cell, so no neighbour's fill (or veil) drawn later can
       // paint over it.
-      if (isSel(b, g)) {
+      if (selected) {
         const w = st.perimeterWidth;
         const i = w / 2;
         ctx.lineWidth = w;
@@ -915,70 +845,6 @@ export function drawHeat(
     }
   }
 
-  // ── One outline per boxed span ─────────────────────────────────────────
-  // Drawn after every cell, because a box spans columns the loop paints at
-  // different times — unlike the per-cell edges above, which are inset inside
-  // their own cell and so cannot be overpainted.
-  //
-  // Each edge is tested against the plot bounds and skipped when it falls
-  // outside, so a selection running past the viewport grows no rule at the
-  // edge of the screen — the same rule the padded neighbour grid enforces for
-  // the leftover perimeter.
-  if (st !== undefined && boxed.length > 0 && vEnd > vStart) {
-    // The drawn bin range, in key units — the same question the padded
-    // neighbour grid answers for the leftover perimeter, asked of a box: does
-    // this region continue past what is being drawn?
-    const drawnFrom = grid.begin[vStart]!;
-    const drawnTo = grid.end[vEnd - 1]!;
-    const w = st.perimeterWidth;
-    const i = w / 2;
-    ctx.lineWidth = w;
-    ctx.strokeStyle = st.perimeter;
-    for (let k = 0; k < boxed.length; k += 1) {
-      const { sp, g0, g1 } = boxed[k]!;
-      // The span's OWN edges through the scale, not the visible cells': a box
-      // clipped to the window would report the wrong extent.
-      const ea = binScale(sp.x[0]);
-      const eb = binScale(sp.x[1]);
-      const spanA = Math.min(ea, eb);
-      const spanB = Math.max(ea, eb);
-      let bandA = Infinity;
-      let bandB = -Infinity;
-      for (let g = g0; g < g1; g += 1) {
-        if (bandLo[g]! < bandA) bandA = bandLo[g]!;
-        if (bandHi[g]! > bandB) bandB = bandHi[g]!;
-      }
-      if (!(spanB > spanA) || !(bandB > bandA)) continue;
-      // The two spans transpose with the orientation exactly as a cell does.
-      const x0 = vertical ? spanA : bandA;
-      const x1 = vertical ? spanB : bandB;
-      const y0 = vertical ? bandA : spanA;
-      const y1 = vertical ? bandB : spanB;
-      // Entirely outside the drawn range: nothing to outline here.
-      if (sp.x[1] <= drawnFrom || sp.x[0] >= drawnTo) continue;
-      // Only the BIN axis can run off-screen; every row band is resolved.
-      const startOn = sp.x[0] >= drawnFrom;
-      const endOn = sp.x[1] <= drawnTo;
-      ctx.beginPath();
-      if (vertical ? startOn : true) {
-        ctx.moveTo(x0 + i, y0);
-        ctx.lineTo(x0 + i, y1);
-      }
-      if (vertical ? endOn : true) {
-        ctx.moveTo(x1 - i, y0);
-        ctx.lineTo(x1 - i, y1);
-      }
-      if (vertical ? true : startOn) {
-        ctx.moveTo(x0, y0 + i);
-        ctx.lineTo(x1, y0 + i);
-      }
-      if (vertical ? true : endOn) {
-        ctx.moveTo(x0, y1 - i);
-        ctx.lineTo(x1, y1 - i);
-      }
-      ctx.stroke();
-    }
-  }
   ctx.restore();
 }
 

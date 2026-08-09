@@ -468,6 +468,17 @@ export function HeatMap<
                     }
                     return out;
                   },
+                  // The brush draws THIS, not the pointer rectangle: the cut
+                  // snaps to whole bins and whole rows, so a raw rect would
+                  // promise a different set than the release delivers — and
+                  // it disagrees most visibly at the moment the user is
+                  // deciding where to let go.
+                  snap: (lo, hi, y0, y1) => {
+                    const [g0, g1] = rowRun(y0, y1);
+                    return g1 > g0
+                      ? { x: [ss.begin[lo]!, ss.end[hi - 1]!], y: [g0, g1] }
+                      : null;
+                  },
                   // `rows` names the rows rather than numbering slots, so a
                   // committed selection survives a row reorder (RFC A5.3).
                   channels: (_hits, y0, y1) => {

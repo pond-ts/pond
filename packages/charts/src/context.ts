@@ -891,6 +891,21 @@ export interface SweepSession {
     readonly y?: readonly [number, number];
     readonly rows?: readonly string[];
   } | null;
+  /**
+   * The cut's **snapped rect in axis units** (x in key units, y in the
+   * sweeping layer's y-axis units), for the brush to draw — `null` when the
+   * layer's cut is free, or when nothing is covered.
+   *
+   * A snapping layer must draw the rect it is going to *take*, not the one
+   * the pointer traced: a heat map snaps to whole cells, so a raw pointer
+   * rect promises a different set than the release delivers, and the two
+   * disagree most visibly at exactly the moment the user is deciding where
+   * to let go.
+   */
+  snappedRect?(): {
+    readonly x: readonly [number, number];
+    readonly y: readonly [number, number];
+  } | null;
 }
 
 /**
@@ -918,8 +933,17 @@ export interface SweepGesture {
    * `hovered` (RFC A3.4 — the library owns the state, each layer renders its
    * own hover treatment) and report them to the `<MultiSelector>`s in scope.
    * Nothing else crosses the public boundary until release (RFC A1.4).
+   *
+   * `light: false` **reports without lighting** — for a layer whose brush
+   * already outlines exactly the covered region (a heat map's snapped rect).
+   * Its hover treatment is a ring around *the cell under the pointer*, and
+   * during a sweep there is no such cell: a ring on every covered cell turns
+   * the region into the mostly-border grid the selection outline exists to
+   * avoid, inside a rect that is already saying the same thing. The consumer
+   * still hears the full set through `onHoverMany`, so a controlled `hovered`
+   * can render it however it likes.
    */
-  preview(hits: readonly SelectInfo[]): void;
+  preview(hits: readonly SelectInfo[], light?: boolean): void;
   /**
    * The release: report `(hits, modifiers, span)` to the `<MultiSelector>`s in
    * scope (RFC A5.2), clear the preview, and — when `selected` is

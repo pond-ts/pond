@@ -412,15 +412,11 @@ const GRID = TimeSeries.fromColumns({
   schema: [
     { name: 'time', kind: 'time' },
     { name: 'lo', kind: 'number' },
-    // A THIRD row, so a span can name two rows that do not touch — the case
-    // that has no honest bounding box (see the fallback test below).
-    { name: 'mid', kind: 'number' },
     { name: 'hi', kind: 'number' },
   ] as const,
   columns: {
     time: [0, 1000, 2000],
     lo: [1, 2, 3],
-    mid: [7, 8, 9],
     hi: [4, 5, 6],
   },
 });
@@ -475,12 +471,11 @@ function mountHeat(
  * Every **selection outline** the draw emitted, as `[x, y, w, h]` — the
  * bounding box of each stroked path, rounded.
  *
- * `theme.heat`'s states draw **one outline per selection act**: a span is a
- * grid-snapped rectangle by construction, so it emits a single box however
- * many cells it covers, and two overlapping sweeps stay two overlapping boxes
- * rather than fusing into the L-shape of their union. Cells with no box
- * behind them (individual marks) fall back to the union perimeter, one path
- * per cell, so they come out of the same reader.
+ * A committed selection is one region however it was assembled, so
+ * `theme.heat`'s states draw **one outline around the union** — each cell
+ * emits only the edges it does not share with a selected neighbour, one
+ * stroked path per cell. The count is therefore a cell count, and the boxes
+ * are each cell's own outer edges.
  */
 function outlines(
   calls: readonly CtxCall[],
@@ -522,9 +517,6 @@ function outlines(
   return out;
 }
 
-/** The heat row's height — the box for an all-rows span spans it. */
-const FULL_H = 100;
-
 const heatSpan = (over: Partial<SpanSelection> = {}): SpanSelection => ({
   kind: 'span',
   id: 'temp',
@@ -533,22 +525,16 @@ const heatSpan = (over: Partial<SpanSelection> = {}): SpanSelection => ({
 });
 
 describe('<HeatMap> — a heat-map span uses `rows` (RFC A5.3)', () => {
-  it('a rows-less span outlines the covered bins, full height', () => {
+  it('a rows-less span selects every row of the covered bins', () => {
     const { calls } = mountHeat({ selected: [heatSpan()] });
-    const [box, ...rest] = outlines(calls);
-    // ONE box for the whole span — 2 bins × 2 rows, not four cell outlines.
-    expect(rest).toHaveLength(0);
-    expect(box![3]).toBe(FULL_H); // spans both rows
+    expect(outlines(calls)).toHaveLength(4); // 2 bins × 2 rows
   });
 
   it('rows narrows to the named rows — a label set, not an interval', () => {
     const { calls } = mountHeat({
       selected: [heatSpan({ rows: ['hi'] })],
     });
-    const [box, ...rest] = outlines(calls);
-    expect(rest).toHaveLength(0);
-    // Same x as above, half the height: the box tracks the named rows.
-    expect(box![3]).toBe(Math.round(FULL_H / 2));
+    expect(outlines(calls)).toHaveLength(2); // (0, hi), (1, hi)
   });
 
   it('the selection survives a row reorder — it names rows, not slots', () => {
@@ -562,12 +548,11 @@ describe('<HeatMap> — a heat-map span uses `rows` (RFC A5.3)', () => {
     const after = outlines(
       mountHeat({ selected: [heatSpan({ rows: ['hi'] })] }, ['hi', 'lo']).calls,
     );
-    expect(before).toHaveLength(1);
-    expect(after).toHaveLength(1);
-    // The box MOVED with its row: same x and width, different y.
-    expect(after[0]![0]).toBe(before[0]![0]);
-    expect(after[0]![2]).toBe(before[0]![2]);
-    expect(after[0]![1]).not.toBe(before[0]![1]);
+    expect(before).toHaveLength(2);
+    expect(after).toHaveLength(2);
+    // The lit band MOVED with its row: same x columns, different y band.
+    expect(after.map(([x]) => x)).toEqual(before.map(([x]) => x));
+    expect(after.map(([, y]) => y)).not.toEqual(before.map(([, y]) => y));
   });
 
   it('a span naming another layer lights nothing', () => {
@@ -575,33 +560,6 @@ describe('<HeatMap> — a heat-map span uses `rows` (RFC A5.3)', () => {
       selected: [heatSpan({ id: 'other' })],
     });
     expect(outlines(calls)).toHaveLength(0);
-  });
-
-  it('a span whose rows SKIP one gets no box — the honest fallback', () => {
-    // A rect sweep snaps outward, so its rows are always consecutive and it
-    // always earns a box. A hand-built descriptor can name `['lo', 'hi']`
-    // over a three-row grid, and there is no honest rectangle for that: a box
-    // would enclose `mid`, which is not selected and is sitting there veiled
-    // to say so. Those cells fall back to the union perimeter instead.
-    const { calls } = mountHeat(
-      { selected: [heatSpan({ rows: ['lo', 'hi'] })] },
-      ['lo', 'mid', 'hi'],
-    );
-    const drawn = outlines(calls);
-    // Two bins × two non-adjacent rows: four cell outlines, and none of them
-    // spans the gap. A box would be ONE outline as tall as the whole plot.
-    expect(drawn).toHaveLength(4);
-    expect(drawn.every(([, , , h]) => h < FULL_H)).toBe(true);
-  });
-
-  it('…and a CONSECUTIVE pair on the same grid does get one', () => {
-    // The pair that proves the clause above is about adjacency, not about row
-    // count: same grid, same two-row span, rows that touch.
-    const { calls } = mountHeat(
-      { selected: [heatSpan({ rows: ['lo', 'mid'] })] },
-      ['lo', 'mid', 'hi'],
-    );
-    expect(outlines(calls)).toHaveLength(1);
   });
 
   it('a span and a cell mark light their union', () => {
@@ -617,12 +575,7 @@ describe('<HeatMap> — a heat-map span uses `rows` (RFC A5.3)', () => {
         },
       ],
     });
-    // The span gets its box; the lone mark has none, so it falls back to the
-    // union perimeter and outlines its own cell. Two acts, two outlines —
-    // at different places, and not merged into one.
-    const boxes = outlines(calls);
-    expect(boxes).toHaveLength(2);
-    expect(boxes[0]!.slice(0, 2)).not.toEqual(boxes[1]!.slice(0, 2));
+    expect(outlines(calls)).toHaveLength(2); // (0, lo) + (2, hi)
   });
 });
 

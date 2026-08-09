@@ -119,21 +119,27 @@ include new features and type-level changes; patch bumps are strictly additive.
   `theme.bar` — a cell is a bar's slot with colour instead of height — and
   only the state styling is new, because a bar's fill is free while a cell's
   fill **is the datum**.
-  - **One outline per selection act, and acts do not merge.** A sweep releases
-    a grid-snapped rect and that rect keeps its own outline, so two
-    overlapping sweeps stay two overlapping rectangles rather than fusing into
-    the L-shape of their union — the outline says what was _done_, which is
-    the thing a reader can undo. A span is a rectangle by construction (the
-    sweep snaps outward in both axes), so it needs no analysis to box.
-  - **Anything with no box falls back to a union perimeter** — individual cell
-    marks, and the rare descriptor whose `rows` are not consecutive in this
-    grid. Each such cell draws only the edges it does not share with another,
-    which is exactly the region's outline, with no connectivity pass: several
-    disconnected pieces get one outline each and a hole gets its own. That is
-    what keeps a demoted region readable — one outline round the remainder
-    plus a small one round the knocked-out cell — instead of the "mostly
-    border" grid a per-cell outline gives. Neither shape grows a false edge
-    where a selection runs off-screen.
+  - **The live drag shows the SNAPPED rect it is about to take** (new
+    `SweepSession.snap`), not the rectangle the pointer traced. A heat map
+    snaps to whole bins and whole rows, so a raw pointer rect promises a
+    different set than the release delivers — and the two disagree exactly
+    while the reader is deciding where to let go. A scatter's cut is free, so
+    its brush stays on the pointer, which is honest there.
+  - **A committed selection is one region however it was assembled.** On
+    release the new rect joins what is already selected and the outline
+    merges: one perimeter around the union, drawn by suppressing each cell
+    edge whose neighbour is also selected. No connectivity pass falls out of
+    that — disconnected pieces get one outline each and a hole gets its own,
+    which is what keeps a demoted region readable instead of the "mostly
+    border" grid a per-cell outline gives. No false edge where a selection
+    runs off-screen.
+  - **A snapping layer's sweep reports its covered marks without lighting
+    them** (`SweepGesture.preview`'s new `light` argument). The heat map's
+    hover treatment is a ring around _the cell under the pointer_, and during
+    a sweep there is no such cell: a ring on every covered cell turned the
+    region into a grid of borders inside a rect already saying the same
+    thing. Consumers still hear the whole set through `<MultiSelector
+onHover>`.
   - **An unselected cell recedes under a flat overlay, not `globalAlpha`.**
     Alpha and value are the same channel on a ramp, so fading a cell slides it
     along the scale; an overlay is uniform and monotonic, so the ramp's order

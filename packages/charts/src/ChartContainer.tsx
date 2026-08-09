@@ -1368,13 +1368,15 @@ export function ChartContainer({
     return {
       // The *declaration*, not a measurement of the block — see the field doc.
       snapped: entries.some((e) => e.sequence !== undefined),
-      preview: (hits: readonly SelectInfo[]) => {
+      preview: (hits: readonly SelectInfo[], light = true) => {
         // The single-hit / resting-block dedup state is meaningless mid-sweep;
         // reset both so the first post-sweep pointer hover always reports.
         lastHoverRef.current = null;
         lastHoverBlockRef.current = null;
+        // Reporting and lighting are separate on purpose — see the field doc.
         for (const e of entries) e.onHoverMany?.(hits);
-        if (!controlledHoverRef.current) setInternalHovered(hits);
+        if (!controlledHoverRef.current)
+          setInternalHovered(light ? hits : null);
       },
       commit: (
         hits: readonly SelectInfo[],

@@ -738,12 +738,36 @@ export function Layers({ children }: LayersProps) {
       // The rect tracks the pointer every frame, gate or no gate: the covered
       // set is unchanged for a move within one heat-map cell, and a brush that
       // only redrew when the set changed would visibly stick between cells.
-      const xa = Math.max(0, Math.min(c.plotWidth, c.xScale(span.start)));
-      const xb = Math.max(0, Math.min(c.plotWidth, c.xScale(span.end)));
-      const forward = sw.anchor <= sw.pendingT;
+      //
+      // **A snapping layer draws the rect it is going to take**, not the one
+      // the pointer traced — otherwise the preview promises a different set
+      // than the release delivers. The corners keep the drag's own diagonal
+      // either way, so the two crosshairs stay on the ends the user is
+      // holding rather than jumping to a fixed pair of corners.
+      const snapped = sw.session.snappedRect?.() ?? null;
+      const clampX = (v: number) => Math.max(0, Math.min(c.plotWidth, v));
+      const forwardX = sw.anchor <= sw.pendingT;
+      const forwardY = sw.anchorPy <= sw.pendingPy;
+      if (snapped !== null) {
+        const xa = clampX(c.xScale(snapped.x[0]));
+        const xb = clampX(c.xScale(snapped.x[1]));
+        const ya = sw.yScale(snapped.y[0]);
+        const yb = sw.yScale(snapped.y[1]);
+        const yLo = Math.min(ya, yb);
+        const yHi = Math.max(ya, yb);
+        setSweepRect({
+          x0: forwardX ? Math.min(xa, xb) : Math.max(xa, xb),
+          x1: forwardX ? Math.max(xa, xb) : Math.min(xa, xb),
+          y0: forwardY ? yLo : yHi,
+          y1: forwardY ? yHi : yLo,
+        });
+        return changed;
+      }
+      const xa = clampX(c.xScale(span.start));
+      const xb = clampX(c.xScale(span.end));
       setSweepRect({
-        x0: forward ? xa : xb,
-        x1: forward ? xb : xa,
+        x0: forwardX ? xa : xb,
+        x1: forwardX ? xb : xa,
         y0: sw.anchorPy,
         y1: sw.pendingPy,
       });
@@ -756,7 +780,15 @@ export function Layers({ children }: LayersProps) {
     const sw = sweepRef.current;
     if (sw === null || !sw.committed) return;
     if (cutSweep(sw, containerRef.current))
-      sw.gesture.preview(sw.session.hits());
+      // A brush that is drawing the SNAPPED region already outlines exactly
+      // what will be taken, so lighting each covered mark on top of it is
+      // redundant — and on a heat map actively worse (see `preview`). Tested
+      // on the answer, not on whether the method exists: `sweep2D` always
+      // defines it and returns `null` for a layer that does not snap.
+      sw.gesture.preview(
+        sw.session.hits(),
+        (sw.session.snappedRect?.() ?? null) === null,
+      );
   }, [cutSweep]);
   const scheduleSweepFrame = useCallback(() => {
     const sw = sweepRef.current;

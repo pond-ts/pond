@@ -205,19 +205,26 @@ milestone. Plan:
   **Also shipped — the heat map states.** A new optional `theme.heat` slot
   carrying only the states (the geometry still comes from `theme.bar`, which
   is right: a cell is a bar's slot with colour instead of height). The
-  outline is **one per selection act** (owner, 2026-08-09): a sweep releases a
-  grid-snapped rect and that rect keeps its own box, so two overlapping
-  sweeps stay two overlapping rectangles instead of fusing into their union's
-  L-shape. The outline then describes what was _done_ — the undoable unit —
-  rather than a merged set nobody selected in one go.
+  live drag and the committed outline answer differently (owner, 2026-08-09,
+  after one wrong turn — see below):
+  - **Dragging** — the brush shows the **snapped** rect it is about to take
+    (`SweepSession.snap`), so the preview cannot promise a set the release
+    will not deliver. A scatter's cut is free, so its brush stays on the
+    pointer.
+  - **Released** — the new rect joins what is already selected and the
+    outline **merges**: one perimeter around the union, from suppressing each
+    cell edge whose neighbour is also selected. No connectivity pass, so
+    disconnected pieces get one outline each and a hole gets its own, and no
+    false edge where a selection runs off-screen.
 
-  Anything without a box (cell marks; a descriptor whose `rows` skip a row)
-  falls back to the **union perimeter**, which suppresses each cell edge
-  whose neighbour is also a leftover — no connectivity pass, so disconnected
-  pieces get one outline each and a hole gets its own. That is what keeps a
-  demoted region readable. Both shapes clip their edges against the drawn bin
-  range, so a selection running off-screen grows no false edge at the
-  viewport boundary.
+  **The wrong turn, for the record.** A diagram showing two overlapping
+  grid-snapped rectangles was read as "one outline per selection _act_, acts
+  do not merge", and shipped that way (`27df067`) before the owner corrected
+  it: the diagram was the **drag**, not the commit. What it was really saying
+  is that the drag rect snaps — the thing that was actually missing — and the
+  per-act reading was reverted. Worth keeping because the mistake is not
+  obvious in hindsight: both readings produce overlapping rectangles in a
+  still image, and only the moment they appear tells them apart.
 
   **Also shipped — the perf gate** (`scripts/perf-interact2d.mjs`, 18
   scenarios). It found what it was written to look for and one thing it was
