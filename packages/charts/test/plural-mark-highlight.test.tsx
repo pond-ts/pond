@@ -16,7 +16,11 @@ import {
   type RowFrame,
   type SelectInfo,
 } from '../src/context.js';
-import { recordingContext, stubCanvasContext } from './canvas-mock.js';
+import {
+  arcsFilled,
+  recordingContext,
+  stubCanvasContext,
+} from './canvas-mock.js';
 import type { CtxCall } from './canvas-mock.js';
 
 afterEach(cleanup);
@@ -129,46 +133,60 @@ function mountScatter(props: Record<string, unknown>) {
 }
 
 describe('<ScatterChart> — the whole selection / hover set reaches the draw', () => {
-  // One `arc` per point in the base pass, one more per highlight ring, so the
-  // ring count reads straight off the op log.
-  const RINGS = (calls: readonly CtxCall[]) => count(calls, 'arc') - 4;
+  // `defaultTheme.scatter` carries a `states` ladder, so a live point is not
+  // "the base mark plus a highlight ring" — it is ONE mark drawn in the
+  // state's colour at the state's size. The arc total is therefore the same
+  // whatever is selected, and what counts a state is its **fill**.
+  const S = defaultTheme.scatter.default;
+  const SELECTED = (calls: readonly CtxCall[]) =>
+    arcsFilled(calls, S.states!.selected).length;
+  const HOVERED = (calls: readonly CtxCall[]) =>
+    arcsFilled(calls, S.states!.hover);
+  // Every point still draws exactly once, live or not — the state moved the
+  // mark rather than adding one.
+  const TOTAL_ARCS = 4;
 
-  it('rings every member of a multi-mark `selected`', () => {
+  it('recolours every member of a multi-mark `selected`', () => {
     const { calls } = mountScatter({ selected: [point(0), point(2)] });
-    expect(RINGS(calls)).toBe(2);
+    expect(SELECTED(calls)).toBe(2);
+    expect(count(calls, 'arc')).toBe(TOTAL_ARCS);
   });
 
-  it('rings a three-mark selection — no cap at one', () => {
+  it('recolours a three-mark selection — no cap at one', () => {
     const { calls } = mountScatter({
       selected: [point(0), point(1), point(3)],
     });
-    expect(RINGS(calls)).toBe(3);
+    expect(SELECTED(calls)).toBe(3);
   });
 
-  it('still rings exactly one for a single-mark selection (unchanged)', () => {
+  it('still lights exactly one for a single-mark selection (unchanged)', () => {
     // The union `selected` accepts means every shipped caller passes one mark;
     // widening the reader must not change what they see.
     const { calls } = mountScatter({ selected: point(1) });
-    expect(RINGS(calls)).toBe(1);
+    expect(SELECTED(calls)).toBe(1);
   });
 
-  it('rings every member of a multi-mark `hovered`', () => {
+  it('recolours every member of a multi-mark `hovered`, and grows them', () => {
     const { calls } = mountScatter({ hovered: [point(1), point(2)] });
-    expect(RINGS(calls)).toBe(2);
-    const alphas = calls
-      .filter((c) => c.type === 'set' && c.name === 'globalAlpha')
-      .map((c) => c.args[0]);
-    expect(alphas).toContain(0.5); // the fainter hover ring
+    const hov = HOVERED(calls);
+    expect(hov).toHaveLength(2);
+    // Hover is the state that spends SIZE — the radii are the grown ones, not
+    // the resting radius with a ring around it.
+    expect(hov).toEqual([S.states!.hoverRadius, S.states!.hoverRadius]);
+    expect(count(calls, 'arc')).toBe(TOTAL_ARCS);
   });
 
-  it('rings selection and hover together, selection winning the overlap', () => {
+  it('lights selection and hover together, selection winning the overlap', () => {
     const { calls } = mountScatter({
       selected: [point(0), point(1)],
       hovered: [point(1), point(3)],
     });
-    // Three distinct live points (0, 1, 3) — point 1 is in both sets and rings
-    // once, as selected.
-    expect(RINGS(calls)).toBe(3);
+    // Three distinct live points (0, 1, 3) — point 1 is in both sets and
+    // draws once, as selected. The precedence is visible in the fills, which
+    // is stronger than the old ring count: it says WHICH state won.
+    expect(SELECTED(calls)).toBe(2);
+    expect(HOVERED(calls)).toHaveLength(1);
+    expect(count(calls, 'arc')).toBe(TOTAL_ARCS);
   });
 
   it('ignores set members naming another layer', () => {
@@ -176,11 +194,29 @@ describe('<ScatterChart> — the whole selection / hover set reaches the draw', 
       selected: [point(0, 'elsewhere'), point(2)],
       hovered: [point(1, 'elsewhere')],
     });
-    expect(RINGS(calls)).toBe(1);
+    expect(SELECTED(calls)).toBe(1);
+    expect(HOVERED(calls)).toHaveLength(0);
   });
 
-  it('rings nothing when both sets are empty', () => {
-    expect(RINGS(mountScatter({}).calls)).toBe(0);
+  it('lights nothing when both sets are empty — and dims nothing either', () => {
+    const { calls } = mountScatter({});
+    expect(SELECTED(calls)).toBe(0);
+    expect(HOVERED(calls)).toHaveLength(0);
+    // The resting field is the resting field: an empty selection must not
+    // recede the plot, which is what `selectionActive` gates.
+    expect(arcsFilled(calls, S.color)).toEqual(
+      Array(TOTAL_ARCS).fill(S.radius),
+    );
+  });
+
+  it('recedes the unselected field — shrunk AND faded, not one or the other', () => {
+    const { calls } = mountScatter({ selected: [point(0)] });
+    const rest = arcsFilled(calls, S.color);
+    expect(rest).toEqual(Array(3).fill(S.states!.dimmedRadius));
+    const alphas = calls
+      .filter((c) => c.type === 'set' && c.name === 'globalAlpha')
+      .map((c) => c.args[0]);
+    expect(alphas).toContain(S.states!.dimmedOpacity);
   });
 });
 

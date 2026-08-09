@@ -193,10 +193,18 @@ milestone. Plan:
   publishes **no resting block**, because the block is a column and the drag
   beside it captures a rect.
 
+  **Also shipped — the scatter palette.** `theme.scatter.*.states` (an
+  optional group, `BoxStyle.states`' shape), the rest colour off cerulean to
+  `#2A9D8F` at 9px, and the whole table above wired into `drawScatter`. Two
+  notes worth keeping: a live point is deferred **whole** rather than
+  re-ringed, because its fill _and_ radius change and a resting neighbour
+  drawn later would otherwise paint over the grown body; and the state radii
+  are applied as the **ratio** to the base radius, so a data-driven `radius`
+  encoding is not flattened to one size the moment a point goes live.
+
   What is left: the **at-rest small grey crosshair** (the drag pair exists;
-  the resting one is cursor work); the **scatter palette move** off cerulean
-  and both state tables above; the **heat map's single-perimeter selection**
-  and white-veil ghosting; and the **perf gate** — a rect preview lights far
+  the resting one is cursor work); the **heat map's single-perimeter
+  selection** and white-veil ghosting; and the **perf gate** — a rect preview lights far
   more marks per pointer move than the 1-D band that cost 6.2 s/frame before
   its membership scan was re-priced (A8.1).
 

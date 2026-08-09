@@ -1,6 +1,6 @@
 import type { ChartSeries } from './data.js';
 import type { Scale } from './line.js';
-import type { ScatterStyle } from './theme.js';
+import type { ScatterStates, ScatterStyle } from './theme.js';
 import type { ResolvedEncoding } from './encoding.js';
 import type { SelectInfo, LayerDrawStats, SpanSelection } from './context.js';
 import { visiblePointRange } from './culling.js';
@@ -224,6 +224,25 @@ export function drawScatter(
   // old pair of scalars had and the reason this isn't an array of objects.
   let selRings: number[] | null = null;
   let hovRings: number[] | null = null;
+  // The state ladder, or `undefined` for the pre-states behaviour — in which
+  // case every branch below it is inert and the op stream is unchanged.
+  const st = style.states;
+  // The radii arrive in px against the base radius and are applied as the
+  // RATIO between them, so a data-driven `radius` encoding still grows and
+  // shrinks proportionally instead of collapsing to one size when it goes
+  // live. `style.radius` is what an unencoded point already draws at, so on
+  // the uniform path these land exactly on the token's px value.
+  const hoverK = st === undefined ? 1 : st.hoverRadius / style.radius;
+  const dimK = st === undefined ? 1 : st.dimmedRadius / style.radius;
+  // A **committed** selection is what recedes the rest of the field; a hover
+  // is not, or the whole plot would flicker under an ordinary mousemove.
+  //
+  // Note this is all-or-nothing across the base loop: every point that is not
+  // live is dimmed, and live points leave the loop entirely, so the alpha is
+  // set ONCE around the loop rather than toggled per point. Bracketed in its
+  // own `save`/`restore` (the `drawBox` ladder's discipline) so a draw with
+  // nothing selected emits exactly the op stream it always did.
+  const dimming = st !== undefined && (anySelected || anySpan);
 
   // Viewport culling (Phase 2): draw only the marks in the visible x-window
   // (+1 each side). The loop keeps the **original** index `i`, so the index-keyed
@@ -321,6 +340,10 @@ export function drawScatter(
   }
 
   let drawn = 0;
+  if (dimming) {
+    ctx.save();
+    ctx.globalAlpha = st!.dimmedOpacity;
+  }
   for (let i = vStart; i < vEnd; i += 1) {
     if (!isPoint(cs, i)) continue;
     drawn += 1;
@@ -329,8 +352,37 @@ export function drawScatter(
     const px = xScale(cs.x[i]!) + offsetPx;
     const py = yScale(cs.y[i]!);
     const r = encoding.radiusAt(i);
+    // Which state this point is in. Selection (a mark entry naming it, or a
+    // span containing it) is tested first and wins outright, so a point that
+    // is both never draws twice.
+    let live = 0; // 0 = neither, 1 = hovered, 2 = selected
+    if (anySelected || anyHovered || anySpan) {
+      const key = keyAt(i);
+      if (
+        (anySelected && marksPoint(selected, seriesId, key)) ||
+        (anySpan && spanMatchesAny(spans, key, cs.y[i]!))
+      ) {
+        live = 2;
+      } else if (anyHovered && marksPoint(hovered, seriesId, key)) {
+        live = 1;
+      }
+    }
+    // A live point is **deferred whole** under `states`, not just its ring:
+    // its fill and radius both change, so drawing the mark here and only its
+    // ring later would let a resting neighbour drawn afterwards paint over
+    // the grown body it belongs to.
+    if (live !== 0) {
+      (live === 2 ? (selRings ??= []) : (hovRings ??= [])).push(
+        px,
+        py,
+        st !== undefined && live === 1 ? r * hoverK : r,
+      );
+      if (st !== undefined) continue;
+    }
     ctx.beginPath();
-    ctx.arc(px, py, r, 0, Math.PI * 2);
+    // Outside a non-empty selection a point shrinks as well as fading — see
+    // `dimmedRadius`; the alpha itself is set once, around the loop.
+    ctx.arc(px, py, dimming ? r * dimK : r, 0, Math.PI * 2);
     ctx.fillStyle = encoding.colorAt(i);
     ctx.fill();
     if (style.outlineWidth > 0) {
@@ -338,38 +390,30 @@ export function drawScatter(
       ctx.strokeStyle = style.outline;
       ctx.stroke();
     }
-    // Defer each live point's highlight ring to a second pass so it sits on
-    // top of any neighbour drawn after it. Selection (a mark entry naming the
-    // point, or a span containing it) is tested first and wins outright, so a
-    // point that is both never draws two rings.
-    if (anySelected || anyHovered || anySpan) {
-      const key = keyAt(i);
-      if (
-        (anySelected && marksPoint(selected, seriesId, key)) ||
-        (anySpan && spanMatchesAny(spans, key, cs.y[i]!))
-      ) {
-        (selRings ??= []).push(px, py, r);
-      } else if (anyHovered && marksPoint(hovered, seriesId, key)) {
-        (hovRings ??= []).push(px, py, r);
-      }
-    }
   }
+  if (dimming) ctx.restore();
 
-  // Highlight rings, after the base pass — always on top. Hover first, then
-  // selection over it: both use the one ring the style carries, so the fainter
-  // state must not paint over the committed one where two marks overlap.
+  // The live marks, after the base pass — always on top. Hover first, then
+  // selection over it, so the fainter state never paints over the committed
+  // one where two marks overlap.
   if (hovRings !== null) {
     ctx.save();
-    ctx.globalAlpha = HOVER_RING_ALPHA;
-    ctx.lineWidth = style.selectedWidth;
-    ctx.strokeStyle = style.selectedOutline;
-    strokeRings(ctx, hovRings);
+    if (st !== undefined) fillMarks(ctx, hovRings, st.hover, st.halo, st);
+    else {
+      ctx.globalAlpha = HOVER_RING_ALPHA;
+      ctx.lineWidth = style.selectedWidth;
+      ctx.strokeStyle = style.selectedOutline;
+      strokeRings(ctx, hovRings);
+    }
     ctx.restore();
   }
   if (selRings !== null) {
-    ctx.lineWidth = style.selectedWidth;
-    ctx.strokeStyle = style.selectedOutline;
-    strokeRings(ctx, selRings);
+    if (st !== undefined) fillMarks(ctx, selRings, st.selected, st.halo, st);
+    else {
+      ctx.lineWidth = style.selectedWidth;
+      ctx.strokeStyle = style.selectedOutline;
+      strokeRings(ctx, selRings);
+    }
   }
 
   // Optional per-point labels, after all marks so text isn't overpainted.
@@ -403,6 +447,27 @@ const LABEL_GAP = 4;
 /** Stroke one circle per `[px, py, r]` triple of `rings`. The caller owns the
  *  stroke state (colour / width / alpha), so both highlight passes set it once
  *  rather than per ring. */
+/** Draw one live mark per `[px, py, r]` triple — the `states` path's second
+ *  pass: a filled disc in the state's colour, ringed by the halo that keeps
+ *  overlapping same-coloured points countable. */
+function fillMarks(
+  ctx: CanvasRenderingContext2D,
+  marks: readonly number[],
+  fill: string,
+  halo: string,
+  st: ScatterStates,
+) {
+  ctx.fillStyle = fill;
+  ctx.lineWidth = st.haloWidth;
+  ctx.strokeStyle = halo;
+  for (let j = 0; j < marks.length; j += 3) {
+    ctx.beginPath();
+    ctx.arc(marks[j]!, marks[j + 1]!, marks[j + 2]!, 0, Math.PI * 2);
+    ctx.fill();
+    if (st.haloWidth > 0) ctx.stroke();
+  }
+}
+
 function strokeRings(ctx: CanvasRenderingContext2D, rings: readonly number[]) {
   for (let j = 0; j < rings.length; j += 3) {
     ctx.beginPath();

@@ -287,6 +287,65 @@ export interface ScatterStyle {
   readonly selectedWidth: number;
   /** Colour of the optional per-point text label. */
   readonly label: string;
+  /**
+   * The **interaction states** — fill and size per state, and the whole
+   * styling channel for a live point when set. Unset ⇒ the pre-states
+   * behaviour exactly: every point keeps its resting fill and radius, and a
+   * live one is merely re-ringed in `selectedOutline`/`selectedWidth`.
+   *
+   * A scatter can afford what a candle cannot. A candle's hue *is* its
+   * meaning (rising vs falling), so it carries state in weight and alpha
+   * alone; a heat cell's colour is its value, so it carries state in chrome.
+   * A point's colour encodes nothing by default, so it is free to recolour —
+   * and it also has a channel none of the column marks have: **size**.
+   *
+   * That is why hover and selection split the channels rather than sharing
+   * them. See {@link ScatterStates}.
+   */
+  readonly states?: ScatterStates;
+}
+
+/**
+ * A scatter point's per-state fill and size ({@link ScatterStyle.states}).
+ *
+ * The radii are given in px against {@link ScatterStyle.radius}, and applied
+ * as the **ratio** between them — so a data-driven `radius` encoding still
+ * grows and shrinks by the same proportion instead of being flattened to one
+ * size the moment a point goes live.
+ */
+export interface ScatterStates {
+  /**
+   * Fill for a **hovered** point — or one under a live drag rect, which is
+   * the same state (the sweep lights its covered marks through the plural
+   * `hovered`). A brightened form of the resting colour, not a new hue: the
+   * preview says "these are the ones", and saying it in the committed colour
+   * would make the preview and the commit read alike.
+   */
+  readonly hover: string;
+  /** Hovered radius (px). Hover is the state that spends **size** — it is the
+   *  channel a lone pointer-over can afford, and a hover does not have to
+   *  survive being read against a whole field of committed marks. */
+  readonly hoverRadius: number;
+  /**
+   * Fill for a **selected** point. Its radius is deliberately left at
+   * {@link ScatterStyle.radius}: selection spends **hue** instead, so
+   * committing a sweep does not reflow the cloud under the pointer.
+   */
+  readonly selected: string;
+  /** The ring around a live (hovered or selected) point — what keeps
+   *  overlapping points countable once a whole swept region shares one fill. */
+  readonly halo: string;
+  /** Halo width (px); `0` draws none. */
+  readonly haloWidth: number;
+  /**
+   * Radius (px) of a point **outside a non-empty selection**. It shrinks as
+   * well as fading because alpha alone at these levels thins a cloud to
+   * nearly nothing, and the shape of the unselected field is the thing a
+   * scatter's background is *for*.
+   */
+  readonly dimmedRadius: number;
+  /** Alpha of a point outside a non-empty selection. */
+  readonly dimmedOpacity: number;
 }
 
 /**
@@ -655,35 +714,69 @@ export const defaultTheme: ChartTheme = {
     out: { color: '#e8836b', width: 1.5, fill: '#e8836b', fillOpacity: 0.3 },
   },
   scatter: {
-    // The data cerulean with a white ring (legible on a busy plot); the
-    // selected point gets a darker, wider ring. `primary`/`secondary` mirror
-    // the line roles so a scatter overlaid on a line can share its identity.
+    // A 9px teal point with a white ring (legible on a busy plot), and the
+    // shared `states` ladder over it. `primary`/`secondary` keep the LINE
+    // roles' hues — that identity is the whole reason they exist, so a
+    // scatter overlaid on a line still reads as the same series — and take
+    // the same states with their own hue brightened for hover.
+    //
+    // The default role's rest is `#2A9D8F`, the bar's resting teal, and NOT
+    // the old cerulean `#0284c7`: blue has to mean *committed*, and a
+    // cerulean point going to selection blue is barely a change. Same rule
+    // the bar palette reached, for the third time.
     default: {
-      color: '#0284c7',
-      radius: 4,
+      color: '#2A9D8F',
+      radius: 4.5,
       outline: '#ffffff',
       outlineWidth: 1,
       selectedOutline: '#1e293b',
       selectedWidth: 2,
       label: '#334155',
+      states: {
+        hover: '#4FD0BE',
+        hoverRadius: 5.5,
+        selected: '#3F5BE0', // the shared selection blue
+        halo: '#ffffff',
+        haloWidth: 2,
+        dimmedRadius: 2.5,
+        dimmedOpacity: 0.34,
+      },
     },
     primary: {
       color: '#0284c7',
-      radius: 4,
+      radius: 4.5,
       outline: '#ffffff',
       outlineWidth: 1,
       selectedOutline: '#1e293b',
       selectedWidth: 2,
       label: '#334155',
+      states: {
+        hover: '#38bdf8', // the primary cerulean, brightened
+        hoverRadius: 5.5,
+        selected: '#3F5BE0', // the shared selection blue
+        halo: '#ffffff',
+        haloWidth: 2,
+        dimmedRadius: 2.5,
+        dimmedOpacity: 0.34,
+      },
     },
     secondary: {
       color: '#e8836b',
-      radius: 4,
+      radius: 4.5,
       outline: '#ffffff',
       outlineWidth: 1,
       selectedOutline: '#1e293b',
       selectedWidth: 2,
       label: '#334155',
+      states: {
+        hover: '#f5a991', // the secondary coral, brightened
+        hoverRadius: 5.5,
+        selected: '#3F5BE0', // the shared selection blue
+        halo: '#ffffff',
+        haloWidth: 2,
+        dimmedRadius: 2.5,
+        dimmedOpacity: 0.34,
+      },
     },
   },
   box: {

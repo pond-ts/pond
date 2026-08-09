@@ -21,7 +21,11 @@ import {
 } from '../src/context.js';
 import { barsFromTimeSeries, stacksFromColumns } from '../src/data.js';
 import { scaleLinear } from 'd3-scale';
-import { recordingContext, stubCanvasContext } from './canvas-mock.js';
+import {
+  arcsFilled,
+  recordingContext,
+  stubCanvasContext,
+} from './canvas-mock.js';
 import type { CtxCall } from './canvas-mock.js';
 
 afterEach(cleanup);
@@ -277,11 +281,14 @@ function mountScatter(props: Record<string, unknown>) {
   );
 }
 
-// One `arc` per point in the base pass, one more per highlight ring.
-const RINGS = (calls: readonly CtxCall[]) => count(calls, 'arc') - 4;
+// `defaultTheme.scatter` carries a `states` ladder, so a selected point is
+// recoloured rather than given a second arc — the count is of marks drawn in
+// the selection blue, not of extra arcs.
+const SELECTED = (calls: readonly CtxCall[]) =>
+  arcsFilled(calls, defaultTheme.scatter.default.states!.selected).length;
 
 describe('<ScatterChart> — a scatter span uses `y` (RFC A3.3/A5.3)', () => {
-  it('an x-only span rings every point in the interval', () => {
+  it('an x-only span selects every point in the interval', () => {
     const { calls } = mountScatter({
       selected: [
         {
@@ -291,7 +298,7 @@ describe('<ScatterChart> — a scatter span uses `y` (RFC A3.3/A5.3)', () => {
         } satisfies SpanSelection,
       ],
     });
-    expect(RINGS(calls)).toBe(2); // points 1, 2 — point 3 sits ON the open edge
+    expect(SELECTED(calls)).toBe(2); // points 1, 2 — 3 sits ON the open edge
   });
 
   it('y narrows it to the 2-D rectangle, half-open on both axes', () => {
@@ -305,10 +312,10 @@ describe('<ScatterChart> — a scatter span uses `y` (RFC A3.3/A5.3)', () => {
         } satisfies SpanSelection,
       ],
     });
-    expect(RINGS(calls)).toBe(2);
+    expect(SELECTED(calls)).toBe(2);
   });
 
-  it('a span plus a mark ring their union, one ring per point', () => {
+  it('a span plus a mark select their union, one mark per point', () => {
     const { calls } = mountScatter({
       selected: [
         {
@@ -325,7 +332,7 @@ describe('<ScatterChart> — a scatter span uses `y` (RFC A3.3/A5.3)', () => {
         } satisfies SpanSelection,
       ],
     });
-    expect(RINGS(calls)).toBe(3); // points 0, 1 (span) + 3 (mark)
+    expect(SELECTED(calls)).toBe(3); // points 0, 1 (span) + 3 (mark)
   });
 });
 

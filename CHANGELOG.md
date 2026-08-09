@@ -62,6 +62,39 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: a scatter point carries its state in colour AND size** — new
+  optional `theme.scatter.*.states` (`hover` / `hoverRadius` / `selected` /
+  `halo` / `haloWidth` / `dimmedRadius` / `dimmedOpacity`). Unset ⇒ the
+  previous behaviour exactly: a live point keeps its fill and is merely
+  re-ringed in `selectedOutline`.
+
+  A point is the one mark with a spare channel. A candle's hue _is_ its
+  meaning and a heat cell's colour _is_ its value, so those carry state in
+  weight and chrome; a point's colour encodes nothing by default and it also
+  has **size**. So the two live states split the channels rather than sharing
+  one: **hover grows and brightens** (keeping its own hue — a preview that
+  borrowed the committed colour would read as committed), while **selection
+  recolours and keeps its size**, so committing a sweep does not reflow the
+  cloud under the pointer. Both take a halo, which is what keeps overlapping
+  points countable once a whole swept region shares one fill.
+
+  A point outside a non-empty selection **shrinks as well as fading** — alpha
+  alone thins a cloud to nearly nothing, and the shape of the unselected field
+  is what a scatter's background is for. A hover does not recede the field;
+  only a committed selection does.
+
+  The radii are px against the base `radius` and applied as the **ratio**
+  between them, so a data-driven `radius` encoding still grows and shrinks
+  proportionally instead of flattening to one size when a point goes live.
+
+- **charts: `defaultTheme`'s resting scatter point moves off cerulean
+  (`#0284c7`) to the shared teal `#2A9D8F`, at 9px.** Blue has to mean
+  _committed_, and a cerulean point going to selection blue is barely a
+  change — the rule the bar palette reached, now for the third time. The
+  `primary` / `secondary` roles keep the **line** roles' hues (that identity
+  is why they exist) and take the same states with their own hue brightened
+  for hover.
+
 - **charts: `<MultiSelector>` sweeps a 2-D rect on `<ScatterChart>` and
   `<HeatMap>`** ([PND-INTERACT2D]). Every other mark owns a column of the key
   axis, so a drag over it is a range of keys; a scatter point owns a
