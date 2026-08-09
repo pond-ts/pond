@@ -742,6 +742,7 @@ export function BarChart<
     const multi = (groups?.length ?? 0) > 1;
     const ramp = multi ? base.groups : undefined;
     const rampDim = multi ? base.groupsDimmed : undefined;
+    const rampHover = multi ? base.groupsHover : undefined;
     const at = (r: readonly string[], i: number) => r[i % r.length]!;
     const fills = (groups ?? []).map(
       (g, i) =>
@@ -759,6 +760,11 @@ export function BarChart<
       ...(ramped && rampDim !== undefined
         ? {
             dimmedFills: (groups ?? []).map((_g, i) => at(rampDim, i)),
+          }
+        : {}),
+      ...(ramped && rampHover !== undefined
+        ? {
+            hoverFills: (groups ?? []).map((_g, i) => at(rampHover, i)),
           }
         : {}),
       opacity: base.opacity,

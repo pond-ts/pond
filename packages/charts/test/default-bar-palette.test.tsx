@@ -98,6 +98,53 @@ describe('defaultTheme.bar.default — the interaction-state palette', () => {
     ]);
   });
 
+  it('carries a hovered ramp too — same length, and never the resting hues', () => {
+    // A flat hover colour repaints the pointed-at segment in another group's
+    // hue, so hovering erased the ramp right where the reader is looking.
+    expect(bar.groupsHover).toEqual([
+      '#6bb8a9',
+      '#7c99cd',
+      '#eabd7a',
+      '#c68476',
+    ]);
+    expect(bar.groupsHover).toHaveLength(bar.groups!.length);
+    // Every hover entry must differ from its resting entry, or hovering that
+    // group is invisible — the failure the flat `hover` never had.
+    for (let i = 0; i < bar.groups!.length; i += 1) {
+      expect(bar.groupsHover![i]).not.toBe(bar.groups![i]);
+    }
+  });
+
+  it('brightens each hover entry rather than shifting its hue', () => {
+    // The claim the ramp rests on: hover says "brighter", not "another group".
+    // So each entry must be lighter than its resting colour *and* nearer that
+    // colour's hue than any other ramp entry's.
+    const rgb = (hex: string) =>
+      [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [
+        number,
+        number,
+        number,
+      ];
+    const lum = (hex: string) => {
+      const [r, g, b] = rgb(hex);
+      return (Math.max(r, g, b) + Math.min(r, g, b)) / 2;
+    };
+    /** Distance in RGB — good enough to say "closest to which ramp entry". */
+    const dist = (a: string, b: string) => {
+      const [r1, g1, b1] = rgb(a);
+      const [r2, g2, b2] = rgb(b);
+      return (r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2;
+    };
+    bar.groups!.forEach((resting, i) => {
+      const hovered = bar.groupsHover![i]!;
+      expect(lum(hovered)).toBeGreaterThan(lum(resting));
+      const nearest = bar
+        .groups!.map((g, j) => [dist(hovered, g), j] as const)
+        .sort((x, y) => x[0] - y[0])[0]![1];
+      expect(nearest).toBe(i);
+    });
+  });
+
   it('starts the ramp near the resting fill, and keeps selection blue out of it', () => {
     // The ramp has to look like the rest of the palette, so entry 0 is a teal
     // close to `fill`. And no entry may be the selection blue — a resting
@@ -243,6 +290,58 @@ describe('the stack group ramp resolves through the draw path', () => {
     );
     expect(fills).toContain(defaultTheme.bar.default.groups![2]);
     expect(fills).not.toContain(defaultTheme.bar.default.highlight);
+  });
+
+  it('brightens a hovered segment within its own group, not to the flat hover', () => {
+    // Hovering the third group must light *that group's* brighter hue. With
+    // the flat `hover` it went teal — so a hovered terracotta segment read as
+    // a teal one, and block-scoped hover did that to a whole bin at once.
+    const hovered: SelectInfo = {
+      id: 's',
+      key: 0,
+      value: 2,
+      color: '#000',
+      label: 'g2',
+    };
+    const fills = drawFills(
+      <BarChart series={stack(4)} columns={cols4} axis="a" id="s" />,
+      { hovered },
+    );
+    expect(fills).toContain(defaultTheme.bar.default.groupsHover![2]);
+    expect(fills).not.toContain(defaultTheme.bar.default.hover);
+    // The other three groups of that bin are untouched — hover is per
+    // segment here, and nothing else in the chart changed.
+    expect(fills).toContain(defaultTheme.bar.default.groups![0]);
+    expect(fills).not.toContain(defaultTheme.bar.default.groupsHover![0]);
+  });
+
+  it('keeps the flat `hover` for a single-group stack', () => {
+    // Same gate as the resting ramp: a categorical chart has no groups to
+    // tell apart, so it keeps the palette's one hover teal.
+    const hovered: SelectInfo = {
+      id: 's',
+      key: 0,
+      value: 3,
+      color: '#000',
+      label: 'a',
+      mark: 'a',
+    };
+    const fills = drawFills(
+      <BarChart
+        categories={[
+          { label: 'a', value: 3 },
+          { label: 'b', value: 7 },
+        ]}
+        axis="a"
+        id="s"
+      />,
+      { hovered },
+      { categorical: true },
+    );
+    expect(fills).toContain(defaultTheme.bar.default.hover);
+    for (const h of defaultTheme.bar.default.groupsHover!) {
+      expect(fills).not.toContain(h);
+    }
   });
 
   it('yields the whole ramp to `<BarChart colors>` — an override owns the scale', () => {

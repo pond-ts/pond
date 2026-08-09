@@ -896,6 +896,16 @@ export interface StackStyle {
    */
   readonly dimmedFills?: readonly string[];
   /**
+   * Per-group {@link hover}, parallel to {@link fills} — the resolved
+   * `theme.bar.default.groupsHover` ramp. Set only for a **group-ramped**
+   * stack; `undefined` falls back to the flat {@link hover}.
+   *
+   * A single hover colour repaints the pointed-at segment in a hue belonging
+   * to another group, so hovering erases the ramp exactly where the reader is
+   * looking — and block-scoped hover erases the whole bin.
+   */
+  readonly hoverFills?: readonly string[];
+  /**
    * Whether {@link fills} carry **group identity** (a resolved group ramp)
    * rather than being one repeated role colour.
    *
@@ -1319,7 +1329,13 @@ export function drawStacks(
                 ? fill
                 : (style.highlight ?? fill)
               : isHovered
-                ? (style.hover ?? style.highlight ?? fill)
+                ? // Per-group where the ramp supplies one, so hovering
+                  // brightens the segment instead of recolouring it out of
+                  // its group.
+                  (style.hoverFills?.[g] ??
+                  style.hover ??
+                  style.highlight ??
+                  fill)
                 : fill;
       ctx.fillStyle = emphasised;
       ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);

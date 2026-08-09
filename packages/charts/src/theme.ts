@@ -462,6 +462,18 @@ export interface BarStyle {
    */
   readonly groupsDimmed?: readonly string[];
   /**
+   * The **hovered** counterpart of {@link groups}, same order and cycling.
+   *
+   * Per-group for the reason the flat {@link hover} cannot be: one hover
+   * colour repaints whichever segment the pointer is over in a hue belonging
+   * to a different group, so pointing at a stack momentarily *erases the
+   * ramp* — and under a `<MultiSelector>`, where hover is block-scoped, it
+   * erases the whole bin at once. Each entry is its ramp colour brightened
+   * (same hue, lighter), the same relationship {@link fill} has to
+   * {@link hover}.
+   */
+  readonly groupsHover?: readonly string[];
+  /**
    * Stroke for a **selected** bar's outline, where the default is the bar's own
    * resolved fill. The one selection cue that still works when the fill cannot
    * change — a `binColors` bar keeps its own colour by design, so without this
@@ -647,6 +659,12 @@ export const defaultTheme: ChartTheme = {
       // reads as four bands rather than one grey block, and the amber stays
       // the lightest of them as it is in the vivid ramp.
       groupsDimmed: ['#c7cecd', '#ced1d6', '#dcd8d2', '#d3cdcc'],
+      // Each ramp entry brightened by the same move `fill` → `hover` makes:
+      // hue held, lightness +0.11, saturation left alone. So a hovered segment
+      // still says which group it is — the thing a single hover colour cannot
+      // do on a stack, and under a <MultiSelector> (block-scoped hover) it is
+      // the whole bin that would otherwise go one flat colour.
+      groupsHover: ['#6bb8a9', '#7c99cd', '#eabd7a', '#c68476'],
     },
     secondary: {
       fill: '#e8836b',

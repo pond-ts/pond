@@ -62,8 +62,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
-- **charts: `defaultTheme` gains a stack group ramp — `bar.default.groups` and
-  `bar.default.groupsDimmed`.** A multi-group stack resolved every group to
+- **charts: `defaultTheme` gains a stack group ramp — `bar.default.groups`,
+  `bar.default.groupsHover` and `bar.default.groupsDimmed`.** A multi-group stack resolved every group to
   `bar.default.fill`, because each group looks up a theme role named after
   itself and an unthemed stack has none — so an unthemed stacked chart painted
   every segment one teal, its structure visible only as hairline seams. The
@@ -76,6 +76,13 @@ include new features and type-level changes; patch bumps are strictly additive.
   unselected bins a selection wants you to compare against become solid blocks.
   Each entry is its ramp colour desaturated and lightened, keeping hue and
   relative lightness.
+
+  `groupsHover` is per-group for the reason the flat `hover` cannot be: one
+  hover colour repaints the pointed-at segment in a hue belonging to a
+  different group, so hovering _erased the ramp_ exactly where the reader was
+  looking — and under a `<MultiSelector>`, where hover is block-scoped, it
+  erased the whole bin at once. Each entry is its ramp colour brightened by
+  the same move `fill` → `hover` makes (hue held, lightness `+0.11`).
 
   Two deliberate boundaries. **Multi-group only** — `categories` and every
   horizontal bar run the same stacked draw path with `G === 1`, and a ramp
