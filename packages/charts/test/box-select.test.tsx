@@ -222,7 +222,10 @@ describe('<BoxPlot> sweeps by column, like a bar that is not grounded', () => {
   });
 
   it('sweeps a contiguous run of columns and skips the gap box', () => {
-    const session = mountBoxes().layer().beginSweep!()!;
+    const session = mountBoxes().layer().beginSweep!(
+      (v: number) => v,
+      (v: number) => v,
+    )!;
     expect(session).not.toBeNull();
     // A window over buckets 0..1.
     session.update(2, 18);
@@ -239,7 +242,10 @@ describe('<BoxPlot> sweeps by column, like a bar that is not grounded', () => {
     const { container, layer } = mountBoxes();
     const c = container();
     const l = layer();
-    const session = l.beginSweep!()!;
+    const session = l.beginSweep!(
+      (v: number) => v,
+      (v: number) => v,
+    )!;
     session.update(0, 10);
     const swept = session.hits()[0]!;
     const clicked = l.hitTest!(+c.xScale(5), 100, c.xScale, (v: number) => v, {

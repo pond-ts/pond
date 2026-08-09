@@ -22,6 +22,7 @@ import { bandRect, regionSpan } from './tracker.js';
 import { effectiveCursorEntries, gestureOwner } from './cursors.js';
 import {
   renderBrushBand,
+  renderBrushRect,
   resolveBrushClaim,
   resolveRangeDrag,
   warnSweepShadowsRangeDrag,
@@ -51,6 +52,7 @@ import {
   type SelectModifiers,
   type SweepGesture,
   type SweepSession,
+  type YScale,
 } from './context.js';
 
 /** Fallback **y**-gridline tick count, used only before the row publishes its
@@ -104,7 +106,7 @@ const DRAG_SLOP = 4;
 function beginTopmostSweep(
   c: Pick<ContainerFrame, 'xScale'>,
   r: Pick<RowFrame, 'layers' | 'yScales' | 'defaultAxisId'>,
-): SweepSession | null {
+): { session: SweepSession; yScale: YScale } | null {
   for (let i = r.layers.length - 1; i >= 0; i -= 1) {
     const entry = r.layers[i]!;
     const ys = r.yScales.get(entry.axisId ?? r.defaultAxisId);
@@ -114,7 +116,12 @@ function beginTopmostSweep(
         (v) => c.xScale(v),
         (v) => ys(v),
       ) ?? null;
-    if (s !== null) return s;
+    // The scale rides along because a `twoD` session's `update` takes its y
+    // window in the LAYER'S axis units, and only this loop knows which of the
+    // row's axes that is. Handing back the session alone would leave the
+    // gesture inverting pointer pixels through the default axis, which is a
+    // silent mis-cut exactly on a dual-axis row.
+    if (s !== null) return { session: s, yScale: ys };
   }
   return null;
 }
@@ -629,13 +636,32 @@ export function Layers({ children }: LayersProps) {
   // **coalesced to animation frames** (RFC A1.4): pointermove only records
   // `pendingT` and schedules `raf`; the frame re-cuts the session and, only
   // when the covered set changed, lights the hits through plural `hovered`.
+  //
+  // A `twoD` session (a scatter, a heat map) tracks the pointer's **y**
+  // alongside its x — `anchorPy` / `pendingPy` in plot pixels, inverted
+  // through the sweeping layer's own axis at cut time. Pixels rather than
+  // axis units because the pixel is what both consumers want: the session
+  // wants it inverted, the rect wants it drawn, and carrying axis units would
+  // mean mapping back through the scale to paint.
   const sweepRef = useRef<{
     anchor: number;
+    anchorPy: number;
     session: SweepSession;
+    yScale: YScale;
     gesture: SweepGesture;
     committed: boolean;
     raf: number;
     pendingT: number | null;
+    pendingPy: number;
+  } | null>(null);
+  // The live 2-D brush rect, in plot pixels — row-local because a rect's y
+  // only means anything against the axis it was measured on (see
+  // `ResolvedCursorFrame.rect`). The 1-D band stays container state.
+  const [sweepRect, setSweepRect] = useState<{
+    x0: number;
+    x1: number;
+    y0: number;
+    y1: number;
   } | null>(null);
   // (`sweeping` — the paint-only mirror of "a sweep is live" — is declared up
   // with the cursor resolution, which it suppresses. It also renders the
@@ -656,17 +682,53 @@ export function Layers({ children }: LayersProps) {
   // A1.5's arbitration, surfaced: warn once when a press found both claimants.
   const warnedSweepShadowRef = useRef(false);
 
-  /** Re-cut the sweep to the latest pointer (bucket-snapped through the shared
-   *  `cursorBuckets`, freeform without) and light the changed preview. */
+  /**
+   * One re-cut of the live sweep at the recorded pointer: the x window
+   * bucket-snapped through the shared `cursorBuckets` (freeform without),
+   * and — for a `twoD` layer — the y window inverted through the sweeping
+   * layer's own axis, plus the brush rect that goes with it. Returns whether
+   * the covered set changed (the session's delta gate).
+   *
+   * Shared by the frame flush and the release, so the final cut is the same
+   * cut, and the release cannot capture a different set than the preview the
+   * user let go of.
+   */
+  const cutSweep = useCallback(
+    (sw: NonNullable<typeof sweepRef.current>, c: ContainerFrame): boolean => {
+      if (sw.pendingT === null) return false;
+      const span = regionSpan(c.cursorBuckets ?? [], sw.anchor, sw.pendingT);
+      if (span === null) return false;
+      if (sw.session.twoD !== true)
+        return sw.session.update(span.start, span.end);
+      const changed = sw.session.update(
+        span.start,
+        span.end,
+        +sw.yScale.invert(sw.anchorPy),
+        +sw.yScale.invert(sw.pendingPy),
+      );
+      // The rect tracks the pointer every frame, gate or no gate: the covered
+      // set is unchanged for a move within one heat-map cell, and a brush that
+      // only redrew when the set changed would visibly stick between cells.
+      const xa = Math.max(0, Math.min(c.plotWidth, c.xScale(span.start)));
+      const xb = Math.max(0, Math.min(c.plotWidth, c.xScale(span.end)));
+      const forward = sw.anchor <= sw.pendingT;
+      setSweepRect({
+        x0: forward ? xa : xb,
+        x1: forward ? xb : xa,
+        y0: sw.anchorPy,
+        y1: sw.pendingPy,
+      });
+      return changed;
+    },
+    [],
+  );
+  /** Re-cut the sweep to the latest pointer and light the changed preview. */
   const flushSweep = useCallback(() => {
     const sw = sweepRef.current;
-    if (sw === null || !sw.committed || sw.pendingT === null) return;
-    const c = containerRef.current;
-    const span = regionSpan(c.cursorBuckets ?? [], sw.anchor, sw.pendingT);
-    if (span === null) return;
-    if (sw.session.update(span.start, span.end))
+    if (sw === null || !sw.committed) return;
+    if (cutSweep(sw, containerRef.current))
       sw.gesture.preview(sw.session.hits());
-  }, []);
+  }, [cutSweep]);
   const scheduleSweepFrame = useCallback(() => {
     const sw = sweepRef.current;
     if (sw === null || sw.raf !== 0) return;
@@ -683,6 +745,7 @@ export function Layers({ children }: LayersProps) {
     if (sw.raf !== 0) cancelAnimationFrame(sw.raf);
     if (sw.committed) {
       setSweeping(false);
+      setSweepRect(null);
       containerRef.current.setRegionAnchor(null);
       sw.gesture.preview([]); // un-light the preview; nothing commits
     }
@@ -702,8 +765,7 @@ export function Layers({ children }: LayersProps) {
       // selector over a row of untagged/lines-only layers deliberately claims
       // nothing (Q8's identity-gates-interactivity, range form).
       const sweepGesture = c.resolveSweep(r.rowKey);
-      const sweepSession: SweepSession | null =
-        sweepGesture !== null ? beginTopmostSweep(c, r) : null;
+      const swept = sweepGesture !== null ? beginTopmostSweep(c, r) : null;
       const drag = resolveRangeDrag(
         c,
         gestureOwner(effectiveCursorEntries(c.cursors, r.rowKey)),
@@ -714,7 +776,7 @@ export function Layers({ children }: LayersProps) {
       // routes.
       const claim = resolveBrushClaim({
         creating: c.creating !== null,
-        sweep: sweepSession !== null,
+        sweep: swept !== null,
         drag,
         shiftKey: e.shiftKey,
         panEnabled: c.panEnabled,
@@ -729,20 +791,19 @@ export function Layers({ children }: LayersProps) {
       if (claim.kind === 'sweep') {
         if (isDev && drag !== null)
           warnSweepShadowsRangeDrag(warnedSweepShadowRef);
-        const px = Math.max(
-          0,
-          Math.min(
-            c.plotWidth,
-            e.clientX - e.currentTarget.getBoundingClientRect().left,
-          ),
-        );
+        const box = e.currentTarget.getBoundingClientRect();
+        const px = Math.max(0, Math.min(c.plotWidth, e.clientX - box.left));
+        const py = Math.max(0, Math.min(r.height, e.clientY - box.top));
         sweepRef.current = {
           anchor: +c.xScale.invert(px),
-          session: sweepSession!,
+          anchorPy: py,
+          session: swept!.session,
+          yScale: swept!.yScale,
           gesture: sweepGesture!,
           committed: false,
           raf: 0,
           pendingT: null,
+          pendingPy: py,
         };
         return;
       }
@@ -843,17 +904,32 @@ export function Layers({ children }: LayersProps) {
         } else {
           const rect = e.currentTarget.getBoundingClientRect();
           const px = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
+          const py = Math.max(
+            0,
+            Math.min(rowRef.current.height, e.clientY - rect.top),
+          );
+          const twoD = sw.session.twoD === true;
           let justCommitted = false;
           if (!sw.committed) {
             const start = clickStartRef.current;
-            // The sweep is an x-gesture: slop on |dx|, so a vertical wobble
-            // under a still x stays a click.
-            if (start === null || Math.abs(e.clientX - start.x) <= DRAG_SLOP)
-              return;
+            if (start === null) return;
+            // A 1-D sweep is an x-gesture: slop on |dx|, so a vertical wobble
+            // under a still x stays a click. A `twoD` sweep has a real second
+            // axis, so a straight-down drag is a legitimate rect and the slop
+            // has to be on the DISTANCE — measuring |dx| there would make the
+            // one gesture that only moves in y impossible to start.
+            const dx = e.clientX - start.x;
+            const moved = twoD
+              ? Math.hypot(dx, e.clientY - start.y)
+              : Math.abs(dx);
+            if (moved <= DRAG_SLOP) return;
             sw.committed = true;
             justCommitted = true;
             setSweeping(true);
-            c.setRegionAnchor(sw.anchor); // paint-only mirror (the band)
+            // A `twoD` sweep paints its own row-local rect instead: the
+            // container's anchor is how EVERY row draws the band, and a rect
+            // measured against this row's y axis means nothing in the others.
+            if (!twoD) c.setRegionAnchor(sw.anchor); // paint-only mirror (the band)
             c.setHovered(null, rowRef.current.rowKey); // plural preview owns hover now
             try {
               e.currentTarget.setPointerCapture(e.pointerId);
@@ -862,7 +938,9 @@ export function Layers({ children }: LayersProps) {
             }
           }
           c.setHoverX(px);
+          if (twoD) c.setHoverY(py, rowRef.current.rowKey);
           sw.pendingT = +c.xScale.invert(px);
+          sw.pendingPy = py;
           // The move that COMMITS the sweep cuts synchronously: the band and
           // the covered marks appear in the same event turn, so a
           // bucket-snapped sweep lights its whole first bucket from the
@@ -997,8 +1075,13 @@ export function Layers({ children }: LayersProps) {
           ) {
             block = cached.hits;
           } else {
-            const session = beginTopmostSweep(c, r);
-            if (session !== null) {
+            const session = beginTopmostSweep(c, r)?.session ?? null;
+            // A `twoD` layer has no resting block. Its snap block is a whole
+            // x column, and a drag there captures a RECT — so lighting the
+            // column at rest would preview a set the gesture never selects,
+            // which is the exact lie the resting preview exists to avoid.
+            // Rest falls back to the single-mark hover (the `hit` below).
+            if (session !== null && session.twoD !== true) {
               session.update(span.start, span.end);
               let hits = session.hits();
               // Same block, same marks after a registry re-identification
@@ -1050,20 +1133,17 @@ export function Layers({ children }: LayersProps) {
         sweepRef.current = null;
         if (sw.raf !== 0) cancelAnimationFrame(sw.raf);
         if (!sw.committed) return; // a click — handleClick owns it
-        const px = Math.max(
+        const box = e.currentTarget.getBoundingClientRect();
+        sw.pendingT = +c.xScale.invert(
+          Math.max(0, Math.min(c.plotWidth, e.clientX - box.left)),
+        );
+        sw.pendingPy = Math.max(
           0,
-          Math.min(
-            c.plotWidth,
-            e.clientX - e.currentTarget.getBoundingClientRect().left,
-          ),
+          Math.min(rowRef.current.height, e.clientY - box.top),
         );
-        const span = regionSpan(
-          c.cursorBuckets ?? [],
-          sw.anchor,
-          +c.xScale.invert(px),
-        );
-        if (span !== null) sw.session.update(span.start, span.end);
+        cutSweep(sw, c);
         setSweeping(false);
+        setSweepRect(null);
         c.setRegionAnchor(null); // the band reverts, as the range drag's does
         try {
           e.currentTarget.releasePointerCapture(e.pointerId);
@@ -1078,12 +1158,19 @@ export function Layers({ children }: LayersProps) {
           shiftKey: e.shiftKey,
           altKey: e.altKey,
         };
+        // A `twoD` layer's span carries the second dimension too — a scatter's
+        // continuous `y` window, a heat map's ordinal `rows` — so replaying
+        // the descriptor through `spanMatchesAny` reproduces the rect, not
+        // the whole column under it. The session names its own channel; the
+        // gesture never guesses which one a layer uses.
+        const channels =
+          sw.session.twoD === true ? (sw.session.extent2D?.() ?? null) : null;
         sw.gesture.commit(
           sw.session.hits(),
           modifiers,
           extent === null
             ? null
-            : { kind: 'span', id: sw.session.id, x: extent },
+            : { kind: 'span', id: sw.session.id, x: extent, ...channels },
         );
         return;
       }
@@ -1264,8 +1351,11 @@ export function Layers({ children }: LayersProps) {
       const span = regionSpan(c.cursorBuckets ?? [], +c.xScale.invert(px));
       const gesture = span === null ? null : c.resolveSweep(r.rowKey);
       if (span !== null && gesture !== null && gesture.snapped) {
-        const session = beginTopmostSweep(c, r);
-        if (session !== null) {
+        const session = beginTopmostSweep(c, r)?.session ?? null;
+        // …and for the same reason, a `twoD` layer's click stays a click on
+        // the mark under the pointer. The block it would otherwise commit is
+        // the column, which is not what the rect gesture next to it captures.
+        if (session !== null && session.twoD !== true) {
           session.update(span.start, span.end);
           const hits = session.hits();
           const extent = session.extent();
@@ -1419,10 +1509,13 @@ export function Layers({ children }: LayersProps) {
   // folds the category axis into the gesture (RFC §8 / A4.2 — nobody sees a
   // numeric range), and the band maps slot units through the shared band
   // scale like any other span.
+  // A 2-D sweep paints `sweepRect` instead, so it must not ALSO shade a band:
+  // `sweeping` alone would resolve one from the pointer's bucket, and the row
+  // would carry a full-height column under the rect the drag is drawing.
   const bandActive =
     (wantsBand &&
       (container.xKind === 'time' || container.xKind === 'value')) ||
-    sweeping ||
+    (sweeping && sweepRect === null) ||
     restingBand;
   const band: { x0: number; x1: number } | null =
     bandActive && cursorTime !== null
@@ -1464,6 +1557,7 @@ export function Layers({ children }: LayersProps) {
     band,
     bandLine,
     bandDragging,
+    rect: sweepRect,
     formattedTime,
     plotWidth,
     rowHeight: row.height,
@@ -1687,6 +1781,10 @@ export function Layers({ children }: LayersProps) {
           {(sweeping || restingBand) &&
             !wantsBand &&
             renderBrushBand(cursorRenderFrame)}
+          {/* The 2-D brush — always from here, never from a cursor slot: a
+              rect belongs to the row whose axis measured its y, and no
+              `<RangeCursor>` has a second dimension to render. */}
+          {renderBrushRect(cursorRenderFrame)}
         </svg>
         {/* The cursors' DOM slots, above the SVG: the in-plot chips
             (`renderPlotHtml` — value chips, the time readout) and the

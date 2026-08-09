@@ -433,6 +433,7 @@ export function HeatMap<
                   begin: ss.begin,
                   end: ss.end,
                   length: ss.length,
+                  spanFrom: 'bins',
                   materialize: (lo, hi, y0, y1) => {
                     const [g0, g1] = rowRun(y0, y1);
                     const out: SelectInfo[] = [];

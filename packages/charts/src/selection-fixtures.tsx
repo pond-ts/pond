@@ -573,7 +573,9 @@ export const scatterPoints: ChartFixture = {
     },
   })),
   describe: (hit) => isoDay(hit.key),
-  sweep: false,
+  // A **2-D** sweep: the drag cuts a free rect, and the committed span carries
+  // a `y` window alongside `x` ([PND-INTERACT2D]).
+  sweep: true,
   rangeCursor: true,
 };
 
@@ -630,7 +632,9 @@ export const heatGrid: ChartFixture = {
     hit.label === undefined
       ? isoDay(hit.key)
       : `${isoDay(hit.key)}·${hit.label}`,
-  sweep: false,
+  // A **2-D** sweep, snapped in both dimensions — bins on x, rows on y — so a
+  // capture is always a contiguous rectangle of cells ([PND-INTERACT2D]).
+  sweep: true,
   rangeCursor: true,
 };
 

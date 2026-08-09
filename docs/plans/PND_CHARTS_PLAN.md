@@ -1925,11 +1925,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                                _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                                is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                                iteration to discover, and the docs still don't mention it. **The one-line
-                                                                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                                row's data cursor is suppressed."
+                                                                                    _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                                    is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                                    iteration to discover, and the docs still don't mention it. **The one-line
+                                                                                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                                    row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -2539,6 +2539,50 @@ membership testing is linear over `selected` per mark _by documented design_
 structure"), and a half-sweep of a 16,425-cell grid is ~10⁸ comparisons per
 repaint. One decision, not a project, and nothing in step 5 can start without
 it.
+
+**Shipped, [PND-INTERACT2D] — the cut and the gesture (2026-08-09).**
+`sweep2D` (`src/sweep.ts`), `beginSweep` on `<ScatterChart>` and `<HeatMap>`,
+the gesture's y-tracking in `Layers.tsx`, and the rect brush. Three findings
+worth keeping, because each was a wrong first answer:
+
+1. **A point layer's committed span is the drag window, not its hits.**
+   `sweep2D` first derived `x` as `[first.key, last.key]` the way the 1-D cut
+   snaps outward to the covered bins' edges. `SpanSelection.x` is **half-open**
+   (`x[0] <= key < x[1]`), which is exactly right for marks that tile the axis
+   — a bar's `end` is its neighbour's `begin`, so the open side falls between
+   them — and exactly wrong for isolated points, where it drops the last point
+   the drag captured. Caught by a `selectionContains` round-trip over the
+   committed hits, not by any test of the extent itself; the extent looked
+   correct in isolation. The fix is the `spanFrom: 'bins' | 'drag'` option: a
+   point layer reports the drag's own half-open window, which is what the `y`
+   channel already did, so a point layer now describes both dimensions the
+   same way.
+
+2. **A 2-D sweep's slop is on the distance, not on `|dx|`.** The 1-D rule is
+   deliberate — a vertical wobble under a still x stays a click — and
+   inherited unchanged it makes a straight-down drag, the one gesture that
+   moves only in y, impossible to start.
+
+3. **A 2-D layer publishes no resting block, and its click stays a click.**
+   The resting preview lights the snap block under the pointer precisely so
+   that hover and drag cannot disagree. On a 2-D layer that block is a whole
+   x column while the drag beside it captures a rect, so the preview would
+   advertise a set the gesture never selects — the exact lie the resting
+   preview exists to prevent. Both the hover path and the
+   `gesture.snapped` click-commits-block path now opt out on `session.twoD`.
+
+Also worth recording: **`beginTopmostSweep` now returns the layer's `yScale`
+alongside its session.** A `twoD` session takes its y window in the sweeping
+layer's own axis units, and only that loop knows which of a row's axes that
+is; returning the session alone would have left the gesture inverting pointer
+pixels through the row's _default_ axis — a silent mis-cut visible only on a
+dual-axis row.
+
+The brush rect carries its corners **unsorted** (`(x0,y0)` = anchor,
+`(x1,y1)` = pointer) so the two `+` marks land on the diagonal the drag is
+actually on; the renderer sorts for the box. And the rect is **row-local
+state**, not container state like the band: an x-range means the same thing in
+every row, a y-range only means something against the axis that measured it.
 
 **Deferred but considered:** namespaced component names (`Cursor.Crosshair`,
 `Selection.Brush`) — rejected, nothing in the package exports a namespaced

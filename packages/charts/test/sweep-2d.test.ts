@@ -23,6 +23,7 @@ const points = (ys: number[]) => {
       begin: xs,
       end: xs,
       length: ys.length,
+      spanFrom: 'drag',
       materialize: (lo, hi, y0, y1) => {
         const out: SelectInfo[] = [];
         for (let i = lo; i < hi; i += 1) {
@@ -65,13 +66,26 @@ describe('sweep2D — the rect cut', () => {
     expect(session.hits().map((h) => h.key)).toEqual([0, 1]);
   });
 
-  it('extents over the marks the y filter KEPT, not the x run', () => {
-    // Keys 0..4 are all inside the x window, but only key 1 passes in y. A
-    // span claiming [0, 4] would re-select four marks the drag never covered.
-    const { session } = points([0, 9, 0, 0, 0]);
+  it('spans the DRAG window, so the half-open test keeps the last point', () => {
+    // `[first.key, last.key]` looks tighter and drops its own right edge:
+    // `SpanSelection.x` is half-open, so a span of [0, 4] excludes key 4. A
+    // point has no interval to snap outward to, so the drag window — which is
+    // half-open by construction — is the honest descriptor. The y channel
+    // already reports the drag window for the same reason.
+    const { session } = points([5, 5, 5, 5, 5]);
+    session.update(0, 5, 0, 10);
+    expect(session.hits().map((h) => h.key)).toEqual([0, 1, 2, 3, 4]);
+    expect(session.extent()).toEqual([0, 5]);
+  });
+
+  it('…and still reports nothing when the y filter emptied the run', () => {
+    // The x run is non-empty and the drag window is real; the SPAN must not
+    // be, because no mark survived. A span here would re-select five marks
+    // the drag never covered.
+    const { session } = points([0, 0, 0, 0, 0]);
     session.update(0, 5, 8, 10);
-    expect(session.hits().map((h) => h.key)).toEqual([1]);
-    expect(session.extent()).toEqual([1, 1]);
+    expect(session.hits()).toEqual([]);
+    expect(session.extent()).toBeNull();
   });
 
   it('reports the drag window as the y channel, not the points’ bounds', () => {
@@ -114,6 +128,7 @@ describe('sweep2D over a BINNED layer (the heat map shape)', () => {
       begin,
       end,
       length: 3,
+      spanFrom: 'bins',
       materialize: (lo, hi, y0, y1) => {
         const [g0, g1] = rowRun(y0, y1);
         const out: SelectInfo[] = [];

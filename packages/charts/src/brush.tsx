@@ -231,3 +231,66 @@ export function renderBrushBand(f: ResolvedCursorFrame): ReactNode {
     </>
   );
 }
+
+/** Half-length of a brush crosshair's arms, in pixels. Small on purpose — it
+ *  marks a corner, and a full-plot rule at each end of the diagonal would put
+ *  four lines across a plot the rect is already dividing. */
+const BRUSH_CROSS_PX = 5;
+
+/**
+ * The **2-D brush renderer** — the rect a sweep paints over a `twoD` layer
+ * (a scatter, a heat map), the counterpart of {@link renderBrushBand} and
+ * drawn from the same `theme.brush` tokens so the two brushes read as one
+ * gesture in two dimensionalities.
+ *
+ * A small `+` sits on each end of the drag diagonal: the corner the press
+ * anchored and the corner under the pointer. That is the whole reason
+ * {@link ResolvedCursorFrame.rect} arrives unsorted — sorting first would put
+ * both crosses on the same diagonal regardless of which way the drag went.
+ */
+export function renderBrushRect(f: ResolvedCursorFrame): ReactNode {
+  const r = f.rect;
+  if (r === null) return null;
+  const ink = f.theme.cursor ?? f.theme.axis.label;
+  const brush = f.theme.brush;
+  const fill = brush?.fill ?? ink;
+  const opacity = brush === undefined ? 0.12 : 1;
+  const edge = brush?.edge ?? ink;
+  const x = Math.min(r.x0, r.x1);
+  const y = Math.min(r.y0, r.y1);
+  const w = Math.abs(r.x1 - r.x0);
+  const h = Math.abs(r.y1 - r.y0);
+  return (
+    <>
+      <rect x={x} y={y} width={w} height={h} fill={fill} opacity={opacity} />
+      <rect
+        x={Math.round(x) + 0.5}
+        y={Math.round(y) + 0.5}
+        width={Math.max(0, Math.round(w) - 1)}
+        height={Math.max(0, Math.round(h) - 1)}
+        fill="none"
+        stroke={edge}
+        strokeWidth={1}
+      />
+      {[
+        [r.x0, r.y0],
+        [r.x1, r.y1],
+      ].map(([cx, cy], i) => (
+        <g key={i} stroke={edge} strokeWidth={1} shapeRendering="crispEdges">
+          <line
+            x1={Math.round(cx!) - BRUSH_CROSS_PX}
+            y1={Math.round(cy!)}
+            x2={Math.round(cx!) + BRUSH_CROSS_PX}
+            y2={Math.round(cy!)}
+          />
+          <line
+            x1={Math.round(cx!)}
+            y1={Math.round(cy!) - BRUSH_CROSS_PX}
+            x2={Math.round(cx!)}
+            y2={Math.round(cy!) + BRUSH_CROSS_PX}
+          />
+        </g>
+      ))}
+    </>
+  );
+}

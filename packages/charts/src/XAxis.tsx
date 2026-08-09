@@ -665,6 +665,7 @@ export function XAxis({
             band: null,
             bandLine: false,
             bandDragging: false, // no band in the axis strip to edge
+            rect: null, // …and no 2-D brush: the strip has no y
             formattedTime: readoutFmt(+xScale.invert(cursorX!)),
             plotWidth,
             rowHeight: 0,

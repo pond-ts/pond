@@ -16,6 +16,8 @@ import * as multiCandlestick from '../src/MultiSelectorCandlestick.stories.js';
 import * as selectorScatter from '../src/SelectorScatter.stories.js';
 import * as selectorHeatMap from '../src/SelectorHeatMap.stories.js';
 import * as multiStacked from '../src/MultiSelectorStacked.stories.js';
+import * as multiScatter from '../src/MultiSelectorScatter.stories.js';
+import * as multiHeatMap from '../src/MultiSelectorHeatMap.stories.js';
 import * as multiTradingSessions from '../src/MultiSelectorTradingSessions.stories.js';
 import {
   makeMultiSelectorStories,
@@ -87,6 +89,11 @@ describe('the selection matrix covers the same features in every column', () => 
     // fixture declares no `sequence` and the factory generates no cell. The
     // gap is *information* — asserted, not merely allowed.
     expect(namesOf(multiCategorical)).toEqual(MULTI_FEATURES);
+    // The two **2-D** columns declare no `sequence` either — their snapping,
+    // where they snap at all, is the layer's own grid rather than a consumer's
+    // bucketing — so they carry the base set like the categorical column.
+    expect(namesOf(multiScatter)).toEqual(MULTI_FEATURES);
+    expect(namesOf(multiHeatMap)).toEqual(MULTI_FEATURES);
     expect(namesOf(multiBarChart)).toEqual(
       [...MULTI_FEATURES, 'SweepWithSequence'].sort(),
     );
@@ -138,6 +145,8 @@ describe('the selection matrix covers the same features in every column', () => 
         multiBoxWhisker,
         multiBoxSolid,
         multiCandlestick,
+        multiScatter,
+        multiHeatMap,
         multiTradingSessions,
       ].map((m) => (m.default as { title: string }).title.split('/').pop()),
     );
@@ -170,6 +179,8 @@ describe.each([
   ['MultiSelector/Candlestick', multiCandlestick],
   ['Selector/Scatter', selectorScatter],
   ['Selector/HeatMap', selectorHeatMap],
+  ['MultiSelector/Scatter', multiScatter],
+  ['MultiSelector/HeatMap', multiHeatMap],
   ['MultiSelector/TradingSessions', multiTradingSessions],
 ])('%s stories render', (_group, mod) => {
   for (const [name, story] of Object.entries(mod).filter(

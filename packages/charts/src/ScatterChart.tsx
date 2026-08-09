@@ -372,6 +372,7 @@ export function ScatterChart<
                       begin: cs.x,
                       end: cs.x,
                       length: cs.length,
+                      spanFrom: 'drag',
                       materialize: (lo, hi, y0, y1) => {
                         const out: SelectInfo[] = [];
                         for (let i = lo; i < hi; i += 1) {

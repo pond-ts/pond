@@ -833,8 +833,19 @@ export interface SweepSession {
    * Re-cut the covered set to the marks intersecting the half-open window
    * `[x0, x1)` (key-axis units, `x0 <= x1`). Returns whether the covered set
    * changed — the delta gate: an unchanged frame re-materialises nothing.
+   *
+   * `y0`/`y1` are the rect's second dimension in the layer's **y-axis data
+   * units** (not pixels — the gesture inverts through the same `yScale` the
+   * session was built with), and only a {@link twoD} session reads them; the
+   * gesture omits them entirely for a 1-D layer. They are unordered, because
+   * a drag upward hands them over inverted and the session is the one place
+   * that knows whether its axis descends.
+   *
+   * **A `twoD` session must include y in its own delta gate.** A purely
+   * vertical drag leaves the x run untouched, so a gate that watched x alone
+   * would answer `false` and freeze the preview under a moving pointer.
    */
-  update(x0: number, x1: number): boolean;
+  update(x0: number, x1: number, y0?: number, y1?: number): boolean;
   /**
    * The covered marks, materialised (and cached until the next change) — the
    * live preview `hovered` lights, and verbatim the release payload.
@@ -1343,6 +1354,32 @@ export interface ResolvedCursorFrame {
    * committed range the user hasn't made yet.
    */
   readonly bandDragging: boolean;
+  /**
+   * The **2-D brush rect** — a live `<MultiSelector>` sweep over a `twoD`
+   * layer ({@link SweepSession.twoD}: a scatter, a heat map), as clamped plot
+   * pixels. `null` in every other state, including a 1-D sweep, which paints
+   * {@link band} instead.
+   *
+   * It is deliberately **not** a band with a y range bolted on. The band is
+   * container state, so every row paints it from one anchor — right for an
+   * x-range, which means the same thing in every row. A rect's y is only
+   * meaningful in the row whose layer's axis it was measured against, so this
+   * is resolved per row by the row that owns the drag, and stays `null` in
+   * the others.
+   *
+   * **Unsorted, on purpose:** `(x0, y0)` is the corner the drag was anchored
+   * at and `(x1, y1)` the corner under the pointer, so either may be the
+   * larger. The renderer sorts for the box, but it needs the diagonal intact
+   * to put the two crosshairs on the corners the user is actually holding.
+   * (`x` is still the *snapped* band edge where the layer snaps — assigned to
+   * whichever end the anchor is on.)
+   */
+  readonly rect: {
+    readonly x0: number;
+    readonly x1: number;
+    readonly y0: number;
+    readonly y1: number;
+  } | null;
   /** The cursor time, formatted by the container's readout channel
    *  (`formatReadout ?? formatTime` in a row; the axis's own resolved readout
    *  formatter in the x-axis slot). `null` when out of bounds / not wanted. */

@@ -62,11 +62,9 @@ milestone. Plan:
   lighting a grid preview — the 1-D case cost 6.2 s/frame before it was fixed);
   **settle spans-plural-or-topmost** before copying `SpanSelection`'s
   single-`id` shape; and it **also closes horizontal-bar sweeps**, which are a
-  y-window and therefore 2-D machinery (A8.4). Both layers now have
-  `Selector/{Scatter,HeatMap}` matrix columns, so the click/hover half is
-  covered and walkable; their fixtures declare `sweep: false`, which is what
-  keeps the missing gesture visible as a **declared** gap rather than an
-  absent story.
+  y-window and therefore 2-D machinery (A8.4). Both layers now have full
+  `Selector/{Scatter,HeatMap}` **and** `MultiSelector/{Scatter,HeatMap}` matrix
+  columns, both fixtures declaring `sweep: true`.
 
   **Owner decisions, 2026-08-09** — these settle the shape, so the remaining
   work is implementation rather than design:
@@ -182,13 +180,25 @@ milestone. Plan:
   teal and `#3F5BE0` its selection blue, so a selected point beside a selected
   bar reads as one act.
 
-  What is actually left: `SweepSession` is x-only (`update(x0, x1)` /
-  `extent()`), so it needs a 2-D counterpart; `beginSweep` on the two layers
-  (it already receives **both** scale functions, so the signature was built for
-  this); the gesture tracking y alongside x; the two-crosshair-plus-rect brush;
-  the scatter palette move; and the perf gate — a rect preview lights far more
-  marks per pointer move than the 1-D band that cost 6.2 s/frame before its
-  membership scan was re-priced (A8.1).
+  **Shipped so far — the cut and the gesture.** `sweep2D` (the rect cut, with
+  y in its delta gate), `beginSweep` on both layers, the gesture tracking y
+  alongside x and committing the second channel, and the brush rect with a
+  small `+` on each end of the drag diagonal. Both fixtures declare
+  `sweep: true` and the two `MultiSelector` columns are walkable.
+
+  Three findings from that pass, recorded in the charts breakout plan: a point
+  layer's span must be the **drag window**, not `[first.key, last.key]` (the
+  half-open test drops its own last point); a 2-D sweep's slop must be on the
+  **distance**, or a straight-down drag can never start; and a 2-D layer
+  publishes **no resting block**, because the block is a column and the drag
+  beside it captures a rect.
+
+  What is left: the **at-rest small grey crosshair** (the drag pair exists;
+  the resting one is cursor work); the **scatter palette move** off cerulean
+  and both state tables above; the **heat map's single-perimeter selection**
+  and white-veil ghosting; and the **perf gate** — a rect preview lights far
+  more marks per pointer move than the 1-D band that cost 6.2 s/frame before
+  its membership scan was re-priced (A8.1).
 
 - **[PND-INTERACTCONF]** — **The conformance tail.** The **list family** joins
   the sweep. (`<BoxPlot>` has now joined: a box is an aggregation owning one

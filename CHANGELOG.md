@@ -62,6 +62,28 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: `<MultiSelector>` sweeps a 2-D rect on `<ScatterChart>` and
+  `<HeatMap>`** ([PND-INTERACT2D]). Every other mark owns a column of the key
+  axis, so a drag over it is a range of keys; a scatter point owns a
+  _position_ and a heat cell owns a `(bin, row)`, so the same gesture becomes
+  a **rectangle**. Nothing new is mounted and no prop is added — the layer
+  declares its own dimensionality, so the markup for a scatter is the markup
+  for a bar.
+  - **Scatter cuts a free rect** and commits `SpanSelection.y` (the drag's
+    continuous window) alongside `x`.
+  - **The heat map snaps both dimensions** — bins on x, whole rows on y — and
+    commits `SpanSelection.rows` by row **name**, so a re-ordered `columns`
+    list cannot silently repoint a selection at different data. Snapping both
+    axes is also why a capture is always a contiguous rectangle of cells.
+  - The drag paints a **rect brush** (`theme.brush`'s existing fill/edge
+    tokens) with a small `+` on each end of the drag diagonal, in place of the
+    1-D band.
+  - A 2-D drag arms on pointer **distance**, not `|dx|`, so a straight-down
+    drag is a gesture rather than a click.
+  - A 2-D layer publishes **no resting block preview**, and a click on one
+    selects the mark under the pointer: the block would be a whole column,
+    which is not what the rect gesture beside it captures.
+
 - **charts: `<Candlestick>` gains the id-gated interaction surface** — `id`,
   `hitTest`, `beginSweep` and `binIntervals`, so a candle selects, hovers and
   sweeps like every other column mark. A candle is an aggregation owning one

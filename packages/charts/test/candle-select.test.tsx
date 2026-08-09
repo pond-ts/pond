@@ -166,7 +166,10 @@ describe('<Candlestick id> — the id gate', () => {
   });
 
   it('sweeps a contiguous run of columns', () => {
-    const session = mount().layer.beginSweep!()!;
+    const session = mount().layer.beginSweep!(
+      (v: number) => v,
+      (v: number) => v,
+    )!;
     session.update(KEYS.x[0]!, KEYS.xEnd[1]!);
     expect(session.hits().map((h) => h.key)).toEqual([KEYS.x[0], KEYS.x[1]]);
     expect(session.extent()).toEqual([KEYS.x[0], KEYS.xEnd[1]]);
