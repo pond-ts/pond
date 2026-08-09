@@ -1346,6 +1346,139 @@ a smooth drag and a stuttering one.
 hand-computing one, and a 20-period band on 150k points becomes legible
 by zooming rather than by 40 lines of caller code.
 
+## Found by the selection matrix (2026-08-09)
+
+The `Interactions/{Selector,MultiSelector}/*` stories were reorganised into a
+generated **matrix** — one feature set × one fixture per chart type
+([selection-fixtures.tsx](../../packages/charts/src/selection-fixtures.tsx)
+supplies the columns,
+[selection-stories.tsx](../../packages/charts/src/selection-stories.tsx) the
+rows). Because every cell comes from one definition, a visible difference
+between two columns is a difference in the **library** rather than in how
+someone wrote the story, which is what makes walking it a review technique.
+
+Building four columns (Categorical, BarChart, Stacked, TradingSessions)
+surfaced five defects. Two are fixed; three are below. The fifth — a
+`<MultiSelector>` click swallowing a whole stacked bin, because the widen-the-
+click guard counted marks instead of testing whether a `sequence` was declared
+— was found and fixed in the same pass; the fourth was `defaultTheme` having no
+stack group ramp, also shipped.
+
+**Reading note for whoever picks these up:** one thing the walk got _wrong_
+first, worth not re-filing. Hovering one segment of a stack makes its
+bin-mates look dimmed. They are not: sampled from the canvas they are
+`42,157,143`, identical to a neighbouring bar. It is simultaneous contrast
+against the adjacent hover colour. The screenshot is convincing and wrong.
+
+### [PND-HITMODE] — the stacked/categorical `hitTest` ignores `mode`
+
+Two `hitTest` registrations in
+[BarChart.tsx](../../packages/charts/src/BarChart.tsx): the single-series one
+takes `(px, py, xScale, yScale, mode)`, the stacked one takes
+`(px, py, xScale, yScale)`.
+
+`mode` is what lets the single-series path give hover and select **different
+geometry** — hover claims the bar's whole slot (the continuous hover model of
+#582, so the readout tracks even above a short bar) while select requires the
+pointer inside the drawn ink (so genuinely empty plot space stays the §7
+deselect path). The stacked path has neither half: `stackAt` tests
+`px ∈ [x0,x1] && py ∈ [yTop,yBottom]` per segment and returns `null` above the
+stack, for both channels.
+
+So the same gesture reports differently depending on chart type — which is
+exactly the divergence the matrix exists to make visible, and it is visible
+between `Selector/BarChart` and `Selector/Stacked`.
+
+**The design question, and why this isn't a one-liner.** If an above-the-ink
+hover claimed the slot on a stack, **which segment does it report?** The
+topmost drawn one is the obvious candidate and is not obviously right — a
+reader pointing at empty space above a column is arguably asking about the
+column, not about its top slice. Options worth weighing:
+
+- **Topmost drawn segment.** Simple, matches "what you'd hit if you slid
+  down", but reports a specific group the pointer never touched.
+- **No segment, but a bin-level hit.** Honest, but `SelectInfo` has no
+  bin-without-group shape today, and inventing one ripples into
+  `selectionContains` and the span tests.
+- **Leave hover ink-only on stacks and fix only the readout.** The narrowest
+  option; concedes the inconsistency.
+
+Note the categorical path shares this code, so whatever is chosen also decides
+categorical hover — where there is exactly one segment per slot and the
+topmost-segment answer is unambiguous. That asymmetry (unambiguous for
+`G === 1`, contested for `G > 1`) may be the argument for gating the change on
+group count.
+
+**Done when:** hovering above a short bar behaves the same on a categorical,
+stacked and time-axis bar chart, or the difference is documented as
+intentional with the reason.
+
+### [PND-ORDCURSOR] — `<RangeCursor>` on an ordinal axis removes the cursor
+
+`<RangeCursor>` gates its band on a continuous x
+([brush.tsx](../../packages/charts/src/brush.tsx)). On a category axis it
+therefore draws nothing — but it is still a _mounted cursor_, and a mounted
+cursor is the row's chosen cursor, so it displaces whatever the row would
+otherwise have shown. The row ends up with **no cursor at all**, which is
+strictly worse than not mounting one.
+
+This was found by mounting `<RangeCursor>` across the whole Selector feature
+set and noticing the categorical column lost its cursor. The matrix now routes
+around it: `ChartFixture` carries an explicit `rangeCursor: boolean` and the
+categorical fixture declares `false`, so the capability gap is _declared_
+rather than silently demonstrated by a story that renders nothing.
+
+Three ways out, in rough order of ambition:
+
+- **Make it a no-op mount** — register nothing on an ordinal axis, so the
+  row keeps its default/other cursor. Smallest, and removes the trap.
+- **Draw a slot band.** The `<MultiSelector>` sweep _already_ snaps over the
+  category axis's unit slots `[i, i+1)` (the container publishes them as snap
+  buckets so a sweep runs slot-edge to slot-edge, RFC A7.6). So the geometry
+  a slot-wide band needs already exists — this is more plausible than the
+  "gates on a continuous x" comment suggests.
+- **Dev-warn on the mount.** Cheap, and consistent with how the sweep/range
+  shadow conflict is surfaced (`warnSweepShadowsRangeDrag`), but a warning is
+  not a fix.
+
+**Done when:** mounting `<RangeCursor>` on a category axis either works or
+leaves the row exactly as it was — never leaves it with less.
+
+### [PND-TICKGAP] — the trading tick budget doesn't bound label spacing
+
+`TRADING_TICK_PX` (65px, in
+[ChartContainer.tsx](../../packages/charts/src/ChartContainer.tsx)) is the
+target plot-pixels-per-tick on a trading-time axis: the scale's `ticks(count)`
+treats `count` as a cap on calendar buckets and `coarsenCalendar` picks the
+finest grain that fits. The comment on the constant is explicit that the count
+must scale with the room the labels have.
+
+It does not achieve that under collapse. The grain's anchors are **wall-clock**
+instants, and an anchor inside closed time has no position — it gets clamped to
+the session open. On six 09:30–16:00 sessions at 820px the ladder picks the
+12-hour rung; the `00:00` anchor clamps to 09:30 and the session's own `12:00`
+anchor sits 2.5 trading-hours later, which on an 86px session is **~33px** —
+half the budget. The labels abut. At 640px they overlap outright.
+
+The budget divides _plot width_ by a per-label allowance and compares against a
+count, which is only a valid proxy for spacing when anchors are evenly spread
+in **drawn** space. Collapse is precisely what breaks that. A correct rule
+measures the realised gap between consecutive drawn anchors and coarsens (or
+drops labels) when any pair is under the allowance — closer to a label-collision
+pass than to a count cap.
+
+Reproduce: any `Interactions/MultiSelector/TradingSessions` story. Left visible
+there on purpose (it is orthogonal to selection, and the alternatives — fewer
+sessions, one bar per session — would cost the weekend seam those stories are
+built on); the fixture carries a comment pointing here.
+
+Note this is **not** the same as one bar per session looking fine: with 6–10
+one-bar sessions the ladder lands on day grain, one label per session, and
+nothing collides. The bug needs a sub-day grain over short sessions.
+
+**Done when:** a six-session intraday chart at 640px labels its axis without
+overlapping, and the rule that achieves it is expressed in drawn space.
+
 ## Core carry-forwards surfaced by charts
 
 Tracked in [PND_CORE_PLAN.md](PND_CORE_PLAN.md): bundle-safe column-API
@@ -1737,11 +1870,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                        _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                        is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                        iteration to discover, and the docs still don't mention it. **The one-line
-                                                                        fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                        row's data cursor is suppressed."
+                                                                            _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                            is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                            iteration to discover, and the docs still don't mention it. **The one-line
+                                                                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                            row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -2213,20 +2346,20 @@ building the individual fixes.
 The owner's ordered wave, and a deliberate **simplification of the RFC's
 model** worth recording because it changed the migration cost.
 
-`docs/rfcs/selection.md` A1.1/A1.4 has the *library* owning the set arithmetic:
+`docs/rfcs/selection.md` A1.1/A1.4 has the _library_ owning the set arithmetic:
 `selectionMode: 'replace' | 'add'`, and `onSelect` reporting the resulting set —
 which A1.4 flags as a breaking widen of a published prop needing the human gate
 plus a one-release shim. The owner's spec inverts it: **the library reports the
 hit plus the modifiers; the consumer computes.** Strictly less API, and once
-`selected` is widened to a *union* rather than a replacement, the whole wave is
+`selected` is widened to a _union_ rather than a replacement, the whole wave is
 non-breaking. `selectionMode` becomes additive sugar later instead of a gate
 now, so nothing in the RFC is contradicted — only deferred.
 
 What shipped:
 
 - **`onSelect(hit, modifiers)`** — `{ additive, ctrlKey, metaKey, shiftKey,
-  altKey }`. This is the piece that was actually load-bearing: every consumer
-  was hardcoding `additive: false` because it *could not do otherwise*, the
+altKey }`. This is the piece that was actually load-bearing: every consumer
+  was hardcoding `additive: false` because it _could not do otherwise_, the
   click having already been reduced to a hit. `additive` resolves the platform
   chord once (⌘/Ctrl) rather than leaving six consumers to get one OS wrong.
   Deliberately **no derived `range` flag** — `shift` is already the
@@ -2276,8 +2409,8 @@ starting. Everything below is the ordering, not the design.
 
 **Why this exists.** Interaction occupied thirteen `ChartContainer` props plus
 `ChartRow.cursor`, four of them mode-conditional — inert unless a sibling prop
-held a particular string. The tell was `onRegionSelect`: a *selection* callback
-living on a *cursor* mode. Cursors read; selectors report. They are now
+held a particular string. The tell was `onRegionSelect`: a _selection_ callback
+living on a _cursor_ mode. Cursors read; selectors report. They are now
 components you mount.
 
 **The load-bearing decisions, with where the reasoning lives:**
@@ -2290,12 +2423,12 @@ components you mount.
   category axis is the local proof that enumerating catches what composing
   hides.
 - **The container keeps `selected`/`hovered`** (A1.2). Mounting is right for the
-  **gesture** and wrong for the **state** — estela's chart is usually *not* the
+  **gesture** and wrong for the **state** — estela's chart is usually _not_ the
   gesture origin, and requiring a mounted `<Selector>` for controlled
   highlighting would break every multi-surface consumer.
-- **A region is a cursor *and* a drag** (A1.5, held against review). Two public
+- **A region is a cursor _and_ a drag** (A1.5, held against review). Two public
   components, **one** brush recognizer and **one** band renderer underneath, and
-  that engine owns *every* drag claim including pan.
+  that engine owns _every_ drag claim including pan.
 - **The library owns state, the layer owns treatment** (A3.4). Heat map outlines
   the covered rect; scatter dims what is not covered. Resolves the "where does a
   layer's own hover affordance sit" question in the layer's favour.
@@ -2309,7 +2442,7 @@ surface. A step without its stories is not landed.
 2. **Cursor components + deprecation shim.** Mechanical: presets register the
    specs `Layers` already reads. Deletes a real seam as a side effect — the
    crosshair's x-time pill is gated on `container.cursor === 'crosshair'`, the
-   *container default*, so a per-row crosshair has no time pill today.
+   _container default_, so a per-row crosshair has no time pill today.
 3. **`<RangeCursor>`** — absorbs the drag props with honest names.
    `onDragRelease` emits the shape `ChartContainer.range` already accepts.
 4. **`<Selector>`** — the #606 surface re-homed, plus §7.1's dev warning
@@ -2323,16 +2456,16 @@ surface. A step without its stories is not landed.
      §7.1's break and outside its justification (an explicit `select()` call is
      already intentional by construction). `rowKey` present ⇒ plot gesture ⇒
      gated; absent ⇒ programmatic ⇒ ungated. The parameter is the scope resolver
-     *and* the gesture discriminator, which is why it isn't a boolean.
+     _and_ the gesture discriminator, which is why it isn't a boolean.
    - **Hover is not gated, only scoped.** `onHover` moves onto `<Selector>`, but
-     the hover *highlight* is container state (A1.2) and keeps working with none
+     the hover _highlight_ is container state (A1.2) and keeps working with none
      mounted. No gate is needed to arrange this: with nothing registered there
      is nobody to report to. Gating it would have been a second, larger break
      the RFC never asked for.
    - **A bare `<Selector />` enables the gesture.** The mount is the enablement,
      not the callback — so a consumer happy with the container's uncontrolled
      highlight mounts one with no props and stops.
-   - **The entry memoizes on which callbacks are *present*, not their
+   - **The entry memoizes on which callbacks are _present_, not their
      identity**, with the functions read through a ref. Consumers pass inline
      arrows; re-registering per render would thrash a `useState`-backed
      registry.
@@ -2342,11 +2475,11 @@ surface. A step without its stories is not landed.
 7. **Conformance pass** — the list family and the two single-selection layers.
 
 **The blocking question, [PND-INTERACT2D]'s critical path.** RFC **Q12**:
-⌘-clicking a mark *out* of a span selection is not representable in
+⌘-clicking a mark _out_ of a span selection is not representable in
 `(SelectInfo | SpanSelection)[]` without either an exclusion channel or a
 documented rule that any click after a sweep replaces. It decides whether a
 descriptor can be the round-trip currency at all — which matters because
-membership testing is linear over `selected` per mark *by documented design*
+membership testing is linear over `selected` per mark _by documented design_
 (`bars.ts`: "a selection is a handful of marks a person clicked, not a data
 structure"), and a half-sweep of a 16,425-cell grid is ~10⁸ comparisons per
 repaint. One decision, not a project, and nothing in step 5 can start without
@@ -2359,28 +2492,28 @@ deprecate. `<SweepSelector>` over `<MultiSelector>` — argued on the grounds th
 the gesture is invariant while a result count is not; `<MultiSelector>` chosen
 for payload cardinality, with the "does this imply `<Selector>` is
 single-select?" misreading treated as a docs problem. Renaming the annotation
-`<Region>` — unnecessary once the two *new* names moved instead.
+`<Region>` — unnecessary once the two _new_ names moved instead.
 
-  **Re-homed 2026-08-08 → `docs/rfcs/interaction.md`** (§8, as
-  `<RegionSelector>`). The marks-not-a-range choice above is unchanged and is
-  still what subsumes this entry; what moved is where the component lives — with
-  the interaction primitives rather than the annotation family — and it now
-  arrives alongside a cursor/selector split that makes mounting a selector
-  **required**. That RFC is out for red-team and is **not** a commitment; A4.3's
-  sequencing (widen `hovered`, then build the sweep) survives it either way.
+**Re-homed 2026-08-08 → `docs/rfcs/interaction.md`** (§8, as
+`<RegionSelector>`). The marks-not-a-range choice above is unchanged and is
+still what subsumes this entry; what moved is where the component lives — with
+the interaction primitives rather than the annotation family — and it now
+arrives alongside a cursor/selector split that makes mounting a selector
+**required**. That RFC is out for red-team and is **not** a commitment; A4.3's
+sequencing (widen `hovered`, then build the sweep) survives it either way.
 
-  The original entry, for the record — `cursor="region"` + `onRegionSelect` is
-  gated to continuous axes; the 0.53.0 notes state it directly ("a **category**
-  axis stays excluded — an ordinal-slot select is a different gesture"). For a
-  ranked category chart, dragging across a run of bars is the primary
-  interaction: "select the top twelve" is one gesture with a lasso and twelve
-  ctrl-clicks without one. The workaround re-implements the inverse of the band
-  scale the library already owns and exports, in a second place, so the two can
-  disagree about which bar the pointer is on. The gesture genuinely _is_
-  different — it snaps to whole slots and should report category names rather
-  than a numeric range — but that is an argument for the library owning it, not
-  for excluding it; the continuous version already handles drag state, the
-  modifier conflict with pan, and one-shot commit on release.
+The original entry, for the record — `cursor="region"` + `onRegionSelect` is
+gated to continuous axes; the 0.53.0 notes state it directly ("a **category**
+axis stays excluded — an ordinal-slot select is a different gesture"). For a
+ranked category chart, dragging across a run of bars is the primary
+interaction: "select the top twelve" is one gesture with a lasso and twelve
+ctrl-clicks without one. The workaround re-implements the inverse of the band
+scale the library already owns and exports, in a second place, so the two can
+disagree about which bar the pointer is on. The gesture genuinely _is_
+different — it snaps to whole slots and should report category names rather
+than a numeric range — but that is an argument for the library owning it, not
+for excluding it; the continuous version already handles drag state, the
+modifier conflict with pan, and one-shot commit on release.
 
 - **[PND-CATSTACK]** (high, predicted) — co-existing segments on the first-class
   category axis (see the un-narrowing note under [PND-BANDBAR2] above).

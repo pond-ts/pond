@@ -94,6 +94,28 @@ milestone. Plan:
   px `offset` for same-x pairs, line-only shape, join the cursor x-snap, and
   selection `id` via rect-containment `hitTest` (#508 item 5; Candlestick
   takes the same geometry helper).
+- **[PND-HITMODE]** — **The stacked/categorical `hitTest` ignores `mode`, so
+  hover is ink-only there.** The single-series path takes `(px, py, xScale,
+yScale, mode)` and uses `mode` to let hover claim the whole slot while
+  select requires the drawn ink (#582's continuous hover model); the stacked
+  path takes no `mode` and is ink-only for both. So hovering above a short bar
+  reports nothing on a categorical or stacked chart and reports the bar on a
+  time-axis one. Carries a design question — which segment an above-the-ink
+  hover should report on a stack — which is why it isn't a one-liner.
+- **[PND-ORDCURSOR]** — **`<RangeCursor>` on an ordinal axis takes the row's
+  cursor with it.** It gates on a continuous x (`brush.tsx`), so on a category
+  axis mounting one is not merely inert — the row ends up with no cursor at
+  all. Either draw a slot-band there or make the mount a no-op that leaves the
+  row's other cursor alone; silently removing a cursor is the one option that
+  isn't defensible.
+- **[PND-TICKGAP]** — **The trading axis's tick budget doesn't bound label
+  spacing under collapse.** `TRADING_TICK_PX` budgets 65px of plot per tick and
+  picks the finest grain that fits, but a wall-clock anchor that falls in
+  closed time gets relocated to the session open — a `00:00` anchor lands at
+  09:30, ~33px from that session's `12:00` label. The budget measures
+  wall-clock spacing while the axis draws in trading time, so it does not bound
+  what it thinks it bounds. Visible in every `MultiSelector/TradingSessions`
+  story.
 - **[PND-CURSOR]** — Cursor/readout polish backlog (scatter 2D-nearest,
   chip de-overlap, y-oriented region cursor, `pointercancel` clear-only
   fix).
