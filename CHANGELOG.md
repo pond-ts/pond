@@ -119,12 +119,21 @@ include new features and type-level changes; patch bumps are strictly additive.
   `theme.bar` — a cell is a bar's slot with colour instead of height — and
   only the state styling is new, because a bar's fill is free while a cell's
   fill **is the datum**.
-  - **The perimeter is drawn by suppressing each cell edge whose neighbour is
-    also selected.** Summed over the region that is exactly its outline, with
-    no connectivity pass — so a selection in several disconnected pieces gets
-    one outline **per piece**, a hole in the middle of a piece gets its own,
-    and nothing assumes a selection is a single rectangle. A selection running
-    off-screen grows no false edge at the viewport boundary either.
+  - **One outline per selection act, and acts do not merge.** A sweep releases
+    a grid-snapped rect and that rect keeps its own outline, so two
+    overlapping sweeps stay two overlapping rectangles rather than fusing into
+    the L-shape of their union — the outline says what was _done_, which is
+    the thing a reader can undo. A span is a rectangle by construction (the
+    sweep snaps outward in both axes), so it needs no analysis to box.
+  - **Anything with no box falls back to a union perimeter** — individual cell
+    marks, and the rare descriptor whose `rows` are not consecutive in this
+    grid. Each such cell draws only the edges it does not share with another,
+    which is exactly the region's outline, with no connectivity pass: several
+    disconnected pieces get one outline each and a hole gets its own. That is
+    what keeps a demoted region readable — one outline round the remainder
+    plus a small one round the knocked-out cell — instead of the "mostly
+    border" grid a per-cell outline gives. Neither shape grows a false edge
+    where a selection runs off-screen.
   - **An unselected cell recedes under a flat overlay, not `globalAlpha`.**
     Alpha and value are the same channel on a ramp, so fading a cell slides it
     along the scale; an overlay is uniform and monotonic, so the ramp's order

@@ -237,6 +237,23 @@ describe('<HeatMap> — the whole selection / hover set reaches the draw', () =>
     expect(edges(calls)).toBe(lit);
   });
 
+  it('a boxed SPAN running off-screen keeps its sides off the viewport edge', () => {
+    // The box is one outline for the whole span, so a span wider than the
+    // viewport must drop the two sides that fall outside it and draw only
+    // top and bottom — the same rule the leftover perimeter gets from its
+    // padded neighbour grid, applied to a shape that has no neighbours.
+    const span = {
+      kind: 'span' as const,
+      id: 'temp',
+      x: [WIDE_BEGINS[0]!, WIDE_BEGINS[8]! + 1000] as [number, number],
+    };
+    const wide = mountHeat({ selected: [span] }, [3500, 5500], WIDE).calls;
+    expect(edges(wide)).toBe(2); // top + bottom, no sides
+    // …and the same span with the whole grid in view draws all four.
+    const all = mountHeat({ selected: [span] }, [-500, 8500], WIDE).calls;
+    expect(edges(all)).toBe(4);
+  });
+
   it('two disconnected blocks get one outline each — no connectivity pass', () => {
     // Bins 0 and 2, both rows: two 1×2 columns with an unselected column
     // between them. 2·(2·1 + 2·2) = 12 edges — each block closed on all four

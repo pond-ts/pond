@@ -205,12 +205,19 @@ milestone. Plan:
   **Also shipped — the heat map states.** A new optional `theme.heat` slot
   carrying only the states (the geometry still comes from `theme.bar`, which
   is right: a cell is a bar's slot with colour instead of height). The
-  perimeter falls out of **suppressing each cell edge whose neighbour is also
-  selected** — no connectivity pass, so disconnected pieces get one outline
-  each and a hole gets its own, and a non-rectangular union (a mid-row run
-  with a low block hanging under part of it) traces correctly. The neighbour
-  grid is precomputed one column wider than the culling window, so a
-  selection running off-screen grows no false edge at the viewport boundary.
+  outline is **one per selection act** (owner, 2026-08-09): a sweep releases a
+  grid-snapped rect and that rect keeps its own box, so two overlapping
+  sweeps stay two overlapping rectangles instead of fusing into their union's
+  L-shape. The outline then describes what was _done_ — the undoable unit —
+  rather than a merged set nobody selected in one go.
+
+  Anything without a box (cell marks; a descriptor whose `rows` skip a row)
+  falls back to the **union perimeter**, which suppresses each cell edge
+  whose neighbour is also a leftover — no connectivity pass, so disconnected
+  pieces get one outline each and a hole gets its own. That is what keeps a
+  demoted region readable. Both shapes clip their edges against the drawn bin
+  range, so a selection running off-screen grows no false edge at the
+  viewport boundary.
 
   **Also shipped — the perf gate** (`scripts/perf-interact2d.mjs`, 18
   scenarios). It found what it was written to look for and one thing it was
