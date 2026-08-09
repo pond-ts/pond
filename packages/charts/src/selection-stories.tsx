@@ -6,7 +6,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { YAxis } from './YAxis.js';
 import { Selector, MultiSelector } from './selectors.js';
-import { sameMark } from './span.js';
+import { isSpanSelection, sameMark, selectionContains } from './span.js';
 import { RangeCursor } from './cursors.js';
 import type { SelectInfo, SelectionEntry } from './context.js';
 import { caption, type ChartFixture } from './selection-fixtures.js';
@@ -476,25 +476,40 @@ export function makeMultiSelectorStories(
                   const hit = hits[0];
                   if (hit === undefined) return setSel([]);
                   if (!(mods?.additive ?? false)) return setSel([hit]);
-                  // Demote: the span becomes the marks it covered, minus this one.
-                  // `sameMark`, not `m.key !== hit.key`. A key IS a bar's
-                  // identity, so the shorter test looks right — and on a
-                  // stack or a heat map it knocks out every mark in the bin
-                  // instead of the one clicked, which is what this story was
-                  // doing until a heat-map demote left a column-shaped hole.
+                  // The ⌘-click policy `selectionContains`' doc describes,
+                  // written out in full: a mark already in the selection comes
+                  // OUT, one that isn't goes in. The demote is the extra step
+                  // a span needs before it can lose a member — it becomes the
+                  // marks it covered, minus this one.
+                  //
+                  // Two mistakes this has already made, both worth the words:
+                  //
+                  // - **`sameMark`, not `m.key !== hit.key`.** A key IS a
+                  //   bar's identity, so the shorter test looks right — and on
+                  //   a stack or a heat map it knocks out every mark in the
+                  //   bin, which showed up as a column-shaped hole.
+                  // - **Handle the MARK arm too.** Demoting only rewrote the
+                  //   span entries, so once the span was gone every later
+                  //   ⌘-click fell through the `flatMap` unchanged and the
+                  //   second knock-out silently did nothing.
                   setSel((cur) =>
-                    cur.flatMap((e) =>
-                      'kind' in e && e.kind === 'span'
-                        ? stash.filter((m) => !sameMark(m, hit))
-                        : [e],
-                    ),
+                    selectionContains(cur, hit)
+                      ? cur.flatMap((e) =>
+                          isSpanSelection(e)
+                            ? stash.filter((m) => !sameMark(m, hit))
+                            : sameMark(e, hit)
+                              ? []
+                              : [e],
+                        )
+                      : [...cur, hit],
                   );
                 }}
               />
             </Chart>
             <p style={caption}>
-              Sweep a run, then ⌘/Ctrl-click one inside it to knock it out — the
-              span demotes to its marks. <strong>selected:</strong>{' '}
+              Sweep a run, then ⌘/Ctrl-click marks inside it to knock them out
+              one by one — the span demotes to its marks on the first, and every
+              ⌘-click after that toggles. <strong>selected:</strong>{' '}
               {describeEntries(fx, sel)}
             </p>
           </div>

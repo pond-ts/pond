@@ -121,6 +121,26 @@ describe('demote-on-edit knocks out one mark, not a bin', () => {
     expect(counts.filter((n) => n === counts[0]!)).toHaveLength(1);
   });
 
+  it('a SECOND knock-out works — and a third, and a re-add', () => {
+    // The first ⌘-click demotes the span; every one after it acts on a list
+    // of marks, and the demote arm alone left those untouched — so the second
+    // knock-out silently did nothing. Every existing test above stopped after
+    // one click, which is exactly why that survived.
+    const t = mountDemote(heatGrid);
+    t.sweep([0.15, 0.1], [0.6, 0.9]);
+    t.metaClick([0.35, 0.55]);
+    const one = t.readout().split(', ').length;
+    t.metaClick([0.45, 0.55]);
+    const two = t.readout().split(', ').length;
+    expect(two).toBe(one - 1);
+    t.metaClick([0.25, 0.55]);
+    expect(t.readout().split(', ').length).toBe(one - 2);
+    // …and ⌘-clicking a knocked-out cell puts it back: the policy is a
+    // toggle, which is what `selectionContains`' doc describes.
+    t.metaClick([0.25, 0.55]);
+    expect(t.readout().split(', ').length).toBe(one - 1);
+  });
+
   it('a stacked bar loses ONE segment, for the same reason', () => {
     const t = mountDemote(stackedBars);
     t.sweep([0.15, 0.7], [0.6, 0.7]);

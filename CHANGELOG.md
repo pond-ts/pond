@@ -77,6 +77,14 @@ include new features and type-level changes; patch bumps are strictly additive.
   the outline was faithfully drawing a wrong selection. All three
   hand-rolled identity tests in `selection-stories.tsx` now call `sameMark`.
 
+- **charts: `<MultiSelector>`'s demote story could only knock out one mark.**
+  It rewrote the span entries and passed everything else through, so once the
+  span had demoted there was nothing left for a second ⌘-click to act on and
+  it silently did nothing. It now implements the ⌘-click policy
+  `selectionContains`' doc describes in full — a mark in the selection comes
+  out, one that isn't goes in — with the demote as the extra step a span
+  needs before it can lose a member.
+
 - **charts: a rect-sweeping row rests as a small crosshair** — the last piece
   of the 2-D brush. Under a mounted `<MultiSelector>`, a row whose topmost
   sweepable layer cuts a rect (a scatter, a heat map) shows a compact grey `+`
