@@ -305,6 +305,24 @@ export interface BoxStyle {
   readonly medianWidth: number;
   readonly whisker: string;
   readonly whiskerWidth: number;
+  /**
+   * The **interaction-state palette**, for a `shape="solid"` box — the fill a
+   * selected box takes, the one a hovered box takes, and the one a box outside
+   * a non-empty selection recedes to. All three optional and all three opt-in:
+   * unset ⇒ the shipped behaviour (an outline is the whole cue, nothing dims).
+   *
+   * **Solid only, and that is the point.** A solid box *is* a bar — one filled
+   * rect over its column — so it reads with the same three-step emphasis every
+   * bar has, and against a dimmed field. The `whisker`/`none` shapes paint thin
+   * stems and a small body over mostly-empty slot; a fill swap there recolours
+   * a few pixels and a dim erases them, so those shapes keep the bounding
+   * outline as their cue.
+   */
+  readonly highlight?: string;
+  /** See {@link highlight}. Falls back to `highlight` when unset. */
+  readonly hover?: string;
+  /** See {@link highlight}. Unset ⇒ nothing dims (back-compatible). */
+  readonly dimmed?: string;
 }
 
 /**
@@ -599,6 +617,13 @@ export const defaultTheme: ChartTheme = {
       medianWidth: 2,
       whisker: '#a3cde5',
       whiskerWidth: 1,
+      // A solid box is a bar, so it takes the bar palette's interaction
+      // states verbatim — selection blue, the brighter-teal hover, and the
+      // same receded step. Sharing the values is deliberate: a selected box
+      // beside a selected bar in the next row must read as one act.
+      highlight: '#3F5BE0',
+      hover: '#3FBFAE',
+      dimmed: 'rgba(2,132,199,0.28)',
     },
     // The warm accent box — the second series of a paired distribution (an
     // in/out traffic list), mirroring `bar.secondary` / `line.secondary`.

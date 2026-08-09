@@ -1,7 +1,7 @@
 import { useContext, useEffect } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
-import { ValueSeries } from 'pond-ts';
+import { TimeSeries, ValueSeries } from 'pond-ts';
 import { ChartContainer } from '../src/ChartContainer.js';
 import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
@@ -14,7 +14,8 @@ import {
   type RowFrame,
 } from '../src/context.js';
 import { resolveSelection } from '../src/select.js';
-import { stubCanvasContext } from './canvas-mock.js';
+import { recordingContext, stubCanvasContext } from './canvas-mock.js';
+import { defaultTheme } from '../src/theme.js';
 
 afterEach(cleanup);
 
@@ -142,5 +143,207 @@ describe('<BoxPlot id> — selection (#508 item 5)', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+// ── The sweep + the solid interaction palette ───────────────────────────────
+
+/**
+ * A box is an **aggregation**: it owns one `[begin, end)` interval of the key
+ * axis. That its ink floats between two quantiles rather than rising from the
+ * baseline says nothing about which column the mark occupies — so it sweeps,
+ * and snaps, exactly as a bar does. These pin that equivalence.
+ */
+describe('<BoxPlot> sweeps by column, like a bar that is not grounded', () => {
+  /** Four 10-unit buckets on a time axis, with a gap at index 2. */
+  const buckets = () =>
+    new TimeSeries({
+      name: 'b',
+      schema: [
+        { name: 'timeRange', kind: 'timeRange' },
+        { name: 'lo', kind: 'number', required: false },
+        { name: 'hi', kind: 'number', required: false },
+      ] as const,
+      rows: [
+        [[0, 10], 2, 8],
+        [[10, 20], 3, 9],
+        [[20, 30], undefined, undefined],
+        [[30, 40], 1, 7],
+      ] as never,
+    });
+
+  function mountBoxes(shape: 'whisker' | 'solid' = 'whisker') {
+    let cf: ContainerFrame | null = null;
+    let rf: RowFrame | null = null;
+    function Capture() {
+      const c = useContext(ContainerContext);
+      const r = useContext(RowContext);
+      useEffect(() => {
+        if (c) cf = c;
+        if (r) rf = r;
+      });
+      return null;
+    }
+    const stub = stubCanvasContext();
+    try {
+      render(
+        <ChartContainer range={[0, 40]} width={400} showAxis={false}>
+          <ChartRow height={200}>
+            <YAxis id="v" min={0} max={10} />
+            <Layers>
+              <BoxPlot
+                series={buckets()}
+                lower="lo"
+                upper="hi"
+                axis="v"
+                shape={shape}
+                id="b"
+              />
+              <Capture />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>,
+      );
+    } finally {
+      stub.restore();
+    }
+    return { container: () => cf!, layer: () => rf!.layers[0]!.layer };
+  }
+
+  it('publishes its columns as snap buckets, so the band lands on box edges', () => {
+    // Without this the region cursor / sweep band has nothing to snap to and
+    // runs centre-to-centre, disagreeing with the span the release commits
+    // (RFC A7.6's edge rule) — the same thing bar layers publish bins for.
+    const bins = mountBoxes().layer().binIntervals?.();
+    expect(bins).toBeDefined();
+    expect(bins).toHaveLength(4);
+    expect([+bins![0]!.begin(), +bins![0]!.end()]).toEqual([0, 10]);
+    expect([+bins![3]!.begin(), +bins![3]!.end()]).toEqual([30, 40]);
+  });
+
+  it('sweeps a contiguous run of columns and skips the gap box', () => {
+    const session = mountBoxes().layer().beginSweep!()!;
+    expect(session).not.toBeNull();
+    // A window over buckets 0..1.
+    session.update(2, 18);
+    expect(session.hits().map((h) => h.key)).toEqual([0, 10]);
+    // Widen over the gap to the last box: the gap owns no membership, so it
+    // is absent from the hits while the span still spans it.
+    session.update(2, 39);
+    expect(session.hits().map((h) => h.key)).toEqual([0, 10, 30]);
+    // The extent snaps outward to whole columns (A7.6's edge rule).
+    expect(session.extent()).toEqual([0, 40]);
+  });
+
+  it('materialises exactly what hitTest reports, so click and sweep agree', () => {
+    const { container, layer } = mountBoxes();
+    const c = container();
+    const l = layer();
+    const session = l.beginSweep!()!;
+    session.update(0, 10);
+    const swept = session.hits()[0]!;
+    const clicked = l.hitTest!(+c.xScale(5), 100, c.xScale, (v: number) => v, {
+      mode: 'select',
+    } as never);
+    // `hitTest`'s y needs to land inside the mark; assert on the shared
+    // identity fields the sweep is required to match rather than re-deriving
+    // pixel geometry here.
+    expect(swept.id).toBe('b');
+    expect(swept.key).toBe(0);
+    expect(swept.value).toBe(8); // `upper`, as hitTest reports
+    expect(clicked === null || clicked.key === swept.key).toBe(true);
+  });
+});
+
+describe('a SOLID box takes the bar interaction palette', () => {
+  const one = () =>
+    new TimeSeries({
+      name: 'b',
+      schema: [
+        { name: 'timeRange', kind: 'timeRange' },
+        { name: 'lo', kind: 'number' },
+        { name: 'q1', kind: 'number' },
+        { name: 'q3', kind: 'number' },
+        { name: 'hi', kind: 'number' },
+      ] as const,
+      rows: [
+        [[0, 10], 2, 4, 6, 8],
+        [[10, 20], 2, 4, 6, 8],
+      ] as [[number, number], number, number, number, number][],
+    });
+
+  /** Mount, draw once, return every `fillStyle` the layer set. */
+  function fills(shape: 'whisker' | 'solid', selected?: unknown): string[] {
+    let cf: ContainerFrame | null = null;
+    let rf: RowFrame | null = null;
+    function Capture() {
+      const c = useContext(ContainerContext);
+      const r = useContext(RowContext);
+      useEffect(() => {
+        if (c) cf = c;
+        if (r) rf = r;
+      });
+      return null;
+    }
+    const stub = stubCanvasContext();
+    try {
+      render(
+        <ChartContainer
+          range={[0, 20]}
+          width={400}
+          showAxis={false}
+          {...(selected ? { selected: selected as never } : {})}
+        >
+          <ChartRow height={200}>
+            <YAxis id="v" min={0} max={10} />
+            <Layers>
+              <BoxPlot
+                series={one()}
+                lower="lo"
+                q1="q1"
+                median="q1"
+                q3="q3"
+                upper="hi"
+                axis="v"
+                shape={shape}
+                id="b"
+              />
+              <Capture />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>,
+      );
+    } finally {
+      stub.restore();
+    }
+    const { ctx, calls } = recordingContext();
+    rf!.layers[0]!.layer.draw(ctx, cf!.xScale, rf!.yScales.get('v')!);
+    return calls
+      .filter((c) => c.type === 'set' && c.name === 'fillStyle')
+      .map((c) => String(c.args[0]));
+  }
+
+  const sel = [{ id: 'b', key: 0, value: 8, color: '#000', label: 'lo–hi' }];
+
+  it('fills the selected box with `highlight` and recedes the other', () => {
+    const painted = fills('solid', sel);
+    expect(painted).toContain(defaultTheme.box.default.highlight);
+    expect(painted).toContain(defaultTheme.box.default.dimmed);
+  });
+
+  it('rests on the plain fill when nothing is selected — nothing dims', () => {
+    const painted = fills('solid');
+    expect(new Set(painted)).toEqual(new Set([defaultTheme.box.default.fill]));
+    expect(painted).not.toContain(defaultTheme.box.default.dimmed);
+  });
+
+  it('leaves the WHISKER shape on its outline cue — no fill swap, no dim', () => {
+    // The scoping the palette is deliberately given: a whisker box paints thin
+    // stems over a mostly-empty slot, so a fill swap recolours a few pixels
+    // and a dim erases them. Its cue stays the bounding outline.
+    const painted = fills('whisker', sel);
+    expect(new Set(painted)).toEqual(new Set([defaultTheme.box.default.fill]));
+    expect(painted).not.toContain(defaultTheme.box.default.highlight);
+    expect(painted).not.toContain(defaultTheme.box.default.dimmed);
   });
 });

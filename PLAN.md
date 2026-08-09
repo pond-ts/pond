@@ -63,9 +63,13 @@ milestone. Plan:
   **settle spans-plural-or-topmost** before copying `SpanSelection`'s
   single-`id` shape; and it **also closes horizontal-bar sweeps**, which are a
   y-window and therefore 2-D machinery (A8.4).
-- **[PND-INTERACTCONF]** — **The conformance tail.** `<BoxPlot>` and the list
-  family join the sweep (both ride here by plan; `BoxPlot`'s pixel `offset`
-  complicates its key-space cut). `format` is a container-wide channel and
+- **[PND-INTERACTCONF]** — **The conformance tail.** The **list family** joins
+  the sweep. (`<BoxPlot>` has now joined: a box is an aggregation owning one
+  `[begin, end)` column, so it publishes `binIntervals` + `beginSweep` and
+  sweeps exactly as a bar — a bar that simply isn't grounded to the axis. Its
+  pixel `offset` still complicates the key-space cut, and that is now
+  `[PND-BOXHIT]`'s territory since the same shift is what makes two paired
+  boxes' hit rects overlap.) `format` is a container-wide channel and
   cannot be honoured per-row without reworking the readout plumbing (A8.4).
   Then **remove the deprecation shims** one minor after they land.
 - **[PND-CURSORAPI]** — **Publish the cursor contract** (RFC Q3), under A7.1's

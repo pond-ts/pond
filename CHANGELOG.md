@@ -62,6 +62,34 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: `<BoxPlot>` joins the sweep — it publishes `binIntervals` and
+  `beginSweep`, so a `<MultiSelector>` selects boxes by column.** A box is an
+  **aggregation**: it owns one `[begin, end)` interval of the key axis, and the
+  fact that its ink floats between two quantiles rather than rising from the
+  baseline says nothing about which column the mark occupies. So it sweeps
+  exactly as a bar does — a bar that simply isn't grounded to the axis — over
+  the same `sweep1D` cut, with each materialised hit identical to what
+  `hitTest` reports for that box. A gap box (its present quantiles not all
+  finite) owns no membership, the rule `hitTest` and the flag already applied.
+
+  `binIntervals` is the other half: the region cursor and the sweep band now
+  snap to box edges instead of running centre-to-centre, which is what keeps
+  the drawn band and the committed span agreeing (RFC A7.6's edge rule).
+
+- **charts: a `shape="solid"` box takes the bar interaction palette** — new
+  optional `theme.box.*` tokens `highlight`, `hover` and `dimmed`, set on
+  `defaultTheme` to the bar palette's own values so a selected box beside a
+  selected bar reads as one act. A solid box _is_ a bar (one filled rect over
+  its column), so it now carries the three-step emphasis in its **fill** and
+  recedes when a selection exists elsewhere, rather than signalling only with
+  an outline.
+
+  **Scoped to `solid` on purpose.** The `whisker`/`none` shapes paint thin
+  stems and a small body over a mostly-empty slot; a fill swap there recolours
+  a few pixels and a dim erases them, so those keep the bounding outline as
+  their cue. All three tokens are optional and unset ⇒ the shipped behaviour,
+  so a hand-built theme's boxes do not change.
+
 - **charts: `defaultTheme` gains a stack group ramp — `bar.default.groups`,
   `bar.default.groupsHover` and `bar.default.groupsDimmed`.** A multi-group stack resolved every group to
   `bar.default.fill`, because each group looks up a theme role named after

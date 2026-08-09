@@ -13,10 +13,8 @@ import { boxWhisker } from './selection-fixtures.js';
  * body. Read against `Interactions/Selector/BoxSolid`, which is the same data
  * and the same feature set with the spread drawn as one bar instead.
  *
- * There is deliberately **no `MultiSelector/BoxWhisker`**: `<BoxPlot>`
- * publishes no `beginSweep` ([PND-INTERACTCONF]), so the fixture declares
- * `sweep: false` and the factory generates nothing rather than a column of
- * charts that ignore the component under test.
+ * The sweep half lives in `Interactions/MultiSelector/BoxWhisker`: a box is an
+ * aggregation owning one column of the key axis, so it sweeps like any bar.
  */
 const meta = {
   title: 'Interactions/Selector/BoxWhisker',

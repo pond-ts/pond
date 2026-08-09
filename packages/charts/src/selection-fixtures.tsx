@@ -341,10 +341,10 @@ const clock = (t: number) => new Date(t).toTimeString().slice(0, 5);
  * **what counts as the mark for hit purposes**, and the answer is allowed to
  * differ by shape — which is why it ships as two columns rather than one.
  *
- * It also declares `sweep: false`. `<BoxPlot>` publishes `hitTest` but no
- * `beginSweep` ([PND-INTERACTCONF] tracks joining the sweep), so there is no
- * `<MultiSelector>` column here at all rather than one that renders charts
- * ignoring the component under test.
+ * It sweeps like any bar column. A box is an **aggregation** — it owns one
+ * `[begin, end)` interval of the key axis — so the fact that its ink floats
+ * between two quantiles instead of rising from the baseline says nothing about
+ * which column the mark occupies. The sweep cuts columns, not ink.
  */
 const boxFixture = (
   name: string,
@@ -399,8 +399,10 @@ const boxFixture = (
     },
   })),
   describe: (hit) => clock(hit.key),
-  // No `sequence`: it feeds the sweep, and there is no sweep here.
-  sweep: false,
+  sweep: true,
+  /** Three 10-minute boxes per bucket — coarser than the mark, so the snap has
+   *  something to do (the lesson `timeBars` learned with its `'1d'`). */
+  sequence: () => Sequence.every('30m', { anchor: BOX_BASE }),
   rangeCursor: true,
 });
 

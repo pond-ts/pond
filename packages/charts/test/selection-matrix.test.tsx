@@ -9,6 +9,8 @@ import * as multiBarChart from '../src/MultiSelectorBarChart.stories.js';
 import * as selectorStacked from '../src/SelectorStacked.stories.js';
 import * as selectorBoxWhisker from '../src/SelectorBoxWhisker.stories.js';
 import * as selectorBoxSolid from '../src/SelectorBoxSolid.stories.js';
+import * as multiBoxWhisker from '../src/MultiSelectorBoxWhisker.stories.js';
+import * as multiBoxSolid from '../src/MultiSelectorBoxSolid.stories.js';
 import * as multiStacked from '../src/MultiSelectorStacked.stories.js';
 import * as multiTradingSessions from '../src/MultiSelectorTradingSessions.stories.js';
 import {
@@ -17,11 +19,10 @@ import {
 } from '../src/selection-stories.js';
 import {
   FIXTURES,
-  boxSolid,
-  boxWhisker,
   categoricalBars,
   timeBars,
   tradingSessions,
+  type ChartFixture,
 } from '../src/selection-fixtures.js';
 
 afterEach(cleanup);
@@ -85,6 +86,12 @@ describe('the selection matrix covers the same features in every column', () => 
     expect(namesOf(multiStacked)).toEqual(
       [...MULTI_FEATURES, 'SweepWithSequence'].sort(),
     );
+    expect(namesOf(multiBoxWhisker)).toEqual(
+      [...MULTI_FEATURES, 'SweepWithSequence'].sort(),
+    );
+    expect(namesOf(multiBoxSolid)).toEqual(
+      [...MULTI_FEATURES, 'SweepWithSequence'].sort(),
+    );
     // The trading column adds the session pair on top of the sequence cell —
     // the *only* column whose axis has seams for a block to respect or cross,
     // so these two have nothing to be compared against elsewhere.
@@ -99,14 +106,12 @@ describe('the selection matrix covers the same features in every column', () => 
   });
 
   it('a fixture that cannot sweep gets no <MultiSelector> column at all', () => {
-    // `<BoxPlot>` hit-tests and selects but publishes no `beginSweep`
-    // ([PND-INTERACTCONF]), so a mounted `<MultiSelector>` would have neither
-    // a drag nor a resting preview. The whole column is withheld rather than
-    // generated as charts that ignore the component they are named after.
-    expect(boxWhisker.sweep).toBe(false);
-    expect(makeMultiSelectorStories(boxWhisker)).toBeNull();
-    expect(makeMultiSelectorStories(boxSolid)).toBeNull();
-    // …and every sweeping fixture still gets one.
+    // The capability is declared, not inferred from what happens to be wired.
+    // Nothing in the matrix declares `sweep: false` today — box plots did
+    // until `<BoxPlot>` gained `beginSweep` — so this pins the *mechanism*
+    // against a stub rather than leaving it untested until it is needed.
+    const cannot: ChartFixture = { ...timeBars, sweep: false };
+    expect(makeMultiSelectorStories(cannot)).toBeNull();
     expect(makeMultiSelectorStories(timeBars)).not.toBeNull();
   });
 
@@ -116,9 +121,14 @@ describe('the selection matrix covers the same features in every column', () => 
     // only information when it was declared — so derive the expected set from
     // the declarations, not from the files that happen to exist.
     const wired = new Set(
-      [multiCategorical, multiBarChart, multiStacked, multiTradingSessions].map(
-        (m) => (m.default as { title: string }).title.split('/').pop(),
-      ),
+      [
+        multiCategorical,
+        multiBarChart,
+        multiStacked,
+        multiBoxWhisker,
+        multiBoxSolid,
+        multiTradingSessions,
+      ].map((m) => (m.default as { title: string }).title.split('/').pop()),
     );
     const shouldSweep = FIXTURES.filter((f) => f.sweep).map((f) => f.name);
     expect([...shouldSweep].sort()).toEqual([...wired].sort());
@@ -143,6 +153,8 @@ describe.each([
   ['Selector/BoxSolid', selectorBoxSolid],
   ['MultiSelector/BarChart', multiBarChart],
   ['MultiSelector/Stacked', multiStacked],
+  ['MultiSelector/BoxWhisker', multiBoxWhisker],
+  ['MultiSelector/BoxSolid', multiBoxSolid],
   ['MultiSelector/TradingSessions', multiTradingSessions],
 ])('%s stories render', (_group, mod) => {
   for (const [name, story] of Object.entries(mod).filter(

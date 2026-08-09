@@ -1,6 +1,7 @@
 import { useContext, useEffect, useMemo } from 'react';
-import { ValueSeries } from 'pond-ts';
+import { Interval, ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
+import { sweep1D } from './sweep.js';
 import { boxFromTimeSeries, boxFromValueSeries } from './data.js';
 import type { NumericColumn, ValueNumericColumn } from './column-names.js';
 import {
@@ -19,6 +20,7 @@ import {
   type CursorFlagLine,
   type LayerEntry,
   type SelectInfo,
+  type SweepSession,
   type TrackerSample,
 } from './context.js';
 import {
@@ -328,6 +330,25 @@ export function BoxPlot<
     () => spansForLayer(container.selectedSpans, id, label),
     [container.selectedSpans, id, label],
   );
+  // The box's **column** — its `[x, xEnd)` slot, published as snap buckets
+  // exactly as a bar layer publishes its bins. A box *is* a bar that isn't
+  // grounded to the axis: an aggregation owning one interval of the key axis,
+  // drawn floating between two quantiles instead of rising from the baseline.
+  // That the ink doesn't reach the axis says nothing about which column the
+  // mark owns, so the region cursor snaps to boxes and a sweep cuts them
+  // slot-edge to slot-edge, same as bars (RFC A7.6's edge rule).
+  //
+  // Memoized off the shape alone, so a hover / selection change (which
+  // rebuilds the layer entry) doesn't re-allocate the intervals.
+  const binBuckets = useMemo<readonly Interval[] | null>(() => {
+    if (bx.length === 0) return null;
+    const out = new Array<Interval>(bx.length);
+    for (let i = 0; i < bx.length; i += 1) {
+      const b = bx.x[i]!;
+      out[i] = new Interval({ value: b, start: b, end: bx.xEnd[i]! });
+    }
+    return out;
+  }, [bx]);
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
@@ -338,6 +359,7 @@ export function BoxPlot<
         xKind: isValue ? 'value' : 'time',
         xExtent: () =>
           bx.length === 0 ? null : [bx.x[0]!, bx.xEnd[bx.length - 1]!],
+        ...(binBuckets !== null ? { binIntervals: () => binBuckets } : {}),
         sampleAt: (x) => {
           // The readout reads the box **under the cursor** (boxIndexAtTime — span
           // containment, not nearest-by-begin which flips past a wide box's
@@ -410,6 +432,40 @@ export function BoxPlot<
                 const [, begin, value] = hit;
                 return { id, key: begin, value, color: style.whisker, label };
               },
+              // The `<MultiSelector>` sweep's range query, identical in shape
+              // to the bar layer's: boxes are sorted, non-overlapping key
+              // intervals, so the covered set is a contiguous run and
+              // `sweep1D`'s two binary searches find it. Each materialised hit
+              // is EXACTLY what `hitTest` reports for that box, so a swept box
+              // and a clicked box are the same currency.
+              beginSweep: (): SweepSession | null =>
+                bx.length === 0
+                  ? null
+                  : sweep1D({
+                      id,
+                      begin: bx.x,
+                      end: bx.xEnd,
+                      length: bx.length,
+                      // A gap box (its present quantiles not all finite) draws
+                      // nothing and owns no membership — the same rule
+                      // `hitTest` and the flag already apply.
+                      selectable: (i) => isFiniteBox(bx, i),
+                      materialize: (lo, hi) => {
+                        const out: SelectInfo[] = [];
+                        for (let i = lo; i < hi; i += 1) {
+                          if (!isFiniteBox(bx, i)) continue;
+                          out.push({
+                            id,
+                            key: bx.x[i]!,
+                            // `upper`, matching what `hitTest` reports.
+                            value: bx.upper[i]!,
+                            color: style.whisker,
+                            label,
+                          });
+                        }
+                        return out;
+                      },
+                    }),
             }),
         draw: (ctx, xScale, yScale) =>
           drawBox(
@@ -435,6 +491,7 @@ export function BoxPlot<
     }),
     [
       bx,
+      binBuckets,
       isValue,
       series,
       lower,

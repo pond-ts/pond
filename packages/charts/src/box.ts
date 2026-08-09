@@ -15,6 +15,13 @@ const WHISKER_CAP_FRACTION = 0.5;
 const NO_KEYS: readonly number[] = [];
 
 /**
+ * The outer bar's alpha for a **live** (selected / hovered / dimmed) solid box.
+ * The inner q1→q3 body doubles it, as at rest — so the mark keeps its two-tier
+ * read in every state rather than flattening to one block when it lights.
+ */
+const LIVE_OUTER_ALPHA = 0.5;
+
+/**
  * Is `key` one of `keys`? The set form of the `key === selectedKey` check
  * {@link drawBox} used to make ([PND-MULTISEL] / RFC A4.3).
  *
@@ -235,16 +242,57 @@ export function drawBox(
     const yQ1 = hasBox ? yScale(box.q1[i]!) : 0;
     const yQ3 = hasBox ? yScale(box.q3[i]!) : 0;
 
+    // The mark's interaction state, resolved **before** the shape branch: a
+    // solid box paints it as its fill (bar parity), every shape paints it as
+    // the outline below. A decimated aggregate box carries synthetic keys a
+    // mark entry can't name — but a span's interval WOULD contain them, so it
+    // is gated off explicitly (per-box highlight is meaningless at decimation
+    // density, and lighting an aggregate column would claim marks the
+    // selection never held).
+    const key = box.x[i]!;
+    const isSelected =
+      includesKey(selectedKeys, key) ||
+      (!decimated &&
+        spans.length > 0 &&
+        spanMatchesAny(spans, key, box.upper[i]!));
+    // Selected outranks hovered on a box that is both — the same precedence the
+    // bar paths document, and what the `key === selectedKey` test did before.
+    const isHovered = !isSelected && includesKey(hoveredKeys, key);
+    // Recede the rest, exactly as `drawBars` does: only with a real selection
+    // (marks or spans) and only when the theme opted in with a `dimmed`.
+    const dimming =
+      style.dimmed !== undefined &&
+      (selectedKeys.length > 0 || spans.length > 0);
+
     if (shape === 'solid') {
       // Candlestick: a light outer bar over the full lower→upper spread, then —
       // when there's a body — a more-prominent inner q1→q3 box on top (same fill
       // at rising opacity). No stems, no outline.
+      //
+      // **A solid box is a bar**, so it carries the bar's three-step emphasis
+      // in its *fill* rather than only in an outline: selected > hovered >
+      // dimmed > rest. A live state also paints at full opacity — the resting
+      // `fillOpacity` is a translucency that would mute the state colour it is
+      // meant to announce.
+      const live = isSelected
+        ? (style.highlight ?? style.fill)
+        : isHovered
+          ? (style.hover ?? style.highlight ?? style.fill)
+          : dimming
+            ? style.dimmed!
+            : style.fill;
+      // The two-tier look is an alpha *ratio*, not two fixed values — so a
+      // live state keeps the outer bar readable against the inner body
+      // instead of flattening into one block, which is what a plain
+      // "alpha = 1 when live" would do.
+      const resting = live === style.fill;
+      const outerAlpha = resting ? style.fillOpacity : LIVE_OUTER_ALPHA;
       ctx.save();
-      ctx.fillStyle = style.fill;
-      ctx.globalAlpha = style.fillOpacity;
+      ctx.fillStyle = live;
+      ctx.globalAlpha = outerAlpha;
       ctx.fillRect(x0, yUpper, x1 - x0, yLower - yUpper);
       if (hasBox) {
-        ctx.globalAlpha = Math.min(1, style.fillOpacity * 2);
+        ctx.globalAlpha = Math.min(1, outerAlpha * 2);
         ctx.fillRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
       }
       ctx.restore();
@@ -307,19 +355,6 @@ export function drawBox(
     // hovered = fainter. **Every** named box lights, not only the first — so a
     // set of pinned boxes, or a sweep hovering several at once, all read back.
     // Bracketed so alpha/width don't leak to the next box.
-    const key = box.x[i]!;
-    // A decimated aggregate box carries synthetic keys a mark entry can't name
-    // — but a span's interval WOULD contain them, so it is gated off explicitly
-    // (per-box highlight is meaningless at decimation density, and lighting an
-    // aggregate column would claim marks the selection never held).
-    const isSelected =
-      includesKey(selectedKeys, key) ||
-      (!decimated &&
-        spans.length > 0 &&
-        spanMatchesAny(spans, key, box.upper[i]!));
-    // Selected outranks hovered on a box that is both — the same precedence the
-    // bar paths document, and what the `key === selectedKey` test did before.
-    const isHovered = !isSelected && includesKey(hoveredKeys, key);
     if (isSelected || isHovered) {
       ctx.save();
       ctx.strokeStyle = style.stroke;
