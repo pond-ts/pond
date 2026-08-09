@@ -13,7 +13,7 @@ import ChartsValueAxisDual from '@site/src/examples/charts-value-axis-dual';
 `@pond-ts/charts` draws whatever axis your data implies — it is never a prop
 you set. Hand `<ChartContainer>` a `TimeSeries` and you get a time axis; hand
 it a `ValueSeries` (from [`byValue`](../../pond-ts/transforms/aggregation#byvalue)
-or [`ValueSeries.fromColumns`](../../pond-ts/creating#columnar-ingest)) and
+or [`ValueSeries.fromColumns`](../../pond-ts/creating#columnar)) and
 every draw layer in that row draws against a **linear value axis** instead —
 same `LineChart`, `ScatterChart`, `BoxPlot`, `BarChart` components, no
 axis-type prop anywhere.

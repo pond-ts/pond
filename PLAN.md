@@ -159,13 +159,6 @@ financial hub, and the in-site API reference for core + charts). Plan:
 - **[PND-APIREF]** — In-site API reference completion: `{@link}` resolution,
   react/fit/financial tranches, big-page ergonomics, missing class-level
   docstrings.
-- **[PND-VSDOC]** — Give `creating.mdx` its `ValueSeries` section. PR #564
-  restructured the ingest page around JSON / columnar / Arrow and
-  deliberately skipped `ValueSeries` because its whole surface was
-  `fromColumns` — "two-thirds empty". [PND-VSIO] filled the other
-  two-thirds (`fromJSON` / `fromArrow` in, `toJSON` / `toColumns` /
-  `toArrow` out), so the section now has content: one subsection per door
-  shape, cross-linked to the deep dive.
 - **[PND-OBSDOC]** — "Observing pond-ts in production" how-to: the
   documentation-backlog items (pushMany guidance, bench-honesty callout, GC
   snippet, no-NaN guarantee, tie semantics, latency pattern) as one MDX pass.

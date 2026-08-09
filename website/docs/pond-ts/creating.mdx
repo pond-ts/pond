@@ -4,24 +4,36 @@ sidebar_position: 4
 
 # Creating series
 
-Two ways to build a pond series:
+## Introduction
 
-- **Batch** — `new TimeSeries({ name, schema, rows })` for a complete,
-  immutable dataset built once and queried many times.
-- **Live** — `new LiveSeries({ name, schema })` for a streaming
-  buffer that grows incrementally as `push` is called.
+Everything in pond starts with getting data **in**. Which door you use is
+decided by the shape the data arrives in — not by what you plan to do with it
+afterwards. Every batch door produces the same `TimeSeries`, with the same
+schema contract and the same operator surface; the live door builds a
+`LiveSeries` that snapshots to one on demand.
 
-Same schema type, same operator surface — see
-[Concepts → Series](./concepts/series) for the conceptual model.
-This page covers the construction patterns and the JSON wire format
-both directions share.
+| Your data arrives as…                                   | Door                         | Section                                         |
+| ------------------------------------------------------- | ---------------------------- | ----------------------------------------------- |
+| Row tuples you built in code                            | `new TimeSeries({ rows })`   | [The constructor](#the-constructor)             |
+| A JSON payload — rows of arrays or objects              | `TimeSeries.fromJSON`        | [`fromJSON`](#fromjson)                         |
+| Struct-of-arrays JSON — `{ time: [...], close: [...] }` | `TimeSeries.fromColumns`     | [JSON columnar](#json-columnar)                 |
+| Typed arrays off a binary decoder                       | `TimeSeries.fromColumns`     | [Float64Array columnar](#float64array-columnar) |
+| A decoded Apache Arrow `Table`                          | `TimeSeries.fromArrow`       | [Arrow](#arrow)                                 |
+| Events arriving one at a time, forever                  | `new LiveSeries(…)` + `push` | [Live data](#live-data)                         |
+| Rows keyed by a value, not a time                       | `ValueSeries.from*`          | [ValueSeries](#valueseries)                     |
 
-If you're coming from pandas: `TimeSeries.fromJSON` ≈
-`pd.read_json(..., convert_dates=True, date_format='iso')`; `toJSON` ≈
-`.to_json(orient='records'|'values', date_format='iso')`;
-`parse.timeZone` ≈ `.tz_localize(...)` on a naive `DatetimeIndex`.
+Going the other way, each door has an inverse: `toJSON` serializes rows for the
+wire, `toRows` / `toObjects` hand back in-memory rows, `toColumns` emits the
+columnar-JSON envelope `fromColumns` reads back, and `toArrow` hands the raw
+column buffers to another columnar engine.
 
-## Batch construction
+Two smaller doors round out the set:
+`TimeSeries.fromEvents(events, { schema, name })`
+for `Event` objects you already hold, and
+`TimeSeries.fromPoints(points, { schema })` for wide `{ ts, … }` objects (the
+shape charts hand back).
+
+### The constructor
 
 ```ts
 import { TimeSeries } from 'pond-ts';
@@ -42,13 +54,12 @@ const cpu = new TimeSeries({
 });
 ```
 
-The `as const` on the schema is load-bearing — without it,
-TypeScript widens the schema tuple to a regular array and the column
-kinds widen to `string`, breaking type inference across every
-transform.
+The `as const` on the schema is load-bearing — without it, TypeScript widens the
+schema tuple to a regular array and the column kinds widen to `string`, breaking
+type inference across every transform.
 
 Rows must be in **non-decreasing key order** — the constructor throws on
-out-of-order rows (the error names the offending row). For unsorted input (a
+out-of-order rows, and the error names the offending row. For unsorted input (a
 CSV read in arrival order, merged sources), pass `sort: true` to sort on
 construction instead of pre-sorting yourself:
 
@@ -56,15 +67,17 @@ construction instead of pre-sorting yourself:
 const cpu = new TimeSeries({ name: 'cpu', schema, rows, sort: true });
 ```
 
-The sort is **stable**, so rows with equal keys keep their input order.
-`TimeSeries.fromJSON({ …, sort: true })` accepts the same option.
+The sort is **stable**, so rows with equal keys keep their input order. Every
+other ingest door takes the same `sort` option and means the same thing by it.
 
-For the full schema-as-contract story (kinds, narrowing,
-`required: false`), see [Concepts → Series](./concepts/series).
-For messy or partially-bad input, see
+For the full schema-as-contract story (kinds, narrowing, `required: false`), see
+[Concepts → Series](./concepts/series). For messy or partially-bad input, see
 [Cleaning data](../pond-ts/transforms/cleaning).
 
-## Live construction
+### Live data
+
+When events arrive incrementally rather than as a finished dataset, construct a
+`LiveSeries` with the same schema and push into it:
 
 ```ts
 import { LiveSeries } from 'pond-ts';
@@ -84,38 +97,32 @@ live.pushMany([
 ]);
 ```
 
-Retention and ordering details are on [Late data](./concepts/late-data);
-the LiveSeries reference page is
+`live.toTimeSeries()` snapshots to an immutable batch series at any time — the
+snapshot is independent of future pushes, and `live.toJSON()` is shorthand for
+snapshotting and serializing. Retention and ordering details are on
+[Late data](./concepts/late-data); the reference page is
 [LiveSeries](../pond-ts/live/live-series).
 
-`live.toTimeSeries()` snapshots to an immutable batch series at any
-time — the snapshot is independent of future pushes.
+The rest of this page is about batch ingest, and applies to a `LiveSeries` only
+through that snapshot.
 
-## JSON round-trip
+### Coming from pandas
 
-Both `TimeSeries` and `LiveSeries` round-trip through JSON via
-`toJSON` / `fromJSON`. The shape is identical for both; consumers
-of the JSON don't need to know which side it came from.
+`TimeSeries.fromJSON` ≈ `pd.read_json(…, convert_dates=True, date_format='iso')`;
+`toJSON` ≈ `.to_json(orient='records'|'values', date_format='iso')`;
+`parse.timeZone` ≈ `.tz_localize(…)` on a naive `DatetimeIndex`;
+`TimeSeries.fromColumns` ≈ `pd.DataFrame({...})` over aligned arrays;
+`fromArrow` / `toArrow` ≈ `pa.Table` interop.
 
-This is the rest of the page — the shape of the JSON payload, the
-timestamp-parsing rules, and the one genuinely tricky corner
-(wall-clock strings and time zones):
+## JSON
 
-- [**The JSON shape**](#the-json-shape) — what `toJSON` emits and
-  what `fromJSON` accepts.
-- [**`fromJSON`**](#fromjson) — options, timestamp parsing, wall-clock
-  strings.
-- [**`toJSON`**](#tojson) — array and object row formats.
-- [**Round-trip fidelity**](#round-trip-fidelity) — what's preserved.
-- [**Columnar ingest**](#columnar-ingest) — `fromColumns` / `toColumns`,
-  the struct-of-arrays doors for bulk/binary wire formats.
-- [**Calendar-aware sequences**](#calendar-aware-sequences) — the
-  timezone-sensitive sibling to `Sequence.every`.
-- [**Pitfalls**](#pitfalls).
+JSON is the row-shaped door — the natural fit for a REST endpoint, and the right
+default. Both `TimeSeries` and `LiveSeries` round-trip through it via `toJSON` /
+`fromJSON`, and the shape is identical for both: consumers of the JSON don't need
+to know which side it came from.
 
-## The JSON shape
-
-A JSON-serialized `TimeSeries` is just:
+A JSON-serialized `TimeSeries` is just three fields — the series name, the schema
+(the same tuple you'd pass to the constructor), and the rows:
 
 ```json
 {
@@ -132,37 +139,33 @@ A JSON-serialized `TimeSeries` is just:
 }
 ```
 
-Three fields: the series name, the schema (same tuple you'd pass to
-the constructor), and the rows. By default rows are arrays — one per
-event, positional by schema column. The alternative is object rows
-keyed by column name (see [toJSON](#tojson) below).
+By default rows are arrays — one per event, positional by schema column. The
+alternative is object rows keyed by column name (see [`toJSON`](#tojson)).
 
-The temporal key column always comes first. Its serialized form
-depends on its kind:
+The temporal key column always comes first. Its serialized form depends on its
+kind:
 
 | Kind          | JSON shape                                                         |
 | ------------- | ------------------------------------------------------------------ |
 | `'time'`      | `number` (ms since epoch) or ISO string (`"2025-01-01T00:00:00Z"`) |
-| `'timerange'` | `[startMs, endMs]` or `{ start, end }`                             |
+| `'timeRange'` | `[startMs, endMs]` or `{ start, end }`                             |
 | `'interval'`  | `[label, startMs, endMs]` or `{ value, start, end }`               |
 
-Everything else is the obvious thing — numbers become numbers, strings
-become strings, arrays become arrays, `undefined` is serialized as
-`null` (and parsed back to `undefined` on ingest).
+Everything else is the obvious thing — numbers become numbers, strings become
+strings, arrays become arrays, `undefined` is serialized as `null` (and parsed
+back to `undefined` on ingest).
 
 :::note[Coming from pondjs?]
-pondjs serialized `TimeRangeEvent` as a nested shape —
-`[[startMs, endMs], data]` — with the temporal key wrapped inside the
-event payload. pond-ts flattens: the timerange key is the first
-positional element (or the `timerange` key on an object row), and
-payload columns follow. A legacy pondjs JSON payload needs a small
-remap before it round-trips through `TimeSeries.fromJSON`.
+pondjs serialized `TimeRangeEvent` as a nested shape — `[[startMs, endMs], data]`
+— with the temporal key wrapped inside the event payload. pond-ts flattens: the
+timeRange key is the first positional element (or the `timeRange` key on an
+object row), and payload columns follow. A legacy pondjs JSON payload needs a
+small remap before it round-trips through `TimeSeries.fromJSON`.
 :::
 
-## `fromJSON`
+### `fromJSON`
 
-Two-argument-free constructor: pass the parsed JSON and get back a
-typed `TimeSeries`.
+Pass the parsed JSON, get back a typed `TimeSeries`:
 
 ```ts
 import { TimeSeries } from 'pond-ts';
@@ -183,8 +186,7 @@ const cpu = TimeSeries.fromJSON({
 });
 ```
 
-In React, when the server emits a full pond-ts payload, the client is
-one line:
+In React, when the server emits a full pond-ts payload, the client is one line:
 
 ```ts
 const payload = await (await fetch('/api/cpu')).json();
@@ -198,22 +200,25 @@ const rows = await (await fetch('/api/cpu/rows')).json();
 const cpu = TimeSeries.fromJSON({ name: 'cpu', schema, rows });
 ```
 
-### Timestamp inputs
+Rows must be in non-decreasing key order, same as the constructor; pass
+`sort: true` for a payload that isn't guaranteed ordered.
 
-`fromJSON` accepts two timestamp formats per event key, and they can
-mix freely:
+#### Timestamp inputs
+
+`fromJSON` accepts two timestamp formats per event key, and they can mix freely:
 
 - **Number** — milliseconds since the Unix epoch, UTC. No ambiguity.
-- **ISO string** — parsed by the same rules as `Date.parse`. If the
-  string carries an offset (`Z`, `+02:00`), the offset is used as-is.
-  If it doesn't (a **wall-clock string** like `'2025-01-01T09:00'`),
-  you must supply `parse.timeZone` or the library doesn't know what
-  wall you mean.
+- **ISO string** — parsed by the same rules as `Date.parse`. If the string
+  carries an offset (`Z`, `+02:00`), the offset is used as-is. If it doesn't (a
+  **wall-clock string** like `'2025-01-01T09:00'`), the library has no way to
+  know which wall you mean and reads it in `parse.timeZone` — which
+  **defaults to UTC**. Supply it whenever the data isn't UTC: getting this
+  wrong is silent, not loud.
 
-### Wall-clock strings: `parse.timeZone`
+#### Wall-clock strings: `parse.timeZone`
 
-The common case for analytics data: timestamps were emitted in local
-time and never carried a zone offset.
+The common case for analytics data: timestamps were emitted in local time and
+never carried a zone offset.
 
 ```ts
 const ts = TimeSeries.fromJSON({
@@ -228,26 +233,26 @@ const ts = TimeSeries.fromJSON({
 });
 
 ts.at(0)!.begin();
-// 1735714800000 — i.e. 2025-01-01T08:00:00Z
+// 1735718400000 — i.e. 2025-01-01T08:00:00Z
 ```
 
-### Does this input need `parse.timeZone`?
+Does your input need it?
 
 | Input shape                   | Example                    | `parse.timeZone`?                  |
 | ----------------------------- | -------------------------- | ---------------------------------- |
 | Number (ms since epoch)       | `1735689600000`            | Ignored — UTC by definition.       |
 | String with offset (`Z`)      | `'2025-01-01T09:00Z'`      | Ignored — offset is authoritative. |
 | String with offset (`±hh:mm`) | `'2025-01-01T09:00+01:00'` | Ignored — offset is authoritative. |
-| Wall-clock string (no offset) | `'2025-01-01T09:00'`       | **Required.** Throws without it.   |
+| Wall-clock string (no offset) | `'2025-01-01T09:00'`       | **Read it.** Defaults to UTC.      |
 
-If your upstream data source is a spreadsheet, a log scraper, or a
-database export without a zone column, you're almost certainly in the
-wall-clock row — pass `parse.timeZone` once per `fromJSON` call.
+If your upstream source is a spreadsheet, a log scraper, or a database export
+without a zone column, you're almost certainly in the wall-clock row — pass
+`parse.timeZone` once per `fromJSON` call.
 
-### Object rows
+#### Object rows
 
-If your JSON source uses keyed objects instead of positional arrays,
-`fromJSON` accepts that shape too:
+If your JSON source uses keyed objects instead of positional arrays, `fromJSON`
+accepts that shape too:
 
 ```ts
 const ts = TimeSeries.fromJSON({
@@ -268,14 +273,14 @@ const ts = TimeSeries.fromJSON({
 });
 ```
 
-Object rows and array rows can't mix within a single `rows` array. The
-library picks the format based on the first row.
+Object rows and array rows can't mix within a single `rows` array. The library
+picks the format based on the first row.
 
-### Missing values
+#### Missing values
 
 `null` in a cell becomes `undefined` on the event; a column marked
-`required: false` in the schema accepts both `null` and a missing
-key (in object rows):
+`required: false` in the schema accepts both `null` and a missing key (in object
+rows):
 
 ```ts
 const schema = [
@@ -294,10 +299,14 @@ TimeSeries.fromJSON({
 });
 ```
 
-Columns without `required: false` reject `null` at validation time —
-if a cell is sometimes-present, make it optional in the schema.
+Columns without `required: false` reject `null` at validation time — if a cell is
+sometimes-present, make it optional in the schema.
 
-## `toJSON`
+Note that `fromJSON` **rejects** a non-finite provided number (`NaN`, `Infinity`)
+outright rather than treating it as a gap. The columnar doors are looser here;
+see [Common ingest issues](#non-finite-numbers-mean-different-things-per-door).
+
+### `toJSON`
 
 Serializes back to the JSON-friendly shape.
 
@@ -309,10 +318,10 @@ JSON.stringify(payload);
 // One string; round-trips via TimeSeries.fromJSON(JSON.parse(...)).
 ```
 
-### Array vs object rows
+#### Array vs object rows
 
-Default is array rows (smaller on the wire, faster to parse). Request
-object rows when readability matters more than size:
+Default is array rows (smaller on the wire, faster to parse). Request object rows
+when readability matters more than size:
 
 ```ts
 const compact = series.toJSON();
@@ -324,29 +333,10 @@ const keyed = series.toJSON({ rowFormat: 'object' });
 
 Both formats round-trip through `fromJSON` with the same output.
 
-### In-memory normalized exports
+#### Round-trip fidelity
 
-When you want rows in a richer in-memory form — preserving `Time` /
-`TimeRange` / `Interval` as objects instead of numbers/tuples — use
-the non-JSON exporters:
-
-```ts
-const rows = series.toRows();
-// ReadonlyArray of [key, ...values] tuples with *object* keys
-
-const objects = series.toObjects();
-// ReadonlyArray of { [colName]: value } objects with *object* keys
-```
-
-Both are faster than `toJSON` (no JSON-shape conversion) and are the
-right choice for passing data to in-process consumers (tests, other
-library code, React components). They do **not** round-trip via
-`fromJSON`; use `toJSON` for wire-format serialization.
-
-## Round-trip fidelity
-
-`series.toJSON()` → `JSON.stringify` → `JSON.parse` →
-`TimeSeries.fromJSON(...)` preserves:
+`series.toJSON()` → `JSON.stringify` → `JSON.parse` → `TimeSeries.fromJSON(…)`
+preserves:
 
 - Series `name`
 - Every column name + kind
@@ -356,29 +346,75 @@ library code, React components). They do **not** round-trip via
 
 It does **not** preserve:
 
-- Schema `required: true | false` flags that differ from validation
-  defaults — declare them explicitly on both sides if you need that
-  narrowing to survive.
-- Comments, whitespace, or any non-payload metadata you might be
-  tempted to attach.
+- Schema `required: true | false` flags that differ from validation defaults —
+  declare them explicitly on both sides if you need that narrowing to survive.
+- Comments, whitespace, or any non-payload metadata you might be tempted to
+  attach.
 
-If the two ends of a round-trip share the same `schema` tuple (as
-`const`), TypeScript's type-narrowing on `.get()` is preserved through
-the round-trip at the type level. If one end imports a different
-schema, the narrowing is only as good as what both ends import.
+If the two ends of a round-trip share the same `schema` tuple (as `const`),
+TypeScript's type-narrowing on `.get()` is preserved through the round-trip at
+the type level. If one end imports a different schema, the narrowing is only as
+good as what both ends import.
 
-## Columnar ingest
+#### In-memory exports
 
-`fromJSON` takes row tuples — the natural shape for a REST endpoint and
-the right default. But some sources hand you data **struct-of-arrays**
-already: a bulk columnar JSON payload (`{ time: [...], open: [...], ... }`),
-a protobuf message with `repeated double` fields (a packed column decodes
-straight to a `Float64Array`), or a fixed-point wire format you've already
-descaled into typed arrays. Reshaping those back into rows just to hand
-them to `fromJSON` costs a transpose pass you don't need.
+When the consumer is in-process rather than across a wire, skip the JSON shape
+entirely. `toRows` / `toObjects` preserve `Time` / `TimeRange` / `Interval` as
+objects instead of flattening them to numbers and tuples:
 
-`TimeSeries.fromColumns` is the columnar counterpart to `fromJSON` — it
-takes column-shaped input directly:
+```ts
+const rows = series.toRows();
+// ReadonlyArray of [key, ...values] tuples with *object* keys
+
+const objects = series.toObjects();
+// ReadonlyArray of { [colName]: value } objects with *object* keys
+```
+
+Both are faster than `toJSON` (no JSON-shape conversion) and are the right choice
+for tests, other library code, and React components. They do **not** round-trip
+via `fromJSON` — use `toJSON` for wire-format serialization.
+
+## Columnar
+
+`fromJSON` takes row tuples, but plenty of sources hand you data
+**struct-of-arrays** already: a bulk columnar JSON payload, a protobuf message
+with `repeated double` fields, an Arrow record batch. Reshaping those back into
+rows just to hand them to `fromJSON` costs a transpose pass you don't need — and
+throws away the fact that pond's own storage is columnar underneath, so a
+columnar input can often be adopted rather than copied.
+
+Three ways in, one ingest engine:
+
+| Input                                         | Door          | Cost                                     |
+| --------------------------------------------- | ------------- | ---------------------------------------- |
+| `{ time: number[], close: number[] }`         | `fromColumns` | One copy per column                      |
+| `{ time: Float64Array, close: Float64Array }` | `fromColumns` | **Zero-copy** — buffers adopted          |
+| A decoded Apache Arrow `Table`                | `fromArrow`   | **Zero-copy** for single-chunk `Float64` |
+
+And two ways back out — [`toColumns`](#columnar-out-tocolumns) for a
+JSON-shaped payload, [`toArrow`](#arrow) for the buffers themselves. Each
+ingress pairs with its inverse, so a columnar payload round-trips.
+
+All of them share the same rules for missing values, ordering, and `sort` —
+see [Missing values and ordering](#missing-values-and-ordering).
+
+**Supported kinds.** Any key kind — a `timeRange` or `interval` key flattens
+into extra columns, see [Two-edged keys](#two-edged-keys) — and `number` /
+`string` value columns. `boolean` and array columns export fine but can't be
+ingested back; the row doors take those.
+
+:::info[Value-keyed data has its own door]
+`fromColumns` builds a **time**-keyed series. If your rows are keyed by a
+monotonic _value_ instead — an options chain keyed by strike, a spectrum keyed by
+frequency — don't launder the axis through a fake `time` column:
+`ValueSeries.fromColumns` is the same door with a `'value'`-kind axis column in
+place of time. See [ValueSeries](#valueseries) below.
+:::
+
+### JSON columnar
+
+The plain-array case — exactly what `JSON.parse` gives you for a columnar wire
+payload, with no transpose needed:
 
 ```ts
 import { TimeSeries } from 'pond-ts';
@@ -387,6 +423,7 @@ const schema = [
   { name: 'time', kind: 'time' },
   { name: 'open', kind: 'number' },
   { name: 'close', kind: 'number' },
+  { name: 'venue', kind: 'string' },
 ] as const;
 
 const bars = TimeSeries.fromColumns({
@@ -396,51 +433,23 @@ const bars = TimeSeries.fromColumns({
     time: [1735689600000, 1735689660000, 1735689720000],
     open: [193.1, 193.4, 193.2],
     close: [193.4, 193.2, 193.6],
+    venue: ['XNAS', 'XNAS', 'XNAS'],
   },
 });
 ```
 
-Each entry in `columns` is one column's values, aligned by index; every
-column must be the same length as the key column. That's the same shape
-`JSON.parse` gives you for a columnar wire payload — no transpose needed.
+Each entry in `columns` is one column's values, aligned by index; every column
+must be the same length as the key column, and a missing or mismatched column
+throws naming itself. String columns are dictionary-encoded when that pays off,
+which is why a low-cardinality column like `venue` above costs almost nothing.
 
-### `Float64Array` columns
+Plain arrays are always **copied** into pond's storage — the source array is
+yours to keep mutating afterwards.
 
-Each column can also be a `Float64Array` instead of a plain array — the
-shape a binary decoder (protobuf packed doubles, a fixed-point decoder
-after descaling) hands back directly:
+#### Missing values and ordering
 
-```ts
-const bars = TimeSeries.fromColumns({
-  name: 'AAPL',
-  schema,
-  columns: {
-    time: Float64Array.from([1735689600000, 1735689660000, 1735689720000]),
-    open: Float64Array.from([193.1, 193.4, 193.2]),
-    close: Float64Array.from([193.4, 193.2, 193.6]),
-  },
-});
-```
-
-This is the fast path: a `Float64Array` column is **adopted directly**,
-not copied — no re-materialization, no per-row intake. It's also why
-`fromColumns` is one function that takes either shape rather than two
-separate ones: a plain-array caller and a typed-array caller both want the
-same ingest, just with a different (adopt vs. copy) cost underneath.
-
-:::warning[Adopted, not copied]
-Because a `Float64Array` column is adopted by reference, mutating the
-source buffer after construction mutates the series. Hand `fromColumns` a
-buffer you're done writing to — freshly decoded output is the common case
-and is naturally safe. `number[]` columns are always copied, so this only
-applies to the typed-array path.
-:::
-
-### Missing values and ordering
-
-A `null`/`undefined` cell (plain-array columns) or a non-finite cell
-(`NaN`, `Infinity` — either input type) is a gap, identically across both
-input shapes:
+A `null`/`undefined` cell, or a non-finite numeric cell (`NaN`, `Infinity`), is a
+**gap**:
 
 ```ts
 TimeSeries.fromColumns({
@@ -450,67 +459,85 @@ TimeSeries.fromColumns({
     time: [1735689600000, 1735689660000],
     open: [193.1, 193.4],
     close: [193.4, null], // gap
+    venue: ['XNAS', null], // gap
   },
 });
 ```
 
-This is looser than `fromJSON`, which rejects a non-finite _provided_
-number outright rather than treating it as a gap.
+The rule is identical across every columnar input shape — plain array, typed
+array, Arrow. It is deliberately looser than `fromJSON`, which rejects a
+non-finite _provided_ number outright.
 
-Columns must be in **non-decreasing key order**, same invariant as
-`fromJSON` — an out-of-order key throws, naming the offending index. For a
-payload whose rows aren't guaranteed ordered, pass `sort: true` to sort
-rows by key before construction — a stable sort, like `fromJSON`'s. (Sorting
-disables the zero-copy adoption above: a reorder needs fresh buffers.)
+Columns must be in **non-decreasing key order**, same invariant as `fromJSON` — an
+out-of-order key throws, naming the offending index. Pass `sort: true` to sort
+rows by key before construction; the sort is stable, like `fromJSON`'s. Sorting
+**disables zero-copy adoption** on every door below: a reorder needs fresh
+buffers.
 
-### Scope
+### Float64Array columnar
 
-`fromColumns` currently supports a `time`-kind key column and `number`
-value columns — the market-data / chart wire-format case that motivated
-it. Other key kinds (`interval`, `timerange`) and non-numeric value
-columns throw for now.
+A numeric column can be a `Float64Array` instead of a plain array — the shape a
+binary decoder (protobuf packed doubles, a fixed-point decoder after descaling)
+hands back directly:
 
-:::info[Value-keyed data has its own door]
-`fromColumns` builds a **time**-keyed series. If your rows are keyed by a
-monotonic _value_ instead — an options chain keyed by strike, a spectrum
-keyed by frequency — don't launder the axis through a fake `time` column:
-**`ValueSeries.fromColumns({ name, schema, columns, sort })`** is the same
-door with a `'value'`-kind axis column in place of time. Same
-`number[]` / `Float64Array` inputs, same zero-copy adoption, same
-`sort: true`. Data that _starts_ time-keyed projects into value-land with
-[`byValue`](./concepts/value-axis) instead.
+```ts
+const bars = TimeSeries.fromColumns({
+  name: 'AAPL',
+  schema,
+  columns: {
+    time: Float64Array.from([1735689600000, 1735689660000, 1735689720000]),
+    open: Float64Array.from([193.1, 193.4, 193.2]),
+    close: Float64Array.from([193.4, 193.2, 193.6]),
+    venue: ['XNAS', 'XNAS', 'XNAS'], // strings stay a string[]
+  },
+});
+```
+
+This is the fast path: a `Float64Array` column is **adopted directly**, not
+copied — no re-materialization, no per-row intake. It's also why `fromColumns` is
+one function taking either shape rather than two separate ones: a plain-array
+caller and a typed-array caller want the same ingest, just with a different
+(adopt vs. copy) cost underneath, so the wire format changes only your _decoder_.
+
+String columns have no typed-array form — hand them a `string[]`. Passing a typed
+array for a `'string'`-kind column throws rather than stringifying numbers.
+
+:::warning[Adopted, not copied]
+Because a `Float64Array` column is adopted by reference, mutating the source
+buffer after construction mutates the series. Hand `fromColumns` a buffer you're
+done writing to — freshly decoded output is the common case and is naturally
+safe. `number[]` columns are always copied, so this only applies to the
+typed-array path.
 :::
 
 :::tip[Why this matters for interactive charts]
-The real cost this solves isn't raw parse speed — it's _when_ the parse
-happens. Decoding a hefty series (hundreds of thousands of points)
-synchronously on the main thread can stall an animating or panning chart
-for a visible frame. Because `fromColumns` accepts `Float64Array`s
-directly, a decoder can run in a **Web Worker** and `postMessage` the
-resulting typed arrays back as **transferable objects** (zero-copy) —
-`fromColumns` then adopts them on the main thread for a fraction of a
-millisecond per column, instead of a multi-frame freeze. A plain
-`number[]` can't transfer this way (it structured-clones), so this
-pattern specifically wants the columnar + typed-array path.
+The real cost this solves isn't raw parse speed — it's _when_ the parse happens.
+Decoding a hefty series (hundreds of thousands of points) synchronously on the
+main thread can stall an animating or panning chart for a visible frame. Because
+`fromColumns` accepts `Float64Array`s directly, a decoder can run in a **Web
+Worker** and `postMessage` the resulting typed arrays back as **transferable
+objects** (zero-copy) — `fromColumns` then adopts them on the main thread for a
+fraction of a millisecond per column, instead of a multi-frame freeze. A plain
+`number[]` can't transfer this way (it structured-clones), so this pattern
+specifically wants the columnar + typed-array path.
 :::
 
-### Getting it back out: `toColumns`
+### Columnar out: `toColumns`
 
 `series.toColumns()` is the inverse — the same `{ name, schema, columns }`
-envelope, one plain array per column, which `fromColumns` takes straight
-back:
+envelope, one plain array per column, which `fromColumns` takes straight back:
 
 ```ts
-// In process, the round trip is typed end to end — no cast, and the
-// result is a TimeSeries<typeof schema>, not a widened one.
+// In process, the round trip is typed end to end — no cast, and the result
+// is a TimeSeries<typeof schema>, not a widened one.
 const restored = TimeSeries.fromColumns(series.toColumns());
 ```
 
-That assignability is the contract: `toColumns()`'s return type is typed
-per column (`{ time: number[]; cpu: Array<number | null>; … }`) and is
-accepted by `fromColumns` as it stands. Gaps come out as `null` (`NaN`
-isn't JSON, and a `Float64Array` doesn't stringify as an array), which is
-what makes the envelope safe to send:
+That assignability is the contract: `toColumns()`'s return type is typed per
+column (`{ time: number[]; cpu: Array<number | null>; … }`) and is accepted by
+`fromColumns` as it stands. Gaps come out as `null` (`NaN` isn't JSON, and a
+`Float64Array` doesn't stringify as an array), which is what makes the envelope
+safe to send:
 
 ```ts
 const wire = JSON.stringify(series.toColumns());
@@ -520,30 +547,29 @@ const restored = TimeSeries.fromColumns(parsed);
 ```
 
 Across a wire the types are your assertion to make, not the library's —
-`JSON.parse` returns `any`, so annotate it (as above) if you want the
-restored series typed rather than widened.
+`JSON.parse` returns `any`, so annotate it (as above) if you want the restored
+series typed rather than widened.
 
 **It is dramatically cheaper than the row export.** `toColumns` reads the
-columnar store directly, where `toJSON` materialises a row per event —
-measured at 100k rows × 6 columns, **~2.5–3 ms vs ~26 ms** (an 8–10×
-gap across runs) that widens with row count, because the row door
-allocates per row and this one allocates per column. Reach for it
-whenever the consumer is column-oriented or the payload is large.
-(In-process, going to another columnar engine, `toArrow` is cheaper
-still — ~0.006 ms — because it hands over the buffers rather than
-copying them.)
+columnar store directly, where `toJSON` materializes a row per event — measured
+at 100k rows × 6 columns, **~2.5–3 ms vs ~26 ms** (an 8–10× gap across runs)
+that widens with row count, because the row door allocates per row and this one
+allocates per column. Reach for it whenever the consumer is column-oriented or
+the payload is large. In-process, going to another columnar engine, `toArrow` is
+cheaper still — ~0.006 ms — because it hands over the buffers rather than
+copying them.
 
 **`boolean` / array columns** export fine but can't be ingested back (the
-columnar engine takes `number` and `string`). The return type says so, so
-that round trip fails to compile rather than at runtime; `select()` them
-out, or use the row doors.
+columnar engine takes `number` and `string`). The return type says so, so that
+round trip fails to _compile_ rather than at runtime; `select()` them out, or
+use the row doors.
 
 `ValueSeries` has the same method with the same contract.
 
-### Two-edged keys: the flattened convention
+### Two-edged keys
 
-A `timeRange` or `interval` key — what `aggregate` produces — spans two
-edges, and JSON has no interval-of-time type. Both doors flatten it into
+A `timeRange` or `interval` key — what `aggregate` produces — spans two edges,
+and JSON has no interval-of-time type. Every columnar door flattens it into
 extra columns named off the key:
 
 ```ts
@@ -564,81 +590,242 @@ TimeSeries.fromColumns(daily.toColumns()); // round-trips, key and all
 ```
 
 A `timeRange` key is `timeRange` + `timeRangeEnd`; an `interval` key adds
-`intervalLabel`. **The names are fully determined** — a key column's name
-always equals its kind — so there's nothing to configure. Note what stays
-put: the `schema` keeps declaring the _logical_ key, and the edge columns
-are derived from it rather than described by it, which is what lets the
-envelope round-trip as the series' own schema.
+`intervalLabel`. **The names are fully determined** — a key column's name always
+equals its kind — so there's nothing to configure. Note what stays put: the
+`schema` keeps declaring the _logical_ key, and the edge columns are derived
+from it rather than described by it, which is what lets the envelope round-trip
+as the series' own schema.
 
-This is the same convention `toArrow` has always emitted (Arrow has no
-interval type either), so one payload spelling now serves the JSON and
-Arrow doors alike — `fromArrow(table, { keyKind: 'interval' })` reads the
-Arrow side back.
+This is the same convention `toArrow` has always emitted (Arrow has no interval
+type either), so one payload spelling serves the JSON and Arrow doors alike —
+`fromArrow(table, { keyKind: 'interval' })` reads the Arrow side back.
 
 Two consequences worth knowing:
 
 - **A value column may not take a derived name.** A column called
   `timeRangeEnd` alongside a `timeRange` key means one array with two
-  claimants, so both `fromColumns` and `toColumns` throw, naming the
-  collision.
+  claimants, so both `fromColumns` and `toColumns` throw, naming the collision.
 - **Ordering is by `(begin, end)`.** Equal begins must be non-decreasing in
-  `end` — matching the row door. `sort: true` sorts the same way.
+  `end` — matching the row door. `sort: true` sorts the same way. Interval
+  labels must be present in every row and all of one type, again matching the
+  row door.
 
 Why flattened rather than `[[begin, end], …]` pairs? Because the substrate
-stores the edges as separate buffers, a paired spelling would need a
-per-row un-zip on the way in — a row walk in the middle of the door that
-exists to avoid row walks.
+stores the edges as separate buffers, a paired spelling would need a per-row
+un-zip on the way in — a row walk in the middle of the door that exists to
+avoid row walks.
 
-## Calendar-aware sequences
+### Arrow
 
-For timezone-sensitive bucketing, `Sequence.every(duration)` is
-millisecond-exact — great for sub-hour buckets, wrong for days and
-months (which have non-constant duration across DST and calendar
-boundaries). Use `Sequence.calendar` instead:
+pond does **not** depend on `apache-arrow`. You bring your own Arrow, decode the
+table however you like, and hand the `Table` over — the input is duck-typed
+against the small structural surface pond actually reads (`ArrowTableLike`,
+`ArrowVectorLike`, … all exported if you need to satisfy it from something that
+isn't arrow-js).
+
+#### `fromArrow`
 
 ```ts
-import { Sequence } from 'pond-ts';
+import { tableFromIPC } from 'apache-arrow';
+import { TimeSeries } from 'pond-ts';
 
-// Fixed 24h steps — wrong around DST.
-const fixedDaily = Sequence.every('1d');
+const table = tableFromIPC(
+  await (await fetch('/api/bars.arrow')).arrayBuffer(),
+);
 
-// Local calendar days in New York — boundaries honor DST transitions.
-const localDaily = Sequence.calendar('day', {
-  timeZone: 'America/New_York',
-});
-
-// Weeks starting Monday in Europe/London:
-const weekly = Sequence.calendar('week', {
-  timeZone: 'Europe/London',
-  weekStartsOn: 1, // 1=Mon, 7=Sun (ISO-8601)
-});
-
-// Months (variable length):
-const monthly = Sequence.calendar('month', {
-  timeZone: 'America/New_York',
-});
+const bars = TimeSeries.fromArrow(table, { name: 'AAPL', time: 'ts' });
 ```
 
-Supported units: `'day'`, `'week'`, `'month'`. Pass to `aggregate` or
-`align` exactly like a fixed-step sequence.
+The schema is derived from the Arrow fields, so you don't declare one. (You may
+supply `S` as `fromArrow<MySchema>(…)` for downstream typing — pond takes that on
+trust and does not verify the fields match, exactly as `fromEvents` trusts its
+schema.)
 
-### When it matters
+| Option     | Default                              | Meaning                                                                                      |
+| ---------- | ------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `name`     | `'arrow'`                            | Series name.                                                                                 |
+| `time`     | the field named `'time'`             | Which column is the time key. Throws if absent.                                              |
+| `timeUnit` | read from the Arrow `Timestamp` type | `'second' \| 'millisecond' \| 'microsecond' \| 'nanosecond'`. An explicit value always wins. |
+| `columns`  | every non-time field                 | Value columns to include, in order.                                                          |
+| `keyKind`  | `'time'`                             | `'timeRange'` / `'interval'` to read a [flattened two-edged key](#two-edged-keys) back.      |
+| `sort`     | `false`                              | Sort by time key first (disables adoption).                                                  |
 
-- **Daily and monthly reports** — a "daily" bucket in fixed-step is
-  24 hours, but local calendar days around a DST transition are 23 or
-  25 hours. Reports bucketed by local calendar boundaries need
-  `calendar`.
-- **Cross-month rollups** — 30 days is not February; 31 days is not
-  April. Month buckets must honor the calendar, not a fixed stride.
-- **Week-starting conventions** — ISO Monday vs US Sunday vs retail
-  Saturday. `weekStartsOn` sets the anchor.
+**Column handling.** The time key accepts `Timestamp`, `Date32`/`Date64`, and
+plain int/float columns, all normalized to epoch ms: a `Timestamp`'s raw-unit
+int64 is scaled by its `TimeUnit`, a `Date32`/`Date64` already arrives as epoch-ms
+from Arrow's `toArray()` and passes through, and a plain number is taken as ms. A
+null in the time key throws. Value columns may be numeric (`Float32` and int
+columns convert to `Float64`; nulls become gaps) or `Utf8` strings (dict-encoded;
+nulls become gaps). Any other Arrow type — list, struct — throws, naming it; use
+`columns` to select a supported subset out of a mixed table.
 
-Hour-or-smaller buckets: use `Sequence.every` — the fixed-step
-primitive is correct and cheaper.
+**What's zero-copy.** Every **single-chunk** `Float64` column's backing
+`Float64Array` is adopted as-is, and the time key is converted **BigInt-free** —
+Arrow's idiomatic int64 timestamps are recombined from their two int32 halves
+rather than `Number(bigint)` per row, measured ~11× faster on the time column
+(0.6 ms vs 6.8 ms at 500k rows; `packages/core/scripts/perf-from-arrow.mjs`). A
+table decoded from a **multi-record-batch** IPC stream has multi-chunk columns,
+whose `toArray()` concatenates into a fresh buffer — still correct, but a copy
+rather than an adopt, and the aliasing warning above doesn't apply to it.
 
-## Pitfalls
+#### `toArrow`
 
-### Wall-clock strings without `parse.timeZone`
+The other columnar door out — `toColumns` copies into JSON-safe arrays, this one
+hands over the buffers themselves. pond's columnar substrate is already laid out
+the way Arrow wants: the validity bitmap is
+LSB-first, one bit per value, 1 = valid; numeric columns are a contiguous
+`Float64Array`; booleans a packed bitmap; dict-encoded strings `Int32Array`
+indices plus a dictionary. So `toArrow` hands back the buffers pond is already
+holding — nothing is copied, reshaped, or re-encoded.
+
+It returns `{ length, fields }` rather than an Arrow `Table`, for the same reason
+`fromArrow` takes a duck-typed one: adding a dependency to hand data _out_ would
+be a strange price for interop. The caller assembles per field, narrowing on
+`type` first:
+
+```ts
+import { makeData, makeVector, Float64 } from 'apache-arrow';
+
+const { fields } = series.toArrow();
+const f = fields.find((x) => x.name === 'close')!;
+if (f.type !== 'float64' && f.type !== 'timestamp') throw new Error(f.type);
+
+const vec = makeVector(
+  makeData({
+    type: new Float64(),
+    length: f.length,
+    nullCount: f.nullCount,
+    nullBitmap: f.nullBitmap,
+    data: f.values, // narrowed to Float64Array by the guard above
+  }),
+);
+```
+
+From there a consumer can reach whatever engine they like — polars, DuckDB,
+arrow-js — for work pond doesn't do well, without pond depending on any of it and
+without paying a re-ingest to get there.
+
+`toArrow` exports `number`, `string` and `boolean` value columns (a wider set
+than ingest accepts); anything else throws, naming the column. Pass
+`{ columns: [...] }` to select a subset — the key field(s) are always included.
+A `timeRange` or `interval` key becomes two flat fields, `<key>` and
+`<key>End`, since Arrow has no interval-of-time type; interval labels ride along
+as `<key>Label`. A value column that would collide with one of those synthesized
+names throws rather than producing a duplicate field name.
+
+Two cases are **not** zero-copy, named here so the cost is visible: a chunked
+column is materialized into one buffer first, and a string column pond chose not
+to dictionary-encode is handed over as a plain JS array (Arrow `Utf8` wants
+offsets into a UTF-8 byte buffer — building those is the consumer's encode).
+
+:::warning[The buffers are live storage]
+`toArrow` hands over pond's actual storage, not copies. Writing to one corrupts
+the series it came from — a `TimeSeries` is immutable by contract, not by
+defensive cloning. This is the same read-only contract `column(name)`,
+`keyColumn()` and `toFloat64Array()` already carry, but it's worth restating when
+the buffers cross into another library. Copy first
+(`new Float64Array(f.values)`) if the consumer mutates in place.
+:::
+
+## ValueSeries
+
+Everything above builds a **time**-keyed series. When the key is a monotonic
+_value_ instead — an options chain by strike, a spectrum by frequency, a ride by
+cumulative distance — `ValueSeries` is the counterpart, and every door on this
+page has a twin:
+
+| Time-keyed                  | Value-keyed                              |
+| --------------------------- | ---------------------------------------- |
+| `TimeSeries.fromJSON`       | `ValueSeries.fromJSON`                   |
+| `TimeSeries.fromColumns`    | `ValueSeries.fromColumns`                |
+| `TimeSeries.fromArrow`      | `ValueSeries.fromArrow(table, { axis })` |
+| `series.toJSON()`           | `chain.toJSON()`                         |
+| `series.toRows/toObjects()` | `chain.toRows/toObjects()`               |
+| `series.toColumns()`        | `chain.toColumns()`                      |
+| `series.toArrow()`          | `chain.toArrow()`                        |
+
+They share **one ingest engine**, so the monotonic-key contract, `sort: true`,
+the gap rules, and the zero-copy adoption behave identically — reread the
+sections above and substitute the axis for time. `schema[0]` is a `'value'`-kind
+axis column instead of a `'time'`-kind one; every direct door checks that first
+and names itself in the error if you got it wrong.
+
+```ts
+import { ValueSeries } from 'pond-ts';
+
+const schema = [
+  { name: 'strike', kind: 'value' }, // schema[0] is the axis
+  { name: 'iv', kind: 'number' },
+  { name: 'oi', kind: 'number' },
+] as const;
+
+ValueSeries.fromJSON({ name: 'chain', schema, rows });
+ValueSeries.fromColumns({ name: 'chain', schema, columns });
+ValueSeries.fromArrow(table, { axis: 'strike' });
+```
+
+Data that _starts_ time-keyed doesn't use these doors at all — it projects with
+[`byValue(axis)`](./concepts/value-axis), which re-keys a `TimeSeries` onto one
+of its own monotonic columns. The direct doors are for rows that were **never**
+time-keyed. The full tour is the
+[ValueSeries deep dive](./value-series); what follows is only where the value
+axis genuinely diverges from what you just read.
+
+### JSON
+
+`ValueSeries.fromJSON` is the `TimeSeries` contract minus the one thing a value
+axis has no use for: **there is no timestamp parsing and no `parse.timeZone`.**
+The axis cell must be a finite `number` — a value axis has no calendar to
+interpret `'2026-01-01'` against — so a string axis is an error naming the row
+rather than a silent `NaN`.
+
+Everything else carries over: array or object rows, `null` as missing,
+`required: false` for sometimes-present columns, `sort: true` for an unordered
+payload, and strict per-cell kind checking (a `NaN` in a `number` column is
+**rejected**, not read as a gap).
+
+### Columnar
+
+`ValueSeries.fromColumns` takes the same `number[]` / `Float64Array` /
+`string[]` inputs with the same adopt-vs-copy costs, and is looser than the JSON
+door in the same way — a non-finite number is a gap, and `required` isn't
+checked, because a decoded buffer can't tell "absent" from "not a number".
+
+`chain.toColumns()` is the same envelope with the same contract as the
+[time-keyed one](#columnar-out-tocolumns) — minus the two-edged case, since a
+value axis is always one number per row and has nothing to flatten.
+
+:::note[Round trips are typed, and honest about what won't survive]
+`ValueSeries.fromColumns(vs.toColumns())` and `ValueSeries.fromJSON(vs.toJSON())`
+compile without a cast. A `boolean` or array column — which only a `byValue`
+projection can introduce, since the direct doors take `number` and `string` —
+exports fine but can't be ingested back, and the **columnar** round trip fails to
+_compile_ rather than at runtime. The row leg is the other way round: `toJSON`
+types its `boolean` cells honestly, so `fromJSON` accepts the payload's shape and
+throws at ingest, naming the column and its kind.
+:::
+
+### Arrow
+
+`ValueSeries.fromArrow(table, { axis })` differs from the time door in exactly
+two ways:
+
+- **`axis` is required.** There's no `'time'` field convention to fall back on —
+  `strike`, `frequency`, `depth`, `cumDist` are all equally plausible names, and
+  silently keying on the wrong column is worse than an error.
+- **The axis is read unscaled.** No `timeUnit`, no `TimeUnit` to consult; the
+  numbers are taken at face value. int64 still recombines BigInt-free.
+
+`chain.toArrow()` is the same exporter `TimeSeries.toArrow` uses and returns the
+same `{ length, fields }` — a `'value'` axis simply exports as a plain `float64`
+field rather than a `timestamp` one. The live-storage warning above applies
+identically.
+
+## Common ingest issues
+
+### Wall-clock strings silently become UTC
+
+This is the sharpest edge on the page, because nothing goes wrong loudly:
 
 ```ts
 TimeSeries.fromJSON({
@@ -647,41 +834,94 @@ TimeSeries.fromJSON({
   rows: [['2025-01-01T09:00', 0.42]],
   // no parse.timeZone
 });
-// Throws — ambiguous local string; needs a zone context.
+// No error. `parse.timeZone` defaults to 'UTC', so this is 09:00Z —
+// an hour off if the data was actually 09:00 in Madrid.
 ```
 
-Either add `parse.timeZone` or switch to an offset-qualified string
-(`'2025-01-01T09:00Z'`) or a number (`Date.parse('2025-01-01T09:00Z')`).
+An ambiguous local string doesn't throw; it resolves in `parse.timeZone`,
+which defaults to `'UTC'`. If your timestamps came out of a spreadsheet, a log
+scraper, or a database export without a zone column, that default is a
+wrong-answer bug that no test will surface for you — every timestamp is
+consistently shifted, so the series still looks plausible.
+
+Pass `parse.timeZone` explicitly whenever the source isn't UTC, or remove the
+ambiguity upstream with an offset-qualified string (`'2025-01-01T09:00Z'`) or
+a number (`Date.parse('2025-01-01T09:00Z')`).
 
 ### Mixed timestamp formats
 
-Mixing number and ISO-string timestamps within one `rows` array is
-legal at the type level — both normalize to ms-since-epoch internally
-— but it's almost always a symptom of an upstream bug. Two specific
-risks worth naming:
+Mixing number and ISO-string timestamps within one `rows` array is legal at the
+type level — both normalize to ms-since-epoch internally — but it's almost always
+a symptom of an upstream bug. Two specific risks worth naming:
 
-- **Silent zone drift.** A run of ISO strings marked with `Z` followed
-  by a run of bare-wall-clock strings will produce events that look
-  ordered but are actually offset by the local-vs-UTC delta of the
-  wall-clock rows' zone. Catch this upstream, not here.
-- **Numbers are always UTC.** If you mix numbers and wall-clock strings
-  with `parse.timeZone`, the numbers don't pick up the zone — they
-  stay UTC while the strings get resolved in the specified zone. If
-  the upstream emits both, something is already wrong in the producer.
+- **Silent zone drift.** A run of ISO strings marked with `Z` followed by a run of
+  bare wall-clock strings produces events that look ordered but are actually
+  offset by the local-vs-UTC delta of the wall-clock rows' zone.
+- **Numbers are always UTC.** If you mix numbers and wall-clock strings with
+  `parse.timeZone`, the numbers don't pick up the zone — they stay UTC while the
+  strings get resolved in the specified zone.
 
-Test `fromJSON` with a consistent input format in production and
-normalize upstream before shipping the payload over the wire.
+Normalize upstream before shipping the payload over the wire.
 
-### `Sequence.every('1M')` for months
+### Out-of-order keys
 
-`every` only accepts durations with a fixed millisecond value — hours,
-minutes, seconds, and whole days. Months are not fixed-duration and
-aren't accepted. Use `Sequence.calendar('month', { timeZone })`.
+Every door requires **non-decreasing** keys and throws otherwise, naming the
+offending row or index. This isn't fussiness: bisect-based operators (`crop`,
+`atTime`, range queries) depend on the invariant, and a backwards key on a
+trusted columnar door is a corruption signal rather than something to silently
+accept.
+
+Pass `sort: true` to sort instead of throwing. To flatten a genuine backwards
+blip to a plateau — a different, lossy choice — clamp the keys yourself before
+ingest; the library won't mutate your data for you.
+
+### Non-finite numbers mean different things per door
+
+| Door                        | `NaN` / `Infinity` in a value column |
+| --------------------------- | ------------------------------------ |
+| `fromJSON` / constructor    | **Rejected** — throws                |
+| `fromColumns` / `fromArrow` | **Treated as a gap** (missing)       |
+
+The columnar doors are the trusted fast path, where a decoder's `NaN` is
+overwhelmingly a sentinel for "no reading" rather than a bad value. If you need a
+non-finite to be an _error_ in columnar input, check it before ingest.
+
+### Mutating a buffer you handed to `fromColumns`
+
+Adoption is by reference, so this silently rewrites history:
+
+```ts
+const closes = Float64Array.from([193.4, 193.2, 193.6]);
+
+const bars = TimeSeries.fromColumns({
+  name: 'AAPL',
+  schema,
+  columns: { time, open, close: closes, venue },
+});
+
+closes[0] = 0; // bars now reports 0 for the first close
+```
+
+Hand over a buffer you're done writing to, or pass a copy
+(`new Float64Array(closes)`). The same applies in reverse to `toArrow`'s output.
+`number[]` columns are always copied, so they're never affected.
+
+### `boolean` / array columns don't survive a columnar round trip
+
+Every key kind goes through the columnar doors — a two-edged key
+[flattens](#two-edged-keys) — but the value kinds are `number` and `string`. A
+`boolean` or array column **exports** fine through `toColumns` / `toArrow` and
+then can't come back: the ingest engine has no branch for it.
+
+The failure is a compile error rather than a runtime one, because
+`toColumns()`'s return type encodes it — `fromColumns(series.toColumns())` won't
+typecheck on a series carrying either kind. `select()` those columns out first,
+or round-trip through the row doors, which take every kind.
 
 ### Object-row JSON from non-pond-ts sources
 
-If you're parsing JSON emitted by a non-pond-ts system, object rows
-may use different key names than your schema. Map them first:
+If you're parsing JSON emitted by a non-pond-ts system, object rows may use
+different key names than your schema. Map them first:
 
 ```ts
 const theirRows: Array<{ ts: number; cpu_pct: number }> = externalData;
@@ -694,15 +934,24 @@ const ours = theirRows.map((r) => ({
 TimeSeries.fromJSON({ name: 'cpu', schema, rows: ours });
 ```
 
-Library isn't trying to guess remaps.
+The library isn't trying to guess remaps.
 
 ## See also
 
-- [Columnar ingest](#columnar-ingest) — `fromColumns` / `toColumns` for
-  struct-of-arrays / typed-array wire formats.
-- [Concepts → Series](./concepts/series)
-  — `TimeSeries` vs `LiveSeries`, schema shape, mental model.
-- [Array columns](../pond-ts/advanced/arrays) — array cells
-  serialize as JSON arrays and round-trip without special handling.
-- [Alignment](../pond-ts/transforms/alignment) — where
-  `Sequence.calendar(...)` gets used.
+- [Concepts → Series](./concepts/series) — `TimeSeries` vs `LiveSeries`, schema
+  shape, mental model.
+- [ValueSeries deep dive](./value-series) — the full door-by-door tour of the
+  value-keyed type, plus reading, slicing, and when _not_ to reach for it.
+- [Value axis concept](./concepts/value-axis) — _when and why_ a value axis, and
+  the `byValue` projection route.
+- [Cleaning data](../pond-ts/transforms/cleaning) — what to do about the bad rows
+  once they're in.
+- [Columns](../pond-ts/advanced/columns) — the typed-column API that columnar
+  ingest feeds, and the other zero-copy exports (`toFloat64Array`, `keyColumn`).
+- [Aggregation](../pond-ts/transforms/aggregation) — where `interval` keys come
+  from, the ones [Two-edged keys](#two-edged-keys) exists to carry.
+- [Array columns](../pond-ts/advanced/arrays) — array cells serialize as JSON
+  arrays and round-trip without special handling.
+- [Sequences](./concepts/sequences) — including `Sequence.calendar` for
+  timezone-aware daily/weekly/monthly boundaries, the thing you usually want next
+  after ingesting local-time data.
