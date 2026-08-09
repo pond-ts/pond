@@ -88,11 +88,39 @@ milestone. Plan:
   and `.rows` (the heat map's ordinal set) already exist and
   `spanMatchesAny` already tests them.
 
+  **The visual model (owner, 2026-08-09).** The gesture:
+  - **At rest** — a single **grey crosshair**.
+  - **Dragging** — a _second_ crosshair pins at the anchor, with a **blue
+    rect** spanning between the two. So the 2-D brush is the 1-D band's
+    analog: the same "here is what you have grabbed", in both axes.
+
+  Scatter point states:
+
+  | state                         | fill  | mark                         |
+  | ----------------------------- | ----- | ---------------------------- |
+  | rest                          | green | —                            |
+  | under the live drag rect      | green | outlined, so it reads larger |
+  | selected (committed)          | blue  | outlined                     |
+  | outside a non-empty selection | —     | ghosted                      |
+
+  Two things this settles beyond the pixels:
+  - **The resting colour moves off cerulean (`#0284c7`) to green.** That is the
+    bar palette's rule for the third time: rest cannot be blue, because blue
+    has to mean _committed_. It is a `defaultTheme.scatter` change, not a
+    per-story one.
+  - **Preview grows; selection recolours.** The live-rect state keeps its hue
+    and gains an outline — the candle's move — while the committed state takes
+    blue, which is available here because a scatter point's colour is not
+    load-bearing the way a candle's direction is. So the preview and the commit
+    are distinguishable without the preview borrowing the committed colour.
+
   What is actually left: `SweepSession` is x-only (`update(x0, x1)` /
   `extent()`), so it needs a 2-D counterpart; `beginSweep` on the two layers
   (it already receives **both** scale functions, so the signature was built for
-  this); the gesture tracking y alongside x; and a rect band where the brush
-  currently draws a vertical strip.
+  this); the gesture tracking y alongside x; the two-crosshair-plus-rect brush;
+  the scatter palette move; and the perf gate — a rect preview lights far more
+  marks per pointer move than the 1-D band that cost 6.2 s/frame before its
+  membership scan was re-priced (A8.1).
 
 - **[PND-INTERACTCONF]** — **The conformance tail.** The **list family** joins
   the sweep. (`<BoxPlot>` has now joined: a box is an aggregation owning one
