@@ -89,10 +89,18 @@ milestone. Plan:
   `spanMatchesAny` already tests them.
 
   **The visual model (owner, 2026-08-09).** The gesture:
-  - **At rest** — a single **grey crosshair**.
-  - **Dragging** — a _second_ crosshair pins at the anchor, with a **blue
+  - **At rest** — a **small grey crosshair**: a compact `+` at the pointer,
+    _not_ full-plot rules.
+  - **Dragging** — a second small crosshair pins at the anchor, with a **blue
     rect** spanning between the two. So the 2-D brush is the 1-D band's
     analog: the same "here is what you have grabbed", in both axes.
+
+  **Small is the point, not a size preference.** A full-plot crosshair is a
+  value-reading instrument — it exists to project the pointer onto both axes.
+  This crosshair marks a _corner of a rect_, and the rect already draws its own
+  edges out to those axes, so full-length rules would add two more
+  plot-spanning lines to a picture that already has them. The compact `+` says
+  "here", which is all a corner needs to say.
 
   Scatter point states:
 
