@@ -114,6 +114,21 @@ milestone. Plan:
     load-bearing the way a candle's direction is. So the preview and the commit
     are distinguishable without the preview borrowing the committed colour.
 
+  **Heat map: one outline around the selection, not one per cell.** The
+  selected block gets a single perimeter; the cells inside keep their ramp
+  colour and simply sit within it.
+
+  That asymmetry with scatter is _derived_, not a second opinion. Because the
+  heat map snaps in **both** dimensions, a selection is always a contiguous
+  rectangle of cells — so "the outline of the selection" is a well-defined
+  single shape. A scatter's selected points are scattered by construction and
+  have no shared perimeter, so there each point is outlined individually. Same
+  rule (outline what is selected), different geometry to outline.
+
+  It is also the fix for the thing that makes a per-cell treatment unreadable:
+  a bordered grid of cells is mostly border, and the interior lines say
+  nothing — every one of them is interior to the selection.
+
   What is actually left: `SweepSession` is x-only (`update(x0, x1)` /
   `extent()`), so it needs a 2-D counterpart; `beginSweep` on the two layers
   (it already receives **both** scale functions, so the signature was built for
