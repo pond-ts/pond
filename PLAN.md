@@ -129,6 +129,29 @@ milestone. Plan:
   a bordered grid of cells is mostly border, and the interior lines say
   nothing — every one of them is interior to the selection.
 
+  **And the heat map does not ghost.** The outline is the whole cue; unselected
+  cells keep their ramp colour at full strength. Not a preference — on a heat
+  map **alpha and value are the same channel**, so dimming does not merely mute
+  the grid, it moves cells along the ramp: a ghosted dark cell and a resting
+  mid cell can render as the same colour, and the reader has no way to tell
+  which they are looking at. Every other layer can spend alpha because alpha
+  carries nothing there.
+
+  **The rule underneath all of this, which the wave has now hit five times:**
+  _state may only use a channel the mark is not already using for data._
+
+  | layer    | channel the data owns      | so state uses                 |
+  | -------- | -------------------------- | ----------------------------- |
+  | bar      | — (position only)          | fill swap + dim               |
+  | stack    | hue (group identity)       | per-group ramps + dim         |
+  | box      | lightness (quantile order) | the whole ladder shifts + dim |
+  | candle   | hue (direction)            | weight + dim only             |
+  | heat map | **colour ramp (value)**    | outline only — no dim         |
+  | scatter  | — (colour is free)         | recolour + grow + ghost       |
+
+  Read down the last column and every decision in this wave falls out of the
+  one before it.
+
   What is actually left: `SweepSession` is x-only (`update(x0, x1)` /
   `extent()`), so it needs a 2-D counterpart; `beginSweep` on the two layers
   (it already receives **both** scale functions, so the signature was built for
