@@ -202,10 +202,11 @@ export const timeBars: ChartFixture = {
 
 // ── Stacked bars (many marks per bin) ──────────────────────────────────────
 
-/** The stack's groups, bottom → top. */
-const TIERS = ['web', 'api', 'db'] as const;
+/** The stack's groups, bottom → top. **Four**, so the story walks the whole
+ *  `defaultTheme` group ramp rather than the first few entries of it. */
+const TIERS = ['web', 'api', 'db', 'edge'] as const;
 
-/** Twenty daily bins, three positive segments each. */
+/** Twenty daily bins, four positive segments each. */
 const stacked = () =>
   new TimeSeries({
     name: 'tiers',
@@ -214,13 +215,15 @@ const stacked = () =>
       { name: 'web', kind: 'number' },
       { name: 'api', kind: 'number' },
       { name: 'db', kind: 'number' },
+      { name: 'edge', kind: 'number' },
     ] as const,
     rows: Array.from({ length: 20 }, (_, i) => [
       [D0 + i * DAY, D0 + (i + 1) * DAY],
       3 + 2 * Math.sin(i / 2),
       2 + 1.5 * Math.sin(i / 3 + 1),
       1.5 + Math.sin(i * 1.7),
-    ]) as [[number, number], number, number, number][],
+      1.2 + Math.sin(i / 4 + 2),
+    ]) as [[number, number], number, number, number, number][],
   });
 
 /**
@@ -237,7 +240,7 @@ const stacked = () =>
 export const stackedBars: ChartFixture = {
   name: 'Stacked',
   container: { range: [D0, D0 + 20 * DAY] },
-  axis: { id: 'v', min: 0, max: 12, label: '' },
+  axis: { id: 'v', min: 0, max: 14, label: '' },
   renderLayer: (id) => (
     <BarChart series={stacked()} columns={TIERS} axis="v" id={id} />
   ),

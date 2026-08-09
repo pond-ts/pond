@@ -60,6 +60,40 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts: `defaultTheme` gains a stack group ramp — `bar.default.groups` and
+  `bar.default.groupsDimmed`.** A multi-group stack resolved every group to
+  `bar.default.fill`, because each group looks up a theme role named after
+  itself and an unthemed stack has none — so an unthemed stacked chart painted
+  every segment one teal, its structure visible only as hairline seams. The
+  ramp is four muted hues at similar lightness (`#4c9e8f` `#5379be` `#e2a54a`
+  `#b5604e`, first group first, cycling), so it says "different group" rather
+  than "more important".
+
+  `groupsDimmed` is the receded counterpart, **per group** rather than the flat
+  `dimmed`: a stack dimmed to one colour stops being a stack, and the
+  unselected bins a selection wants you to compare against become solid blocks.
+  Each entry is its ramp colour desaturated and lightened, keeping hue and
+  relative lightness.
+
+  Two deliberate boundaries. **Multi-group only** — `categories` and every
+  horizontal bar run the same stacked draw path with `G === 1`, and a ramp
+  there would repaint charts that have nothing to do with stacks, so a
+  single-group stack keeps `fill`. And a **`<BarChart colors>` override yields
+  the whole ramp**, dimmed entries included, since pairing the call site's hue
+  with the ramp's receded counterpart would dim a colour to one belonging to a
+  different colour entirely.
+
+  Resolution per group is unchanged apart from the new fallback:
+  `colors` → a role named after the group → the ramp → `fill`.
+
+- **charts: a selected segment of a group-ramped stack keeps its own colour.**
+  The outline and the receded neighbours are the cue — the same exclusion
+  `binFills` already gets, and for the same reason: replacing a
+  meaning-carrying colour with the flat `highlight` erases _which group_ is
+  selected, which is the thing the selection is about.
+
 ### Changed
 
 - **charts: mounting `<MultiSelector>` now changes the row's RESTING state —

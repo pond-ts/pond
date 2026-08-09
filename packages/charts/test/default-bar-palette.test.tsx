@@ -15,12 +15,29 @@
  *    theme object holds the right strings — including `emphasisOpacity`,
  *    which the palette relies on being `1` by default rather than setting.
  */
-import { describe, expect, it } from 'vitest';
-import { render } from '@testing-library/react';
+import { useContext, useEffect } from 'react';
+import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, render } from '@testing-library/react';
+import { TimeSeries } from 'pond-ts';
 import { defaultTheme } from '../src/theme.js';
 import { renderBrushBand } from '../src/brush.js';
+import { ChartContainer } from '../src/ChartContainer.js';
+import { ChartRow } from '../src/ChartRow.js';
+import { Layers } from '../src/Layers.js';
+import { BarChart } from '../src/BarChart.js';
+import { YAxis } from '../src/YAxis.js';
+import {
+  ContainerContext,
+  RowContext,
+  type ContainerFrame,
+  type RowFrame,
+  type SelectInfo,
+} from '../src/context.js';
+import { recordingContext, stubCanvasContext } from './canvas-mock.js';
 import type { ChartTheme } from '../src/theme.js';
 import type { ResolvedCursorFrame } from '../src/context.js';
+
+afterEach(cleanup);
 
 describe('defaultTheme.bar.default — the interaction-state palette', () => {
   const bar = defaultTheme.bar.default;
@@ -64,6 +81,202 @@ describe('defaultTheme.bar.default — the interaction-state palette', () => {
 
   it('leaves `secondary` on the warm accent — the palette is the default role only', () => {
     expect(defaultTheme.bar.secondary!.fill).toBe('#e8836b');
+  });
+
+  it('carries a four-hue stack ramp, and a receded counterpart per entry', () => {
+    // Without this an unthemed multi-group stack painted every segment
+    // `fill` — one solid teal column with hairline seams, which is not a
+    // stack. The dimmed ramp is per-entry for the same reason: a receded bin
+    // collapsed to one grey stops showing structure to compare against.
+    expect(bar.groups).toEqual(['#4c9e8f', '#5379be', '#e2a54a', '#b5604e']);
+    expect(bar.groupsDimmed).toHaveLength(bar.groups!.length);
+    expect(bar.groupsDimmed).toEqual([
+      '#c7cecd',
+      '#ced1d6',
+      '#dcd8d2',
+      '#d3cdcc',
+    ]);
+  });
+
+  it('starts the ramp near the resting fill, and keeps selection blue out of it', () => {
+    // The ramp has to look like the rest of the palette, so entry 0 is a teal
+    // close to `fill`. And no entry may be the selection blue — a resting
+    // segment the same colour as a committed one is the exact confusion the
+    // interaction palette exists to prevent.
+    expect(bar.groups![0]).toMatch(/^#4c9e8f$/);
+    expect(bar.groups).not.toContain(bar.highlight);
+    expect(bar.groups).not.toContain(bar.hover);
+  });
+});
+
+// ── the ramp through the draw path ──────────────────────────────────────────
+
+/** Mount a chart and run one draw pass, returning every `fillStyle` set. */
+function drawFills(
+  node: React.ReactNode,
+  props: Record<string, unknown> = {},
+  /** A category axis derives its domain from the layer, so it must NOT be
+   *  handed a `range` — that would resolve the axis as time instead. */
+  opts: { categorical?: boolean } = {},
+): string[] {
+  let cf: ContainerFrame | null = null;
+  let rf: RowFrame | null = null;
+  function Capture() {
+    const c = useContext(ContainerContext);
+    const r = useContext(RowContext);
+    useEffect(() => {
+      if (c) cf = c;
+      if (r) rf = r;
+    });
+    return null;
+  }
+  const stub = stubCanvasContext();
+  try {
+    render(
+      <ChartContainer
+        {...(opts.categorical ? {} : { range: [0, 4] as [number, number] })}
+        width={300}
+        {...props}
+      >
+        <ChartRow height={100}>
+          <YAxis id="a" min={0} max={20} />
+          <Layers>
+            {node}
+            <Capture />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+  } finally {
+    stub.restore();
+  }
+  const { ctx, calls } = recordingContext();
+  rf!.layers[0]!.layer.draw(ctx, cf!.xScale, rf!.yScales.get('a')!);
+  return calls
+    .filter((c) => c.type === 'set' && c.name === 'fillStyle')
+    .map((c) => String(c.args[0]));
+}
+
+/** Four bins × `n` groups, every segment a positive 2. */
+const stack = (n: number) => {
+  const cols = ['g0', 'g1', 'g2', 'g3'].slice(0, n);
+  return new TimeSeries({
+    name: 's',
+    schema: [
+      { name: 'timeRange', kind: 'timeRange' },
+      ...cols.map((c) => ({ name: c, kind: 'number' as const })),
+    ],
+    rows: Array.from({ length: 4 }, (_, i) => [
+      [i, i + 1],
+      ...cols.map(() => 2),
+    ]),
+  } as never);
+};
+
+describe('the stack group ramp resolves through the draw path', () => {
+  const cols4 = ['g0', 'g1', 'g2', 'g3'];
+
+  it('paints a multi-group stack from the ramp, one hue per group', () => {
+    const fills = drawFills(
+      <BarChart series={stack(4)} columns={cols4} axis="a" id="s" />,
+    );
+    // Every ramp entry is used, and nothing falls back to the flat `fill`.
+    expect(new Set(fills)).toEqual(new Set(defaultTheme.bar.default.groups));
+  });
+
+  it('leaves a SINGLE-group stack on `fill` — a ramp needs groups to tell apart', () => {
+    // The back-compat half, and the one that matters. Note it has to be a
+    // **categorical** (or horizontal) chart: a one-column *vertical* series
+    // normalizes to the single-series path and never reaches `stackStyle`, so
+    // testing it there would pass whatever the gate did ([PND-BARSEM]).
+    const fills = drawFills(
+      <BarChart
+        categories={[
+          { label: 'a', value: 3 },
+          { label: 'b', value: 7 },
+        ]}
+        axis="a"
+        id="s"
+      />,
+      {},
+      { categorical: true },
+    );
+    expect(fills.length).toBeGreaterThan(0);
+    expect(new Set(fills)).toEqual(new Set([defaultTheme.bar.default.fill]));
+  });
+
+  it('recedes the unselected bins per group, keeping the bands distinct', () => {
+    const selected: SelectInfo = {
+      id: 's',
+      key: 0,
+      value: 2,
+      color: '#000',
+      label: 'g0',
+    };
+    const fills = drawFills(
+      <BarChart series={stack(4)} columns={cols4} axis="a" id="s" />,
+      { selected: [selected] },
+    );
+    // The three unselected bins recede through the *dimmed ramp* — all four
+    // entries present, so a receded bin still reads as four bands.
+    for (const d of defaultTheme.bar.default.groupsDimmed!) {
+      expect(fills).toContain(d);
+    }
+    // …and the flat `dimmed` is not what painted them.
+    expect(fills).not.toContain(defaultTheme.bar.default.dimmed);
+  });
+
+  it('keeps a selected segment its own ramp colour, not the flat highlight', () => {
+    // A group ramp is meaning-carrying colour — the same exclusion `binFills`
+    // gets. Repainting the selection blue would erase which group it is,
+    // which is the one thing the selection is about.
+    const selected: SelectInfo = {
+      id: 's',
+      key: 0,
+      value: 2,
+      color: '#000',
+      label: 'g2',
+    };
+    const fills = drawFills(
+      <BarChart series={stack(4)} columns={cols4} axis="a" id="s" />,
+      { selected: [selected] },
+    );
+    expect(fills).toContain(defaultTheme.bar.default.groups![2]);
+    expect(fills).not.toContain(defaultTheme.bar.default.highlight);
+  });
+
+  it('yields the whole ramp to `<BarChart colors>` — an override owns the scale', () => {
+    // Half-honouring it would be worse than either: pairing the call site's
+    // hue with the *ramp's* receded counterpart dims a colour to something
+    // that belongs to a different colour entirely. So an override drops the
+    // dimmed ramp too, back to the flat `dimmed`.
+    const selected: SelectInfo = {
+      id: 's',
+      key: 0,
+      value: 2,
+      color: '#000',
+      label: 'g0',
+    };
+    const overridden = (
+      <BarChart
+        series={stack(4)}
+        columns={cols4}
+        axis="a"
+        id="s"
+        colors={{ g0: '#111', g1: '#222', g2: '#333', g3: '#444' }}
+      />
+    );
+    // At rest the override paints every segment — the ramp is out of it.
+    expect(new Set(drawFills(overridden))).toEqual(
+      new Set(['#111', '#222', '#333', '#444']),
+    );
+    // With a selection, the receded bins fall back to the flat `dimmed`
+    // rather than to ramp entries that no longer correspond to anything.
+    const fills = drawFills(overridden, { selected: [selected] });
+    expect(fills).toContain(defaultTheme.bar.default.dimmed);
+    for (const d of defaultTheme.bar.default.groupsDimmed!) {
+      expect(fills).not.toContain(d);
+    }
   });
 });
 

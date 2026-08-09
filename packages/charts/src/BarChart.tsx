@@ -735,11 +735,32 @@ export function BarChart<
   const groups = shape.kind === 'stacked' ? shape.ss.groups : undefined;
   const stackStyle = useMemo<StackStyle>(() => {
     const base = bar.default;
+    // The theme's **group ramp** — multi-group only, since a ramp exists to
+    // tell groups apart and `G === 1` (every categorical and single-series
+    // chart runs this same path) has nothing to tell apart. Resolution per
+    // group: `colors` → a role named after the group → the ramp → `fill`.
+    const multi = (groups?.length ?? 0) > 1;
+    const ramp = multi ? base.groups : undefined;
+    const rampDim = multi ? base.groupsDimmed : undefined;
+    const at = (r: readonly string[], i: number) => r[i % r.length]!;
     const fills = (groups ?? []).map(
-      (g) => colors?.[g] ?? (bar[g] ?? base).fill,
+      (g, i) =>
+        colors?.[g] ??
+        bar[g]?.fill ??
+        (ramp !== undefined ? at(ramp, i) : base.fill),
     );
+    // A ramp entry the call site overrode is no longer the ramp's colour, so
+    // its receded counterpart would be wrong — the whole ramp only means
+    // anything when it is the ramp that painted it.
+    const ramped = ramp !== undefined && colors === undefined;
     return {
       fills,
+      ...(ramped ? { groupColored: true } : {}),
+      ...(ramped && rampDim !== undefined
+        ? {
+            dimmedFills: (groups ?? []).map((_g, i) => at(rampDim, i)),
+          }
+        : {}),
       opacity: base.opacity,
       outlineWidth: base.outlineWidth,
       // [PND-CATEMPH] Forward the themed emphasis so the category / horizontal

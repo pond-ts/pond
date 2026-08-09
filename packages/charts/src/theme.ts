@@ -430,6 +430,38 @@ export interface BarStyle {
    */
   readonly bands?: readonly string[];
   /**
+   * The **stack group ramp** — ordered fills for a *multi-group* stack's
+   * segments, `groups[0]` for the first (bottom / left) group. Cycles when the
+   * stack has more groups than the ramp has entries.
+   *
+   * Sibling of {@link bands}, and here for the same reason (a `theme.bar`
+   * top-level key would collide with a role of that name) — but a different
+   * axis: `bands` colours one bar *along its length* against a threshold
+   * ladder, this colours *across the groups* of one bin.
+   *
+   * **Multi-group only.** A ramp exists to tell groups apart, so with one group
+   * there is nothing to tell apart and the bar keeps its {@link fill} — which
+   * is what keeps every categorical and single-series chart (both of which run
+   * the stacked draw path with `G === 1`) exactly as it was.
+   *
+   * Resolution order per group: `<BarChart colors>` → a theme role named after
+   * the group (`bar.web`) → this ramp → {@link fill}. So a named role still
+   * wins, and the ramp is the fallback that makes an *unthemed* stack legible
+   * instead of painting every segment one colour.
+   */
+  readonly groups?: readonly string[];
+  /**
+   * The receded counterpart of {@link groups}, same order and cycling — what a
+   * segment fades to when a selection exists elsewhere.
+   *
+   * Per-group rather than the flat {@link dimmed}, because a stack dimmed to a
+   * single colour stops being a stack: the segment boundaries vanish and the
+   * unselected columns read as solid blocks. Each entry is its ramp colour
+   * desaturated and lightened, so the bin keeps its structure while clearly
+   * receding.
+   */
+  readonly groupsDimmed?: readonly string[];
+  /**
    * Stroke for a **selected** bar's outline, where the default is the bar's own
    * resolved fill. The one selection cue that still works when the fill cannot
    * change — a `binColors` bar keeps its own colour by design, so without this
@@ -603,6 +635,18 @@ export const defaultTheme: ChartTheme = {
       // ok/warning/alarm ladder out of the box; a longer `thresholds` needs a
       // longer ladder from the theme or `bandColors`.
       bands: ['#2A9D8F', '#e8a13c', '#d64545'],
+      // The **stack group ramp**, first group first (so a vertical stack reads
+      // teal at the bottom up to terracotta). Four muted hues at similar
+      // lightness, so no segment shouts over its neighbours the way a
+      // saturation ladder would — the ramp says "different group", not
+      // "more important". It starts on a teal near the resting `fill` so a
+      // two-group stack still looks like the rest of the palette.
+      groups: ['#4c9e8f', '#5379be', '#e2a54a', '#b5604e'],
+      // Each ramp entry desaturated (~×0.18) and lightened toward the ground,
+      // keeping its hue and its *relative* lightness — so a receded bin still
+      // reads as four bands rather than one grey block, and the amber stays
+      // the lightest of them as it is in the vivid ramp.
+      groupsDimmed: ['#c7cecd', '#ced1d6', '#dcd8d2', '#d3cdcc'],
     },
     secondary: {
       fill: '#e8836b',

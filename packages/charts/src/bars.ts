@@ -885,6 +885,26 @@ export interface StackStyle {
    * dimmed value simply replaces it while it is out of the set.
    */
   readonly dimmed?: string;
+  /**
+   * Per-group {@link dimmed}, parallel to {@link fills} — the resolved
+   * `theme.bar.default.groupsDimmed` ramp. Set only for a **group-ramped**
+   * stack; `undefined` falls back to the flat {@link dimmed}.
+   *
+   * A stack dimmed to one colour stops being a stack — the segment boundaries
+   * vanish and the receded bins read as solid blocks, which is exactly the
+   * structure a selection wants to keep visible for comparison.
+   */
+  readonly dimmedFills?: readonly string[];
+  /**
+   * Whether {@link fills} carry **group identity** (a resolved group ramp)
+   * rather than being one repeated role colour.
+   *
+   * When they do, a selected segment keeps its own fill and the outline plus
+   * the receded neighbours are the cue — the same exclusion {@link binFills}
+   * already gets, and for the same reason: replacing a meaning-carrying colour
+   * with the flat `highlight` destroys the thing the selection is *about*.
+   */
+  readonly groupColored?: boolean;
 }
 
 /** The narrowed selection / hover identity a stacked segment matches against:
@@ -1140,7 +1160,8 @@ export function drawStacks(
   // opted-in theme.
   const hasSpans = spans.length > 0;
   const dimming =
-    style.dimmed !== undefined && (selection.length > 0 || hasSpans);
+    (style.dimmed !== undefined || style.dimmedFills !== undefined) &&
+    (selection.length > 0 || hasSpans);
   // The large-set switch (see barMatchesAny): a sweep preview / demoted sweep
   // indexes once, a clicked handful keeps the linear scan.
   const selIndex =
@@ -1250,7 +1271,7 @@ export function drawStacks(
         // orientation — vertical bars band along y, horizontal along x, while
         // the bin span (the other axis) is shared by every band.
         if (dimming && !selected && !isHovered) {
-          ctx.fillStyle = style.dimmed!;
+          ctx.fillStyle = style.dimmedFills?.[g] ?? style.dimmed ?? fill;
           ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
           continue;
         }
@@ -1287,14 +1308,19 @@ export function drawStacks(
       // Same precedence as `drawBars`: selected > hovered > dimmed > rest.
       const emphasised =
         dimming && !selected && !isHovered
-          ? style.dimmed!
-          : style.binFills === undefined
-            ? selected
-              ? (style.highlight ?? fill)
+          ? (style.dimmedFills?.[g] ?? style.dimmed ?? fill)
+          : style.binFills !== undefined
+            ? fill
+            : selected
+              ? // A group ramp is meaning-carrying colour, so a selected
+                // segment keeps it: the outline and the receded neighbours are
+                // the cue. Same exclusion `binFills` gets, one line up.
+                style.groupColored
+                ? fill
+                : (style.highlight ?? fill)
               : isHovered
                 ? (style.hover ?? style.highlight ?? fill)
-                : fill
-            : fill;
+                : fill;
       ctx.fillStyle = emphasised;
       ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
       if (selected) {
