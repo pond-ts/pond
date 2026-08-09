@@ -391,6 +391,7 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 | `SpanSelection`                            | Range entry for `selected` — one layer's marks over `x`/`y`/`rows` (RFC A5.2)    | `packages/charts/src/context.ts`          |
 | `SelectionEntry`                           | One `selected` array entry: `SelectInfo \| SpanSelection`                        | `packages/charts/src/context.ts`          |
 | `selectionContains`                        | Is a hit in a mixed selection? The same membership predicate the layers run      | `packages/charts/src/span.ts`             |
+| `sameMark`                                 | Are two hits the same mark? Full identity (`id`, `mark`-or-`key`, `label`)       | `packages/charts/src/span.ts`             |
 | `isSpanSelection`                          | Entry discriminant — narrows a `SelectionEntry` to `SpanSelection`               | `packages/charts/src/span.ts`             |
 | `DrawStatsFrame` / `LayerDrawInfo`         | Per-repaint draw-cost + decimation stats (`ChartContainer` `onDrawStats`)        | `packages/charts/src/context.ts`          |
 | `TimeGrain`                                | Coarse time unit for grain-aware formatting                                      | `packages/charts/src/tickLadder.ts`       |

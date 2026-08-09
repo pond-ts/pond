@@ -6,6 +6,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { YAxis } from './YAxis.js';
 import { Selector, MultiSelector } from './selectors.js';
+import { sameMark } from './span.js';
 import { RangeCursor } from './cursors.js';
 import type { SelectInfo, SelectionEntry } from './context.js';
 import { caption, type ChartFixture } from './selection-fixtures.js';
@@ -174,8 +175,6 @@ export function makeSelectorStories(fx: ChartFixture): SelectorStories {
           marginRight: 6,
           cursor: 'pointer',
         } as const;
-        const same = (a: SelectInfo, b: SelectInfo) =>
-          a.mark !== undefined ? a.mark === b.mark : a.key === b.key;
         return (
           <div>
             <div style={{ marginBottom: 8 }}>
@@ -185,8 +184,8 @@ export function makeSelectorStories(fx: ChartFixture): SelectorStories {
                   style={btn}
                   onClick={() =>
                     setSel((cur) =>
-                      cur.some((m) => same(m, p.info))
-                        ? cur.filter((m) => !same(m, p.info))
+                      cur.some((m) => sameMark(m, p.info))
+                        ? cur.filter((m) => !sameMark(m, p.info))
                         : [...cur, p.info],
                     )
                   }
@@ -213,8 +212,6 @@ export function makeSelectorStories(fx: ChartFixture): SelectorStories {
       render: function Render() {
         const [sel, setSel] = useState<readonly SelectInfo[]>([]);
         const [last, setLast] = useState('—');
-        const same = (a: SelectInfo, b: SelectInfo) =>
-          a.mark !== undefined ? a.mark === b.mark : a.key === b.key;
         return (
           <div>
             <Chart fx={fx} selected={sel}>
@@ -231,8 +228,8 @@ export function makeSelectorStories(fx: ChartFixture): SelectorStories {
                   setSel((cur) => {
                     if (hit === null) return [];
                     if (!(mods?.additive ?? false)) return [hit];
-                    return cur.some((m) => same(m, hit))
-                      ? cur.filter((m) => !same(m, hit))
+                    return cur.some((m) => sameMark(m, hit))
+                      ? cur.filter((m) => !sameMark(m, hit))
                       : [...cur, hit];
                   });
                 }}
@@ -480,10 +477,15 @@ export function makeMultiSelectorStories(
                   if (hit === undefined) return setSel([]);
                   if (!(mods?.additive ?? false)) return setSel([hit]);
                   // Demote: the span becomes the marks it covered, minus this one.
+                  // `sameMark`, not `m.key !== hit.key`. A key IS a bar's
+                  // identity, so the shorter test looks right — and on a
+                  // stack or a heat map it knocks out every mark in the bin
+                  // instead of the one clicked, which is what this story was
+                  // doing until a heat-map demote left a column-shaped hole.
                   setSel((cur) =>
                     cur.flatMap((e) =>
                       'kind' in e && e.kind === 'span'
-                        ? stash.filter((m) => m.key !== hit.key)
+                        ? stash.filter((m) => !sameMark(m, hit))
                         : [e],
                     ),
                   );

@@ -62,6 +62,21 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: new `sameMark(a, b)` export** — the full mark identity (`id`,
+  `mark`-or-`key`, `label`), companion to `selectionContains`, whose doc has
+  always told a consumer to write `remove(cur, hit)` without giving them
+  anything to write it with.
+
+### Fixed
+
+- **charts: `<MultiSelector>`'s demote-on-edit stories removed a whole bin
+  instead of the clicked mark.** They filtered on `m.key !== hit.key`, which
+  is a bar's identity but only half of a stack segment's or a heat cell's —
+  so ⌘-clicking one cell inside a swept heat-map region knocked out every row
+  of its column. Visible as a column-shaped hole in the selection's outline;
+  the outline was faithfully drawing a wrong selection. All three
+  hand-rolled identity tests in `selection-stories.tsx` now call `sameMark`.
+
 - **charts: a rect-sweeping row rests as a small crosshair** — the last piece
   of the 2-D brush. Under a mounted `<MultiSelector>`, a row whose topmost
   sweepable layer cuts a rect (a scatter, a heat map) shows a compact grey `+`
