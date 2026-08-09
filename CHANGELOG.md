@@ -62,6 +62,24 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: a rect-sweeping row rests as a small crosshair** — the last piece
+  of the 2-D brush. Under a mounted `<MultiSelector>`, a row whose topmost
+  sweepable layer cuts a rect (a scatter, a heat map) shows a compact grey `+`
+  at the pointer; a drag pins that same `+` at the anchor, adds a second at
+  the pointer, and spans the blue rect between them.
+
+  It is deliberately _not_ a full-plot crosshair. That is a value-reading
+  instrument — it exists to project the pointer onto both axes — whereas this
+  marks a corner a rect would start from, and the rect draws its own edges out
+  to those axes the moment a drag begins. Plot-spanning rules would add two
+  more lines to a picture that is about to have them anyway.
+
+  It replaces the resting _band_, which a 2-D row should never have shown: a
+  band previews the snap block, and the block is a whole x column while the
+  drag beside it captures a rect. New `RowLayer.sweepsRect` declares which
+  shape a layer sweeps, so the resting cursor can ask without building a
+  per-drag session.
+
 - **charts: `<ScatterChart>` and `<HeatMap>` index a large selection set
   instead of scanning it** — the live-preview repaint on both goes from
   seconds to milliseconds. `bars.ts` grew a per-draw set index at 16 entries

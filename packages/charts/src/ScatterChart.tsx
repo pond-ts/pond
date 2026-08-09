@@ -363,6 +363,9 @@ export function ScatterChart<
                * for that point, so a swept point and a clicked one are the
                * same currency.
                */
+              // A point/cell owns a position, not a column: the sweep is a rect, and
+              // the resting cursor is the small crosshair rather than a band.
+              sweepsRect: true,
               beginSweep: (): SweepSession | null =>
                 cs.length === 0
                   ? null

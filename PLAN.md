@@ -238,8 +238,20 @@ milestone. Plan:
   happens when there is a selection, so it is documented in the bench header
   rather than optimised away.
 
-  What is left: the **at-rest small grey crosshair** (the drag pair exists;
-  the resting one is cursor work).
+  **Shipped — the resting crosshair, and with it the whole of
+  [PND-INTERACT2D]'s visual model.** A rect-sweeping row now rests as a small
+  grey `+` and the drag pins the same mark at its anchor, so the gesture reads
+  as picking up what was already under the cursor. It replaces the resting
+  _band_, which a 2-D row should never have had — the band previews the snap
+  block, and the block is a whole column while the drag captures a rect.
+
+  The fact is declared on the layer (`RowLayer.sweepsRect`) rather than
+  derived from a session, because at rest there is no drag to build one for
+  and snapshotting the layer's arrays to answer a yes/no question is the wrong
+  shape. It is the same fact `SweepSession.twoD` reports, so
+  `test/sweep-capabilities.test.ts` pins their agreement across every
+  sweep-capable layer — and does it by building the real session rather than
+  reading the flag back, or the test would agree with itself.
 
 - **[PND-INTERACTCONF]** — **The conformance tail.** The **list family** joins
   the sweep. (`<BoxPlot>` has now joined: a box is an aggregation owning one

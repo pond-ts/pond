@@ -126,6 +126,20 @@ function beginTopmostSweep(
   return null;
 }
 
+/**
+ * Does the topmost sweep-capable layer cut a **rect**? The render-time,
+ * session-free counterpart of {@link beginTopmostSweep} — same z-order rule,
+ * reading each layer's `sweepsRect` declaration, so the resting cursor and
+ * the gesture cannot disagree about which shape this row is.
+ */
+function topmostSweepsRect(layers: RowFrame['layers']): boolean {
+  for (let i = layers.length - 1; i >= 0; i -= 1) {
+    const l = layers[i]!.layer;
+    if (l.beginSweep !== undefined) return l.sweepsRect === true;
+  }
+  return false;
+}
+
 /** Same marks, by full identity — so a recomputed resting block can keep the
  *  CACHED array's reference when nothing actually changed. The layer registry
  *  re-identifies on every hover commit (the entries close over the hovered
@@ -454,21 +468,36 @@ export function Layers({ children }: LayersProps) {
   //   consumer actually set — both register non-`implicit` entries and keep
   //   their own slots (a mounted `<RangeCursor>` already draws this same
   //   band; a `<CrosshairCursor>` keeps its crosshair).
+  //
+  // Which of the two the row gets is the TOPMOST sweep-capable layer's
+  // business (§8's z-order rule again, and the same rule `beginTopmostSweep`
+  // follows) — but answered from the layer's `sweepsRect` declaration rather
+  // than by building a session, because at rest there is no drag to build one
+  // for.
+  const sweeps = container.hasMultiSelector(row.rowKey);
+  const rectPreview = sweeps && topmostSweepsRect(layers);
   const blockPreview =
-    container.hasMultiSelector(row.rowKey) &&
+    sweeps &&
+    !rectPreview &&
     layers.some((e) => e.layer.beginSweep !== undefined);
-  const restingBand =
-    blockPreview &&
+  // The resting brush replaces the implicit cursor either way; only its SHAPE
+  // differs. A 2-D row gets no band: its snap block is a whole x column while
+  // a drag there captures a rect, so a band would advertise a set the gesture
+  // never selects (the same reason the block hover opts out).
+  const restingBrush =
+    (blockPreview || rectPreview) &&
     !editingActive &&
     effectiveCursorEntries(container.cursors, row.rowKey).every(
       (e) => e.implicit === true,
     );
+  const restingBand = restingBrush && !rectPreview;
+  const restingCross = restingBrush && rectPreview;
   const cursorEntries = useMemo(
     () =>
-      editingActive || sweeping || restingBand
+      editingActive || sweeping || restingBrush
         ? []
         : effectiveCursorEntries(container.cursors, row.rowKey),
-    [editingActive, sweeping, restingBand, container.cursors, row.rowKey],
+    [editingActive, sweeping, restingBrush, container.cursors, row.rowKey],
   );
   const wantsSamples = cursorEntries.some((e) => e.wants.samples);
   const wantsFlags = cursorEntries.some((e) => e.wants.flags);
@@ -1558,6 +1587,7 @@ export function Layers({ children }: LayersProps) {
     bandLine,
     bandDragging,
     rect: sweepRect,
+    restingCross,
     formattedTime,
     plotWidth,
     rowHeight: row.height,

@@ -805,6 +805,21 @@ export interface RowLayer {
     yScale: (value: number) => number,
   ): SweepSession | null;
   /**
+   * Whether a sweep over this layer cuts a **rect** rather than a band — the
+   * same fact {@link SweepSession.twoD} reports, declared on the layer because
+   * the RESTING state has to know it and there is no session at rest.
+   *
+   * It decides what the row's resting cursor is: a band over the snap block
+   * for a 1-D layer, a small crosshair at the pointer for a 2-D one (a rect
+   * gesture has no resting block to preview — see `Layers`). Building a
+   * per-drag session just to ask would be the wrong shape and would snapshot
+   * the layer's arrays for nothing.
+   *
+   * Must agree with the session the layer's own `beginSweep` returns;
+   * `sweep-capabilities.test.ts` pins that across every layer.
+   */
+  readonly sweepsRect?: boolean;
+  /**
    * Draw into the plot canvas. `xScale`/`yScale` map data→pixels. May return
    * {@link LayerDrawStats} (source/drawn counts + whether decimation engaged) so
    * the container can surface them via {@link ContainerProps.onDrawStats}; a
@@ -1380,6 +1395,19 @@ export interface ResolvedCursorFrame {
     readonly y0: number;
     readonly y1: number;
   } | null;
+  /**
+   * Draw the **resting** 2-D brush — a small grey `+` at the pointer, the
+   * rect gesture's answer to {@link band}'s resting block preview.
+   *
+   * Small on purpose, and not a crosshair in the usual sense. A full-plot
+   * crosshair is a value-reading instrument: it exists to project the pointer
+   * onto both axes. This one marks *a corner a rect would start from*, and
+   * the rect draws its own edges out to those axes the moment a drag begins —
+   * so plot-spanning rules would add two more lines to a picture that is
+   * about to have them anyway. The compact `+` says "here", which is all a
+   * corner needs to say.
+   */
+  readonly restingCross: boolean;
   /** The cursor time, formatted by the container's readout channel
    *  (`formatReadout ?? formatTime` in a row; the axis's own resolved readout
    *  formatter in the x-axis slot). `null` when out of bounds / not wanted. */

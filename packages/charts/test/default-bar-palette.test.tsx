@@ -392,6 +392,7 @@ function frame(
   return {
     bandDragging: dragging,
     rect: null,
+    restingCross: false,
     cursorX: 40,
     cursorY: null,
     rowKey: null,

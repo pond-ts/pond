@@ -237,6 +237,24 @@ export function renderBrushBand(f: ResolvedCursorFrame): ReactNode {
  *  four lines across a plot the rect is already dividing. */
 const BRUSH_CROSS_PX = 5;
 
+/** One brush crosshair — the same `+` at rest and at each end of a drag's
+ *  diagonal, so the resting mark reads as the thing the drag then picks up. */
+function brushCross(
+  key: number | string,
+  cx: number,
+  cy: number,
+  stroke: string,
+): ReactNode {
+  const x = Math.round(cx);
+  const y = Math.round(cy);
+  return (
+    <g key={key} stroke={stroke} strokeWidth={1} shapeRendering="crispEdges">
+      <line x1={x - BRUSH_CROSS_PX} y1={y} x2={x + BRUSH_CROSS_PX} y2={y} />
+      <line x1={x} y1={y - BRUSH_CROSS_PX} x2={x} y2={y + BRUSH_CROSS_PX} />
+    </g>
+  );
+}
+
 /**
  * The **2-D brush renderer** — the rect a sweep paints over a `twoD` layer
  * (a scatter, a heat map), the counterpart of {@link renderBrushBand} and
@@ -249,9 +267,20 @@ const BRUSH_CROSS_PX = 5;
  * both crosses on the same diagonal regardless of which way the drag went.
  */
 export function renderBrushRect(f: ResolvedCursorFrame): ReactNode {
-  const r = f.rect;
-  if (r === null) return null;
   const ink = f.theme.cursor ?? f.theme.axis.label;
+  const r = f.rect;
+  if (r === null) {
+    // At rest: one grey `+` at the pointer, in the hovered row only. It is
+    // the same mark the drag then pins at its anchor — the gesture reads as
+    // picking up what was already under the cursor, rather than swapping one
+    // kind of cursor for another.
+    return f.restingCross &&
+      f.cursorX !== null &&
+      f.cursorY !== null &&
+      f.rowKey === f.hoveredRowKey
+      ? brushCross('rest', f.cursorX, f.cursorY, ink)
+      : null;
+  }
   const brush = f.theme.brush;
   const fill = brush?.fill ?? ink;
   const opacity = brush === undefined ? 0.12 : 1;
@@ -275,22 +304,7 @@ export function renderBrushRect(f: ResolvedCursorFrame): ReactNode {
       {[
         [r.x0, r.y0],
         [r.x1, r.y1],
-      ].map(([cx, cy], i) => (
-        <g key={i} stroke={edge} strokeWidth={1} shapeRendering="crispEdges">
-          <line
-            x1={Math.round(cx!) - BRUSH_CROSS_PX}
-            y1={Math.round(cy!)}
-            x2={Math.round(cx!) + BRUSH_CROSS_PX}
-            y2={Math.round(cy!)}
-          />
-          <line
-            x1={Math.round(cx!)}
-            y1={Math.round(cy!) - BRUSH_CROSS_PX}
-            x2={Math.round(cx!)}
-            y2={Math.round(cy!) + BRUSH_CROSS_PX}
-          />
-        </g>
-      ))}
+      ].map(([cx, cy], i) => brushCross(i, cx!, cy!, edge))}
     </>
   );
 }
