@@ -858,6 +858,18 @@ export interface SweepSession {
  */
 export interface SweepGesture {
   /**
+   * Whether an in-scope `<MultiSelector>` **declared a `sequence`** — i.e. the
+   * consumer said selection happens in bucket units rather than in marks.
+   *
+   * This is what widens a *click* from the mark under the pointer to the whole
+   * snap block (RFC §8). It has to be the declaration and not a property of
+   * what the block happened to contain: a stack's bin holds one mark per
+   * group, so "the block covers more than one mark" is true of an ordinary
+   * single-bin click on a stacked chart, and using that as the test made a
+   * click there select the whole bin instead of the clicked segment.
+   */
+  readonly snapped: boolean;
+  /**
    * The frame-coalesced **live preview**: light `hits` through the plural
    * `hovered` (RFC A3.4 — the library owns the state, each layer renders its
    * own hover treatment) and report them to the `<MultiSelector>`s in scope.

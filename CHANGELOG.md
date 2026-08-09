@@ -98,11 +98,16 @@ include new features and type-level changes; patch bumps are strictly additive.
   descriptor a sweep of that block would produce, so a consumer needs no
   click-versus-drag branch.
 
-  **Without a `sequence` nothing changes**: the block _is_ the single bin, so
-  a click still reports one mark with a null span and stays distinguishable
-  from a sweep (RFC §8). Setting a `sequence` is the consumer declaring that
-  selection happens in bucket units, and that declaration is what widens the
-  click.
+  **Without a `sequence` nothing changes**: a click still reports one mark
+  with a null span and stays distinguishable from a sweep (RFC §8). The test
+  is the **declaration** — an in-scope `<MultiSelector sequence={…}>` — and
+  deliberately not "the block covers more than one mark", which is a different
+  question on a stacked chart, where one bin holds one mark per group and an
+  ordinary unsnapped click would otherwise swallow the whole column.
+
+  On a stack a snapped click therefore commits `bins × groups` marks under one
+  span — 21 for a seven-day bucket over a three-group stack — while an
+  unsnapped one still selects the single segment under the pointer.
 
 - **charts: the brush band's edge rules now draw only while a drag is in
   flight.** The band renders in two states — previewing the block a drag

@@ -1247,23 +1247,29 @@ export function Layers({ children }: LayersProps) {
     // commits the same block, through the same session the drag uses — one
     // code path, so rest, click and sweep cannot disagree.
     //
-    // **Only when snapping actually widens it.** With no `sequence` the block
-    // is the single bin under the pointer, and this falls through to the
-    // one-mark `select` below unchanged — which is what keeps a click
+    // **Only when a `sequence` was declared** (`gesture.snapped`). With none,
+    // the block is the single bin under the pointer and this falls through to
+    // the one-mark `select` below unchanged — which is what keeps a click
     // distinguishable from a sweep by its `null` span (RFC §8: a click is a
     // click). A `sequence` is an explicit declaration that selection happens
     // in bucket units, and *that* is what earns the wider commit.
+    //
+    // The test has to be the declaration rather than "the block covers more
+    // than one mark", which is what it was first written as. A **stack**'s bin
+    // holds one mark per group, so the mark-count test fired on an ordinary
+    // unsnapped click and swallowed the whole bin instead of the clicked
+    // segment — found walking `MultiSelector/Stacked/ClickStillSelectsOne`.
     if (hit !== null && c.hasMultiSelector(r.rowKey)) {
       const px = e.clientX - rect.left;
       const span = regionSpan(c.cursorBuckets ?? [], +c.xScale.invert(px));
       const gesture = span === null ? null : c.resolveSweep(r.rowKey);
-      if (span !== null && gesture !== null) {
+      if (span !== null && gesture !== null && gesture.snapped) {
         const session = beginTopmostSweep(c, r);
         if (session !== null) {
           session.update(span.start, span.end);
           const hits = session.hits();
           const extent = session.extent();
-          if (hits.length > 1 && extent !== null) {
+          if (hits.length > 0 && extent !== null) {
             gesture.commit(hits, modifiers, {
               kind: 'span',
               id: session.id,

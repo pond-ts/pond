@@ -1291,4 +1291,88 @@ describe('a click commits the block it previewed (sequence-snapped)', () => {
     expect(seen[0]!.hits).toHaveLength(1);
     expect(seen[0]!.span).toBeNull();
   });
+
+  it('on a STACK with no sequence, a click is the clicked segment — not the bin', () => {
+    // The regression the mark-count guard caused. A stack's bin holds one mark
+    // per group, so "the block covers more than one mark" is true of an
+    // ordinary unsnapped click here — and the click swallowed the whole
+    // column. The widening has to key off the `sequence` *declaration*, which
+    // this chart makes no use of.
+    const stacked = () =>
+      new TimeSeries({
+        name: 's',
+        schema: [
+          { name: 'timeRange', kind: 'timeRange' },
+          { name: 'lo', kind: 'number' },
+          { name: 'hi', kind: 'number' },
+        ] as const,
+        rows: Array.from({ length: 4 }, (_, i) => [
+          [i * 250, (i + 1) * 250],
+          2,
+          3,
+        ]) as [[number, number], number, number][],
+      });
+    const seen: {
+      hits: readonly SelectInfo[];
+      span: SpanSelection | null;
+    }[] = [];
+    const { click, pxAt } = mount({
+      children: (
+        <MultiSelector
+          onSelect={(hits, _m, span) => seen.push({ hits, span })}
+        />
+      ),
+      layers: (
+        <BarChart series={stacked()} columns={['lo', 'hi']} axis="a" id="b" />
+      ),
+    });
+    // POINTER_Y (115) on a 0..12 axis over 120px is value ~0.4 — inside the
+    // BOTTOM segment, so the clicked mark is unambiguously `lo`.
+    act(() => click(pxAt(120)));
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.hits).toHaveLength(1);
+    expect(seen[0]!.hits[0]!.label).toBe('lo');
+    expect(seen[0]!.span).toBeNull();
+  });
+
+  it('a sequence still widens a stacked click — to every mark in the bucket', () => {
+    // The other half: the declaration is what widens, and on a stack a widened
+    // block is (bins × groups). Two bins per bucket × two groups = four.
+    const stacked = () =>
+      new TimeSeries({
+        name: 's',
+        schema: [
+          { name: 'timeRange', kind: 'timeRange' },
+          { name: 'lo', kind: 'number' },
+          { name: 'hi', kind: 'number' },
+        ] as const,
+        rows: Array.from({ length: 4 }, (_, i) => [
+          [i * 250, (i + 1) * 250],
+          2,
+          3,
+        ]) as [[number, number], number, number][],
+      });
+    const seen: {
+      hits: readonly SelectInfo[];
+      span: SpanSelection | null;
+    }[] = [];
+    const { click, pxAt } = mount({
+      children: (
+        <MultiSelector
+          sequence={twoPerBucket()}
+          onSelect={(hits, _m, span) => seen.push({ hits, span })}
+        />
+      ),
+      layers: (
+        <BarChart series={stacked()} columns={['lo', 'hi']} axis="a" id="b" />
+      ),
+    });
+    act(() => click(pxAt(120)));
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.hits).toHaveLength(4);
+    expect(seen[0]!.span).not.toBeNull();
+    expect(seen[0]!.span!.x).toEqual([0, 500]);
+  });
 });

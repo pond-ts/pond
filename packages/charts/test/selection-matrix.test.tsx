@@ -6,6 +6,8 @@ import * as selectorCategorical from '../src/SelectorCategorical.stories.js';
 import * as selectorBarChart from '../src/SelectorBarChart.stories.js';
 import * as multiCategorical from '../src/MultiSelectorCategorical.stories.js';
 import * as multiBarChart from '../src/MultiSelectorBarChart.stories.js';
+import * as selectorStacked from '../src/SelectorStacked.stories.js';
+import * as multiStacked from '../src/MultiSelectorStacked.stories.js';
 import * as multiTradingSessions from '../src/MultiSelectorTradingSessions.stories.js';
 import { makeSessionStories } from '../src/selection-stories.js';
 import {
@@ -59,6 +61,7 @@ describe('the selection matrix covers the same features in every column', () => 
   it('<Selector>: both columns, identical feature set', () => {
     expect(namesOf(selectorCategorical)).toEqual(SELECTOR_FEATURES);
     expect(namesOf(selectorBarChart)).toEqual(SELECTOR_FEATURES);
+    expect(namesOf(selectorStacked)).toEqual(SELECTOR_FEATURES);
   });
 
   it('<MultiSelector>: identical except the declared sequence gap', () => {
@@ -67,6 +70,9 @@ describe('the selection matrix covers the same features in every column', () => 
     // gap is *information* — asserted, not merely allowed.
     expect(namesOf(multiCategorical)).toEqual(MULTI_FEATURES);
     expect(namesOf(multiBarChart)).toEqual(
+      [...MULTI_FEATURES, 'SweepWithSequence'].sort(),
+    );
+    expect(namesOf(multiStacked)).toEqual(
       [...MULTI_FEATURES, 'SweepWithSequence'].sort(),
     );
     // The trading column adds the session pair on top of the sequence cell —
@@ -96,7 +102,9 @@ describe.each([
   ['Selector/Categorical', selectorCategorical],
   ['Selector/BarChart', selectorBarChart],
   ['MultiSelector/Categorical', multiCategorical],
+  ['Selector/Stacked', selectorStacked],
   ['MultiSelector/BarChart', multiBarChart],
+  ['MultiSelector/Stacked', multiStacked],
   ['MultiSelector/TradingSessions', multiTradingSessions],
 ])('%s stories render', (_group, mod) => {
   for (const [name, story] of Object.entries(mod).filter(

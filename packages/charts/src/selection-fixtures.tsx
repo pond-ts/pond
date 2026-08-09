@@ -200,6 +200,81 @@ export const timeBars: ChartFixture = {
   rangeCursor: true,
 };
 
+// ── Stacked bars (many marks per bin) ──────────────────────────────────────
+
+/** The stack's groups, bottom → top. */
+const TIERS = ['web', 'api', 'db'] as const;
+
+/** Twenty daily bins, three positive segments each. */
+const stacked = () =>
+  new TimeSeries({
+    name: 'tiers',
+    schema: [
+      { name: 'timeRange', kind: 'timeRange' },
+      { name: 'web', kind: 'number' },
+      { name: 'api', kind: 'number' },
+      { name: 'db', kind: 'number' },
+    ] as const,
+    rows: Array.from({ length: 20 }, (_, i) => [
+      [D0 + i * DAY, D0 + (i + 1) * DAY],
+      3 + 2 * Math.sin(i / 2),
+      2 + 1.5 * Math.sin(i / 3 + 1),
+      1.5 + Math.sin(i * 1.7),
+    ]) as [[number, number], number, number, number][],
+  });
+
+/**
+ * **A stacked bar chart** — the column where a bin holds *many* marks.
+ *
+ * Every other column is one mark per x position, so "the mark under the
+ * pointer" and "the bin under the pointer" are the same thing and nothing
+ * distinguishes them. Here they come apart: a wide series carries no stable
+ * per-bin `mark`, so a segment's identity is the pair **`(key = bin begin,
+ * label = group)`** and one bin's three segments share a key. That is the
+ * axis this column exercises — click resolves to a segment, while a sweep
+ * materialises *every* drawn segment of every covered bin.
+ */
+export const stackedBars: ChartFixture = {
+  name: 'Stacked',
+  container: { range: [D0, D0 + 20 * DAY] },
+  axis: { id: 'v', min: 0, max: 12, label: '' },
+  renderLayer: (id) => (
+    <BarChart series={stacked()} columns={TIERS} axis="v" id={id} />
+  ),
+  secondary: {
+    axis: { id: 'e', min: 0, max: 3, label: 'errors' },
+    renderLayer: (id) => (
+      <BarChart series={dailyErrors()} column="v" axis="e" id={id} as="warn" />
+    ),
+  },
+  // A segment is picked by `(key, label)` — `stackIndexMatches` falls to
+  // `labelsByKey` when the series carries no stable marks, so an external
+  // control naming only the day would match nothing.
+  picks: [
+    { day: 0, tier: 'web' },
+    { day: 4, tier: 'api' },
+    { day: 9, tier: 'db' },
+  ].map(({ day, tier }) => ({
+    label: `${isoDay(D0 + day * DAY)}·${tier}`,
+    info: {
+      id: 'svc',
+      key: D0 + day * DAY,
+      value: 0,
+      color: '#000',
+      label: tier,
+    },
+  })),
+  /** `describeEntries` renders a span's endpoints through this with a
+   *  `{ key }`-only cast, so a missing label is a real case here rather than
+   *  defensive noise — a span names an x range, not a group. */
+  describe: (hit) =>
+    hit.label === undefined
+      ? isoDay(hit.key)
+      : `${isoDay(hit.key)}·${hit.label}`,
+  sequence: () => Sequence.every('7d', { anchor: D0 }),
+  rangeCursor: true,
+};
+
 // ── Trading sessions (a discontinuous time axis) ───────────────────────────
 
 /** Six weekday sessions (09:30–16:00 UTC) from a Monday — five overnight seams
@@ -317,7 +392,12 @@ export const tradingSessions: ChartFixture = {
 };
 
 /** Every column of the matrix, in tree order. */
-export const FIXTURES = [categoricalBars, timeBars, tradingSessions] as const;
+export const FIXTURES = [
+  categoricalBars,
+  timeBars,
+  stackedBars,
+  tradingSessions,
+] as const;
 
 /** Shared caption styling, so every cell reads identically. */
 export const caption = {

@@ -1366,6 +1366,8 @@ export function ChartContainer({
     ).filter((e) => e.multi);
     if (entries.length === 0) return null;
     return {
+      // The *declaration*, not a measurement of the block — see the field doc.
+      snapped: entries.some((e) => e.sequence !== undefined),
       preview: (hits: readonly SelectInfo[]) => {
         // The single-hit / resting-block dedup state is meaningless mid-sweep;
         // reset both so the first post-sweep pointer hover always reports.
