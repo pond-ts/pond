@@ -76,19 +76,38 @@ include new features and type-level changes; patch bumps are strictly additive.
   snap to box edges instead of running centre-to-centre, which is what keeps
   the drawn band and the committed span agreeing (RFC A7.6's edge rule).
 
-- **charts: a `shape="solid"` box takes the bar interaction palette** — new
-  optional `theme.box.*` tokens `highlight`, `hover` and `dimmed`, set on
-  `defaultTheme` to the bar palette's own values so a selected box beside a
-  selected bar reads as one act. A solid box _is_ a bar (one filled rect over
-  its column), so it now carries the three-step emphasis in its **fill** and
-  recedes when a selection exists elsewhere, rather than signalling only with
-  an outline.
+- **charts: `<BoxPlot>` gets a tint ladder — `theme.box.*.states`, one
+  four-step ladder per interaction state.** Every mark of a box reads its step
+  from the same ladder (0 body/outer · 1 the solid shape's inner bar · 2 stroke
+  - whiskers · 3 the median rule), so a state change is a **single palette
+    swap** and the quantile read survives it intact. The ladder carries its
+    meaning in _lightness_, which is what lets a box move wholesale — brighter
+    teal on hover, blue when committed — where a multi-hue stacked bar cannot.
 
-  **Scoped to `solid` on purpose.** The `whisker`/`none` shapes paint thin
-  stems and a small body over a mostly-empty slot; a fill swap there recolours
-  a few pixels and a dim erases them, so those keep the bounding outline as
-  their cue. All three tokens are optional and unset ⇒ the shipped behaviour,
-  so a hand-built theme's boxes do not change.
+  Three rules it encodes, each the opposite of what the `bar` palette needs:
+  - **Shift the ladder, not one step.** Recolouring only the median, or only
+    the body, breaks the read; all four steps move together and keep their
+    relative spacing.
+  - **Dim without desaturating.** A single-hue ladder has nothing to muddy
+    into, so the receded state is the rest ladder at `dimmedOpacity` (`0.32`) —
+    no desaturated companion of the kind `bar.groupsDimmed` is.
+  - **Hairlines need weight, not just hue.** At 1px a colour change is nearly
+    invisible, so a selected box's body stroke and whiskers take
+    `selectedStrokeWidth` (1 → 1.5 on `defaultTheme`) alongside the swap.
+
+  It follows the bar palette's rule exactly — hover brightens within teal, blue
+  means committed — and step 2 of each ladder **is** the matching bar token
+  (`bar.hover` / `bar.highlight`), so a live box beside a live bar reads as one
+  act.
+
+  With a ladder in force the old bounding outline is superseded and no longer
+  drawn: the ladder has already moved every mark, and a rect around a whisker
+  claims the empty slot either side of it as part of the mark. `states` is
+  optional — unset ⇒ the flat `fill`/`stroke`/`median`/`whisker` tokens and the
+  outline cue, exactly as before.
+
+  **`defaultTheme.box.default.strokeWidth` moves `1.5` → `1`**, so the selected
+  weight has somewhere to go.
 
 - **charts: `defaultTheme` gains a stack group ramp — `bar.default.groups`,
   `bar.default.groupsHover` and `bar.default.groupsDimmed`.** A multi-group stack resolved every group to

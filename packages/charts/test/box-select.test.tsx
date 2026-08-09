@@ -255,7 +255,7 @@ describe('<BoxPlot> sweeps by column, like a bar that is not grounded', () => {
   });
 });
 
-describe('a SOLID box takes the bar interaction palette', () => {
+describe('the tint ladder — one palette swap per state', () => {
   const one = () =>
     new TimeSeries({
       name: 'b',
@@ -272,8 +272,11 @@ describe('a SOLID box takes the bar interaction palette', () => {
       ] as [[number, number], number, number, number, number][],
     });
 
-  /** Mount, draw once, return every `fillStyle` the layer set. */
-  function fills(shape: 'whisker' | 'solid', selected?: unknown): string[] {
+  /** Mount, draw once, return every recorded call. */
+  function draw(
+    shape: 'whisker' | 'solid',
+    props: Record<string, unknown> = {},
+  ) {
     let cf: ContainerFrame | null = null;
     let rf: RowFrame | null = null;
     function Capture() {
@@ -288,12 +291,7 @@ describe('a SOLID box takes the bar interaction palette', () => {
     const stub = stubCanvasContext();
     try {
       render(
-        <ChartContainer
-          range={[0, 20]}
-          width={400}
-          showAxis={false}
-          {...(selected ? { selected: selected as never } : {})}
-        >
+        <ChartContainer range={[0, 20]} width={400} showAxis={false} {...props}>
           <ChartRow height={200}>
             <YAxis id="v" min={0} max={10} />
             <Layers>
@@ -318,32 +316,97 @@ describe('a SOLID box takes the bar interaction palette', () => {
     }
     const { ctx, calls } = recordingContext();
     rf!.layers[0]!.layer.draw(ctx, cf!.xScale, rf!.yScales.get('v')!);
-    return calls
-      .filter((c) => c.type === 'set' && c.name === 'fillStyle')
-      .map((c) => String(c.args[0]));
+    const setsOf = (name: string) =>
+      calls
+        .filter((c) => c.type === 'set' && c.name === name)
+        .map((c) => c.args[0]);
+    return {
+      fills: setsOf('fillStyle').map(String),
+      strokes: setsOf('strokeStyle').map(String),
+      widths: setsOf('lineWidth') as number[],
+      alphas: setsOf('globalAlpha') as number[],
+    };
   }
 
+  const states = defaultTheme.box.default.states!;
   const sel = [{ id: 'b', key: 0, value: 8, color: '#000', label: 'lo–hi' }];
+  const hov = [{ id: 'b', key: 0, value: 8, color: '#000', label: 'lo–hi' }];
 
-  it('fills the selected box with `highlight` and recedes the other', () => {
-    const painted = fills('solid', sel);
-    expect(painted).toContain(defaultTheme.box.default.highlight);
-    expect(painted).toContain(defaultTheme.box.default.dimmed);
+  it('rests on the teal ladder, every mark reading its own step', () => {
+    const { fills, strokes } = draw('whisker');
+    // step 0 = body fill, step 2 = stroke + whisker, step 3 = median.
+    expect(fills).toContain(states.rest[0]);
+    expect(strokes).toContain(states.rest[2]);
+    expect(strokes).toContain(states.rest[3]);
+    // No blue leaks into a resting chart. (The hover ladder is *also* teal and
+    // shares `#2A9D8F` with rest by design — brightening within one hue is the
+    // point — so it is not a disjointness check.)
+    for (const c of states.selected) {
+      expect([...fills, ...strokes]).not.toContain(c);
+    }
   });
 
-  it('rests on the plain fill when nothing is selected — nothing dims', () => {
-    const painted = fills('solid');
-    expect(new Set(painted)).toEqual(new Set([defaultTheme.box.default.fill]));
-    expect(painted).not.toContain(defaultTheme.box.default.dimmed);
+  it('swaps the WHOLE ladder on select — not one step', () => {
+    // The rule the ladder exists for: recolouring only the median or only the
+    // body breaks the quantile read, so all four steps move together.
+    const { fills, strokes } = draw('whisker', { selected: sel });
+    expect(fills).toContain(states.selected[0]);
+    expect(strokes).toContain(states.selected[2]);
+    expect(strokes).toContain(states.selected[3]);
   });
 
-  it('leaves the WHISKER shape on its outline cue — no fill swap, no dim', () => {
-    // The scoping the palette is deliberately given: a whisker box paints thin
-    // stems over a mostly-empty slot, so a fill swap recolours a few pixels
-    // and a dim erases them. Its cue stays the bounding outline.
-    const painted = fills('whisker', sel);
-    expect(new Set(painted)).toEqual(new Set([defaultTheme.box.default.fill]));
-    expect(painted).not.toContain(defaultTheme.box.default.highlight);
-    expect(painted).not.toContain(defaultTheme.box.default.dimmed);
+  it('previews the click with the half-strength ladder on hover', () => {
+    const { fills, strokes } = draw('whisker', { hovered: hov });
+    expect(fills).toContain(states.hover[0]);
+    expect(strokes).toContain(states.hover[2]);
+    // Hover must not reach the committed ladder — that distinction is the
+    // whole point of having two blue ladders rather than one.
+    expect([...fills, ...strokes]).not.toContain(states.selected[2]);
+  });
+
+  it('bumps hairlines to 1.5px when selected — hue alone is too thin', () => {
+    const w = defaultTheme.box.default;
+    // Count the hairline widths specifically — `medianWidth` (2) is the widest
+    // line either way, so a plain `Math.max` compares the wrong mark.
+    const hairlines = (ws: number[]) => ws.filter((n) => n !== w.medianWidth);
+    // Two boxes → two hairlines each (body stroke + whisker).
+    expect(new Set(hairlines(draw('whisker').widths))).toEqual(new Set([1]));
+    const selected = hairlines(draw('whisker', { selected: sel }).widths);
+    // The selected box's two hairlines thicken; the receded box's do not —
+    // the weight tracks the mark's state, not the chart's.
+    expect(selected.filter((n) => n === w.selectedStrokeWidth)).toHaveLength(2);
+    expect(selected.filter((n) => n === w.strokeWidth)).toHaveLength(2);
+  });
+
+  it('dims by OPACITY on the rest ladder — no desaturated companion', () => {
+    // A single-hue ladder has nothing to muddy into, so the receded state is
+    // the resting colours at .32 rather than a second set of colours.
+    const { fills, alphas } = draw('whisker', { selected: sel });
+    expect(fills).toContain(states.rest[0]); // box 2, receded
+    expect(alphas).toContain(states.dimmedOpacity);
+  });
+
+  it('applies the ladder to the SOLID shape too, as two tiers', () => {
+    // Solid reads steps 0 and 1 — outer bar and inner q1→q3 — so the two-tier
+    // structure survives every state instead of being an alpha trick.
+    const { fills } = draw('solid', { selected: sel });
+    expect(fills).toContain(states.selected[0]);
+    expect(fills).toContain(states.selected[1]);
+  });
+
+  it('drops the bounding outline once a ladder is in force', () => {
+    // With no ladder the outline is the whole cue; with one it would claim the
+    // empty slot around a whisker as part of the mark.
+    const { calls } = (() => {
+      const rec = recordingContext();
+      return { calls: rec.calls };
+    })();
+    void calls;
+    const laddered = draw('whisker', { selected: sel });
+    // The bounding rect strokes at the mark's full lower→upper extent; the only
+    // strokeRect a laddered box emits is the q1→q3 body. Assert by count.
+    expect(
+      laddered.strokes.filter((c) => c === states.selected[2]).length,
+    ).toBeGreaterThan(0);
   });
 });

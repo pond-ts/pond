@@ -306,23 +306,69 @@ export interface BoxStyle {
   readonly whisker: string;
   readonly whiskerWidth: number;
   /**
-   * The **interaction-state palette**, for a `shape="solid"` box — the fill a
-   * selected box takes, the one a hovered box takes, and the one a box outside
-   * a non-empty selection recedes to. All three optional and all three opt-in:
-   * unset ⇒ the shipped behaviour (an outline is the whole cue, nothing dims).
+   * The **tint ladder** — one four-step ladder per interaction state, and the
+   * whole styling channel for a box when set. Unset ⇒ the flat
+   * `fill`/`stroke`/`median`/`whisker` tokens above, unchanged.
    *
-   * **Solid only, and that is the point.** A solid box *is* a bar — one filled
-   * rect over its column — so it reads with the same three-step emphasis every
-   * bar has, and against a dimmed field. The `whisker`/`none` shapes paint thin
-   * stems and a small body over mostly-empty slot; a fill swap there recolours
-   * a few pixels and a dim erases them, so those shapes keep the bounding
-   * outline as their cue.
+   * Every mark of a box reads its step from the *same* ladder
+   * ({@link BoxLadder} documents which step is which), so a state change is a
+   * **single palette swap** rather than four independent colour decisions.
+   * That is what keeps the quantile read intact across states: the ladder
+   * carries its meaning in *lightness*, so moving the whole ladder — brighter
+   * teal on hover, blue when committed — leaves every relationship between the
+   * marks untouched.
+   *
+   * Two consequences worth stating, because both are the opposite of what the
+   * multi-hue `bar` palette needs:
+   *
+   * - **Shift the ladder, not one step.** Recolouring only the median, or only
+   *   the body, breaks the read. All four steps move together and keep their
+   *   relative lightness spacing.
+   * - **Dim without desaturating.** A single-hue ladder has nothing to muddy
+   *   into, so {@link dimmedOpacity} alone is the receded state — no
+   *   desaturated companion ladder of the kind `bar.groupsDimmed` needs.
    */
-  readonly highlight?: string;
-  /** See {@link highlight}. Falls back to `highlight` when unset. */
-  readonly hover?: string;
-  /** See {@link highlight}. Unset ⇒ nothing dims (back-compatible). */
-  readonly dimmed?: string;
+  readonly states?: BoxStates;
+  /**
+   * Stroke width for a **selected** box's hairlines — the body outline and the
+   * whiskers both. Unset ⇒ they keep {@link strokeWidth} / {@link whiskerWidth}.
+   *
+   * A hairline cannot carry a state in hue alone: at 1px a colour change is
+   * nearly invisible, and the whisker is the mark that reaches furthest. A
+   * weight change is legible at any width, so selection bumps it (1 → 1.5 on
+   * `defaultTheme`) alongside the ladder swap.
+   */
+  readonly selectedStrokeWidth?: number;
+}
+
+/**
+ * A box's four tint steps, lightest → darkest. Which mark reads which step:
+ *
+ * | step | box plot        | quantile bands |
+ * | ---- | --------------- | -------------- |
+ * | `0`  | body fill / the solid shape's outer bar | outer band |
+ * | `1`  | the solid shape's inner q1→q3 bar        | inner band |
+ * | `2`  | body stroke + whiskers                   | —          |
+ * | `3`  | the median rule                          | median rule |
+ *
+ * Steps are *positions on one hue's lightness ramp*, not four palette entries —
+ * a ladder whose steps don't descend in lightness stops encoding anything.
+ */
+export type BoxLadder = readonly [string, string, string, string];
+
+/** The per-state ladders (see {@link BoxStyle.states}). */
+export interface BoxStates {
+  /** Nothing selected anywhere. */
+  readonly rest: BoxLadder;
+  /** Pointer over this box — a preview of what a click would commit, so it
+   *  sits between {@link rest} and {@link selected} in strength. */
+  readonly hover: BoxLadder;
+  /** Committed. Pairs with {@link BoxStyle.selectedStrokeWidth}. */
+  readonly selected: BoxLadder;
+  /** How far a box **outside** a non-empty selection recedes — the
+   *  {@link rest} ladder at this alpha. No separate ladder, and deliberately
+   *  no desaturation (see {@link BoxStyle.states}). */
+  readonly dimmedOpacity: number;
 }
 
 /**
@@ -612,18 +658,30 @@ export const defaultTheme: ChartTheme = {
       fill: '#0284c7',
       fillOpacity: 0.3,
       stroke: '#0284c7',
-      strokeWidth: 1.5,
+      // 1px at rest, 1.5 when selected (`selectedStrokeWidth`) — the design's
+      // hairline rule. Previously a flat 1.5, which left no headroom for a
+      // weight change to mean anything.
+      strokeWidth: 1,
       median: '#075985',
       medianWidth: 2,
       whisker: '#a3cde5',
       whiskerWidth: 1,
-      // A solid box is a bar, so it takes the bar palette's interaction
-      // states verbatim — selection blue, the brighter-teal hover, and the
-      // same receded step. Sharing the values is deliberate: a selected box
-      // beside a selected bar in the next row must read as one act.
-      highlight: '#3F5BE0',
-      hover: '#3FBFAE',
-      dimmed: 'rgba(2,132,199,0.28)',
+      // The tint ladder. Lightness spacing is held across all three ladders,
+      // so the quantile read (outer < inner < stroke < median) never changes —
+      // only where the ladder sits does. It follows the bar palette's rule
+      // exactly: hover brightens within teal, blue means committed. Step 2 of
+      // each ladder IS the matching bar token (`bar.hover` / `bar.highlight`),
+      // so a live box beside a live bar reads as one act.
+      states: {
+        rest: ['#BFE3DE', '#7FC8BF', '#2A9D8F', '#1F7A6F'],
+        // Hover brightens *within teal* — blue stays reserved for a committed
+        // selection, the same rule `bar.hover` follows (and step 2 is exactly
+        // `bar.default.hover`, so a hovered box and a hovered bar match).
+        hover: ['#D6F1EC', '#9CDBD1', '#3FBFAE', '#2A9D8F'],
+        selected: ['#C0CAF6', '#8095EA', '#3F5BE0', '#1C2E9E'],
+        dimmedOpacity: 0.32,
+      },
+      selectedStrokeWidth: 1.5,
     },
     // The warm accent box — the second series of a paired distribution (an
     // in/out traffic list), mirroring `bar.secondary` / `line.secondary`.

@@ -15,13 +15,6 @@ const WHISKER_CAP_FRACTION = 0.5;
 const NO_KEYS: readonly number[] = [];
 
 /**
- * The outer bar's alpha for a **live** (selected / hovered / dimmed) solid box.
- * The inner q1→q3 body doubles it, as at rest — so the mark keeps its two-tier
- * read in every state rather than flattening to one block when it lights.
- */
-const LIVE_OUTER_ALPHA = 0.5;
-
-/**
  * Is `key` one of `keys`? The set form of the `key === selectedKey` check
  * {@link drawBox} used to make ([PND-MULTISEL] / RFC A4.3).
  *
@@ -259,40 +252,79 @@ export function drawBox(
     // bar paths document, and what the `key === selectedKey` test did before.
     const isHovered = !isSelected && includesKey(hoveredKeys, key);
     // Recede the rest, exactly as `drawBars` does: only with a real selection
-    // (marks or spans) and only when the theme opted in with a `dimmed`.
-    const dimming =
-      style.dimmed !== undefined &&
-      (selectedKeys.length > 0 || spans.length > 0);
+    // (marks or spans) in play.
+    const dimming = selectedKeys.length > 0 || spans.length > 0;
+
+    // **The tint ladder.** One four-step ladder per state, so a state change is
+    // a single palette swap and every mark keeps its position in the quantile
+    // read (step 0 body/outer · 1 inner · 2 stroke+whisker · 3 median). The
+    // ladder carries meaning in *lightness*, so rotating its hue leaves every
+    // relationship between the marks intact — which is why a box can do the
+    // plain teal→blue shift a multi-hue stacked bar cannot.
+    //
+    // Dimming is opacity alone. A single-hue ladder has nothing to muddy into,
+    // so there is no desaturated companion of the kind `bar.groupsDimmed` is.
+    const states = style.states;
+    const ladder = states
+      ? isSelected
+        ? states.selected
+        : isHovered
+          ? states.hover
+          : states.rest
+      : undefined;
+    // Applied to *every* mark of the box, so the whole ladder recedes together.
+    const stateAlpha =
+      states !== undefined && dimming && !isSelected && !isHovered
+        ? states.dimmedOpacity
+        : 1;
+    // A hairline can't carry a state in hue: at 1px a colour change is nearly
+    // invisible, so selection bumps the weight too.
+    const strokeW =
+      isSelected && style.selectedStrokeWidth !== undefined
+        ? style.selectedStrokeWidth
+        : style.strokeWidth;
+    const whiskerW =
+      isSelected && style.selectedStrokeWidth !== undefined
+        ? style.selectedStrokeWidth
+        : style.whiskerWidth;
+    // Bracket an op group **only** when the alpha actually differs from 1.
+    // Without this every box would emit two extra canvas ops per group even on
+    // the legacy path, where `stateAlpha` is always 1 — a draw-sequence change
+    // for every existing consumer in exchange for nothing.
+    const dimmed = stateAlpha !== 1;
+    const withAlpha = (fn: () => void) => {
+      if (!dimmed) return fn();
+      ctx.save();
+      ctx.globalAlpha = stateAlpha;
+      fn();
+      ctx.restore();
+    };
+    // Ladder steps, falling back to the flat tokens when no ladder is set.
+    const cFill = ladder?.[0] ?? style.fill;
+    const cInner = ladder?.[1] ?? style.fill;
+    const cStroke = ladder?.[2] ?? style.stroke;
+    const cMedian = ladder?.[3] ?? style.median;
+    const cWhisker = ladder?.[2] ?? style.whisker;
+    // With a ladder the step colours are opaque by design (lightness is the
+    // encoding, not alpha); the legacy path keeps its translucent fill.
+    const baseFillAlpha = ladder !== undefined ? 1 : style.fillOpacity;
 
     if (shape === 'solid') {
       // Candlestick: a light outer bar over the full lower→upper spread, then —
       // when there's a body — a more-prominent inner q1→q3 box on top (same fill
       // at rising opacity). No stems, no outline.
-      //
-      // **A solid box is a bar**, so it carries the bar's three-step emphasis
-      // in its *fill* rather than only in an outline: selected > hovered >
-      // dimmed > rest. A live state also paints at full opacity — the resting
-      // `fillOpacity` is a translucency that would mute the state colour it is
-      // meant to announce.
-      const live = isSelected
-        ? (style.highlight ?? style.fill)
-        : isHovered
-          ? (style.hover ?? style.highlight ?? style.fill)
-          : dimming
-            ? style.dimmed!
-            : style.fill;
-      // The two-tier look is an alpha *ratio*, not two fixed values — so a
-      // live state keeps the outer bar readable against the inner body
-      // instead of flattening into one block, which is what a plain
-      // "alpha = 1 when live" would do.
-      const resting = live === style.fill;
-      const outerAlpha = resting ? style.fillOpacity : LIVE_OUTER_ALPHA;
+      // With a ladder the two tiers are two *steps* (0 outer, 1 inner), which
+      // is what keeps the tier read identical in every state. Without one they
+      // are one colour at two alphas, as before.
       ctx.save();
-      ctx.fillStyle = live;
-      ctx.globalAlpha = outerAlpha;
+      ctx.fillStyle = cFill;
+      ctx.globalAlpha = baseFillAlpha * stateAlpha;
       ctx.fillRect(x0, yUpper, x1 - x0, yLower - yUpper);
       if (hasBox) {
-        ctx.globalAlpha = Math.min(1, outerAlpha * 2);
+        ctx.fillStyle = cInner;
+        ctx.globalAlpha =
+          (ladder !== undefined ? 1 : Math.min(1, style.fillOpacity * 2)) *
+          stateAlpha;
         ctx.fillRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
       }
       ctx.restore();
@@ -300,13 +332,15 @@ export function drawBox(
       // `whisker` / `none`: the graded q1→q3 box fill + outline (body only).
       if (hasBox) {
         ctx.save();
-        ctx.fillStyle = style.fill;
-        ctx.globalAlpha = style.fillOpacity;
+        ctx.fillStyle = cFill;
+        ctx.globalAlpha = baseFillAlpha * stateAlpha;
         ctx.fillRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
         ctx.restore();
-        ctx.strokeStyle = style.stroke;
-        ctx.lineWidth = style.strokeWidth;
-        ctx.strokeRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
+        withAlpha(() => {
+          ctx.strokeStyle = cStroke;
+          ctx.lineWidth = strokeW;
+          ctx.strokeRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
+        });
       }
 
       if (shape === 'whisker') {
@@ -319,22 +353,24 @@ export function drawBox(
           capWidthPx !== undefined
             ? Math.min(capWidthPx, x1 - x0) / 2
             : ((x1 - x0) * WHISKER_CAP_FRACTION) / 2;
-        ctx.strokeStyle = style.whisker;
-        ctx.lineWidth = style.whiskerWidth;
-        ctx.beginPath();
-        // Upper stem: from the box top (q3) or, range-only, from lower.
-        ctx.moveTo(mid, hasBox ? yQ3 : yLower);
-        ctx.lineTo(mid, yUpper);
-        ctx.moveTo(mid - capHalf, yUpper);
-        ctx.lineTo(mid + capHalf, yUpper);
-        // Lower cap (and, with a body, the lower stem q1→lower).
-        if (hasBox) {
-          ctx.moveTo(mid, yQ1);
-          ctx.lineTo(mid, yLower);
-        }
-        ctx.moveTo(mid - capHalf, yLower);
-        ctx.lineTo(mid + capHalf, yLower);
-        ctx.stroke();
+        withAlpha(() => {
+          ctx.strokeStyle = cWhisker;
+          ctx.lineWidth = whiskerW;
+          ctx.beginPath();
+          // Upper stem: from the box top (q3) or, range-only, from lower.
+          ctx.moveTo(mid, hasBox ? yQ3 : yLower);
+          ctx.lineTo(mid, yUpper);
+          ctx.moveTo(mid - capHalf, yUpper);
+          ctx.lineTo(mid + capHalf, yUpper);
+          // Lower cap (and, with a body, the lower stem q1→lower).
+          if (hasBox) {
+            ctx.moveTo(mid, yQ1);
+            ctx.lineTo(mid, yLower);
+          }
+          ctx.moveTo(mid - capHalf, yLower);
+          ctx.lineTo(mid + capHalf, yLower);
+          ctx.stroke();
+        });
       }
     }
 
@@ -342,12 +378,14 @@ export function drawBox(
     // median column and `showMedian` is on.
     if (drawMedian) {
       const yMedian = yScale(box.median[i]!);
-      ctx.strokeStyle = style.median;
-      ctx.lineWidth = style.medianWidth;
-      ctx.beginPath();
-      ctx.moveTo(x0, yMedian);
-      ctx.lineTo(x1, yMedian);
-      ctx.stroke();
+      withAlpha(() => {
+        ctx.strokeStyle = cMedian;
+        ctx.lineWidth = style.medianWidth;
+        ctx.beginPath();
+        ctx.moveTo(x0, yMedian);
+        ctx.lineTo(x1, yMedian);
+        ctx.stroke();
+      });
     }
 
     // Selection / hover: outline the whole mark (x-slot × whisker extent) so a
@@ -355,7 +393,12 @@ export function drawBox(
     // hovered = fainter. **Every** named box lights, not only the first — so a
     // set of pinned boxes, or a sweep hovering several at once, all read back.
     // Bracketed so alpha/width don't leak to the next box.
-    if (isSelected || isHovered) {
+    // **Without a ladder**, the bounding outline is the whole state cue — the
+    // shipped behaviour, kept for any theme that sets no `states`. With one it
+    // is superseded and deliberately not drawn: the ladder already moved every
+    // mark, and a bounding rect on top would claim the empty slot around a
+    // whisker as part of the mark.
+    if (ladder === undefined && (isSelected || isHovered)) {
       ctx.save();
       ctx.strokeStyle = style.stroke;
       ctx.lineWidth = isSelected ? style.strokeWidth + 1 : style.strokeWidth;

@@ -7,6 +7,7 @@ import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { ScatterChart } from '../src/ScatterChart.js';
 import { BoxPlot } from '../src/BoxPlot.js';
+import { defaultTheme } from '../src/theme.js';
 import { YAxis } from '../src/YAxis.js';
 import {
   ContainerContext,
@@ -188,7 +189,8 @@ describe('<ScatterChart> — the whole selection / hover set reaches the draw', 
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A range-only vol smile on a value (strike) axis — bid→ask per strike, no
- *  body, so the only `strokeRect` a draw emits is a selection / hover outline. */
+ *  body and no median, so each box's *whisker stroke* is the only mark it
+ *  draws, and its ladder step is the whole state signal. */
 const smile = () =>
   ValueSeries.fromColumns({
     name: 'smile',
@@ -224,37 +226,77 @@ function mountBox(props: Record<string, unknown>) {
   );
 }
 
+/**
+ * The state each of the four boxes drew, read off its whisker's ladder step.
+ * `defaultTheme.box.default` carries a tint ladder, so a box announces its
+ * state by *which ladder* it painted from — the bounding outline that used to
+ * carry it is superseded (a rect around a whisker claims the empty slot
+ * either side of it as part of the mark).
+ */
+function statePerBox(calls: readonly CtxCall[]): string[] {
+  const L = defaultTheme.box.default.states!;
+  const step2 = {
+    [L.rest[2]]: 'rest',
+    [L.hover[2]]: 'hover',
+    [L.selected[2]]: 'selected',
+  };
+  const out: string[] = [];
+  let alpha = 1;
+  for (const c of calls) {
+    if (c.type === 'set' && c.name === 'globalAlpha')
+      alpha = c.args[0] as number;
+    if (c.type !== 'set' || c.name !== 'strokeStyle') continue;
+    const state = step2[String(c.args[0])];
+    if (state === undefined) continue;
+    out.push(state === 'rest' && alpha === L.dimmedOpacity ? 'dimmed' : state);
+  }
+  return out;
+}
+
 describe('<BoxPlot> — the whole selection / hover set reaches the draw', () => {
-  it('outlines every member of a multi-mark `selected`', () => {
+  it('lights every member of a multi-mark `selected`', () => {
     const { calls } = mountBox({ selected: [box(95), box(115)] });
-    expect(alphaPerStrokeRect(calls)).toEqual([1, 1]);
+    // Four strikes → four boxes; keys 95 / 105 / 115 are indices 1 / 2 / 3
+    // (a box keys at its neighbour-spaced span begin). 95 and 115 select; the
+    // other two recede.
+    expect(statePerBox(calls)).toEqual([
+      'dimmed',
+      'selected',
+      'dimmed',
+      'selected',
+    ]);
   });
 
-  it('outlines a three-box selection — no cap at one', () => {
+  it('lights a three-box selection — no cap at one', () => {
     const { calls } = mountBox({
       selected: [box(95), box(105), box(115)],
     });
-    expect(count(calls, 'strokeRect')).toBe(3);
+    expect(statePerBox(calls).filter((s) => s === 'selected')).toHaveLength(3);
   });
 
-  it('still outlines exactly one for a single-mark selection (unchanged)', () => {
+  it('still lights exactly one for a single-mark selection (unchanged)', () => {
     const { calls } = mountBox({ selected: box(95) });
-    expect(alphaPerStrokeRect(calls)).toEqual([1]);
+    expect(statePerBox(calls).filter((s) => s === 'selected')).toHaveLength(1);
   });
 
-  it('outlines every member of a multi-mark `hovered`, faintly', () => {
+  it('lights every member of a multi-mark `hovered`', () => {
     const { calls } = mountBox({ hovered: [box(95), box(105)] });
-    expect(alphaPerStrokeRect(calls)).toEqual([0.5, 0.5]);
+    // Hover does not dim the field — only a selection does.
+    expect(statePerBox(calls)).toEqual(['rest', 'hover', 'hover', 'rest']);
   });
 
-  it('outlines selection and hover together, selection winning the overlap', () => {
+  it('lights selection and hover together, selection winning the overlap', () => {
     const { calls } = mountBox({
       selected: [box(95)],
       hovered: [box(95), box(115)],
     });
-    // Two lit boxes: 95 selected (full strength, not double-stroked) and 115
-    // hovered.
-    expect(alphaPerStrokeRect(calls)).toEqual([1, 0.5]);
+    // 95 is in both and reads as selected; 115 hovers; the rest recede.
+    expect(statePerBox(calls)).toEqual([
+      'dimmed',
+      'selected',
+      'dimmed',
+      'hover',
+    ]);
   });
 
   it('ignores set members naming another layer', () => {
@@ -262,10 +304,11 @@ describe('<BoxPlot> — the whole selection / hover set reaches the draw', () =>
       selected: [box(95, 'elsewhere'), box(105)],
       hovered: [box(115, 'elsewhere')],
     });
-    expect(alphaPerStrokeRect(calls)).toEqual([1]);
+    expect(statePerBox(calls).filter((s) => s === 'selected')).toHaveLength(1);
   });
 
-  it('outlines nothing when both sets are empty', () => {
+  it('leaves every box at rest when both sets are empty', () => {
+    expect(new Set(statePerBox(mountBox({}).calls))).toEqual(new Set(['rest']));
     expect(count(mountBox({}).calls, 'strokeRect')).toBe(0);
   });
 });

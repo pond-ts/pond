@@ -8,6 +8,7 @@ import { Layers } from '../src/Layers.js';
 import { BarChart } from '../src/BarChart.js';
 import { ScatterChart } from '../src/ScatterChart.js';
 import { BoxPlot } from '../src/BoxPlot.js';
+import { defaultTheme } from '../src/theme.js';
 import { HeatMap } from '../src/HeatMap.js';
 import { YAxis } from '../src/YAxis.js';
 import {
@@ -374,7 +375,15 @@ describe('<BoxPlot> — spans select boxes by their key span', () => {
         { kind: 'span', id: 'smile', x: [95, 115] } satisfies SpanSelection,
       ],
     });
-    expect(alphaPerStrokeRect(calls)).toEqual([1, 1]); // keys 95, 105 — not 115
+    // The cue is the **tint ladder**, not a bounding outline: with a laddered
+    // theme a span-covered box paints from the selected ladder and the rest
+    // recede. Half-open `[95, 115)` covers keys 95 and 105, not 115.
+    const L = defaultTheme.box.default.states!;
+    const strokes = calls
+      .filter((c) => c.type === 'set' && c.name === 'strokeStyle')
+      .map((c) => String(c.args[0]));
+    expect(strokes.filter((c) => c === L.selected[2])).toHaveLength(2);
+    expect(strokes.filter((c) => c === L.rest[2]).length).toBeGreaterThan(0);
   });
 
   it('a span naming another layer outlines nothing', () => {
