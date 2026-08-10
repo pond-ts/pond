@@ -1925,11 +1925,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                                    _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                                    is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                                    iteration to discover, and the docs still don't mention it. **The one-line
-                                                                                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                                    row's data cursor is suppressed."
+                                                                                        _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                                        is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                                        iteration to discover, and the docs still don't mention it. **The one-line
+                                                                                        fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                                        row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -2875,3 +2875,125 @@ ladder, no colours, `binColors` conflict, multi-group stack). The sweep across
 the rest — warn when a theme sets slots the active draw path cannot read, when
 `bins` is handed plausibly-time-shaped keys — is still open and is the highest-
 value item left from this report.
+
+---
+
+## Consumer re-ranking, 2026-08-10 — post-migration, by maintained cost
+
+A consumer finishing their migration onto 0.58.0 re-ranked their remaining
+friction **by what still costs them maintained code**, rather than by the
+original severity. That is a better basis than a first-report score, because a
+workaround's cost is only measurable once it has been lived with — and one item
+moved for a reason worth recording.
+
+Ranked: **[PND-SYMLOG] > [PND-CATSTACK] > [PND-BARWIDTH]**.
+
+### The re-rank's reasoning
+
+- **[PND-SYMLOG] rose to highest — on failure mode, not effort.** A whole module
+  plus its spec exist only as the workaround: values pre-transformed into a ±1
+  plot space with a linear axis pinned to `[-1, 1]`. What makes it the top item
+  is that **its failure is silent**. `at` lives in plot space while `label` must
+  read in real units, so computing them by different routes yields a chart whose
+  labels confidently describe positions they do not occupy — no exception, no
+  visual artifact. The consumer had to make the coupling structural (one closure
+  returning the mapping _and_ the ticks, so a caller cannot obtain one without
+  the other) and fence it with a test that reconstructs each tick's real value
+  and re-runs the transform. **A workaround that needs a structural invariant
+  plus a reconstruction test to stay honest is the strongest argument for the
+  library owning the transform.**
+
+  Note the scope point they make, which changes what "done" means here: **if the
+  axis owns the transform it must also own tick placement.** A `scale="symlog"`
+  that still expected consumer-supplied ticks would leave the hazard exactly
+  where it is and would be a much smaller win than it appears.
+
+- **[PND-CATSTACK] gained a third cost, and the newest is the strongest.** It was
+  filed for label thinning and stable per-category identity. Composing the stack
+  by hand — one `<BarChart categories>` layer per cumulative total, drawn
+  outermost-first so each overpaints the one beneath — now also costs a
+  consumer-assembled legend (which is most of [PND-BINSWATCH]) and, new in
+  0.58.0: **a selection entry keys on `(layer id, mark)`, so a composed stack of
+  N layers needs the controlled set replicated across every segment layer.** Miss
+  one and a selected bar recedes _from the waist up_ — segments below stay lit,
+  ones above go flat. It reads as a rendering bug rather than a selection one,
+  and nothing in the types hints at it. Selection made the workaround worse,
+  which is the sort of interaction between features that a friction re-rank
+  surfaces and a first report cannot.
+
+- **[PND-BARWIDTH] is new.** Bar width and band width are one knob:
+  `maxBandWidth` caps the slot, `gap` insets by a fixed amount, so bar width is
+  always `bandWidth - gap`. Two independent sizes are needed — slots spreading to
+  fill the plot up to a cap, with the **ink** inside each slot pinned to a fixed
+  px width — because a fixed bar width is what makes a measure comparable
+  _between_ panes: if bars fatten as a pane widens, two panels side by side read
+  as different weights of the same thing. Each available spelling gives up one
+  half. The workaround computes `gap` from the band width it predicts the library
+  will choose — a **re-derivation of pond's own layout arithmetic in consumer
+  code**, so it goes silently wrong the moment that rule changes on either side.
+
+### Two selection questions, answered from the draw path
+
+Asked because a real multi-group category stack would change how selection
+behaves, and the answers bear on the API shape rather than only on the docs.
+
+**Q: With a real multi-group stack, does one entry naming layer + mark light the
+whole bar — i.e. does the per-layer replication become unnecessary?**
+
+**Yes, and structurally so.** In `drawStacks` the per-segment test is:
+
+```js
+const stableMark = ss.marks?.[b]; // indexed by BIN, not by group
+const matches = (m) =>
+  m.id === seriesId &&
+  (stableMark !== undefined
+    ? m.mark === stableMark // marks path: group/label ignored entirely
+    : m.key === ss.begin[b] && m.label === ss.groups[g]);
+```
+
+A categorical series carries `marks`, and `marks` is indexed by **bin**. So on
+the marks path the group is not part of the identity: one entry naming
+`(id, mark)` matches **every segment of that bar**. The replication disappears,
+and the waist-up failure becomes impossible to express — there is one layer and
+one mark identity per bar.
+
+**The flip side, worth settling before the API is built:** for a categorical
+stack, per-_segment_ selection is then **not addressable** — `marks` present
+means `label` is ignored, so "select just this segment of this category" has no
+spelling. That is the right default for the reported use case (select a bar),
+but it is a real constraint and should be a deliberate decision rather than a
+discovered one.
+
+**Q: Is `groupsDimmed` then the recede path, rather than the flat `dimmed`?**
+
+**Yes — but gated twice, and the second gate will catch a migrating consumer.**
+`drawStacks` resolves `style.dimmedFills?.[g] ?? style.dimmed ?? fill`, and
+`BarChart` populates `dimmedFills` from `bar[as].groupsDimmed` only when:
+
+1. `multi = groups.length > 1` — a real multi-group stack; and
+2. `ramped = ramp !== undefined && colors === undefined` — **the theme ramp
+   actually painted it.**
+
+Gate 2 is the one to flag: a consumer who migrates to a real stack **but keeps
+passing `colors`** gets the flat `dimmed`, not per-group recede. The reasoning is
+sound and in the source ("a ramp entry the call site overrode is no longer the
+ramp's colour, so its receded counterpart would be wrong"), but it means
+per-group recede and call-site colours are mutually exclusive today. If a
+consumer needs both — which a category stack with meaningful segment colours
+plausibly does — the missing piece is a `dimmedColors` companion to `colors`.
+**Recorded as an open design question for [PND-CATSTACK], not assumed.**
+
+### Working agreement
+
+The consumer asked for, and this plan adopts: **API shape circulated before
+build-out** (cheaper to reject a shape than an implementation), **PRs opened and
+reviewed but not merged** (merges are the owner's), and **per-feature releases**
+rather than batching. They also offered behaviour verification against a branch
+or prerelease — interactive stories driving real pointer events plus a
+canvas-pixel probe harness — _before_ merge is requested rather than as review.
+
+That ordering is worth taking. Two findings from this same exchange argue for it:
+the `dimmed`/`binColors` precedence was only settled by reading the draw path,
+and a test written to pin it initially passed for the wrong reason (`colors`
+where `binColors` was meant — the former silently falls through to the flat
+fill). Types and review did not catch either; looking did.
