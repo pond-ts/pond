@@ -360,13 +360,15 @@ The ValueSeries siblings (`fromValueSeries` etc.) are deliberately
 | `barsFromBins`       | `(bins, column, opts?) → BarSeries`                    | One-column histogram (single-series path, [PND-BARSEM])   |
 | `stacksFromBins`     | `(bins, columns[], opts?) → StackedBarSeries`          | Multi-column histograms from `byColumn` output            |
 | `categoryStack`      | `(CategoryDatum[]) → StackedBarSeries`                 | Categorical bars                                          |
+| `categoryStacks`     | `(CategoryStackDatum[], columns) → StackedBarSeries`   | Stacked categorical bars ([PND-CATSTACK])                 |
 | `bandedColor`        | `(value, colors[], lo, hi) → string \| undefined`      | The heat map's own banding — for a matching legend        |
 | `heatValueExtent`    | `(StackedBarSeries) → [lo, hi] \| null`                | Finite extent across a grid; `<HeatMap>`'s domain default |
 | `transposeRow`       | `(series, opts?) → CategoryDatum[]`                    | One row read across as categories                         |
 
 Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 `BarSeries`, `OhlcSeries`, `StackedBarSeries`; option types `BoxColumns`,
-`OhlcColumns`, `BinRecord`, `StacksFromBinsOptions`, `CategoryDatum`, `RowAt`,
+`OhlcColumns`, `BinRecord`, `StacksFromBinsOptions`, `CategoryDatum`,
+`CategoryStackDatum`, `RowAt`,
 `TransposeRowOptions`.
 
 ### Theming
