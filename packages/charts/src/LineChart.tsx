@@ -7,8 +7,16 @@ import {
   fromValueSeries,
 } from './data.js';
 import type { NumericColumn, ValueNumericColumn } from './column-names.js';
-import { drawLine, traceHitIndex, yExtent } from './line.js';
+import {
+  drawLine,
+  drawPartitioned,
+  traceHitIndex,
+  traceStateStyle,
+  yExtent,
+  type TraceState,
+} from './line.js';
 import { sweepSpan } from './sweep.js';
+import type { LineStyle } from './theme.js';
 import type { DecimateOption } from './decimate.js';
 import { resolveCurve, type Curve } from './curve.js';
 import {
@@ -238,6 +246,37 @@ export function LineChart<
     }
     return provider.boundaries(cs.x[0]!, cs.x[cs.length - 1]!);
   }, [sessionBreaks, container.discontinuities, cs]);
+  // ── The trace's interaction state ([PND-TRACESEL]).
+  //
+  // Read here so a selection change re-registers the layer and the canvas
+  // repaints — the same plumbing `<BarChart>` uses. Reference-stable when
+  // nothing names this layer, so an unrelated selection elsewhere in the
+  // container neither re-identifies this entry nor repaints it.
+  const selectedEntries = container.selected;
+  const hoveredEntries = container.hovered;
+  const allSpans = container.selectedSpans;
+  const traceState = useMemo<TraceState>(() => {
+    if (id === undefined) return 'rest';
+    // A span on THIS layer is handled by the partitioned draw below, not by a
+    // whole-series state: the emphasis is a region, not the series.
+    if (allSpans.some((sp) => sp.id === id)) return 'rest';
+    const mine = (e: { readonly id: string }) => e.id === id;
+    if (selectedEntries.some(mine)) return 'selected';
+    if (hoveredEntries.some(mine)) return 'hover';
+    // Something else is selected ⇒ recede. Nothing dims while the selection is
+    // empty: with nothing selected there is nothing to recede *from*, the same
+    // rule `BarStyle.dimmed` states for the marks.
+    if (selectedEntries.length > 0 || allSpans.length > 0) return 'dimmed';
+    return 'rest';
+  }, [id, selectedEntries, hoveredEntries, allSpans]);
+  // The swept window on this layer, in **key units** — mapped to pixels at draw
+  // time, because that is when the scale is known.
+  const spanX = useMemo<readonly [number, number] | null>(() => {
+    if (id === undefined) return null;
+    const mine = allSpans.find((sp) => sp.id === id);
+    return mine === undefined ? null : mine.x;
+  }, [id, allSpans]);
+
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
@@ -333,19 +372,50 @@ export function LineChart<
               ]
             : [];
         },
-        draw: (ctx, xScale, yScale) =>
-          drawLine(
+        draw: (ctx, xScale, yScale) => {
+          const stroke = (st: LineStyle, alpha: number) => () => {
+            const prior = ctx.globalAlpha;
+            if (alpha !== 1) ctx.globalAlpha = prior * alpha;
+            const out = drawLine(
+              ctx,
+              cs,
+              xScale,
+              yScale,
+              st,
+              curveFactory,
+              gaps,
+              gapConnectorOpacity,
+              sessionBreakInstants,
+              decimate,
+            );
+            ctx.globalAlpha = prior;
+            return out;
+          };
+          // No window on this layer ⇒ one pass, in the series' own state.
+          if (spanX === null) {
+            const [st, alpha] = traceStateStyle(style, traceState);
+            return stroke(st, alpha)();
+          }
+          // A window: the trace outside it recedes and the portion inside is
+          // emphasised — the trace's answer to lighting the covered marks.
+          // `spanColor` is the one hue a trace's state may take, because inside
+          // a single series identity is not in question; with none themed the
+          // window just thickens.
+          const [outStyle, outAlpha] = traceStateStyle(style, 'dimmed');
+          const [inStyle] = traceStateStyle(style, 'selected');
+          return drawPartitioned(
             ctx,
-            cs,
-            xScale,
-            yScale,
-            style,
-            curveFactory,
-            gaps,
-            gapConnectorOpacity,
-            sessionBreakInstants,
-            decimate,
-          ),
+            [xScale(spanX[0]), xScale(spanX[1])],
+            ctx.canvas.height,
+            stroke(outStyle, outAlpha),
+            stroke(
+              style.spanColor === undefined
+                ? inStyle
+                : { ...inStyle, color: style.spanColor },
+              1,
+            ),
+          );
+        },
       },
       axisId: axis,
       index,
@@ -365,6 +435,8 @@ export function LineChart<
       decimate,
       axis,
       id,
+      traceState,
+      spanX,
       index,
     ],
   );

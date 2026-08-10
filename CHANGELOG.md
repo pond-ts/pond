@@ -86,6 +86,17 @@ include new features and type-level changes; patch bumps are strictly additive.
   through its **fill** (the whole shape is the target); a line within 6px of
   its **stroke**. New `sweepSpan` session in the kernel; `sweepsRect: false`,
   `sweepAxis: 'x'`.
+- **charts: trace interaction states.** A selected series **thickens and keeps
+  its colour** — state is weight, never hue, because a line's colour is how a
+  reader tells one series from another (the same rule `<Candlestick>` follows).
+  Other series recede to `0.32` with their hue intact; hover echoes the
+  selected weight. A **swept window** partitions the trace: the covered portion
+  is emphasised and may take a hue (`spanColor`, defaulting to the selection
+  blue) because inside one series identity is not in question, while the rest
+  recedes. New `LineStyle` tokens `selectedWidth` / `hoverWidth` /
+  `dimmedOpacity` / `spanColor`, and `AreaStyle` gains those plus
+  `selectedFillOpacity` — an area's mark is its fill, so its state channels are
+  fill strength and edge weight rather than weight alone.
 - **charts: keyboard parity on the list family.** Rows now navigate and select
   from the keyboard: **↑/↓** move focus, **Home/End** jump to the ends,
   **Enter/Space** select the focused row (carrying modifiers, so ⌘/Ctrl-Enter

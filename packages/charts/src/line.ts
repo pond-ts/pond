@@ -403,3 +403,82 @@ function pointSegmentDistance(
   const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
+
+/**
+ * The **interaction state** a trace draws in, resolved from the selection
+ * ([PND-TRACESEL]).
+ *
+ * - `'rest'` — nothing selected anywhere, or this trace is what's selected and
+ *   nothing needs emphasis beyond its own.
+ * - `'selected'` — this series is the selected one: thicken it.
+ * - `'hover'` — transient echo of `selected`.
+ * - `'dimmed'` — something *else* is selected: recede, hue intact.
+ */
+export type TraceState = 'rest' | 'selected' | 'hover' | 'dimmed';
+
+/**
+ * The style a trace strokes with in a given state — weight and alpha only, so a
+ * muted or emphasised line still reads as *which* series it is
+ * (`LineStyle.selectedWidth`'s doc has the argument).
+ *
+ * Returned as a `[style, alpha]` pair rather than folded into the style,
+ * because alpha belongs to the canvas' `globalAlpha` and not to a stroke
+ * colour: baking it into the colour would lose the hue on a themed line that
+ * already carries an alpha of its own.
+ */
+export function traceStateStyle(
+  style: LineStyle,
+  state: TraceState,
+): readonly [LineStyle, number] {
+  const selected = style.selectedWidth ?? style.width * 2;
+  switch (state) {
+    case 'selected':
+      return [{ ...style, width: selected }, 1];
+    case 'hover':
+      return [{ ...style, width: style.hoverWidth ?? selected }, 1];
+    case 'dimmed':
+      return [style, style.dimmedOpacity ?? 0.32];
+    case 'rest':
+      return [style, 1];
+  }
+}
+
+/**
+ * Run `draw` twice to paint a trace **partitioned by a swept window**: the
+ * whole trace in `outside`, then the same trace again in `inside`, **clipped to
+ * the window's pixel band**.
+ *
+ * Clipping rather than slicing the series, and that is the load-bearing choice.
+ * Slicing would have to re-cull, re-decimate and re-split each piece — three
+ * cache misses and three chances for the seam to disagree with itself, and the
+ * decimated polyline's bucket edges would not line up with the window's, so
+ * the boundary would visibly jitter as the drag moved. Clipping strokes the
+ * *identical* geometry twice and lets the rasteriser cut it, so the seam is
+ * exact by construction and both passes hit the same decimation cache entry.
+ *
+ * The window arrives in **pixels** because that is what a clip rect wants and
+ * the caller has already mapped it through the scale it drew with.
+ */
+export function drawPartitioned(
+  ctx: CanvasRenderingContext2D,
+  windowPx: readonly [number, number],
+  height: number,
+  outside: () => LayerDrawStats,
+  inside: () => LayerDrawStats,
+): LayerDrawStats {
+  const stats = outside();
+  const [x0, x1] = windowPx;
+  // A collapsed window has no inside to paint — and `clip()` on a zero-width
+  // rect would suppress the second pass anyway, so skip the save/restore.
+  if (x1 <= x0) return stats;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x0, 0, x1 - x0, height);
+  ctx.clip();
+  inside();
+  ctx.restore();
+  // The stats describe the geometry walked, and the clipped pass walks the
+  // same series — reporting it twice would double every count in the draw
+  // budget for what is one trace.
+  return stats;
+}

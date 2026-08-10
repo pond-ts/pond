@@ -5,6 +5,7 @@ import {
   strokeAffinePolyline,
   TRACE_HIT_PX,
   type Scale,
+  type TraceState,
 } from './line.js';
 import type { AreaStyle } from './theme.js';
 import type { LayerDrawStats } from './context.js';
@@ -457,4 +458,37 @@ export function areaHitIndex(
   if (px < xScale(cs.x[0]!) - tolerance) return null;
   if (px > xScale(cs.x[n - 1]!) + tolerance) return null;
   return Math.abs(px - xi) <= Math.abs(px - xj) ? i : j;
+}
+
+/**
+ * The style an area fills with in a given interaction state
+ * ([PND-TRACESEL]) — the {@link AreaStyle} counterpart of `traceStateStyle`.
+ *
+ * The channels differ from a line's because what carries the mark differs: an
+ * area's mark is its **fill**, so state is the fill's strength plus the edge's
+ * weight. A line has only a stroke, so there weight is all there is.
+ *
+ * Alpha comes back separately, as it does for a line, so a muted area keeps its
+ * hue rather than having the fade baked into a colour.
+ */
+export function areaStateStyle(
+  style: AreaStyle,
+  state: TraceState,
+): readonly [AreaStyle, number] {
+  const emphasised: AreaStyle = {
+    ...style,
+    width: style.selectedWidth ?? style.width * 2,
+    fillOpacity:
+      style.selectedFillOpacity ?? Math.min(style.fillOpacity * 2, 1),
+  };
+  switch (state) {
+    case 'selected':
+      return [emphasised, 1];
+    case 'hover':
+      return [emphasised, 1];
+    case 'dimmed':
+      return [style, style.dimmedOpacity ?? 0.32];
+    case 'rest':
+      return [style, 1];
+  }
 }

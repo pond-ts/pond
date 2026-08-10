@@ -7,7 +7,9 @@ import {
   fromValueSeries,
 } from './data.js';
 import type { NumericColumn, ValueNumericColumn } from './column-names.js';
-import { areaExtent, areaHitIndex, drawArea } from './area.js';
+import { areaExtent, areaHitIndex, areaStateStyle, drawArea } from './area.js';
+import { drawPartitioned, type TraceState } from './line.js';
+import type { AreaStyle } from './theme.js';
 import { sweepSpan } from './sweep.js';
 import type { DecimateOption } from './decimate.js';
 import { resolveCurve, type Curve } from './curve.js';
@@ -263,6 +265,26 @@ export function AreaChart<
   // falling back to the shared default so a theme without it still renders faint.
   const gapConnectorOpacity =
     container.theme.gap?.connectorOpacity ?? DEFAULT_GAP_CONNECTOR_OPACITY;
+  // ── The trace's interaction state ([PND-TRACESEL]) — see `<LineChart>` for
+  // the reasoning; this is the same derivation over `AreaStyle`'s channels.
+  const selectedEntries = container.selected;
+  const hoveredEntries = container.hovered;
+  const allSpans = container.selectedSpans;
+  const traceState = useMemo<TraceState>(() => {
+    if (id === undefined) return 'rest';
+    if (allSpans.some((sp) => sp.id === id)) return 'rest';
+    const mine = (e: { readonly id: string }) => e.id === id;
+    if (selectedEntries.some(mine)) return 'selected';
+    if (hoveredEntries.some(mine)) return 'hover';
+    if (selectedEntries.length > 0 || allSpans.length > 0) return 'dimmed';
+    return 'rest';
+  }, [id, selectedEntries, hoveredEntries, allSpans]);
+  const spanX = useMemo<readonly [number, number] | null>(() => {
+    if (id === undefined) return null;
+    const mine = allSpans.find((sp) => sp.id === id);
+    return mine === undefined ? null : mine.x;
+  }, [id, allSpans]);
+
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
@@ -352,27 +374,56 @@ export function AreaChart<
               ]
             : [];
         },
-        draw: (ctx, xScale, yScale) =>
-          drawArea(
+        draw: (ctx, xScale, yScale) => {
+          const fill = (st: AreaStyle, alpha: number) => () => {
+            const prior = ctx.globalAlpha;
+            if (alpha !== 1) ctx.globalAlpha = prior * alpha;
+            const out = drawAreaWith(st);
+            ctx.globalAlpha = prior;
+            return out;
+          };
+          if (spanX === null) {
+            const [st, alpha] = areaStateStyle(style, traceState);
+            return fill(st, alpha)();
+          }
+          const [outStyle, outAlpha] = areaStateStyle(style, 'dimmed');
+          const [inStyle] = areaStateStyle(style, 'selected');
+          return drawPartitioned(
             ctx,
-            cs,
-            xScale,
-            yScale,
-            style,
-            // Omitted baseline rests on the axis floor (resolved late from the
-            // scale, so it tracks the auto-fit domain); a fixed baseline is used
-            // verbatim.
-            // A log axis has no position for zero — or anything at or below
-            // it — so an explicit out-of-domain `baseline` would scale to
-            // `NaN` and poison every coordinate in the fill path. Fall back
-            // to the axis floor, which is exactly what an omitted baseline
-            // already resolves to.
-            resolveAreaBaseline(baseline, yScale),
-            curveFactory,
-            gaps,
-            gapConnectorOpacity,
-            decimate,
-          ),
+            [xScale(spanX[0]), xScale(spanX[1])],
+            ctx.canvas.height,
+            fill(outStyle, outAlpha),
+            fill(
+              style.spanColor === undefined
+                ? inStyle
+                : { ...inStyle, color: style.spanColor, fill: style.spanColor },
+              1,
+            ),
+          );
+
+          function drawAreaWith(st: AreaStyle) {
+            return drawArea(
+              ctx,
+              cs,
+              xScale,
+              yScale,
+              st,
+              // Omitted baseline rests on the axis floor (resolved late from the
+              // scale, so it tracks the auto-fit domain); a fixed baseline is used
+              // verbatim.
+              // A log axis has no position for zero — or anything at or below
+              // it — so an explicit out-of-domain `baseline` would scale to
+              // `NaN` and poison every coordinate in the fill path. Fall back
+              // to the axis floor, which is exactly what an omitted baseline
+              // already resolves to.
+              resolveAreaBaseline(baseline, yScale),
+              curveFactory,
+              gaps,
+              gapConnectorOpacity,
+              decimate,
+            );
+          }
+        },
       },
       axisId: axis,
       index,
@@ -392,6 +443,8 @@ export function AreaChart<
       decimate,
       axis,
       id,
+      traceState,
+      spanX,
       index,
     ],
   );
