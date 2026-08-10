@@ -509,6 +509,15 @@ export function AreaChart<
     registerTrackerSource(slot, entry.layer);
   }, [registerTrackerSource, slot, entry.layer]);
 
+  // Advertise selectability (only when an `id` was given) — see the same block
+  // in `LineChart.tsx` for why a trace was missing from this set.
+  const { registerSelectable, unregisterSelectable } = container;
+  useEffect(() => {
+    if (id === undefined) return;
+    registerSelectable(slot);
+    return () => unregisterSelectable(slot);
+  }, [registerSelectable, unregisterSelectable, slot, id]);
+
   // And a legend row: the readout identity + the resolved area style (top line
   // over the translucent fill), so a `<Legend>` swatch can never drift.
   const legendRows = useMemo<readonly LegendItemInput[] | null>(() => {

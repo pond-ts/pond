@@ -1262,8 +1262,9 @@ export function ChartContainer({
         warnedNoSelectableRef.current = true;
         console.warn(
           '[pond-charts] `selected`/`onSelect` is set but no layer has an `id` — ' +
-            'nothing is selectable. Give a <BarChart>/<ScatterChart>/<BoxPlot> an ' +
-            '`id` to make it interactive (an `id` gates selection + hover).',
+            'nothing is selectable. Give a <BarChart>/<ScatterChart>/<BoxPlot>/' +
+            '<HeatMap>/<LineChart>/<AreaChart> an `id` to make it interactive ' +
+            '(an `id` gates selection + hover).',
         );
       }
     } else {

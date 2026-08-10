@@ -518,6 +518,19 @@ export function LineChart<
     registerTrackerSource(slot, entry.layer);
   }, [registerTrackerSource, slot, entry.layer]);
 
+  // Advertise selectability (only when an `id` was given) — the same
+  // registration `<BarChart>`/`<ScatterChart>`/`<BoxPlot>`/`<HeatMap>` make.
+  // A trace became selectable in [PND-TRACESEL] but never joined this set, so
+  // the container's "wired but nothing is selectable" guard fired on every
+  // trace-only chart that *was* correctly wired, and told the consumer to add
+  // an `id` to a mark layer they hadn't mounted.
+  const { registerSelectable, unregisterSelectable } = container;
+  useEffect(() => {
+    if (id === undefined) return;
+    registerSelectable(slot);
+    return () => unregisterSelectable(slot);
+  }, [registerSelectable, unregisterSelectable, slot, id]);
+
   // And a legend row: the readout identity + the resolved line style, so a
   // `<Legend>` swatch can never drift from what the canvas draws.
   const legendRows = useMemo<readonly LegendItemInput[] | null>(() => {

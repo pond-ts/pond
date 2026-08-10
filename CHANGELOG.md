@@ -173,6 +173,31 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **charts: a `<LineChart id>` / `<AreaChart id>` no longer draws the
+  "nothing is selectable" warning.** Traces became selectable in
+  [PND-TRACESEL] but never joined the container's selectable registry, so the
+  guard that catches a genuinely-forgotten `id` fired on every correctly-wired
+  trace chart — and its remedy told you to add an `id` to a
+  `<BarChart>`/`<ScatterChart>`/`<BoxPlot>`, none of which you had mounted.
+  Both trace layers now register on `id` like every other selectable layer, and
+  the message names all six. The guard still fires for a trace with **no** `id`,
+  which is the footgun it exists for.
+
+- **charts: `<Layers>` now warns when a `<Fragment>` child swallows the
+  injected z-order index.** A fragment accepts no props, so the index
+  `<Layers>` injects to make stacking follow declaration order died on it and
+  every layer inside fell back to the `index = 0` default. The sort is stable,
+  so the tie resolved to **mount** order — which matches declaration order on a
+  synchronous tree, and that is what made it silent: the stack looked right
+  until the two disagreed, at which point a layer toggled on between two others
+  landed on top instead of slotting into place. Layers must be direct children
+  (already documented); a dev-only warning now names the consequence, and the
+  fragment no longer gets cloned, so React's less specific "invalid prop
+  supplied to React.Fragment" no longer fires alongside it. Two places that
+  **demonstrate** ordering had already tripped it: the `LineSweep` story and the
+  `spans[0]`-is-topmost test, both of which passed while never exercising the
+  index — both now use keyed arrays.
+
 - **charts: `<MultiSelector>`'s demote-on-edit stories removed a whole bin
   instead of the clicked mark.** They filtered on `m.key !== hit.key`, which
   is a bar's identity but only half of a stack segment's or a heat cell's —
