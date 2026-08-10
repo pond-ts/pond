@@ -74,6 +74,16 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: keyboard parity on the list family.** Rows now navigate and select
+  from the keyboard: **↑/↓** move focus, **Home/End** jump to the ends,
+  **Enter/Space** select the focused row (carrying modifiers, so ⌘/Ctrl-Enter
+  adds), and **Shift** with any movement key extends the run. The anchor is
+  shared with the pointer, so a click can be finished with the keyboard; it
+  holds across repeats, so Shift-↓ grows one run rather than sliding a two-row
+  window. Navigation never selects on its own, movement keys are
+  `preventDefault`ed so the page cannot scroll out from under the list, and
+  arrows stay inside their own table rather than walking into a nested list in
+  an expanded row.
 - **charts: `<BarList onRowSelect>` / `<BoxList onRowSelect>`** — the range
   gesture, and how a user actually produces a multi-row `selected`. The list's
   answer to `<MultiSelector>`: **mounting it enables the drag** (a list with

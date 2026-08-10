@@ -18,6 +18,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
@@ -211,8 +212,92 @@ export function ListTable<R extends ListRow>({
    * range gesture should not cost the list its selectable text.
    */
   const [armed, setArmed] = useState(false);
+  /**
+   * The **selection anchor** — the row a range extends *from*, shared by both
+   * input methods so they are one model rather than two: click a row, then
+   * Shift-Arrow, and the run starts where you clicked.
+   *
+   * A plain move (arrow, click, Enter) re-anchors; a shift-extend deliberately
+   * does not, so repeated Shift-Down grows one run instead of walking a
+   * two-row window down the list.
+   */
+  const anchorRef = useRef<number | null>(null);
+  const tableRef = useRef<HTMLTableElement | null>(null);
+
+  /**
+   * This table's own row elements, in display order.
+   *
+   * Scoped with `:scope >` because an expanded row's detail may contain a
+   * whole nested list, whose rows carry the same attribute — a plain
+   * descendant query would walk into it and the arrow keys would navigate
+   * somebody else's list. (`handlePointerOver` guards the same hazard.)
+   */
+  const rowEls = (): readonly HTMLElement[] =>
+    Array.from(
+      tableRef.current?.querySelectorAll<HTMLElement>(
+        ':scope > tbody > tr[data-list-row]',
+      ) ?? [],
+    );
   /** A ranged drag ends in a `click` too; this swallows that one. */
   const rangedClickRef = useRef(false);
+
+  /**
+   * Keyboard parity with the pointer: there is no drag on a keyboard, so the
+   * range has to arrive as a **modifier** there.
+   *
+   * That is not the contradiction with `SelectModifiers`' "an ordinal range is
+   * a gesture, not a modifier" that it looks like. The note is about not
+   * overloading a *pointer* chord that already means something else (a region
+   * drag); a keyboard has no competing gesture and Shift-Arrow is the one
+   * range idiom every platform already teaches.
+   *
+   * - **Arrow Up/Down** — move focus one row; re-anchor.
+   * - **Home/End** — move focus to the first/last row; re-anchor.
+   * - **Shift** with any of those — move focus and report the run from the
+   *   anchor, which stays put.
+   * - **Enter/Space** — select the focused row (with modifiers, so ⌘/Ctrl-Enter
+   *   adds); re-anchor.
+   *
+   * Focus is moved by focusing the row element rather than by tracking an
+   * index in state: the browser is already the source of truth for what has
+   * focus, and a second copy of that would be one more thing to keep in sync.
+   */
+  const onRowKeyDown = (e: ReactKeyboardEvent, i: number) => {
+    if (!interactive) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      anchorRef.current = i;
+      onRowClick?.(rows[i]!);
+      onRowSelect?.([rows[i]!], mods(e));
+      return;
+    }
+    const last = rows.length - 1;
+    const to =
+      e.key === 'ArrowDown'
+        ? Math.min(i + 1, last)
+        : e.key === 'ArrowUp'
+          ? Math.max(i - 1, 0)
+          : e.key === 'Home'
+            ? 0
+            : e.key === 'End'
+              ? last
+              : null;
+    if (to === null) return;
+    // Claim the key before anything else can act on it: Arrow and Home/End
+    // would otherwise scroll the page out from under the list.
+    e.preventDefault();
+    rowEls()[to]?.focus();
+    if (!e.shiftKey || !ranges) {
+      anchorRef.current = to;
+      return;
+    }
+    // Extending: the anchor holds, so Shift-Down repeatedly grows ONE run.
+    // With no anchor yet (arrowing in from a Tab, never having selected), the
+    // row we left is the honest one to start from.
+    const from = anchorRef.current ?? i;
+    anchorRef.current = from;
+    onRowSelect?.(runOf(from, to), mods(e));
+  };
 
   /** The rows of the inclusive index run `[a, b]`, in display order. */
   const runOf = (a: number, b: number): readonly R[] =>
@@ -246,6 +331,9 @@ export function ListTable<R extends ListRow>({
     // stealing the one gesture the platform already spent. Touch keeps
     // click-to-select, which still reports through `onRowSelect`.
     if (e.pointerType === 'touch') return;
+    // The press is a plain move: it re-anchors, so a later Shift-Arrow
+    // extends from the row the user actually grabbed.
+    anchorRef.current = i;
     dragRef.current = { anchor: i, current: i, ranged: false };
     setArmed(true);
     setDragRun(null);
@@ -381,6 +469,7 @@ export function ListTable<R extends ListRow>({
 
   return (
     <table
+      ref={tableRef}
       data-list={kind}
       onPointerOver={tracksHover ? handlePointerOver : undefined}
       onPointerLeave={tracksHover ? () => reportHover(null) : undefined}
@@ -490,6 +579,7 @@ export function ListTable<R extends ListRow>({
                           rangedClickRef.current = false;
                           return;
                         }
+                        anchorRef.current = i;
                         onRowClick?.(row);
                         // `onRowSelect` is a strict SUPERSET of `onRowClick`,
                         // the way `<MultiSelector>` is of `<Selector>`: below
@@ -517,17 +607,7 @@ export function ListTable<R extends ListRow>({
                 // A clickable row is keyboard-reachable too: focusable, and
                 // Enter / Space activate it (Space's default scroll is eaten).
                 tabIndex={interactive ? 0 : undefined}
-                onKeyDown={
-                  !interactive
-                    ? undefined
-                    : (e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          onRowClick?.(row);
-                          onRowSelect?.([row], mods(e));
-                        }
-                      }
-                }
+                onKeyDown={interactive ? (e) => onRowKeyDown(e, i) : undefined}
                 style={{
                   borderTop: i > 0 ? divider : undefined,
                   cursor: interactive ? 'pointer' : undefined,

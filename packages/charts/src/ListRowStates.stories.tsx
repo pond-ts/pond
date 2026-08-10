@@ -257,3 +257,46 @@ function RangeDemo() {
 
 /** Drag across rows to select a run; ⌘/Ctrl-drag to add. */
 export const RangeGesture = { render: () => <RangeDemo /> };
+
+/**
+ * **Keyboard parity** — the same selection, without a pointer.
+ *
+ * There is no drag on a keyboard, so the range arrives as a *modifier* there:
+ * **Shift-Arrow** extends from the anchor, which holds across repeats so
+ * Shift-Down grows one run rather than sliding a two-row window down the list.
+ * The anchor is shared with the pointer, so you can click a row and finish with
+ * the keyboard.
+ *
+ * Tab into the list, then: **↑ / ↓** move, **Home / End** jump, **Enter /
+ * Space** select, **⌘/Ctrl-Enter** adds, **Shift-↑ / ↓ / Home / End** extend.
+ */
+function KeyboardDemo() {
+  const [sel, setSel] = useState<readonly string[]>([]);
+  return (
+    <Frame
+      caption={
+        <>
+          Tab into the rows, then <strong>Shift-↓</strong> to extend. ↑/↓ move
+          without selecting; Enter selects; ⌘/Ctrl-Enter adds.
+          <br />
+          <strong>selected:</strong> {sel.length === 0 ? '—' : sel.join(', ')}
+        </>
+      }
+    >
+      <BarList
+        rows={hosts}
+        columns={oneMetric}
+        selected={sel}
+        onRowSelect={(rows, m) => {
+          const keys = rows.map((r) => r.key);
+          setSel((cur) =>
+            m.additive ? [...new Set([...cur, ...keys])] : keys,
+          );
+        }}
+      />
+    </Frame>
+  );
+}
+
+/** Tab in, then Shift-↑/↓ to extend a run — no pointer involved. */
+export const KeyboardSelection = { render: () => <KeyboardDemo /> };

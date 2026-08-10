@@ -505,10 +505,38 @@ milestone. Plan:
       a long-press or an explicit multi-select mode — rather than stealing the
       one gesture the platform already spent. **Unbuilt.**
 
-    **Still open: keyboard parity.** Rows are focusable and Enter / Space fire
-    both callbacks, but there is no Shift-arrow extend — the gesture is
-    pointer-only, and a keyboard range wants settling against whatever
-    shift-click policy a consumer defines.
+    **Keyboard parity shipped 2026-08-10.** ↑/↓ move, Home/End jump,
+    Enter/Space select (with modifiers, so ⌘/Ctrl-Enter adds), Shift with any
+    movement key extends.
+    - **On a keyboard the range IS a modifier**, which only looks like it
+      contradicts `SelectModifiers`' "an ordinal range is a gesture, not a
+      modifier". That note is about not overloading a _pointer_ chord that
+      already means something else (a region drag); a keyboard has no competing
+      gesture, and Shift-Arrow is the one range idiom every platform teaches.
+    - **One anchor, shared with the pointer**, so a click can be finished with
+      the keyboard. It holds across repeats (a plain move re-anchors, a
+      shift-extend does not) — otherwise Shift-↓ slides a two-row window down
+      the list instead of growing one run.
+    - **Focus is the browser's**, not a mirrored index in state: arrows focus
+      the row element and read `document.activeElement` implicitly. A second
+      copy of "what has focus" is one more thing to desynchronise.
+    - **The row lookup is `:scope > tbody > tr[data-list-row]`** — an expanded
+      row's detail may hold a whole nested list whose rows carry the same
+      attribute, and a descendant query would navigate somebody else's rows.
+      (`handlePointerOver` guards the same hazard.)
+
+    **Still open, and deliberately not done here:**
+    - **No roving tabindex.** Every interactive row is still `tabIndex={0}`, so
+      a 100-row list is 100 tab stops — the ARIA listbox pattern would make one
+      row tabbable and let the arrows do the rest. It is the better pattern and
+      it is a _behaviour change_ to existing keyboard flow, so it is worth
+      asking for rather than slipping in beside a feature.
+    - **No ARIA selection semantics.** `aria-selected` is not valid on a plain
+      `<tr>`; making it valid means `role="grid"`, which promises cell-level
+      Left/Right navigation this does not implement. Promoting the role without
+      the navigation would be a worse lie than the current silence, so the
+      honest fix is the whole grid pattern or a `role="listbox"` rebuild —
+      neither of which belongs inside this task.
 
     **Superseded — what was open before the gesture landed:**
     - **Drag over `<tr>` rows** — press on row _i_, drag to row _j_, take
