@@ -618,6 +618,15 @@ milestone. Plan:
     single-span limitation starts to show. **Revisit if a consumer hits it** —
     plural spans is the fix, and it is a currency change.
 
+  **Open, and owed a perf commit:** `sliceTrace` **does** fall under the repo's
+  perf gate, contrary to what PR #634's body claimed — a fresh-eyes review
+  caught it. It pushes into two `number[]`s and allocates two `Float64Array`s
+  per partitioned frame, sized by the window, so a fully-swept large trace is a
+  per-frame loop over the whole series. `sweepSpan` and the `O(log N)` hit tests
+  are genuinely exempt; this is not. The fix is to slice from the
+  **already-decimated** polyline (or reuse buffers across frames) plus
+  `scripts/perf-trace-sweep.mjs` and a before/after table, per the gate.
+
   **Still open:** the **visual state**. `LineStyle` has only `color`/`width`/
   `dash`, so a selected or dimmed trace currently looks identical to a resting
   one — selection you cannot see, which is the visual twin of the "inaudible
