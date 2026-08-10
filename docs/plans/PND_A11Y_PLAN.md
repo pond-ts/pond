@@ -65,22 +65,79 @@ original framing: it is not only the _state_ that is silent but the
 `link` or `option` role and no hint of activation, so in browse mode a screen
 reader user is never told the row does anything. **Verified.**
 
-The two candidate repairs, both bigger than a prop:
+**Researched 2026-08-10, and there is a clear answer.** Prior art settles the
+grid-vs-listbox question more sharply than the first draft's "two options, pick
+one".
 
-1. **`role="grid"`** — makes `aria-selected` meaningful, keeps table
-   semantics. But the ARIA grid pattern promises **cell-level** Left/Right
-   navigation we do not implement, and declaring the role without it misleads
-   AT: a user told this is a grid will try to navigate it as one.
-2. **`role="listbox"`, rows as `option`s** — `aria-selected` is native, and our
-   row-level arrows already _are_ the listbox pattern. But it discards the
-   table semantics the family exists for, and an `option` is not supposed to
-   contain a grid of cells.
+**Reject `listbox`, on spec grounds rather than taste.** An `option` may not
+contain interactive content, and our rows contain the expander `<button>` — this
+is the documented reason Adobe did not use `listbox` for their own list
+component ([react-spectrum#1327](https://github.com/adobe/react-spectrum/issues/1327)).
+It also discards the column semantics we chose deliberately, and Adrian Roselli
+notes both the APG examples and the native control have
+[_"tested poorly with users for more than two decades"_](http://adrianroselli.com/2022/05/under-engineered-multi-selects.html).
 
-**A third option the first draft missed:** keep `role=table` and announce
-selection through a **live region**. Smaller than either, and honest — it adds
-information without claiming a widget pattern. Probably the right first move
-regardless of which of 1/2 wins later. (Prior-art research on this decision is
-outstanding; see _Open questions_.)
+**On `role="grid"`, the cell-navigation question is APG, not spec.** Nothing in
+the ARIA `grid` definition mandates Left/Right. The
+[APG grid pattern](https://www.w3.org/WAI/ARIA/apg/patterns/grid/) states it
+declaratively ("Right Arrow: Moves focus one cell to the right…") and reserves
+"Optionally" for _layout_ grids only — so **there is no APG-sanctioned row-only
+grid variant**. The first draft's instinct ("declaring the role without the
+navigation lies to AT") is right as pattern conformance, wrong as a spec
+violation. Sarah Higley's
+[Grids Part 1](https://sarahmhigley.com/writing/grids-part1/) leans our case
+grid-ward anyway: _"A table that is primarily static content, but with the
+primary purpose is to select rows… would lean towards being a grid."_
+
+**The clever escape hatch exists and does not fit us.** React Aria's `GridList`
+is `role="grid"` with **`aria-colcount="1"`** and one `gridcell` per row — in a
+one-column grid, row-level arrows _are_ complete cell navigation, so nothing is
+promised unfulfilled. Verified in
+[`useGridList.ts`](https://github.com/adobe/react-spectrum/blob/main/packages/react-aria/src/gridlist/useGridList.ts).
+But `aria-colcount=1` is honest for a list and would be **a lie for
+`<BarList>`**, which has real data cells and column semantics. We cannot borrow
+the fig leaf.
+
+**Both libraries that chose grid also paid for cell navigation** — AG Grid
+(`treegrid` when grouping, `grid` otherwise, `aria-selected` on rows _and_
+cells) and [MUI X DataGrid](https://mui.com/x/react-data-grid/accessibility/),
+whose keymap is nearly ours already ("Shift+Arrow Up/Down: Select the current
+row and adjacent rows"). **Nobody in the surveyed set ships a multi-column
+row-only grid.** TanStack prescribes no ARIA at all; Glide Data Grid's own
+README disclaims its a11y.
+
+**Recommendation (researcher confidence: high).** `role="grid"` +
+`aria-multiselectable` + `aria-selected` on `<tr>` + `aria-rowcount`/
+`aria-rowindex`, **and implement Left/Right cell navigation** — roughly a day,
+genuinely useful for reading a wide row, and it converts the role from a lie
+into a promise kept. Note `aria-selected` on `<tr>` is harmless either way, so
+it can ship as belt-and-braces immediately.
+
+**Two things the role alone does not buy, and the first is not optional:**
+
+- **A live-region selection announcer with a count.** React Aria ships
+  `useGridSelectionAnnouncement` whose own comment is the rationale: _"Many
+  screen readers do not announce when items in a grid are selected/deselected.
+  We do this using an ARIA live region."_ It announces the changed row by name
+  and **always appends a count** in multiple mode
+  (`"{count, plural, one {# item selected} other {# items selected}}."`), so
+  Shift-Arrow over 40 rows says "…40 items selected". **This is the single most
+  directly applicable finding in the whole audit: `aria-selected` alone is
+  demonstrably insufficient**, and the strings are copyable, which answers the
+  first draft's worry about inventing wording.
+- **An opt-in checkbox column** (researcher confidence: medium). It is the only
+  selection signal every AT announces natively, and it doubles as the touch
+  answer — AG Grid, MUI and TanStack all fall back to per-row checkboxes.
+  Adobe instead uses long-press with `aria-describedby` = _"Long press to enter
+  selection mode."_ Roselli
+  [argues](http://adrianroselli.com/2020/07/aria-grid-as-an-anti-pattern.html)
+  for checkboxes over `grid` entirely. Treat as opt-in, not mandatory — it is a
+  real design cost for a charting component.
+
+**Caveat worth carrying:** row selection is under-specified even _inside_ a
+grid — [w3c/aria#1008](https://github.com/w3c/aria/issues/1008) (open since 2019) and [w3c/aria#2403](https://github.com/w3c/aria/issues/2403), which
+reports "some screen readers don't seem to convey that information". Which is
+the second argument for the announcer: do not rely on the role alone.
 
 ### Open — the table is unnavigable as a table
 
@@ -125,7 +182,14 @@ outstanding; see _Open questions_.)
   the consumer owns all set arithmetic, so tap-to-toggle multi-select is
   implementable today. What is missing is a _built-in range_ gesture, and
   `additive` is always false on touch.
-- **Focus visibility — confirmed, and worse than stated.** The shell sets no
+- **Focus visibility — confirmed, worse than stated, and it is TWO tests.**
+  Per [Understanding Focus Appearance](https://www.w3.org/WAI/WCAG22/Understanding/focus-appearance.html),
+  **2.4.13** measures the change of contrast between focused and unfocused
+  states (≥3:1 on the same pixels) and **1.4.11** measures the indicator
+  against _adjacent_ colours — so the ring must be evaluated against **both**
+  the unselected and the selected row background. A ring tuned to the default
+  ground commonly fails 1.4.11 once a selection tint sits under it; a two-tone
+  ring (dark stroke + light offset halo) survives both. The shell sets no
   focus style and no `:focus-visible` rule, and `theme.list` has no focus
   token — so a consumer cannot fix a bad focus ring by theming either. Needs
   checking against `selectedBand` (WCAG 2.4.11/2.4.13).
@@ -374,6 +438,12 @@ Ordered:
 
 **Cheap, high value — do these first:**
 
+0. **`aria-selected` on `<tr>` plus a live-region announcer with a count.** The
+   announcer is the highest-value item in this file: it is what actually makes
+   selection audible, the role alone is documented as insufficient, and React
+   Aria's strings can be copied rather than invented. `aria-selected` is inert
+   on `role=table` but harmless, so it can land now and become meaningful the
+   moment the role changes.
 1. `bar.default.selectedOutline` — one token; makes selection non-chromatic.
 2. `aria-label` + `<figure>` on `ChartContainer`, `role="img"` on the canvas —
    turns a blank into a named object.
@@ -386,21 +456,36 @@ Ordered:
 selection; a `theme.list` focus token + focus style; annotation hit targets
 toward 24px; a darker `hoverRail`; column headers via `ListCellSpec.header`.
 
-**Large design projects, not fixes — say so plainly:** a focus model and
-keyboard grammar for the plot; the offscreen `<table>` data fallback;
-non-pointer alternatives to every drag; the grid-vs-listbox decision for the
-list family; a touch range affordance.
+**Now scoped rather than open-ended** — the research turned two of these from
+"design project" into "known pattern, known cost":
+
+- **`role="grid"` + cell navigation** for the list family — ~a day, pattern
+  settled. Was "the grid-vs-listbox decision".
+- **The offscreen `<table>` data fallback** for charts — already in
+  `docs/rfcs/charts.md` for v1.1, and the research says it is **tier one**: the
+  single highest-value move on the canvas surface, ahead of keyboard nav.
+
+**Still genuinely large design projects:** a focus model and keyboard grammar
+for the plot (copy Highcharts' `normal` mode; Data Navigator is the general
+form); non-pointer alternatives to every drag; a touch range affordance
+(checkboxes or long-press).
 
 ## Open questions
 
-- **Grid vs listbox vs live-region for the list family.** Prior-art research
-  outstanding — specifically whether the ARIA APG's cell-navigation requirement
-  for `role=grid` is normative or a recommendation, and what Adobe's React Aria
-  `GridList` (built for "a list whose rows are selectable and may contain
-  interactive children") settled on, since that is our case exactly.
+- **~~Grid vs listbox~~ — answered**, see the list-family section. What remains
+  for the owner is only whether to also ship the **opt-in checkbox column**
+  (medium confidence, a real design cost for a charting component, and
+  simultaneously the touch answer).
 - **How far to take the canvas.** From "text alternative + data-table fallback"
-  to "full keyboard navigation model" is a large range, and the answer is a
-  product decision about who the charts are for.
+  to "full keyboard navigation model" is a large range, and it is a product
+  decision about who the charts are for. The research narrows it usefully: the
+  fallback is tier one and the keyboard model tier two, so this is a question
+  of _when_, not _whether_.
+- **Whether a chart mark is a "graphical object" whose selection state is
+  "required to understand the content"** under SC 1.4.11. It reads that way,
+  which is what makes the 1.67:1 selected-vs-rest bar pair a plausible
+  violation rather than only a quality problem — but it is a judgement call and
+  should not be asserted as a failure anywhere public without a second opinion.
 
 ## Tasks
 
