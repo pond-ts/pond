@@ -636,6 +636,55 @@ milestone. Plan:
   it is a `defaultTheme` change and moves visual baselines, so it belongs in
   its own commit with the baseline regeneration.
 
+- **[PND-INTERACTDOCS]** — **The interaction wave's docs pass, and the
+  `onSelect` collapse it blocks on.** Owner-listed 2026-08-10.
+
+  **First, collapse `<MultiSelector onSelect>`'s `span` + `spans` into one
+  `spans` argument.** PR #634 shipped it as a 4th argument on the reasoning
+  that widening the 3rd would churn 23 call sites — **that reasoning was
+  wrong**: `selectors.tsx` does not exist at `v0.57.0`, so `<MultiSelector>`
+  and `<Selector>` have **never been published** and there are no external
+  consumers. The 23 sites are all in-repo. Do it before release, not behind a
+  shim for a thing nobody has. (Contrast `<BarList>/<BoxList> selected`, which
+  **is** released — that widening genuinely needed the owner gate.)
+
+  Attempted at the tail of the session and **reverted to keep the branch
+  green**, so nothing is half-migrated. The type layer collapses cleanly (four
+  sites: `SweepGesture.commit`, `SelectorEntry.onSelectMany`,
+  `MultiSelectorProps.onSelect`, and the forwarder). The cost is the call
+  sites, and they are not a regex job: `multi-selector.test.tsx` alone has ~12
+  tests that destructure `vi.fn()` mock calls as `[hits, modifiers, span]`
+  with `SpanSelection | null` annotations, plus `selectionContains([span!])`
+  round-trips and `toBeNull()` checks that must become `toEqual([])` — several
+  of which **encode the old "null means a click" contract** and need reading,
+  not substituting.
+
+  **Then the docs pass.** Note the docs-build CI does **not** typecheck MDX
+  code blocks, so a stale signature there ships silently wrong — these must be
+  read, not trusted to CI. Owner-named pages first:
+  - `website/docs/learn-charts/06-cursors-readouts-zoom.mdx`
+  - `website/docs/charts/interaction/cursors-and-readouts.mdx`
+  - `website/docs/charts/interaction/selection-and-hover.mdx`
+
+  Found by search, and the owner expects more:
+  - `website/docs/charts/interaction/legend.mdx`, `pan-zoom-and-range-selection.mdx`
+  - `website/docs/charts/types/lists.mdx` — needs the whole list story: plural
+    `selected`, `onRowSelect`, keyboard parity, the row-state ladder
+  - `website/docs/charts/theming.mdx` — new `line`/`area` state tokens, the
+    `list` register, the experimental `annotation.spanEdge`
+  - `website/docs/charts/gallery/site-traffic-dashboard.mdx` +
+    `website/src/examples/gallery-site-traffic-dashboard.tsx` (a real example
+    that mounts selection)
+  - `website/docs/charts/gallery/volume-history.mdx` — uses
+    `onSelect={([from]) => …}`, i.e. already destructures; check it against the
+    collapsed shape
+  - `how-to-guides/categorical-charts.mdx`, `histograms.mdx` — `<Selector>`
+    only, so unaffected by the collapse, but worth checking against the wave
+
+  **Nothing documents the new surfaces at all yet**: horizontal sweeps, trace
+  selection, the list range gesture and keyboard, or the row-state ladder. The
+  docs pass is a write, not just an edit.
+
 - **[PND-TRACECYCLE]** — **Hotkeys to cycle which series a window selects.**
   Owner idea, 2026-08-10: `all → series1 → series2 → all`, with a hotkey to
   **keep** the current one or **exclude** it.
