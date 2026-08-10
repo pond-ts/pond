@@ -6,6 +6,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { HeatMap } from './HeatMap.js';
 import { YAxis } from './YAxis.js';
+import { Selector } from './selectors.js';
 import { stacksFromColumns } from './data.js';
 import { sanFranciscoTemperatures } from './sf-temperatures.fixture.js';
 import { defaultTheme } from './theme.js';
@@ -112,25 +113,24 @@ function SelectableDemo() {
           </span>
         )}
       </div>
-      <ChartContainer
-        range={RANGE}
-        width={720}
-        cursor="none"
-        onSelect={setSel}
-        onHover={(h) => h && setSel(h)}
-      >
-        <ChartRow height={120}>
-          <YAxis id="v" label="°F" />
-          <Layers>
-            <HeatMap
-              series={sf}
-              columns={['low', 'high']}
-              colors={RAMP}
-              id="temp"
-              gap={0.5}
-            />
-          </Layers>
-        </ChartRow>
+      <ChartContainer range={RANGE} width={720} cursor="none">
+        <Selector
+          onSelect={setSel}
+          onHover={(h: SelectInfo | null) => h && setSel(h)}
+        >
+          <ChartRow height={120}>
+            <YAxis id="v" label="°F" />
+            <Layers>
+              <HeatMap
+                series={sf}
+                columns={['low', 'high']}
+                colors={RAMP}
+                id="temp"
+                gap={0.5}
+              />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     </div>
   );
@@ -171,30 +171,30 @@ const tempCell = (i: number, row: 'low' | 'high'): SelectInfo => ({
  */
 export const MultiSelected: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={720}
-      cursor="none"
-      selected={[
-        tempCell(40, 'low'),
-        tempCell(120, 'high'),
-        tempCell(200, 'low'),
-        tempCell(280, 'low'),
-        tempCell(280, 'high'),
-      ]}
-    >
-      <ChartRow height={120}>
-        <YAxis id="v" label="°F" />
-        <Layers>
-          <HeatMap
-            series={sf}
-            columns={['low', 'high']}
-            colors={RAMP}
-            id="temp"
-            gap={0.5}
-          />
-        </Layers>
-      </ChartRow>
+    <ChartContainer range={RANGE} width={720} cursor="none">
+      <Selector
+        enabled={false}
+        selected={[
+          tempCell(40, 'low'),
+          tempCell(120, 'high'),
+          tempCell(200, 'low'),
+          tempCell(280, 'low'),
+          tempCell(280, 'high'),
+        ]}
+      >
+        <ChartRow height={120}>
+          <YAxis id="v" label="°F" />
+          <Layers>
+            <HeatMap
+              series={sf}
+              columns={['low', 'high']}
+              colors={RAMP}
+              id="temp"
+              gap={0.5}
+            />
+          </Layers>
+        </ChartRow>
+      </Selector>
     </ChartContainer>
   ),
 };
@@ -208,27 +208,27 @@ export const MultiSelected: Story = {
  */
 export const MultiHovered: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={720}
-      cursor="none"
-      hovered={[100, 101, 102, 103, 104, 105].flatMap((i) => [
-        tempCell(i, 'low'),
-        tempCell(i, 'high'),
-      ])}
-    >
-      <ChartRow height={120}>
-        <YAxis id="v" label="°F" />
-        <Layers>
-          <HeatMap
-            series={sf}
-            columns={['low', 'high']}
-            colors={RAMP}
-            id="temp"
-            gap={0.5}
-          />
-        </Layers>
-      </ChartRow>
+    <ChartContainer range={RANGE} width={720} cursor="none">
+      <Selector
+        enabled={false}
+        hovered={[100, 101, 102, 103, 104, 105].flatMap((i) => [
+          tempCell(i, 'low'),
+          tempCell(i, 'high'),
+        ])}
+      >
+        <ChartRow height={120}>
+          <YAxis id="v" label="°F" />
+          <Layers>
+            <HeatMap
+              series={sf}
+              columns={['low', 'high']}
+              colors={RAMP}
+              id="temp"
+              gap={0.5}
+            />
+          </Layers>
+        </ChartRow>
+      </Selector>
     </ChartContainer>
   ),
 };
@@ -241,30 +241,30 @@ export const MultiHovered: Story = {
  */
 export const MultiSelectedAndHovered: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={720}
-      cursor="none"
-      selected={[tempCell(60, 'low'), tempCell(150, 'high')]}
-      hovered={[
-        tempCell(150, 'high'),
-        tempCell(151, 'high'),
-        tempCell(152, 'high'),
-        tempCell(153, 'high'),
-      ]}
-    >
-      <ChartRow height={120}>
-        <YAxis id="v" label="°F" />
-        <Layers>
-          <HeatMap
-            series={sf}
-            columns={['low', 'high']}
-            colors={RAMP}
-            id="temp"
-            gap={0.5}
-          />
-        </Layers>
-      </ChartRow>
+    <ChartContainer range={RANGE} width={720} cursor="none">
+      <Selector
+        enabled={false}
+        selected={[tempCell(60, 'low'), tempCell(150, 'high')]}
+        hovered={[
+          tempCell(150, 'high'),
+          tempCell(151, 'high'),
+          tempCell(152, 'high'),
+          tempCell(153, 'high'),
+        ]}
+      >
+        <ChartRow height={120}>
+          <YAxis id="v" label="°F" />
+          <Layers>
+            <HeatMap
+              series={sf}
+              columns={['low', 'high']}
+              colors={RAMP}
+              id="temp"
+              gap={0.5}
+            />
+          </Layers>
+        </ChartRow>
+      </Selector>
     </ChartContainer>
   ),
 };

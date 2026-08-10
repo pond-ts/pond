@@ -17,6 +17,7 @@ import { BarChart } from '../src/BarChart.js';
 import { ScatterChart } from '../src/ScatterChart.js';
 import { Legend } from '../src/Legend.js';
 import { YAxis } from '../src/YAxis.js';
+import { Selector } from '../src/selectors.js';
 import { orderLegendItems, type LegendItemSpec } from '../src/swatch.js';
 import { useChartLegend } from '../src/useChartLegend.js';
 import { stubCanvasContext } from './canvas-mock.js';
@@ -270,25 +271,32 @@ describe('<Legend> — zero-config enumeration', () => {
 describe('<Legend> — id-gated interactions', () => {
   it('echoes the container selection: the selected row reads emphasized', () => {
     const { container } = renderChart(
-      <ChartContainer
-        range={[0, 2000]}
-        width={400}
-        selected={{ id: 'pts', key: 0, value: 0, color: '#000', label: 'dots' }}
-      >
-        <ChartRow height={100}>
-          <YAxis id="a" min={0} max={10} />
-          <Layers>
-            <ScatterChart
-              series={series()}
-              column="v"
-              id="pts"
-              as="dots"
-              axis="a"
-            />
-            <LineChart series={series()} column="w" as="foam" axis="a" />
-          </Layers>
-        </ChartRow>
-        <Legend />
+      <ChartContainer range={[0, 2000]} width={400}>
+        <Selector
+          enabled={false}
+          selected={{
+            id: 'pts',
+            key: 0,
+            value: 0,
+            color: '#000',
+            label: 'dots',
+          }}
+        >
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={10} />
+            <Layers>
+              <ScatterChart
+                series={series()}
+                column="v"
+                id="pts"
+                as="dots"
+                axis="a"
+              />
+              <LineChart series={series()} column="w" as="foam" axis="a" />
+            </Layers>
+          </ChartRow>
+          <Legend />
+        </Selector>
       </ChartContainer>,
     );
     const card = legendCard(container);
@@ -333,21 +341,23 @@ describe('<Legend> — id-gated interactions', () => {
   it('clicking an id-bearing row toggles selection through the frame', () => {
     const onSelect = vi.fn();
     const { container } = renderChart(
-      <ChartContainer range={[0, 2000]} width={400} onSelect={onSelect}>
-        <ChartRow height={100}>
-          <YAxis id="a" min={0} max={10} />
-          <Layers>
-            <ScatterChart
-              series={series()}
-              column="v"
-              id="pts"
-              as="dots"
-              axis="a"
-            />
-            <LineChart series={series()} column="w" as="foam" axis="a" />
-          </Layers>
-        </ChartRow>
-        <Legend />
+      <ChartContainer range={[0, 2000]} width={400}>
+        <Selector onSelect={onSelect}>
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={10} />
+            <Layers>
+              <ScatterChart
+                series={series()}
+                column="v"
+                id="pts"
+                as="dots"
+                axis="a"
+              />
+              <LineChart series={series()} column="w" as="foam" axis="a" />
+            </Layers>
+          </ChartRow>
+          <Legend />
+        </Selector>
       </ChartContainer>,
     );
     const card = legendCard(container);
@@ -368,20 +378,22 @@ describe('<Legend> — id-gated interactions', () => {
   it('hovering an id-bearing row echoes into the container hovered channel', () => {
     const onHover = vi.fn();
     const { container } = renderChart(
-      <ChartContainer range={[0, 2000]} width={400} onHover={onHover}>
-        <ChartRow height={100}>
-          <YAxis id="a" min={0} max={10} />
-          <Layers>
-            <ScatterChart
-              series={series()}
-              column="v"
-              id="pts"
-              as="dots"
-              axis="a"
-            />
-          </Layers>
-        </ChartRow>
-        <Legend />
+      <ChartContainer range={[0, 2000]} width={400}>
+        <Selector onHover={onHover}>
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={10} />
+            <Layers>
+              <ScatterChart
+                series={series()}
+                column="v"
+                id="pts"
+                as="dots"
+                axis="a"
+              />
+            </Layers>
+          </ChartRow>
+          <Legend />
+        </Selector>
       </ChartContainer>,
     );
     const card = legendCard(container);
@@ -406,20 +418,22 @@ describe('<Legend> — id-gated interactions', () => {
     const onSelect = vi.fn();
     const onRowClick = vi.fn();
     const { container } = renderChart(
-      <ChartContainer range={[0, 2000]} width={400} onSelect={onSelect}>
-        <ChartRow height={100}>
-          <YAxis id="a" min={0} max={10} />
-          <Layers>
-            <ScatterChart
-              series={series()}
-              column="v"
-              id="pts"
-              as="dots"
-              axis="a"
-            />
-          </Layers>
-        </ChartRow>
-        <Legend onRowClick={onRowClick} />
+      <ChartContainer range={[0, 2000]} width={400}>
+        <Selector onSelect={onSelect}>
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={10} />
+            <Layers>
+              <ScatterChart
+                series={series()}
+                column="v"
+                id="pts"
+                as="dots"
+                axis="a"
+              />
+            </Layers>
+          </ChartRow>
+          <Legend onRowClick={onRowClick} />
+        </Selector>
       </ChartContainer>,
     );
     const card = legendCard(container);
@@ -559,26 +573,26 @@ describe('useChartLegend — the headless legend', () => {
     const stub = stubCanvasContext();
     try {
       render(
-        <ChartContainer
-          range={[0, 2000]}
-          width={400}
-          {...(onSelect ? { onSelect } : {})}
-          {...(onHover ? { onHover } : {})}
-        >
-          <ChartRow height={100}>
-            <YAxis id="a" min={0} max={10} />
-            <Layers>
-              <ScatterChart
-                series={series()}
-                column="v"
-                id="pts"
-                as="dots"
-                axis="a"
-              />
-              <LineChart series={series()} column="w" as="foam" axis="a" />
-            </Layers>
-          </ChartRow>
-          <Harness sink={(l) => (legend = l)} />
+        <ChartContainer range={[0, 2000]} width={400}>
+          <Selector
+            {...(onSelect ? { onSelect } : {})}
+            {...(onHover ? { onHover } : {})}
+          >
+            <ChartRow height={100}>
+              <YAxis id="a" min={0} max={10} />
+              <Layers>
+                <ScatterChart
+                  series={series()}
+                  column="v"
+                  id="pts"
+                  as="dots"
+                  axis="a"
+                />
+                <LineChart series={series()} column="w" as="foam" axis="a" />
+              </Layers>
+            </ChartRow>
+            <Harness sink={(l) => (legend = l)} />
+          </Selector>
         </ChartContainer>,
       );
     } finally {

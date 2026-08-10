@@ -10,24 +10,27 @@ page is the other half: **dragging across a range** of marks, holding several
 selections at once, and the currency that keeps a large selection cheap.
 
 Mount **`<MultiSelector>`** instead of `<Selector>`. It arms the sweep drag
-alongside the click, and reports in a plural currency.
+alongside the click, wraps its scope the same way `<Selector>` does, and
+reports in a plural currency.
 
 ```tsx
-<ChartContainer range={range} width={720} selected={sel}>
+<ChartContainer range={range} width={720}>
   <MultiSelector
+    selected={sel}
     onHover={setPreview}
     onSelect={(hits, modifiers, spans) => {
       // A sweep: hits are the covered marks, spans is what they demote to.
       // A click: one hit (or none), and spans is EMPTY.
       setSel(modifiers?.additive ? [...sel, ...spans, ...hits] : [...spans]);
     }}
-  />
-  <ChartRow height={180}>
-    <YAxis id="v" />
-    <Layers>
-      <BarChart series={s} column="v" axis="v" id="cpu" />
-    </Layers>
-  </ChartRow>
+  >
+    <ChartRow height={180}>
+      <YAxis id="v" />
+      <Layers>
+        <BarChart series={s} column="v" axis="v" id="cpu" />
+      </Layers>
+    </ChartRow>
+  </MultiSelector>
 </ChartContainer>
 ```
 
@@ -64,8 +67,8 @@ cover:
   (coalesced to animation frames past the first cut).
 
 Uncontrolled, the covered marks light on their own — the library owns the hover
-state and each layer draws its own treatment. Echo `onHover` back as
-`<ChartContainer hovered>` only when you control hover.
+state and each layer draws its own treatment. Echo `onHover` back as this same
+component's `hovered` only when you control hover.
 
 :::note Re-price a membership scan before you light a preview
 The resting block preview puts a whole covered run into `hovered` every frame.

@@ -6,6 +6,7 @@ import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { XAxis } from '../src/XAxis.js';
 import { YAxis } from '../src/YAxis.js';
+import { Selector } from '../src/selectors.js';
 import {
   ContainerContext,
   type ContainerFrame,
@@ -41,14 +42,16 @@ function mount(onHover: (hit: SelectInfo | null) => void) {
   const stub = stubCanvasContext();
   try {
     render(
-      <ChartContainer range={[0, 3]} width={300} onHover={onHover}>
-        <ChartRow height={100}>
-          <YAxis id="a" min={0} max={4} label="" />
-          <Layers>
-            <Capture />
-          </Layers>
-        </ChartRow>
-        <XAxis />
+      <ChartContainer range={[0, 3]} width={300}>
+        <Selector onHover={onHover}>
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={4} label="" />
+            <Layers>
+              <Capture />
+            </Layers>
+          </ChartRow>
+          <XAxis />
+        </Selector>
       </ChartContainer>,
     );
   } finally {

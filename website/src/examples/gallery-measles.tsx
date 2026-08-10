@@ -7,6 +7,7 @@ import {
   HeatMap,
   Layers,
   Marker,
+  Selector,
   YAxis,
   type SelectInfo,
 } from '@pond-ts/charts';
@@ -189,31 +190,32 @@ export default function GalleryMeasles({
         // The cell outline answers both axes; a shared vertical line would only
         // answer x, and on a grid that is a second, weaker cursor.
         cursor="none"
-        onHover={setHit}
       >
-        <ChartRow height={height}>
-          <YAxis id="state" label="" width={92} />
-          <Layers>
-            <HeatMap
-              series={series}
-              columns={ROWS}
-              colors={RAMP}
-              scale="log"
-              noData="hatch"
-              // Pinned, so the colours mean the same thing at every zoom and
-              // the ramp's floor sits exactly on zero.
-              domain={[0, 3000]}
-              axis="state"
-              id="measles"
-            />
-            <Marker at={yearTime(1963)} label="1963 · vaccine licensed" />
-            <Marker at={yearTime(1971)} label="1971 · MMR" />
-            <Marker at={yearTime(1980)} label="1980 · school mandates" />
-            {/* The one moment the record goes the wrong way — and the reason
-                the interventions above were not yet finished. */}
-            <Marker at={yearTime(1989)} label="1989 · rise" />
-          </Layers>
-        </ChartRow>
+        <Selector onHover={setHit}>
+          <ChartRow height={height}>
+            <YAxis id="state" label="" width={92} />
+            <Layers>
+              <HeatMap
+                series={series}
+                columns={ROWS}
+                colors={RAMP}
+                scale="log"
+                noData="hatch"
+                // Pinned, so the colours mean the same thing at every zoom and
+                // the ramp's floor sits exactly on zero.
+                domain={[0, 3000]}
+                axis="state"
+                id="measles"
+              />
+              <Marker at={yearTime(1963)} label="1963 · vaccine licensed" />
+              <Marker at={yearTime(1971)} label="1971 · MMR" />
+              <Marker at={yearTime(1980)} label="1980 · school mandates" />
+              {/* The one moment the record goes the wrong way — and the reason
+                  the interventions above were not yet finished. */}
+              <Marker at={yearTime(1989)} label="1989 · rise" />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     </div>
   );

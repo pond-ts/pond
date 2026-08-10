@@ -123,8 +123,8 @@ export interface BoxListCommon<R extends ListRow = ListRow> {
   /**
    * Controlled **hover-highlight** — the lit row key(s), or `null`; **omitted
    * ⇒ uncontrolled**. Accepts one key or a set, the same union
-   * `<ChartContainer hovered>` takes, so an external hover (a chart mark, a
-   * map segment) lights rows from outside. See `<BarList>`'s `hovered` for the
+   * `<Selector hovered>` takes, so an external hover (a chart mark, a map
+   * segment) lights rows from outside. See `<BarList>`'s `hovered` for the
    * full note.
    */
   hovered?: string | readonly string[] | null;

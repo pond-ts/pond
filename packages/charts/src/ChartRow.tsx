@@ -1,4 +1,6 @@
 import {
+  Children,
+  Fragment,
   isValidElement,
   useCallback,
   useContext,
@@ -517,14 +519,54 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
   const leftAxisEls: ReactNode[] = [];
   const plotEls: ReactNode[] = [];
   const rightAxisEls: ReactNode[] = [];
+  let axisInsideWrapper = false;
   for (const child of indexedChildren ?? []) {
     if (isValidElement(child) && child.type === YAxis) {
       const side = (child.props as { side?: 'left' | 'right' }).side ?? 'left';
       (side === 'right' ? rightAxisEls : leftAxisEls).push(child);
     } else {
+      // A `<Selector>`/`<MultiSelector>` is a legitimate row child now that it
+      // wraps its scope (RFC A10.1) — but it must wrap the row's `<Layers>`,
+      // NOT its axes: the sort above matches on `child.type`, so an axis
+      // nested inside any wrapper is invisible to it and lands in the plot
+      // column. The fragment warning cannot catch this one (a selector is a
+      // real element, not a fragment), and the failure is silent, so look one
+      // level down for the mistake the docs could invite.
+      // A fragment is skipped here: `useIndexedChildren` already warns about
+      // it and names the same gutter consequence, so checking it too would
+      // print two warnings for one mistake.
+      if (
+        isDev &&
+        isValidElement(child) &&
+        child.type !== Fragment &&
+        !axisInsideWrapper
+      ) {
+        const nested = (child.props as { children?: ReactNode }).children;
+        if (nested !== undefined) {
+          for (const g of Children.toArray(nested)) {
+            if (isValidElement(g) && g.type === YAxis) {
+              axisInsideWrapper = true;
+              break;
+            }
+          }
+        }
+      }
       plotEls.push(child);
     }
   }
+  const warnedAxisWrapperRef = useRef(false);
+  useEffect(() => {
+    if (!isDev || !axisInsideWrapper || warnedAxisWrapperRef.current) return;
+    warnedAxisWrapperRef.current = true;
+    console.warn(
+      '[pond-charts] a <YAxis> is nested inside another element in this ' +
+        '<ChartRow>, so it renders in the plot column instead of a gutter — ' +
+        '<ChartRow> places axes by matching its own children, and cannot see ' +
+        'through a wrapper. A row-scoped <Selector>/<MultiSelector> should ' +
+        "wrap the row's <Layers>, leaving each <YAxis> a direct child of the " +
+        '<ChartRow>.',
+    );
+  }, [axisInsideWrapper]);
 
   return (
     <RowContext.Provider value={frame}>

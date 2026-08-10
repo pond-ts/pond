@@ -7,6 +7,7 @@ import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { ScatterChart } from '../src/ScatterChart.js';
 import { BoxPlot } from '../src/BoxPlot.js';
+import { Selector } from '../src/selectors.js';
 import { defaultTheme } from '../src/theme.js';
 import { YAxis } from '../src/YAxis.js';
 import {
@@ -59,16 +60,22 @@ function mountRow(
     return null;
   }
   const stub = stubCanvasContext();
+  const row = (
+    <ChartRow height={200}>
+      <YAxis id="a" min={0} max={10} label="" />
+      <Layers>
+        {children}
+        <Capture />
+      </Layers>
+    </ChartRow>
+  );
   try {
     render(
-      <ChartContainer width={400} {...containerProps}>
-        <ChartRow height={200}>
-          <YAxis id="a" min={0} max={10} label="" />
-          <Layers>
-            {children}
-            <Capture />
-          </Layers>
-        </ChartRow>
+      <ChartContainer width={400}>
+        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+        <Selector enabled={false} {...(containerProps as any)}>
+          {row}
+        </Selector>
       </ChartContainer>,
     );
   } finally {

@@ -1,5 +1,7 @@
 import {
+  Children,
   Fragment,
+  isValidElement,
   useCallback,
   useContext,
   useEffect,
@@ -1921,6 +1923,42 @@ export function Layers({ children }: LayersProps) {
     'the draw layers inside it all register at 0 and their z-stacking falls ' +
       'back to mount order',
   );
+
+  // The non-fragment half of the same trap, and the mirror of `<ChartRow>`'s
+  // axis check: a draw layer nested inside ANY element child of `<Layers>`
+  // never receives the injected index, so the z-stack silently falls back to
+  // mount order. `<Selector>`/`<MultiSelector>` made this reachable when they
+  // gained `children` (RFC A10.1) — they belong *outside* `<Layers>`, wrapping
+  // it — and being real elements they slip past the fragment warning. No draw
+  // layer takes element children of its own, so "a child that has element
+  // children" is a sound signal here. (Codex finding on #638.)
+  let wrapperChild = false;
+  if (isDev) {
+    for (const child of Children.toArray(children)) {
+      if (!isValidElement(child) || child.type === Fragment) continue;
+      const nested = (child.props as { children?: ReactNode }).children;
+      if (nested === undefined) continue;
+      for (const g of Children.toArray(nested)) {
+        if (isValidElement(g)) {
+          wrapperChild = true;
+          break;
+        }
+      }
+      if (wrapperChild) break;
+    }
+  }
+  const warnedWrapperRef = useRef(false);
+  useEffect(() => {
+    if (!isDev || !wrapperChild || warnedWrapperRef.current) return;
+    warnedWrapperRef.current = true;
+    console.warn(
+      '[pond-charts] a child of <Layers> wraps other elements, so any draw ' +
+        'layer inside it never receives the injected z-order index and the ' +
+        'stack falls back to mount order. Draw layers must be direct children ' +
+        'of <Layers>; a <Selector>/<MultiSelector> belongs outside it, ' +
+        'wrapping the <Layers> (or the whole <ChartRow>).',
+    );
+  }, [wrapperChild]);
 
   return (
     <LayersContext.Provider value={registry}>

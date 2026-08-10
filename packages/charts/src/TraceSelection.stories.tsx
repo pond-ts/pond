@@ -79,12 +79,9 @@ function Demo({ kind }: { kind: 'line' | 'area' }) {
   const [note, setNote] = useState('—');
   return (
     <div style={{ width: 560 }}>
-      <ChartContainer
-        range={[D0, D0 + (N - 1) * DAY]}
-        width={560}
-        selected={sel}
-      >
+      <ChartContainer range={[D0, D0 + (N - 1) * DAY]} width={560}>
         <MultiSelector
+          selected={sel}
           onSelect={(hits, _m, spans) => {
             // **`spans`, not `span`.** One sweep commits a span per trace, and
             // reading the singular would select whichever happened to be
@@ -112,38 +109,39 @@ function Demo({ kind }: { kind: 'line' | 'area' }) {
                 : [hit],
             );
           }}
-        />
-        <ChartRow height={200}>
-          <YAxis id="v" min={0} max={8} label="" />
-          <Layers>
-            {/* A keyed array, not a `<>…</>` — a fragment accepts no props, so
-                it would swallow the z-order index `<Layers>` injects and both
-                traces would register at 0. That matters most in this story:
-                `spans` is documented topmost-first, and topmost is decided by
-                the injected index. */}
-            {kind === 'line' ? (
-              [
-                <LineChart
-                  key="cpu"
-                  series={wave(0, 1)}
-                  column="v"
-                  axis="v"
-                  id="cpu"
-                />,
-                <LineChart
-                  key="mem"
-                  series={wave(2.2, 0.7)}
-                  column="v"
-                  axis="v"
-                  as="secondary"
-                  id="mem"
-                />,
-              ]
-            ) : (
-              <AreaChart series={wave(0, 1)} column="v" axis="v" id="net" />
-            )}
-          </Layers>
-        </ChartRow>
+        >
+          <ChartRow height={200}>
+            <YAxis id="v" min={0} max={8} label="" />
+            <Layers>
+              {/* A keyed array, not a `<>…</>` — a fragment accepts no props, so
+                  it would swallow the z-order index `<Layers>` injects and both
+                  traces would register at 0. That matters most in this story:
+                  `spans` is documented topmost-first, and topmost is decided by
+                  the injected index. */}
+              {kind === 'line' ? (
+                [
+                  <LineChart
+                    key="cpu"
+                    series={wave(0, 1)}
+                    column="v"
+                    axis="v"
+                    id="cpu"
+                  />,
+                  <LineChart
+                    key="mem"
+                    series={wave(2.2, 0.7)}
+                    column="v"
+                    axis="v"
+                    as="secondary"
+                    id="mem"
+                  />,
+                ]
+              ) : (
+                <AreaChart series={wave(0, 1)} column="v" axis="v" id="net" />
+              )}
+            </Layers>
+          </ChartRow>
+        </MultiSelector>
       </ChartContainer>
       <p style={caption}>
         Drag across the plot to sweep a range — the band is the whole preview,

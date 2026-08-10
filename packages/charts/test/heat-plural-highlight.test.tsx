@@ -7,6 +7,7 @@ import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { HeatMap } from '../src/HeatMap.js';
 import { YAxis } from '../src/YAxis.js';
+import { Selector } from '../src/selectors.js';
 import { RowContext, type RowFrame, type SelectInfo } from '../src/context.js';
 import { defaultTheme } from '../src/theme.js';
 import { stacksFromColumns } from '../src/data.js';
@@ -105,26 +106,37 @@ function mountHeat(
     });
     return null;
   }
+  const { selected, hovered, ...rest } = containerProps as {
+    selected?: SelectInfo | readonly SelectInfo[];
+    hovered?: SelectInfo | readonly SelectInfo[];
+    [key: string]: unknown;
+  };
   const stub = stubCanvasContext();
   try {
     render(
-      <ChartContainer range={[0, 3000]} width={300} {...containerProps}>
-        <ChartRow height={100}>
-          <YAxis id="a" />
-          <Layers>
-            <HeatMap
-              series={series}
-              columns={['lo', 'hi']}
-              colors={RAMP}
-              id="temp"
-              // Off explicitly: a reduced grid suppresses every outline by
-              // design, which is its own test below — these must read the
-              // undecimated path.
-              decimate={false}
-            />
-            <Capture />
-          </Layers>
-        </ChartRow>
+      <ChartContainer range={[0, 3000]} width={300} {...rest}>
+        <Selector
+          enabled={false}
+          {...(selected !== undefined ? { selected } : {})}
+          {...(hovered !== undefined ? { hovered } : {})}
+        >
+          <ChartRow height={100}>
+            <YAxis id="a" />
+            <Layers>
+              <HeatMap
+                series={series}
+                columns={['lo', 'hi']}
+                colors={RAMP}
+                id="temp"
+                // Off explicitly: a reduced grid suppresses every outline by
+                // design, which is its own test below — these must read the
+                // undecimated path.
+                decimate={false}
+              />
+              <Capture />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>,
     );
   } finally {
@@ -385,24 +397,21 @@ describe('<HeatMap> — the whole selection / hover set reaches the draw', () =>
     const stub = stubCanvasContext();
     try {
       render(
-        <ChartContainer
-          range={[0, N * 1000]}
-          width={300}
-          selected={pinned}
-          hovered={pinned}
-        >
-          <ChartRow height={100}>
-            <YAxis id="a" />
-            <Layers>
-              <HeatMap
-                series={dense}
-                columns={['lo', 'hi']}
-                colors={RAMP}
-                id="temp"
-              />
-              <Capture />
-            </Layers>
-          </ChartRow>
+        <ChartContainer range={[0, N * 1000]} width={300}>
+          <Selector enabled={false} selected={pinned} hovered={pinned}>
+            <ChartRow height={100}>
+              <YAxis id="a" />
+              <Layers>
+                <HeatMap
+                  series={dense}
+                  columns={['lo', 'hi']}
+                  colors={RAMP}
+                  id="temp"
+                />
+                <Capture />
+              </Layers>
+            </ChartRow>
+          </Selector>
         </ChartContainer>,
       );
     } finally {

@@ -74,23 +74,24 @@ function mount(orientation: 'vertical' | 'horizontal') {
           onSelect={(hits, mods, spans) =>
             seen.push({ hits, mods, span: spans[0] ?? null })
           }
-        />
-        <ChartRow height={ROW_H}>
-          <YAxis
-            id="a"
-            min={0}
-            max={orientation === 'horizontal' ? 5000 : 10}
-          />
-          <Layers>
-            <BarChart
-              series={bars()}
-              column="v"
-              axis="a"
-              id="s"
-              orientation={orientation}
+        >
+          <ChartRow height={ROW_H}>
+            <YAxis
+              id="a"
+              min={0}
+              max={orientation === 'horizontal' ? 5000 : 10}
             />
-          </Layers>
-        </ChartRow>
+            <Layers>
+              <BarChart
+                series={bars()}
+                column="v"
+                axis="a"
+                id="s"
+                orientation={orientation}
+              />
+            </Layers>
+          </ChartRow>
+        </MultiSelector>
       </ChartContainer>,
     ).container;
   } finally {
@@ -325,18 +326,19 @@ function mountCategorical() {
           onSelect={(hits, mods, spans) =>
             seen.push({ hits, mods, span: spans[0] ?? null })
           }
-        />
-        <ChartRow height={ROW_H}>
-          <YAxis id="stage" width={96} />
-          <Layers>
-            <BarChart
-              categories={STAGES}
-              orientation="horizontal"
-              axis="stage"
-              id="funnel"
-            />
-          </Layers>
-        </ChartRow>
+        >
+          <ChartRow height={ROW_H}>
+            <YAxis id="stage" width={96} />
+            <Layers>
+              <BarChart
+                categories={STAGES}
+                orientation="horizontal"
+                axis="stage"
+                id="funnel"
+              />
+            </Layers>
+          </ChartRow>
+        </MultiSelector>
       </ChartContainer>,
     ).container;
   } finally {
@@ -461,20 +463,24 @@ describe('the committed span replays', () => {
         captured = sel[0] ?? null;
       }, [sel]);
       return (
-        <ChartContainer range={[0, 5000]} width={PLOT_W} selected={sel}>
-          <MultiSelector onSelect={(_h, _m, spans) => setSel([...spans])} />
-          <ChartRow height={ROW_H}>
-            <YAxis id="a" min={0} max={5000} />
-            <Layers>
-              <BarChart
-                series={bars()}
-                column="v"
-                axis="a"
-                id="s"
-                orientation="horizontal"
-              />
-            </Layers>
-          </ChartRow>
+        <ChartContainer range={[0, 5000]} width={PLOT_W}>
+          <MultiSelector
+            selected={sel}
+            onSelect={(_h, _m, spans) => setSel([...spans])}
+          >
+            <ChartRow height={ROW_H}>
+              <YAxis id="a" min={0} max={5000} />
+              <Layers>
+                <BarChart
+                  series={bars()}
+                  column="v"
+                  axis="a"
+                  id="s"
+                  orientation="horizontal"
+                />
+              </Layers>
+            </ChartRow>
+          </MultiSelector>
         </ChartContainer>
       );
     }

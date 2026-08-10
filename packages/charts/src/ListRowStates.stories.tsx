@@ -228,7 +228,7 @@ export const NoListRegister = {
  * a click reports one row, and a drag across rows reports the whole run. The
  * library holds no state and applies no set arithmetic — you get the run and
  * the modifiers and decide what the next selection is, which is exactly the
- * contract `<ChartContainer selected>` has on the canvas side.
+ * contract `<Selector selected>` has on the canvas side.
  *
  * **Crossing into another row is what makes it a range**, not a pixel slop, so
  * a press-and-release is always a click and a horizontal wobble never commits

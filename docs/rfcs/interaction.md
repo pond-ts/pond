@@ -433,22 +433,22 @@ that never moves selects and commits no region. This is also why #606 exposes
 
 ## 9. Migration — the eggs
 
-| today                  | becomes                           |
-| ---------------------- | --------------------------------- |
-| `cursor`               | mount a cursor component          |
-| `ChartRow.cursor`      | mount it inside the row           |
-| `cursorSequence`       | `<RegionCursor sequence>`         |
-| `cursorTime`           | `showTime` on the cursor          |
-| `cursorFormat`         | `format` on the cursor            |
-| `crosshairSnap`        | `<CrosshairCursor snap>`          |
-| `onRegionSelect`       | `<RegionCursor onDragRelease>`    |
-| `regionSelectModifier` | `<RegionCursor dragModifier>`     |
-| `onSelect`             | `<Selector onSelect>`             |
-| `onHover`              | `<Selector onHover>`              |
-| `selected`             | **stays on the container** (A1.2) |
-| `hovered`              | **stays on the container** (A1.2) |
-| `trackerPosition`      | **stays on the container** (Q4)   |
-| `onTrackerChanged`     | **stays on the container** (Q4)   |
+| today                  | becomes                                                          |
+| ---------------------- | ---------------------------------------------------------------- |
+| `cursor`               | mount a cursor component                                         |
+| `ChartRow.cursor`      | mount it inside the row                                          |
+| `cursorSequence`       | `<RegionCursor sequence>`                                        |
+| `cursorTime`           | `showTime` on the cursor                                         |
+| `cursorFormat`         | `format` on the cursor                                           |
+| `crosshairSnap`        | `<CrosshairCursor snap>`                                         |
+| `onRegionSelect`       | `<RegionCursor onDragRelease>`                                   |
+| `regionSelectModifier` | `<RegionCursor dragModifier>`                                    |
+| `onSelect`             | `<Selector onSelect>`                                            |
+| `onHover`              | `<Selector onHover>`                                             |
+| `selected`             | ~~stays on the container~~ → **moved onto `<Selector>`** (A10.3) |
+| `hovered`              | ~~stays on the container~~ → **moved onto `<Selector>`** (A10.3) |
+| `trackerPosition`      | **stays on the container** (Q4)                                  |
+| `onTrackerChanged`     | **stays on the container** (Q4)                                  |
 
 **The frame does not move.** `ContainerFrame.selected` / `.hovered` /
 `.cursorBuckets` / `CursorFrame` stay exactly where they are; only the
@@ -614,6 +614,15 @@ the failure mode is visible rather than quietly patched.
    that isn't mounted. Both resolved by A1.2.
 
 ### A1.2 `selected` / `hovered` stay on the container — selectors only report
+
+> **REVERSED by [Amendment 10](#amendment-10-2026-08-10--selector-wraps-its-scope-and-owns-the-state)
+> (2026-08-10), two days after being accepted.** The state props moved onto
+> `<Selector>` / `<MultiSelector>` after all. The reasoning below was not wrong
+> on its own terms — what it missed is that §7.1 _already_ requires mounting a
+> selector for the plot gesture, so the common chart wired one concept in two
+> places. A10.3 has the argument; the case this section protected is now
+> `<Selector enabled={false} selected={…}>` (A10.2). Kept unedited as the record
+> of what we decided and why the reversal was not free.
 
 **Accepted (pjm17971, 2026-08-08), and it was always the intended API**; §9 got
 it wrong by sweeping the state props along with the gesture props.
@@ -1166,13 +1175,19 @@ genuinely reports one hit, `<MultiSelector>` genuinely reports a list.
 
 ### A4.2 The decided surface — read this, then the reasoning
 
+> **Superseded in part by [Amendment 10](#amendment-10-2026-08-10--selector-wraps-its-scope-and-owns-the-state).**
+> `selected` / `hovered` are **no longer container props** — they moved onto
+> `<Selector>` / `<MultiSelector>`, which also gained `children` (they wrap
+> their scope) and `enabled`. The sketch below is preserved as the state of the
+> design at A4; read A10.3 for what shipped.
+
 Everything settled across §1–§12 and A1–A4, in one place:
 
 ```tsx
 <ChartContainer
   range={view}                              // view window — unchanged
-  selected={sel}                            // consumer-owned state (A1.2)
-  hovered={hov}                             //   ⤷ NOT moved onto the selectors
+  selected={sel}                            // ⚠ A10.3: moved to <Selector>
+  hovered={hov}                             // ⚠ A10.3: moved to <Selector>
   trackerPosition={t}                       // cross-chart sync — stays (Q4)
   onTrackerChanged={setT}
 >
@@ -1838,3 +1853,121 @@ plainly: highlight is `selected` carrying spans, zoom is `range` — both alread
 exist, and choosing between them per interaction is app policy. If a consumer
 building this finds themselves writing the same glue twice, that is the signal
 to reconsider, not before.
+
+## Amendment 10 (2026-08-10) — `<Selector>` wraps its scope, and owns the state
+
+Owner feedback, reading the freshly-written docs pages for A4.2/A5.2:
+
+> Three things that immediately jump out reading the docs: it would seem more
+> natural if `<Selector>` wrapped what it controlled selection for, not just
+> hung out like a spy in a hotel lobby; I hate to say this but `selected`
+> should be on `<Selector>`; `<Selector>` should have an `enable`, default
+> `true`. Applies to `<MultiSelector>` too.
+
+Two of the three are additive. The third reverses A1.2 — a decision this same
+RFC reached two days earlier and the owner accepted in writing. Recorded here
+because the reversal has a specific reason, not because A1.2 was wrong on its
+own terms.
+
+### A10.1 Scoping by wrapping, not by position — free, because nothing reads position
+
+`<Selector>` / `<MultiSelector>` decide their scope (one row vs. the whole
+container) by reading `RowContext` at mount time — a context read, not a JSX
+position check. A component nested one level deeper is still a descendant of
+the same provider, so accepting `children` and rendering them changes nothing
+about how scope is resolved:
+
+```tsx
+// container-wide, wraps every row
+<ChartContainer>
+  <Selector onSelect={...}>
+    <ChartRow>…</ChartRow>
+    <ChartRow>…</ChartRow>
+  </Selector>
+</ChartContainer>
+
+// row-scoped, wraps that row's plot
+<ChartRow>
+  <Selector onSelect={...}>
+    <Layers>…</Layers>
+  </Selector>
+</ChartRow>
+```
+
+`<Selector />` with no children keeps working exactly as before — this is
+additive, not a migration.
+
+### A10.2 `enabled`, default `true` — already half-built
+
+`useSelectorMount` has taken an internal `enabled` boolean since it was
+written; it was driven by the legacy-props shim ("no legacy prop set" is what
+makes "no selector mounted" detectable) and never exposed. `enabled={false}`
+now disables the **gesture** — no hit-testing, no `onSelect`/`onHover` firing,
+the plot goes inert exactly as if unmounted — while still being a legitimate
+place to declare controlled state (A10.3): `<Selector enabled={false}
+selected={sel} />` is the "highlight from outside, no plot click" configuration
+A1.2 protected, expressed as one component instead of a prop's absence.
+
+### A10.3 `selected` / `hovered` move onto `<Selector>` / `<MultiSelector>` — full transfer
+
+**A1.2's reasoning was not wrong**, and is worth restating so the reversal
+doesn't read as "we changed our minds for no reason": conflating _what is
+selected_ with _the gesture that produces it_ is what produced Q8's
+circularity, and separating them is what let a legend-only, no-plot-gesture
+consumer keep working with nothing mounted at all.
+
+**What changed is not that reasoning — it's the cost of keeping the two
+components separate.** Two decisions made independently, days apart, only
+looked collision-free until stated in the same room:
+
+1. **The plot gesture already requires mounting `<Selector>`** (§7.1, decided
+   before A1.2). A chart that wants click-select was _never_ going to be
+   state-prop-only — it needs the component regardless.
+2. **A1.2 kept the state prop on the container anyway**, reasoning that
+   controlled highlighting should work with _no_ `<Selector>` mounted.
+
+Combine them and the common case — a chart that both selects on click **and**
+highlights a controlled set, which is most of them — ends up wiring the same
+concept in two places: `<ChartContainer selected={sel}>` for what's lit,
+`<Selector onSelect={...}>` for what lights it, with no structural link between
+them beyond the consumer's own care. `selected` on `<Selector>` closes that:
+one component, one place, for a gesture that already had to be mounted anyway.
+
+**The case A1.2 was protecting doesn't disappear — it becomes `enabled=false`
+(A10.2).** `<Selector enabled={false} selected={sel} />` is legend-only
+highlighting with the gesture explicitly turned off, which is more honest than
+today's implicit "prop present ⇒ works, absent ⇒ also works, no bookkeeping" —
+a reader now sees the state and the gesture toggle in the same tag rather than
+inferring "no `<Selector>` mounted here means intentionally read-only."
+
+**Full transfer, not a second entry point.** `<ChartContainer selected>` /
+`hovered` do **not** stay as an alternate path once `<Selector selected>`
+exists — two ways to set the same state is exactly the duplication this
+project's `bar.dimmed` note (RFC A2.3) already warned against for theme
+tokens, and it would apply here for the identical reason. They join
+`onSelect`/`onHover` (already deprecated this same release) on the **existing**
+one-minor shim: still work, dev-warn once, naming `<Selector selected hovered
+onSelect onHover>` as the replacement — the same deprecation window, widened
+to cover the two props A1.2 had carved out of it.
+
+**Precedence when both are present** (the deprecated container prop and a
+mounted `<Selector selected>`): the mounted selector wins, dev-warned once —
+it's the one being asked for, and the shim exists for callers who haven't
+migrated yet, not for mixing the two styles in one chart.
+
+**Multiple selectors, more than one declaring `selected`:** ambiguous by
+construction (which one is _the_ chart's selection?), so the first registered
+wins and a dev warning names the rest. Not expected in practice — one
+`<Selector>`/`<MultiSelector>` per selection domain is the intended shape,
+matching A10.1's wrapping — but a registry, not a single prop, is what makes
+"first wins, dev-warn the rest" a fact about registration order rather than an
+invariant the type system enforces.
+
+### A10.4 What does not move
+
+The list family (`<BarList>` / `<BoxList>`) is untouched. Its `selected` /
+`hovered` / `onRowSelect` / `onHover` live directly on the component because
+the component **is** the whole interaction surface — there is no separate
+"mount a gesture" step to fold state into, the way there is for the canvas's
+`<Selector>`. A1.2's reasoning, and this amendment's reversal of it, are both
+scoped to the canvas selector components.

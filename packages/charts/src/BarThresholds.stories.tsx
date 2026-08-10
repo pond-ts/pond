@@ -7,6 +7,7 @@ import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
+import { Selector } from './selectors.js';
 import { defaultTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
 
@@ -282,19 +283,21 @@ function SelectDemo() {
   const [sel, setSel] = useState<SelectInfo | null>(null);
   return (
     <div>
-      <ChartContainer width={640} selected={sel} onSelect={setSel}>
-        <ChartRow height={240}>
-          <YAxis id="v" label="" min={0} max={3.6} />
-          <Layers>
-            <BarChart
-              categories={LOAD}
-              id="load"
-              thresholds={[1, 2]}
-              bandColors={BANDS}
-              gap={6}
-            />
-          </Layers>
-        </ChartRow>
+      <ChartContainer width={640}>
+        <Selector selected={sel} onSelect={setSel}>
+          <ChartRow height={240}>
+            <YAxis id="v" label="" min={0} max={3.6} />
+            <Layers>
+              <BarChart
+                categories={LOAD}
+                id="load"
+                thresholds={[1, 2]}
+                bandColors={BANDS}
+                gap={6}
+              />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
       <p style={{ font: '13px system-ui', color: '#888' }}>
         selected: {sel?.mark ?? '—'}

@@ -10,6 +10,7 @@ import { ScatterChart } from '../src/ScatterChart.js';
 import { BoxPlot } from '../src/BoxPlot.js';
 import { defaultTheme } from '../src/theme.js';
 import { HeatMap } from '../src/HeatMap.js';
+import { Selector } from '../src/selectors.js';
 import { YAxis } from '../src/YAxis.js';
 import {
   ContainerContext,
@@ -62,17 +63,34 @@ function mountRow(
     });
     return null;
   }
+  // `selected`/`hovered` are the two keys that used to be container props and
+  // are now `<Selector>`'s — split them out of the merged bag so the rest
+  // (`range`, `showAxis`, …) still reaches `<ChartContainer>`.
+  const { selected, hovered, ...rest } = containerProps as {
+    selected?: unknown;
+    hovered?: unknown;
+    [k: string]: unknown;
+  };
+  const selectorProps: Record<string, unknown> = {};
+  if ('selected' in containerProps) selectorProps.selected = selected;
+  if ('hovered' in containerProps) selectorProps.hovered = hovered;
   const stub = stubCanvasContext();
+  const row = (
+    <ChartRow height={200}>
+      {yAxis}
+      <Layers>
+        {children}
+        <Capture />
+      </Layers>
+    </ChartRow>
+  );
   try {
     render(
-      <ChartContainer width={400} {...containerProps}>
-        <ChartRow height={200}>
-          {yAxis}
-          <Layers>
-            {children}
-            <Capture />
-          </Layers>
-        </ChartRow>
+      <ChartContainer width={400} {...rest}>
+        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+        <Selector enabled={false} {...(selectorProps as any)}>
+          {row}
+        </Selector>
       </ChartContainer>,
     );
   } finally {
@@ -439,22 +457,28 @@ function mountHeat(
     return null;
   }
   const stub = stubCanvasContext();
+  const row = (
+    <ChartRow height={100}>
+      <YAxis id="a" />
+      <Layers>
+        <HeatMap
+          series={GRID}
+          columns={columns as ['lo', 'hi']}
+          colors={RAMP}
+          id="temp"
+          decimate={false}
+        />
+        <Capture />
+      </Layers>
+    </ChartRow>
+  );
   try {
     render(
-      <ChartContainer range={[0, 3000]} width={300} {...containerProps}>
-        <ChartRow height={100}>
-          <YAxis id="a" />
-          <Layers>
-            <HeatMap
-              series={GRID}
-              columns={columns as ['lo', 'hi']}
-              colors={RAMP}
-              id="temp"
-              decimate={false}
-            />
-            <Capture />
-          </Layers>
-        </ChartRow>
+      <ChartContainer range={[0, 3000]} width={300}>
+        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+        <Selector enabled={false} {...(containerProps as any)}>
+          {row}
+        </Selector>
       </ChartContainer>,
     );
   } finally {

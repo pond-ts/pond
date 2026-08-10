@@ -6,6 +6,7 @@ import {
   ChartRow,
   HeatMap,
   Layers,
+  Selector,
   YAxis,
   type SelectInfo,
 } from '@pond-ts/charts';
@@ -324,31 +325,32 @@ export default function GalleryNino34Heatmap({
         // leaking the synthetic year the fixture happens to be built on. Same
         // reason, same prop, as the day-of-year chart above.
         timeFormat="%b"
-        // `onHover` reports the **cell under the pointer** — a real 2-D hit,
-        // which is what a grid needs and what `onTrackerChanged` cannot give:
-        // the tracker samples every row at the cursor's x and knows nothing
-        // about y, so any single number picked out of it is a guess at which
-        // row was meant. `hitTest` already resolves both axes, so use it.
-        onHover={setHit}
       >
-        <ChartRow height={height}>
-          {/* `label=""` because the title otherwise defaults to the axis id —
-              "yr" is plumbing, not a label. */}
-          <YAxis id="yr" ticks={NAMED_TICKS} label="" />
-          <Layers>
-            <HeatMap
-              series={series}
-              columns={ROWS}
-              colors={colors}
-              // Pinned for the anomaly so the diverging ramp's neutral band
-              // sits on zero; left to the layer for absolute SST, which has no
-              // meaningful centre to pin to.
-              {...(measure === 'anomaly' ? { domain: ANOMALY_DOMAIN } : {})}
-              axis="yr"
-              id="sst"
-            />
-          </Layers>
-        </ChartRow>
+        {/* `onHover` reports the **cell under the pointer** — a real 2-D hit,
+            which is what a grid needs and what `onTrackerChanged` cannot give:
+            the tracker samples every row at the cursor's x and knows nothing
+            about y, so any single number picked out of it is a guess at which
+            row was meant. `hitTest` already resolves both axes, so use it. */}
+        <Selector onHover={setHit}>
+          <ChartRow height={height}>
+            {/* `label=""` because the title otherwise defaults to the axis id —
+                "yr" is plumbing, not a label. */}
+            <YAxis id="yr" ticks={NAMED_TICKS} label="" />
+            <Layers>
+              <HeatMap
+                series={series}
+                columns={ROWS}
+                colors={colors}
+                // Pinned for the anomaly so the diverging ramp's neutral band
+                // sits on zero; left to the layer for absolute SST, which has no
+                // meaningful centre to pin to.
+                {...(measure === 'anomaly' ? { domain: ANOMALY_DOMAIN } : {})}
+                axis="yr"
+                id="sst"
+              />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     </div>
   );

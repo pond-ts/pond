@@ -1,4 +1,10 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import {
+  cloneElement,
+  useMemo,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import type { StoryObj } from '@storybook/react-vite';
 import type { BoundedSequence, Sequence } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
@@ -28,30 +34,42 @@ import { caption, type ChartFixture } from './selection-fixtures.js';
 type Story = StoryObj;
 const H = 240;
 
-/** The chart under test, wired identically in every cell. */
+/**
+ * The chart under test, wired identically in every cell. `children` are
+ * non-wrapping registrants rendered before the row (e.g. `<Cursor/>`);
+ * `selector`, when given, is a `<Selector>`/`<MultiSelector>` element that
+ * WRAPS the row instead (A10.1) — `Chart` clones it with the row as its
+ * children, so a story only ever writes the selector element itself and never
+ * has to hand-nest `<ChartRow>` inside it.
+ */
 function Chart({
   fx,
   children,
   height = H,
+  selector,
   ...container
 }: {
   fx: ChartFixture;
   children?: React.ReactNode;
   height?: number;
+  selector?: ReactElement;
   [k: string]: unknown;
 }) {
+  const row = (
+    <ChartRow height={height}>
+      <YAxis
+        id={fx.axis.id}
+        label={fx.axis.label}
+        min={fx.axis.min}
+        max={fx.axis.max}
+      />
+      <Layers>{fx.renderLayer('svc')}</Layers>
+    </ChartRow>
+  );
   return (
     <ChartContainer width={640} {...fx.container} {...container}>
       {children}
-      <ChartRow height={height}>
-        <YAxis
-          id={fx.axis.id}
-          label={fx.axis.label}
-          min={fx.axis.min}
-          max={fx.axis.max}
-        />
-        <Layers>{fx.renderLayer('svc')}</Layers>
-      </ChartRow>
+      {selector ? cloneElement(selector, undefined, row) : row}
     </ChartContainer>
   );
 }
@@ -88,9 +106,16 @@ export function makeSelectorStories(fx: ChartFixture): SelectorStories {
         const [sel, setSel] = useState<readonly SelectInfo[]>([]);
         return (
           <div>
-            <Chart fx={fx} selected={sel}>
+            <Chart
+              fx={fx}
+              selector={
+                <Selector
+                  selected={sel}
+                  onSelect={(h) => setSel(h === null ? [] : [h])}
+                />
+              }
+            >
               <Cursor />
-              <Selector onSelect={(h) => setSel(h === null ? [] : [h])} />
             </Chart>
             <p style={caption}>
               Click a mark to select it, empty space to clear.{' '}
@@ -109,7 +134,7 @@ export function makeSelectorStories(fx: ChartFixture): SelectorStories {
         const [sel, setSel] = useState<readonly SelectInfo[]>([]);
         return (
           <div>
-            <ChartContainer width={640} {...fx.container} selected={sel}>
+            <ChartContainer width={640} {...fx.container}>
               <ChartRow height={150}>
                 <YAxis
                   id={fx.axis.id}
@@ -118,8 +143,12 @@ export function makeSelectorStories(fx: ChartFixture): SelectorStories {
                   max={fx.axis.max}
                 />
                 <Cursor />
-                <Selector onSelect={(h) => setSel(h === null ? [] : [h])} />
-                <Layers>{fx.renderLayer('svc')}</Layers>
+                <Selector
+                  selected={sel}
+                  onSelect={(h) => setSel(h === null ? [] : [h])}
+                >
+                  <Layers>{fx.renderLayer('svc')}</Layers>
+                </Selector>
               </ChartRow>
               <ChartRow height={110}>
                 <YAxis
@@ -159,11 +188,11 @@ export function makeSelectorStories(fx: ChartFixture): SelectorStories {
       ),
     },
 
-    /** **Controlled selection with no selector mounted** — the case A1.2
-     *  exists to protect. The buttons stand in for the legend chip / filter
-     *  list that really drives this: the chart *displays* a selection owned
-     *  elsewhere, and the plot is deliberately inert. This is also why §7.1's
-     *  warning suppresses whenever `selected` is supplied (A2.6). */
+    /** **Controlled selection, gesture disabled** — `enabled={false}` exists
+     *  to protect. The buttons stand in for the legend chip / filter list that
+     *  really drives this: the chart *displays* a selection owned elsewhere,
+     *  and the plot is deliberately inert. This is also why §7.1's warning
+     *  suppresses whenever controlled `selected` is in effect (A2.6). */
     ControlledNoSelector: {
       render: function Render() {
         const [sel, setSel] = useState<readonly SelectInfo[]>([
@@ -194,7 +223,10 @@ export function makeSelectorStories(fx: ChartFixture): SelectorStories {
                 </button>
               ))}
             </div>
-            <Chart fx={fx} selected={sel} />
+            <Chart
+              fx={fx}
+              selector={<Selector enabled={false} selected={sel} />}
+            />
             <p style={caption}>
               The buttons drive the highlight; clicking the plot does nothing.{' '}
               <strong>selected:</strong> {list(fx, sel)}
@@ -214,26 +246,31 @@ export function makeSelectorStories(fx: ChartFixture): SelectorStories {
         const [last, setLast] = useState('—');
         return (
           <div>
-            <Chart fx={fx} selected={sel}>
+            <Chart
+              fx={fx}
+              selector={
+                <Selector
+                  selected={sel}
+                  onSelect={(hit, mods) => {
+                    setLast(
+                      hit === null
+                        ? 'null hit → clear'
+                        : `${fx.describe(hit)} · additive=${mods?.additive ?? false}` +
+                            ` shift=${mods?.shiftKey ?? false}` +
+                            ` alt=${mods?.altKey ?? false}`,
+                    );
+                    setSel((cur) => {
+                      if (hit === null) return [];
+                      if (!(mods?.additive ?? false)) return [hit];
+                      return cur.some((m) => sameMark(m, hit))
+                        ? cur.filter((m) => !sameMark(m, hit))
+                        : [...cur, hit];
+                    });
+                  }}
+                />
+              }
+            >
               <Cursor />
-              <Selector
-                onSelect={(hit, mods) => {
-                  setLast(
-                    hit === null
-                      ? 'null hit → clear'
-                      : `${fx.describe(hit)} · additive=${mods?.additive ?? false}` +
-                          ` shift=${mods?.shiftKey ?? false}` +
-                          ` alt=${mods?.altKey ?? false}`,
-                  );
-                  setSel((cur) => {
-                    if (hit === null) return [];
-                    if (!(mods?.additive ?? false)) return [hit];
-                    return cur.some((m) => sameMark(m, hit))
-                      ? cur.filter((m) => !sameMark(m, hit))
-                      : [...cur, hit];
-                  });
-                }}
-              />
             </Chart>
             <p style={caption}>
               ⌘/Ctrl-click to add or remove; try shift and alt too.{' '}
@@ -254,9 +291,11 @@ export function makeSelectorStories(fx: ChartFixture): SelectorStories {
         const [hov, setHov] = useState<SelectInfo | null>(null);
         return (
           <div>
-            <Chart fx={fx} hovered={hov}>
+            <Chart
+              fx={fx}
+              selector={<Selector hovered={hov} onHover={setHov} />}
+            >
               <Cursor />
-              <Selector onHover={setHov} />
             </Chart>
             <p style={caption}>
               <strong>hovered:</strong>{' '}
@@ -273,9 +312,8 @@ export function makeSelectorStories(fx: ChartFixture): SelectorStories {
     BareSelector: {
       render: () => (
         <div>
-          <Chart fx={fx}>
+          <Chart fx={fx} selector={<Selector />}>
             <Cursor />
-            <Selector />
           </Chart>
           <p style={caption}>
             Uncontrolled: <code>&lt;Selector /&gt;</code> with no props, no{' '}
@@ -340,14 +378,19 @@ export function makeMultiSelectorStories(
         const [count, setCount] = useState(0);
         return (
           <div>
-            <Chart fx={fx} selected={sel} height={220}>
-              <MultiSelector
-                onSelect={(hits, _mods, spans) => {
-                  setCount(hits.length);
-                  setSel(spans.length > 0 ? [...spans] : hits.slice(0, 1));
-                }}
-              />
-            </Chart>
+            <Chart
+              fx={fx}
+              height={220}
+              selector={
+                <MultiSelector
+                  selected={sel}
+                  onSelect={(hits, _mods, spans) => {
+                    setCount(hits.length);
+                    setSel(spans.length > 0 ? [...spans] : hits.slice(0, 1));
+                  }}
+                />
+              }
+            />
             <p style={caption}>
               Drag to sweep · click one mark to select just it · click away to
               clear.
@@ -369,18 +412,23 @@ export function makeMultiSelectorStories(
         const [shape, setShape] = useState('—');
         return (
           <div>
-            <Chart fx={fx} selected={sel} height={220}>
-              <MultiSelector
-                onSelect={(hits, _mods, spans) => {
-                  setShape(
-                    spans.length === 0
-                      ? `click → ${hits.length} hit, no span`
-                      : `sweep → ${hits.length} hits, ${spans.length} span(s)`,
-                  );
-                  setSel(spans.length > 0 ? [...spans] : hits);
-                }}
-              />
-            </Chart>
+            <Chart
+              fx={fx}
+              height={220}
+              selector={
+                <MultiSelector
+                  selected={sel}
+                  onSelect={(hits, _mods, spans) => {
+                    setShape(
+                      spans.length === 0
+                        ? `click → ${hits.length} hit, no span`
+                        : `sweep → ${hits.length} hits, ${spans.length} span(s)`,
+                    );
+                    setSel(spans.length > 0 ? [...spans] : hits);
+                  }}
+                />
+              }
+            />
             <p style={caption}>
               Click, then drag, and watch the shape of the report change.{' '}
               <strong>last:</strong> {shape}
@@ -401,15 +449,20 @@ export function makeMultiSelectorStories(
         const [committed, setCommitted] = useState(0);
         return (
           <div>
-            <Chart fx={fx} selected={sel} height={220}>
-              <MultiSelector
-                onHover={(hits) => setPreview(hits.length)}
-                onSelect={(hits, _mods, spans) => {
-                  setCommitted(hits.length);
-                  setSel(spans.length > 0 ? [...spans] : hits);
-                }}
-              />
-            </Chart>
+            <Chart
+              fx={fx}
+              height={220}
+              selector={
+                <MultiSelector
+                  selected={sel}
+                  onHover={(hits) => setPreview(hits.length)}
+                  onSelect={(hits, _mods, spans) => {
+                    setCommitted(hits.length);
+                    setSel(spans.length > 0 ? [...spans] : hits);
+                  }}
+                />
+              }
+            />
             <p style={caption}>
               Hover, then drag, and watch the count track the band before you
               release.
@@ -432,19 +485,24 @@ export function makeMultiSelectorStories(
         const [sel, setSel] = useState<readonly SelectionEntry[]>([]);
         return (
           <div>
-            <Chart fx={fx} selected={sel} height={220}>
-              <MultiSelector
-                onSelect={(hits, mods, spans) => {
-                  const add = mods?.additive ?? false;
-                  if (spans.length > 0) {
-                    setSel((cur) => (add ? [...cur, ...spans] : [...spans]));
-                    return;
-                  }
-                  if (hits.length === 0) return setSel([]);
-                  setSel((cur) => (add ? [...cur, hits[0]!] : [hits[0]!]));
-                }}
-              />
-            </Chart>
+            <Chart
+              fx={fx}
+              height={220}
+              selector={
+                <MultiSelector
+                  selected={sel}
+                  onSelect={(hits, mods, spans) => {
+                    const add = mods?.additive ?? false;
+                    if (spans.length > 0) {
+                      setSel((cur) => (add ? [...cur, ...spans] : [...spans]));
+                      return;
+                    }
+                    if (hits.length === 0) return setSel([]);
+                    setSel((cur) => (add ? [...cur, hits[0]!] : [hits[0]!]));
+                  }}
+                />
+              }
+            />
             <p style={caption}>
               Sweep a range, then ⌘/Ctrl-click a mark to add it — and
               plain-click to replace. <strong>selected:</strong>{' '}
@@ -465,47 +523,52 @@ export function makeMultiSelectorStories(
         const [stash, setStash] = useState<readonly SelectInfo[]>([]);
         return (
           <div>
-            <Chart fx={fx} selected={sel} height={220}>
-              <MultiSelector
-                onSelect={(hits, mods, spans) => {
-                  if (spans.length > 0) {
-                    setStash(hits);
-                    setSel([...spans]);
-                    return;
-                  }
-                  const hit = hits[0];
-                  if (hit === undefined) return setSel([]);
-                  if (!(mods?.additive ?? false)) return setSel([hit]);
-                  // The ⌘-click policy `selectionContains`' doc describes,
-                  // written out in full: a mark already in the selection comes
-                  // OUT, one that isn't goes in. The demote is the extra step
-                  // a span needs before it can lose a member — it becomes the
-                  // marks it covered, minus this one.
-                  //
-                  // Two mistakes this has already made, both worth the words:
-                  //
-                  // - **`sameMark`, not `m.key !== hit.key`.** A key IS a
-                  //   bar's identity, so the shorter test looks right — and on
-                  //   a stack or a heat map it knocks out every mark in the
-                  //   bin, which showed up as a column-shaped hole.
-                  // - **Handle the MARK arm too.** Demoting only rewrote the
-                  //   span entries, so once the span was gone every later
-                  //   ⌘-click fell through the `flatMap` unchanged and the
-                  //   second knock-out silently did nothing.
-                  setSel((cur) =>
-                    selectionContains(cur, hit)
-                      ? cur.flatMap((e) =>
-                          isSpanSelection(e)
-                            ? stash.filter((m) => !sameMark(m, hit))
-                            : sameMark(e, hit)
-                              ? []
-                              : [e],
-                        )
-                      : [...cur, hit],
-                  );
-                }}
-              />
-            </Chart>
+            <Chart
+              fx={fx}
+              height={220}
+              selector={
+                <MultiSelector
+                  selected={sel}
+                  onSelect={(hits, mods, spans) => {
+                    if (spans.length > 0) {
+                      setStash(hits);
+                      setSel([...spans]);
+                      return;
+                    }
+                    const hit = hits[0];
+                    if (hit === undefined) return setSel([]);
+                    if (!(mods?.additive ?? false)) return setSel([hit]);
+                    // The ⌘-click policy `selectionContains`' doc describes,
+                    // written out in full: a mark already in the selection comes
+                    // OUT, one that isn't goes in. The demote is the extra step
+                    // a span needs before it can lose a member — it becomes the
+                    // marks it covered, minus this one.
+                    //
+                    // Two mistakes this has already made, both worth the words:
+                    //
+                    // - **`sameMark`, not `m.key !== hit.key`.** A key IS a
+                    //   bar's identity, so the shorter test looks right — and on
+                    //   a stack or a heat map it knocks out every mark in the
+                    //   bin, which showed up as a column-shaped hole.
+                    // - **Handle the MARK arm too.** Demoting only rewrote the
+                    //   span entries, so once the span was gone every later
+                    //   ⌘-click fell through the `flatMap` unchanged and the
+                    //   second knock-out silently did nothing.
+                    setSel((cur) =>
+                      selectionContains(cur, hit)
+                        ? cur.flatMap((e) =>
+                            isSpanSelection(e)
+                              ? stash.filter((m) => !sameMark(m, hit))
+                              : sameMark(e, hit)
+                                ? []
+                                : [e],
+                          )
+                        : [...cur, hit],
+                    );
+                  }}
+                />
+              }
+            />
             <p style={caption}>
               Sweep a run, then ⌘/Ctrl-click marks inside it to knock them out
               one by one — the span demotes to its marks on the first, and every
@@ -530,15 +593,20 @@ export function makeMultiSelectorStories(
         const [count, setCount] = useState(0);
         return (
           <div>
-            <Chart fx={fx} selected={sel} height={220}>
-              <MultiSelector
-                sequence={seq()}
-                onSelect={(hits, _mods, spans) => {
-                  setCount(hits.length);
-                  setSel(spans.length > 0 ? [...spans] : hits);
-                }}
-              />
-            </Chart>
+            <Chart
+              fx={fx}
+              height={220}
+              selector={
+                <MultiSelector
+                  selected={sel}
+                  sequence={seq()}
+                  onSelect={(hits, _mods, spans) => {
+                    setCount(hits.length);
+                    setSel(spans.length > 0 ? [...spans] : hits);
+                  }}
+                />
+              }
+            />
             <p style={caption}>
               The sweep snaps to whole buckets — hover first and the whole block
               previews. <strong>selected:</strong> {describeEntries(fx, sel)} (
@@ -589,16 +657,21 @@ export function makeSessionStories(fx: ChartFixture): SessionStories | null {
         const seq = useMemo(sequence, []);
         return (
           <div>
-            <Chart fx={fx} selected={sel} height={220}>
-              <MultiSelector
-                sequence={seq}
-                onHover={(hits) => setPreview(hits.length)}
-                onSelect={(hits, _mods, spans) => {
-                  setCount(hits.length);
-                  setSel(spans.length > 0 ? [...spans] : hits);
-                }}
-              />
-            </Chart>
+            <Chart
+              fx={fx}
+              height={220}
+              selector={
+                <MultiSelector
+                  selected={sel}
+                  sequence={seq}
+                  onHover={(hits) => setPreview(hits.length)}
+                  onSelect={(hits, _mods, spans) => {
+                    setCount(hits.length);
+                    setSel(spans.length > 0 ? [...spans] : hits);
+                  }}
+                />
+              }
+            />
             <p style={caption}>
               {note}
               <br />

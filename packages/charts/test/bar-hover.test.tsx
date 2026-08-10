@@ -7,6 +7,7 @@ import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { BarChart } from '../src/BarChart.js';
 import { YAxis } from '../src/YAxis.js';
+import { Selector, type SelectorProps } from '../src/selectors.js';
 import { ContainerContext, type ContainerFrame } from '../src/context.js';
 
 afterEach(cleanup);
@@ -47,17 +48,19 @@ const hitB = { id: 'v', key: 1, value: 2, color: '#fff', label: 'v' };
  * hit-test).
  */
 describe('controlled bar hover (hovered / onHover)', () => {
-  const tree = (props: Partial<Parameters<typeof ChartContainer>[0]>) => {
+  const tree = (props: Pick<SelectorProps, 'hovered' | 'onHover'>) => {
     let frame: ContainerFrame | null = null;
     const ui = (
-      <ChartContainer range={[0, 3]} width={300} {...props}>
-        <ChartRow height={100}>
-          <YAxis id="a" min={0} max={5} />
-          <Layers>
-            <BarChart series={bars} column="v" axis="a" />
-          </Layers>
-          <Capture sink={(f) => (frame = f)} />
-        </ChartRow>
+      <ChartContainer range={[0, 3]} width={300}>
+        <Selector {...props}>
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={5} />
+            <Layers>
+              <BarChart series={bars} column="v" axis="a" />
+            </Layers>
+            <Capture sink={(f) => (frame = f)} />
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     );
     return { ui, get: () => frame! };

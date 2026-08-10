@@ -8,6 +8,7 @@ import { Layers } from '../src/Layers.js';
 import { BarChart } from '../src/BarChart.js';
 import { XAxis } from '../src/XAxis.js';
 import { YAxis } from '../src/YAxis.js';
+import { Selector } from '../src/selectors.js';
 import {
   ContainerContext,
   RowContext,
@@ -115,20 +116,17 @@ function fillsWithHover(
   const stub = stubCanvasContext();
   try {
     render(
-      <ChartContainer
-        range={[0, 30]}
-        width={300}
-        theme={theme}
-        hovered={hovered}
-      >
-        <ChartRow height={100}>
-          <YAxis id="a" min={0} max={10} />
-          <Layers>
-            {node}
-            <Capture />
-          </Layers>
-        </ChartRow>
-        <XAxis />
+      <ChartContainer range={[0, 30]} width={300} theme={theme}>
+        <Selector enabled={false} hovered={hovered}>
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={10} />
+            <Layers>
+              {node}
+              <Capture />
+            </Layers>
+          </ChartRow>
+          <XAxis />
+        </Selector>
       </ChartContainer>,
     );
   } finally {

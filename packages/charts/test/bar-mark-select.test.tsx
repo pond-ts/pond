@@ -8,6 +8,7 @@ import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { BarChart } from '../src/BarChart.js';
 import { YAxis } from '../src/YAxis.js';
+import { Selector } from '../src/selectors.js';
 import {
   ContainerContext,
   RowContext,
@@ -74,14 +75,16 @@ function mount<S extends SeriesSchema>(
   const stub = stubCanvasContext();
   try {
     render(
-      <ChartContainer range={[0, 3]} width={300} selected={selected}>
-        <ChartRow height={100}>
-          <YAxis id="a" min={0} max={5} />
-          <Layers>
-            <BarChart series={series} column="v" axis="a" id="v" />
-            <Capture />
-          </Layers>
-        </ChartRow>
+      <ChartContainer range={[0, 3]} width={300}>
+        <Selector enabled={false} selected={selected}>
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={5} />
+            <Layers>
+              <BarChart series={series} column="v" axis="a" id="v" />
+              <Capture />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>,
     );
   } finally {

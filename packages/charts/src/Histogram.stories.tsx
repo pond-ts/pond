@@ -6,6 +6,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
+import { Selector } from './selectors.js';
 import { defaultTheme } from './theme.js';
 import type { ChartTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
@@ -466,19 +467,21 @@ function HoverSelectDemo() {
           </span>
         )}
       </div>
-      <ChartContainer range={[BASE, BASE + HOUR]} width={660} onSelect={setSel}>
-        <ChartRow height={260}>
-          <YAxis id="count" label="incidents" min={0} pad={0.06} />
-          <Layers>
-            <BarChart
-              series={byHost}
-              column="n"
-              colors={HOST_COLORS}
-              id="incidents"
-              gap={2}
-            />
-          </Layers>
-        </ChartRow>
+      <ChartContainer range={[BASE, BASE + HOUR]} width={660}>
+        <Selector onSelect={setSel}>
+          <ChartRow height={260}>
+            <YAxis id="count" label="incidents" min={0} pad={0.06} />
+            <Layers>
+              <BarChart
+                series={byHost}
+                column="n"
+                colors={HOST_COLORS}
+                id="incidents"
+                gap={2}
+              />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     </div>
   );

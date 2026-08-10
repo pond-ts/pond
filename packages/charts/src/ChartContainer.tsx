@@ -46,10 +46,11 @@ import {
   warnOnDuplicateGestureOwners,
 } from './cursors.js';
 import {
-  LegacySelector,
   effectiveSelectorEntries,
+  resolveControlledHovered,
+  resolveControlledSelected,
+  selectorEntryEqual,
   warnInertClick,
-  warnLegacySelectionProps,
 } from './selectors.js';
 import { isDev } from './dev.js';
 import type { LegendItemSpec } from './swatch.js';
@@ -352,114 +353,6 @@ export interface ChartContainerProps {
    */
   onDrawStats?: (frame: DrawStatsFrame) => void;
   /**
-   * Controlled selection — the selected mark (echo the `onSelect` arg back), or
-   * `null`. **Omitted ⇒ uncontrolled** (a click on a selectable layer manages it
-   * internally; pass `null` to force nothing selected). A layer is **selectable
-   * only when it carries an `id`** (the stable series identity) — `BarChart` /
-   * `ScatterChart` highlight the mark matching the selection's `id` (the series)
-   * and its `key` (the sample), so two series sharing a timestamp don't both
-   * light up, and the selection survives a data update (it keys on the stable
-   * `id`, not the sample `key`). A layer with no `id` renders + reads out but
-   * can't be selected.
-   *
-   * **Accepts a set** ([PND-MULTISEL]): pass a `SelectInfo[]` to light several
-   * marks at once — the shape a consumer whose filter is multi-valued actually
-   * has. Insertion-ordered, `[]` means nothing selected. A single `SelectInfo`
-   * still works and means exactly what it did, so this is a **union, not a
-   * replacement**: no existing caller changes. (`docs/rfcs/selection.md` A1.4
-   * proposed replacing the type outright and flagged it as a breaking widen
-   * needing the human gate plus a one-release shim — accepting both costs one
-   * `Array.isArray` and needs neither.)
-   *
-   * The library applies **no set arithmetic**: a chart click reports the hit it
-   * found, and a consumer that wants ⌘-click-to-add reads
-   * {@link SelectModifiers.additive} off `onSelect` and drives this prop.
-   * `selectionMode` (RFC A1.1) would be sugar over exactly that, and stays
-   * unbuilt until a consumer wants it — adding it later is additive.
-   *
-   * **Array entries may also be spans** (interaction RFC A5.2): a
-   * {@link SpanSelection} names *every* mark of one layer inside a range —
-   * `{ kind: 'span', id, x: [lo, hi) }`, plus `y` (scatter's continuous second
-   * dimension) or `rows` (a heat map's ordinal row names) — so a swept session
-   * of ten thousand bars is one entry, not ten thousand. Membership follows
-   * the containment rule documented on {@link SpanSelection} (half-open
-   * intervals, snapped-outward edges), and the exported `selectionContains`
-   * runs the **same** predicate the layers do, so click policy over a mixed
-   * selection never re-implements the interval test. The union widens once
-   * more and stays **non-breaking**: a bare `SelectInfo` and a plain
-   * `SelectInfo[]` mean exactly what they always did.
-   */
-  selected?: SelectInfo | readonly SelectionEntry[] | null;
-  /**
-   * Fires when a selectable layer's mark is clicked, with the hit mark, or `null`
-   * when a click misses every mark (or hits a layer with no `id` — display-only,
-   * so it reads as empty space). Notification only — works in both controlled and
-   * uncontrolled mode. If this or `selected` is set but no layer has an `id`, a
-   * dev-warning notes that nothing is selectable.
-   *
-   * The second argument carries the **keyboard modifiers** held during the click
-   * ([PND-MULTISEL]). Without them a consumer cannot implement ⌘/Ctrl-click-adds
-   * at all — the click has already been reduced to a hit — so every consumer was
-   * forced to treat every click as a replace. `modifiers` is `undefined` for a
-   * selection that didn't come from a pointer event (a `<Legend>` row, a
-   * programmatic `select`).
-   *
-   * ```tsx
-   * onSelect={(hit, mods) =>
-   *   setSelected((cur) =>
-   *     hit === null ? []
-   *     : mods?.additive ? toggle(cur, hit)
-   *     : [hit],
-   *   )
-   * }
-   * ```
-   *
-   * @deprecated Move it onto a mounted `<Selector onSelect={…}>` — a child of
-   * this container, or of a `<ChartRow>` to scope the gesture to that row.
-   * Mounting the component is now what **enables** a plot click at all
-   * (`docs/rfcs/interaction.md` §7.1); this prop keeps working for one more
-   * minor by synthesizing an equivalent registration internally, and a mounted
-   * `<Selector>` overrides it. The state props ({@link selected} /
-   * {@link hovered}) deliberately **stay here** (A1.2).
-   */
-  onSelect?: (hit: SelectInfo | null, modifiers?: SelectModifiers) => void;
-  /**
-   * Controlled hover-highlight — the transiently lit mark(s) (echo the `onHover`
-   * arg back), or `null`. **Omitted ⇒ uncontrolled** (the pointer over a
-   * selectable layer manages it internally). The hover analog of
-   * {@link selected}: pass it to **pin** lit marks from outside the chart (e.g.
-   * hovering a legend / list row lights the matching {@link BarChart} bar). Only
-   * layers with a hover-highlight (currently `BarChart`) render it; keyed by the
-   * same {@link SelectInfo} identity as selection.
-   *
-   * **Accepts a single mark or a set** — the same union {@link selected} takes,
-   * so passing one `SelectInfo` still works unchanged. Plural because a drag
-   * sweep lights several marks at once ("would be selected if you released
-   * now"); plain pointer-over carries 0 or 1. See RFC `selection.md` A4.2, which
-   * supersedes A1.4's "hover is inherently one mark".
-   */
-  hovered?: SelectInfo | readonly SelectInfo[] | null;
-  /**
-   * Fires when the pointer enters a selectable layer's mark (the hit mark) or
-   * leaves every mark (`null`) — the hover analog of {@link onSelect}. Notification
-   * only (works controlled or uncontrolled), and **deduped**: it fires on a mark
-   * transition, not on every pointer move. Wire it to mirror hover out-of-band
-   * (e.g. a list row ↔ the bar), pairing with {@link hovered} to sync both ways.
-   * (The annotation counterpart is {@link onHoverAnnotation}.)
-   *
-   * **Dedup key:** by the mark's `key` + `label` only (not `value`/`color`). So on
-   * a live chart where a bar's value changes while the cursor stays on it, this
-   * won't re-fire — read the current value from your series, not the last
-   * `onHover` payload. (Matches the internal hover-highlight, which repaints on
-   * key transitions.)
-   *
-   * @deprecated Move it onto a mounted `<Selector onHover={…}>`, alongside
-   * {@link onSelect}. Works for one more minor via the shim; a mounted
-   * `<Selector>` overrides it. {@link hovered} stays on the container (RFC
-   * A1.2) — controlled highlighting needs no `<Selector>` at all.
-   */
-  onHover?: (hit: SelectInfo | null) => void;
-  /**
    * Which pan/zoom gestures the plot captures:
    *
    * - `'none'` (or `false`, the **default**) — neither; the plot doesn't capture
@@ -670,10 +563,6 @@ export function ChartContainer({
   trackerPosition,
   onTrackerChanged,
   onDrawStats,
-  selected,
-  onSelect,
-  hovered,
-  onHover,
   panZoom = false,
   bounds,
   onTimeRangeChange,
@@ -963,9 +852,18 @@ export function ChartContainer({
     ReadonlyMap<symbol, SelectorEntry>
   >(() => new Map());
   const registerSelector = useCallback((key: symbol, entry: SelectorEntry) => {
-    setSelectorMap((m) =>
-      m.get(key) === entry ? m : new Map(m).set(key, entry),
-    );
+    setSelectorMap((m) => {
+      // **Value-equal, not reference-equal.** Since A10.3 the entry carries the
+      // controlled `selected`/`hovered`, so a consumer's inline array mints a
+      // fresh entry every render; a reference-only guard then updates the
+      // registry every time, and any descendant that reads the container
+      // context (`useChartLegend()`) re-renders, rebuilds the array, and
+      // re-registers — an unbounded loop. Same guard, same reason, as
+      // `registerAxis`/`axisSpecEqual` in `ChartRow.tsx`.
+      const prev = m.get(key);
+      if (prev !== undefined && selectorEntryEqual(prev, entry)) return m;
+      return new Map(m).set(key, entry);
+    });
   }, []);
   const unregisterSelector = useCallback((key: symbol) => {
     setSelectorMap((m) => {
@@ -993,20 +891,6 @@ export function ChartContainer({
       cursorSequenceProp,
     [cursors, selectors, cursorSequenceProp],
   );
-  // …and the matching deprecation warning, once, naming the replacement. The
-  // *state* props (`selected` / `hovered`) are not deprecated and are not
-  // listed here — RFC A1.2 keeps them on the container deliberately.
-  const warnedLegacySelectionRef = useRef(false);
-  useEffect(() => {
-    if (!isDev || warnedLegacySelectionRef.current) return;
-    const legacy: string[] = [];
-    if (onSelect !== undefined) legacy.push('onSelect');
-    if (onHover !== undefined) legacy.push('onHover');
-    if (legacy.length === 0) return;
-    warnedLegacySelectionRef.current = true;
-    warnLegacySelectionProps(legacy);
-  }, [onSelect, onHover]);
-
   // Annotations register here so the container can do what a mark can't in
   // isolation: draw its guide line across other rows, order regions, serve snap
   // targets. Keyed by per-instance slot key (same discipline as the sources).
@@ -1128,15 +1012,16 @@ export function ChartContainer({
     [hasDrawStats],
   );
 
-  // Selection: controlled (`selected` prop) or uncontrolled (internal). A click
-  // on a selectable layer calls `select()` after hit-testing; the mounted
-  // `<Selector>`s in scope are notified in both modes, and the internal state is
-  // managed only when uncontrolled — **the state stays here** whether or not a
-  // selector is mounted (interaction RFC A1.2). The full SelectInfo is the
-  // identity (key + series), so multi-series marks at one timestamp stay
-  // distinct. Refs written after commit (not in render) so the click handler
-  // never reads a callback / mode from a frame abandoned under concurrent
-  // rendering.
+  // Selection: controlled (a mounted selector's `selected`) or uncontrolled
+  // (internal). A click on a selectable layer calls `select()` after
+  // hit-testing; the mounted `<Selector>`s in scope are notified in both
+  // modes, and the internal state is managed only when uncontrolled — whether
+  // *this* container's derived state is controlled now depends on the
+  // registry, not a container prop (interaction RFC A10.3). The full
+  // SelectInfo is the identity (key + series), so multi-series marks at one
+  // timestamp stay distinct. Refs written after commit (not in render) so the
+  // click handler never reads a callback / mode from a frame abandoned under
+  // concurrent rendering.
   // Widened past a single mark for the sweep (RFC A5.2): an uncontrolled
   // `<MultiSelector>` release commits its compact span descriptor here, so the
   // swept bars stay lit with no controlled prop — the sweep analog of the
@@ -1144,10 +1029,20 @@ export function ChartContainer({
   const [internalSelected, setInternalSelected] = useState<
     SelectInfo | readonly SelectionEntry[] | null
   >(null);
-  const controlledSelection = selected !== undefined;
-  // Normalize the prop's three accepted shapes — a single mark, a set, or
-  // nothing — into the shapes the frame carries ([PND-MULTISEL] / RFC A5.2).
-  // A mixed `SelectionEntry` array is split ONCE here into its mark entries
+  // Controlled selection now comes from the registry (interaction RFC A10.3):
+  // whichever mounted `<Selector>`/`<MultiSelector>` declared `selected` owns
+  // it — chart-wide, not row-scoped, and independent of `gestureEnabled`
+  // (`<Selector enabled={false} selected={…}>` is a legitimate owner). Warned
+  // once if more than one mount declares it.
+  const warnedAmbiguousSelectedRef = useRef(false);
+  const controlledSelected = useMemo(
+    () => resolveControlledSelected(selectors, warnedAmbiguousSelectedRef),
+    [selectors],
+  );
+  const controlledSelection = controlledSelected.present;
+  // Normalize the three accepted shapes — a single mark, a set, or nothing —
+  // into the shapes the frame carries ([PND-MULTISEL] / RFC A5.2). A mixed
+  // `SelectionEntry` array is split ONCE here into its mark entries
   // (`selected`, the exact field every pre-span reader keeps consuming
   // unchanged) and its span descriptors (`selectedSpans`, which only the
   // span-aware layers read) — so a consumer who never passes a span pays
@@ -1160,7 +1055,9 @@ export function ChartContainer({
     selectedValue: readonly SelectInfo[];
     selectedSpans: readonly SpanSelection[];
   }>(() => {
-    const raw = controlledSelection ? selected : internalSelected;
+    const raw = controlledSelection
+      ? controlledSelected.value
+      : internalSelected;
     if (raw === null || raw === undefined)
       return { selectedValue: EMPTY_SELECTION, selectedSpans: NO_SPANS };
     if (!Array.isArray(raw))
@@ -1191,7 +1088,7 @@ export function ChartContainer({
       selectedValue: marks.length === 0 ? EMPTY_SELECTION : marks,
       selectedSpans: spans,
     };
-  }, [controlledSelection, selected, internalSelected]);
+  }, [controlledSelection, controlledSelected.value, internalSelected]);
   const controlledSelectionRef = useRef(controlledSelection);
   useLayoutEffect(() => {
     selectorsRef.current = selectors;
@@ -1216,9 +1113,10 @@ export function ChartContainer({
         rowKey ?? null,
       );
       if (rowKey !== undefined && entries.length === 0) {
-        // A2.6: suppress when `selected` is supplied — after A1.2 that is the
-        // signature of the *endorsed* controlled-highlight setup, not of a
-        // consumer who lost their click.
+        // A2.6: suppress when controlled `selected` is in effect — that is
+        // the signature of the *endorsed* controlled-highlight setup
+        // (`<Selector enabled={false} selected={…}>`), not of a consumer who
+        // lost their click.
         if (isDev && hit !== null && !controlledSelectionRef.current)
           warnInertClick(warnedInertClickRef);
         return;
@@ -1245,26 +1143,33 @@ export function ChartContainer({
     [],
   );
 
-  // Dev-warn: selection is wired (`selected`, `onSelect`, or a mounted
-  // `<Selector>`) but no layer carries an `id`, so nothing is selectable — `id`
-  // gates interactivity, so a consumer who forgot it gets a silent no-op click
-  // without this nudge. Fires once per wired-but-empty transition (guarded by a
-  // ref); child layers register before this parent effect runs, so the set is
-  // settled here.
+  // Dev-warn: selection is wired (a controlled `selected`, or a mounted
+  // `<Selector>`/`<MultiSelector>` at all — mounting is itself wiring, even
+  // with no callbacks) but no layer carries an `id`, so nothing is
+  // selectable — `id` gates interactivity, so a consumer who forgot it gets a
+  // silent no-op click without this nudge. Fires once per wired-but-empty
+  // transition (guarded by a ref); child layers register before this parent
+  // effect runs, so the set is settled here.
+  // "Wired" means a gesture is armed, or state is being driven. A selector
+  // whose gesture is off AND which declares no state is wired to nothing — it
+  // would be a strange thing to mount, but accusing it of a missing `id` is a
+  // false positive, so it doesn't count (reviewer finding on #638).
   const selectionWired =
     controlledSelection ||
-    onSelect !== undefined ||
-    selectors.some((e) => !e.legacy);
+    selectors.some(
+      (e) => e.gestureEnabled || e.declaresSelected || e.declaresHovered,
+    );
   const warnedNoSelectableRef = useRef(false);
   useEffect(() => {
     if (selectionWired && selectableRef.current.size === 0) {
       if (!warnedNoSelectableRef.current) {
         warnedNoSelectableRef.current = true;
         console.warn(
-          '[pond-charts] `selected`/`onSelect` is set but no layer has an `id` — ' +
-            'nothing is selectable. Give a <BarChart>/<ScatterChart>/<BoxPlot>/' +
-            '<HeatMap>/<LineChart>/<AreaChart> an `id` to make it interactive ' +
-            '(an `id` gates selection + hover).',
+          '[pond-charts] a <Selector>/<MultiSelector> is mounted (or declares ' +
+            '`selected`) but no layer has an `id` — nothing is selectable. Give ' +
+            'a <BarChart>/<ScatterChart>/<BoxPlot>/<HeatMap>/<LineChart>/' +
+            '<AreaChart> an `id` to make it interactive (an `id` gates ' +
+            'selection + hover).',
         );
       }
     } else {
@@ -1273,11 +1178,12 @@ export function ChartContainer({
   }, [selectionWired, selectableKeys]);
 
   // Hover-highlight: the transient mark under the pointer (distinct from the
-  // committed selection). Controlled (`hovered` prop) or uncontrolled (internal),
-  // mirroring selection; `onHover` notifies in both modes. Deduped by the mark's
-  // full identity so it fires — and the data canvas repaints — only when the
-  // hovered mark changes, not on every pointer move (the move itself just slides
-  // the SVG cursor, which never touches the data canvas).
+  // committed selection). Controlled (a mounted selector's `hovered`) or
+  // uncontrolled (internal), mirroring selection; `onHover` notifies in both
+  // modes. Deduped by the mark's full identity so it fires — and the data
+  // canvas repaints — only when the hovered mark changes, not on every pointer
+  // move (the move itself just slides the SVG cursor, which never touches the
+  // data canvas).
   //
   // "Full identity" means `label` and `mark` as well as `id` and `key`, and that
   // is load-bearing rather than belt-and-braces. `key` is the mark's position on
@@ -1292,15 +1198,20 @@ export function ChartContainer({
   const [internalHovered, setInternalHovered] = useState<
     SelectInfo | readonly SelectInfo[] | null
   >(null);
-  const controlledHover = hovered !== undefined;
+  const warnedAmbiguousHoveredRef = useRef(false);
+  const controlledHovered = useMemo(
+    () => resolveControlledHovered(selectors, warnedAmbiguousHoveredRef),
+    [selectors],
+  );
+  const controlledHover = controlledHovered.present;
   // Same three-shape normalization `selected` does — a single mark, a set, or
   // nothing — so a pointer-driven hover (always one mark) and a sweep-driven
   // one (several) reach the draw paths in the same shape (RFC A4.2).
   const hoveredValue: readonly SelectInfo[] = useMemo(() => {
-    const raw = controlledHover ? hovered : internalHovered;
+    const raw = controlledHover ? controlledHovered.value : internalHovered;
     if (raw === null || raw === undefined) return EMPTY_SELECTION;
     return Array.isArray(raw) ? raw : [raw as SelectInfo];
-  }, [controlledHover, hovered, internalHovered]);
+  }, [controlledHover, controlledHovered.value, internalHovered]);
   const controlledHoverRef = useRef(controlledHover);
   // The last mark we reported — so the callback dedups across pointer moves even
   // in controlled mode, where there's no internal state to compare against.
@@ -1313,8 +1224,8 @@ export function ChartContainer({
   // block transition and within-block mark transitions re-render nothing.
   const lastHoverBlockRef = useRef<readonly SelectInfo[] | null>(null);
   // Unlike `select`, this is **not** gated on a mounted `<Selector>`: the
-  // hover-highlight is container state (A1.2) and keeps working with none
-  // mounted; with none mounted there is simply no `onHover` to fire.
+  // hover state moves regardless, uncontrolled with none mounted; with none
+  // mounted there is simply no `onHover` to fire.
   const setHovered = useCallback(
     (
       hit: SelectInfo | null,
@@ -1995,13 +1906,6 @@ export function ChartContainer({
           // brush band. An explicit `cursor` prop (any mode) still wins.
           implicit={cursorProp === undefined}
         />
-        {/* The deprecation shim: the legacy `onSelect`/`onHover` props,
-            synthesized as a container-scoped `<Selector>` registration so a
-            chart written against them keeps its plot gesture for one more
-            minor. Registers as `legacy`, so mounting a real <Selector>
-            overrides it — and registers *nothing* when neither prop is set,
-            which is what makes RFC §7.1's break detectable. */}
-        <LegacySelector onSelect={onSelect} onHover={onHover} />
         <div style={{ width: `${width}px` }}>
           <div
             style={{
