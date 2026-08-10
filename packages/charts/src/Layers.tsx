@@ -149,8 +149,12 @@ function beginSpanOnlySweeps(
   c: Pick<ContainerFrame, 'xScale'>,
   r: Pick<RowFrame, 'layers' | 'yScales' | 'defaultAxisId'>,
 ): readonly SweepSession[] {
+  // **Topmost first**, matching `beginTopmostSweep`'s descending scan, so
+  // `spans[0]` is the same layer `span` reports (reviewer finding: ascending
+  // order made the documented `span === spans[0]` false on a two-trace row).
   const out: SweepSession[] = [];
-  for (const entry of r.layers) {
+  for (let i = r.layers.length - 1; i >= 0; i -= 1) {
+    const entry = r.layers[i]!;
     const ys = r.yScales.get(entry.axisId ?? r.defaultAxisId);
     if (ys === undefined) continue;
     const s =
@@ -178,11 +182,10 @@ function topmostSweepsRect(layers: RowFrame['layers']): boolean {
 }
 
 /**
- * Which screen axis the topmost sweep-capable layer cuts — the `sweepAxis`
- * counterpart of {@link topmostSweepsRect}, same z-order rule and the same
- * reason for existing: the resting state has to answer it with no session in
- * hand. `'x'` for a row with nothing sweepable, which is what every caller
- * wants for "not a transposed row".
+ * Does the topmost sweep-capable layer have a range but **no marks**? The
+ * render-time counterpart of {@link SweepSession.spanOnly}, read where
+ * {@link topmostSweepsRect} is and for the same reason: the resting state needs
+ * the fact and there is no session at rest.
  */
 function topmostSweepSpanOnly(layers: RowFrame['layers']): boolean {
   for (let i = layers.length - 1; i >= 0; i -= 1) {
@@ -192,6 +195,13 @@ function topmostSweepSpanOnly(layers: RowFrame['layers']): boolean {
   return false;
 }
 
+/**
+ * Which screen axis the topmost sweep-capable layer cuts — the `sweepAxis`
+ * counterpart of {@link topmostSweepsRect}, same z-order rule and the same
+ * reason for existing: the resting state has to answer it with no session in
+ * hand. `'x'` for a row with nothing sweepable, which is what every caller
+ * wants for "not a transposed row".
+ */
 function topmostSweepAxis(layers: RowFrame['layers']): 'x' | 'y' {
   for (let i = layers.length - 1; i >= 0; i -= 1) {
     const l = layers[i]!.layer;
@@ -827,6 +837,13 @@ export function Layers({ children }: LayersProps) {
       // every cut, from the same sessions the release will read, so the
       // preview cannot promise a different picture than the commit delivers.
       const publishPreview = () => {
+        // **Bail out when nothing needs it.** Reviewer finding: this ran every
+        // raf frame of every sweep and minted a fresh array even with zero
+        // span-only layers, and `previewSpans` sits in the container frame
+        // memos — so a plain MARK-layer sweep re-rendered per frame where the
+        // session's `changed` gate used to suppress it. That is an A8.1-class
+        // regression on a path this PR was not supposed to touch.
+        if (sw.spanOnly.length === 0) return;
         const spans: SpanSelection[] = [];
         for (const s of sw.spanOnly) {
           const ext = s.extent();

@@ -1052,47 +1052,44 @@ export function BarChart<
               // non-zero — the marks hitTest can hit), assembled exactly as
               // hitTest assembles them.
               sweepAxis: vertical ? ('x' as const) : ('y' as const),
-              ...{
-                beginSweep: (): SweepSession | null => {
-                  const G = ss.groups.length;
-                  if (ss.length === 0 || G === 0) return null;
-                  const drawn = (b: number, g: number) => {
-                    const v = ss.values[b * G + g]!;
-                    return Number.isFinite(v) && v !== 0;
-                  };
-                  return sweep1D({
-                    id,
-                    begin: ss.begin,
-                    end: ss.end,
-                    length: ss.length,
-                    selectable: (b) => {
-                      for (let g = 0; g < G; g += 1)
-                        if (drawn(b, g)) return true;
-                      return false;
-                    },
-                    materialize: (lo, hi) => {
-                      const out: SelectInfo[] = [];
-                      for (let b = lo; b < hi; b += 1) {
-                        const stableMark = ss.marks?.[b];
-                        for (let g = 0; g < G; g += 1) {
-                          if (!drawn(b, g)) continue;
-                          out.push({
-                            id,
-                            key: ss.begin[b]!,
-                            value: ss.values[b * G + g]!,
-                            color:
-                              stackStyle.binFills?.[b] ?? stackStyle.fills[g]!,
-                            label: stableMark ?? ss.groups[g]!,
-                            ...(stableMark !== undefined
-                              ? { mark: stableMark }
-                              : {}),
-                          });
-                        }
+              beginSweep: (): SweepSession | null => {
+                const G = ss.groups.length;
+                if (ss.length === 0 || G === 0) return null;
+                const drawn = (b: number, g: number) => {
+                  const v = ss.values[b * G + g]!;
+                  return Number.isFinite(v) && v !== 0;
+                };
+                return sweep1D({
+                  id,
+                  begin: ss.begin,
+                  end: ss.end,
+                  length: ss.length,
+                  selectable: (b) => {
+                    for (let g = 0; g < G; g += 1) if (drawn(b, g)) return true;
+                    return false;
+                  },
+                  materialize: (lo, hi) => {
+                    const out: SelectInfo[] = [];
+                    for (let b = lo; b < hi; b += 1) {
+                      const stableMark = ss.marks?.[b];
+                      for (let g = 0; g < G; g += 1) {
+                        if (!drawn(b, g)) continue;
+                        out.push({
+                          id,
+                          key: ss.begin[b]!,
+                          value: ss.values[b * G + g]!,
+                          color:
+                            stackStyle.binFills?.[b] ?? stackStyle.fills[g]!,
+                          label: stableMark ?? ss.groups[g]!,
+                          ...(stableMark !== undefined
+                            ? { mark: stableMark }
+                            : {}),
+                        });
                       }
-                      return out;
-                    },
-                  });
-                },
+                    }
+                    return out;
+                  },
+                });
               },
             }),
         draw: (ctx, xScale, yScale) =>

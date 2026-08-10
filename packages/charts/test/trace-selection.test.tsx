@@ -288,6 +288,7 @@ function mount(node: React.ReactNode) {
   const seen: Array<{
     hits: readonly SelectInfo[];
     span: SpanSelection | null;
+    spans: readonly SpanSelection[];
   }> = [];
   let rf: RowFrame | null = null;
   function Capture() {
@@ -303,7 +304,7 @@ function mount(node: React.ReactNode) {
     dom = render(
       <ChartContainer range={[0, 4000]} width={320}>
         <MultiSelector
-          onSelect={(hits, _m, span) => seen.push({ hits, span })}
+          onSelect={(hits, _m, span, spans) => seen.push({ hits, span, spans })}
         />
         <ChartRow height={120}>
           <YAxis id="a" min={0} max={6} />
@@ -396,6 +397,59 @@ describe('a sweep over a trace commits a span with no marks', () => {
     );
     expect(s).not.toBeNull();
     expect(s!.twoD).not.toBe(true);
+  });
+});
+
+describe('a sweep covers EVERY trace in the row', () => {
+  // The PR's headline behaviour, and it had no assertions at all — which is
+  // exactly what let the span ORDER bug through (`spans[0]` was the
+  // bottom-most layer while `span` reported the topmost, contradicting the
+  // documented relationship). Reviewer finding; this is the test that pins it.
+  const two = (
+    <>
+      <LineChart series={line()} column="v" axis="a" id="cpu" />
+      <LineChart series={line()} column="v" axis="a" id="mem" />
+    </>
+  );
+
+  it('reports one span per trace, not just the topmost', () => {
+    const t = mount(two);
+    t.sweep(40, 240);
+    expect(t.seen).toHaveLength(1);
+    const { spans } = t.seen[0]!;
+    expect(spans.map((s) => s.id).sort()).toEqual(['cpu', 'mem']);
+  });
+
+  it('`spans[0]` is the same layer `span` reports', () => {
+    // The documented relationship. `beginTopmostSweep` scans descending and
+    // `beginSpanOnlySweeps` used to scan ascending, so on a two-trace row the
+    // two disagreed about which layer they meant.
+    const t = mount(two);
+    t.sweep(40, 240);
+    const { span, spans } = t.seen[0]!;
+    expect(span).not.toBeNull();
+    expect(spans[0]!.id).toBe(span!.id);
+  });
+
+  it('names each trace exactly once', () => {
+    // The duplicate-span bug: the claimant was prepended AND appeared again in
+    // the span-only set, because those are separately-built sessions.
+    const t = mount(two);
+    t.sweep(40, 240);
+    const ids = t.seen[0]!.spans.map((s) => s.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('still reports no marks — plural spans, zero hits', () => {
+    const t = mount(two);
+    t.sweep(40, 240);
+    expect(t.seen[0]!.hits).toEqual([]);
+  });
+
+  it('a single trace reports exactly one span', () => {
+    const t = mount(<LineChart series={line()} column="v" axis="a" id="cpu" />);
+    t.sweep(40, 240);
+    expect(t.seen[0]!.spans.map((s) => s.id)).toEqual(['cpu']);
   });
 });
 

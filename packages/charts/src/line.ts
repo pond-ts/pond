@@ -359,7 +359,12 @@ export function traceHitIndex(
   let bestIdx: number | null = null;
   // The pointer's nearest point on the path lies on one of the two segments
   // touching `lo`, so `lo - 1 … lo + 1` bounds everything worth measuring.
-  for (let i = Math.max(0, lo - 1); i < Math.min(n - 1, lo + 1); i += 1) {
+  // The segments touching `lo` are `[lo-1, lo]` and `[lo, lo+1]`, so the
+  // indices to measure are `lo-1` and `lo` — inclusive of `lo`. The previous
+  // exclusive bound `< min(n-1, lo+1)` collapsed to an empty range when the
+  // pointer sat past the last sample (`lo === n`), so a within-tolerance click
+  // off the right end missed while the left-end mirror worked (reviewer find).
+  for (let i = Math.max(0, lo - 1); i <= Math.min(n - 2, lo); i += 1) {
     const ay = cs.y[i]!;
     const by = cs.y[i + 1]!;
     if (!Number.isFinite(ay) || !Number.isFinite(by)) continue;
