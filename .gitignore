@@ -13,7 +13,7 @@ experiments/
 # Claude Code local state (worktrees, per-machine settings).
 .claude/
 
-# README, LICENSE, CHANGELOG copied into each package by `prepack`
+# README, LICENSE, CHANGELOG, API.md copied into each package by `prepack`
 # so the published npm tarball includes them. Sources of truth are
 # the repo-root files; the per-package copies are build artifacts.
 # Exception: @pond-ts/charts, @pond-ts/fit, @pond-ts/financial, and
@@ -26,3 +26,4 @@ packages/*/README.md
 !packages/process/README.md
 packages/*/LICENSE
 packages/*/CHANGELOG.md
+packages/*/API.md

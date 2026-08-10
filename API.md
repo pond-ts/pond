@@ -1,19 +1,29 @@
 # API.md — public API map for agents
 
-A fast-navigation map of every public export across the monorepo's six
-packages, **for agents working in this repo**. Use it to find the right
-primitive and the file it lives in without crawling `src/`. It is a map, not a
-reference: one line per export, grouped by purpose, with the source path.
-Verify exact signatures in the listed source file (or the generated typedoc)
-before writing code against them.
+A fast-navigation map of every public export across pond's six packages,
+written **for coding agents**. Use it to find the right primitive and the file
+it lives in without crawling `src/`. It is a map, not a reference: one line per
+export, grouped by purpose, with the source path. Verify exact signatures in
+the listed source file (or the generated typedoc) before writing code against
+them.
+
+**This file ships inside every `pond-ts` / `@pond-ts/*` npm package**, so an
+agent working in a consuming repo has the whole export surface locally — no
+network, no crawling `node_modules/*/dist/*.d.ts`. Every package carries the
+same monorepo-wide copy on purpose: the packages compose, so knowing what is
+next door is the point.
 
 - **Authority**: each package's `src/index.ts` is the export surface. If this
-  file and `index.ts` disagree, `index.ts` wins — fix this file in the same PR.
-- **Maintenance**: when a PR adds/removes/renames a public export, update the
-  matching row here in that PR.
-- **Human-facing docs**: `website/docs/` (narrative + per-feature reference)
-  and `pathname:///generated-api/<pkg>/` (generated typedoc). This file is the
-  agent-facing complement, not a replacement.
+  file and `index.ts` disagree, `index.ts` wins.
+- **Source paths** (`packages/core/src/…`) are repo-relative. From a consuming
+  repo, read them on GitHub:
+  <https://github.com/pond-ts/pond/blob/main/>`<path>`.
+- **Human-facing docs**: <https://pond-ts.org> — narrative guides, per-feature
+  reference, and generated typedoc per package. This file is the agent-facing
+  complement, not a replacement.
+- **Contributing to pond itself**: when a PR adds, removes, or renames a public
+  export, update the matching row here in that PR — CI enforces it (the
+  `API map` workflow).
 
 | Package              | npm name             | Entry points                                           | Docs hub                  |
 | -------------------- | -------------------- | ------------------------------------------------------ | ------------------------- |
