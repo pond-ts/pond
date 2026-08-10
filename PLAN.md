@@ -697,6 +697,38 @@ financial hub, and the in-site API reference for core + charts). Plan:
   documentation-backlog items (pushMany guidance, bench-honesty callout, GC
   snippet, no-NaN guarantee, tie semantics, latency pattern) as one MDX pass.
 
+### Accessibility — audit and fixes, library-wide
+
+Pond's interaction surface grew one gesture at a time — cursors, selection, the
+sweep, the 2-D rect, the list range gesture — and each landed with its own
+keyboard story or none. Nobody has yet walked the **whole** surface from a
+keyboard or a screen reader. Plan (and the finding register):
+[PND_A11Y_PLAN.md](docs/plans/PND_A11Y_PLAN.md).
+
+- **[PND-A11Y]** — **Audit the interaction surface, then fix.** Per surface,
+  not per component: what can a keyboard user do, what does a screen reader
+  say, and what does the DOM claim. Findings accumulate in the breakout plan
+  as they are found — including the ones deliberately not fixed and why — so a
+  later pass does not re-derive them.
+
+  **The finding that prompted it:** the list family now supports single and
+  multi-row selection by pointer _and_ keyboard, and **none of it is exposed to
+  assistive technology.** `aria-selected` is not valid on a plain `<tr>`, and
+  the obvious repair (`role="grid"`) promises cell-level Left/Right navigation
+  the list does not implement — telling assistive technology a lie about the
+  widget is worse than the current silence. The honest options are implementing
+  the full ARIA grid pattern or rebuilding the interactive list as a
+  `listbox`, and that is a design decision rather than a prop. Also open on the
+  same surface: no roving tabindex (a 100-row list is 100 tab stops), no touch
+  affordance for a range at all, and unverified focus visibility against the
+  selection band.
+
+  **The canvas is in scope and unaudited.** Every chart gesture is
+  mouse-driven with no keyboard path, and what a screen reader should be told
+  about a chart is a question this has not opened. The first step there is an
+  inventory, not a fix — recorded so the audit's scope is not silently "the
+  lists".
+
 ### Agent workloads — the defensible bench
 
 [`docs/notes/agent-workloads-2026-07.md`](docs/notes/agent-workloads-2026-07.md)
@@ -1557,4 +1589,8 @@ These happen throughout rather than being scheduled:
 - add end-to-end examples whenever a major capability lands
 - keep API reference generation working in CI
 - expand tests alongside every new public API
+- **check the keyboard and screen-reader path for any new interaction** — a
+  gesture is not finished because a sighted mouse user can drive it; record
+  what you find (fixed or not) in
+  [PND_A11Y_PLAN.md](docs/plans/PND_A11Y_PLAN.md)
 - prefer benchmark-backed changes for performance-sensitive core refactors
