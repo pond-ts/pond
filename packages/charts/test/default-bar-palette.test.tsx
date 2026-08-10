@@ -481,3 +481,80 @@ describe('theme.brush — the drag band routes through the theme', () => {
     expect(container.querySelectorAll('line')).toHaveLength(0);
   });
 });
+
+/**
+ * **`dimmed` overrides a per-bar / per-band colour, unlike the live states.**
+ *
+ * Asked by the SPARC consumer migrating onto 0.58.0, and worth pinning rather
+ * than leaving to a Storybook read: they had generalized `BarStyle.hover`'s
+ * documented `binColors` exclusion ("pops each bar's own fill") to `dimmed`,
+ * concluded their `binColors` and `thresholds` charts would get no recede, and
+ * were about to hand-dim inside their own colour arrays. The opposite is true,
+ * and the asymmetry is the whole point: **emphasis preserves a per-bar colour
+ * (it is what the value means), recession suppresses it** (a receded bar's job
+ * is to stop competing over meaning).
+ */
+describe('`dimmed` vs. per-bar and per-band colour', () => {
+  const bins = () =>
+    new TimeSeries({
+      name: 'b',
+      schema: [
+        { name: 'timeRange', kind: 'timeRange' },
+        { name: 'v', kind: 'number' },
+      ],
+      rows: [
+        [[0, 1], 3],
+        [[1, 2], 7],
+      ],
+    } as never);
+
+  /** Names bin 0, so bin 1 is the unselected one under test. */
+  const pick: SelectInfo = {
+    id: 'b',
+    key: 0,
+    value: 3,
+    color: '#000',
+    label: 'v',
+  };
+  const RAMP = ['#111111', '#222222'];
+
+  it('an unselected `binColors` bar takes `dimmed`, NOT its own colour', () => {
+    const fills = drawFills(
+      <BarChart series={bins()} column="v" axis="a" id="b" binColors={RAMP} />,
+      { selected: [pick] },
+    );
+    // The selected bar keeps its own ramp colour (emphasis preserves meaning)…
+    expect(fills).toContain(RAMP[0]);
+    // …and the unselected one is receded, its ramp colour discarded.
+    expect(fills).toContain(defaultTheme.bar.default.dimmed);
+    expect(fills).not.toContain(RAMP[1]);
+  });
+
+  it('an unselected banded bar draws FLAT in `dimmed`, not a dimmed ladder', () => {
+    // The ladder encodes *where the value sits*; a receded bar should stop
+    // making that claim, so it collapses to one flat rect rather than painting
+    // a dim gradient.
+    const fills = drawFills(
+      <BarChart
+        series={bins()}
+        column="v"
+        axis="a"
+        id="b"
+        thresholds={[5]}
+        bandColors={RAMP}
+      />,
+      { selected: [pick] },
+    );
+    expect(fills).toContain(defaultTheme.bar.default.dimmed);
+    // Bin 1 (value 7) reaches the upper band; dimmed, that colour is gone.
+    expect(fills).not.toContain(RAMP[1]);
+  });
+
+  it('nothing dims while the selection is empty — there is nothing to recede from', () => {
+    const fills = drawFills(
+      <BarChart series={bins()} column="v" axis="a" id="b" binColors={RAMP} />,
+    );
+    expect(fills).not.toContain(defaultTheme.bar.default.dimmed);
+    expect(new Set(fills)).toEqual(new Set(RAMP));
+  });
+});

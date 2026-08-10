@@ -292,10 +292,14 @@ export interface ChartTheme {
    *
    * So the two values here are the ones with no canvas counterpart: the row
    * **band** tints. Everything else resolves from tokens that already exist
-   * and are per-metric where they should be — a selected fill takes
-   * {@link BarStyle.highlight}, a dimmed one {@link BarStyle.dimmed} — so a
-   * consumer who themes their bars gets a coherent list without theming it
-   * twice.
+   * and are per-metric where they should be — a selected glyph fill takes
+   * `bar[as].highlight` and a dimmed one `bar[as].dimmed` — so a consumer who
+   * themes their bars gets a coherent list without theming it twice.
+   *
+   * **To be unambiguous, because this reads as a list of fields on this
+   * block:** `highlight` / `dimmed` are **`BarStyle`** tokens, resolved through
+   * `theme.bar[as]`. They are not fields of `theme.list` and there is no
+   * `list.dimmed` — this register carries exactly the five values below.
    *
    * **The rail is deliberately NOT per-metric.** There is one rail per row
    * and a row may carry several metrics, so it cannot resolve through
@@ -755,6 +759,11 @@ export interface BarStyle {
    *   both states so a red/green volume bar keeps its meaning while live —
    *   the one *design* exclusion rather than a path consequence.
    *
+   * **Scope note: that `binColors` exclusion is about the LIVE states only.**
+   * It does not carry over to {@link dimmed}, which *replaces* a per-bar fill
+   * on an unselected bar — see that token, which spells out the asymmetry and
+   * why emphasis preserves a per-bar colour while recession suppresses it.
+   *
    * The **decimated** dense-bar pass also draws the flat fill only, as it
    * already did for `highlight`.
    */
@@ -857,6 +866,29 @@ export interface BarStyle {
    * component, and drifted immediately — one consumer had three charts using
    * `color-mix` at 22%, 28% and 30% for the same concept, in the same week, for
    * no reason. One theme value fixes that permanently.
+   *
+   * **It OVERRIDES a per-bar fill, unlike the live states.** This is the one
+   * place `dimmed` and {@link hover} deliberately disagree, and the asymmetry
+   * is easy to read the wrong way round:
+   *
+   * - **{@link binColors} / {@link binFills}:** an unselected bar paints
+   *   `dimmed`, discarding its own colour. (Hover and selection do the
+   *   opposite — they keep the per-bar colour and pop the alpha, so a
+   *   red/green volume bar stays red/green while live.)
+   * - **{@link bands} / thresholds:** an unselected banded bar draws **flat**
+   *   in `dimmed`, discarding the ladder entirely rather than dimming each
+   *   band.
+   * - **A multi-group stack** resolves per group through
+   *   {@link StackStyle.dimmedFills} first, falling back to this flat value —
+   *   a stack dimmed to one colour stops reading as a stack.
+   *
+   * The rule behind all three: a per-bar or per-band colour encodes *what the
+   * value is*, and a receded bar's whole job is to stop competing over that.
+   * Emphasis preserves meaning; recession suppresses it. So a chart that keeps
+   * `binColors` or `thresholds` for reasons unrelated to selection still gets
+   * a visible de-emphasis for free, and does **not** need to dim inside its own
+   * colour arrays. (Asked by a consumer who reasonably generalized `hover`'s
+   * `binColors` exclusion to this token; the exclusion is live-states-only.)
    */
   readonly dimmed?: string;
 }

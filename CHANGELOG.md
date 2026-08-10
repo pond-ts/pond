@@ -61,6 +61,31 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **charts: `BarStyle.dimmed`'s precedence over per-bar and per-band colour is
+  documented, and pinned.** A consumer migrating onto 0.58.0 read
+  `BarStyle.hover`'s documented `binColors` exclusion ("pops each bar's _own_
+  fill"), reasonably generalized it to `dimmed`, concluded their `binColors` and
+  `thresholds` charts would get no de-emphasis, and was about to hand-dim inside
+  their own colour arrays. The opposite is true: **an unselected bar takes
+  `dimmed`, discarding its per-bar colour, and a banded bar draws flat rather
+  than dimming each band.** The asymmetry is deliberate — emphasis preserves a
+  per-bar colour because that colour is what the value means, while a receded
+  bar's job is to stop competing over meaning — but only `hover` said anything,
+  so generalizing was the natural read. `dimmed` now spells out all three paths
+  (`binColors`/`binFills`, bands/thresholds, and the per-group stack fallback
+  through `StackStyle.dimmedFills`), `hover` scopes its exclusion to the live
+  states, and three tests pin the behaviour.
+
+- **charts: the `theme.list` register no longer reads as if it carries
+  `dimmed`.** Its doc mentioned `highlight`/`dimmed` while explaining that a
+  list resolves glyph state through the bar tokens — accurate, but sitting in a
+  sentence about per-metric resolution it read as a field list, and cost the
+  same consumer a couple of passes to rule out a missing `list.dimmed`. Now
+  states explicitly that those are `BarStyle` tokens resolved via
+  `theme.bar[as]`, and that this register carries exactly its five values.
+
 ## [0.58.0] — 2026-08-10
 
 ### Added
