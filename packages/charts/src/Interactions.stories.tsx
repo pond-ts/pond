@@ -6,7 +6,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
-import { docsTheme } from './docs-theme.fixture.js';
+import { defaultTheme } from './theme.js';
 import type { TrackerInfo } from './context.js';
 
 const N = 60;
@@ -75,7 +75,7 @@ function Rows() {
  */
 export const CursorSync: Story = {
   render: () => (
-    <ChartContainer range={TIME_RANGE} width={560} theme={docsTheme}>
+    <ChartContainer range={TIME_RANGE} width={560}>
       <Rows />
     </ChartContainer>
   ),
@@ -87,12 +87,7 @@ export const CursorSync: Story = {
  */
 export const FlagReadout: Story = {
   render: () => (
-    <ChartContainer
-      range={TIME_RANGE}
-      width={560}
-      theme={docsTheme}
-      cursor="flag"
-    >
+    <ChartContainer range={TIME_RANGE} width={560} cursor="flag">
       <Rows />
     </ChartContainer>
   ),
@@ -105,12 +100,7 @@ export const FlagReadout: Story = {
  */
 export const InlineReadout: Story = {
   render: () => (
-    <ChartContainer
-      range={TIME_RANGE}
-      width={560}
-      theme={docsTheme}
-      cursor="inline"
-    >
+    <ChartContainer range={TIME_RANGE} width={560} cursor="inline">
       <Rows />
     </ChartContainer>
   ),
@@ -122,12 +112,7 @@ export const InlineReadout: Story = {
  */
 export const PointCursor: Story = {
   render: () => (
-    <ChartContainer
-      range={TIME_RANGE}
-      width={560}
-      theme={docsTheme}
-      cursor="point"
-    >
+    <ChartContainer range={TIME_RANGE} width={560} cursor="point">
       <Rows />
     </ChartContainer>
   ),
@@ -143,12 +128,7 @@ export const PointCursor: Story = {
  */
 export const Formats: Story = {
   render: () => (
-    <ChartContainer
-      range={TIME_RANGE}
-      width={560}
-      theme={docsTheme}
-      cursor="inline"
-    >
+    <ChartContainer range={TIME_RANGE} width={560} cursor="inline">
       <ChartRow height={90}>
         <YAxis id="pct" label="ratio" min={0} max={1} format=".0%" />
         <Layers>
@@ -230,7 +210,6 @@ export const CursorTime: Story = {
     <ChartContainer
       range={TIME_RANGE}
       width={560}
-      theme={docsTheme}
       cursor="flag"
       cursorTime
       timeFormat="%I:%M %p"
@@ -258,9 +237,9 @@ function OutsideReadoutDemo() {
           marginBottom: '8px',
           display: 'flex',
           gap: '16px',
-          fontFamily: docsTheme.font.family,
+          fontFamily: defaultTheme.font.family,
           fontSize: '12px',
-          color: docsTheme.axis.label,
+          color: defaultTheme.axis.label,
         }}
       >
         {info === null ? (
@@ -276,12 +255,7 @@ function OutsideReadoutDemo() {
           </>
         )}
       </div>
-      <ChartContainer
-        range={TIME_RANGE}
-        width={560}
-        theme={docsTheme}
-        onTrackerChanged={setInfo}
-      >
+      <ChartContainer range={TIME_RANGE} width={560} onTrackerChanged={setInfo}>
         <Rows />
       </ChartContainer>
     </div>
@@ -312,12 +286,7 @@ function ControlledCursorDemo() {
         onChange={(e) => setT(Number(e.target.value))}
         style={{ display: 'block', width: '560px', marginBottom: '8px' }}
       />
-      <ChartContainer
-        range={TIME_RANGE}
-        width={560}
-        theme={docsTheme}
-        trackerPosition={t}
-      >
+      <ChartContainer range={TIME_RANGE} width={560} trackerPosition={t}>
         <Rows />
       </ChartContainer>
     </div>
@@ -354,7 +323,6 @@ function SyncedChartsDemo() {
     <ChartContainer
       range={TIME_RANGE}
       width={560}
-      theme={docsTheme}
       trackerPosition={sharedTime}
       onTrackerChanged={(info) => setSharedTime(info?.time ?? null)}
     >
@@ -393,7 +361,6 @@ export const PanZoom: Story = {
     <ChartContainer
       range={TIME_RANGE}
       width={560}
-      theme={docsTheme}
       panZoom
       minDuration={2 * STEP}
     >
@@ -410,12 +377,7 @@ export const PanZoom: Story = {
  */
 export const PanOnly: Story = {
   render: () => (
-    <ChartContainer
-      range={TIME_RANGE}
-      width={560}
-      theme={docsTheme}
-      panZoom="pan"
-    >
+    <ChartContainer range={TIME_RANGE} width={560} panZoom="pan">
       <Rows />
     </ChartContainer>
   ),
@@ -436,7 +398,6 @@ export const Bounded: Story = {
       <ChartContainer
         range={[TIME_RANGE[0] + third, TIME_RANGE[1] - third]}
         width={560}
-        theme={docsTheme}
         panZoom="panZoom"
         bounds={TIME_RANGE}
         minDuration={5 * STEP}

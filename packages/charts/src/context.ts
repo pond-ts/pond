@@ -191,8 +191,22 @@ export interface ContainerFrame {
    * hover-*highlight* is internal state, and RFC A1.2 keeps state on the
    * container; with no selector mounted there is simply nobody to report to,
    * which needs no gate to arrange.
+   *
+   * `block` — the **resting block preview** under a mounted `<MultiSelector>`
+   * (the marks of the snap block the pointer is in — exactly the set a drag
+   * begun and released there would select). When present it becomes the
+   * hovered *state* (every mark in the block lights) and what
+   * `<MultiSelector onHover>` hears, deduped by the block array's identity
+   * (the caller keeps it reference-stable per block, so within-block mark
+   * transitions re-render nothing). `<Selector onHover>` keeps its per-mark
+   * currency — `hit` still reports per mark transition. Omitted ⇒ the
+   * plain single-mark hover, exactly as before.
    */
-  setHovered(hit: SelectInfo | null, rowKey?: symbol): void;
+  setHovered(
+    hit: SelectInfo | null,
+    rowKey?: symbol,
+    block?: readonly SelectInfo[],
+  ): void;
   /** The default in-chart cursor presentation for all rows ({@link CursorMode});
    *  a row may override it via its own `cursor`. */
   readonly cursor: CursorMode;
@@ -291,6 +305,16 @@ export interface ContainerFrame {
    * {@link registerSelector}.
    */
   resolveSweep(rowKey: symbol): SweepGesture | null;
+  /**
+   * Whether a `<MultiSelector>` is in scope for this row — the *render-time*
+   * fact behind {@link resolveSweep} (which builds the per-drag gesture and is
+   * for the pointer-down path). Rows read this to decide the **resting block
+   * preview**: with one in scope over a sweep-capable row, the shared brush
+   * band becomes the resting cursor (replacing the implicit line shim) and
+   * hover lights the whole snap block a drag would select. Identity changes
+   * when the selector registry does, so it is safe in render memos.
+   */
+  hasMultiSelector(rowKey: symbol): boolean;
   /**
    * Register this layer's **legend row** — its display label + resolved
    * {@link SwatchSpec} (and selection `id` when it has one) — keyed by the
@@ -706,13 +730,15 @@ export interface RowLayer {
   binCategories?(): readonly string[] | null;
   /**
    * A bar/histogram layer's bar `[begin, end)` spans, as pond `Interval`s — the
-   * **region cursor's snap buckets**. When present (and no `cursorSequence` is
-   * set), a region drag snaps bar by bar and a hover highlights the bar under the
-   * pointer, so a histogram gets bin-aligned selection for free. Only a
-   * **vertical** bar layer on a **continuous** (time / value) x axis publishes
-   * them — a horizontal chart puts the value on x (snapping counts is meaningless)
-   * and a **category** (ordinal-slot) axis is excluded from the region cursor.
-   * `null` / absent otherwise.
+   * **shared snap buckets**. When present (and no `cursorSequence` is set), a
+   * region drag snaps bar by bar and a `<MultiSelector>` sweep's band extends
+   * bar by bar, so a histogram gets bin-aligned selection for free. Only a
+   * **vertical** bar layer publishes them — a horizontal chart puts the value
+   * on x (snapping counts is meaningless). On a **category** axis they are
+   * the unit slots `[i, i+1)`: the region cursor still ignores them (its band
+   * gates on a continuous axis), but the sweep band snaps over them to the
+   * slots' outer edges (RFC A7.6's edge rule — the band must agree with the
+   * span the release commits). `null` / absent otherwise.
    */
   binIntervals?(): readonly Interval[] | null;
   /**
@@ -741,12 +767,24 @@ export interface RowLayer {
    * so they render + read out but never select/hover (a click on them resolves
    * to empty space ⇒ deselect). `xScale`/`yScale` map data→pixels (the row
    * resolves the layer's axis scale, as for `draw`).
+   *
+   * `mode` says which gesture is asking, and a layer whose hover target is
+   * generous may narrow the *select* one. The single-series bar path does:
+   * **hover** attributes the bar's whole slot (full interval width, full plot
+   * height — the continuous model #582 asked for, so the highlight tracks
+   * like the readout), while **select** additionally requires the pointer to
+   * be within the bar's drawn ink vertically. Without that narrowing, slots
+   * tile the entire plot and a click can never resolve to `null` — RFC §7's
+   * empty-click deselect path becomes unreachable on any full-range bar
+   * chart. Layers whose hit target is already the drawn mark (stacks,
+   * scatter, boxes, heat cells) ignore `mode`.
    */
   hitTest?(
     px: number,
     py: number,
     xScale: (value: number) => number,
     yScale: (value: number) => number,
+    mode?: 'hover' | 'select',
   ): SelectInfo | null;
   /**
    * Begin a **sweep session** over this layer's marks — `<MultiSelector>`'s
@@ -766,6 +804,21 @@ export interface RowLayer {
     xScale: (value: number) => number,
     yScale: (value: number) => number,
   ): SweepSession | null;
+  /**
+   * Whether a sweep over this layer cuts a **rect** rather than a band — the
+   * same fact {@link SweepSession.twoD} reports, declared on the layer because
+   * the RESTING state has to know it and there is no session at rest.
+   *
+   * It decides what the row's resting cursor is: a band over the snap block
+   * for a 1-D layer, a small crosshair at the pointer for a 2-D one (a rect
+   * gesture has no resting block to preview — see `Layers`). Building a
+   * per-drag session just to ask would be the wrong shape and would snapshot
+   * the layer's arrays for nothing.
+   *
+   * Must agree with the session the layer's own `beginSweep` returns;
+   * `sweep-capabilities.test.ts` pins that across every layer.
+   */
+  readonly sweepsRect?: boolean;
   /**
    * Draw into the plot canvas. `xScale`/`yScale` map data→pixels. May return
    * {@link LayerDrawStats} (source/drawn counts + whether decimation engaged) so
@@ -795,8 +848,19 @@ export interface SweepSession {
    * Re-cut the covered set to the marks intersecting the half-open window
    * `[x0, x1)` (key-axis units, `x0 <= x1`). Returns whether the covered set
    * changed — the delta gate: an unchanged frame re-materialises nothing.
+   *
+   * `y0`/`y1` are the rect's second dimension in the layer's **y-axis data
+   * units** (not pixels — the gesture inverts through the same `yScale` the
+   * session was built with), and only a {@link twoD} session reads them; the
+   * gesture omits them entirely for a 1-D layer. They are unordered, because
+   * a drag upward hands them over inverted and the session is the one place
+   * that knows whether its axis descends.
+   *
+   * **A `twoD` session must include y in its own delta gate.** A purely
+   * vertical drag leaves the x run untouched, so a gate that watched x alone
+   * would answer `false` and freeze the preview under a moving pointer.
    */
-  update(x0: number, x1: number): boolean;
+  update(x0: number, x1: number, y0?: number, y1?: number): boolean;
   /**
    * The covered marks, materialised (and cached until the next change) — the
    * live preview `hovered` lights, and verbatim the release payload.
@@ -809,6 +873,39 @@ export interface SweepSession {
    * when nothing is covered.
    */
   extent(): readonly [number, number] | null;
+  /**
+   * **Set by a layer whose marks live in two dimensions** — a scatter (a point
+   * is a position, not a column) or a heat map (a grid of cells). The gesture
+   * reads this to decide whether to track a y window alongside x and to draw a
+   * rect rather than a band: dimensionality is a property of the *layer*, so a
+   * consumer mounts the same `<MultiSelector>` either way (RFC Q14).
+   */
+  readonly twoD?: boolean;
+  /**
+   * The captured set's **second-dimension** channels, for a `twoD` session —
+   * whichever of {@link SpanSelection.y} (a scatter's continuous window) and
+   * {@link SpanSelection.rows} (a heat map's ordinal row set) the layer uses.
+   * `null` when nothing is covered. Absent on a 1-D session.
+   */
+  extent2D?(): {
+    readonly y?: readonly [number, number];
+    readonly rows?: readonly string[];
+  } | null;
+  /**
+   * The cut's **snapped rect in axis units** (x in key units, y in the
+   * sweeping layer's y-axis units), for the brush to draw — `null` when the
+   * layer's cut is free, or when nothing is covered.
+   *
+   * A snapping layer must draw the rect it is going to *take*, not the one
+   * the pointer traced: a heat map snaps to whole cells, so a raw pointer
+   * rect promises a different set than the release delivers, and the two
+   * disagree most visibly at exactly the moment the user is deciding where
+   * to let go.
+   */
+  snappedRect?(): {
+    readonly x: readonly [number, number];
+    readonly y: readonly [number, number];
+  } | null;
 }
 
 /**
@@ -820,12 +917,33 @@ export interface SweepSession {
  */
 export interface SweepGesture {
   /**
+   * Whether an in-scope `<MultiSelector>` **declared a `sequence`** — i.e. the
+   * consumer said selection happens in bucket units rather than in marks.
+   *
+   * This is what widens a *click* from the mark under the pointer to the whole
+   * snap block (RFC §8). It has to be the declaration and not a property of
+   * what the block happened to contain: a stack's bin holds one mark per
+   * group, so "the block covers more than one mark" is true of an ordinary
+   * single-bin click on a stacked chart, and using that as the test made a
+   * click there select the whole bin instead of the clicked segment.
+   */
+  readonly snapped: boolean;
+  /**
    * The frame-coalesced **live preview**: light `hits` through the plural
    * `hovered` (RFC A3.4 — the library owns the state, each layer renders its
    * own hover treatment) and report them to the `<MultiSelector>`s in scope.
    * Nothing else crosses the public boundary until release (RFC A1.4).
+   *
+   * `light: false` **reports without lighting** — for a layer whose brush
+   * already outlines exactly the covered region (a heat map's snapped rect).
+   * Its hover treatment is a ring around *the cell under the pointer*, and
+   * during a sweep there is no such cell: a ring on every covered cell turns
+   * the region into the mostly-border grid the selection outline exists to
+   * avoid, inside a rect that is already saying the same thing. The consumer
+   * still hears the full set through `onHoverMany`, so a controlled `hovered`
+   * can render it however it likes.
    */
-  preview(hits: readonly SelectInfo[]): void;
+  preview(hits: readonly SelectInfo[], light?: boolean): void;
   /**
    * The release: report `(hits, modifiers, span)` to the `<MultiSelector>`s in
    * scope (RFC A5.2), clear the preview, and — when `selected` is
@@ -1264,6 +1382,56 @@ export interface ResolvedCursorFrame {
   readonly band: { readonly x0: number; readonly x1: number } | null;
   /** Degenerate range cursor (no buckets, not mid-drag): draw a plain line. */
   readonly bandLine: boolean;
+  /**
+   * Whether the band's extent is being **dragged** right now — a range drag
+   * anchored, or a `<MultiSelector>` sweep past its slop — rather than merely
+   * previewing the block under the pointer.
+   *
+   * The band renders in both states; this is what separates them. The edges
+   * are the gesture's grabbed boundary, so they draw only while there is a
+   * gesture: at rest the band is a *preview*, and edging a preview reads as a
+   * committed range the user hasn't made yet.
+   */
+  readonly bandDragging: boolean;
+  /**
+   * The **2-D brush rect** — a live `<MultiSelector>` sweep over a `twoD`
+   * layer ({@link SweepSession.twoD}: a scatter, a heat map), as clamped plot
+   * pixels. `null` in every other state, including a 1-D sweep, which paints
+   * {@link band} instead.
+   *
+   * It is deliberately **not** a band with a y range bolted on. The band is
+   * container state, so every row paints it from one anchor — right for an
+   * x-range, which means the same thing in every row. A rect's y is only
+   * meaningful in the row whose layer's axis it was measured against, so this
+   * is resolved per row by the row that owns the drag, and stays `null` in
+   * the others.
+   *
+   * **Unsorted, on purpose:** `(x0, y0)` is the corner the drag was anchored
+   * at and `(x1, y1)` the corner under the pointer, so either may be the
+   * larger. The renderer sorts for the box, but it needs the diagonal intact
+   * to put the two crosshairs on the corners the user is actually holding.
+   * (`x` is still the *snapped* band edge where the layer snaps — assigned to
+   * whichever end the anchor is on.)
+   */
+  readonly rect: {
+    readonly x0: number;
+    readonly x1: number;
+    readonly y0: number;
+    readonly y1: number;
+  } | null;
+  /**
+   * Draw the **resting** 2-D brush — a small grey `+` at the pointer, the
+   * rect gesture's answer to {@link band}'s resting block preview.
+   *
+   * Small on purpose, and not a crosshair in the usual sense. A full-plot
+   * crosshair is a value-reading instrument: it exists to project the pointer
+   * onto both axes. This one marks *a corner a rect would start from*, and
+   * the rect draws its own edges out to those axes the moment a drag begins —
+   * so plot-spanning rules would add two more lines to a picture that is
+   * about to have them anyway. The compact `+` says "here", which is all a
+   * corner needs to say.
+   */
+  readonly restingCross: boolean;
   /** The cursor time, formatted by the container's readout channel
    *  (`formatReadout ?? formatTime` in a row; the axis's own resolved readout
    *  formatter in the x-axis slot). `null` when out of bounds / not wanted. */
@@ -1344,6 +1512,14 @@ export interface CursorEntry {
    *  with any non-legacy (component-mounted) cursor drops its legacy entries —
    *  mounting a component overrides the string prop during the window. */
   readonly legacy: boolean;
+  /**
+   * The shim entry nobody asked for: the container's `'line'` **default**,
+   * synthesized with no `cursor` prop set. A mounted `<MultiSelector>`'s
+   * resting block preview (the brush band as the resting cursor) replaces
+   * only these — an explicitly chosen cursor, component-mounted or via the
+   * legacy string prop, still wins.
+   */
+  readonly implicit?: boolean;
   /**
    * Whether this cursor owns **snap and gesture** (RFC A2.5): at most one per
    * scope (dev-warned otherwise), resolved to the hovered row's innermost

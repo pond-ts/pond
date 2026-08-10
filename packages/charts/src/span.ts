@@ -144,22 +144,31 @@ export function spansForLayer(
 }
 
 /**
- * Does a mark **entry** of the selection identify `hit`? The full mark
- * identity, matching the container's own hover dedup: same layer `id`, same
- * per-mark handle — the stable `mark` when **both** sides carry one, else the
- * sample `key` (the `barMatches` fallback rule) — and same `label`, which on a
- * grouped layer (stack segment, heat cell) is the half of the identity that
- * separates two marks sharing a bin. `NaN` keys never match (`NaN !== NaN`),
- * so a series-scoped legend entry names no mark, deliberately.
+ * **Are these the same mark?** The full mark identity, matching the
+ * container's own hover dedup: same layer `id`, same per-mark handle — the
+ * stable `mark` when **both** sides carry one, else the sample `key` (the
+ * `barMatches` fallback rule) — and same `label`, which on a grouped layer
+ * (stack segment, heat cell) is the half of the identity that separates two
+ * marks sharing a bin. `NaN` keys never match (`NaN !== NaN`), so a
+ * series-scoped legend entry names no mark, deliberately.
+ *
+ * Exported as the companion to {@link selectionContains}, whose doc has
+ * always told a consumer to write `remove(cur, hit)` without giving them
+ * anything to write it with. **`key` alone is not identity**, and reaching
+ * for it is the natural mistake: it is right for a bar, a box and a candle,
+ * and on a stack or a heat map it silently takes out every mark in the bin.
+ * `<MultiSelector>`'s own demote-on-edit stories made exactly that error, in
+ * three places, in the file that is supposed to be the worked example —
+ * which is why this is a library export and not a docs note.
  */
-function markContains(entry: SelectInfo, hit: SelectInfo): boolean {
-  if (entry.id !== hit.id) return false;
-  if (entry.mark !== undefined && hit.mark !== undefined) {
-    if (entry.mark !== hit.mark) return false;
-  } else if (entry.key !== hit.key) {
+export function sameMark(a: SelectInfo, b: SelectInfo): boolean {
+  if (a.id !== b.id) return false;
+  if (a.mark !== undefined && b.mark !== undefined) {
+    if (a.mark !== b.mark) return false;
+  } else if (a.key !== b.key) {
     return false;
   }
-  return entry.label === hit.label;
+  return a.label === b.label;
 }
 
 /**
@@ -175,7 +184,9 @@ function markContains(entry: SelectInfo, hit: SelectInfo): boolean {
  *   setSelected((cur) =>
  *     hit === null ? []
  *     : mods?.additive
- *       ? selectionContains(cur, hit) ? remove(cur, hit) : [...cur, hit]
+ *       ? selectionContains(cur, hit)
+ *         ? cur.filter((e) => isSpanSelection(e) || !sameMark(e, hit))
+ *         : [...cur, hit]
  *       : [hit],
  *   )
  * }
@@ -199,7 +210,7 @@ export function selectionContains(
         spanContainsPoint(entry, hit.key, hit.value, hit.label)
       )
         return true;
-    } else if (markContains(entry, hit)) {
+    } else if (sameMark(entry, hit)) {
       return true;
     }
   }

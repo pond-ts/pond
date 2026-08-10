@@ -62,12 +62,241 @@ milestone. Plan:
   lighting a grid preview — the 1-D case cost 6.2 s/frame before it was fixed);
   **settle spans-plural-or-topmost** before copying `SpanSelection`'s
   single-`id` shape; and it **also closes horizontal-bar sweeps**, which are a
-  y-window and therefore 2-D machinery (A8.4).
-- **[PND-INTERACTCONF]** — **The conformance tail.** `<BoxPlot>` and the list
-  family join the sweep (both ride here by plan; `BoxPlot`'s pixel `offset`
-  complicates its key-space cut). `format` is a container-wide channel and
+  y-window and therefore 2-D machinery (A8.4). Both layers now have full
+  `Selector/{Scatter,HeatMap}` **and** `MultiSelector/{Scatter,HeatMap}` matrix
+  columns, both fixtures declaring `sweep: true`.
+
+  **Owner decisions, 2026-08-09** — these settle the shape, so the remaining
+  work is implementation rather than design:
+  - **It is the same `<MultiSelector>`, not a new component.** "Yes it's
+    different but to a user it's natural" — a drag draws a rectangle, and the
+    _layer_ declares whether it reads one or two dimensions. Nothing new is
+    mounted and no prop is added; the consumer's markup for a scatter is the
+    markup for a bar.
+  - **The heat map snaps in both dimensions** — bin columns on x, row slots on
+    y, so the rect lands on cell edges exactly as the 1-D band lands on bin
+    edges (A7.6's edge rule, in two axes).
+  - **Scatter is free** — an unsnapped rect in data space, because a point has
+    no cell to snap to.
+
+  With the layer declaring its own dimensionality, **spans-plural-or-topmost
+  resolves the way the 1-D case already does**: the topmost sweep-capable layer
+  claims the drag, and the commit carries that layer's `id`. The descriptor
+  needs nothing new either — `SpanSelection.y` (scatter's continuous window)
+  and `.rows` (the heat map's ordinal set) already exist and
+  `spanMatchesAny` already tests them.
+
+  **The visual model (owner, 2026-08-09).** The gesture:
+  - **At rest** — a **small grey crosshair**: a compact `+` at the pointer,
+    _not_ full-plot rules.
+  - **Dragging** — a second small crosshair pins at the anchor, with a **blue
+    rect** spanning between the two. So the 2-D brush is the 1-D band's
+    analog: the same "here is what you have grabbed", in both axes.
+
+  **Small is the point, not a size preference.** A full-plot crosshair is a
+  value-reading instrument — it exists to project the pointer onto both axes.
+  This crosshair marks a _corner of a rect_, and the rect already draws its own
+  edges out to those axes, so full-length rules would add two more
+  plot-spanning lines to a picture that already has them. The compact `+` says
+  "here", which is all a corner needs to say.
+
+  Scatter point states:
+
+  | state                         | fill  | mark                         |
+  | ----------------------------- | ----- | ---------------------------- |
+  | rest                          | green | —                            |
+  | under the live drag rect      | green | outlined, so it reads larger |
+  | selected (committed)          | blue  | outlined                     |
+  | outside a non-empty selection | —     | ghosted                      |
+
+  Two things this settles beyond the pixels:
+  - **The resting colour moves off cerulean (`#0284c7`) to green.** That is the
+    bar palette's rule for the third time: rest cannot be blue, because blue
+    has to mean _committed_. It is a `defaultTheme.scatter` change, not a
+    per-story one.
+  - **Preview grows; selection recolours.** The live-rect state keeps its hue
+    and gains an outline — the candle's move — while the committed state takes
+    blue, which is available here because a scatter point's colour is not
+    load-bearing the way a candle's direction is. So the preview and the commit
+    are distinguishable without the preview borrowing the committed colour.
+
+  **Heat map: one outline around the selection, not one per cell.** The
+  selected block gets a single perimeter; the cells inside keep their ramp
+  colour and simply sit within it.
+
+  That asymmetry with scatter is _derived_, not a second opinion. Because the
+  heat map snaps in **both** dimensions, a selection is always a contiguous
+  rectangle of cells — so "the outline of the selection" is a well-defined
+  single shape. A scatter's selected points are scattered by construction and
+  have no shared perimeter, so there each point is outlined individually. Same
+  rule (outline what is selected), different geometry to outline.
+
+  It is also the fix for the thing that makes a per-cell treatment unreadable:
+  a bordered grid of cells is mostly border, and the interior lines say
+  nothing — every one of them is interior to the selection.
+
+  **The heat map ghosts with a flat overlay, not opacity.** Unselected cells
+  take a **white veil at 62%**; the selected region takes one perimeter.
+
+  This corrects an earlier note here that said the heat map must not ghost at
+  all, on the grounds that alpha and value are the same channel so dimming
+  moves cells along the ramp. The concern is real but the conclusion was too
+  strong, and the design answers it: a **flat overlay is uniform and
+  monotonic**, so every cell lightens by the same transform and the ramp's
+  _order_ survives inside the ghosted set. What remains is only a cross-set
+  ambiguity — a veiled dark cell can match a resting mid one — and the
+  perimeter is what tells you which set you are reading.
+
+  "Not opacity" is load-bearing beyond the arithmetic: on a white ground the
+  two are numerically close, but opacity composites with whatever is _behind_
+  the cell (gridlines, a non-white background, another layer), so the same
+  value would veil to different colours in different charts. A flat overlay
+  is a property of the cell.
+
+  Full state table:
+
+  | mark                | rest                  | dimmed                        | hover                                     | selected                                              |
+  | ------------------- | --------------------- | ----------------------------- | ----------------------------------------- | ----------------------------------------------------- |
+  | **heat map cell**   | ramp value, no chrome | white veil 62%                | 2px white **+** 2px `#12564E` double ring | — (the _region_ carries it)                           |
+  | **heat map region** | —                     | —                             | —                                         | 2px `#3F5BE0` perimeter, one outline around the union |
+  | **scatter point**   | 9px `#2A9D8F`         | 5px · opacity `.34` (shrinks) | 11px `#4FD0BE` + 2px halo                 | 9px `#3F5BE0` + 2px halo                              |
+
+  Three details in that table are decisions, not values:
+  - **The cell hover is a double ring** — white _and_ dark teal, 2px each. A
+    single ring cannot work on a ramp: white vanishes at the light end and dark
+    teal at the dark end, so the pair guarantees one of them reads wherever the
+    cell happens to sit. This is the same problem `binFills` bars have and a
+    better answer than theirs.
+  - **A dimmed point shrinks (9px → 5px) as well as fading.** Alpha alone at
+    `.34` would thin the cloud to near-nothing; shrinking keeps its _shape_
+    readable, which is the thing a scatter's unselected field is for.
+  - **Hover grows (11px) and selection does not (9px).** Size carries hover
+    because it is the channel a lone pointer-over can afford to spend; the
+    committed state spends hue instead and keeps its resting size, so a
+    selection does not reflow the cloud. Both take a 2px halo, which is what
+    keeps overlapping points countable once they are the same colour.
+
+  The point palette is the shared one again: `#2A9D8F` is the bar's resting
+  teal and `#3F5BE0` its selection blue, so a selected point beside a selected
+  bar reads as one act.
+
+  **Shipped so far — the cut and the gesture.** `sweep2D` (the rect cut, with
+  y in its delta gate), `beginSweep` on both layers, the gesture tracking y
+  alongside x and committing the second channel, and the brush rect with a
+  small `+` on each end of the drag diagonal. Both fixtures declare
+  `sweep: true` and the two `MultiSelector` columns are walkable.
+
+  Three findings from that pass, recorded in the charts breakout plan: a point
+  layer's span must be the **drag window**, not `[first.key, last.key]` (the
+  half-open test drops its own last point); a 2-D sweep's slop must be on the
+  **distance**, or a straight-down drag can never start; and a 2-D layer
+  publishes **no resting block**, because the block is a column and the drag
+  beside it captures a rect.
+
+  **Also shipped — the scatter palette.** `theme.scatter.*.states` (an
+  optional group, `BoxStyle.states`' shape), the rest colour off cerulean to
+  `#2A9D8F` at 9px, and the whole table above wired into `drawScatter`. Two
+  notes worth keeping: a live point is deferred **whole** rather than
+  re-ringed, because its fill _and_ radius change and a resting neighbour
+  drawn later would otherwise paint over the grown body; and the state radii
+  are applied as the **ratio** to the base radius, so a data-driven `radius`
+  encoding is not flattened to one size the moment a point goes live.
+
+  **Also shipped — the heat map states.** A new optional `theme.heat` slot
+  carrying only the states (the geometry still comes from `theme.bar`, which
+  is right: a cell is a bar's slot with colour instead of height). The
+  live drag and the committed outline answer differently (owner, 2026-08-09,
+  after one wrong turn — see below):
+  - **Dragging** — the brush shows the **snapped** rect it is about to take
+    (`SweepSession.snap`), so the preview cannot promise a set the release
+    will not deliver. A scatter's cut is free, so its brush stays on the
+    pointer.
+  - **Released** — the new rect joins what is already selected and the
+    outline **merges**: one perimeter around the union, from suppressing each
+    cell edge whose neighbour is also selected. No connectivity pass, so
+    disconnected pieces get one outline each and a hole gets its own, and no
+    false edge where a selection runs off-screen.
+
+  **The wrong turn, for the record.** A diagram showing two overlapping
+  grid-snapped rectangles was read as "one outline per selection _act_, acts
+  do not merge", and shipped that way (`27df067`) before the owner corrected
+  it: the diagram was the **drag**, not the commit. What it was really saying
+  is that the drag rect snaps — the thing that was actually missing — and the
+  per-act reading was reverted. Worth keeping because the mistake is not
+  obvious in hindsight: both readings produce overlapping rectangles in a
+  still image, and only the moment they appear tells them apart.
+
+  **Also shipped — the perf gate** (`scripts/perf-interact2d.mjs`, 18
+  scenarios). It found what it was written to look for and one thing it was
+  not:
+  - **The A8.1 shape, unfixed on both 2-D layers.** A sweep lights its covered
+    marks through the plural `hovered`, so the draw's membership test runs
+    once per visible mark over the whole set — 100k points with 50k covered
+    measured **4.0 s per frame**. `bars.ts` solved this with a per-draw set
+    index at 16 entries; scatter and the heat map never got one. They have one
+    now: **4042 ms → 14.7 ms** (scatter) and **2.64 ms → 1.01 ms** (heat).
+  - **The heat map recomputed what its neighbour grid already knew** — the
+    cell loop redid the label compare and the span test per cell even though
+    the perimeter pre-pass had answered them. Reading the grid back: −10% on a
+    45,000-cell selected repaint.
+  - **A "floor" scenario that was measuring the worst case.** `CUT-GATED`
+    wiggled the pointer across an exact key, and the press-edge pullback
+    flipped the covered run on every other move — 9,999 re-cuts out of 10,000
+    while claiming to be the delta-gated floor. Caught by instrumenting rather
+    than by reading the number, which looked plausible. Fixed, it is 25 ns per
+    gated move.
+
+  What remains costed, not fixed: the states path adds ~70–90% to a _selected_
+  heat repaint (1.4 ms at 365×45, 4.6 ms at 45,000 cells) — the veil is one
+  extra `fillRect` per unselected cell. That is inside frame budget and only
+  happens when there is a selection, so it is documented in the bench header
+  rather than optimised away.
+
+  **Shipped — the resting crosshair, and with it the whole of
+  [PND-INTERACT2D]'s visual model.** A rect-sweeping row now rests as a small
+  grey `+` and the drag pins the same mark at its anchor, so the gesture reads
+  as picking up what was already under the cursor. It replaces the resting
+  _band_, which a 2-D row should never have had — the band previews the snap
+  block, and the block is a whole column while the drag captures a rect.
+
+  The fact is declared on the layer (`RowLayer.sweepsRect`) rather than
+  derived from a session, because at rest there is no drag to build one for
+  and snapshotting the layer's arrays to answer a yes/no question is the wrong
+  shape. It is the same fact `SweepSession.twoD` reports, so
+  `test/sweep-capabilities.test.ts` pins their agreement across every
+  sweep-capable layer — and does it by building the real session rather than
+  reading the flag back, or the test would agree with itself.
+
+- **[PND-INTERACTCONF]** — **The conformance tail.** The **list family** joins
+  the sweep. (`<BoxPlot>` has now joined: a box is an aggregation owning one
+  `[begin, end)` column, so it publishes `binIntervals` + `beginSweep` and
+  sweeps exactly as a bar — a bar that simply isn't grounded to the axis. Its
+  pixel `offset` still complicates the key-space cut, and that is now
+  `[PND-BOXHIT]`'s territory since the same shift is what makes two paired
+  boxes' hit rects overlap.) `format` is a container-wide channel and
   cannot be honoured per-row without reworking the readout plumbing (A8.4).
   Then **remove the deprecation shims** one minor after they land.
+
+  **The four columns [PND-INTERACT2D] did not reach** (owner, 2026-08-10).
+  The wave took the column marks (bar, stack, box, candle) and the two 2-D
+  layers (scatter, heat map); these are what is left, and they split into two
+  quite different problems:
+  - **`<BoxList>` and `<BarList>`** — the list family. Same currency as the
+    rest (discrete marks with an `id`), so this is conformance rather than
+    design: publish `hitTest` + `beginSweep`, add the matrix columns, walk
+    the fan-out. The open question is what a sweep even means on a list,
+    whose "axis" is a stack of rows rather than a scale — most likely a 1-D
+    cut over the row order, which would make it the first ORDINAL sweep and
+    is worth settling before writing code.
+  - **`<LineChart>` and `<AreaChart>`** — a continuous trace has **no marks
+    to select**, which is why they have no `id` gate today and why
+    `LineChart.hitTest` still sits in `[PND-SELECT]` Phase 2. So "join the
+    matrix" is not yet a well-posed task for them: it needs a decision on
+    what a selection on a trace _is_ (the samples in an x range? the range
+    itself, as a `SpanSelection` with no marks? a point on the path?) before
+    any of the interaction surface applies. Do not treat these as the same
+    kind of gap as the list family.
+
 - **[PND-CURSORAPI]** — **Publish the cursor contract** (RFC Q3), under A7.1's
   litmus rather than by argument: every built-in **and** SpiderRock's gapped
   crosshair written against it with nothing needing a new slot. The surface
@@ -94,6 +323,38 @@ milestone. Plan:
   px `offset` for same-x pairs, line-only shape, join the cursor x-snap, and
   selection `id` via rect-containment `hitTest` (#508 item 5; Candlestick
   takes the same geometry helper).
+- **[PND-BOXHIT]** — **`<BoxPlot>`'s hit area is the mark's bounding box, not
+  its ink — and on `shape="whisker"` those differ by 25×.** Measured at box
+  centre: with the solid shape, ink and hit are both ~50px wide everywhere
+  (they agree). With the whisker shape, in the p75→p95 region the drawn stem is
+  **2px** while the hit is **50px** — so clicking visually empty plot beside a
+  stem selects the box. That directly contradicts the bar rule shipped this
+  same wave, where a click above the ink is the _deselect_ path, so the two
+  layers now disagree about what empty space means. Sharpest under `offset`
+  (paired call/put boxes), where two ±4px-shifted boxes have near-identical hit
+  rects and layer order decides the winner.
+- **[PND-HITMODE]** — **The stacked/categorical `hitTest` ignores `mode`, so
+  hover is ink-only there.** The single-series path takes `(px, py, xScale,
+yScale, mode)` and uses `mode` to let hover claim the whole slot while
+  select requires the drawn ink (#582's continuous hover model); the stacked
+  path takes no `mode` and is ink-only for both. So hovering above a short bar
+  reports nothing on a categorical or stacked chart and reports the bar on a
+  time-axis one. Carries a design question — which segment an above-the-ink
+  hover should report on a stack — which is why it isn't a one-liner.
+- **[PND-ORDCURSOR]** — **`<RangeCursor>` on an ordinal axis takes the row's
+  cursor with it.** It gates on a continuous x (`brush.tsx`), so on a category
+  axis mounting one is not merely inert — the row ends up with no cursor at
+  all. Either draw a slot-band there or make the mount a no-op that leaves the
+  row's other cursor alone; silently removing a cursor is the one option that
+  isn't defensible.
+- **[PND-TICKGAP]** — **The trading axis's tick budget doesn't bound label
+  spacing under collapse.** `TRADING_TICK_PX` budgets 65px of plot per tick and
+  picks the finest grain that fits, but a wall-clock anchor that falls in
+  closed time gets relocated to the session open — a `00:00` anchor lands at
+  09:30, ~33px from that session's `12:00` label. The budget measures
+  wall-clock spacing while the axis draws in trading time, so it does not bound
+  what it thinks it bounds. Visible in every `MultiSelector/TradingSessions`
+  story.
 - **[PND-CURSOR]** — Cursor/readout polish backlog (scatter 2D-nearest,
   chip de-overlap, y-oriented region cursor, `pointercancel` clear-only
   fix).

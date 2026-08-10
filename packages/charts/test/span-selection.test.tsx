@@ -8,6 +8,7 @@ import { Layers } from '../src/Layers.js';
 import { BarChart } from '../src/BarChart.js';
 import { ScatterChart } from '../src/ScatterChart.js';
 import { BoxPlot } from '../src/BoxPlot.js';
+import { defaultTheme } from '../src/theme.js';
 import { HeatMap } from '../src/HeatMap.js';
 import { YAxis } from '../src/YAxis.js';
 import {
@@ -20,7 +21,11 @@ import {
 } from '../src/context.js';
 import { barsFromTimeSeries, stacksFromColumns } from '../src/data.js';
 import { scaleLinear } from 'd3-scale';
-import { recordingContext, stubCanvasContext } from './canvas-mock.js';
+import {
+  arcsFilled,
+  recordingContext,
+  stubCanvasContext,
+} from './canvas-mock.js';
 import type { CtxCall } from './canvas-mock.js';
 
 afterEach(cleanup);
@@ -276,11 +281,14 @@ function mountScatter(props: Record<string, unknown>) {
   );
 }
 
-// One `arc` per point in the base pass, one more per highlight ring.
-const RINGS = (calls: readonly CtxCall[]) => count(calls, 'arc') - 4;
+// `defaultTheme.scatter` carries a `states` ladder, so a selected point is
+// recoloured rather than given a second arc — the count is of marks drawn in
+// the selection blue, not of extra arcs.
+const SELECTED = (calls: readonly CtxCall[]) =>
+  arcsFilled(calls, defaultTheme.scatter.default.states!.selected).length;
 
 describe('<ScatterChart> — a scatter span uses `y` (RFC A3.3/A5.3)', () => {
-  it('an x-only span rings every point in the interval', () => {
+  it('an x-only span selects every point in the interval', () => {
     const { calls } = mountScatter({
       selected: [
         {
@@ -290,7 +298,7 @@ describe('<ScatterChart> — a scatter span uses `y` (RFC A3.3/A5.3)', () => {
         } satisfies SpanSelection,
       ],
     });
-    expect(RINGS(calls)).toBe(2); // points 1, 2 — point 3 sits ON the open edge
+    expect(SELECTED(calls)).toBe(2); // points 1, 2 — 3 sits ON the open edge
   });
 
   it('y narrows it to the 2-D rectangle, half-open on both axes', () => {
@@ -304,10 +312,10 @@ describe('<ScatterChart> — a scatter span uses `y` (RFC A3.3/A5.3)', () => {
         } satisfies SpanSelection,
       ],
     });
-    expect(RINGS(calls)).toBe(2);
+    expect(SELECTED(calls)).toBe(2);
   });
 
-  it('a span plus a mark ring their union, one ring per point', () => {
+  it('a span plus a mark select their union, one mark per point', () => {
     const { calls } = mountScatter({
       selected: [
         {
@@ -324,7 +332,7 @@ describe('<ScatterChart> — a scatter span uses `y` (RFC A3.3/A5.3)', () => {
         } satisfies SpanSelection,
       ],
     });
-    expect(RINGS(calls)).toBe(3); // points 0, 1 (span) + 3 (mark)
+    expect(SELECTED(calls)).toBe(3); // points 0, 1 (span) + 3 (mark)
   });
 });
 
@@ -374,7 +382,15 @@ describe('<BoxPlot> — spans select boxes by their key span', () => {
         { kind: 'span', id: 'smile', x: [95, 115] } satisfies SpanSelection,
       ],
     });
-    expect(alphaPerStrokeRect(calls)).toEqual([1, 1]); // keys 95, 105 — not 115
+    // The cue is the **tint ladder**, not a bounding outline: with a laddered
+    // theme a span-covered box paints from the selected ladder and the rest
+    // recede. Half-open `[95, 115)` covers keys 95 and 105, not 115.
+    const L = defaultTheme.box.default.states!;
+    const strokes = calls
+      .filter((c) => c.type === 'set' && c.name === 'strokeStyle')
+      .map((c) => String(c.args[0]));
+    expect(strokes.filter((c) => c === L.selected[2])).toHaveLength(2);
+    expect(strokes.filter((c) => c === L.rest[2]).length).toBeGreaterThan(0);
   });
 
   it('a span naming another layer outlines nothing', () => {
@@ -412,7 +428,7 @@ const RAMP = ['#111', '#555', '#999', '#ddd'];
 
 function mountHeat(
   containerProps: Record<string, unknown>,
-  columns: readonly ['lo', 'hi'] | readonly ['hi', 'lo'] = ['lo', 'hi'],
+  columns: readonly string[] = ['lo', 'hi'],
 ) {
   let rf: RowFrame | null = null;
   function Capture() {
@@ -451,11 +467,54 @@ function mountHeat(
   return { calls };
 }
 
-/** The rect (x, y) of every `strokeRect` — a heat cell only strokes when live. */
-function strokeRects(calls: readonly CtxCall[]): Array<[number, number]> {
-  return calls
-    .filter((c) => c.name === 'strokeRect')
-    .map((c) => [c.args[0] as number, c.args[1] as number]);
+/**
+ * Every **selection outline** the draw emitted, as `[x, y, w, h]` — the
+ * bounding box of each stroked path, rounded.
+ *
+ * A committed selection is one region however it was assembled, so
+ * `theme.heat`'s states draw **one outline around the union** — each cell
+ * emits only the edges it does not share with a selected neighbour, one
+ * stroked path per cell. The count is therefore a cell count, and the boxes
+ * are each cell's own outer edges.
+ */
+function outlines(
+  calls: readonly CtxCall[],
+): Array<[number, number, number, number]> {
+  const ink = defaultTheme.heat!.default.perimeter;
+  const out: Array<[number, number, number, number]> = [];
+  let stroke: unknown;
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  let any = false;
+  for (const c of calls) {
+    if (c.type === 'set' && c.name === 'strokeStyle') stroke = c.args[0];
+    else if (c.name === 'beginPath') {
+      x0 = Infinity;
+      y0 = Infinity;
+      x1 = -Infinity;
+      y1 = -Infinity;
+      any = false;
+    } else if (c.name === 'moveTo' || c.name === 'lineTo') {
+      any = true;
+      const x = c.args[0] as number;
+      const y = c.args[1] as number;
+      x0 = Math.min(x0, x);
+      y0 = Math.min(y0, y);
+      x1 = Math.max(x1, x);
+      y1 = Math.max(y1, y);
+    } else if (c.name === 'stroke' && any && stroke === ink) {
+      out.push([
+        Math.round(x0),
+        Math.round(y0),
+        Math.round(x1 - x0),
+        Math.round(y1 - y0),
+      ]);
+      any = false;
+    }
+  }
+  return out;
 }
 
 const heatSpan = (over: Partial<SpanSelection> = {}): SpanSelection => ({
@@ -468,14 +527,14 @@ const heatSpan = (over: Partial<SpanSelection> = {}): SpanSelection => ({
 describe('<HeatMap> — a heat-map span uses `rows` (RFC A5.3)', () => {
   it('a rows-less span selects every row of the covered bins', () => {
     const { calls } = mountHeat({ selected: [heatSpan()] });
-    expect(strokeRects(calls)).toHaveLength(4); // 2 bins × 2 rows
+    expect(outlines(calls)).toHaveLength(4); // 2 bins × 2 rows
   });
 
   it('rows narrows to the named rows — a label set, not an interval', () => {
     const { calls } = mountHeat({
       selected: [heatSpan({ rows: ['hi'] })],
     });
-    expect(strokeRects(calls)).toHaveLength(2); // (0, hi), (1, hi)
+    expect(outlines(calls)).toHaveLength(2); // (0, hi), (1, hi)
   });
 
   it('the selection survives a row reorder — it names rows, not slots', () => {
@@ -483,10 +542,10 @@ describe('<HeatMap> — a heat-map span uses `rows` (RFC A5.3)', () => {
     // the other band of the plot; the SAME cells must light. A numeric
     // y-interval (A3.3's rejected shape) would keep the old band instead —
     // which is exactly why the descriptor carries labels.
-    const before = strokeRects(
+    const before = outlines(
       mountHeat({ selected: [heatSpan({ rows: ['hi'] })] }, ['lo', 'hi']).calls,
     );
-    const after = strokeRects(
+    const after = outlines(
       mountHeat({ selected: [heatSpan({ rows: ['hi'] })] }, ['hi', 'lo']).calls,
     );
     expect(before).toHaveLength(2);
@@ -500,7 +559,7 @@ describe('<HeatMap> — a heat-map span uses `rows` (RFC A5.3)', () => {
     const { calls } = mountHeat({
       selected: [heatSpan({ id: 'other' })],
     });
-    expect(strokeRects(calls)).toHaveLength(0);
+    expect(outlines(calls)).toHaveLength(0);
   });
 
   it('a span and a cell mark light their union', () => {
@@ -516,7 +575,7 @@ describe('<HeatMap> — a heat-map span uses `rows` (RFC A5.3)', () => {
         },
       ],
     });
-    expect(strokeRects(calls)).toHaveLength(2); // (0, lo) + (2, hi)
+    expect(outlines(calls)).toHaveLength(2); // (0, lo) + (2, hi)
   });
 });
 

@@ -7,7 +7,6 @@ import { LineChart } from './LineChart.js';
 import { XAxis } from './XAxis.js';
 import { defaultTheme } from './theme.js';
 import type { ChartTheme } from './theme.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 const N = 60;
 /** Fixed base epoch (2026-01-01 12:00 UTC) + 1-minute step, so the time axis
@@ -87,7 +86,7 @@ type Story = StoryObj;
  */
 export const ValueAxisDistance: Story = {
   render: () => (
-    <ChartContainer timeFormat=",.0f" width={480} theme={docsTheme}>
+    <ChartContainer timeFormat=",.0f" width={480}>
       <ChartRow height={200}>
         <Layers>
           <LineChart series={rideByDistance()} column="hr" as="heartrate" />
@@ -115,7 +114,6 @@ export const ValueAxisFlag: Story = {
         cursor="flag"
         cursorTime
         width={480}
-        theme={docsTheme}
       >
         <ChartRow height={200}>
           <Layers>
@@ -138,12 +136,7 @@ export const ValueAxisLabeled: Story = {
     const series = rideByDistance();
     const maxDist = series.axisAt(series.length - 1);
     return (
-      <ChartContainer
-        range={[0, maxDist]}
-        showAxis={false}
-        width={480}
-        theme={docsTheme}
-      >
+      <ChartContainer range={[0, maxDist]} showAxis={false} width={480}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="hr" as="heartrate" />
@@ -160,7 +153,7 @@ export const WithGap: Story = {
   render: () => {
     const series = sineWithGap();
     return (
-      <ChartContainer range={TIME_RANGE} width={480} theme={docsTheme}>
+      <ChartContainer range={TIME_RANGE} width={480}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" />
@@ -176,7 +169,7 @@ export const Flat: Story = {
   render: () => {
     const series = flat();
     return (
-      <ChartContainer range={TIME_RANGE} width={480} theme={docsTheme}>
+      <ChartContainer range={TIME_RANGE} width={480}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" as="context" />
@@ -377,7 +370,7 @@ const dashTheme: ChartTheme = {
   ...defaultTheme,
   line: {
     ...defaultTheme.line,
-    observed: { color: '#2563eb', width: 1.5 },
+    observed: { ...defaultTheme.line.default },
     model: { color: '#d63d8a', width: 1.5, dash: [6, 4] },
     forecast: { color: '#5eb5a6', width: 1.5, dash: [2, 3] },
   },

@@ -128,3 +128,37 @@ export function stubCanvasContext(): { calls: CtxCall[]; restore: () => void } {
     },
   };
 }
+
+/**
+ * The **radii of every `arc` drawn while `fillStyle` was `color`** — how a
+ * state-coloured mark is counted once a state changes the mark itself rather
+ * than adding a ring beside it.
+ *
+ * Counting `arc` ops alone stopped answering the question when `theme.scatter`
+ * gained its `states` ladder: a live point is no longer "the base mark plus a
+ * highlight ring" (two arcs) but *one* mark drawn in a different colour at a
+ * different size, so the arc total is the same whatever is selected. What
+ * distinguishes the state is the fill — and, for hover, the radius — which is
+ * what this returns.
+ *
+ * Attribution is on the **`fill`** op, not the `arc` — the two passes order
+ * them differently (the base pass arcs then sets its colour; the ladder's
+ * second pass sets the colour once and then arcs), and "what colour did this
+ * disc come out" is only answerable at the fill. Reading it off the `arc`
+ * silently credits each base-pass mark to its predecessor's colour.
+ */
+export function arcsFilled(calls: readonly CtxCall[], color: string): number[] {
+  const out: number[] = [];
+  let fill: unknown;
+  let pending: number | null = null;
+  for (const c of calls) {
+    if (c.type === 'set' && c.name === 'fillStyle') fill = c.args[0];
+    else if (c.type === 'call' && c.name === 'arc')
+      pending = c.args[2] as number;
+    else if (c.type === 'call' && c.name === 'fill') {
+      if (pending !== null && fill === color) out.push(pending);
+      pending = null;
+    }
+  }
+  return out;
+}

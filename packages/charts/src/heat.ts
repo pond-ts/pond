@@ -3,6 +3,7 @@ import type { StackedBarSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { Orientation, StackMark } from './bars.js';
 import type { SpanSelection } from './context.js';
+import type { HeatStates } from './theme.js';
 import { NO_SPANS, spanContainsPoint } from './span.js';
 import { visibleSpanRange } from './culling.js';
 import {
@@ -76,6 +77,13 @@ export interface HeatStyle {
   /** Stroke for the `'hatch'` no-data fill — the theme's grid colour, so it
    *  reads as chart furniture rather than as a value. */
   readonly gridColor: string;
+  /**
+   * The **interaction states** ({@link HeatStates}), from `theme.heat`. Unset
+   * ⇒ the pre-states treatment exactly: a live cell gets one outline of its
+   * own in {@link highlight}, `outlineWidth` for hover and twice that for
+   * selection, and nothing recedes.
+   */
+  readonly states?: HeatStates;
 }
 
 /**
@@ -249,6 +257,66 @@ function binLabelsInto(
     if (stable !== undefined ? m.mark === stable : m.key === begin)
       out.push(m.label);
   }
+}
+
+/**
+ * Past this many entries a per-draw index beats {@link binLabelsInto}'s scan.
+ * The scan runs once per **bin** over the whole set, so it is O(W · |set|) —
+ * fine for the handful of cells a person clicks, and not fine for a rect
+ * preview, which lights its whole covered region through `hovered`. Same
+ * threshold and same reasoning as `bars.ts` / `scatter.ts`.
+ */
+const MARK_INDEX_THRESHOLD = 16;
+
+/**
+ * {@link binLabelsInto} in map form: bin identity → the labels named on it.
+ *
+ * Two maps rather than one, because the pairwise rule is asymmetric exactly
+ * as the bar index's is. A bin with a **stable mark** matches only entries
+ * carrying that mark; a bin without one matches by key, and then an entry's
+ * own mark is irrelevant. So marked entries go in `byMark` and *every* entry
+ * goes in `byKey`.
+ */
+interface BinLabelIndex {
+  readonly byMark: ReadonlyMap<string, string[]>;
+  readonly byKey: ReadonlyMap<number, string[]>;
+}
+
+function buildBinLabelIndex(
+  set: readonly StackMark[],
+  seriesId: string | undefined,
+): BinLabelIndex {
+  const byMark = new Map<string, string[]>();
+  const byKey = new Map<number, string[]>();
+  for (let i = 0; i < set.length; i += 1) {
+    const m = set[i]!;
+    if (m.id !== seriesId) continue;
+    if (m.mark !== undefined) {
+      const at = byMark.get(m.mark);
+      if (at) at.push(m.label);
+      else byMark.set(m.mark, [m.label]);
+    }
+    const at = byKey.get(m.key);
+    if (at) at.push(m.label);
+    else byKey.set(m.key, [m.label]);
+  }
+  return { byMark, byKey };
+}
+
+const NO_LABELS: readonly string[] = [];
+
+/** The labels named on bin `b`, through the index. */
+function indexedBinLabels(
+  ix: BinLabelIndex,
+  ss: StackedBarSeries,
+  b: number,
+): readonly string[] {
+  const stable = ss.marks?.[b];
+  return (
+    (stable !== undefined
+      ? ix.byMark.get(stable)
+      : ix.byKey.get(ss.begin[b]!)) ?? NO_LABELS
+  );
 }
 
 /** Is `label` one of the (usually zero or one) labels {@link binLabelsInto}
@@ -476,6 +544,18 @@ export function drawHeat(
   // path had when it matched a lone mark. `null` ⇒ that set is not in play.
   const selLabels: string[] | null = anySelected ? [] : null;
   const hovLabels: string[] | null = anyHovered ? [] : null;
+  // …and the index form for a big set, built once per draw — see
+  // `MARK_INDEX_THRESHOLD`. Only a sweep preview ever reaches it, so a
+  // clicked handful still pays nothing but the scan it always paid.
+  const selIx =
+    anySelected && sel.length > MARK_INDEX_THRESHOLD
+      ? buildBinLabelIndex(sel, seriesId)
+      : null;
+  const hovIx =
+    anyHovered && hov.length > MARK_INDEX_THRESHOLD
+      ? buildBinLabelIndex(hov, seriesId)
+      : null;
+
   // Scratch for the per-bin span narrowing — the spans whose `x` contains the
   // current bin, reused across bins so the resting frame (and any spanless
   // frame) allocates nothing. `null` ⇒ spans are not in play at all.
@@ -500,6 +580,68 @@ export function drawHeat(
     bandHi[g] = hi;
   }
 
+  // ── The selected-cell grid, for the union perimeter ────────────────────
+  // A **committed** selection is one region however it was assembled: the
+  // outline merges. That is the other half of the live drag's sentence — the
+  // brush shows the snapped rect it is about to take, and only on release
+  // does that rect join what is already selected (`SweepSession.snap`).
+  //
+  // So: one outline around the union, drawn by suppressing each cell edge
+  // whose neighbour is also selected. No connectivity pass falls out of that
+  // — disconnected pieces get one outline each, and a hole in the middle of
+  // one gets its own, which is what keeps a demoted region readable instead
+  // of the "mostly border" grid a per-cell outline gives.
+  //
+  // The grid is padded one column either side of the window, because a
+  // neighbour test reaches exactly that far and an unpadded answer would draw
+  // a false edge wherever a selection runs off-screen.
+  const st = style.states;
+  const perimeter = st !== undefined && (anySelected || spanSet.length > 0);
+  const pStart = Math.max(0, vStart - 1);
+  const pEnd = Math.min(grid.length, vEnd + 1);
+  const selGrid = perimeter ? new Uint8Array((pEnd - pStart) * G) : null;
+  if (selGrid !== null) {
+    const scratch: string[] = [];
+    const covering: SpanSelection[] = [];
+    for (let b = pStart; b < pEnd; b += 1) {
+      let labels: readonly string[] = NO_LABELS;
+      if (selIx !== null) labels = indexedBinLabels(selIx, ss, b);
+      else if (anySelected) {
+        binLabelsInto(scratch, sel, seriesId, ss, b);
+        labels = scratch;
+      }
+      covering.length = 0;
+      const begin = ss.begin[b]!;
+      for (let s = 0; s < spanSet.length; s += 1) {
+        const sp = spanSet[s]!;
+        if (begin >= sp.x[0] && begin < sp.x[1]) covering.push(sp);
+      }
+      if (labels.length === 0 && covering.length === 0) continue;
+      const base = b * G;
+      const out = (b - pStart) * G;
+      for (let g = 0; g < G; g += 1) {
+        const value = values[base + g]!;
+        if (!Number.isFinite(value)) continue;
+        const group = ss.groups[g]!;
+        let hit = hasLabel(labels, group);
+        for (let s = 0; !hit && s < covering.length; s += 1) {
+          hit = spanContainsPoint(covering[s]!, begin, value, group);
+        }
+        if (hit) selGrid[out + g] = 1;
+      }
+    }
+  }
+  /** Is cell `(b, g)` selected? Off-grid answers `false`; outside the
+   *  precomputed window it is unknowable, which cannot happen because the
+   *  window is padded by exactly the one column a neighbour test can reach. */
+  const isSel = (b: number, g: number): boolean =>
+    selGrid !== null &&
+    b >= pStart &&
+    b < pEnd &&
+    g >= 0 &&
+    g < G &&
+    selGrid[(b - pStart) * G + g] === 1;
+
   let lastFill: string | undefined;
 
   for (let b = vStart; b < vEnd; b += 1) {
@@ -517,8 +659,18 @@ export function drawHeat(
     // than once per cell: what is left for the row loop is a label compare
     // against the handful (usually none) that name this bin at all. `sel`/`hov`
     // are empty whenever the grid is reduced, so `grid === ss` here.
-    if (selLabels !== null) binLabelsInto(selLabels, sel, seriesId, ss, b);
-    if (hovLabels !== null) binLabelsInto(hovLabels, hov, seriesId, ss, b);
+    let selNames: readonly string[] | null = null;
+    let hovNames: readonly string[] | null = null;
+    if (selIx !== null) selNames = indexedBinLabels(selIx, ss, b);
+    else if (selLabels !== null) {
+      binLabelsInto(selLabels, sel, seriesId, ss, b);
+      selNames = selLabels;
+    }
+    if (hovIx !== null) hovNames = indexedBinLabels(hovIx, ss, b);
+    else if (hovLabels !== null) {
+      binLabelsInto(hovLabels, hov, seriesId, ss, b);
+      hovNames = hovLabels;
+    }
     // The span x half, once per bin: keep only the spans whose half-open `x`
     // contains this bin's `begin` — the row loop then tests just their `rows` /
     // `y` channels against the handful that survive. `spanSet` is empty
@@ -532,10 +684,12 @@ export function drawHeat(
       }
     }
     const binIsLive =
-      (selLabels !== null && selLabels.length > 0) ||
-      (hovLabels !== null && hovLabels.length > 0) ||
+      (selNames !== null && selNames.length > 0) ||
+      (hovNames !== null && hovNames.length > 0) ||
       (binSpans !== null && binSpans.length > 0);
     const base = b * G;
+    // This bin's row in the neighbour grid, or `-1` when there is none.
+    const selRow = selGrid !== null ? (b - pStart) * G : -1;
     for (let g = 0; g < G; g += 1) {
       // Gaps are skipped before any per-cell work, exactly as `cellRect` does
       // by returning null: a hole in the record draws nothing and owns no hit
@@ -578,24 +732,36 @@ export function drawHeat(
       let live = false;
       if (binIsLive) {
         const group = ss.groups[g]!;
-        selected = selLabels !== null && hasLabel(selLabels, group);
-        // The spans that cover this bin, against the cell's remaining channels
-        // — the row name (`rows`) and the value (`y`). `spanContainsPoint` is
-        // the single containment rule (its x re-test is two compares on an
-        // already-passing bin), so this cannot drift from `selectionContains`.
-        if (!selected && binSpans !== null && binSpans.length > 0) {
-          const begin = ss.begin[b]!;
-          for (let s = 0; s < binSpans.length; s += 1) {
-            if (spanContainsPoint(binSpans[s]!, begin, value, group)) {
-              selected = true;
-              break;
+        if (selRow >= 0) {
+          // The neighbour grid already answered this, for every cell in the
+          // window — reading it back is the point of having built it. Redoing
+          // the label compare and the span test here would pay for the same
+          // answer twice on every selected frame.
+          selected = selGrid![selRow + g] === 1;
+        } else {
+          selected = selNames !== null && hasLabel(selNames, group);
+          // The spans that cover this bin, against the cell's remaining
+          // channels — the row name (`rows`) and the value (`y`).
+          // `spanContainsPoint` is the single containment rule (its x re-test
+          // is two compares on an already-passing bin), so this cannot drift
+          // from `selectionContains`.
+          if (!selected && binSpans !== null && binSpans.length > 0) {
+            const begin = ss.begin[b]!;
+            for (let s = 0; s < binSpans.length; s += 1) {
+              if (spanContainsPoint(binSpans[s]!, begin, value, group)) {
+                selected = true;
+                break;
+              }
             }
           }
         }
-        live = selected || (hovLabels !== null && hasLabel(hovLabels, group));
+        live = selected || (hovNames !== null && hasLabel(hovNames, group));
       }
 
-      ctx.globalAlpha = live ? 1 : style.opacity;
+      // Under `states` there is no alpha pop: a live cell is marked by chrome,
+      // so `opacity` stays what it is — the LAYER's base alpha — instead of
+      // quietly becoming a state and being overridden to 1.
+      ctx.globalAlpha = live && st === undefined ? 1 : style.opacity;
       // Assigning `fillStyle` is not free — a real canvas parses the CSS colour
       // on every set — and a banded ramp hands out long runs of the same string,
       // so set it only when it actually changes.
@@ -604,18 +770,81 @@ export function drawHeat(
         ctx.fillStyle = fill;
       }
       ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
-      if (live) {
-        // Inset by half the stroke so the outline sits inside the cell rather
-        // than straddling its edge and bleeding over the neighbour — which on a
-        // flush grid (`gap: 0`) would misreport the neighbour's colour.
-        const w = selected ? style.outlineWidth * 2 : style.outlineWidth;
+      if (st === undefined) {
+        if (live) {
+          // Inset by half the stroke so the outline sits inside the cell rather
+          // than straddling its edge and bleeding over the neighbour — which on a
+          // flush grid (`gap: 0`) would misreport the neighbour's colour.
+          const w = selected ? style.outlineWidth * 2 : style.outlineWidth;
+          const i = w / 2;
+          ctx.lineWidth = w;
+          ctx.strokeStyle = style.highlight;
+          ctx.strokeRect(x0 + i, yTop + i, x1 - x0 - w, yBottom - yTop - w);
+        }
+        continue;
+      }
+      // ── The states path ────────────────────────────────────────────────
+      // Recede: a flat overlay composited over the cell, NOT an alpha — see
+      // `HeatStates.veil`. Only a committed selection recedes the field; a
+      // hovered cell keeps its value even while the rest is veiled.
+      if (perimeter && !live) {
+        lastFill = st.veil;
+        ctx.fillStyle = st.veil;
+        ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
+      }
+      if (live && !selected) {
+        // The double ring, both inside the cell so both sit on its colour.
+        const w = st.ringWidth;
+        ctx.lineWidth = w;
+        for (let ring = 0; ring < 2; ring += 1) {
+          const i = w / 2 + ring * w;
+          ctx.strokeStyle = st.hoverRing[ring]!;
+          ctx.strokeRect(
+            x0 + i,
+            yTop + i,
+            x1 - x0 - 2 * i,
+            yBottom - yTop - 2 * i,
+          );
+        }
+      }
+      // **One outline around the union**, drawn as the edges this cell does
+      // not share with a selected neighbour. Summed over the region that is
+      // exactly its perimeter.
+      //
+      // Safe in the cell loop rather than deferred: every edge is inset
+      // INSIDE its own cell, so no neighbour's fill (or veil) drawn later can
+      // paint over it.
+      if (selected) {
+        const w = st.perimeterWidth;
         const i = w / 2;
         ctx.lineWidth = w;
-        ctx.strokeStyle = style.highlight;
-        ctx.strokeRect(x0 + i, yTop + i, x1 - x0 - w, yBottom - yTop - w);
+        ctx.strokeStyle = st.perimeter;
+        ctx.beginPath();
+        // Which cell sits on each side of this one **on screen**. The two
+        // orientations disagree about all four: transposing swaps the axes,
+        // and the y scale descends — so a higher ROW index is further up on a
+        // vertical grid, while a later BIN is further up on a horizontal one.
+        if (!(vertical ? isSel(b - 1, g) : isSel(b, g - 1))) {
+          ctx.moveTo(x0 + i, yTop);
+          ctx.lineTo(x0 + i, yBottom);
+        }
+        if (!(vertical ? isSel(b + 1, g) : isSel(b, g + 1))) {
+          ctx.moveTo(x1 - i, yTop);
+          ctx.lineTo(x1 - i, yBottom);
+        }
+        if (!(vertical ? isSel(b, g + 1) : isSel(b + 1, g))) {
+          ctx.moveTo(x0, yTop + i);
+          ctx.lineTo(x1, yTop + i);
+        }
+        if (!(vertical ? isSel(b, g - 1) : isSel(b - 1, g))) {
+          ctx.moveTo(x0, yBottom - i);
+          ctx.lineTo(x1, yBottom - i);
+        }
+        ctx.stroke();
       }
     }
   }
+
   ctx.restore();
 }
 

@@ -7,10 +7,9 @@ import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { Marker } from './annotations.js';
 import { priceSeries, BASE, STEP, RANGE } from './story-data.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
- * `<Marker>` — a vertical line at an x position (a time here), in the turquoise
+ * `<Marker>` — a vertical line at an x position (a time here), in the amber
  * annotation register. These stories fan out its props: **label** (auto time /
  * custom / off), the **indicator** x-axis-pill opt-in, **selection / depth**, and
  * **multiple** markers. Drag-to-edit + create live under **Annotations/Scenarios**.
@@ -23,7 +22,7 @@ const at = (i: number) => BASE + i * STEP;
  *  axis draws a marker's `indicator` pill; children are the annotation(s). */
 function Chart({ children }: { children: ReactNode }) {
   return (
-    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={H}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />

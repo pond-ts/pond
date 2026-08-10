@@ -5,7 +5,6 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { AreaChart } from './AreaChart.js';
 import { YAxis } from './YAxis.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 const N = 60;
 /** Fixed base epoch (2026-01-01 12:00 UTC) + 1-minute step, so the time axis
@@ -110,7 +109,7 @@ export const Elevation: Story = {
   render: () => {
     const e = elevation();
     return (
-      <ChartContainer range={TIME_RANGE} width={560} theme={docsTheme}>
+      <ChartContainer range={TIME_RANGE} width={560}>
         <ChartRow height={240}>
           <YAxis id="m" label="m" />
           <Layers>
@@ -134,7 +133,7 @@ export const AboveBelowAxis: Story = {
   render: () => {
     const t = traffic();
     return (
-      <ChartContainer range={TIME_RANGE} width={560} theme={docsTheme}>
+      <ChartContainer range={TIME_RANGE} width={560}>
         <ChartRow height={240}>
           <YAxis id="mbps" label="Mb/s" />
           <Layers>
@@ -158,7 +157,7 @@ export const TrafficAreas: Story = {
   render: () => {
     const t = siteTraffic();
     return (
-      <ChartContainer range={TIME_RANGE} width={640} theme={docsTheme}>
+      <ChartContainer range={TIME_RANGE} width={640}>
         <ChartRow height={260}>
           <YAxis id="bps" label="Gbps" />
           <Layers>

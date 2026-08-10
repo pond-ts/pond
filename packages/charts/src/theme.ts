@@ -90,6 +90,24 @@ export interface ChartTheme {
     readonly [semantic: string]: CandleStyle;
   };
   /**
+   * Map from a heat map's semantic identifier to its **interaction states**
+   * ({@link HeatMap}). Optional throughout; with no `heat` slot a live cell
+   * takes the pre-states treatment (one outline per cell, in
+   * `bar.highlight`).
+   *
+   * **Only the states, and deliberately so.** A heat map's *geometry* is
+   * bar-family — the slot gap, the minimum bin width, the outline weight —
+   * and it reads all of it from `bar[semantic] ?? bar.default`, which is
+   * right: a cell is a bar's slot with colour instead of height. What it
+   * cannot share is state styling, because a bar's fill is free and a cell's
+   * fill **is the datum** (see {@link HeatStates}). So the split is between
+   * the two things, not an accident of where the tokens landed.
+   */
+  readonly heat?: {
+    readonly default: HeatStates;
+    readonly [semantic: string]: HeatStates;
+  };
+  /**
    * Map from a bar's semantic identifier to its style — the fill, the
    * selected-bar highlight, and the slot gap / minimum width ({@link BarChart}).
    * `default` is the fallback; a bar resolves `bar[semantic] ?? bar.default`.
@@ -287,6 +305,125 @@ export interface ScatterStyle {
   readonly selectedWidth: number;
   /** Colour of the optional per-point text label. */
   readonly label: string;
+  /**
+   * The **interaction states** — fill and size per state, and the whole
+   * styling channel for a live point when set. Unset ⇒ the pre-states
+   * behaviour exactly: every point keeps its resting fill and radius, and a
+   * live one is merely re-ringed in `selectedOutline`/`selectedWidth`.
+   *
+   * A scatter can afford what a candle cannot. A candle's hue *is* its
+   * meaning (rising vs falling), so it carries state in weight and alpha
+   * alone; a heat cell's colour is its value, so it carries state in chrome.
+   * A point's colour encodes nothing by default, so it is free to recolour —
+   * and it also has a channel none of the column marks have: **size**.
+   *
+   * That is why hover and selection split the channels rather than sharing
+   * them. See {@link ScatterStates}.
+   */
+  readonly states?: ScatterStates;
+}
+
+/**
+ * A scatter point's per-state fill and size ({@link ScatterStyle.states}).
+ *
+ * The radii are given in px against {@link ScatterStyle.radius}, and applied
+ * as the **ratio** between them — so a data-driven `radius` encoding still
+ * grows and shrinks by the same proportion instead of being flattened to one
+ * size the moment a point goes live.
+ */
+export interface ScatterStates {
+  /**
+   * Fill for a **hovered** point — or one under a live drag rect, which is
+   * the same state (the sweep lights its covered marks through the plural
+   * `hovered`). A brightened form of the resting colour, not a new hue: the
+   * preview says "these are the ones", and saying it in the committed colour
+   * would make the preview and the commit read alike.
+   */
+  readonly hover: string;
+  /** Hovered radius (px). Hover is the state that spends **size** — it is the
+   *  channel a lone pointer-over can afford, and a hover does not have to
+   *  survive being read against a whole field of committed marks. */
+  readonly hoverRadius: number;
+  /**
+   * Fill for a **selected** point. Its radius is deliberately left at
+   * {@link ScatterStyle.radius}: selection spends **hue** instead, so
+   * committing a sweep does not reflow the cloud under the pointer.
+   */
+  readonly selected: string;
+  /** The ring around a live (hovered or selected) point — what keeps
+   *  overlapping points countable once a whole swept region shares one fill. */
+  readonly halo: string;
+  /** Halo width (px); `0` draws none. */
+  readonly haloWidth: number;
+  /**
+   * Radius (px) of a point **outside a non-empty selection**. It shrinks as
+   * well as fading because alpha alone at these levels thins a cloud to
+   * nearly nothing, and the shape of the unselected field is the thing a
+   * scatter's background is *for*.
+   */
+  readonly dimmedRadius: number;
+  /** Alpha of a point outside a non-empty selection. */
+  readonly dimmedOpacity: number;
+}
+
+/**
+ * A heat map's **interaction states** ({@link ChartTheme.heat}).
+ *
+ * A cell has no spare channel at all. A bar's fill is free, so a bar swaps it;
+ * a point's colour encodes nothing by default, so a point recolours *and*
+ * resizes. A cell's colour **is** its value, and its rect is the grid — so
+ * every state here is **chrome added around the cell** or a transform applied
+ * uniformly to all of them, and none of them repaints a cell in a colour the
+ * ramp could also have produced.
+ */
+export interface HeatStates {
+  /**
+   * The flat overlay painted over a cell **outside a non-empty selection** —
+   * carry the alpha in the colour (`rgba(255,255,255,0.62)`), because it is
+   * composited over the cell, not applied as one.
+   *
+   * **A flat overlay, not `globalAlpha`, and the difference is the whole
+   * point.** Alpha and value are the same channel on a ramp, so fading a cell
+   * slides it along the scale — a dimmed dark cell becomes a resting mid one.
+   * An overlay is *uniform and monotonic*: every cell moves by the same
+   * transform, so the ramp's **order survives inside the veiled set** and only
+   * the cross-set comparison is ambiguous — which is exactly what the
+   * {@link perimeter} is there to disambiguate.
+   *
+   * It is also why this is a colour and not a number: opacity composites with
+   * whatever is *behind* the cell (a gridline, a non-white background, another
+   * layer), so the same value would veil to different colours in different
+   * charts. An overlay is a property of the cell.
+   */
+  readonly veil: string;
+  /**
+   * The hovered cell's **double ring**, outer colour first — two concentric
+   * rings of {@link ringWidth}, both inside the cell.
+   *
+   * A single ring cannot work against a ramp: a light ring vanishes at the
+   * pale end and a dark one at the dark end, and a cell can be anywhere on the
+   * scale. The pair guarantees one of the two reads wherever the cell happens
+   * to sit. (The same problem `bar.binFills` has, and a better answer than
+   * picking one colour and hoping.)
+   */
+  readonly hoverRing: readonly [string, string];
+  /** Width of each of the two hover rings, in px. */
+  readonly ringWidth: number;
+  /**
+   * The selected region's **perimeter** — one outline around the union of
+   * selected cells, not one per cell.
+   *
+   * Per-cell outlines are what this replaces, and the reason is legible in any
+   * screenshot of them: a bordered grid is mostly border, and every interior
+   * line says nothing, because it is interior to the selection. Drawn by
+   * suppressing each cell edge whose neighbour is also selected, so a
+   * selection in several disconnected pieces gets one outline **per piece**,
+   * and a hole in the middle of one gets its own — no connectivity pass, and
+   * no assumption that a selection is a single rectangle.
+   */
+  readonly perimeter: string;
+  /** Perimeter stroke width, in px. */
+  readonly perimeterWidth: number;
 }
 
 /**
@@ -305,6 +442,70 @@ export interface BoxStyle {
   readonly medianWidth: number;
   readonly whisker: string;
   readonly whiskerWidth: number;
+  /**
+   * The **tint ladder** — one four-step ladder per interaction state, and the
+   * whole styling channel for a box when set. Unset ⇒ the flat
+   * `fill`/`stroke`/`median`/`whisker` tokens above, unchanged.
+   *
+   * Every mark of a box reads its step from the *same* ladder
+   * ({@link BoxLadder} documents which step is which), so a state change is a
+   * **single palette swap** rather than four independent colour decisions.
+   * That is what keeps the quantile read intact across states: the ladder
+   * carries its meaning in *lightness*, so moving the whole ladder — brighter
+   * teal on hover, blue when committed — leaves every relationship between the
+   * marks untouched.
+   *
+   * Two consequences worth stating, because both are the opposite of what the
+   * multi-hue `bar` palette needs:
+   *
+   * - **Shift the ladder, not one step.** Recolouring only the median, or only
+   *   the body, breaks the read. All four steps move together and keep their
+   *   relative lightness spacing.
+   * - **Dim without desaturating.** A single-hue ladder has nothing to muddy
+   *   into, so {@link dimmedOpacity} alone is the receded state — no
+   *   desaturated companion ladder of the kind `bar.groupsDimmed` needs.
+   */
+  readonly states?: BoxStates;
+  /**
+   * Stroke width for a **selected** box's hairlines — the body outline and the
+   * whiskers both. Unset ⇒ they keep {@link strokeWidth} / {@link whiskerWidth}.
+   *
+   * A hairline cannot carry a state in hue alone: at 1px a colour change is
+   * nearly invisible, and the whisker is the mark that reaches furthest. A
+   * weight change is legible at any width, so selection bumps it (1 → 1.5 on
+   * `defaultTheme`) alongside the ladder swap.
+   */
+  readonly selectedStrokeWidth?: number;
+}
+
+/**
+ * A box's four tint steps, lightest → darkest. Which mark reads which step:
+ *
+ * | step | box plot        | quantile bands |
+ * | ---- | --------------- | -------------- |
+ * | `0`  | body fill / the solid shape's outer bar | outer band |
+ * | `1`  | the solid shape's inner q1→q3 bar        | inner band |
+ * | `2`  | body stroke + whiskers                   | —          |
+ * | `3`  | the median rule                          | median rule |
+ *
+ * Steps are *positions on one hue's lightness ramp*, not four palette entries —
+ * a ladder whose steps don't descend in lightness stops encoding anything.
+ */
+export type BoxLadder = readonly [string, string, string, string];
+
+/** The per-state ladders (see {@link BoxStyle.states}). */
+export interface BoxStates {
+  /** Nothing selected anywhere. */
+  readonly rest: BoxLadder;
+  /** Pointer over this box — a preview of what a click would commit, so it
+   *  sits between {@link rest} and {@link selected} in strength. */
+  readonly hover: BoxLadder;
+  /** Committed. Pairs with {@link BoxStyle.selectedStrokeWidth}. */
+  readonly selected: BoxLadder;
+  /** How far a box **outside** a non-empty selection recedes — the
+   *  {@link rest} ladder at this alpha. No separate ladder, and deliberately
+   *  no desaturation (see {@link BoxStyle.states}). */
+  readonly dimmedOpacity: number;
 }
 
 /**
@@ -327,6 +528,41 @@ export interface CandleStyle {
   readonly rising: { readonly body: string; readonly wick: string };
   /** Falling candle (close < open) — body + wick colours. */
   readonly falling: { readonly body: string; readonly wick: string };
+  /**
+   * The **interaction state** cues — and note what is *missing* from them.
+   *
+   * A `bar` swaps its fill and a `box` rotates its whole tint ladder, because
+   * on those marks hue is free: the meaning lives in position and in lightness
+   * ordering. **A candle's hue is its meaning** — rising vs falling is the
+   * first thing anyone reads off it — so a candle introduces *no state colour
+   * at all*, not even for its outline. Every cue here is a change of weight or
+   * of alpha:
+   *
+   * - **Live** (hovered *or* selected) — the candle **grows**: its body is
+   *   stroked in its own colour and its lines thicken to
+   *   {@link liveWickWidth}, so the mark gets a little heavier and nothing
+   *   else about it changes. Nothing is recoloured, and nothing is added that
+   *   the chart doesn't otherwise draw.
+   * - **Selected** — the same, plus the rest of the field recedes to
+   *   {@link dimmedOpacity}. The dimming is what separates a committed
+   *   selection from a passing hover, since the lit mark looks identical
+   *   either way.
+   *
+   * That last point is deliberate but worth knowing: hover and selection are
+   * distinguished by what happens to the *other* candles, not by this one.
+   *
+   * Both optional; unset ⇒ a display-only candle exactly as before.
+   */
+  readonly dimmedOpacity?: number;
+  /**
+   * Line weight for a **live** (hovered or selected) candle — its wick, and
+   * the stroke around its body that makes the mark grow.
+   *
+   * Unlike {@link BoxStyle.selectedStrokeWidth}, which only selection triggers,
+   * this fires on hover too: a box announces hover by moving its tint ladder,
+   * and a candle has no ladder to move.
+   */
+  readonly liveWickWidth?: number;
   /** Doji (open === close) — body + wick colours; falls back to `rising` if unset. */
   readonly neutral?: { readonly body: string; readonly wick: string };
   /** Body width as a fraction of the candle slot (0–1). Omitted ⇒ `0.8`. */
@@ -430,6 +666,50 @@ export interface BarStyle {
    */
   readonly bands?: readonly string[];
   /**
+   * The **stack group ramp** — ordered fills for a *multi-group* stack's
+   * segments, `groups[0]` for the first (bottom / left) group. Cycles when the
+   * stack has more groups than the ramp has entries.
+   *
+   * Sibling of {@link bands}, and here for the same reason (a `theme.bar`
+   * top-level key would collide with a role of that name) — but a different
+   * axis: `bands` colours one bar *along its length* against a threshold
+   * ladder, this colours *across the groups* of one bin.
+   *
+   * **Multi-group only.** A ramp exists to tell groups apart, so with one group
+   * there is nothing to tell apart and the bar keeps its {@link fill} — which
+   * is what keeps every categorical and single-series chart (both of which run
+   * the stacked draw path with `G === 1`) exactly as it was.
+   *
+   * Resolution order per group: `<BarChart colors>` → a theme role named after
+   * the group (`bar.web`) → this ramp → {@link fill}. So a named role still
+   * wins, and the ramp is the fallback that makes an *unthemed* stack legible
+   * instead of painting every segment one colour.
+   */
+  readonly groups?: readonly string[];
+  /**
+   * The receded counterpart of {@link groups}, same order and cycling — what a
+   * segment fades to when a selection exists elsewhere.
+   *
+   * Per-group rather than the flat {@link dimmed}, because a stack dimmed to a
+   * single colour stops being a stack: the segment boundaries vanish and the
+   * unselected columns read as solid blocks. Each entry is its ramp colour
+   * desaturated and lightened, so the bin keeps its structure while clearly
+   * receding.
+   */
+  readonly groupsDimmed?: readonly string[];
+  /**
+   * The **hovered** counterpart of {@link groups}, same order and cycling.
+   *
+   * Per-group for the reason the flat {@link hover} cannot be: one hover
+   * colour repaints whichever segment the pointer is over in a hue belonging
+   * to a different group, so pointing at a stack momentarily *erases the
+   * ramp* — and under a `<MultiSelector>`, where hover is block-scoped, it
+   * erases the whole bin at once. Each entry is its ramp colour brightened
+   * (same hue, lighter), the same relationship {@link fill} has to
+   * {@link hover}.
+   */
+  readonly groupsHover?: readonly string[];
+  /**
    * Stroke for a **selected** bar's outline, where the default is the bar's own
    * resolved fill. The one selection cue that still works when the fill cannot
    * change — a `binColors` bar keeps its own colour by design, so without this
@@ -464,11 +744,13 @@ export interface BarStyle {
 }
 
 /**
- * The neutral default theme. `default` / `primary` match the M1 `LineChart`
- * colour (`#2563eb`) so adopting the theme channel doesn't shift existing
- * renders. `primary` / `secondary` / `context` are a built-in generic role
- * vocabulary; an unrecognised (e.g. domain-specific) identifier falls back to
- * `default`.
+ * The neutral default theme. The shared data hue is a cerulean (`#0284c7`)
+ * across `line` / `band` / `area` / `scatter` / `box` / candle-rising, chosen
+ * to clear the bar palette's *selection* blue (`#3F5BE0`) — the original M1
+ * royal blue (`#2563eb`) sat ~ΔE 5 from it, so a line drawn over bars read as
+ * nearly the selection colour. `primary` / `secondary` / `context` are a
+ * built-in generic role vocabulary; an unrecognised (e.g. domain-specific)
+ * identifier falls back to `default`.
  *
  * **Spreading this inherits every slot you don't override** — including colours
  * for layers you haven't added yet, so a `{ ...defaultTheme, bar: … }` theme
@@ -487,72 +769,140 @@ export interface BarStyle {
  */
 export const defaultTheme: ChartTheme = {
   line: {
-    default: { color: '#2563eb', width: 1.5 },
-    primary: { color: '#2563eb', width: 1.5 },
+    default: { color: '#0284c7', width: 1.5 },
+    primary: { color: '#0284c7', width: 1.5 },
     secondary: { color: '#e8836b', width: 1.5 },
     context: { color: '#5eb5a6', width: 1.5 },
   },
   band: {
-    default: { fill: '#2563eb', opacity: 0.15 },
-    outer: { fill: '#2563eb', opacity: 0.1 },
-    inner: { fill: '#2563eb', opacity: 0.2 },
+    default: { fill: '#0284c7', opacity: 0.15 },
+    outer: { fill: '#0284c7', opacity: 0.1 },
+    inner: { fill: '#0284c7', opacity: 0.2 },
   },
   area: {
     // Outline at the line colour; graded fill from it. `in`/`out` are the
     // above/below-axis roles (esnet traffic), composed as two layers.
     default: {
-      color: '#2563eb',
+      color: '#0284c7',
       width: 1.5,
-      fill: '#2563eb',
+      fill: '#0284c7',
       fillOpacity: 0.3,
     },
-    in: { color: '#2563eb', width: 1.5, fill: '#2563eb', fillOpacity: 0.3 },
+    in: { color: '#0284c7', width: 1.5, fill: '#0284c7', fillOpacity: 0.3 },
     out: { color: '#e8836b', width: 1.5, fill: '#e8836b', fillOpacity: 0.3 },
   },
   scatter: {
-    // Brand blue fill with a white ring (legible on a busy plot); the selected
-    // point gets a darker, wider ring. `primary`/`secondary` mirror the line
-    // roles so a scatter overlaid on a line can share its identity.
+    // A 9px teal point with a white ring (legible on a busy plot), and the
+    // shared `states` ladder over it. `primary`/`secondary` keep the LINE
+    // roles' hues — that identity is the whole reason they exist, so a
+    // scatter overlaid on a line still reads as the same series — and take
+    // the same states with their own hue brightened for hover.
+    //
+    // The default role's rest is `#2A9D8F`, the bar's resting teal, and NOT
+    // the old cerulean `#0284c7`: blue has to mean *committed*, and a
+    // cerulean point going to selection blue is barely a change. Same rule
+    // the bar palette reached, for the third time.
     default: {
-      color: '#2563eb',
-      radius: 4,
+      color: '#2A9D8F',
+      radius: 4.5,
       outline: '#ffffff',
       outlineWidth: 1,
       selectedOutline: '#1e293b',
       selectedWidth: 2,
       label: '#334155',
+      states: {
+        hover: '#4FD0BE',
+        hoverRadius: 5.5,
+        selected: '#3F5BE0', // the shared selection blue
+        halo: '#ffffff',
+        haloWidth: 2,
+        dimmedRadius: 2.5,
+        dimmedOpacity: 0.34,
+      },
     },
     primary: {
-      color: '#2563eb',
-      radius: 4,
+      color: '#0284c7',
+      radius: 4.5,
       outline: '#ffffff',
       outlineWidth: 1,
       selectedOutline: '#1e293b',
       selectedWidth: 2,
       label: '#334155',
+      states: {
+        hover: '#38bdf8', // the primary cerulean, brightened
+        hoverRadius: 5.5,
+        selected: '#3F5BE0', // the shared selection blue
+        halo: '#ffffff',
+        haloWidth: 2,
+        dimmedRadius: 2.5,
+        dimmedOpacity: 0.34,
+      },
     },
     secondary: {
       color: '#e8836b',
-      radius: 4,
+      radius: 4.5,
       outline: '#ffffff',
       outlineWidth: 1,
       selectedOutline: '#1e293b',
       selectedWidth: 2,
       label: '#334155',
+      states: {
+        hover: '#f5a991', // the secondary coral, brightened
+        hoverRadius: 5.5,
+        selected: '#3F5BE0', // the shared selection blue
+        halo: '#ffffff',
+        haloWidth: 2,
+        dimmedRadius: 2.5,
+        dimmedOpacity: 0.34,
+      },
+    },
+  },
+  heat: {
+    // A cell's colour is its value, so every state here is chrome around the
+    // cell (or one uniform transform over all of them) — see `HeatStates`.
+    default: {
+      veil: 'rgba(255,255,255,0.62)',
+      // White outside, dark teal inside: one of the pair reads wherever on
+      // the ramp the cell happens to sit.
+      hoverRing: ['#ffffff', '#12564E'],
+      ringWidth: 2,
+      // The shared selection blue — a selected region beside a selected bar
+      // reads as one act.
+      perimeter: '#3F5BE0',
+      perimeterWidth: 2,
     },
   },
   box: {
-    // The blue brand box: a translucent fill outlined in the line colour, a
+    // The cerulean data box: a translucent fill outlined in the line colour, a
     // bolder median, and matching whiskers.
     default: {
-      fill: '#2563eb',
+      fill: '#0284c7',
       fillOpacity: 0.3,
-      stroke: '#2563eb',
-      strokeWidth: 1.5,
-      median: '#1e3a8a',
+      stroke: '#0284c7',
+      // 1px at rest, 1.5 when selected (`selectedStrokeWidth`) — the design's
+      // hairline rule. Previously a flat 1.5, which left no headroom for a
+      // weight change to mean anything.
+      strokeWidth: 1,
+      median: '#075985',
       medianWidth: 2,
-      whisker: '#aabee9',
+      whisker: '#a3cde5',
       whiskerWidth: 1,
+      // The tint ladder. Lightness spacing is held across all three ladders,
+      // so the quantile read (outer < inner < stroke < median) never changes —
+      // only where the ladder sits does. It follows the bar palette's rule
+      // exactly: hover brightens within teal, blue means committed. Step 2 of
+      // each ladder IS the matching bar token (`bar.hover` / `bar.highlight`),
+      // so a live box beside a live bar reads as one act.
+      states: {
+        rest: ['#BFE3DE', '#7FC8BF', '#2A9D8F', '#1F7A6F'],
+        // Hover brightens *within teal* — blue stays reserved for a committed
+        // selection, the same rule `bar.hover` follows (and step 2 is exactly
+        // `bar.default.hover`, so a hovered box and a hovered bar match).
+        hover: ['#D6F1EC', '#9CDBD1', '#3FBFAE', '#2A9D8F'],
+        selected: ['#C0CAF6', '#8095EA', '#3F5BE0', '#1C2E9E'],
+        dimmedOpacity: 0.32,
+      },
+      selectedStrokeWidth: 1.5,
     },
     // The warm accent box — the second series of a paired distribution (an
     // in/out traffic list), mirroring `bar.secondary` / `line.secondary`.
@@ -569,14 +919,20 @@ export const defaultTheme: ChartTheme = {
   },
   candle: {
     // Neutral / unbranded up-down pair — *not* market green/red (a consumer
-    // supplies that via cssVarTheme). Rising reuses the brand blue; falling the
-    // warm secondary accent — distinguishable at a glance on the light ground.
+    // supplies that via cssVarTheme). Rising reuses the data cerulean; falling
+    // the warm secondary accent — distinguishable at a glance on light ground.
     default: {
-      rising: { body: '#2563eb', wick: '#1e3a8a' },
+      rising: { body: '#0284c7', wick: '#075985' },
       falling: { body: '#e8836b', wick: '#b4442a' },
       neutral: { body: '#94a3b8', wick: '#64748b' },
       bodyWidth: 0.7,
       wickWidth: 1,
+      // No state colour at all — the direction hue owns that channel. A live
+      // candle simply grows (its body stroked in its own colour, lines
+      // heavier); a selection additionally recedes the field to `.32`, the
+      // same step every other mark uses.
+      dimmedOpacity: 0.32,
+      liveWickWidth: 1.5,
     },
   },
   bar: {
@@ -601,6 +957,24 @@ export const defaultTheme: ChartTheme = {
       // ok/warning/alarm ladder out of the box; a longer `thresholds` needs a
       // longer ladder from the theme or `bandColors`.
       bands: ['#2A9D8F', '#e8a13c', '#d64545'],
+      // The **stack group ramp**, first group first (so a vertical stack reads
+      // teal at the bottom up to terracotta). Four muted hues at similar
+      // lightness, so no segment shouts over its neighbours the way a
+      // saturation ladder would — the ramp says "different group", not
+      // "more important". It starts on a teal near the resting `fill` so a
+      // two-group stack still looks like the rest of the palette.
+      groups: ['#4c9e8f', '#5379be', '#e2a54a', '#b5604e'],
+      // Each ramp entry desaturated (~×0.18) and lightened toward the ground,
+      // keeping its hue and its *relative* lightness — so a receded bin still
+      // reads as four bands rather than one grey block, and the amber stays
+      // the lightest of them as it is in the vivid ramp.
+      groupsDimmed: ['#c7cecd', '#ced1d6', '#dcd8d2', '#d3cdcc'],
+      // Each ramp entry brightened by the same move `fill` → `hover` makes:
+      // hue held, lightness +0.11, saturation left alone. So a hovered segment
+      // still says which group it is — the thing a single hover colour cannot
+      // do on a stack, and under a <MultiSelector> (block-scoped hover) it is
+      // the whole bin that would otherwise go one flat colour.
+      groupsHover: ['#6bb8a9', '#7c99cd', '#eabd7a', '#c68476'],
     },
     secondary: {
       fill: '#e8836b',
@@ -632,16 +1006,16 @@ export const defaultTheme: ChartTheme = {
   brush: { fill: 'rgba(63,91,224,0.07)', edge: 'rgba(63,91,224,0.45)' },
   chip: { background: '#ffffff' },
   gap: { connectorOpacity: 0.5 },
-  // Teal marks register — reads on the light ground, and distinct from the
-  // blue `line`/`area`/`scatter`/`box` data. **Known collision:** it is *not*
-  // distinct from the bar palette's resting teal (`#0d9488` vs `#2A9D8F` is
-  // ~ΔE 4), so a chart that puts annotations over default-theme bars should
-  // move one of the two — the "a placed mark never reads as data" rule can't
-  // hold for both slots on one built-in palette. Left as-is deliberately: the
-  // register is shared by every layer, and re-hueing it to suit bars would
-  // trade this collision for a different one.
+  // Burnt-amber marks register — a deliberately warm outlier against every
+  // data hue, so a placed mark never reads as data (the same rule the docs
+  // brand's `vizMark` encodes). Verified against the whole palette: its
+  // nearest data neighbours are the threshold-ladder red `#d64545` (ΔE2000
+  // ≈ 18) and the warm secondary accent `#e8836b` (ΔE2000 ≈ 21); everything
+  // else — bar teal, hover teal, selection blue, the data cerulean — clears
+  // ΔE2000 40+. (The previous turquoise `#0d9488` sat ~ΔE 4 from the bar
+  // palette's resting teal `#2A9D8F` — indistinguishable at a glance.)
   annotation: {
-    color: '#0d9488',
+    color: '#b45309',
     fillOpacity: 0.1,
     depth: [1, 0.7, 0.4],
   },

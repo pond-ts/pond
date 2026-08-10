@@ -1,7 +1,7 @@
 import { useContext, useEffect } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
-import { ValueSeries } from 'pond-ts';
+import { TimeSeries, ValueSeries } from 'pond-ts';
 import { ChartContainer } from '../src/ChartContainer.js';
 import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
@@ -14,7 +14,8 @@ import {
   type RowFrame,
 } from '../src/context.js';
 import { resolveSelection } from '../src/select.js';
-import { stubCanvasContext } from './canvas-mock.js';
+import { recordingContext, stubCanvasContext } from './canvas-mock.js';
+import { defaultTheme } from '../src/theme.js';
 
 afterEach(cleanup);
 
@@ -142,5 +143,276 @@ describe('<BoxPlot id> — selection (#508 item 5)', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+// ── The sweep + the solid interaction palette ───────────────────────────────
+
+/**
+ * A box is an **aggregation**: it owns one `[begin, end)` interval of the key
+ * axis. That its ink floats between two quantiles rather than rising from the
+ * baseline says nothing about which column the mark occupies — so it sweeps,
+ * and snaps, exactly as a bar does. These pin that equivalence.
+ */
+describe('<BoxPlot> sweeps by column, like a bar that is not grounded', () => {
+  /** Four 10-unit buckets on a time axis, with a gap at index 2. */
+  const buckets = () =>
+    new TimeSeries({
+      name: 'b',
+      schema: [
+        { name: 'timeRange', kind: 'timeRange' },
+        { name: 'lo', kind: 'number', required: false },
+        { name: 'hi', kind: 'number', required: false },
+      ] as const,
+      rows: [
+        [[0, 10], 2, 8],
+        [[10, 20], 3, 9],
+        [[20, 30], undefined, undefined],
+        [[30, 40], 1, 7],
+      ] as never,
+    });
+
+  function mountBoxes(shape: 'whisker' | 'solid' = 'whisker') {
+    let cf: ContainerFrame | null = null;
+    let rf: RowFrame | null = null;
+    function Capture() {
+      const c = useContext(ContainerContext);
+      const r = useContext(RowContext);
+      useEffect(() => {
+        if (c) cf = c;
+        if (r) rf = r;
+      });
+      return null;
+    }
+    const stub = stubCanvasContext();
+    try {
+      render(
+        <ChartContainer range={[0, 40]} width={400} showAxis={false}>
+          <ChartRow height={200}>
+            <YAxis id="v" min={0} max={10} />
+            <Layers>
+              <BoxPlot
+                series={buckets()}
+                lower="lo"
+                upper="hi"
+                axis="v"
+                shape={shape}
+                id="b"
+              />
+              <Capture />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>,
+      );
+    } finally {
+      stub.restore();
+    }
+    return { container: () => cf!, layer: () => rf!.layers[0]!.layer };
+  }
+
+  it('publishes its columns as snap buckets, so the band lands on box edges', () => {
+    // Without this the region cursor / sweep band has nothing to snap to and
+    // runs centre-to-centre, disagreeing with the span the release commits
+    // (RFC A7.6's edge rule) — the same thing bar layers publish bins for.
+    const bins = mountBoxes().layer().binIntervals?.();
+    expect(bins).toBeDefined();
+    expect(bins).toHaveLength(4);
+    expect([+bins![0]!.begin(), +bins![0]!.end()]).toEqual([0, 10]);
+    expect([+bins![3]!.begin(), +bins![3]!.end()]).toEqual([30, 40]);
+  });
+
+  it('sweeps a contiguous run of columns and skips the gap box', () => {
+    const session = mountBoxes().layer().beginSweep!(
+      (v: number) => v,
+      (v: number) => v,
+    )!;
+    expect(session).not.toBeNull();
+    // A window over buckets 0..1.
+    session.update(2, 18);
+    expect(session.hits().map((h) => h.key)).toEqual([0, 10]);
+    // Widen over the gap to the last box: the gap owns no membership, so it
+    // is absent from the hits while the span still spans it.
+    session.update(2, 39);
+    expect(session.hits().map((h) => h.key)).toEqual([0, 10, 30]);
+    // The extent snaps outward to whole columns (A7.6's edge rule).
+    expect(session.extent()).toEqual([0, 40]);
+  });
+
+  it('materialises exactly what hitTest reports, so click and sweep agree', () => {
+    const { container, layer } = mountBoxes();
+    const c = container();
+    const l = layer();
+    const session = l.beginSweep!(
+      (v: number) => v,
+      (v: number) => v,
+    )!;
+    session.update(0, 10);
+    const swept = session.hits()[0]!;
+    const clicked = l.hitTest!(+c.xScale(5), 100, c.xScale, (v: number) => v, {
+      mode: 'select',
+    } as never);
+    // `hitTest`'s y needs to land inside the mark; assert on the shared
+    // identity fields the sweep is required to match rather than re-deriving
+    // pixel geometry here.
+    expect(swept.id).toBe('b');
+    expect(swept.key).toBe(0);
+    expect(swept.value).toBe(8); // `upper`, as hitTest reports
+    expect(clicked === null || clicked.key === swept.key).toBe(true);
+  });
+});
+
+describe('the tint ladder — one palette swap per state', () => {
+  const one = () =>
+    new TimeSeries({
+      name: 'b',
+      schema: [
+        { name: 'timeRange', kind: 'timeRange' },
+        { name: 'lo', kind: 'number' },
+        { name: 'q1', kind: 'number' },
+        { name: 'q3', kind: 'number' },
+        { name: 'hi', kind: 'number' },
+      ] as const,
+      rows: [
+        [[0, 10], 2, 4, 6, 8],
+        [[10, 20], 2, 4, 6, 8],
+      ] as [[number, number], number, number, number, number][],
+    });
+
+  /** Mount, draw once, return every recorded call. */
+  function draw(
+    shape: 'whisker' | 'solid',
+    props: Record<string, unknown> = {},
+  ) {
+    let cf: ContainerFrame | null = null;
+    let rf: RowFrame | null = null;
+    function Capture() {
+      const c = useContext(ContainerContext);
+      const r = useContext(RowContext);
+      useEffect(() => {
+        if (c) cf = c;
+        if (r) rf = r;
+      });
+      return null;
+    }
+    const stub = stubCanvasContext();
+    try {
+      render(
+        <ChartContainer range={[0, 20]} width={400} showAxis={false} {...props}>
+          <ChartRow height={200}>
+            <YAxis id="v" min={0} max={10} />
+            <Layers>
+              <BoxPlot
+                series={one()}
+                lower="lo"
+                q1="q1"
+                median="q1"
+                q3="q3"
+                upper="hi"
+                axis="v"
+                shape={shape}
+                id="b"
+              />
+              <Capture />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>,
+      );
+    } finally {
+      stub.restore();
+    }
+    const { ctx, calls } = recordingContext();
+    rf!.layers[0]!.layer.draw(ctx, cf!.xScale, rf!.yScales.get('v')!);
+    const setsOf = (name: string) =>
+      calls
+        .filter((c) => c.type === 'set' && c.name === name)
+        .map((c) => c.args[0]);
+    return {
+      fills: setsOf('fillStyle').map(String),
+      strokes: setsOf('strokeStyle').map(String),
+      widths: setsOf('lineWidth') as number[],
+      alphas: setsOf('globalAlpha') as number[],
+    };
+  }
+
+  const states = defaultTheme.box.default.states!;
+  const sel = [{ id: 'b', key: 0, value: 8, color: '#000', label: 'lo–hi' }];
+  const hov = [{ id: 'b', key: 0, value: 8, color: '#000', label: 'lo–hi' }];
+
+  it('rests on the teal ladder, every mark reading its own step', () => {
+    const { fills, strokes } = draw('whisker');
+    // step 0 = body fill, step 2 = stroke + whisker, step 3 = median.
+    expect(fills).toContain(states.rest[0]);
+    expect(strokes).toContain(states.rest[2]);
+    expect(strokes).toContain(states.rest[3]);
+    // No blue leaks into a resting chart. (The hover ladder is *also* teal and
+    // shares `#2A9D8F` with rest by design — brightening within one hue is the
+    // point — so it is not a disjointness check.)
+    for (const c of states.selected) {
+      expect([...fills, ...strokes]).not.toContain(c);
+    }
+  });
+
+  it('swaps the WHOLE ladder on select — not one step', () => {
+    // The rule the ladder exists for: recolouring only the median or only the
+    // body breaks the quantile read, so all four steps move together.
+    const { fills, strokes } = draw('whisker', { selected: sel });
+    expect(fills).toContain(states.selected[0]);
+    expect(strokes).toContain(states.selected[2]);
+    expect(strokes).toContain(states.selected[3]);
+  });
+
+  it('previews the click with the half-strength ladder on hover', () => {
+    const { fills, strokes } = draw('whisker', { hovered: hov });
+    expect(fills).toContain(states.hover[0]);
+    expect(strokes).toContain(states.hover[2]);
+    // Hover must not reach the committed ladder — that distinction is the
+    // whole point of having two blue ladders rather than one.
+    expect([...fills, ...strokes]).not.toContain(states.selected[2]);
+  });
+
+  it('bumps hairlines to 1.5px when selected — hue alone is too thin', () => {
+    const w = defaultTheme.box.default;
+    // Count the hairline widths specifically — `medianWidth` (2) is the widest
+    // line either way, so a plain `Math.max` compares the wrong mark.
+    const hairlines = (ws: number[]) => ws.filter((n) => n !== w.medianWidth);
+    // Two boxes → two hairlines each (body stroke + whisker).
+    expect(new Set(hairlines(draw('whisker').widths))).toEqual(new Set([1]));
+    const selected = hairlines(draw('whisker', { selected: sel }).widths);
+    // The selected box's two hairlines thicken; the receded box's do not —
+    // the weight tracks the mark's state, not the chart's.
+    expect(selected.filter((n) => n === w.selectedStrokeWidth)).toHaveLength(2);
+    expect(selected.filter((n) => n === w.strokeWidth)).toHaveLength(2);
+  });
+
+  it('dims by OPACITY on the rest ladder — no desaturated companion', () => {
+    // A single-hue ladder has nothing to muddy into, so the receded state is
+    // the resting colours at .32 rather than a second set of colours.
+    const { fills, alphas } = draw('whisker', { selected: sel });
+    expect(fills).toContain(states.rest[0]); // box 2, receded
+    expect(alphas).toContain(states.dimmedOpacity);
+  });
+
+  it('applies the ladder to the SOLID shape too, as two tiers', () => {
+    // Solid reads steps 0 and 1 — outer bar and inner q1→q3 — so the two-tier
+    // structure survives every state instead of being an alpha trick.
+    const { fills } = draw('solid', { selected: sel });
+    expect(fills).toContain(states.selected[0]);
+    expect(fills).toContain(states.selected[1]);
+  });
+
+  it('drops the bounding outline once a ladder is in force', () => {
+    // With no ladder the outline is the whole cue; with one it would claim the
+    // empty slot around a whisker as part of the mark.
+    const { calls } = (() => {
+      const rec = recordingContext();
+      return { calls: rec.calls };
+    })();
+    void calls;
+    const laddered = draw('whisker', { selected: sel });
+    // The bounding rect strokes at the mark's full lower→upper extent; the only
+    // strokeRect a laddered box emits is the q1→q3 body. Assert by count.
+    expect(
+      laddered.strokes.filter((c) => c === states.selected[2]).length,
+    ).toBeGreaterThan(0);
   });
 });

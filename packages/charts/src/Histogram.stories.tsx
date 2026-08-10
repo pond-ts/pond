@@ -6,9 +6,8 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
-import { estelaTheme } from './theme.js';
+import { defaultTheme } from './theme.js';
 import type { ChartTheme } from './theme.js';
-import { docsTheme } from './docs-theme.fixture.js';
 import type { SelectInfo } from './context.js';
 
 /**
@@ -107,7 +106,7 @@ export const IncidentsStacked: Story = {
   render: () => {
     const byHost = incidentsByHost();
     return (
-      <ChartContainer range={[BASE, BASE + HOUR]} width={660} theme={docsTheme}>
+      <ChartContainer range={[BASE, BASE + HOUR]} width={660}>
         <ChartRow height={260}>
           <YAxis id="count" label="incidents" min={0} pad={0.06} />
           <Layers>
@@ -180,7 +179,7 @@ export const RiskBands: Story = {
   render: () => {
     const byBand = riskByBand();
     return (
-      <ChartContainer range={[BASE, BASE + HOUR]} width={660} theme={docsTheme}>
+      <ChartContainer range={[BASE, BASE + HOUR]} width={660}>
         <ChartRow height={260}>
           <YAxis id="count" label="hosts" min={0} pad={0.06} />
           <Layers>
@@ -194,12 +193,12 @@ export const RiskBands: Story = {
 
 /** A theme that names the risk bands as `bar` roles — the *other* colour path. */
 const riskTheme: ChartTheme = {
-  ...estelaTheme,
+  ...defaultTheme,
   bar: {
-    ...estelaTheme.bar,
-    safe: { ...estelaTheme.bar.default, fill: '#3FB984' },
-    warn: { ...estelaTheme.bar.default, fill: '#E0A24A' },
-    crit: { ...estelaTheme.bar.default, fill: '#D9534F' },
+    ...defaultTheme.bar,
+    safe: { ...defaultTheme.bar.default, fill: '#3FB984' },
+    warn: { ...defaultTheme.bar.default, fill: '#E0A24A' },
+    crit: { ...defaultTheme.bar.default, fill: '#D9534F' },
   },
 };
 
@@ -284,7 +283,7 @@ export const HeartRateZones: Story = {
     const bins = hrZoneMinutes();
     const zoneTicks = HR_ZONES.map((label, i) => ({ at: i + 0.5, label }));
     return (
-      <ChartContainer width={660} theme={docsTheme}>
+      <ChartContainer width={660}>
         <ChartRow height={230}>
           <YAxis id="zone" label="zone" width={92} ticks={zoneTicks} />
           <Layers>
@@ -319,7 +318,7 @@ export const HeartRateZonesColored: Story = {
     const bins = hrZoneMinutes();
     const zoneTicks = HR_ZONES.map((label, i) => ({ at: i + 0.5, label }));
     return (
-      <ChartContainer width={660} theme={docsTheme}>
+      <ChartContainer width={660}>
         <ChartRow height={230}>
           <YAxis id="zone" label="zone" width={92} ticks={zoneTicks} />
           <Layers>
@@ -386,7 +385,7 @@ export const PowerDistribution: Story = {
   render: () => {
     const bins = powerDistribution();
     return (
-      <ChartContainer range={[0, 300]} width={660} theme={docsTheme}>
+      <ChartContainer range={[0, 300]} width={660}>
         <ChartRow height={240}>
           <YAxis id="secs" label="seconds" min={0} pad={0.06} />
           <Layers>
@@ -419,7 +418,7 @@ export const HorizontalSingle: Story = {
     });
     const ticks = cats.map((label, i) => ({ at: i + 0.5, label }));
     return (
-      <ChartContainer width={620} theme={docsTheme}>
+      <ChartContainer width={620}>
         <ChartRow height={200}>
           <YAxis id="verb" label="method" width={80} ticks={ticks} />
           <Layers>
@@ -454,9 +453,9 @@ function HoverSelectDemo() {
         style={{
           height: '18px',
           marginBottom: '8px',
-          fontFamily: docsTheme.font.family,
+          fontFamily: defaultTheme.font.family,
           fontSize: '12px',
-          color: docsTheme.axis.label,
+          color: defaultTheme.axis.label,
         }}
       >
         {sel === null ? (
@@ -467,12 +466,7 @@ function HoverSelectDemo() {
           </span>
         )}
       </div>
-      <ChartContainer
-        range={[BASE, BASE + HOUR]}
-        width={660}
-        theme={docsTheme}
-        onSelect={setSel}
-      >
+      <ChartContainer range={[BASE, BASE + HOUR]} width={660} onSelect={setSel}>
         <ChartRow height={260}>
           <YAxis id="count" label="incidents" min={0} pad={0.06} />
           <Layers>

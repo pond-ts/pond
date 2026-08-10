@@ -60,6 +60,382 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts: new `sameMark(a, b)` export** — the full mark identity (`id`,
+  `mark`-or-`key`, `label`), companion to `selectionContains`, whose doc has
+  always told a consumer to write `remove(cur, hit)` without giving them
+  anything to write it with.
+
+### Fixed
+
+- **charts: `<MultiSelector>`'s demote-on-edit stories removed a whole bin
+  instead of the clicked mark.** They filtered on `m.key !== hit.key`, which
+  is a bar's identity but only half of a stack segment's or a heat cell's —
+  so ⌘-clicking one cell inside a swept heat-map region knocked out every row
+  of its column. Visible as a column-shaped hole in the selection's outline;
+  the outline was faithfully drawing a wrong selection. All three
+  hand-rolled identity tests in `selection-stories.tsx` now call `sameMark`.
+
+- **charts: `<MultiSelector>`'s demote story could only knock out one mark.**
+  It rewrote the span entries and passed everything else through, so once the
+  span had demoted there was nothing left for a second ⌘-click to act on and
+  it silently did nothing. It now implements the ⌘-click policy
+  `selectionContains`' doc describes in full — a mark in the selection comes
+  out, one that isn't goes in — with the demote as the extra step a span
+  needs before it can lose a member.
+
+- **charts: `<ScatterChart>` and `<HeatMap>` index a large selection set
+  instead of scanning it** — the live-preview repaint on both goes from
+  seconds to milliseconds. `bars.ts` grew a per-draw set index at 16 entries
+  because a sweep preview puts the whole covered run in `hovered` and the
+  linear scan measured 6.2 s/frame at 100k; neither 2-D layer had the fix, and
+  a rect fills that set faster than a band can. Measured by the new
+  `scripts/perf-interact2d.mjs`:
+
+  | scenario                              | before  | after   |
+  | ------------------------------------- | ------- | ------- |
+  | scatter, 100k points, 10k covered     | 1424 ms | 13.2 ms |
+  | scatter, 100k points, 50k covered     | 4042 ms | 14.7 ms |
+  | heat map, 365×45, 2,783 cells covered | 2.64 ms | 1.01 ms |
+
+  Below the threshold nothing changes: a clicked handful still scans, and
+  still allocates nothing.
+
+- **charts: a selected segment of a group-ramped stack keeps its own colour.**
+  The outline and the receded neighbours are the cue — the same exclusion
+  `binFills` already gets, and for the same reason: replacing a
+  meaning-carrying colour with the flat `highlight` erases _which group_ is
+  selected, which is the thing the selection is about.
+
+### Added
+
+- **charts: a rect-sweeping row rests as a small crosshair** — the last piece
+  of the 2-D brush. Under a mounted `<MultiSelector>`, a row whose topmost
+  sweepable layer cuts a rect (a scatter, a heat map) shows a compact grey `+`
+  at the pointer; a drag pins that same `+` at the anchor, adds a second at
+  the pointer, and spans the blue rect between them.
+
+  It is deliberately _not_ a full-plot crosshair. That is a value-reading
+  instrument — it exists to project the pointer onto both axes — whereas this
+  marks a corner a rect would start from, and the rect draws its own edges out
+  to those axes the moment a drag begins. Plot-spanning rules would add two
+  more lines to a picture that is about to have them anyway.
+
+  It replaces the resting _band_, which a 2-D row should never have shown: a
+  band previews the snap block, and the block is a whole x column while the
+  drag beside it captures a rect. New `RowLayer.sweepsRect` declares which
+  shape a layer sweeps, so the resting cursor can ask without building a
+  per-drag session.
+
+- **charts: a heat map's selection is one outline around the region, not one
+  per cell** — new optional `theme.heat` slot (`HeatStates`: `veil`,
+  `hoverRing`, `ringWidth`, `perimeter`, `perimeterWidth`). Absent, the
+  pre-states treatment is unchanged. The _geometry_ still comes from
+  `theme.bar` — a cell is a bar's slot with colour instead of height — and
+  only the state styling is new, because a bar's fill is free while a cell's
+  fill **is the datum**.
+  - **The live drag shows the SNAPPED rect it is about to take** (new
+    `SweepSession.snap`), not the rectangle the pointer traced. A heat map
+    snaps to whole bins and whole rows, so a raw pointer rect promises a
+    different set than the release delivers — and the two disagree exactly
+    while the reader is deciding where to let go. A scatter's cut is free, so
+    its brush stays on the pointer, which is honest there.
+  - **A committed selection is one region however it was assembled.** On
+    release the new rect joins what is already selected and the outline
+    merges: one perimeter around the union, drawn by suppressing each cell
+    edge whose neighbour is also selected. No connectivity pass falls out of
+    that — disconnected pieces get one outline each and a hole gets its own,
+    which is what keeps a demoted region readable instead of the "mostly
+    border" grid a per-cell outline gives. No false edge where a selection
+    runs off-screen.
+  - **A snapping layer's sweep reports its covered marks without lighting
+    them** (`SweepGesture.preview`'s new `light` argument). The heat map's
+    hover treatment is a ring around _the cell under the pointer_, and during
+    a sweep there is no such cell: a ring on every covered cell turned the
+    region into a grid of borders inside a rect already saying the same
+    thing. Consumers still hear the whole set through `<MultiSelector
+onHover>`.
+  - **An unselected cell recedes under a flat overlay, not `globalAlpha`.**
+    Alpha and value are the same channel on a ramp, so fading a cell slides it
+    along the scale; an overlay is uniform and monotonic, so the ramp's order
+    survives inside the receded set. It is a colour rather than a number
+    because opacity composites with whatever is _behind_ the cell, which would
+    veil the same value to different colours in different charts.
+  - **The hover ring is a pair** — a light ring outside and a dark one inside,
+    both within the cell. A single ring cannot work against a ramp: the light
+    one vanishes at the pale end and the dark one at the dark end.
+
+- **charts: a scatter point carries its state in colour AND size** — new
+  optional `theme.scatter.*.states` (`hover` / `hoverRadius` / `selected` /
+  `halo` / `haloWidth` / `dimmedRadius` / `dimmedOpacity`). Unset ⇒ the
+  previous behaviour exactly: a live point keeps its fill and is merely
+  re-ringed in `selectedOutline`.
+
+  A point is the one mark with a spare channel. A candle's hue _is_ its
+  meaning and a heat cell's colour _is_ its value, so those carry state in
+  weight and chrome; a point's colour encodes nothing by default and it also
+  has **size**. So the two live states split the channels rather than sharing
+  one: **hover grows and brightens** (keeping its own hue — a preview that
+  borrowed the committed colour would read as committed), while **selection
+  recolours and keeps its size**, so committing a sweep does not reflow the
+  cloud under the pointer. Both take a halo, which is what keeps overlapping
+  points countable once a whole swept region shares one fill.
+
+  A point outside a non-empty selection **shrinks as well as fading** — alpha
+  alone thins a cloud to nearly nothing, and the shape of the unselected field
+  is what a scatter's background is for. A hover does not recede the field;
+  only a committed selection does.
+
+  The radii are px against the base `radius` and applied as the **ratio**
+  between them, so a data-driven `radius` encoding still grows and shrinks
+  proportionally instead of flattening to one size when a point goes live.
+
+- **charts: `<MultiSelector>` sweeps a 2-D rect on `<ScatterChart>` and
+  `<HeatMap>`** ([PND-INTERACT2D]). Every other mark owns a column of the key
+  axis, so a drag over it is a range of keys; a scatter point owns a
+  _position_ and a heat cell owns a `(bin, row)`, so the same gesture becomes
+  a **rectangle**. Nothing new is mounted and no prop is added — the layer
+  declares its own dimensionality, so the markup for a scatter is the markup
+  for a bar.
+  - **Scatter cuts a free rect** and commits `SpanSelection.y` (the drag's
+    continuous window) alongside `x`.
+  - **The heat map snaps both dimensions** — bins on x, whole rows on y — and
+    commits `SpanSelection.rows` by row **name**, so a re-ordered `columns`
+    list cannot silently repoint a selection at different data. Snapping both
+    axes is also why a capture is always a contiguous rectangle of cells.
+  - The drag paints a **rect brush** (`theme.brush`'s existing fill/edge
+    tokens) with a small `+` on each end of the drag diagonal, in place of the
+    1-D band.
+  - A 2-D drag arms on pointer **distance**, not `|dx|`, so a straight-down
+    drag is a gesture rather than a click.
+  - A 2-D layer publishes **no resting block preview**, and a click on one
+    selects the mark under the pointer: the block would be a whole column,
+    which is not what the rect gesture beside it captures.
+
+- **charts: `<Candlestick>` gains the id-gated interaction surface** — `id`,
+  `hitTest`, `beginSweep` and `binIntervals`, so a candle selects, hovers and
+  sweeps like every other column mark. A candle is an aggregation owning one
+  `[x, xEnd)` slot; hits are rect containment over that slot (a doji body is a
+  pixel tall and a wick is a hairline, so requiring drawn ink would make most
+  candles unclickable), `key` is its `x` and `value` its `close`.
+
+- **charts: a candle carries its state in weight and alpha — never in hue.**
+  New optional `theme.candle.*` tokens `liveWickWidth` and `dimmedOpacity`.
+  Where a bar swaps its fill and a box rotates its tint ladder, **a candle's
+  hue is its meaning** — rising vs falling is the first thing read off it — so
+  a candle introduces no state colour at all:
+  - **Live** (hovered _or_ selected): an outline around the slot in the
+    candle's **own body colour**, and lines thickened to `liveWickWidth`.
+  - **Selected**: the same, plus the rest of the field receding to
+    `dimmedOpacity`.
+
+  So hover and selection look identical _on the mark_ and differ in what
+  happens to the others — a deliberate consequence of hue being unavailable.
+  It also means the weight bump fires on hover here, unlike
+  `BoxStyle.selectedStrokeWidth`, which only selection triggers because a box
+  announces hover by moving its ladder.
+
+  Both tokens optional; unset ⇒ a display-only candle exactly as before.
+
+- **charts: `<BoxPlot>` joins the sweep — it publishes `binIntervals` and
+  `beginSweep`, so a `<MultiSelector>` selects boxes by column.** A box is an
+  **aggregation**: it owns one `[begin, end)` interval of the key axis, and the
+  fact that its ink floats between two quantiles rather than rising from the
+  baseline says nothing about which column the mark occupies. So it sweeps
+  exactly as a bar does — a bar that simply isn't grounded to the axis — over
+  the same `sweep1D` cut, with each materialised hit identical to what
+  `hitTest` reports for that box. A gap box (its present quantiles not all
+  finite) owns no membership, the rule `hitTest` and the flag already applied.
+
+  `binIntervals` is the other half: the region cursor and the sweep band now
+  snap to box edges instead of running centre-to-centre, which is what keeps
+  the drawn band and the committed span agreeing (RFC A7.6's edge rule).
+
+- **charts: `<BoxPlot>` gets a tint ladder — `theme.box.*.states`, one
+  four-step ladder per interaction state.** Every mark of a box reads its step
+  from the same ladder (0 body/outer · 1 the solid shape's inner bar · 2 stroke
+  - whiskers · 3 the median rule), so a state change is a **single palette
+    swap** and the quantile read survives it intact. The ladder carries its
+    meaning in _lightness_, which is what lets a box move wholesale — brighter
+    teal on hover, blue when committed — where a multi-hue stacked bar cannot.
+
+  Three rules it encodes, each the opposite of what the `bar` palette needs:
+  - **Shift the ladder, not one step.** Recolouring only the median, or only
+    the body, breaks the read; all four steps move together and keep their
+    relative spacing.
+  - **Dim without desaturating.** A single-hue ladder has nothing to muddy
+    into, so the receded state is the rest ladder at `dimmedOpacity` (`0.32`) —
+    no desaturated companion of the kind `bar.groupsDimmed` is.
+  - **Hairlines need weight, not just hue.** At 1px a colour change is nearly
+    invisible, so a selected box's body stroke and whiskers take
+    `selectedStrokeWidth` (1 → 1.5 on `defaultTheme`) alongside the swap.
+
+  It follows the bar palette's rule exactly — hover brightens within teal, blue
+  means committed — and step 2 of each ladder **is** the matching bar token
+  (`bar.hover` / `bar.highlight`), so a live box beside a live bar reads as one
+  act.
+
+  With a ladder in force the old bounding outline is superseded and no longer
+  drawn: the ladder has already moved every mark, and a rect around a whisker
+  claims the empty slot either side of it as part of the mark. `states` is
+  optional — unset ⇒ the flat `fill`/`stroke`/`median`/`whisker` tokens and the
+  outline cue, exactly as before.
+
+  **`defaultTheme.box.default.strokeWidth` moves `1.5` → `1`**, so the selected
+  weight has somewhere to go.
+
+- **charts: `defaultTheme` gains a stack group ramp — `bar.default.groups`,
+  `bar.default.groupsHover` and `bar.default.groupsDimmed`.** A multi-group stack resolved every group to
+  `bar.default.fill`, because each group looks up a theme role named after
+  itself and an unthemed stack has none — so an unthemed stacked chart painted
+  every segment one teal, its structure visible only as hairline seams. The
+  ramp is four muted hues at similar lightness (`#4c9e8f` `#5379be` `#e2a54a`
+  `#b5604e`, first group first, cycling), so it says "different group" rather
+  than "more important".
+
+  `groupsDimmed` is the receded counterpart, **per group** rather than the flat
+  `dimmed`: a stack dimmed to one colour stops being a stack, and the
+  unselected bins a selection wants you to compare against become solid blocks.
+  Each entry is its ramp colour desaturated and lightened, keeping hue and
+  relative lightness.
+
+  `groupsHover` is per-group for the reason the flat `hover` cannot be: one
+  hover colour repaints the pointed-at segment in a hue belonging to a
+  different group, so hovering _erased the ramp_ exactly where the reader was
+  looking — and under a `<MultiSelector>`, where hover is block-scoped, it
+  erased the whole bin at once. Each entry is its ramp colour brightened by
+  the same move `fill` → `hover` makes (hue held, lightness `+0.11`).
+
+  Two deliberate boundaries. **Multi-group only** — `categories` and every
+  horizontal bar run the same stacked draw path with `G === 1`, and a ramp
+  there would repaint charts that have nothing to do with stacks, so a
+  single-group stack keeps `fill`. And a **`<BarChart colors>` override yields
+  the whole ramp**, dimmed entries included, since pairing the call site's hue
+  with the ramp's receded counterpart would dim a colour to one belonging to a
+  different colour entirely.
+
+  Resolution per group is unchanged apart from the new fallback:
+  `colors` → a role named after the group → the ramp → `fill`.
+
+### Changed
+
+- **charts: `defaultTheme`'s resting scatter point moves off cerulean
+  (`#0284c7`) to the shared teal `#2A9D8F`, at 9px.** Blue has to mean
+  _committed_, and a cerulean point going to selection blue is barely a
+  change — the rule the bar palette reached, now for the third time. The
+  `primary` / `secondary` roles keep the **line** roles' hues (that identity
+  is why they exist) and take the same states with their own hue brightened
+  for hover.
+
+### Changed
+
+- **charts: mounting `<MultiSelector>` now changes the row's RESTING state —
+  the band and the hover become a live preview of the block a drag would
+  select.** Two halves, one requirement ("the grey cursor and the hover
+  highlighting are a preview for the block a drag will select"):
+  - **The brush band is the resting cursor.** With a `<MultiSelector>` in
+    scope over a sweep-capable row, the shared brush band (`<RangeCursor>`'s
+    renderer — one function, so the visuals cannot drift) spans the **snap
+    block under the pointer**: the `sequence` bucket where one is set, else
+    the layer's own bin/slot. It replaces the container's **implicit**
+    `'line'` default; an explicitly chosen cursor — a mounted component or a
+    legacy `cursor` string the consumer actually set — still wins the
+    surface.
+  - **Hover is block-scoped.** Pointing at any one mark of a block lights
+    (and reports through `onHover`) **every mark in the block** — e.g. all
+    four six-hour bars of a day under `sequence={Sequence.calendar('day')}`
+    — reported once per block transition, with within-block moves
+    re-rendering nothing. A co-mounted `<Selector onHover>` keeps its
+    per-mark currency.
+
+  Rest and drag share one code path (the same snap buckets, the same layer
+  sweep session), so what the rest previews and what a drag commits cannot
+  disagree — the drag just grows the same band, and release selects exactly
+  what was lit. **This is new semantics, not a bug fix**: the interaction RFC
+  had hover meaning "the mark under the pointer" (A4.2) and the sweep preview
+  meaning "what would be selected"; a mounted snapping `<MultiSelector>` now
+  unifies them at rest.
+
+- **charts: under a snapping `<MultiSelector>`, a click commits the whole
+  block it previewed** — not the single mark under the pointer. This is the
+  third state falling in behind the two above: with a `sequence` set, the
+  band spans the block, hover lights the block, and a click now selects the
+  block, so the three no longer disagree about what "the thing under the
+  pointer" means. The commit carries the same `{ kind: 'span', … }`
+  descriptor a sweep of that block would produce, so a consumer needs no
+  click-versus-drag branch.
+
+  **Without a `sequence` nothing changes**: a click still reports one mark
+  with a null span and stays distinguishable from a sweep (RFC §8). The test
+  is the **declaration** — an in-scope `<MultiSelector sequence={…}>` — and
+  deliberately not "the block covers more than one mark", which is a different
+  question on a stacked chart, where one bin holds one mark per group and an
+  ordinary unsnapped click would otherwise swallow the whole column.
+
+  On a stack a snapped click therefore commits `bins × groups` marks under one
+  span — 21 for a seven-day bucket over a three-group stack — while an
+  unsnapped one still selects the single segment under the pointer.
+
+- **charts: the brush band's edge rules now draw only while a drag is in
+  flight.** The band renders in two states — previewing the block a drag
+  _would_ select, and tracking a drag actually in progress — and since the
+  resting preview landed, the wash alone could not tell them apart. The edges
+  mark the boundary the gesture has **grabbed**, so at rest there is nothing
+  for them to mark: edging a preview asserts a range the user hasn't made yet,
+  and makes the two states read alike.
+
+  Applies to both band-drawing surfaces, `<MultiSelector>`'s sweep and a
+  snapping `<RangeCursor>`, from the one shared renderer. The wash is
+  unchanged in both states, and a _click_ never flashes the edges on its way
+  to committing a block — the sweep only anchors once it crosses `DRAG_SLOP`.
+  Themes that set no `theme.brush` drew no edges to begin with and are
+  unaffected.
+
+### Fixed
+
+- **charts: six `<MultiSelector>` polish bugs found walking the Storybook
+  stories.**
+  - **A live sweep no longer draws the data cursor over its band.** The
+    default `line` preset (and any mounted cursor) kept painting its solid
+    vertical rule at the raw pointer for the whole drag, so the sweep read as
+    "a line" while the band (7% wash) sat underneath. A live sweep now
+    suppresses the row's cursor slots exactly as annotation editing does; the
+    shared brush band still renders, so a sweep looks like a `<RangeCursor>`
+    drag (RFC §8.1's identical pixels).
+  - **Adjacent selected bars keep their gap.** The selection outline was a
+    centred `strokeRect`, painting `outlineWidth / 2` outside each bar — with
+    the default `gap: 1` that bridged the whole gap from both sides, fusing a
+    swept run into one solid block. The outline now strokes _inside_ the ink
+    (both draw paths, `drawBars` and `drawStacks`); a mark too thin to contain
+    its outline skips it.
+  - **Clicking the empty space above the bars deselects.** Bar slots tile the
+    full plot height (the continuous hover model of #582), so a click could
+    never resolve to "no mark" — RFC §7's empty-commit deselect path was
+    unreachable on a full-range bar chart. The click hit-test now requires
+    the pointer within the bar's drawn ink vertically (the slot keeps its
+    full interval width, so the gap between columns still selects). Hover is
+    deliberately unchanged: the highlight keeps tracking the full slot like
+    the readout. No new callback needed — the existing
+    `([], modifiers, null)` empty commit is the deselect signal.
+  - **A bucket-snapped sweep lights its whole first bucket from the moment
+    the drag starts.** The move that commits the sweep now runs the covered
+    cut synchronously (later moves stay frame-coalesced per RFC A1.4), and
+    the preview is pinned to agree with the commit exactly under a
+    `sequence`.
+  - **The `SweepAdditive` story's policy handled only spans** — any click
+    (⌘ held or not) cleared the whole selection, so the A5.2 headline flow
+    ("sweep, then ⌘-click to extend") deleted it instead. The library
+    reported `(hits, modifiers, null)` correctly all along; the story-side
+    set arithmetic was wrong and is fixed (a story-driven test now pins it).
+  - **A category sweep's band snaps to the slots' outer edges.** The band
+    scale's `invert` returns slot centres, so the freeform band ran
+    centre-to-centre while capture and the committed span snapped outward
+    (RFC A7.6's edge rule) — the drawn band disagreed with the selection by
+    half a slot at each end. The vertical categorical bar layer now publishes
+    its unit slots as snap buckets and the band extends slot-edge to
+    slot-edge.
+
 ### Changed
 
 - **charts: `defaultTheme` bars look different. This is a visible change to
@@ -93,6 +469,41 @@ include new features and type-level changes; patch bumps are strictly additive.
   Nothing about this is forced on a custom theme: every value above lives in
   `defaultTheme`, and `estelaTheme` plus any hand-built theme are untouched.
   To keep the old look, override `bar.default` with the old-column values.
+
+- **charts: `defaultTheme`'s data blue and annotation register re-hued — the
+  two colour collisions the new bar palette created are fixed.** The old
+  annotation turquoise (`#0d9488`) sat ~ΔE 4 from the bar palette's resting
+  teal (`#2A9D8F`), so a placed mark over default-theme bars read as data; the
+  old royal data blue (`#2563eb`) sat ~ΔE 5 from the new _selection_ blue
+  (`#3F5BE0`), so a line drawn over bars read as nearly the selection colour.
+
+  | `defaultTheme`                                                 | old       | new       |
+  | -------------------------------------------------------------- | --------- | --------- |
+  | data blue (`line`/`band`/`area`/`scatter`/`box`/candle rising) | `#2563eb` | `#0284c7` |
+  | dark accents (box `median`, candle rising `wick`)              | `#1e3a8a` | `#075985` |
+  | box `whisker`                                                  | `#aabee9` | `#a3cde5` |
+  | `annotation.color`                                             | `#0d9488` | `#b45309` |
+
+  The whole `#2563eb` family moves together so the theme keeps one data blue
+  (a line and its variance band must stay one hue). The register's new burnt
+  amber is a deliberately warm outlier — nearest data hue ΔE2000 ≈ 18, most
+  40+ — restoring "a placed mark never reads as data" for the whole palette.
+  Both rules are now pinned by `test/default-theme-collisions.test.ts`, so a
+  future palette edit that re-introduces a collision fails CI. The teal
+  fallbacks a theme _without_ an annotation register gets (`#14b8a6` /
+  `#0d9488` built-ins) are unchanged.
+
+- **charts (dev): Storybook unified on the shipped `defaultTheme`.** All ~280
+  `theme={docsTheme}` / `theme={estelaTheme}` props are gone from the stories,
+  so every story now exercises the `theme ?? defaultTheme` fallback a
+  themeless consumer hits — previously nothing in the repo rendered the
+  default theme at all, which is how both collisions above went unseen.
+  Theming-as-a-feature lives in a curated set: the new `Theming/Showcase`
+  group (docs light/dark, estela dark), `Theming/CssVars`, and the handful of
+  stories whose subject is the theme channel itself (custom line themes, list
+  estela restyles, per-role bar/box/annotation maps — now based on
+  `defaultTheme`). Story-local `dimmed`/`highlight` overrides that predated
+  the default palette's own interaction states are dropped.
 
 ### Added
 

@@ -9,7 +9,6 @@ import { Candlestick } from './Candlestick.js';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
 import { priceSeries, RANGE } from './story-data.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
 import {
   MIN,
   barSeq,
@@ -46,7 +45,6 @@ export const Default: Story = {
     <ChartContainer
       width={W}
       range={RANGE}
-      theme={docsTheme}
       cursor="region"
       cursorSequence={Sequence.every('15m')}
     >
@@ -72,7 +70,6 @@ export const Sessions: Story = {
         width={W}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        theme={docsTheme}
         cursor="region"
         cursorSequence={sessionSeq(s)}
       >
@@ -100,7 +97,6 @@ export const CroppedToSessions: Story = {
         width={W}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        theme={docsTheme}
         cursor="region"
         cursorSequence={Sequence.calendar('week')}
       >
@@ -130,7 +126,6 @@ export const AggregationAligned: Story = {
         width={W}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        theme={docsTheme}
         cursor="region"
         cursorSequence={hourGrid}
       >
@@ -173,7 +168,6 @@ function DragToSelectDemo() {
         width={W}
         range={range}
         discontinuities={provider(s)}
-        theme={docsTheme}
         cursor="region"
         cursorSequence={hourGrid}
         onRegionSelect={(r) => setRange([r[0], r[1]])}
@@ -211,7 +205,6 @@ function FreeformDemo() {
       <ChartContainer
         width={W}
         range={range}
-        theme={docsTheme}
         cursor="region"
         onRegionSelect={(r) => setRange([r[0], r[1]])}
       >
@@ -268,7 +261,6 @@ function ValueAxisSelectDemo() {
       <ChartContainer
         width={W}
         range={range}
-        theme={docsTheme}
         cursor="region"
         onRegionSelect={(r) => setRange([r[0], r[1]])}
       >
@@ -319,7 +311,6 @@ function HistogramBinsDemo() {
       <ChartContainer
         width={W}
         range={range}
-        theme={docsTheme}
         cursor="region"
         onRegionSelect={(r) => setRange([r[0], r[1]])}
       >
@@ -361,7 +352,6 @@ function PanAndSelectDemo() {
         width={W}
         range={range}
         discontinuities={provider(s)}
-        theme={docsTheme}
         panZoom
         onTimeRangeChange={setRange}
         cursor="region"

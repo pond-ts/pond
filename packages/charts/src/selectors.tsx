@@ -213,13 +213,20 @@ export interface MultiSelectorProps {
    */
   sequence?: Sequence | BoundedSequence;
   /**
-   * The marks the gesture currently covers — **live during a sweep** (updated
-   * as the drag crosses marks, coalesced to animation frames) and, outside
-   * one, the plural mirror of `<Selector onHover>` (0 or 1 hits, deduped by
-   * mark transition). Echo it back as `<ChartContainer hovered>` only when
-   * you control hover — uncontrolled, the covered marks already light through
-   * the container's own hover state (RFC A3.4: the library owns the state,
-   * each layer draws its own hover treatment).
+   * The marks the gesture currently covers — or **would** cover:
+   *
+   * - **At rest**, the marks of the **snap block under the pointer** (the
+   *   `sequence` bucket, else the layer's own bin/slot), reported once per
+   *   block transition. This is the resting preview: hovering ANY mark of a
+   *   block reports the whole block, because that is exactly the set a drag
+   *   begun and released there would select.
+   * - **During a sweep**, every covered mark, updated as the drag crosses
+   *   marks (coalesced to animation frames past the first cut).
+   *
+   * Echo it back as `<ChartContainer hovered>` only when you control hover —
+   * uncontrolled, the covered marks already light through the container's
+   * own hover state (RFC A3.4: the library owns the state, each layer draws
+   * its own hover treatment).
    */
   onHover?: (hits: readonly SelectInfo[]) => void;
   /**
@@ -276,6 +283,19 @@ export interface MultiSelectorProps {
  * nothing — `selected` / `hovered` stay on the container (A1.2). The sweep
  * captures marks from the row's **topmost** sweep-capable layer (the z-order
  * rule a click already follows); a layer without an `id` is never swept (Q8).
+ *
+ * **Mounting also changes the row's RESTING state** — the grey band and the
+ * hover are a live preview of the block a drag would select:
+ *
+ * - The shared brush band becomes the **resting cursor**, spanning the snap
+ *   block under the pointer (the `sequence` bucket, else the layer's own
+ *   bin/slot), replacing the container's implicit `'line'` default. An
+ *   explicitly chosen cursor — a mounted component, or a legacy `cursor`
+ *   string the consumer actually set — still wins the surface.
+ * - Hover is **block-scoped**: pointing at any one mark of a block lights
+ *   (and reports) every mark in it. Rest and drag share one code path — the
+ *   same snap buckets, the same layer session — so what the rest previews and
+ *   what a drag commits cannot disagree; the drag just grows the same band.
  */
 export function MultiSelector({
   sequence,

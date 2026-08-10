@@ -1,4 +1,5 @@
 import { useContext, useEffect, useMemo } from 'react';
+import { Interval } from 'pond-ts';
 import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { ohlcFromTimeSeries } from './data.js';
 import type { NumericColumn } from './column-names.js';
@@ -6,6 +7,7 @@ import type { DecimateOption } from './decimate.js';
 import {
   drawCandles,
   isFiniteOhlc,
+  ohlcAt,
   ohlcExtent,
   ohlcIndexAtTime,
   resolveCandleStyle,
@@ -16,6 +18,8 @@ import {
   ContainerContext,
   LayersContext,
   type LayerEntry,
+  type SelectInfo,
+  type SweepSession,
   type TrackerSample,
 } from './context.js';
 import {
@@ -24,6 +28,25 @@ import {
   type LegendItemInput,
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
+import { sweep1D } from './sweep.js';
+
+const NO_KEYS: readonly number[] = [];
+
+/** This layer's keys within a selection / hover set — see `<BoxPlot>`'s twin.
+ *  Reference-stable when empty, so an untouched set doesn't rebuild the layer. */
+function keysOf(
+  set: readonly SelectInfo[],
+  id: string | undefined,
+): readonly number[] {
+  if (id === undefined || set.length === 0) return NO_KEYS;
+  const out: number[] = [];
+  for (let i = 0; i < set.length; i += 1) {
+    const m = set[i]!;
+    if (m.id === id) out.push(m.key);
+  }
+  return out.length === 0 ? NO_KEYS : out;
+}
+import { spansForLayer } from './span.js';
 
 export interface CandlestickProps<S extends SeriesSchema> {
   /**
@@ -101,6 +124,18 @@ export interface CandlestickProps<S extends SeriesSchema> {
    */
   legend?: boolean | string;
   /**
+   * Stable series identity — **gates selection + hover**, the same id-gated
+   * contract `<BarChart>` / `<BoxPlot>` / `<ScatterChart>` carry. With an `id`,
+   * a click inside a candle's slot selects it (`selected`/`onSelect`),
+   * pointer-over lights it (`hovered`/`onHover`), and a `<MultiSelector>` can
+   * sweep a run of candles. **Omitted ⇒ display-only.** `key` is the candle's
+   * `x` (its slot begin).
+   *
+   * The state cues never touch the candle's colour — see {@link CandleStyle}
+   * for why a candle is the one mark whose hue cannot carry its state.
+   */
+  id?: string;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -147,6 +182,7 @@ export function Candlestick<S extends SeriesSchema>({
   gap = 0,
   showOHLC = false,
   decimate = true,
+  id,
   legend,
   index = 0,
 }: CandlestickProps<S>) {
@@ -170,6 +206,33 @@ export function Candlestick<S extends SeriesSchema>({
   // Series identity for the readout (the `as` role, else the close column name) —
   // the primary `close` pill keys on this, like every other layer.
   const label = semantic ?? close;
+  // Current selection / hover narrowed to this layer's candle keys (each
+  // candle's `x`), and the selection's span entries — the same three channels
+  // the bar and box layers narrow. A no-`id` layer never matches.
+  const selectedKeys = useMemo(
+    () => keysOf(container.selected, id),
+    [container.selected, id],
+  );
+  const hoveredKeys = useMemo(
+    () => keysOf(container.hovered, id),
+    [container.hovered, id],
+  );
+  const layerSpans = useMemo(
+    () => spansForLayer(container.selectedSpans, id, label),
+    [container.selectedSpans, id, label],
+  );
+  // A candle owns one `[x, xEnd)` column of the key axis — an aggregation, the
+  // same as a box — so it publishes its slots as snap buckets and the region
+  // cursor / sweep band land on candle edges rather than centre-to-centre.
+  const binBuckets = useMemo<readonly Interval[] | null>(() => {
+    if (ohlc.length === 0) return null;
+    const out = new Array<Interval>(ohlc.length);
+    for (let i = 0; i < ohlc.length; i += 1) {
+      const b = ohlc.x[i]!;
+      out[i] = new Interval({ value: b, start: b, end: ohlc.xEnd[i]! });
+    }
+    return out;
+  }, [ohlc]);
 
   const entry = useMemo<LayerEntry>(
     () => ({
@@ -179,6 +242,7 @@ export function Candlestick<S extends SeriesSchema>({
         xKind: 'time',
         xExtent: () =>
           ohlc.length === 0 ? null : [ohlc.x[0]!, ohlc.xEnd[ohlc.length - 1]!],
+        ...(binBuckets !== null ? { binIntervals: () => binBuckets } : {}),
         sampleAt: (time) => {
           // The readout reads the candle **under the cursor** (containment span,
           // not nearest-by-begin), anchored at the slot centre. Outside every
@@ -214,6 +278,59 @@ export function Candlestick<S extends SeriesSchema>({
           ];
           return samples;
         },
+        ...(id === undefined
+          ? {}
+          : {
+              // Rect containment over the candle's slot (`ohlcAt`) — a candle
+              // is a discrete interval mark, so this is the box's rule, not
+              // the continuous nearest-point one. `key` is its `x`, `value`
+              // its `close` (the price the default readout reports).
+              hitTest: (px, py, xScale, yScale): SelectInfo | null => {
+                const hit = ohlcAt(ohlc, px, py, xScale, yScale, gap, 1);
+                if (hit === null) return null;
+                const [i, begin, value] = hit;
+                const { body } = resolveCandleStyle(
+                  style,
+                  ohlc.open[i]!,
+                  ohlc.close[i]!,
+                  colorBy,
+                );
+                return { id, key: begin, value, color: body, label };
+              },
+              // Candles are sorted, non-overlapping columns, so a sweep is
+              // `sweep1D`'s two binary searches — identical to the bar and box
+              // layers, and each materialised hit is exactly what `hitTest`
+              // reports for that candle.
+              beginSweep: (): SweepSession | null =>
+                ohlc.length === 0
+                  ? null
+                  : sweep1D({
+                      id,
+                      begin: ohlc.x,
+                      end: ohlc.xEnd,
+                      length: ohlc.length,
+                      selectable: (i) => isFiniteOhlc(ohlc, i),
+                      materialize: (lo, hi) => {
+                        const out: SelectInfo[] = [];
+                        for (let i = lo; i < hi; i += 1) {
+                          if (!isFiniteOhlc(ohlc, i)) continue;
+                          out.push({
+                            id,
+                            key: ohlc.x[i]!,
+                            value: ohlc.close[i]!,
+                            color: resolveCandleStyle(
+                              style,
+                              ohlc.open[i]!,
+                              ohlc.close[i]!,
+                              colorBy,
+                            ).body,
+                            label,
+                          });
+                        }
+                        return out;
+                      },
+                    }),
+            }),
         draw: (ctx, xScale, yScale) =>
           drawCandles(
             ctx,
@@ -226,6 +343,9 @@ export function Candlestick<S extends SeriesSchema>({
             gap,
             undefined,
             decimate,
+            selectedKeys,
+            hoveredKeys,
+            layerSpans,
           ),
       },
       axisId: axis,
@@ -243,6 +363,11 @@ export function Candlestick<S extends SeriesSchema>({
       decimate,
       axis,
       index,
+      id,
+      binBuckets,
+      selectedKeys,
+      hoveredKeys,
+      layerSpans,
     ],
   );
   // Stable per-instance slot (see useSlotKey): keeps this candle layer's

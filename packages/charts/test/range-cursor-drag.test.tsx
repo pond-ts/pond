@@ -212,6 +212,77 @@ describe('<RangeCursor sequence> — the drag snaps bucket by bucket', () => {
     expect(span.x[0]).toBe(D0 + 1 * DAY);
     expect(span.x[1]).toBe(D0 + 4 * DAY);
   });
+
+  it('the resting bucket band is the wash alone — edges only while dragging', () => {
+    // A snapping `<RangeCursor>` bands the bucket under the pointer at REST
+    // too, so it has the same two states `<MultiSelector>` does and the same
+    // need to distinguish them: the edges mark a boundary the pointer has
+    // grabbed, and at rest there is no gesture to have grabbed one.
+    let frame: ContainerFrame | null = null;
+    const { container } = render(
+      <ChartContainer range={[D0, D1]} width={320} showAxis={false}>
+        <RangeCursor
+          sequence={Sequence.calendar('day')}
+          onDragRelease={vi.fn()}
+        />
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={10} />
+          <Layers>
+            <LineChart
+              series={
+                new TimeSeries({
+                  name: 'd',
+                  schema: [
+                    { name: 'time', kind: 'time' },
+                    { name: 'v', kind: 'number' },
+                  ] as const,
+                  rows: [
+                    [D0, 1],
+                    [D0 + 3 * DAY, 5],
+                  ] as [number, number][],
+                })
+              }
+              column="v"
+              axis="a"
+            />
+          </Layers>
+        </ChartRow>
+        <Capture sink={(f) => (frame = f)} />
+      </ChartContainer>,
+    );
+    const surface = container.querySelector('canvas')!.parentElement!;
+    const pxAt = (t: number) => ((t - D0) / (D1 - D0)) * frame!.plotWidth;
+    const edges = () =>
+      Array.from(container.querySelectorAll('svg line')).filter(
+        (l) => l.getAttribute('stroke') === 'rgba(63,91,224,0.45)', // brush.edge
+      );
+
+    // Rest: the day bucket under the pointer is banded, unedged.
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.2 * DAY), 0)),
+    );
+    expect(container.querySelector('svg rect')).not.toBeNull();
+    expect(edges()).toHaveLength(0);
+
+    // Dragging: the same band, now with its grabbed boundary marked.
+    act(() =>
+      surface.dispatchEvent(pointer('pointerdown', pxAt(D0 + 1.2 * DAY), 1)),
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 3.5 * DAY), 1)),
+    );
+    expect(edges()).toHaveLength(2);
+
+    // Released: back to the resting bucket, unedged.
+    act(() =>
+      surface.dispatchEvent(pointer('pointerup', pxAt(D0 + 3.5 * DAY), 0)),
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 3.5 * DAY), 0)),
+    );
+    expect(container.querySelector('svg rect')).not.toBeNull();
+    expect(edges()).toHaveLength(0);
+  });
 });
 
 describe('enableDrag — the OFF switch', () => {

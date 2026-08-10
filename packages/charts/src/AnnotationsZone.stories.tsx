@@ -7,8 +7,7 @@ import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { Zone } from './annotations.js';
 import { priceSeries, RANGE } from './story-data.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
-import type { ChartTheme } from './theme.js';
+import { defaultTheme, type ChartTheme } from './theme.js';
 
 /**
  * `<Zone>` — a shaded **y-span**, the value-axis counterpart of `<Region>`.
@@ -23,7 +22,7 @@ const H = 220;
 
 function Chart({
   children,
-  theme = docsTheme,
+  theme = defaultTheme,
 }: {
   children: ReactNode;
   theme?: ChartTheme;
@@ -48,9 +47,9 @@ function Chart({
  * app re-colours at once.
  */
 const banded: ChartTheme = {
-  ...docsTheme,
+  ...defaultTheme,
   annotation: {
-    ...docsTheme.annotation!,
+    ...defaultTheme.annotation!,
     roles: {
       low: { color: '#1f9d63', fillOpacity: 0.14 },
       mid: { color: '#c2a20f', fillOpacity: 0.14 },

@@ -12,7 +12,6 @@ import {
   STEP,
   RANGE,
 } from './story-data.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * `cursor="inline"` — a dot on each series with its value chip **beside the dot**
@@ -43,7 +42,6 @@ function Chart({
       cursor="inline"
       cursorTime={cursorTime ?? false}
       trackerPosition={pin}
-      theme={docsTheme}
     >
       <ChartRow height={220}>
         <Layers>{children}</Layers>
@@ -66,17 +64,11 @@ type Story = StoryObj;
  *  pin a controlled position for a static regression shot; this is the live one. */
 export const Interactive: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="inline"
-      cursorTime
-      theme={docsTheme}
-    >
+    <ChartContainer range={RANGE} width={W} cursor="inline" cursorTime>
       <ChartRow height={220}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
-          <LineChart series={s} column="slow" as="slow" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+          <LineChart series={s} column="slow" as="secondary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -88,7 +80,7 @@ export const Interactive: Story = {
 export const SingleSeries: Story = {
   render: () => (
     <Chart pin={BASE + 45 * STEP}>
-      <LineChart series={s} column="fast" as="fast" axis="usd" />
+      <LineChart series={s} column="fast" as="primary" axis="usd" />
     </Chart>
   ),
 };
@@ -97,8 +89,8 @@ export const SingleSeries: Story = {
 export const MultipleSeries: Story = {
   render: () => (
     <Chart pin={BASE + 45 * STEP}>
-      <LineChart series={s} column="fast" as="fast" axis="usd" />
-      <LineChart series={s} column="slow" as="slow" axis="usd" />
+      <LineChart series={s} column="fast" as="primary" axis="usd" />
+      <LineChart series={s} column="slow" as="secondary" axis="usd" />
     </Chart>
   ),
 };
@@ -107,8 +99,8 @@ export const MultipleSeries: Story = {
 export const WithTime: Story = {
   render: () => (
     <Chart pin={BASE + 45 * STEP} cursorTime>
-      <LineChart series={s} column="fast" as="fast" axis="usd" />
-      <LineChart series={s} column="slow" as="slow" axis="usd" />
+      <LineChart series={s} column="fast" as="primary" axis="usd" />
+      <LineChart series={s} column="slow" as="secondary" axis="usd" />
     </Chart>
   ),
 };
@@ -118,8 +110,8 @@ export const WithTime: Story = {
 export const RightEdgeFlip: Story = {
   render: () => (
     <Chart pin={BASE + 84 * STEP}>
-      <LineChart series={s} column="fast" as="fast" axis="usd" />
-      <LineChart series={s} column="slow" as="slow" axis="usd" />
+      <LineChart series={s} column="fast" as="primary" axis="usd" />
+      <LineChart series={s} column="slow" as="secondary" axis="usd" />
     </Chart>
   ),
 };
@@ -130,7 +122,7 @@ export const RightEdgeFlip: Story = {
 export const NearTopClamp: Story = {
   render: () => (
     <Chart pin={BASE + 16 * STEP}>
-      <LineChart series={s} column="fast" as="fast" axis="usd" />
+      <LineChart series={s} column="fast" as="primary" axis="usd" />
     </Chart>
   ),
 };
@@ -140,7 +132,7 @@ export const NearTopClamp: Story = {
 export const NearBottomClamp: Story = {
   render: () => (
     <Chart pin={BASE + 45 * STEP}>
-      <LineChart series={s} column="fast" as="fast" axis="usd" />
+      <LineChart series={s} column="fast" as="primary" axis="usd" />
     </Chart>
   ),
 };
@@ -154,11 +146,10 @@ export const MultiRow: Story = {
       width={W}
       cursor="inline"
       trackerPosition={BASE + 45 * STEP}
-      theme={docsTheme}
     >
       <ChartRow height={150}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>

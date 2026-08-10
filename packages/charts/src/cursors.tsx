@@ -498,7 +498,13 @@ function buildRangeCursor(o: {
  * Update-in-place on a prop change (the entry memo), unregister on unmount —
  * the `registerAxis` discipline.
  */
-function useCursorMount(built: BuiltCursor | null, legacy: boolean): void {
+function useCursorMount(
+  built: BuiltCursor | null,
+  legacy: boolean,
+  /** The container shim's un-asked-for `'line'` default (see
+   *  {@link CursorEntry.implicit}) — never set by component mounts. */
+  implicit = false,
+): void {
   const container = useContext(ContainerContext);
   if (container === null) {
     throw new Error(
@@ -524,8 +530,9 @@ function useCursorMount(built: BuiltCursor | null, legacy: boolean): void {
             dragModifier: built.dragModifier,
             rowKey,
             legacy,
+            ...(implicit ? { implicit } : {}),
           },
-    [built, rowKey, legacy],
+    [built, rowKey, legacy, implicit],
   );
   const { registerCursor, unregisterCursor } = container;
   useEffect(() => {
@@ -721,6 +728,7 @@ export function LegacyCursor({
   showTime,
   snap,
   sequence,
+  implicit = false,
 }: {
   mode: CursorMode;
   /** The container's `cursorTime` (the in-plot time readout opt-in). */
@@ -728,6 +736,10 @@ export function LegacyCursor({
   /** The container's `crosshairSnap` (the reticle y-snap). */
   snap: boolean;
   sequence?: Sequence | BoundedSequence | undefined;
+  /** This shim carries the container's un-asked-for `'line'` DEFAULT (no
+   *  `cursor` prop set) — the only cursor a mounted `<MultiSelector>`'s
+   *  resting block preview replaces (see {@link CursorEntry.implicit}). */
+  implicit?: boolean;
 }) {
   const built = useMemo<BuiltCursor | null>(() => {
     switch (mode) {
@@ -750,7 +762,7 @@ export function LegacyCursor({
         return null;
     }
   }, [mode, showTime, snap, sequence]);
-  useCursorMount(built, true);
+  useCursorMount(built, true, implicit);
   return null;
 }
 

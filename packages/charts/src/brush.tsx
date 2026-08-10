@@ -198,7 +198,12 @@ export function renderBrushBand(f: ResolvedCursorFrame): ReactNode {
           opacity={bandOpacity}
         />
       )}
+      {/* The edges are the **gesture's** grabbed boundary, so they draw only
+          while one is in flight. A resting band is a preview of the block a
+          drag would select; edging it would assert a range the user has not
+          made yet, and the two states would read alike. */}
       {f.band !== null &&
+        f.bandDragging &&
         edge !== undefined &&
         [f.band.x0, f.band.x1].map((x, i) => (
           <line
@@ -223,6 +228,83 @@ export function renderBrushBand(f: ResolvedCursorFrame): ReactNode {
           shapeRendering="crispEdges"
         />
       )}
+    </>
+  );
+}
+
+/** Half-length of a brush crosshair's arms, in pixels. Small on purpose — it
+ *  marks a corner, and a full-plot rule at each end of the diagonal would put
+ *  four lines across a plot the rect is already dividing. */
+const BRUSH_CROSS_PX = 5;
+
+/** One brush crosshair — the same `+` at rest and at each end of a drag's
+ *  diagonal, so the resting mark reads as the thing the drag then picks up. */
+function brushCross(
+  key: number | string,
+  cx: number,
+  cy: number,
+  stroke: string,
+): ReactNode {
+  const x = Math.round(cx);
+  const y = Math.round(cy);
+  return (
+    <g key={key} stroke={stroke} strokeWidth={1} shapeRendering="crispEdges">
+      <line x1={x - BRUSH_CROSS_PX} y1={y} x2={x + BRUSH_CROSS_PX} y2={y} />
+      <line x1={x} y1={y - BRUSH_CROSS_PX} x2={x} y2={y + BRUSH_CROSS_PX} />
+    </g>
+  );
+}
+
+/**
+ * The **2-D brush renderer** — the rect a sweep paints over a `twoD` layer
+ * (a scatter, a heat map), the counterpart of {@link renderBrushBand} and
+ * drawn from the same `theme.brush` tokens so the two brushes read as one
+ * gesture in two dimensionalities.
+ *
+ * A small `+` sits on each end of the drag diagonal: the corner the press
+ * anchored and the corner under the pointer. That is the whole reason
+ * {@link ResolvedCursorFrame.rect} arrives unsorted — sorting first would put
+ * both crosses on the same diagonal regardless of which way the drag went.
+ */
+export function renderBrushRect(f: ResolvedCursorFrame): ReactNode {
+  const ink = f.theme.cursor ?? f.theme.axis.label;
+  const r = f.rect;
+  if (r === null) {
+    // At rest: one grey `+` at the pointer, in the hovered row only. It is
+    // the same mark the drag then pins at its anchor — the gesture reads as
+    // picking up what was already under the cursor, rather than swapping one
+    // kind of cursor for another.
+    return f.restingCross &&
+      f.cursorX !== null &&
+      f.cursorY !== null &&
+      f.rowKey === f.hoveredRowKey
+      ? brushCross('rest', f.cursorX, f.cursorY, ink)
+      : null;
+  }
+  const brush = f.theme.brush;
+  const fill = brush?.fill ?? ink;
+  const opacity = brush === undefined ? 0.12 : 1;
+  const edge = brush?.edge ?? ink;
+  const x = Math.min(r.x0, r.x1);
+  const y = Math.min(r.y0, r.y1);
+  const w = Math.abs(r.x1 - r.x0);
+  const h = Math.abs(r.y1 - r.y0);
+  return (
+    <>
+      <rect x={x} y={y} width={w} height={h} fill={fill} opacity={opacity} />
+      <rect
+        x={Math.round(x) + 0.5}
+        y={Math.round(y) + 0.5}
+        width={Math.max(0, Math.round(w) - 1)}
+        height={Math.max(0, Math.round(h) - 1)}
+        fill="none"
+        stroke={edge}
+        strokeWidth={1}
+      />
+      {[
+        [r.x0, r.y0],
+        [r.x1, r.y1],
+      ].map(([cx, cy], i) => brushCross(i, cx!, cy!, edge))}
     </>
   );
 }

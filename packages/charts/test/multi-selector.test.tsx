@@ -21,8 +21,8 @@ import { Layers } from '../src/Layers.js';
 import { BarChart } from '../src/BarChart.js';
 import { LineChart } from '../src/LineChart.js';
 import { YAxis } from '../src/YAxis.js';
-import { MultiSelector } from '../src/selectors.js';
-import { RangeCursor } from '../src/cursors.js';
+import { MultiSelector, Selector } from '../src/selectors.js';
+import { CrosshairCursor, RangeCursor } from '../src/cursors.js';
 import { resolveBrushClaim } from '../src/brush.js';
 import { selectionContains } from '../src/span.js';
 import {
@@ -102,6 +102,13 @@ function Capture({ sink }: { sink: (f: ContainerFrame) => void }) {
   return null;
 }
 
+// Pointer y: inside every fixture bar's INK (values 1..10 on a 0..12 axis over
+// a 120px row put the shortest bar's top at y=110). A click resolves through
+// the 'select' hit-test, which — unlike hover's full-height slot — requires
+// the pointer within the bar's drawn ink, so genuinely empty plot space stays
+// the deselect path.
+const POINTER_Y = 115;
+
 function pointer(
   type: string,
   x: number,
@@ -112,7 +119,7 @@ function pointer(
     bubbles: true,
     cancelable: true,
     clientX: x,
-    clientY: 40,
+    clientY: POINTER_Y,
     buttons,
     ...init,
   });
@@ -168,7 +175,7 @@ function mount(opts: {
           bubbles: true,
           cancelable: true,
           clientX: x,
-          clientY: 40,
+          clientY: POINTER_Y,
           ...init,
         }),
       ),
@@ -295,37 +302,45 @@ describe('<MultiSelector> sweep — the release payload', () => {
 // ── The live preview — plural hovered, frame-coalesced (RFC A1.4 / A3.4) ────
 
 describe('the live preview', () => {
-  it('lights every covered mark through plural hovered, once the frame runs', () => {
+  it('lights every covered mark through plural hovered — synchronously on the move that commits', () => {
     const onHover = vi.fn();
     const { surface, pxAt, frame } = mount({
       children: <MultiSelector onHover={onHover} />,
     });
     act(() => surface.dispatchEvent(pointer('pointerdown', pxAt(150), 1)));
     act(() => surface.dispatchEvent(pointer('pointermove', pxAt(350), 1)));
-    // Coalesced: the move scheduled a frame; nothing crossed yet.
-    expect(frame().hovered).toEqual([]);
-    flushFrames();
+    // The move that COMMITS the sweep cuts synchronously — the covered set
+    // lights in the same event turn the band appears, no frame in between
+    // (a bucket-snapped sweep must light its whole first bucket from the
+    // moment the drag starts).
     expect(frame().hovered.map((h) => h.value)).toEqual([2, 3, 4]);
     expect(onHover).toHaveBeenCalledTimes(1);
     expect(
       (onHover.mock.calls[0]![0] as readonly SelectInfo[]).map((h) => h.value),
     ).toEqual([2, 3, 4]);
+    // No frame was left pending for the commit cut.
+    flushFrames();
+    expect(onHover).toHaveBeenCalledTimes(1);
     act(() => surface.dispatchEvent(pointer('pointerup', pxAt(350), 0)));
   });
 
-  it('several moves coalesce into one frame — one preview, at the final window', () => {
+  it('moves after the commit coalesce into one frame — one preview, at the final window', () => {
     const onHover = vi.fn();
     const { surface, pxAt } = mount({
       children: <MultiSelector onHover={onHover} />,
     });
     act(() => surface.dispatchEvent(pointer('pointerdown', pxAt(150), 1)));
     act(() => surface.dispatchEvent(pointer('pointermove', pxAt(250), 1)));
+    // The commit move reported synchronously (bars 1..2)…
+    expect(onHover).toHaveBeenCalledTimes(1);
     act(() => surface.dispatchEvent(pointer('pointermove', pxAt(350), 1)));
     act(() => surface.dispatchEvent(pointer('pointermove', pxAt(550), 1)));
+    // …and the two moves after it coalesced into ONE frame at the final
+    // window (RFC A1.4).
     flushFrames();
-    expect(onHover).toHaveBeenCalledTimes(1);
+    expect(onHover).toHaveBeenCalledTimes(2);
     expect(
-      (onHover.mock.calls[0]![0] as readonly SelectInfo[]).map((h) => h.value),
+      (onHover.mock.calls[1]![0] as readonly SelectInfo[]).map((h) => h.value),
     ).toEqual([2, 3, 4, 5, 6]);
     act(() => surface.dispatchEvent(pointer('pointerup', pxAt(550), 0)));
   });
@@ -385,8 +400,176 @@ describe('the live preview', () => {
     act(() => surface.dispatchEvent(pointer('pointermove', pxAt(350), 1)));
     expect(frame().regionAnchor).not.toBeNull();
     expect(dom.querySelector('svg rect')).not.toBeNull();
+    // Release: the anchor clears, and the band REVERTS to the resting block
+    // preview — the one-bucket band under the pointer, not nothing (the band
+    // is the <MultiSelector>'s resting cursor).
     act(() => surface.dispatchEvent(pointer('pointerup', pxAt(350), 0)));
+    expect(frame().regionAnchor).toBeNull();
+    const resting = dom.querySelector('svg rect')!;
+    expect(resting).not.toBeNull();
+    expect(Number(resting.getAttribute('width'))).toBeCloseTo(
+      pxAt(400) - pxAt(300), // the release-point bar's bin, snapped
+      6,
+    );
+    // Leaving the plot clears it (React delegates onPointerLeave through
+    // pointerout with a relatedTarget outside the element).
+    act(() =>
+      surface.dispatchEvent(
+        new PointerEvent('pointerout', {
+          bubbles: true,
+          relatedTarget: document.body,
+        }),
+      ),
+    );
     expect(dom.querySelector('svg rect')).toBeNull();
+  });
+
+  it('the sweep and the rest both suppress the data cursor — a band, never a line', () => {
+    // With no cursor mounted the deprecation shim's default `line` preset is
+    // in effect, and it painted its solid vertical rule at the raw pointer —
+    // over the band during a drag, and as the whole resting cursor before
+    // one. Under a mounted <MultiSelector> the rule never draws: the brush
+    // band IS the resting cursor (the block a drag would select), and the
+    // drag grows the same band (§8.1's identical pixels).
+    const { surface, pxAt, dom } = mount({
+      children: <MultiSelector />,
+    });
+    const cursorLines = () =>
+      Array.from(dom.querySelectorAll('svg line')).filter(
+        (l) => l.getAttribute('stroke') === '#64748b', // the cursor ink
+      );
+    // Rest: the band over the hovered bar's bin, no line.
+    act(() => surface.dispatchEvent(pointer('pointermove', pxAt(150), 0)));
+    expect(dom.querySelector('svg rect')).not.toBeNull();
+    expect(cursorLines()).toHaveLength(0);
+    // Mid-sweep: the band is up, still no line.
+    act(() => surface.dispatchEvent(pointer('pointerdown', pxAt(150), 1)));
+    act(() => surface.dispatchEvent(pointer('pointermove', pxAt(350), 1)));
+    expect(dom.querySelector('svg rect')).not.toBeNull();
+    expect(cursorLines()).toHaveLength(0);
+    // Release: back to the resting band — never the line.
+    act(() => surface.dispatchEvent(pointer('pointerup', pxAt(350), 0)));
+    act(() => surface.dispatchEvent(pointer('pointermove', pxAt(500), 0)));
+    expect(dom.querySelector('svg rect')).not.toBeNull();
+    expect(cursorLines()).toHaveLength(0);
+  });
+
+  it('the band edges appear only once a drag is in flight', () => {
+    // The band has two states — previewing the block a drag would select, and
+    // tracking a drag in flight — and the wash alone cannot tell them apart.
+    // The edges are the gesture's grabbed boundary, so they are what
+    // distinguishes them: at rest, edging the preview would assert a range
+    // nobody has made yet.
+    const { surface, pxAt, dom } = mount({ children: <MultiSelector /> });
+    const edges = () =>
+      Array.from(dom.querySelectorAll('svg line')).filter(
+        (l) => l.getAttribute('stroke') === 'rgba(63,91,224,0.45)', // brush.edge
+      );
+
+    // Rest: the block preview is up — the wash, no edges.
+    act(() => surface.dispatchEvent(pointer('pointermove', pxAt(150), 0)));
+    expect(dom.querySelector('svg rect')).not.toBeNull();
+    expect(edges()).toHaveLength(0);
+
+    // Pressed but under the slop is still a *click* candidate, not a drag —
+    // so a click never flashes edges on its way to committing a block.
+    act(() => surface.dispatchEvent(pointer('pointerdown', pxAt(150), 1)));
+    expect(edges()).toHaveLength(0);
+
+    // Past the slop the sweep anchors: now there is a grabbed boundary.
+    act(() => surface.dispatchEvent(pointer('pointermove', pxAt(350), 1)));
+    expect(edges()).toHaveLength(2);
+
+    // Release reverts to the resting preview — the wash alone, again.
+    act(() => surface.dispatchEvent(pointer('pointerup', pxAt(350), 0)));
+    expect(dom.querySelector('svg rect')).not.toBeNull();
+    expect(edges()).toHaveLength(0);
+  });
+});
+
+// ── The deselect path: a click above the ink resolves to NO mark ────────────
+
+describe('click-deselect (RFC §7 — the empty commit must be reachable)', () => {
+  it('a click in the empty space above a bar deselects: ([], modifiers, null)', () => {
+    // Bar slots tile the whole plot (full interval width, full height — the
+    // continuous hover model of #582), so before this fix a click could
+    // NEVER resolve to null on a full-range bar chart: "click away to
+    // clear" had nowhere to click. The select hit-test now narrows to the
+    // bar's drawn ink vertically; hover keeps the full slot.
+    const onSelect = vi.fn();
+    const { surface, pxAt } = mount({
+      children: <MultiSelector onSelect={onSelect} />,
+    });
+    // Bar 1's value is 2 → its ink tops out at y=100 of 120. Click at y=20,
+    // well above the ink but inside the slot.
+    const x = pxAt(150);
+    const up = { clientY: 20 } as PointerEventInit;
+    act(() => surface.dispatchEvent(pointer('pointerdown', x, 1, up)));
+    act(() => surface.dispatchEvent(pointer('pointerup', x, 0, up)));
+    act(() =>
+      surface.dispatchEvent(
+        new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: 20,
+        }),
+      ),
+    );
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    const [hits, , span] = onSelect.mock.calls[0]! as [
+      readonly SelectInfo[],
+      SelectModifiers,
+      SpanSelection | null,
+    ];
+    expect(hits).toEqual([]);
+    expect(span).toBeNull();
+  });
+
+  it('hover at the same point still reports the bar — the slot stays continuous (#582)', () => {
+    // The asymmetry is deliberate: hover is a reading affordance (the
+    // highlight tracks like the readout, no dead zones), a click is a
+    // commitment (and its null is the deselect signal).
+    const onHover = vi.fn();
+    const { surface, pxAt } = mount({
+      children: <MultiSelector onHover={onHover} />,
+    });
+    act(() =>
+      surface.dispatchEvent(
+        pointer('pointermove', pxAt(150), 0, { clientY: 20 }),
+      ),
+    );
+    expect(onHover).toHaveBeenCalledTimes(1);
+    const hits = onHover.mock.calls[0]![0] as readonly SelectInfo[];
+    expect(hits.length).toBe(1);
+    expect(hits[0]!.value).toBe(2);
+  });
+
+  it('a click in the gap between two bars still selects — the gap is not a dead channel', () => {
+    // #582's fix survives on the x axis: the slot spans the bar's full
+    // interval, so a click landing between two columns (at ink height)
+    // selects the bar whose slot it is in rather than deselecting.
+    const onSelect = vi.fn();
+    const { surface, pxAt } = mount({
+      children: <MultiSelector onSelect={onSelect} />,
+      props: { selected: [] },
+    });
+    // Exactly on the bar 1 / bar 2 boundary, at a y inside both bars' ink.
+    const x = pxAt(200);
+    act(() => surface.dispatchEvent(pointer('pointerdown', x, 1)));
+    act(() => surface.dispatchEvent(pointer('pointerup', x, 0)));
+    act(() =>
+      surface.dispatchEvent(
+        new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: POINTER_Y,
+        }),
+      ),
+    );
+    const [hits] = onSelect.mock.calls[0]! as [readonly SelectInfo[]];
+    expect(hits.length).toBe(1);
   });
 });
 
@@ -426,7 +609,7 @@ describe('click-select through <MultiSelector> (§8.1 — separated by movement)
           bubbles: true,
           cancelable: true,
           clientX: x + 3,
-          clientY: 40,
+          clientY: POINTER_Y,
         }),
       ),
     );
@@ -598,6 +781,48 @@ describe('sequence snapping', () => {
     expect(span.x).toEqual([D0 + 1 * DAY, D0 + 3 * DAY]);
   });
 
+  it('the PREVIEW snaps identically — the whole bucket lights from the moment the drag starts', () => {
+    // The preview and the commit must never disagree: from the first
+    // over-slop move (which cuts synchronously — no animation frame in
+    // between) the covered set is the snapped bucket's WHOLE bar set, not
+    // the bars under the raw drag span. Release then commits exactly what
+    // was lit.
+    const onHover = vi.fn();
+    const onSelect = vi.fn();
+    const { surface, pxAt, frame } = mount({
+      children: (
+        <MultiSelector
+          sequence={Sequence.calendar('day')}
+          onHover={onHover}
+          onSelect={onSelect}
+        />
+      ),
+      layers: <BarChart series={sixHourBars()} column="v" axis="a" id="q" />,
+      range: [D0, D1],
+    });
+    act(() =>
+      surface.dispatchEvent(pointer('pointerdown', pxAt(D0 + 1.4 * DAY), 1)),
+    );
+    // A tiny move — past the slop, still inside day 1's SECOND bar.
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.55 * DAY), 1)),
+    );
+    // Synchronous, and the whole of day 1 — all four bars, including the two
+    // the raw 0.15-day drag never touched.
+    expect(frame().hovered.map((h) => h.value)).toEqual([5, 6, 7, 8]);
+    // Release right there: the commit is exactly the preview.
+    act(() =>
+      surface.dispatchEvent(pointer('pointerup', pxAt(D0 + 1.55 * DAY), 0)),
+    );
+    const [hits, , span] = onSelect.mock.calls[0]! as [
+      readonly SelectInfo[],
+      SelectModifiers,
+      SpanSelection,
+    ];
+    expect(hits.map((h) => h.value)).toEqual([5, 6, 7, 8]);
+    expect(span.x).toEqual([D0 + 1 * DAY, D0 + 2 * DAY]);
+  });
+
   it('a category axis sweeps the same gesture — the PND-CATRANGE fold-in (RFC §8)', () => {
     const onSelect = vi.fn();
     const categories = [
@@ -627,6 +852,40 @@ describe('sequence snapping', () => {
     expect(span).toEqual({ kind: 'span', id: 'svc', x: [1, 4] });
     // And it round-trips through the exported predicate, mark identity intact.
     for (const h of hits) expect(selectionContains([span], h)).toBe(true);
+  });
+
+  it('the category sweep BAND snaps to the slots’ outer edges, not centre-to-centre (A7.6)', () => {
+    // The band scale's `invert` snaps a pixel to the slot CENTRE, so with no
+    // snap buckets the drawn band ran centre-to-centre — while capture and
+    // the committed span snapped outward to the covered slots' outer edges
+    // (the A7.6 edge rule). The drawn band and the committed selection
+    // disagreed at both ends by half a slot. The categorical layer now
+    // publishes its unit slots as snap buckets, so the band extends
+    // slot-edge to slot-edge — exactly the extent release will commit.
+    const categories = [
+      { label: 'api', value: 3 },
+      { label: 'auth', value: 2 },
+      { label: 'cache', value: 1 },
+      { label: 'db', value: 4 },
+      { label: 'queue', value: 2 },
+    ];
+    const { surface, frame, dom } = mount({
+      children: <MultiSelector />,
+      layers: <BarChart categories={categories} id="svc" />,
+    });
+    const w = frame().plotWidth;
+    const pxSlot = (v: number) => (v / 5) * w;
+    act(() => surface.dispatchEvent(pointer('pointerdown', pxSlot(1.5), 1)));
+    act(() => surface.dispatchEvent(pointer('pointermove', pxSlot(3.5), 1)));
+    const band = dom.querySelector('svg rect')!;
+    expect(band).not.toBeNull();
+    // Outer edge of slot 1 to outer edge of slot 3: x = w/5, width = 3w/5.
+    expect(Number(band.getAttribute('x'))).toBeCloseTo(pxSlot(1), 6);
+    expect(Number(band.getAttribute('width'))).toBeCloseTo(
+      pxSlot(4) - pxSlot(1),
+      6,
+    );
+    act(() => surface.dispatchEvent(pointer('pointerup', pxSlot(3.5), 0)));
   });
 });
 
@@ -709,7 +968,7 @@ describe('demote on edit (RFC A5.2) — sweep, then ⌘-click one out', () => {
           bubbles: true,
           cancelable: true,
           clientX: cx,
-          clientY: 40,
+          clientY: POINTER_Y,
           metaKey: true,
         }),
       ),
@@ -727,5 +986,393 @@ describe('demote on edit (RFC A5.2) — sweep, then ⌘-click one out', () => {
     expect(selectionContains(latest, probe(100, 2))).toBe(true);
     expect(selectionContains(latest, probe(200, 3))).toBe(false);
     expect(selectionContains(latest, probe(300, 4))).toBe(true);
+  });
+});
+
+// ── The resting block preview — the band and hover ARE the drag's preview ───
+
+describe('the resting block preview (band as resting cursor, block-scoped hover)', () => {
+  const DAY = 86_400_000;
+  const D0 = Date.UTC(2026, 0, 5);
+  const D1 = D0 + 5 * DAY;
+
+  /** Four 6h bars per day over 5 days (values 1..20) — a day-snapped resting
+   *  hover must light whole days, not the one bar under the pointer. */
+  const sixHourBars = () =>
+    new TimeSeries({
+      name: 'q',
+      schema: [
+        { name: 'timeRange', kind: 'timeRange' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      rows: Array.from({ length: 20 }, (_, i) => [
+        [D0 + i * (DAY / 4), D0 + (i + 1) * (DAY / 4)],
+        i + 1,
+      ]) as [[number, number], number][],
+    });
+
+  const seqMount = (children: ReactNode) =>
+    mount({
+      children,
+      layers: <BarChart series={sixHourBars()} column="v" axis="a" id="q" />,
+      range: [D0, D1],
+    });
+
+  it('hovering ONE bar lights the whole sequence block — the set a drag would select', () => {
+    const onHover = vi.fn();
+    const { surface, pxAt, frame } = seqMount(
+      <MultiSelector sequence={Sequence.calendar('day')} onHover={onHover} />,
+    );
+    // Rest the pointer inside day 1's THIRD bar (no buttons — pure hover).
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.6 * DAY), 0)),
+    );
+    // All four bars of day 1 light — including the three not under the pointer.
+    expect(frame().hovered.map((h) => h.value)).toEqual([5, 6, 7, 8]);
+    // …and <MultiSelector onHover> heard exactly that block.
+    expect(onHover).toHaveBeenCalledTimes(1);
+    expect(
+      (onHover.mock.calls[0]![0] as readonly SelectInfo[]).map((h) => h.value),
+    ).toEqual([5, 6, 7, 8]);
+  });
+
+  it('within-block moves re-report nothing; crossing into the next block re-fires', () => {
+    const onHover = vi.fn();
+    const { surface, pxAt, frame } = seqMount(
+      <MultiSelector sequence={Sequence.calendar('day')} onHover={onHover} />,
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.3 * DAY), 0)),
+    );
+    const firstState = frame().hovered;
+    // A second move inside the SAME day (a different bar of it): no new
+    // report, and the hovered state keeps the same identity — no repaint.
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.8 * DAY), 0)),
+    );
+    expect(onHover).toHaveBeenCalledTimes(1);
+    expect(frame().hovered).toBe(firstState);
+    // Crossing into day 2 re-fires with the next four bars.
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 2.2 * DAY), 0)),
+    );
+    expect(onHover).toHaveBeenCalledTimes(2);
+    expect(
+      (onHover.mock.calls[1]![0] as readonly SelectInfo[]).map((h) => h.value),
+    ).toEqual([9, 10, 11, 12]);
+  });
+
+  it('the resting band spans the sequence block, and the shim line never draws', () => {
+    const { surface, pxAt, dom } = seqMount(
+      <MultiSelector sequence={Sequence.calendar('day')} />,
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.6 * DAY), 0)),
+    );
+    const band = dom.querySelector('svg rect')!;
+    expect(band).not.toBeNull();
+    expect(Number(band.getAttribute('x'))).toBeCloseTo(pxAt(D0 + 1 * DAY), 6);
+    expect(Number(band.getAttribute('width'))).toBeCloseTo(
+      pxAt(D0 + 2 * DAY) - pxAt(D0 + 1 * DAY),
+      6,
+    );
+    expect(
+      Array.from(dom.querySelectorAll('svg line')).filter(
+        (l) => l.getAttribute('stroke') === '#64748b',
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('a co-mounted <Selector> keeps its per-mark hover currency', () => {
+    const single = vi.fn();
+    const { surface, pxAt } = seqMount(
+      <>
+        <MultiSelector sequence={Sequence.calendar('day')} />
+        <Selector onHover={single} />
+      </>,
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.3 * DAY), 0)),
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.8 * DAY), 0)),
+    );
+    // Two different bars of one block: the single currency reports each mark.
+    expect(single).toHaveBeenCalledTimes(2);
+    expect((single.mock.calls[0]![0] as SelectInfo).value).toBe(6);
+    expect((single.mock.calls[1]![0] as SelectInfo).value).toBe(8);
+  });
+
+  it('with no sequence the block is the snap bin — hover is one bar, banded', () => {
+    // The bins-only case (SweepBars): the block is the bar's own bin, so the
+    // hovered set is that one bar and the resting band is its bin.
+    const { surface, pxAt, frame, dom } = mount({
+      children: <MultiSelector />,
+    });
+    act(() => surface.dispatchEvent(pointer('pointermove', pxAt(150), 0)));
+    expect(frame().hovered.map((h) => h.value)).toEqual([2]);
+    const band = dom.querySelector('svg rect')!;
+    expect(band).not.toBeNull();
+    expect(Number(band.getAttribute('x'))).toBeCloseTo(pxAt(100), 6);
+    expect(Number(band.getAttribute('width'))).toBeCloseTo(
+      pxAt(200) - pxAt(100),
+      6,
+    );
+  });
+
+  it('rest flows into the drag unchanged — the same block, then grown', () => {
+    const { surface, pxAt, frame } = seqMount(
+      <MultiSelector sequence={Sequence.calendar('day')} />,
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.4 * DAY), 0)),
+    );
+    expect(frame().hovered.map((h) => h.value)).toEqual([5, 6, 7, 8]);
+    // Press and cross the slop inside the SAME day: the preview is the same
+    // four bars (one code path — the resting block IS the drag's first cut).
+    act(() =>
+      surface.dispatchEvent(pointer('pointerdown', pxAt(D0 + 1.4 * DAY), 1)),
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.55 * DAY), 1)),
+    );
+    expect(frame().hovered.map((h) => h.value)).toEqual([5, 6, 7, 8]);
+    // Drag into day 2: the block grows to eight.
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 2.5 * DAY), 1)),
+    );
+    flushFrames();
+    expect(frame().hovered.map((h) => h.value)).toEqual([
+      5, 6, 7, 8, 9, 10, 11, 12,
+    ]);
+    act(() =>
+      surface.dispatchEvent(pointer('pointerup', pxAt(D0 + 2.5 * DAY), 0)),
+    );
+  });
+
+  it('an explicitly mounted cursor wins the surface — no resting band, hover still block-scoped', () => {
+    const { surface, pxAt, frame, dom } = seqMount(
+      <>
+        <MultiSelector sequence={Sequence.calendar('day')} />
+        <CrosshairCursor />
+      </>,
+    );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.6 * DAY), 0)),
+    );
+    // The crosshair keeps its slots (its reticle draws lines)…
+    expect(Array.from(dom.querySelectorAll('svg line')).length).toBeGreaterThan(
+      0,
+    );
+    // …and the brush band does not replace it.
+    expect(
+      dom.querySelector('svg rect[fill="rgba(63,91,224,0.07)"]'),
+    ).toBeNull();
+    // The hover PREVIEW is about the selection, not the cursor: still the block.
+    expect(frame().hovered.map((h) => h.value)).toEqual([5, 6, 7, 8]);
+  });
+
+  it('an explicitly chosen legacy cursor string also wins', () => {
+    const { surface, pxAt, dom } = seqMount(
+      <MultiSelector sequence={Sequence.calendar('day')} />,
+    );
+    // Contrast case: same mount but with `cursor="line"` SET on the container.
+    const explicit = mount({
+      children: <MultiSelector sequence={Sequence.calendar('day')} />,
+      layers: <BarChart series={sixHourBars()} column="v" axis="a" id="q" />,
+      range: [D0, D1],
+      props: { cursor: 'line' },
+    });
+    const lines = (d: HTMLElement) =>
+      Array.from(d.querySelectorAll('svg line')).filter(
+        (l) => l.getAttribute('stroke') === '#64748b',
+      );
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', pxAt(D0 + 1.6 * DAY), 0)),
+    );
+    act(() =>
+      explicit.surface.dispatchEvent(
+        pointer('pointermove', explicit.pxAt(D0 + 1.6 * DAY), 0),
+      ),
+    );
+    // Implicit default: band, no line. Explicit `cursor="line"`: the line.
+    expect(lines(dom as HTMLElement)).toHaveLength(0);
+    expect(dom.querySelector('svg rect')).not.toBeNull();
+    expect(lines(explicit.dom as HTMLElement).length).toBeGreaterThan(0);
+    expect(explicit.dom.querySelector('svg rect')).toBeNull();
+  });
+
+  it('the category block previews at rest too — band on the slot edges', () => {
+    const categories = [
+      { label: 'api', value: 3 },
+      { label: 'auth', value: 2 },
+      { label: 'cache', value: 1 },
+      { label: 'db', value: 4 },
+      { label: 'queue', value: 2 },
+    ];
+    const { surface, frame, dom } = mount({
+      children: <MultiSelector />,
+      layers: <BarChart categories={categories} id="svc" />,
+    });
+    const w = () => frame().plotWidth;
+    act(() =>
+      surface.dispatchEvent(pointer('pointermove', (1.4 / 5) * w(), 0)),
+    );
+    // Hover anywhere in slot 1 lights its bar and bands its outer edges.
+    expect(frame().hovered.map((h) => h.label)).toEqual(['auth']);
+    const band = dom.querySelector('svg rect')!;
+    expect(band).not.toBeNull();
+    expect(Number(band.getAttribute('x'))).toBeCloseTo((1 / 5) * w(), 6);
+    expect(Number(band.getAttribute('width'))).toBeCloseTo((1 / 5) * w(), 6);
+  });
+});
+
+// ── A click commits the block it previewed ─────────────────────────────────
+
+/**
+ * **The click commits the same block the resting preview lit.**
+ *
+ * Found by walking the matrix: under a `sequence`, hovering previewed a whole
+ * bucket (band + every covered mark) and then a *click* selected exactly one
+ * mark — so the preview lied for the gesture most people try first. Three
+ * states disagreed: hover said the block, click said one mark, sweep said the
+ * block.
+ *
+ * The rule is one line and needs no special case: **a click commits the
+ * block.** With no `sequence` the block is the single bin under the pointer,
+ * so a click stays one mark with a `null` span — which is what keeps a click
+ * distinguishable from a sweep (RFC §8). A `sequence` declares that selection
+ * happens in bucket units, and that is what earns the wider commit.
+ */
+describe('a click commits the block it previewed (sequence-snapped)', () => {
+  /** Four 250-unit bars over [0,1000]; a 500-unit sequence buckets them 2 + 2. */
+  const twoPerBucket = () => Sequence.every(500, { anchor: 0 });
+
+  it('under a sequence, a click reports the whole bucket and a span', () => {
+    const seen: {
+      hits: readonly SelectInfo[];
+      span: SpanSelection | null;
+    }[] = [];
+    const { click, pxAt } = mount({
+      children: (
+        <MultiSelector
+          sequence={twoPerBucket()}
+          onSelect={(hits, _m, span) => seen.push({ hits, span })}
+        />
+      ),
+    });
+    // A click inside the FIRST bucket — one bar's ink, not a drag.
+    act(() => click(pxAt(120)));
+
+    expect(seen).toHaveLength(1);
+    // The bucket holds two bars, so the click commits both — not the one hit.
+    expect(seen[0]!.hits.length).toBeGreaterThan(1);
+    // …and reports a span, because the gesture snapped to a bucket.
+    expect(seen[0]!.span).not.toBeNull();
+    expect(seen[0]!.span!.x[0]).toBe(0);
+    expect(seen[0]!.span!.x[1]).toBe(500);
+  });
+
+  it('with NO sequence a click is still one mark with a null span (RFC §8)', () => {
+    const seen: {
+      hits: readonly SelectInfo[];
+      span: SpanSelection | null;
+    }[] = [];
+    const { click, pxAt } = mount({
+      children: (
+        <MultiSelector
+          onSelect={(hits, _m, span) => seen.push({ hits, span })}
+        />
+      ),
+    });
+    act(() => click(pxAt(120)));
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.hits).toHaveLength(1);
+    expect(seen[0]!.span).toBeNull();
+  });
+
+  it('on a STACK with no sequence, a click is the clicked segment — not the bin', () => {
+    // The regression the mark-count guard caused. A stack's bin holds one mark
+    // per group, so "the block covers more than one mark" is true of an
+    // ordinary unsnapped click here — and the click swallowed the whole
+    // column. The widening has to key off the `sequence` *declaration*, which
+    // this chart makes no use of.
+    const stacked = () =>
+      new TimeSeries({
+        name: 's',
+        schema: [
+          { name: 'timeRange', kind: 'timeRange' },
+          { name: 'lo', kind: 'number' },
+          { name: 'hi', kind: 'number' },
+        ] as const,
+        rows: Array.from({ length: 4 }, (_, i) => [
+          [i * 250, (i + 1) * 250],
+          2,
+          3,
+        ]) as [[number, number], number, number][],
+      });
+    const seen: {
+      hits: readonly SelectInfo[];
+      span: SpanSelection | null;
+    }[] = [];
+    const { click, pxAt } = mount({
+      children: (
+        <MultiSelector
+          onSelect={(hits, _m, span) => seen.push({ hits, span })}
+        />
+      ),
+      layers: (
+        <BarChart series={stacked()} columns={['lo', 'hi']} axis="a" id="b" />
+      ),
+    });
+    // POINTER_Y (115) on a 0..12 axis over 120px is value ~0.4 — inside the
+    // BOTTOM segment, so the clicked mark is unambiguously `lo`.
+    act(() => click(pxAt(120)));
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.hits).toHaveLength(1);
+    expect(seen[0]!.hits[0]!.label).toBe('lo');
+    expect(seen[0]!.span).toBeNull();
+  });
+
+  it('a sequence still widens a stacked click — to every mark in the bucket', () => {
+    // The other half: the declaration is what widens, and on a stack a widened
+    // block is (bins × groups). Two bins per bucket × two groups = four.
+    const stacked = () =>
+      new TimeSeries({
+        name: 's',
+        schema: [
+          { name: 'timeRange', kind: 'timeRange' },
+          { name: 'lo', kind: 'number' },
+          { name: 'hi', kind: 'number' },
+        ] as const,
+        rows: Array.from({ length: 4 }, (_, i) => [
+          [i * 250, (i + 1) * 250],
+          2,
+          3,
+        ]) as [[number, number], number, number][],
+      });
+    const seen: {
+      hits: readonly SelectInfo[];
+      span: SpanSelection | null;
+    }[] = [];
+    const { click, pxAt } = mount({
+      children: (
+        <MultiSelector
+          sequence={twoPerBucket()}
+          onSelect={(hits, _m, span) => seen.push({ hits, span })}
+        />
+      ),
+      layers: (
+        <BarChart series={stacked()} columns={['lo', 'hi']} axis="a" id="b" />
+      ),
+    });
+    act(() => click(pxAt(120)));
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.hits).toHaveLength(4);
+    expect(seen[0]!.span).not.toBeNull();
+    expect(seen[0]!.span!.x).toEqual([0, 500]);
   });
 });

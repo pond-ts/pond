@@ -25,7 +25,7 @@ import {
   weekdaySessions,
   withHalfDay,
 } from './tradingAxis.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
+import { defaultTheme } from './theme.js';
 
 /**
  * Trading-time x axis — the discontinuous axis that collapses closed-market
@@ -53,7 +53,6 @@ export const WeekendSkip: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        theme={docsTheme}
       >
         <ChartRow height={260}>
           <YAxis id="p" />
@@ -76,7 +75,6 @@ export const HolidayGap: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        theme={docsTheme}
       >
         <ChartRow height={260}>
           <YAxis id="p" />
@@ -99,7 +97,6 @@ export const HalfDay: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        theme={docsTheme}
       >
         <ChartRow height={260}>
           <YAxis id="p" />
@@ -123,7 +120,6 @@ export const IntradaySessions: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        theme={docsTheme}
       >
         <ChartRow height={260}>
           <YAxis id="p" />
@@ -164,7 +160,6 @@ export const SessionBreaks: Story = {
           width={WIDTH}
           range={rangeOf(s)}
           discontinuities={provider(s)}
-          theme={docsTheme}
         >
           {row(false)}
         </ChartContainer>
@@ -172,7 +167,6 @@ export const SessionBreaks: Story = {
           width={WIDTH}
           range={rangeOf(s)}
           discontinuities={provider(s)}
-          theme={docsTheme}
         >
           {row(true)}
         </ChartContainer>
@@ -198,14 +192,13 @@ export const ContinuousVsTrading: Story = {
     );
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <ChartContainer width={WIDTH} range={rangeOf(s)} theme={docsTheme}>
+        <ChartContainer width={WIDTH} range={rangeOf(s)}>
           {row}
         </ChartContainer>
         <ChartContainer
           width={WIDTH}
           range={rangeOf(s)}
           discontinuities={provider(s)}
-          theme={docsTheme}
         >
           {row}
         </ChartContainer>
@@ -226,7 +219,6 @@ export const DailyMonths: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        theme={docsTheme}
       >
         <ChartRow height={260}>
           <YAxis id="p" />
@@ -252,7 +244,6 @@ export const YearDaily: Story = {
         width={900}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        theme={docsTheme}
       >
         <ChartRow height={260}>
           <YAxis id="p" />
@@ -277,7 +268,6 @@ export const YearDailyNarrow: Story = {
         width={420}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        theme={docsTheme}
       >
         <ChartRow height={260}>
           <YAxis id="p" />
@@ -319,7 +309,6 @@ export const DateStyleDaily: Story = {
           width={WIDTH}
           range={rangeOf(s)}
           discontinuities={provider(s)}
-          theme={docsTheme}
           showAxis={false}
         >
           {row}
@@ -329,7 +318,6 @@ export const DateStyleDaily: Story = {
           width={WIDTH}
           range={rangeOf(s)}
           discontinuities={provider(s)}
-          theme={docsTheme}
           showAxis={false}
         >
           {row}
@@ -365,7 +353,6 @@ export const DateStyleIntraday: Story = {
           width={WIDTH}
           range={rangeOf(s)}
           discontinuities={provider(s)}
-          theme={docsTheme}
           showAxis={false}
         >
           {row}
@@ -375,7 +362,6 @@ export const DateStyleIntraday: Story = {
           width={WIDTH}
           range={rangeOf(s)}
           discontinuities={provider(s)}
-          theme={docsTheme}
           showAxis={false}
         >
           {row}
@@ -564,9 +550,9 @@ function Toggle({
         border: 'none',
         padding: 0,
         cursor: 'pointer',
-        color: docsTheme.axis.label,
+        color: defaultTheme.axis.label,
         fontSize: 12,
-        fontFamily: docsTheme.font.family,
+        fontFamily: defaultTheme.font.family,
       }}
     >
       <span
@@ -629,9 +615,9 @@ function DateStylePanZoomDemo() {
     padding: '3px 10px',
     fontSize: 12,
     borderRadius: 4,
-    border: `1px solid ${docsTheme.axis.grid}`,
+    border: `1px solid ${defaultTheme.axis.grid}`,
     background: active ? '#3b82f6' : 'transparent',
-    color: active ? '#fff' : docsTheme.axis.label,
+    color: active ? '#fff' : defaultTheme.axis.label,
     cursor: 'pointer',
   });
   return (
@@ -642,7 +628,7 @@ function DateStylePanZoomDemo() {
           gap: 16,
           alignItems: 'center',
           flexWrap: 'wrap',
-          fontFamily: docsTheme.font.family,
+          fontFamily: defaultTheme.font.family,
         }}
       >
         <div style={{ display: 'flex', gap: 4 }}>
@@ -670,7 +656,7 @@ function DateStylePanZoomDemo() {
           ))}
         </div>
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <span style={{ fontSize: 12, color: docsTheme.axis.label }}>
+          <span style={{ fontSize: 12, color: defaultTheme.axis.label }}>
             labels
           </span>
           {(['center', 'left'] as const).map((a) => (
@@ -688,7 +674,6 @@ function DateStylePanZoomDemo() {
       <ChartContainer
         width={WIDTH}
         range={range}
-        theme={docsTheme}
         panZoom
         onTimeRangeChange={setRange}
         minDuration={5 * SEC}
@@ -717,7 +702,7 @@ function DateStylePanZoomDemo() {
           display: 'flex',
           gap: 20,
           alignItems: 'center',
-          fontFamily: docsTheme.font.family,
+          fontFamily: defaultTheme.font.family,
         }}
       >
         <Toggle on={grid} onClick={() => setGrid((v) => !v)} label="Grid" />
@@ -759,12 +744,7 @@ export const SpacingProportionalVsUniform: Story = {
     );
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <ChartContainer
-          width={WIDTH}
-          range={rangeOf(s)}
-          calendar={cal}
-          theme={docsTheme}
-        >
+        <ChartContainer width={WIDTH} range={rangeOf(s)} calendar={cal}>
           {row}
         </ChartContainer>
         <ChartContainer
@@ -772,7 +752,6 @@ export const SpacingProportionalVsUniform: Story = {
           range={rangeOf(s)}
           calendar={cal}
           spacing="uniform"
-          theme={docsTheme}
         >
           {row}
         </ChartContainer>

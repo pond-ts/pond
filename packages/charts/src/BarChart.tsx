@@ -577,15 +577,21 @@ export function BarChart<
             ? 'value'
             : 'time';
 
-  // The bars' `[begin, end)` spans as pond `Interval`s — the region cursor's snap
-  // buckets (a region drag snaps bar by bar; a hover highlights the bar under the
-  // pointer). Published only for a **vertical** bar layer on a **continuous**
-  // (time / value) x axis: a horizontal chart puts the value/count on x (snapping
-  // it is meaningless) and a categorical (ordinal-slot) axis is out of the region
-  // cursor's scope. Memoized off the shape alone, so a hover / selection change
-  // (which rebuilds the layer entry) doesn't re-allocate the intervals.
+  // The bars' `[begin, end)` spans as pond `Interval`s — the shared snap
+  // buckets (a region drag snaps bar by bar; a `<MultiSelector>` sweep's band
+  // extends bar by bar). Published for any **vertical** bar layer: a
+  // horizontal chart puts the value/count on x (snapping it is meaningless).
+  // On a **category** axis the buckets are the unit slots `[i, i+1)` — the
+  // region cursor still ignores them (its band gates on a continuous axis),
+  // but the sweep's band needs them to snap to the slots' **outer edges**:
+  // the band scale's `invert` snaps a pixel to the slot *centre*, so a
+  // freeform sweep band ran centre-to-centre while capture and the committed
+  // span snapped outward (RFC A7.6's edge rule) — the band disagreed with
+  // what release would select. Memoized off the shape alone, so a hover /
+  // selection change (which rebuilds the layer entry) doesn't re-allocate
+  // the intervals.
   const binBuckets = useMemo<readonly Interval[] | null>(() => {
-    if (orientation !== 'vertical' || binAxisKind === 'category') return null;
+    if (orientation !== 'vertical') return null;
     const { begin, end, length } =
       shape.kind === 'single' ? shape.bs : shape.ss;
     if (length === 0) return null;
@@ -729,11 +735,38 @@ export function BarChart<
   const groups = shape.kind === 'stacked' ? shape.ss.groups : undefined;
   const stackStyle = useMemo<StackStyle>(() => {
     const base = bar.default;
+    // The theme's **group ramp** — multi-group only, since a ramp exists to
+    // tell groups apart and `G === 1` (every categorical and single-series
+    // chart runs this same path) has nothing to tell apart. Resolution per
+    // group: `colors` → a role named after the group → the ramp → `fill`.
+    const multi = (groups?.length ?? 0) > 1;
+    const ramp = multi ? base.groups : undefined;
+    const rampDim = multi ? base.groupsDimmed : undefined;
+    const rampHover = multi ? base.groupsHover : undefined;
+    const at = (r: readonly string[], i: number) => r[i % r.length]!;
     const fills = (groups ?? []).map(
-      (g) => colors?.[g] ?? (bar[g] ?? base).fill,
+      (g, i) =>
+        colors?.[g] ??
+        bar[g]?.fill ??
+        (ramp !== undefined ? at(ramp, i) : base.fill),
     );
+    // A ramp entry the call site overrode is no longer the ramp's colour, so
+    // its receded counterpart would be wrong — the whole ramp only means
+    // anything when it is the ramp that painted it.
+    const ramped = ramp !== undefined && colors === undefined;
     return {
       fills,
+      ...(ramped ? { groupColored: true } : {}),
+      ...(ramped && rampDim !== undefined
+        ? {
+            dimmedFills: (groups ?? []).map((_g, i) => at(rampDim, i)),
+          }
+        : {}),
+      ...(ramped && rampHover !== undefined
+        ? {
+            hoverFills: (groups ?? []).map((_g, i) => at(rampHover, i)),
+          }
+        : {}),
       opacity: base.opacity,
       outlineWidth: base.outlineWidth,
       // [PND-CATEMPH] Forward the themed emphasis so the category / horizontal
@@ -832,7 +865,7 @@ export function BarChart<
           ...(id === undefined
             ? {}
             : {
-                hitTest: (px, py, xScale, yScale): SelectInfo | null => {
+                hitTest: (px, py, xScale, yScale, mode): SelectInfo | null => {
                   const baseline = resolveBarBaseline(yScale);
                   // No `gapPx` — the hit region is the bar's whole slot (its
                   // interval width, full plot height), not the inset rect the
@@ -848,6 +881,22 @@ export function BarChart<
                   );
                   if (hit === null) return null;
                   const [bi, begin, value] = hit;
+                  // A CLICK narrows the slot to the bar's drawn ink
+                  // vertically (the x keeps the slot, so the gap between
+                  // columns is still not a dead channel). Slots tile the
+                  // whole plot, so without this a click could never resolve
+                  // to null — and that null IS the deselect path (RFC §7's
+                  // empty commit). Hover keeps the full slot: the highlight
+                  // tracks continuously like the readout (#582).
+                  if (mode === 'select') {
+                    const yValue = yScale(value);
+                    const yBase = yScale(baseline);
+                    if (
+                      py < Math.min(yValue, yBase) ||
+                      py > Math.max(yValue, yBase)
+                    )
+                      return null;
+                  }
                   // The bar's stable `mark` (its own axis key) rides the
                   // selection, so the highlight match and a controlled echo key
                   // on the *sample* rather than on the `begin` edge — which on a

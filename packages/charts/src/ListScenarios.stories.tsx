@@ -110,7 +110,7 @@ const trafficTheme: ChartTheme = {
     default: {
       ...defaultTheme.box.default,
       fillOpacity: 0.16,
-      whisker: '#c9d8f3',
+      whisker: '#c8e2f0',
     },
     secondary: {
       ...defaultTheme.box.secondary!,

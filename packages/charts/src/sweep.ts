@@ -126,3 +126,171 @@ export function sweep1D(opts: {
     },
   };
 }
+
+/**
+ * A **2-D** sweep session — the rect gesture, for layers whose marks do not
+ * reduce to a run of columns ([PND-INTERACT2D], RFC A7.6/A7.7).
+ *
+ * The x half is {@link sweep1D}'s exactly: two binary-search probes over the
+ * sorted, non-overlapping key spans. A **point** layer passes `begin === end`
+ * (a position has no span either side of it), which makes the same cut mean
+ * "keys within the window". The y half is the layer's own business — it
+ * arrives as a window and the layer's `materialize` applies it, because a
+ * scatter filters a continuous value while a heat map picks whole row slots.
+ *
+ * **No spatial index, deliberately** (Q14): the x cut is `O(log N)` and the y
+ * filter is a scan of that run, so nothing persists outside a drag. The
+ * delta-gate below is what keeps that affordable — a pointer move that changes
+ * neither the run nor the y window re-materialises nothing, which is the
+ * lesson A8.1 cost 6.2 s/frame to learn on the 1-D preview.
+ */
+export function sweep2D(opts: {
+  readonly id: string;
+  /** Key-axis begins, ascending. Equal to `end` for a point layer. */
+  readonly begin: ArrayLike<number>;
+  /** Key-axis ends, ascending. Equal to `begin` for a point layer. */
+  readonly end: ArrayLike<number>;
+  readonly length: number;
+  /**
+   * Where the committed span's `x` interval comes from. (Not to be confused
+   * with `RowLayer.xExtent`, which is the layer's whole key range.)
+   *
+   * - `'bins'` — the marks **tile** the key axis, so the span snaps outward to
+   *   the covered bins' own edges, exactly as 1-D (a heat map).
+   * - `'drag'` — the marks are isolated positions with no interval either side
+   *   to snap to, so the drag's own half-open window is the span (a scatter).
+   *   Deriving `[first.key, last.key]` from the hits looks tighter and is
+   *   wrong: `SpanSelection`'s `x` test is half-open, so that span excludes
+   *   the very last point the drag captured. The drag window is also what the
+   *   `y` channel reports, so a point layer describes both of its dimensions
+   *   the same way.
+   */
+  readonly spanFrom: 'bins' | 'drag';
+  /** The marks in key-run `[lo, hi)` whose y falls in the **half-open**
+   *  `[y0, y1)` — the same rule `SpanSelection.y` tests, so the capture and
+   *  the committed descriptor agree on the boundary. */
+  materialize(
+    lo: number,
+    hi: number,
+    y0: number,
+    y1: number,
+  ): readonly SelectInfo[];
+  /**
+   * The cut's **snapped rect in axis units** — `x` in key units, `y` in the
+   * layer's own y-axis units — or omitted when the layer's cut is free.
+   *
+   * This is for the BRUSH, not for the commit: a layer that snaps should draw
+   * the rect it is actually going to take, not the raw pointer rectangle,
+   * or the preview promises a different set than the release delivers. A
+   * scatter omits it and keeps the pointer rect, which is honest there
+   * because a free cut takes exactly what the pointer enclosed.
+   */
+  snap?(
+    lo: number,
+    hi: number,
+    y0: number,
+    y1: number,
+  ): {
+    readonly x: readonly [number, number];
+    readonly y: readonly [number, number];
+  } | null;
+  /** The captured set's second-dimension channels — see
+   *  {@link SweepSession.extent2D}. */
+  channels(
+    hits: readonly SelectInfo[],
+    y0: number,
+    y1: number,
+  ): {
+    readonly y?: readonly [number, number];
+    readonly rows?: readonly string[];
+  } | null;
+}): SweepSession {
+  const { id, begin, end, length, spanFrom, snap, materialize, channels } =
+    opts;
+  let curLo = 0;
+  let curHi = 0;
+  // The y window is part of the gate: moving the pointer vertically changes
+  // the covered set without moving the x run at all.
+  let curY0 = 0;
+  let curY1 = 0;
+  // The drag's raw x window, kept for `spanFrom: 'drag'`.
+  let curX0 = 0;
+  let curX1 = 0;
+  let cache: readonly SelectInfo[] = NO_HITS;
+  let dirty = false;
+  return {
+    id,
+    twoD: true,
+    update(x0: number, x1: number, y0 = 0, y1 = 0): boolean {
+      let lo = firstAbove(end, length, x0);
+      let hi = firstAtOrAbove(begin, length, x1);
+      if (hi < lo) hi = lo;
+      // A point layer's `end === begin`, so a mark sitting exactly on `x0` is
+      // excluded by `firstAbove`. Pull it back in: the press pixel is inside
+      // the rect the user is drawing, not outside it.
+      while (lo > 0 && begin[lo - 1] === x0) lo -= 1;
+      curX0 = x0;
+      curX1 = x1;
+      let [ylo, yhi] = y0 <= y1 ? [y0, y1] : [y1, y0];
+      // **Gate on the SNAPPED window.** A snapping layer's covered set only
+      // changes when the pointer crosses a row edge, so comparing raw axis
+      // units re-materialises the whole set on every sub-cell pixel of
+      // vertical movement — the delta gate defeating itself, and precisely
+      // the A8.1 shape this gate exists to prevent. Idempotent for the
+      // layers that snap (a row run snapped twice is the same run), and
+      // inert for the ones that do not.
+      const snapped = snap?.(lo, hi, ylo, yhi) ?? null;
+      if (snapped !== null) {
+        ylo = snapped.y[0];
+        yhi = snapped.y[1];
+      }
+      if (lo === curLo && hi === curHi && ylo === curY0 && yhi === curY1) {
+        return false;
+      }
+      curLo = lo;
+      curHi = hi;
+      curY0 = ylo;
+      curY1 = yhi;
+      dirty = true;
+      return true;
+    },
+    hits(): readonly SelectInfo[] {
+      if (dirty) {
+        cache =
+          curHi > curLo ? materialize(curLo, curHi, curY0, curY1) : NO_HITS;
+        dirty = false;
+      }
+      return cache;
+    },
+    extent(): readonly [number, number] | null {
+      const hs = this.hits();
+      if (hs.length === 0) return null;
+      // A point layer reports the drag's own window — see `spanFrom`.
+      // Snapping to the hits would give `[first.key, last.key]`, which the
+      // half-open test then reads as excluding the last point captured.
+      if (spanFrom === 'drag') return [curX0, curX1];
+      // Snapped outward exactly as 1-D — but over the marks the **y filter
+      // kept**, not the whole x run. A column whose cells all fell outside the
+      // rect must not widen the span, or replaying that span would re-select
+      // marks the drag never covered.
+      //
+      // Every mark's `key` IS its `begin` on both 2-D layers, and `materialize`
+      // walks the run in index order, so the surviving edges are the first and
+      // last hit keys — the right edge found with one `O(log N)` probe rather
+      // than a scan.
+      const lo = hs[0]!.key;
+      const last = hs[hs.length - 1]!.key;
+      const i = firstAtOrAbove(begin, length, last);
+      return [lo, i < length && begin[i] === last ? end[i]! : last];
+    },
+    snappedRect() {
+      return curHi > curLo
+        ? (snap?.(curLo, curHi, curY0, curY1) ?? null)
+        : null;
+    },
+    extent2D() {
+      const hs = this.hits();
+      return hs.length === 0 ? null : channels(hs, curY0, curY1);
+    },
+  };
+}

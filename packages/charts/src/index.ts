@@ -172,7 +172,11 @@ export type {
   BandStyle,
   AreaStyle,
   ScatterStyle,
+  ScatterStates,
   BoxStyle,
+  BoxStates,
+  BoxLadder,
+  HeatStates,
   CandleStyle,
   BarStyle,
 } from './theme.js';
@@ -232,7 +236,7 @@ export type {
 // Span-selection membership (interaction RFC A5.2) — the same predicate the
 // layers run per mark, exported so a consumer editing a mixed `selected` array
 // never re-implements the interval test, plus the entry discriminant.
-export { selectionContains, isSpanSelection } from './span.js';
+export { selectionContains, isSpanSelection, sameMark } from './span.js';
 
 // Draw-stats observability — the `onDrawStats` callback's frame + per-layer line.
 export type { DrawStatsFrame, LayerDrawInfo } from './context.js';

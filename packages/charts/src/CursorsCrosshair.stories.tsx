@@ -11,7 +11,6 @@ import {
   STEP,
   RANGE,
 } from './story-data.fixture.js';
-import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * `cursor="crosshair"` — a single inspection **reticle**: a full-height dashed
@@ -52,11 +51,10 @@ export const FreeReticle: Story = {
       width={W}
       cursor="crosshair"
       crosshairSnap={false}
-      theme={docsTheme}
     >
       <ChartRow height={240}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -72,11 +70,10 @@ export const SingleSeries: Story = {
       width={W}
       cursor="crosshair"
       trackerPosition={PIN}
-      theme={docsTheme}
     >
       <ChartRow height={240}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -93,12 +90,11 @@ export const MultipleSeries: Story = {
       width={W}
       cursor="crosshair"
       trackerPosition={PIN}
-      theme={docsTheme}
     >
       <ChartRow height={240}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
-          <LineChart series={s} column="slow" as="slow" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+          <LineChart series={s} column="slow" as="secondary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>
@@ -115,12 +111,11 @@ export const LeftAxis: Story = {
       width={W}
       cursor="crosshair"
       trackerPosition={PIN}
-      theme={docsTheme}
     >
       <ChartRow height={240}>
         <YAxis id="usd" side="left" format=",.0f" />
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
         </Layers>
       </ChartRow>
     </ChartContainer>
@@ -136,13 +131,12 @@ export const DualAxis: Story = {
       width={W}
       cursor="crosshair"
       trackerPosition={PIN}
-      theme={docsTheme}
     >
       <ChartRow height={240}>
         <YAxis id="L" side="left" format=",.0f" />
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="L" />
-          <LineChart series={s} column="slow" as="slow" axis="R" />
+          <LineChart series={s} column="fast" as="primary" axis="L" />
+          <LineChart series={s} column="slow" as="secondary" axis="R" />
         </Layers>
         <YAxis id="R" side="right" format=",.0f" />
       </ChartRow>
@@ -159,11 +153,10 @@ export const MultiRow: Story = {
       width={W}
       cursor="crosshair"
       trackerPosition={PIN}
-      theme={docsTheme}
     >
       <ChartRow height={150}>
         <Layers>
-          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>

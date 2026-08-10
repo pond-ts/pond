@@ -329,6 +329,36 @@ function barMatchesAny(
 const MARK_INDEX_THRESHOLD = 16;
 
 /**
+ * Stroke a selected mark's outline **inside** its ink rect. Canvas strokes
+ * centre on the path, so a plain `strokeRect(x0, yTop, …)` paints
+ * `lineWidth / 2` *outside* the rect — which, with the default
+ * `outlineWidth: 1.5` against the default `gap: 1`, is enough to bridge the
+ * whole inter-bar gap from both sides: a swept run of selected bars fused
+ * into one unreadable block (you could not count them). Insetting the path by
+ * half the line width keeps every stroked pixel within the bar's own ink, so
+ * adjacent selected marks stay separated by exactly the gap the resting bars
+ * show. A mark too thin to contain its outline (either dimension
+ * `<= lineWidth`) skips the stroke — the highlight fill is already the
+ * signal, and an outline wider than the bar would only smear into the
+ * neighbours this exists to keep distinct.
+ */
+export function strokeSelectedOutline(
+  ctx: CanvasRenderingContext2D,
+  x0: number,
+  x1: number,
+  yTop: number,
+  yBottom: number,
+  lineWidth: number,
+): void {
+  const w = x1 - x0;
+  const h = yBottom - yTop;
+  if (w <= lineWidth || h <= lineWidth) return;
+  const inset = lineWidth / 2;
+  ctx.lineWidth = lineWidth;
+  ctx.strokeRect(x0 + inset, yTop + inset, w - lineWidth, h - lineWidth);
+}
+
+/**
  * {@link barMatchesAny} in set form, for large entry sets — three O(C) sets
  * built once per draw, O(1) per bar, encoding exactly the pairwise rule:
  * an entry and a bar that BOTH carry a mark compare marks; either side
@@ -568,9 +598,8 @@ export function drawBars(
       ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
       drawn += 1;
       if (selected) {
-        ctx.lineWidth = style.outlineWidth;
         ctx.strokeStyle = style.selectedOutline ?? fill;
-        ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+        strokeSelectedOutline(ctx, x0, x1, yTop, yBottom, style.outlineWidth);
       }
       continue;
     }
@@ -608,9 +637,8 @@ export function drawBars(
         // Outline the whole bar (not the last band) in the colour of the band
         // the value reached — the one colour that means something for a bar
         // painted in several.
-        ctx.lineWidth = style.outlineWidth;
         ctx.strokeStyle = style.selectedOutline ?? topFill;
-        ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+        strokeSelectedOutline(ctx, x0, x1, yTop, yBottom, style.outlineWidth);
       }
       continue;
     }
@@ -645,9 +673,8 @@ export function drawBars(
       // fill, so only the half-stroke falling outside the rect reads. A theme
       // that needs the two states clearly apart sets `BarStyle.hover` (#577);
       // the outline is the shape cue, not the whole signal.
-      ctx.lineWidth = style.outlineWidth;
       ctx.strokeStyle = style.selectedOutline ?? style.highlight;
-      ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+      strokeSelectedOutline(ctx, x0, x1, yTop, yBottom, style.outlineWidth);
     }
   }
   ctx.restore();
@@ -858,6 +885,36 @@ export interface StackStyle {
    * dimmed value simply replaces it while it is out of the set.
    */
   readonly dimmed?: string;
+  /**
+   * Per-group {@link dimmed}, parallel to {@link fills} — the resolved
+   * `theme.bar.default.groupsDimmed` ramp. Set only for a **group-ramped**
+   * stack; `undefined` falls back to the flat {@link dimmed}.
+   *
+   * A stack dimmed to one colour stops being a stack — the segment boundaries
+   * vanish and the receded bins read as solid blocks, which is exactly the
+   * structure a selection wants to keep visible for comparison.
+   */
+  readonly dimmedFills?: readonly string[];
+  /**
+   * Per-group {@link hover}, parallel to {@link fills} — the resolved
+   * `theme.bar.default.groupsHover` ramp. Set only for a **group-ramped**
+   * stack; `undefined` falls back to the flat {@link hover}.
+   *
+   * A single hover colour repaints the pointed-at segment in a hue belonging
+   * to another group, so hovering erases the ramp exactly where the reader is
+   * looking — and block-scoped hover erases the whole bin.
+   */
+  readonly hoverFills?: readonly string[];
+  /**
+   * Whether {@link fills} carry **group identity** (a resolved group ramp)
+   * rather than being one repeated role colour.
+   *
+   * When they do, a selected segment keeps its own fill and the outline plus
+   * the receded neighbours are the cue — the same exclusion {@link binFills}
+   * already gets, and for the same reason: replacing a meaning-carrying colour
+   * with the flat `highlight` destroys the thing the selection is *about*.
+   */
+  readonly groupColored?: boolean;
 }
 
 /** The narrowed selection / hover identity a stacked segment matches against:
@@ -1113,7 +1170,8 @@ export function drawStacks(
   // opted-in theme.
   const hasSpans = spans.length > 0;
   const dimming =
-    style.dimmed !== undefined && (selection.length > 0 || hasSpans);
+    (style.dimmed !== undefined || style.dimmedFills !== undefined) &&
+    (selection.length > 0 || hasSpans);
   // The large-set switch (see barMatchesAny): a sweep preview / demoted sweep
   // indexes once, a clicked handful keeps the linear scan.
   const selIndex =
@@ -1223,7 +1281,7 @@ export function drawStacks(
         // orientation — vertical bars band along y, horizontal along x, while
         // the bin span (the other axis) is shared by every band.
         if (dimming && !selected && !isHovered) {
-          ctx.fillStyle = style.dimmed!;
+          ctx.fillStyle = style.dimmedFills?.[g] ?? style.dimmed ?? fill;
           ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
           continue;
         }
@@ -1245,11 +1303,10 @@ export function drawStacks(
           topFill = ladder.colors[bk]!;
         }
         if (selected) {
-          ctx.lineWidth = style.outlineWidth;
           // A themed outline if the theme sets one, else the band the value
           // reached — the one colour that means anything on a banded bar.
           ctx.strokeStyle = style.selectedOutline ?? topFill;
-          ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+          strokeSelectedOutline(ctx, x0, x1, yTop, yBottom, style.outlineWidth);
         }
         continue;
       }
@@ -1261,20 +1318,30 @@ export function drawStacks(
       // Same precedence as `drawBars`: selected > hovered > dimmed > rest.
       const emphasised =
         dimming && !selected && !isHovered
-          ? style.dimmed!
-          : style.binFills === undefined
-            ? selected
-              ? (style.highlight ?? fill)
+          ? (style.dimmedFills?.[g] ?? style.dimmed ?? fill)
+          : style.binFills !== undefined
+            ? fill
+            : selected
+              ? // A group ramp is meaning-carrying colour, so a selected
+                // segment keeps it: the outline and the receded neighbours are
+                // the cue. Same exclusion `binFills` gets, one line up.
+                style.groupColored
+                ? fill
+                : (style.highlight ?? fill)
               : isHovered
-                ? (style.hover ?? style.highlight ?? fill)
-                : fill
-            : fill;
+                ? // Per-group where the ramp supplies one, so hovering
+                  // brightens the segment instead of recolouring it out of
+                  // its group.
+                  (style.hoverFills?.[g] ??
+                  style.hover ??
+                  style.highlight ??
+                  fill)
+                : fill;
       ctx.fillStyle = emphasised;
       ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
       if (selected) {
-        ctx.lineWidth = style.outlineWidth;
         ctx.strokeStyle = style.selectedOutline ?? emphasised;
-        ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+        strokeSelectedOutline(ctx, x0, x1, yTop, yBottom, style.outlineWidth);
       }
     }
   }
