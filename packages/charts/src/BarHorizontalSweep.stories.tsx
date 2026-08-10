@@ -94,5 +94,71 @@ function Demo() {
   );
 }
 
+/**
+ * The funnel / ranking shape ([PND-HCAT]) — the same drag over an **ordinal**
+ * bin axis.
+ *
+ * Worth its own story because it is the combination the transposed cut could
+ * plausibly have got wrong. A *vertical* categorical chart puts its bins on a
+ * d3 **band** scale, whose `invert` snaps a pixel to the slot centre — which
+ * is why that path publishes `binIntervals`, so its band can still snap
+ * outward to slot edges. Transposed, the bins land on y as a plain linear
+ * scale over `[0, N]` and only the *ticks* are categorical, so no correction
+ * is needed and the band lands on slot boundaries by construction.
+ */
+const STAGES = [
+  { label: 'Visited', value: 12400 },
+  { label: 'Signed up', value: 5200 },
+  { label: 'Activated', value: 2100 },
+  { label: 'Subscribed', value: 780 },
+  { label: 'Renewed', value: 410 },
+];
+
+function CategoryDemo() {
+  const [selected, setSelected] = useState<readonly SelectionEntry[]>([]);
+  const readout =
+    selected.length === 0
+      ? '—'
+      : selected
+          .map((e) =>
+            isSpan(e)
+              ? `slots [${e.x[0]} → ${e.x[1]}) — ${STAGES.slice(e.x[0], e.x[1])
+                  .map((c) => c.label)
+                  .join(', ')}`
+              : (e.label ?? String(e.key)),
+          )
+          .join(' | ');
+  return (
+    <div style={{ width: 520, fontFamily: 'system-ui, sans-serif' }}>
+      {/* No `range`: a categorical horizontal chart derives its value extent
+          from the data, and its slot domain `[0, N]` from the layer. */}
+      <ChartContainer width={520} selected={selected}>
+        <MultiSelector
+          onSelect={(hits, _mods, span) =>
+            setSelected(span === null ? hits : [span])
+          }
+        />
+        <ChartRow height={220}>
+          {/* A wider gutter — the category labels are words, not numbers. */}
+          <YAxis id="stage" width={96} />
+          <Layers>
+            <BarChart
+              categories={STAGES}
+              orientation="horizontal"
+              axis="stage"
+              id="funnel"
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+      <div style={{ marginTop: 8, fontSize: 13 }}>selected: {readout}</div>
+    </div>
+  );
+}
+
 /** Drag vertically to sweep whole bins; the band snaps to bin edges. */
 export const SweepVertically = { render: () => <Demo /> };
+
+/** The ordinal bin axis: the band lands on whole slots, and the span reads as
+ *  a slot run. */
+export const SweepCategories = { render: () => <CategoryDemo /> };

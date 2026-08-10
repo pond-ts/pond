@@ -67,7 +67,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   same 1-D cut, the axis moved. The value axis stays inert exactly as it does on
   a vertical chart. Layers declare which axis a sweep cuts through the new
   `RowLayer.sweepAxis: 'x' | 'y'` (default `'x'`, so nothing else changes), and
-  the brush band is drawn transposed and snapped to bin edges. The horizontal
+  the brush band is drawn transposed and snapped to bin edges. Covers a
+  **categorical** bin axis too (the funnel / ranking shape): the span reads as
+  a slot run and the band lands on whole slots. The horizontal
   **heat map** still cannot sweep — it cannot hit-test either — and a y-cutting
   row draws no resting block preview yet.
 

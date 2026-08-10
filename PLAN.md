@@ -307,6 +307,16 @@ milestone. Plan:
   `snappedRect()` made for the rect, and is strictly better than the x path's:
   the band is derived from the cut rather than agreed with it.
 
+  **A categorical bin axis needs no special case, and that is a finding rather
+  than an assumption.** The vertical categorical path puts its bins on a d3
+  **band** scale, whose `invert` snaps a pixel to the slot _centre_ — which is
+  exactly why it publishes `binIntervals`, so its band can still snap outward
+  to slot edges. Transposed, the bins land on y as a plain linear scale over
+  `[0, N]` and only the _ticks_ are categorical (`binCategories`, consumed by
+  `<YAxis>`), so `yScale.invert` is continuous and the extent-derived band
+  lands on slot boundaries by construction. Pinned by tests and a story rather
+  than left as a reading.
+
   **Not in scope, and declared rather than discovered:** the **horizontal heat
   map** is the (y, rect) corner and stays closed — `HeatMap` returns `[]` from
   `hitTest` when horizontal, so it cannot select at all, let alone sweep, and

@@ -256,6 +256,159 @@ describe('the band is drawn transposed, and the x band is suppressed', () => {
   });
 });
 
+/** The funnel shape — categories on y as unit slots `[i, i+1)`. */
+const STAGES = [
+  { label: 'Visited', value: 12400 },
+  { label: 'Signed up', value: 5200 },
+  { label: 'Activated', value: 2100 },
+  { label: 'Subscribed', value: 780 },
+  { label: 'Renewed', value: 410 },
+];
+
+/**
+ * The categorical twin of {@link mount}: a horizontal `<BarChart categories>`,
+ * whose bin axis is **ordinal slots** rather than a continuous key range.
+ *
+ * The y axis is left to auto-fit — a horizontal categorical chart derives its
+ * slot domain `[0, N]` from the layer, and pinning it here would test the
+ * harness rather than the chart.
+ */
+function mountCategorical() {
+  const seen: Array<{
+    hits: readonly SelectInfo[];
+    span: SpanSelection | null;
+  }> = [];
+  const stub = stubCanvasContext();
+  let dom: HTMLElement;
+  try {
+    dom = render(
+      <ChartContainer width={PLOT_W}>
+        <MultiSelector
+          onSelect={(hits, _mods, span) => seen.push({ hits, span })}
+        />
+        <ChartRow height={ROW_H}>
+          <YAxis id="stage" width={96} />
+          <Layers>
+            <BarChart
+              categories={STAGES}
+              orientation="horizontal"
+              axis="stage"
+              id="funnel"
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    ).container;
+  } finally {
+    stub.restore();
+  }
+  const surface = dom.querySelector('canvas')!.parentElement!;
+  const ev = (type: string, x: number, y: number, buttons: number) =>
+    act(() => {
+      surface.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          buttons,
+          pointerId: 1,
+        }),
+      );
+    });
+  return {
+    dom,
+    seen,
+    drag(y0: number, y1: number) {
+      ev('pointerdown', 160, y0, 1);
+      ev('pointermove', 160, y1, 1);
+      ev('pointerup', 160, y1, 0);
+    },
+    hold(y0: number, y1: number) {
+      ev('pointerdown', 160, y0, 1);
+      ev('pointermove', 160, y1, 1);
+    },
+    bandRect: () =>
+      Array.from(dom.querySelectorAll('svg rect'))
+        .map((r) => ({
+          x: Number(r.getAttribute('x')),
+          y: Number(r.getAttribute('y')),
+          h: Number(r.getAttribute('height')),
+        }))
+        .filter((r) => r.x === 0 && r.h > 0 && r.h < ROW_H),
+  };
+}
+
+describe('a CATEGORICAL y axis sweeps the same way', () => {
+  // The one combination the transposed cut could plausibly have got wrong.
+  // On a *vertical* categorical chart the bin axis is a d3 **band** scale,
+  // whose `invert` snaps a pixel to the slot CENTRE — which is why the
+  // vertical path publishes `binIntervals` so its band can still snap
+  // outward to slot edges (see `BarChart`'s `binBuckets`). Transposed, the
+  // bins land on y as a plain **linear** scale over `[0, N]` and only the
+  // TICKS are categorical (`binCategories`, consumed by `<YAxis>`), so
+  // `yScale.invert` is continuous and no such correction is needed. These
+  // pin that reading rather than trusting it.
+
+  it('a vertical drag takes whole slots, and names the categories', () => {
+    const t = mountCategorical();
+    // Slot 0 sits at the BOTTOM (value 0..1 on an ascending axis), so a drag
+    // across the middle of the plot takes the middle of the funnel.
+    t.drag(50, 130);
+    expect(t.seen).toHaveLength(1);
+    const { hits, span } = t.seen[0]!;
+    expect(span).not.toBeNull();
+    expect(span!.id).toBe('funnel');
+    // Slot units, and snapped to whole slots — integers, not the fractional
+    // positions the pointer actually landed on.
+    expect(span!.x[0]).toBe(Math.round(span!.x[0]));
+    expect(span!.x[1]).toBe(Math.round(span!.x[1]));
+    expect(span!.x[1] - span!.x[0]).toBe(hits.length);
+    // Each hit names its category, and the run is CONTIGUOUS in the declared
+    // order — a sweep that cut on the wrong axis, or read slot positions as
+    // values, would still produce labels but not an unbroken run of them.
+    const idx = hits.map((h) => STAGES.findIndex((c) => c.label === h.label));
+    expect(idx.every((i) => i >= 0)).toBe(true);
+    const sorted = [...idx].sort((a, b) => a - b);
+    expect(sorted[sorted.length - 1]! - sorted[0]!).toBe(sorted.length - 1);
+    expect(hits.length).toBeGreaterThan(1);
+    expect(hits.length).toBeLessThan(STAGES.length);
+  });
+
+  it('the band lands on slot EDGES, not on the pointer', () => {
+    // The band is derived from `SweepSession.extent()`, so on a 5-slot axis
+    // over a 200px row every edge must fall on a 40px boundary however
+    // untidily the drag ended.
+    const t = mountCategorical();
+    t.hold(50, 133);
+    const band = t.bandRect();
+    expect(band).toHaveLength(1);
+    const slotPx = ROW_H / STAGES.length;
+    // A multiple of the slot height — not `% slotPx === 0`, which a pixel
+    // that arrives as 39.99999999999999 fails while sitting exactly on the
+    // edge it is supposed to.
+    const slots = (v: number) => v / slotPx;
+    expect(slots(band[0]!.y)).toBeCloseTo(Math.round(slots(band[0]!.y)), 6);
+    expect(slots(band[0]!.h)).toBeCloseTo(Math.round(slots(band[0]!.h)), 6);
+    // …and it is a real span of slots, not a degenerate zero-height one that
+    // would satisfy the two assertions above for free.
+    expect(Math.round(slots(band[0]!.h))).toBeGreaterThan(0);
+  });
+
+  it('a whole-plot drag takes every category', () => {
+    const t = mountCategorical();
+    t.drag(2, ROW_H - 2);
+    expect(t.seen[0]!.hits).toHaveLength(STAGES.length);
+    expect(t.seen[0]!.span!.x).toEqual([0, STAGES.length]);
+  });
+
+  it('a horizontal drag still never sweeps a categorical row either', () => {
+    const t = mountCategorical();
+    t.drag(100, 100);
+    expect(t.seen.filter((s) => s.span !== null)).toHaveLength(0);
+  });
+});
+
 describe('the committed span replays', () => {
   it('feeding the span back as `selected` re-selects the swept bars', () => {
     // The whole point of the span currency: a consumer stashes it and hands
