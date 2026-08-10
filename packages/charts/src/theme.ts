@@ -214,6 +214,18 @@ export interface ChartTheme {
    */
   readonly annotation?: {
     readonly color: string;
+    /**
+     * **EXPERIMENTAL ([PND-ANNSNAP]).** Ink for the vertical rules at a swept
+     * window's edges — a preview of what promoting the sweep to an annotation
+     * would look like. Lighter than {@link color} because these mark a
+     * *candidate* range rather than a committed mark. **Omitted ⇒ a light
+     * orange fallback.**
+     *
+     * Not settled: the rules are drawn canvas-side, under the trace ink,
+     * whereas a real annotation renders in the SVG overlay above it. If the
+     * look is kept, that mismatch has to be resolved rather than papered over.
+     */
+    readonly spanEdge?: string;
     readonly fillOpacity: number;
     readonly depth: readonly [number, number, number];
     /**
@@ -1158,6 +1170,9 @@ export const defaultTheme: ChartTheme = {
   // palette's resting teal `#2A9D8F` — indistinguishable at a glance.)
   annotation: {
     color: '#b45309',
+    // EXPERIMENTAL — a lighter orange for a swept window's edge rules, which
+    // mark a candidate range rather than a committed mark. See `spanEdge`.
+    spanEdge: '#f0b26b',
     fillOpacity: 0.1,
     depth: [1, 0.7, 0.4],
   },

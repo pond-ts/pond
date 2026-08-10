@@ -11,6 +11,7 @@ import {
   drawLine,
   drawPartitioned,
   sliceTrace,
+  strokeSpanEdges,
   traceHitIndex,
   traceStateStyle,
   yExtent,
@@ -424,6 +425,14 @@ export function LineChart<
           // `spanColor` is the one hue a trace's state may take, because inside
           // a single series identity is not in question; with none themed the
           // window just thickens.
+          // EXPERIMENT: annotation-register rules at the window's edges,
+          // underneath the trace ink (drawn first). See `strokeSpanEdges`.
+          strokeSpanEdges(
+            ctx,
+            [xScale(spanX[0]), xScale(spanX[1])],
+            ctx.canvas.height,
+            container.theme.annotation?.spanEdge ?? '#f0b26b',
+          );
           const [outStyle, outAlpha] = traceStateStyle(style, 'dimmed');
           const [inStyle] = traceStateStyle(style, 'selected');
           // The emphasised pass strokes a **slice** of the trace rather than

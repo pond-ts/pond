@@ -716,6 +716,22 @@ milestone. Plan:
      draggable when `onChange` is given, so a click on one is partly spoken
      for.
 
+  **A visual experiment is in the tree, unsettled** (2026-08-10): light-orange
+  vertical rules at a committed window's edges,
+  `theme.annotation.spanEdge` + `strokeSpanEdges`, drawn from each trace layer.
+  It previews what promoting a sweep to an annotation would look like, and it
+  reads well on both a line and an area. **Two things about it are wrong and
+  need deciding before it stays:**
+  - **A real annotation cannot sit there.** Annotations render in the **SVG
+    overlay above** the canvas; these are canvas-side _under_ the trace ink,
+    because "underneath" is what was asked for. So the experiment shows a look
+    the annotation register cannot currently produce. Either the rules move
+    above the ink, or the register gains a canvas-underlay pass.
+  - **Every spanned layer draws its own copy** at the same x. They are opaque so
+    the overdraw is idempotent, but that is a workaround for the rules living on
+    the wrong owner: a window's edges belong to the row, not to each trace in
+    it. Two traces currently stroke the same two lines twice.
+
   **Note on scope:** promoting a sweep to an annotation may not need library
   machinery at all — `onCreate({kind: 'region'})` exists and a consumer holding
   the span can create it in a line, which is the same call made for

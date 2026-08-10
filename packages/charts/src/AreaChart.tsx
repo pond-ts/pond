@@ -8,7 +8,7 @@ import {
 } from './data.js';
 import type { NumericColumn, ValueNumericColumn } from './column-names.js';
 import { areaExtent, areaHitIndex, areaStateStyle, drawArea } from './area.js';
-import { drawPartitioned, type TraceState } from './line.js';
+import { drawPartitioned, strokeSpanEdges, type TraceState } from './line.js';
 import type { AreaStyle } from './theme.js';
 import { sweepSpan } from './sweep.js';
 import type { DecimateOption } from './decimate.js';
@@ -400,6 +400,14 @@ export function AreaChart<
             const [st, alpha] = areaStateStyle(style, traceState);
             return fill(st, alpha)();
           }
+          // EXPERIMENT: annotation-register rules at the window's edges,
+          // underneath the trace ink (drawn first). See `strokeSpanEdges`.
+          strokeSpanEdges(
+            ctx,
+            [xScale(spanX[0]), xScale(spanX[1])],
+            ctx.canvas.height,
+            container.theme.annotation?.spanEdge ?? '#f0b26b',
+          );
           const [outStyle, outAlpha] = areaStateStyle(style, 'dimmed');
           const [inStyle] = areaStateStyle(style, 'selected');
           return drawPartitioned(

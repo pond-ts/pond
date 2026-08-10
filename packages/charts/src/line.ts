@@ -587,3 +587,46 @@ export function sliceTrace(
     length: xs.length,
   };
 }
+
+/**
+ * **EXPERIMENT ([PND-ANNSNAP]).** Vertical rules at a swept window's edges, in
+ * the annotation register — a preview of what "promote this sweep to an
+ * annotation" would look like, drawn *underneath* the trace.
+ *
+ * Two caveats, and the second decides whether this survives:
+ *
+ * - **Opaque on purpose.** Every spanned layer in the row draws its own edges
+ *   at the same x, so a translucent stroke would composite once per trace and
+ *   darken with the number of series. Opaque makes the overdraw idempotent.
+ * - **A real annotation could not sit here.** Annotations render in the SVG
+ *   overlay *above* the canvas, so a promoted span's rules would land on top of
+ *   the traces, not under them. This is canvas-side precisely because "under"
+ *   was asked for — if the look is kept, the honest options are to accept rules
+ *   above the ink, or to give the annotation register a canvas-underlay pass.
+ */
+export function strokeSpanEdges(
+  ctx: CanvasRenderingContext2D,
+  windowPx: readonly [number, number],
+  height: number,
+  color: string,
+  width = 1,
+): void {
+  const prior = ctx.strokeStyle;
+  const priorWidth = ctx.lineWidth;
+  const priorAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  for (const x of windowPx) {
+    // Half-pixel offset so a 1px rule lands on one device column instead of
+    // straddling two and rendering as a 2px smear.
+    const px = Math.round(x) + 0.5;
+    ctx.beginPath();
+    ctx.moveTo(px, 0);
+    ctx.lineTo(px, height);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = prior;
+  ctx.lineWidth = priorWidth;
+  ctx.globalAlpha = priorAlpha;
+}
