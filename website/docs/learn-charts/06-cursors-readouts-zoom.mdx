@@ -110,6 +110,22 @@ selection straight back into `range`. A "reset" button is just
 track has passed a static value to since chapter 1 — controlling it is
 nothing new, just a new source for the value.
 
+## Two drags that look alike
+
+Worth separating now, because they use the same gesture and you will meet both:
+`cursor="region"` drags out a **time range** — a view concern, which is why it
+pairs with `setRange`. A `<MultiSelector>` drag looks identical but selects the
+**data marks** inside a range instead, and hands you those.
+
+Same gesture, same drag band on screen (one renderer, so they can't drift), two
+different questions. This chapter is the range one. The marks one is
+reference-only: [selection & hover](../charts/interaction/selection-and-hover.mdx)
+and [sweeps & multi-select](../charts/interaction/sweeps-and-multi-select.mdx).
+
+One conflict to know about: `regionSelectModifier="shift"` claims the shift
+chord, so if you later want shift to mean something in a selection handler on the
+same chart, decide which one owns it.
+
 ## Recap
 
 Five cursor modes cover reading a hovered value in five different visual

@@ -1,6 +1,6 @@
 ---
 title: Legend
-sidebar_position: 3
+sidebar_position: 4
 ---
 
 import ChartExample from '@site/src/components/ChartExample';
@@ -149,7 +149,11 @@ into a custom legend is a label-keyed join — no extra plumbing.
 ## See also
 
 - [Selection & hover](./selection-and-hover.mdx) — the id-gated contract the
-  legend's interactions ride on.
+  legend's interactions ride on. Note that a legend click is a **programmatic**
+  select, so its `onSelect` fires with `modifiers` **undefined** — that absence
+  is how a handler tells a chip from a pointer gesture.
+- [Sweeps & multi-select](./sweeps-and-multi-select.mdx) — the plural currency,
+  if your legend drives a multi-selection.
 - [Cursors & readouts](./cursors-and-readouts.mdx) — the hover readout whose
   labels the legend rows match.
 - [Theming](../theming.mdx) — the `theme.legend` slot and resolved styles.

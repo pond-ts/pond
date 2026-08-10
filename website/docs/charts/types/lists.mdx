@@ -182,23 +182,25 @@ updates or sibling lists.
 
 ## Shared table props
 
-| Prop                                 | Type                       | Default     | Purpose                                                                                                                                                                   |
-| ------------------------------------ | -------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rows` / `series`                    | `R[]` / `TimeSeries`       | one-of      | The record door (entities) / the series door (one row per event, `label` names the cell).                                                                                 |
-| `columns`                            | see below                  | — (req)     | The glyph lines, top→bottom within each row.                                                                                                                              |
-| `domain`                             | `[number, number]`         | data fit    | Pin the shared scale.                                                                                                                                                     |
-| `sortBy`                             | `string`                   | input order | `values` entry that ranks the list (with several columns, this picks the driver).                                                                                         |
-| `sortDirection`                      | `'asc' \| 'desc'`          | `'desc'`    | Largest on top by default.                                                                                                                                                |
-| `sort`                               | `(a, b) => number`         | —           | Full comparator; overrides `sortBy`.                                                                                                                                      |
-| `before` / `after`                   | `ListCellSpec[]`           | —           | Data cell columns flanking the glyphs (`{ key, align?, render(row) }`).                                                                                                   |
-| `renderExpanded`                     | `(row) => ReactNode`       | —           | Per-row detail; providing it adds the chevron column.                                                                                                                     |
-| `defaultExpanded` / `onExpandToggle` | `string[]` / `(key, open)` | —           | Seed + observe expansion (uncontrolled, keyed on `row.key`).                                                                                                              |
-| `selected` / `onRowClick`            | `string \| null` / `(row)` | —           | Consumer-owned selection (inset accent edge) + row clicks.                                                                                                                |
-| `barHeight`                          | `number`                   | `8` / `10`  | Height per glyph line in px (bar / box).                                                                                                                                  |
-| `divided`                            | `boolean`                  | `true`      | Rules between rows.                                                                                                                                                       |
-| `markers`                            | `ListMarker[]`             | —           | Dotted reference rules through every row + a label strip above (see [Reference markers](#reference-markers)).                                                             |
-| `baseline`                           | `boolean`                  | box / bar   | Vertical rule at the scale origin — **on** for `BoxList` (its lines float at `lower`; the origin is what relates rows), **off** for `BarList` (tracks already show zero). |
-| `theme`                              | `ChartTheme`               | default     | The same one styling channel the canvas charts read.                                                                                                                      |
+| Prop                                 | Type                                           | Default     | Purpose                                                                                                                                                                   |
+| ------------------------------------ | ---------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rows` / `series`                    | `R[]` / `TimeSeries`                           | one-of      | The record door (entities) / the series door (one row per event, `label` names the cell).                                                                                 |
+| `columns`                            | see below                                      | — (req)     | The glyph lines, top→bottom within each row.                                                                                                                              |
+| `domain`                             | `[number, number]`                             | data fit    | Pin the shared scale.                                                                                                                                                     |
+| `sortBy`                             | `string`                                       | input order | `values` entry that ranks the list (with several columns, this picks the driver).                                                                                         |
+| `sortDirection`                      | `'asc' \| 'desc'`                              | `'desc'`    | Largest on top by default.                                                                                                                                                |
+| `sort`                               | `(a, b) => number`                             | —           | Full comparator; overrides `sortBy`.                                                                                                                                      |
+| `before` / `after`                   | `ListCellSpec[]`                               | —           | Data cell columns flanking the glyphs (`{ key, align?, render(row) }`).                                                                                                   |
+| `renderExpanded`                     | `(row) => ReactNode`                           | —           | Per-row detail; providing it adds the chevron column.                                                                                                                     |
+| `defaultExpanded` / `onExpandToggle` | `string[]` / `(key, open)`                     | —           | Seed + observe expansion (uncontrolled, keyed on `row.key`).                                                                                                              |
+| `selected` / `onRowClick`            | `string \| string[] \| null` / `(row)`         | —           | Consumer-owned selection (inset accent edge) + row clicks. See [Row selection](#row-selection).                                                                           |
+| `hovered` / `onHover`                | `string \| string[] \| null` / `(row \| null)` | —           | Controlled hover-highlight + the outbound half — light rows from outside the list, or mirror the list's hover out.                                                        |
+| `onRowSelect`                        | `(rows, modifiers)`                            | —           | The **gesture**: a click, a drag over a run of rows, or a keyboard extend. Plural, with the chord that was held.                                                          |
+| `barHeight`                          | `number`                                       | `8` / `10`  | Height per glyph line in px (bar / box).                                                                                                                                  |
+| `divided`                            | `boolean`                                      | `true`      | Rules between rows.                                                                                                                                                       |
+| `markers`                            | `ListMarker[]`                                 | —           | Dotted reference rules through every row + a label strip above (see [Reference markers](#reference-markers)).                                                             |
+| `baseline`                           | `boolean`                                      | box / bar   | Vertical rule at the scale origin — **on** for `BoxList` (its lines float at `lower`; the origin is what relates rows), **off** for `BarList` (tracks already show zero). |
+| `theme`                              | `ChartTheme`                                   | default     | The same one styling channel the canvas charts read.                                                                                                                      |
 
 ## Column specs
 
@@ -221,6 +223,73 @@ Because box columns name plain `values` entries, **any stat can rank the
 list** — `sortBy="now"` for the current value, `sortBy="p95"` for tail
 latency; there is no stat-picking rule to remember.
 
+## Row selection
+
+The list family is a **second interaction surface**, speaking the same
+vocabulary as the canvas — not a parallel one. `selected` and `hovered` each
+take **one key or a set**, the same union
+[`<ChartContainer hovered>`](../interaction/selection-and-hover.mdx) takes, so a
+list and a chart can be wired to the same state in both directions.
+
+Passing a bare key still means exactly what it looks like; the plural exists
+because a sweep lights several marks at once.
+
+### `onRowSelect` — the gesture
+
+`onRowClick` is one row, one click. `onRowSelect` is the **selection gesture**,
+and it reports plurally with the chord that was held:
+
+```tsx
+<BarList
+  rows={rows}
+  columns={[{ column: 'bps' }]}
+  selected={sel}
+  onRowSelect={(rows, m) =>
+    setSel((cur) => {
+      const keys = rows.map((r) => r.key);
+      return m.additive ? [...new Set([...cur, ...keys])] : keys;
+    })
+  }
+/>
+```
+
+Three gestures produce it:
+
+- **A click** — one row.
+- **A drag** down or up over a run of rows — the row-range gesture, the list's
+  answer to a canvas sweep. ⌘/Ctrl-drag adds to the selection; a plain drag
+  replaces.
+- **The keyboard** — see below.
+
+`modifiers.additive` is the platform add chord already resolved (⌘ on macOS,
+Ctrl elsewhere). **`shiftKey` is reported but carries no built-in meaning in the
+modifier payload** — an ordinal range is a _gesture_ here, not a modifier.
+
+The library applies **no set arithmetic**. It reports what the gesture covered
+and renders what you hand back.
+
+### Keyboard
+
+Interactive rows are focusable and have full parity with the pointer:
+
+| Key                   | Does                                  |
+| --------------------- | ------------------------------------- |
+| **↑** / **↓**         | Move focus to the previous / next row |
+| **Home** / **End**    | Jump to the first / last row          |
+| **Shift** + ↑/↓       | Extend the selection from the anchor  |
+| **Space** / **Enter** | Select the focused row                |
+
+Shift-extend shares its anchor with the drag gesture, so a drag followed by a
+Shift+↓ continues the same run rather than starting a new one.
+
+Two deliberate details: a drag sets `user-select: none` only once the press is
+**armed**, so ordinary label text stays selectable when you aren't dragging; and
+**touch is excluded** from the drag gesture, because claiming it would break
+scrolling the list on a phone.
+
+Broader plot-level keyboard access and screen-reader announcement are tracked as
+`[PND-A11Y]`; the list family is the surface that has it today.
+
 ## Sorting semantics
 
 Numbers order numerically, strings lexicographically; numbers rank before
@@ -230,12 +299,53 @@ Ties keep input order (stable).
 
 ## Theming
 
-No new theme surface: bars read `theme.bar[as]`, boxes `theme.box[as]`, text
-takes the axis inks, the row hover tint reuses the legend border, and the
-selected-row edge draws in the **annotation register** (a selection is a
-user's mark, not data). Swap `defaultTheme` for `estelaTheme` (or a
-`cssVarTheme`) and the list restyles wholesale.
+Bars read `theme.bar[as]`, boxes `theme.box[as]`, and text takes the axis inks,
+so swapping `defaultTheme` for `estelaTheme` (or a `cssVarTheme`) restyles the
+list wholesale.
+
+Row **state** has its own small register, `theme.list`, because a row's state
+channels are a **band** (the row's background) and a **rail** (the inset edge) —
+the glyph itself is already spending colour on data:
+
+| Token          | Is                                                    |
+| -------------- | ----------------------------------------------------- |
+| `hoverBand`    | Transient row background under the pointer            |
+| `hoverRail`    | Transient inset edge — never the selection hue        |
+| `selectedBand` | Committed row background                              |
+| `selectedRail` | Committed inset edge                                  |
+| `markerInk`    | Reference-marker ink, held clear of the selection hue |
+
+The channel rule the whole library follows applies here too: state may only use a
+channel the mark isn't already using for data. Hover and selected are
+distinguished by **hue**, not just intensity, so a lit row and a committed one
+never read as "the same thing, slightly more so".
+
+Two details worth knowing before you theme it:
+
+- **The glyph fills stay per-metric.** A selected bar takes
+  `theme.bar[as].highlight` and a dimmed one `theme.bar[as].dimmed`, so theming
+  your bars gets you a coherent list without theming it twice. **The rail is
+  deliberately not per-metric** — there is one rail per row and a row may carry
+  several metrics, so it can't resolve through `bar[as]` the way a fill can.
+- **`markerInk` is reserved away from the selection hue on purpose.** On a
+  bullet row the target marker sits _inside_ the mark that selection recolours,
+  so a tick in the selection blue is the one collision the language can't absorb:
+  you couldn't tell a target from a selected bar.
+
+`theme.list` is **optional and back-compatible when omitted** — rows fall back to
+the pre-token look (hover band from `legend.border`, selection rail from the
+annotation register) and get **no dimmed state at all**, which is the thing to
+weigh if you're carrying a custom theme forward.
+
+## See also
+
+- [Selection & hover](../interaction/selection-and-hover.mdx) — the canvas half
+  of the same vocabulary (`SelectInfo`, `sameMark`, the modifier payload).
+- [Sweeps & multi-select](../interaction/sweeps-and-multi-select.mdx) — the
+  canvas sweep the row-range gesture mirrors.
+- [Theming](../theming.mdx) — the channel rule, and the `theme.list` register.
 
 Storybook: `Lists/BarList` and `Lists/BoxList` fan out every knob;
+`Lists/Row states` walks the state ladder plus the drag and keyboard gestures;
 `Lists/Scenarios` composes both full tables (traffic by interface, activity
 splits) from real pond pipelines.

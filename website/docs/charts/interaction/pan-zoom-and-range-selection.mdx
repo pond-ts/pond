@@ -1,6 +1,6 @@
 ---
 title: Pan, zoom & range selection
-sidebar_position: 4
+sidebar_position: 5
 ---
 
 import ChartExample from '@site/src/components/ChartExample';
@@ -133,6 +133,11 @@ then ignored so they can't fight the user's pan. To drive the range externally
   the select-to-zoom loop taught end to end.
 - [Cursors & readouts](./cursors-and-readouts.mdx) — the other six cursor
   modes (the readouts, as opposed to `region`'s selection).
+- [Sweeps & multi-select](./sweeps-and-multi-select.mdx) — the _other_ drag
+  that selects. `region` gives you a **time range**; a `<MultiSelector>` sweep
+  gives you the **marks** inside one. Worth reading together, because
+  `regionSelectModifier="shift"` claims the shift chord that a selection
+  handler might otherwise want.
 - Storybook: [`Cursors/Region`](pathname:///storybook/?path=/story/cursors-region--drag-to-select)
   — `DragToSelect`, `Freeform`, `Sessions`, `ValueAxisSelect`, `PanAndSelect`.
 - Storybook: [`Cursors/Scenarios/Pan Zoom`](pathname:///storybook/?path=/story/cursors-scenarios--pan-zoom),
