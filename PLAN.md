@@ -340,13 +340,39 @@ milestone. Plan:
   The wave took the column marks (bar, stack, box, candle) and the two 2-D
   layers (scatter, heat map); these are what is left, and they split into two
   quite different problems:
-  - **`<BoxList>` and `<BarList>`** — the list family. Same currency as the
-    rest (discrete marks with an `id`), so this is conformance rather than
-    design: publish `hitTest` + `beginSweep`, add the matrix columns, walk
-    the fan-out. The open question is what a sweep even means on a list,
-    whose "axis" is a stack of rows rather than a scale — most likely a 1-D
-    cut over the row order, which would make it the first ORDINAL sweep and
-    is worth settling before writing code.
+  - **`<BoxList>` and `<BarList>`** — the list family. **The framing above
+    was wrong, corrected 2026-08-10 on inspection.** It read "same currency
+    as the rest, so this is conformance rather than design: publish
+    `hitTest` + `beginSweep`, add the matrix columns". `hitTest` and
+    `beginSweep` are **`RowLayer` members**, consumed by `Layers.tsx`'s
+    canvas pointer surface — and the list family has no layer to put them
+    on. Both components render an **HTML `<table>`** and are explicitly
+    standalone ("no `<ChartContainer>`; there is no time axis here"): no
+    canvas, no `registerLayer`, no scale to invert a pointer through, no
+    `SweepSession` plumbing reaching them. None of [PND-HSWEEP]'s
+    `sweepAxis: 'y'` work transfers either, for the same reason — it lives
+    in the canvas gesture.
+
+    So this is **design, not conformance**, and it is a second interaction
+    surface rather than a missing column of the first. What a list drag
+    wants to be is the spreadsheet / file-manager idiom — press on row _i_,
+    drag to row _j_, take the run — which is an ordinal cut over row order
+    (PLAN guessed that part right) but implemented against `<tr>` pointer
+    events, not against `sweep1D`. There is no key axis for a `SpanSelection`
+    to describe, and no layer `id` for one to carry.
+
+    **The load-bearing decision is a public type widening, so it is a human
+    gate.** A list's `selected` is `string | null` — _singular_ — while its
+    `hovered` is already `string | readonly string[] | null` (widened when
+    the lists were taught to speak the canvas's hover vocabulary). Any
+    multi-select at all means widening `selected` to match, on both
+    `<BarList>` and `<BoxList>`. Per this file's own release rules that
+    needs owner sign-off before code.
+
+    Worth noting what the asymmetry already tells us: `hovered` went plural
+    precisely _because_ a sweep lights several marks at once. The list was
+    given the receiving half of the gesture and not the committing half.
+
   - **`<LineChart>` and `<AreaChart>`** — a continuous trace has **no marks
     to select**, which is why they have no `id` gate today and why
     `LineChart.hitTest` still sits in `[PND-SELECT]` Phase 2. So "join the
