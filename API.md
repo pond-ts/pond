@@ -373,39 +373,39 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 
 ### Live values, scales & key types
 
-| Export                                     | Purpose                                                                          | Source                                    |
-| ------------------------------------------ | -------------------------------------------------------------------------------- | ----------------------------------------- |
-| `createLiveValue` / `LiveValue`            | Imperative push channel for high-frequency indicator updates (isolated repaint)  | `packages/charts/src/indicators.tsx`      |
-| `scaleTradingTime` / `TradingTimeScale`    | Discontinuous time scale collapsing closed-market gaps                           | `packages/charts/src/tradingTimeScale.ts` |
-| `DiscontinuityProvider`                    | Gap topology consumed by the trading-time scale                                  | `packages/charts/src/tradingTimeScale.ts` |
-| `scaleBand` / `ScaleBand`                  | Ordinal slot scale for the category axis                                         | `packages/charts/src/bandScale.ts`        |
-| `GapMode`                                  | `'none' \| 'empty' \| 'dashed' \| 'step' \| 'fade'` (Line/Area `gaps` prop)      | `packages/charts/src/gaps.ts`             |
-| `DecimateOption`                           | `<LineChart decimate>` — M4 viewport decimation (`bool \| { threshold }`)        | `packages/charts/src/decimate.ts`         |
-| `CursorMode`                               | `'none' \| 'line' \| 'point' \| 'inline' \| 'flag' \| 'crosshair' \| 'region'`   | `packages/charts/src/context.ts`          |
-| `TrackerInfo` / `TrackerSample`            | Hover readout payload (`onTrackerChanged`)                                       | `packages/charts/src/context.ts`          |
-| `AnnotationKind` / `CreateSpec`            | Annotation identity + draw-gesture payload (`onCreate`)                          | `packages/charts/src/context.ts`          |
-| `SelectInfo`                               | Selection/hover payload (`Selector`/`MultiSelector` `onSelect`/`onHover`)        | `packages/charts/src/context.ts`          |
-| `SelectModifiers`                          | Keyboard modifiers on a click, 2nd arg to `onSelect`                             | `packages/charts/src/context.ts`          |
-| `SelectorProps`                            | `<Selector>`'s props — `onSelect?` / `onHover?`                                  | `packages/charts/src/selectors.tsx`       |
-| `MultiSelectorProps`                       | `<MultiSelector>`'s props — `sequence?` / `onSelect?` / `onHover?` (plural)      | `packages/charts/src/selectors.tsx`       |
-| `RangeSpan`                                | `<RangeCursor onDragRelease>` payload — `{ x: [lo, hi], y? }` in axis units      | `packages/charts/src/context.ts`          |
-| `SpanSelection`                            | Range entry for `selected` — one layer's marks over `x`/`y`/`rows` (RFC A5.2)    | `packages/charts/src/context.ts`          |
-| `SelectionEntry`                           | One `selected` array entry: `SelectInfo \| SpanSelection`                        | `packages/charts/src/context.ts`          |
-| `selectionContains`                        | Is a hit in a mixed selection? The same membership predicate the layers run      | `packages/charts/src/span.ts`             |
-| `sameMark`                                 | Are two hits the same mark? Full identity (`id`, `mark`-or-`key`, `label`)       | `packages/charts/src/span.ts`             |
-| `isSpanSelection`                          | Entry discriminant — narrows a `SelectionEntry` to `SpanSelection`               | `packages/charts/src/span.ts`             |
-| `DrawStatsFrame` / `LayerDrawInfo`         | Per-repaint draw-cost + decimation stats (`ChartContainer` `onDrawStats`)        | `packages/charts/src/context.ts`          |
-| `TimeGrain`                                | Coarse time unit for grain-aware formatting                                      | `packages/charts/src/tickLadder.ts`       |
-| `SwatchSpec` / `LegendItemInput`           | Legend swatch vocabulary + explicit-rows input (`<Legend items>`)                | `packages/charts/src/swatch.ts`           |
-| `useChartLegend`                           | Headless legend hook: rows (items grouped by chart row) + `hover`/`select` verbs | `packages/charts/src/useChartLegend.ts`   |
-| `ChartLegend` / `LegendRow` / `LegendItem` | The hook's return shape (`rows` group `items`; items carry `selected`/`hovered`) | `packages/charts/src/useChartLegend.ts`   |
-| `LegendPlacement`                          | `'top-left' \| 'top-right' \| 'bottom-left' \| 'bottom-right'`                   | `packages/charts/src/Legend.tsx`          |
-| `Curve`                                    | Path interpolation: `'linear' \| 'monotone' \| 'natural' \| 'basis' \| 'step'`   | `packages/charts/src/curve.ts`            |
-| `RadiusEncoding` / `ColorEncoding`         | Data-driven scatter size/colour                                                  | `packages/charts/src/encoding.ts`         |
-| `CandleVariant` / `ColorBy`                | OHLC mark shape / colouring strategy                                             | `packages/charts/src/ohlc.ts`             |
-| `AxisFormat` / `CursorFormat`              | Tick and cursor-readout formatting (d3 specifier or fn)                          | `packages/charts/src/format.ts`           |
-| `AxisTransform`                            | Monotonic `to`/`from` pair for derived-unit x-axis relabeling                    | `packages/charts/src/derivedTicks.ts`     |
-| `Orientation`                              | Bar growth direction                                                             | `packages/charts/src/bars.ts`             |
+| Export                                     | Purpose                                                                                               | Source                                    |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `createLiveValue` / `LiveValue`            | Imperative push channel for high-frequency indicator updates (isolated repaint)                       | `packages/charts/src/indicators.tsx`      |
+| `scaleTradingTime` / `TradingTimeScale`    | Discontinuous time scale collapsing closed-market gaps                                                | `packages/charts/src/tradingTimeScale.ts` |
+| `DiscontinuityProvider`                    | Gap topology consumed by the trading-time scale                                                       | `packages/charts/src/tradingTimeScale.ts` |
+| `scaleBand` / `ScaleBand`                  | Ordinal slot scale for the category axis                                                              | `packages/charts/src/bandScale.ts`        |
+| `GapMode`                                  | `'none' \| 'empty' \| 'dashed' \| 'step' \| 'fade'` (Line/Area `gaps` prop)                           | `packages/charts/src/gaps.ts`             |
+| `DecimateOption`                           | `<LineChart decimate>` — M4 viewport decimation (`bool \| { threshold }`)                             | `packages/charts/src/decimate.ts`         |
+| `CursorMode`                               | `'none' \| 'line' \| 'point' \| 'inline' \| 'flag' \| 'crosshair' \| 'region'`                        | `packages/charts/src/context.ts`          |
+| `TrackerInfo` / `TrackerSample`            | Hover readout payload (`onTrackerChanged`)                                                            | `packages/charts/src/context.ts`          |
+| `AnnotationKind` / `CreateSpec`            | Annotation identity + draw-gesture payload (`onCreate`)                                               | `packages/charts/src/context.ts`          |
+| `SelectInfo`                               | Selection/hover payload (`Selector`/`MultiSelector` `onSelect`/`onHover`)                             | `packages/charts/src/context.ts`          |
+| `SelectModifiers`                          | Keyboard modifiers on a click, 2nd arg to `onSelect`                                                  | `packages/charts/src/context.ts`          |
+| `SelectorProps`                            | `<Selector>`'s props — `enabled?` / `selected?` / `hovered?` / `onSelect?` / `onHover?` / `children?` | `packages/charts/src/selectors.tsx`       |
+| `MultiSelectorProps`                       | `<MultiSelector>`'s props — the above plus `sequence?`, with plural callbacks                         | `packages/charts/src/selectors.tsx`       |
+| `RangeSpan`                                | `<RangeCursor onDragRelease>` payload — `{ x: [lo, hi], y? }` in axis units                           | `packages/charts/src/context.ts`          |
+| `SpanSelection`                            | Range entry for `selected` — one layer's marks over `x`/`y`/`rows` (RFC A5.2)                         | `packages/charts/src/context.ts`          |
+| `SelectionEntry`                           | One `selected` array entry: `SelectInfo \| SpanSelection`                                             | `packages/charts/src/context.ts`          |
+| `selectionContains`                        | Is a hit in a mixed selection? The same membership predicate the layers run                           | `packages/charts/src/span.ts`             |
+| `sameMark`                                 | Are two hits the same mark? Full identity (`id`, `mark`-or-`key`, `label`)                            | `packages/charts/src/span.ts`             |
+| `isSpanSelection`                          | Entry discriminant — narrows a `SelectionEntry` to `SpanSelection`                                    | `packages/charts/src/span.ts`             |
+| `DrawStatsFrame` / `LayerDrawInfo`         | Per-repaint draw-cost + decimation stats (`ChartContainer` `onDrawStats`)                             | `packages/charts/src/context.ts`          |
+| `TimeGrain`                                | Coarse time unit for grain-aware formatting                                                           | `packages/charts/src/tickLadder.ts`       |
+| `SwatchSpec` / `LegendItemInput`           | Legend swatch vocabulary + explicit-rows input (`<Legend items>`)                                     | `packages/charts/src/swatch.ts`           |
+| `useChartLegend`                           | Headless legend hook: rows (items grouped by chart row) + `hover`/`select` verbs                      | `packages/charts/src/useChartLegend.ts`   |
+| `ChartLegend` / `LegendRow` / `LegendItem` | The hook's return shape (`rows` group `items`; items carry `selected`/`hovered`)                      | `packages/charts/src/useChartLegend.ts`   |
+| `LegendPlacement`                          | `'top-left' \| 'top-right' \| 'bottom-left' \| 'bottom-right'`                                        | `packages/charts/src/Legend.tsx`          |
+| `Curve`                                    | Path interpolation: `'linear' \| 'monotone' \| 'natural' \| 'basis' \| 'step'`                        | `packages/charts/src/curve.ts`            |
+| `RadiusEncoding` / `ColorEncoding`         | Data-driven scatter size/colour                                                                       | `packages/charts/src/encoding.ts`         |
+| `CandleVariant` / `ColorBy`                | OHLC mark shape / colouring strategy                                                                  | `packages/charts/src/ohlc.ts`             |
+| `AxisFormat` / `CursorFormat`              | Tick and cursor-readout formatting (d3 specifier or fn)                                               | `packages/charts/src/format.ts`           |
+| `AxisTransform`                            | Monotonic `to`/`from` pair for derived-unit x-axis relabeling                                         | `packages/charts/src/derivedTicks.ts`     |
+| `Orientation`                              | Bar growth direction                                                                                  | `packages/charts/src/bars.ts`             |
 
 ---
 

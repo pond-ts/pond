@@ -1206,14 +1206,14 @@ export interface SelectorEntry {
   /** Whether `selected` was explicitly passed to this mount — distinguishes
    *  "controlled with nothing selected" (`null`) from "not the state owner"
    *  (`undefined`), the same three-state shape `selected` itself needs. */
-  readonly hasSelected: boolean;
+  readonly declaresSelected: boolean;
   /** `<Selector selected>` / `<MultiSelector selected>` (A10.3) — meaningful
-   *  only when {@link hasSelected} is true. */
+   *  only when {@link declaresSelected} is true. */
   readonly selected?: SelectInfo | readonly SelectionEntry[] | null | undefined;
-  /** As {@link hasSelected}, for `hovered`. */
-  readonly hasHovered: boolean;
+  /** As {@link declaresSelected}, for `hovered`. */
+  readonly declaresHovered: boolean;
   /** `<Selector hovered>` / `<MultiSelector hovered>` (A10.3) — meaningful
-   *  only when {@link hasHovered} is true. */
+   *  only when {@link declaresHovered} is true. */
   readonly hovered?: SelectInfo | readonly SelectInfo[] | null | undefined;
 }
 

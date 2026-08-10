@@ -329,3 +329,104 @@ describe('the §7.1 dev warning (A2.6)', () => {
     warn.mockRestore();
   });
 });
+
+/**
+ * Controlled state now resolves from the **selector registry** rather than a
+ * container prop (A10.3), which is a new resolution path and was shipped with
+ * no coverage of its own (reviewer finding on #638). These pin the three
+ * things that path decides.
+ */
+describe('resolving the controlled-state owner (A10.3)', () => {
+  const mk = (label: string, value: number): SelectInfo => ({
+    id: 'cap',
+    key: 0,
+    value,
+    color: '#000',
+    label,
+    mark: label,
+  });
+
+  it('a `gestureEnabled: false` selector still owns the state', () => {
+    // The whole point of A10.2: the resolvers deliberately do NOT filter on
+    // `gestureEnabled`, while `effectiveSelectorEntries` does. If that split
+    // ever collapses, `enabled={false} selected={…}` silently stops working.
+    const { frame } = mount(
+      {},
+      <Selector enabled={false} selected={mk('alpha', 3)} />,
+    );
+    expect(frame().selected).toHaveLength(1);
+    expect(frame().selected[0]!.mark).toBe('alpha');
+  });
+
+  it('a selector that declares nothing leaves the chart uncontrolled', () => {
+    // `declaresSelected` is about the PROP being passed, not about the value
+    // being non-null — a bare `<Selector />` must not read as "controlled with
+    // nothing selected", or a click could never light anything.
+    const { frame, click } = mount({}, <Selector />);
+    click();
+    expect(frame().selected).toHaveLength(1);
+  });
+
+  it('distinguishes `selected={null}` from an absent `selected`', () => {
+    // The other side of the same three-state shape: an explicit `null` IS
+    // controlled, and pins the selection empty against a click.
+    const { frame, click } = mount({}, <Selector selected={null} />);
+    click();
+    expect(frame().selected).toEqual([]);
+  });
+
+  it('first registered wins when two selectors declare `selected`, and warns', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { frame } = mount(
+        {},
+        <>
+          <Selector enabled={false} selected={mk('first', 1)} />
+          <Selector enabled={false} selected={mk('second', 2)} />
+        </>,
+      );
+      expect(frame().selected[0]!.mark).toBe('first');
+      const ambiguous = warn.mock.calls.filter((c) =>
+        /more than one mounted <Selector>/.test(String(c[0])),
+      );
+      expect(ambiguous).toHaveLength(1);
+      expect(String(ambiguous[0]![0])).toMatch(/`selected`/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does not warn when only one selector declares `selected`', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      mount(
+        {},
+        <>
+          <Selector selected={mk('alpha', 3)} />
+          <Selector />
+        </>,
+      );
+      expect(
+        warn.mock.calls.filter((c) =>
+          /more than one mounted <Selector>/.test(String(c[0])),
+        ),
+      ).toHaveLength(0);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('`hovered` resolves independently of `selected`', () => {
+    // Two selectors, one owning each channel — nothing couples them, so this
+    // must work rather than one silently winning both.
+    const { frame } = mount(
+      {},
+      <>
+        <Selector enabled={false} selected={mk('alpha', 3)} />
+        <Selector enabled={false} hovered={mk('beta', 2)} />
+      </>,
+    );
+    expect(frame().selected[0]!.mark).toBe('alpha');
+    expect(frame().hovered[0]!.mark).toBe('beta');
+  });
+});

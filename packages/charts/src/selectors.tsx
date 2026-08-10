@@ -70,9 +70,9 @@ interface SelectorMountOptions {
   readonly multi?: boolean;
   /** `<MultiSelector sequence>` — the sweep's bucket snap. */
   readonly sequence?: Sequence | BoundedSequence | undefined;
-  readonly hasSelected: boolean;
+  readonly declaresSelected: boolean;
   readonly selected?: SelectInfo | readonly SelectionEntry[] | null | undefined;
-  readonly hasHovered: boolean;
+  readonly declaresHovered: boolean;
   readonly hovered?: SelectInfo | readonly SelectInfo[] | null | undefined;
 }
 
@@ -92,9 +92,9 @@ function useSelectorMount(opts: SelectorMountOptions): void {
     gestureEnabled,
     multi = false,
     sequence,
-    hasSelected,
+    declaresSelected,
     selected,
-    hasHovered,
+    declaresHovered,
     hovered,
   } = opts;
   const container = useContext(ContainerContext);
@@ -145,9 +145,9 @@ function useSelectorMount(opts: SelectorMountOptions): void {
       sequence: gestureEnabled ? sequence : undefined,
       rowKey,
       gestureEnabled,
-      hasSelected,
+      declaresSelected,
       selected,
-      hasHovered,
+      declaresHovered,
       hovered,
     }),
     [
@@ -159,14 +159,21 @@ function useSelectorMount(opts: SelectorMountOptions): void {
       multi,
       sequence,
       rowKey,
-      hasSelected,
+      declaresSelected,
       selected,
-      hasHovered,
+      declaresHovered,
       hovered,
     ],
   );
   const { registerSelector, unregisterSelector } = container;
-  useEffect(() => {
+  // **`useLayoutEffect`, not `useEffect`** — this registration is the path
+  // controlled `selected` / `hovered` now travel (A10.3), and a passive effect
+  // would make them a commit late: the first paint after a `selected` change
+  // would show the *previous* selection, and a mount with `selected` already
+  // set would flash unselected before lighting up. The old container props were
+  // render-synchronous, so anything slower here is a visible regression rather
+  // than a micro-optimisation. (Reviewer finding on #638.)
+  useLayoutEffect(() => {
     registerSelector(key, entry);
   }, [registerSelector, key, entry]);
   useEffect(() => () => unregisterSelector(key), [unregisterSelector, key]);
@@ -235,9 +242,23 @@ export interface SelectorProps {
   onSelect?: (hit: SelectInfo | null, modifiers?: SelectModifiers) => void;
   /**
    * What it applies to (interaction RFC A10.1): every `<ChartRow>` when
-   * mounted as a direct child of `<ChartContainer>`, or just the row it's
-   * nested inside when mounted there instead. Optional — `<Selector />` with
-   * no children keeps working exactly as it always has.
+   * mounted as a direct child of `<ChartContainer>`, or just one row when
+   * mounted inside that `<ChartRow>`. Optional — `<Selector />` with no
+   * children keeps working exactly as it always has.
+   *
+   * **Row-scoped, wrap the row's `<Layers>` — not its axes.** `<ChartRow>`
+   * places axes into gutters by matching its *own* children against `<YAxis>`,
+   * so an axis nested inside this component is invisible to that sort and
+   * renders in the plot column instead. Dev warns if you do.
+   *
+   * ```tsx
+   * <ChartRow height={180}>
+   *   <YAxis id="v" />                  // stays a direct child of the row
+   *   <Selector selected={sel} onSelect={setSel}>
+   *     <Layers>…</Layers>
+   *   </Selector>
+   * </ChartRow>
+   * ```
    */
   children?: ReactNode;
 }
@@ -245,8 +266,9 @@ export interface SelectorProps {
 /**
  * Mount it to make the plot **click-selectable** (RFC §7.1) and to hold the
  * selection state that produces — wrap every `<ChartRow>` as a direct child of
- * `<ChartContainer>`, or wrap one row's contents to scope both the gesture and
- * the state to that row (interaction RFC A10.1).
+ * `<ChartContainer>`, or wrap one row's **`<Layers>`** to scope both the
+ * gesture and the state to that row (interaction RFC A10.1; see
+ * {@link SelectorProps.children} for why the axes stay outside).
  *
  * ```tsx
  * <ChartContainer>
@@ -277,9 +299,9 @@ export function Selector({
   useSelectorMount({
     cb: { onHover, onSelect },
     gestureEnabled: enabled,
-    hasSelected: selected !== undefined,
+    declaresSelected: selected !== undefined,
     selected,
-    hasHovered: hovered !== undefined,
+    declaresHovered: hovered !== undefined,
     hovered,
   });
   return <>{children}</>;
@@ -429,9 +451,9 @@ export function MultiSelector({
     gestureEnabled: enabled,
     multi: true,
     sequence,
-    hasSelected: selected !== undefined,
+    declaresSelected: selected !== undefined,
     selected,
-    hasHovered: hovered !== undefined,
+    declaresHovered: hovered !== undefined,
     hovered,
   });
   return <>{children}</>;
@@ -491,7 +513,7 @@ export function resolveControlledSelected(
 } {
   const owner = pickControlledOwner(
     all,
-    (e) => e.hasSelected,
+    (e) => e.declaresSelected,
     warned,
     'selected',
   );
@@ -510,7 +532,7 @@ export function resolveControlledHovered(
 } {
   const owner = pickControlledOwner(
     all,
-    (e) => e.hasHovered,
+    (e) => e.declaresHovered,
     warned,
     'hovered',
   );

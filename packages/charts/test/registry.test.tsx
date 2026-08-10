@@ -7,6 +7,7 @@ import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { LineChart } from '../src/LineChart.js';
 import { BoxPlot } from '../src/BoxPlot.js';
+import { Selector } from '../src/selectors.js';
 import { YAxis } from '../src/YAxis.js';
 import { RowContext } from '../src/context.js';
 
@@ -534,5 +535,71 @@ describe('box cursor — consolidated flag (all values, one chip)', () => {
       container.querySelectorAll('svg line').length,
     ).toBeGreaterThanOrEqual(1);
     expect(container.querySelectorAll('svg circle').length).toBe(0);
+  });
+});
+
+/**
+ * `<Selector>` became a legitimate `<ChartRow>` child when it gained `children`
+ * (RFC A10.1) — and immediately became a new way to trip the same trap the
+ * fragment guard exists for: `<ChartRow>` places axes by matching
+ * `child.type === YAxis`, so an axis nested inside ANY wrapper is invisible to
+ * that sort and lands in the plot column. The fragment warning cannot catch it
+ * (a selector is a real element), and the failure is silent. Reviewer finding
+ * on #638.
+ */
+describe('a <YAxis> nested inside a row-child wrapper', () => {
+  const wrapped = (
+    <ChartContainer range={[0, 3]} width={400}>
+      <ChartRow height={100}>
+        <Selector>
+          <YAxis id="a" label="left-axis" min={0} max={10} />
+          <Layers>
+            <LineChart series={mk([1, 2, 3])} column="v" axis="a" />
+          </Layers>
+        </Selector>
+      </ChartRow>
+    </ChartContainer>
+  );
+
+  const direct = (
+    <ChartContainer range={[0, 3]} width={400}>
+      <ChartRow height={100}>
+        <YAxis id="a" label="left-axis" min={0} max={10} />
+        <Selector>
+          <Layers>
+            <LineChart series={mk([1, 2, 3])} column="v" axis="a" />
+          </Layers>
+        </Selector>
+      </ChartRow>
+    </ChartContainer>
+  );
+
+  it('warns, naming the gutter consequence', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      render(wrapped);
+      const hits = warn.mock.calls
+        .map((c) => String(c[0]))
+        .filter((m) => m.includes('nested inside another element'));
+      expect(hits).toHaveLength(1);
+      expect(hits[0]).toContain('gutter');
+      expect(hits[0]).toContain('<Layers>');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('says nothing when the selector wraps only <Layers> — the correct shape', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      render(direct);
+      expect(
+        warn.mock.calls.filter((c) =>
+          String(c[0]).includes('nested inside another element'),
+        ),
+      ).toHaveLength(0);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

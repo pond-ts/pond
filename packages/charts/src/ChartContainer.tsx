@@ -1140,7 +1140,15 @@ export function ChartContainer({
   // silent no-op click without this nudge. Fires once per wired-but-empty
   // transition (guarded by a ref); child layers register before this parent
   // effect runs, so the set is settled here.
-  const selectionWired = controlledSelection || selectors.length > 0;
+  // "Wired" means a gesture is armed, or state is being driven. A selector
+  // whose gesture is off AND which declares no state is wired to nothing — it
+  // would be a strange thing to mount, but accusing it of a missing `id` is a
+  // false positive, so it doesn't count (reviewer finding on #638).
+  const selectionWired =
+    controlledSelection ||
+    selectors.some(
+      (e) => e.gestureEnabled || e.declaresSelected || e.declaresHovered,
+    );
   const warnedNoSelectableRef = useRef(false);
   useEffect(() => {
     if (selectionWired && selectableRef.current.size === 0) {
