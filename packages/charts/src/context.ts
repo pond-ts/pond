@@ -1024,9 +1024,9 @@ export interface SweepGesture {
   commit(
     hits: readonly SelectInfo[],
     modifiers: SelectModifiers,
-    span: SpanSelection | null,
-    /** Every span the gesture produced — see `<MultiSelector onSelect>`'s
-     *  fourth argument. A strict superset of `span`. */
+    /** Every span the gesture produced, **topmost first** — see
+     *  `<MultiSelector onSelect>`. Empty for a click, or for a sweep that
+     *  covered nothing. */
     spans: readonly SpanSelection[],
   ): void;
 }
@@ -1186,7 +1186,6 @@ export interface SelectorEntry {
     | ((
         hits: readonly SelectInfo[],
         modifiers: SelectModifiers | undefined,
-        span: SpanSelection | null,
         spans: readonly SpanSelection[],
       ) => void)
     | undefined;

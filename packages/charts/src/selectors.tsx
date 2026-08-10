@@ -34,7 +34,7 @@ import { useSlotKey } from './use-slot-key.js';
 
 /** The reporting callbacks, held in a ref so a consumer's inline arrow doesn't
  *  re-register the entry on every render. The plural pair is `<MultiSelector>`'s
- *  (RFC §8 / A5.2); the singular pair is `<Selector>`'s and the shim's. */
+ *  (RFC §8 / A5.2); the singular pair is `<Selector>`'s and the legacy props'. */
 interface SelectorCallbacks {
   readonly onHover: ((hit: SelectInfo | null) => void) | undefined;
   readonly onSelect:
@@ -45,7 +45,6 @@ interface SelectorCallbacks {
     | ((
         hits: readonly SelectInfo[],
         modifiers: SelectModifiers | undefined,
-        span: SpanSelection | null,
         spans: readonly SpanSelection[],
       ) => void)
     | undefined;
@@ -64,7 +63,7 @@ interface SelectorCallbacks {
 function useSelectorMount(
   cb: SelectorCallbacks,
   legacy: boolean,
-  /** `false` registers nothing — the shim's "neither legacy prop is set" case,
+  /** `false` registers nothing — the legacy props' "neither legacy prop is set" case,
    *  which is what makes "no selector mounted" detectable at all. */
   enabled: boolean,
   /** A `<MultiSelector>` mount — arms the sweep drag alongside the click. */
@@ -112,8 +111,8 @@ function useSelectorMount(
               ? (hits) => cbRef.current.onHoverMany?.(hits)
               : undefined,
             onSelectMany: hasSelectMany
-              ? (hits, modifiers, span, spans) =>
-                  cbRef.current.onSelectMany?.(hits, modifiers, span, spans)
+              ? (hits, modifiers, spans) =>
+                  cbRef.current.onSelectMany?.(hits, modifiers, spans)
               : undefined,
             sequence,
             rowKey,
@@ -243,7 +242,16 @@ export interface MultiSelectorProps {
    *   arithmetic, no interval math.
    * - **A click** (no movement past the drag slop) is `<Selector>`'s gesture
    *   in this currency: one hit (or none — the deselect path), the modifiers,
-   *   and `span: null`. Clicks produce marks; only sweeps produce a span.
+   *   and an **empty** `spans`. Clicks produce marks; only sweeps produce
+   *   spans.
+   *
+   * **`spans` is plural because one sweep can commit several.** A trace sweep
+   * produces one span per trace ([PND-TRACESEL]): every trace shares the swept
+   * x window, so singling one out by z-order would be arbitrary to the reader.
+   * Mark layers keep topmost-wins, so there it holds exactly one. **Topmost
+   * layer first**, and compare spans by `id` rather than identity — each
+   * span-only layer clamps the window to *its own* key range, so two traces of
+   * different extents report different `x` for one drag.
    *
    * `modifiers` is absent for a **programmatic** select (a `<Legend>` chip),
    * as on `<Selector onSelect>`. **The library reports; you decide** — pond
@@ -252,25 +260,6 @@ export interface MultiSelectorProps {
   onSelect?: (
     hits: readonly SelectInfo[],
     modifiers: SelectModifiers | undefined,
-    span: SpanSelection | null,
-    /**
-     * **Every span the gesture produced**, topmost layer first — a superset of
-     * `span`, whose layer is `spans[0]`'s.
-     *
-     * Not quite `span === spans[0]`: each span-only layer clamps the window to
-     * **its own** key range, so two traces of different extents report
-     * different `x` for the same drag. Compare by `id`, not by identity.
-     *
-     * One sweep can commit several spans, because one row can hold several
-     * layers whose windows are equally the answer. A **trace** sweep does
-     * ([PND-TRACESEL]): every trace shares the swept x window, so singling one
-     * out by z-order would be arbitrary to the reader. Mark layers keep
-     * topmost-wins, so there this is `[span]`.
-     *
-     * `span` exists only for compatibility — it predates plural spans and is
-     * scheduled to collapse into this argument when the deprecation shims come
-     * out next minor. **Read `spans`.**
-     */
     spans: readonly SpanSelection[],
   ) => void;
 }
@@ -281,7 +270,7 @@ export interface MultiSelectorProps {
  * a drag past the slop **sweeps** — the band extends (bucket by bucket with a
  * {@link MultiSelectorProps.sequence}, freeform without), every covered mark
  * lights through the plural `hovered` as the drag moves, and release commits
- * `(hits, modifiers, span)` once. The gesture rides the shared brush
+ * `(hits, modifiers, spans)` once. The gesture rides the shared brush
  * recognizer (`brush.tsx`) and draws the same band `<RangeCursor>` does —
  * identical pixels, different currency (§8.1): the range cursor releases an
  * extent, this releases **marks** (which is what folds the category axis in —
@@ -292,7 +281,7 @@ export interface MultiSelectorProps {
  * <ChartContainer selected={sel}>
  *   <MultiSelector
  *     sequence={daily}
- *     onSelect={(hits, mods, span) => …}
+ *     onSelect={(hits, mods, spans) => …}
  *   />
  *   <ChartRow>…</ChartRow>
  * </ChartContainer>

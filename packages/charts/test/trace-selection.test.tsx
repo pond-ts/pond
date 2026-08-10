@@ -5,6 +5,7 @@ import { TimeSeries } from 'pond-ts';
 import { ChartContainer } from '../src/ChartContainer.js';
 import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
+import { BarChart } from '../src/BarChart.js';
 import { LineChart } from '../src/LineChart.js';
 import { AreaChart } from '../src/AreaChart.js';
 import { YAxis } from '../src/YAxis.js';
@@ -51,6 +52,20 @@ const line = () =>
       number,
     ][],
   });
+/** Five bars, so the mark-layer half of the contract can be asserted too. */
+const bars = () =>
+  new TimeSeries({
+    name: 'x',
+    schema: [
+      { name: 'timeRange', kind: 'timeRange' },
+      { name: 'v', kind: 'number' },
+    ] as const,
+    rows: Array.from({ length: 5 }, (_, i) => [[T(i), T(i + 1)], i + 1]) as [
+      [number, number],
+      number,
+    ][],
+  });
+
 // **There is no gappy fixture here on purpose.** A `TimeSeries` cannot hold a
 // gap in a number column — NaN, `null` and `undefined` are all rejected by
 // validation — so a gap only ever reaches a chart as NaN in the Float64Array
@@ -304,7 +319,9 @@ function mount(node: React.ReactNode) {
     dom = render(
       <ChartContainer range={[0, 4000]} width={320}>
         <MultiSelector
-          onSelect={(hits, _m, span, spans) => seen.push({ hits, span, spans })}
+          onSelect={(hits, _m, spans) =>
+            seen.push({ hits, span: spans[0] ?? null, spans })
+          }
         />
         <ChartRow height={120}>
           <YAxis id="a" min={0} max={6} />
@@ -420,15 +437,30 @@ describe('a sweep covers EVERY trace in the row', () => {
     expect(spans.map((s) => s.id).sort()).toEqual(['cpu', 'mem']);
   });
 
-  it('`spans[0]` is the same layer `span` reports', () => {
-    // The documented relationship. `beginTopmostSweep` scans descending and
-    // `beginSpanOnlySweeps` used to scan ascending, so on a two-trace row the
-    // two disagreed about which layer they meant.
+  it('`spans[0]` is the TOPMOST layer, not the bottom-most', () => {
+    // The ordering guarantee, asserted against the declaration order rather
+    // than against the harness. `beginTopmostSweep` scans descending and
+    // `beginSpanOnlySweeps` once ascended, so the two disagreed about which
+    // layer they meant — and comparing `spans[0].id` to the recorder's own
+    // `span` field cannot catch that, because the harness *derives* that field
+    // from `spans[0]`. It was tautological; a reviewer caught it.
+    //
+    // `mem` is declared second, so it is topmost in the z-stack.
     const t = mount(two);
     t.sweep(40, 240);
-    const { span, spans } = t.seen[0]!;
-    expect(span).not.toBeNull();
-    expect(spans[0]!.id).toBe(span!.id);
+    expect(t.seen[0]!.spans[0]!.id).toBe('mem');
+  });
+
+  it('a MARK layer sweep reports exactly one span', () => {
+    // The other half of the documented contract — "mark layers keep
+    // topmost-wins, so there it holds exactly one". Nothing pinned it, and
+    // `expect(spans[0]).toEqual(…)` passes just as happily with duplicates,
+    // which is the bug class the wave already fixed once.
+    const t = mount(<BarChart series={bars()} column="v" axis="a" id="b" />);
+    t.sweep(40, 240, 100);
+    expect(t.seen).toHaveLength(1);
+    expect(t.seen[0]!.spans).toHaveLength(1);
+    expect(t.seen[0]!.spans[0]!.id).toBe('b');
   });
 
   it('names each trace exactly once', () => {

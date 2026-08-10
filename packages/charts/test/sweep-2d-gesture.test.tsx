@@ -193,7 +193,7 @@ function mount(opts: {
   return { surface, frame: f, pxAt, drag, dragTo, dom, svgRects };
 }
 
-type Call = [readonly SelectInfo[], SelectModifiers, SpanSelection | null];
+type Call = [readonly SelectInfo[], SelectModifiers, readonly SpanSelection[]];
 
 // ── The scatter: a free rect ────────────────────────────────────────────────
 
@@ -222,7 +222,8 @@ describe('a scatter sweep cuts a free rect', () => {
     const onSelect = vi.fn();
     const { drag, pxAt } = mount({ layers: scatter, onSelect });
     drag(pxAt(100), yPx(1), pxAt(600), yPx(9));
-    const [hits, , span] = onSelect.mock.calls[0] as Call;
+    const [hits, , spans] = onSelect.mock.calls[0] as Call;
+    const span = spans[0] ?? null;
     expect(span!.id).toBe('p');
     // A point layer's span is the DRAG's window, not the covered keys: a
     // point has no interval to snap outward to, and `[first.key, last.key]`
@@ -251,7 +252,7 @@ describe('a scatter sweep cuts a free rect', () => {
     const up = vi.fn();
     const t = mount({ layers: scatter, onSelect: up });
     t.drag(t.pxAt(600), yPx(9), t.pxAt(100), yPx(1));
-    const span = (up.mock.calls[0] as Call)[2]!;
+    const span = (up.mock.calls[0] as Call)[2][0]!;
     expect(span.x[0]).toBeCloseTo(100);
     expect(span.x[1]).toBeCloseTo(600);
     expect(span.y![0]).toBeCloseTo(1);
@@ -269,7 +270,7 @@ describe('a scatter sweep cuts a free rect', () => {
     const x = t.pxAt(150);
     t.drag(x, yPx(11), x + 3, yPx(1));
     expect(two).toHaveBeenCalledTimes(1);
-    const span = (two.mock.calls[0] as Call)[2]!;
+    const span = (two.mock.calls[0] as Call)[2][0]!;
     expect(span.x[0]).toBeLessThanOrEqual(150);
     expect(span.x[1]).toBeGreaterThan(150);
     expect((two.mock.calls[0] as Call)[0].map((h) => h.value)).toEqual([2]);
@@ -319,7 +320,8 @@ describe('a heat-map sweep snaps both dimensions', () => {
     });
     // Two bins wide (150 and 250 → bins 1,2), clipping rows 0 and 1.
     drag(pxAt(150), rowMid(0), pxAt(250), rowMid(1));
-    const [hits, , span] = onSelect.mock.calls[0] as Call;
+    const [hits, , spans] = onSelect.mock.calls[0] as Call;
+    const span = spans[0] ?? null;
     expect(hits.map((h) => h.value).sort((a, b) => a - b)).toEqual([
       10, 11, 20, 21,
     ]);
@@ -338,7 +340,8 @@ describe('a heat-map sweep snaps both dimensions', () => {
     const onSelect = vi.fn();
     const { drag, pxAt } = mount({ layers: heat, axisMax: 3, onSelect });
     drag(pxAt(150), rowMid(2) - 5, pxAt(350), rowMid(2) + 5);
-    const [hits, , span] = onSelect.mock.calls[0] as Call;
+    const [hits, , spans] = onSelect.mock.calls[0] as Call;
+    const span = spans[0] ?? null;
     expect(span!.rows).toEqual(['high']);
     expect(hits.map((h) => h.label)).toEqual(['high', 'high', 'high']);
     expect(hits.map((h) => h.value)).toEqual([12, 22, 32]);

@@ -197,16 +197,16 @@ describe('<MultiSelector> sweep — the release payload', () => {
     drag(pxAt(150), pxAt(350));
 
     expect(onSelect).toHaveBeenCalledTimes(1);
-    const [hits, modifiers, span] = onSelect.mock.calls[0]! as [
+    const [hits, modifiers, spans] = onSelect.mock.calls[0]! as [
       readonly SelectInfo[],
       SelectModifiers,
-      SpanSelection | null,
+      readonly SpanSelection[],
     ];
     expect(hits.map((h) => h.value)).toEqual([2, 3, 4]);
     expect(hits.every((h) => h.id === 'b')).toBe(true);
     expect(modifiers.additive).toBe(false);
     // The span: the covered marks' snapped-outward extent (RFC A7.6).
-    expect(span).toEqual({ kind: 'span', id: 'b', x: [100, 400] });
+    expect(spans[0]).toEqual({ kind: 'span', id: 'b', x: [100, 400] });
   });
 
   it('the span round-trips: selectionContains agrees with the committed hits exactly', () => {
@@ -215,12 +215,12 @@ describe('<MultiSelector> sweep — the release payload', () => {
       children: <MultiSelector onSelect={onSelect} />,
     });
     drag(pxAt(150), pxAt(350));
-    const [hits, , span] = onSelect.mock.calls[0]! as [
+    const [hits, , spans] = onSelect.mock.calls[0]! as [
       readonly SelectInfo[],
       SelectModifiers,
-      SpanSelection,
+      readonly SpanSelection[],
     ];
-    const sel: readonly SelectionEntry[] = [span];
+    const sel: readonly SelectionEntry[] = [...spans];
     for (const h of hits) expect(selectionContains(sel, h)).toBe(true);
     // The neighbours on either side of the sweep are outside — the edge rule.
     const neighbour = (key: number, value: number): SelectInfo => ({
@@ -240,13 +240,13 @@ describe('<MultiSelector> sweep — the release payload', () => {
       children: <MultiSelector onSelect={onSelect} />,
     });
     drag(pxAt(350), pxAt(150));
-    const [hits, , span] = onSelect.mock.calls[0]! as [
+    const [hits, , spans] = onSelect.mock.calls[0]! as [
       readonly SelectInfo[],
       SelectModifiers,
-      SpanSelection,
+      readonly SpanSelection[],
     ];
     expect(hits.map((h) => h.value)).toEqual([2, 3, 4]);
-    expect(span.x).toEqual([100, 400]);
+    expect(spans[0]!.x).toEqual([100, 400]);
   });
 
   it('reports the modifiers held at release (⌘ → additive)', () => {
@@ -490,7 +490,7 @@ describe('the live preview', () => {
 // ── The deselect path: a click above the ink resolves to NO mark ────────────
 
 describe('click-deselect (RFC §7 — the empty commit must be reachable)', () => {
-  it('a click in the empty space above a bar deselects: ([], modifiers, null)', () => {
+  it('a click in the empty space above a bar deselects: ([], modifiers, [])', () => {
     // Bar slots tile the whole plot (full interval width, full height — the
     // continuous hover model of #582), so before this fix a click could
     // NEVER resolve to null on a full-range bar chart: "click away to
@@ -517,13 +517,13 @@ describe('click-deselect (RFC §7 — the empty commit must be reachable)', () =
       ),
     );
     expect(onSelect).toHaveBeenCalledTimes(1);
-    const [hits, , span] = onSelect.mock.calls[0]! as [
+    const [hits, , spans] = onSelect.mock.calls[0]! as [
       readonly SelectInfo[],
       SelectModifiers,
-      SpanSelection | null,
+      readonly SpanSelection[],
     ];
     expect(hits).toEqual([]);
-    expect(span).toBeNull();
+    expect(spans).toEqual([]);
   });
 
   it('hover at the same point still reports the bar — the slot stays continuous (#582)', () => {
@@ -576,22 +576,22 @@ describe('click-deselect (RFC §7 — the empty commit must be reachable)', () =
 // ── A click is still a click — <MultiSelector> is a superset of <Selector> ──
 
 describe('click-select through <MultiSelector> (§8.1 — separated by movement)', () => {
-  it('a click (no movement) selects ONE mark: ([hit], modifiers, null)', () => {
+  it('a click (no movement) selects ONE mark: ([hit], modifiers, [])', () => {
     const onSelect = vi.fn();
     const { click, pxAt } = mount({
       children: <MultiSelector onSelect={onSelect} />,
     });
     click(pxAt(150));
     expect(onSelect).toHaveBeenCalledTimes(1);
-    const [hits, modifiers, span] = onSelect.mock.calls[0]! as [
+    const [hits, modifiers, spans] = onSelect.mock.calls[0]! as [
       readonly SelectInfo[],
       SelectModifiers,
-      SpanSelection | null,
+      readonly SpanSelection[],
     ];
     expect(hits.length).toBe(1);
     expect(hits[0]!.value).toBe(2);
     expect(modifiers.additive).toBe(false);
-    expect(span).toBeNull();
+    expect(spans).toEqual([]);
   });
 
   it('a sub-slop wobble is still a click, not a one-bar sweep', () => {
@@ -614,16 +614,16 @@ describe('click-select through <MultiSelector> (§8.1 — separated by movement)
       ),
     );
     expect(onSelect).toHaveBeenCalledTimes(1);
-    const [hits, , span] = onSelect.mock.calls[0]! as [
+    const [hits, , spans] = onSelect.mock.calls[0]! as [
       readonly SelectInfo[],
       SelectModifiers,
-      SpanSelection | null,
+      readonly SpanSelection[],
     ];
     expect(hits.length).toBe(1);
-    expect(span).toBeNull();
+    expect(spans).toEqual([]);
   });
 
-  it('a click that hits nothing reports ([], modifiers, null) — the deselect path', () => {
+  it('a click that hits nothing reports ([], modifiers, []) — the deselect path', () => {
     const onSelect = vi.fn();
     const { click, pxAt } = mount({
       children: <MultiSelector onSelect={onSelect} />,
@@ -631,13 +631,13 @@ describe('click-select through <MultiSelector> (§8.1 — separated by movement)
     });
     click(pxAt(1500));
     expect(onSelect).toHaveBeenCalledTimes(1);
-    const [hits, , span] = onSelect.mock.calls[0]! as [
+    const [hits, , spans] = onSelect.mock.calls[0]! as [
       readonly SelectInfo[],
       SelectModifiers,
-      SpanSelection | null,
+      readonly SpanSelection[],
     ];
     expect(hits).toEqual([]);
-    expect(span).toBeNull();
+    expect(spans).toEqual([]);
   });
 
   it('mounting <MultiSelector> arms the plot click (§7.1) — the uncontrolled highlight commits', () => {
@@ -772,13 +772,13 @@ describe('sequence snapping', () => {
     // Drag from midday day 1 to midday day 2 → the snapped window is
     // [D0+1d, D0+3d): all EIGHT bars of days 1–2, not the 5 the raw drag hit.
     drag(pxAt(D0 + 1.5 * DAY), pxAt(D0 + 2.5 * DAY));
-    const [hits, , span] = onSelect.mock.calls[0]! as [
+    const [hits, , spans] = onSelect.mock.calls[0]! as [
       readonly SelectInfo[],
       SelectModifiers,
-      SpanSelection,
+      readonly SpanSelection[],
     ];
     expect(hits.map((h) => h.value)).toEqual([5, 6, 7, 8, 9, 10, 11, 12]);
-    expect(span.x).toEqual([D0 + 1 * DAY, D0 + 3 * DAY]);
+    expect(spans[0]!.x).toEqual([D0 + 1 * DAY, D0 + 3 * DAY]);
   });
 
   it('the PREVIEW snaps identically — the whole bucket lights from the moment the drag starts', () => {
@@ -814,13 +814,13 @@ describe('sequence snapping', () => {
     act(() =>
       surface.dispatchEvent(pointer('pointerup', pxAt(D0 + 1.55 * DAY), 0)),
     );
-    const [hits, , span] = onSelect.mock.calls[0]! as [
+    const [hits, , spans] = onSelect.mock.calls[0]! as [
       readonly SelectInfo[],
       SelectModifiers,
-      SpanSelection,
+      readonly SpanSelection[],
     ];
     expect(hits.map((h) => h.value)).toEqual([5, 6, 7, 8]);
-    expect(span.x).toEqual([D0 + 1 * DAY, D0 + 2 * DAY]);
+    expect(spans[0]!.x).toEqual([D0 + 1 * DAY, D0 + 2 * DAY]);
   });
 
   it('a category axis sweeps the same gesture — the PND-CATRANGE fold-in (RFC §8)', () => {
@@ -841,17 +841,17 @@ describe('sequence snapping', () => {
     const pxSlot = (v: number) => (v / 5) * frame().plotWidth;
     drag(pxSlot(1.5), pxSlot(3.5));
     expect(onSelect).toHaveBeenCalledTimes(1);
-    const [hits, , span] = onSelect.mock.calls[0]! as [
+    const [hits, , spans] = onSelect.mock.calls[0]! as [
       readonly SelectInfo[],
       SelectModifiers,
-      SpanSelection,
+      readonly SpanSelection[],
     ];
     expect(hits.map((h) => h.label)).toEqual(['auth', 'cache', 'db']);
     expect(hits.map((h) => h.mark)).toEqual(['auth', 'cache', 'db']);
     // The span is in slot units — snapped outward to the covered slots.
-    expect(span).toEqual({ kind: 'span', id: 'svc', x: [1, 4] });
+    expect(spans[0]).toEqual({ kind: 'span', id: 'svc', x: [1, 4] });
     // And it round-trips through the exported predicate, mark identity intact.
-    for (const h of hits) expect(selectionContains([span], h)).toBe(true);
+    for (const h of hits) expect(selectionContains([...spans], h)).toBe(true);
   });
 
   it('the category sweep BAND snaps to the slots’ outer edges, not centre-to-centre (A7.6)', () => {
@@ -906,10 +906,10 @@ describe('demote on edit (RFC A5.2) — sweep, then ⌘-click one out', () => {
       return (
         <ChartContainer range={[0, 1000]} width={320} selected={sel}>
           <MultiSelector
-            onSelect={(hits, mods, span) => {
-              if (span !== null) {
+            onSelect={(hits, mods, spans) => {
+              if (spans.length > 0) {
                 stashed = hits;
-                setSel([span]);
+                setSel([...spans]);
                 return;
               }
               const hit = hits[0] ?? null;
@@ -1257,7 +1257,9 @@ describe('a click commits the block it previewed (sequence-snapped)', () => {
       children: (
         <MultiSelector
           sequence={twoPerBucket()}
-          onSelect={(hits, _m, span) => seen.push({ hits, span })}
+          onSelect={(hits, _m, spans) =>
+            seen.push({ hits, span: spans[0] ?? null })
+          }
         />
       ),
     });
@@ -1273,7 +1275,7 @@ describe('a click commits the block it previewed (sequence-snapped)', () => {
     expect(seen[0]!.span!.x[1]).toBe(500);
   });
 
-  it('with NO sequence a click is still one mark with a null span (RFC §8)', () => {
+  it('with NO sequence a click is still one mark with NO span (RFC §8)', () => {
     const seen: {
       hits: readonly SelectInfo[];
       span: SpanSelection | null;
@@ -1281,7 +1283,9 @@ describe('a click commits the block it previewed (sequence-snapped)', () => {
     const { click, pxAt } = mount({
       children: (
         <MultiSelector
-          onSelect={(hits, _m, span) => seen.push({ hits, span })}
+          onSelect={(hits, _m, spans) =>
+            seen.push({ hits, span: spans[0] ?? null })
+          }
         />
       ),
     });
@@ -1319,7 +1323,9 @@ describe('a click commits the block it previewed (sequence-snapped)', () => {
     const { click, pxAt } = mount({
       children: (
         <MultiSelector
-          onSelect={(hits, _m, span) => seen.push({ hits, span })}
+          onSelect={(hits, _m, spans) =>
+            seen.push({ hits, span: spans[0] ?? null })
+          }
         />
       ),
       layers: (
@@ -1361,7 +1367,9 @@ describe('a click commits the block it previewed (sequence-snapped)', () => {
       children: (
         <MultiSelector
           sequence={twoPerBucket()}
-          onSelect={(hits, _m, span) => seen.push({ hits, span })}
+          onSelect={(hits, _m, spans) =>
+            seen.push({ hits, span: spans[0] ?? null })
+          }
         />
       ),
       layers: (

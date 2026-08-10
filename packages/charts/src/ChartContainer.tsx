@@ -1237,7 +1237,6 @@ export function ChartContainer({
         e.onSelectMany?.(
           hit === null ? EMPTY_SELECTION : [hit],
           modifiers,
-          null,
           EMPTY_PREVIEW_SPANS,
         );
       }
@@ -1390,10 +1389,9 @@ export function ChartContainer({
       commit: (
         hits: readonly SelectInfo[],
         modifiers: SelectModifiers,
-        span: SpanSelection | null,
         spans: readonly SpanSelection[],
       ) => {
-        for (const e of entries) e.onSelectMany?.(hits, modifiers, span, spans);
+        for (const e of entries) e.onSelectMany?.(hits, modifiers, spans);
         // Uncontrolled: the compact span descriptors ARE the selection (A5.2's
         // second currency) — the swept marks stay lit via the same membership
         // test a controlled span would use. The preview clears; the committed
