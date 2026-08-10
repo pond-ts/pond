@@ -489,6 +489,21 @@ milestone. Plan:
     - **No shift-click policy.** `shiftKey` is reported and given no
       behaviour, per `SelectModifiers`' own note that an ordinal range is a
       gesture, not a modifier.
+    - **Native text selection is suppressed for the press only** (owner
+      reported it: dragging painted the browser's selection colour across the
+      labels, competing with the band and rail for the same meaning). Scoped to
+      the press rather than the list because a data list's labels are hostnames
+      and ticker symbols that people copy — a range gesture must not cost the
+      list its selectable text. It has to be state rather than the gesture ref,
+      because the style must be in the DOM before the browser starts extending
+      a selection on the first move; `pointerdown` is discrete, so React
+      flushes it in time.
+    - **Touch is excluded from the gesture.** A vertical drag over a list on a
+      touch device is how you SCROLL, and claiming it for a range would make
+      the list impossible to scroll past. Touch keeps click-to-select (still
+      reported through `onRowSelect`); a touch range wants its own affordance —
+      a long-press or an explicit multi-select mode — rather than stealing the
+      one gesture the platform already spent. **Unbuilt.**
 
     **Still open: keyboard parity.** Rows are focusable and Enter / Space fire
     both callbacks, but there is no Shift-arrow extend — the gesture is

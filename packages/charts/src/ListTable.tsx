@@ -196,6 +196,21 @@ export function ListTable<R extends ListRow>({
   } | null>(null);
   /** The run the drag currently covers — the live preview, painted as hover. */
   const [dragRun, setDragRun] = useState<ReadonlySet<string> | null>(null);
+  /**
+   * A press is armed — used only to suppress **native text selection** for the
+   * gesture's duration.
+   *
+   * It has to be state rather than the ref above, because the suppression is a
+   * style: `user-select` must already be `none` in the DOM before the browser
+   * starts extending a selection, which it does on the first move after the
+   * press. `pointerdown` is a discrete event, so React flushes this update
+   * synchronously — the style lands before any `pointermove` arrives.
+   *
+   * Scoped to the press rather than to the whole list on purpose: a data list's
+   * labels are hostnames and ticker symbols, and people copy them. Mounting a
+   * range gesture should not cost the list its selectable text.
+   */
+  const [armed, setArmed] = useState(false);
   /** A ranged drag ends in a `click` too; this swallows that one. */
   const rangedClickRef = useRef(false);
 
@@ -222,9 +237,17 @@ export function ListTable<R extends ListRow>({
   });
 
   /** Press: arm a potential range on this row. Nothing commits yet. */
-  const beginDrag = (i: number) => {
+  const beginDrag = (i: number, e: ReactPointerEvent) => {
     if (!ranges) return;
+    // **Touch is excluded, deliberately.** A vertical drag over a list on a
+    // touch device is how you SCROLL, and claiming it for a range would make
+    // the list impossible to scroll past. A touch range gesture needs its own
+    // affordance (a long-press, or an explicit multi-select mode) rather than
+    // stealing the one gesture the platform already spent. Touch keeps
+    // click-to-select, which still reports through `onRowSelect`.
+    if (e.pointerType === 'touch') return;
     dragRef.current = { anchor: i, current: i, ranged: false };
+    setArmed(true);
     setDragRun(null);
   };
   /** The pointer reached row `i` with the button still down. */
@@ -240,6 +263,7 @@ export function ListTable<R extends ListRow>({
     const d = dragRef.current;
     dragRef.current = null;
     setDragRun(null);
+    setArmed(false);
     if (d === null) return;
     // Hand the hover channel back, to the row the pointer actually ended on.
     // The press suppressed reporting for its whole duration, so without this
@@ -265,6 +289,7 @@ export function ListTable<R extends ListRow>({
       if (d === null) return;
       dragRef.current = null;
       setDragRun(null);
+      setArmed(false);
       // Released off the rows, so there is no row under the pointer to hand
       // the hover back to — unlike `endDrag`, which knows exactly which.
       reportHover(null);
@@ -362,6 +387,12 @@ export function ListTable<R extends ListRow>({
       style={{
         width: '100%',
         borderCollapse: 'collapse',
+        // Suppress native text selection **only while a press is armed**. A
+        // drag across rows would otherwise sweep up the label text along the
+        // way — the run gets picked out in the browser's own selection colour,
+        // fighting the band and the rail for the same meaning. Released, the
+        // labels are selectable again (see `armed`).
+        ...(armed ? { userSelect: 'none' as const } : {}),
         font: `${theme.font.size}px/${1.5} ${theme.font.family}`,
         color: ink,
         background: theme.background,
@@ -470,7 +501,7 @@ export function ListTable<R extends ListRow>({
                 }
                 {...(ranges
                   ? {
-                      onPointerDown: () => beginDrag(i),
+                      onPointerDown: (e: ReactPointerEvent) => beginDrag(i, e),
                       // Per-row `pointerenter` rather than pointer capture:
                       // capture would route every later event to the pressed
                       // row and the other rows would never hear the pointer

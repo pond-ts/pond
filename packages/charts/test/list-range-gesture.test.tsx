@@ -326,6 +326,94 @@ describe('modifiers and mounting', () => {
   });
 });
 
+describe('the gesture does not fight the platform', () => {
+  const table = (c: HTMLElement) =>
+    c.querySelector('[data-list]') as HTMLElement;
+
+  it('suppresses native text selection WHILE pressed, and only then', () => {
+    // Without this, a drag sweeps up the label text on its way down: the run
+    // gets picked out in the browser's own selection colour, competing with
+    // the band and the rail for the same meaning. Scoped to the press because
+    // a data list's labels are hostnames and people copy them — mounting a
+    // range gesture must not cost the list its selectable text.
+    const { container } = render(
+      <BarList rows={hosts} columns={columns} onRowSelect={() => {}} />,
+    );
+    expect(table(container).style.userSelect).toBe('');
+    fireEvent.pointerDown(row(container, 'b'), { buttons: 1 });
+    expect(table(container).style.userSelect).toBe('none');
+    fireEvent.pointerEnter(row(container, 'c'), { buttons: 1 });
+    expect(table(container).style.userSelect).toBe('none');
+    fireEvent.pointerUp(row(container, 'c'));
+    expect(table(container).style.userSelect).toBe('');
+  });
+
+  it('a release outside the rows restores selectable text too', () => {
+    // The stranded-drag path has its own teardown; it must undo this as well,
+    // or one release off the list leaves the labels permanently unselectable.
+    const { container } = render(
+      <BarList rows={hosts} columns={columns} onRowSelect={() => {}} />,
+    );
+    fireEvent.pointerDown(row(container, 'b'), { buttons: 1 });
+    fireEvent.pointerEnter(row(container, 'c'), { buttons: 1 });
+    act(() => {
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+    });
+    expect(table(container).style.userSelect).toBe('');
+  });
+
+  it('TOUCH does not arm the gesture — the list still scrolls', () => {
+    // A vertical drag over a list on a touch device is how you scroll. Taking
+    // it for a range would make the list impossible to scroll past, so touch
+    // keeps click-to-select (which still reports through `onRowSelect`).
+    const seen: Array<readonly string[]> = [];
+    const { container } = render(
+      <BarList
+        rows={hosts}
+        columns={columns}
+        onRowSelect={(rows) => seen.push(rows.map((r) => r.key))}
+      />,
+    );
+    fireEvent.pointerDown(row(container, 'b'), {
+      buttons: 1,
+      pointerType: 'touch',
+    });
+    // Nothing armed: no text-selection suppression, and no preview.
+    expect(table(container).style.userSelect).toBe('');
+    fireEvent.pointerEnter(row(container, 'c'), {
+      buttons: 1,
+      pointerType: 'touch',
+    });
+    expect(lit(container)).toEqual(['c']); // ordinary hover, not a run
+    fireEvent.pointerUp(row(container, 'c'), { pointerType: 'touch' });
+    fireEvent.click(row(container, 'c'));
+    // …and the tap still selects the one row it landed on.
+    expect(seen).toEqual([['c']]);
+  });
+
+  it('a MOUSE drag still arms it — touch is the only exclusion', () => {
+    const seen: Array<readonly string[]> = [];
+    const { container } = render(
+      <BarList
+        rows={hosts}
+        columns={columns}
+        onRowSelect={(rows) => seen.push(rows.map((r) => r.key))}
+      />,
+    );
+    fireEvent.pointerDown(row(container, 'b'), {
+      buttons: 1,
+      pointerType: 'mouse',
+    });
+    fireEvent.pointerEnter(row(container, 'c'), {
+      buttons: 1,
+      pointerType: 'mouse',
+    });
+    fireEvent.pointerUp(row(container, 'c'), { pointerType: 'mouse' });
+    fireEvent.click(row(container, 'c'));
+    expect(seen).toEqual([['b', 'c']]);
+  });
+});
+
 describe('end to end — the run becomes a selection', () => {
   it('feeding `onRowSelect` back through `selected` marks the run', () => {
     // The whole loop, which is the thing a consumer actually writes: the

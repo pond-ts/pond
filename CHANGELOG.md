@@ -86,7 +86,11 @@ include new features and type-level changes; patch bumps are strictly additive.
   live preview out-ranks `hovered` for the duration without touching it, and
   `onHover` stays quiet so the two channels never contradict. The library holds
   no state and applies no set arithmetic: you get the run and the modifiers.
-  `shiftKey` is reported but given no built-in meaning.
+  `shiftKey` is reported but given no built-in meaning. Native text selection
+  is suppressed for the press's duration only, so a drag does not sweep up the
+  label text while the labels stay selectable at rest; **touch is excluded** —
+  a vertical drag over a list is how a touch device scrolls, so touch keeps
+  click-to-select.
 - **charts: the row-chart state ladder** — `<BarList>` / `<BoxList>` now carry
   rest / hover / selected / dimmed states, via a new optional
   **`ChartTheme.list`** register (`hoverBand`, `hoverRail`, `selectedBand`,
