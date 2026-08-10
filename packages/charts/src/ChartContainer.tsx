@@ -69,6 +69,8 @@ import { isSpanSelection, NO_SPANS } from './span.js';
 
 /** Stable identity for "nothing selected" — see the normalization below. */
 const EMPTY_SELECTION: readonly SelectInfo[] = [];
+/** Stable "no sweep in flight" identity for the span preview channel. */
+const EMPTY_PREVIEW_SPANS: readonly SpanSelection[] = [];
 
 /** Tick count for a **continuous** (non-trading) x axis — the `ticks(count)`
  *  request `<TimeAxis>`, the x gridlines, and the cursor-time formatter share
@@ -885,6 +887,12 @@ export function ChartContainer({
   const [hoverX, setHoverX] = useState<number | null>(null);
   // The region-cursor drag anchor (epoch ms) — set on press, cleared on release.
   const [regionAnchor, setRegionAnchor] = useState<number | null>(null);
+  // The live sweep preview for span-only layers ([PND-TRACESEL]) — a paint
+  // mirror beside `regionAnchor`, never part of the committed selection.
+  // `EMPTY_PREVIEW_SPANS` keeps the at-rest case reference-stable so a
+  // pointer move over an unswept plot re-identifies no layer entry.
+  const [previewSpans, setPreviewSpans] =
+    useState<readonly SpanSelection[]>(EMPTY_PREVIEW_SPANS);
   // The free-form crosshair also needs the pointer's y + which row (row-specific,
   // unlike the shared x). One state object so a move updates both atomically.
   const [hoverPoint, setHoverPoint] = useState<{
@@ -1817,6 +1825,8 @@ export function ChartContainer({
       crosshairSnap,
       cursorBuckets,
       regionAnchor,
+      previewSpans,
+      setPreviewSpans,
       setRegionAnchor,
       onRegionSelect,
       reportDrawStats,
@@ -1895,6 +1905,8 @@ export function ChartContainer({
       crosshairSnap,
       cursorBuckets,
       regionAnchor,
+      previewSpans,
+      setPreviewSpans,
       setRegionAnchor,
       onRegionSelect,
       reportDrawStats,

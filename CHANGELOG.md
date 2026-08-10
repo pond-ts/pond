@@ -96,7 +96,12 @@ include new features and type-level changes; patch bumps are strictly additive.
   recedes. New `LineStyle` tokens `selectedWidth` / `hoverWidth` /
   `dimmedOpacity` / `spanColor`, and `AreaStyle` gains those plus
   `selectedFillOpacity` — an area's mark is its fill, so its state channels are
-  fill strength and edge weight rather than weight alone.
+  fill strength and edge weight rather than weight alone. The partition is
+  **live during the drag**, and a sweep covers **every trace in the row** rather
+  than the topmost one: they all share the same x window, so singling one out by
+  z-order would be arbitrary. Mark layers keep topmost-wins unchanged.
+  `spanColor` applies only when a single trace is swept — with two, both would
+  go blue and identity would be in question again inside the window.
 - **charts: keyboard parity on the list family.** Rows now navigate and select
   from the keyboard: **↑/↓** move focus, **Home/End** jump to the ends,
   **Enter/Space** select the focused row (carrying modifiers, so ⌘/Ctrl-Enter

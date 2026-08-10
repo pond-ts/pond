@@ -269,7 +269,15 @@ export function AreaChart<
   // the reasoning; this is the same derivation over `AreaStyle`'s channels.
   const selectedEntries = container.selected;
   const hoveredEntries = container.hovered;
-  const allSpans = container.selectedSpans;
+  // The committed spans, plus the **live** ones of a sweep in flight. A
+  // previewed span draws exactly as a committed one, so releasing changes
+  // nothing visually — the preview cannot promise a picture the commit does not
+  // deliver. The live channel wins while it is non-empty, because during a drag
+  // it IS the current answer.
+  const allSpans =
+    container.previewSpans.length > 0
+      ? container.previewSpans
+      : container.selectedSpans;
   const traceState = useMemo<TraceState>(() => {
     if (id === undefined) return 'rest';
     if (allSpans.some((sp) => sp.id === id)) return 'rest';
@@ -279,6 +287,12 @@ export function AreaChart<
     if (selectedEntries.length > 0 || allSpans.length > 0) return 'dimmed';
     return 'rest';
   }, [id, selectedEntries, hoveredEntries, allSpans]);
+  // **`spanColor` only when this is the ONLY swept trace.** The hue is
+  // justified by identity not being in question inside a single series — but
+  // sweep two traces and both would go blue, so inside the window you could no
+  // longer tell them apart, which is the very thing the rule exists to prevent.
+  // With more than one, the window thickens and every trace keeps its colour.
+  const soleSpannedTrace = allSpans.length === 1;
   const spanX = useMemo<readonly [number, number] | null>(() => {
     if (id === undefined) return null;
     const mine = allSpans.find((sp) => sp.id === id);
@@ -394,7 +408,7 @@ export function AreaChart<
             ctx.canvas.height,
             fill(outStyle, outAlpha),
             fill(
-              style.spanColor === undefined
+              style.spanColor === undefined || !soleSpannedTrace
                 ? inStyle
                 : { ...inStyle, color: style.spanColor, fill: style.spanColor },
               1,
@@ -445,6 +459,7 @@ export function AreaChart<
       id,
       traceState,
       spanX,
+      soleSpannedTrace,
       index,
     ],
   );

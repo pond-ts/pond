@@ -331,6 +331,7 @@ export function sweepSpan(opts: {
   let live = false;
   return {
     id,
+    spanOnly: true,
     update(x0: number, x1: number): boolean {
       let a = Math.min(x0, x1);
       let b = Math.max(x0, x1);

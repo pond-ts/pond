@@ -51,6 +51,7 @@ import {
   type SelectInfo,
   type SelectModifiers,
   type SweepGesture,
+  type SpanSelection,
   type SweepSession,
   type YScale,
 } from './context.js';
@@ -95,6 +96,8 @@ const ZOOM_SENSITIVITY = 0.0015;
  *  it still selects. One threshold for both so a click never also nudges the pan
  *  (and never hit-tests against a shifted scale). */
 const DRAG_SLOP = 4;
+/** Stable "no sweep in flight" identity for the span preview channel. */
+const EMPTY_SPANS: readonly SpanSelection[] = [];
 
 /**
  * The topmost sweep-capable layer's fresh {@link SweepSession} (RFC §8's
@@ -127,6 +130,37 @@ function beginTopmostSweep(
       return { session: s, yScale: ys, axis: entry.layer.sweepAxis ?? 'x' };
   }
   return null;
+}
+
+/**
+ * Every **span-only** layer's session in the row ([PND-TRACESEL]) — a trace has
+ * a range but no marks, and every trace shares the same x window, so they are
+ * swept together rather than by z-order.
+ *
+ * Mark layers are untouched by this: topmost-wins still decides which of them
+ * claims a drag, because there you were pointing at marks and the topmost is
+ * the one you meant. A trace sweep points at nothing, so singling one out
+ * would be arbitrary to the reader.
+ *
+ * Built once per gesture, at the press, for the reason every session is: they
+ * snapshot the layer's arrays and nothing persists outside the drag.
+ */
+function beginSpanOnlySweeps(
+  c: Pick<ContainerFrame, 'xScale'>,
+  r: Pick<RowFrame, 'layers' | 'yScales' | 'defaultAxisId'>,
+): readonly SweepSession[] {
+  const out: SweepSession[] = [];
+  for (const entry of r.layers) {
+    const ys = r.yScales.get(entry.axisId ?? r.defaultAxisId);
+    if (ys === undefined) continue;
+    const s =
+      entry.layer.beginSweep?.(
+        (v) => c.xScale(v),
+        (v) => ys(v),
+      ) ?? null;
+    if (s !== null && s.spanOnly === true) out.push(s);
+  }
+  return out;
 }
 
 /**
@@ -703,6 +737,9 @@ export function Layers({ children }: LayersProps) {
     yScale: YScale;
     /** The sweeping layer's declared cut axis — see `RowLayer.sweepAxis`. */
     axis: 'x' | 'y';
+    /** Every span-only layer in the row — swept alongside the claimant, so a
+     *  window covers every trace rather than the topmost one. */
+    spanOnly: readonly SweepSession[];
     gesture: SweepGesture;
     committed: boolean;
     raf: number;
@@ -771,10 +808,26 @@ export function Layers({ children }: LayersProps) {
       // stronger version of it: the band is *derived* from the cut, so it
       // cannot promise a different set than release delivers. With nothing
       // covered there is no extent, and the raw drag is what to show.
+      // The **live span preview** for span-only layers ([PND-TRACESEL]): a
+      // trace has no marks, so plural `hovered` carries nothing for it and the
+      // thing that wants lighting is the portion inside the window. Published
+      // every cut, from the same sessions the release will read, so the
+      // preview cannot promise a different picture than the commit delivers.
+      const publishPreview = () => {
+        const spans: SpanSelection[] = [];
+        for (const s of sw.spanOnly) {
+          const ext = s.extent();
+          if (ext !== null) spans.push({ kind: 'span', id: s.id, x: ext });
+        }
+        c.setPreviewSpans(spans);
+      };
       if (sw.axis === 'y') {
         const a = +sw.yScale.invert(sw.anchorPy);
         const b = +sw.yScale.invert(sw.pendingPy);
         const changed = sw.session.update(Math.min(a, b), Math.max(a, b));
+        for (const s of sw.spanOnly)
+          if (s !== sw.session) s.update(Math.min(a, b), Math.max(a, b));
+        publishPreview();
         const ext = sw.session.extent();
         setSweepBandY(
           ext === null
@@ -785,8 +838,15 @@ export function Layers({ children }: LayersProps) {
       }
       const span = regionSpan(c.cursorBuckets ?? [], sw.anchor, sw.pendingT);
       if (span === null) return false;
-      if (sw.session.twoD !== true)
-        return sw.session.update(span.start, span.end);
+      if (sw.session.twoD !== true) {
+        const changed = sw.session.update(span.start, span.end);
+        // Every span-only layer takes the same window — including the claimant
+        // when it is one, which `!==` skips to avoid cutting it twice.
+        for (const s of sw.spanOnly)
+          if (s !== sw.session) s.update(span.start, span.end);
+        publishPreview();
+        return changed;
+      }
       const changed = sw.session.update(
         span.start,
         span.end,
@@ -867,6 +927,7 @@ export function Layers({ children }: LayersProps) {
       setSweepRect(null);
       setSweepBandY(null);
       containerRef.current.setRegionAnchor(null);
+      containerRef.current.setPreviewSpans(EMPTY_SPANS);
       sw.gesture.preview([]); // un-light the preview; nothing commits
     }
   }, []);
@@ -920,6 +981,7 @@ export function Layers({ children }: LayersProps) {
           session: swept!.session,
           yScale: swept!.yScale,
           axis: swept!.axis,
+          spanOnly: beginSpanOnlySweeps(c, r),
           gesture: sweepGesture!,
           committed: false,
           raf: 0,
@@ -1273,6 +1335,10 @@ export function Layers({ children }: LayersProps) {
         setSweeping(false);
         setSweepRect(null);
         setSweepBandY(null);
+        // The preview hands over to the committed selection here. A layer that
+        // was previewed and is now selected sees no visual change, which is the
+        // point: release must not repaint what it already promised.
+        c.setPreviewSpans(EMPTY_SPANS);
         c.setRegionAnchor(null); // the band reverts, as the range drag's does
         try {
           e.currentTarget.releasePointerCapture(e.pointerId);

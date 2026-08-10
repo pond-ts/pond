@@ -83,6 +83,26 @@ export interface ContainerFrame {
   /** Set / clear the region-drag anchor (see {@link regionAnchor}). */
   setRegionAnchor(value: number | null): void;
   /**
+   * The **live** spans of a sweep in flight — the preview a span-only layer
+   * paints ([PND-TRACESEL]), and empty at rest.
+   *
+   * A mark layer previews through plural `hovered`: the covered marks light.
+   * A **trace has no marks**, so there is nothing for that channel to carry —
+   * what wants lighting is the *portion of the trace inside the window*, which
+   * is a span, not a set of marks. Hence a second preview channel rather than
+   * an abuse of the first.
+   *
+   * A paint mirror in the same sense as {@link regionAnchor}: `Layers` writes
+   * it from the live session and clears it on release, and it never enters the
+   * committed selection — {@link selectedSpans} is the consumer's, this is the
+   * gesture's. A layer that finds itself named here should draw as though the
+   * span were committed, so releasing changes nothing visually and the preview
+   * cannot promise a different picture than the commit delivers.
+   */
+  readonly previewSpans: readonly SpanSelection[];
+  /** Set / clear the live sweep preview (see {@link previewSpans}). */
+  setPreviewSpans(spans: readonly SpanSelection[]): void;
+  /**
    * One-shot callback fired when a `region`-cursor **drag** is released, with the
    * selected `[lo, hi]` span in **axis units** — epoch ms on a time axis, the axis
    * value on a value axis (snapped to the `cursorSequence` buckets when present,
@@ -907,6 +927,20 @@ export interface SweepSession {
    * consumer mounts the same `<MultiSelector>` either way (RFC Q14).
    */
   readonly twoD?: boolean;
+  /**
+   * **Set by a layer that has a range but no marks** — a continuous trace
+   * ([PND-TRACESEL]). `hits()` is always empty and the span is the whole
+   * selection.
+   *
+   * The gesture reads this to answer "who else did I sweep?". Topmost-wins
+   * exists because a release carried **one** span, and on mark layers it is
+   * defensible — you were pointing at marks, so the topmost is the one you
+   * meant. A trace sweep points at *nothing*: every trace in the row shares
+   * the same x window, so singling one out by z-order is arbitrary to the
+   * reader. Every span-only layer in the row is therefore swept together,
+   * while mark layers keep topmost-wins unchanged.
+   */
+  readonly spanOnly?: boolean;
   /**
    * The captured set's **second-dimension** channels, for a `twoD` session —
    * whichever of {@link SpanSelection.y} (a scatter's continuous window) and

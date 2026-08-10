@@ -254,7 +254,15 @@ export function LineChart<
   // container neither re-identifies this entry nor repaints it.
   const selectedEntries = container.selected;
   const hoveredEntries = container.hovered;
-  const allSpans = container.selectedSpans;
+  // The committed spans, plus the **live** ones of a sweep in flight. A
+  // previewed span draws exactly as a committed one, so releasing changes
+  // nothing visually — the preview cannot promise a picture the commit does not
+  // deliver. The live channel wins while it is non-empty, because during a drag
+  // it IS the current answer.
+  const allSpans =
+    container.previewSpans.length > 0
+      ? container.previewSpans
+      : container.selectedSpans;
   const traceState = useMemo<TraceState>(() => {
     if (id === undefined) return 'rest';
     // A span on THIS layer is handled by the partitioned draw below, not by a
@@ -271,6 +279,12 @@ export function LineChart<
   }, [id, selectedEntries, hoveredEntries, allSpans]);
   // The swept window on this layer, in **key units** — mapped to pixels at draw
   // time, because that is when the scale is known.
+  // **`spanColor` only when this is the ONLY swept trace.** The hue is
+  // justified by identity not being in question inside a single series — but
+  // sweep two traces and both would go blue, so inside the window you could no
+  // longer tell them apart, which is the very thing the rule exists to prevent.
+  // With more than one, the window thickens and every trace keeps its colour.
+  const soleSpannedTrace = allSpans.length === 1;
   const spanX = useMemo<readonly [number, number] | null>(() => {
     if (id === undefined) return null;
     const mine = allSpans.find((sp) => sp.id === id);
@@ -409,7 +423,7 @@ export function LineChart<
             ctx.canvas.height,
             stroke(outStyle, outAlpha),
             stroke(
-              style.spanColor === undefined
+              style.spanColor === undefined || !soleSpannedTrace
                 ? inStyle
                 : { ...inStyle, color: style.spanColor },
               1,
@@ -437,6 +451,7 @@ export function LineChart<
       id,
       traceState,
       spanX,
+      soleSpannedTrace,
       index,
     ],
   );
