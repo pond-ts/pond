@@ -37,13 +37,29 @@ const EMPTY_HOVER: ReadonlySet<string> = new Set<string>();
 /** The same trick for "nothing selected" — see {@link EMPTY_HOVER}. */
 const EMPTY_SELECTED: ReadonlySet<string> = new Set<string>();
 
+/**
+ * A row's interaction state, handed to {@link ListTableProps.renderGlyphs} so
+ * the glyphs can follow it — the fill is the one channel the shell cannot
+ * paint for them.
+ *
+ * `dimmed` is derived, not passed in: it means *something else* is selected.
+ * Nothing dims while the selection is empty, because with nothing selected
+ * there is nothing to recede from — the same rule `BarStyle.dimmed` states
+ * for the canvas.
+ */
+export interface ListRowState {
+  readonly selected: boolean;
+  readonly hovered: boolean;
+  readonly dimmed: boolean;
+}
+
 export interface ListTableProps<R extends ListRow> {
   /** Rows in display order (the caller sorts). */
   readonly rows: readonly R[];
   /** Which sister is rendering — stamped as `data-list` for styling/tests. */
   readonly kind: 'bar' | 'box';
   /** The glyph cell's content for one row (the bar / box lines). */
-  readonly renderGlyphs: (row: R) => ReactNode;
+  readonly renderGlyphs: (row: R, state: ListRowState) => ReactNode;
   readonly before?: readonly ListCellSpec<R>[] | undefined;
   readonly after?: readonly ListCellSpec<R>[] | undefined;
   readonly renderExpanded?: ((row: R) => ReactNode) | undefined;
@@ -173,6 +189,11 @@ export function ListTable<R extends ListRow>({
 
   const ink = listInk(theme);
   const accent = theme.annotation?.color ?? FALLBACK_ACCENT;
+  // The row-chart register. Absent ⇒ the pre-token look exactly: a hover band
+  // borrowed from `legend.border`, a selection rail from the annotation
+  // register, and no dimmed state — so a hand-built theme's rows do not
+  // shift under it (the same back-compatibility `theme.brush` was given).
+  const reg = theme.list;
   const divider = divided ? `1px solid ${theme.axis.grid}` : undefined;
   // Label + before + glyph + after (+ expander) — the detail row spans them all.
   const span = 2 + before.length + after.length + (renderExpanded ? 1 : 0);
@@ -259,6 +280,25 @@ export function ListTable<R extends ListRow>({
         {rows.map((row, i) => {
           const isSelected = selectedKeys.has(row.key);
           const isHovered = hoveredKeys.has(row.key);
+          // Dimmed means *something else* is selected — nothing recedes while
+          // the selection is empty. Only meaningful once a register exists;
+          // without one there is no dimmed state at all.
+          const isDimmed =
+            reg !== undefined && selectedKeys.size > 0 && !isSelected;
+          // **Selection outranks hover on the band**, because selection is
+          // committed and hover is transient: a hovered selected row must not
+          // read as merely hovered. The rail follows the band so the two
+          // never disagree about which state the row is in.
+          const band = isSelected
+            ? reg?.selectedBand
+            : isHovered
+              ? (reg?.hoverBand ?? theme.legend?.border ?? theme.axis.grid)
+              : undefined;
+          const rail = isSelected
+            ? (reg?.selectedRail ?? accent)
+            : isHovered
+              ? reg?.hoverRail
+              : undefined;
           const isOpen = renderExpanded !== undefined && expanded.has(row.key);
           return (
             <Fragment key={row.key}>
@@ -285,13 +325,21 @@ export function ListTable<R extends ListRow>({
                 style={{
                   borderTop: i > 0 ? divider : undefined,
                   cursor: interactive ? 'pointer' : undefined,
-                  background: isHovered
-                    ? (theme.legend?.border ?? theme.axis.grid)
-                    : undefined,
-                  // The selection accent: an inset edge in the annotation
-                  // register (a *user's* mark, so it takes the marks colour,
-                  // not a data hue) — reads on any ground, moves no layout.
-                  boxShadow: isSelected ? `inset 3px 0 0 ${accent}` : undefined,
+                  background: band,
+                  // The rail: a 3px inset edge — reads on any ground and
+                  // moves no layout. It is chrome for the whole ROW, so it
+                  // resolves from the list register rather than from
+                  // `bar[as]`; a row may carry several metrics and there is
+                  // only ever one rail.
+                  boxShadow:
+                    rail === undefined ? undefined : `inset 3px 0 0 ${rail}`,
+                  // The row is the target, not the bar (see `ChartTheme.list`):
+                  // a 4% row would otherwise be a sliver to aim at, so the
+                  // whole band is one hit area of at least 44px.
+                  // (`height`, not `minHeight`: a table row ignores the
+                  // latter, while the former is treated as a MINIMUM — the
+                  // used height is max(specified, content).)
+                  ...(interactive || hoverWired ? { height: 44 } : {}),
                 }}
               >
                 <td data-list-cell="label" style={textCell()}>
@@ -318,7 +366,11 @@ export function ListTable<R extends ListRow>({
                   style={glyphCellStyle('6px')}
                 >
                   <div style={{ position: 'relative' }}>
-                    {renderGlyphs(row)}
+                    {renderGlyphs(row, {
+                      selected: isSelected,
+                      hovered: isHovered,
+                      dimmed: isDimmed,
+                    })}
                     {drawnMarkers.map((m, mi) => (
                       // One dotted segment per row, bleeding through the
                       // row's vertical padding (+ divider) so adjacent rows'

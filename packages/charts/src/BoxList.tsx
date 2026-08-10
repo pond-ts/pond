@@ -258,10 +258,11 @@ export function BoxList<
       divided={divided}
       baseline={baseline}
       theme={theme}
-      renderGlyphs={(row) => (
+      renderGlyphs={(row, state) => (
         <>
           {columns.map((col, ci) => (
             <BoxLine
+              dimmed={state.dimmed}
               // Index-qualified so two lines over the same quantile names
               // (say, styled differently) never collide.
               key={`${ci} ${col.lower} ${col.upper}`}
@@ -289,6 +290,7 @@ function BoxLine<R extends ListRow>({
   style,
   ink,
   fontSize,
+  dimmed,
 }: {
   row: R;
   col: BoxListColumn;
@@ -297,6 +299,8 @@ function BoxLine<R extends ListRow>({
   style: BoxStyle;
   ink: string;
   fontSize: number;
+  /** Something else is selected — recede this row's marks. */
+  dimmed: boolean;
 }) {
   const at = (name: string | undefined) =>
     name === undefined ? null : listFraction(row.values[name], scale);
@@ -313,6 +317,21 @@ function BoxLine<R extends ListRow>({
       : null;
 
   const pct = (f: number) => `${f * 100}%`;
+  /**
+   * The dim multiplier for this line's **marks** — body, median, tick.
+   *
+   * Not the range band below it: that is the row's *scale*, the thing that
+   * makes one row comparable with the next, and receding it alongside the
+   * marks is exactly the mistake `ChartTheme.list`'s track rule names. It is
+   * the box list's track.
+   *
+   * **Selection is deliberately absent here.** Rule 2 is that band + rail
+   * read as selected with no help from the fill, and a box has four inks
+   * (whisker, body, median, tick) rather than the one a bar has — "the fill
+   * goes blue" has no single referent. So a selected box row is signalled by
+   * its chrome alone, which the rule says is sufficient by design.
+   */
+  const dim = dimmed ? 0.32 : 1;
   // The row keeps its slot height even when everything is missing — a gap
   // reads as an empty line, not a collapsed row.
   return (
@@ -345,7 +364,7 @@ function BoxLine<R extends ListRow>({
             left: pct(q1),
             width: pct(Math.max(q3 - q1, 0)),
             background: style.fill,
-            opacity: Math.min(style.fillOpacity * 2, 1),
+            opacity: Math.min(style.fillOpacity * 2, 1) * dim,
             borderRadius: 1,
           }}
         />
@@ -360,6 +379,7 @@ function BoxLine<R extends ListRow>({
             left: `calc(${pct(med)} - ${style.medianWidth / 2}px)`,
             width: style.medianWidth,
             background: style.median,
+            opacity: dim,
           }}
         />
       )}
@@ -375,6 +395,7 @@ function BoxLine<R extends ListRow>({
               width: 3,
               background: style.stroke,
               borderRadius: 1,
+              opacity: dim,
             }}
           />
           {label !== null && (

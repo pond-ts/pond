@@ -284,11 +284,34 @@ export function BarList<
       divided={divided}
       baseline={baseline}
       theme={theme}
-      renderGlyphs={(row) => (
+      renderGlyphs={(row, state) => (
         <>
           {columns.map((col, ci) => {
             const style = theme.bar[col.as ?? 'default'] ?? theme.bar.default;
             const frac = listFraction(row.values[col.column], scale);
+            // **The fill's state treatment — decorative, never load-bearing.**
+            // The band and the rail have already said "selected"; this only
+            // agrees with them. It is skipped entirely on a multi-metric row
+            // because there the fill IS the metric's identity, and recolouring
+            // it would trade a distinction the reader needs for one they
+            // already have (`ChartTheme.list`'s channel rule).
+            //
+            // Which is also why nothing below may be the *only* signal: strip
+            // this block and a selected row still reads as selected.
+            const soleMetric = columns.length === 1;
+            const fill =
+              state.selected && soleMetric
+                ? style.highlight
+                : state.dimmed
+                  ? (style.dimmed ?? style.fill)
+                  : style.fill;
+            // A `dimmed` token carries its own alpha (`rgba(…,0.32)`), so
+            // multiplying `opacity` on top of it would dim twice. Fall back to
+            // the raw 0.32 only when the theme names no dimmed colour.
+            const fillOpacity =
+              state.dimmed && style.dimmed === undefined
+                ? style.opacity * 0.32
+                : style.opacity;
             return (
               <div
                 // Index-qualified so the same values entry drawn twice (say,
@@ -304,7 +327,14 @@ export function BarList<
                 }}
               >
                 {/* The track: the bar's own hue, faint — reads on any ground
-                    without a dedicated token. */}
+                    without a dedicated token.
+
+                    **It never takes the state treatment.** The unfilled
+                    remainder is a *scale*, not a measurement: dimming it
+                    alongside the fill would destroy the shared baseline that
+                    makes rows comparable in the first place. Full strength in
+                    every state, tinted to its own metric — so it stays
+                    `style.fill`, not `fill`. */}
                 <div
                   style={{
                     position: 'absolute',
@@ -322,8 +352,8 @@ export function BarList<
                       bottom: 0,
                       left: 0,
                       width: `${frac * 100}%`,
-                      background: style.fill,
-                      opacity: style.opacity,
+                      background: fill,
+                      opacity: fillOpacity,
                       borderRadius: barHeight / 2,
                     }}
                   />

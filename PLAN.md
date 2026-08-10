@@ -406,7 +406,36 @@ milestone. Plan:
       selection recolors, so a blue tick is the one collision the rest of the
       language cannot absorb.
 
-    **Gap against what `ListTable` renders today** (verified 2026-08-10):
+    **Shipped 2026-08-10.** The register is `ChartTheme.list` — five values,
+    optional, and back-compatible when omitted (a theme without it keeps the
+    borrowed hover band, the annotation rail and no dimmed state). Only the
+    two band tints and the marker ink are new: a selected fill takes
+    `BarStyle.highlight` and a dimmed one `BarStyle.dimmed`, both of which the
+    interaction-state palette already carried, so a consumer who themes their
+    bars gets a coherent list without theming it twice. **The rail is
+    deliberately not per-metric** — one rail, many metrics — so it lives in
+    the register rather than resolving through `bar[as]`.
+
+    Two judgement calls worth recording. **A `<BoxList>` gets no "fill goes
+    blue"**: a box has four inks (whisker, body, median, tick) so the phrase
+    has no single referent, and rule 2 says chrome alone is sufficient by
+    design — its dimmed state recedes body/median/tick and leaves the range
+    band, which is the box list's track. **The 44px is gated on
+    interactivity**: a read-only list has no target to make tappable, and
+    forcing the height there would be a layout change for nothing.
+
+    Revert-verified with three rule-specific mutations (fill carries selection
+    on a multi-metric row / the track dims with the fill / hover borrows the
+    selection rail); each reds exactly its own rule's test.
+
+    **What the ladder did NOT cover, and why.** The spec's **target marker**
+    (`ink #1C1C1A · 3px`, never blue) is a _bullet-row_ element — a per-row
+    target sitting inside the mark. `<BarList markers>` today draws a
+    reference rule through **every** row, which is a different thing. The
+    register carries `markerInk` for it, but the per-row bullet target itself
+    is unbuilt.
+
+    **Gap against what `ListTable` rendered before** (verified 2026-08-10):
     - **rail on selected** — exists, as `boxShadow: inset 3px 0 0 accent`.
     - **band on hover** — exists, but reaches through `theme.legend.border`,
       an unrelated token `[PND-CHFRIC]` already flags.

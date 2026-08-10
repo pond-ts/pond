@@ -260,6 +260,58 @@ export interface ChartTheme {
     readonly border: string;
     readonly text: string;
   };
+  /**
+   * The **row-chart register** — `<BarList>` / `<BoxList>`, whose row states
+   * live on chrome the canvas has no equivalent of.
+   *
+   * A row chart cannot signal state the way a column chart does. Two reasons,
+   * and the second is the load-bearing one:
+   *
+   * - **The row is the target, not the bar.** A vertical bar can be its own
+   *   hit area because every mark spans the full column width; a row's mark
+   *   is as short as its value, so a 4% row would be a 30px sliver. The
+   *   label gutter, the track and the trailing value are one target, and the
+   *   thing that lights has to be the whole **band**.
+   * - **The band carries selection alone.** In a multi-metric row the fill
+   *   *is* the identity of the metric, so it cannot also carry state — the
+   *   same channel rule the canvas marks follow. Band + rail must read as
+   *   selected with no help from the fill, and designing the single-metric
+   *   case that way too means one treatment covers every row chart.
+   *
+   * So the two values here are the ones with no canvas counterpart: the row
+   * **band** tints. Everything else resolves from tokens that already exist
+   * and are per-metric where they should be — a selected fill takes
+   * {@link BarStyle.highlight}, a dimmed one {@link BarStyle.dimmed} — so a
+   * consumer who themes their bars gets a coherent list without theming it
+   * twice.
+   *
+   * **The rail is deliberately NOT per-metric.** There is one rail per row
+   * and a row may carry several metrics, so it cannot resolve through
+   * `bar[as]` the way a fill does; it lives here with the bands.
+   *
+   * **Optional, and back-compatible when omitted:** with no `list` the rows
+   * keep exactly the pre-token look — a hover band from `legend.border`, a
+   * selection rail from the annotation register, and no dimmed state at all.
+   */
+  readonly list?: {
+    /** Row stripe behind the hovered row — the whole band, gutter to value. */
+    readonly hoverBand: string;
+    /** The hovered row's 3px inset left edge. Never the selection hue. */
+    readonly hoverRail: string;
+    /** Row stripe behind a selected row. */
+    readonly selectedBand: string;
+    /** The selected row's 3px inset left edge. */
+    readonly selectedRail: string;
+    /**
+     * Reference ink — per-row target markers, thresholds, reference ticks.
+     *
+     * **Reserved away from the selection hue on purpose.** On a bullet row
+     * the marker sits *inside* the mark that selection recolors, so a tick
+     * in the selection blue is the one collision the rest of the language
+     * cannot absorb: you could not tell a target from a selected bar.
+     */
+    readonly markerInk: string;
+  };
 }
 
 /** A resolved line style: stroke colour + width (px). */
@@ -1020,6 +1072,17 @@ export const defaultTheme: ChartTheme = {
     depth: [1, 0.7, 0.4],
   },
   // The in-chart series key: chip-white card, gridline border, axis-label text.
+  // The row-chart register — see `ChartTheme.list`. The two band tints are
+  // the only genuinely new values: the rails are the same teal/blue pair the
+  // bar's interaction-state palette already uses (`hover` / `highlight`), and
+  // the marker ink is the near-black the annotation register reads against.
+  list: {
+    hoverBand: '#F6F6F3', // warm neutral — a lift, not a hue
+    hoverRail: '#4FD0BE', // brighter teal, never blue
+    selectedBand: '#EEF1FD', // the selection blue, washed
+    selectedRail: '#3F5BE0', // = bar.default.highlight — committed state
+    markerInk: '#1C1C1A', // reserved from the selection hue (see the doc)
+  },
   legend: {
     background: '#ffffff',
     border: '#e2e8f0',
