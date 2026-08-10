@@ -71,7 +71,9 @@ function mount(orientation: 'vertical' | 'horizontal') {
     dom = render(
       <ChartContainer range={[0, 5000]} width={PLOT_W}>
         <MultiSelector
-          onSelect={(hits, mods, span) => seen.push({ hits, mods, span })}
+          onSelect={(hits, mods, spans) =>
+            seen.push({ hits, mods, span: spans[0] ?? null })
+          }
         />
         <ChartRow height={ROW_H}>
           <YAxis
@@ -320,7 +322,9 @@ function mountCategorical() {
     dom = render(
       <ChartContainer width={PLOT_W}>
         <MultiSelector
-          onSelect={(hits, mods, span) => seen.push({ hits, mods, span })}
+          onSelect={(hits, mods, spans) =>
+            seen.push({ hits, mods, span: spans[0] ?? null })
+          }
         />
         <ChartRow height={ROW_H}>
           <YAxis id="stage" width={96} />
@@ -458,9 +462,7 @@ describe('the committed span replays', () => {
       }, [sel]);
       return (
         <ChartContainer range={[0, 5000]} width={PLOT_W} selected={sel}>
-          <MultiSelector
-            onSelect={(_h, _m, span) => setSel(span === null ? [] : [span])}
-          />
+          <MultiSelector onSelect={(_h, _m, spans) => setSel([...spans])} />
           <ChartRow height={ROW_H}>
             <YAxis id="a" min={0} max={5000} />
             <Layers>

@@ -62,6 +62,16 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **charts (breaking, pre-release): `<MultiSelector onSelect>`'s span argument
+  is plural.** The signature is now
+  `(hits, modifiers, spans: readonly SpanSelection[])` — one argument, not the
+  `span` + `spans` pair #634 briefly shipped. **An empty array now carries what
+  `null` used to**: a click (clicks produce marks, only sweeps produce spans) or
+  a sweep that covered nothing. Spans arrive **topmost layer first**; compare
+  them by `id`, since each span-only layer clamps the window to its own key
+  range. Not a compatibility concern in practice — `<MultiSelector>` has never
+  appeared in a published version.
+
 - **charts: `<BarList selected>` / `<BoxList selected>` accept a set**
   ([PND-INTERACTCONF]). Widened from `string | null` to
   `string | readonly string[] | null` — the same union `hovered` already took.

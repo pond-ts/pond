@@ -368,8 +368,8 @@ export const DefaultThemeStates: Story = {
       <div>
         <ChartContainer range={TIME_RANGE} width={640} selected={sel}>
           <MultiSelector
-            onSelect={(hits, _mods, span) =>
-              setSel(span !== null ? [span] : hits.slice(0, 1))
+            onSelect={(hits, _mods, spans) =>
+              setSel(spans.length > 0 ? [...spans] : hits.slice(0, 1))
             }
           />
           <ChartRow height={240}>

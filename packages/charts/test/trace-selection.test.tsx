@@ -304,7 +304,9 @@ function mount(node: React.ReactNode) {
     dom = render(
       <ChartContainer range={[0, 4000]} width={320}>
         <MultiSelector
-          onSelect={(hits, _m, span, spans) => seen.push({ hits, span, spans })}
+          onSelect={(hits, _m, spans) =>
+            seen.push({ hits, span: spans[0] ?? null, spans })
+          }
         />
         <ChartRow height={120}>
           <YAxis id="a" min={0} max={6} />

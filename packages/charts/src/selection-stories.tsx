@@ -342,9 +342,9 @@ export function makeMultiSelectorStories(
           <div>
             <Chart fx={fx} selected={sel} height={220}>
               <MultiSelector
-                onSelect={(hits, _mods, span) => {
+                onSelect={(hits, _mods, spans) => {
                   setCount(hits.length);
-                  setSel(span !== null ? [span] : hits.slice(0, 1));
+                  setSel(spans.length > 0 ? [...spans] : hits.slice(0, 1));
                 }}
               />
             </Chart>
@@ -371,13 +371,13 @@ export function makeMultiSelectorStories(
           <div>
             <Chart fx={fx} selected={sel} height={220}>
               <MultiSelector
-                onSelect={(hits, _mods, span) => {
+                onSelect={(hits, _mods, spans) => {
                   setShape(
-                    span === null
-                      ? `click → ${hits.length} hit, span null`
-                      : `sweep → ${hits.length} hits, span present`,
+                    spans.length === 0
+                      ? `click → ${hits.length} hit, no span`
+                      : `sweep → ${hits.length} hits, ${spans.length} span(s)`,
                   );
-                  setSel(span !== null ? [span] : hits);
+                  setSel(spans.length > 0 ? [...spans] : hits);
                 }}
               />
             </Chart>
@@ -404,9 +404,9 @@ export function makeMultiSelectorStories(
             <Chart fx={fx} selected={sel} height={220}>
               <MultiSelector
                 onHover={(hits) => setPreview(hits.length)}
-                onSelect={(hits, _mods, span) => {
+                onSelect={(hits, _mods, spans) => {
                   setCommitted(hits.length);
-                  setSel(span !== null ? [span] : hits);
+                  setSel(spans.length > 0 ? [...spans] : hits);
                 }}
               />
             </Chart>
@@ -434,10 +434,10 @@ export function makeMultiSelectorStories(
           <div>
             <Chart fx={fx} selected={sel} height={220}>
               <MultiSelector
-                onSelect={(hits, mods, span) => {
+                onSelect={(hits, mods, spans) => {
                   const add = mods?.additive ?? false;
-                  if (span !== null) {
-                    setSel((cur) => (add ? [...cur, span] : [span]));
+                  if (spans.length > 0) {
+                    setSel((cur) => (add ? [...cur, ...spans] : [...spans]));
                     return;
                   }
                   if (hits.length === 0) return setSel([]);
@@ -467,10 +467,10 @@ export function makeMultiSelectorStories(
           <div>
             <Chart fx={fx} selected={sel} height={220}>
               <MultiSelector
-                onSelect={(hits, mods, span) => {
-                  if (span !== null) {
+                onSelect={(hits, mods, spans) => {
+                  if (spans.length > 0) {
                     setStash(hits);
-                    setSel([span]);
+                    setSel([...spans]);
                     return;
                   }
                   const hit = hits[0];
@@ -533,9 +533,9 @@ export function makeMultiSelectorStories(
             <Chart fx={fx} selected={sel} height={220}>
               <MultiSelector
                 sequence={seq()}
-                onSelect={(hits, _mods, span) => {
+                onSelect={(hits, _mods, spans) => {
                   setCount(hits.length);
-                  setSel(span !== null ? [span] : hits);
+                  setSel(spans.length > 0 ? [...spans] : hits);
                 }}
               />
             </Chart>
@@ -593,9 +593,9 @@ export function makeSessionStories(fx: ChartFixture): SessionStories | null {
               <MultiSelector
                 sequence={seq}
                 onHover={(hits) => setPreview(hits.length)}
-                onSelect={(hits, _mods, span) => {
+                onSelect={(hits, _mods, spans) => {
                   setCount(hits.length);
-                  setSel(span !== null ? [span] : hits);
+                  setSel(spans.length > 0 ? [...spans] : hits);
                 }}
               />
             </Chart>

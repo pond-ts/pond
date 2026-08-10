@@ -83,8 +83,8 @@ function Demo() {
           (see CLAUDE.md). */}
       <ChartContainer range={[0, 12]} width={520} selected={selected}>
         <MultiSelector
-          onSelect={(hits, _mods, span) =>
-            setSelected(span === null ? hits : [span])
+          onSelect={(hits, _mods, spans) =>
+            setSelected(spans.length === 0 ? hits : [...spans])
           }
         />
         <ChartRow height={260}>
@@ -152,8 +152,8 @@ function CategoryDemo() {
           from the data, and its slot domain `[0, N]` from the layer. */}
       <ChartContainer width={520} selected={selected}>
         <MultiSelector
-          onSelect={(hits, _mods, span) =>
-            setSelected(span === null ? hits : [span])
+          onSelect={(hits, _mods, spans) =>
+            setSelected(spans.length === 0 ? hits : [...spans])
           }
         />
         <ChartRow height={220}>
@@ -252,10 +252,10 @@ function AdditiveDemo() {
     <div>
       <HBars selected={sel}>
         <MultiSelector
-          onSelect={(hits, mods, span) => {
+          onSelect={(hits, mods, spans) => {
             const add = mods?.additive ?? false;
-            if (span !== null) {
-              setSel((cur) => (add ? [...cur, span] : [span]));
+            if (spans.length > 0) {
+              setSel((cur) => (add ? [...cur, ...spans] : [...spans]));
               return;
             }
             // A click with nothing under it clears, additive or not — the
@@ -314,8 +314,8 @@ function VersusDemo() {
       <div>
         <HBars selected={many}>
           <MultiSelector
-            onSelect={(hits, _mods, span) =>
-              setMany(span !== null ? [span] : hits.slice(0, 1))
+            onSelect={(hits, _mods, spans) =>
+              setMany(spans.length > 0 ? [...spans] : hits.slice(0, 1))
             }
           />
         </HBars>

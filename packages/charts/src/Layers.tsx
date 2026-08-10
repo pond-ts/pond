@@ -1410,7 +1410,7 @@ export function Layers({ children }: LayersProps) {
           const ext = s.extent();
           if (ext !== null) all.push({ kind: 'span', id: s.id, x: ext });
         }
-        sw.gesture.commit(sw.session.hits(), modifiers, claimed, all);
+        sw.gesture.commit(sw.session.hits(), modifiers, all);
         return;
       }
       // End a range drag: commit the anchor→pointer span as a one-shot range —
@@ -1604,7 +1604,7 @@ export function Layers({ children }: LayersProps) {
               id: session.id,
               x: extent,
             };
-            gesture.commit(hits, modifiers, one, [one]);
+            gesture.commit(hits, modifiers, [one]);
             return;
           }
         }

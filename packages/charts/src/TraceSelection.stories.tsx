@@ -85,7 +85,7 @@ function Demo({ kind }: { kind: 'line' | 'area' }) {
         selected={sel}
       >
         <MultiSelector
-          onSelect={(hits, _m, _span, spans) => {
+          onSelect={(hits, _m, spans) => {
             // **`spans`, not `span`.** One sweep commits a span per trace, and
             // reading the singular would select whichever happened to be
             // topmost while the preview had lit both — the commit would show
