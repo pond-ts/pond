@@ -1254,7 +1254,8 @@ export function Layers({ children }: LayersProps) {
       const owner = gestureOwner(effectiveCursorEntries(c.cursors, r.rowKey));
       if (owner?.spec.snapX === 'sample') {
         const t = +c.xScale.invert(rawX);
-        for (const entry of r.layers) {
+        for (let i = r.layers.length - 1; i >= 0; i -= 1) {
+          const entry = r.layers[i]!;
           if (entry.layer.cursorFlag) continue;
           const s = entry.layer.sampleAt(t)[0];
           if (s !== undefined) {
@@ -1340,7 +1341,7 @@ export function Layers({ children }: LayersProps) {
       const c = containerRef.current;
       // End a sweep: one final synchronous re-cut at the release pointer (the
       // last move's animation frame may not have run), then commit
-      // `(hits, modifiers, span)` to the <MultiSelector>s the press resolved
+      // `(hits, modifiers, spans)` to the <MultiSelector>s the press resolved
       // (RFC A5.2). The hits ARE the materialised preview — `session.hits()`
       // reads the same cached array the last preview lit, never a fresh range
       // query (A7.7) — and the span is the covered marks' snapped-outward
@@ -1389,9 +1390,8 @@ export function Layers({ children }: LayersProps) {
         // gesture never guesses which one a layer uses.
         const channels =
           sw.session.twoD === true ? (sw.session.extent2D?.() ?? null) : null;
-        // Every span this gesture produced. The claimant's comes first — it is
-        // what the third argument reports, and on a mark-layer row it is the
-        // only one. A trace sweep adds one per span-only layer, because they
+        // Every span this gesture produced, and the claimant's comes first —
+        // on a mark-layer row it is the only one. A trace sweep adds one per span-only layer, because they
         // all share the x window and z-order means nothing to the reader there
         // ([PND-TRACESEL]).
         const claimed: SpanSelection | null =
