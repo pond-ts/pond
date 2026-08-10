@@ -60,6 +60,18 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **charts: `<BarList selected>` / `<BoxList selected>` accept a set**
+  ([PND-INTERACTCONF]). Widened from `string | null` to
+  `string | readonly string[] | null` — the same union `hovered` already took.
+  **Additive:** every existing caller passes a `string` or `null`, both still
+  valid and unchanged. The lists were given the _receiving_ half of the sweep
+  vocabulary (`hovered` went plural because a sweep lights several marks at
+  once) and not the committing half, which made a list multi-select
+  inexpressible whatever gesture drives it. The gesture itself is still to
+  come; this is the currency it needs.
+
 ### Added
 
 - **charts: a horizontal `<BarChart>` can be swept** ([PND-HSWEEP]). `<MultiSelector>`

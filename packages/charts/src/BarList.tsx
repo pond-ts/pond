@@ -72,11 +72,19 @@ export interface BarListCommon<R extends ListRow = ListRow> {
   /** Observe a toggle (`expanded` is the row's **new** state). */
   onExpandToggle?: (key: string, expanded: boolean) => void;
   /**
-   * The selected row's `key`, marked with an inset edge in the annotation
-   * (marks) register — selection is a user's mark, not data. Consumer-owned
-   * state: pair with `onRowClick`. `null` / omitted ⇒ none.
+   * The selected row(s), marked with an inset edge in the annotation (marks)
+   * register — selection is a user's mark, not data. Consumer-owned state:
+   * pair with {@link onRowClick}. `null` / omitted ⇒ none.
+   *
+   * **Accepts one key or a set**, the same union {@link hovered} takes
+   * ([PND-INTERACTCONF] / RFC `interaction.md` A3.1 — the list family speaks
+   * the canvas's interaction vocabulary, not a parallel one). Plural because
+   * a range of rows can be selected at once; passing a bare key still means
+   * exactly what it looks like.
+   *
+   * The library applies **no set arithmetic** — it renders what you hand back.
    */
-  selected?: string | null;
+  selected?: string | readonly string[] | null;
   /** Row click (rows show the pointer affordance only when provided). */
   onRowClick?: (row: R) => void;
   /**

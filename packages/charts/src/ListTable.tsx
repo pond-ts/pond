@@ -34,6 +34,9 @@ const FALLBACK_ACCENT = '#0d9488';
  */
 const EMPTY_HOVER: ReadonlySet<string> = new Set<string>();
 
+/** The same trick for "nothing selected" — see {@link EMPTY_HOVER}. */
+const EMPTY_SELECTED: ReadonlySet<string> = new Set<string>();
+
 export interface ListTableProps<R extends ListRow> {
   /** Rows in display order (the caller sorts). */
   readonly rows: readonly R[];
@@ -48,7 +51,9 @@ export interface ListTableProps<R extends ListRow> {
   readonly onExpandToggle?:
     | ((key: string, expanded: boolean) => void)
     | undefined;
-  readonly selected?: string | null | undefined;
+  /** Selected row(s) — one key, a set of them, or nothing. Widened to match
+   *  {@link ListTableProps.hovered}; see `<BarList selected>`. */
+  readonly selected?: string | readonly string[] | null | undefined;
   readonly onRowClick?: ((row: R) => void) | undefined;
   /** Controlled hover — one row key, a set of them, or nothing. Omitted ⇒
    *  uncontrolled (the shell tracks the pointer itself, as it always has). */
@@ -120,6 +125,14 @@ export function ListTable<R extends ListRow>({
     if (raw === null || raw === undefined) return EMPTY_HOVER;
     return new Set(typeof raw === 'string' ? [raw] : raw);
   }, [controlledHover, hovered, internalHovered]);
+  // …and the identical normalization for `selected`, which now takes the same
+  // union. It is deliberately the same three shapes and the same question
+  // ("is this row in the set"): the two channels of one vocabulary should not
+  // differ in how a consumer spells them.
+  const selectedKeys: ReadonlySet<string> = useMemo(() => {
+    if (selected === null || selected === undefined) return EMPTY_SELECTED;
+    return new Set(typeof selected === 'string' ? [selected] : selected);
+  }, [selected]);
 
   const rowByKey = useMemo(
     () => new Map(rows.map((row) => [row.key, row])),
@@ -244,7 +257,7 @@ export function ListTable<R extends ListRow>({
           </tr>
         )}
         {rows.map((row, i) => {
-          const isSelected = selected != null && selected === row.key;
+          const isSelected = selectedKeys.has(row.key);
           const isHovered = hoveredKeys.has(row.key);
           const isOpen = renderExpanded !== undefined && expanded.has(row.key);
           return (

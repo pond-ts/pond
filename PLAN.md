@@ -361,17 +361,31 @@ milestone. Plan:
     events, not against `sweep1D`. There is no key axis for a `SpanSelection`
     to describe, and no layer `id` for one to carry.
 
-    **The load-bearing decision is a public type widening, so it is a human
-    gate.** A list's `selected` is `string | null` — _singular_ — while its
-    `hovered` is already `string | readonly string[] | null` (widened when
-    the lists were taught to speak the canvas's hover vocabulary). Any
-    multi-select at all means widening `selected` to match, on both
-    `<BarList>` and `<BoxList>`. Per this file's own release rules that
-    needs owner sign-off before code.
+    **The currency is now in place** (owner-approved 2026-08-10; a public
+    type widening, so it was a human gate). `selected` on both `<BarList>`
+    and `<BoxList>` takes `string | readonly string[] | null` — the same
+    union `hovered` already took, with the same normalization and the same
+    "no set arithmetic" contract. Additive: every existing caller passes a
+    `string` or `null`. The asymmetry it closes is the tell for why it is
+    the right shape — `hovered` went plural precisely _because_ a sweep
+    lights several marks at once, so the list had the receiving half of the
+    gesture and not the committing half.
 
-    Worth noting what the asymmetry already tells us: `hovered` went plural
-    precisely _because_ a sweep lights several marks at once. The list was
-    given the receiving half of the gesture and not the committing half.
+    **What is left is the gesture**, which is the design half:
+    - **Drag over `<tr>` rows** — press on row _i_, drag to row _j_, take
+      the run. Pointer events on the table rows, not `sweep1D`: a list has
+      no key axis and no scale to invert through. A row's `key` is its
+      identity, so the committed value is a **key array**, not a
+      `SpanSelection` (which needs a numeric interval and a layer `id`,
+      neither of which a list has).
+    - **The commit channel.** `onRowClick(row)` reports one row and carries
+      no modifiers. A range release needs something plural — most likely a
+      sibling callback rather than a widening, since the two report
+      different things (one row vs a run) and a click must stay a click.
+    - **Keyboard parity.** Rows are already focusable with Enter / Space
+      activating them; a range select wants Shift-click and a Shift-arrow
+      extend, and that is worth settling _with_ the pointer gesture rather
+      than after it.
 
   - **`<LineChart>` and `<AreaChart>`** — a continuous trace has **no marks
     to select**, which is why they have no `id` gate today and why
