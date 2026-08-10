@@ -31,6 +31,7 @@ describe('BarChart stories render', () => {
       'HoverSelect',
       'HoverVsSelectColours',
       'MarkSelection',
+      'MaxBarWidth',
     ]);
   });
 

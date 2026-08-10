@@ -318,6 +318,36 @@ export interface BarChartCommon<
    */
   gap?: number;
   /**
+   * Cap on a bar's **ink** width in px — applied after the `gap` inset and
+   * centred in its slot ([PND-BARWIDTH]). **Omitted ⇒ the theme's `bar`
+   * `maxWidth`, and uncapped if that is unset too** (a bar is `slot - gap`
+   * wide, as it always was).
+   *
+   * This is the *absolute* half of the width vocabulary. `gap` is **relative**,
+   * so with it alone bar width is always `slot - gap` and fattens as the plot
+   * widens; a fixed ink width is what makes a measure comparable **between**
+   * panes, since bars that widen with their pane read as different weights of
+   * the same thing.
+   *
+   * Pairs with `<ChartContainer maxBandWidth>`: that caps the **slot** (how far
+   * the bars spread), this caps the **ink** inside whatever slot results. The
+   * two are independent, which is the point — neither spelling alone expresses
+   * "spread the slots, pin the bar":
+   *
+   * - `maxBandWidth = barWidth + gap` pins the bar but stops the slots
+   *   spreading;
+   * - `maxBandWidth = slotCap` spreads them but lets the bar grow.
+   *
+   * `theme.bar[as].minWidth` still wins if the two bounds would invert, so the
+   * rect can never flip.
+   *
+   * **On a stacked chart the cap narrows the hit target too**, because a stack
+   * hit-tests its drawn segment rect (it must, to resolve *which* segment).
+   * A single-series bar is unaffected: it hit-tests its whole slot, so the ink
+   * can be narrow while the target stays full width.
+   */
+  maxBarWidth?: number;
+  /**
    * **M4 column decimation** (charts decimator wave). **Omitted ⇒ `true`**: once
    * the visible bars are denser than ~2 per device pixel (each slot < ~1px), the
    * **single-series** bars are drawn as one per-column **envelope** rect — the
@@ -438,6 +468,7 @@ export function BarChart<
   id,
   axis,
   gap,
+  maxBarWidth,
   decimate = true,
   legend,
   index = 0,
@@ -672,6 +703,23 @@ export function BarChart<
   // The stacked path's bar-thickness floor comes from `bar.default` (not the `as`
   // role — `as` is single-series only), matching how `gapPx` sources its default.
   const stackMinWidth = bar.default.minWidth;
+  // Same sourcing as `gapPx`: the prop wins, else the theme token, else
+  // uncapped ([PND-BARWIDTH]). `bar.default` rather than the `as` role for the
+  // stacked ceiling, for the reason above.
+  const maxWidthPx = maxBarWidth ?? bar.default.maxWidth;
+  // The single-series draw takes a `BarStyle` straight from the theme, so the
+  // prop override is applied by shadowing the token — same relationship `gap`
+  // has, and with the prop absent the role's own `maxWidth` (if any) already
+  // rides along untouched. Only the INK path gets this: `barSlotRect` (the hit
+  // region) stays the whole slot, so a narrow capped bar keeps a full-width
+  // target — the deliberate ink/hit split `gapPx` already relies on.
+  const singleDrawStyle = useMemo(
+    () =>
+      maxBarWidth !== undefined
+        ? { ...singleStyle, maxWidth: maxBarWidth }
+        : singleStyle,
+    [singleStyle, maxBarWidth],
+  );
 
   // ── Threshold ladder ([PND-BANDBAR2]) ────────────────────────────────────
   // Resolved once here rather than per bar per frame: normalize the breakpoints
@@ -840,9 +888,10 @@ export function BarChart<
         ? { emphasisOpacity: base.emphasisOpacity }
         : {}),
       ...(base.dimmed !== undefined ? { dimmed: base.dimmed } : {}),
+      ...(maxWidthPx !== undefined ? { maxWidth: maxWidthPx } : {}),
       ...(binColors !== undefined ? { binFills: binColors } : {}),
     };
-  }, [bar, groups, colors, binColors]);
+  }, [bar, groups, colors, binColors, maxWidthPx]);
 
   // The current selection / hover, narrowed to the identity the highlight match
   // needs. For a stack that's (id, key, label = group); the single path uses just
@@ -1016,7 +1065,7 @@ export function BarChart<
               bs,
               xScale,
               yScale,
-              singleStyle,
+              singleDrawStyle,
               resolveBarBaseline(yScale),
               gapPx,
               id,
@@ -1074,6 +1123,7 @@ export function BarChart<
                   yScale,
                   gapPx,
                   stackMinWidth,
+                  maxWidthPx,
                 );
                 if (hit === null) return null;
                 const [bi, g, begin, name, value] = hit;
@@ -1178,6 +1228,7 @@ export function BarChart<
     categoryLabels,
     orientation,
     singleStyle,
+    singleDrawStyle,
     stackStyle,
     binColors,
     bandLadder,
@@ -1186,6 +1237,7 @@ export function BarChart<
     gapPx,
     decimate,
     stackMinWidth,
+    maxWidthPx,
     selection,
     hover,
     layerSpans,

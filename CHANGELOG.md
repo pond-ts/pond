@@ -63,6 +63,28 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: `<BarChart maxBarWidth>` — cap a bar's ink independently of its slot**
+  ([PND-BARWIDTH]). Applied after the `gap` inset and centred in the slot, with
+  `theme.bar[as].maxWidth` as the fallback (the same relationship `gap` has) and
+  uncapped when neither is set.
+
+  It is the **absolute** half of the width vocabulary. `gap` is *relative*, so
+  with it alone bar width is always `slot - gap` and fattens as the plot widens
+  — and a fixed ink width is what makes a measure comparable **between** panes,
+  since bars that widen with their pane read as different weights of the same
+  thing. Neither existing spelling expresses "spread the slots, pin the bar":
+  `maxBandWidth = barWidth + gap` pins the bar but stops the slots spreading,
+  and `maxBandWidth = slotCap` spreads them but lets the bar grow. The
+  workaround was to compute `gap` from the band width you predicted the library
+  would pick — a re-derivation of pond's layout arithmetic in consumer code,
+  which goes silently wrong the moment that rule changes on either side.
+
+  Pairs with `<ChartContainer maxBandWidth>` (which caps the **slot**) and
+  `minWidth` still wins if the two bounds would invert. **A single-series bar's
+  hit target stays its whole slot**, so narrow ink costs nothing in clickability;
+  on a **stacked** chart the cap does narrow the target, because a stack must
+  hit-test its drawn segment rect to resolve which segment.
+
 - **charts: `<BarChart categories columns>` — a first-class stacked category
   chart** ([PND-CATSTACK]). Each datum is `{ label, values }` and `columns`
   names the groups to stack bottom → top, the same relationship

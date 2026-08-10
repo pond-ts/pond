@@ -91,6 +91,7 @@ export function barRect(
   baseline: number,
   gapPx: number,
   minWidthPx: number,
+  maxWidthPx?: number,
 ): [x0: number, x1: number, yTop: number, yBottom: number] | null {
   const v = cs.y[i]!;
   if (!Number.isFinite(v)) return null;
@@ -100,6 +101,7 @@ export function barRect(
     xScale,
     gapPx,
     minWidthPx,
+    maxWidthPx,
   );
   const yValue = yScale(v);
   const yBase = yScale(baseline);
@@ -564,6 +566,7 @@ export function drawBars(
       baseline,
       gapPx,
       style.minWidth,
+      style.maxWidth,
     );
     if (rect === null) continue;
     const [x0, x1, yTop, yBottom] = rect;
@@ -832,6 +835,9 @@ export interface StackStyle {
   readonly fills: readonly string[];
   readonly opacity: number;
   readonly outlineWidth: number;
+  /** Cap on a segment's ink span in px, centred in the slot — the stacked
+   *  counterpart of `BarStyle.maxWidth` ([PND-BARWIDTH]). Omitted ⇒ uncapped. */
+  readonly maxWidth?: number;
   /**
    * Optional **per-bin** fill override, aligned index-for-index to the bins
    * (bin `b` uses `binFills[b]`), taking precedence over the per-group
@@ -1078,6 +1084,7 @@ export function segmentRect(
   cumBefore: number,
   gapPx: number,
   minSpanPx: number,
+  maxSpanPx?: number,
 ): [x0: number, x1: number, yTop: number, yBottom: number] | null {
   const G = ss.groups.length;
   const v = ss.values[b * G + g]!;
@@ -1105,6 +1112,7 @@ export function segmentRect(
       xScale,
       gapPx,
       minSpanPx,
+      maxSpanPx,
     );
     const yA = yScale(cumBefore);
     const yB = yScale(cumBefore + v);
@@ -1116,6 +1124,7 @@ export function segmentRect(
     yScale,
     gapPx,
     minSpanPx,
+    maxSpanPx,
   );
   const xA = xScale(cumBefore);
   const xB = xScale(cumBefore + v);
@@ -1202,6 +1211,7 @@ export function drawStacks(
         v < 0 ? cumNeg : cumPos,
         gapPx,
         minSpanPx,
+        style.maxWidth,
       );
       if (Number.isFinite(v)) {
         if (v > 0) cumPos += v;
@@ -1368,6 +1378,10 @@ export function stackAt(
   yScale: Scale,
   gapPx: number,
   minSpanPx: number,
+  /** Must match the draw's cap ([PND-BARWIDTH]) — this function's whole
+   *  contract is that its rect is the drawn rect, so a cap applied to one and
+   *  not the other silently drifts the hit target off the ink. */
+  maxSpanPx?: number,
 ):
   | [bin: number, group: number, begin: number, name: string, value: number]
   | null {
@@ -1390,6 +1404,7 @@ export function stackAt(
         v < 0 ? cumNeg : cumPos,
         gapPx,
         minSpanPx,
+        maxSpanPx,
       );
       if (Number.isFinite(v)) {
         if (v > 0) cumPos += v;

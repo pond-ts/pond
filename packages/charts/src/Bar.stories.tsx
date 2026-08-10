@@ -399,3 +399,64 @@ export const DefaultThemeStates: Story = {
     );
   },
 };
+
+/**
+ * **`maxBarWidth`** — the *absolute* half of the width vocabulary
+ * ([PND-BARWIDTH]). `gap` is a **relative** inset, so with it alone a bar is
+ * always `slot - gap` and fattens as the plot widens. A fixed ink width is what
+ * makes a measure comparable **between** panes: bars that widen with their pane
+ * read as different weights of the same thing.
+ *
+ * The two panes below are deliberately different widths and show the same data.
+ * Uncapped, the bars are visibly different weights; capped, they match — which
+ * is the whole point of the prop.
+ */
+export const MaxBarWidth: Story = {
+  render: () => {
+    const v = hourlyVolume();
+    const pane = (width: number, capped: boolean) => (
+      <div>
+        <div style={{ font: '12px system-ui', color: '#667', marginBottom: 4 }}>
+          {width}px pane · {capped ? 'maxBarWidth={14}' : 'uncapped'}
+        </div>
+        <ChartContainer range={TIME_RANGE} width={width}>
+          <ChartRow height={160}>
+            <YAxis id="count" label="req" min={0} />
+            <Layers>
+              <BarChart
+                series={v}
+                column="count"
+                id="count"
+                gap={3}
+                {...(capped ? { maxBarWidth: 14 } : {})}
+              />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>
+      </div>
+    );
+    return (
+      <div style={{ display: 'grid', gap: 18 }}>
+        {pane(620, false)}
+        {pane(380, false)}
+        {pane(620, true)}
+        {pane(380, true)}
+        <p
+          style={{
+            font: '13px system-ui',
+            color: '#667',
+            maxWidth: 620,
+            lineHeight: 1.5,
+          }}
+        >
+          Top two: the same bars at two pane widths, uncapped — the wider
+          pane&apos;s bars are visibly heavier. Bottom two:{' '}
+          <code>maxBarWidth={14}</code> — the ink matches across panes while the
+          slots still spread to fill each one. The{' '}
+          <strong>hit target stays the whole slot</strong>, so the narrower ink
+          costs nothing in clickability.
+        </p>
+      </div>
+    );
+  },
+};

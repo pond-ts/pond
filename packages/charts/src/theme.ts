@@ -732,6 +732,28 @@ export interface BarStyle {
   readonly highlight: string;
   readonly gap: number;
   readonly minWidth: number;
+  /**
+   * Cap on a bar's **ink** width in px, applied after the `gap` inset and
+   * centred in the slot ([PND-BARWIDTH]). **Omitted ⇒ uncapped** — a bar is
+   * `slot - gap` wide, as it always was.
+   *
+   * It is the missing half of the width vocabulary, and the reason it cannot be
+   * spelled with `gap` alone: `gap` is a *relative* inset, so bar width tracks
+   * the slot and fattens as the plot widens. A **fixed** ink width is what makes
+   * a measure comparable *between* panes — bars that widen with their pane read
+   * as different weights of the same thing. Wanting both (slots spreading to
+   * fill, ink pinned) needs two independent knobs; with one, a consumer has to
+   * predict the slot width and back-solve the gap, re-deriving pond's own layout
+   * arithmetic in their code.
+   *
+   * Pairs with `<ChartContainer maxBandWidth>`, which caps the **slot**: that
+   * one decides how far the bars spread, this one how wide the ink is inside
+   * whatever slot results. `minWidth` still wins if the two would invert.
+   *
+   * `<BarChart maxBarWidth>` overrides this per layer, the same relationship
+   * `gap` has.
+   */
+  readonly maxWidth?: number;
   readonly outlineWidth: number;
   /**
    * Optional distinct **hover** fill, so a bar can read a three-step emphasis —
