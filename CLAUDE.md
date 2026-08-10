@@ -2,6 +2,10 @@
 
 TypeScript time series library. Successor to pondjs / react-timeseries-charts.
 
+## Vibe
+
+When reporting information to me, be concise, use plain english, but sacrifice grammer for the sake of concision. If you learnt a lesson from the previous turn, make a memory of that or store it with your working document. Only bring it to me if it is going to effect my next decision. 
+
 ## Plan
 
 **Read [PLAN.md](PLAN.md) at the start of every session.** It is the binding
