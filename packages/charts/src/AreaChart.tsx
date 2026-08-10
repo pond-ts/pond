@@ -8,7 +8,12 @@ import {
 } from './data.js';
 import type { NumericColumn, ValueNumericColumn } from './column-names.js';
 import { areaExtent, areaHitIndex, areaStateStyle, drawArea } from './area.js';
-import { drawPartitioned, strokeSpanEdges, type TraceState } from './line.js';
+import {
+  drawPartitioned,
+  plotExtentOf,
+  strokeSpanEdges,
+  type TraceState,
+} from './line.js';
 import type { AreaStyle } from './theme.js';
 import { sweepSpan } from './sweep.js';
 import type { DecimateOption } from './decimate.js';
@@ -423,7 +428,7 @@ export function AreaChart<
           return drawPartitioned(
             ctx,
             [xScale(spanX[0]), xScale(spanX[1])],
-            ctx.canvas.height,
+            plotExtentOf(ctx, xScale, yScale).height,
             fill(outStyle, outAlpha),
             fill(
               style.spanColor === undefined || !soleSpannedTrace
@@ -431,6 +436,9 @@ export function AreaChart<
                 : { ...inStyle, color: style.spanColor, fill: style.spanColor },
               1,
             ),
+            true,
+            0,
+            plotExtentOf(ctx, xScale, yScale).width,
           );
 
           function drawAreaWith(st: AreaStyle) {

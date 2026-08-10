@@ -488,6 +488,9 @@ export function drawPartitioned(
    * trace, so the murk was overlap, never a double render.
    */
   capOverhangPx = 0,
+  /** The plot's CSS width — see {@link plotExtentOf}. Defaults to the device
+   *  width only so a bare test stub still clips something sane. */
+  plotWidthCss?: number,
 ): LayerDrawStats {
   const [x0, x1] = windowPx;
   // A collapsed window has no inside to paint, so one plain pass is the whole
@@ -511,7 +514,8 @@ export function drawPartitioned(
   const leftEdge = x0 - inset;
   const rightEdge = x1 + inset;
   if (leftEdge > 0) ctx.rect(0, 0, leftEdge, height);
-  ctx.rect(rightEdge, 0, Math.max(0, ctx.canvas.width - rightEdge), height);
+  const right = plotWidthCss ?? ctx.canvas.width;
+  ctx.rect(rightEdge, 0, Math.max(0, right - rightEdge), height);
   ctx.clip();
   const stats = outside();
   ctx.restore();
@@ -623,6 +627,32 @@ export function sliceTrace(
  *   was asked for — if the look is kept, the honest options are to accept rules
  *   above the ink, or to give the annotation register a canvas-underlay pass.
  */
+/**
+ * The plot's extent in **CSS pixels**, from the scales' own ranges.
+ *
+ * Not `ctx.canvas.width`/`height`: those are **device** pixels, while the
+ * context is pre-transformed by the device ratio, so mixing them overshoots at
+ * dpr>1 and — the case that actually breaks — *undershoots* at dpr<1 (a
+ * zoomed-out browser), collapsing a clip that should span the plot. The scales
+ * are the honest source, and this needs no dpr arithmetic at all. Falls back to
+ * the canvas dims only when a scale exposes no range (a bare test stub).
+ */
+export function plotExtentOf(
+  ctx: CanvasRenderingContext2D,
+  xScale: Scale,
+  yScale: Scale,
+): { readonly width: number; readonly height: number } {
+  const span = (s: Scale, fallback: number): number => {
+    const r = (s as unknown as { range?: () => number[] }).range?.();
+    if (r === undefined || r.length < 2) return fallback;
+    return Math.abs(+r[r.length - 1]! - +r[0]!);
+  };
+  return {
+    width: span(xScale, ctx.canvas.width),
+    height: span(yScale, ctx.canvas.height),
+  };
+}
+
 export function strokeSpanEdges(
   ctx: CanvasRenderingContext2D,
   windowPx: readonly [number, number],

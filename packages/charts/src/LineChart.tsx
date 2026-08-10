@@ -10,6 +10,7 @@ import type { NumericColumn, ValueNumericColumn } from './column-names.js';
 import {
   drawLine,
   drawPartitioned,
+  plotExtentOf,
   sliceTrace,
   strokeSpanEdges,
   traceHitIndex,
@@ -457,7 +458,7 @@ export function LineChart<
           return drawPartitioned(
             ctx,
             [xScale(spanX[0]), xScale(spanX[1])],
-            ctx.canvas.height,
+            plotExtentOf(ctx, xScale, yScale).height,
             stroke(outStyle, outAlpha),
             inner === null
               ? () => ({ sourceCount: 0, drawnCount: 0, decimated: false })
@@ -466,6 +467,7 @@ export function LineChart<
             // The round cap overhangs the boundary by half its width; keep the
             // muted trace out from under it.
             inInk.width / 2,
+            plotExtentOf(ctx, xScale, yScale).width,
           );
         },
       },
