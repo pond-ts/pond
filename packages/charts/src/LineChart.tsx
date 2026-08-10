@@ -262,10 +262,10 @@ export function LineChart<
   // nothing visually — the preview cannot promise a picture the commit does not
   // deliver. The live channel wins while it is non-empty, because during a drag
   // it IS the current answer.
-  const allSpans =
-    container.previewSpans.length > 0
-      ? container.previewSpans
-      : container.selectedSpans;
+  const previewing = container.previewSpans.length > 0;
+  const allSpans = previewing
+    ? container.previewSpans
+    : container.selectedSpans;
   const traceState = useMemo<TraceState>(() => {
     if (id === undefined) return 'rest';
     // A span on THIS layer is handled by the partitioned draw below, not by a
@@ -312,6 +312,7 @@ export function LineChart<
               // drag covered, so no rect and no y window.
               sweepsRect: false,
               sweepAxis: 'x' as const,
+              sweepSpanOnly: true,
               hitTest: (px, py, xScale, yScale): SelectInfo | null => {
                 const i = traceHitIndex(cs, px, py, xScale, yScale);
                 if (i === null) return null;
@@ -427,12 +428,21 @@ export function LineChart<
           // window just thickens.
           // EXPERIMENT: annotation-register rules at the window's edges,
           // underneath the trace ink (drawn first). See `strokeSpanEdges`.
-          strokeSpanEdges(
-            ctx,
-            [xScale(spanX[0]), xScale(spanX[1])],
-            ctx.canvas.height,
-            container.theme.annotation?.spanEdge ?? '#f0b26b',
-          );
+          //
+          // **Committed spans only.** While the drag is live the brush band
+          // already strokes its own edges at the same two x positions, so
+          // drawing these too put two rules a fraction of a pixel apart on each
+          // boundary — which read as one muddy smear rather than as either. The
+          // handoff is the honest reading anyway: the band is the gesture's
+          // mark and belongs to the drag; these preview the annotation you
+          // would get, and belong to the result.
+          if (!previewing)
+            strokeSpanEdges(
+              ctx,
+              [xScale(spanX[0]), xScale(spanX[1])],
+              ctx.canvas.height,
+              container.theme.annotation?.spanEdge ?? '#f0b26b',
+            );
           const [outStyle, outAlpha] = traceStateStyle(style, 'dimmed');
           const [inStyle] = traceStateStyle(style, 'selected');
           // The emphasised pass strokes a **slice** of the trace rather than
@@ -453,6 +463,9 @@ export function LineChart<
               ? () => ({ sourceCount: 0, drawnCount: 0, decimated: false })
               : stroke(inInk, 1, inner),
             false,
+            // The round cap overhangs the boundary by half its width; keep the
+            // muted trace out from under it.
+            inInk.width / 2,
           );
         },
       },
@@ -477,6 +490,7 @@ export function LineChart<
       traceState,
       spanX,
       soleSpannedTrace,
+      previewing,
       index,
     ],
   );

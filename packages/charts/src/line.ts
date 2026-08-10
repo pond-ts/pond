@@ -472,6 +472,17 @@ export function drawPartitioned(
    * shear the ribbon flat and defeat the round cap the slice exists to allow.
    */
   clipInside = true,
+  /**
+   * Half the emphasised stroke's width, in px — how far its **round cap**
+   * overhangs the window boundary. The outside pass's clip is inset by this,
+   * so the cap lands on bare ground instead of on top of the muted trace.
+   *
+   * Without it the boundary column carries two antialiased edges stacked (the
+   * muted stroke's clipped end, plus the cap) and the seam reads muddy at
+   * zoom. Measured, not guessed: the draw issues exactly two strokes per
+   * trace, so the murk was overlap, never a double render.
+   */
+  capOverhangPx = 0,
 ): LayerDrawStats {
   const [x0, x1] = windowPx;
   // A collapsed window has no inside to paint, so one plain pass is the whole
@@ -491,8 +502,11 @@ export function drawPartitioned(
   // The complement as two rects in one path: everything left of the window,
   // everything right of it. A negative-width rect is legal but not portable
   // across every canvas impl, so clamp rather than rely on it.
-  if (x0 > 0) ctx.rect(0, 0, x0, height);
-  ctx.rect(x1, 0, Math.max(0, ctx.canvas.width - x1), height);
+  const inset = Math.max(0, capOverhangPx);
+  const leftEdge = x0 - inset;
+  const rightEdge = x1 + inset;
+  if (leftEdge > 0) ctx.rect(0, 0, leftEdge, height);
+  ctx.rect(rightEdge, 0, Math.max(0, ctx.canvas.width - rightEdge), height);
   ctx.clip();
   const stats = outside();
   ctx.restore();

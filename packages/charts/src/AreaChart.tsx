@@ -274,10 +274,10 @@ export function AreaChart<
   // nothing visually — the preview cannot promise a picture the commit does not
   // deliver. The live channel wins while it is non-empty, because during a drag
   // it IS the current answer.
-  const allSpans =
-    container.previewSpans.length > 0
-      ? container.previewSpans
-      : container.selectedSpans;
+  const previewing = container.previewSpans.length > 0;
+  const allSpans = previewing
+    ? container.previewSpans
+    : container.selectedSpans;
   const traceState = useMemo<TraceState>(() => {
     if (id === undefined) return 'rest';
     if (allSpans.some((sp) => sp.id === id)) return 'rest';
@@ -316,6 +316,7 @@ export function AreaChart<
           : {
               sweepsRect: false,
               sweepAxis: 'x' as const,
+              sweepSpanOnly: true,
               hitTest: (px, py, xScale, yScale): SelectInfo | null => {
                 const i = areaHitIndex(cs, baseline, px, py, xScale, yScale);
                 if (i === null) return null;
@@ -402,12 +403,21 @@ export function AreaChart<
           }
           // EXPERIMENT: annotation-register rules at the window's edges,
           // underneath the trace ink (drawn first). See `strokeSpanEdges`.
-          strokeSpanEdges(
-            ctx,
-            [xScale(spanX[0]), xScale(spanX[1])],
-            ctx.canvas.height,
-            container.theme.annotation?.spanEdge ?? '#f0b26b',
-          );
+          //
+          // **Committed spans only.** While the drag is live the brush band
+          // already strokes its own edges at the same two x positions, so
+          // drawing these too put two rules a fraction of a pixel apart on each
+          // boundary — which read as one muddy smear rather than as either. The
+          // handoff is the honest reading anyway: the band is the gesture's
+          // mark and belongs to the drag; these preview the annotation you
+          // would get, and belong to the result.
+          if (!previewing)
+            strokeSpanEdges(
+              ctx,
+              [xScale(spanX[0]), xScale(spanX[1])],
+              ctx.canvas.height,
+              container.theme.annotation?.spanEdge ?? '#f0b26b',
+            );
           const [outStyle, outAlpha] = areaStateStyle(style, 'dimmed');
           const [inStyle] = areaStateStyle(style, 'selected');
           return drawPartitioned(
@@ -468,6 +478,7 @@ export function AreaChart<
       traceState,
       spanX,
       soleSpannedTrace,
+      previewing,
       index,
     ],
   );

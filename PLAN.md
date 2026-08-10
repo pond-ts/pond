@@ -727,6 +727,14 @@ milestone. Plan:
     because "underneath" is what was asked for. So the experiment shows a look
     the annotation register cannot currently produce. Either the rules move
     above the ink, or the register gains a canvas-underlay pass.
+  - **It collided with the brush band, twice.** Mid-drag the band strokes its
+    own edges at the same two x positions, and at rest the **resting block
+    band** did too — so each boundary carried two vertical rules a pixel apart,
+    reading as one muddy smear. Fixed by making the rules committed-only and by
+    suppressing the resting block band on a span-only row, which was a bug in
+    its own right: that band previews "a drag here selects this block", and a
+    trace has no blocks. The lesson generalises — **a boundary should be marked
+    once**, and three separate things now want to mark one.
   - **Every spanned layer draws its own copy** at the same x. They are opaque so
     the overdraw is idempotent, but that is a workaround for the rules living on
     the wrong owner: a window's edges belong to the row, not to each trace in

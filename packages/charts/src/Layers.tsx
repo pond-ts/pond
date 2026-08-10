@@ -184,6 +184,14 @@ function topmostSweepsRect(layers: RowFrame['layers']): boolean {
  * hand. `'x'` for a row with nothing sweepable, which is what every caller
  * wants for "not a transposed row".
  */
+function topmostSweepSpanOnly(layers: RowFrame['layers']): boolean {
+  for (let i = layers.length - 1; i >= 0; i -= 1) {
+    const l = layers[i]!;
+    if (l.layer.beginSweep !== undefined) return l.layer.sweepSpanOnly === true;
+  }
+  return false;
+}
+
 function topmostSweepAxis(layers: RowFrame['layers']): 'x' | 'y' {
   for (let i = layers.length - 1; i >= 0; i -= 1) {
     const l = layers[i]!.layer;
@@ -529,9 +537,14 @@ export function Layers({ children }: LayersProps) {
   const sweeps = container.hasMultiSelector(row.rowKey);
   const rectPreview = sweeps && topmostSweepsRect(layers);
   const sweepAxis = topmostSweepAxis(layers);
+  // A span-only row gets no resting block band either, and for the rect's
+  // reason: a trace has no blocks, so the band would preview a set the drag
+  // never takes. It would also collide with the committed span's own edge
+  // rules, putting two vertical marks a pixel apart on each boundary.
   const blockPreview =
     sweeps &&
     !rectPreview &&
+    !topmostSweepSpanOnly(layers) &&
     layers.some((e) => e.layer.beginSweep !== undefined);
   // The resting brush replaces the implicit cursor either way; only its SHAPE
   // differs. A 2-D row gets no band: its snap block is a whole x column while

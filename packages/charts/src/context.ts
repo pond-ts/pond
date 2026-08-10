@@ -866,6 +866,18 @@ export interface RowLayer {
    */
   readonly sweepAxis?: 'x' | 'y';
   /**
+   * **Whether a sweep over this layer has a range but no marks** — the same
+   * fact {@link SweepSession.spanOnly} reports, declared on the layer for
+   * exactly the reason {@link sweepsRect} is: the RESTING state has to know it
+   * and there is no session at rest.
+   *
+   * It suppresses the resting **block** band. That band previews "a drag begun
+   * here selects this block", and a trace has no blocks — a drag takes a
+   * freeform window — so the band would advertise a set the gesture never
+   * selects. Precisely the reason a `twoD` layer gets no resting band either.
+   */
+  readonly sweepSpanOnly?: boolean;
+  /**
    * Draw into the plot canvas. `xScale`/`yScale` map data→pixels. May return
    * {@link LayerDrawStats} (source/drawn counts + whether decimation engaged) so
    * the container can surface them via {@link ContainerProps.onDrawStats}; a
