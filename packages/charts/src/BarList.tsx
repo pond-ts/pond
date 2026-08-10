@@ -137,7 +137,7 @@ export interface BarListCommon<R extends ListRow = ListRow> {
    * _outside_ the list — the chart bar the pointer is on, a map segment, a
    * sibling list.
    *
-   * **Accepts one key or a set**, the same union `<ChartContainer hovered>`
+   * **Accepts one key or a set**, the same union `<Selector hovered>`
    * takes ([PND-INTERACTCONF] / RFC `interaction.md` A3.1 — the list family
    * speaks the canvas's interaction vocabulary, not a parallel one). Plural
    * because a sweep lights several marks at once; a plain pointer-over carries

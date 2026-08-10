@@ -8,6 +8,7 @@ import { ScatterChart } from './ScatterChart.js';
 import { LineChart } from './LineChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
+import { Selector } from './selectors.js';
 import { defaultTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
 
@@ -203,23 +204,20 @@ function ControlledSelectDemo() {
           </span>
         )}
       </div>
-      <ChartContainer
-        range={TIME_RANGE}
-        width={620}
-        selected={sel}
-        onSelect={setSel}
-      >
-        <ChartRow height={280}>
-          <YAxis id="price" label="price" />
-          <Layers>
-            <ScatterChart
-              series={t}
-              column="price"
-              id="price"
-              radius={{ column: 'volume', range: [3, 16] }}
-            />
-          </Layers>
-        </ChartRow>
+      <ChartContainer range={TIME_RANGE} width={620}>
+        <Selector selected={sel} onSelect={setSel}>
+          <ChartRow height={280}>
+            <YAxis id="price" label="price" />
+            <Layers>
+              <ScatterChart
+                series={t}
+                column="price"
+                id="price"
+                radius={{ column: 'volume', range: [3, 16] }}
+              />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     </div>
   );
@@ -260,22 +258,23 @@ export const MultiSelected: Story = {
   render: () => {
     const t = trades();
     return (
-      <ChartContainer
-        range={TIME_RANGE}
-        width={620}
-        selected={[tradeMark(8), tradeMark(24), tradeMark(40)]}
-      >
-        <ChartRow height={300}>
-          <YAxis id="price" label="price" />
-          <Layers>
-            <ScatterChart
-              series={t}
-              column="price"
-              id="trades"
-              radius={{ column: 'volume', range: [3, 16] }}
-            />
-          </Layers>
-        </ChartRow>
+      <ChartContainer range={TIME_RANGE} width={620}>
+        <Selector
+          enabled={false}
+          selected={[tradeMark(8), tradeMark(24), tradeMark(40)]}
+        >
+          <ChartRow height={300}>
+            <YAxis id="price" label="price" />
+            <Layers>
+              <ScatterChart
+                series={t}
+                column="price"
+                id="trades"
+                radius={{ column: 'volume', range: [3, 16] }}
+              />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     );
   },
@@ -292,22 +291,20 @@ export const MultiHovered: Story = {
   render: () => {
     const t = trades();
     return (
-      <ChartContainer
-        range={TIME_RANGE}
-        width={620}
-        hovered={[20, 21, 22, 23, 24].map(tradeMark)}
-      >
-        <ChartRow height={300}>
-          <YAxis id="price" label="price" />
-          <Layers>
-            <ScatterChart
-              series={t}
-              column="price"
-              id="trades"
-              radius={{ column: 'volume', range: [3, 16] }}
-            />
-          </Layers>
-        </ChartRow>
+      <ChartContainer range={TIME_RANGE} width={620}>
+        <Selector enabled={false} hovered={[20, 21, 22, 23, 24].map(tradeMark)}>
+          <ChartRow height={300}>
+            <YAxis id="price" label="price" />
+            <Layers>
+              <ScatterChart
+                series={t}
+                column="price"
+                id="trades"
+                radius={{ column: 'volume', range: [3, 16] }}
+              />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     );
   },
@@ -324,23 +321,24 @@ export const MultiSelectedAndHovered: Story = {
   render: () => {
     const t = trades();
     return (
-      <ChartContainer
-        range={TIME_RANGE}
-        width={620}
-        selected={[tradeMark(8), tradeMark(24)]}
-        hovered={[tradeMark(24), tradeMark(32), tradeMark(40)]}
-      >
-        <ChartRow height={300}>
-          <YAxis id="price" label="price" />
-          <Layers>
-            <ScatterChart
-              series={t}
-              column="price"
-              id="trades"
-              radius={{ column: 'volume', range: [3, 16] }}
-            />
-          </Layers>
-        </ChartRow>
+      <ChartContainer range={TIME_RANGE} width={620}>
+        <Selector
+          enabled={false}
+          selected={[tradeMark(8), tradeMark(24)]}
+          hovered={[tradeMark(24), tradeMark(32), tradeMark(40)]}
+        >
+          <ChartRow height={300}>
+            <YAxis id="price" label="price" />
+            <Layers>
+              <ScatterChart
+                series={t}
+                column="price"
+                id="trades"
+                radius={{ column: 'volume', range: [3, 16] }}
+              />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     );
   },

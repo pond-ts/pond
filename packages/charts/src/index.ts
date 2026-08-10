@@ -210,11 +210,12 @@ export type {
   CrosshairCursorProps,
   RangeCursorProps,
 } from './cursors.js';
-// Click-select as a mounted component (interaction RFC §7): mounting
-// `<Selector>` is what enables a plot click at all — `selected` / `hovered`
-// stay on `<ChartContainer>` (A1.2), so controlled highlighting needs none.
+// Selection as a mounted component (interaction RFC §7 / A10): `<Selector>`
+// wraps what it applies to and owns both the gesture and the state it
+// produces — `selected` / `hovered` / `onSelect` / `onHover` are its props,
+// not the container's. Mounting is what enables a plot click at all.
 // `<MultiSelector>` (RFC §8) is its sweep superset: a click still selects one
-// mark, a drag sweeps many and releases `(hits, modifiers, span)` (A5.2).
+// mark, a drag sweeps many and releases `(hits, modifiers, spans)` (A5.2).
 export { Selector, MultiSelector } from './selectors.js';
 export type { SelectorProps, MultiSelectorProps } from './selectors.js';
 

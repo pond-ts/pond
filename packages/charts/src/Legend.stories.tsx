@@ -11,6 +11,7 @@ import { BarChart } from './BarChart.js';
 import { Legend } from './Legend.js';
 import { useChartLegend } from './useChartLegend.js';
 import { YAxis } from './YAxis.js';
+import { Selector } from './selectors.js';
 import type { SelectInfo } from './context.js';
 import { twoSeries, hrSeries, RANGE } from './story-data.fixture.js';
 
@@ -247,28 +248,30 @@ export const InteractiveSelect: Story = {
     const [sel, setSel] = useState<SelectInfo | null>(null);
     return (
       <div>
-        <ChartContainer range={RANGE} width={W} onSelect={setSel}>
-          <ChartRow height={200}>
-            <YAxis id="v" min={100} max={230} />
-            <Layers>
-              <ScatterChart
-                series={s}
-                column="fast"
-                id="fast"
-                as="primary"
-                axis="v"
-              />
-              <ScatterChart
-                series={s}
-                column="slow"
-                id="slow"
-                as="secondary"
-                axis="v"
-              />
-              <LineChart series={hrSeries()} column="bpm" as="bpm" axis="v" />
-            </Layers>
-          </ChartRow>
-          <Legend />
+        <ChartContainer range={RANGE} width={W}>
+          <Selector onSelect={setSel}>
+            <ChartRow height={200}>
+              <YAxis id="v" min={100} max={230} />
+              <Layers>
+                <ScatterChart
+                  series={s}
+                  column="fast"
+                  id="fast"
+                  as="primary"
+                  axis="v"
+                />
+                <ScatterChart
+                  series={s}
+                  column="slow"
+                  id="slow"
+                  as="secondary"
+                  axis="v"
+                />
+                <LineChart series={hrSeries()} column="bpm" as="bpm" axis="v" />
+              </Layers>
+            </ChartRow>
+            <Legend />
+          </Selector>
         </ChartContainer>
         <div style={{ font: '12px system-ui', marginTop: 8 }}>
           selected: {sel === null ? '(none)' : sel.id}

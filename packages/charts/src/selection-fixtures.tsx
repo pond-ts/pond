@@ -55,7 +55,7 @@ export interface ChartFixture {
     renderLayer(id: string): ReactNode;
   };
   /** Marks an *external* control can pick — drives the controlled-selection
-   *  story, which is the case A1.2 exists to protect. */
+   *  story, the case `<Selector enabled={false}>` exists to protect. */
   readonly picks: readonly { label: string; info: SelectInfo }[];
   /** How a hit reads in a caption. */
   describe(hit: SelectInfo): string;

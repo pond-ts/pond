@@ -176,7 +176,7 @@ export const HoveredRow: Story = {
 
 /**
  * **Plural hover** — `hovered` takes a *set* of keys as well as a single one
- * (the same union `<ChartContainer hovered>` takes), so a sweep, or a filter
+ * (the same union `<Selector hovered>` takes), so a sweep, or a filter
  * that matched several entities, lights every one of them at once.
  */
 export const HoveredRows: Story = {

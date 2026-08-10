@@ -7,6 +7,7 @@ import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
+import { Selector } from './selectors.js';
 import { transposeRow } from './data.js';
 import { defaultTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
@@ -157,18 +158,20 @@ function SelectDemo() {
           </span>
         )}
       </div>
-      <ChartContainer width={640} onSelect={setSel}>
-        <ChartRow height={240}>
-          <YAxis id="v" label="net Δ" min={0} pad={0.08} />
-          <Layers>
-            <BarChart
-              categories={TICKERS}
-              binColors={PALETTE}
-              id="tickers"
-              gap={6}
-            />
-          </Layers>
-        </ChartRow>
+      <ChartContainer width={640}>
+        <Selector onSelect={setSel}>
+          <ChartRow height={240}>
+            <YAxis id="v" label="net Δ" min={0} pad={0.08} />
+            <Layers>
+              <BarChart
+                categories={TICKERS}
+                binColors={PALETTE}
+                id="tickers"
+                gap={6}
+              />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     </div>
   );

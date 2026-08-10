@@ -17,17 +17,18 @@ import { stubCanvasContext } from './canvas-mock.js';
 afterEach(cleanup);
 
 /**
- * `<Selector>` — click-select as a mounted component (interaction RFC §7 /
- * §7.1 / A1.2 / A2.6 / Q8).
+ * `<Selector>` — selection as a mounted component (interaction RFC §7 /
+ * §7.1 / A2.6 / A10 / Q8).
  *
  * Two rules pull in opposite directions, and both have to hold:
  *
  * - **Mounting enables the plot gesture.** With no `<Selector>` mounted a plot
  *   click does nothing — not even the uncontrolled internal highlight it used
- *   to do. That is the deliberate break.
- * - **The state stays on the container.** `selected` / `hovered` are still
- *   container props, so controlled highlighting works with no `<Selector>` at
- *   all — the legend-chip / external-list case A1.2 exists to protect.
+ *   to do. That is the deliberate break §7.1 made.
+ * - **`<Selector>` owns the state it drives** (A10.3): `selected` / `hovered`
+ *   are its props, not the container's. `enabled={false}` disables the
+ *   gesture while keeping the state — the legend-chip / external-list case
+ *   that needs controlled highlighting with a deliberately inert plot.
  *
  * Everything here drives the **real components** through real DOM events. The
  * defect this wave keeps producing sits in the component wiring, not in the
@@ -166,10 +167,10 @@ describe('mounting <Selector> is what enables the plot click (§7.1)', () => {
   });
 });
 
-describe('the state stays on the container (A1.2)', () => {
-  it('controlled `selected` still highlights with NO selector mounted', () => {
-    // The case A1.2 exists to protect: a legend chip or an external filter
-    // list drives the chart, the plot is deliberately inert.
+describe('<Selector> owns controlled state (A10.3)', () => {
+  it('`<Selector enabled={false} selected>` highlights with the gesture off', () => {
+    // The case `enabled={false}` exists to protect: a legend chip or an
+    // external filter list drives the chart, the plot is deliberately inert.
     const sel: SelectInfo = {
       id: 'cap',
       key: 0,
@@ -178,12 +179,19 @@ describe('the state stays on the container (A1.2)', () => {
       label: 'alpha',
       mark: 'alpha',
     };
-    const { frame } = mount({ selected: sel });
+    const { frame, click } = mount(
+      {},
+      <Selector enabled={false} selected={sel} />,
+    );
+    expect(frame().selected).toHaveLength(1);
+    expect(frame().selected[0]!.mark).toBe('alpha');
+    // And the gesture really is off — a click doesn't touch it.
+    click();
     expect(frame().selected).toHaveLength(1);
     expect(frame().selected[0]!.mark).toBe('alpha');
   });
 
-  it('controlled `hovered` still lights with NO selector mounted', () => {
+  it('`<Selector enabled={false} hovered>` lights with the gesture off', () => {
     const hov: SelectInfo = {
       id: 'cap',
       key: 0,
@@ -192,18 +200,19 @@ describe('the state stays on the container (A1.2)', () => {
       label: 'beta',
       mark: 'beta',
     };
-    expect(mount({ hovered: hov }).frame().hovered).toHaveLength(1);
+    const { frame } = mount({}, <Selector enabled={false} hovered={hov} />);
+    expect(frame().hovered).toHaveLength(1);
   });
 
   it('a controlled `selected` is not overwritten by a plot click', () => {
     const onSelect = vi.fn();
     const sel: SelectInfo[] = [];
     const { frame, click } = mount(
-      { selected: sel },
-      <Selector onSelect={onSelect} />,
+      {},
+      <Selector selected={sel} onSelect={onSelect} />,
     );
     click();
-    // Reported to the consumer, who owns the next set — the container did not
+    // Reported to the consumer, who owns the next set — the selector did not
     // take it upon itself to apply one.
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(frame().selected).toBe(sel);
@@ -218,8 +227,8 @@ describe('the state stays on the container (A1.2)', () => {
   });
 
   it('the hover HIGHLIGHT works with no selector mounted', () => {
-    // Hover is not gated: the highlight is container state, and with nothing
-    // mounted there is simply nobody to report to.
+    // Hover is not gated: the highlight is internal state regardless, and
+    // with nothing mounted there is simply nobody to report to.
     const { frame, move } = mount();
     move(40);
     expect(frame().hovered).toHaveLength(1);
@@ -267,61 +276,14 @@ describe('the library reports; the consumer decides', () => {
   });
 });
 
-describe('the deprecation shim', () => {
-  it('the container `onSelect` prop still enables and reports the click', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const onSelect = vi.fn();
-    const { frame, click } = mount({ onSelect });
-    click();
-    expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(frame().selected).toHaveLength(1);
-    warn.mockRestore();
-  });
-
-  it('the container `onHover` prop still reports hover', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const onHover = vi.fn();
-    const { move } = mount({ onHover });
-    move(40);
-    expect(onHover).toHaveBeenCalled();
-    warn.mockRestore();
-  });
-
-  it('dev-warns once, naming <Selector> as the replacement', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    mount({ onSelect: () => {}, onHover: () => {} });
-    const migration = warn.mock.calls.filter((c) =>
-      /deprecated — move/.test(String(c[0])),
-    );
-    expect(migration).toHaveLength(1);
-    expect(String(migration[0]![0])).toMatch(/<Selector/);
-    expect(String(migration[0]![0])).toMatch(/onSelect and onHover/);
-    warn.mockRestore();
-  });
-
-  it('does not warn when neither legacy prop is set', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    mount({}, <Selector onSelect={() => {}} />);
-    expect(
-      warn.mock.calls.filter((c) => /deprecated — move/.test(String(c[0]))),
-    ).toHaveLength(0);
-    warn.mockRestore();
-  });
-
-  it('a mounted <Selector> overrides the legacy prop in the same scope', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const legacy = vi.fn();
-    const mounted = vi.fn();
-    const { click } = mount(
-      { onSelect: legacy },
-      <Selector onSelect={mounted} />,
-    );
-    click();
-    expect(mounted).toHaveBeenCalledTimes(1);
-    expect(legacy).not.toHaveBeenCalled();
-    warn.mockRestore();
-  });
-});
+// Removed: `<ChartContainer selected>` / `hovered` / `onSelect` / `onHover`
+// no longer exist — no deprecation shim, straight deletion (pre-1.0). See
+// docs/rfcs/interaction.md Amendment 10 and the CHANGELOG's migration note.
+// The five tests that lived here ("the container `onSelect` prop still
+// enables and reports the click", its `onHover` counterpart, the migration
+// warning, "does not warn when neither legacy prop is set", and "a mounted
+// <Selector> overrides the legacy prop") all asserted behavior of a surface
+// that is now gone.
 
 describe('the §7.1 dev warning (A2.6)', () => {
   it('fires when a click hits a mark and no <Selector> is mounted', () => {
@@ -332,12 +294,12 @@ describe('the §7.1 dev warning (A2.6)', () => {
     warn.mockRestore();
   });
 
-  it('does NOT fire when `selected` is supplied — the endorsed setup', () => {
-    // A2.6: after A1.2 the inert-plot signature is *also* the signature of
-    // controlled highlighting, and the deprecation window should not spend its
-    // loudness on people already doing the right thing.
+  it('does NOT fire when controlled `selected` is in effect — the endorsed setup', () => {
+    // A2.6: the inert-plot signature is *also* the signature of controlled
+    // highlighting (`<Selector enabled={false} selected={…}>`), and the
+    // warning should not spend its loudness on people already doing that.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    mount({ selected: null }).click();
+    mount({}, <Selector enabled={false} selected={null} />).click();
     expect(inertWarnings(warn)).toHaveLength(0);
     warn.mockRestore();
   });
@@ -353,13 +315,6 @@ describe('the §7.1 dev warning (A2.6)', () => {
   it('does NOT fire when a <Selector> is mounted', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mount({}, <Selector />).click();
-    expect(inertWarnings(warn)).toHaveLength(0);
-    warn.mockRestore();
-  });
-
-  it('does NOT fire when the legacy `onSelect` prop is carrying the click', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    mount({ onSelect: () => {} }).click();
     expect(inertWarnings(warn)).toHaveLength(0);
     warn.mockRestore();
   });

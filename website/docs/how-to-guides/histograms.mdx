@@ -308,14 +308,16 @@ alternative when the bands aren't even (the HR zones above).
 Give a histogram an `id` to make it interactive. Hover lights the bar or
 **segment** under the cursor; click selects it (outlined). A stacked segment's
 identity is `(id, bucket, group)`, so two hosts in one bucket never both light
-up. Both channels are controllable from the container via
+up. Both channels are controllable via a mounted `<Selector>`'s
 `selected`/`onSelect` and `hovered`/`onHover`, keyed by `SelectInfo` — the
 segment's `label` carries the group name and `value` its magnitude:
 
 ```tsx
-<ChartContainer onSelect={(hit) => hit && console.log(hit.label, hit.value)}>
-  …
-  <BarChart series={byHost} column="n" colors={hostColors} id="incidents" />
+<ChartContainer>
+  <Selector onSelect={(hit) => hit && console.log(hit.label, hit.value)}>
+    …
+    <BarChart series={byHost} column="n" colors={hostColors} id="incidents" />
+  </Selector>
 </ChartContainer>
 ```
 

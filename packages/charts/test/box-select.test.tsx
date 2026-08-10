@@ -6,6 +6,7 @@ import { ChartContainer } from '../src/ChartContainer.js';
 import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { BoxPlot } from '../src/BoxPlot.js';
+import { Selector } from '../src/selectors.js';
 import { YAxis } from '../src/YAxis.js';
 import {
   ContainerContext,
@@ -50,28 +51,30 @@ describe('<BoxPlot id> — selection (#508 item 5)', () => {
       return null;
     }
     const stub = stubCanvasContext();
+    const row = (
+      <ChartRow height={200}>
+        <YAxis id="iv" min={0.1} max={0.25} />
+        <Layers>
+          <BoxPlot
+            series={smile()}
+            lower="bid"
+            upper="ask"
+            as="iv"
+            axis="iv"
+            {...(props.id !== undefined ? { id: props.id } : {})}
+          />
+          <Capture />
+        </Layers>
+      </ChartRow>
+    );
     try {
       render(
-        <ChartContainer
-          range={[90, 110]}
-          width={400}
-          showAxis={false}
-          {...(props.onSelect ? { onSelect: props.onSelect } : {})}
-        >
-          <ChartRow height={200}>
-            <YAxis id="iv" min={0.1} max={0.25} />
-            <Layers>
-              <BoxPlot
-                series={smile()}
-                lower="bid"
-                upper="ask"
-                as="iv"
-                axis="iv"
-                {...(props.id !== undefined ? { id: props.id } : {})}
-              />
-              <Capture />
-            </Layers>
-          </ChartRow>
+        <ChartContainer range={[90, 110]} width={400} showAxis={false}>
+          {props.onSelect ? (
+            <Selector onSelect={props.onSelect}>{row}</Selector>
+          ) : (
+            row
+          )}
         </ChartContainer>,
       );
     } finally {
@@ -281,7 +284,7 @@ describe('the tint ladder — one palette swap per state', () => {
   /** Mount, draw once, return every recorded call. */
   function draw(
     shape: 'whisker' | 'solid',
-    props: Record<string, unknown> = {},
+    props: { selected?: unknown; hovered?: unknown } = {},
   ) {
     let cf: ContainerFrame | null = null;
     let rf: RowFrame | null = null;
@@ -295,26 +298,32 @@ describe('the tint ladder — one palette swap per state', () => {
       return null;
     }
     const stub = stubCanvasContext();
+    const row = (
+      <ChartRow height={200}>
+        <YAxis id="v" min={0} max={10} />
+        <Layers>
+          <BoxPlot
+            series={one()}
+            lower="lo"
+            q1="q1"
+            median="q1"
+            q3="q3"
+            upper="hi"
+            axis="v"
+            shape={shape}
+            id="b"
+          />
+          <Capture />
+        </Layers>
+      </ChartRow>
+    );
     try {
       render(
-        <ChartContainer range={[0, 20]} width={400} showAxis={false} {...props}>
-          <ChartRow height={200}>
-            <YAxis id="v" min={0} max={10} />
-            <Layers>
-              <BoxPlot
-                series={one()}
-                lower="lo"
-                q1="q1"
-                median="q1"
-                q3="q3"
-                upper="hi"
-                axis="v"
-                shape={shape}
-                id="b"
-              />
-              <Capture />
-            </Layers>
-          </ChartRow>
+        <ChartContainer range={[0, 20]} width={400} showAxis={false}>
+          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+          <Selector enabled={false} {...(props as any)}>
+            {row}
+          </Selector>
         </ChartContainer>,
       );
     } finally {

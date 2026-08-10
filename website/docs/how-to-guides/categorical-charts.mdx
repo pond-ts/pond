@@ -175,9 +175,11 @@ Give the layer an `id` to make the bars selectable. A click reports the
 **category name** in `SelectInfo.label` **and** in the stable `SelectInfo.mark`:
 
 ```tsx
-<ChartContainer onSelect={(hit) => hit && filterStore.toggle(hit.mark)}>
-  …
-  <BarChart categories={data} binColors={ramp} id="tickers" />
+<ChartContainer>
+  <Selector onSelect={(hit) => hit && filterStore.toggle(hit.mark)}>
+    …
+    <BarChart categories={data} binColors={ramp} id="tickers" />
+  </Selector>
 </ChartContainer>
 ```
 

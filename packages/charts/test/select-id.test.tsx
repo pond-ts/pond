@@ -7,7 +7,11 @@ import { Layers } from '../src/Layers.js';
 import { BarChart } from '../src/BarChart.js';
 import { LineChart } from '../src/LineChart.js';
 import { AreaChart } from '../src/AreaChart.js';
-import { MultiSelector } from '../src/selectors.js';
+import {
+  MultiSelector,
+  Selector,
+  type SelectorProps,
+} from '../src/selectors.js';
 import { YAxis } from '../src/YAxis.js';
 
 afterEach(cleanup);
@@ -32,29 +36,28 @@ const bars = new TimeSeries({
  * wiring `selected`/`onSelect` but forgetting the `id`, so nothing is selectable.
  */
 describe('selection dev-warn: wired but no selectable layer', () => {
-  const tree = (
-    props: Partial<Parameters<typeof ChartContainer>[0]>,
-    barId?: string,
-  ) => (
-    <ChartContainer range={[0, 3]} width={300} {...props}>
-      <ChartRow height={100}>
-        <YAxis id="a" min={0} max={5} />
-        <Layers>
-          <BarChart
-            series={bars}
-            column="v"
-            axis="a"
-            {...(barId === undefined ? {} : { id: barId })}
-          />
-        </Layers>
-      </ChartRow>
+  const tree = (props: Partial<SelectorProps>, barId?: string) => (
+    <ChartContainer range={[0, 3]} width={300}>
+      <Selector {...props}>
+        <ChartRow height={100}>
+          <YAxis id="a" min={0} max={5} />
+          <Layers>
+            <BarChart
+              series={bars}
+              column="v"
+              axis="a"
+              {...(barId === undefined ? {} : { id: barId })}
+            />
+          </Layers>
+        </ChartRow>
+      </Selector>
     </ChartContainer>
   );
 
-  // `onSelect` on the container is deprecated in favour of a mounted
-  // `<Selector>` (interaction RFC §7), so wiring it now also emits the
-  // migration warning. These cases are about the *no-selectable-layer* warning,
-  // so they count that one rather than every `console.warn`.
+  // A mounted `<Selector>` with a wired `onSelect`/`selected` and no
+  // selectable layer emits the migration warning. These cases are about the
+  // *no-selectable-layer* warning, so they count that one rather than every
+  // `console.warn`.
   const noIdWarnings = (warn: { mock: { calls: unknown[][] } }) =>
     warn.mock.calls.filter((c) => /no layer has an `id`/.test(String(c[0])));
 
@@ -80,8 +83,20 @@ describe('selection dev-warn: wired but no selectable layer', () => {
   });
 
   it('does NOT warn when selection is not wired at all', () => {
+    // Nothing wired now means no <Selector> mounted at all — the §7.1 gate —
+    // rather than a mounted-but-empty one, which would itself trip the
+    // no-selectable-layer warning below.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    render(tree({}));
+    render(
+      <ChartContainer range={[0, 3]} width={300}>
+        <ChartRow height={100}>
+          <YAxis id="a" min={0} max={5} />
+          <Layers>
+            <BarChart series={bars} column="v" axis="a" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });

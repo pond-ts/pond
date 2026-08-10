@@ -8,6 +8,7 @@ import { BarChart } from '../src/BarChart.js';
 import { TimeSeries } from 'pond-ts';
 import { YAxis } from '../src/YAxis.js';
 import { defaultTheme } from '../src/theme.js';
+import { Selector } from '../src/selectors.js';
 import {
   ContainerContext,
   RowContext,
@@ -62,18 +63,29 @@ function mount(props: Record<string, unknown> = {}, theme = defaultTheme) {
     });
     return null;
   }
+  const { selected, hovered, ...rest } = props as {
+    selected?: SelectInfo | readonly SelectInfo[] | null;
+    hovered?: SelectInfo | readonly SelectInfo[] | null;
+    [key: string]: unknown;
+  };
   const stub = stubCanvasContext();
   let dom: HTMLElement;
   try {
     const res = render(
-      <ChartContainer width={300} theme={theme} {...props}>
-        <ChartRow height={100}>
-          <YAxis id="a" min={0} max={4} label="" />
-          <Layers>
-            <BarChart categories={categories} id="cap" />
-            <Capture />
-          </Layers>
-        </ChartRow>
+      <ChartContainer width={300} theme={theme} {...rest}>
+        <Selector
+          enabled={false}
+          {...(selected !== undefined ? { selected } : {})}
+          {...(hovered !== undefined ? { hovered } : {})}
+        >
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={4} label="" />
+            <Layers>
+              <BarChart categories={categories} id="cap" />
+              <Capture />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>,
     );
     dom = res.container;
@@ -96,13 +108,15 @@ describe('modifier state reaches onSelect', () => {
     let dom: HTMLElement;
     try {
       const res = render(
-        <ChartContainer width={300} onSelect={onSelect}>
-          <ChartRow height={100}>
-            <YAxis id="a" min={0} max={4} label="" />
-            <Layers>
-              <BarChart categories={categories} id="cap" />
-            </Layers>
-          </ChartRow>
+        <ChartContainer width={300}>
+          <Selector onSelect={onSelect}>
+            <ChartRow height={100}>
+              <YAxis id="a" min={0} max={4} label="" />
+              <Layers>
+                <BarChart categories={categories} id="cap" />
+              </Layers>
+            </ChartRow>
+          </Selector>
         </ChartContainer>,
       );
       dom = res.container;
@@ -166,14 +180,16 @@ describe('modifier state reaches onSelect', () => {
     }
     try {
       render(
-        <ChartContainer width={300} onSelect={onSelect}>
-          <ChartRow height={100}>
-            <YAxis id="a" min={0} max={4} label="" />
-            <Layers>
-              <BarChart categories={categories} id="cap" />
-              <Grab />
-            </Layers>
-          </ChartRow>
+        <ChartContainer width={300}>
+          <Selector onSelect={onSelect}>
+            <ChartRow height={100}>
+              <YAxis id="a" min={0} max={4} label="" />
+              <Layers>
+                <BarChart categories={categories} id="cap" />
+                <Grab />
+              </Layers>
+            </ChartRow>
+          </Selector>
         </ChartContainer>,
       );
     } finally {
@@ -281,25 +297,26 @@ describe('a consumer can implement ⌘-click-adds with what is now exposed', () 
       const [sel, setSel] = useState<readonly SelectInfo[]>([]);
       return (
         <>
-          <ChartContainer
-            width={300}
-            selected={sel}
-            onSelect={(hit, mods) =>
-              setSel((cur) => {
-                if (hit === null) return [];
-                if (!mods?.additive) return [hit];
-                return cur.some((m) => m.mark === hit.mark)
-                  ? cur.filter((m) => m.mark !== hit.mark)
-                  : [...cur, hit];
-              })
-            }
-          >
-            <ChartRow height={100}>
-              <YAxis id="a" min={0} max={4} label="" />
-              <Layers>
-                <BarChart categories={categories} id="cap" />
-              </Layers>
-            </ChartRow>
+          <ChartContainer width={300}>
+            <Selector
+              selected={sel}
+              onSelect={(hit, mods) =>
+                setSel((cur) => {
+                  if (hit === null) return [];
+                  if (!mods?.additive) return [hit];
+                  return cur.some((m) => m.mark === hit.mark)
+                    ? cur.filter((m) => m.mark !== hit.mark)
+                    : [...cur, hit];
+                })
+              }
+            >
+              <ChartRow height={100}>
+                <YAxis id="a" min={0} max={4} label="" />
+                <Layers>
+                  <BarChart categories={categories} id="cap" />
+                </Layers>
+              </ChartRow>
+            </Selector>
           </ChartContainer>
           <output>{sel.map((m) => m.mark).join(',')}</output>
         </>
@@ -381,9 +398,9 @@ describe('the single-series draw path dims too', () => {
     },
     theme = dimTheme,
   ) {
-    // `thresholds` belongs to <BarChart>, `selected` to <ChartContainer> —
-    // spreading both onto the container silently drops the ladder.
-    const { thresholds, ...containerProps } = props;
+    // `thresholds` belongs to <BarChart>, `selected` to <Selector> — spreading
+    // both onto the container silently drops the ladder.
+    const { thresholds, selected } = props;
     let cf: ContainerFrame | null = null;
     let rf: RowFrame | null = null;
     function Capture() {
@@ -398,25 +415,25 @@ describe('the single-series draw path dims too', () => {
     const stub = stubCanvasContext();
     try {
       render(
-        <ChartContainer
-          range={[0, 3]}
-          width={300}
-          theme={theme}
-          {...containerProps}
-        >
-          <ChartRow height={100}>
-            <YAxis id="a" min={0} max={4} label="" />
-            <Layers>
-              <BarChart
-                series={series}
-                column="v"
-                id="cap"
-                decimate={false}
-                {...(thresholds ? { thresholds } : {})}
-              />
-              <Capture />
-            </Layers>
-          </ChartRow>
+        <ChartContainer range={[0, 3]} width={300} theme={theme}>
+          <Selector
+            enabled={false}
+            {...(selected !== undefined ? { selected } : {})}
+          >
+            <ChartRow height={100}>
+              <YAxis id="a" min={0} max={4} label="" />
+              <Layers>
+                <BarChart
+                  series={series}
+                  column="v"
+                  id="cap"
+                  decimate={false}
+                  {...(thresholds ? { thresholds } : {})}
+                />
+                <Capture />
+              </Layers>
+            </ChartRow>
+          </Selector>
         </ChartContainer>,
       );
     } finally {
@@ -522,14 +539,15 @@ describe('shift does not collide with the region cursor', () => {
           panZoom
           regionSelectModifier="shift"
           onRegionSelect={onRegionSelect}
-          onSelect={onSelect}
         >
-          <ChartRow height={100}>
-            <YAxis id="a" min={0} max={4} label="" />
-            <Layers>
-              <BarChart categories={categories} id="cap" />
-            </Layers>
-          </ChartRow>
+          <Selector onSelect={onSelect}>
+            <ChartRow height={100}>
+              <YAxis id="a" min={0} max={4} label="" />
+              <Layers>
+                <BarChart categories={categories} id="cap" />
+              </Layers>
+            </ChartRow>
+          </Selector>
         </ChartContainer>,
       ).container;
     } finally {

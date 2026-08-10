@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { cloneElement, useState } from 'react';
 import type { Meta } from '@storybook/react-vite';
 import { TimeSeries } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
@@ -81,31 +81,33 @@ function Demo() {
           carries the **value** on a horizontal chart, and the bins go on the
           row's own y. No `theme` prop — stories render `defaultTheme`
           (see CLAUDE.md). */}
-      <ChartContainer range={[0, 12]} width={520} selected={selected}>
+      <ChartContainer range={[0, 12]} width={520}>
         <MultiSelector
+          selected={selected}
           onSelect={(hits, _mods, spans) =>
             setSelected(spans.length === 0 ? hits : [...spans])
           }
-        />
-        <ChartRow height={260}>
-          <YAxis
-            id="bins"
-            min={D0}
-            max={D0 + N * DAY}
-            ticks={dayTicks}
-            width={56}
-            label=""
-          />
-          <Layers>
-            <BarChart
-              series={daily()}
-              column="v"
-              axis="bins"
-              id="svc"
-              orientation="horizontal"
+        >
+          <ChartRow height={260}>
+            <YAxis
+              id="bins"
+              min={D0}
+              max={D0 + N * DAY}
+              ticks={dayTicks}
+              width={56}
+              label=""
             />
-          </Layers>
-        </ChartRow>
+            <Layers>
+              <BarChart
+                series={daily()}
+                column="v"
+                axis="bins"
+                id="svc"
+                orientation="horizontal"
+              />
+            </Layers>
+          </ChartRow>
+        </MultiSelector>
       </ChartContainer>
       <div style={{ marginTop: 8, fontSize: 13 }}>selected: {readout}</div>
     </div>
@@ -150,24 +152,26 @@ function CategoryDemo() {
     <div style={{ width: 520, fontFamily: 'system-ui, sans-serif' }}>
       {/* No `range`: a categorical horizontal chart derives its value extent
           from the data, and its slot domain `[0, N]` from the layer. */}
-      <ChartContainer width={520} selected={selected}>
+      <ChartContainer width={520}>
         <MultiSelector
+          selected={selected}
           onSelect={(hits, _mods, spans) =>
             setSelected(spans.length === 0 ? hits : [...spans])
           }
-        />
-        <ChartRow height={220}>
-          {/* A wider gutter — the category labels are words, not numbers. */}
-          <YAxis id="stage" width={96} />
-          <Layers>
-            <BarChart
-              categories={STAGES}
-              orientation="horizontal"
-              axis="stage"
-              id="funnel"
-            />
-          </Layers>
-        </ChartRow>
+        >
+          <ChartRow height={220}>
+            {/* A wider gutter — the category labels are words, not numbers. */}
+            <YAxis id="stage" width={96} />
+            <Layers>
+              <BarChart
+                categories={STAGES}
+                orientation="horizontal"
+                axis="stage"
+                id="funnel"
+              />
+            </Layers>
+          </ChartRow>
+        </MultiSelector>
       </ChartContainer>
       <div style={{ marginTop: 8, fontSize: 13 }}>selected: {readout}</div>
     </div>
@@ -189,30 +193,33 @@ function HBars({
   children,
 }: {
   selected: readonly SelectionEntry[];
-  children: React.ReactNode;
+  children: React.ReactElement<{ selected?: readonly SelectionEntry[] }>;
 }) {
   return (
-    <ChartContainer range={[0, 12]} width={420} selected={selected}>
-      {children}
-      <ChartRow height={240}>
-        <YAxis
-          id="bins"
-          min={D0}
-          max={D0 + N * DAY}
-          ticks={dayTicks}
-          width={56}
-          label=""
-        />
-        <Layers>
-          <BarChart
-            series={daily()}
-            column="v"
-            axis="bins"
-            id="svc"
-            orientation="horizontal"
+    <ChartContainer range={[0, 12]} width={420}>
+      {cloneElement(
+        children,
+        { selected },
+        <ChartRow height={240}>
+          <YAxis
+            id="bins"
+            min={D0}
+            max={D0 + N * DAY}
+            ticks={dayTicks}
+            width={56}
+            label=""
           />
-        </Layers>
-      </ChartRow>
+          <Layers>
+            <BarChart
+              series={daily()}
+              column="v"
+              axis="bins"
+              id="svc"
+              orientation="horizontal"
+            />
+          </Layers>
+        </ChartRow>,
+      )}
     </ChartContainer>
   );
 }

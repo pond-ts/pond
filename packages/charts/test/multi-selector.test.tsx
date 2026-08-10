@@ -551,8 +551,7 @@ describe('click-deselect (RFC §7 — the empty commit must be reachable)', () =
     // selects the bar whose slot it is in rather than deselecting.
     const onSelect = vi.fn();
     const { surface, pxAt } = mount({
-      children: <MultiSelector onSelect={onSelect} />,
-      props: { selected: [] },
+      children: <MultiSelector selected={[]} onSelect={onSelect} />,
     });
     // Exactly on the bar 1 / bar 2 boundary, at a y inside both bars' ink.
     const x = pxAt(200);
@@ -904,8 +903,9 @@ describe('demote on edit (RFC A5.2) — sweep, then ⌘-click one out', () => {
       const [sel, setSel] = useState<readonly SelectionEntry[]>([]);
       latest = sel;
       return (
-        <ChartContainer range={[0, 1000]} width={320} selected={sel}>
+        <ChartContainer range={[0, 1000]} width={320}>
           <MultiSelector
+            selected={sel}
             onSelect={(hits, mods, spans) => {
               if (spans.length > 0) {
                 stashed = hits;

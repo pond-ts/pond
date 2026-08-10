@@ -207,9 +207,9 @@ export interface ContainerFrame {
    * mounts, else the container's) exactly as {@link select} does; omit it for a
    * programmatic hover (a `<Legend>` chip).
    *
-   * **Not gated on a mounted `<Selector>`, unlike {@link select}.** The
-   * hover-*highlight* is internal state, and RFC A1.2 keeps state on the
-   * container; with no selector mounted there is simply nobody to report to,
+   * **Not gated on a mounted `<Selector>`, unlike {@link select}.** With no
+   * selector mounted there is simply nobody registered to hear about it (RFC
+   * A10.3) — the hover state still moves, it just has nothing to report to,
    * which needs no gate to arrange.
    *
    * `block` — the **resting block preview** under a mounted `<MultiSelector>`
@@ -296,11 +296,10 @@ export interface ContainerFrame {
   registerSelectable(key: symbol): void;
   unregisterSelectable(key: symbol): void;
   /**
-   * Register a mounted **selector** ({@link SelectorEntry}) — `<Selector>` (and
-   * the deprecation shim synthesizing one from the container's legacy
-   * `onSelect`/`onHover` props) calls this, keyed by the component's
-   * per-instance slot key. The same idiom as `registerCursor` / `registerAxis`
-   * / `registerLayer`: update in place, unregister on unmount.
+   * Register a mounted **selector** ({@link SelectorEntry}) — `<Selector>` /
+   * `<MultiSelector>` call this, keyed by the component's per-instance slot
+   * key. The same idiom as `registerCursor` / `registerAxis` / `registerLayer`:
+   * update in place, unregister on unmount.
    *
    * **The registration is the enablement** (interaction RFC §7.1): a plot click
    * resolves the selectors in scope (`effectiveSelectorEntries`) and does
@@ -1114,15 +1113,15 @@ export interface TrackerSource {
  */
 /**
  * The keyboard modifiers held during the click that produced a selection —
- * handed to `<ChartContainer onSelect>` alongside the hit ([PND-MULTISEL]).
+ * handed to `<Selector onSelect>` alongside the hit ([PND-MULTISEL]).
  *
  * **Why the library reports these instead of acting on them.** A consumer with
  * a multi-valued filter needs ⌘/Ctrl-click to mean "add to the selection", and
  * without the modifier state on the callback it simply cannot: the click has
  * already been reduced to a hit by the time it arrives, so every consumer is
  * forced to treat every click as a replace. Reporting the modifiers keeps the
- * *policy* with the consumer (which is where `docs/rfcs/selection.md` A1.2 puts
- * set arithmetic) while removing the thing that made the policy unexpressible.
+ * *policy* with the consumer while removing the thing that made the policy
+ * unexpressible.
  *
  * The library itself still applies no modifier semantics — a chart click sets
  * the single hit as it always has. A consumer that wants add/toggle reads
@@ -1152,9 +1151,9 @@ export interface SelectModifiers {
 
 /**
  * A mounted `<Selector>` as the container holds it — the reporting callbacks
- * plus the mount scope (interaction RFC §7 / A4.2). **A selector reports; it
- * holds no state**: `selected` / `hovered` stay on `<ChartContainer>` (A1.2),
- * and the consumer feeds the next set back through them.
+ * plus the mount scope (interaction RFC §7 / A4.2). **A selector both reports
+ * and, optionally, owns controlled state** (`selected` / `hovered` — A10.3):
+ * the gesture and the state it drives are declared on the same mount.
  *
  * Registered via {@link ContainerFrame.registerSelector}, the same idiom as
  * `registerCursor`. Internal (not exported from `index.ts`) — `<Selector>`'s
@@ -1172,7 +1171,7 @@ export interface SelectorEntry {
    * Whether this entry is a mounted `<MultiSelector>` (RFC §8) — the flag the
    * sweep gesture resolves on: **mounting one is what arms the sweep drag** on
    * the plot, exactly as mounting any selector is what arms the click (§7.1).
-   * `<Selector>` and the legacy shim register `false`.
+   * `<Selector>` registers `false`.
    */
   readonly multi: boolean;
   /** `<MultiSelector onHover>` — the marks a live sweep covers (0/1 outside a
@@ -1195,10 +1194,27 @@ export interface SelectorEntry {
   /** Mount scope: a row's key when mounted inside a `<ChartRow>` (that row's
    *  clicks only), `null` when mounted at the container (every row). */
   readonly rowKey: symbol | null;
-  /** Synthesized by the deprecation shim from the container's legacy
-   *  `onSelect`/`onHover` props. A scope with a real `<Selector>` mounted drops
-   *  its legacy entry — mounting overrides the prop during the window. */
-  readonly legacy: boolean;
+  /**
+   * Whether the **gesture** is active (`<Selector enabled>`, A10.2). `false`
+   * means the plot behaves as if this entry were unmounted — no hit-testing,
+   * no callbacks fire, no sweep arms — while the entry may still be the
+   * chart's controlled-state owner below. This is what makes
+   * `<Selector enabled={false} selected={sel} />` the "highlight only, no
+   * plot gesture" configuration: one component, gesture off, state on.
+   */
+  readonly gestureEnabled: boolean;
+  /** Whether `selected` was explicitly passed to this mount — distinguishes
+   *  "controlled with nothing selected" (`null`) from "not the state owner"
+   *  (`undefined`), the same three-state shape `selected` itself needs. */
+  readonly hasSelected: boolean;
+  /** `<Selector selected>` / `<MultiSelector selected>` (A10.3) — meaningful
+   *  only when {@link hasSelected} is true. */
+  readonly selected?: SelectInfo | readonly SelectionEntry[] | null | undefined;
+  /** As {@link hasSelected}, for `hovered`. */
+  readonly hasHovered: boolean;
+  /** `<Selector hovered>` / `<MultiSelector hovered>` (A10.3) — meaningful
+   *  only when {@link hasHovered} is true. */
+  readonly hovered?: SelectInfo | readonly SelectInfo[] | null | undefined;
 }
 
 /**

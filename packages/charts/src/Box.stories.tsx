@@ -5,6 +5,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { BoxPlot } from './BoxPlot.js';
 import { YAxis } from './YAxis.js';
+import { Selector } from './selectors.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
 
@@ -401,22 +402,24 @@ export const Selectable: Story = {
   render: () => {
     const s = smile();
     return (
-      <ChartContainer
-        width={620}
-        selected={{
-          id: 'smile',
-          key: 95,
-          value: 0.26,
-          color: '#000',
-          label: 'iv',
-        }}
-      >
-        <ChartRow height={260}>
-          <YAxis id="iv" label="IV" />
-          <Layers>
-            <BoxPlot series={s} lower="bid" upper="ask" as="iv" id="smile" />
-          </Layers>
-        </ChartRow>
+      <ChartContainer width={620}>
+        <Selector
+          enabled={false}
+          selected={{
+            id: 'smile',
+            key: 95,
+            value: 0.26,
+            color: '#000',
+            label: 'iv',
+          }}
+        >
+          <ChartRow height={260}>
+            <YAxis id="iv" label="IV" />
+            <Layers>
+              <BoxPlot series={s} lower="bid" upper="ask" as="iv" id="smile" />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     );
   },
@@ -445,16 +448,18 @@ export const MultiSelected: Story = {
   render: () => {
     const s = smile();
     return (
-      <ChartContainer
-        width={620}
-        selected={[smileMark(85), smileMark(105), smileMark(125)]}
-      >
-        <ChartRow height={260}>
-          <YAxis id="iv" label="IV" />
-          <Layers>
-            <BoxPlot series={s} lower="bid" upper="ask" as="iv" id="smile" />
-          </Layers>
-        </ChartRow>
+      <ChartContainer width={620}>
+        <Selector
+          enabled={false}
+          selected={[smileMark(85), smileMark(105), smileMark(125)]}
+        >
+          <ChartRow height={260}>
+            <YAxis id="iv" label="IV" />
+            <Layers>
+              <BoxPlot series={s} lower="bid" upper="ask" as="iv" id="smile" />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     );
   },
@@ -470,16 +475,18 @@ export const MultiHovered: Story = {
   render: () => {
     const s = smile();
     return (
-      <ChartContainer
-        width={620}
-        hovered={[smileMark(95), smileMark(105), smileMark(115)]}
-      >
-        <ChartRow height={260}>
-          <YAxis id="iv" label="IV" />
-          <Layers>
-            <BoxPlot series={s} lower="bid" upper="ask" as="iv" id="smile" />
-          </Layers>
-        </ChartRow>
+      <ChartContainer width={620}>
+        <Selector
+          enabled={false}
+          hovered={[smileMark(95), smileMark(105), smileMark(115)]}
+        >
+          <ChartRow height={260}>
+            <YAxis id="iv" label="IV" />
+            <Layers>
+              <BoxPlot series={s} lower="bid" upper="ask" as="iv" id="smile" />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     );
   },
@@ -495,17 +502,19 @@ export const MultiSelectedAndHovered: Story = {
   render: () => {
     const s = smile();
     return (
-      <ChartContainer
-        width={620}
-        selected={[smileMark(85), smileMark(95)]}
-        hovered={[smileMark(95), smileMark(105), smileMark(115)]}
-      >
-        <ChartRow height={260}>
-          <YAxis id="iv" label="IV" />
-          <Layers>
-            <BoxPlot series={s} lower="bid" upper="ask" as="iv" id="smile" />
-          </Layers>
-        </ChartRow>
+      <ChartContainer width={620}>
+        <Selector
+          enabled={false}
+          selected={[smileMark(85), smileMark(95)]}
+          hovered={[smileMark(95), smileMark(105), smileMark(115)]}
+        >
+          <ChartRow height={260}>
+            <YAxis id="iv" label="IV" />
+            <Layers>
+              <BoxPlot series={s} lower="bid" upper="ask" as="iv" id="smile" />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     );
   },

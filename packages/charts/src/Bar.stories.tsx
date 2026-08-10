@@ -6,7 +6,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
-import { MultiSelector } from './selectors.js';
+import { MultiSelector, Selector } from './selectors.js';
 import { defaultTheme } from './theme.js';
 import type { SelectInfo, SelectionEntry } from './context.js';
 
@@ -204,18 +204,15 @@ function HoverSelectDemo() {
           </span>
         )}
       </div>
-      <ChartContainer
-        range={TIME_RANGE}
-        width={640}
-        cursor="flag"
-        onSelect={setSel}
-      >
-        <ChartRow height={240}>
-          <YAxis id="count" label="req" min={0} />
-          <Layers>
-            <BarChart series={v} column="count" id="count" gap={3} />
-          </Layers>
-        </ChartRow>
+      <ChartContainer range={TIME_RANGE} width={640} cursor="flag">
+        <Selector onSelect={setSel}>
+          <ChartRow height={240}>
+            <YAxis id="count" label="req" min={0} />
+            <Layers>
+              <BarChart series={v} column="count" id="count" gap={3} />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     </div>
   );
@@ -245,13 +242,15 @@ export const ControlledSelection: Story = {
       label: 'count',
     };
     return (
-      <ChartContainer range={TIME_RANGE} width={640} selected={pinned}>
-        <ChartRow height={240}>
-          <YAxis id="count" label="req" min={0} />
-          <Layers>
-            <BarChart series={v} column="count" id="count" gap={3} />
-          </Layers>
-        </ChartRow>
+      <ChartContainer range={TIME_RANGE} width={640}>
+        <Selector enabled={false} selected={pinned}>
+          <ChartRow height={240}>
+            <YAxis id="count" label="req" min={0} />
+            <Layers>
+              <BarChart series={v} column="count" id="count" gap={3} />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     );
   },
@@ -284,13 +283,15 @@ export const MarkSelection: Story = {
       mark: String(key), // the identity the highlight matches on
     };
     return (
-      <ChartContainer range={TIME_RANGE} width={640} selected={pinned}>
-        <ChartRow height={240}>
-          <YAxis id="count" label="req" min={0} />
-          <Layers>
-            <BarChart series={v} column="count" id="count" gap={3} />
-          </Layers>
-        </ChartRow>
+      <ChartContainer range={TIME_RANGE} width={640}>
+        <Selector enabled={false} selected={pinned}>
+          <ChartRow height={240}>
+            <YAxis id="count" label="req" min={0} />
+            <Layers>
+              <BarChart series={v} column="count" id="count" gap={3} />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     );
   },
@@ -323,13 +324,15 @@ export const HoverVsSelectColours: Story = {
       label: 'count',
     };
     return (
-      <ChartContainer range={TIME_RANGE} width={640} selected={pinned}>
-        <ChartRow height={240}>
-          <YAxis id="count" label="req" min={0} />
-          <Layers>
-            <BarChart series={v} column="count" id="count" gap={3} />
-          </Layers>
-        </ChartRow>
+      <ChartContainer range={TIME_RANGE} width={640}>
+        <Selector enabled={false} selected={pinned}>
+          <ChartRow height={240}>
+            <YAxis id="count" label="req" min={0} />
+            <Layers>
+              <BarChart series={v} column="count" id="count" gap={3} />
+            </Layers>
+          </ChartRow>
+        </Selector>
       </ChartContainer>
     );
   },
@@ -366,18 +369,20 @@ export const DefaultThemeStates: Story = {
     const [sel, setSel] = useState<readonly SelectionEntry[]>([]);
     return (
       <div>
-        <ChartContainer range={TIME_RANGE} width={640} selected={sel}>
+        <ChartContainer range={TIME_RANGE} width={640}>
           <MultiSelector
+            selected={sel}
             onSelect={(hits, _mods, spans) =>
               setSel(spans.length > 0 ? [...spans] : hits.slice(0, 1))
             }
-          />
-          <ChartRow height={240}>
-            <YAxis id="count" label="req" min={0} />
-            <Layers>
-              <BarChart series={v} column="count" id="count" gap={3} />
-            </Layers>
-          </ChartRow>
+          >
+            <ChartRow height={240}>
+              <YAxis id="count" label="req" min={0} />
+              <Layers>
+                <BarChart series={v} column="count" id="count" gap={3} />
+              </Layers>
+            </ChartRow>
+          </MultiSelector>
         </ChartContainer>
         <p
           style={{

@@ -7,6 +7,7 @@ import { BoxList } from './BoxList.js';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
+import { Selector } from './selectors.js';
 import { YAxis } from './YAxis.js';
 import { defaultTheme, estelaTheme } from './theme.js';
 import type { ChartTheme } from './theme.js';
@@ -329,18 +330,18 @@ export const HoverLinkedChart: StoryObj = {
         <h3 style={{ font: '600 14px system-ui', color: '#334155' }}>
           Splits — hover either surface
         </h3>
-        <ChartContainer
-          range={SPLIT_RANGE}
-          width={760}
-          hovered={pinned}
-          onHover={(hit) => setKey(hit?.mark ?? null)}
-        >
-          <ChartRow height={160}>
-            <YAxis id="speed" label="mph" min={0} />
-            <Layers>
-              <BarChart series={series} column="speed" id="speed" gap={3} />
-            </Layers>
-          </ChartRow>
+        <ChartContainer range={SPLIT_RANGE} width={760}>
+          <Selector
+            hovered={pinned}
+            onHover={(hit) => setKey(hit?.mark ?? null)}
+          >
+            <ChartRow height={160}>
+              <YAxis id="speed" label="mph" min={0} />
+              <Layers>
+                <BarChart series={series} column="speed" id="speed" gap={3} />
+              </Layers>
+            </ChartRow>
+          </Selector>
         </ChartContainer>
         <BarList
           series={series}

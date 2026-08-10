@@ -25,6 +25,7 @@ import { ChartContainer } from '../src/ChartContainer.js';
 import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { BarChart } from '../src/BarChart.js';
+import { Selector } from '../src/selectors.js';
 import { YAxis } from '../src/YAxis.js';
 import {
   ContainerContext,
@@ -178,20 +179,25 @@ function drawFills(
     return null;
   }
   const stub = stubCanvasContext();
+  const row = (
+    <ChartRow height={100}>
+      <YAxis id="a" min={0} max={20} />
+      <Layers>
+        {node}
+        <Capture />
+      </Layers>
+    </ChartRow>
+  );
   try {
     render(
       <ChartContainer
         {...(opts.categorical ? {} : { range: [0, 4] as [number, number] })}
         width={300}
-        {...props}
       >
-        <ChartRow height={100}>
-          <YAxis id="a" min={0} max={20} />
-          <Layers>
-            {node}
-            <Capture />
-          </Layers>
-        </ChartRow>
+        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+        <Selector enabled={false} {...(props as any)}>
+          {row}
+        </Selector>
       </ChartContainer>,
     );
   } finally {

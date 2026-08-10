@@ -18,33 +18,41 @@ cheap live on [Sweeps & multi-select](./sweeps-and-multi-select.mdx).
 
 Chapter 6 doesn't cover this; it's reference-only.
 
-## Two rules, and they pull against each other on purpose
+## One component: the gesture and the state it drives
+
+`<Selector>` is a `value`/`onChange` pair for a chart's selection — `selected`
+is the value, `onSelect` is the change notification, both on the same tag —
+and it **wraps what it applies to** rather than sitting beside it:
+
+```tsx
+<ChartContainer range={range} width={720}>
+  <Selector selected={sel} onSelect={setSel}>
+    <ChartRow height={180}>
+      <YAxis id="v" />
+      <Layers>
+        <BarChart series={s} column="v" axis="v" id="cpu" />
+      </Layers>
+    </ChartRow>
+  </Selector>
+</ChartContainer>
+```
+
+Two rules:
 
 **1. Mounting `<Selector>` is what enables the plot gesture.** With no selector
 mounted, a click on the plot does nothing. Selection is a subsystem — modifiers,
 a set, a dim slot, precedence against hover — and it should not switch itself on
 just because a layer happened to be given an `id`.
 
-**2. The selector reports; the container holds the state.** `selected` and
-`hovered` stay on `<ChartContainer>`, so controlled highlighting — a legend
-chip, an external filter list, a linked table — keeps working with **no**
-selector mounted at all. The break narrows to precisely the thing being made
-deliberate: the plot gesture.
+**2. It wraps what it applies to.** Mount it as a direct child of
+`<ChartContainer>` to enable every row, or inside one `<ChartRow>` to scope the
+gesture (and the state) to just that row.
 
-```tsx
-<ChartContainer range={range} width={720} selected={sel}>
-  <Selector onSelect={setSel} />
-  <ChartRow height={180}>
-    <YAxis id="v" />
-    <Layers>
-      <BarChart series={s} column="v" axis="v" id="cpu" />
-    </Layers>
-  </ChartRow>
-</ChartContainer>
-```
-
-Mount the selector inside a `<ChartRow>` instead of the container to scope it to
-**that row's** clicks; as a direct child of the container it hears every row.
+Want controlled highlighting from _outside_ the chart — a legend chip, an
+external filter list — with the plot deliberately inert on click? Mount
+`<Selector enabled={false} selected={sel}>` wrapping the same content.
+`enabled` defaults to `true`; `false` turns off hit-testing and callbacks while
+`selected`/`hovered` stay in effect.
 
 ## Identity gates selectability
 
@@ -137,6 +145,7 @@ series-scoped entry against itself.
 
 ```tsx
 <Selector
+  selected={sel}
   onSelect={(hit) => {
     if (hit === null) return setSel([]);
     // Toggle: sameMark matches this trace against itself even though its
@@ -147,7 +156,9 @@ series-scoped entry against itself.
         : [hit],
     );
   }}
-/>
+>
+  <ChartRow>…</ChartRow>
+</Selector>
 ```
 
 **A line is hit within ~6px of its stroke; an area is hit anywhere inside its
@@ -164,8 +175,8 @@ This is the same channel rule `<Candlestick>` follows, and
 
 ## Controlled vs. uncontrolled
 
-Omit `selected` and a click manages selection internally — enough for a
-self-contained chart. Pass `selected` (echoing `onSelect` back) when the
+Omit `<Selector selected>` and a click manages selection internally — enough
+for a self-contained chart. Pass `selected` (echoing `onSelect` back) when the
 selection is **shared state**: a URL param, a sibling detail view, a selection
 that should survive a re-render driven from elsewhere. `hovered` works the same
 way for the transient highlight — pass it to light a mark from an out-of-band
@@ -176,8 +187,8 @@ on every pointer move.
 
 ## Sharp edges
 
-- **A selector must be mounted.** `<ChartContainer onSelect>` / `onHover` still
-  work for one more minor and warn; they are the pre-`<Selector>` shape.
+- **A selector must be mounted for a click to do anything** — even a bare
+  `<Selector />` with no props. There's no container-level fallback.
 - **`onHover` dedupes on `key` + `label`, not `value`** — on a live chart where
   a hovered bar's value changes it won't re-fire. Read the current value from
   your series, not from the last `onHover` payload.

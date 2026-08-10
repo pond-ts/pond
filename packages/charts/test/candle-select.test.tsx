@@ -6,6 +6,7 @@ import { ChartContainer } from '../src/ChartContainer.js';
 import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { Candlestick } from '../src/Candlestick.js';
+import { Selector } from '../src/selectors.js';
 import { YAxis } from '../src/YAxis.js';
 import { defaultTheme } from '../src/theme.js';
 import {
@@ -68,25 +69,30 @@ function mount(props: Record<string, unknown> = {}, id: string | null = 'c') {
     return null;
   }
   const stub = stubCanvasContext();
+  const row = (
+    <ChartRow height={200}>
+      <YAxis id="v" min={95} max={110} />
+      <Layers>
+        <Candlestick
+          series={bars()}
+          axis="v"
+          {...(id !== null ? { id } : {})}
+        />
+        <Capture />
+      </Layers>
+    </ChartRow>
+  );
   try {
     render(
       <ChartContainer
         range={[D0 - DAY / 2, D0 + 3.5 * DAY]}
         width={400}
         showAxis={false}
-        {...props}
       >
-        <ChartRow height={200}>
-          <YAxis id="v" min={95} max={110} />
-          <Layers>
-            <Candlestick
-              series={bars()}
-              axis="v"
-              {...(id !== null ? { id } : {})}
-            />
-            <Capture />
-          </Layers>
-        </ChartRow>
+        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+        <Selector enabled={false} {...(props as any)}>
+          {row}
+        </Selector>
       </ChartContainer>,
     );
   } finally {

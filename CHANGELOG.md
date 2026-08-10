@@ -62,6 +62,63 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **charts (BREAKING): `<ChartContainer selected>` / `hovered` / `onSelect` /
+  `onHover` are REMOVED. Move them onto `<Selector>` / `<MultiSelector>`,
+  which now also WRAP the content they apply to.** No deprecation shim — this
+  is a straight deletion, and the fix is mechanical. Two changes at once:
+
+  **1. State moved from the container onto the selector.** `selected` /
+  `hovered` are no longer container props; they're `<Selector>` /
+  `<MultiSelector>` props, alongside `onSelect` / `onHover`. One component now
+  owns both the gesture and the state it produces — a `value`/`onChange` pair,
+  the same shape as a controlled `<input>`.
+
+  **2. The selector wraps its scope instead of sitting beside it.** Previously
+  `<Selector>` was a bare sibling mount; it now takes `children` and wraps
+  whatever it applies to — every `<ChartRow>` (mounted as a direct child of
+  `<ChartContainer>`) or just one row (mounted inside that `<ChartRow>`
+  instead).
+
+  **Migration — before:**
+
+  ```tsx
+  <ChartContainer selected={sel} onSelect={setSel}>
+    <ChartRow>…</ChartRow>
+  </ChartContainer>
+  ```
+
+  **after:**
+
+  ```tsx
+  <ChartContainer>
+    <Selector selected={sel} onSelect={setSel}>
+      <ChartRow>…</ChartRow>
+    </Selector>
+  </ChartContainer>
+  ```
+
+  Same rule for `<MultiSelector>` — `selected` / `hovered` move onto it, and
+  it wraps its `<ChartRow>`(s) the same way.
+
+  **Had `selected` with no `<Selector>` mounted at all** (controlled
+  highlighting driven from outside the chart — a legend chip, an external
+  filter list — with the plot deliberately inert on click)? Mount
+  `<Selector enabled={false} selected={sel}>` wrapping the same content.
+  `enabled` is new, defaults to `true`, and `false` disables the **gesture
+  only** — no hit-testing, no `onSelect`/`onHover` firing — while `selected` /
+  `hovered` stay in effect. This is the one case that needs a new prop rather
+  than just moving existing ones; every other case is a pure relocation.
+
+  **Why, having shipped the opposite design two days ago** (`docs/rfcs/
+interaction.md` A1.2: "the selector reports; the container holds the
+  state"): the plot gesture already requires mounting `<Selector>` (§7.1,
+  decided earlier still), so a chart that both selects on click and
+  highlights a controlled set — most of them — was wiring one concept in two
+  places with no structural link between them beyond care. Full write-up in
+  `docs/rfcs/interaction.md` Amendment 10. `<Selector>`/`<MultiSelector>` had
+  never appeared in a published release, so this is a same-cycle correction,
+  not a second breaking change to migrate through.
+
 - **charts (breaking, pre-release): `<MultiSelector onSelect>`'s span argument
   is plural.** The signature is now
   `(hits, modifiers, spans: readonly SpanSelection[])` — one argument, not the
