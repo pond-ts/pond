@@ -46,6 +46,7 @@ interface SelectorCallbacks {
         hits: readonly SelectInfo[],
         modifiers: SelectModifiers | undefined,
         span: SpanSelection | null,
+        spans: readonly SpanSelection[],
       ) => void)
     | undefined;
 }
@@ -111,8 +112,8 @@ function useSelectorMount(
               ? (hits) => cbRef.current.onHoverMany?.(hits)
               : undefined,
             onSelectMany: hasSelectMany
-              ? (hits, modifiers, span) =>
-                  cbRef.current.onSelectMany?.(hits, modifiers, span)
+              ? (hits, modifiers, span, spans) =>
+                  cbRef.current.onSelectMany?.(hits, modifiers, span, spans)
               : undefined,
             sequence,
             rowKey,
@@ -252,6 +253,21 @@ export interface MultiSelectorProps {
     hits: readonly SelectInfo[],
     modifiers: SelectModifiers | undefined,
     span: SpanSelection | null,
+    /**
+     * **Every span the gesture produced** — a strict superset of `span`, which
+     * is `spans[0] ?? null`.
+     *
+     * One sweep can commit several spans, because one row can hold several
+     * layers whose windows are equally the answer. A **trace** sweep does
+     * ([PND-TRACESEL]): every trace shares the swept x window, so singling one
+     * out by z-order would be arbitrary to the reader. Mark layers keep
+     * topmost-wins, so there this is `[span]`.
+     *
+     * `span` exists only for compatibility — it predates plural spans and is
+     * scheduled to collapse into this argument when the deprecation shims come
+     * out next minor. **Read `spans`.**
+     */
+    spans: readonly SpanSelection[],
   ) => void;
 }
 

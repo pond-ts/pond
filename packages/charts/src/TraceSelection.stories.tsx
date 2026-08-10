@@ -85,10 +85,14 @@ function Demo({ kind }: { kind: 'line' | 'area' }) {
         selected={sel}
       >
         <MultiSelector
-          onSelect={(hits, _m, span) => {
-            if (span !== null) {
-              setNote(`sweep → span, ${hits.length} marks`);
-              setSel([span]);
+          onSelect={(hits, _m, _span, spans) => {
+            // **`spans`, not `span`.** One sweep commits a span per trace, and
+            // reading the singular would select whichever happened to be
+            // topmost while the preview had lit both — the commit would show
+            // less than the drag promised.
+            if (spans.length > 0) {
+              setNote(`sweep → ${spans.length} span(s), ${hits.length} marks`);
+              setSel(spans);
               return;
             }
             const hit = hits[0];

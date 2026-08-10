@@ -1238,6 +1238,7 @@ export function ChartContainer({
           hit === null ? EMPTY_SELECTION : [hit],
           modifiers,
           null,
+          EMPTY_PREVIEW_SPANS,
         );
       }
       if (!controlledSelectionRef.current) setInternalSelected(hit);
@@ -1390,14 +1391,19 @@ export function ChartContainer({
         hits: readonly SelectInfo[],
         modifiers: SelectModifiers,
         span: SpanSelection | null,
+        spans: readonly SpanSelection[],
       ) => {
-        for (const e of entries) e.onSelectMany?.(hits, modifiers, span);
-        // Uncontrolled: the compact span descriptor IS the selection (A5.2's
+        for (const e of entries) e.onSelectMany?.(hits, modifiers, span, spans);
+        // Uncontrolled: the compact span descriptors ARE the selection (A5.2's
         // second currency) — the swept marks stay lit via the same membership
         // test a controlled span would use. The preview clears; the committed
         // highlight takes over.
+        //
+        // **All of them**, not just the claimant's: a trace sweep produces one
+        // span per trace ([PND-TRACESEL]), and keeping only the topmost would
+        // leave the uncontrolled path showing less than the preview promised.
         if (!controlledSelectionRef.current)
-          setInternalSelected(span === null ? null : [span]);
+          setInternalSelected(spans.length === 0 ? null : [...spans]);
         lastHoverRef.current = null;
         lastHoverBlockRef.current = null;
         if (!controlledHoverRef.current) setInternalHovered(null);

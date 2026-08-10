@@ -466,11 +466,29 @@ export function drawPartitioned(
   outside: () => LayerDrawStats,
   inside: () => LayerDrawStats,
 ): LayerDrawStats {
-  const stats = outside();
   const [x0, x1] = windowPx;
-  // A collapsed window has no inside to paint — and `clip()` on a zero-width
-  // rect would suppress the second pass anyway, so skip the save/restore.
-  if (x1 <= x0) return stats;
+  // A collapsed window has no inside to paint, so one plain pass is the whole
+  // picture — and `clip()` on a zero-width rect would suppress the second pass
+  // anyway.
+  if (x1 <= x0) return outside();
+  // **Both passes are clipped, and the outside one to the window's COMPLEMENT.**
+  // Painting the muted trace full-width and the emphasised one over it works
+  // for a line, whose stroke is opaque and covers itself. It is wrong for an
+  // **area**: a semi-transparent fill composites with whatever is under it, so
+  // the window would carry muted-plus-emphasised stacked and read darker than
+  // either — the emphasis would depend on what it was drawn over. Clipping the
+  // outside pass away from the window means each pixel is painted exactly once,
+  // whatever its alpha.
+  ctx.save();
+  ctx.beginPath();
+  // The complement as two rects in one path: everything left of the window,
+  // everything right of it. A negative-width rect is legal but not portable
+  // across every canvas impl, so clamp rather than rely on it.
+  if (x0 > 0) ctx.rect(0, 0, x0, height);
+  ctx.rect(x1, 0, Math.max(0, ctx.canvas.width - x1), height);
+  ctx.clip();
+  const stats = outside();
+  ctx.restore();
   ctx.save();
   ctx.beginPath();
   ctx.rect(x0, 0, x1 - x0, height);

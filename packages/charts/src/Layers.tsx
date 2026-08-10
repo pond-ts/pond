@@ -825,8 +825,7 @@ export function Layers({ children }: LayersProps) {
         const a = +sw.yScale.invert(sw.anchorPy);
         const b = +sw.yScale.invert(sw.pendingPy);
         const changed = sw.session.update(Math.min(a, b), Math.max(a, b));
-        for (const s of sw.spanOnly)
-          if (s !== sw.session) s.update(Math.min(a, b), Math.max(a, b));
+        for (const s of sw.spanOnly) s.update(Math.min(a, b), Math.max(a, b));
         publishPreview();
         const ext = sw.session.extent();
         setSweepBandY(
@@ -840,10 +839,10 @@ export function Layers({ children }: LayersProps) {
       if (span === null) return false;
       if (sw.session.twoD !== true) {
         const changed = sw.session.update(span.start, span.end);
-        // Every span-only layer takes the same window — including the claimant
-        // when it is one, which `!==` skips to avoid cutting it twice.
-        for (const s of sw.spanOnly)
-          if (s !== sw.session) s.update(span.start, span.end);
+        // Every span-only layer takes the same window. These are sessions of
+        // their own — including one for the claimant when it is a trace — so
+        // there is nothing to skip.
+        for (const s of sw.spanOnly) s.update(span.start, span.end);
         publishPreview();
         return changed;
       }
@@ -1360,13 +1359,28 @@ export function Layers({ children }: LayersProps) {
         // gesture never guesses which one a layer uses.
         const channels =
           sw.session.twoD === true ? (sw.session.extent2D?.() ?? null) : null;
-        sw.gesture.commit(
-          sw.session.hits(),
-          modifiers,
+        // Every span this gesture produced. The claimant's comes first — it is
+        // what the third argument reports, and on a mark-layer row it is the
+        // only one. A trace sweep adds one per span-only layer, because they
+        // all share the x window and z-order means nothing to the reader there
+        // ([PND-TRACESEL]).
+        const claimed: SpanSelection | null =
           extent === null
             ? null
-            : { kind: 'span', id: sw.session.id, x: extent, ...channels },
-        );
+            : { kind: 'span', id: sw.session.id, x: extent, ...channels };
+        // `sw.spanOnly` is the authoritative set for span-only layers — and it
+        // holds a session for EVERY one of them, including the claimant when
+        // the claimant is a trace. Those are freshly built, so they are never
+        // the same object as `sw.session`: prepending the claimant
+        // unconditionally reported the topmost trace twice. Prepend it only
+        // when it is a mark layer, which `spanOnly` does not cover.
+        const all: SpanSelection[] = [];
+        if (claimed !== null && sw.session.spanOnly !== true) all.push(claimed);
+        for (const s of sw.spanOnly) {
+          const ext = s.extent();
+          if (ext !== null) all.push({ kind: 'span', id: s.id, x: ext });
+        }
+        sw.gesture.commit(sw.session.hits(), modifiers, claimed, all);
         return;
       }
       // End a range drag: commit the anchor→pointer span as a one-shot range —
@@ -1555,11 +1569,12 @@ export function Layers({ children }: LayersProps) {
           const hits = session.hits();
           const extent = session.extent();
           if (hits.length > 0 && extent !== null) {
-            gesture.commit(hits, modifiers, {
+            const one: SpanSelection = {
               kind: 'span',
               id: session.id,
               x: extent,
-            });
+            };
+            gesture.commit(hits, modifiers, one, [one]);
             return;
           }
         }

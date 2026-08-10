@@ -627,6 +627,25 @@ milestone. Plan:
   it is a `defaultTheme` change and moves visual baselines, so it belongs in
   its own commit with the baseline regeneration.
 
+- **[PND-TRACECYCLE]** — **Hotkeys to cycle which series a window selects.**
+  Owner idea, 2026-08-10: `all → series1 → series2 → all`, with a hotkey to
+  **keep** the current one or **exclude** it.
+
+  Worth recording because it is a _third_ answer to the question a trace sweep
+  cannot answer by pointing. The first two were z-order (topmost-wins —
+  arbitrary to the reader) and take-everything (shipped, [PND-TRACESEL]).
+  Cycling is better than either: it hands the ambiguity to the user instead of
+  resolving it by a rule they cannot see, and it needs no new currency — plural
+  spans already exist, so cycling is a _filter_ over the set the gesture
+  produced.
+
+  Open: whether cycling happens **during** the drag (the preview narrows as you
+  tab) or **after** the commit (the selection narrows); which keys, given the
+  plot surface is not focusable at all today ([PND-A11Y]); and whether
+  keep/exclude are separate keys or a modifier on the cycle. The focus problem
+  is the real blocker — there is no keyboard path to a chart, so this task
+  depends on [PND-A11Y]'s focus model rather than standing alone.
+
 - **[PND-ANNSNAP]** — **A snap-target registry, and selection ↔ annotation.**
   Owner design sketch, 2026-08-10. Two halves that share one mechanism.
 

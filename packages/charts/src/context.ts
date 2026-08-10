@@ -1013,6 +1013,9 @@ export interface SweepGesture {
     hits: readonly SelectInfo[],
     modifiers: SelectModifiers,
     span: SpanSelection | null,
+    /** Every span the gesture produced — see `<MultiSelector onSelect>`'s
+     *  fourth argument. A strict superset of `span`. */
+    spans: readonly SpanSelection[],
   ): void;
 }
 
@@ -1172,6 +1175,7 @@ export interface SelectorEntry {
         hits: readonly SelectInfo[],
         modifiers: SelectModifiers | undefined,
         span: SpanSelection | null,
+        spans: readonly SpanSelection[],
       ) => void)
     | undefined;
   /** `<MultiSelector sequence>` — the sweep's bucket snap, folded into the
