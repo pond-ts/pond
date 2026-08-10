@@ -5,94 +5,404 @@
 
 Pond's interaction surface has grown one gesture at a time — cursors,
 selection, the sweep, the 2-D rect, the list range gesture — and each landed
-with its own keyboard story or none. Nobody has yet looked at the **whole**
-surface from a keyboard or a screen reader and asked what it announces. This
-plan is where that audit accumulates.
+with its own keyboard story or none. This plan is the register for a
+library-wide audit of the whole thing.
 
 **The standing rule that produced it:** a feature is not finished because a
-sighted mouse user can drive it. The specific trap this plan exists to break
-is the one below — selection now _exists_ on the list family and a screen
-reader cannot hear it, which was noticed only because the pointer work forced
-a keyboard pass right after it.
+sighted mouse user can drive it. The trap it exists to break is the one below —
+selection now _exists_ on the list family and a screen reader cannot hear it,
+noticed only because the pointer work forced a keyboard pass right after it.
 
-**Method.** Audit per surface, not per component: what does a keyboard user
-do here, what does a screen reader say, and what does the DOM claim. Record
-findings here as they are found — including the ones deliberately not fixed,
-with the reason — so a later pass does not re-derive them. Fixes land as
-their own PRs; this file is the register, not the changelog.
+**Method.** Audit per surface, not per component: what can a keyboard user do,
+what does a screen reader hear, and what does the DOM claim. Record findings
+here as they are found — **including the ones deliberately not fixed, with the
+reason** — so a later pass does not re-derive them. Fixes land as their own
+PRs; this file is the register, not the changelog.
 
-## Findings
+**Provenance.** First pass 2026-08-10: three parallel read-only audits (list
+family / canvas surface / theme contrast + tooling), integrated here. Findings
+are marked **Verified** (confirmed against the code or computed) or
+**Suspected** (needs a real screen reader, a browser, or a measurement). Do not
+promote a Suspected finding without checking it — one claim in this file's first
+draft was wrong (see _Corrections_).
 
-### The list family: selection exists and is inaudible
+## Corrections to earlier claims in this file
 
-Found 2026-08-10, while landing the list range gesture and its keyboard
-parity ([PND-INTERACTCONF]). Both `<BarList>` and `<BoxList>` now support
-single and multi-row selection by pointer and keyboard, and **none of it is
-exposed to assistive technology.**
+- **`aria-selected` is _not_ invalid on a `<tr>`.** The first draft of this
+  register said it was, and repeated it. It is in fact a **supported property
+  of role `row`** — but it is
+  [_"only relevant if the row is in an interactive container, such as a grid or
+  treegrid, but not relevant if the row is in a table"_](https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Reference/Roles/row_role).
+  So on our `role=table` it is **legal and inert**, not invalid — setting it
+  would be silent rather than broken, and `role=table` has no home for
+  `aria-multiselectable` either. The conclusion survives unchanged (do not
+  claim `role=grid` without the navigation it promises), but the reason is
+  "announces nothing", not "is forbidden". **Verified** against MDN; the
+  normative ARIA text is worth quoting directly before anyone acts on it.
 
-**`aria-selected` is not valid on a plain `<tr>`.** The list renders a real
-`<table>`, whose implicit role is `table`, and a `<tr>`'s implicit `row` role
-only supports `aria-selected` inside a `grid` or `treegrid`. So the state that
-paints as a band and a rail has no programmatic equivalent at all: a screen
-reader user can move through the rows and select them and never be told which
-are selected.
+## The list family
 
-**Why it was not fixed in the same pass, and this is the load-bearing part.**
-The obvious repair is `role="grid"` on the table, which makes `aria-selected`
-valid on the rows. But `grid` promises **cell-level** navigation — Left/Right
-between cells, and the whole
-[ARIA grid pattern](https://www.w3.org/WAI/ARIA/apg/patterns/grid/) around it —
-and the list implements row-level arrows only. Promoting the role without the
-navigation tells assistive technology a lie about what the widget can do,
-which is worse than the current silence: a user who is told this is a grid
-will try to navigate it as one.
+`<BarList>` / `<BoxList>` / `ListTable` — a real `<table>`, deliberately.
 
-So the honest options are both bigger than a prop:
+### Fixed in the same pass as the audit
 
-1. **Implement the grid pattern properly** — cell focus, Left/Right, the
-   `role="grid"` + `aria-multiselectable` + `aria-selected` triple. Most
-   faithful to what the list already is (a table of data cells), and the most
-   work.
-2. **Rebuild the interactive list as `role="listbox"`** with rows as
-   `option`s. `aria-selected` is native there and the row-level arrows the
-   list already has are exactly the listbox pattern. But it discards table
-   semantics — the thing the list family exists for ("Renders a real
-   `<table>` — the point of the list family is table semantics") — and a
-   listbox option is not supposed to contain a grid of cells.
+- **The row stole its children's keys.** `keydown` bubbles, so a key pressed on
+  the expander `<button>` reached the row's handler, which `preventDefault`ed
+  Enter/Space and selected the row instead of expanding it — and a cancelled
+  keydown also suppresses a button's own Space activation. Arrows yanked focus
+  out of the button onto a row. Fixed by scoping the row handler to
+  `e.target === e.currentTarget`, which also protects any interactive content a
+  consumer puts in a `render` cell. Five tests; revert-verified. **Verified.**
+- **Every chevron had the same accessible name** ("Expand row"), so a screen
+  reader's control list was N indistinguishable buttons. Now named for its row;
+  state stays on `aria-expanded`. **Verified.**
 
-Neither is a small change and the choice is a real design decision, so it
-wants deciding rather than defaulting.
+### Open — selection is inaudible, and so is the affordance
 
-**Also open on the same surface:**
+**Nothing about selection reaches assistive technology.** Worse than the
+original framing: it is not only the _state_ that is silent but the
+**affordance** — the row is a `<tr tabIndex={0} onClick>` with no `button`,
+`link` or `option` role and no hint of activation, so in browse mode a screen
+reader user is never told the row does anything. **Verified.**
 
-- **No roving tabindex.** Every interactive row is `tabIndex={0}`, so a
-  100-row list is 100 tab stops. Both patterns above make one row tabbable
-  and let the arrows do the rest. Worth noting this is a **behaviour change**
-  for anyone tabbing through rows today, not a pure improvement.
-- **The drag-range gesture is pointer-only by design**, and touch is
-  excluded deliberately (a vertical drag over a list is how a touch device
-  scrolls). Keyboard parity covers the keyboard; **touch has no range
-  affordance at all** — a long-press or an explicit multi-select mode is
-  unbuilt. That is an accessibility gap as much as a feature gap: on a
-  touch-only device the multi-select is unreachable.
-- **Focus visibility.** Rows rely on the UA focus ring. It has not been
-  checked against the selection band and rail — a ring that reads as
-  "selected" or disappears against `selectedBand` would make the keyboard
-  path ambiguous exactly when it matters.
+The two candidate repairs, both bigger than a prop:
 
-### The canvas: not yet audited
+1. **`role="grid"`** — makes `aria-selected` meaningful, keeps table
+   semantics. But the ARIA grid pattern promises **cell-level** Left/Right
+   navigation we do not implement, and declaring the role without it misleads
+   AT: a user told this is a grid will try to navigate it as one.
+2. **`role="listbox"`, rows as `option`s** — `aria-selected` is native, and our
+   row-level arrows already _are_ the listbox pattern. But it discards the
+   table semantics the family exists for, and an `option` is not supposed to
+   contain a grid of cells.
 
-`<ChartContainer>` and the layer stack are a `<canvas>` with pointer
-handlers. Selection, the sweep, the 2-D rect, pan/zoom and the cursors are
-all mouse-driven, and there is no keyboard path to any of them. What a
-screen reader should be told about a chart at all is a design question this
-plan has not opened yet — the honest first step is an inventory of what
-exists, not a fix.
+**A third option the first draft missed:** keep `role=table` and announce
+selection through a **live region**. Smaller than either, and honest — it adds
+information without claiming a widget pattern. Probably the right first move
+regardless of which of 1/2 wins later. (Prior-art research on this decision is
+outstanding; see _Open questions_.)
 
-Recorded here so the audit's scope is not silently "the lists".
+### Open — the table is unnavigable as a table
+
+- **No headers, no accessible name.** No `<caption>`, `<thead>`, `<th>`, `role`
+  or `aria-label`. The label cell is a `<td>`, not `<th scope="row">`, and
+  `ListCellSpec` has **no header field at all** — a consumer literally cannot
+  supply column headers. A screen reader in table mode gets "row 3, column 4,
+  15.3" with no column name and no row name, and the table is anonymous in the
+  page's table list. This directly contradicts `ListTable`'s own docstring
+  claim of "screen-reader-legible rows". `<th scope="row">` for the label is
+  nearly free; column headers need a new `ListCellSpec.header` + `<thead>` and
+  a decision about the glyph column and about breaking existing story layouts.
+  **Verified.**
+- **The quantity is purely visual in `<BarList>`.** The bar is nested empty
+  `<div>`s with a percentage width — no text, no label, no `title`. The widest
+  cell in the row reads as **blank**. Numbers reach text only if the consumer
+  adds `before`/`after` cells. `<BoxList>` prints the current value when
+  `format` is given, but never the five-number summary. Marker crossings are
+  the dotted rule alone. The library cannot know units or formatting, so there
+  is no safe mandatory default — options are an opt-in
+  `accessibleValue?: (row) => string` rendered visually-hidden, or documenting
+  that a text cell is mandatory and making every example use one. **Verified.**
+- **Sorting is invisible.** `sortBy` reorders at render with no header, so no
+  `aria-sort` and no statement that the list is ranked or by what — the
+  component's primary semantic. Rides on the header work above. **Verified.**
+- **The marker label strip is a fake data row** — a `<tr>` of empty cells with
+  one holding absolutely-positioned labels. Screen readers count it as data and
+  read a run of blanks. It is chrome: it belongs in a `<caption>`, a `<thead>`,
+  or outside the table. **Verified.**
+- **Nothing is announced on selection change.** A drag or Shift-Arrow that
+  takes 12 rows produces no announcement and no focus change. A polite live
+  region is cheap, but the message wording ("12 rows selected") is something
+  the library would be inventing, and it needs a localisation answer.
+  **Verified** (no `aria-live` anywhere in the package).
+
+### Open — the register's other three original claims, as corrected
+
+- **No roving tabindex — confirmed, and understated.** With `renderExpanded`
+  every row contributes **two** tab stops (row + chevron), so a 100-row list is 200. Changing it is a behaviour change, not a pure improvement.
+- **Touch has no range gesture — confirmed, but "multi-select is unreachable
+  on touch" was overstated.** A tap still fires `onRowSelect([row], mods)` and
+  the consumer owns all set arithmetic, so tap-to-toggle multi-select is
+  implementable today. What is missing is a _built-in range_ gesture, and
+  `additive` is always false on touch.
+- **Focus visibility — confirmed, and worse than stated.** The shell sets no
+  focus style and no `:focus-visible` rule, and `theme.list` has no focus
+  token — so a consumer cannot fix a bad focus ring by theming either. Needs
+  checking against `selectedBand` (WCAG 2.4.11/2.4.13).
+
+### Low vision
+
+`whiteSpace: 'nowrap'` on every text cell with no overflow container forces
+page-level horizontal scrolling at 200–400% zoom (WCAG 1.4.10). Fonts are
+absolute px from `theme.font.size`, so the list ignores the browser font size;
+making that relative is a cross-cutting theme decision because the canvas
+measures in px. **Verified.**
+
+## The canvas surface
+
+A repo-wide grep for `tabIndex|role=|aria-|onKeyDown` across
+`packages/charts/src` returns **five hits, all outside the plot**. This is not
+a set of gaps; it is an unstarted surface — and the project already knows:
+`docs/rfcs/charts.md` parks an "offscreen `<table>` data fallback for keyboard
+/ AT" in v1.1.
+
+- **There is no keyboard path to any chart interaction.** The plot is a `<div>`
+  with pointer handlers and no `tabIndex`, so it never receives a keypress. A
+  keyboard-only user cannot select, sweep, rect-select, pan, zoom, move a
+  cursor, or create/drag/delete an annotation. Additive selection needs
+  meta/ctrl **plus** a pointer with no equivalent. **Fails WCAG 2.1.1 (A)
+  outright.** The verbs are already context methods so wiring is modest;
+  **choosing the focus model — plot? row? mark? series? — is a design project**,
+  not a patch. **Verified.**
+- **The `<canvas>` claims nothing.** No role, no accessible name, no fallback
+  content, no `<figure>`/`<figcaption>` anywhere in the package. The entire
+  visualisation is an empty inline box to a screen reader. An `aria-label` +
+  `<figure>` on `ChartContainer` and `role="img"` on the canvas is **cheap and
+  the highest-value single move on this surface.** **Verified.**
+- **Legend chips are interactive `<div>`s** — `onClick`, `cursor: pointer`, no
+  `tabIndex`, no `role="button"`, no `aria-pressed`, and the swatch `<svg>` is
+  not `aria-hidden`. Credit where due: selection is encoded non-chromatically
+  (`fontWeight: 600`), but unselected rows at `opacity: 0.45` push their labels
+  under contrast minimums. Small, self-contained fix, and the pattern already
+  exists in `ListTable`. **Verified.**
+- **Annotation handles are pointer-only** — transparent `<rect>`s with pointer
+  handlers, no `tabIndex`/`role`/`onKeyDown`/name. Selecting, editing or
+  dragging a `<Marker>`/`<Region>`/`<Baseline>` is unreachable by keyboard and
+  invisible to AT. **Verified.**
+- **Hit targets are far under WCAG 2.5.8 (24×24)** — handles are 6×18 with a
+  5px pad, edge grabs 8px. Cheap in code, but at 24px adjacent handles on a
+  narrow region overlap, so it needs a design call. **Every drag gesture is
+  pointer-only with no alternative**, which also **fails WCAG 2.5.7 (Dragging
+  Movements)**. **Verified.**
+- **Axis tick labels are real text, and that is a genuine asset.** Two caveats,
+  both **Suspected**: y-tick DOM order is scale order (visually bottom→top), so
+  reading order may be inverted; and an axis is an unlabelled bag of numbers
+  with no grouping. `role="group"` + `aria-label` on the axis box is cheap.
+- **Readout chips and y-gutter pills are unlabelled and silent** — no
+  `role="status"`, no `aria-live`. Academic while there is no keyboard route to
+  producing one; it becomes the _first_ thing to fix the moment there is.
+  **Verified.**
+- **Motion is genuinely fine.** No CSS transitions, no decorative animation,
+  nothing auto-moves; `requestAnimationFrame` only coalesces pointer moves.
+  `prefers-reduced-motion` is absent and there is nothing it would gate. **Not
+  a finding.**
+
+## Contrast — measured, and the conformance line is not where I first put it
+
+WCAG 2.1 relative luminance, alpha composited before measuring. `defaultTheme`
+sets no `background`, so marks sit on the page ground; measured against
+**white**, and every number changes on a non-white host. `font.size: 11`, so
+**all** text takes the 4.5:1 threshold — nothing here qualifies for 3:1.
+
+**A correction to this file's first draft, and it matters.** I originally marked
+every under-3:1 state transition as a failure. SC 1.4.11 says otherwise, twice,
+[verbatim](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html):
+
+> This success criterion does not require that changes in color that
+> differentiate between states of an individual component meet the 3:1 contrast
+> ratio when they do not appear next to each other.
+
+> Therefore, additional author-supplied visual treatments for hover are not
+> "required to identify" the hover state. Those treatments can be considered
+> supplemental and do not themselves need to contrast 3:1 against the
+> background.
+
+So **hover is exempt**, explicitly. Rest→hover at 1.47:1 is _conformant_. What
+the criterion does cover is "visual information required to identify … states"
+against **adjacent** colours — and in a chart a selected bar and an unselected
+bar sit side by side, so that pair is adjacent and the state is arguably
+required to understand the graphic. Keep the two apart below: **conformance**
+is narrow, **quality** is where most of this lives. Do not report quality items
+as violations.
+
+### Text — one clear failure (SC 1.4.3, unambiguous)
+
+| Token                      | Colour                   | Ratio    | Verdict                                                           |
+| -------------------------- | ------------------------ | -------- | ----------------------------------------------------------------- |
+| axis **title**             | `#64748b` @ opacity 0.85 | **3.56** | **fails 1.4.3** (needs 4.5)                                       |
+| `axis.label` (ticks)       | `#64748b`                | 4.76     | passes **on white only** — an `#f1f5f9` ground gives 4.45, a fail |
+| `estelaTheme` `axis.label` | `#4E6B6B` on `#06191D`   | **3.13** | **fails 1.4.3**                                                   |
+
+Everything else measured (band labels, legend text, list ink, marker labels)
+clears 4.5:1 comfortably.
+
+### Marks and states
+
+| Pair                                               | Ratio       | Reading                                                                                                      |
+| -------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
+| `bar.fill` `#2A9D8F` vs white                      | 3.32        | passes as a graphical object                                                                                 |
+| `bar.highlight` `#3F5BE0` vs white                 | 5.55        | passes                                                                                                       |
+| **`highlight` → `fill`, bars side by side**        | **1.67**    | **the real concern** — adjacent, and state-identifying                                                       |
+| `hover` → `fill`                                   | 1.47        | _conformant_ (hover is supplemental); poor quality                                                           |
+| `dimmed` → `fill`                                  | 2.34        | quality                                                                                                      |
+| ramp `groups[1]` `#5379be` → `groups[3]` `#b5604e` | **1.02**    | **worst finding in the theme** — luminance-identical, and exactly the pair that collapses under deuteranopia |
+| `brush.fill` / `brush.edge` vs white               | 1.10 / 1.99 | a live drag preview is information, not decoration                                                           |
+
+**A selected bar is the same brightness as an unselected one.** And **the
+outline that was supposed to be the second cue is a no-op**: `bars.ts` strokes
+`style.selectedOutline ?? fill`, and `defaultTheme` sets no `selectedOutline`,
+so it strokes the selected fill over the selected fill. Setting
+`bar.default.selectedOutline` to a contrasting ink is **one token and the
+cheapest real win in this file**. It moves visual baselines, which per CLAUDE.md
+is the point of the `defaultTheme` rule.
+
+### The `list` register, measured separately
+
+The contrast audit ran against a worktree predating `theme.list`, so its
+list-colour numbers describe the old ad-hoc values. Measured here instead:
+
+| Token / pair                                 | Ratio       | Reading                                             |
+| -------------------------------------------- | ----------- | --------------------------------------------------- |
+| `selectedRail` `#3F5BE0` vs white            | 5.55        | passes                                              |
+| `selectedRail` vs `selectedBand`             | **4.92**    | passes — **this is what carries selection**         |
+| `markerInk` `#1C1C1A` vs white               | 17.07       | passes                                              |
+| `hoverRail` `#4FD0BE` vs white / vs its band | 1.89 / 1.75 | hover is supplemental ⇒ conformant, but weak        |
+| `hoverBand` / `selectedBand` vs white        | 1.08 / 1.13 | washes, by design                                   |
+| `selectedBand` vs `hoverBand`                | **1.04**    | the two bands are indistinguishable from each other |
+
+**Read:** the ladder's _selection_ is perceivable without colour — the rail
+carries it at 4.92:1, which vindicates the "band + rail" belt and braces,
+because the band alone at 1.13:1 would not. **Hover has no strong cue**: band
+1.08, rail 1.75 against that band, bands 1.04 apart. Conformant, but a
+low-vision user gets no hover feedback. A darker `hoverRail` is the fix and it
+is a change to a shipped default.
+
+## Prior art — what other libraries actually do
+
+Researched 2026-08-10. This is the section to read **before** designing anything
+on the canvas surface, because the field has already converged and we should
+copy rather than invent.
+
+**The minimum credible answer is not keyboard navigation — it is a text
+alternative plus a real data table.** That is the consensus across Highcharts'
+own [10 guidelines](https://www.highcharts.com/article/10-guidelines-for-dataviz-accessibility/),
+the [A11Y Collective](https://www.a11y-collective.com/blog/accessible-charts/),
+and Chartability's critical tests. Highest-value single move for us: a
+visually-hidden (or toggle-revealed) `<table>` of the plotted data plus a
+summary description, with the canvas labelled. **This is already parked in
+`docs/rfcs/charts.md` for v1.1 — the research says promote it, it is tier one,
+not tier two.**
+
+**Canvas is not an excuse.** The accepted pattern is canvas + a parallel
+semantic DOM layer, and it ships in production:
+
+- **AG Charts** (canvas) has a full keyboard model with announcements from the
+  focused element ([docs](https://www.ag-grid.com/charts/javascript/accessibility/)).
+- **[Data Navigator](https://github.com/cmudig/data-navigator)** (IEEE TVCG
+  2024, [paper](https://arxiv.org/abs/2308.08475)) is the generalised, citable
+  form: semantic HTML positioned over the graphic, explicitly so "png, svg,
+  canvas, and even webgl" become navigable. Model = **Structure** (a graph of
+  nodes and edges defining navigation paths) + **Input** + **Rendering**. If we
+  build a focus model, this is the design to start from.
+- **ECharts** is the weak floor — one generated `aria-label` on the container,
+  no keyboard nav, off by default. **Chart.js** is the null case: its own docs
+  say canvas content is inaccessible and it is up to you.
+
+**The keyboard model to copy** — Highcharts `'normal'` mode, which AG Charts
+converged on independently, and which matches the ARIA "one tab stop, arrows
+inside" convention that Recharts also argues for:
+
+> container is **one tab stop**; `←/→` moves between points within a series;
+> `↑/↓` moves between series; `Home/End` first/last; `PageUp/PageDown` by a
+> page; `Enter`/`Space` activates; `Esc` leaves; visible focus ring;
+> wrap-around; remember the last-focused point per series.
+
+Worth stealing AG Charts' documented honesty too: points are traversed in
+**declared** order, which may not match visual order.
+
+**Decal / pattern fills** are real and cheap (ECharts `aria.decal`, Highcharts
+pattern fills — opt-in in both), but a small win next to structure.
+**Sonification** ships only in Highcharts, opt-in, built with the Georgia Tech
+Sonification Lab. **Do not build this.**
+
+**[Chartability](https://chartability.fizz.studio/)** (Elavsky, EuroVis 2022) is
+50 testable questions under POUR+CAF, with a ~14-test critical pass in 20–40
+minutes. It is renderer-agnostic and never lets canvas off the hook. **Its
+critical ten is the checklist this plan should actually be scored against**, and
+its most relevant finding: **87.5% of audited charts failed contrast.**
+
+One caution on sources: a blog claiming Plotly ships arrow-key mark navigation
+by default **contradicts Plotly's own issue tracker** (open since 2016). Prefer
+vendor docs and issue trackers over listicles.
+
+## Tooling — there is none, and the obvious first move is the wrong one
+
+No axe, no `jest-axe`/`vitest-axe`, no `@axe-core/playwright`, no
+`@storybook/addon-a11y`, and **no ESLint at all** in the repo, so
+`eslint-plugin-jsx-a11y` has no host. The 20+ Playwright specs are visual
+regression and perf only — no `getByRole`, no `aria-` assertion anywhere.
+
+**The coverage figure, stated properly.** Deque's own study found axe-core
+covered **57% of issues by volume** across 13,000+ pages
+([deque.com](https://www.deque.com/blog/automated-testing-study-identifies-57-percent-of-digital-accessibility-issues/)).
+That is instances, not success criteria, and it is inflated by a few rule types
+recurring thousands of times. The older 30–40% lore is the success-criteria
+framing. Both are vendor-published — treat 57% as "issues you can count".
+
+**Bokeh already ran the experiment we were about to run, and removed axe-core.**
+Across ~114 examples axe found ~7 unique issue classes, **all in the surrounding
+widgets and toolbar**; plots without toolbars reported **zero**, because
+everything was canvas. They pulled it citing false confidence: accessibility
+tests "might make the team think accessibility is 'handled' when canvas
+elements (the core product) are completely untested"
+([bokeh#14057](https://github.com/bokeh/bokeh/discussions/14057)). That is our
+exact situation, so **axe is demoted below the token test** and, if adopted,
+must be scoped to chrome with the limitation written down.
+
+Ordered:
+
+1. **A theme-token contrast unit test.** Pure arithmetic over the theme object
+   (`wcag-contrast` or `colorjs.io`), no DOM, no canvas problem. Assert every
+   text token ≥4.5:1 against its ground and every _adjacent-in-a-chart_ pair
+   ≥3:1. **This is the only mechanism that can ever cover the mark colours** —
+   axe cannot see canvas — and it covers `defaultTheme`, which nothing else
+   renders. ~half a day.
+2. **`eslint-plugin-jsx-a11y`** — needs an ESLint host first. Catches what axe
+   structurally cannot: `onClick` on a `<div>` with no role or key handler, in
+   code paths no story covers. That is precisely the legend-chip and
+   annotation-handle class above. ~1 hour plus fixes.
+3. **`@axe-core/playwright` on a few e2e pages, `exclude`-ing canvas**, aimed at
+   legends, tooltips and controls — and **documented as not covering the
+   charts**, per Bokeh.
+4. **Storybook a11y addon at warn-not-fail** over the fan-out. Known blind spot:
+   it runs before async components finish rendering, producing false negatives.
+   Lowest value per unit of noise here.
+5. **A manual keyboard + screen-reader pass on one interactive chart.** Bokeh's
+   conclusion was that this beats maintaining automation on a canvas product.
+
+## Priorities
+
+**Cheap, high value — do these first:**
+
+1. `bar.default.selectedOutline` — one token; makes selection non-chromatic.
+2. `aria-label` + `<figure>` on `ChartContainer`, `role="img"` on the canvas —
+   turns a blank into a named object.
+3. Legend chips → `role="button"` + `tabIndex` + `aria-pressed` + Enter/Space.
+4. Axis title contrast (opacity default, or a darker ink).
+5. `<th scope="row">` for the list's label cell.
+6. The theme-token contrast test (tooling item 2), so 1 and 4 cannot regress.
+
+**Medium, needs a small design decision:** live-region announcement for list
+selection; a `theme.list` focus token + focus style; annotation hit targets
+toward 24px; a darker `hoverRail`; column headers via `ListCellSpec.header`.
+
+**Large design projects, not fixes — say so plainly:** a focus model and
+keyboard grammar for the plot; the offscreen `<table>` data fallback;
+non-pointer alternatives to every drag; the grid-vs-listbox decision for the
+list family; a touch range affordance.
+
+## Open questions
+
+- **Grid vs listbox vs live-region for the list family.** Prior-art research
+  outstanding — specifically whether the ARIA APG's cell-navigation requirement
+  for `role=grid` is normative or a recommendation, and what Adobe's React Aria
+  `GridList` (built for "a list whose rows are selectable and may contain
+  interactive children") settled on, since that is our case exactly.
+- **How far to take the canvas.** From "text alternative + data-table fallback"
+  to "full keyboard navigation model" is a large range, and the answer is a
+  product decision about who the charts are for.
 
 ## Tasks
 
-_None yet — the audit's first pass is the finding register above. Fixes
-become `[PND-XXXXXX]` tasks in [PLAN.md](../../PLAN.md) once the decisions
-they depend on are made._
+_None yet — fixes become `[PND-XXXXXX]` tasks in [PLAN.md](../../PLAN.md) as
+the decisions above are made._

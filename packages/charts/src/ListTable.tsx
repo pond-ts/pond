@@ -264,6 +264,15 @@ export function ListTable<R extends ListRow>({
    */
   const onRowKeyDown = (e: ReactKeyboardEvent, i: number) => {
     if (!interactive) return;
+    // **Only when the ROW itself has focus.** A row may contain its own
+    // interactive content — the expander chevron is a real `<button>`, and a
+    // consumer's `render` cell could be anything — and `keydown` bubbles. The
+    // chevron stops propagation on `click` but a button cannot stop what it
+    // does not know about, so without this guard Enter on the chevron reached
+    // here, got `preventDefault`ed, and selected the row instead of expanding
+    // it (and worse, the cancelled keydown suppresses the button's own Space
+    // activation). Arrow keys would likewise yank focus out of the button.
+    if (e.target !== e.currentTarget) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       anchorRef.current = i;
@@ -693,7 +702,14 @@ export function ListTable<R extends ListRow>({
                       type="button"
                       data-list-expander=""
                       aria-expanded={isOpen}
-                      aria-label={isOpen ? 'Collapse row' : 'Expand row'}
+                      // Named for the row it belongs to: every chevron
+                      // sharing one label makes a screen reader's control
+                      // list N indistinguishable "Expand row" buttons. State
+                      // rides on `aria-expanded`, so the label need only
+                      // identify the target.
+                      aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${
+                        row.label ?? row.key
+                      }`}
                       onClick={(e) => {
                         // The chevron toggles; it must not double as a row click.
                         e.stopPropagation();

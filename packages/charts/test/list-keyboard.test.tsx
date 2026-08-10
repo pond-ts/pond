@@ -386,6 +386,76 @@ describe('scope and mounting', () => {
   });
 });
 
+describe('the row does not steal its children’s keys', () => {
+  // Found by an accessibility audit of code written minutes earlier: `keydown`
+  // bubbles, and the row's handler ran for keys pressed on the expander
+  // `<button>` inside it. The button stops propagation on `click`, but a button
+  // cannot stop what it does not know about — so Enter on the chevron got
+  // `preventDefault`ed and selected the row instead of expanding it.
+  const withExpander = () => {
+    const seen: Array<readonly string[]> = [];
+    const toggles: Array<[string, boolean]> = [];
+    const { container } = render(
+      <BarList
+        rows={hosts}
+        columns={columns}
+        onRowSelect={(rows) => seen.push(rows.map((r) => r.key))}
+        onExpandToggle={(key, open) => toggles.push([key, open])}
+        renderExpanded={() => <div>detail</div>}
+      />,
+    );
+    return { container, seen, toggles };
+  };
+  const chevron = (c: HTMLElement, key: string) =>
+    row(c, key).querySelector('[data-list-expander]') as HTMLButtonElement;
+
+  it('Enter on the chevron does not select the row', () => {
+    const { container, seen } = withExpander();
+    const btn = chevron(container, 'b');
+    btn.focus();
+    // Not prevented — so the browser's own button activation still runs, which
+    // is what actually toggles the row.
+    expect(fireEvent.keyDown(btn, { key: 'Enter' })).toBe(true);
+    expect(seen).toEqual([]);
+  });
+
+  it('Space on the chevron is left to the button too', () => {
+    const { container, seen } = withExpander();
+    const btn = chevron(container, 'b');
+    btn.focus();
+    expect(fireEvent.keyDown(btn, { key: ' ' })).toBe(true);
+    expect(seen).toEqual([]);
+  });
+
+  it('arrows on the chevron do not yank focus out to a row', () => {
+    const { container } = withExpander();
+    const btn = chevron(container, 'b');
+    btn.focus();
+    fireEvent.keyDown(btn, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(btn);
+  });
+
+  it('…and the row still owns keys pressed on the ROW', () => {
+    // The guard must not disable the row's own keyboard — the pair that makes
+    // it a scope check rather than a switch-off.
+    const { container, seen } = withExpander();
+    row(container, 'b').focus();
+    fireEvent.keyDown(row(container, 'b'), { key: 'Enter' });
+    expect(seen).toEqual([['b']]);
+  });
+
+  it('each chevron is named for its own row', () => {
+    // Every chevron sharing one label gives a screen reader's control list N
+    // indistinguishable "Expand row" buttons.
+    const { container } = withExpander();
+    const labels = Array.from(
+      container.querySelectorAll('[data-list-expander]'),
+    ).map((b) => b.getAttribute('aria-label'));
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels[0]).toContain('a');
+  });
+});
+
 describe('end to end — keyboard only', () => {
   it('Tab in, Shift-Down twice, and three rows are selected', () => {
     function Harness() {
