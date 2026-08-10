@@ -1,6 +1,4 @@
 import {
-  Children,
-  cloneElement,
   isValidElement,
   useCallback,
   useContext,
@@ -8,11 +6,11 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactElement,
   type ReactNode,
 } from 'react';
 import { scaleLinear, scaleLog } from 'd3-scale';
 import { isDev } from './dev.js';
+import { useIndexedChildren } from './child-index.js';
 import { logAxisWarning, needsExtents, resolveYDomain } from './domain.js';
 import { resolveAxisFormat } from './format.js';
 import { resolveYTickCount } from './yticks.js';
@@ -495,10 +493,17 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
   // Inject each direct child's JSX position so axes register their declaration
   // order (the default-axis source). `<Layers>` receives an index too (harmless
   // — it's not an axis) and injects its own into the draw layers.
-  const indexedChildren = Children.map(children, (child, index) =>
-    isValidElement(child)
-      ? cloneElement(child as ReactElement<{ index?: number }>, { index })
-      : child,
+  //
+  // A fragment child costs more here than it does in `<Layers>`: the axes
+  // inside it lose the index *and* the `child.type === YAxis` sort below cannot
+  // see through it, so they fall into `plotEls` and render in the middle of the
+  // row instead of in a gutter. Hence the same warning on both.
+  const indexedChildren = useIndexedChildren(
+    children,
+    '<ChartRow>',
+    'the axes inside it lose their declaration order (the default-axis pick ' +
+      'and slot order within a side) and are placed in the plot rather than a ' +
+      'gutter, because the side sort cannot see through a fragment',
   );
 
   // Place axes by their `side`, not by JSX author position — so a `side="right"`

@@ -183,7 +183,7 @@ describe('a fragment child of <Layers> swallows the injected index', () => {
       slotting((kids) => <>{kids}</>);
       const hits = warn.mock.calls
         .map((c) => String(c[0]))
-        .filter((m) => m.includes('swallows the injected z-order index'));
+        .filter((m) => m.includes('swallows the injected declaration index'));
       // One `<Layers>`, one warning — the re-render that mounts 'm' must not
       // add a second (the ref guard), or a live chart would spam the console.
       expect(hits).toHaveLength(1);
@@ -199,9 +199,96 @@ describe('a fragment child of <Layers> swallows the injected index', () => {
       slotting((kids) => kids);
       expect(
         warn.mock.calls.filter((c) =>
-          String(c[0]).includes('swallows the injected z-order index'),
+          String(c[0]).includes('swallows the injected declaration index'),
         ),
       ).toHaveLength(0);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+/**
+ * `<ChartRow>` injects the same index into its axes, and a fragment there costs
+ * **more** than in `<Layers>`: the axes lose their declaration order *and* the
+ * `child.type === YAxis` side-sort cannot see through the fragment, so they land
+ * in the plot column instead of a gutter. Reviewer finding on the `<Layers>`
+ * fix — one bug class, two injection sites, and only one had been fixed.
+ */
+describe('a fragment child of <ChartRow> swallows the injected index', () => {
+  /** Labelled so `getByText` can locate each axis for a placement assertion. */
+  const labelledRow = (wrap: (kids: React.ReactNode[]) => React.ReactNode) => (
+    <ChartContainer range={[0, 3]} width={400}>
+      <ChartRow height={100}>
+        {wrap([
+          <YAxis key="a" id="a" label="left-axis" min={0} max={10} />,
+          <YAxis
+            key="b"
+            id="b"
+            side="right"
+            label="right-axis"
+            min={0}
+            max={10}
+          />,
+        ])}
+        <Layers>
+          <LineChart series={mk([1, 2, 3])} column="v" axis="a" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  );
+
+  it('warns, naming the placement consequence', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      render(labelledRow((kids) => <>{kids}</>));
+      const hits = warn.mock.calls
+        .map((c) => String(c[0]))
+        .filter((m) => m.includes('<ChartRow>'));
+      expect(hits).toHaveLength(1);
+      expect(hits[0]).toContain('gutter');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('says nothing when the axes are direct children', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      render(labelledRow((kids) => kids));
+      expect(
+        warn.mock.calls.filter((c) => String(c[0]).includes('<ChartRow>')),
+      ).toHaveLength(0);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('a fragment really does misplace the axes', () => {
+    // The consequence the message claims, pinned rather than asserted in prose:
+    // a right-side axis wrapped in a fragment renders *before* the plot instead
+    // of after it, because the side sort never sees a `<YAxis>` to sort.
+    // Same `compareDocumentPosition` idiom as `axis placement by side` below,
+    // which is the reliable way to read placement out of this row.
+    const FOLLOWING = Node.DOCUMENT_POSITION_FOLLOWING;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const direct = render(labelledRow((kids) => kids));
+      const canvasD = direct.container.querySelector('canvas')!;
+      // Direct children: the right axis follows the plot, as `side` promises.
+      expect(
+        canvasD.compareDocumentPosition(direct.getByText('right-axis')) &
+          FOLLOWING,
+      ).toBeTruthy();
+      cleanup();
+
+      const wrapped = render(labelledRow((kids) => <>{kids}</>));
+      const canvasW = wrapped.container.querySelector('canvas')!;
+      // Wrapped: it precedes the plot — never sorted into the right gutter.
+      expect(
+        canvasW.compareDocumentPosition(wrapped.getByText('right-axis')) &
+          FOLLOWING,
+      ).toBeFalsy();
     } finally {
       warn.mockRestore();
     }

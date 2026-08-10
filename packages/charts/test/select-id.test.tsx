@@ -140,12 +140,22 @@ describe('selection dev-warn: a trace counts as selectable', () => {
     },
   );
 
-  it('names the trace components in the remedy', () => {
+  it('names every selectable component in the remedy', () => {
+    // All six, not just the two this fix adds — the message went stale once
+    // already by naming a subset, and `<HeatMap>` was missing from it too.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     render(traceTree('line', false));
     const msg = String(noIdWarnings(warn)[0]![0]);
-    expect(msg).toContain('<LineChart>');
-    expect(msg).toContain('<AreaChart>');
+    for (const c of [
+      '<BarChart>',
+      '<ScatterChart>',
+      '<BoxPlot>',
+      '<HeatMap>',
+      '<LineChart>',
+      '<AreaChart>',
+    ]) {
+      expect(msg).toContain(c);
+    }
     warn.mockRestore();
   });
 });

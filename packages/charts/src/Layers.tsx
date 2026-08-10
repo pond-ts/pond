@@ -1,8 +1,5 @@
 import {
-  Children,
-  cloneElement,
   Fragment,
-  isValidElement,
   useCallback,
   useContext,
   useEffect,
@@ -13,7 +10,6 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
-  type ReactElement,
   type ReactNode,
 } from 'react';
 import { Canvas } from './Canvas.js';
@@ -29,6 +25,7 @@ import {
 } from './brush.js';
 import { resolveSelection } from './select.js';
 import { isDev } from './dev.js';
+import { useIndexedChildren } from './child-index.js';
 import {
   panRange,
   zoomRange,
@@ -1918,39 +1915,12 @@ export function Layers({ children }: LayersProps) {
 
   // Inject each draw layer's JSX position so it registers its declaration order
   // (z-stack: lower index at the back), independent of mount timing.
-  //
-  // A `<>…</>` wrapper is the one non-layer child worth calling out: it accepts
-  // no props, so the index dies there and the layers inside it fall back to
-  // their `index = 0` default. That is silent — a stable sort leaves the tie in
-  // *mount* order, which for a synchronous tree matches declaration order, so
-  // the stack looks right while the guarantee this injection exists to provide
-  // is gone. Skipping the clone also keeps React's own less specific "invalid
-  // prop supplied to React.Fragment" from firing alongside our warning.
-  let sawFragmentChild = false;
-  const indexedChildren = Children.map(children, (child, index) => {
-    if (!isValidElement(child)) return child;
-    if (child.type === Fragment) {
-      sawFragmentChild = true;
-      return child;
-    }
-    return cloneElement(child as ReactElement<{ index?: number }>, { index });
-  });
-
-  // Warned from an effect, not from the `Children.map` above: that runs during
-  // render, and a render-phase ref write would let a discarded concurrent
-  // render burn the once-per-`<Layers>` flag and swallow the warning. Same
-  // dev-gated, ref-guarded shape as `<ChartRow>`'s deprecation notice.
-  const warnedFragmentRef = useRef(false);
-  useEffect(() => {
-    if (!isDev || !sawFragmentChild || warnedFragmentRef.current) return;
-    warnedFragmentRef.current = true;
-    console.warn(
-      '[pond-charts] a <Fragment> child of <Layers> swallows the injected ' +
-        'z-order index, so the draw layers inside it all register at 0 and ' +
-        'their stacking falls back to mount order. List them as direct ' +
-        'children, or return a keyed array instead of a fragment.',
-    );
-  }, [sawFragmentChild]);
+  const indexedChildren = useIndexedChildren(
+    children,
+    '<Layers>',
+    'the draw layers inside it all register at 0 and their z-stacking falls ' +
+      'back to mount order',
+  );
 
   return (
     <LayersContext.Provider value={registry}>

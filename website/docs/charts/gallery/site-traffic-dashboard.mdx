@@ -69,12 +69,15 @@ line, in the saturated shade — two more `<AreaChart>`s appended to the same
     baseline={0}
   />
 
-  {/* …and, when a row is picked, its contribution within it */}
+  {/* …and, when a row is picked, its contribution within it. One conditional
+      per layer, NOT a fragment around both: `<Layers>` injects each child's
+      declaration index to set the z-stack, and a fragment takes no props, so
+      both overlays would register at 0 and end up *behind* the second wash. */}
   {picked && (
-    <>
-      <AreaChart series={picked} column="in" as="strongIn" baseline={0} />
-      <AreaChart series={pickedDown} column="out" as="strongOut" baseline={0} />
-    </>
+    <AreaChart series={picked} column="in" as="strongIn" baseline={0} />
+  )}
+  {picked && (
+    <AreaChart series={pickedDown} column="out" as="strongOut" baseline={0} />
   )}
 </Layers>
 ```

@@ -644,13 +644,18 @@ milestone. Plan:
   **Found while testing the stories, fixed 2026-08-10:** two defects that both
   came from a **pre-existing guard not learning about the new capability**, a
   pattern worth watching for on any wave that widens what a layer can do.
-  - **A `<Fragment>` child of `<Layers>` swallows the injected z-order index**,
-    so the layers inside register at `0`, the stable sort leaves the tie in
-    _mount_ order, and the stack looks correct until mount and declaration order
-    disagree. It had reached two places that **demonstrate** ordering — the
-    `LineSweep` story and the reviewer-mandated `spans[0]`-is-topmost test —
-    both of which passed while never exercising the index. Dev now warns; both
-    use keyed arrays.
+  - **A `<Fragment>` child swallows the injected declaration index**, so the
+    elements inside register at `0`, the stable sort leaves the tie in _mount_
+    order, and the stack looks correct until mount and declaration order
+    disagree. It had reached **four** call sites, three of which
+    **demonstrate** ordering — the `LineSweep` story, the reviewer-mandated
+    `spans[0]`-is-topmost test, and two perf stories (one a band-behind-line
+    stack holding by mount luck) — plus the site-traffic gallery page, which
+    taught the pattern in prose. Both injection sites now warn: `<Layers>` and
+    **`<ChartRow>`**, where a fragment costs more because the `side` sort can't
+    see a `<YAxis>` through it and the axes land in the plot rather than a
+    gutter. The second site was a Layer-2 review find — the first pass named
+    the bug class and fixed one of its two homes.
   - **The container's "wired but nothing is selectable" guard accused every
     correctly-wired trace chart**, because traces never joined the selectable
     registry, and its remedy named three components the consumer hadn't

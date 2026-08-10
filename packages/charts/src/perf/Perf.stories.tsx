@@ -136,19 +136,26 @@ function StaticRender({ size, scenario }: StaticArgs) {
         <YAxis id="v" label="v" min={0} max={100} />
         <Layers>
           {line && <LineChart series={line} column="v" as="foam" />}
-          {three && (
-            <>
-              <LineChart series={three} column="a" as="foam" />
-              <LineChart series={three} column="b" as="hr" />
-              <LineChart series={three} column="c" as="elevation" />
-            </>
-          )}
-          {band && (
-            <>
-              <BandChart series={band} lower="lower" upper="upper" as="inner" />
-              <LineChart series={band} column="mid" as="foam" />
-            </>
-          )}
+          {/* Keyed arrays, not `<>…</>`: a fragment takes no props, so it would
+              swallow the z-order index `<Layers>` injects and every layer
+              inside would register at 0. It matters in the `band` group below,
+              where the fill has to sit *behind* the `mid` line — on a tie that
+              held by mount order alone. */}
+          {three && [
+            <LineChart key="a" series={three} column="a" as="foam" />,
+            <LineChart key="b" series={three} column="b" as="hr" />,
+            <LineChart key="c" series={three} column="c" as="elevation" />,
+          ]}
+          {band && [
+            <BandChart
+              key="band"
+              series={band}
+              lower="lower"
+              upper="upper"
+              as="inner"
+            />,
+            <LineChart key="mid" series={band} column="mid" as="foam" />,
+          ]}
         </Layers>
       </ChartRow>
     </ChartContainer>

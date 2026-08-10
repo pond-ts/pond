@@ -183,20 +183,27 @@ include new features and type-level changes; patch bumps are strictly additive.
   the message names all six. The guard still fires for a trace with **no** `id`,
   which is the footgun it exists for.
 
-- **charts: `<Layers>` now warns when a `<Fragment>` child swallows the
-  injected z-order index.** A fragment accepts no props, so the index
-  `<Layers>` injects to make stacking follow declaration order died on it and
-  every layer inside fell back to the `index = 0` default. The sort is stable,
-  so the tie resolved to **mount** order — which matches declaration order on a
+- **charts: `<Layers>` and `<ChartRow>` now warn when a `<Fragment>` child
+  swallows the injected declaration index.** A fragment accepts no props, so
+  the index that makes ordering follow the markup died on it and every element
+  inside fell back to the `index = 0` default. The sort is stable, so the tie
+  resolved to **mount** order — which matches declaration order on a
   synchronous tree, and that is what made it silent: the stack looked right
   until the two disagreed, at which point a layer toggled on between two others
-  landed on top instead of slotting into place. Layers must be direct children
-  (already documented); a dev-only warning now names the consequence, and the
-  fragment no longer gets cloned, so React's less specific "invalid prop
-  supplied to React.Fragment" no longer fires alongside it. Two places that
-  **demonstrate** ordering had already tripped it: the `LineSweep` story and the
-  `spans[0]`-is-topmost test, both of which passed while never exercising the
-  index — both now use keyed arrays.
+  landed on top instead of slotting into place. Direct children were already
+  documented; a dev-only warning now names the consequence, and the fragment is
+  no longer cloned, so React's less specific "invalid prop supplied to
+  React.Fragment" stops firing alongside it.
+
+  **A fragment costs more in `<ChartRow>`**, which is why both sites warn: the
+  axes inside it lose their order _and_ the `side` sort can't see a `<YAxis>`
+  through a fragment, so they render in the plot column instead of a gutter.
+
+  Four places had already tripped it, three of which **demonstrate** ordering:
+  the `LineSweep` story, the `spans[0]`-is-topmost test, and two perf stories —
+  one of them a band-behind-line stack that held only by mount luck. All now
+  use keyed arrays, and the site-traffic gallery page no longer teaches the
+  pattern in prose (its runnable example never used it).
 
 - **charts: `<MultiSelector>`'s demote-on-edit stories removed a whole bin
   instead of the clicked mark.** They filtered on `m.key !== hit.key`, which
