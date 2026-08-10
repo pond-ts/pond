@@ -422,12 +422,16 @@ describe('a sweep covers EVERY trace in the row', () => {
   // exactly what let the span ORDER bug through (`spans[0]` was the
   // bottom-most layer while `span` reported the topmost, contradicting the
   // documented relationship). Reviewer finding; this is the test that pins it.
-  const two = (
-    <>
-      <LineChart series={line()} column="v" axis="a" id="cpu" />
-      <LineChart series={line()} column="v" axis="a" id="mem" />
-    </>
-  );
+  // A keyed ARRAY, not `<>…</>`. This was a fragment, and that quietly undid
+  // what the ordering test below claims to assert: a fragment takes no props,
+  // so `<Layers>`'s injected z-index died on it and both traces registered at
+  // the `index = 0` default. The sort is stable, so the tie fell through to
+  // mount order — which matches declaration order here, so the test passed
+  // while never once exercising the index it was written to pin.
+  const two = [
+    <LineChart key="cpu" series={line()} column="v" axis="a" id="cpu" />,
+    <LineChart key="mem" series={line()} column="v" axis="a" id="mem" />,
+  ];
 
   it('reports one span per trace, not just the topmost', () => {
     const t = mount(two);
@@ -446,6 +450,15 @@ describe('a sweep covers EVERY trace in the row', () => {
     // from `spans[0]`. It was tautological; a reviewer caught it.
     //
     // `mem` is declared second, so it is topmost in the z-stack.
+    //
+    // Scope of what this pins, stated honestly: it catches the scan DIRECTION
+    // bug it was written for, and switching `two` from a fragment to a keyed
+    // array means the layers now genuinely receive their injected indices. It
+    // still cannot catch a broken injection — index order and mount order
+    // coincide on a two-layer synchronous tree, so pinning the index to a
+    // constant leaves all 39 tests here green. Detecting that needs a tree
+    // where the two disagree; `registry.test.tsx` owns it via the mount-late
+    // middle layer.
     const t = mount(two);
     t.sweep(40, 240);
     expect(t.seen[0]!.spans[0]!.id).toBe('mem');

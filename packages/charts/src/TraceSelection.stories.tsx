@@ -116,17 +116,29 @@ function Demo({ kind }: { kind: 'line' | 'area' }) {
         <ChartRow height={200}>
           <YAxis id="v" min={0} max={8} label="" />
           <Layers>
+            {/* A keyed array, not a `<>…</>` — a fragment accepts no props, so
+                it would swallow the z-order index `<Layers>` injects and both
+                traces would register at 0. That matters most in this story:
+                `spans` is documented topmost-first, and topmost is decided by
+                the injected index. */}
             {kind === 'line' ? (
-              <>
-                <LineChart series={wave(0, 1)} column="v" axis="v" id="cpu" />
+              [
                 <LineChart
+                  key="cpu"
+                  series={wave(0, 1)}
+                  column="v"
+                  axis="v"
+                  id="cpu"
+                />,
+                <LineChart
+                  key="mem"
                   series={wave(2.2, 0.7)}
                   column="v"
                   axis="v"
                   as="secondary"
                   id="mem"
-                />
-              </>
+                />,
+              ]
             ) : (
               <AreaChart series={wave(0, 1)} column="v" axis="v" id="net" />
             )}

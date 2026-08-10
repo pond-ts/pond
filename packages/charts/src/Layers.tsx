@@ -1,8 +1,5 @@
 import {
-  Children,
-  cloneElement,
   Fragment,
-  isValidElement,
   useCallback,
   useContext,
   useEffect,
@@ -13,7 +10,6 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
-  type ReactElement,
   type ReactNode,
 } from 'react';
 import { Canvas } from './Canvas.js';
@@ -29,6 +25,7 @@ import {
 } from './brush.js';
 import { resolveSelection } from './select.js';
 import { isDev } from './dev.js';
+import { useIndexedChildren } from './child-index.js';
 import {
   panRange,
   zoomRange,
@@ -249,7 +246,11 @@ export interface LayersProps {
  * others slots into place, not onto the top), and each layer keeps a stable,
  * id-keyed slot so a series/style update holds its position (no jump to the
  * front — the trap that bites live charts). Draw layers must be **direct
- * children** of `<Layers>` for the index to reach them.
+ * children** of `<Layers>` for the index to reach them — to group them
+ * conditionally, return a **keyed array**, not a `<>…</>`: a fragment takes no
+ * props, so the index stops there and the layers inside it all register at 0
+ * (dev warns about this, because a stable sort makes the resulting tie look
+ * correct until mount order and declaration order disagree).
  */
 export function Layers({ children }: LayersProps) {
   const container = useContext(ContainerContext);
@@ -1914,10 +1915,11 @@ export function Layers({ children }: LayersProps) {
 
   // Inject each draw layer's JSX position so it registers its declaration order
   // (z-stack: lower index at the back), independent of mount timing.
-  const indexedChildren = Children.map(children, (child, index) =>
-    isValidElement(child)
-      ? cloneElement(child as ReactElement<{ index?: number }>, { index })
-      : child,
+  const indexedChildren = useIndexedChildren(
+    children,
+    '<Layers>',
+    'the draw layers inside it all register at 0 and their z-stacking falls ' +
+      'back to mount order',
   );
 
   return (

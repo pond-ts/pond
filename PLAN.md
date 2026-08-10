@@ -615,8 +615,12 @@ milestone. Plan:
     at marks. A trace sweep points at _nothing_, so "which trace did I sweep?"
     has no pointer answer, and the choice is genuinely arbitrary to the reader.
     Not a regression and not new machinery, but the trace case is where the
-    single-span limitation starts to show. **Revisit if a consumer hits it** —
-    plural spans is the fix, and it is a currency change.
+    single-span limitation starts to show. **Resolved, not deferred** — the
+    owner hit it immediately ("when you drag a window both series highlight but
+    only one selects. Both should select"), so a sweep now commits **one span
+    per trace** and `onSelect` took the plural currency ([PND-INTERACTDOCS],
+    #635). The "revisit if a consumer hits it" wording above is kept as the
+    record of what we predicted; the prediction was wrong about the timescale.
 
   **Open, and owed a perf commit:** `sliceTrace` **does** fall under the repo's
   perf gate, contrary to what PR #634's body claimed — a fresh-eyes review
@@ -627,14 +631,40 @@ milestone. Plan:
   **already-decimated** polyline (or reuse buffers across frames) plus
   `scripts/perf-trace-sweep.mjs` and a before/after table, per the gate.
 
-  **Still open:** the **visual state**. `LineStyle` has only `color`/`width`/
-  `dash`, so a selected or dimmed trace currently looks identical to a resting
-  one — selection you cannot see, which is the visual twin of the "inaudible
-  selection" mistake `[PND-A11Y]` records. The design is settled (weight, not
-  hue, because a line's colour is its identity): `LineStyle` wants
-  `selectedWidth` + `dimmedOpacity`. Deliberately not landed in the same pass —
-  it is a `defaultTheme` change and moves visual baselines, so it belongs in
-  its own commit with the baseline regeneration.
+  **The visual state SHIPPED** (2026-08-10, the commit after — it was held back
+  one pass because it is a `defaultTheme` change). `LineStyle` gained
+  `selectedWidth` / `hoverWidth` / `dimmedOpacity` / `spanColor`; `AreaStyle`
+  those plus `selectedFillOpacity`, because an area's mark is its fill so its
+  channels are fill strength and edge weight rather than weight alone. The
+  partition is live during the drag, a line's emphasised segment strokes an
+  interpolated slice so its ends take a round cap, and `spanColor` applies only
+  when a **single** trace is swept (with two, both would go blue and identity
+  would be in question again inside the window).
+
+  **Found while testing the stories, fixed 2026-08-10:** two defects that both
+  came from a **pre-existing guard not learning about the new capability**, a
+  pattern worth watching for on any wave that widens what a layer can do.
+  - **A `<Fragment>` child swallows the injected declaration index**, so the
+    elements inside register at `0`, the stable sort leaves the tie in _mount_
+    order, and the stack looks correct until mount and declaration order
+    disagree. It had reached **four** call sites, three of which
+    **demonstrate** ordering — the `LineSweep` story, the reviewer-mandated
+    `spans[0]`-is-topmost test, and two perf stories (one a band-behind-line
+    stack holding by mount luck) — plus the site-traffic gallery page, which
+    taught the pattern in prose. Both injection sites now warn: `<Layers>` and
+    **`<ChartRow>`**, where a fragment costs more because the `side` sort can't
+    see a `<YAxis>` through it and the axes land in the plot rather than a
+    gutter. The second site was a Layer-2 review find — the first pass named
+    the bug class and fixed one of its two homes.
+  - **The container's "wired but nothing is selectable" guard accused every
+    correctly-wired trace chart**, because traces never joined the selectable
+    registry, and its remedy named three components the consumer hadn't
+    mounted. Both trace layers now register on `id`.
+
+    Worth noting how each was found: the first by a **React console warning**
+    the story had been emitting all along, the second by that same console read
+    — neither by a test, and neither by two rounds of adversarial review. The
+    cheap habit is to read the console on a story you are about to demo.
 
 - **[PND-INTERACTDOCS]** — **The interaction wave's docs pass, and the
   `onSelect` collapse it blocks on.** Owner-listed 2026-08-10.

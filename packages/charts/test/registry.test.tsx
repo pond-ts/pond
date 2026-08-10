@@ -120,6 +120,182 @@ describe('registry order stability', () => {
 });
 
 /**
+ * A `<Fragment>` child of `<Layers>` takes no props, so the injected z-order
+ * index dies on it and every layer inside falls back to `index = 0`. The sort
+ * is stable, so the tie resolves to *mount* order — which for a synchronous
+ * tree matches declaration order, and that is what makes this silent: the stack
+ * looks correct right up to the moment mount order and declaration order
+ * disagree.
+ *
+ * Found by the React console warning (`Invalid prop 'index' supplied to
+ * React.Fragment`) while walking the interaction stories, and it had already
+ * reached two places that *demonstrate* ordering: the `LineSweep` story and the
+ * reviewer-mandated `spans[0]` ordering test in `trace-selection.test.tsx`.
+ */
+describe('a fragment child of <Layers> swallows the injected index', () => {
+  /** The toggle from the test above — the only probe that separates the two. */
+  const slotting = (wrap: (kids: React.ReactNode[]) => React.ReactNode) => {
+    const spy = vi.fn();
+    const sA = mk([1, 2, 3]);
+    const sM = mk([4, 5, 6]);
+    const sB = mk([7, 8, 9]);
+    const tree = (showMiddle: boolean) => (
+      <ChartContainer range={[0, 3]} width={300}>
+        <ChartRow height={100}>
+          <Layers>
+            {wrap([
+              <LineChart key="a" series={sA} column="v" axis="a" />,
+              showMiddle ? (
+                <LineChart key="m" series={sM} column="v" axis="m" />
+              ) : null,
+              <LineChart key="b" series={sB} column="v" axis="b" />,
+            ])}
+          </Layers>
+          <Probe spy={spy} />
+        </ChartRow>
+      </ChartContainer>
+    );
+    const { rerender } = render(tree(false));
+    rerender(tree(true)); // 'm' mounts LAST, declared in the MIDDLE
+    return last(spy).order as (string | undefined)[];
+  };
+
+  it('a keyed array keeps the slotting guarantee', () => {
+    expect(slotting((kids) => kids)).toEqual(['a', 'm', 'b']);
+  });
+
+  it('a fragment loses it — the late layer lands on top', () => {
+    // The failure the warning exists to name. Not an assertion of desired
+    // behaviour: it pins that the fragment path really does degrade to mount
+    // order, which is why listing layers directly is a documented requirement
+    // rather than a style preference.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(slotting((kids) => <>{kids}</>)).toEqual(['a', 'b', 'm']);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('warns once per <Layers>, naming the consequence', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      slotting((kids) => <>{kids}</>);
+      const hits = warn.mock.calls
+        .map((c) => String(c[0]))
+        .filter((m) => m.includes('swallows the injected declaration index'));
+      // One `<Layers>`, one warning — the re-render that mounts 'm' must not
+      // add a second (the ref guard), or a live chart would spam the console.
+      expect(hits).toHaveLength(1);
+      expect(hits[0]).toContain('mount order');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('says nothing when the layers are direct children', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      slotting((kids) => kids);
+      expect(
+        warn.mock.calls.filter((c) =>
+          String(c[0]).includes('swallows the injected declaration index'),
+        ),
+      ).toHaveLength(0);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+/**
+ * `<ChartRow>` injects the same index into its axes, and a fragment there costs
+ * **more** than in `<Layers>`: the axes lose their declaration order *and* the
+ * `child.type === YAxis` side-sort cannot see through the fragment, so they land
+ * in the plot column instead of a gutter. Reviewer finding on the `<Layers>`
+ * fix — one bug class, two injection sites, and only one had been fixed.
+ */
+describe('a fragment child of <ChartRow> swallows the injected index', () => {
+  /** Labelled so `getByText` can locate each axis for a placement assertion. */
+  const labelledRow = (wrap: (kids: React.ReactNode[]) => React.ReactNode) => (
+    <ChartContainer range={[0, 3]} width={400}>
+      <ChartRow height={100}>
+        {wrap([
+          <YAxis key="a" id="a" label="left-axis" min={0} max={10} />,
+          <YAxis
+            key="b"
+            id="b"
+            side="right"
+            label="right-axis"
+            min={0}
+            max={10}
+          />,
+        ])}
+        <Layers>
+          <LineChart series={mk([1, 2, 3])} column="v" axis="a" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  );
+
+  it('warns, naming the placement consequence', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      render(labelledRow((kids) => <>{kids}</>));
+      const hits = warn.mock.calls
+        .map((c) => String(c[0]))
+        .filter((m) => m.includes('<ChartRow>'));
+      expect(hits).toHaveLength(1);
+      expect(hits[0]).toContain('gutter');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('says nothing when the axes are direct children', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      render(labelledRow((kids) => kids));
+      expect(
+        warn.mock.calls.filter((c) => String(c[0]).includes('<ChartRow>')),
+      ).toHaveLength(0);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('a fragment really does misplace the axes', () => {
+    // The consequence the message claims, pinned rather than asserted in prose:
+    // a right-side axis wrapped in a fragment renders *before* the plot instead
+    // of after it, because the side sort never sees a `<YAxis>` to sort.
+    // Same `compareDocumentPosition` idiom as `axis placement by side` below,
+    // which is the reliable way to read placement out of this row.
+    const FOLLOWING = Node.DOCUMENT_POSITION_FOLLOWING;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const direct = render(labelledRow((kids) => kids));
+      const canvasD = direct.container.querySelector('canvas')!;
+      // Direct children: the right axis follows the plot, as `side` promises.
+      expect(
+        canvasD.compareDocumentPosition(direct.getByText('right-axis')) &
+          FOLLOWING,
+      ).toBeTruthy();
+      cleanup();
+
+      const wrapped = render(labelledRow((kids) => <>{kids}</>));
+      const canvasW = wrapped.container.querySelector('canvas')!;
+      // Wrapped: it precedes the plot — never sorted into the right gutter.
+      expect(
+        canvasW.compareDocumentPosition(wrapped.getByText('right-axis')) &
+          FOLLOWING,
+      ).toBeFalsy();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+/**
  * The registration value-equality guard (F-charts-axis-reregister): a `<YAxis>`
  * / draw layer re-fires its register effect whenever its memoized spec yields a
  * fresh object — which an inline `ticks={[]}` / `format` or a re-rendered parent

@@ -173,6 +173,38 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **charts: a `<LineChart id>` / `<AreaChart id>` no longer draws the
+  "nothing is selectable" warning.** Traces became selectable in
+  [PND-TRACESEL] but never joined the container's selectable registry, so the
+  guard that catches a genuinely-forgotten `id` fired on every correctly-wired
+  trace chart — and its remedy told you to add an `id` to a
+  `<BarChart>`/`<ScatterChart>`/`<BoxPlot>`, none of which you had mounted.
+  Both trace layers now register on `id` like every other selectable layer, and
+  the message names all six. The guard still fires for a trace with **no** `id`,
+  which is the footgun it exists for.
+
+- **charts: `<Layers>` and `<ChartRow>` now warn when a `<Fragment>` child
+  swallows the injected declaration index.** A fragment accepts no props, so
+  the index that makes ordering follow the markup died on it and every element
+  inside fell back to the `index = 0` default. The sort is stable, so the tie
+  resolved to **mount** order — which matches declaration order on a
+  synchronous tree, and that is what made it silent: the stack looked right
+  until the two disagreed, at which point a layer toggled on between two others
+  landed on top instead of slotting into place. Direct children were already
+  documented; a dev-only warning now names the consequence, and the fragment is
+  no longer cloned, so React's less specific "invalid prop supplied to
+  React.Fragment" stops firing alongside it.
+
+  **A fragment costs more in `<ChartRow>`**, which is why both sites warn: the
+  axes inside it lose their order _and_ the `side` sort can't see a `<YAxis>`
+  through a fragment, so they render in the plot column instead of a gutter.
+
+  Four places had already tripped it, three of which **demonstrate** ordering:
+  the `LineSweep` story, the `spans[0]`-is-topmost test, and two perf stories —
+  one of them a band-behind-line stack that held only by mount luck. All now
+  use keyed arrays, and the site-traffic gallery page no longer teaches the
+  pattern in prose (its runnable example never used it).
+
 - **charts: `<MultiSelector>`'s demote-on-edit stories removed a whole bin
   instead of the clicked mark.** They filtered on `m.key !== hit.key`, which
   is a bar's identity but only half of a stack segment's or a heat cell's —
