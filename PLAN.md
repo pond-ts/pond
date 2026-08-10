@@ -627,6 +627,76 @@ milestone. Plan:
   it is a `defaultTheme` change and moves visual baselines, so it belongs in
   its own commit with the baseline regeneration.
 
+- **[PND-ANNSNAP]** — **A snap-target registry, and selection ↔ annotation.**
+  Owner design sketch, 2026-08-10. Two halves that share one mechanism.
+
+  **The mechanism: `<ChartContainer snap>`, with targets contributed by
+  sources.** A mode, not a per-gesture prop — and the consumer enumerates
+  nothing, because the sources already know where their edges are. Same
+  "declared, resolved by the container" shape as cursor snap policy and
+  `binIntervals`.
+
+  **This is a SECOND channel, deliberately not the existing one.** A **range
+  cursor is not bound by it** — an _interval sequence_ is what the range cursor
+  follows, and that is a **tiling** that partitions the axis ("which bucket am I
+  in"). Snap targets are a **sparse set of edges** ("what is the nearest one,
+  if it is close enough"). Different question, different resolution, so
+  conflating them into `cursorBuckets` would break the range cursor to serve
+  the sweep.
+
+  **The target sources** (owner's list):
+  - **series that are intervals or time-ranges** — a bar / bin / box layer's
+    `[begin, end)` edges. Already published as `binIntervals`, so this
+    contributor exists and only needs re-pointing.
+  - **category marks** — the unit slots `[i, i+1)`; also already `binIntervals`.
+  - **annotation edges** — a `<Region>`'s `from`/`to` and a `<Marker>`'s `at`.
+    (A `<Baseline>` is a y value and so is not an x target.)
+  - **session boundaries** — the trading calendar's collapse instants, which
+    `<LineChart>` already computes for its own drawing and the container holds
+    as `discontinuities`.
+  - **sweep selection edges** — an existing span's own boundaries. **This is
+    the elegant one:** sweeping up to an existing span's edge lands flush on
+    it, so regions merge _exactly_ rather than approximately — which is a
+    better answer to "sweeps merge regions" than a `mergeSpans` tolerance
+    could be, because the coincidence is made true at gesture time instead of
+    reconciled afterwards.
+
+  **The two actions:**
+  - **Promote a sweep to annotation(s)** — to save the range. Note the plural:
+    a trace sweep now commits one span per trace ([PND-TRACESEL]), so promoting
+    yields several annotations, and "which ones" is a question.
+  - **Select within an annotation** — the inverse, making selections and
+    annotations interconvertible.
+
+  **Open questions, and the first two must be answered before any code:**
+  1. **Precedence among targets.** With five contributors a pixel is often
+     near several. "Nearest in pixels" is the obvious rule and probably right,
+     but ties need a tie-break and it may be that an annotation edge should
+     beat a bin edge regardless of distance (the user placed the annotation
+     deliberately; the bin edge is just data shape).
+  2. **The radius is in pixels, so it is view-dependent.** Zoomed out, many
+     targets fall inside it and snapping becomes unpredictable; zoomed in,
+     nothing does. Needs an explicit rule, and probably a cap on how far the
+     cut may move from where the pointer actually is.
+  3. **A span must not snap to its own edge.** Sweep edges being targets means
+     the live preview's own boundaries enter the target set _during_ the drag
+     that is creating them — a feedback loop that would pin the cut to itself.
+     The preview spans have to be excluded from their own snap resolution.
+  4. **`snap` as a boolean vs a set of kinds.** A boolean is the right first
+     shape (the repo does not add speculative options), but "snap to
+     annotations but not to bins" is a plausible early ask, so the widening
+     path should be obvious before the boolean ships.
+  5. **What activates "select within an annotation".** A `<Region>` is already
+     draggable when `onChange` is given, so a click on one is partly spoken
+     for.
+
+  **Note on scope:** promoting a sweep to an annotation may not need library
+  machinery at all — `onCreate({kind: 'region'})` exists and a consumer holding
+  the span can create it in a line, which is the same call made for
+  `mergeSpans` and the lists' set arithmetic. **Snapping cannot be done
+  consumer-side**, because it has to happen _during_ the drag. That asymmetry
+  is the argument for building the registry and leaving promotion to policy.
+
 - **[PND-CURSORAPI]** — **Publish the cursor contract** (RFC Q3), under A7.1's
   litmus rather than by argument: every built-in **and** SpiderRock's gapped
   crosshair written against it with nothing needing a new slot. The surface
