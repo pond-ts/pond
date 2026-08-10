@@ -52,7 +52,10 @@ function drag(
   if (opts.releaseOutside) {
     act(() => {
       window.dispatchEvent(
-        new PointerEvent('pointerup', { bubbles: true, metaKey: opts.meta }),
+        new PointerEvent('pointerup', {
+          bubbles: true,
+          metaKey: opts.meta === true,
+        }),
       );
     });
     return;

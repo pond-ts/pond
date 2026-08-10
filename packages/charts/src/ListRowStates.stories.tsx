@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { Meta } from '@storybook/react-vite';
 import { BarList } from './BarList.js';
 import { BoxList } from './BoxList.js';
-import { defaultTheme } from './theme.js';
+import { defaultTheme, type ChartTheme } from './theme.js';
 import type { ListRow } from './list.js';
 
 /**
@@ -33,6 +33,17 @@ import type { ListRow } from './list.js';
  * No `theme` prop anywhere here — these render `defaultTheme`, which is what
  * a consumer who themes nothing actually gets (see CLAUDE.md).
  */
+/**
+ * `defaultTheme` with the `list` register **omitted** — not set to `undefined`.
+ * Under `exactOptionalPropertyTypes` those are different types, and only the
+ * omission is what a hand-built theme predating the register actually looks
+ * like.
+ */
+function themeWithoutList(): ChartTheme {
+  const { list: _list, ...rest } = defaultTheme;
+  return rest;
+}
+
 const meta = {
   title: 'Lists/Row states',
   parameters: { layout: 'centered' },
@@ -204,7 +215,7 @@ export const NoListRegister = {
         rows={hosts}
         columns={oneMetric}
         selected="web-2"
-        theme={{ ...defaultTheme, list: undefined }}
+        theme={themeWithoutList()}
       />
     </Frame>
   ),

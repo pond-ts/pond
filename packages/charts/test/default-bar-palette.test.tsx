@@ -391,6 +391,9 @@ function frame(
 ) {
   return {
     bandDragging: dragging,
+    // The transposed band ([PND-HSWEEP]) — absent in every case here, which
+    // is what keeps these assertions about the x band.
+    bandY: null,
     rect: null,
     restingCross: false,
     cursorX: 40,

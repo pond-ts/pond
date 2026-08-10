@@ -30,6 +30,17 @@ afterEach(cleanup);
  * through on exactly the row type the rule exists for.
  */
 
+/**
+ * `defaultTheme` with the `list` register **omitted** — not set to `undefined`.
+ * Under `exactOptionalPropertyTypes` those are different types, and only the
+ * omission is what a hand-built theme predating the register actually looks
+ * like.
+ */
+function themeWithoutList(): ChartTheme {
+  const { list: _list, ...rest } = defaultTheme;
+  return rest;
+}
+
 const hosts: ListRow[] = [
   { key: 'web-1', values: { in: 62, out: 20 } },
   { key: 'web-2', values: { in: 95, out: 44 } },
@@ -213,7 +224,7 @@ describe('rule 1 — the row is the target', () => {
 });
 
 describe('a theme with no `list` register keeps the pre-token look', () => {
-  const bare: ChartTheme = { ...defaultTheme, list: undefined };
+  const bare: ChartTheme = themeWithoutList();
 
   it('hover falls back, selection keeps the annotation rail, nothing dims', () => {
     const { container, rerender } = render(
