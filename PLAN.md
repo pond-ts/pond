@@ -649,6 +649,13 @@ milestone. Plan:
 - **[PND-ANNSNAP]** — **A snap-target registry, and selection ↔ annotation.**
   Owner design sketch, 2026-08-10. Two halves that share one mechanism.
 
+  **The scenario both halves are for** is written up as RFC **Amendment 9** —
+  a pace + elevation chart where a lap bar windows both traces, and a swept
+  segment is saved ("Chalk hill climb"), listed with stats, and clicked to
+  return to. Read it before designing: it is what makes lap boundaries the
+  motivating snap contributor and "save the range" a real step rather than a
+  nice-to-have.
+
   **The mechanism: `<ChartContainer snap>`, with targets contributed by
   sources.** A mode, not a per-gesture prop — and the consumer enumerates
   nothing, because the sources already know where their edges are. Same
