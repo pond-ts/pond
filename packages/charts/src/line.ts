@@ -465,6 +465,13 @@ export function drawPartitioned(
   height: number,
   outside: () => LayerDrawStats,
   inside: () => LayerDrawStats,
+  /**
+   * Clip the emphasised pass to the window. **`true` for a fill**, whose
+   * boundary is a vertical wall by construction; **`false` for a stroke that
+   * has sliced its own path** (see {@link sliceTrace}), because a clip would
+   * shear the ribbon flat and defeat the round cap the slice exists to allow.
+   */
+  clipInside = true,
 ): LayerDrawStats {
   const [x0, x1] = windowPx;
   // A collapsed window has no inside to paint, so one plain pass is the whole
@@ -489,6 +496,13 @@ export function drawPartitioned(
   ctx.clip();
   const stats = outside();
   ctx.restore();
+  if (!clipInside) {
+    // The caller's path already ends where the window does, so it needs no
+    // clip — and its round caps may overhang the boundary by half a stroke,
+    // which is exactly the look: a rounded end sitting on the muted trace.
+    inside();
+    return stats;
+  }
   ctx.save();
   ctx.beginPath();
   ctx.rect(x0, 0, x1 - x0, height);
@@ -499,4 +513,77 @@ export function drawPartitioned(
   // same series — reporting it twice would double every count in the draw
   // budget for what is one trace.
   return stats;
+}
+
+/**
+ * A trace sliced to the key window `[lo, hi]`, with its **endpoints
+ * interpolated** onto the path — or `null` when nothing of it falls inside.
+ *
+ * This exists so the emphasised pass of a partitioned draw can be a real path
+ * whose own ends are the window's ends, which is what lets a **round cap**
+ * show. A clipped stroke cannot have one: the clip shears the ribbon on a
+ * vertical line wherever the rect cuts it, so the cap is drawn off in the
+ * hidden part of the path and the visible end is always a hard vertical edge,
+ * whatever `lineCap` says.
+ *
+ * The endpoints are interpolated rather than snapped to the nearest sample
+ * because at low density snapping would visibly overshoot or undershoot the
+ * window the reader just swept — the emphasis would not line up with the band
+ * that produced it.
+ *
+ * A boundary landing on a **gap** contributes no interpolated point: there is
+ * no drawn segment there to sit on, and inventing one would bridge a hole the
+ * trace deliberately shows.
+ */
+export function sliceTrace(
+  cs: ChartSeries,
+  lo: number,
+  hi: number,
+): ChartSeries | null {
+  const n = cs.length;
+  if (n === 0 || hi <= lo) return null;
+  // First index at or past `lo`, first past `hi` — the interior run.
+  let a = 0;
+  let b = n;
+  while (a < b) {
+    const mid = (a + b) >> 1;
+    if (cs.x[mid]! < lo) a = mid + 1;
+    else b = mid;
+  }
+  let e = a;
+  while (e < n && cs.x[e]! <= hi) e += 1;
+  const xs: number[] = [];
+  const ys: number[] = [];
+  /** Value on the segment `[i-1, i]` at key `k`, or null across a gap/edge. */
+  const at = (i: number, k: number): number | null => {
+    if (i <= 0 || i >= n) return null;
+    const y0 = cs.y[i - 1]!;
+    const y1 = cs.y[i]!;
+    if (!Number.isFinite(y0) || !Number.isFinite(y1)) return null;
+    const x0 = cs.x[i - 1]!;
+    const x1 = cs.x[i]!;
+    if (x1 === x0) return y1;
+    const t = (k - x0) / (x1 - x0);
+    return y0 + (y1 - y0) * t;
+  };
+  const head = at(a, lo);
+  if (head !== null) {
+    xs.push(lo);
+    ys.push(head);
+  }
+  for (let i = a; i < e; i += 1) {
+    xs.push(cs.x[i]!);
+    ys.push(cs.y[i]!);
+  }
+  const tail = at(e, hi);
+  if (tail !== null) {
+    xs.push(hi);
+    ys.push(tail);
+  }
+  if (xs.length === 0) return null;
+  return {
+    x: Float64Array.from(xs),
+    y: Float64Array.from(ys),
+    length: xs.length,
+  };
 }

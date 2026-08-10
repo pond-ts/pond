@@ -101,7 +101,11 @@ include new features and type-level changes; patch bumps are strictly additive.
   than the topmost one: they all share the same x window, so singling one out by
   z-order would be arbitrary. Mark layers keep topmost-wins unchanged.
   `spanColor` applies only when a single trace is swept — with two, both would
-  go blue and identity would be in question again inside the window.
+  go blue and identity would be in question again inside the window. A line's
+  emphasised segment has **round ends**: it strokes an interpolated slice of the
+  path rather than the whole trace clipped, so its endpoints are real path ends
+  and take a cap. An area still clips, because a fill's boundary is a vertical
+  wall by construction.
 - **charts: keyboard parity on the list family.** Rows now navigate and select
   from the keyboard: **↑/↓** move focus, **Home/End** jump to the ends,
   **Enter/Space** select the focused row (carrying modifiers, so ⌘/Ctrl-Enter

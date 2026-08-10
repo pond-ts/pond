@@ -10,7 +10,7 @@ import { AreaChart } from '../src/AreaChart.js';
 import { YAxis } from '../src/YAxis.js';
 import { MultiSelector } from '../src/selectors.js';
 import { sweepSpan } from '../src/sweep.js';
-import { traceHitIndex } from '../src/line.js';
+import { sliceTrace, traceHitIndex } from '../src/line.js';
 import { areaHitIndex } from '../src/area.js';
 import { sameMark, selectionContains } from '../src/span.js';
 import { RowContext, type RowFrame } from '../src/context.js';
@@ -163,6 +163,68 @@ describe('`traceHitIndex` — distance to the drawn path', () => {
   it('an empty series is a miss, not a throw', () => {
     const none = { x: new Float64Array(), y: new Float64Array(), length: 0 };
     expect(traceHitIndex(none, 0, 0, id, id)).toBeNull();
+  });
+});
+
+describe('`sliceTrace` — the path whose ends ARE the window', () => {
+  // Why this exists rather than clipping the emphasised pass: a clipped stroke
+  // is sheared on a vertical line wherever the rect cuts it, so `lineCap`
+  // never shows — the cap is drawn off in the hidden part of the path. Slicing
+  // gives the emphasised segment real endpoints, which can be rounded.
+  const cs = {
+    x: new Float64Array([0, 10, 20, 30]),
+    y: new Float64Array([0, 10, 20, 30]),
+    length: 4,
+  };
+
+  it('interpolates both endpoints onto the path', () => {
+    // The boundary lands between samples, and the emphasis has to start
+    // exactly there — snapping to the nearest sample would over- or
+    // under-shoot the window the reader just swept, so the emphasis would not
+    // line up with the band that produced it.
+    const out = sliceTrace(cs, 5, 25)!;
+    expect(out).not.toBeNull();
+    expect([...out.x]).toEqual([5, 10, 20, 25]);
+    expect([...out.y]).toEqual([5, 10, 20, 25]); // y = x here
+  });
+
+  it('keeps interior samples untouched', () => {
+    const out = sliceTrace(cs, 0, 30)!;
+    expect([...out.x]).toEqual([0, 10, 20, 30]);
+  });
+
+  it('a boundary on a gap contributes no point', () => {
+    // No drawn segment there to sit on, and inventing one would bridge a hole
+    // the trace deliberately shows.
+    const g = {
+      x: new Float64Array([0, 10, 20, 30]),
+      y: new Float64Array([0, NaN, 20, 30]),
+      length: 4,
+    };
+    const out = sliceTrace(g, 5, 25)!;
+    // The head would have to interpolate across the NaN at index 1 — skipped.
+    expect(out.x[0]).not.toBe(5);
+    expect([...out.x]).toEqual([10, 20, 25]);
+  });
+
+  it('a window past the data yields null, not an empty path', () => {
+    expect(sliceTrace(cs, 100, 200)).toBeNull();
+    expect(sliceTrace(cs, -200, -100)).toBeNull();
+  });
+
+  it('a collapsed or reversed window yields null', () => {
+    expect(sliceTrace(cs, 10, 10)).toBeNull();
+    expect(sliceTrace(cs, 20, 10)).toBeNull();
+  });
+
+  it('an empty series yields null', () => {
+    expect(
+      sliceTrace(
+        { x: new Float64Array(), y: new Float64Array(), length: 0 },
+        0,
+        1,
+      ),
+    ).toBeNull();
   });
 });
 

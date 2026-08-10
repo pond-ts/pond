@@ -10,6 +10,7 @@ import type { NumericColumn, ValueNumericColumn } from './column-names.js';
 import {
   drawLine,
   drawPartitioned,
+  sliceTrace,
   traceHitIndex,
   traceStateStyle,
   yExtent,
@@ -17,6 +18,7 @@ import {
 } from './line.js';
 import { sweepSpan } from './sweep.js';
 import type { LineStyle } from './theme.js';
+import type { ChartSeries } from './data.js';
 import type { DecimateOption } from './decimate.js';
 import { resolveCurve, type Curve } from './curve.js';
 import {
@@ -387,24 +389,31 @@ export function LineChart<
             : [];
         },
         draw: (ctx, xScale, yScale) => {
-          const stroke = (st: LineStyle, alpha: number) => () => {
-            const prior = ctx.globalAlpha;
-            if (alpha !== 1) ctx.globalAlpha = prior * alpha;
-            const out = drawLine(
-              ctx,
-              cs,
-              xScale,
-              yScale,
-              st,
-              curveFactory,
-              gaps,
-              gapConnectorOpacity,
-              sessionBreakInstants,
-              decimate,
-            );
-            ctx.globalAlpha = prior;
-            return out;
-          };
+          const stroke =
+            (st: LineStyle, alpha: number, only?: ChartSeries) => () => {
+              const prior = ctx.globalAlpha;
+              const priorCap = ctx.lineCap;
+              if (alpha !== 1) ctx.globalAlpha = prior * alpha;
+              // Round the emphasised segment's ends. Only meaningful on a sliced
+              // path, whose endpoints ARE the window's — a clipped stroke is
+              // sheared vertically and no cap shows.
+              if (only !== undefined) ctx.lineCap = 'round';
+              const out = drawLine(
+                ctx,
+                only ?? cs,
+                xScale,
+                yScale,
+                st,
+                curveFactory,
+                gaps,
+                gapConnectorOpacity,
+                sessionBreakInstants,
+                decimate,
+              );
+              ctx.globalAlpha = prior;
+              ctx.lineCap = priorCap;
+              return out;
+            };
           // No window on this layer ⇒ one pass, in the series' own state.
           if (spanX === null) {
             const [st, alpha] = traceStateStyle(style, traceState);
@@ -417,17 +426,24 @@ export function LineChart<
           // window just thickens.
           const [outStyle, outAlpha] = traceStateStyle(style, 'dimmed');
           const [inStyle] = traceStateStyle(style, 'selected');
+          // The emphasised pass strokes a **slice** of the trace rather than
+          // the whole thing clipped, so its ends are real path ends and can be
+          // rounded. With nothing of the trace inside the window there is
+          // nothing to emphasise, and the muted pass alone is the picture.
+          const inner = sliceTrace(cs, spanX[0], spanX[1]);
+          const inInk =
+            style.spanColor === undefined || !soleSpannedTrace
+              ? inStyle
+              : { ...inStyle, color: style.spanColor };
           return drawPartitioned(
             ctx,
             [xScale(spanX[0]), xScale(spanX[1])],
             ctx.canvas.height,
             stroke(outStyle, outAlpha),
-            stroke(
-              style.spanColor === undefined || !soleSpannedTrace
-                ? inStyle
-                : { ...inStyle, color: style.spanColor },
-              1,
-            ),
+            inner === null
+              ? () => ({ sourceCount: 0, drawnCount: 0, decimated: false })
+              : stroke(inInk, 1, inner),
+            false,
           );
         },
       },
