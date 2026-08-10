@@ -61,6 +61,22 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **all packages: `API.md` now ships inside the npm tarball.** The agent-facing
+  map of every public export across the six packages — one line per export with
+  its purpose and source path — was repo-only, so an agent working in a
+  _consuming_ repo had to crawl `node_modules/*/dist/*.d.ts` or go to the
+  network to learn the surface. It is now copied in by each package's existing
+  `prepack` (the same mechanism that already ships `README`, `LICENSE` and
+  `CHANGELOG`) and listed in `files`. ~69kB per tarball.
+
+  Every package carries the same **monorepo-wide** copy rather than a
+  per-package slice, deliberately: the packages compose, and knowing what is
+  next door is most of the value. The header now names its audience and
+  resolves repo-relative source paths against GitHub, since inside
+  `node_modules` a bare `packages/core/src/…` points nowhere.
+
 ### Fixed
 
 - **charts: `BarStyle.dimmed`'s precedence over per-bar and per-band colour is
