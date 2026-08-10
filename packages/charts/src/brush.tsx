@@ -186,6 +186,45 @@ export function renderBrushBand(f: ResolvedCursorFrame): ReactNode {
   const bandFill = brush?.fill ?? ink;
   const bandOpacity = brush === undefined ? 0.12 : 1;
   const edge = brush?.edge;
+  // The transposed band (`sweepAxis: 'y'` — a horizontal bar's bins run down
+  // the screen). Same tokens, same two-edges-while-dragging rule, geometry
+  // rotated: full width, bounded on y. Rendered from this function rather than
+  // a sibling so the promise that there is exactly one brush visual survives
+  // the second orientation.
+  // Truthiness rather than `!== null`, so a hand-built frame that predates
+  // this field (several tests, and any consumer's) keeps the x behaviour
+  // instead of crashing on an absent one.
+  const by = f.bandY;
+  if (by) {
+    const y0 = Math.min(by.y0, by.y1);
+    const y1 = Math.max(by.y0, by.y1);
+    return (
+      <>
+        <rect
+          x={0}
+          y={y0}
+          width={f.plotWidth}
+          height={y1 - y0}
+          fill={bandFill}
+          opacity={bandOpacity}
+        />
+        {f.bandDragging &&
+          edge !== undefined &&
+          [y0, y1].map((y, i) => (
+            <line
+              key={i}
+              x1={0}
+              y1={Math.round(y)}
+              x2={f.plotWidth}
+              y2={Math.round(y)}
+              stroke={edge}
+              strokeWidth={1}
+              shapeRendering="crispEdges"
+            />
+          ))}
+      </>
+    );
+  }
   return (
     <>
       {f.band !== null && (

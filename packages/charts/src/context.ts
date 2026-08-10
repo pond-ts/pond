@@ -820,6 +820,32 @@ export interface RowLayer {
    */
   readonly sweepsRect?: boolean;
   /**
+   * **Which screen axis a sweep over this layer cuts** — `'x'` (the default,
+   * and every layer that shipped before [PND-HSWEEP]) or `'y'` for a
+   * transposed layer whose bins run down the screen: a horizontal
+   * `<BarChart>` puts the value on the shared x, so a window there says
+   * nothing about which bins are covered and the cut has to come from the
+   * pointer's y.
+   *
+   * **Orthogonal to {@link sweepsRect}, and all four pairs are real** — (x,
+   * band) a vertical bar, (y, band) a horizontal bar, (x, rect) a scatter or a
+   * vertical heat map, (y, rect) a horizontal heat map. That is why this is a
+   * second field rather than a third value on `sweepsRect`.
+   *
+   * The session itself is unaffected: {@link SweepSession.update} takes
+   * **key-axis units** and does not care which screen axis produced them, so a
+   * transposed layer builds the same `sweep1D` a vertical one does. What the
+   * axis changes is the *gesture* — which pointer coordinate is inverted (and
+   * through which scale), where the drag slop lives (`|dy|` rather than
+   * `|dx|`), and which way the brush band is drawn.
+   *
+   * A `'y'` cut is measured against **one row's** axis, so its band is
+   * row-local exactly as a rect is, and it takes its geometry from
+   * {@link SweepSession.extent} rather than from the shared bin channel —
+   * `binIntervals` carries the *value* axis on a transposed layer.
+   */
+  readonly sweepAxis?: 'x' | 'y';
+  /**
    * Draw into the plot canvas. `xScale`/`yScale` map data→pixels. May return
    * {@link LayerDrawStats} (source/drawn counts + whether decimation engaged) so
    * the container can surface them via {@link ContainerProps.onDrawStats}; a
@@ -1380,6 +1406,19 @@ export interface ResolvedCursorFrame {
    *  declared sequence, else the drag span), as clamped plot pixels; `null`
    *  when nothing to shade. Resolved by the container from `regionSpan`. */
   readonly band: { readonly x0: number; readonly x1: number } | null;
+  /**
+   * The **transposed band** — the same brush over a layer that declares
+   * `sweepAxis: 'y'` (a horizontal `<BarChart>`, whose bins run down the
+   * screen), as plot pixels on the row's own y axis. `null` in every other
+   * state, including an x sweep, which paints {@link band}.
+   *
+   * Row-local for {@link rect}'s reason: a y interval only means anything
+   * against the axis that measured it, so the row owning the drag resolves it
+   * and the others stay `null`. It is drawn by the same `renderBrushBand` with
+   * the geometry transposed — one renderer, so the two orientations of one
+   * gesture cannot drift (§8.1).
+   */
+  readonly bandY: { readonly y0: number; readonly y1: number } | null;
   /** Degenerate range cursor (no buckets, not mid-drag): draw a plain line. */
   readonly bandLine: boolean;
   /**

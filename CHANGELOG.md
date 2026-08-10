@@ -62,6 +62,15 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: a horizontal `<BarChart>` can be swept** ([PND-HSWEEP]). `<MultiSelector>`
+  now works on a transposed chart, cut with a **vertical** drag: same component,
+  same 1-D cut, the axis moved. The value axis stays inert exactly as it does on
+  a vertical chart. Layers declare which axis a sweep cuts through the new
+  `RowLayer.sweepAxis: 'x' | 'y'` (default `'x'`, so nothing else changes), and
+  the brush band is drawn transposed and snapped to bin edges. The horizontal
+  **heat map** still cannot sweep — it cannot hit-test either — and a y-cutting
+  row draws no resting block preview yet.
+
 - **charts: new `sameMark(a, b)` export** — the full mark identity (`id`,
   `mark`-or-`key`, `label`), companion to `selectionContains`, whose doc has
   always told a consumer to write `remove(cur, hit)` without giving them

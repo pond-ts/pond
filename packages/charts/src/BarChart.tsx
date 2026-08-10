@@ -1035,59 +1035,65 @@ export function BarChart<
                   ...(stableMark !== undefined ? { mark: stableMark } : {}),
                 };
               },
-              // The sweep, on the binned/stacked/categorical path — but only
-              // when the BIN axis is the shared x (vertical): the pointer
-              // sweeps in x-axis units, and a horizontal chart's x is the
-              // VALUE axis, whose window says nothing about which bins are
-              // covered (the bin cut there is a y-window — [PND-INTERACT2D]'s
-              // territory, with scatter's). A covered bin materialises every
-              // drawn segment (finite, non-zero — the marks hitTest can hit),
-              // assembled exactly as hitTest assembles them.
-              ...(vertical
-                ? {
-                    beginSweep: (): SweepSession | null => {
-                      const G = ss.groups.length;
-                      if (ss.length === 0 || G === 0) return null;
-                      const drawn = (b: number, g: number) => {
-                        const v = ss.values[b * G + g]!;
-                        return Number.isFinite(v) && v !== 0;
-                      };
-                      return sweep1D({
-                        id,
-                        begin: ss.begin,
-                        end: ss.end,
-                        length: ss.length,
-                        selectable: (b) => {
-                          for (let g = 0; g < G; g += 1)
-                            if (drawn(b, g)) return true;
-                          return false;
-                        },
-                        materialize: (lo, hi) => {
-                          const out: SelectInfo[] = [];
-                          for (let b = lo; b < hi; b += 1) {
-                            const stableMark = ss.marks?.[b];
-                            for (let g = 0; g < G; g += 1) {
-                              if (!drawn(b, g)) continue;
-                              out.push({
-                                id,
-                                key: ss.begin[b]!,
-                                value: ss.values[b * G + g]!,
-                                color:
-                                  stackStyle.binFills?.[b] ??
-                                  stackStyle.fills[g]!,
-                                label: stableMark ?? ss.groups[g]!,
-                                ...(stableMark !== undefined
-                                  ? { mark: stableMark }
-                                  : {}),
-                              });
-                            }
-                          }
-                          return out;
-                        },
-                      });
+              // The sweep, on the binned/stacked/categorical path — **either
+              // orientation** ([PND-HSWEEP]). The session is identical, because
+              // `sweep1D` cuts in KEY-axis units and does not care which screen
+              // axis produced them; the bins are `ss.begin`/`ss.end` whichever
+              // way the chart is drawn. What differs is only where the gesture
+              // reads the pointer, which `sweepAxis` declares.
+              //
+              // The cut stays 1-D on a horizontal chart, deliberately: a
+              // vertical bar's sweep ignores the value axis (drag anywhere
+              // horizontally, take whole columns), so its transpose ignores it
+              // too. A rect here would be value-filtering — a capability the
+              // vertical chart has never had.
+              //
+              // A covered bin materialises every drawn segment (finite,
+              // non-zero — the marks hitTest can hit), assembled exactly as
+              // hitTest assembles them.
+              sweepAxis: vertical ? ('x' as const) : ('y' as const),
+              ...{
+                beginSweep: (): SweepSession | null => {
+                  const G = ss.groups.length;
+                  if (ss.length === 0 || G === 0) return null;
+                  const drawn = (b: number, g: number) => {
+                    const v = ss.values[b * G + g]!;
+                    return Number.isFinite(v) && v !== 0;
+                  };
+                  return sweep1D({
+                    id,
+                    begin: ss.begin,
+                    end: ss.end,
+                    length: ss.length,
+                    selectable: (b) => {
+                      for (let g = 0; g < G; g += 1)
+                        if (drawn(b, g)) return true;
+                      return false;
                     },
-                  }
-                : {}),
+                    materialize: (lo, hi) => {
+                      const out: SelectInfo[] = [];
+                      for (let b = lo; b < hi; b += 1) {
+                        const stableMark = ss.marks?.[b];
+                        for (let g = 0; g < G; g += 1) {
+                          if (!drawn(b, g)) continue;
+                          out.push({
+                            id,
+                            key: ss.begin[b]!,
+                            value: ss.values[b * G + g]!,
+                            color:
+                              stackStyle.binFills?.[b] ?? stackStyle.fills[g]!,
+                            label: stableMark ?? ss.groups[g]!,
+                            ...(stableMark !== undefined
+                              ? { mark: stableMark }
+                              : {}),
+                          });
+                        }
+                      }
+                      return out;
+                    },
+                  });
+                },
+              },
             }),
         draw: (ctx, xScale, yScale) =>
           drawStacks(

@@ -1731,6 +1731,12 @@ rather than a surprise.
   says nothing about bins. A horizontal bin cut is a y-window, i.e. 2-D
   machinery. `beginSweep` is wired **vertical-only** and documented. This is a
   real gap against the original friction report, which named horizontal bars.
+  **Half-corrected, 2026-08-10** ([PND-HSWEEP]): "2-D machinery" is true of the
+  plumbing and false of the gesture. A vertical bar's sweep ignores the value
+  axis, so its transpose must too — the cut is 1-D on the **other** axis, and
+  `sweep1D` is reused verbatim. What the layer gains is `sweepAxis: 'x' | 'y'`,
+  orthogonal to `sweepsRect`; all four combinations are real, the (y, rect)
+  corner being the horizontal heat map.
 - **"Freeform" is not freeform over bars.** A bar/histogram layer's
   `binIntervals` feed the shared snap channel, so a sweep or drag with no
   `sequence` still bin-snaps. Cohesive behaviour, wrong word in §6/§8.

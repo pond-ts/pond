@@ -267,6 +267,55 @@ milestone. Plan:
   sweep-capable layer — and does it by building the real session rather than
   reading the flag back, or the test would agree with itself.
 
+- **[PND-HSWEEP]** — **The transposed sweep: horizontal bars.** `beginSweep` is
+  wired **vertical-only** on every bar path, so a horizontal `<BarChart>` (bins
+  on y, value on x) cannot sweep at all — the gap A8.4 named against the
+  original friction report, and the one [PND-INTERACT2D] said it would close
+  and didn't. Picked up ahead of the list family because it is the same
+  currency as everything that already sweeps, where a list's is not.
+
+  **It is 1-D, not 2-D** (owner + design, 2026-08-10). A8.4 called a horizontal
+  bin cut "2-D machinery", which is true of the _plumbing_ and false of the
+  _gesture_: a vertical bar's sweep ignores the value axis entirely (drag
+  anywhere horizontally, take whole columns), so its transpose must ignore the
+  value axis too — drag anywhere vertically, take whole rows. A rect on a
+  horizontal bar would be value-filtering, a capability vertical bars don't
+  have, and would break "the consumer's markup for a scatter is the markup for
+  a bar" from the other side. **`sweep1D` is therefore reused verbatim** — it
+  takes key-axis units and does not care which screen axis they came from.
+
+  **What that costs is one new declaration, `RowLayer.sweepAxis: 'x' | 'y'`**
+  (default `'x'`), orthogonal to the `sweepsRect` that shipped with
+  [PND-INTERACT2D]. Both fields are real in all four combinations — (x, band) a
+  vertical bar, (y, band) a horizontal bar, (x, rect) a scatter or vertical
+  heat map, (y, rect) a horizontal heat map — which is why this is a second
+  boolean-ish axis rather than a three-valued `sweepKind` enum. The gesture
+  reads it to decide which pointer axis to invert, where the slop lives
+  (`|dy|`, not `|dx|`), and which way to draw the band.
+
+  **The band is row-local when the cut is on y.** The x band is container state
+  because x is shared across rows; a y band is measured against one row's own
+  axis, exactly as [PND-INTERACT2D]'s rect is. It is drawn by the same
+  `renderBrushBand` with transposed geometry, keeping §8.1's identical-pixels
+  promise.
+
+  **Snapping does not come from `cursorBuckets`.** The x path snaps its window
+  through the shared bin channel, which on a horizontal chart carries the
+  _value_ axis (`binIntervals` is published vertical-only, deliberately). The y
+  band takes its geometry from `SweepSession.extent()` instead — the
+  snapped-outward extent the session already computes — which is the same move
+  `snappedRect()` made for the rect, and is strictly better than the x path's:
+  the band is derived from the cut rather than agreed with it.
+
+  **Not in scope, and declared rather than discovered:** the **horizontal heat
+  map** is the (y, rect) corner and stays closed — `HeatMap` returns `[]` from
+  `hitTest` when horizontal, so it cannot select at all, let alone sweep, and
+  that is a `[PND-HCAT]`-shaped gap rather than this one. The **resting block
+  preview** for a y-cutting row (the grey band over the block a press would
+  take) needs the resting-block machinery transposed too; until it is, a
+  y-sweeping row must **suppress** the resting band rather than draw the x one,
+  which would advertise a column the drag will never select.
+
 - **[PND-INTERACTCONF]** — **The conformance tail.** The **list family** joins
   the sweep. (`<BoxPlot>` has now joined: a box is an aggregation owning one
   `[begin, end)` column, so it publishes `binIntervals` + `beginSweep` and
