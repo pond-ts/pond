@@ -454,7 +454,48 @@ milestone. Plan:
     land in `defaultTheme` under the list's own key rather than as constants,
     or the stories cannot render the default the way CLAUDE.md requires.
 
-    **What is left is the gesture**, which is the design half:
+    **The gesture shipped 2026-08-10** — `onRowSelect(rows, modifiers)` on both
+    sisters, mount-enabled per A4.2 rule 1 and a strict superset of
+    `onRowClick` exactly as `<MultiSelector>` is of `<Selector>`.
+
+    Decisions worth keeping:
+    - **Crossing into another row makes it a range**, not a pixel slop. A row
+      is tall and discrete, so that is the question the gesture actually turns
+      on; asking it directly means a press-and-release can never commit a range
+      and a horizontal wobble (meaningless on a stack of rows) never can
+      either. It needs no coordinates — per-row `pointerenter` answers it,
+      which is also why there is no pointer capture (capture would route every
+      later event to the pressed row and the others would never hear the
+      pointer arrive; a window `pointerup` covers release-outside instead).
+    - **`ranged` is positional, not historical** — it tracks where the pointer
+      _is_, so wandering away and back is a click again. Found by
+      revert-verification: the original `if (i !== d.anchor) ranged = true`
+      guard was **redundant** (nothing could ever clear the flag), which is why
+      that mutation survived while the others reddened. Making it positional
+      turned dead code into real, tested behaviour.
+    - **`additive` is `metaKey || ctrlKey`**, character-for-character what
+      `Layers` resolves for a canvas select. A `navigator.platform` sniff was
+      written first and rejected: whatever the better rule is, a list and a
+      chart in the same app must not disagree about what "add to selection"
+      means. (Note `SelectModifiers.additive`'s doc claims a per-OS rule the
+      canvas does not implement — a doc/behaviour mismatch predating this.)
+    - **A held press owns the hover channel**, gated on the press being armed
+      rather than on the run having started: hover is delegated at the
+      `<table>` while the range extends per row, and React dispatches the
+      ancestor's handler **first**, so a `ranged` check let the very crossing
+      that starts a run report a hover on its way past. `endDrag` hands the
+      channel back to the row the pointer ended on, or `null` when the release
+      was off the rows.
+    - **No shift-click policy.** `shiftKey` is reported and given no
+      behaviour, per `SelectModifiers`' own note that an ordinal range is a
+      gesture, not a modifier.
+
+    **Still open: keyboard parity.** Rows are focusable and Enter / Space fire
+    both callbacks, but there is no Shift-arrow extend — the gesture is
+    pointer-only, and a keyboard range wants settling against whatever
+    shift-click policy a consumer defines.
+
+    **Superseded — what was open before the gesture landed:**
     - **Drag over `<tr>` rows** — press on row _i_, drag to row _j_, take
       the run. Pointer events on the table rows, not `sweep1D`: a list has
       no key axis and no scale to invert through. A row's `key` is its

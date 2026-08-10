@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Meta } from '@storybook/react-vite';
 import { BarList } from './BarList.js';
 import { BoxList } from './BoxList.js';
@@ -208,3 +209,51 @@ export const NoListRegister = {
     </Frame>
   ),
 };
+
+/**
+ * **The range gesture** — how a user actually produces a multi-row selection.
+ *
+ * `onRowSelect` is the list's `<MultiSelector>`: mounting it enables the drag,
+ * a click reports one row, and a drag across rows reports the whole run. The
+ * library holds no state and applies no set arithmetic — you get the run and
+ * the modifiers and decide what the next selection is, which is exactly the
+ * contract `<ChartContainer selected>` has on the canvas side.
+ *
+ * **Crossing into another row is what makes it a range**, not a pixel slop, so
+ * a press-and-release is always a click and a horizontal wobble never commits
+ * anything. Wander to another row and back and it is a click again.
+ */
+function RangeDemo() {
+  const [sel, setSel] = useState<readonly string[]>([]);
+  const [last, setLast] = useState('—');
+  return (
+    <Frame
+      caption={
+        <>
+          Drag down or up across the rows to select a run. ⌘/Ctrl-drag adds to
+          the selection; a plain drag replaces. A click still selects one row.
+          <br />
+          <strong>selected:</strong> {sel.length === 0 ? '—' : sel.join(', ')}
+          <br />
+          <strong>last gesture:</strong> {last}
+        </>
+      }
+    >
+      <BarList
+        rows={hosts}
+        columns={oneMetric}
+        selected={sel}
+        onRowSelect={(rows, m) => {
+          const keys = rows.map((r) => r.key);
+          setLast(`${keys.length} row(s)${m.additive ? ' · additive' : ''}`);
+          setSel((cur) =>
+            m.additive ? [...new Set([...cur, ...keys])] : keys,
+          );
+        }}
+      />
+    </Frame>
+  );
+}
+
+/** Drag across rows to select a run; ⌘/Ctrl-drag to add. */
+export const RangeGesture = { render: () => <RangeDemo /> };

@@ -69,11 +69,36 @@ include new features and type-level changes; patch bumps are strictly additive.
   valid and unchanged. The lists were given the _receiving_ half of the sweep
   vocabulary (`hovered` went plural because a sweep lights several marks at
   once) and not the committing half, which made a list multi-select
-  inexpressible whatever gesture drives it. The gesture itself is still to
-  come; this is the currency it needs.
+  inexpressible whatever gesture drives it. `onRowSelect` below is the gesture
+  that spends it.
 
 ### Added
 
+- **charts: `<BarList onRowSelect>` / `<BoxList onRowSelect>`** — the range
+  gesture, and how a user actually produces a multi-row `selected`. The list's
+  answer to `<MultiSelector>`: **mounting it enables the drag** (a list with
+  only `onRowClick` is unchanged), a click reports `[row]` — so it is a strict
+  superset — and a drag across rows reports the whole inclusive run in display
+  order, plus `SelectModifiers`. **Crossing into another row is what makes it a
+  range**, not a pixel slop, so a press-and-release is always a click and a
+  horizontal wobble commits nothing; wander to another row and back and it is a
+  click again. The covered rows light as _hovered_ while the drag runs — the
+  live preview out-ranks `hovered` for the duration without touching it, and
+  `onHover` stays quiet so the two channels never contradict. The library holds
+  no state and applies no set arithmetic: you get the run and the modifiers.
+  `shiftKey` is reported but given no built-in meaning.
+- **charts: the row-chart state ladder** — `<BarList>` / `<BoxList>` now carry
+  rest / hover / selected / dimmed states, via a new optional
+  **`ChartTheme.list`** register (`hoverBand`, `hoverRail`, `selectedBand`,
+  `selectedRail`, `markerInk`). A row's **band** (the whole stripe, gutter to
+  value) and **rail** (a 3px inset edge) carry state, because a row's mark is
+  as short as its value and cannot be its own target. **Back-compatible when
+  omitted:** a theme with no `list` keeps the pre-token look exactly — the
+  borrowed hover band, the annotation rail, and no dimmed state. An
+  **interactive** row reserves a 44px hit area (a static list is left alone). A
+  `<BoxList>` recedes its body, median and tick but never its range band, and a
+  multi-metric `<BarList>` row keeps every metric's own hue when selected — the
+  fill is the metric's identity, so state lives on the chrome.
 - **charts: a horizontal `<BarChart>` can be swept** ([PND-HSWEEP]). `<MultiSelector>`
   now works on a transposed chart, cut with a **vertical** drag: same component,
   same 1-D cut, the axis moved. The value axis stays inert exactly as it does on

@@ -20,6 +20,7 @@ import {
   type ListSeriesSource,
 } from './list-source.js';
 import { ListTable } from './ListTable.js';
+import type { SelectModifiers } from './context.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
 
 /** The props both BarList source doors share. */
@@ -87,6 +88,48 @@ export interface BarListCommon<R extends ListRow = ListRow> {
   selected?: string | readonly string[] | null;
   /** Row click (rows show the pointer affordance only when provided). */
   onRowClick?: (row: R) => void;
+  /**
+   * **Plural select** — the list's answer to `<MultiSelector>`, and how a user
+   * produces a multi-row {@link selected}.
+   *
+   * Fires with the rows the gesture took plus its modifiers:
+   *
+   * - a **click** reports `[row]` — so this is a strict *superset* of
+   *   {@link onRowClick}, the way `<MultiSelector>` is of `<Selector>`;
+   * - a **drag across rows** reports the whole inclusive run, in display
+   *   order.
+   *
+   * **Mounting it is what enables the drag** (interaction RFC A4.2 rule 1 —
+   * the same rule that makes a bare `<MultiSelector />` enable the canvas
+   * sweep). A list with only `onRowClick` behaves exactly as it always has.
+   *
+   * **Crossing into another row is what makes it a range**, not a pixel slop:
+   * a row is tall and discrete, so a press-and-release on one row is always a
+   * click, and a horizontal wobble — which on a stack of rows means nothing —
+   * can never commit one. While the drag runs, the covered rows light as
+   * *hovered*: that is the live preview of what releasing would take, and it
+   * out-ranks {@link hovered} for the duration without touching it.
+   *
+   * **The library holds no state and applies no set arithmetic.** You get the
+   * run and the modifiers; you decide whether to replace or union, and feed
+   * the result back through {@link selected}:
+   *
+   * ```tsx
+   * onRowSelect={(rows, m) =>
+   *   setSel((cur) => {
+   *     const keys = rows.map((r) => r.key);
+   *     return m.additive ? [...new Set([...cur, ...keys])] : keys;
+   *   })
+   * }
+   * ```
+   *
+   * `modifiers.additive` is the platform-idiomatic add chord already resolved
+   * (⌘ on macOS, Ctrl elsewhere). **`shiftKey` is reported but carries no
+   * built-in meaning** — an ordinal range is a gesture here, not a modifier
+   * (see `SelectModifiers`), so a shift-click extend is yours to define if you
+   * want one.
+   */
+  onRowSelect?: (rows: readonly R[], modifiers: SelectModifiers) => void;
   /**
    * Controlled **hover-highlight** — the transiently lit row key(s), or `null`.
    * **Omitted ⇒ uncontrolled** (the list tracks its own pointer, as it always
@@ -215,6 +258,7 @@ export function BarList<
     onExpandToggle,
     selected,
     onRowClick,
+    onRowSelect,
     hovered,
     onHover,
     markers,
@@ -279,6 +323,7 @@ export function BarList<
       onExpandToggle={onExpandToggle}
       selected={selected}
       onRowClick={onRowClick}
+      onRowSelect={onRowSelect}
       hovered={hovered}
       onHover={onHover}
       divided={divided}
