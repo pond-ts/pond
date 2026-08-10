@@ -1,0 +1,208 @@
+---
+title: Sweeps & multi-select
+sidebar_position: 3
+---
+
+# Sweeps & multi-select
+
+[Selection & hover](./selection-and-hover.mdx) covers one click, one mark. This
+page is the other half: **dragging across a range** of marks, holding several
+selections at once, and the currency that keeps a large selection cheap.
+
+Mount **`<MultiSelector>`** instead of `<Selector>`. It arms the sweep drag
+alongside the click, and reports in a plural currency.
+
+```tsx
+<ChartContainer range={range} width={720} selected={sel}>
+  <MultiSelector
+    onHover={setPreview}
+    onSelect={(hits, modifiers, spans) => {
+      // A sweep: hits are the covered marks, spans is what they demote to.
+      // A click: one hit (or none), and spans is EMPTY.
+      setSel(modifiers?.additive ? [...sel, ...spans, ...hits] : [...spans]);
+    }}
+  />
+  <ChartRow height={180}>
+    <YAxis id="v" />
+    <Layers>
+      <BarChart series={s} column="v" axis="v" id="cpu" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+## The gesture
+
+A drag on the plot sweeps; a press that never moves past the drag slop is a
+click. Which axis it cuts, and whether it cuts a rectangle, is decided by the
+**topmost sweep-capable layer** in the row — you were pointing at that layer's
+marks, so it resolves the ambiguity.
+
+| Layer                         | The drag cuts                                        |
+| ----------------------------- | ---------------------------------------------------- |
+| `<BarChart>` (vertical)       | a 1-D window in **x**                                |
+| `<BarChart>` (horizontal)     | a 1-D window in **y** — the same gesture, transposed |
+| `<BoxPlot>`                   | a 1-D window in x                                    |
+| `<ScatterChart>`              | a **rect**: x window × value window                  |
+| `<HeatMap>`                   | a **rect**: x window × row set                       |
+| `<LineChart>` / `<AreaChart>` | a **span with no marks** — see below                 |
+
+A horizontal bar sweep is **1-D on the transposed axis**, not 2-D. The bars run
+across, so the categorical axis is vertical and a drag down it covers a run of
+categories — one dimension, rotated. Nothing about the value axis is being
+selected.
+
+## Live preview while you drag
+
+`onHover` fires with **every mark the gesture currently covers** — or would
+cover:
+
+- **At rest**, the marks of the **snap block under the pointer**, reported once
+  per block transition. Hovering _any_ mark of a block reports the whole block,
+  because that is exactly the set a drag begun and released there would select.
+- **During a sweep**, every covered mark, updated as the drag crosses marks
+  (coalesced to animation frames past the first cut).
+
+Uncontrolled, the covered marks light on their own — the library owns the hover
+state and each layer draws its own treatment. Echo `onHover` back as
+`<ChartContainer hovered>` only when you control hover.
+
+:::note Re-price a membership scan before you light a preview
+The resting block preview puts a whole covered run into `hovered` every frame.
+A layer that answers "is this mark selected?" by scanning the selection is fine
+at 5 entries and catastrophic at 5,000 — `<ScatterChart>` and `<HeatMap>` build
+a per-draw set index past 16 entries for exactly this reason, which took their
+preview repaint from seconds to milliseconds. If you write a custom highlight
+predicate, index it.
+:::
+
+## `SpanSelection` — why a sweep doesn't hand you 100k marks
+
+A sweep reports both the covered `hits` **and** the `spans` they demote to:
+
+```ts
+interface SpanSelection {
+  kind: 'span'; // discriminant against SelectInfo, which has no `kind`
+  id: string; // the LAYER whose marks it covers — never matches another layer
+  x: readonly [number, number]; // half-open [lo, hi) against each mark's `key`
+  y?: readonly [number, number]; // value-axis interval — 2-D scatter only
+  rows?: readonly string[]; // row LABEL set — 2-D heat map only, stable
+  //                            under a row reorder because it names rows
+  //                            rather than numbering slots
+}
+```
+
+The span is the **snapped-outward extent whose `selectionContains` test
+reproduces exactly `hits`**. So a selection of a million marks is one small
+object, not a million — and re-testing membership costs an interval compare
+rather than a set lookup.
+
+`x` is the layer's **bin/key axis whatever the orientation**: a horizontal heat
+map's bins run down the screen, but their keys — and so this interval — stay in
+bin-axis units.
+
+### Demote on edit
+
+Feed `[...others, span]` back as `selected` and stash `hits`. To later edit
+_inside_ the span — ⌘-click one mark out of it — swap the span entry for the
+stashed hits and filter:
+
+```tsx
+const demoted = sel.flatMap((e) =>
+  isSpanSelection(e) && e.id === hit.id ? stashed[e.id]! : [e],
+);
+setSel(demoted.filter((e) => !sameMark(e, hit)));
+```
+
+Plain array arithmetic. No interval math, no splitting a span into two — which
+is the whole reason the stash exists.
+
+:::warning Filter on `sameMark`, not `key`
+`m.key !== hit.key` is a bar's identity and only _half_ of a stack segment's or
+a heat cell's. Filtering on it means ⌘-clicking one heat cell knocks out every
+row of its column — and the selection outline will faithfully draw that
+column-shaped hole for you.
+:::
+
+## `spans` is plural
+
+One sweep can commit several spans, so the argument is always an array.
+
+- **Mark layers keep topmost-wins**, so there it holds exactly one.
+- **A trace sweep commits one span per trace.** Every trace in the row shares
+  the swept x window, so singling one out by z-order would be arbitrary to the
+  reader — there is no pointer answer to "which line did I sweep?" when the
+  gesture points at nothing.
+
+Spans arrive **topmost layer first**. Compare them by `id`, not by identity:
+each span-only layer clamps the window to _its own_ key range, so two traces of
+different extents report different `x` for one drag.
+
+**An empty array is a real value** — it means a click (clicks produce marks;
+only sweeps produce spans), or a sweep that covered nothing.
+
+## Sweeping a trace
+
+A trace has no marks, so a sweep over one commits **a span with no hits**. The
+span _is_ the selection.
+
+That is not a shortfall. A trace's samples are usually undrawn and there are
+several per pixel, so "the samples you swept" is a set the user never expressed
+— and materialising them would mean 100k `SelectInfo`s per drag frame. A
+consumer who wants the samples already has the span and their own series, which
+is one `crop` in pond.
+
+Visually, the swept window **partitions** the trace: the covered portion is
+emphasised, the rest recedes, and the split is live during the drag. Because
+identity is not in question _inside_ one series, the covered part may also take
+a hue (`spanColor`) — but only when a **single** trace is swept. With two, both
+would go blue and you would no longer be able to tell them apart in the one
+place you are looking.
+
+A line's emphasised segment strokes an **interpolated slice** of the path rather
+than the whole trace clipped, so its endpoints are real path ends and take a
+round cap. An area still clips, because a fill's boundary is a vertical wall by
+construction.
+
+## Snapping the sweep
+
+Pass `sequence` — a pond `Sequence` (realized over the view) or a
+`BoundedSequence` (used as-is, e.g. a trading calendar's sessions) — and the
+drag extends **bucket by bucket**, capturing every mark the snapped window
+covers.
+
+Omit it and the sweep is freeform, covering the raw drag span. A bar or
+histogram layer's own bins still snap it when present — the same shared
+snap-bucket channel [`<RangeCursor sequence>`](./cursors-and-readouts.mdx)
+feeds.
+
+Pass a **stable reference**; the realized buckets memoize on it.
+
+## Sharp edges
+
+- **`spans` was `span` + `spans` briefly.** Pre-release only — the pair was
+  collapsed into one argument before `<MultiSelector>` ever shipped in a
+  published version, and **empty now carries what `null` used to**.
+- **Modifier policy is yours.** pond reports the chord and holds no set. If
+  ⌘-drag should union and a plain drag should replace, that is your handler's
+  decision, in your state.
+- **`shift` is taken on a continuous axis** by `regionSelectModifier` — see
+  [pan, zoom & range selection](./pan-zoom-and-range-selection.mdx).
+- **A span never matches another layer's marks.** `id` is part of the test, so
+  two layers swept together produce two spans, not one shared one.
+- **Slicing a trace on every frame is not free.** `sliceTrace` allocates per
+  partitioned frame, sized by the window; a fully-swept large trace is a
+  per-frame loop over the series. Tracked as a perf item under
+  `[PND-TRACESEL]`.
+
+## See also
+
+- [Selection & hover](./selection-and-hover.mdx) — one click, one mark;
+  `SelectInfo`, `sameMark`, the modifier payload.
+- [Lists](../types/lists.mdx) — the row-range gesture and its keyboard parity,
+  the same vocabulary on a second surface.
+- [Theming](../theming.mdx) — the selected / hovered / dimmed / span tokens each
+  layer draws with.
+- Storybook:
+  [`Interactions/MultiSelector`](pathname:///storybook/?path=/story/interactions-multiselector-traces--line-sweep)
+  fans out the gesture per layer and per modifier.

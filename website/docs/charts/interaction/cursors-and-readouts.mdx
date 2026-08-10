@@ -178,6 +178,11 @@ shows every chart's value at the one cursor.
   the tutorial that builds these up one mode at a time.
 - [Selection & hover](./selection-and-hover.mdx) — clicking a data mark
   (distinct from the hover readout).
+- [Sweeps & multi-select](./sweeps-and-multi-select.mdx) — dragging across a
+  range of marks. Note the overlap to keep straight: a `<RangeCursor>` drag
+  selects a **time range** (a view concern), a `<MultiSelector>` drag selects
+  the **marks** in one. They share the drag band renderer, and `sequence` snaps
+  both.
 - [Pan, zoom & range selection](./pan-zoom-and-range-selection.mdx) — the
   `region` cursor and the select-to-zoom loop.
 - Storybook: [`Cursors/Scenarios/Synced Charts`](pathname:///storybook/?path=/story/cursors-scenarios--synced-charts) —

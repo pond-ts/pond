@@ -668,8 +668,9 @@ milestone. Plan:
 
 - **[PND-INTERACTDOCS]** — **The interaction wave's docs pass, and the
   `onSelect` collapse it blocks on.** Owner-listed 2026-08-10.
+  **Shipped 2026-08-10.**
 
-  **The `onSelect` collapse is DONE** (2026-08-10, after #634 merged): `span`
+  **The `onSelect` collapse** (before the docs pass, after #634 merged): `span`
   and `spans` are one `spans: readonly SpanSelection[]` argument, and **empty
   now carries what `null` used to** — a click, or a sweep that covered nothing.
 
@@ -680,39 +681,46 @@ milestone. Plan:
   published** and every one of those sites was in-repo. A deprecation shim for
   an API nobody has is pure cost. (Contrast `<BarList>/<BoxList> selected`,
   which **is** released — that widening genuinely needed the owner gate. Both
-  were framed as compatibility questions without checking the tag.)
+  were framed as compatibility questions without checking the tag.) Shipped as
+  #635, and its own fresh-eyes review caught two more things: two duplicate
+  JSDoc blocks left after the migration (one documented the removed `span:
+  null` contract verbatim), and an ordering test that had gone tautological —
+  it compared `spans[0]` to a field the test harness *derived* from `spans[0]`,
+  so it could never fail. Both fixed before merge (`866fb06`).
 
-  The migration was ~9 files and not a regex job: `multi-selector.test.tsx`
-  and `sweep-2d-gesture.test.tsx` destructure `vi.fn()` mock calls with
-  `SpanSelection | null` tuple annotations, and several **test names asserted
-  the old contract literally** (`([hit], modifiers, null)`), so those had to be
-  reworded rather than substituted.
+  **The docs pass.** One page rewritten (`selection-and-hover.mdx` was making
+  claims the wave had made false — single-select only, `BarChart`/`ScatterChart`
+  only), one new page added
+  (`interaction/sweeps-and-multi-select.mdx` — the sweep gesture, `SpanSelection`,
+  demote-on-edit, the trace-sweep case), and six more updated with the row
+  selection story, the trace state channels, and cross-references:
+  `interaction/cursors-and-readouts.mdx`, `interaction/legend.mdx`,
+  `interaction/pan-zoom-and-range-selection.mdx`, `types/lists.mdx` (plural
+  `selected`/`hovered`, `onRowSelect`, the keyboard table, `theme.list`),
+  `theming.mdx` (the channel rule stated once at the top, then per-mark; the new
+  `line`/`area` state tokens), `learn-charts/06-cursors-readouts-zoom.mdx` (a
+  short section distinguishing a `region` time-range drag from a
+  `<MultiSelector>` mark-range drag — same gesture, same drag band, different
+  question).
 
-  **Then the docs pass.** Note the docs-build CI does **not** typecheck MDX
-  code blocks, so a stale signature there ships silently wrong — these must be
-  read, not trusted to CI. Owner-named pages first:
-  - `website/docs/learn-charts/06-cursors-readouts-zoom.mdx`
-  - `website/docs/charts/interaction/cursors-and-readouts.mdx`
-  - `website/docs/charts/interaction/selection-and-hover.mdx`
+  **Checked and left alone, deliberately:** `gallery/volume-history.mdx` uses
+  `onRegionSelect` (the cursor's time-range callback) — unrelated to the
+  collapsed currency. `how-to-guides/categorical-charts.mdx` and
+  `histograms.mdx` use the legacy `<ChartContainer onSelect>` (single hit) —
+  also unaffected. `annotation.spanEdge` stays **undocumented on the public
+  theming page** — its own doc comment already says "not settled" (canvas-side
+  rules vs. an SVG-overlay annotation, a real mismatch), so writing it up as a
+  finished feature would be documenting past the point the code has actually
+  reached. Revisit when `[PND-ANNSNAP]` resolves it.
 
-  Found by search, and the owner expects more:
-  - `website/docs/charts/interaction/legend.mdx`, `pan-zoom-and-range-selection.mdx`
-  - `website/docs/charts/types/lists.mdx` — needs the whole list story: plural
-    `selected`, `onRowSelect`, keyboard parity, the row-state ladder
-  - `website/docs/charts/theming.mdx` — new `line`/`area` state tokens, the
-    `list` register, the experimental `annotation.spanEdge`
-  - `website/docs/charts/gallery/site-traffic-dashboard.mdx` +
-    `website/src/examples/gallery-site-traffic-dashboard.tsx` (a real example
-    that mounts selection)
-  - `website/docs/charts/gallery/volume-history.mdx` — uses
-    `onSelect={([from]) => …}`, i.e. already destructures; check it against the
-    collapsed shape
-  - `how-to-guides/categorical-charts.mdx`, `histograms.mdx` — `<Selector>`
-    only, so unaffected by the collapse, but worth checking against the wave
+  **A Layer-2 review find surfaced two more sites of the same bug class**
+  while this pass was in flight (`#636`, `ac2dd85`): `<ChartRow>`'s axis
+  injection had no fragment guard either, two perf stories and the
+  site-traffic gallery snippet still used the pattern. See `[PND-TRACESEL]`
+  below for the write-up; the gallery MDX fix landed as part of this task.
 
-  **Nothing documents the new surfaces at all yet**: horizontal sweeps, trace
-  selection, the list range gesture and keyboard, or the row-state ladder. The
-  docs pass is a write, not just an edit.
+  Docs-build CI does **not** typecheck MDX code blocks — every snippet above
+  was checked by hand against the actual exported types, not trusted to CI.
 
 - **[PND-TRACECYCLE]** — **Hotkeys to cycle which series a window selects.**
   Owner idea, 2026-08-10: `all → series1 → series2 → all`, with a hotkey to

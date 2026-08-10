@@ -100,7 +100,7 @@ so a chart always renders even for an unnamed identifier.
 | `axis`                                                       | no          | `{ label, grid, gridDash, sessionDivider?, band?, title? }`                                                                    |
 | `font`                                                       | no          | `{ family, size }`                                                                                                             |
 | `background?` / `cursor?` / `chip?` / `gap?` / `annotation?` | no          | `string` / `string` / `{ background }` / `{ connectorOpacity }` / `{ color, fillOpacity, depth:[n,n,n] }`                      |
-| `brush?`                                                     | no          | `{ fill, edge? }` — the drag band (see [below](#bar-interaction-states))                                                       |
+| `brush?`                                                     | no          | `{ fill, edge? }` — the drag band (see [below](#bar-states))                                                                   |
 
 Two built-ins ship: **`defaultTheme`** (a neutral light base) and
 **`estelaTheme`** (`@estela/ui`'s palette on a dark ground — the "restyle by
@@ -132,12 +132,36 @@ Ship your own theme with your app — `@pond-ts/charts` provides `defaultTheme` 
 a neutral base plus the `ChartTheme` type; per-brand themes live in your code,
 not the library.
 
-## Bar interaction states
+## Interaction states, and the channel rule
 
-A bar is the one mark that carries an **interaction state** — it can be at
-rest, under the pointer, selected, or outside somebody else's selection. Four
-states cannot be read as four shades of one colour, so `defaultTheme`'s `bar`
-slot is a small palette in which **state is a hue difference**:
+Marks carry an **interaction state** — at rest, under the pointer, selected, or
+outside somebody else's selection. One rule decides how each mark shows it:
+
+:::tip The channel rule
+**State may only use a channel the mark isn't already using for data.**
+:::
+
+That single rule produces a different answer per mark, and each answer is forced
+rather than chosen:
+
+| Mark     | State channel                    | Because the mark already spends…      |
+| -------- | -------------------------------- | ------------------------------------- |
+| Bar      | **fill** — a hue swap            | position/length on the value          |
+| Candle   | **weight + alpha**               | colour on direction (up/down)         |
+| Line     | **weight** (+ opacity to recede) | **colour on identity** — which series |
+| Area     | **fill strength + edge weight**  | colour on identity, fill on the shape |
+| List row | **band + rail**                  | the glyph on data                     |
+
+The line row is the one to internalise: a line's colour is how a reader tells
+one series from another, so recolouring a selected line destroys the thing
+selection is meant to help you read. A selected trace **thickens and keeps its
+hue**; the others recede in opacity with their hue intact.
+
+### Bar states
+
+A bar is the mark with the fullest ladder — four states cannot be read as four
+shades of one colour, so `defaultTheme`'s `bar` slot is a small palette in which
+**state is a hue difference**:
 
 | State     | `BarStyle` field            | `defaultTheme` value                                       | Reads as                       |
 | --------- | --------------------------- | ---------------------------------------------------------- | ------------------------------ |
@@ -187,6 +211,33 @@ const theme: ChartTheme = {
 `<MultiSelector>` both paint while a drag is in flight (one renderer, so the
 two can never drift). Omit it and the band falls back to the cursor ink at
 `0.12` with no edges.
+
+### Trace states: `line` and `area`
+
+Because a trace spends colour on identity, its state tokens are about **weight
+and recession** — with one exception, which is the interesting part.
+
+| Token                 | On            | `defaultTheme` | Is                                                         |
+| --------------------- | ------------- | -------------- | ---------------------------------------------------------- |
+| `selectedWidth`       | `line` `area` | `3`            | Stroke width when the series is selected                   |
+| `hoverWidth`          | `line`        | —              | The transient echo of `selectedWidth`                      |
+| `dimmedOpacity`       | `line` `area` | `0.32`         | Alpha for series outside the selection                     |
+| `selectedFillOpacity` | `area`        | —              | Fill strength when selected — an area's mark _is_ its fill |
+| `spanColor`           | `line` `area` | `#3F5BE0`      | Hue for a swept **window** inside one series               |
+
+**`spanColor` is the exception to the channel rule, and it earns it.** A
+whole-series selection cannot take a hue, because hue is which series it is. But
+a _window inside_ one series can: identity is not in question there, so the
+covered stretch takes the selection blue — the same `bar.highlight` value, so a
+swept region on a trace reads as the same act as the band that made it.
+
+It applies only when a **single** trace is swept. With two, both would go blue
+and you'd lose identity in exactly the place you're looking. See
+[sweeps & multi-select](./interaction/sweeps-and-multi-select.mdx).
+
+Every one of these is **optional**, and a theme that omits them renders no state
+— the library draws the state, the theme supplies the colour. So a hand-built
+theme keeps its current look until you opt in.
 
 ## Per-series line style: `dash`
 
