@@ -24,7 +24,11 @@ import { Layers } from '../src/Layers.js';
 import { BarChart } from '../src/BarChart.js';
 import { YAxis } from '../src/YAxis.js';
 import { MultiSelector } from '../src/selectors.js';
-import type { SelectInfo, SpanSelection } from '../src/context.js';
+import type {
+  SelectInfo,
+  SelectModifiers,
+  SpanSelection,
+} from '../src/context.js';
 import { stubCanvasContext } from './canvas-mock.js';
 
 afterEach(cleanup);
@@ -58,6 +62,7 @@ const bars = () =>
 function mount(orientation: 'vertical' | 'horizontal') {
   const seen: Array<{
     hits: readonly SelectInfo[];
+    mods: SelectModifiers | undefined;
     span: SpanSelection | null;
   }> = [];
   const stub = stubCanvasContext();
@@ -66,7 +71,7 @@ function mount(orientation: 'vertical' | 'horizontal') {
     dom = render(
       <ChartContainer range={[0, 5000]} width={PLOT_W}>
         <MultiSelector
-          onSelect={(hits, _mods, span) => seen.push({ hits, span })}
+          onSelect={(hits, mods, span) => seen.push({ hits, mods, span })}
         />
         <ChartRow height={ROW_H}>
           <YAxis
@@ -90,7 +95,13 @@ function mount(orientation: 'vertical' | 'horizontal') {
     stub.restore();
   }
   const surface = dom.querySelector('canvas')!.parentElement!;
-  const ev = (type: string, x: number, y: number, buttons: number) =>
+  const ev = (
+    type: string,
+    x: number,
+    y: number,
+    buttons: number,
+    meta = false,
+  ) =>
     act(() => {
       surface.dispatchEvent(
         new PointerEvent(type, {
@@ -99,6 +110,7 @@ function mount(orientation: 'vertical' | 'horizontal') {
           clientX: x,
           clientY: y,
           buttons,
+          metaKey: meta,
           pointerId: 1,
         }),
       );
@@ -107,10 +119,14 @@ function mount(orientation: 'vertical' | 'horizontal') {
     dom,
     seen,
     /** Press at `a`, move to `b`, release — one whole gesture. */
-    drag(a: readonly [number, number], b: readonly [number, number]) {
-      ev('pointerdown', a[0], a[1], 1);
-      ev('pointermove', b[0], b[1], 1);
-      ev('pointerup', b[0], b[1], 0);
+    drag(
+      a: readonly [number, number],
+      b: readonly [number, number],
+      meta = false,
+    ) {
+      ev('pointerdown', a[0], a[1], 1, meta);
+      ev('pointermove', b[0], b[1], 1, meta);
+      ev('pointerup', b[0], b[1], 0, meta);
     },
     /** Press, move, and stop — the drag still held, so the band is live. */
     hold(a: readonly [number, number], b: readonly [number, number]) {
@@ -168,6 +184,25 @@ describe('the cut comes from the pointer’s y', () => {
     const far = mount('horizontal');
     far.drag([160, 20], [160, 180]);
     expect(far.seen[0]!.hits.length).toBeGreaterThan(near.seen[0]!.hits.length);
+  });
+
+  it('modifiers reach the transposed release', () => {
+    // Everything a consumer builds on top — additive selections, the
+    // demote-on-edit toggle — reads `modifiers` off the release. It travels
+    // the same path either orientation, and the whole point of the
+    // transposed cut being the SAME gesture is that a consumer's handling is
+    // the same code; a `modifiers` that arrived `undefined` here would make
+    // that quietly false and only show up in a story.
+    const plain = mount('horizontal');
+    plain.drag([160, 20], [160, 120]);
+    expect(plain.seen[0]!.mods?.additive ?? false).toBe(false);
+
+    const additive = mount('horizontal');
+    additive.drag([160, 20], [160, 120], true);
+    expect(additive.seen[0]!.mods?.additive).toBe(true);
+    // …and the modifier changes nothing about WHAT was captured — it is the
+    // consumer's business, not the session's.
+    expect(additive.seen[0]!.span).toEqual(plain.seen[0]!.span);
   });
 
   it('a drag UPWARD captures the same bins as the same drag downward', () => {
@@ -276,6 +311,7 @@ const STAGES = [
 function mountCategorical() {
   const seen: Array<{
     hits: readonly SelectInfo[];
+    mods: SelectModifiers | undefined;
     span: SpanSelection | null;
   }> = [];
   const stub = stubCanvasContext();
@@ -284,7 +320,7 @@ function mountCategorical() {
     dom = render(
       <ChartContainer width={PLOT_W}>
         <MultiSelector
-          onSelect={(hits, _mods, span) => seen.push({ hits, span })}
+          onSelect={(hits, mods, span) => seen.push({ hits, mods, span })}
         />
         <ChartRow height={ROW_H}>
           <YAxis id="stage" width={96} />
