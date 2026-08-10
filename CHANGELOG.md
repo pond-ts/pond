@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.57.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.58.0...HEAD
+[0.58.0]: https://github.com/pond-ts/pond/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/pond-ts/pond/compare/v0.56.2...v0.57.0
 [0.56.2]: https://github.com/pond-ts/pond/compare/v0.56.1...v0.56.2
 [0.56.1]: https://github.com/pond-ts/pond/compare/v0.56.0...v0.56.1
@@ -60,84 +61,7 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
-### Changed
-
-- **charts (BREAKING): `<ChartContainer selected>` / `hovered` / `onSelect` /
-  `onHover` are REMOVED. Move them onto `<Selector>` / `<MultiSelector>`,
-  which now also WRAP the content they apply to.** No deprecation shim — this
-  is a straight deletion, and the fix is mechanical. Two changes at once:
-
-  **1. State moved from the container onto the selector.** `selected` /
-  `hovered` are no longer container props; they're `<Selector>` /
-  `<MultiSelector>` props, alongside `onSelect` / `onHover`. One component now
-  owns both the gesture and the state it produces — a `value`/`onChange` pair,
-  the same shape as a controlled `<input>`.
-
-  **2. The selector wraps its scope instead of sitting beside it.** Previously
-  `<Selector>` was a bare sibling mount; it now takes `children` and wraps
-  whatever it applies to — every `<ChartRow>` (mounted as a direct child of
-  `<ChartContainer>`) or just one row (mounted inside that `<ChartRow>`
-  instead).
-
-  **Migration — before:**
-
-  ```tsx
-  <ChartContainer selected={sel} onSelect={setSel}>
-    <ChartRow>…</ChartRow>
-  </ChartContainer>
-  ```
-
-  **after:**
-
-  ```tsx
-  <ChartContainer>
-    <Selector selected={sel} onSelect={setSel}>
-      <ChartRow>…</ChartRow>
-    </Selector>
-  </ChartContainer>
-  ```
-
-  Same rule for `<MultiSelector>` — `selected` / `hovered` move onto it, and
-  it wraps its `<ChartRow>`(s) the same way.
-
-  **Had `selected` with no `<Selector>` mounted at all** (controlled
-  highlighting driven from outside the chart — a legend chip, an external
-  filter list — with the plot deliberately inert on click)? Mount
-  `<Selector enabled={false} selected={sel}>` wrapping the same content.
-  `enabled` is new, defaults to `true`, and `false` disables the **gesture
-  only** — no hit-testing, no `onSelect`/`onHover` firing — while `selected` /
-  `hovered` stay in effect. This is the one case that needs a new prop rather
-  than just moving existing ones; every other case is a pure relocation.
-
-  **Why, having shipped the opposite design two days ago** (`docs/rfcs/
-interaction.md` A1.2: "the selector reports; the container holds the
-  state"): the plot gesture already requires mounting `<Selector>` (§7.1,
-  decided earlier still), so a chart that both selects on click and
-  highlights a controlled set — most of them — was wiring one concept in two
-  places with no structural link between them beyond care. Full write-up in
-  `docs/rfcs/interaction.md` Amendment 10. `<Selector>`/`<MultiSelector>` had
-  never appeared in a published release, so this is a same-cycle correction,
-  not a second breaking change to migrate through.
-
-- **charts (breaking, pre-release): `<MultiSelector onSelect>`'s span argument
-  is plural.** The signature is now
-  `(hits, modifiers, spans: readonly SpanSelection[])` — one argument, not the
-  `span` + `spans` pair #634 briefly shipped. **An empty array now carries what
-  `null` used to**: a click (clicks produce marks, only sweeps produce spans) or
-  a sweep that covered nothing. Spans arrive **topmost layer first**; compare
-  them by `id`, since each span-only layer clamps the window to its own key
-  range. Not a compatibility concern in practice — `<MultiSelector>` has never
-  appeared in a published version.
-
-- **charts: `<BarList selected>` / `<BoxList selected>` accept a set**
-  ([PND-INTERACTCONF]). Widened from `string | null` to
-  `string | readonly string[] | null` — the same union `hovered` already took.
-  **Additive:** every existing caller passes a `string` or `null`, both still
-  valid and unchanged. The lists were given the _receiving_ half of the sweep
-  vocabulary (`hovered` went plural because a sweep lights several marks at
-  once) and not the committing half, which made a list multi-select
-  inexpressible whatever gesture drives it. `onRowSelect` below is the gesture
-  that spends it.
+## [0.58.0] — 2026-08-10
 
 ### Added
 
@@ -227,81 +151,6 @@ interaction.md` A1.2: "the selector reports; the container holds the
   `mark`-or-`key`, `label`), companion to `selectionContains`, whose doc has
   always told a consumer to write `remove(cur, hit)` without giving them
   anything to write it with.
-
-### Fixed
-
-- **charts: a `<LineChart id>` / `<AreaChart id>` no longer draws the
-  "nothing is selectable" warning.** Traces became selectable in
-  [PND-TRACESEL] but never joined the container's selectable registry, so the
-  guard that catches a genuinely-forgotten `id` fired on every correctly-wired
-  trace chart — and its remedy told you to add an `id` to a
-  `<BarChart>`/`<ScatterChart>`/`<BoxPlot>`, none of which you had mounted.
-  Both trace layers now register on `id` like every other selectable layer, and
-  the message names all six. The guard still fires for a trace with **no** `id`,
-  which is the footgun it exists for.
-
-- **charts: `<Layers>` and `<ChartRow>` now warn when a `<Fragment>` child
-  swallows the injected declaration index.** A fragment accepts no props, so
-  the index that makes ordering follow the markup died on it and every element
-  inside fell back to the `index = 0` default. The sort is stable, so the tie
-  resolved to **mount** order — which matches declaration order on a
-  synchronous tree, and that is what made it silent: the stack looked right
-  until the two disagreed, at which point a layer toggled on between two others
-  landed on top instead of slotting into place. Direct children were already
-  documented; a dev-only warning now names the consequence, and the fragment is
-  no longer cloned, so React's less specific "invalid prop supplied to
-  React.Fragment" stops firing alongside it.
-
-  **A fragment costs more in `<ChartRow>`**, which is why both sites warn: the
-  axes inside it lose their order _and_ the `side` sort can't see a `<YAxis>`
-  through a fragment, so they render in the plot column instead of a gutter.
-
-  Four places had already tripped it, three of which **demonstrate** ordering:
-  the `LineSweep` story, the `spans[0]`-is-topmost test, and two perf stories —
-  one of them a band-behind-line stack that held only by mount luck. All now
-  use keyed arrays, and the site-traffic gallery page no longer teaches the
-  pattern in prose (its runnable example never used it).
-
-- **charts: `<MultiSelector>`'s demote-on-edit stories removed a whole bin
-  instead of the clicked mark.** They filtered on `m.key !== hit.key`, which
-  is a bar's identity but only half of a stack segment's or a heat cell's —
-  so ⌘-clicking one cell inside a swept heat-map region knocked out every row
-  of its column. Visible as a column-shaped hole in the selection's outline;
-  the outline was faithfully drawing a wrong selection. All three
-  hand-rolled identity tests in `selection-stories.tsx` now call `sameMark`.
-
-- **charts: `<MultiSelector>`'s demote story could only knock out one mark.**
-  It rewrote the span entries and passed everything else through, so once the
-  span had demoted there was nothing left for a second ⌘-click to act on and
-  it silently did nothing. It now implements the ⌘-click policy
-  `selectionContains`' doc describes in full — a mark in the selection comes
-  out, one that isn't goes in — with the demote as the extra step a span
-  needs before it can lose a member.
-
-- **charts: `<ScatterChart>` and `<HeatMap>` index a large selection set
-  instead of scanning it** — the live-preview repaint on both goes from
-  seconds to milliseconds. `bars.ts` grew a per-draw set index at 16 entries
-  because a sweep preview puts the whole covered run in `hovered` and the
-  linear scan measured 6.2 s/frame at 100k; neither 2-D layer had the fix, and
-  a rect fills that set faster than a band can. Measured by the new
-  `scripts/perf-interact2d.mjs`:
-
-  | scenario                              | before  | after   |
-  | ------------------------------------- | ------- | ------- |
-  | scatter, 100k points, 10k covered     | 1424 ms | 13.2 ms |
-  | scatter, 100k points, 50k covered     | 4042 ms | 14.7 ms |
-  | heat map, 365×45, 2,783 cells covered | 2.64 ms | 1.01 ms |
-
-  Below the threshold nothing changes: a clicked handful still scans, and
-  still allocates nothing.
-
-- **charts: a selected segment of a group-ramped stack keeps its own colour.**
-  The outline and the receded neighbours are the cue — the same exclusion
-  `binFills` already gets, and for the same reason: replacing a
-  meaning-carrying colour with the flat `highlight` erases _which group_ is
-  selected, which is the thing the selection is about.
-
-### Added
 
 - **charts: a rect-sweeping row rests as a small crosshair** — the last piece
   of the 2-D brush. Under a mounted `<MultiSelector>`, a row whose topmost
@@ -511,195 +360,6 @@ onHover>`.
   Resolution per group is unchanged apart from the new fallback:
   `colors` → a role named after the group → the ramp → `fill`.
 
-### Changed
-
-- **charts: `defaultTheme`'s resting scatter point moves off cerulean
-  (`#0284c7`) to the shared teal `#2A9D8F`, at 9px.** Blue has to mean
-  _committed_, and a cerulean point going to selection blue is barely a
-  change — the rule the bar palette reached, now for the third time. The
-  `primary` / `secondary` roles keep the **line** roles' hues (that identity
-  is why they exist) and take the same states with their own hue brightened
-  for hover.
-
-### Changed
-
-- **charts: mounting `<MultiSelector>` now changes the row's RESTING state —
-  the band and the hover become a live preview of the block a drag would
-  select.** Two halves, one requirement ("the grey cursor and the hover
-  highlighting are a preview for the block a drag will select"):
-  - **The brush band is the resting cursor.** With a `<MultiSelector>` in
-    scope over a sweep-capable row, the shared brush band (`<RangeCursor>`'s
-    renderer — one function, so the visuals cannot drift) spans the **snap
-    block under the pointer**: the `sequence` bucket where one is set, else
-    the layer's own bin/slot. It replaces the container's **implicit**
-    `'line'` default; an explicitly chosen cursor — a mounted component or a
-    legacy `cursor` string the consumer actually set — still wins the
-    surface.
-  - **Hover is block-scoped.** Pointing at any one mark of a block lights
-    (and reports through `onHover`) **every mark in the block** — e.g. all
-    four six-hour bars of a day under `sequence={Sequence.calendar('day')}`
-    — reported once per block transition, with within-block moves
-    re-rendering nothing. A co-mounted `<Selector onHover>` keeps its
-    per-mark currency.
-
-  Rest and drag share one code path (the same snap buckets, the same layer
-  sweep session), so what the rest previews and what a drag commits cannot
-  disagree — the drag just grows the same band, and release selects exactly
-  what was lit. **This is new semantics, not a bug fix**: the interaction RFC
-  had hover meaning "the mark under the pointer" (A4.2) and the sweep preview
-  meaning "what would be selected"; a mounted snapping `<MultiSelector>` now
-  unifies them at rest.
-
-- **charts: under a snapping `<MultiSelector>`, a click commits the whole
-  block it previewed** — not the single mark under the pointer. This is the
-  third state falling in behind the two above: with a `sequence` set, the
-  band spans the block, hover lights the block, and a click now selects the
-  block, so the three no longer disagree about what "the thing under the
-  pointer" means. The commit carries the same `{ kind: 'span', … }`
-  descriptor a sweep of that block would produce, so a consumer needs no
-  click-versus-drag branch.
-
-  **Without a `sequence` nothing changes**: a click still reports one mark
-  with a null span and stays distinguishable from a sweep (RFC §8). The test
-  is the **declaration** — an in-scope `<MultiSelector sequence={…}>` — and
-  deliberately not "the block covers more than one mark", which is a different
-  question on a stacked chart, where one bin holds one mark per group and an
-  ordinary unsnapped click would otherwise swallow the whole column.
-
-  On a stack a snapped click therefore commits `bins × groups` marks under one
-  span — 21 for a seven-day bucket over a three-group stack — while an
-  unsnapped one still selects the single segment under the pointer.
-
-- **charts: the brush band's edge rules now draw only while a drag is in
-  flight.** The band renders in two states — previewing the block a drag
-  _would_ select, and tracking a drag actually in progress — and since the
-  resting preview landed, the wash alone could not tell them apart. The edges
-  mark the boundary the gesture has **grabbed**, so at rest there is nothing
-  for them to mark: edging a preview asserts a range the user hasn't made yet,
-  and makes the two states read alike.
-
-  Applies to both band-drawing surfaces, `<MultiSelector>`'s sweep and a
-  snapping `<RangeCursor>`, from the one shared renderer. The wash is
-  unchanged in both states, and a _click_ never flashes the edges on its way
-  to committing a block — the sweep only anchors once it crosses `DRAG_SLOP`.
-  Themes that set no `theme.brush` drew no edges to begin with and are
-  unaffected.
-
-### Fixed
-
-- **charts: six `<MultiSelector>` polish bugs found walking the Storybook
-  stories.**
-  - **A live sweep no longer draws the data cursor over its band.** The
-    default `line` preset (and any mounted cursor) kept painting its solid
-    vertical rule at the raw pointer for the whole drag, so the sweep read as
-    "a line" while the band (7% wash) sat underneath. A live sweep now
-    suppresses the row's cursor slots exactly as annotation editing does; the
-    shared brush band still renders, so a sweep looks like a `<RangeCursor>`
-    drag (RFC §8.1's identical pixels).
-  - **Adjacent selected bars keep their gap.** The selection outline was a
-    centred `strokeRect`, painting `outlineWidth / 2` outside each bar — with
-    the default `gap: 1` that bridged the whole gap from both sides, fusing a
-    swept run into one solid block. The outline now strokes _inside_ the ink
-    (both draw paths, `drawBars` and `drawStacks`); a mark too thin to contain
-    its outline skips it.
-  - **Clicking the empty space above the bars deselects.** Bar slots tile the
-    full plot height (the continuous hover model of #582), so a click could
-    never resolve to "no mark" — RFC §7's empty-commit deselect path was
-    unreachable on a full-range bar chart. The click hit-test now requires
-    the pointer within the bar's drawn ink vertically (the slot keeps its
-    full interval width, so the gap between columns still selects). Hover is
-    deliberately unchanged: the highlight keeps tracking the full slot like
-    the readout. No new callback needed — the existing
-    `([], modifiers, null)` empty commit is the deselect signal.
-  - **A bucket-snapped sweep lights its whole first bucket from the moment
-    the drag starts.** The move that commits the sweep now runs the covered
-    cut synchronously (later moves stay frame-coalesced per RFC A1.4), and
-    the preview is pinned to agree with the commit exactly under a
-    `sequence`.
-  - **The `SweepAdditive` story's policy handled only spans** — any click
-    (⌘ held or not) cleared the whole selection, so the A5.2 headline flow
-    ("sweep, then ⌘-click to extend") deleted it instead. The library
-    reported `(hits, modifiers, null)` correctly all along; the story-side
-    set arithmetic was wrong and is fixed (a story-driven test now pins it).
-  - **A category sweep's band snaps to the slots' outer edges.** The band
-    scale's `invert` returns slot centres, so the freeform band ran
-    centre-to-centre while capture and the committed span snapped outward
-    (RFC A7.6's edge rule) — the drawn band disagreed with the selection by
-    half a slot at each end. The vertical categorical bar layer now publishes
-    its unit slots as snap buckets and the band extends slot-edge to
-    slot-edge.
-
-### Changed
-
-- **charts: `defaultTheme` bars look different. This is a visible change to
-  every chart that uses the default theme** — a new **bar interaction-state
-  palette** in which state is a _hue_ difference rather than a shade of one
-  colour. Previously `fill: '#2563eb'` and `highlight: '#1d4ed8'` were two
-  shades of one blue, so a selected bar read as "the same bar, slightly
-  darker". Now rest is teal and a committed selection is blue.
-
-  | `defaultTheme.bar.default` | old       | new                     |
-  | -------------------------- | --------- | ----------------------- |
-  | `fill` (rest)              | `#2563eb` | `#2A9D8F`               |
-  | `opacity` (rest)           | `0.85`    | `1`                     |
-  | `highlight` (selected)     | `#1d4ed8` | `#3F5BE0`               |
-  | `hover`                    | _(unset)_ | `#3FBFAE`               |
-  | `dimmed`                   | _(unset)_ | `rgba(42,157,143,0.32)` |
-  | `bands[0]` (in-range)      | `#2563eb` | `#2A9D8F`               |
-
-  `hover` is a _brighter teal_ and deliberately **not** blue: blue stays
-  reserved for committed selection, so a passing pointer and a real selection
-  never read as the same act. `bands[0]` follows `fill` because it is the
-  in-range band — a bar under its first threshold must not change colour.
-
-  Two behaviour notes beyond the colours. `defaultTheme` now ships a `dimmed`
-  value, so on the default theme **bars outside a non-empty selection now
-  recede** where before nothing did (opting in was previously the consumer's
-  job). And the resting `opacity` of `1` means gridlines no longer show
-  faintly through a bar. `emphasisOpacity` is unchanged — still unset, still
-  defaulting to `1`.
-
-  Nothing about this is forced on a custom theme: every value above lives in
-  `defaultTheme`, and `estelaTheme` plus any hand-built theme are untouched.
-  To keep the old look, override `bar.default` with the old-column values.
-
-- **charts: `defaultTheme`'s data blue and annotation register re-hued — the
-  two colour collisions the new bar palette created are fixed.** The old
-  annotation turquoise (`#0d9488`) sat ~ΔE 4 from the bar palette's resting
-  teal (`#2A9D8F`), so a placed mark over default-theme bars read as data; the
-  old royal data blue (`#2563eb`) sat ~ΔE 5 from the new _selection_ blue
-  (`#3F5BE0`), so a line drawn over bars read as nearly the selection colour.
-
-  | `defaultTheme`                                                 | old       | new       |
-  | -------------------------------------------------------------- | --------- | --------- |
-  | data blue (`line`/`band`/`area`/`scatter`/`box`/candle rising) | `#2563eb` | `#0284c7` |
-  | dark accents (box `median`, candle rising `wick`)              | `#1e3a8a` | `#075985` |
-  | box `whisker`                                                  | `#aabee9` | `#a3cde5` |
-  | `annotation.color`                                             | `#0d9488` | `#b45309` |
-
-  The whole `#2563eb` family moves together so the theme keeps one data blue
-  (a line and its variance band must stay one hue). The register's new burnt
-  amber is a deliberately warm outlier — nearest data hue ΔE2000 ≈ 18, most
-  40+ — restoring "a placed mark never reads as data" for the whole palette.
-  Both rules are now pinned by `test/default-theme-collisions.test.ts`, so a
-  future palette edit that re-introduces a collision fails CI. The teal
-  fallbacks a theme _without_ an annotation register gets (`#14b8a6` /
-  `#0d9488` built-ins) are unchanged.
-
-- **charts (dev): Storybook unified on the shipped `defaultTheme`.** All ~280
-  `theme={docsTheme}` / `theme={estelaTheme}` props are gone from the stories,
-  so every story now exercises the `theme ?? defaultTheme` fallback a
-  themeless consumer hits — previously nothing in the repo rendered the
-  default theme at all, which is how both collisions above went unseen.
-  Theming-as-a-feature lives in a curated set: the new `Theming/Showcase`
-  group (docs light/dark, estela dark), `Theming/CssVars`, and the handful of
-  stories whose subject is the theme channel itself (custom line themes, list
-  estela restyles, per-role bar/box/annotation maps — now based on
-  `defaultTheme`). Story-local `dimmed`/`highlight` overrides that predated
-  the default palette's own interaction states are dropped.
-
-### Added
-
 - **charts: `ChartTheme.brush` — the drag band is now themeable.** The live
   region a brush drag paints (`<RangeCursor>`'s band and `<MultiSelector>`'s
   sweep, which share one renderer) takes `{ fill, edge? }` — a wash plus 1px
@@ -759,149 +419,6 @@ onHover>`.
   draw now builds a set index once (exact same match rule) — 18 ms on that
   case, unchanged at click sizes.
 
-### Changed
-
-- **charts: BREAKING — a plot click does nothing unless a `<Selector>` is
-  mounted.** Click-select used to be _implicit_: any layer with an `id` was
-  selectable, and the container maintained an uncontrolled `selected` whether or
-  not anything was wired. Every chart that highlighted on click goes inert on
-  upgrade until a `<Selector>` is mounted — a regression no type error catches,
-  accepted deliberately (RFC §7.1) because selection turned out to be a whole
-  subsystem (modifiers, a set, a de-emphasis slot, a sweep gesture, precedence
-  against hover) and a subsystem that large should not switch itself on because
-  a layer happened to be given an `id`.
-
-  **What is _not_ affected:** `selected` / `hovered` stay on `<ChartContainer>`
-  (RFC A1.2), so **controlled highlighting keeps working with no `<Selector>`
-  mounted** — a legend chip or an external filter list driving the chart is
-  untouched. So does the hover _highlight_, and so does a programmatic
-  `select()` from `useChartLegend`. The break is precisely the plot gesture.
-
-  Softening the landing: a dev build warns **once** when a click resolves to a
-  mark and no `<Selector>` is mounted — and **suppresses that warning when
-  `selected` is supplied** (RFC A2.6), because after A1.2 that is the signature
-  of the _endorsed_ controlled-highlight setup rather than of a lost click. The
-  warning is scoped to the deprecation window: an `id` without a `<Selector>` is
-  a legitimate configuration afterwards (identity without enablement).
-
-- **charts: `<ChartContainer onSelect>` / `onHover` are deprecated** in favour
-  of `<Selector onSelect>` / `onHover`. They keep working for one more minor —
-  the container synthesizes an equivalent registration internally, so an
-  existing chart keeps its click _and_ stays out of the warning above — and
-  dev-warn once naming the replacement. A mounted `<Selector>` in the same scope
-  overrides them.
-- **charts: `<RangeCursor>` gets its drag — `onDragRelease`, `enableDrag`,
-  `dragModifier` — on a single brush recognizer** (interaction RFC §6 / A4.2,
-  step 3 of A4.4). Wiring `onDragRelease` makes the cursor draggable: the band
-  extends bucket by bucket over the cursor's `sequence` (or a histogram's
-  bins; freeform without either), fires **once** on release, and the cursor
-  **reverts** to the single-bucket highlight — it does not keep the range.
-  The payload is a new exported **`RangeSpan`** — `{ x: [lo, hi], y? }` in
-  axis units, not the legacy bare pair: one uniform shape whose optional `y`
-  the 2-D drag (scatter / heat map, RFC A3.3) will populate additively.
-  `span.x` is exactly what `ChartContainer.range` accepts, so drag-to-zoom is
-  `onDragRelease={(s) => setRange(s.x)}`. `enableDrag` defaults to
-  `!!onDragRelease` and is the **OFF** switch — set it `false` to freeze the
-  gesture without unwiring the callback; `dragModifier="shift"` shares the
-  surface with pan (plain drag pans, shift-drag selects) and is only enforced
-  while pan is enabled.
-
-  Structurally, **one brush recognizer now arbitrates every drag claim on the
-  plot** — annotation-create capture, the range drag (component or legacy),
-  and pan — in a documented precedence order (`packages/charts/src/brush.tsx`,
-  RFC A1.5 / A2.7), replacing the ad-hoc ordering inside
-  `Layers.handlePointerDown`; the band visual is one shared renderer
-  (`renderBrushBand`) so `<RangeCursor>` and the future `<MultiSelector>`
-  cannot drift apart. Observable behaviour is unchanged — every existing
-  interaction test passes as-is. The legacy `cursor="region"` +
-  `onRegionSelect` + `regionSelectModifier` surface keeps working for one more
-  minor (now with the dev deprecation notice naming the replacements); a
-  mounted `<RangeCursor onDragRelease>` takes the gesture over it.
-
-- **charts: span selections — `SpanSelection` entries in `selected`, and
-  `selectionContains`** (interaction RFC A5.2/A5.3/A7.6). The controlled
-  `selected` prop's array form now accepts `SelectionEntry =
-SelectInfo | SpanSelection`: a span names **every** mark of one layer inside
-  a range — `{ kind: 'span', id, x: [lo, hi) }` plus `y` (a scatter's
-  continuous second dimension) or `rows` (a heat map's ordinal row names) — so
-  a swept session of ten thousand bars is one entry, not ten thousand, at an
-  O(1)-per-mark membership test in every selection-aware layer (`BarChart`
-  single + stacked, `ScatterChart`, `BoxPlot`, `HeatMap`). Containment is
-  **half-open** on `x`/`y` (the pond bucket convention, and what makes a
-  sweep's snapped-outward edges agree exactly with the marks it captured —
-  RFC A7.6's edge rule); `rows` is label-set membership, stable under a row
-  reorder. The exported `selectionContains(sel, hit)` runs the **same**
-  predicate the layers do, so consumers implementing click policy over a mixed
-  selection never re-implement the interval test; `isSpanSelection` narrows an
-  entry for A5.2's demote-on-edit flow. The union widens **non-breaking**: a
-  bare `SelectInfo` or plain `SelectInfo[]` means exactly what it did, and a
-  spanless render costs nothing new. The sweep gesture itself
-  (`<MultiSelector>`) is a later step; spans are fully exercisable through the
-  controlled prop today.
-
-### Fixed
-
-- **charts: `<ScatterChart>` and `<BoxPlot>` light every selected / hovered
-  mark, not just the first.** `ContainerFrame.selected` has been a set since
-  [PND-MULTISEL] and `hovered` since RFC A4.3, but both layers narrowed it back
-  to one mark on the way into their draw — the scatter with `selected[0]`, the
-  box with a `find` on its own series id. A consumer pinning three marks got one
-  ring (or one outline), no warning, and no error.
-
-  Both now match **any** member of either set, the way the bar paths already do
-  (`barMatchesAny`), keeping the linear scan those document: a selection is a
-  handful of marks a person clicked, so a `Set` per draw would cost more than it
-  saves. Precedence is the shared one — **selected > hovered > rest** — so a
-  mark in both sets draws its selected cue only, never two.
-
-  `<ScatterChart>` gains a **hover cue** in the process: it had a hover
-  hit-test but never rendered one. A hovered point takes the style's highlight
-  ring at half strength, the same two-step signal `<BoxPlot>` uses, so no new
-  theme token is invented. Both layers still suppress every highlight while
-  **decimated**, unchanged — a sub-pixel ring isn't visible and interaction
-  still reads the source marks.
-
-  This supersedes the "`BoxPlot` and `HeatMap` read the first hovered member
-  only" note under _Changed_ below, for `BoxPlot`. `<HeatMap>` had the identical
-  bug and is fixed in the entry below — it was scoped out of this change on a
-  mistaken reading of its source (it maps both sets into plural memos, then
-  passed `selection[0]` into a single-mark `drawHeat` a hundred lines later).
-
-- **charts: `<HeatMap>` lights every selected / hovered cell, not just the
-  first.** `ContainerFrame.selected` has been a set since [PND-MULTISEL] and
-  `hovered` since RFC A4.3. `<HeatMap>` mapped **both** into plural memoized
-  arrays — which is exactly what made the layer read as already-correct — and
-  then handed `drawHeat` `selection[0] ?? null` / `hover[0] ?? null`, whose
-  parameters were `StackMark | null`. A consumer pinning three cells got one
-  outline, with no warning and no error.
-
-  `drawHeat` now takes both sets (`readonly StackMark[]`, defaulting to empty)
-  and outlines **any** cell a member names, keeping the linear scan
-  `barMatchesAny` documents: a selection is a handful of cells a person clicked,
-  so a `Set` per draw would cost more than it saves. Precedence is the shared one
-  — **selected > hovered > rest** — so a cell in both sets takes the
-  full-strength outline once rather than stacking a hover stroke under it. The
-  per-cell scan is gated on either set naming this layer, so a resting draw and a
-  draw whose selection belongs to another layer cost exactly what they did
-  before, and nothing extra is allocated per frame.
-
-  `<HeatMap>` still suppresses every per-cell outline while **decimated**,
-  unchanged — an aggregated column has no per-cell identity to match and a
-  sub-pixel ring isn't visible — now pinned by tests under a plural set.
-
-  This supersedes the "`ScatterChart` and `HeatMap` draw the first member only"
-  scope limit and the "`BoxPlot` and `HeatMap` read the first hovered member
-  only" note below, for `HeatMap`.
-
-- **charts: the `<HeatMap>` `ValueAxisStripe` story threw on mount.** It called
-  `sf.byValue('high')` on the temperature record in _date_ order, and a value
-  axis must be non-decreasing — it is the key — so the story had never rendered.
-  It now sorts by `high` before re-keying. Found by the story render smoke test
-  added alongside the fix above; `<HeatMap>` had no such net, which is how a
-  broken story went unnoticed.
-
-### Added
-
 - **charts: the list family gets the canvas's hover channel.**
   `<BarList>` / `<BoxList>` now take a controlled **`hovered`** prop —
   one row key or a **set** of them (`string | readonly string[] | null`),
@@ -925,8 +442,6 @@ SelectInfo | SpanSelection`: a span names **every** mark of one layer inside
   reports what the pointer is over and renders what it's handed. Hovered rows
   also carry a `data-hovered` attribute, alongside the existing
   `data-selected`.
-
-### Added
 
 - **charts: cursor components.** The `cursor` string modes are now mounted
   presets — `<LineCursor>`, `<PointCursor>`, `<InlineCursor>`, `<FlagCursor>`,
@@ -952,25 +467,6 @@ SelectInfo | SpanSelection`: a span names **every** mark of one layer inside
   `<XAxis>` now asks whether the **hovered row's** mounted cursor registered
   an x-axis slot, so a crosshair mounted in (or set on) one row of a multi-row
   chart shows its pill when that row is hovered — and only then.
-
-### Changed
-
-- **charts: `hovered` is a set.** `<ChartContainer hovered>` accepts
-  `SelectInfo | readonly SelectInfo[] | null` (a union, so nothing existing
-  changes), and the frame carries the normalized array. Several marks can now
-  be lit at once.
-
-  RFC `selection.md` A1.4 argued hover "is inherently one mark under the
-  pointer" — true while hover _means_ pointer position, and false under a drag
-  sweep, where it means "would be selected if you released now" and several
-  marks light together. This is step 1 of A4.3's sequencing and the
-  prerequisite for `<Select>` drag-to-select; plain pointer-over is unaffected
-  and simply carries 0 or 1 members.
-
-  `BoxPlot` reads the first hovered member only, matching the limit its
-  selection reader already carries. (`HeatMap` did too; see _Fixed_ above.)
-
-### Added
 
 - **charts: `<HeatMap scale="log">` and `noData="hatch"`.** Both come from the
   same chart — US measles incidence by state and year — and both are about a
@@ -1061,8 +557,6 @@ altKey }`). `additive` is the platform-idiomatic add-to-selection chord
   and nothing else. `selectionMode` (RFC A1.1) stays unbuilt: it would be sugar
   over what this ships, and adding it later is additive.
 
-### Added
-
 - **charts: `<HeatMap>` — a grid of colour-coded cells** ([PND-HEATMAP]). Bins
   along x, the series' **columns** down y, colour carrying the value. A single
   column is a stripe (climate stripes, a load band); many columns are a grid.
@@ -1130,7 +624,500 @@ altKey }`). `additive` is the platform-idiomatic add-to-selection chord
   Not built: a grouped two-level x axis, cell value labels, and 2-D region
   selection / pan-zoom.
 
+### Changed
+
+- **charts (BREAKING): `<ChartContainer selected>` / `hovered` / `onSelect` /
+  `onHover` are REMOVED. Move them onto `<Selector>` / `<MultiSelector>`,
+  which now also WRAP the content they apply to.** No deprecation shim — this
+  is a straight deletion, and the fix is mechanical. Two changes at once:
+
+  **1. State moved from the container onto the selector.** `selected` /
+  `hovered` are no longer container props; they're `<Selector>` /
+  `<MultiSelector>` props, alongside `onSelect` / `onHover`. One component now
+  owns both the gesture and the state it produces — a `value`/`onChange` pair,
+  the same shape as a controlled `<input>`.
+
+  **2. The selector wraps its scope instead of sitting beside it.** Previously
+  `<Selector>` was a bare sibling mount; it now takes `children` and wraps
+  whatever it applies to — every `<ChartRow>` (mounted as a direct child of
+  `<ChartContainer>`) or just one row (mounted inside that `<ChartRow>`
+  instead).
+
+  **Migration — before:**
+
+  ```tsx
+  <ChartContainer selected={sel} onSelect={setSel}>
+    <ChartRow>…</ChartRow>
+  </ChartContainer>
+  ```
+
+  **after:**
+
+  ```tsx
+  <ChartContainer>
+    <Selector selected={sel} onSelect={setSel}>
+      <ChartRow>…</ChartRow>
+    </Selector>
+  </ChartContainer>
+  ```
+
+  Same rule for `<MultiSelector>` — `selected` / `hovered` move onto it, and
+  it wraps its `<ChartRow>`(s) the same way.
+
+  **Had `selected` with no `<Selector>` mounted at all** (controlled
+  highlighting driven from outside the chart — a legend chip, an external
+  filter list — with the plot deliberately inert on click)? Mount
+  `<Selector enabled={false} selected={sel}>` wrapping the same content.
+  `enabled` is new, defaults to `true`, and `false` disables the **gesture
+  only** — no hit-testing, no `onSelect`/`onHover` firing — while `selected` /
+  `hovered` stay in effect. This is the one case that needs a new prop rather
+  than just moving existing ones; every other case is a pure relocation.
+
+  **Why, having shipped the opposite design two days ago** (`docs/rfcs/
+interaction.md` A1.2: "the selector reports; the container holds the
+  state"): the plot gesture already requires mounting `<Selector>` (§7.1,
+  decided earlier still), so a chart that both selects on click and
+  highlights a controlled set — most of them — was wiring one concept in two
+  places with no structural link between them beyond care. Full write-up in
+  `docs/rfcs/interaction.md` Amendment 10. `<Selector>`/`<MultiSelector>` had
+  never appeared in a published release, so this is a same-cycle correction,
+  not a second breaking change to migrate through.
+
+- **charts (breaking, pre-release): `<MultiSelector onSelect>`'s span argument
+  is plural.** The signature is now
+  `(hits, modifiers, spans: readonly SpanSelection[])` — one argument, not the
+  `span` + `spans` pair #634 briefly shipped. **An empty array now carries what
+  `null` used to**: a click (clicks produce marks, only sweeps produce spans) or
+  a sweep that covered nothing. Spans arrive **topmost layer first**; compare
+  them by `id`, since each span-only layer clamps the window to its own key
+  range. Not a compatibility concern in practice — `<MultiSelector>` has never
+  appeared in a published version.
+
+- **charts: `<BarList selected>` / `<BoxList selected>` accept a set**
+  ([PND-INTERACTCONF]). Widened from `string | null` to
+  `string | readonly string[] | null` — the same union `hovered` already took.
+  **Additive:** every existing caller passes a `string` or `null`, both still
+  valid and unchanged. The lists were given the _receiving_ half of the sweep
+  vocabulary (`hovered` went plural because a sweep lights several marks at
+  once) and not the committing half, which made a list multi-select
+  inexpressible whatever gesture drives it. `onRowSelect` below is the gesture
+  that spends it.
+
+- **charts: `defaultTheme`'s resting scatter point moves off cerulean
+  (`#0284c7`) to the shared teal `#2A9D8F`, at 9px.** Blue has to mean
+  _committed_, and a cerulean point going to selection blue is barely a
+  change — the rule the bar palette reached, now for the third time. The
+  `primary` / `secondary` roles keep the **line** roles' hues (that identity
+  is why they exist) and take the same states with their own hue brightened
+  for hover.
+
+- **charts: mounting `<MultiSelector>` now changes the row's RESTING state —
+  the band and the hover become a live preview of the block a drag would
+  select.** Two halves, one requirement ("the grey cursor and the hover
+  highlighting are a preview for the block a drag will select"):
+  - **The brush band is the resting cursor.** With a `<MultiSelector>` in
+    scope over a sweep-capable row, the shared brush band (`<RangeCursor>`'s
+    renderer — one function, so the visuals cannot drift) spans the **snap
+    block under the pointer**: the `sequence` bucket where one is set, else
+    the layer's own bin/slot. It replaces the container's **implicit**
+    `'line'` default; an explicitly chosen cursor — a mounted component or a
+    legacy `cursor` string the consumer actually set — still wins the
+    surface.
+  - **Hover is block-scoped.** Pointing at any one mark of a block lights
+    (and reports through `onHover`) **every mark in the block** — e.g. all
+    four six-hour bars of a day under `sequence={Sequence.calendar('day')}`
+    — reported once per block transition, with within-block moves
+    re-rendering nothing. A co-mounted `<Selector onHover>` keeps its
+    per-mark currency.
+
+  Rest and drag share one code path (the same snap buckets, the same layer
+  sweep session), so what the rest previews and what a drag commits cannot
+  disagree — the drag just grows the same band, and release selects exactly
+  what was lit. **This is new semantics, not a bug fix**: the interaction RFC
+  had hover meaning "the mark under the pointer" (A4.2) and the sweep preview
+  meaning "what would be selected"; a mounted snapping `<MultiSelector>` now
+  unifies them at rest.
+
+- **charts: under a snapping `<MultiSelector>`, a click commits the whole
+  block it previewed** — not the single mark under the pointer. This is the
+  third state falling in behind the two above: with a `sequence` set, the
+  band spans the block, hover lights the block, and a click now selects the
+  block, so the three no longer disagree about what "the thing under the
+  pointer" means. The commit carries the same `{ kind: 'span', … }`
+  descriptor a sweep of that block would produce, so a consumer needs no
+  click-versus-drag branch.
+
+  **Without a `sequence` nothing changes**: a click still reports one mark
+  with a null span and stays distinguishable from a sweep (RFC §8). The test
+  is the **declaration** — an in-scope `<MultiSelector sequence={…}>` — and
+  deliberately not "the block covers more than one mark", which is a different
+  question on a stacked chart, where one bin holds one mark per group and an
+  ordinary unsnapped click would otherwise swallow the whole column.
+
+  On a stack a snapped click therefore commits `bins × groups` marks under one
+  span — 21 for a seven-day bucket over a three-group stack — while an
+  unsnapped one still selects the single segment under the pointer.
+
+- **charts: the brush band's edge rules now draw only while a drag is in
+  flight.** The band renders in two states — previewing the block a drag
+  _would_ select, and tracking a drag actually in progress — and since the
+  resting preview landed, the wash alone could not tell them apart. The edges
+  mark the boundary the gesture has **grabbed**, so at rest there is nothing
+  for them to mark: edging a preview asserts a range the user hasn't made yet,
+  and makes the two states read alike.
+
+  Applies to both band-drawing surfaces, `<MultiSelector>`'s sweep and a
+  snapping `<RangeCursor>`, from the one shared renderer. The wash is
+  unchanged in both states, and a _click_ never flashes the edges on its way
+  to committing a block — the sweep only anchors once it crosses `DRAG_SLOP`.
+  Themes that set no `theme.brush` drew no edges to begin with and are
+  unaffected.
+
+- **charts: `defaultTheme` bars look different. This is a visible change to
+  every chart that uses the default theme** — a new **bar interaction-state
+  palette** in which state is a _hue_ difference rather than a shade of one
+  colour. Previously `fill: '#2563eb'` and `highlight: '#1d4ed8'` were two
+  shades of one blue, so a selected bar read as "the same bar, slightly
+  darker". Now rest is teal and a committed selection is blue.
+
+  | `defaultTheme.bar.default` | old       | new                     |
+  | -------------------------- | --------- | ----------------------- |
+  | `fill` (rest)              | `#2563eb` | `#2A9D8F`               |
+  | `opacity` (rest)           | `0.85`    | `1`                     |
+  | `highlight` (selected)     | `#1d4ed8` | `#3F5BE0`               |
+  | `hover`                    | _(unset)_ | `#3FBFAE`               |
+  | `dimmed`                   | _(unset)_ | `rgba(42,157,143,0.32)` |
+  | `bands[0]` (in-range)      | `#2563eb` | `#2A9D8F`               |
+
+  `hover` is a _brighter teal_ and deliberately **not** blue: blue stays
+  reserved for committed selection, so a passing pointer and a real selection
+  never read as the same act. `bands[0]` follows `fill` because it is the
+  in-range band — a bar under its first threshold must not change colour.
+
+  Two behaviour notes beyond the colours. `defaultTheme` now ships a `dimmed`
+  value, so on the default theme **bars outside a non-empty selection now
+  recede** where before nothing did (opting in was previously the consumer's
+  job). And the resting `opacity` of `1` means gridlines no longer show
+  faintly through a bar. `emphasisOpacity` is unchanged — still unset, still
+  defaulting to `1`.
+
+  Nothing about this is forced on a custom theme: every value above lives in
+  `defaultTheme`, and `estelaTheme` plus any hand-built theme are untouched.
+  To keep the old look, override `bar.default` with the old-column values.
+
+- **charts: `defaultTheme`'s data blue and annotation register re-hued — the
+  two colour collisions the new bar palette created are fixed.** The old
+  annotation turquoise (`#0d9488`) sat ~ΔE 4 from the bar palette's resting
+  teal (`#2A9D8F`), so a placed mark over default-theme bars read as data; the
+  old royal data blue (`#2563eb`) sat ~ΔE 5 from the new _selection_ blue
+  (`#3F5BE0`), so a line drawn over bars read as nearly the selection colour.
+
+  | `defaultTheme`                                                 | old       | new       |
+  | -------------------------------------------------------------- | --------- | --------- |
+  | data blue (`line`/`band`/`area`/`scatter`/`box`/candle rising) | `#2563eb` | `#0284c7` |
+  | dark accents (box `median`, candle rising `wick`)              | `#1e3a8a` | `#075985` |
+  | box `whisker`                                                  | `#aabee9` | `#a3cde5` |
+  | `annotation.color`                                             | `#0d9488` | `#b45309` |
+
+  The whole `#2563eb` family moves together so the theme keeps one data blue
+  (a line and its variance band must stay one hue). The register's new burnt
+  amber is a deliberately warm outlier — nearest data hue ΔE2000 ≈ 18, most
+  40+ — restoring "a placed mark never reads as data" for the whole palette.
+  Both rules are now pinned by `test/default-theme-collisions.test.ts`, so a
+  future palette edit that re-introduces a collision fails CI. The teal
+  fallbacks a theme _without_ an annotation register gets (`#14b8a6` /
+  `#0d9488` built-ins) are unchanged.
+
+- **charts (dev): Storybook unified on the shipped `defaultTheme`.** All ~280
+  `theme={docsTheme}` / `theme={estelaTheme}` props are gone from the stories,
+  so every story now exercises the `theme ?? defaultTheme` fallback a
+  themeless consumer hits — previously nothing in the repo rendered the
+  default theme at all, which is how both collisions above went unseen.
+  Theming-as-a-feature lives in a curated set: the new `Theming/Showcase`
+  group (docs light/dark, estela dark), `Theming/CssVars`, and the handful of
+  stories whose subject is the theme channel itself (custom line themes, list
+  estela restyles, per-role bar/box/annotation maps — now based on
+  `defaultTheme`). Story-local `dimmed`/`highlight` overrides that predated
+  the default palette's own interaction states are dropped.
+
+- **charts: BREAKING — a plot click does nothing unless a `<Selector>` is
+  mounted.** Click-select used to be _implicit_: any layer with an `id` was
+  selectable, and the container maintained an uncontrolled `selected` whether or
+  not anything was wired. Every chart that highlighted on click goes inert on
+  upgrade until a `<Selector>` is mounted — a regression no type error catches,
+  accepted deliberately (RFC §7.1) because selection turned out to be a whole
+  subsystem (modifiers, a set, a de-emphasis slot, a sweep gesture, precedence
+  against hover) and a subsystem that large should not switch itself on because
+  a layer happened to be given an `id`.
+
+  **What is _not_ affected:** `selected` / `hovered` stay on `<ChartContainer>`
+  (RFC A1.2), so **controlled highlighting keeps working with no `<Selector>`
+  mounted** — a legend chip or an external filter list driving the chart is
+  untouched. So does the hover _highlight_, and so does a programmatic
+  `select()` from `useChartLegend`. The break is precisely the plot gesture.
+
+  Softening the landing: a dev build warns **once** when a click resolves to a
+  mark and no `<Selector>` is mounted — and **suppresses that warning when
+  `selected` is supplied** (RFC A2.6), because after A1.2 that is the signature
+  of the _endorsed_ controlled-highlight setup rather than of a lost click. The
+  warning is scoped to the deprecation window: an `id` without a `<Selector>` is
+  a legitimate configuration afterwards (identity without enablement).
+
+- **charts: `<ChartContainer onSelect>` / `onHover` are deprecated** in favour
+  of `<Selector onSelect>` / `onHover`. They keep working for one more minor —
+  the container synthesizes an equivalent registration internally, so an
+  existing chart keeps its click _and_ stays out of the warning above — and
+  dev-warn once naming the replacement. A mounted `<Selector>` in the same scope
+  overrides them.
+- **charts: `<RangeCursor>` gets its drag — `onDragRelease`, `enableDrag`,
+  `dragModifier` — on a single brush recognizer** (interaction RFC §6 / A4.2,
+  step 3 of A4.4). Wiring `onDragRelease` makes the cursor draggable: the band
+  extends bucket by bucket over the cursor's `sequence` (or a histogram's
+  bins; freeform without either), fires **once** on release, and the cursor
+  **reverts** to the single-bucket highlight — it does not keep the range.
+  The payload is a new exported **`RangeSpan`** — `{ x: [lo, hi], y? }` in
+  axis units, not the legacy bare pair: one uniform shape whose optional `y`
+  the 2-D drag (scatter / heat map, RFC A3.3) will populate additively.
+  `span.x` is exactly what `ChartContainer.range` accepts, so drag-to-zoom is
+  `onDragRelease={(s) => setRange(s.x)}`. `enableDrag` defaults to
+  `!!onDragRelease` and is the **OFF** switch — set it `false` to freeze the
+  gesture without unwiring the callback; `dragModifier="shift"` shares the
+  surface with pan (plain drag pans, shift-drag selects) and is only enforced
+  while pan is enabled.
+
+  Structurally, **one brush recognizer now arbitrates every drag claim on the
+  plot** — annotation-create capture, the range drag (component or legacy),
+  and pan — in a documented precedence order (`packages/charts/src/brush.tsx`,
+  RFC A1.5 / A2.7), replacing the ad-hoc ordering inside
+  `Layers.handlePointerDown`; the band visual is one shared renderer
+  (`renderBrushBand`) so `<RangeCursor>` and the future `<MultiSelector>`
+  cannot drift apart. Observable behaviour is unchanged — every existing
+  interaction test passes as-is. The legacy `cursor="region"` +
+  `onRegionSelect` + `regionSelectModifier` surface keeps working for one more
+  minor (now with the dev deprecation notice naming the replacements); a
+  mounted `<RangeCursor onDragRelease>` takes the gesture over it.
+
+- **charts: span selections — `SpanSelection` entries in `selected`, and
+  `selectionContains`** (interaction RFC A5.2/A5.3/A7.6). The controlled
+  `selected` prop's array form now accepts `SelectionEntry =
+SelectInfo | SpanSelection`: a span names **every** mark of one layer inside
+  a range — `{ kind: 'span', id, x: [lo, hi) }` plus `y` (a scatter's
+  continuous second dimension) or `rows` (a heat map's ordinal row names) — so
+  a swept session of ten thousand bars is one entry, not ten thousand, at an
+  O(1)-per-mark membership test in every selection-aware layer (`BarChart`
+  single + stacked, `ScatterChart`, `BoxPlot`, `HeatMap`). Containment is
+  **half-open** on `x`/`y` (the pond bucket convention, and what makes a
+  sweep's snapped-outward edges agree exactly with the marks it captured —
+  RFC A7.6's edge rule); `rows` is label-set membership, stable under a row
+  reorder. The exported `selectionContains(sel, hit)` runs the **same**
+  predicate the layers do, so consumers implementing click policy over a mixed
+  selection never re-implement the interval test; `isSpanSelection` narrows an
+  entry for A5.2's demote-on-edit flow. The union widens **non-breaking**: a
+  bare `SelectInfo` or plain `SelectInfo[]` means exactly what it did, and a
+  spanless render costs nothing new. The sweep gesture itself
+  (`<MultiSelector>`) is a later step; spans are fully exercisable through the
+  controlled prop today.
+
+- **charts: `hovered` is a set.** `<ChartContainer hovered>` accepts
+  `SelectInfo | readonly SelectInfo[] | null` (a union, so nothing existing
+  changes), and the frame carries the normalized array. Several marks can now
+  be lit at once.
+
+  RFC `selection.md` A1.4 argued hover "is inherently one mark under the
+  pointer" — true while hover _means_ pointer position, and false under a drag
+  sweep, where it means "would be selected if you released now" and several
+  marks light together. This is step 1 of A4.3's sequencing and the
+  prerequisite for `<Select>` drag-to-select; plain pointer-over is unaffected
+  and simply carries 0 or 1 members.
+
+  `BoxPlot` reads the first hovered member only, matching the limit its
+  selection reader already carries. (`HeatMap` did too; see _Fixed_ above.)
+
 ### Fixed
+
+- **charts: `panZoomXY` lost its aspect ratio at the zoom edge.** The two axes
+  clamped independently — y cannot zoom out past its natural fit, x cannot zoom
+  in past `minDuration` — so whichever hit its limit first stopped while the
+  other kept going, and the picture sheared from that point on. An aspect lock
+  means a limit on **either** axis stops **both**: the factor is now agreed
+  before either axis moves (capped at what y can take, then x is asked what it
+  would do with that, and x's answer is adopted for both). Caught by two new
+  stories — `HeatMap/PanZoomXY`, deliberately diagonally banded because a
+  diagonal exposes shear the instant the ratio slips where a blocky grid hides
+  it, and `ScatterChart/PanZoomXY` — since the only prior `panZoom` story used a
+  category x axis and could not exercise `XY` at all.
+
+- **charts: a `<LineChart id>` / `<AreaChart id>` no longer draws the
+  "nothing is selectable" warning.** Traces became selectable in
+  [PND-TRACESEL] but never joined the container's selectable registry, so the
+  guard that catches a genuinely-forgotten `id` fired on every correctly-wired
+  trace chart — and its remedy told you to add an `id` to a
+  `<BarChart>`/`<ScatterChart>`/`<BoxPlot>`, none of which you had mounted.
+  Both trace layers now register on `id` like every other selectable layer, and
+  the message names all six. The guard still fires for a trace with **no** `id`,
+  which is the footgun it exists for.
+
+- **charts: `<Layers>` and `<ChartRow>` now warn when a `<Fragment>` child
+  swallows the injected declaration index.** A fragment accepts no props, so
+  the index that makes ordering follow the markup died on it and every element
+  inside fell back to the `index = 0` default. The sort is stable, so the tie
+  resolved to **mount** order — which matches declaration order on a
+  synchronous tree, and that is what made it silent: the stack looked right
+  until the two disagreed, at which point a layer toggled on between two others
+  landed on top instead of slotting into place. Direct children were already
+  documented; a dev-only warning now names the consequence, and the fragment is
+  no longer cloned, so React's less specific "invalid prop supplied to
+  React.Fragment" stops firing alongside it.
+
+  **A fragment costs more in `<ChartRow>`**, which is why both sites warn: the
+  axes inside it lose their order _and_ the `side` sort can't see a `<YAxis>`
+  through a fragment, so they render in the plot column instead of a gutter.
+
+  Four places had already tripped it, three of which **demonstrate** ordering:
+  the `LineSweep` story, the `spans[0]`-is-topmost test, and two perf stories —
+  one of them a band-behind-line stack that held only by mount luck. All now
+  use keyed arrays, and the site-traffic gallery page no longer teaches the
+  pattern in prose (its runnable example never used it).
+
+- **charts: `<MultiSelector>`'s demote-on-edit stories removed a whole bin
+  instead of the clicked mark.** They filtered on `m.key !== hit.key`, which
+  is a bar's identity but only half of a stack segment's or a heat cell's —
+  so ⌘-clicking one cell inside a swept heat-map region knocked out every row
+  of its column. Visible as a column-shaped hole in the selection's outline;
+  the outline was faithfully drawing a wrong selection. All three
+  hand-rolled identity tests in `selection-stories.tsx` now call `sameMark`.
+
+- **charts: `<MultiSelector>`'s demote story could only knock out one mark.**
+  It rewrote the span entries and passed everything else through, so once the
+  span had demoted there was nothing left for a second ⌘-click to act on and
+  it silently did nothing. It now implements the ⌘-click policy
+  `selectionContains`' doc describes in full — a mark in the selection comes
+  out, one that isn't goes in — with the demote as the extra step a span
+  needs before it can lose a member.
+
+- **charts: `<ScatterChart>` and `<HeatMap>` index a large selection set
+  instead of scanning it** — the live-preview repaint on both goes from
+  seconds to milliseconds. `bars.ts` grew a per-draw set index at 16 entries
+  because a sweep preview puts the whole covered run in `hovered` and the
+  linear scan measured 6.2 s/frame at 100k; neither 2-D layer had the fix, and
+  a rect fills that set faster than a band can. Measured by the new
+  `scripts/perf-interact2d.mjs`:
+
+  | scenario                              | before  | after   |
+  | ------------------------------------- | ------- | ------- |
+  | scatter, 100k points, 10k covered     | 1424 ms | 13.2 ms |
+  | scatter, 100k points, 50k covered     | 4042 ms | 14.7 ms |
+  | heat map, 365×45, 2,783 cells covered | 2.64 ms | 1.01 ms |
+
+  Below the threshold nothing changes: a clicked handful still scans, and
+  still allocates nothing.
+
+- **charts: a selected segment of a group-ramped stack keeps its own colour.**
+  The outline and the receded neighbours are the cue — the same exclusion
+  `binFills` already gets, and for the same reason: replacing a
+  meaning-carrying colour with the flat `highlight` erases _which group_ is
+  selected, which is the thing the selection is about.
+
+- **charts: six `<MultiSelector>` polish bugs found walking the Storybook
+  stories.**
+  - **A live sweep no longer draws the data cursor over its band.** The
+    default `line` preset (and any mounted cursor) kept painting its solid
+    vertical rule at the raw pointer for the whole drag, so the sweep read as
+    "a line" while the band (7% wash) sat underneath. A live sweep now
+    suppresses the row's cursor slots exactly as annotation editing does; the
+    shared brush band still renders, so a sweep looks like a `<RangeCursor>`
+    drag (RFC §8.1's identical pixels).
+  - **Adjacent selected bars keep their gap.** The selection outline was a
+    centred `strokeRect`, painting `outlineWidth / 2` outside each bar — with
+    the default `gap: 1` that bridged the whole gap from both sides, fusing a
+    swept run into one solid block. The outline now strokes _inside_ the ink
+    (both draw paths, `drawBars` and `drawStacks`); a mark too thin to contain
+    its outline skips it.
+  - **Clicking the empty space above the bars deselects.** Bar slots tile the
+    full plot height (the continuous hover model of #582), so a click could
+    never resolve to "no mark" — RFC §7's empty-commit deselect path was
+    unreachable on a full-range bar chart. The click hit-test now requires
+    the pointer within the bar's drawn ink vertically (the slot keeps its
+    full interval width, so the gap between columns still selects). Hover is
+    deliberately unchanged: the highlight keeps tracking the full slot like
+    the readout. No new callback needed — the existing
+    `([], modifiers, null)` empty commit is the deselect signal.
+  - **A bucket-snapped sweep lights its whole first bucket from the moment
+    the drag starts.** The move that commits the sweep now runs the covered
+    cut synchronously (later moves stay frame-coalesced per RFC A1.4), and
+    the preview is pinned to agree with the commit exactly under a
+    `sequence`.
+  - **The `SweepAdditive` story's policy handled only spans** — any click
+    (⌘ held or not) cleared the whole selection, so the A5.2 headline flow
+    ("sweep, then ⌘-click to extend") deleted it instead. The library
+    reported `(hits, modifiers, null)` correctly all along; the story-side
+    set arithmetic was wrong and is fixed (a story-driven test now pins it).
+  - **A category sweep's band snaps to the slots' outer edges.** The band
+    scale's `invert` returns slot centres, so the freeform band ran
+    centre-to-centre while capture and the committed span snapped outward
+    (RFC A7.6's edge rule) — the drawn band disagreed with the selection by
+    half a slot at each end. The vertical categorical bar layer now publishes
+    its unit slots as snap buckets and the band extends slot-edge to
+    slot-edge.
+
+- **charts: `<ScatterChart>` and `<BoxPlot>` light every selected / hovered
+  mark, not just the first.** `ContainerFrame.selected` has been a set since
+  [PND-MULTISEL] and `hovered` since RFC A4.3, but both layers narrowed it back
+  to one mark on the way into their draw — the scatter with `selected[0]`, the
+  box with a `find` on its own series id. A consumer pinning three marks got one
+  ring (or one outline), no warning, and no error.
+
+  Both now match **any** member of either set, the way the bar paths already do
+  (`barMatchesAny`), keeping the linear scan those document: a selection is a
+  handful of marks a person clicked, so a `Set` per draw would cost more than it
+  saves. Precedence is the shared one — **selected > hovered > rest** — so a
+  mark in both sets draws its selected cue only, never two.
+
+  `<ScatterChart>` gains a **hover cue** in the process: it had a hover
+  hit-test but never rendered one. A hovered point takes the style's highlight
+  ring at half strength, the same two-step signal `<BoxPlot>` uses, so no new
+  theme token is invented. Both layers still suppress every highlight while
+  **decimated**, unchanged — a sub-pixel ring isn't visible and interaction
+  still reads the source marks.
+
+  This supersedes the "`BoxPlot` and `HeatMap` read the first hovered member
+  only" note under _Changed_ below, for `BoxPlot`. `<HeatMap>` had the identical
+  bug and is fixed in the entry below — it was scoped out of this change on a
+  mistaken reading of its source (it maps both sets into plural memos, then
+  passed `selection[0]` into a single-mark `drawHeat` a hundred lines later).
+
+- **charts: `<HeatMap>` lights every selected / hovered cell, not just the
+  first.** `ContainerFrame.selected` has been a set since [PND-MULTISEL] and
+  `hovered` since RFC A4.3. `<HeatMap>` mapped **both** into plural memoized
+  arrays — which is exactly what made the layer read as already-correct — and
+  then handed `drawHeat` `selection[0] ?? null` / `hover[0] ?? null`, whose
+  parameters were `StackMark | null`. A consumer pinning three cells got one
+  outline, with no warning and no error.
+
+  `drawHeat` now takes both sets (`readonly StackMark[]`, defaulting to empty)
+  and outlines **any** cell a member names, keeping the linear scan
+  `barMatchesAny` documents: a selection is a handful of cells a person clicked,
+  so a `Set` per draw would cost more than it saves. Precedence is the shared one
+  — **selected > hovered > rest** — so a cell in both sets takes the
+  full-strength outline once rather than stacking a hover stroke under it. The
+  per-cell scan is gated on either set naming this layer, so a resting draw and a
+  draw whose selection belongs to another layer cost exactly what they did
+  before, and nothing extra is allocated per frame.
+
+  `<HeatMap>` still suppresses every per-cell outline while **decimated**,
+  unchanged — an aggregated column has no per-cell identity to match and a
+  sub-pixel ring isn't visible — now pinned by tests under a plural set.
+
+  This supersedes the "`ScatterChart` and `HeatMap` draw the first member only"
+  scope limit and the "`BoxPlot` and `HeatMap` read the first hovered member
+  only" note below, for `HeatMap`.
+
+- **charts: the `<HeatMap>` `ValueAxisStripe` story threw on mount.** It called
+  `sf.byValue('high')` on the temperature record in _date_ order, and a value
+  axis must be non-decreasing — it is the key — so the story had never rendered.
+  It now sorts by `high` before re-keying. Found by the story render smoke test
+  added alongside the fix above; `<HeatMap>` had no such net, which is how a
+  broken story went unnoticed.
 
 - **charts: hover was stuck on the y axis inside a stacked column.**
   `<ChartContainer>` deduped the hovered mark on `id + key` so the data canvas
