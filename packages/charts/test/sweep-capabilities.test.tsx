@@ -194,6 +194,32 @@ describe('`sweepsRect` agrees with the session every layer builds', () => {
     expect(entry.layer.sweepsRect === true).toBe(rect);
   });
 
+  it('a HORIZONTAL heat map declares no rect — it cannot sweep at all', () => {
+    // `beginSweep` returns `null` when the grid is transposed, so the
+    // declaration has to say so too. Declaring `sweepsRect` unconditionally
+    // made such a row suppress its cursor and paint a resting `+` for a
+    // gesture that can never start — `sweepsRect` is read at REST, where
+    // there is no session to ask.
+    const { frame } = mountRow(
+      <HeatMap
+        series={grid()}
+        columns={['lo', 'hi']}
+        colors={['#eee', '#999']}
+        axis="a"
+        id="s"
+        orientation="horizontal"
+      />,
+    );
+    const entry = frame().layers.at(-1)!;
+    expect(
+      entry.layer.beginSweep!(
+        (v: number) => v,
+        (v: number) => v,
+      ),
+    ).toBeNull();
+    expect(entry.layer.sweepsRect).toBe(false);
+  });
+
   it('a layer with no sweep at all declares neither', () => {
     // `<LineChart>` has no discrete marks, so it never sweeps — and must not
     // claim a rect by omission being read as anything but "no".
@@ -264,6 +290,24 @@ describe('the resting brush takes its shape from the row', () => {
       (r) => Number(r.getAttribute('height')) === 120,
     );
     expect(band.length).toBeGreaterThan(0);
+  });
+
+  it('a horizontal heat map gets no cross either — nothing to preview', () => {
+    const { dom } = mountRow(
+      <HeatMap
+        series={grid()}
+        columns={['lo', 'hi']}
+        colors={['#eee', '#999']}
+        axis="a"
+        id="s"
+        orientation="horizontal"
+      />,
+      <MultiSelector />,
+    );
+    hover(dom, 60, 40);
+    // The pair to the scatter case above: same mounted selector, a layer
+    // that declares no rect, and therefore no `+`.
+    expect(lines(dom).filter((l) => !l.includes('→60,120'))).toHaveLength(0);
   });
 
   it('no <MultiSelector>, no cross — the row keeps its ordinary cursor', () => {

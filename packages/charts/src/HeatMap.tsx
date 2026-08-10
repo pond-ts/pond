@@ -429,9 +429,15 @@ export function HeatMap<
                * rectangle of cells, which in turn is why the region can carry
                * **one** perimeter rather than a border per cell.
                */
-              // A point/cell owns a position, not a column: the sweep is a rect, and
+              // A cell owns a position, not a column: the sweep is a rect, and
               // the resting cursor is the small crosshair rather than a band.
-              sweepsRect: true,
+              //
+              // Gated on exactly what `beginSweep` gates on. `sweepsRect` is
+              // read at REST, where there is no session to ask, so declaring
+              // it unconditionally made a HORIZONTAL heat map suppress its
+              // row's cursor and paint a resting `+` for a rect gesture that
+              // can never start — `beginSweep` returns `null` there.
+              sweepsRect: vertical && ss.length > 0 && G > 0,
               beginSweep: (): SweepSession | null => {
                 if (!vertical || ss.length === 0 || G === 0) return null;
                 /** The window's covering row-slot run, snapped outward. */

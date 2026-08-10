@@ -143,12 +143,35 @@ describe('sweep2D over a BINNED layer (the heat map shape)', () => {
             });
         return out;
       },
+      // The snapped rect the brush draws — and what the delta gate compares,
+      // so a sub-cell vertical move re-materialises nothing.
+      snap: (lo, hi, y0, y1) => {
+        const [g0, g1] = rowRun(y0, y1);
+        return g1 > g0
+          ? { x: [begin[lo]!, end[hi - 1]!] as const, y: [g0, g1] as const }
+          : null;
+      },
       channels: (_h, y0, y1) => {
         const [g0, g1] = rowRun(y0, y1);
         return { rows: rows.slice(g0, g1) };
       },
     });
   };
+
+  it('the delta gate holds for a SUB-CELL vertical move', () => {
+    // The gate compares the SNAPPED window. Comparing raw axis units would
+    // answer `true` for every pixel of vertical movement inside one row and
+    // re-materialise the whole covered set — the gate defeating itself, and
+    // exactly the A8.1 shape it exists to prevent.
+    const s = grid();
+    expect(s.update(0, 10, 0.2, 1.8)).toBe(true);
+    expect(s.update(0, 10, 0.3, 1.7)).toBe(false); // same rows 0..2
+    expect(s.update(0, 10, 0.9, 1.1)).toBe(false); // still rows 0..2
+    // …and it still notices a real row crossing. (Not '0.2 → 2.1': this grid
+    // has two rows, so that clamps to the same [0, 2) run — the mistake this
+    // comment exists to stop the next reader repeating.)
+    expect(s.update(0, 10, 1.2, 1.8)).toBe(true); // rows [1, 2)
+  });
 
   it('snaps a partial row window outward to whole slots', () => {
     const s = grid();

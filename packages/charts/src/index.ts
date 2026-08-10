@@ -172,7 +172,11 @@ export type {
   BandStyle,
   AreaStyle,
   ScatterStyle,
+  ScatterStates,
   BoxStyle,
+  BoxStates,
+  BoxLadder,
+  HeatStates,
   CandleStyle,
   BarStyle,
 } from './theme.js';

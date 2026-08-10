@@ -85,6 +85,31 @@ include new features and type-level changes; patch bumps are strictly additive.
   out, one that isn't goes in — with the demote as the extra step a span
   needs before it can lose a member.
 
+- **charts: `<ScatterChart>` and `<HeatMap>` index a large selection set
+  instead of scanning it** — the live-preview repaint on both goes from
+  seconds to milliseconds. `bars.ts` grew a per-draw set index at 16 entries
+  because a sweep preview puts the whole covered run in `hovered` and the
+  linear scan measured 6.2 s/frame at 100k; neither 2-D layer had the fix, and
+  a rect fills that set faster than a band can. Measured by the new
+  `scripts/perf-interact2d.mjs`:
+
+  | scenario                              | before  | after   |
+  | ------------------------------------- | ------- | ------- |
+  | scatter, 100k points, 10k covered     | 1424 ms | 13.2 ms |
+  | scatter, 100k points, 50k covered     | 4042 ms | 14.7 ms |
+  | heat map, 365×45, 2,783 cells covered | 2.64 ms | 1.01 ms |
+
+  Below the threshold nothing changes: a clicked handful still scans, and
+  still allocates nothing.
+
+- **charts: a selected segment of a group-ramped stack keeps its own colour.**
+  The outline and the receded neighbours are the cue — the same exclusion
+  `binFills` already gets, and for the same reason: replacing a
+  meaning-carrying colour with the flat `highlight` erases _which group_ is
+  selected, which is the thing the selection is about.
+
+### Added
+
 - **charts: a rect-sweeping row rests as a small crosshair** — the last piece
   of the 2-D brush. Under a mounted `<MultiSelector>`, a row whose topmost
   sweepable layer cuts a rect (a scatter, a heat map) shows a compact grey `+`
@@ -102,23 +127,6 @@ include new features and type-level changes; patch bumps are strictly additive.
   drag beside it captures a rect. New `RowLayer.sweepsRect` declares which
   shape a layer sweeps, so the resting cursor can ask without building a
   per-drag session.
-
-- **charts: `<ScatterChart>` and `<HeatMap>` index a large selection set
-  instead of scanning it** — the live-preview repaint on both goes from
-  seconds to milliseconds. `bars.ts` grew a per-draw set index at 16 entries
-  because a sweep preview puts the whole covered run in `hovered` and the
-  linear scan measured 6.2 s/frame at 100k; neither 2-D layer had the fix, and
-  a rect fills that set faster than a band can. Measured by the new
-  `scripts/perf-interact2d.mjs`:
-
-  | scenario                              | before  | after   |
-  | ------------------------------------- | ------- | ------- |
-  | scatter, 100k points, 10k covered     | 1424 ms | 13.2 ms |
-  | scatter, 100k points, 50k covered     | 4042 ms | 14.7 ms |
-  | heat map, 365×45, 2,783 cells covered | 2.64 ms | 1.01 ms |
-
-  Below the threshold nothing changes: a clicked handful still scans, and
-  still allocates nothing.
 
 - **charts: a heat map's selection is one outline around the region, not one
   per cell** — new optional `theme.heat` slot (`HeatStates`: `veil`,
@@ -182,14 +190,6 @@ onHover>`.
   The radii are px against the base `radius` and applied as the **ratio**
   between them, so a data-driven `radius` encoding still grows and shrinks
   proportionally instead of flattening to one size when a point goes live.
-
-- **charts: `defaultTheme`'s resting scatter point moves off cerulean
-  (`#0284c7`) to the shared teal `#2A9D8F`, at 9px.** Blue has to mean
-  _committed_, and a cerulean point going to selection blue is barely a
-  change — the rule the bar palette reached, now for the third time. The
-  `primary` / `secondary` roles keep the **line** roles' hues (that identity
-  is why they exist) and take the same states with their own hue brightened
-  for hover.
 
 - **charts: `<MultiSelector>` sweeps a 2-D rect on `<ScatterChart>` and
   `<HeatMap>`** ([PND-INTERACT2D]). Every other mark owns a column of the key
@@ -318,11 +318,15 @@ onHover>`.
   Resolution per group is unchanged apart from the new fallback:
   `colors` → a role named after the group → the ramp → `fill`.
 
-- **charts: a selected segment of a group-ramped stack keeps its own colour.**
-  The outline and the receded neighbours are the cue — the same exclusion
-  `binFills` already gets, and for the same reason: replacing a
-  meaning-carrying colour with the flat `highlight` erases _which group_ is
-  selected, which is the thing the selection is about.
+### Changed
+
+- **charts: `defaultTheme`'s resting scatter point moves off cerulean
+  (`#0284c7`) to the shared teal `#2A9D8F`, at 9px.** Blue has to mean
+  _committed_, and a cerulean point going to selection blue is barely a
+  change — the rule the bar palette reached, now for the third time. The
+  `primary` / `secondary` roles keep the **line** roles' hues (that identity
+  is why they exist) and take the same states with their own hue brightened
+  for hover.
 
 ### Changed
 

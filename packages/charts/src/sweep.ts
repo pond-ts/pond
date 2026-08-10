@@ -166,7 +166,9 @@ export function sweep2D(opts: {
    *   the same way.
    */
   readonly spanFrom: 'bins' | 'drag';
-  /** The marks in key-run `[lo, hi)` that also fall inside `[y0, y1]`. */
+  /** The marks in key-run `[lo, hi)` whose y falls in the **half-open**
+   *  `[y0, y1)` — the same rule `SpanSelection.y` tests, so the capture and
+   *  the committed descriptor agree on the boundary. */
   materialize(
     lo: number,
     hi: number,
@@ -229,7 +231,19 @@ export function sweep2D(opts: {
       while (lo > 0 && begin[lo - 1] === x0) lo -= 1;
       curX0 = x0;
       curX1 = x1;
-      const [ylo, yhi] = y0 <= y1 ? [y0, y1] : [y1, y0];
+      let [ylo, yhi] = y0 <= y1 ? [y0, y1] : [y1, y0];
+      // **Gate on the SNAPPED window.** A snapping layer's covered set only
+      // changes when the pointer crosses a row edge, so comparing raw axis
+      // units re-materialises the whole set on every sub-cell pixel of
+      // vertical movement — the delta gate defeating itself, and precisely
+      // the A8.1 shape this gate exists to prevent. Idempotent for the
+      // layers that snap (a row run snapped twice is the same run), and
+      // inert for the ones that do not.
+      const snapped = snap?.(lo, hi, ylo, yhi) ?? null;
+      if (snapped !== null) {
+        ylo = snapped.y[0];
+        yhi = snapped.y[1];
+      }
       if (lo === curLo && hi === curHi && ylo === curY0 && yhi === curY1) {
         return false;
       }

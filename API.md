@@ -368,6 +368,7 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 | `cssVarTheme`                  | `(base, resolve, opts?) → ChartTheme` — static CSS-custom-property overlay                   | `packages/charts/src/css-theme.ts`                     |
 | `useChartTheme`                | Hook: re-resolves on `data-theme`/`class` flips (MutationObserver)                           | `packages/charts/src/useChartTheme.ts`                 |
 | Style types                    | `LineStyle`, `AreaStyle`, `BandStyle`, `ScatterStyle`, `BarStyle`, `BoxStyle`, `CandleStyle` | `packages/charts/src/theme.ts`                         |
+| State types                    | `ScatterStates`, `BoxStates`, `BoxLadder`, `HeatStates` — the per-state sub-objects          | `packages/charts/src/theme.ts`                         |
 | Helper types                   | `ChartThemeOverrides`, `VarReader`, `UseChartThemeOptions`                                   | `packages/charts/src/css-theme.ts`, `useChartTheme.ts` |
 
 ### Live values, scales & key types
