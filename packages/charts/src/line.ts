@@ -311,3 +311,95 @@ export function sessionRuns(
   runs.push([start, length]);
   return runs;
 }
+
+/** How near the pointer must come to a trace's path to count as a hit, in px.
+ *  Generous on purpose: a 1.5px stroke is not a target anyone can hit, and a
+ *  trace has no fat mark to aim at the way a bar does. */
+export const TRACE_HIT_PX = 6;
+
+/**
+ * **Is the pointer on this trace?** Distance from `(px, py)` to the drawn
+ * polyline, in pixels, or `null` past the tolerance.
+ *
+ * Returns the **nearest sample's index** on a hit, purely as click provenance —
+ * the selection a trace commits is series-scoped ([PND-TRACESEL]), because a
+ * sample is not a mark. The index is what the readout can name, not what the
+ * selection is keyed on.
+ *
+ * The x cut is a binary search over `xScale(cs.x[i])` rather than an inverse:
+ * a layer's `hitTest` is handed the forward scale only, and a trading-time or
+ * band scale has no honest inverse anyway. Monotonic either way, so bisection
+ * holds. Then only the two segments either side of that index are measured —
+ * the pointer cannot be nearest to any other, so this is `O(log N)` and not a
+ * scan, which matters on a decimated million-point trace.
+ *
+ * Gaps are skipped: a segment with a non-finite end is not drawn, so it cannot
+ * be hit. That is the same rule `drawLine` paints by, and it is why clicking a
+ * dropout selects nothing rather than the bridge across it.
+ */
+export function traceHitIndex(
+  cs: ChartSeries,
+  px: number,
+  py: number,
+  xScale: Scale,
+  yScale: Scale,
+  tolerance = TRACE_HIT_PX,
+): number | null {
+  const n = cs.length;
+  if (n === 0) return null;
+  // Bisect to the first sample at or past the pointer's x.
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (xScale(cs.x[mid]!) < px) lo = mid + 1;
+    else hi = mid;
+  }
+  let best = Infinity;
+  let bestIdx: number | null = null;
+  // The pointer's nearest point on the path lies on one of the two segments
+  // touching `lo`, so `lo - 1 … lo + 1` bounds everything worth measuring.
+  for (let i = Math.max(0, lo - 1); i < Math.min(n - 1, lo + 1); i += 1) {
+    const ay = cs.y[i]!;
+    const by = cs.y[i + 1]!;
+    if (!Number.isFinite(ay) || !Number.isFinite(by)) continue;
+    const ax = xScale(cs.x[i]!);
+    const bx = xScale(cs.x[i + 1]!);
+    const d = pointSegmentDistance(px, py, ax, yScale(ay), bx, yScale(by));
+    if (d < best) {
+      best = d;
+      // Attribute to whichever END the pointer is nearer, so the provenance
+      // index is the sample a reader would say they clicked.
+      const da = Math.hypot(px - ax, py - yScale(ay));
+      const db = Math.hypot(px - bx, py - yScale(by));
+      bestIdx = da <= db ? i : i + 1;
+    }
+  }
+  // A single-sample trace draws no segment, so measure the point itself —
+  // otherwise a one-point series would be unhittable.
+  if (bestIdx === null && n === 1 && Number.isFinite(cs.y[0]!)) {
+    const d = Math.hypot(px - xScale(cs.x[0]!), py - yScale(cs.y[0]!));
+    if (d <= tolerance) return 0;
+    return null;
+  }
+  return best <= tolerance ? bestIdx : null;
+}
+
+/** Euclidean distance from a point to a line segment, in the same units. */
+function pointSegmentDistance(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  // A degenerate segment (both ends on one pixel) is a point.
+  if (lenSq === 0) return Math.hypot(px - ax, py - ay);
+  // Project onto the segment, clamped to its ends.
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}

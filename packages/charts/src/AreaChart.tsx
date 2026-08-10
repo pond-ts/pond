@@ -7,7 +7,8 @@ import {
   fromValueSeries,
 } from './data.js';
 import type { NumericColumn, ValueNumericColumn } from './column-names.js';
-import { areaExtent, drawArea } from './area.js';
+import { areaExtent, areaHitIndex, drawArea } from './area.js';
+import { sweepSpan } from './sweep.js';
 import type { DecimateOption } from './decimate.js';
 import { resolveCurve, type Curve } from './curve.js';
 import {
@@ -15,7 +16,13 @@ import {
   DEFAULT_GAP_CONNECTOR_OPACITY,
   type GapMode,
 } from './gaps.js';
-import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
+import {
+  ContainerContext,
+  LayersContext,
+  type LayerEntry,
+  type SelectInfo,
+  type SweepSession,
+} from './context.js';
 import {
   legendLabelFor,
   useLegendItems,
@@ -36,6 +43,17 @@ export interface AreaChartCommon<
    * single styling channel).
    */
   as?: string;
+  /**
+   * **Opt in to selection** — see `<LineChart id>`; the currency is identical
+   * because the premise is ([PND-TRACESEL]): a click commits a **series-scoped**
+   * `SelectInfo` (`NaN` key/value plus a stable `mark`), a sweep commits a
+   * `SpanSelection` with **no marks**.
+   *
+   * What differs is only the **hit test**: an area is a filled region, so the
+   * pointer counts as on it when it lies **between the trace and the
+   * baseline** — the whole shape is the target, not the 1.5px edge.
+   */
+  id?: string;
   /**
    * Which `<YAxis>` (by its `id`) this area scales against — picks the *scale*,
    * where `as` picks the *style*. **Omitted ⇒ the row's default axis.**
@@ -195,6 +213,7 @@ export function AreaChart<
   readout,
   as: semantic,
   axis,
+  id,
   baseline,
   curve,
   gaps = DEFAULT_GAP_MODE,
@@ -254,6 +273,35 @@ export function AreaChart<
         xKind: series instanceof ValueSeries ? 'value' : 'time',
         xExtent: () =>
           cs.length === 0 ? null : [cs.x[0]!, cs.x[cs.length - 1]!],
+        // ── Selection, gated on `id` ([PND-TRACESEL]). Same currency as
+        // `<LineChart>`; only `hitTest` differs, because a fill is not a stroke.
+        ...(id === undefined
+          ? {}
+          : {
+              sweepsRect: false,
+              sweepAxis: 'x' as const,
+              hitTest: (px, py, xScale, yScale): SelectInfo | null => {
+                const i = areaHitIndex(cs, baseline, px, py, xScale, yScale);
+                if (i === null) return null;
+                return {
+                  id,
+                  // Series-scoped, with a stable `mark` for identity — see
+                  // `<LineChart>`'s hitTest for why both halves are needed.
+                  key: NaN,
+                  value: NaN,
+                  color: style.fill,
+                  label,
+                  mark: label,
+                };
+              },
+              beginSweep: (): SweepSession | null =>
+                cs.length === 0
+                  ? null
+                  : sweepSpan({
+                      id,
+                      bounds: [cs.x[0]!, cs.x[cs.length - 1]!],
+                    }),
+            }),
         sampleAt: (x) => {
           // No readout past the data (tracker policy — nearest clamps to an
           // endpoint outside the span); bounds from the columnar x axis.
@@ -343,6 +391,7 @@ export function AreaChart<
       gapConnectorOpacity,
       decimate,
       axis,
+      id,
       index,
     ],
   );

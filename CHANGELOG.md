@@ -74,6 +74,18 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: `<LineChart id>` / `<AreaChart id>` — selection on a continuous
+  trace** ([PND-TRACESEL]), the last two columns of the selection matrix. A
+  trace has **no marks**, so the currency differs from every other layer and
+  does so deliberately: a **sweep** commits a `SpanSelection` with **no hits**
+  (the span _is_ the selection — a trace's samples are usually undrawn and
+  several fall per pixel, so take the span and slice your own series with it),
+  and a **click** commits a **series-scoped** `SelectInfo` — `key`/`value`
+  `NaN`, plus a stable `mark` so re-clicking deselects. The brush band is the
+  whole live preview, because there are no marks to light. An area is hit
+  through its **fill** (the whole shape is the target); a line within 6px of
+  its **stroke**. New `sweepSpan` session in the kernel; `sweepsRect: false`,
+  `sweepAxis: 'x'`.
 - **charts: keyboard parity on the list family.** Rows now navigate and select
   from the keyboard: **↑/↓** move focus, **Home/End** jump to the ends,
   **Enter/Space** select the focused row (carrying modifiers, so ⌘/Ctrl-Enter

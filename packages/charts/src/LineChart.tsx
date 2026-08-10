@@ -7,7 +7,8 @@ import {
   fromValueSeries,
 } from './data.js';
 import type { NumericColumn, ValueNumericColumn } from './column-names.js';
-import { drawLine, yExtent } from './line.js';
+import { drawLine, traceHitIndex, yExtent } from './line.js';
+import { sweepSpan } from './sweep.js';
 import type { DecimateOption } from './decimate.js';
 import { resolveCurve, type Curve } from './curve.js';
 import {
@@ -15,7 +16,13 @@ import {
   DEFAULT_GAP_CONNECTOR_OPACITY,
   type GapMode,
 } from './gaps.js';
-import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
+import {
+  ContainerContext,
+  LayersContext,
+  type LayerEntry,
+  type SelectInfo,
+  type SweepSession,
+} from './context.js';
 import {
   legendLabelFor,
   useLegendItems,
@@ -36,6 +43,23 @@ export interface LineChartCommon<
    * is what bred react-timeseries-charts' styling bugs; restyle via the theme).
    */
   as?: string;
+  /**
+   * **Opt in to selection** — the layer identity a `<Selector>` /
+   * `<MultiSelector>` reports and a `selected` entry names. **Omitted ⇒ the
+   * trace is inert**, exactly as every other layer's `id` gates it.
+   *
+   * A trace's selection is not shaped like a bar's, because **a trace has no
+   * marks** ([PND-TRACESEL]):
+   *
+   * - a **click** commits a **series-scoped** {@link SelectInfo} — `key` and
+   *   `value` are `NaN`, because no sample was selected, and a stable `mark`
+   *   carries the identity so the documented deselect-toggle works;
+   * - a **sweep** commits a {@link SpanSelection} with **no marks**. The span
+   *   _is_ the selection. A trace's samples are usually undrawn and there are
+   *   several per pixel, so "the samples you swept" is a set you never
+   *   expressed — take the span and slice your own series with it.
+   */
+  id?: string;
   /**
    * Which `<YAxis>` (by its `id`) this line scales against — picks the *scale*,
    * where `as` picks the *style* (separate concerns). **Omitted ⇒ the row's
@@ -153,6 +177,7 @@ export function LineChart<
   readout,
   as: semantic,
   axis,
+  id,
   curve,
   gaps = DEFAULT_GAP_MODE,
   sessionBreaks = false,
@@ -223,6 +248,43 @@ export function LineChart<
         xKind: series instanceof ValueSeries ? 'value' : 'time',
         xExtent: () =>
           cs.length === 0 ? null : [cs.x[0]!, cs.x[cs.length - 1]!],
+        // ── Selection, gated on `id` exactly as every other layer ([PND-TRACESEL]).
+        ...(id === undefined
+          ? {}
+          : {
+              // A trace is 1-D in x: the value axis says nothing about what a
+              // drag covered, so no rect and no y window.
+              sweepsRect: false,
+              sweepAxis: 'x' as const,
+              hitTest: (px, py, xScale, yScale): SelectInfo | null => {
+                const i = traceHitIndex(cs, px, py, xScale, yScale);
+                if (i === null) return null;
+                return {
+                  id,
+                  // **Series-scoped**: no sample was selected, because a
+                  // sample is not a mark. `NaN` is what that already means
+                  // (see `SelectInfo.key`), and the stable `mark` below is
+                  // what gives the entry an identity — `sameMark` prefers it
+                  // over `key`, so two clicks anywhere on the trace are the
+                  // same selection and re-clicking deselects. Without the
+                  // `mark` they never would: `NaN !== NaN`.
+                  key: NaN,
+                  value: NaN,
+                  color: style.color,
+                  label,
+                  mark: label,
+                };
+              },
+              beginSweep: (): SweepSession | null =>
+                cs.length === 0
+                  ? null
+                  : sweepSpan({
+                      id,
+                      // Clamped to the trace's own span, so a drag off the end
+                      // does not commit a range the series never covered.
+                      bounds: [cs.x[0]!, cs.x[cs.length - 1]!],
+                    }),
+            }),
         sampleAt: (x) => {
           // No readout past the data (tracker policy — nearest clamps to an
           // endpoint outside the span); bounds from the columnar x axis.
@@ -302,6 +364,7 @@ export function LineChart<
       sessionBreakInstants,
       decimate,
       axis,
+      id,
       index,
     ],
   );

@@ -554,14 +554,78 @@ milestone. Plan:
       extend, and that is worth settling _with_ the pointer gesture rather
       than after it.
 
-  - **`<LineChart>` and `<AreaChart>`** — a continuous trace has **no marks
-    to select**, which is why they have no `id` gate today and why
-    `LineChart.hitTest` still sits in `[PND-SELECT]` Phase 2. So "join the
-    matrix" is not yet a well-posed task for them: it needs a decision on
-    what a selection on a trace _is_ (the samples in an x range? the range
-    itself, as a `SpanSelection` with no marks? a point on the path?) before
-    any of the interaction surface applies. Do not treat these as the same
-    kind of gap as the list family.
+  - **`<LineChart>` and `<AreaChart>`** — **design settled 2026-08-10**, see
+    `[PND-TRACESEL]` below.
+
+- **[PND-TRACESEL]** — **Selection on a continuous trace** — `<LineChart>` /
+  `<AreaChart>`, the last two columns of the selection matrix. **Design settled
+  2026-08-10; the premise is that a trace has no marks, and every answer below
+  follows from taking that seriously rather than working around it.**
+  - **A sweep commits a `SpanSelection` with NO hits.** The span _is_ the
+    selection. Empty `hits` is not a shortfall: a trace's samples are not marks
+    (they are usually undrawn, and at any real density there are many per
+    pixel), so "the samples you swept" is a set the user never expressed.
+    Materialising them would also be exactly the **A8.1 cliff** — 100k
+    `SelectInfo`s per drag frame — and a consumer who wants them already has
+    the span and their own series, which is one `crop` in pond. **Deferred
+    alternative, considered and rejected:** hits as the covered samples, via
+    `sweep1D` with `begin === end` (scatter's point-layer shape). It is the
+    obvious move and it is the expensive one.
+  - **A click commits a series-scoped `SelectInfo`** — `key`/`value` `NaN`,
+    because no sample was selected, which is what that convention already
+    means. **And it carries a stable `mark`, which is the seam that makes this
+    work with no currency change at all:** `sameMark` checks `mark` _before_
+    falling back to `key`, so two clicks anywhere on the trace are the same
+    mark and the documented deselect-toggle policy works. Without a `mark` it
+    would not — `NaN !== NaN`, so `selectionContains` can never match a
+    series-scoped entry against itself. The `<Legend>` emits no `mark` and so
+    still "names no mark", exactly as its doc says; a trace opts in.
+  - **The visual state uses WEIGHT, not hue** — the channel rule again, and the
+    same answer `<Candlestick>` got. A line's **colour is its identity** (it is
+    how a reader tells one series from another), so state cannot live there.
+    `LineStyle` gains `selectedWidth` and `dimmedOpacity`; nothing else moves.
+  - **`sweepsRect: false`, `sweepAxis: 'x'`.** A trace is 1-D in x and the
+    value axis says nothing about what a drag covered.
+
+  **What this needs in the kernel:** a third session builder beside `sweep1D` /
+  `sweep2D` — one whose `extent()` is the drag window and whose `hits()` is
+  always empty. Small, and clearly earned rather than speculative: it is the
+  only shape that expresses "this layer has a range but no marks".
+
+  **Shipped 2026-08-10.** `sweepSpan` in the kernel, `traceHitIndex` (distance
+  to the drawn polyline, bisected then two segments — `O(log N)`, not a scan)
+  and `areaHitIndex` (inside the fill, edge interpolated so the boundary
+  follows the drawn slope). 27 tests, revert-verified on all three load-bearing
+  claims: dropping the stable `mark` reds the deselect test, measuring to the
+  nearest vertex instead of the segment reds three, and dropping the bounds
+  clamp reds two. Verified in the browser too — a sweep commits
+  `span mem [01-10 → 01-26)` with **0 marks**, and clicking one line then
+  clicking the same line at a **different x** deselects it, which is the whole
+  point of the `mark`.
+
+  **Two things found while building it, worth keeping:**
+  - **A `TimeSeries` cannot hold a gap in a number column** — NaN, `null` and
+    `undefined` are all rejected by validation. So a gap only ever reaches a
+    chart as NaN in the `Float64Array` an operator produced, and the gap cases
+    in both hit tests are pinned at the **unit** level against a raw
+    `ChartSeries` because that is the only honest place for them.
+  - **Topmost-wins reads worse on a trace than on a bar.** With two lines in a
+    row, a sweep commits a span on whichever layer is topmost (A8.4's
+    single-`id` resolution). For column marks that is fine — you were pointing
+    at marks. A trace sweep points at _nothing_, so "which trace did I sweep?"
+    has no pointer answer, and the choice is genuinely arbitrary to the reader.
+    Not a regression and not new machinery, but the trace case is where the
+    single-span limitation starts to show. **Revisit if a consumer hits it** —
+    plural spans is the fix, and it is a currency change.
+
+  **Still open:** the **visual state**. `LineStyle` has only `color`/`width`/
+  `dash`, so a selected or dimmed trace currently looks identical to a resting
+  one — selection you cannot see, which is the visual twin of the "inaudible
+  selection" mistake `[PND-A11Y]` records. The design is settled (weight, not
+  hue, because a line's colour is its identity): `LineStyle` wants
+  `selectedWidth` + `dimmedOpacity`. Deliberately not landed in the same pass —
+  it is a `defaultTheme` change and moves visual baselines, so it belongs in
+  its own commit with the baseline regeneration.
 
 - **[PND-CURSORAPI]** — **Publish the cursor contract** (RFC Q3), under A7.1's
   litmus rather than by argument: every built-in **and** SpiderRock's gapped
