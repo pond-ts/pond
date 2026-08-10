@@ -684,8 +684,8 @@ milestone. Plan:
   were framed as compatibility questions without checking the tag.) Shipped as
   #635, and its own fresh-eyes review caught two more things: two duplicate
   JSDoc blocks left after the migration (one documented the removed `span:
-  null` contract verbatim), and an ordering test that had gone tautological —
-  it compared `spans[0]` to a field the test harness *derived* from `spans[0]`,
+null` contract verbatim), and an ordering test that had gone tautological —
+  it compared `spans[0]` to a field the test harness _derived_ from `spans[0]`,
   so it could never fail. Both fixed before merge (`866fb06`).
 
   **The docs pass.** One page rewritten (`selection-and-hover.mdx` was making
@@ -721,6 +721,48 @@ milestone. Plan:
 
   Docs-build CI does **not** typecheck MDX code blocks — every snippet above
   was checked by hand against the actual exported types, not trusted to CI.
+
+- **[PND-INTERACTOWN]** — **`<Selector>` wraps its scope and owns its state.**
+  Owner feedback on reading the docs pages, 2026-08-10. **Shipped 2026-08-10**
+  (PR #638). `<ChartContainer selected>` / `hovered` / `onSelect` / `onHover`
+  removed outright — no shim, pre-1.0 — and moved onto `<Selector>` /
+  `<MultiSelector>`, which also gained `children` (they wrap their scope) and
+  `enabled` (default `true`; `false` kills the gesture but keeps the state).
+  **This reverses A1.2, accepted two days earlier**, and the reversal's argument
+  is that §7.1 already required mounting a selector, so the common chart wired
+  one concept in two places. Full write-up: `docs/rfcs/interaction.md`
+  Amendment 10.
+
+  **The reviews are the interesting record here**, because the design change was
+  the easy part and the React plumbing was not:
+  - Moving controlled state onto a child means it reaches the container by
+    **registration**, not by prop — so the container's state is now driven by a
+    descendant's effect. Two consequences, both found by review rather than by
+    tests: a passive effect made it a **commit late** (stale paint on change,
+    unselected flash on mount), and a passive _cleanup_ against a layout
+    _register_ left a removed selector owning state for one commit and let a
+    keyed remount hand out the old value. Both halves are `useLayoutEffect` now,
+    and the symmetry is the point.
+  - The entry carries the controlled values, so an inline `selected={[hit]}`
+    mints a fresh entry every render. Harmless alone — a container-only update
+    doesn't re-run the caller's JSX — but a **descendant that consumes the
+    container context** (`useChartLegend()`) does, giving registry update →
+    context change → re-render → re-register, unbounded. Fixed by value-equality
+    in `registerSelector`, the same guard `registerAxis`/`axisSpecEqual` has
+    carried for the same reason.
+  - Giving a component `children` made it a **wrapper**, and wrappers defeat
+    both index-injection sites: inside `<ChartRow>` an axis nested in one is
+    invisible to the `child.type === YAxis` sort (renders mid-row), and inside
+    `<Layers>` a draw layer nested in one loses its z-order index. Same class as
+    the fragment trap `[PND-TRACESEL]` records, with a cause the fragment guard
+    structurally cannot see. Both sites warn now.
+
+  **Left open, deliberately:** `enabled` is all-or-nothing and cannot express
+  "hover yes, click no" — a real gap named in review, recorded rather than
+  patched with a second prop. And the layout-vs-passive cleanup fix is **not
+  test-pinned**: the difference is paint timing and jsdom paints nothing, so it
+  rests on React's documented phase semantics. Worth knowing if it is ever
+  refactored.
 
 - **[PND-TRACECYCLE]** — **Hotkeys to cycle which series a window selects.**
   Owner idea, 2026-08-10: `all → series1 → series2 → all`, with a hotkey to

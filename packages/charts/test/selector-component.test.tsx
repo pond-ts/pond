@@ -1,4 +1,4 @@
-import { useContext, useEffect } from 'react';
+import { StrictMode, useContext, useEffect } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { ChartContainer } from '../src/ChartContainer.js';
@@ -428,5 +428,184 @@ describe('resolving the controlled-state owner (A10.3)', () => {
     );
     expect(frame().selected[0]!.mark).toBe('alpha');
     expect(frame().hovered[0]!.mark).toBe('beta');
+  });
+});
+
+/**
+ * The cases the Codex pass on #638 found uncovered — and which turned out to
+ * be exactly where the two High-severity bugs were hiding. All three are
+ * revert-verified against the fixes they pin.
+ */
+describe('registry lifecycle and reference churn (Codex findings, #638)', () => {
+  const mk = (label: string, value: number): SelectInfo => ({
+    id: 'cap',
+    key: 0,
+    value,
+    color: '#000',
+    label,
+    mark: label,
+  });
+
+  it('a fresh `selected` array with equal contents does not churn the registry', () => {
+    // The loop's first link: an inline `selected={[…]}` mints a new reference
+    // every render, so a reference-only register guard updates the registry
+    // every time. `selectorEntryEqual` compares by VALUE, so a re-render with
+    // an equal selection must leave the frame's identity alone — that identity
+    // holding is what stops a context-consuming descendant from spinning.
+    const seen: unknown[] = [];
+    function Probe() {
+      const c = useContext(ContainerContext);
+      if (c) seen.push(c.selected);
+      return null;
+    }
+    const stub = stubCanvasContext();
+    const tree = () => (
+      <ChartContainer width={300}>
+        {/* a NEW array literal every render, same contents */}
+        <Selector enabled={false} selected={[mk('alpha', 3)]}>
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={4} label="" />
+            <Layers>
+              <BarChart categories={categories} id="cap" />
+            </Layers>
+          </ChartRow>
+        </Selector>
+        <Probe />
+      </ChartContainer>
+    );
+    let rerender: (ui: React.ReactElement) => void;
+    try {
+      ({ rerender } = render(tree()));
+      seen.length = 0;
+      rerender(tree());
+      rerender(tree());
+    } finally {
+      stub.restore();
+    }
+    // Every observation after the settled first render is the same array
+    // identity — no registry update, so nothing for a descendant to react to.
+    const distinct = new Set(seen);
+    expect(distinct.size).toBe(1);
+    expect([...distinct][0]).toHaveLength(1);
+  });
+
+  it('a changed `selected` value still propagates', () => {
+    // The other half — the guard must not be so eager that a real change is
+    // swallowed. Without this, "no churn" could pass by never updating at all.
+    const stub = stubCanvasContext();
+    let frame: ContainerFrame | null = null;
+    function Probe() {
+      const c = useContext(ContainerContext);
+      useEffect(() => {
+        if (c) frame = c;
+      });
+      return null;
+    }
+    const tree = (label: string) => (
+      <ChartContainer width={300}>
+        <Selector enabled={false} selected={[mk(label, 3)]}>
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={4} label="" />
+            <Layers>
+              <BarChart categories={categories} id="cap" />
+            </Layers>
+          </ChartRow>
+        </Selector>
+        <Probe />
+      </ChartContainer>
+    );
+    try {
+      const { rerender } = render(tree('alpha'));
+      expect(frame!.selected[0]!.mark).toBe('alpha');
+      rerender(tree('beta'));
+      expect(frame!.selected[0]!.mark).toBe('beta');
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('unmounting the owner returns the chart to uncontrolled', () => {
+    // **Scope note, because this test is weaker than it looks:** it pins that
+    // removal takes effect, but it does NOT distinguish layout cleanup from
+    // passive cleanup — reverting `unregisterSelector` to `useEffect` leaves it
+    // green. The difference the Codex finding names is *paint* timing (a layout
+    // cleanup runs before paint, a passive one after), and jsdom paints
+    // nothing, so no assertion here can see it. The fix rests on documented
+    // React phase semantics plus the symmetry argument, not on this test.
+    const stub = stubCanvasContext();
+    let frame: ContainerFrame | null = null;
+    function Probe() {
+      const c = useContext(ContainerContext);
+      useEffect(() => {
+        if (c) frame = c;
+      });
+      return null;
+    }
+    const row = (
+      <ChartRow height={100}>
+        <YAxis id="a" min={0} max={4} label="" />
+        <Layers>
+          <BarChart categories={categories} id="cap" />
+        </Layers>
+      </ChartRow>
+    );
+    const tree = (mounted: boolean) => (
+      <ChartContainer width={300}>
+        {mounted ? (
+          <Selector enabled={false} selected={[mk('alpha', 3)]}>
+            {row}
+          </Selector>
+        ) : (
+          row
+        )}
+        <Probe />
+      </ChartContainer>
+    );
+    try {
+      const { rerender } = render(tree(true));
+      expect(frame!.selected).toHaveLength(1);
+      rerender(tree(false));
+      // Uncontrolled again the moment the owner leaves — not one frame later.
+      expect(frame!.selected).toEqual([]);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('survives StrictMode double-invocation without losing its owner', () => {
+    // StrictMode mounts, tears down, and remounts effects. With layout
+    // register + passive unregister that sequence could leave the Map holding
+    // a dead entry ahead of the live one, and "first registered wins" would
+    // hand out the stale value.
+    const stub = stubCanvasContext();
+    let frame: ContainerFrame | null = null;
+    function Probe() {
+      const c = useContext(ContainerContext);
+      useEffect(() => {
+        if (c) frame = c;
+      });
+      return null;
+    }
+    try {
+      render(
+        <StrictMode>
+          <ChartContainer width={300}>
+            <Selector enabled={false} selected={[mk('alpha', 3)]}>
+              <ChartRow height={100}>
+                <YAxis id="a" min={0} max={4} label="" />
+                <Layers>
+                  <BarChart categories={categories} id="cap" />
+                </Layers>
+              </ChartRow>
+            </Selector>
+            <Probe />
+          </ChartContainer>
+        </StrictMode>,
+      );
+    } finally {
+      stub.restore();
+    }
+    expect(frame!.selected).toHaveLength(1);
+    expect(frame!.selected[0]!.mark).toBe('alpha');
   });
 });

@@ -8,6 +8,7 @@ import {
 } from 'react';
 import type { Sequence, BoundedSequence } from 'pond-ts';
 import { isDev } from './dev.js';
+import { isSpanSelection } from './span.js';
 import {
   ContainerContext,
   RowContext,
@@ -176,7 +177,18 @@ function useSelectorMount(opts: SelectorMountOptions): void {
   useLayoutEffect(() => {
     registerSelector(key, entry);
   }, [registerSelector, key, entry]);
-  useEffect(() => () => unregisterSelector(key), [unregisterSelector, key]);
+  // Unregistration is a LAYOUT cleanup too, and the symmetry is load-bearing.
+  // With a passive cleanup the two halves ran in different phases, so removing
+  // a selector left its entry in the registry for one commit — the container
+  // drew once from a dead owner — and a keyed remount registered the new owner
+  // (layout) *before* the old one was dropped (passive), which put both in the
+  // Map at once and let "first registered wins" hand the old value out until
+  // cleanup caught up. Fixing the read path (above) without fixing the teardown
+  // just moved the stale window. (Codex finding on #638.)
+  useLayoutEffect(
+    () => () => unregisterSelector(key),
+    [unregisterSelector, key],
+  );
 }
 
 export interface SelectorProps {
@@ -266,9 +278,14 @@ export interface SelectorProps {
 /**
  * Mount it to make the plot **click-selectable** (RFC §7.1) and to hold the
  * selection state that produces — wrap every `<ChartRow>` as a direct child of
- * `<ChartContainer>`, or wrap one row's **`<Layers>`** to scope both the
- * gesture and the state to that row (interaction RFC A10.1; see
- * {@link SelectorProps.children} for why the axes stay outside).
+ * `<ChartContainer>`, or wrap one row's **`<Layers>`** to scope the *gesture*
+ * to that row (interaction RFC A10.1; see {@link SelectorProps.children} for
+ * why the axes stay outside).
+ *
+ * **Placement scopes the gesture, not the state.** A {@link SelectInfo} names a
+ * *layer*, not a row, so `selected` / `hovered` apply chart-wide wherever this
+ * sits — one selector should own each per chart (first registered wins, dev
+ * warns otherwise).
  *
  * ```tsx
  * <ChartContainer>
@@ -457,6 +474,103 @@ export function MultiSelector({
     hovered,
   });
   return <>{children}</>;
+}
+
+/** One controlled entry — a mark or a span — compared by the fields that carry
+ *  its identity, so a freshly-built object literal equals the one it replaces. */
+function entryValueEqual(a: SelectionEntry, b: SelectionEntry): boolean {
+  if (a === b) return true;
+  const aSpan = isSpanSelection(a);
+  if (aSpan !== isSpanSelection(b)) return false;
+  if (aSpan) {
+    const x = a as SpanSelection;
+    const y = b as SpanSelection;
+    if (x.id !== y.id) return false;
+    if (x.x[0] !== y.x[0] || x.x[1] !== y.x[1]) return false;
+    if ((x.y === undefined) !== (y.y === undefined)) return false;
+    if (x.y && y.y && (x.y[0] !== y.y[0] || x.y[1] !== y.y[1])) return false;
+    if ((x.rows === undefined) !== (y.rows === undefined)) return false;
+    if (x.rows && y.rows) {
+      if (x.rows.length !== y.rows.length) return false;
+      for (let i = 0; i < x.rows.length; i += 1)
+        if (x.rows[i] !== y.rows[i]) return false;
+    }
+    return true;
+  }
+  const m = a as SelectInfo;
+  const n = b as SelectInfo;
+  return (
+    m.id === n.id &&
+    Object.is(m.key, n.key) &&
+    Object.is(m.value, n.value) &&
+    m.label === n.label &&
+    m.mark === n.mark &&
+    m.color === n.color
+  );
+}
+
+/** Value-equality for a controlled `selected` / `hovered`, over all three of
+ *  its accepted shapes (a single mark, a set, or nothing). */
+function controlledValueEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || a === undefined || b === null || b === undefined)
+    return false;
+  const aArr = Array.isArray(a);
+  if (aArr !== Array.isArray(b)) return false;
+  if (!aArr) return entryValueEqual(a as SelectionEntry, b as SelectionEntry);
+  const x = a as readonly SelectionEntry[];
+  const y = b as readonly SelectionEntry[];
+  if (x.length !== y.length) return false;
+  for (let i = 0; i < x.length; i += 1)
+    if (!entryValueEqual(x[i]!, y[i]!)) return false;
+  return true;
+}
+
+/**
+ * **Value-equality for a registered selector — the guard that stops a
+ * controlled selection from looping.** `registerSelector` must no-op when the
+ * incoming entry is value-equal to the stored one, exactly as `registerAxis`
+ * does via `axisSpecEqual` (`ChartRow.tsx`), and for the same reason spelled
+ * out there: register → `setState` → re-render → register is a
+ * "Maximum update depth exceeded" spin.
+ *
+ * A10.3 made this guard load-bearing rather than defensive. The entry now
+ * carries the controlled *values*, and a consumer writing
+ * `selected={[hit]}` — or `selected={[{ id, key, … }]}` — mints a fresh
+ * reference every render. On its own that is survivable, because a
+ * container-only state update does not re-run the consumer's JSX. **But a
+ * descendant that consumes the container context and renders that inline
+ * array does re-run** — `useChartLegend()` is a supported example — so the
+ * chain became: registry update → new frame → context change → descendant
+ * re-render → fresh array → register → registry update, without end. Compare
+ * by value and the cycle closes on the first iteration. (Codex finding on
+ * #638; the reference-only guard it replaces was mine.)
+ *
+ * Cost: the common case is a stable array from `useState`, which hits the
+ * reference fast path. A fresh array costs one element-wise pass with no
+ * allocation, which is the right trade against an unbounded render loop.
+ */
+export function selectorEntryEqual(
+  a: SelectorEntry,
+  b: SelectorEntry,
+): boolean {
+  if (a === b) return true;
+  return (
+    a.rowKey === b.rowKey &&
+    a.multi === b.multi &&
+    a.gestureEnabled === b.gestureEnabled &&
+    a.sequence === b.sequence &&
+    a.declaresSelected === b.declaresSelected &&
+    a.declaresHovered === b.declaresHovered &&
+    // The callbacks are stable wrappers over a ref, so their *presence* is
+    // what can change, and presence is what the entry is memoized on.
+    (a.onSelect === undefined) === (b.onSelect === undefined) &&
+    (a.onHover === undefined) === (b.onHover === undefined) &&
+    (a.onSelectMany === undefined) === (b.onSelectMany === undefined) &&
+    (a.onHoverMany === undefined) === (b.onHoverMany === undefined) &&
+    controlledValueEqual(a.selected, b.selected) &&
+    controlledValueEqual(a.hovered, b.hovered)
+  );
 }
 
 /**

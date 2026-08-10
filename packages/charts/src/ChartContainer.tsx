@@ -49,6 +49,7 @@ import {
   effectiveSelectorEntries,
   resolveControlledHovered,
   resolveControlledSelected,
+  selectorEntryEqual,
   warnInertClick,
 } from './selectors.js';
 import { isDev } from './dev.js';
@@ -851,9 +852,18 @@ export function ChartContainer({
     ReadonlyMap<symbol, SelectorEntry>
   >(() => new Map());
   const registerSelector = useCallback((key: symbol, entry: SelectorEntry) => {
-    setSelectorMap((m) =>
-      m.get(key) === entry ? m : new Map(m).set(key, entry),
-    );
+    setSelectorMap((m) => {
+      // **Value-equal, not reference-equal.** Since A10.3 the entry carries the
+      // controlled `selected`/`hovered`, so a consumer's inline array mints a
+      // fresh entry every render; a reference-only guard then updates the
+      // registry every time, and any descendant that reads the container
+      // context (`useChartLegend()`) re-renders, rebuilds the array, and
+      // re-registers — an unbounded loop. Same guard, same reason, as
+      // `registerAxis`/`axisSpecEqual` in `ChartRow.tsx`.
+      const prev = m.get(key);
+      if (prev !== undefined && selectorEntryEqual(prev, entry)) return m;
+      return new Map(m).set(key, entry);
+    });
   }, []);
   const unregisterSelector = useCallback((key: symbol) => {
     setSelectorMap((m) => {

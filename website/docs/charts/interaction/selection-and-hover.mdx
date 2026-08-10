@@ -46,7 +46,13 @@ just because a layer happened to be given an `id`.
 
 **2. It wraps what it applies to.** Mount it as a direct child of
 `<ChartContainer>` to enable every row, or inside one `<ChartRow>` to scope the
-gesture (and the state) to just that row.
+**gesture** to just that row — wrapping that row's `<Layers>`, so each
+`<YAxis>` stays a direct child of the `<ChartRow>`.
+
+Note the asymmetry: **placement scopes the gesture, not the state.** A
+`SelectInfo` names a _layer_, not a row, so `selected` / `hovered` apply
+chart-wide wherever the selector sits. One selector should own each of them per
+chart; if two declare the same one, the first registered wins and dev warns.
 
 Want controlled highlighting from _outside_ the chart — a legend chip, an
 external filter list — with the plot deliberately inert on click? Mount
