@@ -21,6 +21,7 @@ import {
   type ListSeriesSource,
 } from './list-source.js';
 import { ListTable, listInk } from './ListTable.js';
+import type { SelectModifiers } from './context.js';
 import { defaultTheme, type BoxStyle, type ChartTheme } from './theme.js';
 
 /** The props both BoxList source doors share. */
@@ -61,10 +62,64 @@ export interface BoxListCommon<R extends ListRow = ListRow> {
   defaultExpanded?: readonly string[];
   /** Observe a toggle (`expanded` is the row's new state). */
   onExpandToggle?: (key: string, expanded: boolean) => void;
-  /** The selected row's `key` (inset accent edge). Pair with `onRowClick`. */
-  selected?: string | null;
+  /**
+   * The selected row(s), marked with an inset edge in the annotation (marks)
+   * register — selection is a user's mark, not data. Consumer-owned state:
+   * pair with {@link onRowClick}. `null` / omitted ⇒ none.
+   *
+   * **Accepts one key or a set**, the same union {@link hovered} takes
+   * ([PND-INTERACTCONF] / RFC `interaction.md` A3.1 — the list family speaks
+   * the canvas's interaction vocabulary, not a parallel one). Plural because
+   * a range of rows can be selected at once; passing a bare key still means
+   * exactly what it looks like.
+   *
+   * The library applies **no set arithmetic** — it renders what you hand back.
+   */
+  selected?: string | readonly string[] | null;
   /** Row click (also gates the pointer affordance). */
   onRowClick?: (row: R) => void;
+  /**
+   * **Plural select** — the list's answer to `<MultiSelector>`, and how a user
+   * produces a multi-row {@link selected}.
+   *
+   * Fires with the rows the gesture took plus its modifiers:
+   *
+   * - a **click** reports `[row]` — so this is a strict *superset* of
+   *   {@link onRowClick}, the way `<MultiSelector>` is of `<Selector>`;
+   * - a **drag across rows** reports the whole inclusive run, in display
+   *   order.
+   *
+   * **Mounting it is what enables the drag** (interaction RFC A4.2 rule 1 —
+   * the same rule that makes a bare `<MultiSelector />` enable the canvas
+   * sweep). A list with only `onRowClick` behaves exactly as it always has.
+   *
+   * **Crossing into another row is what makes it a range**, not a pixel slop:
+   * a row is tall and discrete, so a press-and-release on one row is always a
+   * click, and a horizontal wobble — which on a stack of rows means nothing —
+   * can never commit one. While the drag runs, the covered rows light as
+   * *hovered*: that is the live preview of what releasing would take, and it
+   * out-ranks {@link hovered} for the duration without touching it.
+   *
+   * **The library holds no state and applies no set arithmetic.** You get the
+   * run and the modifiers; you decide whether to replace or union, and feed
+   * the result back through {@link selected}:
+   *
+   * ```tsx
+   * onRowSelect={(rows, m) =>
+   *   setSel((cur) => {
+   *     const keys = rows.map((r) => r.key);
+   *     return m.additive ? [...new Set([...cur, ...keys])] : keys;
+   *   })
+   * }
+   * ```
+   *
+   * `modifiers.additive` is the platform-idiomatic add chord already resolved
+   * (⌘ on macOS, Ctrl elsewhere). **`shiftKey` is reported but carries no
+   * built-in meaning** — an ordinal range is a gesture here, not a modifier
+   * (see `SelectModifiers`), so a shift-click extend is yours to define if you
+   * want one.
+   */
+  onRowSelect?: (rows: readonly R[], modifiers: SelectModifiers) => void;
   /**
    * Controlled **hover-highlight** — the lit row key(s), or `null`; **omitted
    * ⇒ uncontrolled**. Accepts one key or a set, the same union
@@ -172,6 +227,7 @@ export function BoxList<
     onExpandToggle,
     selected,
     onRowClick,
+    onRowSelect,
     hovered,
     onHover,
     markers,
@@ -241,15 +297,17 @@ export function BoxList<
       onExpandToggle={onExpandToggle}
       selected={selected}
       onRowClick={onRowClick}
+      onRowSelect={onRowSelect}
       hovered={hovered}
       onHover={onHover}
       divided={divided}
       baseline={baseline}
       theme={theme}
-      renderGlyphs={(row) => (
+      renderGlyphs={(row, state) => (
         <>
           {columns.map((col, ci) => (
             <BoxLine
+              dimmed={state.dimmed}
               // Index-qualified so two lines over the same quantile names
               // (say, styled differently) never collide.
               key={`${ci} ${col.lower} ${col.upper}`}
@@ -277,6 +335,7 @@ function BoxLine<R extends ListRow>({
   style,
   ink,
   fontSize,
+  dimmed,
 }: {
   row: R;
   col: BoxListColumn;
@@ -285,6 +344,8 @@ function BoxLine<R extends ListRow>({
   style: BoxStyle;
   ink: string;
   fontSize: number;
+  /** Something else is selected — recede this row's marks. */
+  dimmed: boolean;
 }) {
   const at = (name: string | undefined) =>
     name === undefined ? null : listFraction(row.values[name], scale);
@@ -301,6 +362,21 @@ function BoxLine<R extends ListRow>({
       : null;
 
   const pct = (f: number) => `${f * 100}%`;
+  /**
+   * The dim multiplier for this line's **marks** — body, median, tick.
+   *
+   * Not the range band below it: that is the row's *scale*, the thing that
+   * makes one row comparable with the next, and receding it alongside the
+   * marks is exactly the mistake `ChartTheme.list`'s track rule names. It is
+   * the box list's track.
+   *
+   * **Selection is deliberately absent here.** Rule 2 is that band + rail
+   * read as selected with no help from the fill, and a box has four inks
+   * (whisker, body, median, tick) rather than the one a bar has — "the fill
+   * goes blue" has no single referent. So a selected box row is signalled by
+   * its chrome alone, which the rule says is sufficient by design.
+   */
+  const dim = dimmed ? 0.32 : 1;
   // The row keeps its slot height even when everything is missing — a gap
   // reads as an empty line, not a collapsed row.
   return (
@@ -333,7 +409,7 @@ function BoxLine<R extends ListRow>({
             left: pct(q1),
             width: pct(Math.max(q3 - q1, 0)),
             background: style.fill,
-            opacity: Math.min(style.fillOpacity * 2, 1),
+            opacity: Math.min(style.fillOpacity * 2, 1) * dim,
             borderRadius: 1,
           }}
         />
@@ -348,6 +424,7 @@ function BoxLine<R extends ListRow>({
             left: `calc(${pct(med)} - ${style.medianWidth / 2}px)`,
             width: style.medianWidth,
             background: style.median,
+            opacity: dim,
           }}
         />
       )}
@@ -363,6 +440,7 @@ function BoxLine<R extends ListRow>({
               width: 3,
               background: style.stroke,
               borderRadius: 1,
+              opacity: dim,
             }}
           />
           {label !== null && (

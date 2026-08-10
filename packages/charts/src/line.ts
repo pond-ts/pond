@@ -311,3 +311,371 @@ export function sessionRuns(
   runs.push([start, length]);
   return runs;
 }
+
+/** How near the pointer must come to a trace's path to count as a hit, in px.
+ *  Generous on purpose: a 1.5px stroke is not a target anyone can hit, and a
+ *  trace has no fat mark to aim at the way a bar does. */
+export const TRACE_HIT_PX = 6;
+
+/**
+ * **Is the pointer on this trace?** Distance from `(px, py)` to the drawn
+ * polyline, in pixels, or `null` past the tolerance.
+ *
+ * Returns the **nearest sample's index** on a hit, purely as click provenance —
+ * the selection a trace commits is series-scoped ([PND-TRACESEL]), because a
+ * sample is not a mark. The index is what the readout can name, not what the
+ * selection is keyed on.
+ *
+ * The x cut is a binary search over `xScale(cs.x[i])` rather than an inverse:
+ * a layer's `hitTest` is handed the forward scale only, and a trading-time or
+ * band scale has no honest inverse anyway. Monotonic either way, so bisection
+ * holds. Then only the two segments either side of that index are measured —
+ * the pointer cannot be nearest to any other, so this is `O(log N)` and not a
+ * scan, which matters on a decimated million-point trace.
+ *
+ * Gaps are skipped: a segment with a non-finite end is not drawn, so it cannot
+ * be hit. That is the same rule `drawLine` paints by, and it is why clicking a
+ * dropout selects nothing rather than the bridge across it.
+ */
+export function traceHitIndex(
+  cs: ChartSeries,
+  px: number,
+  py: number,
+  xScale: Scale,
+  yScale: Scale,
+  tolerance = TRACE_HIT_PX,
+): number | null {
+  const n = cs.length;
+  if (n === 0) return null;
+  // Bisect to the first sample at or past the pointer's x.
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (xScale(cs.x[mid]!) < px) lo = mid + 1;
+    else hi = mid;
+  }
+  let best = Infinity;
+  let bestIdx: number | null = null;
+  // The pointer's nearest point on the path lies on one of the two segments
+  // touching `lo`, so `lo - 1 … lo + 1` bounds everything worth measuring.
+  // The segments touching `lo` are `[lo-1, lo]` and `[lo, lo+1]`, so the
+  // indices to measure are `lo-1` and `lo` — inclusive of `lo`. The previous
+  // exclusive bound `< min(n-1, lo+1)` collapsed to an empty range when the
+  // pointer sat past the last sample (`lo === n`), so a within-tolerance click
+  // off the right end missed while the left-end mirror worked (reviewer find).
+  for (let i = Math.max(0, lo - 1); i <= Math.min(n - 2, lo); i += 1) {
+    const ay = cs.y[i]!;
+    const by = cs.y[i + 1]!;
+    if (!Number.isFinite(ay) || !Number.isFinite(by)) continue;
+    const ax = xScale(cs.x[i]!);
+    const bx = xScale(cs.x[i + 1]!);
+    const d = pointSegmentDistance(px, py, ax, yScale(ay), bx, yScale(by));
+    if (d < best) {
+      best = d;
+      // Attribute to whichever END the pointer is nearer, so the provenance
+      // index is the sample a reader would say they clicked.
+      const da = Math.hypot(px - ax, py - yScale(ay));
+      const db = Math.hypot(px - bx, py - yScale(by));
+      bestIdx = da <= db ? i : i + 1;
+    }
+  }
+  // A single-sample trace draws no segment, so measure the point itself —
+  // otherwise a one-point series would be unhittable.
+  if (bestIdx === null && n === 1 && Number.isFinite(cs.y[0]!)) {
+    const d = Math.hypot(px - xScale(cs.x[0]!), py - yScale(cs.y[0]!));
+    if (d <= tolerance) return 0;
+    return null;
+  }
+  return best <= tolerance ? bestIdx : null;
+}
+
+/** Euclidean distance from a point to a line segment, in the same units. */
+function pointSegmentDistance(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  // A degenerate segment (both ends on one pixel) is a point.
+  if (lenSq === 0) return Math.hypot(px - ax, py - ay);
+  // Project onto the segment, clamped to its ends.
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+/**
+ * The **interaction state** a trace draws in, resolved from the selection
+ * ([PND-TRACESEL]).
+ *
+ * - `'rest'` — nothing selected anywhere, or this trace is what's selected and
+ *   nothing needs emphasis beyond its own.
+ * - `'selected'` — this series is the selected one: thicken it.
+ * - `'hover'` — transient echo of `selected`.
+ * - `'dimmed'` — something *else* is selected: recede, hue intact.
+ */
+export type TraceState = 'rest' | 'selected' | 'hover' | 'dimmed';
+
+/**
+ * The style a trace strokes with in a given state — weight and alpha only, so a
+ * muted or emphasised line still reads as *which* series it is
+ * (`LineStyle.selectedWidth`'s doc has the argument).
+ *
+ * Returned as a `[style, alpha]` pair rather than folded into the style,
+ * because alpha belongs to the canvas' `globalAlpha` and not to a stroke
+ * colour: baking it into the colour would lose the hue on a themed line that
+ * already carries an alpha of its own.
+ */
+export function traceStateStyle(
+  style: LineStyle,
+  state: TraceState,
+): readonly [LineStyle, number] {
+  const selected = style.selectedWidth ?? style.width * 2;
+  switch (state) {
+    case 'selected':
+      return [{ ...style, width: selected }, 1];
+    case 'hover':
+      return [{ ...style, width: style.hoverWidth ?? selected }, 1];
+    case 'dimmed':
+      return [style, style.dimmedOpacity ?? 0.32];
+    case 'rest':
+      return [style, 1];
+  }
+}
+
+/**
+ * Run `draw` twice to paint a trace **partitioned by a swept window**: the
+ * whole trace in `outside`, then the same trace again in `inside`, **clipped to
+ * the window's pixel band**.
+ *
+ * Clipping rather than slicing the series, and that is the load-bearing choice.
+ * Slicing would have to re-cull, re-decimate and re-split each piece — three
+ * cache misses and three chances for the seam to disagree with itself, and the
+ * decimated polyline's bucket edges would not line up with the window's, so
+ * the boundary would visibly jitter as the drag moved. Clipping strokes the
+ * *identical* geometry twice and lets the rasteriser cut it, so the seam is
+ * exact by construction and both passes hit the same decimation cache entry.
+ *
+ * The window arrives in **pixels** because that is what a clip rect wants and
+ * the caller has already mapped it through the scale it drew with.
+ */
+export function drawPartitioned(
+  ctx: CanvasRenderingContext2D,
+  windowPx: readonly [number, number],
+  height: number,
+  outside: () => LayerDrawStats,
+  inside: () => LayerDrawStats,
+  /**
+   * Clip the emphasised pass to the window. **`true` for a fill**, whose
+   * boundary is a vertical wall by construction; **`false` for a stroke that
+   * has sliced its own path** (see {@link sliceTrace}), because a clip would
+   * shear the ribbon flat and defeat the round cap the slice exists to allow.
+   */
+  clipInside = true,
+  /**
+   * Half the emphasised stroke's width, in px — how far its **round cap**
+   * overhangs the window boundary. The outside pass's clip is inset by this,
+   * so the cap lands on bare ground instead of on top of the muted trace.
+   *
+   * Without it the boundary column carries two antialiased edges stacked (the
+   * muted stroke's clipped end, plus the cap) and the seam reads muddy at
+   * zoom. Measured, not guessed: the draw issues exactly two strokes per
+   * trace, so the murk was overlap, never a double render.
+   */
+  capOverhangPx = 0,
+  /** The plot's CSS width — see {@link plotExtentOf}. Defaults to the device
+   *  width only so a bare test stub still clips something sane. */
+  plotWidthCss?: number,
+): LayerDrawStats {
+  const [x0, x1] = windowPx;
+  // A collapsed window has no inside to paint, so one plain pass is the whole
+  // picture — and `clip()` on a zero-width rect would suppress the second pass
+  // anyway.
+  if (x1 <= x0) return outside();
+  // **Both passes are clipped, and the outside one to the window's COMPLEMENT.**
+  // Painting the muted trace full-width and the emphasised one over it works
+  // for a line, whose stroke is opaque and covers itself. It is wrong for an
+  // **area**: a semi-transparent fill composites with whatever is under it, so
+  // the window would carry muted-plus-emphasised stacked and read darker than
+  // either — the emphasis would depend on what it was drawn over. Clipping the
+  // outside pass away from the window means each pixel is painted exactly once,
+  // whatever its alpha.
+  ctx.save();
+  ctx.beginPath();
+  // The complement as two rects in one path: everything left of the window,
+  // everything right of it. A negative-width rect is legal but not portable
+  // across every canvas impl, so clamp rather than rely on it.
+  const inset = Math.max(0, capOverhangPx);
+  const leftEdge = x0 - inset;
+  const rightEdge = x1 + inset;
+  if (leftEdge > 0) ctx.rect(0, 0, leftEdge, height);
+  const right = plotWidthCss ?? ctx.canvas.width;
+  ctx.rect(rightEdge, 0, Math.max(0, right - rightEdge), height);
+  ctx.clip();
+  const stats = outside();
+  ctx.restore();
+  if (!clipInside) {
+    // The caller's path already ends where the window does, so it needs no
+    // clip — and its round caps may overhang the boundary by half a stroke,
+    // which is exactly the look: a rounded end sitting on the muted trace.
+    inside();
+    return stats;
+  }
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x0, 0, x1 - x0, height);
+  ctx.clip();
+  inside();
+  ctx.restore();
+  // The stats describe the geometry walked, and the clipped pass walks the
+  // same series — reporting it twice would double every count in the draw
+  // budget for what is one trace.
+  return stats;
+}
+
+/**
+ * A trace sliced to the key window `[lo, hi]`, with its **endpoints
+ * interpolated** onto the path — or `null` when nothing of it falls inside.
+ *
+ * This exists so the emphasised pass of a partitioned draw can be a real path
+ * whose own ends are the window's ends, which is what lets a **round cap**
+ * show. A clipped stroke cannot have one: the clip shears the ribbon on a
+ * vertical line wherever the rect cuts it, so the cap is drawn off in the
+ * hidden part of the path and the visible end is always a hard vertical edge,
+ * whatever `lineCap` says.
+ *
+ * The endpoints are interpolated rather than snapped to the nearest sample
+ * because at low density snapping would visibly overshoot or undershoot the
+ * window the reader just swept — the emphasis would not line up with the band
+ * that produced it.
+ *
+ * A boundary landing on a **gap** contributes no interpolated point: there is
+ * no drawn segment there to sit on, and inventing one would bridge a hole the
+ * trace deliberately shows.
+ */
+export function sliceTrace(
+  cs: ChartSeries,
+  lo: number,
+  hi: number,
+): ChartSeries | null {
+  const n = cs.length;
+  if (n === 0 || hi <= lo) return null;
+  // First index at or past `lo`, first past `hi` — the interior run.
+  let a = 0;
+  let b = n;
+  while (a < b) {
+    const mid = (a + b) >> 1;
+    if (cs.x[mid]! < lo) a = mid + 1;
+    else b = mid;
+  }
+  let e = a;
+  while (e < n && cs.x[e]! <= hi) e += 1;
+  const xs: number[] = [];
+  const ys: number[] = [];
+  /** Value on the segment `[i-1, i]` at key `k`, or null across a gap/edge. */
+  const at = (i: number, k: number): number | null => {
+    if (i <= 0 || i >= n) return null;
+    const y0 = cs.y[i - 1]!;
+    const y1 = cs.y[i]!;
+    if (!Number.isFinite(y0) || !Number.isFinite(y1)) return null;
+    const x0 = cs.x[i - 1]!;
+    const x1 = cs.x[i]!;
+    if (x1 === x0) return y1;
+    const t = (k - x0) / (x1 - x0);
+    return y0 + (y1 - y0) * t;
+  };
+  const head = at(a, lo);
+  if (head !== null) {
+    xs.push(lo);
+    ys.push(head);
+  }
+  for (let i = a; i < e; i += 1) {
+    xs.push(cs.x[i]!);
+    ys.push(cs.y[i]!);
+  }
+  const tail = at(e, hi);
+  if (tail !== null) {
+    xs.push(hi);
+    ys.push(tail);
+  }
+  if (xs.length === 0) return null;
+  return {
+    x: Float64Array.from(xs),
+    y: Float64Array.from(ys),
+    length: xs.length,
+  };
+}
+
+/**
+ * **EXPERIMENT ([PND-ANNSNAP]).** Vertical rules at a swept window's edges, in
+ * the annotation register — a preview of what "promote this sweep to an
+ * annotation" would look like, drawn *underneath* the trace.
+ *
+ * Two caveats, and the second decides whether this survives:
+ *
+ * - **Opaque on purpose.** Every spanned layer in the row draws its own edges
+ *   at the same x, so a translucent stroke would composite once per trace and
+ *   darken with the number of series. Opaque makes the overdraw idempotent.
+ * - **A real annotation could not sit here.** Annotations render in the SVG
+ *   overlay *above* the canvas, so a promoted span's rules would land on top of
+ *   the traces, not under them. This is canvas-side precisely because "under"
+ *   was asked for — if the look is kept, the honest options are to accept rules
+ *   above the ink, or to give the annotation register a canvas-underlay pass.
+ */
+/**
+ * The plot's extent in **CSS pixels**, from the scales' own ranges.
+ *
+ * Not `ctx.canvas.width`/`height`: those are **device** pixels, while the
+ * context is pre-transformed by the device ratio, so mixing them overshoots at
+ * dpr>1 and — the case that actually breaks — *undershoots* at dpr<1 (a
+ * zoomed-out browser), collapsing a clip that should span the plot. The scales
+ * are the honest source, and this needs no dpr arithmetic at all. Falls back to
+ * the canvas dims only when a scale exposes no range (a bare test stub).
+ */
+export function plotExtentOf(
+  ctx: CanvasRenderingContext2D,
+  xScale: Scale,
+  yScale: Scale,
+): { readonly width: number; readonly height: number } {
+  const span = (s: Scale, fallback: number): number => {
+    const r = (s as unknown as { range?: () => number[] }).range?.();
+    if (r === undefined || r.length < 2) return fallback;
+    return Math.abs(+r[r.length - 1]! - +r[0]!);
+  };
+  return {
+    width: span(xScale, ctx.canvas.width),
+    height: span(yScale, ctx.canvas.height),
+  };
+}
+
+export function strokeSpanEdges(
+  ctx: CanvasRenderingContext2D,
+  windowPx: readonly [number, number],
+  height: number,
+  color: string,
+  width = 1,
+): void {
+  const prior = ctx.strokeStyle;
+  const priorWidth = ctx.lineWidth;
+  const priorAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  for (const x of windowPx) {
+    // Half-pixel offset so a 1px rule lands on one device column instead of
+    // straddling two and rendering as a 2px smear.
+    const px = Math.round(x) + 0.5;
+    ctx.beginPath();
+    ctx.moveTo(px, 0);
+    ctx.lineTo(px, height);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = prior;
+  ctx.lineWidth = priorWidth;
+  ctx.globalAlpha = priorAlpha;
+}

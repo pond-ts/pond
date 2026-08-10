@@ -214,6 +214,18 @@ export interface ChartTheme {
    */
   readonly annotation?: {
     readonly color: string;
+    /**
+     * **EXPERIMENTAL ([PND-ANNSNAP]).** Ink for the vertical rules at a swept
+     * window's edges — a preview of what promoting the sweep to an annotation
+     * would look like. Lighter than {@link color} because these mark a
+     * *candidate* range rather than a committed mark. **Omitted ⇒ a light
+     * orange fallback.**
+     *
+     * Not settled: the rules are drawn canvas-side, under the trace ink,
+     * whereas a real annotation renders in the SVG overlay above it. If the
+     * look is kept, that mismatch has to be resolved rather than papered over.
+     */
+    readonly spanEdge?: string;
     readonly fillOpacity: number;
     readonly depth: readonly [number, number, number];
     /**
@@ -260,6 +272,58 @@ export interface ChartTheme {
     readonly border: string;
     readonly text: string;
   };
+  /**
+   * The **row-chart register** — `<BarList>` / `<BoxList>`, whose row states
+   * live on chrome the canvas has no equivalent of.
+   *
+   * A row chart cannot signal state the way a column chart does. Two reasons,
+   * and the second is the load-bearing one:
+   *
+   * - **The row is the target, not the bar.** A vertical bar can be its own
+   *   hit area because every mark spans the full column width; a row's mark
+   *   is as short as its value, so a 4% row would be a 30px sliver. The
+   *   label gutter, the track and the trailing value are one target, and the
+   *   thing that lights has to be the whole **band**.
+   * - **The band carries selection alone.** In a multi-metric row the fill
+   *   *is* the identity of the metric, so it cannot also carry state — the
+   *   same channel rule the canvas marks follow. Band + rail must read as
+   *   selected with no help from the fill, and designing the single-metric
+   *   case that way too means one treatment covers every row chart.
+   *
+   * So the two values here are the ones with no canvas counterpart: the row
+   * **band** tints. Everything else resolves from tokens that already exist
+   * and are per-metric where they should be — a selected fill takes
+   * {@link BarStyle.highlight}, a dimmed one {@link BarStyle.dimmed} — so a
+   * consumer who themes their bars gets a coherent list without theming it
+   * twice.
+   *
+   * **The rail is deliberately NOT per-metric.** There is one rail per row
+   * and a row may carry several metrics, so it cannot resolve through
+   * `bar[as]` the way a fill does; it lives here with the bands.
+   *
+   * **Optional, and back-compatible when omitted:** with no `list` the rows
+   * keep exactly the pre-token look — a hover band from `legend.border`, a
+   * selection rail from the annotation register, and no dimmed state at all.
+   */
+  readonly list?: {
+    /** Row stripe behind the hovered row — the whole band, gutter to value. */
+    readonly hoverBand: string;
+    /** The hovered row's 3px inset left edge. Never the selection hue. */
+    readonly hoverRail: string;
+    /** Row stripe behind a selected row. */
+    readonly selectedBand: string;
+    /** The selected row's 3px inset left edge. */
+    readonly selectedRail: string;
+    /**
+     * Reference ink — per-row target markers, thresholds, reference ticks.
+     *
+     * **Reserved away from the selection hue on purpose.** On a bullet row
+     * the marker sits *inside* the mark that selection recolors, so a tick
+     * in the selection blue is the one collision the rest of the language
+     * cannot absorb: you could not tell a target from a selected bar.
+     */
+    readonly markerInk: string;
+  };
 }
 
 /** A resolved line style: stroke colour + width (px). */
@@ -275,6 +339,41 @@ export interface LineStyle {
    * observed one at a glance.
    */
   readonly dash?: readonly number[];
+  /**
+   * Stroke width when this trace is the **selected series**, and for the
+   * emphasised portion of a swept window. **Omitted ⇒ `width * 2`.**
+   *
+   * **State on a trace is WEIGHT, not hue** — the channel rule, and the same
+   * answer `<Candlestick>` got. A line's **colour is its identity**: it is how
+   * a reader tells one series from another in a multi-series plot, so a
+   * selected line that turned blue would trade the distinction they need for
+   * one they already have from the chrome. Thickening says "this one" without
+   * spending the channel that says "which one".
+   */
+  readonly selectedWidth?: number;
+  /** Stroke width on **hover** — the transient echo of `selectedWidth`.
+   *  **Omitted ⇒ `selectedWidth`**, so hover previews the committed weight. */
+  readonly hoverWidth?: number;
+  /**
+   * Alpha for a trace that is **outside** the active selection — another
+   * series is selected, or this trace is outside a swept window.
+   * **Omitted ⇒ `0.32`**, the value the rest of the palette recedes to.
+   *
+   * Alpha rather than a colour, deliberately: a muted line must still read as
+   * *which* series it is, so its hue has to survive being pushed back.
+   */
+  readonly dimmedOpacity?: number;
+  /**
+   * Ink for the **swept window's** emphasised portion. **Omitted ⇒ the trace
+   * keeps its own colour and only thickens.**
+   *
+   * This is the one place a trace's state may take a hue, and the reason is
+   * that a window is a **region of one series** — identity is not in question
+   * there, because you can see which line you swept. So the region can read as
+   * the same act as the brush band that made it (the selection blue), where a
+   * whole-series selection cannot.
+   */
+  readonly spanColor?: string;
 }
 
 /** A resolved band style: fill colour + opacity (0–1) for the variance envelope. */
@@ -595,6 +694,25 @@ export interface AreaStyle {
    * a stack can be uniformly translucent — just not *graded*.)
    */
   readonly flatFill?: boolean;
+  /**
+   * Interaction state, the area's counterpart of `LineStyle`'s
+   * ([PND-TRACESEL]) — and the channels differ because what carries the mark
+   * differs. An area's mark is its **fill**, so state is the fill's *strength*
+   * plus the edge's weight; a line's mark is a stroke, so state is weight alone.
+   *
+   * `selectedWidth` thickens the edge, `selectedFillOpacity` strengthens the
+   * fill, `dimmedOpacity` recedes the whole shape, and `spanColor` is the one
+   * hue a swept **window** may take (identity is not in question inside a
+   * single series — see `LineStyle.spanColor`).
+   */
+  readonly selectedWidth?: number;
+  /** Fill opacity when selected. **Omitted ⇒ `min(fillOpacity * 2, 1)`.** */
+  readonly selectedFillOpacity?: number;
+  /** Alpha for an area outside the active selection. **Omitted ⇒ `0.32`.** */
+  readonly dimmedOpacity?: number;
+  /** Ink for a swept window's emphasised portion (edge + fill).
+   *  **Omitted ⇒ the area keeps its own colours and only strengthens.** */
+  readonly spanColor?: string;
 }
 
 /**
@@ -769,10 +887,40 @@ export interface BarStyle {
  */
 export const defaultTheme: ChartTheme = {
   line: {
-    default: { color: '#0284c7', width: 1.5 },
-    primary: { color: '#0284c7', width: 1.5 },
-    secondary: { color: '#e8836b', width: 1.5 },
-    context: { color: '#5eb5a6', width: 1.5 },
+    // **Trace interaction state is weight, plus a hue for a swept WINDOW
+    // only** — see `LineStyle.selectedWidth` / `.spanColor`. A whole-series
+    // selection thickens and keeps its colour, because colour is which series
+    // it is; a window inside one series can take the selection blue, because
+    // there identity is not in question. `spanColor` is `bar.highlight`, so a
+    // swept region on a trace reads as the same act as the band that made it.
+    default: {
+      color: '#0284c7',
+      width: 1.5,
+      selectedWidth: 3,
+      dimmedOpacity: 0.32,
+      spanColor: '#3F5BE0',
+    },
+    primary: {
+      color: '#0284c7',
+      width: 1.5,
+      selectedWidth: 3,
+      dimmedOpacity: 0.32,
+      spanColor: '#3F5BE0',
+    },
+    secondary: {
+      color: '#e8836b',
+      width: 1.5,
+      selectedWidth: 3,
+      dimmedOpacity: 0.32,
+      spanColor: '#3F5BE0',
+    },
+    context: {
+      color: '#5eb5a6',
+      width: 1.5,
+      selectedWidth: 3,
+      dimmedOpacity: 0.32,
+      spanColor: '#3F5BE0',
+    },
   },
   band: {
     default: { fill: '#0284c7', opacity: 0.15 },
@@ -782,11 +930,17 @@ export const defaultTheme: ChartTheme = {
   area: {
     // Outline at the line colour; graded fill from it. `in`/`out` are the
     // above/below-axis roles (esnet traffic), composed as two layers.
+    // Trace interaction state — see `AreaStyle.selectedWidth`. `spanColor` is
+    // `bar.highlight`, so a swept region reads as the same act as the band.
     default: {
       color: '#0284c7',
       width: 1.5,
       fill: '#0284c7',
       fillOpacity: 0.3,
+      selectedWidth: 3,
+      selectedFillOpacity: 0.55,
+      dimmedOpacity: 0.32,
+      spanColor: '#3F5BE0',
     },
     in: { color: '#0284c7', width: 1.5, fill: '#0284c7', fillOpacity: 0.3 },
     out: { color: '#e8836b', width: 1.5, fill: '#e8836b', fillOpacity: 0.3 },
@@ -1016,10 +1170,24 @@ export const defaultTheme: ChartTheme = {
   // palette's resting teal `#2A9D8F` — indistinguishable at a glance.)
   annotation: {
     color: '#b45309',
+    // EXPERIMENTAL — a lighter orange for a swept window's edge rules, which
+    // mark a candidate range rather than a committed mark. See `spanEdge`.
+    spanEdge: '#f0b26b',
     fillOpacity: 0.1,
     depth: [1, 0.7, 0.4],
   },
   // The in-chart series key: chip-white card, gridline border, axis-label text.
+  // The row-chart register — see `ChartTheme.list`. The two band tints are
+  // the only genuinely new values: the rails are the same teal/blue pair the
+  // bar's interaction-state palette already uses (`hover` / `highlight`), and
+  // the marker ink is the near-black the annotation register reads against.
+  list: {
+    hoverBand: '#F6F6F3', // warm neutral — a lift, not a hue
+    hoverRail: '#4FD0BE', // brighter teal, never blue
+    selectedBand: '#EEF1FD', // the selection blue, washed
+    selectedRail: '#3F5BE0', // = bar.default.highlight — committed state
+    markerInk: '#1C1C1A', // reserved from the selection hue (see the doc)
+  },
   legend: {
     background: '#ffffff',
     border: '#e2e8f0',

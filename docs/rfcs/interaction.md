@@ -1731,6 +1731,12 @@ rather than a surprise.
   says nothing about bins. A horizontal bin cut is a y-window, i.e. 2-D
   machinery. `beginSweep` is wired **vertical-only** and documented. This is a
   real gap against the original friction report, which named horizontal bars.
+  **Half-corrected, 2026-08-10** ([PND-HSWEEP]): "2-D machinery" is true of the
+  plumbing and false of the gesture. A vertical bar's sweep ignores the value
+  axis, so its transpose must too — the cut is 1-D on the **other** axis, and
+  `sweep1D` is reused verbatim. What the layer gains is `sweepAxis: 'x' | 'y'`,
+  orthogonal to `sweepsRect`; all four combinations are real, the (y, rect)
+  corner being the horizontal heat map.
 - **"Freeform" is not freeform over bars.** A bar/histogram layer's
   `binIntervals` feed the shared snap channel, so a sweep or drag with no
   `sequence` still bin-snaps. Cohesive behaviour, wrong word in §6/§8.
@@ -1778,3 +1784,57 @@ Worth keeping as the standard for the remaining work.
 3. **The conformance tail** — `<BoxPlot>` and the list family joining the sweep,
    plus `format`'s container-wide scope.
 4. **Remove the shims** one minor after the deprecations land.
+
+## Amendment 9 (2026-08-10) — the canonical scenario, stated by the owner
+
+Everything from A7 onward — plural spans, the trace currency, the list family's
+selection, promote-to-annotation, snap targets — was built one piece at a time
+against the friction in front of it. This is the scenario they were all for,
+and it is written down because it explains several choices that otherwise read
+as arbitrary.
+
+**A running pace chart with an elevation area chart composited together.**
+
+**Outside → in.** Below the chart is a row of **lap bars**. Hit one, and the
+charts window to that lap: the lap's stretch of both traces emphasised, the
+rest muted — the display the row-chart state ladder and the trace partition
+draw.
+
+**In → out, and back.** Drag across the chart to create a segment. Save it —
+_"Chalk hill climb"_. It appears in your segments list below with stats. Click
+it there, and you are isolated to it on the chart again.
+
+### What this validates
+
+- **A window is a property of the RUN, not of a series.** A lap covers pace and
+  elevation equally, so a sweep committing a span on whichever layer happened to
+  be topmost was never going to work. This is the whole argument for plural
+  spans ([PND-TRACESEL]), and it is why the preview lighting both traces while
+  the commit kept one read as a bug rather than a shortcut.
+- **The payload is the range, not the samples.** "Stats" is the point — pace,
+  gain, time — and a consumer computes those from their own series given the
+  span. A 3,000-sample GPS trace has no business arriving as 3,000
+  `SelectInfo`s, which is the empty-`hits` decision restated from the use case
+  rather than from the perf argument.
+- **The segments list is `<BarList>` / `<BoxList>`.** Selection on the list and
+  selection on the chart are two ends of one loop, which is why the lists took
+  the canvas's `hovered` / `selected` vocabulary instead of a parallel one
+  (A3.1) — and why a list needed plural `selected` before any of this could
+  close ([PND-INTERACTCONF]).
+- **Promote-to-annotation is the "save" step**, and **snap targets are what
+  make a segment start exactly at a lap** rather than three samples off
+  ([PND-ANNSNAP]). Lap boundaries are the session-boundary and annotation-edge
+  contributors, doing the job they were listed for.
+
+### The one ambiguity in it, and why it does not block anything
+
+"Windowed to the lap" and "isolated to it" could each mean **highlight in
+place** (the whole run visible, the lap emphasised) or **zoom** (the range
+becomes the lap). The earlier screenshot shows highlight-in-place, and
+"isolated" leans toward zoom, so plausibly both appear at different moments.
+
+It does not need settling at the library level, and that is worth stating
+plainly: highlight is `selected` carrying spans, zoom is `range` — both already
+exist, and choosing between them per interaction is app policy. If a consumer
+building this finds themselves writing the same glue twice, that is the signal
+to reconsider, not before.

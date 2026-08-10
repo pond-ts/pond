@@ -60,7 +60,101 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **charts: `<BarList selected>` / `<BoxList selected>` accept a set**
+  ([PND-INTERACTCONF]). Widened from `string | null` to
+  `string | readonly string[] | null` — the same union `hovered` already took.
+  **Additive:** every existing caller passes a `string` or `null`, both still
+  valid and unchanged. The lists were given the _receiving_ half of the sweep
+  vocabulary (`hovered` went plural because a sweep lights several marks at
+  once) and not the committing half, which made a list multi-select
+  inexpressible whatever gesture drives it. `onRowSelect` below is the gesture
+  that spends it.
+
 ### Added
+
+- **charts: `<LineChart id>` / `<AreaChart id>` — selection on a continuous
+  trace** ([PND-TRACESEL]), the last two columns of the selection matrix. A
+  trace has **no marks**, so the currency differs from every other layer and
+  does so deliberately: a **sweep** commits a `SpanSelection` with **no hits**
+  (the span _is_ the selection — a trace's samples are usually undrawn and
+  several fall per pixel, so take the span and slice your own series with it),
+  and a **click** commits a **series-scoped** `SelectInfo` — `key`/`value`
+  `NaN`, plus a stable `mark` so re-clicking deselects. The brush band is the
+  whole live preview, because there are no marks to light. An area is hit
+  through its **fill** (the whole shape is the target); a line within 6px of
+  its **stroke**. New `sweepSpan` session in the kernel; `sweepsRect: false`,
+  `sweepAxis: 'x'`.
+- **charts: trace interaction states.** A selected series **thickens and keeps
+  its colour** — state is weight, never hue, because a line's colour is how a
+  reader tells one series from another (the same rule `<Candlestick>` follows).
+  Other series recede to `0.32` with their hue intact; hover echoes the
+  selected weight. A **swept window** partitions the trace: the covered portion
+  is emphasised and may take a hue (`spanColor`, defaulting to the selection
+  blue) because inside one series identity is not in question, while the rest
+  recedes. New `LineStyle` tokens `selectedWidth` / `hoverWidth` /
+  `dimmedOpacity` / `spanColor`, and `AreaStyle` gains those plus
+  `selectedFillOpacity` — an area's mark is its fill, so its state channels are
+  fill strength and edge weight rather than weight alone. The partition is
+  **live during the drag**, and a sweep covers **every trace in the row** rather
+  than the topmost one: they all share the same x window, so singling one out by
+  z-order would be arbitrary. Mark layers keep topmost-wins unchanged.
+  `spanColor` applies only when a single trace is swept — with two, both would
+  go blue and identity would be in question again inside the window. A line's
+  emphasised segment has **round ends**: it strokes an interpolated slice of the
+  path rather than the whole trace clipped, so its endpoints are real path ends
+  and take a cap. An area still clips, because a fill's boundary is a vertical
+  wall by construction.
+- **charts: keyboard parity on the list family.** Rows now navigate and select
+  from the keyboard: **↑/↓** move focus, **Home/End** jump to the ends,
+  **Enter/Space** select the focused row (carrying modifiers, so ⌘/Ctrl-Enter
+  adds), and **Shift** with any movement key extends the run. The anchor is
+  shared with the pointer, so a click can be finished with the keyboard; it
+  holds across repeats, so Shift-↓ grows one run rather than sliding a two-row
+  window. Navigation never selects on its own, movement keys are
+  `preventDefault`ed so the page cannot scroll out from under the list, and
+  arrows stay inside their own table rather than walking into a nested list in
+  an expanded row.
+- **charts: `<BarList onRowSelect>` / `<BoxList onRowSelect>`** — the range
+  gesture, and how a user actually produces a multi-row `selected`. The list's
+  answer to `<MultiSelector>`: **mounting it enables the drag** (a list with
+  only `onRowClick` is unchanged), a click reports `[row]` — so it is a strict
+  superset — and a drag across rows reports the whole inclusive run in display
+  order, plus `SelectModifiers`. **Crossing into another row is what makes it a
+  range**, not a pixel slop, so a press-and-release is always a click and a
+  horizontal wobble commits nothing; wander to another row and back and it is a
+  click again. The covered rows light as _hovered_ while the drag runs — the
+  live preview out-ranks `hovered` for the duration without touching it, and
+  `onHover` stays quiet so the two channels never contradict. The library holds
+  no state and applies no set arithmetic: you get the run and the modifiers.
+  `shiftKey` is reported but given no built-in meaning. Native text selection
+  is suppressed for the press's duration only, so a drag does not sweep up the
+  label text while the labels stay selectable at rest; **touch is excluded** —
+  a vertical drag over a list is how a touch device scrolls, so touch keeps
+  click-to-select.
+- **charts: the row-chart state ladder** — `<BarList>` / `<BoxList>` now carry
+  rest / hover / selected / dimmed states, via a new optional
+  **`ChartTheme.list`** register (`hoverBand`, `hoverRail`, `selectedBand`,
+  `selectedRail`, `markerInk`). A row's **band** (the whole stripe, gutter to
+  value) and **rail** (a 3px inset edge) carry state, because a row's mark is
+  as short as its value and cannot be its own target. **Back-compatible when
+  omitted:** a theme with no `list` keeps the pre-token look exactly — the
+  borrowed hover band, the annotation rail, and no dimmed state. An
+  **interactive** row reserves a 44px hit area (a static list is left alone). A
+  `<BoxList>` recedes its body, median and tick but never its range band, and a
+  multi-metric `<BarList>` row keeps every metric's own hue when selected — the
+  fill is the metric's identity, so state lives on the chrome.
+- **charts: a horizontal `<BarChart>` can be swept** ([PND-HSWEEP]). `<MultiSelector>`
+  now works on a transposed chart, cut with a **vertical** drag: same component,
+  same 1-D cut, the axis moved. The value axis stays inert exactly as it does on
+  a vertical chart. Layers declare which axis a sweep cuts through the new
+  `RowLayer.sweepAxis: 'x' | 'y'` (default `'x'`, so nothing else changes), and
+  the brush band is drawn transposed and snapped to bin edges. Covers a
+  **categorical** bin axis too (the funnel / ranking shape): the span reads as
+  a slot run and the band lands on whole slots. The horizontal
+  **heat map** still cannot sweep — it cannot hit-test either — and a y-cutting
+  row draws no resting block preview yet.
 
 - **charts: new `sameMark(a, b)` export** — the full mark identity (`id`,
   `mark`-or-`key`, `label`), companion to `selectionContains`, whose doc has

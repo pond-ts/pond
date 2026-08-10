@@ -1,6 +1,12 @@
 import { area as d3area, curveLinear, type CurveFactory } from 'd3-shape';
 import type { ChartSeries } from './data.js';
-import { strokeAffinePolyline, type Scale } from './line.js';
+import {
+  baselinePxFromScale,
+  strokeAffinePolyline,
+  TRACE_HIT_PX,
+  type Scale,
+  type TraceState,
+} from './line.js';
 import type { AreaStyle } from './theme.js';
 import type { LayerDrawStats } from './context.js';
 import {
@@ -390,4 +396,99 @@ function buildGradient(
     grad.addColorStop(1, opaque);
   }
   return grad;
+}
+
+/**
+ * **Is the pointer inside this area?** The filled-region counterpart of
+ * `traceHitIndex` ([PND-TRACESEL]) — returns the nearest sample's index as
+ * click provenance, or `null` when the pointer is outside the fill.
+ *
+ * An area is not a stroke, so the test is not distance-to-path: the pointer is
+ * on the area when it lies **between the trace and the baseline** at that x.
+ * That is the honest reading of "you clicked the area", and it makes the whole
+ * filled shape the target rather than a 1.5px edge — which is the same reason
+ * the list family made the row the target rather than the bar.
+ *
+ * The x cut bisects `xScale(cs.x[i])` for `traceHitIndex`'s reasons (a layer's
+ * `hitTest` gets the forward scale only, and a trading-time scale has no honest
+ * inverse), and the trace's y is **interpolated** between the bracketing
+ * samples so the boundary follows the drawn edge rather than a step. A tolerance
+ * is still added, so the top edge is grabbable from just outside.
+ *
+ * A gap is a hole, not a bridge: either bracketing sample non-finite ⇒ no hit,
+ * matching what `drawArea` actually fills.
+ */
+export function areaHitIndex(
+  cs: ChartSeries,
+  baseline: number | undefined,
+  px: number,
+  py: number,
+  xScale: Scale,
+  yScale: Scale,
+  tolerance = TRACE_HIT_PX,
+): number | null {
+  const n = cs.length;
+  if (n === 0) return null;
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (xScale(cs.x[mid]!) < px) lo = mid + 1;
+    else hi = mid;
+  }
+  // The bracketing pair around the pointer. At either end of the series the
+  // pair degenerates to one sample, which is correct — the fill stops there.
+  const i = Math.max(0, Math.min(n - 1, lo));
+  const j = Math.max(0, Math.min(n - 1, lo === 0 ? 0 : lo - 1));
+  const yi = cs.y[i]!;
+  const yj = cs.y[j]!;
+  if (!Number.isFinite(yi) || !Number.isFinite(yj)) return null;
+  const xi = xScale(cs.x[i]!);
+  const xj = xScale(cs.x[j]!);
+  // Interpolate the edge at the pointer's x, so the boundary is the drawn
+  // slope and not a staircase. Guard the degenerate same-pixel pair.
+  const t = xi === xj ? 0 : (px - xj) / (xi - xj);
+  const edgePx = yScale(yj + (yi - yj) * Math.max(0, Math.min(1, t)));
+  const basePx =
+    baseline === undefined ? baselinePxFromScale(yScale) : yScale(baseline);
+  const top = Math.min(edgePx, basePx) - tolerance;
+  const bottom = Math.max(edgePx, basePx) + tolerance;
+  if (py < top || py > bottom) return null;
+  // Outside the series' own x span there is no fill to be inside of.
+  if (px < xScale(cs.x[0]!) - tolerance) return null;
+  if (px > xScale(cs.x[n - 1]!) + tolerance) return null;
+  return Math.abs(px - xi) <= Math.abs(px - xj) ? i : j;
+}
+
+/**
+ * The style an area fills with in a given interaction state
+ * ([PND-TRACESEL]) — the {@link AreaStyle} counterpart of `traceStateStyle`.
+ *
+ * The channels differ from a line's because what carries the mark differs: an
+ * area's mark is its **fill**, so state is the fill's strength plus the edge's
+ * weight. A line has only a stroke, so there weight is all there is.
+ *
+ * Alpha comes back separately, as it does for a line, so a muted area keeps its
+ * hue rather than having the fade baked into a colour.
+ */
+export function areaStateStyle(
+  style: AreaStyle,
+  state: TraceState,
+): readonly [AreaStyle, number] {
+  const emphasised: AreaStyle = {
+    ...style,
+    width: style.selectedWidth ?? style.width * 2,
+    fillOpacity:
+      style.selectedFillOpacity ?? Math.min(style.fillOpacity * 2, 1),
+  };
+  switch (state) {
+    case 'selected':
+      return [emphasised, 1];
+    case 'hover':
+      return [emphasised, 1];
+    case 'dimmed':
+      return [style, style.dimmedOpacity ?? 0.32];
+    case 'rest':
+      return [style, 1];
+  }
 }

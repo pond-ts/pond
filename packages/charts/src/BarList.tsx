@@ -20,6 +20,7 @@ import {
   type ListSeriesSource,
 } from './list-source.js';
 import { ListTable } from './ListTable.js';
+import type { SelectModifiers } from './context.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
 
 /** The props both BarList source doors share. */
@@ -72,13 +73,63 @@ export interface BarListCommon<R extends ListRow = ListRow> {
   /** Observe a toggle (`expanded` is the row's **new** state). */
   onExpandToggle?: (key: string, expanded: boolean) => void;
   /**
-   * The selected row's `key`, marked with an inset edge in the annotation
-   * (marks) register — selection is a user's mark, not data. Consumer-owned
-   * state: pair with `onRowClick`. `null` / omitted ⇒ none.
+   * The selected row(s), marked with an inset edge in the annotation (marks)
+   * register — selection is a user's mark, not data. Consumer-owned state:
+   * pair with {@link onRowClick}. `null` / omitted ⇒ none.
+   *
+   * **Accepts one key or a set**, the same union {@link hovered} takes
+   * ([PND-INTERACTCONF] / RFC `interaction.md` A3.1 — the list family speaks
+   * the canvas's interaction vocabulary, not a parallel one). Plural because
+   * a range of rows can be selected at once; passing a bare key still means
+   * exactly what it looks like.
+   *
+   * The library applies **no set arithmetic** — it renders what you hand back.
    */
-  selected?: string | null;
+  selected?: string | readonly string[] | null;
   /** Row click (rows show the pointer affordance only when provided). */
   onRowClick?: (row: R) => void;
+  /**
+   * **Plural select** — the list's answer to `<MultiSelector>`, and how a user
+   * produces a multi-row {@link selected}.
+   *
+   * Fires with the rows the gesture took plus its modifiers:
+   *
+   * - a **click** reports `[row]` — so this is a strict *superset* of
+   *   {@link onRowClick}, the way `<MultiSelector>` is of `<Selector>`;
+   * - a **drag across rows** reports the whole inclusive run, in display
+   *   order.
+   *
+   * **Mounting it is what enables the drag** (interaction RFC A4.2 rule 1 —
+   * the same rule that makes a bare `<MultiSelector />` enable the canvas
+   * sweep). A list with only `onRowClick` behaves exactly as it always has.
+   *
+   * **Crossing into another row is what makes it a range**, not a pixel slop:
+   * a row is tall and discrete, so a press-and-release on one row is always a
+   * click, and a horizontal wobble — which on a stack of rows means nothing —
+   * can never commit one. While the drag runs, the covered rows light as
+   * *hovered*: that is the live preview of what releasing would take, and it
+   * out-ranks {@link hovered} for the duration without touching it.
+   *
+   * **The library holds no state and applies no set arithmetic.** You get the
+   * run and the modifiers; you decide whether to replace or union, and feed
+   * the result back through {@link selected}:
+   *
+   * ```tsx
+   * onRowSelect={(rows, m) =>
+   *   setSel((cur) => {
+   *     const keys = rows.map((r) => r.key);
+   *     return m.additive ? [...new Set([...cur, ...keys])] : keys;
+   *   })
+   * }
+   * ```
+   *
+   * `modifiers.additive` is the platform-idiomatic add chord already resolved
+   * (⌘ on macOS, Ctrl elsewhere). **`shiftKey` is reported but carries no
+   * built-in meaning** — an ordinal range is a gesture here, not a modifier
+   * (see `SelectModifiers`), so a shift-click extend is yours to define if you
+   * want one.
+   */
+  onRowSelect?: (rows: readonly R[], modifiers: SelectModifiers) => void;
   /**
    * Controlled **hover-highlight** — the transiently lit row key(s), or `null`.
    * **Omitted ⇒ uncontrolled** (the list tracks its own pointer, as it always
@@ -207,6 +258,7 @@ export function BarList<
     onExpandToggle,
     selected,
     onRowClick,
+    onRowSelect,
     hovered,
     onHover,
     markers,
@@ -271,16 +323,40 @@ export function BarList<
       onExpandToggle={onExpandToggle}
       selected={selected}
       onRowClick={onRowClick}
+      onRowSelect={onRowSelect}
       hovered={hovered}
       onHover={onHover}
       divided={divided}
       baseline={baseline}
       theme={theme}
-      renderGlyphs={(row) => (
+      renderGlyphs={(row, state) => (
         <>
           {columns.map((col, ci) => {
             const style = theme.bar[col.as ?? 'default'] ?? theme.bar.default;
             const frac = listFraction(row.values[col.column], scale);
+            // **The fill's state treatment — decorative, never load-bearing.**
+            // The band and the rail have already said "selected"; this only
+            // agrees with them. It is skipped entirely on a multi-metric row
+            // because there the fill IS the metric's identity, and recolouring
+            // it would trade a distinction the reader needs for one they
+            // already have (`ChartTheme.list`'s channel rule).
+            //
+            // Which is also why nothing below may be the *only* signal: strip
+            // this block and a selected row still reads as selected.
+            const soleMetric = columns.length === 1;
+            const fill =
+              state.selected && soleMetric
+                ? style.highlight
+                : state.dimmed
+                  ? (style.dimmed ?? style.fill)
+                  : style.fill;
+            // A `dimmed` token carries its own alpha (`rgba(…,0.32)`), so
+            // multiplying `opacity` on top of it would dim twice. Fall back to
+            // the raw 0.32 only when the theme names no dimmed colour.
+            const fillOpacity =
+              state.dimmed && style.dimmed === undefined
+                ? style.opacity * 0.32
+                : style.opacity;
             return (
               <div
                 // Index-qualified so the same values entry drawn twice (say,
@@ -296,7 +372,14 @@ export function BarList<
                 }}
               >
                 {/* The track: the bar's own hue, faint — reads on any ground
-                    without a dedicated token. */}
+                    without a dedicated token.
+
+                    **It never takes the state treatment.** The unfilled
+                    remainder is a *scale*, not a measurement: dimming it
+                    alongside the fill would destroy the shared baseline that
+                    makes rows comparable in the first place. Full strength in
+                    every state, tinted to its own metric — so it stays
+                    `style.fill`, not `fill`. */}
                 <div
                   style={{
                     position: 'absolute',
@@ -314,8 +397,8 @@ export function BarList<
                       bottom: 0,
                       left: 0,
                       width: `${frac * 100}%`,
-                      background: style.fill,
-                      opacity: style.opacity,
+                      background: fill,
+                      opacity: fillOpacity,
                       borderRadius: barHeight / 2,
                     }}
                   />

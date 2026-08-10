@@ -267,6 +267,65 @@ milestone. Plan:
   sweep-capable layer — and does it by building the real session rather than
   reading the flag back, or the test would agree with itself.
 
+- **[PND-HSWEEP]** — **The transposed sweep: horizontal bars.** `beginSweep` is
+  wired **vertical-only** on every bar path, so a horizontal `<BarChart>` (bins
+  on y, value on x) cannot sweep at all — the gap A8.4 named against the
+  original friction report, and the one [PND-INTERACT2D] said it would close
+  and didn't. Picked up ahead of the list family because it is the same
+  currency as everything that already sweeps, where a list's is not.
+
+  **It is 1-D, not 2-D** (owner + design, 2026-08-10). A8.4 called a horizontal
+  bin cut "2-D machinery", which is true of the _plumbing_ and false of the
+  _gesture_: a vertical bar's sweep ignores the value axis entirely (drag
+  anywhere horizontally, take whole columns), so its transpose must ignore the
+  value axis too — drag anywhere vertically, take whole rows. A rect on a
+  horizontal bar would be value-filtering, a capability vertical bars don't
+  have, and would break "the consumer's markup for a scatter is the markup for
+  a bar" from the other side. **`sweep1D` is therefore reused verbatim** — it
+  takes key-axis units and does not care which screen axis they came from.
+
+  **What that costs is one new declaration, `RowLayer.sweepAxis: 'x' | 'y'`**
+  (default `'x'`), orthogonal to the `sweepsRect` that shipped with
+  [PND-INTERACT2D]. Both fields are real in all four combinations — (x, band) a
+  vertical bar, (y, band) a horizontal bar, (x, rect) a scatter or vertical
+  heat map, (y, rect) a horizontal heat map — which is why this is a second
+  boolean-ish axis rather than a three-valued `sweepKind` enum. The gesture
+  reads it to decide which pointer axis to invert, where the slop lives
+  (`|dy|`, not `|dx|`), and which way to draw the band.
+
+  **The band is row-local when the cut is on y.** The x band is container state
+  because x is shared across rows; a y band is measured against one row's own
+  axis, exactly as [PND-INTERACT2D]'s rect is. It is drawn by the same
+  `renderBrushBand` with transposed geometry, keeping §8.1's identical-pixels
+  promise.
+
+  **Snapping does not come from `cursorBuckets`.** The x path snaps its window
+  through the shared bin channel, which on a horizontal chart carries the
+  _value_ axis (`binIntervals` is published vertical-only, deliberately). The y
+  band takes its geometry from `SweepSession.extent()` instead — the
+  snapped-outward extent the session already computes — which is the same move
+  `snappedRect()` made for the rect, and is strictly better than the x path's:
+  the band is derived from the cut rather than agreed with it.
+
+  **A categorical bin axis needs no special case, and that is a finding rather
+  than an assumption.** The vertical categorical path puts its bins on a d3
+  **band** scale, whose `invert` snaps a pixel to the slot _centre_ — which is
+  exactly why it publishes `binIntervals`, so its band can still snap outward
+  to slot edges. Transposed, the bins land on y as a plain linear scale over
+  `[0, N]` and only the _ticks_ are categorical (`binCategories`, consumed by
+  `<YAxis>`), so `yScale.invert` is continuous and the extent-derived band
+  lands on slot boundaries by construction. Pinned by tests and a story rather
+  than left as a reading.
+
+  **Not in scope, and declared rather than discovered:** the **horizontal heat
+  map** is the (y, rect) corner and stays closed — `HeatMap` returns `[]` from
+  `hitTest` when horizontal, so it cannot select at all, let alone sweep, and
+  that is a `[PND-HCAT]`-shaped gap rather than this one. The **resting block
+  preview** for a y-cutting row (the grey band over the block a press would
+  take) needs the resting-block machinery transposed too; until it is, a
+  y-sweeping row must **suppress** the resting band rather than draw the x one,
+  which would advertise a column the drag will never select.
+
 - **[PND-INTERACTCONF]** — **The conformance tail.** The **list family** joins
   the sweep. (`<BoxPlot>` has now joined: a box is an aggregation owning one
   `[begin, end)` column, so it publishes `binIntervals` + `beginSweep` and
@@ -281,21 +340,470 @@ milestone. Plan:
   The wave took the column marks (bar, stack, box, candle) and the two 2-D
   layers (scatter, heat map); these are what is left, and they split into two
   quite different problems:
-  - **`<BoxList>` and `<BarList>`** — the list family. Same currency as the
-    rest (discrete marks with an `id`), so this is conformance rather than
-    design: publish `hitTest` + `beginSweep`, add the matrix columns, walk
-    the fan-out. The open question is what a sweep even means on a list,
-    whose "axis" is a stack of rows rather than a scale — most likely a 1-D
-    cut over the row order, which would make it the first ORDINAL sweep and
-    is worth settling before writing code.
-  - **`<LineChart>` and `<AreaChart>`** — a continuous trace has **no marks
-    to select**, which is why they have no `id` gate today and why
-    `LineChart.hitTest` still sits in `[PND-SELECT]` Phase 2. So "join the
-    matrix" is not yet a well-posed task for them: it needs a decision on
-    what a selection on a trace _is_ (the samples in an x range? the range
-    itself, as a `SpanSelection` with no marks? a point on the path?) before
-    any of the interaction surface applies. Do not treat these as the same
-    kind of gap as the list family.
+  - **`<BoxList>` and `<BarList>`** — the list family. **The framing above
+    was wrong, corrected 2026-08-10 on inspection.** It read "same currency
+    as the rest, so this is conformance rather than design: publish
+    `hitTest` + `beginSweep`, add the matrix columns". `hitTest` and
+    `beginSweep` are **`RowLayer` members**, consumed by `Layers.tsx`'s
+    canvas pointer surface — and the list family has no layer to put them
+    on. Both components render an **HTML `<table>`** and are explicitly
+    standalone ("no `<ChartContainer>`; there is no time axis here"): no
+    canvas, no `registerLayer`, no scale to invert a pointer through, no
+    `SweepSession` plumbing reaching them. None of [PND-HSWEEP]'s
+    `sweepAxis: 'y'` work transfers either, for the same reason — it lives
+    in the canvas gesture.
+
+    So this is **design, not conformance**, and it is a second interaction
+    surface rather than a missing column of the first. What a list drag
+    wants to be is the spreadsheet / file-manager idiom — press on row _i_,
+    drag to row _j_, take the run — which is an ordinal cut over row order
+    (PLAN guessed that part right) but implemented against `<tr>` pointer
+    events, not against `sweep1D`. There is no key axis for a `SpanSelection`
+    to describe, and no layer `id` for one to carry.
+
+    **The currency is now in place** (owner-approved 2026-08-10; a public
+    type widening, so it was a human gate). `selected` on both `<BarList>`
+    and `<BoxList>` takes `string | readonly string[] | null` — the same
+    union `hovered` already took, with the same normalization and the same
+    "no set arithmetic" contract. Additive: every existing caller passes a
+    `string` or `null`. The asymmetry it closes is the tell for why it is
+    the right shape — `hovered` went plural precisely _because_ a sweep
+    lights several marks at once, so the list had the receiving half of the
+    gesture and not the committing half.
+
+    **The row-chart state ladder** (owner spec, 2026-08-10). The visual
+    language for the states above, and the analogue of the scatter / heat-map
+    palettes from [PND-INTERACT2D]. Two elements the row has that a canvas
+    mark does not: the **band** (the whole row stripe, label gutter through
+    trailing value) and the **rail** (a 3px inset left edge).
+
+    | State                    | Treatment                                                          |
+    | ------------------------ | ------------------------------------------------------------------ |
+    | rest                     | band transparent · fill `#2A9D8F`                                  |
+    | dimmed                   | fill opacity `.32` · **track unchanged**                           |
+    | hover                    | band `#F6F6F3` · rail `#4FD0BE`                                    |
+    | selected (single-metric) | band `#EEF1FD` · rail 3px `#3F5BE0` · fill goes blue too           |
+    | selected (multi-metric)  | band + rail **only** — hue is identity, so chrome carries it alone |
+    | target marker            | ink `#1C1C1A` · 3px — never blue                                   |
+
+    Four rules, each with its reason, because the reason is what generalises:
+    - **The row is the target, not the bar.** Label gutter, track and
+      trailing value are one hit area, **≥44px tall**. A vertical bar chart
+      can make the mark the target because every mark spans the full column
+      width; a row chart cannot — a 4% row is a 30px sliver.
+    - **The band carries selection alone.** Band + rail must read as selected
+      with **no help from the fill**, because in a multi-metric row the fill
+      cannot change. Design the single-metric case that way too and one
+      treatment covers every row chart in the library. (This is the channel
+      rule the wave already runs on: state may only use a channel the mark is
+      not already using for data.)
+    - **Track is chrome, so it never dims.** The unfilled remainder is a
+      _scale_, not a measurement — dimming it alongside the fill destroys the
+      shared baseline that makes rows comparable. Full strength in every
+      state, tinted to its metric.
+    - **Reserve blue even from markers.** Targets, thresholds and reference
+      ticks go to ink. On a bullet row the marker sits _inside_ the mark that
+      selection recolors, so a blue tick is the one collision the rest of the
+      language cannot absorb.
+
+    **Shipped 2026-08-10.** The register is `ChartTheme.list` — five values,
+    optional, and back-compatible when omitted (a theme without it keeps the
+    borrowed hover band, the annotation rail and no dimmed state). Only the
+    two band tints and the marker ink are new: a selected fill takes
+    `BarStyle.highlight` and a dimmed one `BarStyle.dimmed`, both of which the
+    interaction-state palette already carried, so a consumer who themes their
+    bars gets a coherent list without theming it twice. **The rail is
+    deliberately not per-metric** — one rail, many metrics — so it lives in
+    the register rather than resolving through `bar[as]`.
+
+    Two judgement calls worth recording. **A `<BoxList>` gets no "fill goes
+    blue"**: a box has four inks (whisker, body, median, tick) so the phrase
+    has no single referent, and rule 2 says chrome alone is sufficient by
+    design — its dimmed state recedes body/median/tick and leaves the range
+    band, which is the box list's track. **The 44px is gated on
+    interactivity**: a read-only list has no target to make tappable, and
+    forcing the height there would be a layout change for nothing.
+
+    Revert-verified with three rule-specific mutations (fill carries selection
+    on a multi-metric row / the track dims with the fill / hover borrows the
+    selection rail); each reds exactly its own rule's test.
+
+    **What the ladder did NOT cover, and why.** The spec's **target marker**
+    (`ink #1C1C1A · 3px`, never blue) is a _bullet-row_ element — a per-row
+    target sitting inside the mark. `<BarList markers>` today draws a
+    reference rule through **every** row, which is a different thing. The
+    register carries `markerInk` for it, but the per-row bullet target itself
+    is unbuilt.
+
+    **Gap against what `ListTable` rendered before** (verified 2026-08-10):
+    - **rail on selected** — exists, as `boxShadow: inset 3px 0 0 accent`.
+    - **band on hover** — exists, but reaches through `theme.legend.border`,
+      an unrelated token `[PND-CHFRIC]` already flags.
+    - **band on selected** — missing (selection is rail-only today).
+    - **rail on hover** — missing (hover is band-only today).
+    - **dimmed** — missing entirely; no state exists for "something else is
+      selected", which is the one the track rule is _about_.
+    - **single- vs multi-metric fill** — no distinction; the glyph fill is
+      not selection-aware at all.
+    - **per-row target marker** — `<BarList markers>` draws vertical rules
+      across _every_ row, which is not the bullet-row target the spec means.
+
+    **The literal hexes are the argument for a list theme slot.** Six values
+    that a consumer cannot currently reach — `[PND-CHFRIC]` already notes the
+    list's colours are only addressable through unrelated tokens. They should
+    land in `defaultTheme` under the list's own key rather than as constants,
+    or the stories cannot render the default the way CLAUDE.md requires.
+
+    **The gesture shipped 2026-08-10** — `onRowSelect(rows, modifiers)` on both
+    sisters, mount-enabled per A4.2 rule 1 and a strict superset of
+    `onRowClick` exactly as `<MultiSelector>` is of `<Selector>`.
+
+    Decisions worth keeping:
+    - **Crossing into another row makes it a range**, not a pixel slop. A row
+      is tall and discrete, so that is the question the gesture actually turns
+      on; asking it directly means a press-and-release can never commit a range
+      and a horizontal wobble (meaningless on a stack of rows) never can
+      either. It needs no coordinates — per-row `pointerenter` answers it,
+      which is also why there is no pointer capture (capture would route every
+      later event to the pressed row and the others would never hear the
+      pointer arrive; a window `pointerup` covers release-outside instead).
+    - **`ranged` is positional, not historical** — it tracks where the pointer
+      _is_, so wandering away and back is a click again. Found by
+      revert-verification: the original `if (i !== d.anchor) ranged = true`
+      guard was **redundant** (nothing could ever clear the flag), which is why
+      that mutation survived while the others reddened. Making it positional
+      turned dead code into real, tested behaviour.
+    - **`additive` is `metaKey || ctrlKey`**, character-for-character what
+      `Layers` resolves for a canvas select. A `navigator.platform` sniff was
+      written first and rejected: whatever the better rule is, a list and a
+      chart in the same app must not disagree about what "add to selection"
+      means. (Note `SelectModifiers.additive`'s doc claims a per-OS rule the
+      canvas does not implement — a doc/behaviour mismatch predating this.)
+    - **A held press owns the hover channel**, gated on the press being armed
+      rather than on the run having started: hover is delegated at the
+      `<table>` while the range extends per row, and React dispatches the
+      ancestor's handler **first**, so a `ranged` check let the very crossing
+      that starts a run report a hover on its way past. `endDrag` hands the
+      channel back to the row the pointer ended on, or `null` when the release
+      was off the rows.
+    - **No shift-click policy.** `shiftKey` is reported and given no
+      behaviour, per `SelectModifiers`' own note that an ordinal range is a
+      gesture, not a modifier.
+    - **Native text selection is suppressed for the press only** (owner
+      reported it: dragging painted the browser's selection colour across the
+      labels, competing with the band and rail for the same meaning). Scoped to
+      the press rather than the list because a data list's labels are hostnames
+      and ticker symbols that people copy — a range gesture must not cost the
+      list its selectable text. It has to be state rather than the gesture ref,
+      because the style must be in the DOM before the browser starts extending
+      a selection on the first move; `pointerdown` is discrete, so React
+      flushes it in time.
+    - **Touch is excluded from the gesture.** A vertical drag over a list on a
+      touch device is how you SCROLL, and claiming it for a range would make
+      the list impossible to scroll past. Touch keeps click-to-select (still
+      reported through `onRowSelect`); a touch range wants its own affordance —
+      a long-press or an explicit multi-select mode — rather than stealing the
+      one gesture the platform already spent. **Unbuilt.**
+
+    **Keyboard parity shipped 2026-08-10.** ↑/↓ move, Home/End jump,
+    Enter/Space select (with modifiers, so ⌘/Ctrl-Enter adds), Shift with any
+    movement key extends.
+    - **On a keyboard the range IS a modifier**, which only looks like it
+      contradicts `SelectModifiers`' "an ordinal range is a gesture, not a
+      modifier". That note is about not overloading a _pointer_ chord that
+      already means something else (a region drag); a keyboard has no competing
+      gesture, and Shift-Arrow is the one range idiom every platform teaches.
+    - **One anchor, shared with the pointer**, so a click can be finished with
+      the keyboard. It holds across repeats (a plain move re-anchors, a
+      shift-extend does not) — otherwise Shift-↓ slides a two-row window down
+      the list instead of growing one run.
+    - **Focus is the browser's**, not a mirrored index in state: arrows focus
+      the row element and read `document.activeElement` implicitly. A second
+      copy of "what has focus" is one more thing to desynchronise.
+    - **The row lookup is `:scope > tbody > tr[data-list-row]`** — an expanded
+      row's detail may hold a whole nested list whose rows carry the same
+      attribute, and a descendant query would navigate somebody else's rows.
+      (`handlePointerOver` guards the same hazard.)
+
+    **Still open, and deliberately not done here:**
+    - **No roving tabindex.** Every interactive row is still `tabIndex={0}`, so
+      a 100-row list is 100 tab stops — the ARIA listbox pattern would make one
+      row tabbable and let the arrows do the rest. It is the better pattern and
+      it is a _behaviour change_ to existing keyboard flow, so it is worth
+      asking for rather than slipping in beside a feature.
+    - **No ARIA selection semantics.** `aria-selected` is not valid on a plain
+      `<tr>`; making it valid means `role="grid"`, which promises cell-level
+      Left/Right navigation this does not implement. Promoting the role without
+      the navigation would be a worse lie than the current silence, so the
+      honest fix is the whole grid pattern or a `role="listbox"` rebuild —
+      neither of which belongs inside this task.
+
+    **Superseded — what was open before the gesture landed:**
+    - **Drag over `<tr>` rows** — press on row _i_, drag to row _j_, take
+      the run. Pointer events on the table rows, not `sweep1D`: a list has
+      no key axis and no scale to invert through. A row's `key` is its
+      identity, so the committed value is a **key array**, not a
+      `SpanSelection` (which needs a numeric interval and a layer `id`,
+      neither of which a list has).
+    - **The commit channel.** `onRowClick(row)` reports one row and carries
+      no modifiers. A range release needs something plural — most likely a
+      sibling callback rather than a widening, since the two report
+      different things (one row vs a run) and a click must stay a click.
+    - **Keyboard parity.** Rows are already focusable with Enter / Space
+      activating them; a range select wants Shift-click and a Shift-arrow
+      extend, and that is worth settling _with_ the pointer gesture rather
+      than after it.
+
+  - **`<LineChart>` and `<AreaChart>`** — **design settled 2026-08-10**, see
+    `[PND-TRACESEL]` below.
+
+- **[PND-TRACESEL]** — **Selection on a continuous trace** — `<LineChart>` /
+  `<AreaChart>`, the last two columns of the selection matrix. **Design settled
+  2026-08-10; the premise is that a trace has no marks, and every answer below
+  follows from taking that seriously rather than working around it.**
+  - **A sweep commits a `SpanSelection` with NO hits.** The span _is_ the
+    selection. Empty `hits` is not a shortfall: a trace's samples are not marks
+    (they are usually undrawn, and at any real density there are many per
+    pixel), so "the samples you swept" is a set the user never expressed.
+    Materialising them would also be exactly the **A8.1 cliff** — 100k
+    `SelectInfo`s per drag frame — and a consumer who wants them already has
+    the span and their own series, which is one `crop` in pond. **Deferred
+    alternative, considered and rejected:** hits as the covered samples, via
+    `sweep1D` with `begin === end` (scatter's point-layer shape). It is the
+    obvious move and it is the expensive one.
+  - **A click commits a series-scoped `SelectInfo`** — `key`/`value` `NaN`,
+    because no sample was selected, which is what that convention already
+    means. **And it carries a stable `mark`, which is the seam that makes this
+    work with no currency change at all:** `sameMark` checks `mark` _before_
+    falling back to `key`, so two clicks anywhere on the trace are the same
+    mark and the documented deselect-toggle policy works. Without a `mark` it
+    would not — `NaN !== NaN`, so `selectionContains` can never match a
+    series-scoped entry against itself. The `<Legend>` emits no `mark` and so
+    still "names no mark", exactly as its doc says; a trace opts in.
+  - **The visual state uses WEIGHT, not hue** — the channel rule again, and the
+    same answer `<Candlestick>` got. A line's **colour is its identity** (it is
+    how a reader tells one series from another), so state cannot live there.
+    `LineStyle` gains `selectedWidth` and `dimmedOpacity`; nothing else moves.
+  - **`sweepsRect: false`, `sweepAxis: 'x'`.** A trace is 1-D in x and the
+    value axis says nothing about what a drag covered.
+
+  **What this needs in the kernel:** a third session builder beside `sweep1D` /
+  `sweep2D` — one whose `extent()` is the drag window and whose `hits()` is
+  always empty. Small, and clearly earned rather than speculative: it is the
+  only shape that expresses "this layer has a range but no marks".
+
+  **Shipped 2026-08-10.** `sweepSpan` in the kernel, `traceHitIndex` (distance
+  to the drawn polyline, bisected then two segments — `O(log N)`, not a scan)
+  and `areaHitIndex` (inside the fill, edge interpolated so the boundary
+  follows the drawn slope). 27 tests, revert-verified on all three load-bearing
+  claims: dropping the stable `mark` reds the deselect test, measuring to the
+  nearest vertex instead of the segment reds three, and dropping the bounds
+  clamp reds two. Verified in the browser too — a sweep commits
+  `span mem [01-10 → 01-26)` with **0 marks**, and clicking one line then
+  clicking the same line at a **different x** deselects it, which is the whole
+  point of the `mark`.
+
+  **Two things found while building it, worth keeping:**
+  - **A `TimeSeries` cannot hold a gap in a number column** — NaN, `null` and
+    `undefined` are all rejected by validation. So a gap only ever reaches a
+    chart as NaN in the `Float64Array` an operator produced, and the gap cases
+    in both hit tests are pinned at the **unit** level against a raw
+    `ChartSeries` because that is the only honest place for them.
+  - **Topmost-wins reads worse on a trace than on a bar.** With two lines in a
+    row, a sweep commits a span on whichever layer is topmost (A8.4's
+    single-`id` resolution). For column marks that is fine — you were pointing
+    at marks. A trace sweep points at _nothing_, so "which trace did I sweep?"
+    has no pointer answer, and the choice is genuinely arbitrary to the reader.
+    Not a regression and not new machinery, but the trace case is where the
+    single-span limitation starts to show. **Revisit if a consumer hits it** —
+    plural spans is the fix, and it is a currency change.
+
+  **Open, and owed a perf commit:** `sliceTrace` **does** fall under the repo's
+  perf gate, contrary to what PR #634's body claimed — a fresh-eyes review
+  caught it. It pushes into two `number[]`s and allocates two `Float64Array`s
+  per partitioned frame, sized by the window, so a fully-swept large trace is a
+  per-frame loop over the whole series. `sweepSpan` and the `O(log N)` hit tests
+  are genuinely exempt; this is not. The fix is to slice from the
+  **already-decimated** polyline (or reuse buffers across frames) plus
+  `scripts/perf-trace-sweep.mjs` and a before/after table, per the gate.
+
+  **Still open:** the **visual state**. `LineStyle` has only `color`/`width`/
+  `dash`, so a selected or dimmed trace currently looks identical to a resting
+  one — selection you cannot see, which is the visual twin of the "inaudible
+  selection" mistake `[PND-A11Y]` records. The design is settled (weight, not
+  hue, because a line's colour is its identity): `LineStyle` wants
+  `selectedWidth` + `dimmedOpacity`. Deliberately not landed in the same pass —
+  it is a `defaultTheme` change and moves visual baselines, so it belongs in
+  its own commit with the baseline regeneration.
+
+- **[PND-INTERACTDOCS]** — **The interaction wave's docs pass, and the
+  `onSelect` collapse it blocks on.** Owner-listed 2026-08-10.
+
+  **First, collapse `<MultiSelector onSelect>`'s `span` + `spans` into one
+  `spans` argument.** PR #634 shipped it as a 4th argument on the reasoning
+  that widening the 3rd would churn 23 call sites — **that reasoning was
+  wrong**: `selectors.tsx` does not exist at `v0.57.0`, so `<MultiSelector>`
+  and `<Selector>` have **never been published** and there are no external
+  consumers. The 23 sites are all in-repo. Do it before release, not behind a
+  shim for a thing nobody has. (Contrast `<BarList>/<BoxList> selected`, which
+  **is** released — that widening genuinely needed the owner gate.)
+
+  Attempted at the tail of the session and **reverted to keep the branch
+  green**, so nothing is half-migrated. The type layer collapses cleanly (four
+  sites: `SweepGesture.commit`, `SelectorEntry.onSelectMany`,
+  `MultiSelectorProps.onSelect`, and the forwarder). The cost is the call
+  sites, and they are not a regex job: `multi-selector.test.tsx` alone has ~12
+  tests that destructure `vi.fn()` mock calls as `[hits, modifiers, span]`
+  with `SpanSelection | null` annotations, plus `selectionContains([span!])`
+  round-trips and `toBeNull()` checks that must become `toEqual([])` — several
+  of which **encode the old "null means a click" contract** and need reading,
+  not substituting.
+
+  **Then the docs pass.** Note the docs-build CI does **not** typecheck MDX
+  code blocks, so a stale signature there ships silently wrong — these must be
+  read, not trusted to CI. Owner-named pages first:
+  - `website/docs/learn-charts/06-cursors-readouts-zoom.mdx`
+  - `website/docs/charts/interaction/cursors-and-readouts.mdx`
+  - `website/docs/charts/interaction/selection-and-hover.mdx`
+
+  Found by search, and the owner expects more:
+  - `website/docs/charts/interaction/legend.mdx`, `pan-zoom-and-range-selection.mdx`
+  - `website/docs/charts/types/lists.mdx` — needs the whole list story: plural
+    `selected`, `onRowSelect`, keyboard parity, the row-state ladder
+  - `website/docs/charts/theming.mdx` — new `line`/`area` state tokens, the
+    `list` register, the experimental `annotation.spanEdge`
+  - `website/docs/charts/gallery/site-traffic-dashboard.mdx` +
+    `website/src/examples/gallery-site-traffic-dashboard.tsx` (a real example
+    that mounts selection)
+  - `website/docs/charts/gallery/volume-history.mdx` — uses
+    `onSelect={([from]) => …}`, i.e. already destructures; check it against the
+    collapsed shape
+  - `how-to-guides/categorical-charts.mdx`, `histograms.mdx` — `<Selector>`
+    only, so unaffected by the collapse, but worth checking against the wave
+
+  **Nothing documents the new surfaces at all yet**: horizontal sweeps, trace
+  selection, the list range gesture and keyboard, or the row-state ladder. The
+  docs pass is a write, not just an edit.
+
+- **[PND-TRACECYCLE]** — **Hotkeys to cycle which series a window selects.**
+  Owner idea, 2026-08-10: `all → series1 → series2 → all`, with a hotkey to
+  **keep** the current one or **exclude** it.
+
+  Worth recording because it is a _third_ answer to the question a trace sweep
+  cannot answer by pointing. The first two were z-order (topmost-wins —
+  arbitrary to the reader) and take-everything (shipped, [PND-TRACESEL]).
+  Cycling is better than either: it hands the ambiguity to the user instead of
+  resolving it by a rule they cannot see, and it needs no new currency — plural
+  spans already exist, so cycling is a _filter_ over the set the gesture
+  produced.
+
+  Open: whether cycling happens **during** the drag (the preview narrows as you
+  tab) or **after** the commit (the selection narrows); which keys, given the
+  plot surface is not focusable at all today ([PND-A11Y]); and whether
+  keep/exclude are separate keys or a modifier on the cycle. The focus problem
+  is the real blocker — there is no keyboard path to a chart, so this task
+  depends on [PND-A11Y]'s focus model rather than standing alone.
+
+- **[PND-ANNSNAP]** — **A snap-target registry, and selection ↔ annotation.**
+  Owner design sketch, 2026-08-10. Two halves that share one mechanism.
+
+  **The scenario both halves are for** is written up as RFC **Amendment 9** —
+  a pace + elevation chart where a lap bar windows both traces, and a swept
+  segment is saved ("Chalk hill climb"), listed with stats, and clicked to
+  return to. Read it before designing: it is what makes lap boundaries the
+  motivating snap contributor and "save the range" a real step rather than a
+  nice-to-have.
+
+  **The mechanism: `<ChartContainer snap>`, with targets contributed by
+  sources.** A mode, not a per-gesture prop — and the consumer enumerates
+  nothing, because the sources already know where their edges are. Same
+  "declared, resolved by the container" shape as cursor snap policy and
+  `binIntervals`.
+
+  **This is a SECOND channel, deliberately not the existing one.** A **range
+  cursor is not bound by it** — an _interval sequence_ is what the range cursor
+  follows, and that is a **tiling** that partitions the axis ("which bucket am I
+  in"). Snap targets are a **sparse set of edges** ("what is the nearest one,
+  if it is close enough"). Different question, different resolution, so
+  conflating them into `cursorBuckets` would break the range cursor to serve
+  the sweep.
+
+  **The target sources** (owner's list):
+  - **series that are intervals or time-ranges** — a bar / bin / box layer's
+    `[begin, end)` edges. Already published as `binIntervals`, so this
+    contributor exists and only needs re-pointing.
+  - **category marks** — the unit slots `[i, i+1)`; also already `binIntervals`.
+  - **annotation edges** — a `<Region>`'s `from`/`to` and a `<Marker>`'s `at`.
+    (A `<Baseline>` is a y value and so is not an x target.)
+  - **session boundaries** — the trading calendar's collapse instants, which
+    `<LineChart>` already computes for its own drawing and the container holds
+    as `discontinuities`.
+  - **sweep selection edges** — an existing span's own boundaries. **This is
+    the elegant one:** sweeping up to an existing span's edge lands flush on
+    it, so regions merge _exactly_ rather than approximately — which is a
+    better answer to "sweeps merge regions" than a `mergeSpans` tolerance
+    could be, because the coincidence is made true at gesture time instead of
+    reconciled afterwards.
+
+  **The two actions:**
+  - **Promote a sweep to annotation(s)** — to save the range. Note the plural:
+    a trace sweep now commits one span per trace ([PND-TRACESEL]), so promoting
+    yields several annotations, and "which ones" is a question.
+  - **Select within an annotation** — the inverse, making selections and
+    annotations interconvertible.
+
+  **Open questions, and the first two must be answered before any code:**
+  1. **Precedence among targets.** With five contributors a pixel is often
+     near several. "Nearest in pixels" is the obvious rule and probably right,
+     but ties need a tie-break and it may be that an annotation edge should
+     beat a bin edge regardless of distance (the user placed the annotation
+     deliberately; the bin edge is just data shape).
+  2. **The radius is in pixels, so it is view-dependent.** Zoomed out, many
+     targets fall inside it and snapping becomes unpredictable; zoomed in,
+     nothing does. Needs an explicit rule, and probably a cap on how far the
+     cut may move from where the pointer actually is.
+  3. **A span must not snap to its own edge.** Sweep edges being targets means
+     the live preview's own boundaries enter the target set _during_ the drag
+     that is creating them — a feedback loop that would pin the cut to itself.
+     The preview spans have to be excluded from their own snap resolution.
+  4. **`snap` as a boolean vs a set of kinds.** A boolean is the right first
+     shape (the repo does not add speculative options), but "snap to
+     annotations but not to bins" is a plausible early ask, so the widening
+     path should be obvious before the boolean ships.
+  5. **What activates "select within an annotation".** A `<Region>` is already
+     draggable when `onChange` is given, so a click on one is partly spoken
+     for.
+
+  **A visual experiment is in the tree, unsettled** (2026-08-10): light-orange
+  vertical rules at a committed window's edges,
+  `theme.annotation.spanEdge` + `strokeSpanEdges`, drawn from each trace layer.
+  It previews what promoting a sweep to an annotation would look like, and it
+  reads well on both a line and an area. **Two things about it are wrong and
+  need deciding before it stays:**
+  - **A real annotation cannot sit there.** Annotations render in the **SVG
+    overlay above** the canvas; these are canvas-side _under_ the trace ink,
+    because "underneath" is what was asked for. So the experiment shows a look
+    the annotation register cannot currently produce. Either the rules move
+    above the ink, or the register gains a canvas-underlay pass.
+  - **It collided with the brush band, twice.** Mid-drag the band strokes its
+    own edges at the same two x positions, and at rest the **resting block
+    band** did too — so each boundary carried two vertical rules a pixel apart,
+    reading as one muddy smear. Fixed by making the rules committed-only and by
+    suppressing the resting block band on a span-only row, which was a bug in
+    its own right: that band previews "a drag here selects this block", and a
+    trace has no blocks. The lesson generalises — **a boundary should be marked
+    once**, and three separate things now want to mark one.
+  - **Every spanned layer draws its own copy** at the same x. They are opaque so
+    the overdraw is idempotent, but that is a workaround for the rules living on
+    the wrong owner: a window's edges belong to the row, not to each trace in
+    it. Two traces currently stroke the same two lines twice.
+
+  **Note on scope:** promoting a sweep to an annotation may not need library
+  machinery at all — `onCreate({kind: 'region'})` exists and a consumer holding
+  the span can create it in a line, which is the same call made for
+  `mergeSpans` and the lists' set arithmetic. **Snapping cannot be done
+  consumer-side**, because it has to happen _during_ the drag. That asymmetry
+  is the argument for building the registry and leaving promotion to policy.
 
 - **[PND-CURSORAPI]** — **Publish the cursor contract** (RFC Q3), under A7.1's
   litmus rather than by argument: every built-in **and** SpiderRock's gapped
@@ -430,6 +938,38 @@ financial hub, and the in-site API reference for core + charts). Plan:
 - **[PND-OBSDOC]** — "Observing pond-ts in production" how-to: the
   documentation-backlog items (pushMany guidance, bench-honesty callout, GC
   snippet, no-NaN guarantee, tie semantics, latency pattern) as one MDX pass.
+
+### Accessibility — audit and fixes, library-wide
+
+Pond's interaction surface grew one gesture at a time — cursors, selection, the
+sweep, the 2-D rect, the list range gesture — and each landed with its own
+keyboard story or none. Nobody has yet walked the **whole** surface from a
+keyboard or a screen reader. Plan (and the finding register):
+[PND_A11Y_PLAN.md](docs/plans/PND_A11Y_PLAN.md).
+
+- **[PND-A11Y]** — **Audit the interaction surface, then fix.** Per surface,
+  not per component: what can a keyboard user do, what does a screen reader
+  say, and what does the DOM claim. Findings accumulate in the breakout plan
+  as they are found — including the ones deliberately not fixed and why — so a
+  later pass does not re-derive them.
+
+  **The finding that prompted it:** the list family now supports single and
+  multi-row selection by pointer _and_ keyboard, and **none of it is exposed to
+  assistive technology.** `aria-selected` is not valid on a plain `<tr>`, and
+  the obvious repair (`role="grid"`) promises cell-level Left/Right navigation
+  the list does not implement — telling assistive technology a lie about the
+  widget is worse than the current silence. The honest options are implementing
+  the full ARIA grid pattern or rebuilding the interactive list as a
+  `listbox`, and that is a design decision rather than a prop. Also open on the
+  same surface: no roving tabindex (a 100-row list is 100 tab stops), no touch
+  affordance for a range at all, and unverified focus visibility against the
+  selection band.
+
+  **The canvas is in scope and unaudited.** Every chart gesture is
+  mouse-driven with no keyboard path, and what a screen reader should be told
+  about a chart is a question this has not opened. The first step there is an
+  inventory, not a fix — recorded so the audit's scope is not silently "the
+  lists".
 
 ### Agent workloads — the defensible bench
 
@@ -1291,4 +1831,8 @@ These happen throughout rather than being scheduled:
 - add end-to-end examples whenever a major capability lands
 - keep API reference generation working in CI
 - expand tests alongside every new public API
+- **check the keyboard and screen-reader path for any new interaction** — a
+  gesture is not finished because a sighted mouse user can drive it; record
+  what you find (fixed or not) in
+  [PND_A11Y_PLAN.md](docs/plans/PND_A11Y_PLAN.md)
 - prefer benchmark-backed changes for performance-sensitive core refactors

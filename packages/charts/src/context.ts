@@ -83,6 +83,26 @@ export interface ContainerFrame {
   /** Set / clear the region-drag anchor (see {@link regionAnchor}). */
   setRegionAnchor(value: number | null): void;
   /**
+   * The **live** spans of a sweep in flight — the preview a span-only layer
+   * paints ([PND-TRACESEL]), and empty at rest.
+   *
+   * A mark layer previews through plural `hovered`: the covered marks light.
+   * A **trace has no marks**, so there is nothing for that channel to carry —
+   * what wants lighting is the *portion of the trace inside the window*, which
+   * is a span, not a set of marks. Hence a second preview channel rather than
+   * an abuse of the first.
+   *
+   * A paint mirror in the same sense as {@link regionAnchor}: `Layers` writes
+   * it from the live session and clears it on release, and it never enters the
+   * committed selection — {@link selectedSpans} is the consumer's, this is the
+   * gesture's. A layer that finds itself named here should draw as though the
+   * span were committed, so releasing changes nothing visually and the preview
+   * cannot promise a different picture than the commit delivers.
+   */
+  readonly previewSpans: readonly SpanSelection[];
+  /** Set / clear the live sweep preview (see {@link previewSpans}). */
+  setPreviewSpans(spans: readonly SpanSelection[]): void;
+  /**
    * One-shot callback fired when a `region`-cursor **drag** is released, with the
    * selected `[lo, hi]` span in **axis units** — epoch ms on a time axis, the axis
    * value on a value axis (snapped to the `cursorSequence` buckets when present,
@@ -820,6 +840,44 @@ export interface RowLayer {
    */
   readonly sweepsRect?: boolean;
   /**
+   * **Which screen axis a sweep over this layer cuts** — `'x'` (the default,
+   * and every layer that shipped before [PND-HSWEEP]) or `'y'` for a
+   * transposed layer whose bins run down the screen: a horizontal
+   * `<BarChart>` puts the value on the shared x, so a window there says
+   * nothing about which bins are covered and the cut has to come from the
+   * pointer's y.
+   *
+   * **Orthogonal to {@link sweepsRect}, and all four pairs are real** — (x,
+   * band) a vertical bar, (y, band) a horizontal bar, (x, rect) a scatter or a
+   * vertical heat map, (y, rect) a horizontal heat map. That is why this is a
+   * second field rather than a third value on `sweepsRect`.
+   *
+   * The session itself is unaffected: {@link SweepSession.update} takes
+   * **key-axis units** and does not care which screen axis produced them, so a
+   * transposed layer builds the same `sweep1D` a vertical one does. What the
+   * axis changes is the *gesture* — which pointer coordinate is inverted (and
+   * through which scale), where the drag slop lives (`|dy|` rather than
+   * `|dx|`), and which way the brush band is drawn.
+   *
+   * A `'y'` cut is measured against **one row's** axis, so its band is
+   * row-local exactly as a rect is, and it takes its geometry from
+   * {@link SweepSession.extent} rather than from the shared bin channel —
+   * `binIntervals` carries the *value* axis on a transposed layer.
+   */
+  readonly sweepAxis?: 'x' | 'y';
+  /**
+   * **Whether a sweep over this layer has a range but no marks** — the same
+   * fact {@link SweepSession.spanOnly} reports, declared on the layer for
+   * exactly the reason {@link sweepsRect} is: the RESTING state has to know it
+   * and there is no session at rest.
+   *
+   * It suppresses the resting **block** band. That band previews "a drag begun
+   * here selects this block", and a trace has no blocks — a drag takes a
+   * freeform window — so the band would advertise a set the gesture never
+   * selects. Precisely the reason a `twoD` layer gets no resting band either.
+   */
+  readonly sweepSpanOnly?: boolean;
+  /**
    * Draw into the plot canvas. `xScale`/`yScale` map data→pixels. May return
    * {@link LayerDrawStats} (source/drawn counts + whether decimation engaged) so
    * the container can surface them via {@link ContainerProps.onDrawStats}; a
@@ -881,6 +939,20 @@ export interface SweepSession {
    * consumer mounts the same `<MultiSelector>` either way (RFC Q14).
    */
   readonly twoD?: boolean;
+  /**
+   * **Set by a layer that has a range but no marks** — a continuous trace
+   * ([PND-TRACESEL]). `hits()` is always empty and the span is the whole
+   * selection.
+   *
+   * The gesture reads this to answer "who else did I sweep?". Topmost-wins
+   * exists because a release carried **one** span, and on mark layers it is
+   * defensible — you were pointing at marks, so the topmost is the one you
+   * meant. A trace sweep points at *nothing*: every trace in the row shares
+   * the same x window, so singling one out by z-order is arbitrary to the
+   * reader. Every span-only layer in the row is therefore swept together,
+   * while mark layers keep topmost-wins unchanged.
+   */
+  readonly spanOnly?: boolean;
   /**
    * The captured set's **second-dimension** channels, for a `twoD` session —
    * whichever of {@link SpanSelection.y} (a scatter's continuous window) and
@@ -953,6 +1025,9 @@ export interface SweepGesture {
     hits: readonly SelectInfo[],
     modifiers: SelectModifiers,
     span: SpanSelection | null,
+    /** Every span the gesture produced — see `<MultiSelector onSelect>`'s
+     *  fourth argument. A strict superset of `span`. */
+    spans: readonly SpanSelection[],
   ): void;
 }
 
@@ -1112,6 +1187,7 @@ export interface SelectorEntry {
         hits: readonly SelectInfo[],
         modifiers: SelectModifiers | undefined,
         span: SpanSelection | null,
+        spans: readonly SpanSelection[],
       ) => void)
     | undefined;
   /** `<MultiSelector sequence>` — the sweep's bucket snap, folded into the
@@ -1380,6 +1456,19 @@ export interface ResolvedCursorFrame {
    *  declared sequence, else the drag span), as clamped plot pixels; `null`
    *  when nothing to shade. Resolved by the container from `regionSpan`. */
   readonly band: { readonly x0: number; readonly x1: number } | null;
+  /**
+   * The **transposed band** — the same brush over a layer that declares
+   * `sweepAxis: 'y'` (a horizontal `<BarChart>`, whose bins run down the
+   * screen), as plot pixels on the row's own y axis. `null` in every other
+   * state, including an x sweep, which paints {@link band}.
+   *
+   * Row-local for {@link rect}'s reason: a y interval only means anything
+   * against the axis that measured it, so the row owning the drag resolves it
+   * and the others stay `null`. It is drawn by the same `renderBrushBand` with
+   * the geometry transposed — one renderer, so the two orientations of one
+   * gesture cannot drift (§8.1).
+   */
+  readonly bandY: { readonly y0: number; readonly y1: number } | null;
   /** Degenerate range cursor (no buckets, not mid-drag): draw a plain line. */
   readonly bandLine: boolean;
   /**

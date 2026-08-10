@@ -294,3 +294,67 @@ export function sweep2D(opts: {
     },
   };
 }
+
+/**
+ * A **span-only** sweep session — for a layer that has a range but **no marks**
+ * ([PND-TRACESEL]): a continuous trace.
+ *
+ * The third shape beside {@link sweep1D} and {@link sweep2D}, and the smallest:
+ * `hits()` is always empty and `extent()` is the drag's own window. That is not
+ * a stub, it is the answer. A `<LineChart>`'s samples are **not marks** — they
+ * are usually undrawn, and at any real density there are several per pixel — so
+ * "the samples you swept" is a set the user never expressed. Reporting the
+ * range they *did* express, and nothing else, is the honest cut.
+ *
+ * It is also the cheap one, which is the same decision viewed from the other
+ * side. Materialising the covered samples would mint an array per changed frame
+ * over a series that may hold a million points — the **A8.1** shape this whole
+ * family of sessions is built to avoid. Here there is nothing to materialise at
+ * all: no index, no scan, no allocation, and `NO_HITS` is a shared constant so
+ * even the empty case never mints an array. A consumer who wants the samples
+ * has the span and their own series, and slicing it is one call in pond.
+ *
+ * **The window is not snapped**, because there is nothing to snap to: a trace
+ * tiles no bins. `Layers` still bucket-snaps the drag through the shared
+ * `cursorBuckets` when a sibling layer publishes `binIntervals`, which is
+ * deliberate — a line over a histogram should cut on the histogram's edges.
+ */
+export function sweepSpan(opts: {
+  readonly id: string;
+  /** The layer's whole key range, so a drag past the data does not claim
+   *  territory the trace never covered. Omit for an unbounded cut. */
+  readonly bounds?: readonly [number, number];
+}): SweepSession {
+  const { id, bounds } = opts;
+  let lo = 0;
+  let hi = 0;
+  let live = false;
+  return {
+    id,
+    spanOnly: true,
+    update(x0: number, x1: number): boolean {
+      let a = Math.min(x0, x1);
+      let b = Math.max(x0, x1);
+      if (bounds !== undefined) {
+        a = Math.max(a, bounds[0]);
+        b = Math.min(b, bounds[1]);
+      }
+
+      // An empty or fully-clipped window covers nothing — reported as "no
+      // extent" rather than as a zero-width span, so a release outside the
+      // data reads as the swept-empty deselect every other layer gives.
+      const next = b > a;
+      if (next === live && a === lo && b === hi) return false;
+      lo = a;
+      hi = b;
+      live = next;
+      return true;
+    },
+    hits(): readonly SelectInfo[] {
+      return NO_HITS;
+    },
+    extent(): readonly [number, number] | null {
+      return live ? [lo, hi] : null;
+    },
+  };
+}

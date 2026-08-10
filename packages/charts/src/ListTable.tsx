@@ -13,13 +13,16 @@
  */
 import {
   Fragment,
+  useEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
+import type { SelectModifiers } from './context.js';
 import type { ListCellSpec, ListRow } from './list.js';
 import type { ChartTheme } from './theme.js';
 
@@ -34,13 +37,32 @@ const FALLBACK_ACCENT = '#0d9488';
  */
 const EMPTY_HOVER: ReadonlySet<string> = new Set<string>();
 
+/** The same trick for "nothing selected" — see {@link EMPTY_HOVER}. */
+const EMPTY_SELECTED: ReadonlySet<string> = new Set<string>();
+
+/**
+ * A row's interaction state, handed to {@link ListTableProps.renderGlyphs} so
+ * the glyphs can follow it — the fill is the one channel the shell cannot
+ * paint for them.
+ *
+ * `dimmed` is derived, not passed in: it means *something else* is selected.
+ * Nothing dims while the selection is empty, because with nothing selected
+ * there is nothing to recede from — the same rule `BarStyle.dimmed` states
+ * for the canvas.
+ */
+export interface ListRowState {
+  readonly selected: boolean;
+  readonly hovered: boolean;
+  readonly dimmed: boolean;
+}
+
 export interface ListTableProps<R extends ListRow> {
   /** Rows in display order (the caller sorts). */
   readonly rows: readonly R[];
   /** Which sister is rendering — stamped as `data-list` for styling/tests. */
   readonly kind: 'bar' | 'box';
   /** The glyph cell's content for one row (the bar / box lines). */
-  readonly renderGlyphs: (row: R) => ReactNode;
+  readonly renderGlyphs: (row: R, state: ListRowState) => ReactNode;
   readonly before?: readonly ListCellSpec<R>[] | undefined;
   readonly after?: readonly ListCellSpec<R>[] | undefined;
   readonly renderExpanded?: ((row: R) => ReactNode) | undefined;
@@ -48,8 +70,15 @@ export interface ListTableProps<R extends ListRow> {
   readonly onExpandToggle?:
     | ((key: string, expanded: boolean) => void)
     | undefined;
-  readonly selected?: string | null | undefined;
+  /** Selected row(s) — one key, a set of them, or nothing. Widened to match
+   *  {@link ListTableProps.hovered}; see `<BarList selected>`. */
+  readonly selected?: string | readonly string[] | null | undefined;
   readonly onRowClick?: ((row: R) => void) | undefined;
+  /** Plural select — a click's one row, or a drag's run. See `<BarList
+   *  onRowSelect>`; mounting it is what enables the drag. */
+  readonly onRowSelect?:
+    | ((rows: readonly R[], modifiers: SelectModifiers) => void)
+    | undefined;
   /** Controlled hover — one row key, a set of them, or nothing. Omitted ⇒
    *  uncontrolled (the shell tracks the pointer itself, as it always has). */
   readonly hovered?: string | readonly string[] | null | undefined;
@@ -89,6 +118,7 @@ export function ListTable<R extends ListRow>({
   onExpandToggle,
   selected,
   onRowClick,
+  onRowSelect,
   hovered,
   onHover,
   divided = true,
@@ -100,7 +130,10 @@ export function ListTable<R extends ListRow>({
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(
     () => new Set(defaultExpanded ?? []),
   );
-  const interactive = onRowClick !== undefined;
+  const interactive = onRowClick !== undefined || onRowSelect !== undefined;
+  // The drag-range gesture, armed by the MOUNT (interaction RFC A4.2 rule 1 —
+  // the same reason a bare `<MultiSelector />` enables the canvas sweep).
+  const ranges = onRowSelect !== undefined;
 
   // Hover: controlled (`hovered`) or uncontrolled (internal), mirroring the
   // canvas layers' channel on `ChartContainer` (RFC `interaction.md` A3.1 —
@@ -120,16 +153,268 @@ export function ListTable<R extends ListRow>({
     if (raw === null || raw === undefined) return EMPTY_HOVER;
     return new Set(typeof raw === 'string' ? [raw] : raw);
   }, [controlledHover, hovered, internalHovered]);
+  // …and the identical normalization for `selected`, which now takes the same
+  // union. It is deliberately the same three shapes and the same question
+  // ("is this row in the set"): the two channels of one vocabulary should not
+  // differ in how a consumer spells them.
+  const selectedKeys: ReadonlySet<string> = useMemo(() => {
+    if (selected === null || selected === undefined) return EMPTY_SELECTED;
+    return new Set(typeof selected === 'string' ? [selected] : selected);
+  }, [selected]);
 
   const rowByKey = useMemo(
     () => new Map(rows.map((row) => [row.key, row])),
     [rows],
   );
+  /**
+   * The live drag-range: the row index the press landed on, the one the
+   * pointer is over now, and whether it has ever left the first.
+   *
+   * **Crossing into another row is what makes it a range** — not a pixel slop.
+   * A row is tall and discrete, so "did the pointer reach a different row" is
+   * the question the gesture actually turns on, and asking it directly means a
+   * press-and-release on one row can never accidentally commit a range (nor
+   * can a horizontal wobble, which on a stack of rows means nothing at all).
+   * It also needs no coordinates: `pointerenter` per row answers it.
+   *
+   * A ref, not state, for the reason the canvas gesture keeps one: the
+   * handlers must never read a state mirror that may not have committed.
+   */
+  const dragRef = useRef<{
+    anchor: number;
+    current: number;
+    /**
+     * Whether the pointer is **currently** on a different row than the anchor
+     * — not whether it ever was.
+     *
+     * So wandering out to another row and back again lands on a *click*, not a
+     * one-row range: the user changed their mind, and the forgiving reading is
+     * the one every other drag in the library takes. It also matters to a
+     * consumer with both callbacks mounted, since a range commits through
+     * `onRowSelect` and swallows the click `onRowClick` would otherwise hear.
+     */
+    ranged: boolean;
+  } | null>(null);
+  /** The run the drag currently covers — the live preview, painted as hover. */
+  const [dragRun, setDragRun] = useState<ReadonlySet<string> | null>(null);
+  /**
+   * A press is armed — used only to suppress **native text selection** for the
+   * gesture's duration.
+   *
+   * It has to be state rather than the ref above, because the suppression is a
+   * style: `user-select` must already be `none` in the DOM before the browser
+   * starts extending a selection, which it does on the first move after the
+   * press. `pointerdown` is a discrete event, so React flushes this update
+   * synchronously — the style lands before any `pointermove` arrives.
+   *
+   * Scoped to the press rather than to the whole list on purpose: a data list's
+   * labels are hostnames and ticker symbols, and people copy them. Mounting a
+   * range gesture should not cost the list its selectable text.
+   */
+  const [armed, setArmed] = useState(false);
+  /**
+   * The **selection anchor** — the row a range extends *from*, shared by both
+   * input methods so they are one model rather than two: click a row, then
+   * Shift-Arrow, and the run starts where you clicked.
+   *
+   * A plain move (arrow, click, Enter) re-anchors; a shift-extend deliberately
+   * does not, so repeated Shift-Down grows one run instead of walking a
+   * two-row window down the list.
+   */
+  const anchorRef = useRef<number | null>(null);
+  const tableRef = useRef<HTMLTableElement | null>(null);
+
+  /**
+   * This table's own row elements, in display order.
+   *
+   * Scoped with `:scope >` because an expanded row's detail may contain a
+   * whole nested list, whose rows carry the same attribute — a plain
+   * descendant query would walk into it and the arrow keys would navigate
+   * somebody else's list. (`handlePointerOver` guards the same hazard.)
+   */
+  const rowEls = (): readonly HTMLElement[] =>
+    Array.from(
+      tableRef.current?.querySelectorAll<HTMLElement>(
+        ':scope > tbody > tr[data-list-row]',
+      ) ?? [],
+    );
+  /** A ranged drag ends in a `click` too; this swallows that one. */
+  const rangedClickRef = useRef(false);
+
+  /**
+   * Keyboard parity with the pointer: there is no drag on a keyboard, so the
+   * range has to arrive as a **modifier** there.
+   *
+   * That is not the contradiction with `SelectModifiers`' "an ordinal range is
+   * a gesture, not a modifier" that it looks like. The note is about not
+   * overloading a *pointer* chord that already means something else (a region
+   * drag); a keyboard has no competing gesture and Shift-Arrow is the one
+   * range idiom every platform already teaches.
+   *
+   * - **Arrow Up/Down** — move focus one row; re-anchor.
+   * - **Home/End** — move focus to the first/last row; re-anchor.
+   * - **Shift** with any of those — move focus and report the run from the
+   *   anchor, which stays put.
+   * - **Enter/Space** — select the focused row (with modifiers, so ⌘/Ctrl-Enter
+   *   adds); re-anchor.
+   *
+   * Focus is moved by focusing the row element rather than by tracking an
+   * index in state: the browser is already the source of truth for what has
+   * focus, and a second copy of that would be one more thing to keep in sync.
+   */
+  const onRowKeyDown = (e: ReactKeyboardEvent, i: number) => {
+    if (!interactive) return;
+    // **Only when the ROW itself has focus.** A row may contain its own
+    // interactive content — the expander chevron is a real `<button>`, and a
+    // consumer's `render` cell could be anything — and `keydown` bubbles. The
+    // chevron stops propagation on `click` but a button cannot stop what it
+    // does not know about, so without this guard Enter on the chevron reached
+    // here, got `preventDefault`ed, and selected the row instead of expanding
+    // it (and worse, the cancelled keydown suppresses the button's own Space
+    // activation). Arrow keys would likewise yank focus out of the button.
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      anchorRef.current = i;
+      onRowClick?.(rows[i]!);
+      onRowSelect?.([rows[i]!], mods(e));
+      return;
+    }
+    const last = rows.length - 1;
+    const to =
+      e.key === 'ArrowDown'
+        ? Math.min(i + 1, last)
+        : e.key === 'ArrowUp'
+          ? Math.max(i - 1, 0)
+          : e.key === 'Home'
+            ? 0
+            : e.key === 'End'
+              ? last
+              : null;
+    if (to === null) return;
+    // Claim the key before anything else can act on it: Arrow and Home/End
+    // would otherwise scroll the page out from under the list.
+    e.preventDefault();
+    rowEls()[to]?.focus();
+    if (!e.shiftKey || !ranges) {
+      anchorRef.current = to;
+      return;
+    }
+    // Extending: the anchor holds, so Shift-Down repeatedly grows ONE run.
+    // With no anchor yet (arrowing in from a Tab, never having selected), the
+    // row we left is the honest one to start from.
+    const from = anchorRef.current ?? i;
+    anchorRef.current = from;
+    onRowSelect?.(runOf(from, to), mods(e));
+  };
+
+  /** The rows of the inclusive index run `[a, b]`, in display order. */
+  const runOf = (a: number, b: number): readonly R[] =>
+    rows.slice(Math.min(a, b), Math.max(a, b) + 1);
+
+  const mods = (e: {
+    ctrlKey: boolean;
+    metaKey: boolean;
+    shiftKey: boolean;
+    altKey: boolean;
+  }): SelectModifiers => ({
+    // `metaKey || ctrlKey`, character-for-character what `Layers` resolves
+    // for a canvas select. Deliberately NOT a `navigator.platform` sniff:
+    // whatever the better rule might be, a list and a chart in the same app
+    // must not disagree about what "add to selection" means — and
+    // `navigator.platform` is deprecated and absent in some hosts anyway.
+    additive: e.metaKey || e.ctrlKey,
+    ctrlKey: e.ctrlKey,
+    metaKey: e.metaKey,
+    shiftKey: e.shiftKey,
+    altKey: e.altKey,
+  });
+
+  /** Press: arm a potential range on this row. Nothing commits yet. */
+  const beginDrag = (i: number, e: ReactPointerEvent) => {
+    if (!ranges) return;
+    // **Touch is excluded, deliberately.** A vertical drag over a list on a
+    // touch device is how you SCROLL, and claiming it for a range would make
+    // the list impossible to scroll past. A touch range gesture needs its own
+    // affordance (a long-press, or an explicit multi-select mode) rather than
+    // stealing the one gesture the platform already spent. Touch keeps
+    // click-to-select, which still reports through `onRowSelect`.
+    if (e.pointerType === 'touch') return;
+    // The press is a plain move: it re-anchors, so a later Shift-Arrow
+    // extends from the row the user actually grabbed.
+    anchorRef.current = i;
+    dragRef.current = { anchor: i, current: i, ranged: false };
+    setArmed(true);
+    setDragRun(null);
+  };
+  /** The pointer reached row `i` with the button still down. */
+  const extendDrag = (i: number) => {
+    const d = dragRef.current;
+    if (d === null || i === d.current) return;
+    d.current = i;
+    d.ranged = i !== d.anchor;
+    setDragRun(new Set(runOf(d.anchor, i).map((r) => r.key)));
+  };
+  /** Release: a range commits here; a single row is left to the click. */
+  const endDrag = (e: ReactPointerEvent) => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    setDragRun(null);
+    setArmed(false);
+    if (d === null) return;
+    // Hand the hover channel back, to the row the pointer actually ended on.
+    // The press suppressed reporting for its whole duration, so without this
+    // the list believes nothing is hovered until the pointer moves again —
+    // the row under the cursor would go dark on release and light again on
+    // the next twitch.
+    reportHover(rows[d.current]?.key ?? null);
+    if (!d.ranged) return;
+    rangedClickRef.current = true;
+    onRowSelect?.(runOf(d.anchor, d.current), mods(e));
+  };
+
+  // A release **outside** the rows would otherwise leave the drag armed, so a
+  // later stray `pointerenter` would resume a gesture the user had finished. It
+  // commits rather than cancels: the run the user let go of is the run they
+  // meant, and where the pointer happened to be when they did is not the
+  // library's business. Registered only while a range gesture is possible — a
+  // list with no `onRowSelect` adds no listener at all.
+  useEffect(() => {
+    if (!ranges) return;
+    const onUp = (e: globalThis.PointerEvent) => {
+      const d = dragRef.current;
+      if (d === null) return;
+      dragRef.current = null;
+      setDragRun(null);
+      setArmed(false);
+      // Released off the rows, so there is no row under the pointer to hand
+      // the hover back to — unlike `endDrag`, which knows exactly which.
+      reportHover(null);
+      if (!d.ranged) return;
+      rangedClickRef.current = true;
+      onRowSelect?.(runOf(d.anchor, d.current), mods(e));
+    };
+    window.addEventListener('pointerup', onUp);
+    return () => window.removeEventListener('pointerup', onUp);
+  });
+
   // The last key we reported, so `onHover` fires on a row transition rather
   // than on every pointer move within a row — the canvas `onHover` dedup rule.
   // A ref (not state): it must not drive a render of its own.
   const lastHoverRef = useRef<string | null>(null);
   const reportHover = (key: string | null) => {
+    // **A held press owns the hover channel** — the same rule the canvas
+    // follows (`Layers` clears the single-mark hover the moment a sweep arms).
+    // Reporting "you are hovering row d" while a run b→d is being previewed
+    // would have the two channels contradict each other, with no way for the
+    // consumer to tell which was current.
+    //
+    // Gated on the press being ARMED, not on the run having started: hover is
+    // delegated at the table (`handlePointerOver`) while the range extends
+    // per row, and React dispatches the ancestor's handler FIRST — so
+    // checking `ranged` here would let the crossing that *starts* the run
+    // report a hover on its way past, and only suppress the ones after it.
+    if (dragRef.current !== null) return;
     if (lastHoverRef.current === key) return;
     lastHoverRef.current = key;
     if (!controlledHover) setInternalHovered(key);
@@ -160,6 +445,11 @@ export function ListTable<R extends ListRow>({
 
   const ink = listInk(theme);
   const accent = theme.annotation?.color ?? FALLBACK_ACCENT;
+  // The row-chart register. Absent ⇒ the pre-token look exactly: a hover band
+  // borrowed from `legend.border`, a selection rail from the annotation
+  // register, and no dimmed state — so a hand-built theme's rows do not
+  // shift under it (the same back-compatibility `theme.brush` was given).
+  const reg = theme.list;
   const divider = divided ? `1px solid ${theme.axis.grid}` : undefined;
   // Label + before + glyph + after (+ expander) — the detail row spans them all.
   const span = 2 + before.length + after.length + (renderExpanded ? 1 : 0);
@@ -188,12 +478,19 @@ export function ListTable<R extends ListRow>({
 
   return (
     <table
+      ref={tableRef}
       data-list={kind}
       onPointerOver={tracksHover ? handlePointerOver : undefined}
       onPointerLeave={tracksHover ? () => reportHover(null) : undefined}
       style={{
         width: '100%',
         borderCollapse: 'collapse',
+        // Suppress native text selection **only while a press is armed**. A
+        // drag across rows would otherwise sweep up the label text along the
+        // way — the run gets picked out in the browser's own selection colour,
+        // fighting the band and the rail for the same meaning. Released, the
+        // labels are selectable again (see `armed`).
+        ...(armed ? { userSelect: 'none' as const } : {}),
         font: `${theme.font.size}px/${1.5} ${theme.font.family}`,
         color: ink,
         background: theme.background,
@@ -244,8 +541,35 @@ export function ListTable<R extends ListRow>({
           </tr>
         )}
         {rows.map((row, i) => {
-          const isSelected = selected != null && selected === row.key;
-          const isHovered = hoveredKeys.has(row.key);
+          const isSelected = selectedKeys.has(row.key);
+          // **A live drag owns the surface**, exactly as the canvas sweep does
+          // (`Layers` clears the single-mark hover the moment a sweep arms):
+          // while a run is being drawn it IS what "would be selected if you
+          // released now", so it replaces the pointer's own hover rather than
+          // being unioned with it. `hovered` and `onHover` are untouched — the
+          // consumer's channel is not hijacked, it is simply out-ranked for
+          // the duration.
+          const isHovered =
+            dragRun !== null ? dragRun.has(row.key) : hoveredKeys.has(row.key);
+          // Dimmed means *something else* is selected — nothing recedes while
+          // the selection is empty. Only meaningful once a register exists;
+          // without one there is no dimmed state at all.
+          const isDimmed =
+            reg !== undefined && selectedKeys.size > 0 && !isSelected;
+          // **Selection outranks hover on the band**, because selection is
+          // committed and hover is transient: a hovered selected row must not
+          // read as merely hovered. The rail follows the band so the two
+          // never disagree about which state the row is in.
+          const band = isSelected
+            ? reg?.selectedBand
+            : isHovered
+              ? (reg?.hoverBand ?? theme.legend?.border ?? theme.axis.grid)
+              : undefined;
+          const rail = isSelected
+            ? (reg?.selectedRail ?? accent)
+            : isHovered
+              ? reg?.hoverRail
+              : undefined;
           const isOpen = renderExpanded !== undefined && expanded.has(row.key);
           return (
             <Fragment key={row.key}>
@@ -254,31 +578,63 @@ export function ListTable<R extends ListRow>({
                 {...(isSelected ? { 'data-selected': '' } : {})}
                 {...(isHovered ? { 'data-hovered': '' } : {})}
                 onClick={
-                  onRowClick === undefined ? undefined : () => onRowClick(row)
+                  !interactive
+                    ? undefined
+                    : (e) => {
+                        // A ranged drag also fires a click; swallow that one,
+                        // or the release would both commit the run and then
+                        // immediately report the single row under the pointer.
+                        if (rangedClickRef.current) {
+                          rangedClickRef.current = false;
+                          return;
+                        }
+                        anchorRef.current = i;
+                        onRowClick?.(row);
+                        // `onRowSelect` is a strict SUPERSET of `onRowClick`,
+                        // the way `<MultiSelector>` is of `<Selector>`: below
+                        // the range gesture a click is still a click, and it
+                        // reports one row plus its modifiers. Both fire when
+                        // both are mounted — each consumer does its own job.
+                        onRowSelect?.([row], mods(e));
+                      }
                 }
+                {...(ranges
+                  ? {
+                      onPointerDown: (e: ReactPointerEvent) => beginDrag(i, e),
+                      // Per-row `pointerenter` rather than pointer capture:
+                      // capture would route every later event to the pressed
+                      // row and the other rows would never hear the pointer
+                      // arrive. The cost is that a release outside the table
+                      // is not seen here — the window listener below is what
+                      // covers that.
+                      onPointerEnter: (e: ReactPointerEvent) => {
+                        if (e.buttons !== 0) extendDrag(i);
+                      },
+                      onPointerUp: endDrag,
+                    }
+                  : {})}
                 // A clickable row is keyboard-reachable too: focusable, and
                 // Enter / Space activate it (Space's default scroll is eaten).
                 tabIndex={interactive ? 0 : undefined}
-                onKeyDown={
-                  onRowClick === undefined
-                    ? undefined
-                    : (e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          onRowClick(row);
-                        }
-                      }
-                }
+                onKeyDown={interactive ? (e) => onRowKeyDown(e, i) : undefined}
                 style={{
                   borderTop: i > 0 ? divider : undefined,
                   cursor: interactive ? 'pointer' : undefined,
-                  background: isHovered
-                    ? (theme.legend?.border ?? theme.axis.grid)
-                    : undefined,
-                  // The selection accent: an inset edge in the annotation
-                  // register (a *user's* mark, so it takes the marks colour,
-                  // not a data hue) — reads on any ground, moves no layout.
-                  boxShadow: isSelected ? `inset 3px 0 0 ${accent}` : undefined,
+                  background: band,
+                  // The rail: a 3px inset edge — reads on any ground and
+                  // moves no layout. It is chrome for the whole ROW, so it
+                  // resolves from the list register rather than from
+                  // `bar[as]`; a row may carry several metrics and there is
+                  // only ever one rail.
+                  boxShadow:
+                    rail === undefined ? undefined : `inset 3px 0 0 ${rail}`,
+                  // The row is the target, not the bar (see `ChartTheme.list`):
+                  // a 4% row would otherwise be a sliver to aim at, so the
+                  // whole band is one hit area of at least 44px.
+                  // (`height`, not `minHeight`: a table row ignores the
+                  // latter, while the former is treated as a MINIMUM — the
+                  // used height is max(specified, content).)
+                  ...(interactive || hoverWired ? { height: 44 } : {}),
                 }}
               >
                 <td data-list-cell="label" style={textCell()}>
@@ -305,7 +661,11 @@ export function ListTable<R extends ListRow>({
                   style={glyphCellStyle('6px')}
                 >
                   <div style={{ position: 'relative' }}>
-                    {renderGlyphs(row)}
+                    {renderGlyphs(row, {
+                      selected: isSelected,
+                      hovered: isHovered,
+                      dimmed: isDimmed,
+                    })}
                     {drawnMarkers.map((m, mi) => (
                       // One dotted segment per row, bleeding through the
                       // row's vertical padding (+ divider) so adjacent rows'
@@ -342,7 +702,14 @@ export function ListTable<R extends ListRow>({
                       type="button"
                       data-list-expander=""
                       aria-expanded={isOpen}
-                      aria-label={isOpen ? 'Collapse row' : 'Expand row'}
+                      // Named for the row it belongs to: every chevron
+                      // sharing one label makes a screen reader's control
+                      // list N indistinguishable "Expand row" buttons. State
+                      // rides on `aria-expanded`, so the label need only
+                      // identify the target.
+                      aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${
+                        row.label ?? row.key
+                      }`}
                       onClick={(e) => {
                         // The chevron toggles; it must not double as a row click.
                         e.stopPropagation();

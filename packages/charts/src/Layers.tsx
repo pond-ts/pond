@@ -51,6 +51,7 @@ import {
   type SelectInfo,
   type SelectModifiers,
   type SweepGesture,
+  type SpanSelection,
   type SweepSession,
   type YScale,
 } from './context.js';
@@ -95,6 +96,8 @@ const ZOOM_SENSITIVITY = 0.0015;
  *  it still selects. One threshold for both so a click never also nudges the pan
  *  (and never hit-tests against a shifted scale). */
 const DRAG_SLOP = 4;
+/** Stable "no sweep in flight" identity for the span preview channel. */
+const EMPTY_SPANS: readonly SpanSelection[] = [];
 
 /**
  * The topmost sweep-capable layer's fresh {@link SweepSession} (RFC §8's
@@ -106,7 +109,7 @@ const DRAG_SLOP = 4;
 function beginTopmostSweep(
   c: Pick<ContainerFrame, 'xScale'>,
   r: Pick<RowFrame, 'layers' | 'yScales' | 'defaultAxisId'>,
-): { session: SweepSession; yScale: YScale } | null {
+): { session: SweepSession; yScale: YScale; axis: 'x' | 'y' } | null {
   for (let i = r.layers.length - 1; i >= 0; i -= 1) {
     const entry = r.layers[i]!;
     const ys = r.yScales.get(entry.axisId ?? r.defaultAxisId);
@@ -120,10 +123,48 @@ function beginTopmostSweep(
     // window in the LAYER'S axis units, and only this loop knows which of the
     // row's axes that is. Handing back the session alone would leave the
     // gesture inverting pointer pixels through the default axis, which is a
-    // silent mis-cut exactly on a dual-axis row.
-    if (s !== null) return { session: s, yScale: ys };
+    // silent mis-cut exactly on a dual-axis row. The declared `sweepAxis`
+    // rides along for the same reason and from the same layer, so the gesture
+    // never has to re-derive which layer won the z-order race.
+    if (s !== null)
+      return { session: s, yScale: ys, axis: entry.layer.sweepAxis ?? 'x' };
   }
   return null;
+}
+
+/**
+ * Every **span-only** layer's session in the row ([PND-TRACESEL]) — a trace has
+ * a range but no marks, and every trace shares the same x window, so they are
+ * swept together rather than by z-order.
+ *
+ * Mark layers are untouched by this: topmost-wins still decides which of them
+ * claims a drag, because there you were pointing at marks and the topmost is
+ * the one you meant. A trace sweep points at nothing, so singling one out
+ * would be arbitrary to the reader.
+ *
+ * Built once per gesture, at the press, for the reason every session is: they
+ * snapshot the layer's arrays and nothing persists outside the drag.
+ */
+function beginSpanOnlySweeps(
+  c: Pick<ContainerFrame, 'xScale'>,
+  r: Pick<RowFrame, 'layers' | 'yScales' | 'defaultAxisId'>,
+): readonly SweepSession[] {
+  // **Topmost first**, matching `beginTopmostSweep`'s descending scan, so
+  // `spans[0]` is the same layer `span` reports (reviewer finding: ascending
+  // order made the documented `span === spans[0]` false on a two-trace row).
+  const out: SweepSession[] = [];
+  for (let i = r.layers.length - 1; i >= 0; i -= 1) {
+    const entry = r.layers[i]!;
+    const ys = r.yScales.get(entry.axisId ?? r.defaultAxisId);
+    if (ys === undefined) continue;
+    const s =
+      entry.layer.beginSweep?.(
+        (v) => c.xScale(v),
+        (v) => ys(v),
+      ) ?? null;
+    if (s !== null && s.spanOnly === true) out.push(s);
+  }
+  return out;
 }
 
 /**
@@ -138,6 +179,35 @@ function topmostSweepsRect(layers: RowFrame['layers']): boolean {
     if (l.beginSweep !== undefined) return l.sweepsRect === true;
   }
   return false;
+}
+
+/**
+ * Does the topmost sweep-capable layer have a range but **no marks**? The
+ * render-time counterpart of {@link SweepSession.spanOnly}, read where
+ * {@link topmostSweepsRect} is and for the same reason: the resting state needs
+ * the fact and there is no session at rest.
+ */
+function topmostSweepSpanOnly(layers: RowFrame['layers']): boolean {
+  for (let i = layers.length - 1; i >= 0; i -= 1) {
+    const l = layers[i]!;
+    if (l.layer.beginSweep !== undefined) return l.layer.sweepSpanOnly === true;
+  }
+  return false;
+}
+
+/**
+ * Which screen axis the topmost sweep-capable layer cuts — the `sweepAxis`
+ * counterpart of {@link topmostSweepsRect}, same z-order rule and the same
+ * reason for existing: the resting state has to answer it with no session in
+ * hand. `'x'` for a row with nothing sweepable, which is what every caller
+ * wants for "not a transposed row".
+ */
+function topmostSweepAxis(layers: RowFrame['layers']): 'x' | 'y' {
+  for (let i = layers.length - 1; i >= 0; i -= 1) {
+    const l = layers[i]!.layer;
+    if (l.beginSweep !== undefined) return l.sweepAxis ?? 'x';
+  }
+  return 'x';
 }
 
 /** Same marks, by full identity — so a recomputed resting block can keep the
@@ -476,9 +546,15 @@ export function Layers({ children }: LayersProps) {
   // for.
   const sweeps = container.hasMultiSelector(row.rowKey);
   const rectPreview = sweeps && topmostSweepsRect(layers);
+  const sweepAxis = topmostSweepAxis(layers);
+  // A span-only row gets no resting block band either, and for the rect's
+  // reason: a trace has no blocks, so the band would preview a set the drag
+  // never takes. It would also collide with the committed span's own edge
+  // rules, putting two vertical marks a pixel apart on each boundary.
   const blockPreview =
     sweeps &&
     !rectPreview &&
+    !topmostSweepSpanOnly(layers) &&
     layers.some((e) => e.layer.beginSweep !== undefined);
   // The resting brush replaces the implicit cursor either way; only its SHAPE
   // differs. A 2-D row gets no band: its snap block is a whole x column while
@@ -490,7 +566,12 @@ export function Layers({ children }: LayersProps) {
     effectiveCursorEntries(container.cursors, row.rowKey).every(
       (e) => e.implicit === true,
     );
-  const restingBand = restingBrush && !rectPreview;
+  // …and a **transposed** row gets none yet: the resting block preview is
+  // resolved from the shared x buckets, so a y-cutting row would draw a band
+  // over a column its drag can never select. Suppressed rather than
+  // transposed — [PND-HSWEEP] carries the follow-up, and a missing preview is
+  // honest where a wrong one is not.
+  const restingBand = restingBrush && !rectPreview && sweepAxis === 'x';
   const restingCross = restingBrush && rectPreview;
   const cursorEntries = useMemo(
     () =>
@@ -677,6 +758,11 @@ export function Layers({ children }: LayersProps) {
     anchorPy: number;
     session: SweepSession;
     yScale: YScale;
+    /** The sweeping layer's declared cut axis — see `RowLayer.sweepAxis`. */
+    axis: 'x' | 'y';
+    /** Every span-only layer in the row — swept alongside the claimant, so a
+     *  window covers every trace rather than the topmost one. */
+    spanOnly: readonly SweepSession[];
     gesture: SweepGesture;
     committed: boolean;
     raf: number;
@@ -689,6 +775,14 @@ export function Layers({ children }: LayersProps) {
   const [sweepRect, setSweepRect] = useState<{
     x0: number;
     x1: number;
+    y0: number;
+    y1: number;
+  } | null>(null);
+  // The live **transposed** band, in this row's plot pixels — a `sweepAxis:
+  // 'y'` cut (a horizontal bar). Row-local for the rect's reason: a y interval
+  // only means anything against the axis that measured it, so the container's
+  // shared `regionAnchor` (how every row draws the x band) is the wrong home.
+  const [sweepBandY, setSweepBandY] = useState<{
     y0: number;
     y1: number;
   } | null>(null);
@@ -725,10 +819,63 @@ export function Layers({ children }: LayersProps) {
   const cutSweep = useCallback(
     (sw: NonNullable<typeof sweepRef.current>, c: ContainerFrame): boolean => {
       if (sw.pendingT === null) return false;
+      // ── The transposed cut (`sweepAxis: 'y'`) — a horizontal bar. ──
+      // The window comes from the pointer's y through the sweeping layer's own
+      // axis, and NOT through `cursorBuckets`: the shared bin channel carries
+      // the *value* axis here (`binIntervals` is published vertical-only), so
+      // snapping the window against it would snap bins to value edges.
+      //
+      // The band is then read back off `session.extent()` — the
+      // snapped-outward run the session already computed — rather than agreed
+      // with separately. Same move `snappedRect()` made for the rect, and the
+      // stronger version of it: the band is *derived* from the cut, so it
+      // cannot promise a different set than release delivers. With nothing
+      // covered there is no extent, and the raw drag is what to show.
+      // The **live span preview** for span-only layers ([PND-TRACESEL]): a
+      // trace has no marks, so plural `hovered` carries nothing for it and the
+      // thing that wants lighting is the portion inside the window. Published
+      // every cut, from the same sessions the release will read, so the
+      // preview cannot promise a different picture than the commit delivers.
+      const publishPreview = () => {
+        // **Bail out when nothing needs it.** Reviewer finding: this ran every
+        // raf frame of every sweep and minted a fresh array even with zero
+        // span-only layers, and `previewSpans` sits in the container frame
+        // memos — so a plain MARK-layer sweep re-rendered per frame where the
+        // session's `changed` gate used to suppress it. That is an A8.1-class
+        // regression on a path this PR was not supposed to touch.
+        if (sw.spanOnly.length === 0) return;
+        const spans: SpanSelection[] = [];
+        for (const s of sw.spanOnly) {
+          const ext = s.extent();
+          if (ext !== null) spans.push({ kind: 'span', id: s.id, x: ext });
+        }
+        c.setPreviewSpans(spans);
+      };
+      if (sw.axis === 'y') {
+        const a = +sw.yScale.invert(sw.anchorPy);
+        const b = +sw.yScale.invert(sw.pendingPy);
+        const changed = sw.session.update(Math.min(a, b), Math.max(a, b));
+        for (const s of sw.spanOnly) s.update(Math.min(a, b), Math.max(a, b));
+        publishPreview();
+        const ext = sw.session.extent();
+        setSweepBandY(
+          ext === null
+            ? { y0: sw.anchorPy, y1: sw.pendingPy }
+            : { y0: sw.yScale(ext[0]), y1: sw.yScale(ext[1]) },
+        );
+        return changed;
+      }
       const span = regionSpan(c.cursorBuckets ?? [], sw.anchor, sw.pendingT);
       if (span === null) return false;
-      if (sw.session.twoD !== true)
-        return sw.session.update(span.start, span.end);
+      if (sw.session.twoD !== true) {
+        const changed = sw.session.update(span.start, span.end);
+        // Every span-only layer takes the same window. These are sessions of
+        // their own — including one for the claimant when it is a trace — so
+        // there is nothing to skip.
+        for (const s of sw.spanOnly) s.update(span.start, span.end);
+        publishPreview();
+        return changed;
+      }
       const changed = sw.session.update(
         span.start,
         span.end,
@@ -807,7 +954,9 @@ export function Layers({ children }: LayersProps) {
     if (sw.committed) {
       setSweeping(false);
       setSweepRect(null);
+      setSweepBandY(null);
       containerRef.current.setRegionAnchor(null);
+      containerRef.current.setPreviewSpans(EMPTY_SPANS);
       sw.gesture.preview([]); // un-light the preview; nothing commits
     }
   }, []);
@@ -860,6 +1009,8 @@ export function Layers({ children }: LayersProps) {
           anchorPy: py,
           session: swept!.session,
           yScale: swept!.yScale,
+          axis: swept!.axis,
+          spanOnly: beginSpanOnlySweeps(c, r),
           gesture: sweepGesture!,
           committed: false,
           raf: 0,
@@ -974,23 +1125,30 @@ export function Layers({ children }: LayersProps) {
           if (!sw.committed) {
             const start = clickStartRef.current;
             if (start === null) return;
-            // A 1-D sweep is an x-gesture: slop on |dx|, so a vertical wobble
-            // under a still x stays a click. A `twoD` sweep has a real second
-            // axis, so a straight-down drag is a legitimate rect and the slop
-            // has to be on the DISTANCE — measuring |dx| there would make the
-            // one gesture that only moves in y impossible to start.
+            // The slop lives on whatever the gesture actually cuts, so the
+            // wobble it forgives is the one that carries no meaning:
+            //  - an x band — |dx|, so a vertical wobble under a still x is a
+            //    click;
+            //  - a **y** band (`sweepAxis: 'y'`, a horizontal bar) — |dy|, the
+            //    mirror image, and measuring |dx| there would make the whole
+            //    gesture unstartable;
+            //  - a `twoD` rect — the DISTANCE, since both axes carry meaning
+            //    and a straight-down drag is a legitimate rect.
             const dx = e.clientX - start.x;
+            const dy = e.clientY - start.y;
             const moved = twoD
-              ? Math.hypot(dx, e.clientY - start.y)
-              : Math.abs(dx);
+              ? Math.hypot(dx, dy)
+              : Math.abs(sw.axis === 'y' ? dy : dx);
             if (moved <= DRAG_SLOP) return;
             sw.committed = true;
             justCommitted = true;
             setSweeping(true);
-            // A `twoD` sweep paints its own row-local rect instead: the
-            // container's anchor is how EVERY row draws the band, and a rect
-            // measured against this row's y axis means nothing in the others.
-            if (!twoD) c.setRegionAnchor(sw.anchor); // paint-only mirror (the band)
+            // A `twoD` sweep paints its own row-local rect instead, and a y
+            // band its own row-local band, for the same reason: the
+            // container's anchor is how EVERY row draws the x band, and
+            // anything measured against this row's y axis means nothing in
+            // the others.
+            if (!twoD && sw.axis === 'x') c.setRegionAnchor(sw.anchor); // paint-only mirror
             c.setHovered(null, rowRef.current.rowKey); // plural preview owns hover now
             try {
               e.currentTarget.setPointerCapture(e.pointerId);
@@ -1205,6 +1363,11 @@ export function Layers({ children }: LayersProps) {
         cutSweep(sw, c);
         setSweeping(false);
         setSweepRect(null);
+        setSweepBandY(null);
+        // The preview hands over to the committed selection here. A layer that
+        // was previewed and is now selected sees no visual change, which is the
+        // point: release must not repaint what it already promised.
+        c.setPreviewSpans(EMPTY_SPANS);
         c.setRegionAnchor(null); // the band reverts, as the range drag's does
         try {
           e.currentTarget.releasePointerCapture(e.pointerId);
@@ -1226,13 +1389,28 @@ export function Layers({ children }: LayersProps) {
         // gesture never guesses which one a layer uses.
         const channels =
           sw.session.twoD === true ? (sw.session.extent2D?.() ?? null) : null;
-        sw.gesture.commit(
-          sw.session.hits(),
-          modifiers,
+        // Every span this gesture produced. The claimant's comes first — it is
+        // what the third argument reports, and on a mark-layer row it is the
+        // only one. A trace sweep adds one per span-only layer, because they
+        // all share the x window and z-order means nothing to the reader there
+        // ([PND-TRACESEL]).
+        const claimed: SpanSelection | null =
           extent === null
             ? null
-            : { kind: 'span', id: sw.session.id, x: extent, ...channels },
-        );
+            : { kind: 'span', id: sw.session.id, x: extent, ...channels };
+        // `sw.spanOnly` is the authoritative set for span-only layers — and it
+        // holds a session for EVERY one of them, including the claimant when
+        // the claimant is a trace. Those are freshly built, so they are never
+        // the same object as `sw.session`: prepending the claimant
+        // unconditionally reported the topmost trace twice. Prepend it only
+        // when it is a mark layer, which `spanOnly` does not cover.
+        const all: SpanSelection[] = [];
+        if (claimed !== null && sw.session.spanOnly !== true) all.push(claimed);
+        for (const s of sw.spanOnly) {
+          const ext = s.extent();
+          if (ext !== null) all.push({ kind: 'span', id: s.id, x: ext });
+        }
+        sw.gesture.commit(sw.session.hits(), modifiers, claimed, all);
         return;
       }
       // End a range drag: commit the anchor→pointer span as a one-shot range —
@@ -1421,11 +1599,12 @@ export function Layers({ children }: LayersProps) {
           const hits = session.hits();
           const extent = session.extent();
           if (hits.length > 0 && extent !== null) {
-            gesture.commit(hits, modifiers, {
+            const one: SpanSelection = {
               kind: 'span',
               id: session.id,
               x: extent,
-            });
+            };
+            gesture.commit(hits, modifiers, one, [one]);
             return;
           }
         }
@@ -1573,10 +1752,14 @@ export function Layers({ children }: LayersProps) {
   // A 2-D sweep paints `sweepRect` instead, so it must not ALSO shade a band:
   // `sweeping` alone would resolve one from the pointer's bucket, and the row
   // would carry a full-height column under the rect the drag is drawing.
+  // A y sweep paints `sweepBandY`, so — exactly as with the rect — it must
+  // not ALSO shade an x band: `sweeping` alone would resolve one from the
+  // pointer's bucket and lay a full-height column across the horizontal band
+  // the drag is actually drawing.
   const bandActive =
     (wantsBand &&
       (container.xKind === 'time' || container.xKind === 'value')) ||
-    (sweeping && sweepRect === null) ||
+    (sweeping && sweepRect === null && sweepBandY === null) ||
     restingBand;
   const band: { x0: number; x1: number } | null =
     bandActive && cursorTime !== null
@@ -1596,7 +1779,10 @@ export function Layers({ children }: LayersProps) {
   // A drag owns the band's extent exactly while an anchor is set — the range
   // drag sets it on pointerdown, the sweep when it crosses `DRAG_SLOP` (so a
   // click never flashes the edges on its way to committing a block).
-  const bandDragging = container.regionAnchor !== null;
+  // A y band's anchor is row-local, so the container's `regionAnchor` says
+  // nothing about it — its own presence is the drag (it is set only past the
+  // slop, and cleared on release).
+  const bandDragging = container.regionAnchor !== null || sweepBandY !== null;
   const bandLine =
     wantsBand &&
     (container.xKind === 'time' || container.xKind === 'value') &&
@@ -1616,6 +1802,7 @@ export function Layers({ children }: LayersProps) {
     flags: trackerFlags,
     pointer,
     band,
+    bandY: sweepBandY,
     bandLine,
     bandDragging,
     rect: sweepRect,

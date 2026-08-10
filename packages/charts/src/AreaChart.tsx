@@ -7,7 +7,15 @@ import {
   fromValueSeries,
 } from './data.js';
 import type { NumericColumn, ValueNumericColumn } from './column-names.js';
-import { areaExtent, drawArea } from './area.js';
+import { areaExtent, areaHitIndex, areaStateStyle, drawArea } from './area.js';
+import {
+  drawPartitioned,
+  plotExtentOf,
+  strokeSpanEdges,
+  type TraceState,
+} from './line.js';
+import type { AreaStyle } from './theme.js';
+import { sweepSpan } from './sweep.js';
 import type { DecimateOption } from './decimate.js';
 import { resolveCurve, type Curve } from './curve.js';
 import {
@@ -15,7 +23,13 @@ import {
   DEFAULT_GAP_CONNECTOR_OPACITY,
   type GapMode,
 } from './gaps.js';
-import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
+import {
+  ContainerContext,
+  LayersContext,
+  type LayerEntry,
+  type SelectInfo,
+  type SweepSession,
+} from './context.js';
 import {
   legendLabelFor,
   useLegendItems,
@@ -36,6 +50,17 @@ export interface AreaChartCommon<
    * single styling channel).
    */
   as?: string;
+  /**
+   * **Opt in to selection** — see `<LineChart id>`; the currency is identical
+   * because the premise is ([PND-TRACESEL]): a click commits a **series-scoped**
+   * `SelectInfo` (`NaN` key/value plus a stable `mark`), a sweep commits a
+   * `SpanSelection` with **no marks**.
+   *
+   * What differs is only the **hit test**: an area is a filled region, so the
+   * pointer counts as on it when it lies **between the trace and the
+   * baseline** — the whole shape is the target, not the 1.5px edge.
+   */
+  id?: string;
   /**
    * Which `<YAxis>` (by its `id`) this area scales against — picks the *scale*,
    * where `as` picks the *style*. **Omitted ⇒ the row's default axis.**
@@ -195,6 +220,7 @@ export function AreaChart<
   readout,
   as: semantic,
   axis,
+  id,
   baseline,
   curve,
   gaps = DEFAULT_GAP_MODE,
@@ -244,6 +270,40 @@ export function AreaChart<
   // falling back to the shared default so a theme without it still renders faint.
   const gapConnectorOpacity =
     container.theme.gap?.connectorOpacity ?? DEFAULT_GAP_CONNECTOR_OPACITY;
+  // ── The trace's interaction state ([PND-TRACESEL]) — see `<LineChart>` for
+  // the reasoning; this is the same derivation over `AreaStyle`'s channels.
+  const selectedEntries = container.selected;
+  const hoveredEntries = container.hovered;
+  // The committed spans, plus the **live** ones of a sweep in flight. A
+  // previewed span draws exactly as a committed one, so releasing changes
+  // nothing visually — the preview cannot promise a picture the commit does not
+  // deliver. The live channel wins while it is non-empty, because during a drag
+  // it IS the current answer.
+  const previewing = container.previewSpans.length > 0;
+  const allSpans = previewing
+    ? container.previewSpans
+    : container.selectedSpans;
+  const traceState = useMemo<TraceState>(() => {
+    if (id === undefined) return 'rest';
+    if (allSpans.some((sp) => sp.id === id)) return 'rest';
+    const mine = (e: { readonly id: string }) => e.id === id;
+    if (selectedEntries.some(mine)) return 'selected';
+    if (hoveredEntries.some(mine)) return 'hover';
+    if (selectedEntries.length > 0 || allSpans.length > 0) return 'dimmed';
+    return 'rest';
+  }, [id, selectedEntries, hoveredEntries, allSpans]);
+  // **`spanColor` only when this is the ONLY swept trace.** The hue is
+  // justified by identity not being in question inside a single series — but
+  // sweep two traces and both would go blue, so inside the window you could no
+  // longer tell them apart, which is the very thing the rule exists to prevent.
+  // With more than one, the window thickens and every trace keeps its colour.
+  const soleSpannedTrace = allSpans.length === 1;
+  const spanX = useMemo<readonly [number, number] | null>(() => {
+    if (id === undefined) return null;
+    const mine = allSpans.find((sp) => sp.id === id);
+    return mine === undefined ? null : mine.x;
+  }, [id, allSpans]);
+
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
@@ -254,6 +314,36 @@ export function AreaChart<
         xKind: series instanceof ValueSeries ? 'value' : 'time',
         xExtent: () =>
           cs.length === 0 ? null : [cs.x[0]!, cs.x[cs.length - 1]!],
+        // ── Selection, gated on `id` ([PND-TRACESEL]). Same currency as
+        // `<LineChart>`; only `hitTest` differs, because a fill is not a stroke.
+        ...(id === undefined
+          ? {}
+          : {
+              sweepsRect: false,
+              sweepAxis: 'x' as const,
+              sweepSpanOnly: true,
+              hitTest: (px, py, xScale, yScale): SelectInfo | null => {
+                const i = areaHitIndex(cs, baseline, px, py, xScale, yScale);
+                if (i === null) return null;
+                return {
+                  id,
+                  // Series-scoped, with a stable `mark` for identity — see
+                  // `<LineChart>`'s hitTest for why both halves are needed.
+                  key: NaN,
+                  value: NaN,
+                  color: style.fill,
+                  label,
+                  mark: label,
+                };
+              },
+              beginSweep: (): SweepSession | null =>
+                cs.length === 0
+                  ? null
+                  : sweepSpan({
+                      id,
+                      bounds: [cs.x[0]!, cs.x[cs.length - 1]!],
+                    }),
+            }),
         sampleAt: (x) => {
           // No readout past the data (tracker policy — nearest clamps to an
           // endpoint outside the span); bounds from the columnar x axis.
@@ -304,27 +394,76 @@ export function AreaChart<
               ]
             : [];
         },
-        draw: (ctx, xScale, yScale) =>
-          drawArea(
+        draw: (ctx, xScale, yScale) => {
+          const fill = (st: AreaStyle, alpha: number) => () => {
+            const prior = ctx.globalAlpha;
+            if (alpha !== 1) ctx.globalAlpha = prior * alpha;
+            const out = drawAreaWith(st);
+            ctx.globalAlpha = prior;
+            return out;
+          };
+          if (spanX === null) {
+            const [st, alpha] = areaStateStyle(style, traceState);
+            return fill(st, alpha)();
+          }
+          // EXPERIMENT: annotation-register rules at the window's edges,
+          // underneath the trace ink (drawn first). See `strokeSpanEdges`.
+          //
+          // **Committed spans only.** While the drag is live the brush band
+          // already strokes its own edges at the same two x positions, so
+          // drawing these too put two rules a fraction of a pixel apart on each
+          // boundary — which read as one muddy smear rather than as either. The
+          // handoff is the honest reading anyway: the band is the gesture's
+          // mark and belongs to the drag; these preview the annotation you
+          // would get, and belong to the result.
+          if (!previewing)
+            strokeSpanEdges(
+              ctx,
+              [xScale(spanX[0]), xScale(spanX[1])],
+              ctx.canvas.height,
+              container.theme.annotation?.spanEdge ?? '#f0b26b',
+            );
+          const [outStyle, outAlpha] = areaStateStyle(style, 'dimmed');
+          const [inStyle] = areaStateStyle(style, 'selected');
+          return drawPartitioned(
             ctx,
-            cs,
-            xScale,
-            yScale,
-            style,
-            // Omitted baseline rests on the axis floor (resolved late from the
-            // scale, so it tracks the auto-fit domain); a fixed baseline is used
-            // verbatim.
-            // A log axis has no position for zero — or anything at or below
-            // it — so an explicit out-of-domain `baseline` would scale to
-            // `NaN` and poison every coordinate in the fill path. Fall back
-            // to the axis floor, which is exactly what an omitted baseline
-            // already resolves to.
-            resolveAreaBaseline(baseline, yScale),
-            curveFactory,
-            gaps,
-            gapConnectorOpacity,
-            decimate,
-          ),
+            [xScale(spanX[0]), xScale(spanX[1])],
+            plotExtentOf(ctx, xScale, yScale).height,
+            fill(outStyle, outAlpha),
+            fill(
+              style.spanColor === undefined || !soleSpannedTrace
+                ? inStyle
+                : { ...inStyle, color: style.spanColor, fill: style.spanColor },
+              1,
+            ),
+            true,
+            0,
+            plotExtentOf(ctx, xScale, yScale).width,
+          );
+
+          function drawAreaWith(st: AreaStyle) {
+            return drawArea(
+              ctx,
+              cs,
+              xScale,
+              yScale,
+              st,
+              // Omitted baseline rests on the axis floor (resolved late from the
+              // scale, so it tracks the auto-fit domain); a fixed baseline is used
+              // verbatim.
+              // A log axis has no position for zero — or anything at or below
+              // it — so an explicit out-of-domain `baseline` would scale to
+              // `NaN` and poison every coordinate in the fill path. Fall back
+              // to the axis floor, which is exactly what an omitted baseline
+              // already resolves to.
+              resolveAreaBaseline(baseline, yScale),
+              curveFactory,
+              gaps,
+              gapConnectorOpacity,
+              decimate,
+            );
+          }
+        },
       },
       axisId: axis,
       index,
@@ -343,6 +482,11 @@ export function AreaChart<
       gapConnectorOpacity,
       decimate,
       axis,
+      id,
+      traceState,
+      spanX,
+      soleSpannedTrace,
+      previewing,
       index,
     ],
   );

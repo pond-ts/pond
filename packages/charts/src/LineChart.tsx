@@ -7,7 +7,20 @@ import {
   fromValueSeries,
 } from './data.js';
 import type { NumericColumn, ValueNumericColumn } from './column-names.js';
-import { drawLine, yExtent } from './line.js';
+import {
+  drawLine,
+  drawPartitioned,
+  plotExtentOf,
+  sliceTrace,
+  strokeSpanEdges,
+  traceHitIndex,
+  traceStateStyle,
+  yExtent,
+  type TraceState,
+} from './line.js';
+import { sweepSpan } from './sweep.js';
+import type { LineStyle } from './theme.js';
+import type { ChartSeries } from './data.js';
 import type { DecimateOption } from './decimate.js';
 import { resolveCurve, type Curve } from './curve.js';
 import {
@@ -15,7 +28,13 @@ import {
   DEFAULT_GAP_CONNECTOR_OPACITY,
   type GapMode,
 } from './gaps.js';
-import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
+import {
+  ContainerContext,
+  LayersContext,
+  type LayerEntry,
+  type SelectInfo,
+  type SweepSession,
+} from './context.js';
 import {
   legendLabelFor,
   useLegendItems,
@@ -36,6 +55,23 @@ export interface LineChartCommon<
    * is what bred react-timeseries-charts' styling bugs; restyle via the theme).
    */
   as?: string;
+  /**
+   * **Opt in to selection** — the layer identity a `<Selector>` /
+   * `<MultiSelector>` reports and a `selected` entry names. **Omitted ⇒ the
+   * trace is inert**, exactly as every other layer's `id` gates it.
+   *
+   * A trace's selection is not shaped like a bar's, because **a trace has no
+   * marks** ([PND-TRACESEL]):
+   *
+   * - a **click** commits a **series-scoped** {@link SelectInfo} — `key` and
+   *   `value` are `NaN`, because no sample was selected, and a stable `mark`
+   *   carries the identity so the documented deselect-toggle works;
+   * - a **sweep** commits a {@link SpanSelection} with **no marks**. The span
+   *   _is_ the selection. A trace's samples are usually undrawn and there are
+   *   several per pixel, so "the samples you swept" is a set you never
+   *   expressed — take the span and slice your own series with it.
+   */
+  id?: string;
   /**
    * Which `<YAxis>` (by its `id`) this line scales against — picks the *scale*,
    * where `as` picks the *style* (separate concerns). **Omitted ⇒ the row's
@@ -153,6 +189,7 @@ export function LineChart<
   readout,
   as: semantic,
   axis,
+  id,
   curve,
   gaps = DEFAULT_GAP_MODE,
   sessionBreaks = false,
@@ -213,6 +250,51 @@ export function LineChart<
     }
     return provider.boundaries(cs.x[0]!, cs.x[cs.length - 1]!);
   }, [sessionBreaks, container.discontinuities, cs]);
+  // ── The trace's interaction state ([PND-TRACESEL]).
+  //
+  // Read here so a selection change re-registers the layer and the canvas
+  // repaints — the same plumbing `<BarChart>` uses. Reference-stable when
+  // nothing names this layer, so an unrelated selection elsewhere in the
+  // container neither re-identifies this entry nor repaints it.
+  const selectedEntries = container.selected;
+  const hoveredEntries = container.hovered;
+  // The committed spans, plus the **live** ones of a sweep in flight. A
+  // previewed span draws exactly as a committed one, so releasing changes
+  // nothing visually — the preview cannot promise a picture the commit does not
+  // deliver. The live channel wins while it is non-empty, because during a drag
+  // it IS the current answer.
+  const previewing = container.previewSpans.length > 0;
+  const allSpans = previewing
+    ? container.previewSpans
+    : container.selectedSpans;
+  const traceState = useMemo<TraceState>(() => {
+    if (id === undefined) return 'rest';
+    // A span on THIS layer is handled by the partitioned draw below, not by a
+    // whole-series state: the emphasis is a region, not the series.
+    if (allSpans.some((sp) => sp.id === id)) return 'rest';
+    const mine = (e: { readonly id: string }) => e.id === id;
+    if (selectedEntries.some(mine)) return 'selected';
+    if (hoveredEntries.some(mine)) return 'hover';
+    // Something else is selected ⇒ recede. Nothing dims while the selection is
+    // empty: with nothing selected there is nothing to recede *from*, the same
+    // rule `BarStyle.dimmed` states for the marks.
+    if (selectedEntries.length > 0 || allSpans.length > 0) return 'dimmed';
+    return 'rest';
+  }, [id, selectedEntries, hoveredEntries, allSpans]);
+  // The swept window on this layer, in **key units** — mapped to pixels at draw
+  // time, because that is when the scale is known.
+  // **`spanColor` only when this is the ONLY swept trace.** The hue is
+  // justified by identity not being in question inside a single series — but
+  // sweep two traces and both would go blue, so inside the window you could no
+  // longer tell them apart, which is the very thing the rule exists to prevent.
+  // With more than one, the window thickens and every trace keeps its colour.
+  const soleSpannedTrace = allSpans.length === 1;
+  const spanX = useMemo<readonly [number, number] | null>(() => {
+    if (id === undefined) return null;
+    const mine = allSpans.find((sp) => sp.id === id);
+    return mine === undefined ? null : mine.x;
+  }, [id, allSpans]);
+
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
@@ -223,6 +305,44 @@ export function LineChart<
         xKind: series instanceof ValueSeries ? 'value' : 'time',
         xExtent: () =>
           cs.length === 0 ? null : [cs.x[0]!, cs.x[cs.length - 1]!],
+        // ── Selection, gated on `id` exactly as every other layer ([PND-TRACESEL]).
+        ...(id === undefined
+          ? {}
+          : {
+              // A trace is 1-D in x: the value axis says nothing about what a
+              // drag covered, so no rect and no y window.
+              sweepsRect: false,
+              sweepAxis: 'x' as const,
+              sweepSpanOnly: true,
+              hitTest: (px, py, xScale, yScale): SelectInfo | null => {
+                const i = traceHitIndex(cs, px, py, xScale, yScale);
+                if (i === null) return null;
+                return {
+                  id,
+                  // **Series-scoped**: no sample was selected, because a
+                  // sample is not a mark. `NaN` is what that already means
+                  // (see `SelectInfo.key`), and the stable `mark` below is
+                  // what gives the entry an identity — `sameMark` prefers it
+                  // over `key`, so two clicks anywhere on the trace are the
+                  // same selection and re-clicking deselects. Without the
+                  // `mark` they never would: `NaN !== NaN`.
+                  key: NaN,
+                  value: NaN,
+                  color: style.color,
+                  label,
+                  mark: label,
+                };
+              },
+              beginSweep: (): SweepSession | null =>
+                cs.length === 0
+                  ? null
+                  : sweepSpan({
+                      id,
+                      // Clamped to the trace's own span, so a drag off the end
+                      // does not commit a range the series never covered.
+                      bounds: [cs.x[0]!, cs.x[cs.length - 1]!],
+                    }),
+            }),
         sampleAt: (x) => {
           // No readout past the data (tracker policy — nearest clamps to an
           // endpoint outside the span); bounds from the columnar x axis.
@@ -271,19 +391,85 @@ export function LineChart<
               ]
             : [];
         },
-        draw: (ctx, xScale, yScale) =>
-          drawLine(
+        draw: (ctx, xScale, yScale) => {
+          const stroke =
+            (st: LineStyle, alpha: number, only?: ChartSeries) => () => {
+              const prior = ctx.globalAlpha;
+              const priorCap = ctx.lineCap;
+              if (alpha !== 1) ctx.globalAlpha = prior * alpha;
+              // Round the emphasised segment's ends. Only meaningful on a sliced
+              // path, whose endpoints ARE the window's — a clipped stroke is
+              // sheared vertically and no cap shows.
+              if (only !== undefined) ctx.lineCap = 'round';
+              const out = drawLine(
+                ctx,
+                only ?? cs,
+                xScale,
+                yScale,
+                st,
+                curveFactory,
+                gaps,
+                gapConnectorOpacity,
+                sessionBreakInstants,
+                decimate,
+              );
+              ctx.globalAlpha = prior;
+              ctx.lineCap = priorCap;
+              return out;
+            };
+          // No window on this layer ⇒ one pass, in the series' own state.
+          if (spanX === null) {
+            const [st, alpha] = traceStateStyle(style, traceState);
+            return stroke(st, alpha)();
+          }
+          // A window: the trace outside it recedes and the portion inside is
+          // emphasised — the trace's answer to lighting the covered marks.
+          // `spanColor` is the one hue a trace's state may take, because inside
+          // a single series identity is not in question; with none themed the
+          // window just thickens.
+          // EXPERIMENT: annotation-register rules at the window's edges,
+          // underneath the trace ink (drawn first). See `strokeSpanEdges`.
+          //
+          // **Committed spans only.** While the drag is live the brush band
+          // already strokes its own edges at the same two x positions, so
+          // drawing these too put two rules a fraction of a pixel apart on each
+          // boundary — which read as one muddy smear rather than as either. The
+          // handoff is the honest reading anyway: the band is the gesture's
+          // mark and belongs to the drag; these preview the annotation you
+          // would get, and belong to the result.
+          if (!previewing)
+            strokeSpanEdges(
+              ctx,
+              [xScale(spanX[0]), xScale(spanX[1])],
+              ctx.canvas.height,
+              container.theme.annotation?.spanEdge ?? '#f0b26b',
+            );
+          const [outStyle, outAlpha] = traceStateStyle(style, 'dimmed');
+          const [inStyle] = traceStateStyle(style, 'selected');
+          // The emphasised pass strokes a **slice** of the trace rather than
+          // the whole thing clipped, so its ends are real path ends and can be
+          // rounded. With nothing of the trace inside the window there is
+          // nothing to emphasise, and the muted pass alone is the picture.
+          const inner = sliceTrace(cs, spanX[0], spanX[1]);
+          const inInk =
+            style.spanColor === undefined || !soleSpannedTrace
+              ? inStyle
+              : { ...inStyle, color: style.spanColor };
+          return drawPartitioned(
             ctx,
-            cs,
-            xScale,
-            yScale,
-            style,
-            curveFactory,
-            gaps,
-            gapConnectorOpacity,
-            sessionBreakInstants,
-            decimate,
-          ),
+            [xScale(spanX[0]), xScale(spanX[1])],
+            plotExtentOf(ctx, xScale, yScale).height,
+            stroke(outStyle, outAlpha),
+            inner === null
+              ? () => ({ sourceCount: 0, drawnCount: 0, decimated: false })
+              : stroke(inInk, 1, inner),
+            false,
+            // The round cap overhangs the boundary by half its width; keep the
+            // muted trace out from under it.
+            inInk.width / 2,
+            plotExtentOf(ctx, xScale, yScale).width,
+          );
+        },
       },
       axisId: axis,
       index,
@@ -302,6 +488,11 @@ export function LineChart<
       sessionBreakInstants,
       decimate,
       axis,
+      id,
+      traceState,
+      spanX,
+      soleSpannedTrace,
+      previewing,
       index,
     ],
   );
