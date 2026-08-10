@@ -371,6 +371,60 @@ milestone. Plan:
     lights several marks at once, so the list had the receiving half of the
     gesture and not the committing half.
 
+    **The row-chart state ladder** (owner spec, 2026-08-10). The visual
+    language for the states above, and the analogue of the scatter / heat-map
+    palettes from [PND-INTERACT2D]. Two elements the row has that a canvas
+    mark does not: the **band** (the whole row stripe, label gutter through
+    trailing value) and the **rail** (a 3px inset left edge).
+
+    | State                    | Treatment                                                          |
+    | ------------------------ | ------------------------------------------------------------------ |
+    | rest                     | band transparent · fill `#2A9D8F`                                  |
+    | dimmed                   | fill opacity `.32` · **track unchanged**                           |
+    | hover                    | band `#F6F6F3` · rail `#4FD0BE`                                    |
+    | selected (single-metric) | band `#EEF1FD` · rail 3px `#3F5BE0` · fill goes blue too           |
+    | selected (multi-metric)  | band + rail **only** — hue is identity, so chrome carries it alone |
+    | target marker            | ink `#1C1C1A` · 3px — never blue                                   |
+
+    Four rules, each with its reason, because the reason is what generalises:
+    - **The row is the target, not the bar.** Label gutter, track and
+      trailing value are one hit area, **≥44px tall**. A vertical bar chart
+      can make the mark the target because every mark spans the full column
+      width; a row chart cannot — a 4% row is a 30px sliver.
+    - **The band carries selection alone.** Band + rail must read as selected
+      with **no help from the fill**, because in a multi-metric row the fill
+      cannot change. Design the single-metric case that way too and one
+      treatment covers every row chart in the library. (This is the channel
+      rule the wave already runs on: state may only use a channel the mark is
+      not already using for data.)
+    - **Track is chrome, so it never dims.** The unfilled remainder is a
+      _scale_, not a measurement — dimming it alongside the fill destroys the
+      shared baseline that makes rows comparable. Full strength in every
+      state, tinted to its metric.
+    - **Reserve blue even from markers.** Targets, thresholds and reference
+      ticks go to ink. On a bullet row the marker sits _inside_ the mark that
+      selection recolors, so a blue tick is the one collision the rest of the
+      language cannot absorb.
+
+    **Gap against what `ListTable` renders today** (verified 2026-08-10):
+    - **rail on selected** — exists, as `boxShadow: inset 3px 0 0 accent`.
+    - **band on hover** — exists, but reaches through `theme.legend.border`,
+      an unrelated token `[PND-CHFRIC]` already flags.
+    - **band on selected** — missing (selection is rail-only today).
+    - **rail on hover** — missing (hover is band-only today).
+    - **dimmed** — missing entirely; no state exists for "something else is
+      selected", which is the one the track rule is _about_.
+    - **single- vs multi-metric fill** — no distinction; the glyph fill is
+      not selection-aware at all.
+    - **per-row target marker** — `<BarList markers>` draws vertical rules
+      across _every_ row, which is not the bullet-row target the spec means.
+
+    **The literal hexes are the argument for a list theme slot.** Six values
+    that a consumer cannot currently reach — `[PND-CHFRIC]` already notes the
+    list's colours are only addressable through unrelated tokens. They should
+    land in `defaultTheme` under the list's own key rather than as constants,
+    or the stories cannot render the default the way CLAUDE.md requires.
+
     **What is left is the gesture**, which is the design half:
     - **Drag over `<tr>` rows** — press on row _i_, drag to row _j_, take
       the run. Pointer events on the table rows, not `sweep1D`: a list has
