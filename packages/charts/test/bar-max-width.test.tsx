@@ -146,6 +146,65 @@ function mount(props: Record<string, unknown>) {
   };
 }
 
+/**
+ * The horizontal twin of `mount`. Bins run down the **y** axis, so the value axis
+ * is x — and this arrangement routes through the oriented/transposed path a stack
+ * uses, which is what made the hit-target guarantee orientation-dependent.
+ */
+function mountHorizontal(props: Record<string, unknown>) {
+  let cf: ContainerFrame | null = null;
+  let rf: RowFrame | null = null;
+  function Capture() {
+    const c = useContext(ContainerContext);
+    const r = useContext(RowContext);
+    useEffect(() => {
+      if (c) cf = c;
+      if (r) rf = r;
+    });
+    return null;
+  }
+  const stub = stubCanvasContext();
+  try {
+    render(
+      <ChartContainer range={[0, 200]} width={400} showAxis={false}>
+        <ChartRow height={200}>
+          <YAxis id="v" label="" />
+          <Layers>
+            <BarChart
+              series={series()}
+              column="v"
+              axis="v"
+              id="b"
+              orientation="horizontal"
+              gap={0}
+              {...props}
+            />
+            <Capture />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+  } finally {
+    stub.restore();
+  }
+  const layer = () => rf!.layers[0]!.layer;
+  return {
+    hitAt(px: number, py: number) {
+      return (
+        layer().hitTest?.(px, py, cf!.xScale, rf!.yScales.get('v')!) ?? null
+      );
+    },
+    /** Heights of every filled rect the draw emitted — the bin-axis thickness. */
+    heights(): number[] {
+      const { ctx, calls } = recordingContext();
+      layer().draw(ctx, cf!.xScale, rf!.yScales.get('v')!);
+      return calls
+        .filter((c) => c.type === 'call' && c.name === 'fillRect')
+        .map((c) => Number(c.args[3]));
+    },
+  };
+}
+
 describe('`<BarChart maxBarWidth>` — the prop reaches the ink', () => {
   it('caps the drawn bar width', () => {
     // 200 units over 400px, two bars ⇒ 200px slots. Uncapped they draw 200 wide.
@@ -162,11 +221,13 @@ describe('`<BarChart maxBarWidth>` — the prop reaches the ink', () => {
     // the slot — otherwise pinning the ink would silently make the chart harder
     // to use, which is the opposite of the point.
     //
-    // **Scope note:** what actually prevents the leak is `barSlotRect`'s
-    // signature — it takes no cap, so wiring one in does not compile (checked:
-    // the attempted mutation is a TS2554). This test therefore documents the
-    // intent and would catch a *future* change that added the parameter and
-    // passed it; it is not what makes the property true today.
+    // **Scope note, corrected after review.** On *this* (vertical) path the leak
+    // is prevented structurally: `barSlotRect` takes no cap, so wiring one in does
+    // not compile. That made this test look like it pinned the whole guarantee —
+    // it pinned one orientation. A single-series *horizontal* chart routes through
+    // the stacked path instead, where nothing structural stopped the cap, and the
+    // guarantee was simply false; see the horizontal test below, which is load-
+    // bearing where this one is documentation.
     const m = mount({ maxBarWidth: 24 });
     const slot = m.plotWidth() / 2; // two bars over the plot
     // Points inside the first slot but far outside the 24px ink centred on it.
@@ -180,6 +241,30 @@ describe('`<BarChart maxBarWidth>` — the prop reaches the ink', () => {
     const viaProp = Math.max(...mount({ maxBarWidth: 12 }).widths());
     expect(viaProp).toBeCloseTo(12, 5);
     expect(uncapped).toBeGreaterThan(viaProp);
+  });
+
+  it("does NOT narrow a single-series HORIZONTAL bar's hit target either", () => {
+    // **Layer-2 review's find.** A single-series *horizontal* chart does not use
+    // the vertical single-series path — it routes through the same oriented,
+    // transposed path a stack uses (`stackAt`), which is handed the cap so its
+    // rect matches the drawn segment. That made the prop's documented guarantee —
+    // "a single-series bar hit-tests its whole slot" — true only of vertical
+    // charts, and the doc said it without qualification.
+    //
+    // Fixed by making the guarantee orientation-independent rather than narrowing
+    // the claim: the cap reaches the hit rect only for a real *stack*, because the
+    // reason for the split is resolving WHICH SEGMENT was hit, and a single-series
+    // chart has one segment per slot and nothing to disambiguate.
+    const m = mountHorizontal({ maxBarWidth: 8 });
+    // Bins run down y: bin 0 occupies the slot y∈[100, 200] of a 200px row, and
+    // the cap makes its ink 8px — y∈[146, 154]. Confirm the cap did reach the
+    // DRAW first, so this test cannot pass by the prop being ignored outright.
+    expect(Math.max(...m.heights())).toBeCloseTo(8, 5);
+    // `px` must sit inside the bar's value extent (bar 0 spans x 0…8.75), so
+    // these probe the bin axis only — the slot, far outside the 8px ink.
+    for (const py of [105, 130, 170, 195]) {
+      expect(m.hitAt(4, py)).not.toBeNull();
+    }
   });
 
   it('composes with `gap` — whichever binds tighter wins', () => {

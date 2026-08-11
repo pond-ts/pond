@@ -8,7 +8,7 @@ import { BarChart } from '../src/BarChart.js';
 import { Selector } from '../src/selectors.js';
 import { YAxis } from '../src/YAxis.js';
 import { categoryStacks } from '../src/data.js';
-import { defaultTheme } from '../src/theme.js';
+import { defaultTheme, estelaTheme, type ChartTheme } from '../src/theme.js';
 import {
   ContainerContext,
   RowContext,
@@ -46,6 +46,7 @@ const COLS = ['hits', 'misses'];
 function mount(
   node: React.ReactNode,
   colors?: Readonly<Record<string, string>>,
+  theme?: ChartTheme,
 ) {
   let cf: ContainerFrame | null = null;
   let rf: RowFrame | null = null;
@@ -61,7 +62,11 @@ function mount(
   const stub = stubCanvasContext();
   try {
     render(
-      <ChartContainer width={400} showAxis={false}>
+      <ChartContainer
+        width={400}
+        showAxis={false}
+        {...(theme ? { theme } : {})}
+      >
         {node}
         <ChartRow height={160}>
           <YAxis id="v" min={0} max={10} label="" />
@@ -229,6 +234,40 @@ describe('selection — one entry lights the whole bar', () => {
     expect(fills).toContain(COLORS.hits);
     expect(fills).toContain(COLORS.misses);
     expect(fills).not.toContain(defaultTheme.bar.default.highlight);
+  });
+
+  it('takes the themed `highlight` when the theme gives groups NO distinct colours', () => {
+    // **Layer-2 review's find, and the reason it could only come from review.**
+    // `groupColored` says "this segment's colour carries meaning, so emphasis
+    // must not overwrite it". Gating it on `groups.length > 1` claims that of any
+    // multi-group stack — including one under a theme with no group ramp, no
+    // `colors` and no per-group roles, where every fill resolves to `base.fill`.
+    // Suppressing the highlight there leaves *nothing*: selection becomes
+    // invisible.
+    //
+    // `estelaTheme` is exactly that theme and it SHIPS. Every story and test
+    // renders `defaultTheme`, whose ramp makes the two gates indistinguishable —
+    // so no amount of the existing suite could have caught this. The gate now
+    // reads the resolved `fills`, which is the honest question.
+    const m = mount(
+      <Selector enabled={false} selected={[bar('beta')]} />,
+      undefined,
+      estelaTheme,
+    );
+    const fills = m.fills();
+    expect(fills).toContain(estelaTheme.bar.default.highlight);
+  });
+
+  it('a degenerate `colors` map that paints every group alike also keeps the highlight', () => {
+    // The same rule from the other side: `colors` is not automatically
+    // meaning-carrying — it is meaning-carrying when it distinguishes something.
+    // One colour for every group distinguishes nothing, so emphasis applies.
+    const flat = { hits: '#777777', misses: '#777777' } as const;
+    const m = mount(
+      <Selector enabled={false} selected={[bar('beta')]} />,
+      flat,
+    );
+    expect(m.fills()).toContain(defaultTheme.bar.default.highlight);
   });
 
   it('on the THEME RAMP, recede is per-group rather than flat', () => {

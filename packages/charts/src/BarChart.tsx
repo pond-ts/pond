@@ -345,6 +345,13 @@ export interface BarChartCommon<
    * hit-tests its drawn segment rect (it must, to resolve *which* segment).
    * A single-series bar is unaffected: it hit-tests its whole slot, so the ink
    * can be narrow while the target stays full width.
+   *
+   * That holds in **both orientations**, and costs a deliberate guard to keep:
+   * a single-series *horizontal* chart shares the oriented draw/hit path with
+   * stacks, so the cap is withheld from its hit rect explicitly (`groups.length >
+   * 1`). Vertical charts get it for free — `barSlotRect` takes no cap. Don't
+   * "simplify" that guard away: the rule follows from segment disambiguation,
+   * which is a property of a stack, not of an axis.
    */
   maxBarWidth?: number;
   /**
@@ -848,19 +855,29 @@ export function BarChart<
     const ramped = ramp !== undefined && colors === undefined;
     // `groupColored` derives nothing — it only says "a selected segment keeps
     // its own fill rather than taking the flat `highlight`", because the colour
-    // is meaning-carrying. That is true of a `colors` map at least as much as
-    // of the default ramp (a call site naming its groups' colours is *more*
-    // deliberate than a fallback), so it gates on being a real multi-group
-    // stack, NOT on the ramp having painted it.
+    // is meaning-carrying.
     //
-    // Found building [PND-CATSTACK]: gating it on `ramped` meant a stack with
-    // `colors` collapsed BOTH segments of a selected bar to one `highlight`
-    // blue, losing the segment distinction exactly where the reader is looking.
-    // For the consumer this feature is for — spec-supplied segment colours —
-    // that made the first-class stack render *worse* under selection than the
-    // hand-composed workaround it replaces (whose `binFills` has the same
-    // exclusion, one line up in `drawStacks`).
-    const groupColoured = (groups?.length ?? 0) > 1;
+    // So the condition is exactly **"do the fills actually differ"**, read off
+    // the resolved `fills` rather than inferred from anything upstream of them.
+    // Both cheaper inferences are wrong, and each was shipped in turn:
+    //
+    //  - Gating on `ramped` (the ramp painted it) meant a stack with `colors`
+    //    collapsed BOTH segments of a selected bar to one `highlight` blue —
+    //    losing the segment distinction exactly where the reader is looking. A
+    //    call site naming its groups' colours is *more* deliberate than a
+    //    fallback ramp, not less. Found building [PND-CATSTACK].
+    //  - Gating on `groups.length > 1` (my fix for that) is wrong in the other
+    //    direction: a multi-group stack under a theme with **no** group ramp, no
+    //    `colors` and no per-group roles resolves every fill to `base.fill`, so
+    //    claiming the colour carries meaning suppresses the highlight and leaves
+    //    *nothing* — selection becomes invisible. `estelaTheme` is exactly that
+    //    theme, and it ships. Found by Layer-2 review, which is the only way it
+    //    could have been: every story and test renders `defaultTheme`, whose ramp
+    //    makes the two gates indistinguishable.
+    //
+    // Reading `fills` also handles the degenerate `colors` map that assigns one
+    // colour to every group: nothing is distinguished, so the highlight applies.
+    const groupColoured = new Set(fills).size > 1;
     return {
       fills,
       ...(groupColoured ? { groupColored: true } : {}),
@@ -1114,6 +1131,19 @@ export function BarChart<
           ? {}
           : {
               hitTest: (px, py, xScale, yScale): SelectInfo | null => {
+                // The cap reaches the hit rect ONLY for a real stack, where the
+                // rect is what resolves *which segment* was hit and so must be
+                // the drawn one. A single-series chart has one segment per slot
+                // and nothing to disambiguate, so narrowing its target buys
+                // nothing and costs clickability.
+                //
+                // This path serves single-series **horizontal** charts as well as
+                // stacks (see the branch comment above), which is how the prop's
+                // documented guarantee — "a single-series bar hit-tests its whole
+                // slot" — was true only of vertical ones. Found by Layer-2 review;
+                // the fix is to make the guarantee orientation-independent rather
+                // than to narrow the claim, since the reason for the split is
+                // segment disambiguation and that is a property of the *stack*.
                 const hit = stackAt(
                   ss,
                   px,
@@ -1123,7 +1153,7 @@ export function BarChart<
                   yScale,
                   gapPx,
                   stackMinWidth,
-                  maxWidthPx,
+                  ss.groups.length > 1 ? maxWidthPx : undefined,
                 );
                 if (hit === null) return null;
                 const [bi, g, begin, name, value] = hit;

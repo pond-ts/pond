@@ -154,11 +154,15 @@ include new features and type-level changes; patch bumps are strictly additive.
   site overrode is no longer the ramp's colour, so its receded counterpart would
   be wrong") applies to the _derived_ companions `dimmedFills` / `hoverFills`,
   which must invent a per-group colour; `groupColored` derives nothing. It now
-  gates on being a real multi-group stack, so a `colors` map — meaning-carrying
-  by construction, and more deliberately so than a fallback ramp — keeps its
-  colours under selection. Found building [PND-CATSTACK], where the old gate made
+  gates on **whether the resolved fills actually differ**, so a `colors` map keeps
+  its colours under selection, while a multi-group stack under a theme that gives
+  its groups no distinct colours at all (no ramp, no roles, no `colors` — e.g.
+  `estelaTheme`) still takes the themed `highlight`, because there is no
+  meaning-carrying colour there to preserve and suppressing the highlight would
+  leave selection invisible. Found building [PND-CATSTACK], where the old gate made
   the first-class stack render _worse_ under selection than the workaround it
-  replaces.
+  replaces; the second half was found in review, since every story and test renders
+  `defaultTheme`, whose ramp hides the difference.
 
 - **all packages: `API.md` now ships inside the npm tarball.** The agent-facing
   map of every public export across the six packages — one line per export with
