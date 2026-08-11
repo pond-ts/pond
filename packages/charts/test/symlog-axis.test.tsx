@@ -82,6 +82,49 @@ describe('monotonicity across the knee', () => {
   });
 });
 
+describe('the curve is `log1p`, not piecewise', () => {
+  // Pinned because the docs now make a *migration* claim on it, and because the
+  // surprise is real: a reporting consumer replaced a hand-rolled piecewise curve
+  // (exactly linear below the knee, log10 above), measured every bar of a ±9M
+  // fixture with a canvas pixel probe, and found small values landing at roughly
+  // half their former height. They corrected me — I had accepted "same knee" as
+  // "same curve". Order, tail dominance and the lift over linear all survived, so
+  // this is a shape difference to document, not a defect to fix.
+  const M = 9e6;
+  const KNEE = 0.02 * M;
+  // Range [1, 0] makes the output a fraction of plot height, zero line centred.
+  const s = () => scaleSymlog().constant(KNEE).domain([-M, M]).range([1, 0]);
+  /** Height above the zero line as a fraction of the half-plot. */
+  const halfHeight = (v: number) => Math.abs(0.5 - +s()(v)) * 2;
+
+  it('is exactly `sign(x) · log1p(|x / knee|)`', () => {
+    // The claim the doc makes about what pond *does*. Reds if d3's transform
+    // changes or if someone swaps the scale for a piecewise construction.
+    const t = (v: number) =>
+      (Math.sign(v) * Math.log1p(Math.abs(v) / KNEE)) / Math.log1p(M / KNEE);
+    for (const v of [0, 1, 283e3, 303e3, 975e3, M, -283e3, -M]) {
+      expect(halfHeight(v)).toBeCloseTo(Math.abs(t(v)), 6);
+    }
+  });
+
+  it('reproduces the consumer’s measured heights', () => {
+    // Their canvas probe, to three places — the numbers quoted in the CHANGELOG
+    // and the `scale` docstring. If these move, those prose numbers are wrong.
+    expect(halfHeight(283e3)).toBeCloseTo(0.24, 2);
+    expect(halfHeight(303e3)).toBeCloseTo(0.251, 2);
+    expect(halfHeight(975e3)).toBeCloseTo(0.473, 2);
+  });
+
+  it('still lifts small values far above a linear axis', () => {
+    // The half of the finding that says this is a documentation problem and not a
+    // regression: the smallest visible value is still lifted several-fold, and the
+    // tail still dominates, so the chart makes the same argument.
+    const linear = 283e3 / M;
+    expect(halfHeight(283e3) / linear).toBeGreaterThan(5);
+    expect(halfHeight(M)).toBeGreaterThan(halfHeight(975e3));
+  });
+});
+
 describe('the tick ladder — the substance of the feature', () => {
   /** A symlog scale as the row builds one: knee = fraction × maxAbs. */
   const scale = (maxAbs: number, fraction = 0.02, lo = -maxAbs) =>

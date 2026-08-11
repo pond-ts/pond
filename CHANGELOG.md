@@ -93,6 +93,15 @@ include new features and type-level changes; patch bumps are strictly additive.
   computing the two by different routes yields a chart that confidently labels
   positions it does not occupy — no exception, no visual artifact.
 
+  **If you are replacing a hand-rolled curve, the shape will shift.** `symlog` is
+  the single smooth `sign(x) · log1p(|x / knee|)`, not two joined segments; a
+  hand-rolled curve that is exactly linear below the knee and `log10` above is the
+  same family with a different shape. Migrating one, a consumer measured small
+  values at **roughly half** their former height (on a ±9M domain, 283k moved from
+  0.44 to 0.24 of the half-plot above the zero line) with order, tail dominance and
+  the several-fold lift over a linear axis all preserved. No `linearWindow` recovers the piecewise shape — the
+  difference is the curve, not the knee.
+
 - **charts: `<BarChart maxBarWidth>` — cap a bar's ink independently of its slot**
   ([PND-BARWIDTH]). Applied after the `gap` inset and centred in the slot, with
   `theme.bar[as].maxWidth` as the fallback (the same relationship `gap` has) and

@@ -19,6 +19,13 @@ import { YAxis } from './YAxis.js';
  * The fan-out is a comparison first (the three scales on identical data, which is
  * the only way the problem is visible), then one story per knob.
  *
+ * **"Linear through zero, logarithmic beyond" is how it reads, not two segments.**
+ * The curve is the single smooth `sign(x) · log1p(|x / knee|)`. If you are
+ * replacing a hand-rolled *piecewise* curve (exactly linear below the knee,
+ * `log10` above), expect small values to sit materially lower — and no
+ * `linearWindow` recovers the old shape, because the difference is the curve.
+ * See `<YAxis scale>`'s docstring.
+ *
  * No `theme` prop — these render `defaultTheme`, per CLAUDE.md.
  */
 const meta = {

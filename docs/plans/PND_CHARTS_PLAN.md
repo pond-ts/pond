@@ -1925,11 +1925,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                                                        _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                                                        is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                                                        iteration to discover, and the docs still don't mention it. **The one-line
-                                                                                                        fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                                                        row's data cursor is suppressed."
+                                                                                                            _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                                                            is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                                                            iteration to discover, and the docs still don't mention it. **The one-line
+                                                                                                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                                                            row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -2968,8 +2968,8 @@ almost exactly: Claude's findings clustered on the diff's internal consistency,
 Codex's on _arithmetic reachable from public inputs_.
 
 - **An empty tick ladder.** A window containing none of the ideal ladder —
-  `[510k, 990k]` with a 19_800 knee excludes zero, both knees, and its one
-  candidate decade — handed `[]` to the labels _and_ the gridlines. Reachable with
+  `[510k, 990k]` with a 19*800 knee excludes zero, both knees, and its one
+  candidate decade — handed `[]` to the labels \_and* the gridlines. Reachable with
   explicit bounds or by panning. The order was wrong: it thinned a symmetric
   ladder and clipped afterwards. Now it clips first, then thins the **survivors**,
   which also stops an asymmetric window being thinned as if it were twice its
@@ -2993,6 +2993,71 @@ Codex's on _arithmetic reachable from public inputs_.
   the axis rather than of the ladder. `resolveAxisFormat` now calibrates a symlog
   default through `[-knee, knee]`; identical output when the knee is already
   coarse.
+
+### Consumer verification, 2026-08-11 — what was and was **not** checked
+
+The reporting consumer built packs from the stack tip, installed them, and
+**migrated for real rather than rendering the stories** — on the argument that
+"does the workaround delete?" cannot be answered any other way. All three
+workarounds deleted cleanly: the symlog transform module _and its spec_ are gone,
+the `gap` re-derivation is gone, and the cumulative-layer composition **plus** its
+per-layer selection replication collapsed to one `<BarChart categories columns>`.
+They confirmed the `groupColored` fix on a real chart by clicking the _lower_
+segment — the case the replication existed for — and got one outline around the
+whole bar.
+
+**Record the gaps as loudly as the confirmations, because "consumer-verified"
+otherwise overstates this:**
+
+- **The tick ladder — the substance of [PND-SYMLOG] — is unverified.** Their chart
+  hides its y axis by default, so the product path never renders it. The bars are
+  vouched for; the ladder is covered only by pond's own tests. The next symlog
+  consumer is the first to see the ladder in anger.
+- **The knee-under-pan/zoom question is unanswered.** Their diverging chart has no
+  pan or zoom (fixed scenario columns, no time axis), so they declined to guess.
+  Still open for a consumer who zooms.
+- **`maxBarWidth`'s hit-target asymmetry didn't bite** — their stack's bars are wide
+  relative to the cap. A denser stack is the case that would find it.
+- **The knee-derived label precision fix is likewise unexercised** for the same
+  hidden-axis reason.
+
+**The correction they made, which is the most valuable thing the exercise
+produced.** I accepted "same knee" as "same curve" and wrote it into the plan and
+the PR. pond's symlog is d3's smooth `sign(x) · log1p(|x / knee|)`; the curve they
+were replacing was **piecewise** — exactly linear below the knee, `log10` above.
+Same family, materially different shape. Measured with a canvas pixel probe across
+a ±9M fixture, small values land at roughly **half** their former height (283k:
+0.44 → 0.24 of the half-plot), while order, tail dominance and a several-fold lift
+over linear all survive — so the chart makes the same argument, differently. They
+explicitly declined to have it changed, and confirmed **no `linearWindow` recovers
+the piecewise shape** (a smaller window fits the large values and overshoots the
+small ones ~2×) because the difference is the curve, not the knee. Now documented
+on `<YAxis scale>`, in the CHANGELOG, on the stories, and pinned by three tests so
+the prose numbers cannot rot. **The general lesson: a confirmed _parameter_ is not
+a confirmed _shape_.**
+
+**[PND-AXISMIRROR] — DECLINED 2026-08-11 (consumer).** They dropped dual mirrored
+axes across every chart in the migration, deciding it once for the set rather than
+per chart, on the reasoning that a treatment the library doesn't really support
+should not be spelled differently in five places. No consumer remains for the ask.
+Closed; reopen with a real case if a wide panel ever proves hard to read. This
+retires the last open axis item from [PND-AXES] apart from the label/tick backlog.
+
+**[PND-BINSWATCH] — partially resolved by [PND-CATSTACK].** The composed
+workaround could not use the legend hook's swatch (a `binColors` layer reports its
+base theme fill), so it sourced colour from its own segment array and lost the
+agree-by-construction property. A first-class stack takes per-column `colors` and
+the swatch **is** the drawn colour, so legend and plot agree again on this path.
+What remains is the original non-stack `binColors` case — which is still the more
+common one, and still compounds with [PND-CATEMPH] as first reported.
+
+**A migration hazard worth passing to the next consumer:** they found _a workaround
+artifact that outlived its workaround, from a different file_ — a legend row
+reversal that existed because the composed version declared layers
+outermost-first. With one layer and a natural `columns` list the reversal became a
+bug, and a quiet one: labels swapped while the colours stayed right, so it read as
+correct at a glance and nothing typed it. Deleting a workaround means auditing
+whatever _compensated_ for it elsewhere, which is not something `tsc` can find.
 
 **Re-scored as a result of shipping these:** the remaining three
 ([PND-BINSWATCH], [PND-TICKCENSUS], [PND-THEMEBASE]-declined) are unchanged, and
