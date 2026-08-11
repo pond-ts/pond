@@ -4,7 +4,7 @@ TypeScript time series library. Successor to pondjs / react-timeseries-charts.
 
 ## Vibe
 
-When reporting information to me, be concise, use plain english, but sacrifice grammer for the sake of concision. If you learnt a lesson from the previous turn, make a memory of that or store it with your working document. Only bring it to me if it is going to effect my next decision. 
+When reporting information to me, be concise, use plain english, but sacrifice grammer for the sake of concision. If you learnt a lesson from the previous turn, make a memory of that or store it with your working document. Only bring it to me if it is going to effect my next decision.
 
 ## Plan
 
@@ -308,6 +308,36 @@ it rather than quietly reaching for the fixture.
 
 Applies to any package with stories; `@pond-ts/charts` is the worked example.
 
+### …and **tests** must render at least one theme that is not `defaultTheme`
+
+The rule above is about stories, and it has a cost the tests have to pay back:
+**`defaultTheme` is the most complete theme in the repo**, so any code that
+branches on whether a theme _supplies_ something is indistinguishable from code
+that doesn't branch at all, as long as `defaultTheme` is the only theme rendered.
+Whenever a behaviour reads a theme slot, cover it with a theme that leaves that
+slot **absent** as well.
+
+The worked example (v0.59.0, [PND-CATSTACK]): `StackStyle.groupColored` says "a
+selected segment keeps its own fill rather than taking the flat `highlight`,
+because the colour carries meaning." It was gated on `groups.length > 1` — which
+is wrong whenever a theme gives its groups no distinct colours, since every fill
+then resolves to `base.fill` and suppressing the highlight leaves **nothing**:
+selection becomes invisible. `estelaTheme` is exactly that theme and it **ships**.
+`defaultTheme` carries a `bar.default.groups` ramp, which makes the correct gate
+and the broken one produce identical output — so the entire suite passed, and a
+Layer-2 reviewer reading the themes found it instead.
+
+Cheap version of the rule: if a `useMemo` or draw path mentions a theme slot, ask
+"what does this do when that slot is `undefined`?" and write that test. A second
+theme in one test is enough; it does not need a story, and it must not become a
+second theme in the story fan-out (that would cost the control the section above
+is protecting).
+
+Raised by the consumer whose migration drove this wave, who makes the parallel
+explicit: their own equivalent hazard needed a test that walks the _whole_ theme
+rather than the slots currently in use. Same shape — **a defect class invisible
+because one configuration is the only one ever exercised.**
+
 ## Performance check for new operators on large data
 
 When adding a new operator (or making a non-trivial impl change to
@@ -551,6 +581,31 @@ not just that the agent was run.
 exist and genuine concerns have fix commits, agent-merge is
 acceptable for this project — the PR comments are the durable
 trail, not a human approval gate.
+
+**Consumer verification and adversarial review find disjoint classes
+— neither substitutes for the other.** Worth stating as a rule rather
+than rediscovering, because both failure modes are _silent_:
+
+- **A consumer exercising real data and real code** finds what only
+  contact reveals: a curve whose _shape_ differs from the one being
+  replaced even though its parameter matches, or an artifact in a
+  _different file_ that outlived the workaround it compensated for.
+  No amount of reading the diff surfaces either.
+- **An adversarial reviewer reading the implementation** finds what
+  only the code reveals: a gate that is correct under every theme the
+  repo renders and wrong under one it doesn't, an arithmetic identity
+  that breaks on a non-finite input, a doc sentence the code outgrew.
+  No amount of using the library surfaces those either — a consumer
+  on the safe side of a broken gate sees nothing wrong.
+
+The v0.59.0 wave is the worked example: the consumer's migration and
+the Layer-2 reviews produced **non-overlapping** findings, and each
+class would have shipped silently without its own pass. So: do not
+treat "a consumer verified it" as discharging Layer 2, and do not
+treat "it was reviewed" as evidence it survives real data. Also record
+what a verification pass did **not** cover — an unstated gap reads as
+coverage (see the [PND-SYMLOG] tick ladder, verified only after the
+consumer added a story for an axis their product path hides).
 
 **When the reviewer can be skipped:**
 
