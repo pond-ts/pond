@@ -6,11 +6,13 @@ import {
   barsFromBins,
   barsFromValueSeries,
   categoryStack,
+  categoryStacks,
   stacksFromBins,
   stacksFromColumns,
   stacksFromGroups,
   type BinRecord,
   type CategoryDatum,
+  type CategoryStackDatum,
   type StackedBarSeries,
 } from './data.js';
 import {
@@ -90,11 +92,17 @@ const EMPTY_MARKS: readonly StackMark[] = [];
  *   `<ChartContainer origin>` does not rescue it: it relabels a value axis but
  *   does not re-ladder it.
  * - **`categories`** — an ordered `{ label, value }[]`, one bar per category.
- *   Takes **no** `column`/`columns` (each datum carries its own value).
- *   Vertical puts the categories on the ordinal **x** axis (the container's
- *   band scale); `orientation="horizontal"` puts them on **y** as unit slots
- *   and the value on x, and a `<YAxis>` with no explicit `ticks` labels one
- *   per category automatically ([PND-HCAT]).
+ *   Takes no `column`. Vertical puts the categories on the ordinal **x** axis
+ *   (the container's band scale); `orientation="horizontal"` puts them on **y**
+ *   as unit slots and the value on x, and a `<YAxis>` with no explicit `ticks`
+ *   labels one per category automatically ([PND-HCAT]).
+ * - **`categories` + `columns`** — a **stacked** category chart
+ *   ([PND-CATSTACK]): each datum is `{ label, values }` and `columns` names the
+ *   groups to stack, bottom → top. The same relationship `series` + `columns`
+ *   already has, so a category stack is now a first-class shape rather than one
+ *   `categories` layer per cumulative total. One layer means one `mark` per
+ *   bar, so **one selection entry lights the whole bar** and the composed
+ *   workaround's per-layer replication is unnecessary.
  *
  * **Live charts:** `series.byValue(…)` / `.toMap()` mint fresh objects each
  * call, so an inline `series={…}` re-registers this layer every render — on a
@@ -156,6 +164,20 @@ type BarChartSource<
       bins?: never;
       column?: never;
       columns?: never;
+    }
+  // A **stacked** category chart ([PND-CATSTACK]): each datum carries a value
+  // per group in a `values` record, and `columns` names which to stack. Its own
+  // member rather than a widened `categories`, so passing `columns` switches the
+  // datum type the call site is checked against — the single-value shape
+  // (`{ label, value }`) and the grouped one (`{ label, values }`) are then
+  // never both assignable, and a half-migrated call site is a type error rather
+  // than a chart with every bar missing.
+  | {
+      categories: readonly CategoryStackDatum[];
+      columns: readonly string[];
+      series?: never;
+      bins?: never;
+      column?: never;
     };
 
 /** The props every {@link BarChartSource} mode shares. */
@@ -441,9 +463,14 @@ export function BarChart<
     );
   }
   if (categories !== undefined) {
-    if (column !== undefined || columns !== undefined) {
+    if (column !== undefined) {
       throw new Error(
-        '<BarChart categories> takes no `column`/`columns` (each datum carries its own value)',
+        '<BarChart categories> takes no `column` — a single-value datum carries its own `value`, and a stacked one names its groups with `columns`',
+      );
+    }
+    if (columns !== undefined && columns.length === 0) {
+      throw new Error(
+        '<BarChart categories> with `columns` needs at least one group name',
       );
     }
   }
@@ -475,10 +502,25 @@ export function BarChart<
   // horizontal bar) so one oriented draw path covers it.
   const shape = useMemo<BarShape>(() => {
     if (categories !== undefined) {
-      // Categorical row-read: one unit-slot bar per category (G === 1), drawn on
-      // the container's band scale. The reused stacked geometry — only the axis
+      // Categorical row-read: one unit-slot bar per category, drawn on the
+      // container's band scale. The reused stacked geometry — only the axis
       // (band scale + labels) is new.
-      return { kind: 'stacked', ss: categoryStack(categories) };
+      //
+      // With `columns` it is a real multi-group stack ([PND-CATSTACK]): same
+      // slots, same `marks`, `G > 1`. Because `marks` is indexed by BIN, one
+      // selection entry naming `(id, mark)` matches every segment of a bar —
+      // which is the property that made the hand-composed workaround's
+      // "recedes from the waist up" bug inexpressible here.
+      return {
+        kind: 'stacked',
+        ss:
+          columns !== undefined
+            ? categoryStacks(
+                categories as readonly CategoryStackDatum[],
+                columns,
+              )
+            : categoryStack(categories as readonly CategoryDatum[]),
+      };
     }
     if (bins !== undefined) {
       const cols = columns ?? (column !== undefined ? [column] : undefined);
@@ -752,11 +794,28 @@ export function BarChart<
     );
     // A ramp entry the call site overrode is no longer the ramp's colour, so
     // its receded counterpart would be wrong — the whole ramp only means
-    // anything when it is the ramp that painted it.
+    // anything when it is the ramp that painted it. This gates the *derived*
+    // companions (`dimmedFills` / `hoverFills`), which need a counterpart per
+    // group and cannot invent one for an arbitrary call-site colour.
     const ramped = ramp !== undefined && colors === undefined;
+    // `groupColored` derives nothing — it only says "a selected segment keeps
+    // its own fill rather than taking the flat `highlight`", because the colour
+    // is meaning-carrying. That is true of a `colors` map at least as much as
+    // of the default ramp (a call site naming its groups' colours is *more*
+    // deliberate than a fallback), so it gates on being a real multi-group
+    // stack, NOT on the ramp having painted it.
+    //
+    // Found building [PND-CATSTACK]: gating it on `ramped` meant a stack with
+    // `colors` collapsed BOTH segments of a selected bar to one `highlight`
+    // blue, losing the segment distinction exactly where the reader is looking.
+    // For the consumer this feature is for — spec-supplied segment colours —
+    // that made the first-class stack render *worse* under selection than the
+    // hand-composed workaround it replaces (whose `binFills` has the same
+    // exclusion, one line up in `drawStacks`).
+    const groupColoured = (groups?.length ?? 0) > 1;
     return {
       fills,
-      ...(ramped ? { groupColored: true } : {}),
+      ...(groupColoured ? { groupColored: true } : {}),
       ...(ramped && rampDim !== undefined
         ? {
             dimmedFills: (groups ?? []).map((_g, i) => at(rampDim, i)),

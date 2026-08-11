@@ -147,6 +147,7 @@ export type {
   BinRecord,
   StacksFromBinsOptions,
   CategoryDatum,
+  CategoryStackDatum,
   RowAt,
   TransposeRowOptions,
 } from './data.js';

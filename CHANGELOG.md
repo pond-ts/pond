@@ -63,6 +63,42 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: `<BarChart categories columns>` — a first-class stacked category
+  chart** ([PND-CATSTACK]). Each datum is `{ label, values }` and `columns`
+  names the groups to stack bottom → top, the same relationship
+  `series` + `columns` already has. New `categoryStacks` reader and
+  `CategoryStackDatum` type; geometry, `marks` and the categorical axis are
+  unchanged from the single-value case, so this reaches the shipped
+  `drawStacks` path with no new draw code. A missing or non-finite group reads
+  as a **gap**, not a zero.
+
+  **It removes a workaround with three costs**, the third only visible since
+  0.58.0: composing the picture from one `categories` layer per _cumulative
+  total_ (drawn outermost-first so each overpaints the one beneath) meant a
+  hand-assembled legend, label thinning blind to the sibling layers, and — because
+  a selection entry keys on `(layer id, mark)` — a controlled set replicated
+  across every segment layer, where missing one made a selected bar recede
+  **from the waist up**. Because `marks` is indexed by **bin**, one entry naming
+  `(id, mark)` now matches every segment of a bar, so that failure is not
+  expressible rather than merely fixed.
+
+### Fixed
+
+- **charts: a selected segment of a stack with `colors` no longer collapses to
+  the flat `highlight`.** `StackStyle.groupColored` — the "a selected segment
+  keeps its own fill" exclusion — was gated on the _theme ramp_ having painted
+  the stack, so a call site passing `colors` lost it and both segments of a
+  selected bar went one `highlight` blue, losing the segment distinction exactly
+  where the reader is looking. The gate's stated reason ("a ramp entry the call
+  site overrode is no longer the ramp's colour, so its receded counterpart would
+  be wrong") applies to the _derived_ companions `dimmedFills` / `hoverFills`,
+  which must invent a per-group colour; `groupColored` derives nothing. It now
+  gates on being a real multi-group stack, so a `colors` map — meaning-carrying
+  by construction, and more deliberately so than a fallback ramp — keeps its
+  colours under selection. Found building [PND-CATSTACK], where the old gate made
+  the first-class stack render _worse_ under selection than the workaround it
+  replaces.
+
 - **all packages: `API.md` now ships inside the npm tarball.** The agent-facing
   map of every public export across the six packages — one line per export with
   its purpose and source path — was repo-only, so an agent working in a

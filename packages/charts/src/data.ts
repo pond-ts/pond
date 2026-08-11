@@ -989,6 +989,68 @@ export interface CategoryDatum {
 }
 
 /**
+ * One category of a **stacked** category chart ([PND-CATSTACK]) — a label plus a
+ * value **per group**, read by name through `<BarChart columns>`.
+ *
+ * The `values` record is the shape the list family already uses
+ * (`ListRow.values`), deliberately: "a row with named values" is one concept in
+ * this library and a category with several groups is exactly that. A missing or
+ * non-finite entry reads as a gap, so a group absent from one category is a hole
+ * rather than a zero — the same rule every other reader applies.
+ */
+export interface CategoryStackDatum {
+  readonly label: string;
+  readonly values: Readonly<Record<string, number | undefined>>;
+}
+
+/**
+ * Build a {@link StackedBarSeries} from ordered categories carrying a value
+ * **per group** — the stacked counterpart of {@link categoryStack}
+ * ([PND-CATSTACK]).
+ *
+ * Geometry is identical to the single-value case (one unit slot `[i, i+1]` per
+ * category, `marks` carrying the names), so the categorical axis derives its
+ * ordered labels exactly as before and a pinned selection still keys on the
+ * stable name. Only `groups` and the `values` layout differ, and both match
+ * {@link stacksFromColumns} — `values[i * G + g]`, bin-major — so this reaches
+ * the shipped `drawStacks` path with no new draw code.
+ *
+ * **Why this replaces a real workaround.** Composing the same picture from one
+ * `<BarChart categories>` layer per cumulative total (drawn outermost-first so
+ * each overpaints the one beneath) costs three things a first-class stack does
+ * not: hand-assembled legends, label thinning that cannot see the other layers,
+ * and — since selection entries key on `(layer id, mark)` — a controlled set
+ * that must be replicated across every segment layer, where missing one makes a
+ * selected bar recede *from the waist up*. With one layer and one `mark` per
+ * bar, that last failure is not expressible.
+ *
+ * O(n·G) with one `Float64Array` allocation, matching `stacksFromColumns`.
+ */
+export function categoryStacks(
+  records: readonly CategoryStackDatum[],
+  columns: readonly string[],
+): StackedBarSeries {
+  const n = records.length;
+  const G = columns.length;
+  const begin = new Float64Array(n);
+  const end = new Float64Array(n);
+  const values = new Float64Array(n * G);
+  const marks = new Array<string>(n);
+  for (let i = 0; i < n; i += 1) {
+    begin[i] = i;
+    end[i] = i + 1;
+    marks[i] = records[i]!.label;
+    const row = records[i]!.values;
+    for (let g = 0; g < G; g += 1) {
+      const v = row[columns[g]!];
+      // A missing key and a non-finite value are the same thing here: no bar.
+      values[i * G + g] = typeof v === 'number' && Number.isFinite(v) ? v : NaN;
+    }
+  }
+  return { begin, end, groups: columns, values, length: n, marks };
+}
+
+/**
  * Build a {@link StackedBarSeries} (single group, `G === 1`) from an ordered list
  * of `{ label, value }` categories — one **unit slot** `[i, i+1]` per category, in
  * order. This is the categorical row-read's geometry: the slots are ordinal
