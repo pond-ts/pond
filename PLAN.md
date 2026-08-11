@@ -947,7 +947,9 @@ yScale, mode)` and uses `mode` to let hover claim the whole slot while
   fix).
 - **[PND-AXES]** — Axis backlog (label align, custom ticks, scale variety) +
   the deferred value-axis naming follow-up. (Relative/elapsed time is done —
-  `<ChartContainer origin>`.)
+  `<ChartContainer origin>`; **symlog is done** — `<YAxis scale="symlog"
+linearWindow>`, [PND-SYMLOG]. A **mirrored** second axis, [PND-AXISMIRROR], is
+  still open.)
 - **[PND-VALAX]** — Value axis: widen Box/Candlestick x; grow the
   `ValueSeries` algebra only when a second consumer (geo) pulls.
 - **[PND-THEME]** — `cssVarTheme` candle mapping (LOW; worked example + var
@@ -1879,11 +1881,12 @@ argument for the rest.
   something defensible, the chart rendered, and the consumer had no way to see
   which branch was taken. **All four groups are now shipped** (see the breakout
   plan for what each landed as); what remains is the "decided at the regroup"
-  set — [PND-CATRANGE], [PND-CATSTACK], [PND-THEMEBASE], [PND-BINSWATCH],
-  [PND-TICKCENSUS], [PND-BARCAP] — plus the deferred **dev-mode warning
-  sweep**, which the trio argued for as one pass rather than three fixes and
-  which only [PND-BANDBAR2] actually got. Itemised, with each workaround and
-  its cost, in
+  set — [PND-CATRANGE], [PND-THEMEBASE], [PND-BINSWATCH], [PND-TICKCENSUS],
+  [PND-BARCAP] — plus the deferred **dev-mode warning sweep**, which the trio
+  argued for as one pass rather than three fixes and which only [PND-BANDBAR2]
+  and [PND-SYMLOG] actually got. **[PND-CATSTACK], [PND-BARWIDTH] and
+  [PND-SYMLOG] shipped 2026-08-11** as stack #644. Itemised, with each workaround
+  and its cost, in
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-sparcfric--sparc-charts-friction-2026-08).
 
 - **[PND-ANNROLE] — annotation roles.** `theme.annotation.depth` draws a

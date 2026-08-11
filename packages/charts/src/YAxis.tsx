@@ -51,8 +51,35 @@ export interface YAxisProps {
    *
    * A dev-mode warning fires for the cases that are unambiguously a mistake: a
    * refused bound, negative data, or an axis with no positive data at all.
+   *
+   * `'symlog'` is **linear through zero, logarithmic beyond** — for data that
+   * spans orders of magnitude *on both sides of zero*, which `'log'` cannot
+   * express at all (it admits no zero and no negatives). The linear window is
+   * {@link linearWindow}. Because it admits zero, it resolves its domain on the
+   * ordinary **linear** path: no positive-only bound refusal, no rounding out to
+   * decades, no gapping of non-positive samples.
+   *
+   * **The axis owns tick placement, and that is the substance of the feature.**
+   * d3's symlog supplies the transform but ticks it *linearly*, which on a ±1M
+   * domain with a 20k knee labels nothing below the knee — the exact region the
+   * scale was chosen to reveal. pond grids it on zero, the knee (±`linearWindow ×
+   * maxAbs`) and mirrored decades beyond, thinned by the same rule the log axis
+   * uses. See `yticks.ts`.
    */
-  scale?: 'linear' | 'log';
+  scale?: 'linear' | 'log' | 'symlog';
+  /**
+   * `scale="symlog"`'s **linear window**, as a fraction of the domain's largest
+   * magnitude. **Default `0.02`** — the knee sits at 2% of `maxAbs`, so a ±1M
+   * domain is linear through ±20k and logarithmic beyond. Ignored on any other
+   * scale.
+   *
+   * **Domain-relative, not absolute** (d3's own `constant` is absolute). A chart
+   * that re-keys to the largest magnitude on every update would otherwise need
+   * the constant recomputed each tick, and would drift silently the moment
+   * someone forgot — the fraction survives a domain change with no call-site
+   * arithmetic at all.
+   */
+  linearWindow?: number;
   /** Explicit domain bounds; omit to auto-fit the charts linked to this axis. */
   min?: number;
   max?: number;
@@ -169,6 +196,7 @@ export function YAxis({
   side = 'left',
   label,
   scale = 'linear',
+  linearWindow,
   min,
   max,
   format,
@@ -201,6 +229,7 @@ export function YAxis({
       // and layers still bind to it, which is the whole point of the prop.
       width: hide ? 0 : width,
       scale,
+      linearWindow,
       min,
       max,
       pad,
@@ -216,6 +245,7 @@ export function YAxis({
       width,
       hide,
       scale,
+      linearWindow,
       min,
       max,
       pad,

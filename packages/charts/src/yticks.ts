@@ -36,6 +36,9 @@ interface TickableScale {
   domain(): number[];
   /** Present on d3's `scaleLog` and on no other continuous scale. */
   base?: () => number;
+  /** Present on d3's `scaleSymlog` and on no other continuous scale — the
+   *  linear window's half-width, i.e. the knee ([PND-SYMLOG]). */
+  constant?: () => number;
 }
 
 /**
@@ -74,6 +77,8 @@ interface TickableScale {
  * approach `resolveBarBaseline` takes to read `.domain()`.
  */
 export function yTickValues(scale: TickableScale, count: number): number[] {
+  if (typeof scale.constant === 'function')
+    return symlogTickValues(scale, count);
   if (typeof scale.base !== 'function') return scale.ticks(count);
 
   const domain = scale.domain();
@@ -91,4 +96,73 @@ export function yTickValues(scale: TickableScale, count: number): number[] {
   const out: number[] = [];
   for (let e = first; e <= last; e += step) out.push(10 ** e);
   return out;
+}
+
+/**
+ * Tick values for a **symlog** axis — linear through zero, logarithmic beyond
+ * ([PND-SYMLOG]).
+ *
+ * **This is the feature, not a refinement of it.** d3's `scaleSymlog` supplies
+ * the transform but its `ticks()` is `linearish` — evenly spaced in *value*. On
+ * a ±1M domain with a 20k knee that yields `-1M, -500k, 0, 500k, 1M`: **nothing
+ * at all below the knee**, which is the region a symlog axis exists to reveal.
+ * The mapping does spread that region generously (0→250px, 20k→294px,
+ * 100k→364px on a 500px range), so such a chart is readable-but-unlabelled —
+ * confidently gridded on the one part of the scale that isn't the point. Owning
+ * the ladder is therefore inseparable from owning the transform.
+ *
+ * The ladder, and why each piece is there:
+ *
+ * - **Zero, always.** It is the axis's centre of symmetry and the one value a
+ *   symlog scale is chosen to keep visible.
+ * - **The knee, ±`constant`.** Where the reading changes from linear to
+ *   logarithmic. Unlabelled, a reader has no way to know which régime a given
+ *   gap belongs to, and the same pixel distance means different things either
+ *   side of it.
+ * - **Decades beyond the knee, mirrored.** What a log plot is conventionally
+ *   gridded on, thinned by the same "every `k`th power of ten" rule the log path
+ *   above uses, so it degrades predictably as the row shrinks instead of
+ *   exploding.
+ * - **Bounds are NOT labelled.** A data-derived bound is rarely round, so
+ *   printing it puts an arbitrary number next to a decade — the noise a log grid
+ *   exists to avoid.
+ *
+ * Below one decade of span past the knee there is nothing to grid
+ * logarithmically, so it defers to `scale.ticks(count)` — which is linear, and
+ * correct, because inside the knee symlog *is* linear.
+ *
+ * Detection is structural, matching the log path's use of `base()`: `constant()`
+ * exists on `scaleSymlog` and on no other continuous scale.
+ */
+function symlogTickValues(scale: TickableScale, count: number): number[] {
+  const domain = scale.domain();
+  const lo = Math.min(domain[0]!, domain[domain.length - 1]!);
+  const hi = Math.max(domain[0]!, domain[domain.length - 1]!);
+  const knee = Math.abs(scale.constant?.() ?? 1);
+  const maxAbs = Math.max(Math.abs(lo), Math.abs(hi));
+  if (!(knee > 0) || !(maxAbs > knee) || !(hi > lo)) return scale.ticks(count);
+
+  const firstExp = Math.ceil(Math.log10(knee));
+  const lastExp = Math.floor(Math.log10(maxAbs));
+  const decades = lastExp - firstExp + 1;
+  if (decades < 1) return scale.ticks(count);
+
+  // A symmetric domain shows each decade twice, so the budget is spent twice as
+  // fast as on a log axis — hence `decades * 2` against the same count.
+  const twoSided = lo < 0 && hi > 0;
+  const budget = Math.max(2, count);
+  const step = Math.max(1, Math.ceil((decades * (twoSided ? 2 : 1)) / budget));
+
+  const out = new Set<number>();
+  const add = (v: number) => {
+    if (v >= lo && v <= hi) out.add(v);
+  };
+  add(0);
+  add(knee);
+  add(-knee);
+  for (let e = firstExp; e <= lastExp; e += step) {
+    add(10 ** e);
+    add(-(10 ** e));
+  }
+  return [...out].sort((a, b) => a - b);
 }

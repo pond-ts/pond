@@ -10,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { scaleLinear, scaleLog } from 'd3-scale';
+import { scaleLinear, scaleLog, scaleSymlog } from 'd3-scale';
 import { isDev } from './dev.js';
 import { useIndexedChildren } from './child-index.js';
 import { logAxisWarning, needsExtents, resolveYDomain } from './domain.js';
@@ -30,6 +30,15 @@ import {
   type RowFrame,
   type YScale,
 } from './context.js';
+
+/**
+ * `scale="symlog"`'s default linear window — the knee at **2% of the domain's
+ * largest magnitude** ([PND-SYMLOG]). Chosen because it is what the reporting
+ * consumer's own transform used (`maxAbs / 50`), and confirmed with them as
+ * generalizing: every caller they had passed the data's own max-abs, and none
+ * had a case for an absolute constant.
+ */
+const DEFAULT_LINEAR_WINDOW = 0.02;
 
 /** Sentinel id for the implicit axis a row gets when no `<YAxis>` is declared. */
 const IMPLICIT_AXIS_ID = '__default__';
@@ -339,7 +348,23 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       // `scaleLog` and `scaleLinear` share the call/ticks/tickFormat/invert
       // surface every consumer uses (see `YScale`), so choosing between them
       // here is the whole of log support — no draw layer branches on it.
-      const base = ax.scale === 'log' ? scaleLog() : scaleLinear();
+      // `scaleSymlog` shares the same call/ticks/tickFormat/invert surface, so
+      // as with log, choosing it here is the whole of symlog support — no draw
+      // layer branches on it. Its `constant` (the linear window's half-width) is
+      // resolved from the axis's DOMAIN-RELATIVE fraction: absolute would need
+      // recomputing whenever the domain moved ([PND-SYMLOG]).
+      const base =
+        ax.scale === 'log'
+          ? scaleLog()
+          : ax.scale === 'symlog'
+            ? scaleSymlog().constant(
+                Math.max(
+                  Number.MIN_VALUE,
+                  (ax.linearWindow ?? DEFAULT_LINEAR_WINDOW) *
+                    Math.max(Math.abs(lo), Math.abs(hi)),
+                ),
+              )
+            : scaleLinear();
       const s = base.domain([lo, hi]).range([height, topHeader]);
       // 2-D pan/zoom is carried as a **pixel** transform (`k`, `ty`) so one
       // gesture serves every axis in the row whatever its units, and all of them
@@ -406,6 +431,43 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       }
     }
   }, [effectiveAxes, layerList, defaultAxisId]);
+
+  // Dev-mode diagnostics for `linearWindow` ([PND-SYMLOG]). Both cases it covers
+  // are *silent* otherwise, which is the whole reason it exists: a
+  // `linearWindow` on a linear or log axis is read by nothing, and a fraction
+  // outside `(0, 1]` either produces a knee at-or-below zero (clamped to
+  // `Number.MIN_VALUE`, so effectively a log axis that admits zero) or one past
+  // the domain (the axis goes linear). Neither throws and neither looks broken —
+  // it just isn't the scale the call site asked for.
+  //
+  // Same shape as the log diagnostics above: an effect rather than the memo, and
+  // deduped in `warnedRef` under a suffixed key so it cannot collide with the
+  // log message stored under the bare axis id.
+  useEffect(() => {
+    if (!isDev) return;
+    const warned = warnedRef.current;
+    for (const ax of effectiveAxes) {
+      const key = `${ax.id}:linearWindow`;
+      const w = ax.linearWindow;
+      let message: string | null = null;
+      if (w !== undefined && ax.scale !== 'symlog') {
+        message =
+          `<YAxis id="${ax.id}"> sets linearWindow=${w} but scale is ` +
+          `"${ax.scale}" — linearWindow only applies to scale="symlog" and is ` +
+          `ignored here.`;
+      } else if (w !== undefined && (!Number.isFinite(w) || w <= 0 || w > 1)) {
+        message =
+          `<YAxis id="${ax.id}"> has linearWindow=${w}, outside (0, 1]. It is ` +
+          `a fraction of the domain's largest magnitude, so 0.02 means "linear ` +
+          `through 2% of the domain".`;
+      }
+      if (message === null) warned.delete(key);
+      else if (warned.get(key) !== message) {
+        warned.set(key, message);
+        console.warn(message);
+      }
+    }
+  }, [effectiveAxes]);
 
   // Resolved auto-tick count per axis — explicit `<YAxis tickCount>` else
   // height-derived (see resolveYTickCount). The single source the `<YAxis>`

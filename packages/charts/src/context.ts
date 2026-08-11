@@ -1670,7 +1670,7 @@ export interface LayerEntry {
 
 /** A y-axis declared in a {@link ChartRow} via `<YAxis>`. */
 /** Which scale a y axis maps its domain through. */
-export type YScaleKind = 'linear' | 'log';
+export type YScaleKind = 'linear' | 'log' | 'symlog';
 
 /**
  * A row's resolved y scale — d3's `scaleLinear()`, or `scaleLog()` when the
@@ -1692,6 +1692,11 @@ export interface AxisSpec {
   readonly width: number;
   /** Which scale the axis maps its domain through ({@link YAxisProps.scale}). */
   readonly scale: YScaleKind;
+  /** `scale="symlog"`'s linear window as a **fraction of the domain's largest
+   *  magnitude** ({@link YAxisProps.linearWindow}) — `undefined` on any other
+   *  scale. Domain-relative rather than absolute so it survives a domain change
+   *  without a recompute ([PND-SYMLOG]). */
+  readonly linearWindow?: number | undefined;
   /** Explicit domain bounds, or `undefined` to auto-fit linked layers. */
   readonly min: number | undefined;
   readonly max: number | undefined;

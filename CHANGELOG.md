@@ -63,12 +63,40 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: `<YAxis scale="symlog">` — linear through zero, logarithmic beyond**
+  ([PND-SYMLOG]). The third `scale` kind, for a **diverging** measure spanning
+  orders of magnitude on both sides of zero. `scale="log"` cannot express that
+  domain at all (no zero, no negatives) and `scale="linear"` flattens everything
+  outside the top decade onto the axis line — so the small and mid-range values,
+  usually the finding, become unreadable.
+
+  The knee is set by the new **`linearWindow`** prop as a _fraction of the
+  domain's largest magnitude_ (default `0.02`): on a ±1M domain the axis is
+  linear through ±20k and logarithmic beyond. Relative rather than absolute so
+  it survives a domain change with no arithmetic at the call site. Values are
+  strictly monotonic across the knee, and zero has a real position.
+
+  **The tick ladder is pond's, not d3's.** `scaleSymlog` supplies the transform
+  but ticks it _linearly_, which puts every label in the top decade and none in
+  the linear window the scale exists to open up. `<YAxis scale="symlog">` grids
+  zero, ±the knee, and mirrored decades beyond it, thinned to the tick budget
+  the same way the log path thins its decades, clipped to the domain. When
+  `linearWindow` swallows the domain there is nothing left to grid
+  logarithmically, and the axis defers to the linear ticks — which is correct,
+  not a fallback: inside the knee, symlog _is_ linear.
+
+  It removes a workaround whose cost was **silence**: pre-transforming values
+  into a ±1 plot space with a linear axis pinned to `[-1, 1]` leaves tick
+  positions in plot space while their labels must read in real units, so
+  computing the two by different routes yields a chart that confidently labels
+  positions it does not occupy — no exception, no visual artifact.
+
 - **charts: `<BarChart maxBarWidth>` — cap a bar's ink independently of its slot**
   ([PND-BARWIDTH]). Applied after the `gap` inset and centred in the slot, with
   `theme.bar[as].maxWidth` as the fallback (the same relationship `gap` has) and
   uncapped when neither is set.
 
-  It is the **absolute** half of the width vocabulary. `gap` is *relative*, so
+  It is the **absolute** half of the width vocabulary. `gap` is _relative_, so
   with it alone bar width is always `slot - gap` and fattens as the plot widens
   — and a fixed ink width is what makes a measure comparable **between** panes,
   since bars that widen with their pane read as different weights of the same

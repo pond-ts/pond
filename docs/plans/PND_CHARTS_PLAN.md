@@ -1925,11 +1925,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                                    _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                                    is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                                    iteration to discover, and the docs still don't mention it. **The one-line
-                                                                                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                                    row's data cursor is suppressed."
+                                                                                                _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                                                is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                                                iteration to discover, and the docs still don't mention it. **The one-line
+                                                                                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                                                row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -2875,3 +2875,82 @@ ladder, no colours, `binColors` conflict, multi-group stack). The sweep across
 the rest — warn when a theme sets slots the active draw path cannot read, when
 `bins` is handed plausibly-time-shaped keys — is still open and is the highest-
 value item left from this report.
+
+### Shipped 2026-08-11 — the "decided at the regroup" trio (stack #644)
+
+Three of the six remaining items, landed as a stack off `main`:
+[PND-CATSTACK] (#642), [PND-BARWIDTH] (#643), [PND-SYMLOG] (the tip). Decisions
+worth keeping beyond what the CHANGELOG records:
+
+**[PND-CATSTACK] — `<BarChart categories columns>`.** Each datum is
+`{ label, values }` with `values` **bin-major** (`values[i * G + g]`), which is
+the layout `drawStacks` already consumes — so the whole feature reaches shipped
+draw code with no new geometry. A missing or non-finite group reads as a **gap**,
+not a zero, matching the single-value path.
+
+The find that justified the perf-check reflex being a _review_ reflex too:
+`groupColored` was computed as `= ramped`, so a stacked category chart reported
+itself un-grouped and took the flat-fill emphasis path. That would have made the
+first-class version render **worse under selection** than the ordinal-index
+workaround it replaces — the workaround at least got per-layer emphasis. Now
+`(groups?.length ?? 0) > 1`.
+
+Also worth recording: the workaround's third cost was only visible _after_
+0.58.0. Composing the picture from one `categories` layer per cumulative total
+means a selection entry keys on `(layer id, mark)` **per segment layer**, so a
+controlled `selected` set has to be replicated across all of them — and missing
+one makes a selected bar recede. Before the [PND-INTERACTOWN] rework that cost
+didn't exist in the same shape, so the item's severity went _up_ as a result of
+other work landing.
+
+**[PND-BARWIDTH] — `<BarChart maxBarWidth>`.** The _absolute_ half of a
+vocabulary whose only existing knob (`gap`) is _relative_. Neither existing
+spelling expresses "spread the slots, pin the ink": `maxBandWidth = barWidth +
+gap` pins the bar but stops the slots spreading, `maxBandWidth = slotCap`
+spreads them but lets the bar grow. Applied **after** the gap inset and centred,
+so adding a cap can only ever narrow a bar and `gap` keeps its meaning;
+`minWidth` still wins so the two bounds cannot invert the rect.
+
+The deliberate asymmetry, documented rather than fixed: **a single-series bar's
+hit target stays its whole slot** (`barSlotRect` takes no cap — wiring one in
+does not compile), so narrow ink costs nothing in clickability. On a **stacked**
+chart the cap does narrow the target, because a stack must hit-test its drawn
+segment rect to resolve which segment was hit. That is a real inconsistency, and
+the alternative — hit-testing the slot and then guessing the segment — is worse.
+
+**[PND-SYMLOG] — `<YAxis scale="symlog" linearWindow>`.** Two decisions carry it.
+
+_The knee is relative, not absolute._ `linearWindow` is a **fraction of the
+domain's largest magnitude** (default `0.02`), so it survives a domain change
+with no arithmetic at the call site. Chosen because it is what the reporting
+consumer's own transform did (`maxAbs / 50`), and confirmed with them as
+generalizing: every caller they had passed the data's own max-abs and none had a
+case for a constant. d3's `constant()` is absolute, so the row computes
+`fraction × maxAbs` at scale-construction time.
+
+_The tick ladder is the substance of the feature, not a detail._ `scaleSymlog`
+supplies the transform but **ticks it linearly** — pinned as a test, since it is
+the baseline the feature exists to beat — which puts every label in the top
+decade and none in the linear window the scale exists to open up. An axis that
+opens up a region and then refuses to label it is not usable, so the ladder
+(zero, ±knee, mirrored decades, thinned to budget, clipped to domain) is where
+most of the work went. When `linearWindow` swallows the domain the axis defers to
+the linear ticks, which is _correct_ rather than a fallback: inside the knee,
+symlog **is** linear.
+
+Detection is **structural** — `constant()` exists only on symlog — mirroring how
+the log path detects `base()`. Worth noting because the alternative (threading
+the axis kind into `yTickValues`) would have widened a signature used by the
+labels, the readout formatter and the gridlines.
+
+This item also carries the clearest illustration of a scoring hazard already
+noted in the re-rank table above: symlog was **low** only because its one caller
+was expected to be retired, and that call reversed. A severity resting on a
+consumer's roadmap is not a stable basis for a library priority.
+
+**Re-scored as a result of shipping these:** the remaining three
+([PND-BINSWATCH], [PND-TICKCENSUS], [PND-THEMEBASE]-declined) are unchanged, and
+the **dev-mode warning sweep** got its second instalment — `linearWindow` on a
+non-symlog axis, and a fraction outside `(0, 1]`, both otherwise silent no-ops.
+The sweep is still open as a pass; it is now accumulating one axis at a time,
+which is worse than doing it once but better than not doing it.
