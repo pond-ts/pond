@@ -1888,9 +1888,10 @@ argument for the rest.
   argued for as one pass rather than three fixes and which only [PND-BANDBAR2]
   and [PND-SYMLOG] actually got. **[PND-CATSTACK], [PND-BARWIDTH] and
   [PND-SYMLOG] shipped 2026-08-11** as stack #644, and the consumer migrated for
-  real against it — all three workarounds deleted, with two verification gaps
-  recorded honestly (the symlog **tick ladder** and the pan/zoom knee are
-  unexercised, because their chart hides its y axis and does not zoom).
+  real against it on 0.59.0 — all three workarounds deleted (net −218/+91 lines of
+  consumer code), the **tick ladder** since verified on one domain via a story they
+  added for the axis their product hides, and the pan/zoom knee still unexercised
+  because their chart does not zoom.
   [PND-BINSWATCH] is now partially resolved on the stack path only. Itemised, with
   each workaround and its cost, in
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-sparcfric--sparc-charts-friction-2026-08).

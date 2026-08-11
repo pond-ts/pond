@@ -1925,11 +1925,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                                                            _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                                                            is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                                                            iteration to discover, and the docs still don't mention it. **The one-line
-                                                                                                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                                                            row's data cursor is suppressed."
+                                                                                                                _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                                                                is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                                                                iteration to discover, and the docs still don't mention it. **The one-line
+                                                                                                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                                                                row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -3009,10 +3009,18 @@ whole bar.
 **Record the gaps as loudly as the confirmations, because "consumer-verified"
 otherwise overstates this:**
 
-- **The tick ladder — the substance of [PND-SYMLOG] — is unverified.** Their chart
-  hides its y axis by default, so the product path never renders it. The bars are
-  vouched for; the ladder is covered only by pond's own tests. The next symlog
-  consumer is the first to see the ladder in anger.
+- **The tick ladder — the substance of [PND-SYMLOG] — was unverified, and is now
+  verified on one domain.** Their chart hides its y axis, so the product path never
+  rendered it; on 0.59.0 they closed the gap deliberately by adding a story that
+  renders the axis their product hides, specifically so the ladder stopped being a
+  known blind spot. On a ±9M fixture with the default window it emits
+  `$1.00M · $180K · $0 · ($180K) · ($1.00M)` — zero, ±the knee at exactly 2% of the
+  extreme, mirrored decades beyond — with distinguishable labels routed through
+  their own paren-negative money formatter, which also confirms the
+  precision-from-the-knee fix on a real domain. **Still unverified: small-magnitude
+  and normalized domains** — the `[-1, 1]` case review found is covered only by
+  pond's tests. Worth noting the shape of how this closed: naming the gap out loud
+  is what got it closed, by the party best placed to close it.
 - **The knee-under-pan/zoom question is unanswered.** Their diverging chart has no
   pan or zoom (fixed scenario columns, no time axis), so they declined to guess.
   Still open for a consumer who zooms.
@@ -3035,6 +3043,28 @@ small ones ~2×) because the difference is the curve, not the knee. Now document
 on `<YAxis scale>`, in the CHANGELOG, on the stories, and pinned by three tests so
 the prose numbers cannot rot. **The general lesson: a confirmed _parameter_ is not
 a confirmed _shape_.**
+
+**Why both passes ran, stated as a rule rather than an anecdote** (the consumer
+asked for this in as many words, and they are right that it should not be left as
+"a thing that happened to work this time"). The two passes over this wave found
+**disjoint classes of defect**, and each class fails _silently_:
+
+- **Contact with real data and real code** found what only contact reveals: the
+  `log1p`-vs-piecewise **shape** difference behind a parameter that matched, and a
+  legend reversal in a _different file_ that outlived the workaround it
+  compensated for. Reading the diff surfaces neither.
+- **Reading the implementation** found what only the code reveals: `groupColored`
+  correct under every theme the repo renders and wrong under one it ships, a
+  `Number.MIN_VALUE` clamp that NaN-ed every pixel, `floor(log10(Infinity))`
+  hanging a render, an API.md row for an export that did not exist. Using the
+  library surfaces none of those — a consumer sitting on the safe side of a broken
+  gate sees nothing at all.
+
+So neither pass discharges the other: "a consumer verified it" is not Layer 2, and
+"it was reviewed" is not evidence it survives real data. Promoted to CLAUDE.md's
+review section so it applies beyond this wave. Corollary, also learned here: record
+what a pass did **not** cover, because an unstated gap reads as coverage — and
+naming the ladder gap out loud is precisely what got it closed.
 
 **[PND-AXISMIRROR] — DECLINED 2026-08-11 (consumer).** They dropped dual mirrored
 axes across every chart in the migration, deciding it once for the set rather than
