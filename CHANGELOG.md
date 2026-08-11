@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.58.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.59.0...HEAD
+[0.59.0]: https://github.com/pond-ts/pond/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/pond-ts/pond/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/pond-ts/pond/compare/v0.56.2...v0.57.0
 [0.56.2]: https://github.com/pond-ts/pond/compare/v0.56.1...v0.56.2
@@ -60,6 +61,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
 ## [Unreleased]
+
+## [0.59.0] — 2026-08-11
 
 ### Added
 
@@ -177,8 +180,6 @@ include new features and type-level changes; patch bumps are strictly additive.
   next door is most of the value. The header now names its audience and
   resolves repo-relative source paths against GitHub, since inside
   `node_modules` a bare `packages/core/src/…` points nowhere.
-
-### Fixed
 
 - **charts: `BarStyle.dimmed`'s precedence over per-bar and per-band colour is
   documented, and pinned.** A consumer migrating onto 0.58.0 read
