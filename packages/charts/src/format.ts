@@ -57,6 +57,9 @@ interface Tickable {
   tickFormat(count: number, specifier?: string): (value: number) => string;
   /** Present on d3's `scaleLog` and on no other continuous scale. */
   base?: () => number;
+  /** Present on d3's `scaleSymlog` and on no other continuous scale — the linear
+   *  window's half-width in data units. */
+  constant?: () => number;
   domain?: () => number[];
 }
 
@@ -86,6 +89,18 @@ interface Tickable {
  * applies the specifier to whatever it is handed, which is what every consumer
  * of this function actually wants; the axis's own tick *thinning* is handled by
  * `yTickValues`, not here.
+ *
+ * **A symlog scale's precision comes from its knee, not its span** ([PND-SYMLOG]).
+ * `scaleSymlog.tickFormat` is `linearish`, so it derives precision from the
+ * domain — and a symlog axis is chosen precisely when the interesting values are
+ * *orders of magnitude smaller* than the domain. On `[-1, 1]` with a `0.02` knee
+ * the ladder emits `-0.02, 0, 0.02` and a span-derived formatter labels all three
+ * **`"0.0"`**: three ticks at three positions asserting the same value, on the
+ * axis whose whole purpose was to separate them. Formatting through a linear
+ * scale over `[-knee, knee]` calibrates to the smallest magnitude the ladder can
+ * emit. It changes nothing when the knee is already coarse (a 20k knee on a ±1M
+ * domain formats identically), and the cursor readout inherits the same extra
+ * precision — which is wanted, since near-zero is where a symlog readout is read.
  */
 export function resolveAxisFormat(
   scale: Tickable,
@@ -93,10 +108,14 @@ export function resolveAxisFormat(
   format: AxisFormat | undefined,
 ): (value: number) => string {
   if (typeof format === 'function') return format;
+  const knee =
+    typeof scale.constant === 'function' ? Math.abs(scale.constant()) : 0;
   const source =
     typeof scale.base === 'function' && typeof scale.domain === 'function'
       ? scaleLinear().domain(scale.domain())
-      : scale;
+      : Number.isFinite(knee) && knee > 0
+        ? scaleLinear().domain([-knee, knee])
+        : scale;
   return format !== undefined
     ? source.tickFormat(count, format)
     : source.tickFormat(count);

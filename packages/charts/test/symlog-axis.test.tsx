@@ -8,6 +8,7 @@ import { Layers } from '../src/Layers.js';
 import { LineChart } from '../src/LineChart.js';
 import { YAxis } from '../src/YAxis.js';
 import { yTickValues } from '../src/yticks.js';
+import { resolveAxisFormat } from '../src/format.js';
 import { scaleLinear, scaleLog, scaleSymlog } from 'd3-scale';
 import {
   ContainerContext,
@@ -142,12 +143,11 @@ describe('the tick ladder — the substance of the feature', () => {
   });
 
   it('spends the budget twice as fast when the domain is two-sided', () => {
-    // Pins the `decades * (twoSided ? 2 : 1)` doubling specifically. Same
-    // magnitudes, same count: mirroring each decade costs two ticks, so the
-    // two-sided ladder must keep about HALF as many distinct magnitudes. Without
-    // the doubling both sides step identically and a symmetric axis draws twice
-    // the requested ticks — which the length-only assertion above would not
-    // notice.
+    // The budget is spent on ticks, not on magnitudes: a two-sided domain draws
+    // each rung twice, so at the same count it must keep about HALF as many
+    // distinct magnitudes. Counting magnitudes instead would let a symmetric axis
+    // draw twice the requested ticks — which the length-only assertion above
+    // would not notice.
     const magnitudes = (ticks: readonly number[]) =>
       new Set(ticks.filter((t) => t !== 0).map(Math.abs)).size;
     const oneSided = magnitudes(yTickValues(scale(1e10, 1e-10, 0), 6));
@@ -166,8 +166,55 @@ describe('the tick ladder — the substance of the feature', () => {
     expect(yTickValues(s, 8)).toContain(knee);
     for (const t of yTickValues(s, 8)) {
       if (t === 0 || Math.abs(t) === knee) continue;
-      // Every other tick sits at least half a decade clear of the knee.
-      expect(Math.abs(t) / knee).toBeGreaterThan(Math.SQRT2);
+      // Every other tick sits at least half a decade clear of the knee. √10, not
+      // √2 — the offset is half a decade in log space, and asserting the weaker
+      // bound would not pin the documented guarantee.
+      expect(Math.abs(t) / knee).toBeGreaterThanOrEqual(Math.sqrt(10) - 1e-9);
+    }
+  });
+
+  it('never returns an empty ladder — clipping happens BEFORE thinning', () => {
+    // Codex found this one, and it is the sharpest kind of bug: a window that
+    // contains none of the ideal ladder. `[510k, 990k]` with a 19_800 knee
+    // excludes zero, both knees, and its one candidate decade (100k), so an
+    // implementation that thinned a symmetric ladder and clipped afterwards
+    // handed `[]` to the labels AND the gridlines — an axis drawn with no ticks,
+    // which reads as a broken renderer rather than as a scale. Reachable with
+    // explicit bounds, or by panning there.
+    const s = scaleSymlog()
+      .constant(19_800)
+      .domain([510_000, 990_000])
+      .range([500, 0]);
+    const ticks = yTickValues(s, 6);
+    expect(ticks.length).toBeGreaterThan(0);
+    expect(ticks.every((t) => t >= 510_000 && t <= 990_000)).toBe(true);
+  });
+
+  it('spends the budget on surviving ticks, not on an ideal ladder', () => {
+    // The same ordering bug in its milder form: a one-sided window past the knee
+    // must not be thinned as though it were the mirrored two-sided ladder, which
+    // would drop every other decade for no reason.
+    const s = scaleSymlog().constant(1).domain([1e2, 1e8]).range([500, 0]);
+    const mags = yTickValues(s, 8)
+      .filter((t) => t !== 0)
+      .map((t) => Math.round(Math.log10(Math.abs(t))));
+    // 1e2 … 1e8 is seven decades against a budget of 8 — all of them fit.
+    expect(mags).toEqual([2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it('does not hang on a non-finite bound', () => {
+    // `floor(log10(Infinity))` is `Infinity`, which made `e += step` a no-op and
+    // the decade loop unterminating — a hung render, not a bad axis. An explicit
+    // `max={Infinity}` reaches the scale intact, so the guard is not theoretical.
+    for (const domain of [
+      [0, Number.POSITIVE_INFINITY],
+      [Number.NEGATIVE_INFINITY, 0],
+      [Number.NaN, 1e6],
+    ] as Array<[number, number]>) {
+      const s = scaleSymlog().constant(100).domain(domain).range([500, 0]);
+      expect(() => yTickValues(s, 6)).not.toThrow();
+      // And it returns promptly with whatever d3 makes of such a domain.
+      expect(Array.isArray(yTickValues(s, 6))).toBe(true);
     }
   });
 
@@ -190,6 +237,48 @@ describe('the tick ladder — the substance of the feature', () => {
     expect(
       yTickValues(g, 5).every((t) => Number.isInteger(Math.log10(t))),
     ).toBe(true);
+  });
+});
+
+describe('label precision comes from the knee, not the span', () => {
+  // Codex's find, and the one that most directly undercut the feature's promise:
+  // placing a tick correctly is worthless if the label rounds it away. A symlog
+  // axis is chosen exactly when the interesting values are orders of magnitude
+  // below the domain, which is the condition under which a span-derived format
+  // has too few digits for them.
+  const symlog = (knee: number, lo: number, hi: number) =>
+    scaleSymlog().constant(knee).domain([lo, hi]).range([500, 0]);
+
+  it('gives each ladder tick a distinct label on a small-magnitude domain', () => {
+    // `[-1, 1]` with a 0.02 knee: the ladder emits -0.02, 0, 0.02 and d3's
+    // span-derived formatter labelled all three "0.0" — three positions
+    // asserting one value, on the axis whose purpose was to separate them.
+    const s = symlog(0.02, -1, 1);
+    const fmt = resolveAxisFormat(s, 4, undefined);
+    const labels = yTickValues(s, 4).map(fmt);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels).toContain(fmt(0.02));
+    expect(fmt(0.02)).not.toBe(fmt(0));
+  });
+
+  it('is unchanged when the knee is already coarse', () => {
+    // The fix must not cost the common case precision it did not need: a 20k knee
+    // on a ±1M domain formats exactly as before.
+    const s = symlog(20_000, -1e6, 1e6);
+    const fmt = resolveAxisFormat(s, 8, undefined);
+    expect([-1e6, -20_000, 0, 20_000, 1e6].map(fmt)).toEqual(
+      [-1e6, -20_000, 0, 20_000, 1e6].map(
+        scaleLinear().domain([-1e6, 1e6]).tickFormat(8),
+      ),
+    );
+  });
+
+  it('leaves an explicit format alone', () => {
+    // A caller-supplied specifier is authoritative; the knee only calibrates the
+    // *default*.
+    const s = symlog(0.02, -1, 1);
+    expect(resolveAxisFormat(s, 4, '.1%')(0.02)).toBe('2.0%');
+    expect(resolveAxisFormat(s, 4, (v) => `v=${v}`)(0.02)).toBe('v=0.02');
   });
 });
 
@@ -303,6 +392,52 @@ describe('`<YAxis scale="symlog">` through the component', () => {
       for (const v of [-1e6, -100, 0, 250, 1e6]) {
         expect(Number.isFinite(+s(v))).toBe(true);
       }
+    }
+  });
+
+  it('a runtime `linearWindow` change re-registers the axis', () => {
+    // Regression, matching the existing `tickCount` one: `linearWindow` must be
+    // in `axisSpecEqual`, or a window-only change compares equal to the stored
+    // spec, `setAxes` is skipped, and the axis keeps drawing with the previous
+    // knee. Silent — the chart still renders, just at the wrong régime boundary.
+    let rf: RowFrame | null = null;
+    function Capture() {
+      const r = useContext(RowContext);
+      useEffect(() => {
+        if (r) rf = r;
+      });
+      return null;
+    }
+    const chart = (linearWindow: number) => (
+      <ChartContainer range={[0, 4]} width={400} showAxis={false}>
+        <ChartRow height={200}>
+          <YAxis
+            id="v"
+            label=""
+            scale="symlog"
+            linearWindow={linearWindow}
+            min={-1e6}
+            max={1e6}
+          />
+          <Layers>
+            <LineChart series={series()} column="v" axis="v" />
+            <Capture />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+    const stub = stubCanvasContext();
+    try {
+      const { rerender } = render(chart(0.02));
+      const knee = () =>
+        (
+          rf!.yScales.get('v')! as unknown as { constant: () => number }
+        ).constant();
+      expect(knee()).toBeCloseTo(0.02 * 1e6, 6);
+      rerender(chart(0.2));
+      expect(knee()).toBeCloseTo(0.2 * 1e6, 6);
+    } finally {
+      stub.restore();
     }
   });
 

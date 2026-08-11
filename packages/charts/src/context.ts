@@ -1673,15 +1673,15 @@ export interface LayerEntry {
 export type YScaleKind = 'linear' | 'log' | 'symlog';
 
 /**
- * A row's resolved y scale — d3's `scaleLinear()`, or `scaleLog()` when the
- * axis asks for `scale="log"`.
+ * A row's resolved y scale — d3's `scaleLinear()`, `scaleLog()` when the axis
+ * asks for `scale="log"`, or `scaleSymlog()` for `scale="symlog"`.
  *
  * Deliberately the **continuous-numeric** supertype rather than `ScaleLinear`:
  * every consumer (the axis labels, the row's gridlines, the cursor readout, and
  * every draw layer) only ever calls it, or reads `domain` / `range` / `ticks` /
- * `tickFormat` / `invert` — the surface both scales share. Keeping the shared
- * type here is what lets a log axis be transparent to the draw layers instead
- * of every layer growing a branch.
+ * `tickFormat` / `invert` — the surface all three scales share. Keeping the
+ * shared type here is what lets a log or symlog axis be transparent to the draw
+ * layers instead of every layer growing a branch.
  */
 export type YScale = ScaleContinuousNumeric<number, number>;
 

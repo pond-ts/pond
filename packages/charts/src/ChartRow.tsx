@@ -107,6 +107,10 @@ function axisSpecEqual(a: AxisSpec, b: AxisSpec): boolean {
     a.side === b.side &&
     a.width === b.width &&
     a.scale === b.scale &&
+    // Easy to forget when adding a scale-shaping field, and the failure is
+    // silent: an axis whose `linearWindow` alone changed would be discarded by
+    // the guard and keep drawing with the previous knee.
+    a.linearWindow === b.linearWindow &&
     // Object.is (not ===) so a degenerate NaN bound compares equal to itself and
     // doesn't re-register every render.
     Object.is(a.min, b.min) &&

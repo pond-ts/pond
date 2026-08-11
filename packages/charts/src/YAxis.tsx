@@ -78,6 +78,16 @@ export interface YAxisProps {
    * the constant recomputed each tick, and would drift silently the moment
    * someone forgot — the fraction survives a domain change with no call-site
    * arithmetic at all.
+   *
+   * Precisely: a fraction of the **resolved domain before any pan/zoom** — the
+   * one the axis's `min`/`max`/`pad`/auto-fit produce. A 2-D gesture is carried
+   * as a *pixel* transform and the knee is deliberately **not** recomputed from
+   * the zoomed window, so zooming moves the plot without moving the boundary
+   * between the two régimes underneath it. (Recomputing would make the same
+   * datum linear at one zoom level and logarithmic at the next.)
+   *
+   * A value outside `(0, 1]` cannot be a knee; the axis draws with the default
+   * instead and dev-warns which window is in force.
    */
   linearWindow?: number;
   /** Explicit domain bounds; omit to auto-fit the charts linked to this axis. */

@@ -131,6 +131,16 @@ export function yTickValues(scale: TickableScale, count: number): number[] {
  * logarithmically, so it defers to `scale.ticks(count)` — which is linear, and
  * correct, because inside the knee symlog *is* linear.
  *
+ * **Clip first, then thin — never the other way round.** A pan/zoom (or explicit
+ * bounds) can leave a window that contains *none* of the ideal ladder:
+ * `[510_000, 990_000]` with a 19_800 knee excludes zero, both knees, and its one
+ * candidate decade, so an order that thinned a symmetric ladder and clipped
+ * afterwards handed **`[]`** to the labels and the gridlines — an axis with no
+ * ticks at all, which reads as a rendering failure rather than as a scale. The
+ * budget is likewise spent on what *survives* the domain, not on an ideal
+ * two-sided ladder, so an asymmetric window is not thinned as if it were twice
+ * its size. If nothing survives, the linear ticks are the honest answer.
+ *
  * Detection is structural, matching the log path's use of `base()`: `constant()`
  * exists on `scaleSymlog` and on no other continuous scale.
  */
@@ -140,6 +150,13 @@ function symlogTickValues(scale: TickableScale, count: number): number[] {
   const hi = Math.max(domain[0]!, domain[domain.length - 1]!);
   const knee = Math.abs(scale.constant?.() ?? 1);
   const maxAbs = Math.max(Math.abs(lo), Math.abs(hi));
+  // Finiteness is checked, not assumed: an explicit `max={Infinity}` reaches here
+  // intact, and `floor(log10(Infinity))` is `Infinity` — which made the decade
+  // loop's `e += step` a no-op and hung the render in a `for` that could never
+  // end. d3's own linear ticks return `[]` on such a domain, so deferring is both
+  // safe and the truthful answer for a domain with no finite extent.
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || !Number.isFinite(knee))
+    return scale.ticks(count);
   if (!(knee > 0) || !(maxAbs > knee) || !(hi > lo)) return scale.ticks(count);
 
   // The ladder starts at the first decade **at least half a decade above the
@@ -152,25 +169,37 @@ function symlogTickValues(scale: TickableScale, count: number): number[] {
   // reporting something false about the scale.
   const firstExp = Math.ceil(Math.log10(knee) + 0.5);
   const lastExp = Math.floor(Math.log10(maxAbs));
-  const decades = lastExp - firstExp + 1;
-  if (decades < 1) return scale.ticks(count);
 
-  // A symmetric domain shows each decade twice, so the budget is spent twice as
-  // fast as on a log axis — hence `decades * 2` against the same count.
-  const twoSided = lo < 0 && hi > 0;
-  const budget = Math.max(2, count);
-  const step = Math.max(1, Math.ceil((decades * (twoSided ? 2 : 1)) / budget));
+  const inDomain = (v: number) => v >= lo && v <= hi;
+  // Zero and ±knee are the fixed part of the ladder — kept whole, never thinned,
+  // because they are what distinguishes a symlog axis from a log one.
+  const fixed = [0, knee, -knee].filter(inDomain);
 
-  const out = new Set<number>();
-  const add = (v: number) => {
-    if (v >= lo && v <= hi) out.add(v);
-  };
-  add(0);
-  add(knee);
-  add(-knee);
-  for (let e = firstExp; e <= lastExp; e += step) {
-    add(10 ** e);
-    add(-(10 ** e));
+  // Every decade past the knee that the domain actually contains, in ascending
+  // magnitude, each carrying whichever of ±10^e survived.
+  const rungs: number[][] = [];
+  for (let e = firstExp; e <= lastExp; e += 1) {
+    const pair = [10 ** e, -(10 ** e)].filter(inDomain);
+    if (pair.length > 0) rungs.push(pair);
   }
+
+  // No rung survives ⇒ there is no logarithmic region to grid, so the linear
+  // ticks are the answer — the same reasoning as the knee-swallows-the-domain
+  // guard above, and the case that used to produce an empty axis. Note this also
+  // covers a window sitting *between* the knee and the first decade.
+  if (rungs.length === 0) return scale.ticks(count);
+
+  // Thin the SURVIVING rungs to what is left of the budget after the fixed
+  // ticks. Stepping by magnitude keeps a rung's ± pair together, so the grid
+  // stays symmetric wherever the domain is.
+  const budget = Math.max(2, count);
+  const total = rungs.reduce((n, pair) => n + pair.length, 0);
+  const room = Math.max(1, budget - fixed.length);
+  const step = Math.max(1, Math.ceil(total / room));
+
+  const out = new Set<number>(fixed);
+  for (let i = 0; i < rungs.length; i += step)
+    for (const v of rungs[i]!) out.add(v);
+
   return [...out].sort((a, b) => a - b);
 }

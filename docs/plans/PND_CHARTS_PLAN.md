@@ -1925,11 +1925,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                                                    _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                                                    is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                                                    iteration to discover, and the docs still don't mention it. **The one-line
-                                                                                                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                                                    row's data cursor is suppressed."
+                                                                                                        _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                                                        is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                                                        iteration to discover, and the docs still don't mention it. **The one-line
+                                                                                                        fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                                                        row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -2961,6 +2961,38 @@ dev-warns which window is in force. Also fixed in the same pass: the first decad
 of the ladder is required to sit half a decade clear of the knee (`× √10`), since
 a data-derived `maxAbs` of 4.95e6 gives a 99k knee and would otherwise draw a
 100k decade a few pixels away, rounding to the same label.
+
+**The Codex escalation earned its keep again, with zero overlap — four finds, all
+real.** Worth the same note the 2026-08-06 wave got, because the split repeated
+almost exactly: Claude's findings clustered on the diff's internal consistency,
+Codex's on _arithmetic reachable from public inputs_.
+
+- **An empty tick ladder.** A window containing none of the ideal ladder —
+  `[510k, 990k]` with a 19_800 knee excludes zero, both knees, and its one
+  candidate decade — handed `[]` to the labels _and_ the gridlines. Reachable with
+  explicit bounds or by panning. The order was wrong: it thinned a symmetric
+  ladder and clipped afterwards. Now it clips first, then thins the **survivors**,
+  which also stops an asymmetric window being thinned as if it were twice its
+  size; if nothing survives, the linear ticks are the honest answer.
+- **A hung render on a non-finite bound.** `floor(log10(Infinity))` is `Infinity`,
+  so `e += step` was a no-op and the decade loop could not terminate. An explicit
+  `max={Infinity}` reaches the scale intact. This is the second bug in this
+  feature caused by trusting an arithmetic identity on a non-finite input, after
+  the `Number.MIN_VALUE` clamp — a pattern worth watching for in any scale code.
+- **`axisSpecEqual` omitted `linearWindow`,** so a window-only change was
+  discarded by the registration guard and the axis kept the previous knee. The
+  analogous `tickCount` regression test already existed one file over; the new
+  field simply wasn't added to either. **When adding a scale-shaping `AxisSpec`
+  field, the guard and its re-register test are part of the change.**
+- **Placement and formatting were disconnected.** On `[-1, 1]` with a `0.02` knee
+  the ladder emitted `-0.02, 0, 0.02` and d3's span-derived formatter labelled all
+  three `"0.0"` — three positions asserting one value, on the axis whose entire
+  purpose was to separate them. This is the _same failure the half-decade fix
+  addressed_ (a duplicated label) arriving by a different route, which is the
+  argument for treating "can two ticks print the same string?" as a property of
+  the axis rather than of the ladder. `resolveAxisFormat` now calibrates a symlog
+  default through `[-knee, knee]`; identical output when the knee is already
+  coarse.
 
 **Re-scored as a result of shipping these:** the remaining three
 ([PND-BINSWATCH], [PND-TICKCENSUS], [PND-THEMEBASE]-declined) are unchanged, and
