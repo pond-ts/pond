@@ -63,12 +63,51 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts: `<YAxis scale="symlog">` — linear through zero, logarithmic beyond**
+  ([PND-SYMLOG]). The third `scale` kind, for a **diverging** measure spanning
+  orders of magnitude on both sides of zero. `scale="log"` cannot express that
+  domain at all (no zero, no negatives) and `scale="linear"` flattens everything
+  outside the top decade onto the axis line — so the small and mid-range values,
+  usually the finding, become unreadable.
+
+  The knee is set by the new **`linearWindow`** prop as a _fraction of the
+  domain's largest magnitude_ (default `0.02`): on a ±1M domain the axis is
+  linear through ±20k and logarithmic beyond. Relative rather than absolute so
+  it survives a domain change with no arithmetic at the call site. Values are
+  strictly monotonic across the knee, and zero has a real position. A fraction
+  outside `(0, 1]` is unusable as a knee, so the axis draws with the default and
+  dev-warns which window is in force.
+
+  **The tick ladder is pond's, not d3's.** `scaleSymlog` supplies the transform
+  but ticks it _linearly_, which puts every label in the top decade and none in
+  the linear window the scale exists to open up. `<YAxis scale="symlog">` grids
+  zero, ±the knee, and mirrored decades beyond it, thinned to the tick budget
+  the same way the log path thins its decades, clipped to the domain. When
+  `linearWindow` swallows the domain there is nothing left to grid
+  logarithmically, and the axis defers to the linear ticks — which is correct,
+  not a fallback: inside the knee, symlog _is_ linear.
+
+  It removes a workaround whose cost was **silence**: pre-transforming values
+  into a ±1 plot space with a linear axis pinned to `[-1, 1]` leaves tick
+  positions in plot space while their labels must read in real units, so
+  computing the two by different routes yields a chart that confidently labels
+  positions it does not occupy — no exception, no visual artifact.
+
+  **If you are replacing a hand-rolled curve, the shape will shift.** `symlog` is
+  the single smooth `sign(x) · log1p(|x / knee|)`, not two joined segments; a
+  hand-rolled curve that is exactly linear below the knee and `log10` above is the
+  same family with a different shape. Migrating one, a consumer measured small
+  values at **roughly half** their former height (on a ±9M domain, 283k moved from
+  0.44 to 0.24 of the half-plot above the zero line) with order, tail dominance and
+  the several-fold lift over a linear axis all preserved. No `linearWindow` recovers the piecewise shape — the
+  difference is the curve, not the knee.
+
 - **charts: `<BarChart maxBarWidth>` — cap a bar's ink independently of its slot**
   ([PND-BARWIDTH]). Applied after the `gap` inset and centred in the slot, with
   `theme.bar[as].maxWidth` as the fallback (the same relationship `gap` has) and
   uncapped when neither is set.
 
-  It is the **absolute** half of the width vocabulary. `gap` is *relative*, so
+  It is the **absolute** half of the width vocabulary. `gap` is _relative_, so
   with it alone bar width is always `slot - gap` and fattens as the plot widens
   — and a fixed ink width is what makes a measure comparable **between** panes,
   since bars that widen with their pane read as different weights of the same
@@ -115,11 +154,15 @@ include new features and type-level changes; patch bumps are strictly additive.
   site overrode is no longer the ramp's colour, so its receded counterpart would
   be wrong") applies to the _derived_ companions `dimmedFills` / `hoverFills`,
   which must invent a per-group colour; `groupColored` derives nothing. It now
-  gates on being a real multi-group stack, so a `colors` map — meaning-carrying
-  by construction, and more deliberately so than a fallback ramp — keeps its
-  colours under selection. Found building [PND-CATSTACK], where the old gate made
+  gates on **whether the resolved fills actually differ**, so a `colors` map keeps
+  its colours under selection, while a multi-group stack under a theme that gives
+  its groups no distinct colours at all (no ramp, no roles, no `colors` — e.g.
+  `estelaTheme`) still takes the themed `highlight`, because there is no
+  meaning-carrying colour there to preserve and suppressing the highlight would
+  leave selection invisible. Found building [PND-CATSTACK], where the old gate made
   the first-class stack render _worse_ under selection than the workaround it
-  replaces.
+  replaces; the second half was found in review, since every story and test renders
+  `defaultTheme`, whose ramp hides the difference.
 
 - **all packages: `API.md` now ships inside the npm tarball.** The agent-facing
   map of every public export across the six packages — one line per export with

@@ -1670,18 +1670,18 @@ export interface LayerEntry {
 
 /** A y-axis declared in a {@link ChartRow} via `<YAxis>`. */
 /** Which scale a y axis maps its domain through. */
-export type YScaleKind = 'linear' | 'log';
+export type YScaleKind = 'linear' | 'log' | 'symlog';
 
 /**
- * A row's resolved y scale — d3's `scaleLinear()`, or `scaleLog()` when the
- * axis asks for `scale="log"`.
+ * A row's resolved y scale — d3's `scaleLinear()`, `scaleLog()` when the axis
+ * asks for `scale="log"`, or `scaleSymlog()` for `scale="symlog"`.
  *
  * Deliberately the **continuous-numeric** supertype rather than `ScaleLinear`:
  * every consumer (the axis labels, the row's gridlines, the cursor readout, and
  * every draw layer) only ever calls it, or reads `domain` / `range` / `ticks` /
- * `tickFormat` / `invert` — the surface both scales share. Keeping the shared
- * type here is what lets a log axis be transparent to the draw layers instead
- * of every layer growing a branch.
+ * `tickFormat` / `invert` — the surface all three scales share. Keeping the
+ * shared type here is what lets a log or symlog axis be transparent to the draw
+ * layers instead of every layer growing a branch.
  */
 export type YScale = ScaleContinuousNumeric<number, number>;
 
@@ -1692,6 +1692,11 @@ export interface AxisSpec {
   readonly width: number;
   /** Which scale the axis maps its domain through ({@link YAxisProps.scale}). */
   readonly scale: YScaleKind;
+  /** `scale="symlog"`'s linear window as a **fraction of the domain's largest
+   *  magnitude** ({@link YAxisProps.linearWindow}) — `undefined` on any other
+   *  scale. Domain-relative rather than absolute so it survives a domain change
+   *  without a recompute ([PND-SYMLOG]). */
+  readonly linearWindow?: number | undefined;
   /** Explicit domain bounds, or `undefined` to auto-fit linked layers. */
   readonly min: number | undefined;
   readonly max: number | undefined;

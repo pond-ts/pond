@@ -36,6 +36,9 @@ interface TickableScale {
   domain(): number[];
   /** Present on d3's `scaleLog` and on no other continuous scale. */
   base?: () => number;
+  /** Present on d3's `scaleSymlog` and on no other continuous scale — the
+   *  linear window's half-width, i.e. the knee ([PND-SYMLOG]). */
+  constant?: () => number;
 }
 
 /**
@@ -74,6 +77,8 @@ interface TickableScale {
  * approach `resolveBarBaseline` takes to read `.domain()`.
  */
 export function yTickValues(scale: TickableScale, count: number): number[] {
+  if (typeof scale.constant === 'function')
+    return symlogTickValues(scale, count);
   if (typeof scale.base !== 'function') return scale.ticks(count);
 
   const domain = scale.domain();
@@ -91,4 +96,110 @@ export function yTickValues(scale: TickableScale, count: number): number[] {
   const out: number[] = [];
   for (let e = first; e <= last; e += step) out.push(10 ** e);
   return out;
+}
+
+/**
+ * Tick values for a **symlog** axis — linear through zero, logarithmic beyond
+ * ([PND-SYMLOG]).
+ *
+ * **This is the feature, not a refinement of it.** d3's `scaleSymlog` supplies
+ * the transform but its `ticks()` is `linearish` — evenly spaced in *value*. On
+ * a ±1M domain with a 20k knee that yields `-1M, -500k, 0, 500k, 1M`: **nothing
+ * at all below the knee**, which is the region a symlog axis exists to reveal.
+ * The mapping does spread that region generously (0→250px, 20k→294px,
+ * 100k→364px on a 500px range), so such a chart is readable-but-unlabelled —
+ * confidently gridded on the one part of the scale that isn't the point. Owning
+ * the ladder is therefore inseparable from owning the transform.
+ *
+ * The ladder, and why each piece is there:
+ *
+ * - **Zero, always.** It is the axis's centre of symmetry and the one value a
+ *   symlog scale is chosen to keep visible.
+ * - **The knee, ±`constant`.** Where the reading changes from linear to
+ *   logarithmic. Unlabelled, a reader has no way to know which régime a given
+ *   gap belongs to, and the same pixel distance means different things either
+ *   side of it.
+ * - **Decades beyond the knee, mirrored.** What a log plot is conventionally
+ *   gridded on, thinned by the same "every `k`th power of ten" rule the log path
+ *   above uses, so it degrades predictably as the row shrinks instead of
+ *   exploding.
+ * - **Bounds are NOT labelled.** A data-derived bound is rarely round, so
+ *   printing it puts an arbitrary number next to a decade — the noise a log grid
+ *   exists to avoid.
+ *
+ * Below one decade of span past the knee there is nothing to grid
+ * logarithmically, so it defers to `scale.ticks(count)` — which is linear, and
+ * correct, because inside the knee symlog *is* linear.
+ *
+ * **Clip first, then thin — never the other way round.** A pan/zoom (or explicit
+ * bounds) can leave a window that contains *none* of the ideal ladder:
+ * `[510_000, 990_000]` with a 19_800 knee excludes zero, both knees, and its one
+ * candidate decade, so an order that thinned a symmetric ladder and clipped
+ * afterwards handed **`[]`** to the labels and the gridlines — an axis with no
+ * ticks at all, which reads as a rendering failure rather than as a scale. The
+ * budget is likewise spent on what *survives* the domain, not on an ideal
+ * two-sided ladder, so an asymmetric window is not thinned as if it were twice
+ * its size. If nothing survives, the linear ticks are the honest answer.
+ *
+ * Detection is structural, matching the log path's use of `base()`: `constant()`
+ * exists on `scaleSymlog` and on no other continuous scale.
+ */
+function symlogTickValues(scale: TickableScale, count: number): number[] {
+  const domain = scale.domain();
+  const lo = Math.min(domain[0]!, domain[domain.length - 1]!);
+  const hi = Math.max(domain[0]!, domain[domain.length - 1]!);
+  const knee = Math.abs(scale.constant?.() ?? 1);
+  const maxAbs = Math.max(Math.abs(lo), Math.abs(hi));
+  // Finiteness is checked, not assumed: an explicit `max={Infinity}` reaches here
+  // intact, and `floor(log10(Infinity))` is `Infinity` — which made the decade
+  // loop's `e += step` a no-op and hung the render in a `for` that could never
+  // end. d3's own linear ticks return `[]` on such a domain, so deferring is both
+  // safe and the truthful answer for a domain with no finite extent.
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || !Number.isFinite(knee))
+    return scale.ticks(count);
+  if (!(knee > 0) || !(maxAbs > knee) || !(hi > lo)) return scale.ticks(count);
+
+  // The ladder starts at the first decade **at least half a decade above the
+  // knee** (`× √10`), not merely above it. `ceil(log10(knee))` alone puts a
+  // decade arbitrarily close to the knee tick whenever the knee lands just under
+  // a power of ten — a data-derived `maxAbs` of 4.95e6 gives a 99k knee and a
+  // 100k decade, two ticks a few pixels apart whose labels round to the *same
+  // string*. Since the knee itself is always drawn, dropping that decade loses
+  // no information; a chart that prints one number twice at two positions is
+  // reporting something false about the scale.
+  const firstExp = Math.ceil(Math.log10(knee) + 0.5);
+  const lastExp = Math.floor(Math.log10(maxAbs));
+
+  const inDomain = (v: number) => v >= lo && v <= hi;
+  // Zero and ±knee are the fixed part of the ladder — kept whole, never thinned,
+  // because they are what distinguishes a symlog axis from a log one.
+  const fixed = [0, knee, -knee].filter(inDomain);
+
+  // Every decade past the knee that the domain actually contains, in ascending
+  // magnitude, each carrying whichever of ±10^e survived.
+  const rungs: number[][] = [];
+  for (let e = firstExp; e <= lastExp; e += 1) {
+    const pair = [10 ** e, -(10 ** e)].filter(inDomain);
+    if (pair.length > 0) rungs.push(pair);
+  }
+
+  // No rung survives ⇒ there is no logarithmic region to grid, so the linear
+  // ticks are the answer — the same reasoning as the knee-swallows-the-domain
+  // guard above, and the case that used to produce an empty axis. Note this also
+  // covers a window sitting *between* the knee and the first decade.
+  if (rungs.length === 0) return scale.ticks(count);
+
+  // Thin the SURVIVING rungs to what is left of the budget after the fixed
+  // ticks. Stepping by magnitude keeps a rung's ± pair together, so the grid
+  // stays symmetric wherever the domain is.
+  const budget = Math.max(2, count);
+  const total = rungs.reduce((n, pair) => n + pair.length, 0);
+  const room = Math.max(1, budget - fixed.length);
+  const step = Math.max(1, Math.ceil(total / room));
+
+  const out = new Set<number>(fixed);
+  for (let i = 0; i < rungs.length; i += step)
+    for (const v of rungs[i]!) out.add(v);
+
+  return [...out].sort((a, b) => a - b);
 }

@@ -1925,11 +1925,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                                    _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                                    is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                                    iteration to discover, and the docs still don't mention it. **The one-line
-                                                                                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                                    row's data cursor is suppressed."
+                                                                                                            _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                                                            is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                                                            iteration to discover, and the docs still don't mention it. **The one-line
+                                                                                                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                                                            row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -2875,3 +2875,193 @@ ladder, no colours, `binColors` conflict, multi-group stack). The sweep across
 the rest — warn when a theme sets slots the active draw path cannot read, when
 `bins` is handed plausibly-time-shaped keys — is still open and is the highest-
 value item left from this report.
+
+### Shipped 2026-08-11 — the "decided at the regroup" trio (stack #644)
+
+Three of the six remaining items, landed as a stack off `main`:
+[PND-CATSTACK] (#642), [PND-BARWIDTH] (#643), [PND-SYMLOG] (the tip). Decisions
+worth keeping beyond what the CHANGELOG records:
+
+**[PND-CATSTACK] — `<BarChart categories columns>`.** Each datum is
+`{ label, values }` with `values` **bin-major** (`values[i * G + g]`), which is
+the layout `drawStacks` already consumes — so the whole feature reaches shipped
+draw code with no new geometry. A missing or non-finite group reads as a **gap**,
+not a zero, matching the single-value path.
+
+The find that justified the perf-check reflex being a _review_ reflex too:
+`groupColored` was computed as `= ramped`, so a stacked category chart reported
+itself un-grouped and took the flat-fill emphasis path. That would have made the
+first-class version render **worse under selection** than the ordinal-index
+workaround it replaces — the workaround at least got per-layer emphasis. Now
+`(groups?.length ?? 0) > 1`.
+
+Also worth recording: the workaround's third cost was only visible _after_
+0.58.0. Composing the picture from one `categories` layer per cumulative total
+means a selection entry keys on `(layer id, mark)` **per segment layer**, so a
+controlled `selected` set has to be replicated across all of them — and missing
+one makes a selected bar recede. Before the [PND-INTERACTOWN] rework that cost
+didn't exist in the same shape, so the item's severity went _up_ as a result of
+other work landing.
+
+**[PND-BARWIDTH] — `<BarChart maxBarWidth>`.** The _absolute_ half of a
+vocabulary whose only existing knob (`gap`) is _relative_. Neither existing
+spelling expresses "spread the slots, pin the ink": `maxBandWidth = barWidth +
+gap` pins the bar but stops the slots spreading, `maxBandWidth = slotCap`
+spreads them but lets the bar grow. Applied **after** the gap inset and centred,
+so adding a cap can only ever narrow a bar and `gap` keeps its meaning;
+`minWidth` still wins so the two bounds cannot invert the rect.
+
+The deliberate asymmetry, documented rather than fixed: **a single-series bar's
+hit target stays its whole slot** (`barSlotRect` takes no cap — wiring one in
+does not compile), so narrow ink costs nothing in clickability. On a **stacked**
+chart the cap does narrow the target, because a stack must hit-test its drawn
+segment rect to resolve which segment was hit. That is a real inconsistency, and
+the alternative — hit-testing the slot and then guessing the segment — is worse.
+
+**[PND-SYMLOG] — `<YAxis scale="symlog" linearWindow>`.** Two decisions carry it.
+
+_The knee is relative, not absolute._ `linearWindow` is a **fraction of the
+domain's largest magnitude** (default `0.02`), so it survives a domain change
+with no arithmetic at the call site. Chosen because it is what the reporting
+consumer's own transform did (`maxAbs / 50`), and confirmed with them as
+generalizing: every caller they had passed the data's own max-abs and none had a
+case for a constant. d3's `constant()` is absolute, so the row computes
+`fraction × maxAbs` at scale-construction time.
+
+_The tick ladder is the substance of the feature, not a detail._ `scaleSymlog`
+supplies the transform but **ticks it linearly** — pinned as a test, since it is
+the baseline the feature exists to beat — which puts every label in the top
+decade and none in the linear window the scale exists to open up. An axis that
+opens up a region and then refuses to label it is not usable, so the ladder
+(zero, ±knee, mirrored decades, thinned to budget, clipped to domain) is where
+most of the work went. When `linearWindow` swallows the domain the axis defers to
+the linear ticks, which is _correct_ rather than a fallback: inside the knee,
+symlog **is** linear.
+
+Detection is **structural** — `constant()` exists only on symlog — mirroring how
+the log path detects `base()`. Worth noting because the alternative (threading
+the axis kind into `yTickValues`) would have widened a signature used by the
+labels, the readout formatter and the gridlines.
+
+This item also carries the clearest illustration of a scoring hazard already
+noted in the re-rank table above: symlog was **low** only because its one caller
+was expected to be retired, and that call reversed. A severity resting on a
+consumer's roadmap is not a stable basis for a library priority.
+
+**The Layer-2 review's best find, recorded because the guard was worse than the
+mistake it guarded.** An invalid `linearWindow` (`0`, negative, `NaN`) was
+"clamped" with `Math.max(Number.MIN_VALUE, knee)`, which satisfies `> 0` and
+looks defensive. It is catastrophic: d3's symlog transform divides by the
+constant, so `|x / 5e-324|` is `Infinity` for every sample and the range
+interpolation returns `NaN` for **every pixel** — a blank plot with `NaN`
+gridline coordinates and no error thrown. The lesson generalises past this
+feature: a clamp chosen to satisfy a _predicate_ (`> 0`) rather than to preserve
+a _behaviour_ is not a guard. It now falls back to the default fraction and
+dev-warns which window is in force. Also fixed in the same pass: the first decade
+of the ladder is required to sit half a decade clear of the knee (`× √10`), since
+a data-derived `maxAbs` of 4.95e6 gives a 99k knee and would otherwise draw a
+100k decade a few pixels away, rounding to the same label.
+
+**The Codex escalation earned its keep again, with zero overlap — four finds, all
+real.** Worth the same note the 2026-08-06 wave got, because the split repeated
+almost exactly: Claude's findings clustered on the diff's internal consistency,
+Codex's on _arithmetic reachable from public inputs_.
+
+- **An empty tick ladder.** A window containing none of the ideal ladder —
+  `[510k, 990k]` with a 19*800 knee excludes zero, both knees, and its one
+  candidate decade — handed `[]` to the labels \_and* the gridlines. Reachable with
+  explicit bounds or by panning. The order was wrong: it thinned a symmetric
+  ladder and clipped afterwards. Now it clips first, then thins the **survivors**,
+  which also stops an asymmetric window being thinned as if it were twice its
+  size; if nothing survives, the linear ticks are the honest answer.
+- **A hung render on a non-finite bound.** `floor(log10(Infinity))` is `Infinity`,
+  so `e += step` was a no-op and the decade loop could not terminate. An explicit
+  `max={Infinity}` reaches the scale intact. This is the second bug in this
+  feature caused by trusting an arithmetic identity on a non-finite input, after
+  the `Number.MIN_VALUE` clamp — a pattern worth watching for in any scale code.
+- **`axisSpecEqual` omitted `linearWindow`,** so a window-only change was
+  discarded by the registration guard and the axis kept the previous knee. The
+  analogous `tickCount` regression test already existed one file over; the new
+  field simply wasn't added to either. **When adding a scale-shaping `AxisSpec`
+  field, the guard and its re-register test are part of the change.**
+- **Placement and formatting were disconnected.** On `[-1, 1]` with a `0.02` knee
+  the ladder emitted `-0.02, 0, 0.02` and d3's span-derived formatter labelled all
+  three `"0.0"` — three positions asserting one value, on the axis whose entire
+  purpose was to separate them. This is the _same failure the half-decade fix
+  addressed_ (a duplicated label) arriving by a different route, which is the
+  argument for treating "can two ticks print the same string?" as a property of
+  the axis rather than of the ladder. `resolveAxisFormat` now calibrates a symlog
+  default through `[-knee, knee]`; identical output when the knee is already
+  coarse.
+
+### Consumer verification, 2026-08-11 — what was and was **not** checked
+
+The reporting consumer built packs from the stack tip, installed them, and
+**migrated for real rather than rendering the stories** — on the argument that
+"does the workaround delete?" cannot be answered any other way. All three
+workarounds deleted cleanly: the symlog transform module _and its spec_ are gone,
+the `gap` re-derivation is gone, and the cumulative-layer composition **plus** its
+per-layer selection replication collapsed to one `<BarChart categories columns>`.
+They confirmed the `groupColored` fix on a real chart by clicking the _lower_
+segment — the case the replication existed for — and got one outline around the
+whole bar.
+
+**Record the gaps as loudly as the confirmations, because "consumer-verified"
+otherwise overstates this:**
+
+- **The tick ladder — the substance of [PND-SYMLOG] — is unverified.** Their chart
+  hides its y axis by default, so the product path never renders it. The bars are
+  vouched for; the ladder is covered only by pond's own tests. The next symlog
+  consumer is the first to see the ladder in anger.
+- **The knee-under-pan/zoom question is unanswered.** Their diverging chart has no
+  pan or zoom (fixed scenario columns, no time axis), so they declined to guess.
+  Still open for a consumer who zooms.
+- **`maxBarWidth`'s hit-target asymmetry didn't bite** — their stack's bars are wide
+  relative to the cap. A denser stack is the case that would find it.
+- **The knee-derived label precision fix is likewise unexercised** for the same
+  hidden-axis reason.
+
+**The correction they made, which is the most valuable thing the exercise
+produced.** I accepted "same knee" as "same curve" and wrote it into the plan and
+the PR. pond's symlog is d3's smooth `sign(x) · log1p(|x / knee|)`; the curve they
+were replacing was **piecewise** — exactly linear below the knee, `log10` above.
+Same family, materially different shape. Measured with a canvas pixel probe across
+a ±9M fixture, small values land at roughly **half** their former height (283k:
+0.44 → 0.24 of the half-plot), while order, tail dominance and a several-fold lift
+over linear all survive — so the chart makes the same argument, differently. They
+explicitly declined to have it changed, and confirmed **no `linearWindow` recovers
+the piecewise shape** (a smaller window fits the large values and overshoots the
+small ones ~2×) because the difference is the curve, not the knee. Now documented
+on `<YAxis scale>`, in the CHANGELOG, on the stories, and pinned by three tests so
+the prose numbers cannot rot. **The general lesson: a confirmed _parameter_ is not
+a confirmed _shape_.**
+
+**[PND-AXISMIRROR] — DECLINED 2026-08-11 (consumer).** They dropped dual mirrored
+axes across every chart in the migration, deciding it once for the set rather than
+per chart, on the reasoning that a treatment the library doesn't really support
+should not be spelled differently in five places. No consumer remains for the ask.
+Closed; reopen with a real case if a wide panel ever proves hard to read. This
+retires the last open axis item from [PND-AXES] apart from the label/tick backlog.
+
+**[PND-BINSWATCH] — partially resolved by [PND-CATSTACK].** The composed
+workaround could not use the legend hook's swatch (a `binColors` layer reports its
+base theme fill), so it sourced colour from its own segment array and lost the
+agree-by-construction property. A first-class stack takes per-column `colors` and
+the swatch **is** the drawn colour, so legend and plot agree again on this path.
+What remains is the original non-stack `binColors` case — which is still the more
+common one, and still compounds with [PND-CATEMPH] as first reported.
+
+**A migration hazard worth passing to the next consumer:** they found _a workaround
+artifact that outlived its workaround, from a different file_ — a legend row
+reversal that existed because the composed version declared layers
+outermost-first. With one layer and a natural `columns` list the reversal became a
+bug, and a quiet one: labels swapped while the colours stayed right, so it read as
+correct at a glance and nothing typed it. Deleting a workaround means auditing
+whatever _compensated_ for it elsewhere, which is not something `tsc` can find.
+
+**Re-scored as a result of shipping these:** the remaining three
+([PND-BINSWATCH], [PND-TICKCENSUS], [PND-THEMEBASE]-declined) are unchanged, and
+the **dev-mode warning sweep** got its second instalment — `linearWindow` on a
+non-symlog axis, and a fraction outside `(0, 1]`, both otherwise silent no-ops.
+The sweep is still open as a pass; it is now accumulating one axis at a time,
+which is worse than doing it once but better than not doing it.

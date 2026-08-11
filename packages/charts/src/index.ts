@@ -132,6 +132,11 @@ export {
   stacksFromBins,
   // Categorical row-read: one bar per `{ label, value }` on the category axis.
   categoryStack,
+  // …and its stacked sibling: one bar per `{ label, values }`, segments named by
+  // `columns` ([PND-CATSTACK]). Public for the same reason every reader above is
+  // — a caller assembling a `StackedBarSeries` by hand needs it — and because
+  // API.md already documented it as public while `index.ts` did not export it.
+  categoryStacks,
   // The transpose reader — one row of a wide series read across into categories.
   transposeRow,
 } from './data.js';
