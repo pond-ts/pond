@@ -1925,11 +1925,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                                                _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                                                is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                                                iteration to discover, and the docs still don't mention it. **The one-line
-                                                                                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                                                row's data cursor is suppressed."
+                                                                                                    _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                                                    is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                                                    iteration to discover, and the docs still don't mention it. **The one-line
+                                                                                                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                                                    row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -2947,6 +2947,20 @@ This item also carries the clearest illustration of a scoring hazard already
 noted in the re-rank table above: symlog was **low** only because its one caller
 was expected to be retired, and that call reversed. A severity resting on a
 consumer's roadmap is not a stable basis for a library priority.
+
+**The Layer-2 review's best find, recorded because the guard was worse than the
+mistake it guarded.** An invalid `linearWindow` (`0`, negative, `NaN`) was
+"clamped" with `Math.max(Number.MIN_VALUE, knee)`, which satisfies `> 0` and
+looks defensive. It is catastrophic: d3's symlog transform divides by the
+constant, so `|x / 5e-324|` is `Infinity` for every sample and the range
+interpolation returns `NaN` for **every pixel** — a blank plot with `NaN`
+gridline coordinates and no error thrown. The lesson generalises past this
+feature: a clamp chosen to satisfy a _predicate_ (`> 0`) rather than to preserve
+a _behaviour_ is not a guard. It now falls back to the default fraction and
+dev-warns which window is in force. Also fixed in the same pass: the first decade
+of the ladder is required to sit half a decade clear of the knee (`× √10`), since
+a data-derived `maxAbs` of 4.95e6 gives a 99k knee and would otherwise draw a
+100k decade a few pixels away, rounding to the same label.
 
 **Re-scored as a result of shipping these:** the remaining three
 ([PND-BINSWATCH], [PND-TICKCENSUS], [PND-THEMEBASE]-declined) are unchanged, and

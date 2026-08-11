@@ -141,6 +141,36 @@ describe('the tick ladder — the substance of the feature', () => {
     expect(many.length).toBeLessThanOrEqual(14);
   });
 
+  it('spends the budget twice as fast when the domain is two-sided', () => {
+    // Pins the `decades * (twoSided ? 2 : 1)` doubling specifically. Same
+    // magnitudes, same count: mirroring each decade costs two ticks, so the
+    // two-sided ladder must keep about HALF as many distinct magnitudes. Without
+    // the doubling both sides step identically and a symmetric axis draws twice
+    // the requested ticks — which the length-only assertion above would not
+    // notice.
+    const magnitudes = (ticks: readonly number[]) =>
+      new Set(ticks.filter((t) => t !== 0).map(Math.abs)).size;
+    const oneSided = magnitudes(yTickValues(scale(1e10, 1e-10, 0), 6));
+    const twoSided = magnitudes(yTickValues(scale(1e10, 1e-10), 6));
+    expect(twoSided).toBeLessThan(oneSided);
+    expect(twoSided).toBeLessThanOrEqual(Math.ceil(oneSided / 2) + 1);
+  });
+
+  it('never draws a decade close enough to the knee to duplicate its label', () => {
+    // A data-derived maxAbs puts the knee wherever it lands: 2% of 4.95e6 is
+    // 99_000, and `ceil(log10(knee))` alone would then emit 100_000 as the first
+    // decade — a few pixels from the knee tick and rounding to the same label.
+    // The knee is always drawn, so dropping that decade loses nothing.
+    const s = scale(4.95e6);
+    const knee = 0.02 * 4.95e6;
+    expect(yTickValues(s, 8)).toContain(knee);
+    for (const t of yTickValues(s, 8)) {
+      if (t === 0 || Math.abs(t) === knee) continue;
+      // Every other tick sits at least half a decade clear of the knee.
+      expect(Math.abs(t) / knee).toBeGreaterThan(Math.SQRT2);
+    }
+  });
+
   it('defers to the linear ticks when the knee swallows the domain', () => {
     // `linearWindow: 1` puts the knee at maxAbs, so there is nothing to grid
     // logarithmically — and inside the knee symlog IS linear, so d3's linear
@@ -250,6 +280,30 @@ describe('`<YAxis scale="symlog">` through the component', () => {
     const [lo, hi] = s.domain() as [number, number];
     expect(lo).toBeLessThan(0);
     expect(hi).toBeGreaterThan(0);
+  });
+
+  it('falls back to the default window when `linearWindow` is unusable', () => {
+    // Found by Layer-2 review, and the sharpest bug in the feature: the first
+    // version clamped the knee to `Number.MIN_VALUE`, which satisfies `> 0` and
+    // is *catastrophic* — d3's transform divides by the constant, so every mapped
+    // pixel comes out `NaN`. A blank plot with NaN gridline coordinates and no
+    // error, from `linearWindow={0}`. Falling back to the default keeps the chart
+    // drawable and the dev warning says which window is in force.
+    for (const w of [0, -1, 20, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const s = mount({
+        scale: 'symlog',
+        linearWindow: w,
+        min: -1e6,
+        max: 1e6,
+      }).scale();
+      expect(
+        (s as unknown as { constant: () => number }).constant(),
+      ).toBeCloseTo(0.02 * 1e6, 6);
+      // The property that actually matters: real pixels, not NaN.
+      for (const v of [-1e6, -100, 0, 250, 1e6]) {
+        expect(Number.isFinite(+s(v))).toBe(true);
+      }
+    }
   });
 
   it('is not a symlog scale when the prop is absent', () => {

@@ -74,7 +74,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   domain's largest magnitude_ (default `0.02`): on a ±1M domain the axis is
   linear through ±20k and logarithmic beyond. Relative rather than absolute so
   it survives a domain change with no arithmetic at the call site. Values are
-  strictly monotonic across the knee, and zero has a real position.
+  strictly monotonic across the knee, and zero has a real position. A fraction
+  outside `(0, 1]` is unusable as a knee, so the axis draws with the default and
+  dev-warns which window is in force.
 
   **The tick ladder is pond's, not d3's.** `scaleSymlog` supplies the transform
   but ticks it _linearly_, which puts every label in the top decade and none in

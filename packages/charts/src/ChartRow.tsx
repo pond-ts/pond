@@ -40,6 +40,39 @@ import {
  */
 const DEFAULT_LINEAR_WINDOW = 0.02;
 
+/**
+ * `scaleSymlog`'s `constant` (the linear window's half-width in data units) for
+ * an axis's domain-relative {@link YAxisProps.linearWindow} ([PND-SYMLOG]).
+ *
+ * **The clamp is the point.** d3's symlog transform is
+ * `sign(x)·log1p(|x / constant|)`, so a `constant` of `0` — or of
+ * `Number.MIN_VALUE`, which the first version of this "clamped" to — divides
+ * every sample by ~zero, and `(∞ − ∞) / (∞ − ∞)` makes **every mapped pixel
+ * `NaN`**: a blank plot, `NaN` gridline coordinates, no error. That is strictly
+ * worse than the mistake it was guarding, so an unusable fraction (non-finite,
+ * `<= 0`, or `> 1`) falls back to the **default** and dev-warns (see the
+ * `linearWindow` diagnostics below) rather than being nudged to a value that
+ * technically satisfies `> 0`.
+ *
+ * A degenerate all-zero domain has no magnitude to take a fraction *of*, so the
+ * knee falls back to `1`; the axis is linear across it either way.
+ */
+function symlogConstant(
+  linearWindow: number | undefined,
+  lo: number,
+  hi: number,
+): number {
+  const usable =
+    linearWindow !== undefined &&
+    Number.isFinite(linearWindow) &&
+    linearWindow > 0 &&
+    linearWindow <= 1;
+  const fraction = usable ? linearWindow! : DEFAULT_LINEAR_WINDOW;
+  const maxAbs = Math.max(Math.abs(lo), Math.abs(hi));
+  const knee = fraction * maxAbs;
+  return Number.isFinite(knee) && knee > 0 ? knee : 1;
+}
+
 /** Sentinel id for the implicit axis a row gets when no `<YAxis>` is declared. */
 const IMPLICIT_AXIS_ID = '__default__';
 
@@ -357,13 +390,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
         ax.scale === 'log'
           ? scaleLog()
           : ax.scale === 'symlog'
-            ? scaleSymlog().constant(
-                Math.max(
-                  Number.MIN_VALUE,
-                  (ax.linearWindow ?? DEFAULT_LINEAR_WINDOW) *
-                    Math.max(Math.abs(lo), Math.abs(hi)),
-                ),
-              )
+            ? scaleSymlog().constant(symlogConstant(ax.linearWindow, lo, hi))
             : scaleLinear();
       const s = base.domain([lo, hi]).range([height, topHeader]);
       // 2-D pan/zoom is carried as a **pixel** transform (`k`, `ty`) so one
@@ -435,10 +462,10 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
   // Dev-mode diagnostics for `linearWindow` ([PND-SYMLOG]). Both cases it covers
   // are *silent* otherwise, which is the whole reason it exists: a
   // `linearWindow` on a linear or log axis is read by nothing, and a fraction
-  // outside `(0, 1]` either produces a knee at-or-below zero (clamped to
-  // `Number.MIN_VALUE`, so effectively a log axis that admits zero) or one past
-  // the domain (the axis goes linear). Neither throws and neither looks broken —
-  // it just isn't the scale the call site asked for.
+  // outside `(0, 1]` is unusable as a knee (see `symlogConstant`), so the axis
+  // silently draws with the **default** window instead of the one asked for.
+  // Neither throws and neither looks broken — it just isn't the scale the call
+  // site asked for.
   //
   // Same shape as the log diagnostics above: an effect rather than the memo, and
   // deduped in `warnedRef` under a suffixed key so it cannot collide with the
@@ -457,9 +484,10 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
           `ignored here.`;
       } else if (w !== undefined && (!Number.isFinite(w) || w <= 0 || w > 1)) {
         message =
-          `<YAxis id="${ax.id}"> has linearWindow=${w}, outside (0, 1]. It is ` +
-          `a fraction of the domain's largest magnitude, so 0.02 means "linear ` +
-          `through 2% of the domain".`;
+          `<YAxis id="${ax.id}"> has linearWindow=${w}, outside (0, 1] — the ` +
+          `axis is drawing with the default ${DEFAULT_LINEAR_WINDOW} instead. ` +
+          `It is a fraction of the domain's largest magnitude, so 0.02 means ` +
+          `"linear through 2% of the domain".`;
       }
       if (message === null) warned.delete(key);
       else if (warned.get(key) !== message) {

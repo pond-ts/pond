@@ -142,7 +142,15 @@ function symlogTickValues(scale: TickableScale, count: number): number[] {
   const maxAbs = Math.max(Math.abs(lo), Math.abs(hi));
   if (!(knee > 0) || !(maxAbs > knee) || !(hi > lo)) return scale.ticks(count);
 
-  const firstExp = Math.ceil(Math.log10(knee));
+  // The ladder starts at the first decade **at least half a decade above the
+  // knee** (`× √10`), not merely above it. `ceil(log10(knee))` alone puts a
+  // decade arbitrarily close to the knee tick whenever the knee lands just under
+  // a power of ten — a data-derived `maxAbs` of 4.95e6 gives a 99k knee and a
+  // 100k decade, two ticks a few pixels apart whose labels round to the *same
+  // string*. Since the knee itself is always drawn, dropping that decade loses
+  // no information; a chart that prints one number twice at two positions is
+  // reporting something false about the scale.
+  const firstExp = Math.ceil(Math.log10(knee) + 0.5);
   const lastExp = Math.floor(Math.log10(maxAbs));
   const decades = lastExp - firstExp + 1;
   if (decades < 1) return scale.ticks(count);
