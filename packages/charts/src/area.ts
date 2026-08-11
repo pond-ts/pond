@@ -2,11 +2,13 @@ import { area as d3area, curveLinear, type CurveFactory } from 'd3-shape';
 import type { ChartSeries } from './data.js';
 import {
   baselinePxFromScale,
+  plotExtentOf,
   strokeAffinePolyline,
   TRACE_HIT_PX,
   type Scale,
   type TraceState,
 } from './line.js';
+import type { BandLadder } from './bars.js';
 import type { AreaStyle } from './theme.js';
 import type { LayerDrawStats } from './context.js';
 import {
@@ -197,6 +199,7 @@ export function drawArea(
   gaps: GapMode = DEFAULT_GAP_MODE,
   gapConnectorOpacity: number = DEFAULT_GAP_CONNECTOR_OPACITY,
   decimate: DecimateOption = true,
+  banding?: BandLadder,
 ): LayerDrawStats {
   const sourceCount = cs.length; // pre-cull, pre-decimation (for draw stats)
   const baselinePx = yScale(baselineValue);
@@ -210,13 +213,25 @@ export function drawArea(
   // instead of re-walking O(N) — the mountain@1M ceiling the bench profile
   // flagged. A `'none'` bridge only fills interior gaps with interpolated values
   // that stay within the finite extent, so the plain extent is exact for it too.
-  const fill = buildGradient(
-    ctx,
-    columnFiniteExtent(cs.y, cs.length),
-    yScale,
-    baselinePx,
-    style,
-  );
+  //
+  // **Banded** ([PND-BANDAREA]): one hard-stop pixel-space gradient carries the
+  // whole ladder for the fill AND the outline — see {@link buildBandGradient}
+  // for why a gradient rather than one clipped redraw per band.
+  const fill =
+    banding !== undefined
+      ? buildBandGradient(
+          ctx,
+          yScale,
+          plotExtentOf(ctx, xScale, yScale).height,
+          banding,
+        )
+      : buildGradient(
+          ctx,
+          columnFiniteExtent(cs.y, cs.length),
+          yScale,
+          baselinePx,
+          style,
+        );
 
   // Clip `cs` to what draws. **Decimated** (linear curve, `decimate !== false`):
   // cull to the visible slice, then the same {@link decimateM4} pre-pass shrinks
@@ -285,12 +300,15 @@ export function drawArea(
   ctx.restore();
 
   // The outline on top: the area's top edge as a line (breaks at the same gaps
-  // as the fill), at full opacity over the graded fill.
+  // as the fill), at full opacity over the graded fill. Banded, it strokes with
+  // the same hard-stop gradient the fill used, so the line switches hue exactly
+  // where it crosses a threshold — the whole point of the ladder is that the
+  // reader sees *where* the value sits, and the edge is the value.
   ctx.save();
   ctx.beginPath();
   if (outline !== null) outline(ys);
   else strokeAffinePolyline(ctx, cs.x, ys, ax!, ay!);
-  ctx.strokeStyle = style.color;
+  ctx.strokeStyle = banding !== undefined ? fill : style.color;
   ctx.lineWidth = style.width;
   ctx.stroke();
   ctx.restore();
@@ -395,6 +413,112 @@ function buildGradient(
     grad.addColorStop(baseOffset, transparent);
     grad.addColorStop(1, opaque);
   }
+  return grad;
+}
+
+/**
+ * The banded fill + stroke for `<AreaChart thresholds>` ([PND-BANDAREA]): one
+ * vertical **hard-stop gradient in pixel space**, a colour switch at every
+ * threshold crossing — `colors[0]` between `-t0` and `+t0`, `colors[k]` over
+ * magnitudes `[t(k-1), tk)` on both sides of zero. `thresholds`/`colors` arrive
+ * as a resolved {@link BandLadder} (ascending, positive, `n + 1` colours), the
+ * same currency `drawBars` takes.
+ *
+ * A gradient rather than one clipped redraw per band, and that is the
+ * load-bearing choice: K + 1 clipped passes walk the path K + 1 times and meet
+ * themselves at every boundary with an antialiased seam, where a gradient
+ * draws the identical single path once and costs O(K) colour stops. It also
+ * bands the **outline for free** — `strokeStyle` takes the same gradient, so
+ * the value line switches hue exactly at a crossing, which no per-band clip
+ * can do without shearing the stroke.
+ *
+ * The ladder is walked on the **magnitude** and mirrored below zero, exactly
+ * as `bandSpan` does for a bar: the boundary at `±tk` separates band `k` (the
+ * zero side) from band `k + 1` (the away side). Whether "away from zero" is up
+ * or down the canvas is probed from the scale itself (`t0` vs `t0 + 1`, both
+ * positive and finite by construction), so a flipped axis bands correctly. A
+ * boundary with **no position** on the scale contributes no crossing — on a
+ * log axis the negative mirrors (and zero) simply don't exist, which is the
+ * right reading. A crossing **off the plot** clamps to the gradient's ends
+ * (a real canvas throws on stops outside `[0, 1]`), which is also what makes a
+ * zoomed-in view honest: with every visible pixel inside one band, the clamp
+ * degenerates the other stops and the whole plot paints that band's colour.
+ *
+ * Falls back to the top band's flat colour when there is nothing to anchor on
+ * (no plot height, or no boundary with a position at all) — reachable only
+ * with a degenerate scale stub, since every real axis positions a positive
+ * finite value; any flat colour is equally (in)correct there, and the top
+ * band's is at least stable.
+ *
+ * Like the bar ladder, breakpoints are **absolute data values**, so the
+ * baseline plays no part here: an area resting on a non-zero floor still bands
+ * at the same heights as its neighbours — measuring from the resolved baseline
+ * instead would silently shift every breakpoint by the floor, the quiet
+ * wrongness [PND-BANDBAR2] exists to remove.
+ */
+export function buildBandGradient(
+  ctx: CanvasRenderingContext2D,
+  yScale: Scale,
+  plotHeight: number,
+  banding: BandLadder,
+): CanvasGradient | string {
+  const { thresholds, colors } = banding;
+  const fallback = colors[colors.length - 1]!;
+  // Guards NaN too — `!(x > 0)`, not `x <= 0`.
+  if (!(plotHeight > 0)) return fallback;
+  // Axis direction: does value increase toward smaller pixels (the canvas
+  // norm)? Probed on the ladder's own first breakpoint — positive and finite
+  // by construction, so it has a position on every axis kind (linear, log,
+  // symlog). Non-finite or equal probes default to the norm.
+  const pA = yScale(thresholds[0]!);
+  const pB = yScale(thresholds[0]! + 1);
+  const higherValueAtSmallerPx = !(
+    Number.isFinite(pA) &&
+    Number.isFinite(pB) &&
+    pB > pA
+  );
+  // Every scalable crossing, as (pixel, colour above it, colour below it) —
+  // "above/below" in *pixel* terms. |v| grows upward through +tk and downward
+  // through -tk, so which side carries the away-from-zero colour flips with
+  // the boundary's sign (and with the axis direction).
+  interface Crossing {
+    readonly px: number;
+    readonly above: string;
+    readonly below: string;
+  }
+  const crossings: Crossing[] = [];
+  for (let k = 0; k < thresholds.length; k += 1) {
+    const zeroSide = colors[k]!;
+    const awaySide = colors[k + 1]!;
+    for (const v of [thresholds[k]!, -thresholds[k]!]) {
+      const px = yScale(v);
+      if (!Number.isFinite(px)) continue; // no position — no crossing
+      const awayAbove = v > 0 === higherValueAtSmallerPx;
+      crossings.push(
+        awayAbove
+          ? { px, above: awaySide, below: zeroSide }
+          : { px, above: zeroSide, below: awaySide },
+      );
+    }
+  }
+  if (crossings.length === 0) return fallback;
+  crossings.sort((a, b) => a.px - b.px);
+  const grad = ctx.createLinearGradient(0, 0, 0, plotHeight);
+  const offsetOf = (px: number): number => {
+    const o = px / plotHeight;
+    return o < 0 ? 0 : o > 1 ? 1 : o;
+  };
+  // Each crossing is a hard stop: two stops at one offset, old colour then
+  // new. The region above the first crossing seeds the walk; clamped
+  // off-plot crossings collapse to zero-height regions at the ends, leaving
+  // the visible span in the band it actually occupies.
+  grad.addColorStop(0, crossings[0]!.above);
+  for (const c of crossings) {
+    const off = offsetOf(c.px);
+    grad.addColorStop(off, c.above);
+    grad.addColorStop(off, c.below);
+  }
+  grad.addColorStop(1, crossings[crossings.length - 1]!.below);
   return grad;
 }
 
