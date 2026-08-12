@@ -1751,6 +1751,27 @@ export function ChartContainer({
   // already uses in `yticks.ts`.
   // Both probes, because d3 splits them: `base()` is on `scaleLog` and
   // `constant()` on `scaleSymlog` — the same pair `tickValues` tests.
+  // `xScale` shapes the VALUE axis only — a logarithmic time axis is
+  // meaningless and a category axis has its own band spacing. Saying so out
+  // loud rather than ignoring the prop: a request that quietly does nothing is
+  // the failure mode `panZoom2D` shipped with, where a mode named two axes and
+  // silently moved one.
+  // `sources.size > 0` because `resolvedKind` falls back to 'time' until the
+  // layers have registered — without the guard this fires once on every mount,
+  // including the valid ones.
+  if (
+    isDev &&
+    xScaleKind !== 'linear' &&
+    sources.size > 0 &&
+    resolvedKind !== 'value'
+  ) {
+    console.warn(
+      `<ChartContainer xScale="${xScaleKind}">: ignored on a ${resolvedKind} ` +
+        'x axis — it applies to a value axis only. A `TimeSeries` gives a time ' +
+        'axis; key the data on the quantity itself (a `ValueSeries`) to get a ' +
+        'value axis you can scale.',
+    );
+  }
   const xIsLog = ((s: unknown) => {
     const probe = s as { base?: unknown; constant?: unknown };
     return (
