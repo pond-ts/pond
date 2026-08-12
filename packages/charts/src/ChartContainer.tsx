@@ -113,8 +113,13 @@ export interface ChartContainerProps {
    * **Make the x axis ordinal at the container level** — one equal-width slot
    * per name, in this order ([PND-IGNITECAT]).
    *
+   * Note this is a list of **names** (`string[]`), unlike `<BarChart
+   * categories>`, which takes `{ label, value }` data. The container names the
+   * slots; the bar layer fills them.
+   *
    * Until this prop, the band scale was reachable only *through a layer*:
-   * `<BarChart categories>` (and the heat map) reported `xKind: 'category'`,
+   * `<BarChart categories>` (and a **horizontal** heat map) reported
+   * `xKind: 'category'`,
    * every other layer reported `'time'` or `'value'`, and the container throws
    * on a mix — so **a line, a point or an envelope over categorical bars was
    * not expressible at all**. The workaround was to key every layer to a
@@ -158,23 +163,46 @@ export interface ChartContainerProps {
    *   ordinal container must name the same list in the same order — this prop
    *   is authoritative, and a silent mismatch would draw bars under the wrong
    *   labels.
-   * - **A horizontal categorical `<BarChart>`.** It puts its categories on the
-   *   **y** axis ([PND-HCAT]) and its x is bar *length*, so declaring ordinal
-   *   slots on x too is two opposite claims about which axis is ordinal. It
-   *   would otherwise pass the value-layer allowance and then draw bar lengths
-   *   as slot coordinates — nonsense that renders.
+   * ## What declaring it costs
    *
-   * ## Two edges worth knowing
+   * Setting this makes the x axis ordinal, and two container capabilities are
+   * defined only on a continuous x. Both were already true of an *inferred*
+   * category axis; they are stated here because this prop lets you opt a
+   * previously-continuous container into them:
    *
-   * - **`categories={[]}` is an ordinal axis with no slots yet**, not a
-   *   fallback to time. That is the useful reading for a loading state: the
-   *   kind stays put when the data arrives, instead of flipping and rebuilding
-   *   every scale mid-session.
-   * - **A value-keyed layer is taken at its word.** Anything reporting
-   *   `'value'` is read as slot coordinates, so a layer whose x means
-   *   something else (a horizontal bar's length, a scatter keyed by price)
-   *   will draw — in the wrong place. The ordinal container is a claim about
-   *   what x *means*, and only the contradiction above is detectable.
+   * - **x pan and zoom stop.** `panZoom` keeps working on **y** (`panY` /
+   *   `zoomY`), but the x half is gated off — sliding between named slots is
+   *   not a gesture the axis has a meaning for.
+   * - **{@link range} stops applying to x.** The domain is `[0, n]`, derived
+   *   from the slot count, so an x range is a no-op rather than an error.
+   *   Show a subset by passing fewer categories.
+   *
+   * ## The hazard this cannot catch
+   *
+   * **A value-keyed layer is taken at its word.** Anything reporting `'value'`
+   * is read as slot coordinates, so a layer whose x means something *else*
+   * will draw — in the wrong place, silently. The sharpest instance is a
+   * **horizontal categorical `<BarChart>`**: its x is bar *length*, not a
+   * coordinate, so on an ordinal x it plots magnitudes as slot positions.
+   * Don't mix one into an ordinal container.
+   *
+   * This is documented rather than enforced, and the reason is worth keeping:
+   * a guard was written for it, testing `binCategories`. That is the generic
+   * "my **y** is ordinal" channel, and a *vertical* heat map sets it too — so
+   * the guard rejected a `ValueSeries` grid with named columns on x, which is
+   * a wanted layout (ordinal rows plus ordinal columns is just a 2-D grid),
+   * with an error naming a `<BarChart>` that wasn't in the tree. Nothing on a
+   * layer source distinguishes "my x is a coordinate" from "my x is a
+   * magnitude", so there is no contradiction to detect — and a flag invented
+   * to carry it would buy a false sense of coverage while every other misuse
+   * stayed silent.
+   *
+   * ## One more edge
+   *
+   * **`categories={[]}` is an ordinal axis with no slots yet**, not a fallback
+   * to time. That is the useful reading for a loading state: the kind stays
+   * put when the data arrives, instead of flipping and rebuilding every scale
+   * mid-session.
    *
    * Omit for the inferred behaviour: a container with only category layers
    * still resolves its slots from them, exactly as before.
@@ -1048,22 +1076,21 @@ export function ChartContainer({
               `coordinates instead (slot i's centre is i + 0.5).`,
           );
         }
-        // A **horizontal** categorical bar layer reports `xKind: 'value'` (its
-        // x is bar *length*) and carries its category names on y, as
-        // `binCategories` ([PND-HCAT]). Under the value-layer allowance above
-        // it would sail straight through — and then draw with bar lengths read
-        // as slot coordinates, which is nonsense that renders. Two opposite
-        // claims about which axis is ordinal is a contradiction, not a layout,
-        // so name it rather than let it paint.
-        if (s.binCategories?.() != null) {
-          throw new Error(
-            `ChartContainer: a horizontal categorical <BarChart> puts its ` +
-              `categories on the y axis, but this container declares ` +
-              `\`categories\` on x — only one of the two can be the ordinal ` +
-              `axis. Drop the container's \`categories\` (the horizontal bars ` +
-              `label their own y slots), or make the bars vertical.`,
-          );
-        }
+        // No guard here for a **horizontal categorical `<BarChart>`**, whose x
+        // is bar *length* rather than a coordinate and which therefore draws
+        // nonsense on an ordinal x. One was written and removed: it tested
+        // `binCategories`, and that is the generic "**my y** is ordinal"
+        // channel — a *vertical* heat map sets it too (`HeatMap.tsx:361`, its
+        // rows), so the guard rejected a `ValueSeries` grid with named columns
+        // on x. That is a legitimate and wanted layout, not a contradiction:
+        // ordinal rows and ordinal columns is simply a 2-D grid.
+        //
+        // The framing was the error. There is no contradiction to detect,
+        // because nothing on a layer source distinguishes "my x is a
+        // coordinate" from "my x is a magnitude", and inventing a flag to
+        // carry that for one guard buys a false sense of coverage — every
+        // *other* misuse of the value-layer allowance stays silent regardless.
+        // The hazard is documented on the prop instead ([PND-IGNITECAT]).
       }
       return 'category';
     }

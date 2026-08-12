@@ -25,6 +25,7 @@ import { LineChart } from '../src/LineChart.js';
 import { ScatterChart } from '../src/ScatterChart.js';
 import { BandChart } from '../src/BandChart.js';
 import { BarChart } from '../src/BarChart.js';
+import { HeatMap } from '../src/HeatMap.js';
 import { XAxis } from '../src/XAxis.js';
 import { YAxis } from '../src/YAxis.js';
 import { ContainerContext, type ContainerFrame } from '../src/context.js';
@@ -57,6 +58,27 @@ const overlay = (labels: readonly string[] = TICKERS) =>
       target: labels.map((_, i) => 12 + i * 4),
       lo: labels.map((_, i) => 8 + i * 4),
       hi: labels.map((_, i) => 16 + i * 4),
+    },
+  });
+
+/**
+ * A **vertical** heat map on a `ValueSeries`: bins along x at slot
+ * coordinates, two named rows down y. It reports `xKind: 'value'` and sets
+ * `binCategories` for its rows — the combination a `binCategories`-based guard
+ * misread as a horizontal bar chart.
+ */
+const grid = () =>
+  ValueSeries.fromColumns({
+    name: 'grid',
+    schema: [
+      { name: 'slot', kind: 'value' },
+      { name: 'lit', kind: 'number' },
+      { name: 'dark', kind: 'number' },
+    ] as const,
+    columns: {
+      slot: TICKERS.map((_, i) => i + 0.5),
+      lit: [1, 4, 9, 3, 6],
+      dark: [7, 2, 5, 8, 1],
     },
   });
 
@@ -264,45 +286,34 @@ describe('<ChartContainer categories> — what still errors', () => {
     }
   });
 
-  it('rejects a horizontal categorical bar layer — both axes claiming ordinal', () => {
-    // The silent-misrender case. A horizontal categorical <BarChart> reports
-    // `xKind: 'value'` (its x is bar *length*) with its names on y, so the
-    // value-layer allowance would wave it through and then draw bar lengths as
-    // slot coordinates — nonsense that renders rather than throws.
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      expect(() =>
-        renderChart(
-          <ChartContainer width={WIDTH} categories={TICKERS}>
-            <ChartRow height={160}>
-              <YAxis id="v" />
-              <Layers>
-                <BarChart categories={bars()} orientation="horizontal" />
-              </Layers>
-            </ChartRow>
-          </ChartContainer>,
-        ),
-      ).toThrow(/only one of the two can be the ordinal axis/);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it('leaves a horizontal categorical bar alone when the container declares nothing', () => {
-    // The capability [PND-HCAT] shipped is untouched: without the prop, the
-    // horizontal chart still labels its own y slots.
+  it('allows a value-keyed vertical heat map — ordinal rows AND ordinal columns', () => {
+    // Found by Layer-2 review. A guard here once tested `binCategories` to
+    // reject a *horizontal* categorical <BarChart>, whose x is bar length. But
+    // `binCategories` is the generic "my y is ordinal" channel, and a vertical
+    // heat map sets it for its rows — so the guard rejected a slot-keyed grid
+    // with named columns on x, which is a wanted layout, with an error naming
+    // a <BarChart> that wasn't in the tree. Ordinal rows plus ordinal columns
+    // is a 2-D grid, not a contradiction.
+    const into = { cf: null as ContainerFrame | null };
     expect(() =>
       renderChart(
-        <ChartContainer width={WIDTH}>
+        <ChartContainer width={WIDTH} categories={TICKERS}>
+          <Capture into={into} />
           <ChartRow height={160}>
             <YAxis id="v" />
             <Layers>
-              <BarChart categories={bars()} orientation="horizontal" />
+              <HeatMap
+                series={grid()}
+                columns={['lit', 'dark']}
+                colors={['#eef', '#88a', '#225']}
+              />
             </Layers>
           </ChartRow>
         </ChartContainer>,
       ),
     ).not.toThrow();
+    expect(into.cf!.xKind).toBe('category');
+    expect(into.cf!.xScale.ticks()).toHaveLength(TICKERS.length);
   });
 
   it('still rejects a mixed x-kind without the prop, and now names the prop', () => {
