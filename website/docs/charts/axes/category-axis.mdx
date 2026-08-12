@@ -9,9 +9,11 @@ import LearnCategoryAxis from '@site/src/examples/learn-09-category-axis';
 # Category axis
 
 A **category axis** is ordinal: one slot per named category, in order, instead
-of a continuous time or value scale. You get one by handing `BarChart` a
-`categories` array — the container infers the `'category'` kind the same way it
-infers time or value, from the data, never a prop.
+of a continuous time or value scale. You get one two ways: hand `BarChart` a
+`categories` array and the container **infers** the `'category'` kind from the
+data, the same way it infers time or value; or **declare** the slots on the
+container with [`<ChartContainer categories>`](#overlaying-other-layers--chartcontainer-categories),
+which is what lets non-bar layers share the axis.
 
 For the tutorial pass see
 [Learn charts, chapter 9](../../learn-charts/beyond-the-time-axis#a-category-axis);
@@ -82,12 +84,81 @@ at `i + 0.5`), `invert()` (snap to the nearest centre), and `label(v)` (slot →
 name). You rarely touch `scaleBand` directly; it's what makes an ordinal axis
 reuse the whole continuous-axis machinery.
 
+## Overlaying other layers — `<ChartContainer categories>`
+
+The axis above is _inferred_ from a category layer, and that has a limit: only
+`<BarChart categories>` and the heat map report an ordinal x-kind, and a
+container throws on a mixed kind — so a line, a point or an envelope over
+categorical bars is not expressible that way.
+
+Declare the slots on the **container** instead, and any value-keyed layer can
+live on them:
+
+```tsx
+const tickers = ['AAPL', 'MSFT', 'NVDA', 'AMZN'];
+
+// Key the overlay to slot coordinates — slot i's centre is i + 0.5.
+const marks = ValueSeries.fromColumns({
+  name: 'target',
+  schema: [
+    { name: 'slot', kind: 'value' },
+    { name: 'target', kind: 'number' },
+  ] as const,
+  columns: {
+    slot: tickers.map((_, i) => i + 0.5),
+    target: [45, 30, 52, 31],
+  },
+});
+
+<ChartContainer width="auto" categories={tickers}>
+  <ChartRow height={200}>
+    <YAxis id="v" min={0} />
+    <Layers>
+      <BarChart categories={data} />
+      <LineChart series={marks} column="target" axis="v" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>;
+```
+
+The container now owns the ordinal domain, so `<BarChart categories>` is
+optional — the axis is categorical even with only value-keyed layers on it.
+
+**Why this is a container prop and not just "key your layers to integers."**
+The hand-rolled version supplies its own tick labels, and that forfeits two
+things the axis already does: `<XAxis>` label thinning (gated on a category
+axis with _no_ custom ticks) and the `maxBandWidth` / `bandAlign` slot packing.
+Declaring the categories keeps both.
+
+Three things still error, deliberately:
+
+- **A time-keyed layer** — a timestamp has no slot to sit in.
+- **A category layer that disagrees** with the prop, in content or order. The
+  prop is authoritative, and a silent mismatch would draw bars under the wrong
+  labels.
+- **A horizontal categorical `<BarChart>`** — it puts its categories on the
+  **y** axis and its x is bar _length_, so declaring ordinal slots on x too is
+  two opposite claims about which axis is ordinal.
+
+Two edges worth knowing:
+
+- **`categories={[]}` is an ordinal axis with no slots yet**, not a fallback to
+  time — so the axis kind doesn't flip (and rebuild every scale) when the data
+  arrives. That's the useful reading for a loading state.
+- **A value-keyed layer is taken at its word.** Anything reporting `'value'` is
+  read as slot coordinates, so a layer whose x means something else will draw,
+  in the wrong place. Only the horizontal-bar contradiction above is
+  detectable.
+
 ## Sharp edges
 
 - **Labels must be unique** — `label` is the selection/identity key; duplicates
   collide.
-- **One category layer per container** — all category rows must agree on the
-  same ordered slot list (a mismatch throws, like the axis-kind mix).
+- **One slot list per container** — all category rows must agree on the same
+  ordered list, and on the container's `categories` when that is given (a
+  mismatch throws, like the axis-kind mix).
+- **Overlay marks belong at `i + 0.5`**, not `i` — `i` is the slot's _left
+  edge_, so a series keyed there draws half a slot to the left of the bars.
 - **No `format` on the axis** — style the names at the data level
   (`CategoryDatum.label`), not with a d3 specifier.
 - **`categories` is one of `BarChart`'s three input modes** (`series` / `bins`
@@ -103,3 +174,6 @@ reuse the whole continuous-axis machinery.
 - Storybook: [`Axes/CategoryAxis`](pathname:///storybook/?path=/story/axes-categoryaxis--tickers)
   — `Tickers`, `HighCardinality`, `CrowdedLabels`, `Select`, `Signed`,
   `Transpose`, `TransposeScrub`.
+- Storybook: [`Category axis/Container categories`](pathname:///storybook/?path=/story/category-axis-container-categories--default)
+  — `Default`, `LineOverBars`, `PointsOverBars`, `EnvelopeOverBars`,
+  `CappedPitch`, `ManyThinnedLabels`, `MultiRow`.

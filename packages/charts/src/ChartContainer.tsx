@@ -110,6 +110,77 @@ export interface ChartContainerProps {
    */
   range?: readonly [number, number] | TimeRange;
   /**
+   * **Make the x axis ordinal at the container level** — one equal-width slot
+   * per name, in this order ([PND-IGNITECAT]).
+   *
+   * Until this prop, the band scale was reachable only *through a layer*:
+   * `<BarChart categories>` (and the heat map) reported `xKind: 'category'`,
+   * every other layer reported `'time'` or `'value'`, and the container throws
+   * on a mix — so **a line, a point or an envelope over categorical bars was
+   * not expressible at all**. The workaround was to key every layer to a
+   * synthetic integer index and hand-supply the tick labels, which forfeits two
+   * features the ordinal axis already implements: `<XAxis>` label thinning
+   * (gated on a category axis with no custom ticks) and the
+   * {@link maxBandWidth} / {@link bandAlign} slot packing.
+   *
+   * Declaring the categories here inverts that. The container owns the ordinal
+   * domain, so **any value-keyed layer can live on it** and both of those
+   * features keep working.
+   *
+   * ## Keying a layer to the slots
+   *
+   * The band scale's domain is **numeric** — slot `i` occupies `[i, i+1]`, so
+   * its **centre is `i + 0.5`**. Key a `ValueSeries` there and the mark lands
+   * on the slot centre, which is also where `<XAxis>` puts the tick:
+   *
+   * ```tsx
+   * const line = ValueSeries.from(
+   *   tickers.map((t, i) => ({ x: i + 0.5, target: t.target })),
+   *   { key: 'x' },
+   * );
+   *
+   * <ChartContainer categories={tickers.map((t) => t.label)} width="auto">
+   *   <ChartRow height={220}>
+   *     <YAxis id="v" />
+   *     <Layers>
+   *       <BarChart categories={bars} />
+   *       <LineChart series={line} column="target" axis="v" />
+   *     </Layers>
+   *   </ChartRow>
+   * </ChartContainer>;
+   * ```
+   *
+   * ## What still errors
+   *
+   * - **A time-keyed layer.** A `TimeSeries` has no slot to sit in; mixing one
+   *   into an ordinal container is a hard error, as a mixed x-kind always was.
+   * - **A category layer that disagrees.** `<BarChart categories>` in an
+   *   ordinal container must name the same list in the same order — this prop
+   *   is authoritative, and a silent mismatch would draw bars under the wrong
+   *   labels.
+   * - **A horizontal categorical `<BarChart>`.** It puts its categories on the
+   *   **y** axis ([PND-HCAT]) and its x is bar *length*, so declaring ordinal
+   *   slots on x too is two opposite claims about which axis is ordinal. It
+   *   would otherwise pass the value-layer allowance and then draw bar lengths
+   *   as slot coordinates — nonsense that renders.
+   *
+   * ## Two edges worth knowing
+   *
+   * - **`categories={[]}` is an ordinal axis with no slots yet**, not a
+   *   fallback to time. That is the useful reading for a loading state: the
+   *   kind stays put when the data arrives, instead of flipping and rebuilding
+   *   every scale mid-session.
+   * - **A value-keyed layer is taken at its word.** Anything reporting
+   *   `'value'` is read as slot coordinates, so a layer whose x means
+   *   something else (a horizontal bar's length, a scatter keyed by price)
+   *   will draw — in the wrong place. The ordinal container is a claim about
+   *   what x *means*, and only the contradiction above is detectable.
+   *
+   * Omit for the inferred behaviour: a container with only category layers
+   * still resolves its slots from them, exactly as before.
+   */
+  categories?: readonly string[];
+  /**
    * **Cap the slot pitch** on a **category** x axis, in CSS pixels
    * ([PND-BANDPACK]). A band scale otherwise spreads its categories across the
    * full plot width, so three categories in a 900px panel become three 300px
@@ -555,6 +626,7 @@ export interface ChartContainerProps {
  */
 export function ChartContainer({
   range,
+  categories: categoriesProp,
   maxBandWidth,
   bandAlign = 'start',
   width,
@@ -598,6 +670,24 @@ export function ChartContainer({
   // *explicitly* set (never on the defaults). Mounted cursor components in the
   // same scope override the shim. See docs/rfcs/interaction.md §9 / A4.4.
   const cursor = cursorProp ?? DEFAULT_CURSOR_MODE;
+
+  // [PND-IGNITECAT] The declared slot list, normalized to `null` when absent
+  // and held by **content** identity. An inline `categories={['a', 'b']}` is a
+  // fresh array every render; keying the kind/scale memos off the raw prop
+  // would rebuild the band scale — and therefore repaint every row — on every
+  // parent render, which is the shape of bug the `<Legend>` items array hit.
+  //
+  // JSON, not `join` — a separator collides (`['a b','c']` and `['a','b c']`
+  // join identically), and a category label containing a space is not a
+  // hypothetical for venue or instrument names.
+  const categoriesKey =
+    categoriesProp === undefined ? null : JSON.stringify(categoriesProp);
+  const declaredCategories = useMemo(
+    (): readonly string[] | null =>
+      categoriesProp === undefined ? null : [...categoriesProp],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- content identity
+    [categoriesKey],
+  );
   const cursorTime = cursorTimeProp ?? false;
   const crosshairSnap = crosshairSnapProp ?? true;
   const warnedLegacyRef = useRef(false);
@@ -941,6 +1031,42 @@ export function ChartContainer({
   // — a mix is a hard error. Defaults to `'time'` until a layer registers (the
   // two-pass: register → re-resolve → rescale).
   const resolvedKind: 'time' | 'value' | 'category' = useMemo(() => {
+    // [PND-IGNITECAT] A container-level `categories` *declares* the ordinal
+    // axis rather than inferring it, which is what lets a non-category layer
+    // join one. A value-keyed layer is compatible by construction: the band
+    // scale's domain is numeric (`[0, n]`, slot `i` at `[i, i+1]`) with a
+    // linear pixel mapping, so a ValueSeries keyed on slot coordinates already
+    // lands where the bars do. A time-keyed layer is not — a timestamp has no
+    // slot — so that stays the hard error a mixed kind always was.
+    if (declaredCategories !== null) {
+      for (const s of sources.values()) {
+        if (s.xKind === 'time') {
+          throw new Error(
+            `ChartContainer: a time-keyed layer cannot plot on a category ` +
+              `axis. This container declares \`categories\`, so its x axis is ` +
+              `ordinal slots — key the layer to a ValueSeries on slot ` +
+              `coordinates instead (slot i's centre is i + 0.5).`,
+          );
+        }
+        // A **horizontal** categorical bar layer reports `xKind: 'value'` (its
+        // x is bar *length*) and carries its category names on y, as
+        // `binCategories` ([PND-HCAT]). Under the value-layer allowance above
+        // it would sail straight through — and then draw with bar lengths read
+        // as slot coordinates, which is nonsense that renders. Two opposite
+        // claims about which axis is ordinal is a contradiction, not a layout,
+        // so name it rather than let it paint.
+        if (s.binCategories?.() != null) {
+          throw new Error(
+            `ChartContainer: a horizontal categorical <BarChart> puts its ` +
+              `categories on the y axis, but this container declares ` +
+              `\`categories\` on x — only one of the two can be the ordinal ` +
+              `axis. Drop the container's \`categories\` (the horizontal bars ` +
+              `label their own y slots), or make the bars vertical.`,
+          );
+        }
+      }
+      return 'category';
+    }
     let kind: 'time' | 'value' | 'category' | undefined;
     for (const s of sources.values()) {
       if (kind === undefined) kind = s.xKind;
@@ -948,33 +1074,47 @@ export function ChartContainer({
         throw new Error(
           `ChartContainer: rows mix x-axis kinds ('${kind}' and '${s.xKind}'). ` +
             `A container has one shared x axis — every row must plot the same ` +
-            `kind (all time-keyed, all value-keyed, or all category).`,
+            `kind (all time-keyed, all value-keyed, or all category). ` +
+            `To put value-keyed layers on an ordinal axis, declare the slots ` +
+            `on the container: <ChartContainer categories={[…]}>.`,
         );
       }
     }
     return kind ?? 'time';
-  }, [sources]);
+  }, [sources, declaredCategories]);
 
   // A `'category'` container's ordered category names — the ordinal axis domain.
   // Every category layer must agree on the same list (a mix is an error, like the
   // kind), so the shared band scale has one authoritative slot order. `null` when
   // no category layer has registered (or the kind isn't category).
+  //
+  // [PND-IGNITECAT] The container's own `categories` prop, when given, is the
+  // authority: layer-derived lists are then *validated* against it rather than
+  // being the source. Reconciling both directions in one pass keeps a single
+  // error message for a disagreement, whichever side is wrong.
   const categories = useMemo((): readonly string[] | null => {
-    let cats: readonly string[] | null = null;
+    const same = (a: readonly string[], b: readonly string[]) =>
+      a.length === b.length && a.every((v, i) => v === b[i]);
+    let cats: readonly string[] | null = declaredCategories;
     for (const s of sources.values()) {
       const c = s.xCategories?.() ?? null;
       if (c === null) continue;
       if (cats === null) cats = c;
-      else if (cats.length !== c.length || cats.some((v, i) => v !== c[i])) {
+      else if (!same(cats, c)) {
         throw new Error(
-          `ChartContainer: category rows disagree on the axis categories. ` +
-            `Every category layer in one container must share the same ordered ` +
-            `column set (got [${cats.join(', ')}] and [${c.join(', ')}]).`,
+          declaredCategories !== null
+            ? `ChartContainer: a category layer's columns disagree with the ` +
+                `container's \`categories\`. The container's list is ` +
+                `authoritative, so they must match in order (container ` +
+                `[${declaredCategories.join(', ')}], layer [${c.join(', ')}]).`
+            : `ChartContainer: category rows disagree on the axis categories. ` +
+                `Every category layer in one container must share the same ordered ` +
+                `column set (got [${cats.join(', ')}] and [${c.join(', ')}]).`,
         );
       }
     }
     return cats;
-  }, [sources]);
+  }, [sources, declaredCategories]);
 
   // Auto-fit extent — the union of the layers' x extents — used as the domain
   // when no explicit `range` is given. (Same source registry as the kind; the

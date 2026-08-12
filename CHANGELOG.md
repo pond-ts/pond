@@ -62,6 +62,47 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts: `<ChartContainer categories>` — the ordinal axis as a
+  container-level choice** ([PND-IGNITECAT]). Declare the slot names on the
+  container and **any value-keyed layer can live on them** — a target line, a
+  point mark or a filled envelope over categorical bars, which was previously
+  not expressible at all.
+
+  The band scale used to be reachable only _through a layer_: `<BarChart
+categories>` and the heat map reported `xKind: 'category'`, every other layer
+  reported `'time'` or `'value'`, and a container throws on a mixed kind. The
+  workaround — key every layer to a synthetic integer index and hand-supply the
+  tick labels — forfeits two features the ordinal axis already implements, and
+  both came back as their own friction entries: `<XAxis>` label thinning (gated
+  on a category axis with no custom ticks) and the `maxBandWidth` / `bandAlign`
+  slot packing. Declaring the categories on the container keeps both.
+
+  The change is small because the scale was already built for it: `scaleBand`'s
+  domain is **numeric** (`[0, n]`, slot `i` at `[i, i+1]`) with a linear pixel
+  mapping, so a `ValueSeries` keyed on slot coordinates already lands where the
+  bars do. **Slot `i`'s centre is `i + 0.5`** — the same number
+  `ScaleBand.ticks()` returns and where `<XAxis>` puts the tick.
+
+  Three things error, deliberately. A **time-keyed layer** (a timestamp has no
+  slot). A **category layer that disagrees** with the prop in content or order
+  — the prop is authoritative, and a silent mismatch would draw bars under the
+  wrong labels. And a **horizontal categorical `<BarChart>`**, which puts its
+  categories on the _y_ axis ([PND-HCAT]) while its x is bar length: it would
+  otherwise pass the value-layer allowance and then draw bar lengths as slot
+  coordinates — nonsense that renders. The pre-existing mixed-kind error now
+  names the prop as the fix.
+
+  Two edges are pinned rather than left to discovery: `categories={[]}` is an
+  ordinal axis with **no slots yet**, not a fallback to time (so the kind
+  doesn't flip and rebuild every scale when data arrives — the loading state);
+  and a value-keyed layer is **taken at its word**, so a layer whose x means
+  something other than a slot coordinate will draw in the wrong place. Only the
+  horizontal-bar contradiction is detectable.
+
+  Omitting `categories` leaves the inferred behaviour exactly as it was.
+
 ## [0.59.0] — 2026-08-11
 
 ### Added
