@@ -14,7 +14,7 @@
 import { useContext, useEffect } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
-import { TimeSeries } from 'pond-ts';
+import { TimeSeries, ValueSeries } from 'pond-ts';
 import { ChartContainer } from '../src/ChartContainer.js';
 import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
@@ -264,6 +264,45 @@ describe('useChartFrame — band geometry', () => {
     // The run fills the plot.
     expect(b.at(0)!.x0).toBeCloseTo(0, 6);
     expect(b.at(3)!.x1).toBeCloseTo(f.plot.width, 6);
+  });
+
+  it('reads a container-declared ordinal axis with no category layer', () => {
+    // The seam between [PND-IGNITEFRAME] and [PND-IGNITECAT], testable for the
+    // first time now that both have landed: `bands` is derived from the
+    // resolved scale, so it must not care *how* the axis became ordinal — a
+    // `<BarChart categories>` inferring it, or the container declaring it.
+    const got = { frame: null as ChartFrame | null };
+    renderChart(
+      <ChartContainer width={WIDTH} categories={['a', 'b', 'c']}>
+        <Probe into={got} />
+        <ChartRow height={100}>
+          <YAxis id="v" label="" />
+          <Layers>
+            <LineChart
+              series={ValueSeries.fromColumns({
+                name: 'o',
+                schema: [
+                  { name: 'slot', kind: 'value' },
+                  { name: 'v', kind: 'number' },
+                ] as const,
+                columns: { slot: [0.5, 1.5, 2.5], v: [1, 2, 3] },
+              })}
+              column="v"
+              axis="v"
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const f = got.frame!;
+    expect(f.xKind).toBe('category');
+    const b = f.bands!;
+    expect(b.count).toBe(3);
+    expect(b.labels).toEqual(['a', 'b', 'c']);
+    // The overlay's own keys land on the slot centres the frame reports.
+    for (let i = 0; i < 3; i++) {
+      expect(b.at(i)!.center).toBeCloseTo(f.xScale(i + 0.5) as number, 6);
+    }
   });
 
   it('returns null for an index that is not a real slot', () => {
