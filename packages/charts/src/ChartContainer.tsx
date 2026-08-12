@@ -307,17 +307,22 @@ export interface ChartContainerProps {
    * **Ignored on a time or category axis**, which have their own spacing rules.
    *
    * **Why this lives on the container and not on `<XAxis scale>`,** which is
-   * where `<YAxis scale>`'s mirror would put it: there is one x scale shared by
-   * every row, and the container builds it. `<XAxis>` renders that scale and
-   * every one of its props is presentational (`format`, `label`, `side`,
-   * `ticks`, `align`, …) — none of them defines the scale. `<YAxis>` is the
-   * opposite: one scale per axis per row, declared by the axis, which is why
-   * `min` / `max` / `pad` / `scale` belong to it.
+   * where `<YAxis scale>`'s mirror would put it: **the rows are stacked
+   * vertically, so a given pixel column has to mean the same x in every one of
+   * them** — otherwise the stack doesn't line up and a cursor at one pixel
+   * reads a different value per row. The x scale and its domain are therefore
+   * *shared by requirement*, not by convention, and a shared thing is declared
+   * once by the thing that contains them. `<YAxis>` is the opposite for the
+   * same reason: each row carries its own quantity, so its scale **must** be
+   * per-row, which is why `min` / `max` / `pad` / `scale` belong to the axis.
    *
-   * Putting a scale-defining prop on `<XAxis>` would mean a registration
-   * round-trip to the component that already owns the scale, and would say the
-   * axis defines something it only draws. It sits here beside `origin`,
-   * `spacing` and `calendar`, which shape the same scale for the same reason.
+   * That gives the test for what belongs here rather than on `<XAxis>`: **does
+   * it define the mapping or the domain?** `origin`, `spacing`, `calendar` and
+   * the viewport props all do, and sit here for the same reason. Every
+   * `<XAxis>` prop (`format`, `label`, `side`, `ticks`, `align`, …) does not —
+   * they style a scale the axis only draws, and putting a scale-defining prop
+   * among them would mean a registration round-trip to the component that
+   * already owns it.
    *
    * (Had `<XAxis>` been mandatory in the declaration, the props would more
    * naturally have lived there and x would mirror y — see [PND-XLOG].)

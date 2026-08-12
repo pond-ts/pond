@@ -70,13 +70,32 @@ container's x-scale resolution, and every consumer of `info.time` /
 `zoomRange` / `panRange` do under it, since they assume linear span arithmetic.
 
 **SHIPPED 2026-08-12** ([#653]) as **`<ChartContainer xScale>`**, not
-`<XAxis scale>` as the issue asked. There is **one** x scale shared by every row
-and the container builds it, while every `<XAxis>` prop is presentational —
-putting a scale-defining prop on the axis would mean a registration round-trip
-to the component that already owns the scale, and would claim the axis defines
-something it only draws. `<YAxis>` is the genuine opposite (one scale per axis
-per row, declared by the axis), so the asymmetry is real rather than an
-oversight. Recorded because the issue's shape was rejected on purpose.
+`<XAxis scale>` as the issue asked. Recorded because the issue's shape was
+rejected on purpose.
+
+**The justification, in its non-circular form** (pjm's, after the merge; the
+version first written down was weaker). Not "there is one x scale and the
+container builds it" — that is an implementation fact standing in for a reason,
+and it builds it only because we put it there. The actual reason is a
+**requirement imposed by the layout: the rows are stacked vertically, so a given
+pixel column must mean the same x in every one of them,** or the stack does not
+line up and a cursor at one pixel reads a different value per row. Scale and
+range are shared _by requirement_, and a shared thing is declared once, by the
+thing that contains them. `<YAxis>` is the genuine opposite for the same reason —
+each row carries its own quantity, so its scale **must** be per-row.
+
+**This yields the test for what belongs on the container:** _does it define the
+mapping or the domain?_ `range`, `xScale`, `spacing`, `bandAlign`,
+`discontinuities`, `calendar`, `origin` and the viewport props all pass — so
+does a future `xLinearWindow` ([PND-XSYMKNEE]), which settles its shape rather
+than leaving it a consolation prize. Every `<XAxis>` prop fails it and should:
+they style a scale the axis only draws.
+
+**`showAxis` fails the test too, and that is [PND-XAXISOWN] stated precisely.**
+It says nothing about the mapping or the domain — it is "does the container draw
+a strip", pure presentation that landed on the container because it was
+x-shaped. The complaint is not that the default is annoying; it is that the prop
+is on the wrong object.
 
 **The parenthetical prediction above was correct, and was the more valuable
 half.** `panRange` / `zoomRange` snapped to integers unconditionally — right for
@@ -258,6 +277,19 @@ present rather than assuming one.
 It is also the concrete cost of the shape pjm named while building [PND-XLOG]:
 had at least one `<XAxis>` been **mandatory**, there would be no implicit strip
 to conflict with, the scale props would live on it, and x would mirror y.
+
+**Stated against the ownership test** ([PND-XLOG] above): container props earn
+their place by defining the **mapping or the domain**, which is what forces them
+to be shared across stacked rows. `showAxis` defines neither. It is "does the
+container draw a strip" — presentation, which landed on the container only
+because it was x-shaped, at a time when nothing distinguished "x-related" from
+"scale-defining". So the precise complaint is **not that the default is
+annoying; it is that the prop is on the wrong object**, and the two-axes
+collision is what that misplacement looks like from a consumer's seat. Useful
+because it sets the fix's direction: presentation belongs with `<XAxis>`, so
+mounted-wins is the correction and `showAxis` is the compatibility shim, rather
+than mounted-wins being a special case bolted onto a prop that stays where it
+is.
 
 ### [PND-AXISGUT] — The X-axis strip doesn't participate in layout — [#607]
 
