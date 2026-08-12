@@ -62,6 +62,21 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- `@pond-ts/charts`: `<AreaChart thresholds>` + `bandColors` — threshold
+  banding along the area's height ([PND-BANDAREA]), the area counterpart of
+  `<BarChart thresholds>`. `n` breakpoints (absolute data values, magnitude-
+  mirrored below zero) make `n + 1` bands; fills resolve `bandColors` → the
+  new `AreaStyle.bands` theme token (the default theme ships the same
+  teal/amber/red ladder as the bar role). One hard-stop pixel-space gradient
+  carries the ladder for the fill **and** the outline, so the value line
+  switches hue exactly at each crossing and the banded area keeps one hit
+  region, one legend row and one readout identity. Composes with `curve`,
+  `gaps` and M4 decimation unchanged; a swept window keeps the band colours
+  (no `spanColor` swap). Ladder resolution + dev warnings shared with
+  `<BarChart>` via one internal hook.
+
 ## [0.59.0] — 2026-08-11
 
 ### Added

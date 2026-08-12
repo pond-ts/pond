@@ -1925,11 +1925,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                                                            _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                                                            is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                                                            iteration to discover, and the docs still don't mention it. **The one-line
-                                                                                                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                                                            row's data cursor is suppressed."
+                                                                                                                _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                                                                is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                                                                iteration to discover, and the docs still don't mention it. **The one-line
+                                                                                                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                                                                row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -3065,3 +3065,59 @@ the **dev-mode warning sweep** got its second instalment — `linearWindow` on a
 non-symlog axis, and a fraction outside `(0, 1]`, both otherwise silent no-ops.
 The sweep is still open as a pass; it is now accumulating one axis at a time,
 which is worse than doing it once but better than not doing it.
+
+### Shipped 2026-08-11 — [PND-BANDAREA] threshold banding on areas
+
+`<AreaChart thresholds>` + `bandColors`, fills from the new `AreaStyle.bands`
+(default theme ships the bar's teal/amber/red ladder). The bar ladder's
+semantics carried over wholesale: absolute data values, magnitude-mirrored
+below zero, sort-don't-reject, dev warnings on every silent-failure path.
+Decisions worth keeping beyond the CHANGELOG:
+
+- **One hard-stop gradient, not K + 1 clipped redraws.** The obvious port of
+  the bar implementation was per-band clip rects around repeated `drawArea`
+  calls. Declined: K + 1 passes walk the path K + 1 times, meet themselves at
+  every boundary with an antialiased seam, and cannot band the outline (a clip
+  shears the stroke). A pixel-space `createLinearGradient` with doubled stops
+  at each crossing draws the identical single path once, costs O(K) stops, and
+  bands the outline for free by assigning the same gradient to `strokeStyle` —
+  the value line switches hue exactly where it crosses a breakpoint. This is
+  also why **M4 decimation stays on** (banding rides the paint, not the
+  geometry), where bars had to disable their envelope pass.
+- **Off-plot crossings clamp to the gradient ends rather than being dropped.**
+  Dropping looks cleaner but is wrong at the edges: a view zoomed entirely
+  inside band 1 must paint amber wall-to-wall, and a domain below every
+  breakpoint must paint band 0 — the clamp construction self-corrects both
+  (pinned in tests); a drop-based construction falls back to the wrong band
+  when no crossing survives.
+- **Banded fill is flat** (the grade to transparent is dropped): the fade
+  encoded distance-from-baseline, which the ladder now states discretely —
+  two encodings of one thing fight, and a near-transparent "low" zone defeats
+  giving low a colour at all.
+- **`spanColor` is skipped for a banded area** (the swept window strengthens
+  and keeps the ladder) — the banded bar's "one hue would erase the very thing
+  the bands encode" rule, applied to the window.
+- **Inferred gap connectors keep the role's line colour**, not zone ink: a
+  connector is a guess about absent data, and a zone colour would over-claim
+  exactly where nothing was measured.
+- **Ladder resolution extracted to a shared `useBandLadder`** (BarChart now
+  consumes it too, behaviour-equivalent — deps refined from the whole style
+  object to the two fields the ladder reads, and two dev-warning strings went
+  component-neutral): the warnings and the value-compare-the-inline-array
+  registration guard are one contract across banded marks, so the two
+  components cannot drift.
+- **No perf script**: the feature adds zero per-event work to the draw (same
+  single path walk; one O(K) gradient build per frame). The perf-check
+  procedure targets operators whose cost scales with input; this one's doesn't.
+- **The Layer 2 review earned its keep — duplicate breakpoints.** `[1, 1]`
+  (an empty middle band) emitted two unordered same-pixel crossings: the
+  gradient seeded one band short at the top and _blended_ across the region
+  below instead of hard-stopping — silent, and diverging from bars, which
+  skip an empty band (`bandSpanInto` clips it to nothing). Fixed with a
+  same-pixel tie-break that orders crossings away-band-outermost so the walk
+  telescopes (skipped bands survive as zero-width ghost stops); the same
+  tie-break also covers _distinct_ breakpoints collapsed onto one pixel by an
+  extreme zoom-out, which value-level dedupe in `normalizeThresholds` could
+  not have caught — and dedupe there would have changed shipped bar
+  behaviour (the n-thresholds → n+1-colours indexing). Both cases pinned in
+  tests.
