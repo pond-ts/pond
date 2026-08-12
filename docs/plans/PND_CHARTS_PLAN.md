@@ -1925,11 +1925,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                                                            _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                                                            is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                                                            iteration to discover, and the docs still don't mention it. **The one-line
-                                                                                                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                                                            row's data cursor is suppressed."
+                                                                                                                _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                                                                is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                                                                iteration to discover, and the docs still don't mention it. **The one-line
+                                                                                                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                                                                row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -3065,3 +3065,191 @@ the **dev-mode warning sweep** got its second instalment — `linearWindow` on a
 non-symlog axis, and a fraction outside `(0, 1]`, both otherwise silent no-ops.
 The sweep is still open as a pass; it is now accumulating one axis at a time,
 which is worse than doing it once but better than not doing it.
+
+---
+
+## [PND-IGNITE] — Ignite charts friction (2026-08-11)
+
+A **third** external consumer survey: 39 raw entries across seven planned
+financial panes, merged to **28 distinct** (`PG-n`), assessed against
+`@pond-ts/charts@0.59.0`. **Zero blocking** — nothing in it stops them
+building, and the report says so up front rather than escalating.
+
+Two things make it worth more than its severity table suggests.
+
+**It is prioritized for the library, not for the consumer.** The report says
+outright that severity-to-us is a poor guide because they already decided to
+absorb all of it, and ranks instead by leverage (does one fix retire several
+entries), correctness (does the workaround _duplicate library-internal state_),
+breadth (how many independent consumers), and cost shape. That is the ranking a
+maintainer would want and rarely gets.
+
+**Its P0 argument is a drift argument, not a verbosity one.** Themes A and B
+both force the consumer to re-derive geometry the library already computed. The
+report's own words: the workaround "is not verbose — it is **wrong over
+time**", correct only until the library changes how a gutter is sized or how
+bands are packed, at which point consumer chrome silently slides out of
+alignment with no type error and no test failure. Two of their seven plans
+independently proposed a dev-mode assertion cross-checking their arithmetic
+against `useChartLegend`'s `gutters`, which the report reads — correctly — as
+the authors knowing they were on thin ice.
+
+Source: `web-platform/packages/trade/docs/charts/POND_FRICTION.md` (themed) and
+`IGNITE_CHARTS_ROOT_PLAN.md` § Library gap register (the 28 raw entries with
+per-entry evidence and workaround).
+
+### Verified against 0.59 before triage
+
+Spot-checked rather than taken on trust. Nothing was overstated:
+
+- `index.ts` exports no container/row context and no geometry hook;
+  `useChartLegend` leaks exactly `gutters: {left, right}` (`useChartLegend.ts:156`).
+- Only `BarChart` (`:969`, `:1113`) and `HeatMap` (`:340`) report
+  `xKind: 'category'`; line/area/band/scatter/box are `'time' | 'value'`.
+- The mixed-x-kind throw is real (`ChartContainer.tsx:946`).
+- `thinCategoryLabels` is gated on `xKind === 'category' && customTicks === undefined`
+  (`XAxis.tsx:445`).
+- `SwatchSpec` has no ramp kind (`swatch.ts:23-47`).
+- `sessionBreaks` / `gaps` exist on the line layer only.
+- `RangeSpan.y` is still documented "not yet emitted" (`context.ts:1240`) and
+  `brush.tsx:88` bails off a time/value axis — so 2-D **select** shipped with
+  [PND-INTERACT2D] and 2-D **zoom** did not. The report is right, and the gap
+  is smaller than "unbuilt": `sweep2D` exists.
+
+### Three corrections to the report's own cost estimates
+
+Recorded because each one changed what we scheduled, and two of them cut
+against the report's stated ordering:
+
+1. **Theme B is cheaper than theme A, not the second-priority item.**
+   `scaleBand`'s domain is already **numeric** (`[0, n]`, slot `i` at
+   `[i, i+1]`) with a linear pixel mapping — category-ness lives in three
+   methods. So a value-keyed layer at slot coordinates _already_ lands where
+   the bars do; the only blockers were the mixed-kind throw and the slot list
+   being sourced solely from a layer. One prop closes both, and PG-7/PG-21 fall
+   out free because they key off `xKind` and the container path rather than off
+   a bar layer. The report ranked A first and said "if only one thing on this
+   list happens, it should be this" — B was the better first move.
+2. **Theme A's placement half was already structurally supported.**
+   `ChartContainer` renders `children` in a `position: relative` flex column
+   (`ChartContainer.tsx:1908`), which is how `<Legend>` anchors — so consumer
+   chrome was always a legal child in flow. Only the _numbers_ were missing,
+   which made the minimum ask close to a pure export rather than a layout
+   change. One wrinkle the report did not hit: x geometry is on
+   `ContainerFrame` and y on `RowFrame`, so the frame has two halves and
+   container-level chrome cannot have y scales.
+3. **PG-16 revives a just-declined item.** [PND-AXISMIRROR] was closed
+   2026-08-11 — _"No consumer remains for the ask. Closed; reopen with a real
+   case."_ Ignite filed one the next day. The close was correct on the evidence
+   available; the lesson is only that "no consumer remains" has a short shelf
+   life when three consumers are active.
+
+### Cross-references to tracked work
+
+| Report item | Existing entry   | What the third report adds                                                                                                  |
+| ----------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| PG-5        | [PND-WIDTH]      | **Third** consumer. New information is the multiplier: seven panes × the same ~25-line measure-and-gate hook in one section |
+| PG-6        | runtime restyle  | Second consumer; twelve interactive series is where the memoized theme-rebuild "stops feeling like a workaround"            |
+| PG-14       | [PND-AXES]       | [PND-SYMLOG] shipped on **y** only; a non-linear **x** scale is still open                                                  |
+| PG-16       | [PND-AXISMIRROR] | Reopens a decline that was one day old (see above)                                                                          |
+| PG-10/11/12 | [PND-INTERACT2D] | Confirms the split: 2-D select shipped, 2-D zoom (`RangeSpan.y`, controlled y viewport) did not                             |
+| PG-26       | [PND-CHFRIC]     | Points at the per-mark bar colour fix as the precedent for the same split on grid cells                                     |
+
+### Shipped 2026-08-12 — themes A, C and B
+
+Three of the report's own four one-line asks, in two PRs.
+
+**[PND-IGNITEFRAME] — `useChartFrame()`** (theme A's minimum). Publishes the
+plot rect, gutters, shared `xScale`/`xKind`, a row's `yScales` + top inset, and
+band slot edges. Two decisions worth keeping:
+
+- **The x/y split mirrors the architecture rather than flattening it.** The
+  container owns one shared x scale, rows own y — so `plot` carries x and
+  `row` carries y, and `row` is **`null`** outside a `<ChartRow>`. Returning
+  `height: 0` there was rejected: it is the same silent-misalignment failure
+  the hook exists to remove. The common case (a header strip beside the rows)
+  genuinely has no y geometry, and the type should say so.
+- **`bands.at(i)` reads the scale rather than recomputing.** `plot.width /
+count` is the obvious re-derivation and is wrong the moment `maxBandWidth`
+  binds — that case is now a test _and_ a story, because it is the one that
+  proves the API earns itself.
+
+Two internals were promoted to frame fields to make this honest:
+`RowFrame.topInset` (previously a local in `ChartRow`) and a named
+`ChartXScale`.
+
+**[PND-WIDTH] — `<ChartContainer width="auto">`** (theme C). Closed. `width` is
+now `number | 'auto'`, omitted meaning auto. The recipe became the
+implementation, and the recipe's sharpest edge closed _by construction_: the
+measured box is one the library owns, so it can never be the caller's padded
+box. Recorded because it is the general shape — **a recipe that warns about a
+trap is a trap the library should absorb.**
+
+**[PND-IGNITECAT] — `<ChartContainer categories>`** (theme B). Closes PG-2.
+Any value-keyed layer can now share an ordinal axis; slot `i`'s centre is
+`i + 0.5`. One hole was found **in Layer-1 self-review, not in design**: a
+horizontal categorical `<BarChart>` reports `xKind: 'value'` with its names on
+y (`binCategories`, [PND-HCAT]), so the new value-layer allowance would have
+waved it through and then drawn bar _lengths_ as slot coordinates — nonsense
+that renders, which is exactly the "misleads rather than blocks" class
+[PND-SPARCFRIC] ranked worst. Now a named error. The generalisation is
+uncomfortable and worth writing down: **widening what an axis accepts widens
+what it can silently misinterpret**, and only contradictions are detectable —
+a value-keyed layer whose x means something else is taken at its word.
+
+### What those three did _not_ close
+
+Honest accounting, because two of these look closed and are not:
+
+- **PG-7** (thin **explicitly supplied** ticks) — _relieved, not closed_.
+  Consumers who adopt container categories no longer need explicit ticks, so
+  they keep thinning. The standalone ask stands for anyone who genuinely wants
+  custom ticks.
+- **PG-21** (bar ink width as a **fraction** of its slot) — _relieved, not
+  closed_. The `maxBandWidth` cap is reachable again, but it is still a pixel
+  value, not a fraction.
+- **PG-9, PG-24, PG-27** — _workaroundable_, which is what the report asked
+  for; the frame makes them expressible as positioned markup. PG-27 (per-cell
+  grid text) and PG-24 (axis labels as filled cells) would still be better as
+  library marks.
+- **PG-3** — untouched. Both halves (uniform slots on a grid layer, category
+  names on _both_ axes) need the heat map's y dimension, not the container's x.
+
+### Remaining, in the report's own priority order
+
+- **P0 tail** — theme A's _better_ option: an in-plot `<CustomLayer draw={(ctx,
+frame) => …}>` receiving the resolved frame inside the plot's clip and
+  z-order. Would retire PG-27 and PG-24 outright rather than making them
+  workaroundable, and gives a principled answer to every future "can it also
+  draw X". The report explicitly says it would be happy with the frame alone,
+  so this is not urgent — but it is the natural next step now that the frame
+  exists, and the frame is most of its input.
+- **P1** — **PG-4**, a **ramp swatch** in the legend. Cheap and well-argued:
+  unlike the series-chip case it needs no per-series metadata, being a pure
+  function of `colors` and `domain`, both already props. The library exports
+  `bandedColor` and `heatValueExtent`, so a consumer hand-building this "is
+  calling library functions to draw a library concept in library colours,
+  purely because there is no component for it." Two panes; placement falls out
+  of the existing legend machinery rather than needing theme A.
+- **P2** — **theme E** (PG-17 `markers?` on `LineStyle`, PG-22 `stroke?` on
+  `BandStyle`; both extend existing style types the way `dash` did, so neither
+  overturns the no-per-component-colour rule). **PG-19**, gap/sessionBreak
+  parity for the band layer — parity, not new capability, and worth doing
+  because the session axis is one of the library's strongest features.
+  **Theme G**, the axis-parity pass (PG-14, PG-16, PG-8, PG-20, PG-25) — five
+  individually small items, worth one pass rather than five tickets.
+- **P3** — theme H (finish 2-D: emit `RangeSpan.y`, controlled y viewport),
+  theme I (PG-18 shared encoding domain is arguably correctness, not
+  ergonomics; PG-26, PG-28), theme J (PG-13, PG-15, PG-23). The report says it
+  would not schedule any of these.
+
+### Two worries the report dissolved on its own
+
+Recorded so they are not re-raised: **stacking multiple coloured tick columns
+on one axis side is supported** (per-side axis slots, unit-tested), and
+**linear diverging colour about a pinned symmetric domain already works**. The
+report also confirms four shipped capabilities materially changed its plans —
+the CSS-custom-property theme bridge removed theming from its gap list
+entirely, per-line dash removed a styling ask, the trading-axis tick-density
+fix made the session axis usable, and per-mark bar colours are the precedent it
+points at for PG-26.
