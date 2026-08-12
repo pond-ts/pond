@@ -154,6 +154,43 @@ competing with it (select is the set, hover is the one under the pointer).
 [#606]: https://github.com/pond-ts/pond/pull/606
 [#577]: https://github.com/pond-ts/pond/issues/577
 
+### [PND-XAXISOWN] — a mounted `<XAxis>` should win over the container's
+
+pjm, on the third sighting: _"I wonder if when you add an XAxis that wins over
+the container (or it warns at the prop conflict), this is like the 3rd time I've
+seen that issue."_
+
+`showAxis` defaults to `true`, so `<ChartContainer>` renders an x-axis strip the
+declaration never mentions. Mount an explicit `<XAxis>` and you get **two**, and
+nothing says so — the consumer has to already know to pass `showAxis={false}`.
+
+**Three sightings, and they are one root cause: the container renders an axis
+the declaration does not mention.**
+
+1. `<GalleryCard height>` carries a comment warning that the caller "must budget
+   for the auto-rendered time-axis strip… the stage clips anything taller,
+   silently cutting off axis labels."
+2. [PND-AXISGUT] / [#607] — estela hand-subtracts `X_AXIS_H` for that same
+   strip, got it wrong once, and shipped overlapping labels.
+3. The `ValueXLog` stories in this wave drew two x axes until `showAxis={false}`
+   was added — as does every other story in `Axes.stories.tsx`, which is the
+   tell: **the whole file works around the default.**
+
+**Proposed:** a mounted `<XAxis>` takes precedence and the implicit strip stands
+down, with `showAxis` kept as the explicit override. Nobody mounts an `<XAxis>`
+_wanting_ a second one, so precedence is what the declaration already means.
+Failing that, warn on the conflict — but silence is the one option the evidence
+rules out.
+
+Worth doing with [PND-AXISGUT], since both are "the implicit axis is invisible
+to the layout and to the declaration", and a mounted-wins rule makes the height
+reservation question answerable — the container would know whether an axis is
+present rather than assuming one.
+
+It is also the concrete cost of the shape pjm named while building [PND-XLOG]:
+had at least one `<XAxis>` been **mandatory**, there would be no implicit strip
+to conflict with, the scale props would live on it, and x would mirror y.
+
 ### [PND-AXISGUT] — The X-axis strip doesn't participate in layout — [#607]
 
 Filed by the estela agent after it shipped overlapping labels, and its framing
@@ -2105,11 +2142,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                                                                _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                                                                is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                                                                iteration to discover, and the docs still don't mention it. **The one-line
-                                                                                                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                                                                row's data cursor is suppressed."
+                                                                                                                    _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                                                                    is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                                                                    iteration to discover, and the docs still don't mention it. **The one-line
+                                                                                                                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                                                                    row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
