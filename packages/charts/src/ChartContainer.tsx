@@ -238,6 +238,18 @@ export interface ChartContainerProps {
    * chart by exactly the padding). Style your own wrapper *around* the
    * container as freely as you like.
    *
+   * **The parent needs a definite width.** `'auto'` measures a `width: 100%`
+   * box, so a parent whose own width comes from its *content* — a float, an
+   * `inline-block`, a grid `auto` track, a flex child without `min-width: 0` —
+   * measures 0, and the chart is the content that would have given it a width.
+   * That is a standing deadlock, not a slow start: the chart stays blank with
+   * no error. Give the parent a width, a `flex` basis, or `min-width: 0`, or
+   * pass a number.
+   *
+   * A container hidden by an ancestor's `display: none` is fine — it keeps the
+   * last width it measured and stays mounted, so a tab switch does not discard
+   * pan/zoom position, selection or hover.
+   *
    * Pass a number whenever the width is already known — a fixed-size panel, a
    * print layout, a test. It skips the measure pass and paints on the first
    * render.
@@ -619,7 +631,18 @@ function AutoWidthContainer(props: ChartContainerProps) {
     const el = boxRef.current;
     if (el === null) return;
     const measure = () =>
-      setMeasured(Math.round(el.getBoundingClientRect().width));
+      setMeasured((prev) => {
+        const next = Math.round(el.getBoundingClientRect().width);
+        // **Latch the last non-zero width.** A box measures 0 whenever it is
+        // not laid out — most often because an ancestor went `display: none`
+        // (a tab switch, a collapsed accordion), which is a *hidden* chart,
+        // not a resized one. Writing that 0 through would unmount the resolved
+        // container and discard everything it owns: pan/zoom position,
+        // selection, hover, and every layer's memoized draw state, all
+        // rebuilt on the way back. Keeping the stale width holds the chart
+        // mounted through the hide, and the next real measurement corrects it.
+        return next > 0 ? next : prev;
+      });
     measure();
     // Guarded rather than assumed: a non-browser render target (SSR, an older
     // test DOM) has no ResizeObserver, and a chart that measured once is a far

@@ -24,7 +24,8 @@ breakpoint decision, a `width`-dependent data query. If you only want the chart
 to fill its box, use `'auto'` and skip the rest of this page.
 
 Note that inside the chart, aligning your own chrome to the plot no longer
-needs the container's width at all — [`useChartFrame()`](../charts/index.mdx)
+needs the container's width at all —
+[`useChartFrame()`](../charts/layout#reading-the-resolved-layout--usechartframe)
 publishes the resolved plot rect, gutters and scales directly.
 :::
 
@@ -121,6 +122,12 @@ Three pieces:
   already batches — most consumers don't need to add their own
   debounce/throttle on top. Add one only if profiling shows the redraw
   cost matters (many rows, many series, a very hot resize loop).
+- **The parent needs a _definite_ width — this bites `width="auto"` too.**
+  A `width: 100%` box inside a parent whose own width comes from its content
+  (a float, an `inline-block`, a grid `auto` track, a flex child without
+  `min-width: 0`) measures 0, and the chart is the content that would have
+  given the parent a width. That deadlocks: the chart stays blank, with no
+  error. Give the parent a width, a `flex` basis, or `min-width: 0`.
 - **A resizable parent needs a resizable parent.** `width: '100%'` on the
   measured box only does anything if something upstream actually
   constrains it — a flex/grid cell, a resizable panel, or (as in the demo

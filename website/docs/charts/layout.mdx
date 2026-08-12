@@ -186,6 +186,12 @@ alignment with no type error and no failing test.
   value; use `width="auto"` (or omit it) to fill a fluid box.
 - **An `'auto'` container paints nothing on the first layout pass** — it has
   no width yet. Pass a number if you need paint on the very first render.
+- **`'auto'` needs a parent with a definite width.** A parent sized by its
+  own content (a float, an `inline-block`, a grid `auto` track, a flex child
+  without `min-width: 0`) measures 0, and the chart is the content that would
+  have given it a width — so the chart stays blank with no error. Hiding a
+  container with `display: none` is fine: it keeps its last width and stays
+  mounted, so pan/zoom and selection survive a tab switch.
 - **`Layers` is mandatory** — draw layers must be inside a `<Layers>`, not
   direct children of the row; it's the z-stack boundary.
 - **Author order is layout order** — left axes before `Layers`, right axes

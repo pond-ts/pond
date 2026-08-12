@@ -14,6 +14,7 @@
  * - the measured box is the library's own plain `<div>`, so it can never be a
  *   caller's padded box — the recipe's sharpest edge, closed by construction.
  */
+import { useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render } from '@testing-library/react';
 import { TimeSeries } from 'pond-ts';
@@ -83,9 +84,21 @@ const resize = (to: number) =>
     for (const cb of [...observers]) cb();
   });
 
+/**
+ * Writes the frame during render, and **clears it on unmount** — without the
+ * cleanup a probe keeps its last value after the chart goes away, so a test
+ * asserting "still mounted" would pass against an unmounted chart. (That
+ * exact hole made the latch test vacuous until a mutation run exposed it.)
+ */
 function Probe({ into }: { into: { frame: ChartFrame | null } }) {
   const frame = useChartFrame();
   into.frame = frame;
+  useEffect(
+    () => () => {
+      into.frame = null;
+    },
+    [into],
+  );
   return null;
 }
 
@@ -166,6 +179,84 @@ describe('<ChartContainer width="auto">', () => {
         got.frame!.plot.width +
         got.frame!.gutters.right,
     ).toBe(700);
+  });
+
+  it('latches the last non-zero width when the box is hidden', () => {
+    // Found by Layer-2 review. `display: none` on an ancestor measures 0, and
+    // writing that through would unmount the resolved container — discarding
+    // pan/zoom, selection, hover and every layer's memoized draw state, then
+    // paying a full remount on the way back. A hidden chart is not a resized
+    // one.
+    boxWidth = 640;
+    const { got, container } = mount('auto');
+    const before = got.frame;
+    expect(before).not.toBeNull();
+    resize(0);
+    // Both halves matter: the chart is still in the DOM, and it kept the width.
+    expect(container.querySelector('canvas')).not.toBeNull();
+    expect(got.frame).not.toBeNull();
+    expect(got.frame!.plot.width).toBe(before!.plot.width);
+    // …and a real measurement still corrects it.
+    resize(480);
+    expect(
+      got.frame!.gutters.left +
+        got.frame!.plot.width +
+        got.frame!.gutters.right,
+    ).toBe(480);
+  });
+
+  it('keeps the chart mounted across a hide, not just the width', () => {
+    // The point of the latch is state survival, so assert on identity rather
+    // than on the number: a remount would give the row a fresh scale map.
+    boxWidth = 500;
+    const { got } = mount('auto');
+    const scaleBefore = got.frame!.xScale;
+    resize(0);
+    resize(500);
+    expect(got.frame!.xScale).toBe(scaleBefore);
+  });
+
+  it('rounds a fractional measurement', () => {
+    boxWidth = 640.4;
+    const { got } = mount('auto');
+    expect(
+      got.frame!.gutters.left +
+        got.frame!.plot.width +
+        got.frame!.gutters.right,
+    ).toBe(640);
+  });
+
+  it('remounts when width flips between a number and auto', () => {
+    // Documented behaviour, pinned: the two paths are different components, so
+    // the switch is a remount. Rare (it is a layout change), and a remount is
+    // the honest response to one — but it should not change silently.
+    const seen: unknown[] = [];
+    function Probe2() {
+      const f = useChartFrame();
+      seen.push(f.xScale);
+      return null;
+    }
+    const tree = (w: number | 'auto') => (
+      <ChartContainer width={w}>
+        <Probe2 />
+        <ChartRow height={100}>
+          <YAxis id="v" />
+          <Layers>
+            <LineChart series={series()} column="v" axis="v" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+    const stub = stubCanvasContext();
+    try {
+      boxWidth = 600;
+      const { rerender } = render(tree(600));
+      const fixed = seen[seen.length - 1];
+      rerender(tree('auto'));
+      expect(seen[seen.length - 1]).not.toBe(fixed);
+    } finally {
+      stub.restore();
+    }
   });
 
   it('stops observing on unmount', () => {

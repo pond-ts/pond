@@ -110,6 +110,15 @@ include new features and type-level changes; patch bumps are strictly additive.
   chart by exactly the padding, silently clipped when the box also hid
   overflow). Style your own wrapper freely.
 
+  Two behaviours worth knowing. A container **hidden** by an ancestor's
+  `display: none` keeps the last width it measured and stays mounted, so a tab
+  switch does not discard pan/zoom position, selection or hover — writing the
+  zero measurement through would unmount and rebuild all of it. And `'auto'`
+  needs a parent with a **definite** width: a parent sized by its own content
+  (a float, an `inline-block`, a grid `auto` track, a flex child without
+  `min-width: 0`) measures 0, and the chart is the content that would have
+  given it a width, so the chart stays blank with no error.
+
   Three independent consumers reported the explicit-pixel requirement; the
   third was multiplying the same ~25-line measure-and-gate hook across seven
   panes.
