@@ -1940,6 +1940,34 @@ argument for the rest.
   adopt immediately and drop its override. Detail in
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-annrole--annotation-roles-a-resting-marks-alpha-is-a-role-question).
 
+- **The estela two-families wave.** Four reports that are two families, not four
+  asks — **X/Y asymmetry** and **`<BarList>` lags `<BarChart>`** — each with the
+  same character: the mechanism exists and only points one way. **Shipped
+  2026-08-12** as [#653]: [PND-XLOG] (landed as `<ChartContainer xScale>`, not
+  `<XAxis scale>` — the container owns the one shared x scale) and
+  [PND-LISTCOLOR] (`<BarList barColors>`, keyed on `row.key` so a `sortBy`
+  cannot repaint the ramp onto the wrong rows). **Still open:**
+  [PND-AXISGUT] / [#607] (the X strip doesn't participate in layout — the Y
+  gutter does), [PND-LISTHOVER] / [#608] (the list has selection but no hover),
+  [PND-CASTDOC] (the union-per-series-kind cast has no prose), and
+  **[PND-XAXISOWN]** — a mounted `<XAxis>` should win over the container's
+  implicit strip, or warn at the conflict. That last one has **three sightings
+  now** (a `<GalleryCard>` comment telling callers to budget for the auto-strip,
+  estela's #607 mis-subtraction, and stories drawing two axes); the tell is that
+  every story in `Axes.stories.tsx` passes `showAxis={false}` to work around a
+  default. It pairs with [PND-AXISGUT], since mounted-wins is what makes the
+  height-reservation question answerable at all.
+
+  Newly surfaced by that wave: **[PND-XSYMKNEE]** — x `'symlog'` uses d3's
+  default knee (absolute 1) with no `linearWindow` counterpart, so on a
+  `[0, 5_000_000]` domain the linear band is invisible and on a `[0, 3]` domain
+  it swallows a third of the axis. Detail for all of these in
+  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#two-families-not-four-issues).
+
+[#607]: https://github.com/pond-ts/pond/issues/607
+[#608]: https://github.com/pond-ts/pond/issues/608
+[#653]: https://github.com/pond-ts/pond/pull/653
+
 ---
 
 ## Cross-cutting work
