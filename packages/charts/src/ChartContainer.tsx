@@ -348,8 +348,42 @@ export interface ChartContainerProps {
    * separators-on-a-clean-plot look.
    */
   sessionDividers?: 'labeled' | 'all' | 'none';
-  /** Total width in CSS pixels (plot + axis gutters). */
-  width: number;
+  /**
+   * Total width in CSS pixels (plot + axis gutters), or **`'auto'` to fill the
+   * available width** — which is also what an omitted `width` means.
+   *
+   * The canvas renderer needs real pixels to lay out ticks and slots before it
+   * draws, so `'auto'` does not hand the canvas a percentage: the container
+   * renders a plain full-width box, measures it with a `ResizeObserver`, and
+   * mounts the chart at that pixel width, re-rendering as the box resizes.
+   * **Nothing paints until a real width exists** — a zero-width chart is
+   * degenerate, not empty — so an auto container renders an empty box for the
+   * first layout pass.
+   *
+   * This is the [responsive-width recipe](https://pond-ts.github.io/pond/docs/recipes/responsive-width)
+   * moved inside the library, and it closes that recipe's sharpest edge by
+   * construction: the measured box is one the library owns, so it can never be
+   * the caller's padded or bordered box (whose border-box width overflows the
+   * chart by exactly the padding). Style your own wrapper *around* the
+   * container as freely as you like.
+   *
+   * **The parent needs a definite width.** `'auto'` measures a `width: 100%`
+   * box, so a parent whose own width comes from its *content* — a float, an
+   * `inline-block`, a grid `auto` track, a flex child without `min-width: 0` —
+   * measures 0, and the chart is the content that would have given it a width.
+   * That is a standing deadlock, not a slow start: the chart stays blank with
+   * no error. Give the parent a width, a `flex` basis, or `min-width: 0`, or
+   * pass a number.
+   *
+   * A container hidden by an ancestor's `display: none` is fine — it keeps the
+   * last width it measured and stays mounted, so a tab switch does not discard
+   * pan/zoom position, selection or hover.
+   *
+   * Pass a number whenever the width is already known — a fixed-size panel, a
+   * print layout, a test. It skips the measure pass and paints on the first
+   * render.
+   */
+  width?: number | 'auto';
   /** Vertical space between rows in CSS pixels (not under the axis). Default 0. */
   rowGap?: number;
   /**
@@ -681,8 +715,82 @@ export interface ChartContainerProps {
  * the shared time `xScale`. It renders its rows (separated by `rowGap`) then one
  * {@link TimeAxis} at the bottom, aligned under the plots. Y axes are per-row
  * (`<YAxis>`).
+ *
+ * A `width` in pixels renders straight through; `'auto'` (or an omitted
+ * `width`) measures the available width first — see {@link
+ * ChartContainerProps.width} and {@link AutoWidthContainer}.
  */
-export function ChartContainer({
+export function ChartContainer(props: ChartContainerProps) {
+  const { width } = props;
+  // The measure pass is a *different component* rather than a branch inside
+  // the resolved one, because the resolved container may not render at all
+  // until a width exists — and ~60 hooks cannot be conditional. Choosing the
+  // component by the prop's kind (number vs auto) means flipping a container
+  // between fixed and auto remounts it; that is a layout change, and a
+  // remount is the honest response to one.
+  if (typeof width === 'number') {
+    return <ResolvedChartContainer {...props} width={width} />;
+  }
+  return <AutoWidthContainer {...props} />;
+}
+
+/**
+ * The `width="auto"` half: render a plain full-width box, measure it, and
+ * mount the chart at that pixel width.
+ *
+ * Three details, each of which the shipped
+ * [responsive-width recipe](https://pond-ts.github.io/pond/docs/recipes/responsive-width)
+ * had to spell out for consumers and which now hold by construction:
+ *
+ * 1. **`useLayoutEffect`, so the first real width lands before paint** — no
+ *    flash of the empty box.
+ * 2. **Measure synchronously on mount, then let `ResizeObserver` take over.**
+ *    RO's own first callback is not guaranteed to fire promptly in every
+ *    browser; relying on it alone can leave a chart that never mounts.
+ * 3. **The measured box is plain.** No padding, no border — so
+ *    `getBoundingClientRect().width` is the content width, and the chart can
+ *    never overflow its own measurement. A caller who wants a bordered frame
+ *    puts it on a wrapper *outside* the container.
+ */
+function AutoWidthContainer(props: ChartContainerProps) {
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const [measured, setMeasured] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = boxRef.current;
+    if (el === null) return;
+    const measure = () =>
+      setMeasured((prev) => {
+        const next = Math.round(el.getBoundingClientRect().width);
+        // **Latch the last non-zero width.** A box measures 0 whenever it is
+        // not laid out — most often because an ancestor went `display: none`
+        // (a tab switch, a collapsed accordion), which is a *hidden* chart,
+        // not a resized one. Writing that 0 through would unmount the resolved
+        // container and discard everything it owns: pan/zoom position,
+        // selection, hover, and every layer's memoized draw state, all
+        // rebuilt on the way back. Keeping the stale width holds the chart
+        // mounted through the hide, and the next real measurement corrects it.
+        return next > 0 ? next : prev;
+      });
+    measure();
+    // Guarded rather than assumed: a non-browser render target (SSR, an older
+    // test DOM) has no ResizeObserver, and a chart that measured once is a far
+    // better failure than one that throws on mount.
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  return (
+    <div ref={boxRef} style={{ width: '100%' }}>
+      {measured > 0 && <ResolvedChartContainer {...props} width={measured} />}
+    </div>
+  );
+}
+
+/** {@link ChartContainer} with its width resolved to a concrete pixel number. */
+function ResolvedChartContainer({
   range,
   categories: categoriesProp,
   maxBandWidth,
@@ -721,7 +829,7 @@ export function ChartContainer({
   grid = true,
   sessionDividers = 'none',
   children,
-}: ChartContainerProps) {
+}: Omit<ChartContainerProps, 'width'> & { width: number }) {
   // ── Legacy cursor props (deprecated) ───────────────────────────────────────
   // The string surface keeps working for one minor: the resolved mode is
   // synthesized into the equivalent mounted preset below (`<LegacyCursor>`),

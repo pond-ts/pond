@@ -956,8 +956,14 @@ linearWindow>`, [PND-SYMLOG]. [PND-AXISMIRROR] (a mirrored second axis) is
   `ValueSeries` algebra only when a second consumer (geo) pulls.
 - **[PND-THEME]** — `cssVarTheme` candle mapping (LOW; worked example + var
   naming convention, no new plumbing).
-- **[PND-WIDTH]** — Responsive width/fill for `ChartContainer` (two
-  consumers hit the explicit-px requirement).
+- **[PND-WIDTH]** — **SHIPPED 2026-08-12, closed.** `<ChartContainer
+width="auto">`, and an omitted `width` means the same. Three consumers hit
+  the explicit-px requirement; the third was multiplying the same ~25-line
+  measure-and-gate hook across seven panes. The documented responsive-width
+  recipe became the implementation, which also closed the recipe's sharpest
+  edge **by construction** — the measured box is one the library owns, so it
+  can never be the caller's padded box. Outcome in
+  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-ignite--ignite-charts-friction-2026-08-11).
 - **[PND-LIVELYR]** — Live-source-aware layer inputs (same report, ask #4):
   charts layers take only `TimeSeries`, forcing a fresh per-tick handle
   (`snapshot.partitionBy().toMap()`) per host. A `LiveView`-aware input — or
@@ -1894,6 +1900,33 @@ argument for the rest.
   [PND-BINSWATCH] is now partially resolved on the stack path only. Itemised, with
   each workaround and its cost, in
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-sparcfric--sparc-charts-friction-2026-08).
+
+- **[PND-IGNITE]** — A **third** external consumer survey: 28 distinct entries
+  (`PG-n`, merged from 39 raw) across seven planned financial panes, assessed
+  against 0.59.0, **zero blocking**. Prioritized for the library rather than
+  for the consumer — by leverage, by whether the workaround _duplicates
+  library-internal state_, by breadth, and by cost shape. Its P0 argument is a
+  **drift** argument: two themes force the consumer to re-derive geometry the
+  library already computed, correct only until the library changes how a gutter
+  is sized or how bands are packed, at which point their chrome silently
+  misaligns with no type error and no test failure. **Three of its four
+  one-line asks shipped 2026-08-12** in two PRs — [PND-IGNITEFRAME]
+  (`useChartFrame()`, publishing the plot rect / gutters / scales / band
+  edges), [PND-WIDTH] (`<ChartContainer width="auto">`, **closed** — third
+  consumer, and the recipe became the implementation), and [PND-IGNITECAT]
+  (`<ChartContainer categories>`, so any value-keyed layer can share an ordinal
+  axis). Triage corrected the report's own ordering on two counts: **theme B
+  was the cheaper P0**, because `scaleBand`'s domain is already numeric so a
+  value-keyed layer lands where the bars do; and theme A's placement half was
+  already structurally supported, leaving only the numbers missing. **PG-16
+  reopens [PND-AXISMIRROR]**, declined 2026-08-11 for want of a consumer, one
+  day before this arrived. Remaining, in the report's order: the in-plot
+  `<CustomLayer>` (theme A's better option, now that the frame exists), a
+  **ramp swatch** in the legend (PG-4, P1, cheap — a pure function of `colors`
+  and `domain`), then P2's style escape hatches, band gap-parity and the
+  axis-parity pass. Itemised, with each correction and what shipping did _not_
+  close, in
+  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-ignite--ignite-charts-friction-2026-08-11).
 
 - **[PND-ANNROLE] — annotation roles.** `theme.annotation.depth` draws a
   resting mark at 0.4 alpha, and **two consumers overrode that in opposite

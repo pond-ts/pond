@@ -7,10 +7,33 @@ import ResponsiveWidth from '@site/src/examples/responsive-width';
 
 # Filling a responsive box
 
-`<ChartContainer>` takes `width` as a **required pixel number**, not
+:::tip[Most of the time, just use `width="auto"`]
+`<ChartContainer width="auto">` — or omitting `width` entirely — does
+everything on this page for you: it renders a plain full-width box, measures
+it, and mounts the chart at that pixel width, re-rendering as the box resizes.
+
+```tsx
+<ChartContainer range={series.timeRange()} width="auto">
+  …
+</ChartContainer>
+```
+
+Reach for the hand-rolled version below when you need the measured width for
+something **besides** the chart — a sibling element sized to match, a
+breakpoint decision, a `width`-dependent data query. If you only want the chart
+to fill its box, use `'auto'` and skip the rest of this page.
+
+Note that inside the chart, aligning your own chrome to the plot no longer
+needs the container's width at all —
+[`useChartFrame()`](../charts/layout#reading-the-resolved-layout--usechartframe)
+publishes the resolved plot rect, gutters and scales directly.
+:::
+
+`<ChartContainer>` takes `width` as a **pixel number or `'auto'`**, never
 `"100%"` — the canvas renderer needs real pixels to lay out ticks and
 slots before it draws. Filling a box that itself resizes (a flex column, a
-CSS Grid cell, a browser window) is one `ResizeObserver` away.
+CSS Grid cell, a browser window) is one `ResizeObserver` away — and that
+observer is what `'auto'` runs internally.
 
 Drag the bottom-right corner of the chart below to resize it — the width
 prop updates live:
@@ -99,6 +122,12 @@ Three pieces:
   already batches — most consumers don't need to add their own
   debounce/throttle on top. Add one only if profiling shows the redraw
   cost matters (many rows, many series, a very hot resize loop).
+- **The parent needs a _definite_ width — this bites `width="auto"` too.**
+  A `width: 100%` box inside a parent whose own width comes from its content
+  (a float, an `inline-block`, a grid `auto` track, a flex child without
+  `min-width: 0`) measures 0, and the chart is the content that would have
+  given the parent a width. That deadlocks: the chart stays blank, with no
+  error. Give the parent a width, a `flex` basis, or `min-width: 0`.
 - **A resizable parent needs a resizable parent.** `width: '100%'` on the
   measured box only does anything if something upstream actually
   constrains it — a flex/grid cell, a resizable panel, or (as in the demo
@@ -110,7 +139,10 @@ Three pieces:
   straight to `ChartContainer` and the chart renders at the padded box's
   _outer_ width while only having the _inner_ (content) width available,
   overflowing by exactly the padding + border — silently clipped if the
-  box also sets `overflow: hidden`. If you want a bordered/padded frame
+  box also sets `overflow: hidden`. **`width="auto"` cannot hit this** — the
+  box it measures is one the library owns and never styles, so a padded
+  wrapper of your own is always safe. It is the sharpest reason to prefer
+  `'auto'` over the hand-rolled version. If you want a bordered/padded frame
   around the chart (as the demo above does, for the dashed resize
   outline), put that styling on an **outer** wrapper and measure a plain,
   unstyled **inner** box instead — the demo's own source does this: the

@@ -46,6 +46,14 @@ export interface ChartLegend {
    * inset from the chart box on each side. A custom legend laid out above /
    * below the chart pads by `gutters.left` (and `gutters.right`) to align
    * with the plot instead of the y-axis column.
+   *
+   * The same two numbers {@link useChartFrame} publishes as
+   * `ChartFrame.gutters`, kept here so a legend needs one hook rather than
+   * two. **Reach for `useChartFrame()` instead** when the chrome is not a
+   * legend, or when aligning needs more than the gutters — the plot width,
+   * the x scale, the per-slot band edges, or a row's y scales. This field
+   * predates that hook and is the reason it exists: the geometry was
+   * published for exactly one consumer, on a hook named for something else.
    */
   readonly gutters: { readonly left: number; readonly right: number };
   /**
