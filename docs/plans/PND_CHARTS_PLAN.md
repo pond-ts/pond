@@ -23,6 +23,73 @@ split has shipped too (notes:
 
 ## Tasks
 
+## Two families, not four issues
+
+Four consumer-filed gaps arrived from estela's dogfooding within a week, and
+they are **not four unrelated asks**. They are two systematic gaps, each with
+the same character: _the mechanism already exists and only points one way._
+
+| **X/Y asymmetry**                                                                                   | **`<BarList>` lags `<BarChart>`**                                                          |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [PND-AXISGUT] / [#607] — the container auto-reserves Y gutter _widths_ but not the X strip _height_ | [PND-LISTHOVER] / [#608] — layers carry `hovered` / `onHover`; the list has selection only |
+| [PND-XLOG] / [#649] — `<YAxis scale="log">` exists; `<XAxis>` has no `scale` at all                 | [PND-LISTCOLOR] / [#650] — bars have `binColors`; a list column has one `as` for every row |
+
+Why the framing earns its place: each family is **cheaper than four separate
+fixes and more coherent**. The log/symlog domain resolution, tick ladder and dev
+warnings are all built — on the Y side. `binColors` and its discipline (a
+per-item colour list, `undefined` falls back to the theme, the highlight pops
+opacity rather than swapping the fill) is built — on the bar side. Both asks are
+largely carrying an existing capability across an axis or a component boundary,
+and doing each family in one pass keeps the two halves from drifting again.
+
+It also predicts where the next report comes from: **anywhere the answer to "does
+the other axis / the other component have this?" is no.**
+
+### [PND-XLOG] — `<XAxis scale="log">` — [#649]
+
+`<YAxis>` takes `scale?: 'linear' | 'log'`; `<XAxis>` takes no `scale` at all, so
+the shared x→pixel scale is `scaleTime` or `scaleLinear` and never `scaleLog`.
+
+**The use case is canonical, not exotic.** estela's mean-maximal power curve is
+watts against duration on a log-time x — 1s · 5s · 15s · 1m · 5m · 20m · 1h · 3h
+— which is how every cycling tool draws it.
+
+**The workaround distorts the data model, which is the tell.** They plot against
+`x = ln(durationSeconds)` on a linear value-x, then relabel ticks back to real
+durations with explicit `<XAxis ticks>`. So: the series carries a synthetic
+`ln(duration)` column purely to fool the axis, every tick position is a
+hand-computed `Math.log(d)`, and the cursor reports `info.time` in **ln-space**,
+so consumers `exp()` at the seam. A reader of that series cannot tell the x
+column is a logarithm.
+
+Most of the machinery exists — `resolveLogDomain`, `logAxisWarning`, the symlog
+tick apparatus — but this is the **shared** x scale rather than a per-row y
+scale, so it is the more invasive of the two families: it touches the
+container's x-scale resolution, and every consumer of `info.time` /
+`trackerPosition` / the region-cursor snap sees a log domain. Worth checking what
+`zoomRange` / `panRange` do under it, since they assume linear span arithmetic.
+
+### [PND-LISTCOLOR] — `<BarList>` per-row bar colour — [#650]
+
+`BarListColumn` carries exactly two fields, `column` and `as`, so one theme role
+covers every row and each bar is the same colour. `<BarChart binColors>` already
+proves the pattern, and its documented use case is literally _"colour heart-rate
+/ power zones each their own colour"_ — which is what estela wanted and could not
+have.
+
+**Their workaround put the colour on the wrong element**, by their own account:
+the zone ramp moved onto the row's label tag and the bar stayed neutral. The bar
+is the natural carrier of a magnitude ramp.
+
+The contained one of the two. Follow `binColors`' discipline exactly, including
+the part that matters: **the highlight pops opacity rather than swapping the
+fill**, so a row keeps its own colour while live — which is the same rule as
+`selection is a mark, not a recolour of the data` below, and the reason a
+`binColors` bar is the one deliberate exception to it.
+
+[#649]: https://github.com/pond-ts/pond/issues/649
+[#650]: https://github.com/pond-ts/pond/issues/650
+
 ### [PND-LISTHOVER] — `<BarList>` has selection but no hover — [#608]
 
 **Confirmed by a built migration spike**, not analysis: estela ran `<BarList>`
