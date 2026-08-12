@@ -71,12 +71,16 @@ interface TickableScale {
  * d3's within-decade selection (2,3,…9 × 10ⁿ) is the right answer and is well
  * behaved — so that case defers to the scale.
  *
+ * Used by **both** axes. Nothing in here was ever y-specific — it detects log
+ * and symlog structurally and defers to the scale for everything else — and
+ * `<ChartContainer xScale="log">` made that concrete ([PND-XLOG]).
+ *
  * Log detection is structural: `base()` exists on `scaleLog` and on no other
  * continuous scale. The alternative is threading the axis kind down to the
  * gridline site, which has no `AxisSpec` in scope — the same localized-shape
  * approach `resolveBarBaseline` takes to read `.domain()`.
  */
-export function yTickValues(scale: TickableScale, count: number): number[] {
+export function tickValues(scale: TickableScale, count: number): number[] {
   if (typeof scale.constant === 'function')
     return symlogTickValues(scale, count);
   if (typeof scale.base !== 'function') return scale.ticks(count);

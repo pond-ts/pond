@@ -34,7 +34,8 @@ import {
   panRangeTrading,
   zoomRangeTrading,
 } from './viewport.js';
-import { yTickValues } from './yticks.js';
+// Aliased: `tickValues` is already a local map of per-axis explicit ticks.
+import { tickValues as axisTickValues } from './yticks.js';
 import {
   ContainerContext,
   CursorContext,
@@ -325,7 +326,7 @@ export function Layers({ children }: LayersProps) {
         const yCount = tickCounts.get(defaultAxisId) ?? GRID_TICKS;
         const yTicks =
           gridY && !(yIsCategory && explicitY === undefined)
-            ? (explicitY ?? yTickValues(gridY, yCount)).map((t) => gridY(t))
+            ? (explicitY ?? axisTickValues(gridY, yCount)).map((t) => gridY(t))
             : [];
         // On a calendar axis the verticals are the FULL grain populations —
         // every day in the month, every month in the year, every aligned
@@ -1236,7 +1237,15 @@ export function Layers({ children }: LayersProps) {
         } else {
           const span = drag.startRange[1] - drag.startRange[0];
           const dt = c.plotWidth > 0 ? -dx * (span / c.plotWidth) : 0;
-          c.applyRange(panRange(drag.startRange, dt));
+          // A log x pans by ratio, not by offset — see `ViewportOptions`.
+          // `snap` follows: whole-millisecond snapping is a time-axis rule and
+          // wrong for any value axis, log or not.
+          c.applyRange(
+            panRange(drag.startRange, dt, {
+              log: c.xIsLog,
+              snap: c.xKind === 'time',
+            }),
+          );
         }
         return; // tracker suppressed during a pan
       }
@@ -1657,7 +1666,10 @@ export function Layers({ children }: LayersProps) {
               c.discontinuities,
               c.minDuration,
             )
-          : zoomRange(c.timeRange, pivot, f, c.minDuration);
+          : zoomRange(c.timeRange, pivot, f, c.minDuration, {
+              log: c.xIsLog,
+              snap: c.xKind === 'time',
+            });
 
       // ── The aspect lock has to be NEGOTIATED, not asserted ────────────────
       // Both axes zooming by "the same factor" only holds the ratio while both

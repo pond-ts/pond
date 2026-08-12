@@ -76,6 +76,33 @@ include new features and type-level changes; patch bumps are strictly additive.
   `gaps` and M4 decimation unchanged; a swept window keeps the band colours
   (no `spanColor` swap). Ladder resolution + dev warnings shared with
   `<BarChart>` via one internal hook.
+- **charts: `<ChartContainer xScale="log" | "symlog">` — a logarithmic value x
+  axis** ([#649]). The x counterpart of `<YAxis scale>`, for a quantity spanning
+  orders of magnitude — a power–duration curve is watts against 1s · 5s · 1m ·
+  20m · 3h, which is unreadable on a linear x.
+
+  ```tsx
+  <ChartContainer range={[1, 10800]} xScale="log">
+  ```
+
+  **Why the container and not `<XAxis scale>`**, where the `<YAxis>` mirror would
+  put it: there is one x scale shared by every row and the container builds it,
+  while every `<XAxis>` prop is presentational (`format`, `label`, `side`,
+  `ticks`, `align`, …). `<YAxis>` is the opposite — one scale per axis per row,
+  declared by the axis, which is why `min`/`max`/`pad`/`scale` live there. It
+  sits beside `origin`, `spacing` and `calendar`, which shape the same scale.
+
+  Ignored on a time or category axis. A `'log'` domain reaching zero **falls back
+  to linear and warns** rather than silently clamping — `log(0)` is undefined;
+  use `'symlog'` for data that crosses zero.
+
+  Nothing downstream branches: d3's log scales share the continuous-scale
+  surface, so draw layers are untouched. The tick ladder is the one the y axis
+  already built (`tickValues`, renamed from `yTickValues` now that both axes use
+  it) — d3's raw `scaleLog.ticks()` is nearly a step function.
+
+  [#649]: https://github.com/pond-ts/pond/issues/649
+
 - **charts: `<BarList barColors>` — per-row bar colour** ([#650]). The list's
   counterpart to `<BarChart binColors>`: `barColors[i]` aligned to the rows you
   passed, an `undefined` or short entry falling back to the column's `as` /
