@@ -131,6 +131,54 @@ include new features and type-level changes; patch bumps are strictly additive.
 
   [#650]: https://github.com/pond-ts/pond/issues/650
 
+- **charts: `<ChartContainer categories>` — the ordinal axis as a
+  container-level choice** ([PND-IGNITECAT]). Declare the slot names on the
+  container and **any value-keyed layer can live on them** — a target line, a
+  point mark or a filled envelope over categorical bars, which was previously
+  not expressible at all.
+
+  The band scale used to be reachable only _through a layer_: `<BarChart
+categories>` and a **horizontal** heat map reported `xKind: 'category'`, every other layer
+  reported `'time'` or `'value'`, and a container throws on a mixed kind. The
+  workaround — key every layer to a synthetic integer index and hand-supply the
+  tick labels — forfeits two features the ordinal axis already implements, and
+  both came back as their own friction entries: `<XAxis>` label thinning (gated
+  on a category axis with no custom ticks) and the `maxBandWidth` / `bandAlign`
+  slot packing. Declaring the categories on the container keeps both.
+
+  The change is small because the scale was already built for it: `scaleBand`'s
+  domain is **numeric** (`[0, n]`, slot `i` at `[i, i+1]`) with a linear pixel
+  mapping, so a `ValueSeries` keyed on slot coordinates already lands where the
+  bars do. **Slot `i`'s centre is `i + 0.5`** — the same number
+  `ScaleBand.ticks()` returns and where `<XAxis>` puts the tick.
+
+  Two things error, deliberately: a **time-keyed layer** (a timestamp has no
+  slot), and a **category layer that disagrees** with the prop in content or
+  order — the prop is authoritative, and a silent mismatch would draw bars
+  under the wrong labels. The pre-existing mixed-kind error now names the prop
+  as the fix.
+
+  Declaring it has two costs, both already true of an inferred category axis
+  and now reachable from a previously-continuous container: **x pan and zoom
+  stop** (`panZoom` keeps working on y), and **`range` stops applying to x**
+  (the domain is `[0, n]` from the slot count, so an x range is a no-op).
+
+  One hazard is documented rather than enforced: **a value-keyed layer is taken
+  at its word**, so a layer whose x means something other than a slot
+  coordinate — a horizontal categorical `<BarChart>`, whose x is bar _length_ —
+  will draw in the wrong place. A guard for that case was written and removed
+  after review: it tested `binCategories`, which is the generic "my _y_ is
+  ordinal" channel that a **vertical heat map** sets for its rows, so it
+  rejected a slot-keyed grid with named columns on x — a wanted layout, since
+  ordinal rows plus ordinal columns is just a 2-D grid. Nothing distinguishes
+  "my x is a coordinate" from "my x is a magnitude", so there is no
+  contradiction to detect.
+
+  `categories={[]}` is an ordinal axis with **no slots yet**, not a fallback to
+  time — so the kind doesn't flip and rebuild every scale when data arrives.
+
+  Omitting `categories` leaves the inferred behaviour exactly as it was.
+
 ## [0.59.0] — 2026-08-11
 
 ### Added
