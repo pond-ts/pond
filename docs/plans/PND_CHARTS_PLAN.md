@@ -2142,11 +2142,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-        _Still true; no longer felt here._ The draggable marker is gone — selection
-        is a click — so nothing on this page is in edit mode. But it cost a design
-        iteration to discover, and the docs still don't mention it. **The one-line
-        fix is a sentence on `editing`**: "while any mark in a row is editing, that
-        row's data cursor is suppressed."
+            _Still true; no longer felt here._ The draggable marker is gone — selection
+            is a click — so nothing on this page is in edit mode. But it cost a design
+            iteration to discover, and the docs still don't mention it. **The one-line
+            fix is a sentence on `editing`**: "while any mark in a row is editing, that
+            row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -3419,14 +3419,38 @@ against the report's stated ordering:
 
 ### Cross-references to tracked work
 
-| Report item | Existing entry   | What the third report adds                                                                                                  |
-| ----------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| PG-5        | [PND-WIDTH]      | **Third** consumer. New information is the multiplier: seven panes × the same ~25-line measure-and-gate hook in one section |
-| PG-6        | runtime restyle  | Second consumer; twelve interactive series is where the memoized theme-rebuild "stops feeling like a workaround"            |
-| PG-14       | [PND-AXES]       | [PND-SYMLOG] shipped on **y** only; a non-linear **x** scale is still open                                                  |
-| PG-16       | [PND-AXISMIRROR] | Reopens a decline that was one day old (see above)                                                                          |
-| PG-10/11/12 | [PND-INTERACT2D] | Confirms the split: 2-D select shipped, 2-D zoom (`RangeSpan.y`, controlled y viewport) did not                             |
-| PG-26       | [PND-CHFRIC]     | Points at the per-mark bar colour fix as the precedent for the same split on grid cells                                     |
+| Report item | Existing entry   | What the third report adds                                                                                                                                                                                            |
+| ----------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PG-5        | [PND-WIDTH]      | **Third** consumer. New information is the multiplier: seven panes × the same ~25-line measure-and-gate hook in one section                                                                                           |
+| PG-6        | runtime restyle  | Second consumer; twelve interactive series is where the memoized theme-rebuild "stops feeling like a workaround"                                                                                                      |
+| PG-14       | [PND-AXES]       | **Half-closed by #653** (landed the same day, independently): x now takes `linear \| log \| symlog` like y, so the _parity_ ask is met — but Ignite wants **square-root**, which neither axis has. See the note below |
+| PG-16       | [PND-AXISMIRROR] | Reopens a decline that was one day old (see above)                                                                                                                                                                    |
+| PG-10/11/12 | [PND-INTERACT2D] | Confirms the split: 2-D select shipped, 2-D zoom (`RangeSpan.y`, controlled y viewport) did not                                                                                                                       |
+| PG-26       | [PND-CHFRIC]     | Points at the per-mark bar colour fix as the precedent for the same split on grid cells                                                                                                                               |
+
+### PG-14 reframed by #653, not closed by it
+
+`<ChartContainer xScale="log" | "symlog">` landed in #653 on **2026-08-12**,
+independently and the same day as this register was filed. It changes what
+PG-14 _is_, which is worth separating from whether it is done:
+
+- **The parity half is closed.** The entry's own framing was "matching the
+  linear/log/symlog choice already offered on the value axis" — x now has
+  exactly those three kinds, and #653's own reasoning for putting the prop on
+  the container rather than `<XAxis>` (one shared x scale, built by the
+  container; `<XAxis>` props are all presentational) is the right seam.
+- **Ignite's actual need is not met.** They ask for "power / square-root", and
+  `pow`/`sqrt` exist on _neither_ axis. So the remaining ask is no longer
+  "give x what y has" — it is "add a `pow` kind", on both axes, which is a
+  different and slightly larger item than the parity pass it was filed under.
+
+That distinction matters for scheduling: PG-14 was cheap as parity (move an
+existing prop) and is not cheap as a new scale kind (a tick ladder for a power
+scale is its own problem, and `exponent` becomes a second prop). It leaves
+theme G's parity pass with four items instead of five.
+
+Recorded because the register would otherwise read as if PG-14 were still the
+original ask, and the next reader would size it wrongly.
 
 ### Shipped 2026-08-12 — themes A, C and B
 
@@ -3509,7 +3533,8 @@ frame) => …}>` receiving the resolved frame inside the plot's clip and
   overturns the no-per-component-colour rule). **PG-19**, gap/sessionBreak
   parity for the band layer — parity, not new capability, and worth doing
   because the session axis is one of the library's strongest features.
-  **Theme G**, the axis-parity pass (PG-14, PG-16, PG-8, PG-20, PG-25) — five
+  **Theme G**, the axis-parity pass (PG-16, PG-8, PG-20, PG-25; PG-14 is now
+  a `pow` ask rather than a parity one, see above) — four
   individually small items, worth one pass rather than five tickets.
 - **P3** — theme H (finish 2-D: emit `RangeSpan.y`, controlled y viewport),
   theme I (PG-18 shared encoding domain is arguably correctness, not
