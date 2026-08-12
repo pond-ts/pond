@@ -36,6 +36,7 @@ import {
   type LegendItemInput,
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
+import { useBandLadder } from './use-band-ladder.js';
 
 export interface AreaChartCommon<
   S extends SeriesSchema = SeriesSchema,
@@ -111,6 +112,58 @@ export interface AreaChartCommon<
    * `DecimateOption`.
    */
   decimate?: DecimateOption;
+  /**
+   * **Threshold breakpoints** ([PND-BANDAREA]) — colour the area *along its
+   * height* against a ladder, so the fill (and the value line on its top edge)
+   * shows which zone each stretch of the series sits in: low / medium / high
+   * as bands that switch exactly at the breakpoints. Breakpoints are
+   * **absolute data values** in the axis's own units — `[1, 2]` means
+   * "warning above 1, alarm above 2", not offsets from the baseline — and `n`
+   * of them make `n + 1` bands. Each must be finite and greater than zero;
+   * anything else is dropped with a dev warning (the ladder is walked on the
+   * magnitude, so a negative breakpoint is not expressible).
+   *
+   * ```tsx
+   * // neutral to 1, warning 1–2, alarm above 2
+   * <AreaChart series={s} column="value" thresholds={[1, 2]} />
+   * ```
+   *
+   * Band fills come from {@link AreaStyle.bands} on the resolved role
+   * (`theme.area[as] ?? theme.area.default`), overridden by {@link bandColors}.
+   * Breakpoints are data and live here; colour stays in the theme — the same
+   * split `<BarChart thresholds>` uses ([PND-BANDBAR2]), and the same
+   * magnitude-mirrored reading: values below zero (an above/below-axis area
+   * with `baseline={0}`) walk the same ±ladder without negative breakpoints.
+   *
+   * **A banded area is still one area.** One hit region, one legend row, one
+   * readout identity; hover / selection strengthen the fill and keep the band
+   * colours, and a swept window's `spanColor` single-hue swap is skipped for
+   * the same reason the banded bar keeps its own colours — one hue would
+   * erase the very thing the bands encode. The banded fill is **flat** (the
+   * grade to transparent at the baseline is dropped): the fade encoded
+   * distance-from-baseline, which the ladder now states discretely. The
+   * outline strokes in the band hues too, switching exactly at each crossing.
+   *
+   * Composes with `curve`, `gaps` and `decimate` unchanged — banding rides
+   * the paint, not the geometry, so M4 decimation stays on (unlike the bar
+   * envelope, which collapses many bars into one rect and so cannot carry
+   * per-band colour). The inferred gap connectors (`'dashed'` / `'step'` /
+   * `'fade'`) keep the role's line colour: they are guesses about absent
+   * data, and a zone colour would over-claim exactly where nothing was
+   * measured.
+   */
+  thresholds?: readonly number[];
+  /**
+   * Call-site override for the {@link thresholds} band fills — `bandColors[k]`
+   * paints the band above `thresholds[k - 1]`, so a ladder of `n` thresholds
+   * reads `n + 1` entries. Omitted ⇒ {@link AreaStyle.bands} from the theme.
+   *
+   * Prefer the theme for anything a design system owns; this is the escape
+   * hatch for a one-off ladder that shouldn't mint a theme role. If neither
+   * source supplies enough entries, the shortfall falls back to the flat fill
+   * and dev-warns rather than silently drawing an unbanded area.
+   */
+  bandColors?: readonly string[];
   /**
    * This layer's `<Legend>` row: `false` ⇒ no row (opt out), a string ⇒ the
    * row's display name. **Omitted ⇒ a row named by the layer's readout
@@ -225,6 +278,8 @@ export function AreaChart<
   curve,
   gaps = DEFAULT_GAP_MODE,
   decimate = true,
+  thresholds,
+  bandColors,
   legend,
   index = 0,
 }: AreaChartProps<S, VS>) {
@@ -263,6 +318,17 @@ export function AreaChart<
   const { area } = container.theme;
   const style =
     (semantic !== undefined ? area[semantic] : undefined) ?? area.default;
+  // ── Threshold ladder ([PND-BANDAREA]) — breakpoints normalized + paired
+  // with `bandColors` → the role's `AreaStyle.bands` in the shared
+  // {@link useBandLadder} (one contract with `<BarChart thresholds>`,
+  // including every dev warning).
+  const bandLadder = useBandLadder(
+    'AreaChart',
+    thresholds,
+    bandColors,
+    style.bands,
+    style.fill,
+  );
   // Series identity for the readout (the `as` role, else the column name).
   const label = semantic ?? column;
   const curveFactory = resolveCurve(curve);
@@ -431,7 +497,12 @@ export function AreaChart<
             plotExtentOf(ctx, xScale, yScale).height,
             fill(outStyle, outAlpha),
             fill(
-              style.spanColor === undefined || !soleSpannedTrace
+              // A banded area skips the window's single-hue swap: one hue
+              // would erase the very thing the bands encode (the banded bar's
+              // rule), so the window strengthens and keeps the ladder.
+              style.spanColor === undefined ||
+                !soleSpannedTrace ||
+                bandLadder !== undefined
                 ? inStyle
                 : { ...inStyle, color: style.spanColor, fill: style.spanColor },
               1,
@@ -461,6 +532,7 @@ export function AreaChart<
               gaps,
               gapConnectorOpacity,
               decimate,
+              bandLadder,
             );
           }
         },
@@ -481,6 +553,7 @@ export function AreaChart<
       gaps,
       gapConnectorOpacity,
       decimate,
+      bandLadder,
       axis,
       id,
       traceState,

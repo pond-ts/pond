@@ -717,6 +717,28 @@ export interface AreaStyle {
   /** Ink for a swept window's emphasised portion (edge + fill).
    *  **Omitted ⇒ the area keeps its own colours and only strengthens.** */
   readonly spanColor?: string;
+  /**
+   * The **threshold-band ladder** — ordered fills for an area coloured *along
+   * its height* against `<AreaChart thresholds>`: `bands[0]` up to the first
+   * threshold, `bands[1]` between the first and second, and so on. A ladder of
+   * `n` thresholds reads `n + 1` entries. The fill **and** the outline take
+   * the band hues (one hard-stop gradient in pixel space), and the grade to
+   * transparent is dropped: the fade encoded distance-from-the-baseline, which
+   * is exactly what the ladder now states discretely — two encodings of one
+   * thing would fight.
+   *
+   * Lives on `AreaStyle` for {@link BarStyle.bands}' reason: `theme.area` is a
+   * semantic **map**, so a top-level key would collide with a role of that
+   * name — and per-role is the more useful shape (`area.default.bands` and a
+   * capacity role's ladder can differ).
+   *
+   * **Overridden by `<AreaChart bandColors>`** at the call site. If neither
+   * resolves enough entries for the ladder, the shortfall falls back to the
+   * flat {@link fill} and (in dev) warns — the same contract as the bar
+   * ladder, because a silently-unbanded chart is the failure mode the feature
+   * exists to remove.
+   */
+  readonly bands?: readonly string[];
 }
 
 /**
@@ -995,6 +1017,9 @@ export const defaultTheme: ChartTheme = {
       selectedFillOpacity: 0.55,
       dimmedOpacity: 0.32,
       spanColor: '#3F5BE0',
+      // The same ok → warning → alarm ladder `bar.default.bands` carries, so a
+      // banded area and a banded bar over one dataset read as one system.
+      bands: ['#2A9D8F', '#e8a13c', '#d64545'],
     },
     in: { color: '#0284c7', width: 1.5, fill: '#0284c7', fillOpacity: 0.3 },
     out: { color: '#e8836b', width: 1.5, fill: '#e8836b', fillOpacity: 0.3 },

@@ -88,7 +88,7 @@ interface Tickable {
  * render blank for almost every real number. A linear scale's `tickFormat`
  * applies the specifier to whatever it is handed, which is what every consumer
  * of this function actually wants; the axis's own tick *thinning* is handled by
- * `yTickValues`, not here.
+ * `tickValues`, not here.
  *
  * **A symlog scale's precision comes from its knee, not its span** ([PND-SYMLOG]).
  * `scaleSymlog.tickFormat` is `linearish`, so it derives precision from the

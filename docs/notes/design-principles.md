@@ -35,6 +35,34 @@ These hold across all new work:
   pattern. An `events.map(...)` in an operator body or a downstream
   package's hot path is a bug even when the tests pass.
 
+## Selection is a mark, not a recolour of the data
+
+**A live mark must not be shown by changing the colour that carries the value.**
+Selection and hover draw in the _annotation_ register — an edge, an outline, an
+inset accent — and leave the datum's own colour alone.
+
+Two layers arrived at this independently, which is what makes it a rule rather
+than a preference:
+
+- **`<HeatMap>`** refuses to swap a cell's fill for a highlight, because on a
+  heat map the colour _is_ the datum — replacing it erases the reading the chart
+  exists to give. A live cell takes an outline instead ([PND-HEATMAP]).
+- **`<BarList>`** marks a selected row with an inset accent edge and leaves the
+  magnitude bar its data colour.
+
+Observed from the outside by the estela agent, whose hand-built list recoloured
+the whole bar on select and which is adopting the convention after seeing it:
+"selection is a mark, not a data recolour — arguably the cleaner one."
+
+The corollary is the test: **if a reader could mistake the live treatment for a
+different value, it is wrong.** That is why `<HeatMap>`'s hover is an outline
+rather than an alpha pop — dimming a cell shifts where the reader places it on
+the colour scale, which is the same error in a quieter form.
+
+The one deliberate exception is `binColors`, where each bar's _own_ fill pops
+for both states so a red/green volume bar keeps its meaning while live. That is
+a recolour of intensity, not of hue — the value's identity survives it.
+
 ## Semantics to preserve
 
 ### Half-open bucketing

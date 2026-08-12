@@ -152,6 +152,9 @@ a previously-continuous container into them:
 - **`range` stops applying to x.** The domain is `[0, n]` from the slot count,
   so an x range is a no-op rather than an error. Show a subset by passing fewer
   categories.
+- **`xScale` stops applying.** `'log'` / `'symlog'` describe how a _continuous_
+  x spaces its values; ordinal slots are evenly spaced by definition, so the
+  kind is ignored (as it already is on a time axis).
 
 ### The hazard this cannot catch
 

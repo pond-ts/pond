@@ -1,5 +1,11 @@
 import { createContext, type ReactNode } from 'react';
-import type { ScaleContinuousNumeric, ScaleLinear, ScaleTime } from 'd3-scale';
+import type {
+  ScaleContinuousNumeric,
+  ScaleLinear,
+  ScaleLogarithmic,
+  ScaleSymLog,
+  ScaleTime,
+} from 'd3-scale';
 import type { ChartTheme } from './theme.js';
 import type { AxisFormat, CursorFormat } from './format.js';
 // Type-only (erased at runtime): swatch.ts imports RowContext from here, so a
@@ -375,9 +381,25 @@ export interface ContainerFrame {
   readonly xScale:
     | ScaleTime<number, number>
     | ScaleLinear<number, number>
+    // `<ChartContainer xScale="log" | "symlog">`. Both share d3's continuous
+    // surface with `ScaleLinear` — call, `invert`, `ticks`, `domain`, `range` —
+    // so a reader that only uses the scale needs no branch. What *does* branch
+    // is arithmetic over the domain, which must move into log space; see
+    // `ViewportOptions`.
+    | ScaleLogarithmic<number, number>
+    | ScaleSymLog<number, number>
     | TradingTimeScale
     | ScaleBand
     | ElapsedScale;
+  /**
+   * Is the x scale **logarithmic** (`log` or `symlog`)?
+   *
+   * Detected structurally rather than threaded from the prop: `base()` exists
+   * on d3's log scales and on no other continuous scale, which is the same test
+   * `yticks.ts` already uses on the y side. Read by the viewport gestures,
+   * which must do their arithmetic in log space (see `ViewportOptions`).
+   */
+  readonly xIsLog: boolean;
   /**
    * The discontinuity provider backing a **trading-time** x axis, if one was
    * supplied to the container — closed-market time (weekends, holidays,
