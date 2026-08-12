@@ -328,10 +328,10 @@ label + data cells, `sortBy`/`sort`, optional per-row expander. The in-plot
 histogram stays `<BarChart orientation="horizontal">` — these are the table
 shape (react-timeseries-charts' `HorizontalBarChart`).
 
-| Component | Data props                                                                           | Purpose                                                             | Source                            |
-| --------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------- | --------------------------------- |
-| `BarList` | `rows`, `columns` (`values` names), `sortBy?`, `before?`/`after?`, `renderExpanded?` | Ranked bar list — one proportional bar line per column per row      | `packages/charts/src/BarList.tsx` |
-| `BoxList` | `rows`, `columns` (five-number names + `value?` tick), same table props              | Distribution list — range band / q1→q3 body / median / current tick | `packages/charts/src/BoxList.tsx` |
+| Component | Data props                                                                                         | Purpose                                                             | Source                            |
+| --------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------- |
+| `BarList` | `rows`, `columns` (`values` names), `barColors?`, `sortBy?`, `before?`/`after?`, `renderExpanded?` | Ranked bar list — one proportional bar line per column per row      | `packages/charts/src/BarList.tsx` |
+| `BoxList` | `rows`, `columns` (five-number names + `value?` tick), same table props                            | Distribution list — range band / q1→q3 body / median / current tick | `packages/charts/src/BoxList.tsx` |
 
 Row/option types + readers (`packages/charts/src/list.ts`): `ListRow`,
 `ListValue`, `ListCellSpec`, `ListMarker` (reference rule through every row,

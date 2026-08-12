@@ -76,6 +76,33 @@ include new features and type-level changes; patch bumps are strictly additive.
   `gaps` and M4 decimation unchanged; a swept window keeps the band colours
   (no `spanColor` swap). Ladder resolution + dev warnings shared with
   `<BarChart>` via one internal hook.
+- **charts: `<BarList barColors>` — per-row bar colour** ([#650]). The list's
+  counterpart to `<BarChart binColors>`: `barColors[i]` aligned to the rows you
+  passed, an `undefined` or short entry falling back to the column's `as` /
+  theme fill.
+
+  ```tsx
+  <BarList rows={zones} columns={[{ column: 'frac' }]} barColors={ZONE_RAMP} />
+  ```
+
+  For the case `binColors` was built for and a list could not do — a zone table
+  where each row's bar carries its own step of a ramp. A `BarListColumn`'s
+  single `as` paints every row the same colour, so the ramp had to move onto the
+  row label, putting it on the wrong element: the bar is the natural carrier of
+  a magnitude.
+
+  **Colours key on the row, not its render position**, so they follow the data
+  through a `sortBy` rather than repainting the ramp onto whichever rows now sit
+  in those slots.
+
+  **A per-row colour makes the fill load-bearing, so its state treatment stands
+  down** — a coloured bar keeps its own colour while selected, and shows the
+  state in opacity instead. That is the rule a multi-metric row already
+  followed, and the one `binColors` follows on the canvas: recolouring a bar
+  that means something trades a distinction the reader needs for one the band
+  and rail already give them.
+
+  [#650]: https://github.com/pond-ts/pond/issues/650
 
 ## [0.59.0] — 2026-08-11
 
