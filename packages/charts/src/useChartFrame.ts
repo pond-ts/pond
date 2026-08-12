@@ -170,11 +170,19 @@ export interface ChartFrame {
    * The shared x→pixel scale, mapping into `[0, plot.width]`. Callable
    * (`value → px`) with `invert` / `ticks` / `tickFormat`, whichever kind the
    * container resolved (see {@link ChartXScale}).
+   *
+   * **Not the same thing as `<ChartContainer xScale>`**, which is a string
+   * naming how a *value* axis spaces itself (`'linear' | 'log' | 'symlog'`).
+   * This is the built scale object that choice — along with the data's kind,
+   * `origin`, `discontinuities` and `categories` — resolves to.
    */
   readonly xScale: ChartXScale;
   /**
-   * Which kind of x axis resolved. `'category'` is exactly when
-   * {@link bands} is non-null.
+   * Which **kind** of x axis resolved: `'time'`, `'value'` or `'category'`.
+   * `'category'` is exactly when {@link bands} is non-null.
+   *
+   * Distinct from `<ChartContainer xScale>` again: that picks the spacing
+   * *within* a value axis, this says whether the axis is a value axis at all.
    */
   readonly xKind: 'time' | 'value' | 'category';
   /** Ordinal slot geometry on a `'category'` axis; `null` otherwise. */

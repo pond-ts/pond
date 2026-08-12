@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { TimeSeries } from 'pond-ts';
+import { TimeSeries, ValueSeries } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
@@ -493,3 +493,80 @@ export const HiddenAxisWithGrid: Story = {
     </ChartContainer>
   ),
 };
+
+/**
+ * **A logarithmic value x axis** — `<ChartContainer xScale="log">` ([PND-XLOG],
+ * [#649]).
+ *
+ * The shape below is a **power–duration curve**: the best average power a rider
+ * held for each duration, from a 1-second sprint to a 3-hour ride. Every cycling
+ * tool draws it on a log x, because the interesting structure is spread across
+ * four orders of magnitude — the sprint end and the endurance end are both
+ * decades wide, and a linear axis crushes everything under a minute into the
+ * first 0.5% of the plot.
+ *
+ * Compare with `ValueXLinear` below: same data, same domain, and on the linear
+ * axis all seven of the short-duration points stack against the left edge.
+ *
+ * **The prop is on the container, not on `<XAxis>`.** There is one x scale
+ * shared by every row and the container builds it; `<XAxis>` renders that scale
+ * and all of its props are presentational. `<YAxis scale>` is the other way
+ * round — one scale per axis per row, declared by the axis.
+ */
+const POWER_DURATION = (() => {
+  // secs → watts, the usual decay: huge for a sprint, asymptotic by ~1h.
+  const pts: Array<[number, number]> = [
+    [1, 1180],
+    [5, 900],
+    [15, 700],
+    [30, 560],
+    [60, 460],
+    [300, 360],
+    [1200, 305],
+    [3600, 270],
+    [10800, 240],
+  ];
+  // A **ValueSeries**: the x axis is seconds, not a date. `xScale` applies to
+  // the value axis only — a log *time* axis is meaningless, and a `TimeSeries`
+  // here would render linear with clock labels.
+  return ValueSeries.fromColumns({
+    name: 'pd',
+    schema: [
+      { name: 'secs', kind: 'value' },
+      { name: 'watts', kind: 'number' },
+    ] as const,
+    columns: {
+      secs: pts.map((p) => p[0]),
+      watts: pts.map((p) => p[1]),
+    },
+  });
+})();
+
+const pdChart = (xScale?: 'log') => (
+  <ChartContainer
+    range={[1, 10800]}
+    width={620}
+    theme={defaultTheme}
+    // The container auto-renders its own axis strip; an explicit <XAxis> on
+    // top of it draws two. Every other story here does the same.
+    showAxis={false}
+    {...(xScale ? { xScale } : {})}
+  >
+    <ChartRow height={260}>
+      <YAxis id="w" label="watts" />
+      <Layers>
+        <LineChart series={POWER_DURATION} column="watts" axis="w" />
+      </Layers>
+    </ChartRow>
+    <XAxis label="duration (s)" />
+  </ChartContainer>
+);
+
+export const ValueXLog: Story = { render: () => pdChart('log') };
+
+/**
+ * The same curve on the default linear x, for contrast. Everything below a
+ * minute — which is most of the curve's shape — is compressed against the left
+ * edge and unreadable. This is the story `ValueXLog` exists to fix.
+ */
+export const ValueXLinear: Story = { render: () => pdChart() };

@@ -64,6 +64,73 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- `@pond-ts/charts`: `<AreaChart thresholds>` + `bandColors` — threshold
+  banding along the area's height ([PND-BANDAREA]), the area counterpart of
+  `<BarChart thresholds>`. `n` breakpoints (absolute data values, magnitude-
+  mirrored below zero) make `n + 1` bands; fills resolve `bandColors` → the
+  new `AreaStyle.bands` theme token (the default theme ships the same
+  teal/amber/red ladder as the bar role). One hard-stop pixel-space gradient
+  carries the ladder for the fill **and** the outline, so the value line
+  switches hue exactly at each crossing and the banded area keeps one hit
+  region, one legend row and one readout identity. Composes with `curve`,
+  `gaps` and M4 decimation unchanged; a swept window keeps the band colours
+  (no `spanColor` swap). Ladder resolution + dev warnings shared with
+  `<BarChart>` via one internal hook.
+- **charts: `<ChartContainer xScale="log" | "symlog">` — a logarithmic value x
+  axis** ([#649]). The x counterpart of `<YAxis scale>`, for a quantity spanning
+  orders of magnitude — a power–duration curve is watts against 1s · 5s · 1m ·
+  20m · 3h, which is unreadable on a linear x.
+
+  ```tsx
+  <ChartContainer range={[1, 10800]} xScale="log">
+  ```
+
+  **Why the container and not `<XAxis scale>`**, where the `<YAxis>` mirror would
+  put it: there is one x scale shared by every row and the container builds it,
+  while every `<XAxis>` prop is presentational (`format`, `label`, `side`,
+  `ticks`, `align`, …). `<YAxis>` is the opposite — one scale per axis per row,
+  declared by the axis, which is why `min`/`max`/`pad`/`scale` live there. It
+  sits beside `origin`, `spacing` and `calendar`, which shape the same scale.
+
+  Ignored on a time or category axis. A `'log'` domain reaching zero **falls back
+  to linear and warns** rather than silently clamping — `log(0)` is undefined;
+  use `'symlog'` for data that crosses zero.
+
+  Nothing downstream branches: d3's log scales share the continuous-scale
+  surface, so draw layers are untouched. The tick ladder is the one the y axis
+  already built (`tickValues`, renamed from `yTickValues` now that both axes use
+  it) — d3's raw `scaleLog.ticks()` is nearly a step function.
+
+  [#649]: https://github.com/pond-ts/pond/issues/649
+
+- **charts: `<BarList barColors>` — per-row bar colour** ([#650]). The list's
+  counterpart to `<BarChart binColors>`: `barColors[i]` aligned to the rows you
+  passed, an `undefined` or short entry falling back to the column's `as` /
+  theme fill.
+
+  ```tsx
+  <BarList rows={zones} columns={[{ column: 'frac' }]} barColors={ZONE_RAMP} />
+  ```
+
+  For the case `binColors` was built for and a list could not do — a zone table
+  where each row's bar carries its own step of a ramp. A `BarListColumn`'s
+  single `as` paints every row the same colour, so the ramp had to move onto the
+  row label, putting it on the wrong element: the bar is the natural carrier of
+  a magnitude.
+
+  **Colours key on the row, not its render position**, so they follow the data
+  through a `sortBy` rather than repainting the ramp onto whichever rows now sit
+  in those slots.
+
+  **A per-row colour makes the fill load-bearing, so its state treatment stands
+  down** — a coloured bar keeps its own colour while selected, and shows the
+  state in opacity instead. That is the rule a multi-metric row already
+  followed, and the one `binColors` follows on the canvas: recolouring a bar
+  that means something trades a distinction the reader needs for one the band
+  and rail already give them.
+
+  [#650]: https://github.com/pond-ts/pond/issues/650
+
 - **charts: `useChartFrame()` — the resolved plot geometry, published**
   ([PND-IGNITEFRAME]). A hook returning what the container already worked out:
   the plot rect (`plot.x` / `plot.width`), the reserved axis `gutters`, the

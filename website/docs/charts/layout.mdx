@@ -156,13 +156,13 @@ function SlotHeader() {
 </ChartContainer>;
 ```
 
-| Field                     | What it is                                                                               |
-| ------------------------- | ---------------------------------------------------------------------------------------- |
-| `plot.x` / `plot.width`   | The plot rect's x geometry, relative to the container's box                              |
-| `gutters.left` / `.right` | The reserved axis gutters (`gutters.left === plot.x`)                                    |
-| `xScale` / `xKind`        | The shared x→pixel scale and which kind resolved                                         |
-| `bands`                   | Ordinal slot geometry (`count`, `pitch`, `labels`, `at(i)`) — `null` off a category axis |
-| `row`                     | `{ topInset, height, yScales, axisSides }` — **`null` outside a `<ChartRow>`**           |
+| Field                     | What it is                                                                                                                                                                         |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plot.x` / `plot.width`   | The plot rect's x geometry, relative to the container's box                                                                                                                        |
+| `gutters.left` / `.right` | The reserved axis gutters (`gutters.left === plot.x`)                                                                                                                              |
+| `xScale` / `xKind`        | The shared x→pixel **scale object**, and which kind resolved (`'time'`/`'value'`/`'category'`) — neither is the `<ChartContainer xScale>` prop, which names a value axis's spacing |
+| `bands`                   | Ordinal slot geometry (`count`, `pitch`, `labels`, `at(i)`) — `null` off a category axis                                                                                           |
+| `row`                     | `{ topInset, height, yScales, axisSides }` — **`null` outside a `<ChartRow>`**                                                                                                     |
 
 Three things to know:
 

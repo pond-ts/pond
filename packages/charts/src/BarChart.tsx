@@ -21,17 +21,16 @@ import {
   barIndexAtTime,
   drawBars,
   drawStacks,
-  normalizeThresholds,
   resolveBarBaseline,
   stackAt,
   stackBinExtent,
   stackValueExtent,
-  type BandLadder,
   type Orientation,
   type StackMark,
   type StackStyle,
 } from './bars.js';
 import { spansForLayer } from './span.js';
+import { useBandLadder } from './use-band-ladder.js';
 import { isDev } from './dev.js';
 import type { NumericColumn, ValueNumericColumn } from './column-names.js';
 import type { DecimateOption } from './decimate.js';
@@ -729,78 +728,16 @@ export function BarChart<
   );
 
   // ── Threshold ladder ([PND-BANDBAR2]) ────────────────────────────────────
-  // Resolved once here rather than per bar per frame: normalize the breakpoints
-  // (sort, drop non-finite), then pair them with `bandColors` → the role's
-  // `BarStyle.bands`. Everything that can go wrong with the pairing is a
-  // *silent* wrong-looking chart, so each case dev-warns — this feature exists
-  // because a quietly-unbanded bar was the workaround's failure mode.
-  // Value-compare the two array props rather than relying on their identity.
-  // `thresholds={[1, 2]}` inline is the documented usage and the shape every
-  // story and doc example uses — and a fresh array each render would rebuild
-  // the ladder, hence the layer `entry` below, hence a `registerLayer` call
-  // **every render**. That is a repaint treadmill, not just a noisy warning.
-  // The same value-compare-on-registration reasoning `<YAxis ticks>` already
-  // applies.
-  const thresholdKey = thresholds === undefined ? '' : thresholds.join(',');
-  const bandColorKey = bandColors === undefined ? '' : bandColors.join(',');
-  const bandLadder = useMemo<BandLadder | undefined>(() => {
-    const steps = normalizeThresholds(thresholds);
-    if (steps === null) {
-      if (isDev && thresholds !== undefined && thresholds.length > 0) {
-        console.warn(
-          '<BarChart thresholds>: no usable breakpoints, so no banding was ' +
-            'applied — each must be finite and greater than zero. Bars draw ' +
-            'in the flat fill.',
-        );
-      }
-      return undefined;
-    }
-    // Some, but not all, entries dropped. Silently banding on a subset of what
-    // the caller wrote is exactly the class of quiet wrongness this feature is
-    // meant to remove, so say so.
-    if (isDev && thresholds !== undefined && steps.length < thresholds.length) {
-      console.warn(
-        `<BarChart thresholds>: dropped ${thresholds.length - steps.length} ` +
-          'breakpoint(s) that were not finite and greater than zero. The ' +
-          'ladder is walked on the magnitude and mirrored onto whichever side ' +
-          'of zero a bar is on, so a negative breakpoint has no meaning; ' +
-          `banding on [${steps.join(', ')}].`,
-      );
-    }
-    const want = steps.length + 1;
-    const supplied = bandColors ?? singleStyle.bands;
-    if (supplied === undefined || supplied.length === 0) {
-      if (isDev) {
-        console.warn(
-          `<BarChart thresholds>: ${steps.length} breakpoint(s) need ${want} ` +
-            'band colours, but neither `bandColors` nor the theme role’s ' +
-            '`BarStyle.bands` supplies any. Bars draw in the flat fill.',
-        );
-      }
-      return undefined;
-    }
-    if (supplied.length < want && isDev) {
-      console.warn(
-        `<BarChart thresholds>: ${steps.length} breakpoint(s) need ${want} ` +
-          `band colours but only ${supplied.length} were supplied; bands ` +
-          'above the last colour fall back to the flat fill.',
-      );
-    }
-    // Pad a short ladder with the flat fill so the draw path can index freely.
-    const resolved =
-      supplied.length >= want
-        ? supplied.slice(0, want)
-        : [
-            ...supplied,
-            ...Array.from(
-              { length: want - supplied.length },
-              () => singleStyle.fill,
-            ),
-          ];
-    return { thresholds: steps, colors: resolved };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `thresholdKey` /
-    // `bandColorKey` are the value-compared stand-ins for the array props.
-  }, [thresholdKey, bandColorKey, singleStyle]);
+  // Breakpoints normalized + paired with `bandColors` → the role's
+  // `BarStyle.bands` in the shared {@link useBandLadder} (one contract with
+  // `<AreaChart thresholds>`, including every dev warning).
+  const bandLadder = useBandLadder(
+    'BarChart',
+    thresholds,
+    bandColors,
+    singleStyle.bands,
+    singleStyle.fill,
+  );
 
   // Conflicts between the ladder and the shapes it can't apply to. In an effect
   // so a re-render doesn't re-log; each fires once per genuinely new pairing.

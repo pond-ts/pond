@@ -7,6 +7,7 @@ import {
   CursorContext,
   type ResolvedCursorFrame,
 } from './context.js';
+import { tickValues } from './yticks.js';
 import { xAxisCursorEntries } from './cursors.js';
 import { axisPillStyle } from './chip.js';
 import type { TradingTimeScale } from './tradingTimeScale.js';
@@ -425,7 +426,16 @@ export function XAxis({
     ? customTicks.map((t) => ({ x: xScale(t.at), label: t.label }))
     : derived !== null
       ? honestDerived()
-      : (xScale.ticks(xTickCount) as ReadonlyArray<number | Date>).map((d) => ({
+      : // `tickValues`, not `xScale.ticks` — d3's raw `scaleLog.ticks()` is
+        // nearly a step function (see `yticks.ts`), so a log x needs the same
+        // decade ladder the y axis already builds. For a time or linear scale
+        // it defers to `scale.ticks(count)`, so this is a no-op there.
+        (
+          tickValues(
+            xScale as Parameters<typeof tickValues>[0],
+            xTickCount,
+          ) as ReadonlyArray<number | Date>
+        ).map((d) => ({
           x: xScale(d as number),
           label: tickFmt(+d),
           // A **period turn** renders emphasized (bold), consistently across

@@ -204,3 +204,71 @@ describe('zoomRangeTrading', () => {
     expect(provider.distance(lo, hi)).toBeCloseTo(wantSpan, 6);
   });
 });
+
+describe('ViewportOptions — value and log domains ([PND-XLOG])', () => {
+  describe('snap: false — a value axis is not milliseconds', () => {
+    it('keeps a fractional domain instead of rounding it away', () => {
+      // A power–duration curve over [0.5, 10800] seconds. The default snap
+      // would put the floor at 0 — which is not merely coarse, it is the value
+      // a log scale cannot represent.
+      const [lo, hi] = panRange([0.5, 10800], 0.25, { snap: false });
+      expect(lo).toBeCloseTo(0.75, 10);
+      expect(hi).toBeCloseTo(10800.25, 10);
+    });
+
+    it('does not collapse a sub-unit domain to a single integer', () => {
+      const [lo, hi] = zoomRange([0.001, 1], 0.03, 0.5, 1e-9, { snap: false });
+      expect(hi).toBeGreaterThan(lo);
+      expect(lo).toBeGreaterThan(0); // survives as a log-representable floor
+    });
+
+    it('still snaps by default, so a time axis is untouched', () => {
+      expect(panRange([10.4, 10.6], 0)).toEqual([10, 11]);
+    });
+  });
+
+  describe('log: true — the arithmetic moves into log space', () => {
+    it('holds the pivot under the cursor, which linear zoom does not', () => {
+      // The guarantee zoom exists for. Linear arithmetic on a log domain drags
+      // the value under the pointer sideways.
+      const range: [number, number] = [1, 10000];
+      const pivot = 100;
+      const before =
+        (Math.log(pivot) - Math.log(range[0])) /
+        (Math.log(range[1]) - Math.log(range[0]));
+      const [lo, hi] = zoomRange(range, pivot, 0.5, 1, { log: true });
+      const after =
+        (Math.log(pivot) - Math.log(lo)) / (Math.log(hi) - Math.log(lo));
+      expect(after).toBeCloseTo(before, 10);
+    });
+
+    it('zooms multiplicatively — equal decades in, equal decades out', () => {
+      const [lo, hi] = zoomRange([1, 10000], 100, 0.5, 1, { log: true });
+      // Four decades halved about the centre leaves two, centred on 100.
+      expect(Math.log10(hi / lo)).toBeCloseTo(2, 10);
+      expect(Math.sqrt(lo * hi)).toBeCloseTo(100, 6);
+    });
+
+    it('never produces a non-positive bound', () => {
+      // The failure that makes this more than a polish item: a log scale is
+      // undefined at zero, so an additive zoom-out is not just wrong but fatal.
+      const [lo] = zoomRange([1, 10000], 2, 8, 1, { log: true });
+      expect(lo).toBeGreaterThan(0);
+    });
+
+    it('pans by a ratio, so the same drag moves the same visual distance', () => {
+      // Additively, +100s near the 1s end walks off the plot and near the 3h
+      // end barely moves. In log space both are the same number of decades.
+      const range: [number, number] = [1, 10000];
+      const span = range[1] - range[0];
+      const [lo, hi] = panRange(range, span * 0.25, { log: true });
+      expect(Math.log10(hi / lo)).toBeCloseTo(4, 10); // width preserved
+      expect(lo).toBeGreaterThan(range[0]); // and it moved
+    });
+
+    it('leaves a non-positive or degenerate range alone rather than NaN-ing', () => {
+      expect(zoomRange([0, 10], 5, 0.5, 1, { log: true })).toEqual([0, 10]);
+      expect(panRange([-5, 5], 1, { log: true })).toEqual([-5, 5]);
+    });
+  });
+});

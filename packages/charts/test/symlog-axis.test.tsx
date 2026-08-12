@@ -7,7 +7,7 @@ import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { LineChart } from '../src/LineChart.js';
 import { YAxis } from '../src/YAxis.js';
-import { yTickValues } from '../src/yticks.js';
+import { tickValues } from '../src/yticks.js';
 import { resolveAxisFormat } from '../src/format.js';
 import { scaleLinear, scaleLog, scaleSymlog } from 'd3-scale';
 import {
@@ -146,7 +146,7 @@ describe('the tick ladder — the substance of the feature', () => {
 
   it('pond grids zero, the knee, and mirrored decades beyond it', () => {
     const s = scale(1e6);
-    const ticks = yTickValues(s, 8);
+    const ticks = tickValues(s, 8);
     expect(ticks).toContain(0);
     // The knee, both sides — where the reading changes régime.
     expect(ticks).toContain(20_000);
@@ -161,7 +161,7 @@ describe('the tick ladder — the substance of the feature', () => {
   it('never emits a tick outside the domain', () => {
     // A one-sided domain must not sprout negative ticks, and the mirrored
     // decades must clip rather than run off the plot.
-    const ticks = yTickValues(scale(1e6, 0.02, 0), 8);
+    const ticks = tickValues(scale(1e6, 0.02, 0), 8);
     expect(ticks.every((t) => t >= 0 && t <= 1e6)).toBe(true);
     expect(ticks).toContain(0);
     expect(ticks).toContain(1_000_000);
@@ -171,7 +171,7 @@ describe('the tick ladder — the substance of the feature', () => {
     // The ladder is assembled from three sources (zero, knee, decades), so it
     // must dedupe and sort — a label list out of order draws fine and reads
     // wrong.
-    const ticks = yTickValues(scale(1e6), 8);
+    const ticks = tickValues(scale(1e6), 8);
     expect([...ticks].sort((a, b) => a - b)).toEqual(ticks);
     expect(new Set(ticks).size).toBe(ticks.length);
   });
@@ -179,8 +179,8 @@ describe('the tick ladder — the substance of the feature', () => {
   it('thins decades to the budget instead of exploding', () => {
     // A ten-decade symmetric domain shows twenty decades of ladder; a small
     // count must step over them, the same rule the log path uses.
-    const many = yTickValues(scale(1e10, 1e-10), 6);
-    const few = yTickValues(scale(1e10, 1e-10), 40);
+    const many = tickValues(scale(1e10, 1e-10), 6);
+    const few = tickValues(scale(1e10, 1e-10), 40);
     expect(many.length).toBeLessThan(few.length);
     expect(many.length).toBeLessThanOrEqual(14);
   });
@@ -193,8 +193,8 @@ describe('the tick ladder — the substance of the feature', () => {
     // would not notice.
     const magnitudes = (ticks: readonly number[]) =>
       new Set(ticks.filter((t) => t !== 0).map(Math.abs)).size;
-    const oneSided = magnitudes(yTickValues(scale(1e10, 1e-10, 0), 6));
-    const twoSided = magnitudes(yTickValues(scale(1e10, 1e-10), 6));
+    const oneSided = magnitudes(tickValues(scale(1e10, 1e-10, 0), 6));
+    const twoSided = magnitudes(tickValues(scale(1e10, 1e-10), 6));
     expect(twoSided).toBeLessThan(oneSided);
     expect(twoSided).toBeLessThanOrEqual(Math.ceil(oneSided / 2) + 1);
   });
@@ -206,8 +206,8 @@ describe('the tick ladder — the substance of the feature', () => {
     // The knee is always drawn, so dropping that decade loses nothing.
     const s = scale(4.95e6);
     const knee = 0.02 * 4.95e6;
-    expect(yTickValues(s, 8)).toContain(knee);
-    for (const t of yTickValues(s, 8)) {
+    expect(tickValues(s, 8)).toContain(knee);
+    for (const t of tickValues(s, 8)) {
       if (t === 0 || Math.abs(t) === knee) continue;
       // Every other tick sits at least half a decade clear of the knee. √10, not
       // √2 — the offset is half a decade in log space, and asserting the weaker
@@ -228,7 +228,7 @@ describe('the tick ladder — the substance of the feature', () => {
       .constant(19_800)
       .domain([510_000, 990_000])
       .range([500, 0]);
-    const ticks = yTickValues(s, 6);
+    const ticks = tickValues(s, 6);
     expect(ticks.length).toBeGreaterThan(0);
     expect(ticks.every((t) => t >= 510_000 && t <= 990_000)).toBe(true);
   });
@@ -238,7 +238,7 @@ describe('the tick ladder — the substance of the feature', () => {
     // must not be thinned as though it were the mirrored two-sided ladder, which
     // would drop every other decade for no reason.
     const s = scaleSymlog().constant(1).domain([1e2, 1e8]).range([500, 0]);
-    const mags = yTickValues(s, 8)
+    const mags = tickValues(s, 8)
       .filter((t) => t !== 0)
       .map((t) => Math.round(Math.log10(Math.abs(t))));
     // 1e2 … 1e8 is seven decades against a budget of 8 — all of them fit.
@@ -255,9 +255,9 @@ describe('the tick ladder — the substance of the feature', () => {
       [Number.NaN, 1e6],
     ] as Array<[number, number]>) {
       const s = scaleSymlog().constant(100).domain(domain).range([500, 0]);
-      expect(() => yTickValues(s, 6)).not.toThrow();
+      expect(() => tickValues(s, 6)).not.toThrow();
       // And it returns promptly with whatever d3 makes of such a domain.
-      expect(Array.isArray(yTickValues(s, 6))).toBe(true);
+      expect(Array.isArray(tickValues(s, 6))).toBe(true);
     }
   });
 
@@ -266,20 +266,20 @@ describe('the tick ladder — the substance of the feature', () => {
     // logarithmically — and inside the knee symlog IS linear, so d3's linear
     // ticks are the correct answer rather than a fallback.
     const s = scale(1e6, 1);
-    expect(yTickValues(s, 6)).toEqual(s.ticks(6));
+    expect(tickValues(s, 6)).toEqual(s.ticks(6));
   });
 
   it('leaves log and linear axes untouched', () => {
     // Detection is structural (`constant()` exists only on symlog); a
     // regression here would silently re-ladder every other axis in the library.
     const l = scaleLinear().domain([0, 100]).range([100, 0]);
-    expect(yTickValues(l, 5)).toEqual(l.ticks(5));
+    expect(tickValues(l, 5)).toEqual(l.ticks(5));
     const g = scaleLog().domain([1, 1000]).range([100, 0]);
     // The log path picks decades itself, so it must not equal the raw d3 ticks
     // *and* must still be decades.
-    expect(
-      yTickValues(g, 5).every((t) => Number.isInteger(Math.log10(t))),
-    ).toBe(true);
+    expect(tickValues(g, 5).every((t) => Number.isInteger(Math.log10(t)))).toBe(
+      true,
+    );
   });
 });
 
@@ -298,7 +298,7 @@ describe('label precision comes from the knee, not the span', () => {
     // asserting one value, on the axis whose purpose was to separate them.
     const s = symlog(0.02, -1, 1);
     const fmt = resolveAxisFormat(s, 4, undefined);
-    const labels = yTickValues(s, 4).map(fmt);
+    const labels = tickValues(s, 4).map(fmt);
     expect(new Set(labels).size).toBe(labels.length);
     expect(labels).toContain(fmt(0.02));
     expect(fmt(0.02)).not.toBe(fmt(0));

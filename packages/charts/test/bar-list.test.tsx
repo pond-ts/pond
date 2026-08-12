@@ -393,3 +393,86 @@ describe('<BarList>', () => {
     expect(bare[1]!.style.borderTop).toBe('');
   });
 });
+
+describe('<BarList barColors> — per-row bar colour ([#650])', () => {
+  const ZONES: ListRow[] = [
+    { key: 'z1', label: 'Z1', values: { frac: 40 } },
+    { key: 'z2', label: 'Z2', values: { frac: 30 } },
+    { key: 'z3', label: 'Z3', values: { frac: 20 } },
+  ];
+  const RAMP = ['#0b3d3a', '#27a396', '#b6e7dd'];
+  const barOf = (c: HTMLElement, key: string) =>
+    c.querySelector(`[data-list-row="${key}"] [data-list-bar]`) as HTMLElement;
+
+  it('paints each row its own colour', () => {
+    const { container } = render(
+      <BarList rows={ZONES} columns={[{ column: 'frac' }]} barColors={RAMP} />,
+    );
+    expect(
+      ['z1', 'z2', 'z3'].map((k) => barOf(container, k).style.background),
+    ).toEqual(RAMP);
+  });
+
+  it('falls back to the theme fill for an undefined or short entry', () => {
+    // A partial list is legal — `binColors` has the same rule.
+    const { container } = render(
+      <BarList
+        rows={ZONES}
+        columns={[{ column: 'frac' }]}
+        barColors={['#0b3d3a', undefined]}
+      />,
+    );
+    expect(barOf(container, 'z1').style.background).toBe('#0b3d3a');
+    for (const k of ['z2', 'z3'])
+      expect(barOf(container, k).style.background).toBe(
+        defaultTheme.bar.default.fill,
+      );
+  });
+
+  it('follows the rows through a sort rather than the render order', () => {
+    // The colours align to the rows the caller passed; the table renders
+    // `sorted`. An index would repaint the ramp onto the wrong rows here.
+    const { container } = render(
+      <BarList
+        rows={ZONES}
+        columns={[{ column: 'frac' }]}
+        barColors={RAMP}
+        sortBy="frac"
+        sortDirection="asc"
+      />,
+    );
+    const order = Array.from(container.querySelectorAll('[data-list-row]')).map(
+      (r) => r.getAttribute('data-list-row'),
+    );
+    expect(order).toEqual(['z3', 'z2', 'z1']); // ascending by frac
+    // …and each row kept ITS colour, not the one at its new position.
+    expect(barOf(container, 'z1').style.background).toBe(RAMP[0]);
+    expect(barOf(container, 'z3').style.background).toBe(RAMP[2]);
+  });
+
+  it('keeps its own colour while selected, rather than swapping to highlight', () => {
+    // The fill means something now, so the state treatment stands down — the
+    // band and rail already say "selected". Same rule as a multi-metric row.
+    const { container } = render(
+      <BarList
+        rows={ZONES}
+        columns={[{ column: 'frac' }]}
+        barColors={RAMP}
+        selected="z2"
+      />,
+    );
+    const bar = barOf(container, 'z2');
+    expect(bar.style.background).toBe(RAMP[1]);
+    expect(bar.style.background).not.toBe(defaultTheme.bar.default.highlight);
+  });
+
+  it('still swaps to highlight when NO per-row colour is given', () => {
+    // The guard must not disable the existing treatment for everyone else.
+    const { container } = render(
+      <BarList rows={ZONES} columns={[{ column: 'frac' }]} selected="z2" />,
+    );
+    expect(barOf(container, 'z2').style.background).toBe(
+      defaultTheme.bar.default.highlight,
+    );
+  });
+});
