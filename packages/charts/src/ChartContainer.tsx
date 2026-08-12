@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { scaleLinear } from 'd3-scale';
+import { scaleLinear, scaleLog, scaleSymlog } from 'd3-scale';
 import {
   identityProvider,
   scaleTradingTime,
@@ -194,6 +194,33 @@ export interface ChartContainerProps {
    * carries its own metric).
    */
   spacing?: 'proportional' | 'uniform';
+  /**
+   * How the **value** x axis maps data to pixels. **Omitted ⇒ `'linear'`.**
+   *
+   * `'log'` for a quantity spanning orders of magnitude — a power–duration
+   * curve is watts against 1s · 5s · 1m · 20m · 3h, which is unreadable on a
+   * linear x. `'symlog'` is the same but linear through zero, for data that
+   * crosses it.
+   *
+   * **Ignored on a time or category axis**, which have their own spacing rules.
+   *
+   * **Why this lives on the container and not on `<XAxis scale>`,** which is
+   * where `<YAxis scale>`'s mirror would put it: there is one x scale shared by
+   * every row, and the container builds it. `<XAxis>` renders that scale and
+   * every one of its props is presentational (`format`, `label`, `side`,
+   * `ticks`, `align`, …) — none of them defines the scale. `<YAxis>` is the
+   * opposite: one scale per axis per row, declared by the axis, which is why
+   * `min` / `max` / `pad` / `scale` belong to it.
+   *
+   * Putting a scale-defining prop on `<XAxis>` would mean a registration
+   * round-trip to the component that already owns the scale, and would say the
+   * axis defines something it only draws. It sits here beside `origin`,
+   * `spacing` and `calendar`, which shape the same scale for the same reason.
+   *
+   * (Had `<XAxis>` been mandatory in the declaration, the props would more
+   * naturally have lived there and x would mirror y — see [PND-XLOG].)
+   */
+  xScale?: 'linear' | 'log' | 'symlog';
   /**
    * Draw the reference gridlines behind the data. On a calendar (time) axis
    * the verticals are the **full grain populations** — every day / month /
@@ -587,6 +614,7 @@ export function ChartContainer({
   discontinuities,
   calendar,
   spacing,
+  xScale: xScaleKind = 'linear',
   grid = true,
   sessionDividers = 'none',
   children,
@@ -1459,7 +1487,34 @@ export function ChartContainer({
       };
     }
     if (resolvedKind === 'value') {
-      const s = scaleLinear().domain([d0, d1]).range([0, plotWidth]);
+      // `scaleLog` / `scaleSymlog` share d3's continuous-scale surface — the
+      // call signature, `invert`, `ticks`, `domain`, `range` — so nothing
+      // downstream branches on which one this is. That is the whole of log
+      // support at the scale layer; the work is in the arithmetic that reads
+      // the domain (see `ViewportOptions`) and in the tick ladder.
+      //
+      // A log scale cannot represent a non-positive domain, and silently
+      // clamping would invent a view the caller did not ask for. So fall back
+      // to linear and say so, matching how `<YAxis scale="log">` behaves.
+      const wantsLog = xScaleKind !== 'linear';
+      const logUsable = xScaleKind === 'symlog' || (d0 > 0 && d1 > 0);
+      if (isDev && wantsLog && !logUsable) {
+        console.warn(
+          `<ChartContainer xScale="log">: the x domain [${d0}, ${d1}] includes ` +
+            'zero or a negative value, which a log scale cannot represent. ' +
+            'Falling back to a linear x axis — use xScale="symlog" for data ' +
+            'that crosses zero.',
+        );
+      }
+      const s = (
+        !wantsLog || !logUsable
+          ? scaleLinear()
+          : xScaleKind === 'symlog'
+            ? scaleSymlog()
+            : scaleLog()
+      )
+        .domain([d0, d1])
+        .range([0, plotWidth]);
       if (elapsedOrigin !== undefined) {
         // Offset (elapsed) value axis: same pixels, ticks anchored at the
         // origin, labels reading `v - origin`. A `timeFormat` / `cursorFormat`
@@ -1689,6 +1744,41 @@ export function ChartContainer({
     cb({ time, values });
   }, [cursorX, xScale, sources, plotWidth]);
 
+  // Structural, not `xScaleKind !== 'linear'`: a log scale asked for over a
+  // non-positive domain falls back to linear above, and the gestures must see
+  // what was actually built rather than what was requested. `base()` exists on
+  // d3's log scales and on no other continuous scale — the same test the y side
+  // already uses in `yticks.ts`.
+  // Both probes, because d3 splits them: `base()` is on `scaleLog` and
+  // `constant()` on `scaleSymlog` — the same pair `tickValues` tests.
+  // `xScale` shapes the VALUE axis only — a logarithmic time axis is
+  // meaningless and a category axis has its own band spacing. Saying so out
+  // loud rather than ignoring the prop: a request that quietly does nothing is
+  // the failure mode `panZoom2D` shipped with, where a mode named two axes and
+  // silently moved one.
+  // `sources.size > 0` because `resolvedKind` falls back to 'time' until the
+  // layers have registered — without the guard this fires once on every mount,
+  // including the valid ones.
+  if (
+    isDev &&
+    xScaleKind !== 'linear' &&
+    sources.size > 0 &&
+    resolvedKind !== 'value'
+  ) {
+    console.warn(
+      `<ChartContainer xScale="${xScaleKind}">: ignored on a ${resolvedKind} ` +
+        'x axis — it applies to a value axis only. A `TimeSeries` gives a time ' +
+        'axis; key the data on the quantity itself (a `ValueSeries`) to get a ' +
+        'value axis you can scale.',
+    );
+  }
+  const xIsLog = ((s: unknown) => {
+    const probe = s as { base?: unknown; constant?: unknown };
+    return (
+      typeof probe.base === 'function' || typeof probe.constant === 'function'
+    );
+  })(xScale);
+
   // Pack overlapping top-flag labels (markers + regions) into stacked lanes so
   // close-in-x labels don't collide; chips read their lane back off the frame.
   const labelLanes = useMemo(
@@ -1796,6 +1886,7 @@ export function ChartContainer({
       zoomEnabled,
       minDuration,
       applyRange,
+      xIsLog,
       zoomX,
       zoomY,
       panX,
@@ -1876,6 +1967,7 @@ export function ChartContainer({
       zoomEnabled,
       minDuration,
       applyRange,
+      xIsLog,
       zoomX,
       zoomY,
       panX,

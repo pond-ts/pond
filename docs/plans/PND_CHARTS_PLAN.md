@@ -23,6 +23,206 @@ split has shipped too (notes:
 
 ## Tasks
 
+## Two families, not four issues
+
+Four consumer-filed gaps arrived from estela's dogfooding within a week, and
+they are **not four unrelated asks**. They are two systematic gaps, each with
+the same character: _the mechanism already exists and only points one way._
+
+| **X/Y asymmetry**                                                                                   | **`<BarList>` lags `<BarChart>`**                                                          |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [PND-AXISGUT] / [#607] — the container auto-reserves Y gutter _widths_ but not the X strip _height_ | [PND-LISTHOVER] / [#608] — layers carry `hovered` / `onHover`; the list has selection only |
+| [PND-XLOG] / [#649] — `<YAxis scale="log">` exists; `<XAxis>` has no `scale` at all                 | [PND-LISTCOLOR] / [#650] — bars have `binColors`; a list column has one `as` for every row |
+
+Why the framing earns its place: each family is **cheaper than four separate
+fixes and more coherent**. The log/symlog domain resolution, tick ladder and dev
+warnings are all built — on the Y side. `binColors` and its discipline (a
+per-item colour list, `undefined` falls back to the theme, the highlight pops
+opacity rather than swapping the fill) is built — on the bar side. Both asks are
+largely carrying an existing capability across an axis or a component boundary,
+and doing each family in one pass keeps the two halves from drifting again.
+
+It also predicts where the next report comes from: **anywhere the answer to "does
+the other axis / the other component have this?" is no.**
+
+### [PND-XLOG] — `<XAxis scale="log">` — [#649]
+
+`<YAxis>` takes `scale?: 'linear' | 'log'`; `<XAxis>` takes no `scale` at all, so
+the shared x→pixel scale is `scaleTime` or `scaleLinear` and never `scaleLog`.
+
+**The use case is canonical, not exotic.** estela's mean-maximal power curve is
+watts against duration on a log-time x — 1s · 5s · 15s · 1m · 5m · 20m · 1h · 3h
+— which is how every cycling tool draws it.
+
+**The workaround distorts the data model, which is the tell.** They plot against
+`x = ln(durationSeconds)` on a linear value-x, then relabel ticks back to real
+durations with explicit `<XAxis ticks>`. So: the series carries a synthetic
+`ln(duration)` column purely to fool the axis, every tick position is a
+hand-computed `Math.log(d)`, and the cursor reports `info.time` in **ln-space**,
+so consumers `exp()` at the seam. A reader of that series cannot tell the x
+column is a logarithm.
+
+Most of the machinery exists — `resolveLogDomain`, `logAxisWarning`, the symlog
+tick apparatus — but this is the **shared** x scale rather than a per-row y
+scale, so it is the more invasive of the two families: it touches the
+container's x-scale resolution, and every consumer of `info.time` /
+`trackerPosition` / the region-cursor snap sees a log domain. Worth checking what
+`zoomRange` / `panRange` do under it, since they assume linear span arithmetic.
+
+### [PND-LISTCOLOR] — `<BarList>` per-row bar colour — [#650]
+
+`BarListColumn` carries exactly two fields, `column` and `as`, so one theme role
+covers every row and each bar is the same colour. `<BarChart binColors>` already
+proves the pattern, and its documented use case is literally _"colour heart-rate
+/ power zones each their own colour"_ — which is what estela wanted and could not
+have.
+
+**Their workaround put the colour on the wrong element**, by their own account:
+the zone ramp moved onto the row's label tag and the bar stayed neutral. The bar
+is the natural carrier of a magnitude ramp.
+
+The contained one of the two. Follow `binColors`' discipline exactly, including
+the part that matters: **the highlight pops opacity rather than swapping the
+fill**, so a row keeps its own colour while live — which is the same rule as
+`selection is a mark, not a recolour of the data` below, and the reason a
+`binColors` bar is the one deliberate exception to it.
+
+[#649]: https://github.com/pond-ts/pond/issues/649
+[#650]: https://github.com/pond-ts/pond/issues/650
+
+### [PND-LISTHOVER] — `<BarList>` has selection but no hover — [#608]
+
+**Confirmed by a built migration spike**, not analysis: estela ran `<BarList>`
+against its real Queen K splits — 124 rows, its own `--es-*` theme — and
+everything else fitted on the first try. Its theme applied, the shared magnitude
+`domain` auto-fitted, `sortBy`-less gave chronological input order, `after`
+cells aligned, `renderExpanded` took its detail panel, `selected` / `onRowClick`
+carried the lock, and the generic `R extends ListRow` carried its extra
+`values` fields through to `renderExpanded` fully typed with a clean typecheck.
+Row hover is the single thing between them and deleting their custom list.
+
+Filed by the estela agent from an actual `<BarList>` migration, which is the
+most valuable kind of report: everything else fitted. `selected` +
+`onRowClick` carried its lock in both directions, `renderExpanded` covered its
+per-row detail panel, `columns` / `after` mapped straight onto its magnitude bar
+and speed/climb cells. **Only hover blocked it.**
+
+Verified against the code:
+
+- `ListTable.tsx:80` holds `useState<string | null>` for hover and consumes it
+  at L211 purely for its own row affordance.
+- `BarListCommon` exposes `selected` (L79) and `onRowClick` (L81) — and no
+  hover prop in either direction.
+
+So hover exists, works, and is sealed in. A consumer can neither read it nor
+drive it.
+
+**Why that is a blocker rather than a nice-to-have.** estela's list is
+_bidirectionally_ hover-linked: row hover lights a map preview and the matching
+chart bar; chart-bar hover lights the row. Migrating with only `selected`
+carries the lock but drops hover — a regression against a behaviour its owner
+had just asked to make _more_ prominent. `data-list-row={key}` lets them fake
+the **out** direction by event delegation; the **in** direction has no path at
+all, because the internal state is uncontrollable.
+
+**The shape is already decided elsewhere, which is the argument.** The canvas
+layers carry `hovered` / `onHover` _alongside_ `selected` / `onSelect` — a
+consumer wiring a `<BarChart>` already knows this vocabulary. `<BarList>` is the
+same two-state interaction one level up and should say it the same way:
+`hovered?: string | null` in, `onRowHover?: (row | null) => void` out, on
+`BarListCommon`.
+
+It is also the [#577] shape repeating: that was bars having one channel where
+the interaction has two states. This is the list having one channel for the same
+reason. Worth asking whether anything else in the package assumes selection is
+the only controllable interaction state.
+
+**Orthogonal to the multi-select wave — safe to land independently.** Raised by
+estela while [#606] ([PND-MULTISEL]) is in flight. Checked, and they do not
+collide: #606 widens _selection_ into a set on the **canvas layers**
+(`selected: SelectInfo | SelectInfo[]`, `onSelect(hit, modifiers)`,
+`BarStyle.dimmed`) and does not touch the list family, while
+`docs/rfcs/selection.md` L247 already settles the question this would otherwise
+raise — **"`hovered` stays singular — hover is inherently one mark under the
+pointer; only committed selection is a set."**
+
+So the singular `hovered?: string | null` is the _deliberate_ shape, not a thing
+to widen later: it composes with a future list multi-select rather than
+competing with it (select is the set, hover is the one under the pointer).
+
+[#608]: https://github.com/pond-ts/pond/issues/608
+[#606]: https://github.com/pond-ts/pond/pull/606
+[#577]: https://github.com/pond-ts/pond/issues/577
+
+### [PND-XAXISOWN] — a mounted `<XAxis>` should win over the container's
+
+pjm, on the third sighting: _"I wonder if when you add an XAxis that wins over
+the container (or it warns at the prop conflict), this is like the 3rd time I've
+seen that issue."_
+
+`showAxis` defaults to `true`, so `<ChartContainer>` renders an x-axis strip the
+declaration never mentions. Mount an explicit `<XAxis>` and you get **two**, and
+nothing says so — the consumer has to already know to pass `showAxis={false}`.
+
+**Three sightings, and they are one root cause: the container renders an axis
+the declaration does not mention.**
+
+1. `<GalleryCard height>` carries a comment warning that the caller "must budget
+   for the auto-rendered time-axis strip… the stage clips anything taller,
+   silently cutting off axis labels."
+2. [PND-AXISGUT] / [#607] — estela hand-subtracts `X_AXIS_H` for that same
+   strip, got it wrong once, and shipped overlapping labels.
+3. The `ValueXLog` stories in this wave drew two x axes until `showAxis={false}`
+   was added — as does every other story in `Axes.stories.tsx`, which is the
+   tell: **the whole file works around the default.**
+
+**Proposed:** a mounted `<XAxis>` takes precedence and the implicit strip stands
+down, with `showAxis` kept as the explicit override. Nobody mounts an `<XAxis>`
+_wanting_ a second one, so precedence is what the declaration already means.
+Failing that, warn on the conflict — but silence is the one option the evidence
+rules out.
+
+Worth doing with [PND-AXISGUT], since both are "the implicit axis is invisible
+to the layout and to the declaration", and a mounted-wins rule makes the height
+reservation question answerable — the container would know whether an axis is
+present rather than assuming one.
+
+It is also the concrete cost of the shape pjm named while building [PND-XLOG]:
+had at least one `<XAxis>` been **mandatory**, there would be no implicit strip
+to conflict with, the scale props would live on it, and x would mirror y.
+
+### [PND-AXISGUT] — The X-axis strip doesn't participate in layout — [#607]
+
+Filed by the estela agent after it shipped overlapping labels, and its framing
+is why this is worth fixing rather than documenting: **layout reservation is
+asymmetric between the two axis dimensions.**
+
+- **Y axis, horizontal — automatic.** `ChartContainer` collects each row's
+  per-slot gutter widths and reserves each slot's max, so a `<YAxis>` never has
+  to be measured by the consumer.
+- **X axis, vertical — manual.** A bottom `<XAxis>` does not participate, so the
+  consumer hand-subtracts (`ChartRow height={containerHeight - X_AXIS_H}`) and
+  keeps a matching `<XAxis height>` in sync with that constant.
+
+Two numbers that must agree, maintained by hand, in two components. Estela got
+them out of sync and shipped x-axis labels overlapping its own chart controls —
+a bug that reached production before pjm caught it.
+
+We have the same footgun documented from the inside: `<GalleryCard height>`
+carries a comment warning that it "must budget for the auto-rendered time-axis
+strip… the stage clips anything taller, silently cutting off axis labels". We
+wrote a warning where the layout should have made the error unrepresentable.
+
+**Proposed:** an auto-height mode where a declared bottom `<XAxis>` reserves its
+strip the way Y gutters already reserve their widths, explicit `height` kept as
+an override. The mechanism exists and only points one way round.
+
+Care needed: this is a layout change on `ChartContainer` / `ChartRow`, and an
+auto mode that silently double-reserves would shrink every chart already doing
+the subtraction. Opt-in, or stand down when an explicit `height` is present.
+
+[#607]: https://github.com/pond-ts/pond/issues/607
+
 ### [PND-ANNROLE] — Annotation **roles**: a resting mark's alpha is a role question
 
 `theme.annotation.depth` is `[1, 0.7, 0.4]`, so a **resting** annotation draws
@@ -837,6 +1037,23 @@ Residue tracked as **[PND-APIREV-REST]** in PLAN.md.
      when it had to answer "is the schema loose" — an all-string schema
      silently accepted anything. The lesson generalises: on type-level work,
      _compiling_ is not evidence of _checking_; only a negative test is.
+
+     **What it left undocumented — [PND-CASTDOC].** The union-per-series-kind
+     shape is correct, but it means a consumer with a loosely-typed series must
+     write a cast at the boundary, and that cast has **no prose anywhere in the
+     charts docs**. Estela hit it bumping 0.54 → 0.57 (its only adaptation, all
+     three bar asks otherwise landing clean) and reverse-engineered it from
+     `DurationAxis.stories.tsx:98`:
+
+     ```tsx
+     <LineChart series={series as ReturnType<typeof ride>} … />
+     ```
+
+     A Storybook story is the systematic knob reference, not somewhere a
+     consumer searches when the compiler rejects their series. "Here is the one
+     cast you need at the seam, and here is why the constraint is a union per
+     series kind" belongs in the charts docs, findable. Cheap to write and it
+     removes the only friction a real migration reported.
 
      Cost accepted by the owner: a union-typed series value must be narrowed
      or cast. The alternative (one generic over the series type) is verified in
@@ -1925,11 +2142,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                                                                _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                                                                is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                                                                iteration to discover, and the docs still don't mention it. **The one-line
-                                                                                                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                                                                row's data cursor is suppressed."
+                                                                                                                    _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                                                                    is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                                                                    iteration to discover, and the docs still don't mention it. **The one-line
+                                                                                                                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                                                                    row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires

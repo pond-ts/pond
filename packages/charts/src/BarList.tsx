@@ -89,6 +89,28 @@ export interface BarListCommon<R extends ListRow = ListRow> {
   /** Row click (rows show the pointer affordance only when provided). */
   onRowClick?: (row: R) => void;
   /**
+   * Per-**row** bar colour, `barColors[i]` aligned to the rows in order — the
+   * list's `<BarChart binColors>` ([#650]). An `undefined` or short entry falls
+   * back to the column's `as` / theme fill, so a partial list is legal.
+   *
+   * For the case `binColors` was built for and a list could not do: a zone
+   * table where each row's bar carries its own step of a ramp (Z1 deep → Z7
+   * pale). Without it a `BarListColumn`'s single `as` paints every row the same
+   * colour, and the ramp has to move onto the label — putting it on the wrong
+   * element, since the bar is the natural carrier of a magnitude.
+   *
+   * **The fill becomes load-bearing, so its state treatment stands down.** A
+   * per-row-coloured bar keeps its own colour while selected or hovered, and
+   * the live state is carried by the band and rail that already say it. This is
+   * the same rule the multi-metric case follows for the same reason — see the
+   * comment beside the fill resolution — and the same one `binColors` follows
+   * on the canvas: recolouring a bar that means something would trade a
+   * distinction the reader needs for one they already have.
+   *
+   * [#650]: https://github.com/pond-ts/pond/issues/650
+   */
+  barColors?: readonly (string | undefined)[];
+  /**
    * **Plural select** — the list's answer to `<MultiSelector>`, and how a user
    * produces a multi-row {@link selected}.
    *
@@ -259,6 +281,7 @@ export function BarList<
     selected,
     onRowClick,
     onRowSelect,
+    barColors,
     hovered,
     onHover,
     markers,
@@ -288,6 +311,20 @@ export function BarList<
           )) as unknown as readonly R[]),
     [rows, series, label],
   );
+  // Keyed by row, not indexed by render position. `barColors` aligns to the
+  // rows the caller passed — but the table renders `sorted`, so an index would
+  // silently repaint the ramp onto the wrong rows the moment `sortBy` is set.
+  // The key survives any reordering.
+  const barColorOf = useMemo(() => {
+    if (barColors === undefined) return null;
+    const m = new Map<string, string>();
+    allRows.forEach((r, i) => {
+      const c = barColors[i];
+      if (c !== undefined) m.set(r.key, c);
+    });
+    return m;
+  }, [barColors, allRows]);
+
   const sorted = useMemo(
     () => sortListRows(allRows, sortBy, sortDirection, sort),
     [allRows, sortBy, sortDirection, sort],
@@ -344,19 +381,37 @@ export function BarList<
             // Which is also why nothing below may be the *only* signal: strip
             // this block and a selected row still reads as selected.
             const soleMetric = columns.length === 1;
+            // A per-row colour makes the fill mean something, which puts it in
+            // exactly the position a multi-metric row's fill is already in: the
+            // state treatment stands down rather than trading a distinction the
+            // reader needs for one the band and rail already give them. Same
+            // rule `binColors` follows on the canvas.
+            const own = barColorOf?.get(row.key);
             const fill =
-              state.selected && soleMetric
-                ? style.highlight
-                : state.dimmed
-                  ? (style.dimmed ?? style.fill)
-                  : style.fill;
+              own !== undefined
+                ? own
+                : state.selected && soleMetric
+                  ? style.highlight
+                  : state.dimmed
+                    ? (style.dimmed ?? style.fill)
+                    : style.fill;
             // A `dimmed` token carries its own alpha (`rgba(…,0.32)`), so
             // multiplying `opacity` on top of it would dim twice. Fall back to
             // the raw 0.32 only when the theme names no dimmed colour.
+            // Opacity is where a coloured bar shows its state, since its hue
+            // is spoken for. A `dimmed` THEME token carries its own alpha so
+            // multiplying on top would dim twice — but that token is not in
+            // play for a per-row colour, so the raw 0.32 applies there too.
             const fillOpacity =
-              state.dimmed && style.dimmed === undefined
-                ? style.opacity * 0.32
-                : style.opacity;
+              own !== undefined
+                ? state.dimmed
+                  ? style.opacity * 0.32
+                  : state.selected
+                    ? 1
+                    : style.opacity
+                : state.dimmed && style.dimmed === undefined
+                  ? style.opacity * 0.32
+                  : style.opacity;
             return (
               <div
                 // Index-qualified so the same values entry drawn twice (say,

@@ -10,7 +10,7 @@ import { YAxis } from '../src/YAxis.js';
 import { scaleLinear, scaleLog } from 'd3-scale';
 import { logAxisWarning, needsExtents, resolveYDomain } from '../src/domain.js';
 import { resolveAxisFormat } from '../src/format.js';
-import { resolveYTickCount, yTickValues } from '../src/yticks.js';
+import { resolveYTickCount, tickValues } from '../src/yticks.js';
 import { resolveAreaBaseline } from '../src/AreaChart.js';
 import { stubCanvasContext } from './canvas-mock.js';
 
@@ -233,12 +233,12 @@ describe('<YAxis scale="log"> — rendered', () => {
     // nothing, and it was never reproduced. Scraping a whole render tree for
     // "things that look like numbers" is the wrong shape of assertion for a
     // claim about tick *selection*: that claim is pinned directly and
-    // deterministically by the `yTickValues` tests above. This one covers only
+    // deterministically by the `tickValues` tests above. This one covers only
     // the wiring between them, so it should not be the thing that blocks a
     // release. See PND_CHARTS_PLAN.md — the Node 18 discrepancy is still open.
     const tickCount = resolveYTickCount(300);
     const scale = scaleLog().domain([1, 10_000]).range([300, 0]);
-    const expected = yTickValues(scale, tickCount).map(
+    const expected = tickValues(scale, tickCount).map(
       resolveAxisFormat(scale, tickCount, undefined),
     );
     const labels = Array.from(container.querySelectorAll('div'))
@@ -259,7 +259,7 @@ describe('<YAxis scale="log"> — rendered', () => {
     // And the selector really picks decades: a linear axis over this domain
     // ticks evenly in thousands, which no decade set contains.
     expect(scaleLinear().domain([1, 10_000]).ticks(5)).toContain(2000);
-    expect(yTickValues(scale, tickCount)).not.toContain(2000);
+    expect(tickValues(scale, tickCount)).not.toContain(2000);
   });
 
   it('warns about a refused explicit bound', () => {
@@ -472,7 +472,7 @@ describe('log axis — formatter and tick selection', () => {
     expect(log.ticks(8).length).toBe(64); // d3's behaviour
 
     for (const count of [4, 6, 8, 12]) {
-      const ticks = yTickValues(log, count);
+      const ticks = tickValues(log, count);
       expect(ticks.length).toBeGreaterThanOrEqual(2);
       expect(ticks.length).toBeLessThanOrEqual(Math.max(2, count));
       // Every tick is a power of ten.
@@ -483,19 +483,19 @@ describe('log axis — formatter and tick selection', () => {
     }
     // A roomy row gets one line per decade; a cramped one thins by whole
     // decades rather than skipping to every other one at random.
-    expect(yTickValues(log, 8)).toEqual([
+    expect(tickValues(log, 8)).toEqual([
       1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17,
     ]);
-    expect(yTickValues(log, 4)).toEqual([1e11, 1e13, 1e15, 1e17]);
+    expect(tickValues(log, 4)).toEqual([1e11, 1e13, 1e15, 1e17]);
   });
 
   it('defers to the scale below two decades, where d3 is well behaved', () => {
     const log = scaleLog().domain([200, 900]);
-    expect(yTickValues(log, 5)).toEqual(log.ticks(5));
+    expect(tickValues(log, 5)).toEqual(log.ticks(5));
   });
 
   it('leaves a linear scale entirely alone', () => {
     const lin = scaleLinear().domain([0, 100]);
-    expect(yTickValues(lin, 5)).toEqual(lin.ticks(5));
+    expect(tickValues(lin, 5)).toEqual(lin.ticks(5));
   });
 });
