@@ -550,6 +550,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
   const frame = useMemo<RowFrame>(
     () => ({
       height,
+      topInset: topHeader,
       cursor,
       isFirstRow,
       rowKey,
@@ -568,6 +569,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
     }),
     [
       height,
+      topHeader,
       cursor,
       isFirstRow,
       rowKey,

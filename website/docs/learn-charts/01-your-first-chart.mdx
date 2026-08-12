@@ -103,13 +103,12 @@ deliberately separate channels) is chapter 5,
 [Styling and theming](./styling-and-theming).
 :::
 
-:::caution[The width caution]
-`width` on `<ChartContainer>` is a **required number**, not `"100%"` — the
-canvas renderer needs real pixels to lay out ticks and slots. Every example
-in this track hardcodes a width for that reason. Filling a responsive box
-is one `ResizeObserver` away — see the
-[responsive-width recipe](../recipes/responsive-width) for the pattern
-this whole site's live charts use.
+:::note[About width]
+`width` on `<ChartContainer>` is a **number of CSS pixels or `'auto'`**, never
+`"100%"` — the canvas renderer needs real pixels to lay out ticks and slots.
+Every example in this track hardcodes a width so the output is predictable, but
+`width="auto"` (or omitting `width` entirely) measures the available space and
+fills it, which is usually what you want in an app.
 :::
 
 ## Recap

@@ -32,6 +32,25 @@ export interface LabelPlacement {
   readonly label: string | null;
 }
 
+/**
+ * The container's shared x→pixel scale, in every kind it can resolve to. All
+ * five are callable (`value → px`) and expose `invert` / `ticks` /
+ * `tickFormat`, which is the whole surface the library — and a consumer
+ * reading the frame ({@link ChartFrame.xScale}) — uses; that shared shape is
+ * what lets a trading-time or ordinal axis drop in where a linear one went.
+ *
+ * Named (rather than written inline on {@link ContainerFrame.xScale}) because
+ * {@link useChartFrame} publishes it: a consumer positioning DOM chrome over
+ * the plot needs to be able to *write down the type* of the scale it maps
+ * through.
+ */
+export type ChartXScale =
+  | ScaleTime<number, number>
+  | ScaleLinear<number, number>
+  | TradingTimeScale
+  | ScaleBand
+  | ElapsedScale;
+
 export interface ContainerFrame {
   readonly timeRange: readonly [number, number];
   readonly width: number;
@@ -372,12 +391,7 @@ export interface ContainerFrame {
    * (axis labels, gridlines, cursor pill) reads durations without any consumer
    * knowing about the mode.
    */
-  readonly xScale:
-    | ScaleTime<number, number>
-    | ScaleLinear<number, number>
-    | TradingTimeScale
-    | ScaleBand
-    | ElapsedScale;
+  readonly xScale: ChartXScale;
   /**
    * The discontinuity provider backing a **trading-time** x axis, if one was
    * supplied to the container — closed-market time (weekends, holidays,
@@ -1731,6 +1745,17 @@ export interface AxisSpec {
  */
 export interface RowFrame {
   readonly height: number;
+  /**
+   * The plot's **top inset** within the row's box, in px — the header band
+   * reserved when any axis in the row draws a `labelPlacement="top"` title,
+   * and `0` when none does. The y-scales' range is `[height, topInset]`, so
+   * the drawable plot is `topInset … height`.
+   *
+   * Carried on the frame (rather than staying a local in `ChartRow`) because
+   * {@link useChartFrame} publishes it — without it a consumer placing an
+   * overlay inside the plot would silently sit under a top axis title.
+   */
+  readonly topInset: number;
   readonly yScales: ReadonlyMap<string, YScale>;
   /** Value formatter per axis id (resolved from the axis's {@link AxisSpec.format}
    *  against its scale) — used by both the tick labels and the cursor readout, so

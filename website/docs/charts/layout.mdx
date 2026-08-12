@@ -72,11 +72,26 @@ multi-panel stack lines up on the x axis without hand-tuning widths.
 
 ## Sizing the frame
 
-`width` is a **required pixel number**, not `"100%"` — the canvas renderer
-needs real pixels to lay out ticks and slots before it draws. To fill a
-container that resizes (a flex column, a grid cell, the window), wrap it in a
-`ResizeObserver`: the [responsive-width recipe](../recipes/responsive-width) is
-that pattern, one hook.
+`width` is either a **pixel number** or **`'auto'`** — and an omitted `width`
+means `'auto'`. It is never `"100%"`: the canvas renderer needs real pixels to
+lay out ticks and slots before it draws.
+
+`'auto'` fills the available width. The container renders a plain full-width
+box, measures it, and mounts the chart at that pixel width, re-rendering as the
+box resizes — so a flex column, a grid cell or the window all just work:
+
+```tsx
+<ChartContainer width="auto">…</ChartContainer>
+```
+
+Nothing paints until a real width exists, so an auto container is briefly an
+empty box on the first layout pass. Pass a number when the width is already
+known (a fixed panel, a print layout, a test) — it skips the measure pass and
+paints on the first render.
+
+The [responsive-width recipe](../recipes/responsive-width) shows the same
+measurement done by hand, which is worth reading when you need the measured
+width for something _besides_ the chart.
 
 For a full-height split with a **draggable divider** between panels (the
 price-over-indicator financial shape), the
@@ -87,12 +102,12 @@ end on these same primitives.
 
 ### `<ChartContainer>` — layout-relevant
 
-| Prop       | Type      | Default | Purpose                                                                                                          |
-| ---------- | --------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
-| `width`    | `number`  | — (req) | Overall chart width in CSS px. Real pixels, never `"100%"`.                                                      |
-| `rowGap`   | `number`  | `0`     | Vertical space between stacked rows in px (not under the axis).                                                  |
-| `showAxis` | `boolean` | `true`  | Auto-render the shared x axis under the rows. `false` for a bare plot or to place your own `<XAxis>`.            |
-| `grid`     | `boolean` | `true`  | Draw the vertical gridlines (a calendar-density hierarchical grid on a time axis). `false` for a clean backdrop. |
+| Prop       | Type               | Default  | Purpose                                                                                                          |
+| ---------- | ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------- |
+| `width`    | `number \| 'auto'` | `'auto'` | Overall chart width in CSS px, or `'auto'` to measure and fill. Real pixels, never `"100%"`.                     |
+| `rowGap`   | `number`           | `0`      | Vertical space between stacked rows in px (not under the axis).                                                  |
+| `showAxis` | `boolean`          | `true`   | Auto-render the shared x axis under the rows. `false` for a bare plot or to place your own `<XAxis>`.            |
+| `grid`     | `boolean`          | `true`   | Draw the vertical gridlines (a calendar-density hierarchical grid on a time axis). `false` for a clean backdrop. |
 
 (`range`, `theme`, `cursor`, and the axis-kind props are covered under
 [Axes](./axes/index.mdx) and [Interaction](./interaction/cursors-and-readouts.mdx).)
@@ -105,10 +120,72 @@ end on these same primitives.
 | `cursor`   | `CursorMode` | container | Cursor presentation for this row, overriding the container.  |
 | `children` | `ReactNode`  | —         | `<YAxis>` (left) · `<Layers>` · `<YAxis>` (right), in order. |
 
+## Reading the resolved layout — `useChartFrame()`
+
+Everything above is the container working out a layout. `useChartFrame()`
+publishes the result, so your own DOM can line up with it: a per-slot header
+table above the plot, a column summary strip below it, a card pinned over one
+band, a colour ramp keyed to the plot's own scale.
+
+```tsx
+function SlotHeader() {
+  const { plot, bands } = useChartFrame();
+  if (bands === null) return null; // not a category axis
+  return (
+    <div
+      style={{ position: 'relative', marginLeft: plot.x, width: plot.width }}
+    >
+      {bands.labels.map((label, i) => {
+        const b = bands.at(i)!;
+        return (
+          <div
+            key={label}
+            style={{ position: 'absolute', left: b.x0, width: b.x1 - b.x0 }}
+          >
+            {label}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+<ChartContainer width="auto">
+  <SlotHeader />
+  <ChartRow height={200}>…</ChartRow>
+</ChartContainer>;
+```
+
+| Field                     | What it is                                                                               |
+| ------------------------- | ---------------------------------------------------------------------------------------- |
+| `plot.x` / `plot.width`   | The plot rect's x geometry, relative to the container's box                              |
+| `gutters.left` / `.right` | The reserved axis gutters (`gutters.left === plot.x`)                                    |
+| `xScale` / `xKind`        | The shared x→pixel scale and which kind resolved                                         |
+| `bands`                   | Ordinal slot geometry (`count`, `pitch`, `labels`, `at(i)`) — `null` off a category axis |
+| `row`                     | `{ topInset, height, yScales, axisSides }` — **`null` outside a `<ChartRow>`**           |
+
+Three things to know:
+
+- **The x/y split is the library's own.** The container owns one shared x
+  scale; rows own their y scales. So `plot` carries x, and y lives on `row`.
+- **Scope follows placement**, exactly as `useChartLegend` does. At the
+  container level you get the x frame and `row: null`; inside a `<ChartRow>`
+  you also get that row's y scales. No prop selects it.
+- **Pixel origins differ by box.** `plot.x` is relative to the container;
+  `xScale(v)` and `bands.at(i)` are relative to the _plot_ (`0 … plot.width`),
+  so add `plot.x` to place DOM chrome; `row.topInset` is relative to the row.
+
+Read the frame rather than recomputing it. Re-deriving the plot rect means
+mirroring the library's gutter arithmetic and band packing, and that copy is
+correct only until either changes — at which point your chrome slides out of
+alignment with no type error and no failing test.
+
 ## Sharp edges
 
-- **`width` is pixels, not percent** — wrap in a `ResizeObserver` to fill a
-  fluid box (recipe linked above).
+- **`width` is pixels or `'auto'`, never percent** — `"100%"` is not a valid
+  value; use `width="auto"` (or omit it) to fill a fluid box.
+- **An `'auto'` container paints nothing on the first layout pass** — it has
+  no width yet. Pass a number if you need paint on the very first render.
 - **`Layers` is mandatory** — draw layers must be inside a `<Layers>`, not
   direct children of the row; it's the z-stack boundary.
 - **Author order is layout order** — left axes before `Layers`, right axes
@@ -121,3 +198,9 @@ end on these same primitives.
 - Storybook: [`Layout`](pathname:///storybook/?path=/story/layout--multi-row)
   — `SingleRow`, `MultiRow`, `DifferentHeights`, `RowGap`, `VaryingGutters`,
   `EstelaShaped`, and the multi-axis variants.
+- Storybook: [`Frame/useChartFrame`](pathname:///storybook/?path=/story/frame-usechartframe--default)
+  — `Default`, `WideGutter`, `DualAxis`, `PerSlotHeader`, `CappedBands`,
+  `BandAlignEnd`, `InPlotOverlay`, `TopInset`, `MultiRow`.
+- Storybook: [`Layout/Auto width`](pathname:///storybook/?path=/story/layout-auto-width--default)
+  — `Default`, `OmittedWidth`, `Fixed`, `ConstrainedParent`, `PaddedWrapper`,
+  `FlexRow`, `ResizableBox`.

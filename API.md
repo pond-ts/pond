@@ -411,6 +411,10 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 | `SwatchSpec` / `LegendItemInput`           | Legend swatch vocabulary + explicit-rows input (`<Legend items>`)                                     | `packages/charts/src/swatch.ts`           |
 | `useChartLegend`                           | Headless legend hook: rows (items grouped by chart row) + `hover`/`select` verbs                      | `packages/charts/src/useChartLegend.ts`   |
 | `ChartLegend` / `LegendRow` / `LegendItem` | The hook's return shape (`rows` group `items`; items carry `selected`/`hovered`)                      | `packages/charts/src/useChartLegend.ts`   |
+| `useChartFrame`                            | Resolved plot geometry: plot rect, gutters, x scale, a row's y scales, band slot edges                | `packages/charts/src/useChartFrame.ts`    |
+| `ChartFrame` / `ChartFrameRow`             | The hook's return shape — container x half, plus a row y half that is `null` outside a `<ChartRow>`   | `packages/charts/src/useChartFrame.ts`    |
+| `ChartBands` / `ChartBand`                 | Ordinal slot geometry on a category axis (`count`/`pitch`/`labels`/`at(i)`); `null` on time/value     | `packages/charts/src/useChartFrame.ts`    |
+| `ChartXScale`                              | The union the container's shared x scale resolves to (time / linear / trading / band / elapsed)       | `packages/charts/src/context.ts`          |
 | `LegendPlacement`                          | `'top-left' \| 'top-right' \| 'bottom-left' \| 'bottom-right'`                                        | `packages/charts/src/Legend.tsx`          |
 | `Curve`                                    | Path interpolation: `'linear' \| 'monotone' \| 'natural' \| 'basis' \| 'step'`                        | `packages/charts/src/curve.ts`            |
 | `RadiusEncoding` / `ColorEncoding`         | Data-driven scatter size/colour                                                                       | `packages/charts/src/encoding.ts`         |

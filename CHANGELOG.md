@@ -62,6 +62,63 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts: `useChartFrame()` — the resolved plot geometry, published**
+  ([PND-IGNITEFRAME]). A hook returning what the container already worked out:
+  the plot rect (`plot.x` / `plot.width`), the reserved axis `gutters`, the
+  shared `xScale` and its `xKind`, a row's `yScales` and top inset, and — on a
+  category axis — the ordinal slot edges (`bands.at(i)`, `pitch`, `labels`).
+
+  Consumers aligning DOM chrome to the plot (per-slot header tables, column
+  summary strips, cards pinned over a band, a colour ramp keyed to the plot's
+  own scale) previously had to re-derive all of it: pin every axis gutter to a
+  fixed width so it stops depending on label content, measure the outer box,
+  subtract, and re-implement the band packing. **That duplicate is not merely
+  verbose — it is wrong over time.** It holds only until the library changes
+  how a gutter is sized or how bands are packed, at which point the chrome
+  slides out of alignment with the plot it labels, with no type error and no
+  failing test.
+
+  Two shape notes. **The x/y split is the library's own** — the container owns
+  one shared x scale, rows own their y scales — so `plot` carries x and `row`
+  carries y, and `row` is `null` when the hook is called outside a
+  `<ChartRow>`. That `null` is deliberate: the common case (a header strip
+  beside the rows) genuinely has no y geometry, and reporting `height: 0`
+  instead would be the same silent misalignment the hook exists to remove.
+  **Scope follows placement**, exactly as `useChartLegend` already does.
+
+  `useChartLegend`'s `gutters` is unchanged and still the right call for a
+  legend; it now documents `useChartFrame()` as the fuller surface. It was the
+  only geometry the library published, for one consumer, on a hook named for
+  something else — which is why this exists.
+
+- **charts: `<ChartContainer width="auto">` — fill the available width**
+  ([PND-WIDTH]). `width` now accepts `'auto'`, and an omitted `width` means the
+  same; a number still skips the measure pass and paints on the first render.
+  The container renders a plain full-width box, measures it with a
+  `ResizeObserver`, and mounts the chart at that pixel width — the canvas
+  renderer needs real pixels to lay out ticks and slots, so this is measurement
+  moved inside the library rather than a percentage handed to a canvas. Nothing
+  paints until a real width exists.
+
+  This is the shipped
+  [responsive-width recipe](https://pond-ts.github.io/pond/docs/recipes/responsive-width)
+  become the implementation, and it closes that recipe's sharpest edge by
+  construction: the measured box is one the library owns, so it can never be
+  the caller's padded or bordered box (whose border-box width overflowed the
+  chart by exactly the padding, silently clipped when the box also hid
+  overflow). Style your own wrapper freely.
+
+  Three independent consumers reported the explicit-pixel requirement; the
+  third was multiplying the same ~25-line measure-and-gate hook across seven
+  panes.
+
+### Changed
+
+- **charts: `ChartContainerProps.width` is now `number | 'auto'` and optional**
+  (was a required `number`). Strictly additive for callers passing a number.
+
 ## [0.59.0] — 2026-08-11
 
 ### Added

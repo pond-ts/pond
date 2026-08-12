@@ -90,6 +90,21 @@ export type { SwatchSpec, LegendItemInput } from './swatch.js';
 // values-in-the-legend).
 export { useChartLegend } from './useChartLegend.js';
 export type { ChartLegend, LegendRow, LegendItem } from './useChartLegend.js';
+// The resolved plot geometry — the plot rect, the axis gutters, the shared x
+// scale, a row's y scales, and (on a category axis) the ordinal slot edges.
+// What a consumer aligning DOM chrome to the plot would otherwise re-derive
+// by mirroring the library's own gutter arithmetic — a duplicate that drifts
+// silently the moment the library changes how a gutter is sized.
+export { useChartFrame } from './useChartFrame.js';
+export type {
+  ChartFrame,
+  ChartFrameRow,
+  ChartBands,
+  ChartBand,
+} from './useChartFrame.js';
+// The union the container's shared x scale resolves to — named so a consumer
+// reading `ChartFrame.xScale` can write down its type.
+export type { ChartXScale } from './context.js';
 export { scaleTradingTime } from './tradingTimeScale.js';
 export type {
   TradingTimeScale,
