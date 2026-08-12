@@ -485,24 +485,43 @@ export function buildBandGradient(
     readonly px: number;
     readonly above: string;
     readonly below: string;
+    /** Ladder index + boundary sign, for the same-pixel tie-break below. */
+    readonly k: number;
+    readonly sign: 1 | -1;
   }
   const crossings: Crossing[] = [];
   for (let k = 0; k < thresholds.length; k += 1) {
     const zeroSide = colors[k]!;
     const awaySide = colors[k + 1]!;
-    for (const v of [thresholds[k]!, -thresholds[k]!]) {
+    for (const sign of [1, -1] as const) {
+      const v = sign * thresholds[k]!;
       const px = yScale(v);
       if (!Number.isFinite(px)) continue; // no position — no crossing
-      const awayAbove = v > 0 === higherValueAtSmallerPx;
+      const awayAbove = sign > 0 === higherValueAtSmallerPx;
       crossings.push(
         awayAbove
-          ? { px, above: awaySide, below: zeroSide }
-          : { px, above: zeroSide, below: awaySide },
+          ? { px, above: awaySide, below: zeroSide, k, sign }
+          : { px, above: zeroSide, below: awaySide, k, sign },
       );
     }
   }
   if (crossings.length === 0) return fallback;
-  crossings.sort((a, b) => a.px - b.px);
+  // Sort by pixel; same-pixel same-sign crossings (a duplicate breakpoint's
+  // empty band, or distinct breakpoints collapsed by an extreme zoom) order
+  // **away-band-outermost**: the away side's colour first coming from the
+  // away direction, the zero side's first coming from zero. That makes the
+  // walk below telescope — the seed reads the true outermost band and the
+  // last stop at the pixel is the true inner colour, with the skipped bands
+  // as zero-width ghosts in between — instead of seeding one band short and
+  // blending across the region below. Bars skip an empty band the same way
+  // (`bandSpanInto` clips it to nothing); a same-pixel *opposite-sign* pair
+  // (a folded scale) has no defined order and keeps insertion order.
+  crossings.sort((a, b) => {
+    if (a.px !== b.px) return a.px - b.px;
+    if (a.sign !== b.sign) return 0;
+    const awayFirst = a.sign > 0 === higherValueAtSmallerPx;
+    return awayFirst ? b.k - a.k : a.k - b.k;
+  });
   const grad = ctx.createLinearGradient(0, 0, 0, plotHeight);
   const offsetOf = (px: number): number => {
     const o = px / plotHeight;

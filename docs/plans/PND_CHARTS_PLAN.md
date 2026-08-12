@@ -1925,11 +1925,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                                                                                                            _Still true; no longer felt here._ The draggable marker is gone — selection
-                                                                                                            is a click — so nothing on this page is in edit mode. But it cost a design
-                                                                                                            iteration to discover, and the docs still don't mention it. **The one-line
-                                                                                                            fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                                                                                                            row's data cursor is suppressed."
+                                                                                                                _Still true; no longer felt here._ The draggable marker is gone — selection
+                                                                                                                is a click — so nothing on this page is in edit mode. But it cost a design
+                                                                                                                iteration to discover, and the docs still don't mention it. **The one-line
+                                                                                                                fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                                                                                                                row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -3101,9 +3101,23 @@ Decisions worth keeping beyond the CHANGELOG:
   connector is a guess about absent data, and a zone colour would over-claim
   exactly where nothing was measured.
 - **Ladder resolution extracted to a shared `useBandLadder`** (BarChart now
-  consumes it too, byte-identical behaviour): the warnings and the
-  value-compare-the-inline-array registration guard are one contract across
-  banded marks, so the two components cannot drift.
+  consumes it too, behaviour-equivalent — deps refined from the whole style
+  object to the two fields the ladder reads, and two dev-warning strings went
+  component-neutral): the warnings and the value-compare-the-inline-array
+  registration guard are one contract across banded marks, so the two
+  components cannot drift.
 - **No perf script**: the feature adds zero per-event work to the draw (same
   single path walk; one O(K) gradient build per frame). The perf-check
   procedure targets operators whose cost scales with input; this one's doesn't.
+- **The Layer 2 review earned its keep — duplicate breakpoints.** `[1, 1]`
+  (an empty middle band) emitted two unordered same-pixel crossings: the
+  gradient seeded one band short at the top and _blended_ across the region
+  below instead of hard-stopping — silent, and diverging from bars, which
+  skip an empty band (`bandSpanInto` clips it to nothing). Fixed with a
+  same-pixel tie-break that orders crossings away-band-outermost so the walk
+  telescopes (skipped bands survive as zero-width ghost stops); the same
+  tie-break also covers _distinct_ breakpoints collapsed onto one pixel by an
+  extreme zoom-out, which value-level dedupe in `normalizeThresholds` could
+  not have caught — and dedupe there would have changed shipped bar
+  behaviour (the n-thresholds → n+1-colours indexing). Both cases pinned in
+  tests.

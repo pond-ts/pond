@@ -181,6 +181,55 @@ describe('buildBandGradient — stop construction', () => {
     ]);
   });
 
+  it('paints a duplicate breakpoint as ONE chained crossing (empty band skipped)', () => {
+    // `[1, 1]` describes an empty middle band ([1, 1)) — bars skip it
+    // (`bandSpanInto` clips it to nothing) and paint low below 1, high above.
+    // The gradient must telescope the same way: the top region seeds with the
+    // TOP band's colour (not the empty middle's), the region below the
+    // crossing is flat low ink (not a low↔mid blend), and the middle colour
+    // survives only as zero-width ghost stops. This was found in review: an
+    // unordered same-pixel pair seeded one band short and blended below.
+    const y = scaleLinear([-3, 3], [300, 0]);
+    const off = (v: number) => y(v) / 300;
+    const { ctx, gradients } = gradientContext();
+    buildBandGradient(ctx, y as Scale, 300, {
+      thresholds: [1, 1],
+      colors: ['#g0', '#a1', '#r2'],
+    });
+    expect(gradients[0]).toEqual([
+      { offset: 0, color: '#r2' }, // seeds with the TOP band
+      { offset: off(1), color: '#r2' },
+      { offset: off(1), color: '#a1' }, // zero-width ghost…
+      { offset: off(1), color: '#a1' }, // …of the empty band
+      { offset: off(1), color: '#g0' }, // last at the pixel: the true inner colour
+      { offset: off(-1), color: '#g0' }, // region between: flat low ink
+      { offset: off(-1), color: '#a1' },
+      { offset: off(-1), color: '#a1' },
+      { offset: off(-1), color: '#r2' },
+      { offset: 1, color: '#r2' },
+    ]);
+  });
+
+  it('chains distinct breakpoints that collapse onto one pixel', () => {
+    // The same telescope under an extreme zoom-out: 1 and 2 land on the same
+    // pixel, so the plot must read low below it and HIGH above it — the mid
+    // band is sub-pixel, not the top of the chart. A hand-rolled fold scale
+    // (every positive → 100, every negative → 200) forces exact collision;
+    // the direction probe degenerates to the canvas norm.
+    const fold = ((v: number) => (v > 0 ? 100 : 200)) as Scale;
+    const { ctx, gradients } = gradientContext();
+    buildBandGradient(ctx, fold, 300, LADDER);
+    const stops = gradients[0]!;
+    expect(stops[0]).toEqual({ offset: 0, color: '#r2' }); // top = top band
+    // Last stop at the positive collision pixel is the low ink — the region
+    // between the two collision pixels reads band 0.
+    const atPositive = stops.filter((s) => s.offset === 100 / 300);
+    expect(atPositive.at(-1)!.color).toBe('#g0');
+    const atNegative = stops.filter((s) => s.offset === 200 / 300);
+    expect(atNegative[0]!.color).toBe('#g0');
+    expect(stops.at(-1)).toEqual({ offset: 1, color: '#r2' });
+  });
+
   it('falls back to the top band flat colour with no height to anchor on', () => {
     const y = scaleLinear([0, 3], [300, 0]);
     const { ctx, gradients } = gradientContext();
