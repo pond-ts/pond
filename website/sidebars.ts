@@ -148,6 +148,7 @@ const sidebars: SidebarsConfig = {
             'charts/gallery/grid-mix',
             'charts/gallery/renewables-vs-demand',
             'charts/gallery/negative-prices',
+            'charts/gallery/eclipse-demand',
             // Track F — science & measurement.
             'charts/gallery/nino34',
             'charts/gallery/measles',

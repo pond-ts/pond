@@ -15,6 +15,12 @@ import {
   SOLAR_GW,
   WIND_GW,
 } from './energy-samples';
+import {
+  DEMAND_GW,
+  ECLIPSE_START_MS,
+  ECLIPSE_STEP_MS,
+  FORECAST_GW,
+} from './spain-eclipse-samples';
 
 /**
  * The Gallery's **Energy** track (plan §4, track D) — grid mix, renewables
@@ -146,3 +152,56 @@ export function dayAheadPriceRange(): [number, number] {
     PRICE_START_MS + PRICE_EUR_MWH.length * PRICE_STEP_MS,
   ];
 }
+
+const eclipseSchema = [
+  { name: 'time', kind: 'time' },
+  { name: 'demand', kind: 'number' },
+  { name: 'forecast', kind: 'number' },
+] as const;
+
+/**
+ * Peninsular Spain's demand against REE's own forecast, **GW at 5-minute
+ * cadence**, across the evening of the 12 August 2026 total solar eclipse
+ * (361 rows, 21:00 CEST on the 11th → 03:00 CEST on the 13th).
+ *
+ * Provenance and licence live in the header of `spain-eclipse-samples.ts`
+ * (short version: **real measured data**, Source: Red Eléctrica,
+ * demanda.ree.es, retrieved 2026-08-13). A different grid and a different
+ * evening from the Easter-weekend fixture above — this one exists for the
+ * ninety minutes where the two columns disagree.
+ */
+export function eclipseDemand() {
+  const rows: Array<[number, number, number]> = [];
+  for (let i = 0; i < DEMAND_GW.length; i += 1) {
+    rows.push([
+      ECLIPSE_START_MS + i * ECLIPSE_STEP_MS,
+      DEMAND_GW[i]!,
+      FORECAST_GW[i]!,
+    ]);
+  }
+  return new TimeSeries({ name: 'spain-demand', schema: eclipseSchema, rows });
+}
+
+/** `[begin, end]` of {@link eclipseDemand} — the full thirty hours, in ms. */
+export function eclipseDemandRange(): [number, number] {
+  return [
+    ECLIPSE_START_MS,
+    ECLIPSE_START_MS + (DEMAND_GW.length - 1) * ECLIPSE_STEP_MS,
+  ];
+}
+
+/**
+ * The eclipse's local circumstances over Spain, as epoch ms — the annotation
+ * layer of the eclipse-demand card. Times are Madrid's (IGN, the Spanish
+ * national observatory: partials 19:31–21:22 CEST; the umbra crossed northern
+ * Spain 20:27–20:32, Madrid itself a >99% partial). Astronomy, not something
+ * derivable from the demand columns — which is the point of overlaying it.
+ */
+export const ECLIPSE_MARKS = {
+  /** First contact over Madrid, 19:31 CEST. */
+  partialsBegin: 1786555860000,
+  /** Mid-totality over the peninsula, 20:29–20:30 CEST. */
+  totality: 1786559370000,
+  /** Last contact over Madrid, 21:22 CEST. */
+  partialsEnd: 1786562520000,
+} as const;

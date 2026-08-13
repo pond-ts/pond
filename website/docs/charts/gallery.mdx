@@ -52,6 +52,7 @@ import GalleryWindRose from '@site/src/examples/gallery-wind-rose';
 import GalleryGridMix from '@site/src/examples/gallery-grid-mix';
 import GalleryRenewables from '@site/src/examples/gallery-renewables';
 import GalleryPowerPrices from '@site/src/examples/gallery-power-prices';
+import GalleryEclipseDemand from '@site/src/examples/gallery-eclipse-demand';
 import GallerySpectrum from '@site/src/examples/gallery-spectrum';
 import GallerySeismograph from '@site/src/examples/gallery-seismograph';
 import GalleryTides from '@site/src/examples/gallery-tides';
@@ -371,8 +372,10 @@ NOAA or NASA numbers, not a model of them. Three of the four are one airport's
 ## Energy
 
 Grid data is where composition, crossover and signed values all turn up at
-once. All three cards are the same real weekend — Easter 2025 in Germany, the
-quietest demand day of the year meeting a big solar peak.
+once. The first three cards are the same real weekend — Easter 2025 in
+Germany, the quietest demand day of the year meeting a big solar peak. The
+fourth is a different grid on a stranger evening: Spain, during the total
+solar eclipse of 12 August 2026.
 
 <GalleryGrid>
 
@@ -412,6 +415,19 @@ quietest demand day of the year meeting a big solar peak.
 >
   {(width, phase) => (
     <GalleryPowerPrices width={width} phase={phase} height={190} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Demand during an eclipse"
+  blurb="Spain's demand against its forecast as the Moon crossed the Sun — a 2.13 GW dip, timed to the minute."
+  storybookHref="pathname:///storybook/?path=/story/annotations-scenarios--in-context"
+  pageHref="/docs/charts/gallery/eclipse-demand"
+  height={212}
+  autoplay={{ period: 18000, staticPhase: 0.43 }}
+>
+  {(width, phase) => (
+    <GalleryEclipseDemand width={width} phase={phase} height={190} />
   )}
 </GalleryCard>
 
