@@ -1,10 +1,11 @@
 /**
  * **Real measured data.** Spain's solar generation on the day of the
- * **12 August 2026 total solar eclipse**, and the same civil day's worth from
- * the day before — 96 quarter-hours each (midnight to midnight CEST), the
- * API's native 15-minute cadence. The pair exists for the evening: on the
- * 11th solar rode an ordinary sunset ramp; on the 12th the Moon took a
- * second, faster sunset out of the middle of the first one.
+ * **12 August 2026 total solar eclipse**, plus the three days before it —
+ * 96 quarter-hours each (midnight to midnight CEST), the API's native
+ * 15-minute cadence. Four civil days, one shared index: sample *i* of every
+ * array is the same clock time. The three ordinary days exist to be a
+ * baseline; on the 12th the Moon took a second, faster sunset out of the
+ * middle of the real one.
  *
  * **Source and licence.** energy-charts.info (Fraunhofer ISE) —
  * https://api.energy-charts.info, `/public_power?country=es` (upstream:
@@ -15,21 +16,22 @@
  * family as `energy-samples.ts`, which documents the licence situation in
  * more detail.
  *
- * **What was kept.** The API's single `Solar` channel, for both days,
+ * **What was kept.** The API's single `Solar` channel, for the four days,
  * converted MW → **GW** at 2 dp (10 MW resolution): `SOLAR_ECLIPSE_DAY_GW`
- * (the 12th) and `SOLAR_DAY_BEFORE_GW` (the 11th). ENTSO-E reports Spanish
- * solar as one category, so PV and solar-thermal are not separable here.
- * Everything else — the fourteen other production types, load, the derived
- * shares — belongs to other cards' questions and was dropped.
+ * (the 12th) and `SOLAR_AUG09_GW` / `SOLAR_AUG10_GW` / `SOLAR_AUG11_GW`
+ * (the ordinary days). ENTSO-E reports Spanish solar as one category, so PV
+ * and solar-thermal are not separable here. Everything else — the fourteen
+ * other production types, load, the derived shares — belongs to other cards'
+ * questions and was dropped.
  *
- * **Quirks.** The two arrays share one index: sample *i* of each is the same
- * clock time (CEST) one day apart, validated to exactly 24 h by the
- * generator. Drawing them on one axis means the day-before curve is plotted
- * 24 h forward of when it happened — the same-clock-time overlay is the whole
- * device, and every page that draws it must say so. Both days are complete
- * (no gaps, no nulls), and neither ever reads zero: Spanish solar idles near
- * **0.6 GW overnight**, because ENTSO-E's single Solar category includes
- * concentrated solar plants discharging thermal storage after dark.
+ * **Quirks.** Drawing the ordinary days on eclipse day's axis means each is
+ * plotted one, two or three days forward of when it happened — the
+ * same-clock-time overlay is the whole device, and every page that draws it
+ * must say so. All four days are complete (no gaps, no nulls; alignment
+ * validated to exactly 24 h between consecutive days at every index), and
+ * none ever reads zero: Spanish solar idles near **0.6 GW overnight**,
+ * because ENTSO-E's single Solar category includes concentrated solar plants
+ * discharging thermal storage after dark.
  *
  * Generated once by `website/scripts/fixtures/spain-eclipse-solar.mjs`, then
  * committed — the docs site fetches nothing.
@@ -38,7 +40,7 @@
 /** First sample: 2026-08-11T22:00:00.000Z (00:00 CEST, 12 Aug). */
 export const ECLIPSE_SOLAR_START_MS = 1786485600000;
 
-/** Cadence of both columns: the API's native 15 minutes. */
+/** Cadence of every column: the API's native 15 minutes. */
 export const ECLIPSE_SOLAR_STEP_MS = 900000;
 
 /** Solar generation on eclipse day (12 August 2026), GW. */
@@ -54,10 +56,38 @@ export const SOLAR_ECLIPSE_DAY_GW: readonly number[] = [
   0.86, 0.69, 0.64, 0.62, 0.61, 0.61, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6,
 ];
 
-/** Solar generation the day before (11 August 2026), GW — indexed to the
- *  same clock time as `SOLAR_ECLIPSE_DAY_GW`. */
+/** Solar generation on 2026-08-09 — indexed to the same clock time as
+ *  `SOLAR_ECLIPSE_DAY_GW`, 3 days earlier. GW. */
 // prettier-ignore
-export const SOLAR_DAY_BEFORE_GW: readonly number[] = [
+export const SOLAR_AUG09_GW: readonly number[] = [
+  0.54, 0.52, 0.48, 0.44, 0.42, 0.42, 0.42, 0.42, 0.42, 0.42, 0.41, 0.38, 0.38,
+  0.36, 0.36, 0.36, 0.36, 0.33, 0.3, 0.28, 0.26, 0.22, 0.16, 0.14, 0.14, 0.13,
+  0.12, 0.12, 0.24, 0.44, 0.8, 1.72, 3.21, 5.41, 8.15, 11.3, 14.46, 17.21, 19.51,
+  20.78, 22.3, 23.22, 24.5, 24.22, 24.02, 24.58, 24.75, 24.91, 24.92, 25.1,
+  25.42, 25.37, 25.27, 24.83, 25.22, 25.12, 25.4, 25.25, 25.44, 25.02, 24.54,
+  24.71, 25.08, 24.33, 23.68, 23.59, 23.81, 23.84, 23.52, 23.28, 23.35, 22.71,
+  21.58, 21.08, 20.52, 19.4, 17.99, 16.42, 13.88, 11.22, 8.88, 6.51, 4.24, 2.52,
+  1.35, 0.86, 0.72, 0.69, 0.68, 0.67, 0.66, 0.65, 0.65, 0.66, 0.65, 0.65,
+];
+
+/** Solar generation on 2026-08-10 — indexed to the same clock time as
+ *  `SOLAR_ECLIPSE_DAY_GW`, 2 days earlier. GW. */
+// prettier-ignore
+export const SOLAR_AUG10_GW: readonly number[] = [
+  0.65, 0.65, 0.64, 0.57, 0.56, 0.54, 0.54, 0.54, 0.54, 0.53, 0.51, 0.48, 0.43,
+  0.38, 0.33, 0.29, 0.29, 0.28, 0.27, 0.26, 0.24, 0.22, 0.2, 0.17, 0.16, 0.14,
+  0.12, 0.12, 0.23, 0.32, 0.66, 1.54, 3.05, 5.27, 7.96, 11.07, 14.32, 17.28,
+  20.11, 22.34, 23.7, 24.72, 25.59, 26.57, 26.9, 27.53, 27.48, 27.3, 26.56,
+  26.52, 26.82, 26.58, 26.65, 26.99, 27.14, 27.3, 27.66, 27.78, 27.53, 27.15,
+  26.63, 26.27, 25.82, 25.25, 25.6, 25.01, 24.51, 23.67, 22.84, 22.33, 22, 21.49,
+  20.85, 20.06, 19.26, 18.18, 17.2, 15.29, 13.1, 11.1, 8.52, 5.94, 3.82, 2.23,
+  1.23, 0.78, 0.62, 0.59, 0.58, 0.58, 0.57, 0.57, 0.56, 0.53, 0.51, 0.51,
+];
+
+/** Solar generation on 2026-08-11 — indexed to the same clock time as
+ *  `SOLAR_ECLIPSE_DAY_GW`, 1 day earlier. GW. */
+// prettier-ignore
+export const SOLAR_AUG11_GW: readonly number[] = [
   0.51, 0.5, 0.5, 0.49, 0.49, 0.48, 0.45, 0.46, 0.46, 0.46, 0.46, 0.46, 0.45,
   0.46, 0.46, 0.46, 0.45, 0.43, 0.43, 0.42, 0.41, 0.38, 0.37, 0.34, 0.33, 0.3,
   0.26, 0.22, 0.33, 0.38, 0.69, 1.58, 3.21, 5.64, 8.52, 11.73, 15.05, 18.33,

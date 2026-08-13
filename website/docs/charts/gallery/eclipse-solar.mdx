@@ -7,25 +7,31 @@ sidebar_label: Eclipse solar
 
 The other half of the [eclipse-demand](./eclipse-demand.mdx) story. A solar
 curve near sunset is already falling, so eclipse day alone just looks like a
-steep evening — the chart only works with a control. Overlaying the previous
-day at the same clock time turns the eclipse into what it was: a second,
-faster sunset taken out of the middle of the real one.
+steep evening — the chart only works against the days that didn't have an
+eclipse in them. Here the three previous days are the control, and one
+`collapse` turns them into a baseline the interesting day can be judged
+against.
 
 import ChartExample from '@site/src/components/ChartExample';
 import GalleryEclipseSolar from '@site/src/examples/gallery-eclipse-solar';
 
 ## The chart
 
-<ChartExample name="gallery-eclipse-solar" height={330} collapsed>
-  {(width) => <GalleryEclipseSolar width={width} height={260} legend />}
+<ChartExample name="gallery-eclipse-solar" height={370} collapsed>
+  {(width) => (
+    <GalleryEclipseSolar width={width} height={260} legend controls />
+  )}
 </ChartExample>
 
-The solid line is Spain's solar generation on 12 August 2026; the muted one
-is the day before, **plotted 24 hours forward so the two evenings share a
-clock**. They ride the same bell until the shaded region, then eclipse day
-falls off it: **4.47 GW below the ordinary evening at 20:15 CEST**, and by
-20:30 it is at a level the ordinary evening wouldn't reach for another
-forty-five minutes.
+Two views, one toggle. **Four days** is the raw material: three grey
+evenings — 9, 10 and 11 August, each **plotted forward to eclipse day's
+clock** — and the solid one the Moon interrupted. **Anomaly vs baseline**
+collapses the grey days into their per-quarter-hour mean and redraws every
+curve as a distance from it: eclipse day dives to **−4.34 GW at 20:15
+CEST**, while the grey residuals hug zero through the whole evening ramp.
+The empty vertical space between them is the point: sunset is the most
+repeatable thing a solar fleet does, and this one broke the pattern by
+gigawatts.
 
 ## The data
 
@@ -33,30 +39,37 @@ forty-five minutes.
 [energy-charts.info](https://api.energy-charts.info) (Fraunhofer ISE),
 **CC BY 4.0**, upstream ENTSO-E — the same source family as the German
 Easter-weekend fixture behind the track's first three cards. Retrieved the
-morning after the eclipse. Two columns, one civil day each:
+morning after the eclipse. Four civil days on one shared index:
 
-| Column       | Meaning                                                 |
-| ------------ | ------------------------------------------------------- |
-| `eclipseDay` | Solar generation on 12 August, GW — 29.67 peak          |
-| `dayBefore`  | 11 August's curve, shifted +24 h to the same clock time |
+| Column          | Meaning                                               |
+| --------------- | ----------------------------------------------------- |
+| `eclipseDay`    | Solar generation on 12 August, GW — 29.67 peak        |
+| `aug09`–`aug11` | The three days before, shifted to the same clock time |
 
-**The shift is the device, so here it is in plain words:** the muted curve
-did not happen when the axis says — it happened one day earlier. Plotting a
-reference series at a false time is only honest when the page says so, every
-time. (The [Niño 3.4 card](./nino34.mdx) does the same thing with 45 years;
-this is the two-day version.)
+**The shift is the device, so here it is in plain words:** the grey curves
+did not happen when the axis says — each happened one, two or three days
+earlier. Plotting reference series at a false time is only honest when the
+page says so, every time. (The [Niño 3.4 card](./nino34.mdx) does the same
+thing with 45 years; this is the long-weekend version.)
 
-Two quirks worth reading off the chart. Neither curve ever touches zero —
-Spanish solar idles near **0.6 GW overnight**, because ENTSO-E reports
-concentrated solar plants discharging stored heat after dark inside the same
-category as PV. And the two days are honestly different days: they disagree
-by up to **3.14 GW late afternoon** (18:45, ordinary weather variation),
-which is exactly why the eclipse still reads as signal — the deficit
-**doubles in fifteen minutes** as totality approaches (2.65 GW at 19:45 →
-4.11 GW at 20:00), peaks at **4.47 GW at 20:15**, and closes again by 21:15
-as sunset finishes what the Moon started. Red Eléctrica had pre-announced a
-loss of _up to 5 GW_; the measured bite against the previous evening came in
-just under it.
+The baseline is **not in the fixture** — it's computed in the example, and
+that's deliberate: it is one `collapse` (below), and teaching it is this
+card's job. Judged against it, the days have two personalities. **Midday is
+weather**: August cloud swings individual days up to **3.57 GW** from the
+pack's mean, and eclipse day itself runs _above_ baseline all afternoon,
+peaking at **+3.53 GW at 17:00** — it was the sunniest of the four (29.67 GW
+peak against the baseline's 27.22).
+**The evening ramp is physics**: from 19:45 onward the three ordinary days
+sit within **±0.53 GW** of their mean, tightening to ±0.21 by 20:30. Into
+that repeatability the eclipse cuts a **−4.34 GW** anomaly at 20:15 — at
+20:00 the gap is **twelve times** the ordinary envelope (−3.86 GW against
+±0.31) — and it closes again by 21:00 as sunset finishes what the Moon
+started. Red Eléctrica had pre-announced a loss of _up to 5 GW_.
+
+One more quirk worth reading off the chart: none of the four days ever
+touches zero — Spanish solar idles near **0.6 GW overnight**, because
+ENTSO-E reports concentrated solar plants discharging stored heat after dark
+inside the same category as PV.
 
 The eclipse marks are the same `ECLIPSE_MARKS` constants the demand card
 draws (IGN's Madrid circumstances) — one fixture module, two cards, one set
@@ -65,64 +78,83 @@ here are CEST.
 
 ## Build it
 
-**1. Put both days in one series.** The overlay happens in the _fixture_, not
-the chart: sample _i_ of each column is the same clock time one day apart, so
-one `TimeSeries` keyed by eclipse-day timestamps carries both curves. The
-chart then draws two columns of one series — the reference muted, the subject
-on top:
+**1. Put all four days in one series.** The overlay happens in the
+_fixture_: sample _i_ of every column is the same clock time on a different
+day, so one `TimeSeries` keyed by eclipse-day timestamps carries the whole
+comparison. Drawing the raw spaghetti is four `<LineChart>`s — the reference
+pack muted, the subject on top:
 
 ```tsx
-const series = eclipseSolar();
+const days = eclipseSolar(); // eclipseDay, aug09, aug10, aug11
 
-<ChartContainer range={eclipseSolarRange()} width={width}>
-  <ChartRow height={220}>
-    <YAxis id="gw" label="GW" format=".1f" min={0} width={48} />
-    <Layers>
-      <LineChart series={series} column="dayBefore" axis="gw" as="muted" />
-      <LineChart series={series} column="eclipseDay" axis="gw" />
-    </Layers>
-  </ChartRow>
-</ChartContainer>;
+<Layers>
+  <LineChart series={days} column="aug09" axis="gw" as="muted" />
+  <LineChart series={days} column="aug10" axis="gw" as="muted" />
+  <LineChart series={days} column="aug11" axis="gw" as="muted" />
+  <LineChart series={days} column="eclipseDay" axis="gw" />
+</Layers>;
 ```
 
-`min={0}` pins the axis floor: generation is a quantity from zero, and the
-overnight CSP shelf should read as _nearly_ nothing, not as the bottom of the
-chart.
-
-**2. Reuse the astronomy.** The annotation register is shared with the demand
-card — same constants, same two marks:
+**2. Collapse the pack into a baseline.** `collapse` runs one reducer across
+named columns, row by row; `{ append: true }` keeps the inputs alongside the
+result. The baseline is the three ordinary days' mean, and every curve's
+anomaly is just another collapse against it:
 
 ```tsx
-<Region
-  from={ECLIPSE_MARKS.partialsBegin}
-  to={ECLIPSE_MARKS.partialsEnd}
-  label="eclipse"
-/>
-<Marker at={ECLIPSE_MARKS.totality} label="totality" />
+const series = days
+  .collapse(
+    ['aug09', 'aug10', 'aug11'],
+    'baseline',
+    (v) => (v.aug09 + v.aug10 + v.aug11) / 3,
+    { append: true },
+  )
+  .collapse(
+    ['eclipseDay', 'baseline'],
+    'delta',
+    (v) => v.eclipseDay - v.baseline,
+    { append: true },
+  );
 ```
 
-**3. Label the shift.** The legend is where the overlay's honesty lives on
-the chart itself — "Day before", not a date the axis would contradict. If you
-drop the legend, the caption has to carry it instead.
+The example repeats the `delta` step for each grey day (`aug09Delta`, …), so
+the ordinary days can be drawn as residuals too — they're the envelope that
+tells you whether the anomaly is signal.
+
+**3. Re-centre the view.** The anomaly mode is the same four layers reading
+the delta columns, with the axis relabelled as a distance and a `<Baseline>`
+naming the new zero:
 
 ```tsx
-<LineChart series={series} column="dayBefore" as="muted" legend="Day before" />
+<YAxis id="gw" label="GW vs baseline" format="+.1f" width={56} />
+<Layers>
+  <LineChart series={series} column="aug09Delta" axis="gw" as="muted" />
+  {/* …aug10Delta, aug11Delta… */}
+  <LineChart series={series} column="delta" axis="gw" />
+  <Baseline value={0} axis="gw" label="3-day baseline" />
+</Layers>
 ```
+
+The toggle between the two is ordinary React state — swap the `column` props
+and the axis; the pond pipeline above already carries both readings of the
+same data.
 
 ## Options to try
 
-| Option               | What it does                               | Reach for it when                                                                    |
-| -------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------ |
-| `as="muted"`         | The reference curve in the theme's neutral | Any shifted or historical comparison curve                                           |
-| More reference days  | A pack of muted curves behind the subject  | One control day is weather; five are a climatology — see [Niño 3.4](./nino34.mdx)    |
-| `min={0}` on `YAxis` | Pins the floor at zero                     | Quantities-from-zero (generation, traffic); auto-ranging would amplify the CSP shelf |
-| `curve="monotone"`   | Smooths both bells                         | 15-minute and coarser cadences, where the ramp shouldn't look like line segments     |
-| `cursor="crosshair"` | Reticle + pill on the nearer curve         | Reading the deficit sample by sample                                                 |
+| Option               | What it does                              | Reach for it when                                                                    |
+| -------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| More baseline days   | A deeper pack behind the subject          | Three days is a long weekend; thirty is a climatology — see [Niño 3.4](./nino34.mdx) |
+| Median, not mean     | `collapse` with a different reducer       | A baseline that shouldn't move when one control day was cloudy                       |
+| `as="muted"`         | The reference pack in the theme's neutral | Any shifted or historical comparison curves                                          |
+| `format="+.1f"`      | Signed tick labels on the anomaly axis    | Any re-centred view — the sign is the reading                                        |
+| `min={0}` on `YAxis` | Pins the raw view's floor at zero         | Quantities-from-zero (generation, traffic); meaningless once re-centred              |
+| `curve="monotone"`   | Smooths all the bells                     | 15-minute and coarser cadences, where the ramp shouldn't look like line segments     |
 
 ## See also
 
 - [Demand during an eclipse](./eclipse-demand.mdx) — the same ninety minutes
-  on the demand side, against a forecast instead of a yesterday
+  on the demand side, against a forecast instead of a baseline
+- [`collapse`](../../pond-ts/transforms/reshape.mdx) — the column-math
+  operator both steps lean on
 - [`<LineChart>`](../types/linechart.mdx) — every prop
 - [Niño 3.4](./nino34.mdx) — the same-clock overlay device at full scale
 - [Grid mix](./grid-mix.mdx) — the source family's licence notes
