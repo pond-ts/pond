@@ -1,0 +1,130 @@
+---
+title: Solar during an eclipse
+sidebar_label: Eclipse solar
+---
+
+# Solar during an eclipse
+
+The other half of the [eclipse-demand](./eclipse-demand.mdx) story. A solar
+curve near sunset is already falling, so eclipse day alone just looks like a
+steep evening — the chart only works with a control. Overlaying the previous
+day at the same clock time turns the eclipse into what it was: a second,
+faster sunset taken out of the middle of the real one.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryEclipseSolar from '@site/src/examples/gallery-eclipse-solar';
+
+## The chart
+
+<ChartExample name="gallery-eclipse-solar" height={330} collapsed>
+  {(width) => <GalleryEclipseSolar width={width} height={260} legend />}
+</ChartExample>
+
+The solid line is Spain's solar generation on 12 August 2026; the muted one
+is the day before, **plotted 24 hours forward so the two evenings share a
+clock**. They ride the same bell until the shaded region, then eclipse day
+falls off it: **4.47 GW below the ordinary evening at 20:15 CEST**, and by
+20:30 it is at a level the ordinary evening wouldn't reach for another
+forty-five minutes.
+
+## The data
+
+**Real measured data** — Spain's grid-scale solar at 15-minute cadence from
+[energy-charts.info](https://api.energy-charts.info) (Fraunhofer ISE),
+**CC BY 4.0**, upstream ENTSO-E — the same source family as the German
+Easter-weekend fixture behind the track's first three cards. Retrieved the
+morning after the eclipse. Two columns, one civil day each:
+
+| Column       | Meaning                                                 |
+| ------------ | ------------------------------------------------------- |
+| `eclipseDay` | Solar generation on 12 August, GW — 29.67 peak          |
+| `dayBefore`  | 11 August's curve, shifted +24 h to the same clock time |
+
+**The shift is the device, so here it is in plain words:** the muted curve
+did not happen when the axis says — it happened one day earlier. Plotting a
+reference series at a false time is only honest when the page says so, every
+time. (The [Niño 3.4 card](./nino34.mdx) does the same thing with 45 years;
+this is the two-day version.)
+
+Two quirks worth reading off the chart. Neither curve ever touches zero —
+Spanish solar idles near **0.6 GW overnight**, because ENTSO-E reports
+concentrated solar plants discharging stored heat after dark inside the same
+category as PV. And the two days are honestly different days: they disagree
+by up to **3.14 GW late afternoon** (18:45, ordinary weather variation),
+which is exactly why the eclipse still reads as signal — the deficit
+**doubles in fifteen minutes** as totality approaches (2.65 GW at 19:45 →
+4.11 GW at 20:00), peaks at **4.47 GW at 20:15**, and closes again by 21:15
+as sunset finishes what the Moon started. Red Eléctrica had pre-announced a
+loss of _up to 5 GW_; the measured bite against the previous evening came in
+just under it.
+
+The eclipse marks are the same `ECLIPSE_MARKS` constants the demand card
+draws (IGN's Madrid circumstances) — one fixture module, two cards, one set
+of facts. The time axis renders in **your** browser's timezone; clock times
+here are CEST.
+
+## Build it
+
+**1. Put both days in one series.** The overlay happens in the _fixture_, not
+the chart: sample _i_ of each column is the same clock time one day apart, so
+one `TimeSeries` keyed by eclipse-day timestamps carries both curves. The
+chart then draws two columns of one series — the reference muted, the subject
+on top:
+
+```tsx
+const series = eclipseSolar();
+
+<ChartContainer range={eclipseSolarRange()} width={width}>
+  <ChartRow height={220}>
+    <YAxis id="gw" label="GW" format=".1f" min={0} width={48} />
+    <Layers>
+      <LineChart series={series} column="dayBefore" axis="gw" as="muted" />
+      <LineChart series={series} column="eclipseDay" axis="gw" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>;
+```
+
+`min={0}` pins the axis floor: generation is a quantity from zero, and the
+overnight CSP shelf should read as _nearly_ nothing, not as the bottom of the
+chart.
+
+**2. Reuse the astronomy.** The annotation register is shared with the demand
+card — same constants, same two marks:
+
+```tsx
+<Region
+  from={ECLIPSE_MARKS.partialsBegin}
+  to={ECLIPSE_MARKS.partialsEnd}
+  label="eclipse"
+/>
+<Marker at={ECLIPSE_MARKS.totality} label="totality" />
+```
+
+**3. Label the shift.** The legend is where the overlay's honesty lives on
+the chart itself — "Day before", not a date the axis would contradict. If you
+drop the legend, the caption has to carry it instead.
+
+```tsx
+<LineChart series={series} column="dayBefore" as="muted" legend="Day before" />
+```
+
+## Options to try
+
+| Option               | What it does                               | Reach for it when                                                                    |
+| -------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `as="muted"`         | The reference curve in the theme's neutral | Any shifted or historical comparison curve                                           |
+| More reference days  | A pack of muted curves behind the subject  | One control day is weather; five are a climatology — see [Niño 3.4](./nino34.mdx)    |
+| `min={0}` on `YAxis` | Pins the floor at zero                     | Quantities-from-zero (generation, traffic); auto-ranging would amplify the CSP shelf |
+| `curve="monotone"`   | Smooths both bells                         | 15-minute and coarser cadences, where the ramp shouldn't look like line segments     |
+| `cursor="crosshair"` | Reticle + pill on the nearer curve         | Reading the deficit sample by sample                                                 |
+
+## See also
+
+- [Demand during an eclipse](./eclipse-demand.mdx) — the same ninety minutes
+  on the demand side, against a forecast instead of a yesterday
+- [`<LineChart>`](../types/linechart.mdx) — every prop
+- [Niño 3.4](./nino34.mdx) — the same-clock overlay device at full scale
+- [Grid mix](./grid-mix.mdx) — the source family's licence notes
+- [**Storybook**](pathname:///storybook/?path=/story/charts-linechart--line-styles) —
+  the systematic knob walk

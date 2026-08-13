@@ -53,6 +53,7 @@ import GalleryGridMix from '@site/src/examples/gallery-grid-mix';
 import GalleryRenewables from '@site/src/examples/gallery-renewables';
 import GalleryPowerPrices from '@site/src/examples/gallery-power-prices';
 import GalleryEclipseDemand from '@site/src/examples/gallery-eclipse-demand';
+import GalleryEclipseSolar from '@site/src/examples/gallery-eclipse-solar';
 import GallerySpectrum from '@site/src/examples/gallery-spectrum';
 import GallerySeismograph from '@site/src/examples/gallery-seismograph';
 import GalleryTides from '@site/src/examples/gallery-tides';
@@ -374,8 +375,8 @@ NOAA or NASA numbers, not a model of them. Three of the four are one airport's
 Grid data is where composition, crossover and signed values all turn up at
 once. The first three cards are the same real weekend — Easter 2025 in
 Germany, the quietest demand day of the year meeting a big solar peak. The
-fourth is a different grid on a stranger evening: Spain, during the total
-solar eclipse of 12 August 2026.
+last two are a different grid on a stranger evening — Spain, during the
+total solar eclipse of 12 August 2026: what demand did, and what solar did.
 
 <GalleryGrid>
 
@@ -428,6 +429,19 @@ solar eclipse of 12 August 2026.
 >
   {(width, phase) => (
     <GalleryEclipseDemand width={width} phase={phase} height={190} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Solar during an eclipse"
+  blurb="Eclipse-day solar over the previous evening at the same clock time — a second sunset, 4.47 GW deep."
+  storybookHref="pathname:///storybook/?path=/story/charts-linechart--line-styles"
+  pageHref="/docs/charts/gallery/eclipse-solar"
+  height={212}
+  autoplay={{ period: 18000, staticPhase: 0.5 }}
+>
+  {(width, phase) => (
+    <GalleryEclipseSolar width={width} phase={phase} height={190} />
   )}
 </GalleryCard>
 
