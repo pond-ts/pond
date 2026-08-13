@@ -60,6 +60,7 @@ import GalleryTides from '@site/src/examples/gallery-tides';
 import GalleryAirQuality from '@site/src/examples/gallery-air-quality';
 import GalleryNino34 from '@site/src/examples/gallery-nino34';
 import GalleryMeasles from '@site/src/examples/gallery-measles';
+import GalleryContributions from '@site/src/examples/gallery-contributions';
 
 {/* ------------------------------------------------------------------ */}
 {/* Each domain section below is owned by one track (gallery plan §4). */}
@@ -562,11 +563,20 @@ and the year that isn't finished yet.
 
 ## Product, transport & statistical
 
-{/* TRACK G — replace this line with the section's blurb. */}
-
-_Cards land here as Track G ships._
+Counting what people make and do. The first card here is as meta as it gets:
+the library's own repository, drawn by the library.
 
 <GalleryGrid>
+
+<GalleryCard
+  title="Contribution heatmap"
+  blurb="The GitHub profile grid, of pond, by pond — 1,001 commits in eighteen weeks, and no weekend stripe."
+  storybookHref="pathname:///storybook/?path=/story/charts-heatmap--grid"
+  pageHref="/docs/charts/gallery/contribution-heatmap"
+  height={230}
+>
+  {(width) => <GalleryContributions width={width} height={190} compact />}
+</GalleryCard>
 
 {/* TRACK G — append product, transport & statistical cards above this line. */}
 
