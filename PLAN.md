@@ -24,6 +24,51 @@ A lost session should never erase the current state of the project.
 
 ---
 
+## The road to 1.0
+
+_Owner's framing, recorded 2026-08-13. This is the horizon every scheduling
+decision below is measured against, so it belongs here rather than in a
+transcript._
+
+**1.0 is roughly three to six months out**, gated on shipping milestones
+rather than a date:
+
+- **Tidal** ships in some form (possibly folded into a larger product).
+- **estela** ships — that surface is already mature.
+- **charts** land in **Ignite** and **SPARC**.
+- **ESnet** possibly migrates off `react-timeseries-charts` — outside our
+  control, but wanted.
+
+**The gate is "does the API look stable".** If it does at that point, that is
+1.0.
+
+**Coverage estimate:** RFCs + this plan account for perhaps **95% of the
+final surface**. The remaining 5% comes from experiments first and then real
+consumers — it is discovered, not designed.
+
+**Why 1.0 is a real boundary, and not just a version number:** after it, the
+API is no longer one person's to change. Everything the pre-1.0 window
+permits reduces to that. This is not a forever project; it is moving fast and
+deliberately toward a fixed point.
+
+**The scheduling consequence, which is easy to get backwards.** The 95% and
+the 5% need *opposite* treatment:
+
+- **Discovery work waits for consumers.** The last 5% is exactly what
+  experiments and real integrations surface; designing it early guesses.
+- **Structural work must precede them.** Anything that reshapes the existing
+  95% — a component-tree change, a prop relocation across components — gets
+  monotonically more expensive as each consumer integrates, and cannot be
+  justified by consumer signal because that signal never asks for it.
+
+So a restructure is not "deferred until we learn more". It is either done
+early or not done. The live worked example is
+[`docs/rfcs/container-decomposition.md`](docs/rfcs/container-decomposition.md),
+whose whole conclusion turns on this: 98% of its blast radius is our own code
+**today**, and the milestones above are precisely the events that spend it.
+
+---
+
 ## Roadmap
 
 ### `@pond-ts/charts`
