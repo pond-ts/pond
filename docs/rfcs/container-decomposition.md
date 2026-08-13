@@ -94,6 +94,15 @@ competing option, it is **wasted work on a prop that stops existing** — and
 worse, it spends the goodwill of a breaking change on the wrong break. Decide
 this first.
 
+**Update (2026-08-13): the timing is now measured, not open.** §10.A puts the
+blast radius at 910 sites of which **98% are ours**, and §10.B puts the
+pre-1.0 window at **three to six months**, gated on consumers integrating.
+Both point the same way and tighten the deadline considerably: the window is
+not "before 1.0", it is **before Ignite and SPARC integrate**, because that
+event is what spends the 98% and the 1.0 gate is literally "the API looks
+stable". **This decides in weeks, not months** — go near-immediately, or drop
+it and build §9. Holding it open is the only option with no upside.
+
 ---
 
 ## §1 The symptom
@@ -431,10 +440,46 @@ decision". The design questions are tractable; these decide the outcome.
      afternoon, not a migration. External consumers are a smaller set today
      than they will ever be again — the expiry argument from a second
      direction.
-- **B. How long is the pre-1.0 window, honestly?** The option expires at 1.0.
-  If 1.0 is far off, this can wait for demand; if it is near, "later" means
-  "never" and the decision is now. That date is not this RFC's to set, but
-  the RFC cannot be judged without it.
+- **B. How long is the pre-1.0 window? — answered by pjm, 2026-08-13.**
+  **Three to six months**, gated on a set of shipping milestones rather than
+  a date: Tidal shipping in some form, estela shipping (that surface is
+  already mature), charts landing in Ignite and SPARC, and — outside our
+  control — ESnet possibly migrating off `react-timeseries-charts`.
+
+  > If the API looks stable then that would be a v1.0 point for me. […] RFCs
+  > and PLAN.md cover maybe 95% of final surface. First experiments then
+  > actual consumers will drive the last part. Then 1.0 is done. Sure it will
+  > evolve after that, but it won't be just mine then.
+
+  **That last clause is the real boundary.** 1.0 is not a quality bar, it is
+  the point where the API stops being one person's to change. Everything the
+  expiry argument says about "permission" reduces to that.
+
+  **The sharpening — and it is the RFC's actual conclusion.** The deadline is
+  **substantially earlier than 1.0**, for two independent reasons:
+
+  1. **The gate is literally "the API looks stable."** A structural change
+     landing at month five *resets that clock* — you cannot decompose the
+     component tree and simultaneously claim the surface has settled. Late
+     is self-defeating in a way that late-but-before-1.0 does not capture.
+  2. **The 98%-is-ours ratio decays monotonically.** It holds *today*
+     because estela is 14 sites and the other consumers have not integrated
+     yet. Ignite and SPARC landing during this window is precisely the event
+     that spends it. The cheapest moment to do this is the earliest one, and
+     every milestone in the list above makes it dearer.
+
+  **Corollary, which resolves how this interacts with the last 5%.** A
+  decomposition is **not** part of the consumer-driven remainder — it is a
+  restructure of the 95% already covered by RFCs and PLAN. So it cannot wait
+  for consumer signal: that signal will never say "decompose the container",
+  it will only raise the price of doing so. The two categories need opposite
+  scheduling. Discovery work waits for consumers; structural work must
+  precede them.
+
+  **Practical reading: this decides in weeks, not months.** Either it goes
+  near-immediately, or it does not go and §9's `xAxis="auto"` should be built
+  instead. Holding it open is the one option with no upside — it delays the
+  cheap fix while the expensive one gets more expensive.
 
 Design questions, in rough order of how much damage a wrong answer does:
 
