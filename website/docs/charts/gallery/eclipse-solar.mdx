@@ -54,22 +54,22 @@ thing with 45 years; this is the long-weekend version.)
 
 The baseline is **not in the fixture** — it's computed in the example, and
 that's deliberate: it is one `collapse` (below), and teaching it is this
-card's job. Judged against it, the days have two personalities. **Midday is
-weather**: August cloud swings individual days up to **3.57 GW** from the
-pack's mean, and eclipse day itself runs _above_ baseline all afternoon,
-peaking at **+3.53 GW at 17:00** — it was the sunniest of the four (29.67 GW
-peak against the baseline's 27.22).
+card's job. Judged against it, the days have two personalities. **The
+afternoon is weather**: cloud swings individual days up to **3.57 GW** from
+the pack's mean (at 17:00), and eclipse day itself rides _above_ baseline
+from late morning until 18:30, peaking at **+3.53 GW at 17:00** — it was the
+sunniest of the four (29.67 GW peak against the baseline's 27.22).
 **The evening ramp is physics**: from 19:45 onward the three ordinary days
 sit within **±0.53 GW** of their mean, tightening to ±0.21 by 20:30. Into
 that repeatability the eclipse cuts a **−4.34 GW** anomaly at 20:15 — at
 20:00 the gap is **twelve times** the ordinary envelope (−3.86 GW against
-±0.31) — and it closes again by 21:00 as sunset finishes what the Moon
-started. Red Eléctrica had pre-announced a loss of _up to 5 GW_.
+±0.31) — then fades with the daylight: −0.45 GW by 21:00, gone by 21:30.
+Red Eléctrica had pre-announced a loss of _up to 5 GW_.
 
 One more quirk worth reading off the chart: none of the four days ever
-touches zero — Spanish solar idles near **0.6 GW overnight**, because
-ENTSO-E reports concentrated solar plants discharging stored heat after dark
-inside the same category as PV.
+touches zero. Each enters the night around **0.5–0.65 GW** and drains to
+**0.12–0.22 GW** before dawn — ENTSO-E reports concentrated solar plants
+discharging stored heat after dark inside the same category as PV.
 
 The eclipse marks are the same `ECLIPSE_MARKS` constants the demand card
 draws (IGN's Madrid circumstances) — one fixture module, two cards, one set
@@ -118,7 +118,9 @@ const series = days
 
 The example repeats the `delta` step for each grey day (`aug09Delta`, …), so
 the ordinary days can be drawn as residuals too — they're the envelope that
-tells you whether the anomaly is signal.
+tells you whether the anomaly is signal. (In the real source the mean's
+inputs come from the exported `ECLIPSE_BASELINE_DAYS` list rather than being
+spelled twice, so the column set has one home.)
 
 **3. Re-centre the view.** The anomaly mode is the same four layers reading
 the delta columns, with the axis relabelled as a distance and a `<Baseline>`

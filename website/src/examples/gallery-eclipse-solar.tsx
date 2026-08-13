@@ -31,9 +31,11 @@ type Mode = 'days' | 'anomaly';
 function withBaseline() {
   return eclipseSolar()
     .collapse(
-      ['aug09', 'aug10', 'aug11'],
+      ECLIPSE_BASELINE_DAYS,
       'baseline',
-      (v) => (v.aug09 + v.aug10 + v.aug11) / 3,
+      (v) =>
+        ECLIPSE_BASELINE_DAYS.reduce((sum, day) => sum + v[day], 0) /
+        ECLIPSE_BASELINE_DAYS.length,
       { append: true },
     )
     .collapse(

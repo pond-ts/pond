@@ -112,9 +112,10 @@ process.stdout.write(`/**
  * same-clock-time overlay is the whole device, and every page that draws it
  * must say so. All four days are complete (no gaps, no nulls; alignment
  * validated to exactly 24 h between consecutive days at every index), and
- * none ever reads zero: Spanish solar idles near **0.6 GW overnight**,
- * because ENTSO-E's single Solar category includes concentrated solar plants
- * discharging thermal storage after dark.
+ * none ever reads zero: each enters the night around **0.5–0.65 GW** and
+ * drains to **0.12–0.22 GW** before dawn, because ENTSO-E's single Solar
+ * category includes concentrated solar plants discharging thermal storage
+ * after dark.
  *
  * Generated once by \`website/scripts/fixtures/spain-eclipse-solar.mjs\`, then
  * committed — the docs site fetches nothing.
