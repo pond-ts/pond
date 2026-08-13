@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -152,8 +153,42 @@ const AXIS_TICK_COUNT = 5;
 const TOP_LABEL_HEADER = 16;
 
 export interface ChartRowProps {
-  /** Row height in CSS pixels. */
-  height: number;
+  /**
+   * Row height in CSS pixels — the **fixed** sizing mode. Omit it (or pass
+   * {@link flex}) to let the row share the container's remaining height
+   * instead; a bare `<ChartRow>` means `flex={1}`.
+   */
+  height?: number;
+  /**
+   * Share of the container's **remaining** height ([PND-HEIGHT]) — the
+   * CSS-flex sizing mode, and what an omitted `height` defaults to (`1`).
+   *
+   * The remainder is what CSS flex layout says it is: the container's height
+   * minus its axis strip, minus every fixed-`height` row, minus any non-row
+   * children you placed between rows (a draggable splitter), minus `rowGap`s.
+   * That is deliberate — the row's box is `flex: <n> 1 0`, so **the browser
+   * does the subtraction** and there is no strip-height constant for a caller
+   * to know, guess, or drift on (the reporting consumer had `20` and `24` in
+   * one codebase for a strip that is actually 22 — *when it is not showing a
+   * calendar band row or marker pills, which change it*). The row then reads
+   * back the height the layout gave it and builds its y-scales from that.
+   *
+   * Mixing modes is the point, not an edge case: a price row over a volume
+   * row is `<ChartRow flex={3}>` over `<ChartRow flex={1}>`; the splitter
+   * shape is one `flex` row that absorbs slack over one fixed row the drag
+   * resizes.
+   *
+   * **Needs a container that manages height** — `<ChartContainer
+   * height={number | 'auto'}>`. Inside a container with no height, a flex
+   * row's box has nothing to flex into, collapses to zero, and stays gated
+   * out; dev builds warn.
+   *
+   * A flex row paints nothing until its first real measurement (one layout
+   * pass), and — like the container's `width="auto"` — it keeps its last
+   * non-zero height while hidden, so a `display: none` tab switch does not
+   * discard its scales.
+   */
+  flex?: number;
   /**
    * Cursor presentation for this row, overriding the container's default
    * ({@link ChartContainerProps.cursor}). Omit to inherit. See {@link CursorMode}.
@@ -184,11 +219,82 @@ export interface ChartRowProps {
  * Children lay out left-to-right in author order, so `<YAxis side="left"/>` goes
  * before `<Layers/>` and `<YAxis side="right"/>` after.
  */
-export function ChartRow({ height, cursor, children }: ChartRowProps) {
+export function ChartRow({
+  height: heightProp,
+  flex,
+  cursor,
+  children,
+}: ChartRowProps) {
   const container = useContext(ContainerContext);
   if (container === null) {
     throw new Error('<ChartRow> must be rendered inside a <ChartContainer>');
   }
+
+  // ── Sizing mode ([PND-HEIGHT]) ─────────────────────────────────────────────
+  // Fixed (`height` in px) or flex (`flex`, the default when neither is
+  // given). A flex row's box is sized by CSS (`flex: <n> 1 0` inside the
+  // container's column), and the row reads back what layout gave it — the
+  // browser subtracts the axis strip, fixed siblings, splitters and row gaps,
+  // so no caller (and no code here) ever knows what those cost.
+  const isFlex = heightProp === undefined;
+  const flexGrow = flex ?? 1;
+  const warnedSizingRef = useRef(false);
+  useEffect(() => {
+    if (!isDev || warnedSizingRef.current) return;
+    if (heightProp !== undefined && flex !== undefined) {
+      // Both given is a contradiction, not a tiebreak: warn and honour
+      // `height` (the long-standing prop) so the chart renders
+      // deterministically.
+      warnedSizingRef.current = true;
+      console.warn(
+        `[pond-charts] <ChartRow> got both height={${heightProp}} and ` +
+          `flex={${flex}} — they are alternative sizing modes. Using ` +
+          `height; drop one.`,
+      );
+    }
+  }, [heightProp, flex]);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const [measured, setMeasured] = useState(0);
+  useLayoutEffect(() => {
+    if (!isFlex) return;
+    const el = boxRef.current;
+    if (el === null) return;
+    const measure = () =>
+      setMeasured((prev) => {
+        const next = Math.round(el.getBoundingClientRect().height);
+        // Latch the last non-zero height — a hidden row (display: none
+        // ancestor) is not a resized one, and writing 0 through would tear
+        // down its scales. Same rule as the container's width="auto".
+        return next > 0 ? next : prev;
+      });
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isFlex]);
+  // A flex row inside a container that doesn't manage height has nothing to
+  // flex into: its box is 0 and stays 0, silently. That is a wiring error the
+  // consumer should hear about now, not a slow start to wait through.
+  const warnedNoHeightRef = useRef(false);
+  useEffect(() => {
+    if (
+      !isDev ||
+      !isFlex ||
+      container.managesHeight ||
+      warnedNoHeightRef.current
+    ) {
+      return;
+    }
+    warnedNoHeightRef.current = true;
+    console.warn(
+      `[pond-charts] <ChartRow flex> needs a container that manages height ` +
+        `— give <ChartContainer> a height ({number | 'auto'}). Inside a ` +
+        `container with no height this row's box collapses to 0 and never ` +
+        `paints.`,
+    );
+  }, [isFlex, container.managesHeight]);
+  const height = isFlex ? measured : heightProp;
 
   // Register on mount so the container can mark the first (topmost) row by
   // mount order — the shared cursor-time chip renders there only.
@@ -677,11 +783,18 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
         />
       )}
       <div
+        ref={boxRef}
         style={{
           display: 'flex',
           flexDirection: 'row',
           width: `${container.width}px`,
-          height: `${height}px`,
+          // Fixed rows keep their pixels; a flex row is sized by the
+          // container's column layout and reads the result back
+          // ([PND-HEIGHT]). `minHeight: 0` is what lets it actually shrink —
+          // a flex child's default min-height is its content.
+          ...(isFlex
+            ? { flex: `${flexGrow} 1 0%`, minHeight: 0 }
+            : { height: `${height}px` }),
         }}
       >
         {leftPad > 0 && <div style={{ flex: `0 0 ${leftPad}px` }} />}

@@ -67,6 +67,14 @@ export type ChartXScale =
 export interface ContainerFrame {
   readonly timeRange: readonly [number, number];
   readonly width: number;
+  /**
+   * Whether the container is managing vertical layout ([PND-HEIGHT]) — it was
+   * given a `height` (number or `'auto'`), renders as a flex column, and flex
+   * rows have real space to divide. `false` is the classic mode: rows declare
+   * pixel heights and the container's height is their sum. A `<ChartRow
+   * flex>` reads this to warn when mounted somewhere it can never resolve.
+   */
+  readonly managesHeight: boolean;
   readonly theme: ChartTheme;
   /** Plot width in px after the gutters — shared by every row. */
   readonly plotWidth: number;

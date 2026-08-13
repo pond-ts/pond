@@ -389,6 +389,48 @@ export interface ChartContainerProps {
    * render.
    */
   width?: number | 'auto';
+  /**
+   * Total height in CSS pixels, or `'auto'` to fill the available height —
+   * **the container-owned vertical layout** ([PND-HEIGHT]). Omitted means the
+   * classic mode: rows declare pixel heights and the container's height is
+   * their sum.
+   *
+   * With a height, the container renders as a **flex column** — the rows
+   * block flexes, the x-axis strip keeps its natural height at the bottom —
+   * and `<ChartRow flex>` rows (a bare `<ChartRow>` is `flex={1}`) divide
+   * whatever the browser says is left. That "whatever the browser says" is
+   * the point: the axis strip's height depends on its `label`, the theme's
+   * font size, whether the tick ladder is showing its calendar band row at
+   * the current grain, and how many marker pills stack — it is not a constant
+   * a caller could subtract, and every consumer who tried carried a wrong
+   * number (20, 24, and the recipe's 22 were all in the wild for one strip).
+   * CSS does the subtraction, so there is no number to know.
+   *
+   * A single full-bleed chart is therefore zero arithmetic:
+   *
+   * ```tsx
+   * <ChartContainer width="auto" height="auto">
+   *   <ChartRow>
+   *     <YAxis id="v" />
+   *     <Layers>…</Layers>
+   *   </ChartRow>
+   * </ChartContainer>
+   * ```
+   *
+   * Fixed-`height` rows keep their pixels inside a managed container, and
+   * non-row children (a draggable splitter between two rows) take their
+   * natural space — so the resizable-panels shape becomes one `flex` row
+   * absorbing slack over one fixed row the drag resizes, with no reserved
+   * strip constant and no measuring hook.
+   *
+   * `'auto'` measures with the same `ResizeObserver` as `width="auto"`, gates
+   * the first paint until both needed dimensions exist, latches the last
+   * non-zero size while hidden, and — because a flex-**column** child's
+   * height defaults to its content — **warns in dev when a measured dimension
+   * stays 0**: the parent needs a definite height, or the deadlock is the
+   * default.
+   */
+  height?: number | 'auto';
   /** Vertical space between rows in CSS pixels (not under the axis). Default 0. */
   rowGap?: number;
   /**
@@ -726,17 +768,24 @@ export interface ChartContainerProps {
  * ChartContainerProps.width} and {@link AutoWidthContainer}.
  */
 export function ChartContainer(props: ChartContainerProps) {
-  const { width } = props;
+  const { width, height } = props;
   // The measure pass is a *different component* rather than a branch inside
   // the resolved one, because the resolved container may not render at all
-  // until a width exists — and ~60 hooks cannot be conditional. Choosing the
-  // component by the prop's kind (number vs auto) means flipping a container
-  // between fixed and auto remounts it; that is a layout change, and a
-  // remount is the honest response to one.
-  if (typeof width === 'number') {
-    return <ResolvedChartContainer {...props} width={width} />;
+  // until its dimensions exist — and ~60 hooks cannot be conditional. Choosing
+  // the component by the props' kinds (number vs auto) means flipping between
+  // fixed and auto remounts; that is a layout change, and a remount is the
+  // honest response to one.
+  //
+  // The dimensions default differently, deliberately: an omitted `width`
+  // means `'auto'` (a chart must have a width, and filling is the sensible
+  // way to get one), while an omitted `height` means *unmanaged* — the
+  // classic mode where rows declare pixel heights and the container is their
+  // sum. `'auto'` height is opt-in because it changes who answers "how tall
+  // is a row".
+  if (typeof width === 'number' && height !== 'auto') {
+    return <ResolvedChartContainer {...props} width={width} height={height} />;
   }
-  return <AutoWidthContainer {...props} />;
+  return <AutoSizeContainer {...props} />;
 }
 
 /**
@@ -757,25 +806,36 @@ export function ChartContainer(props: ChartContainerProps) {
  *    never overflow its own measurement. A caller who wants a bordered frame
  *    puts it on a wrapper *outside* the container.
  */
-function AutoWidthContainer(props: ChartContainerProps) {
+function AutoSizeContainer(props: ChartContainerProps) {
   const boxRef = useRef<HTMLDivElement | null>(null);
-  const [measured, setMeasured] = useState(0);
+  const [measured, setMeasured] = useState({ width: 0, height: 0 });
+  // Which dimensions this instance is responsible for. A numeric width with
+  // height="auto" measures height only, and vice versa.
+  const needWidth = typeof props.width !== 'number';
+  const needHeight = props.height === 'auto';
 
   useLayoutEffect(() => {
     const el = boxRef.current;
     if (el === null) return;
     const measure = () =>
       setMeasured((prev) => {
-        const next = Math.round(el.getBoundingClientRect().width);
-        // **Latch the last non-zero width.** A box measures 0 whenever it is
-        // not laid out — most often because an ancestor went `display: none`
-        // (a tab switch, a collapsed accordion), which is a *hidden* chart,
-        // not a resized one. Writing that 0 through would unmount the resolved
-        // container and discard everything it owns: pan/zoom position,
-        // selection, hover, and every layer's memoized draw state, all
-        // rebuilt on the way back. Keeping the stale width holds the chart
-        // mounted through the hide, and the next real measurement corrects it.
-        return next > 0 ? next : prev;
+        const r = el.getBoundingClientRect();
+        // **Latch the last non-zero value, per dimension.** A box measures 0
+        // whenever it is not laid out — most often because an ancestor went
+        // `display: none` (a tab switch, a collapsed accordion), which is a
+        // *hidden* chart, not a resized one. Writing that 0 through would
+        // unmount the resolved container and discard everything it owns:
+        // pan/zoom position, selection, hover, and every layer's memoized
+        // draw state, all rebuilt on the way back. Keeping the stale value
+        // holds the chart mounted through the hide, and the next real
+        // measurement corrects it.
+        const w = Math.round(r.width);
+        const h = Math.round(r.height);
+        const width = w > 0 ? w : prev.width;
+        const height = h > 0 ? h : prev.height;
+        return width === prev.width && height === prev.height
+          ? prev
+          : { width, height };
       });
     measure();
     // Guarded rather than assumed: a non-browser render target (SSR, an older
@@ -787,12 +847,66 @@ function AutoWidthContainer(props: ChartContainerProps) {
     return () => ro.disconnect();
   }, []);
 
+  const width = needWidth ? measured.width : (props.width as number);
+  const height = needHeight
+    ? measured.height
+    : (props.height as number | undefined);
+  const ready = width > 0 && (!needHeight || measured.height > 0);
+
+  // **A measured dimension that stays 0 is a standing deadlock, not a slow
+  // start** — the parent's size is content-derived and the chart is the
+  // content that would have given it one, so nothing will ever paint and
+  // nothing errors. Worse for height than width: a flex-*column* child's
+  // height defaults to `auto`, so there the deadlock is the default, not an
+  // edge case. Say so once, in dev, after layout has had ample time.
+  const warnedZeroRef = useRef(false);
+  useEffect(() => {
+    if (!isDev || ready || warnedZeroRef.current) return;
+    const t = setTimeout(() => {
+      if (ready || warnedZeroRef.current) return;
+      const el = boxRef.current;
+      if (el === null) return;
+      const r = el.getBoundingClientRect();
+      const stuck = [
+        ...(needWidth && Math.round(r.width) === 0 ? ['width'] : []),
+        ...(needHeight && Math.round(r.height) === 0 ? ['height'] : []),
+      ];
+      if (stuck.length === 0) return;
+      warnedZeroRef.current = true;
+      console.warn(
+        `[pond-charts] <ChartContainer> measured ${stuck.join(' and ')} of 0 ` +
+          `and it has not changed — the chart will stay blank. The measured ` +
+          `box fills its parent, so the parent needs a definite ` +
+          `${stuck.join('/')} (a sized ancestor, a flex basis, or ` +
+          `\`min-${stuck[0]}: 0\` on a flex child); a parent sized by its ` +
+          `own content deadlocks, because the chart is that content.`,
+      );
+    }, ZERO_SIZE_WARNING_MS);
+    return () => clearTimeout(t);
+  }, [ready, needWidth, needHeight]);
+
   return (
-    <div ref={boxRef} style={{ width: '100%' }}>
-      {measured > 0 && <ResolvedChartContainer {...props} width={measured} />}
+    <div
+      ref={boxRef}
+      style={{
+        width: '100%',
+        // Only claim the parent's height when asked to measure it: a
+        // width-only auto container must keep its intrinsic height (the rows'
+        // sum), or every pre-[PND-HEIGHT] consumer's layout changes.
+        ...(needHeight ? { height: '100%', minHeight: 0 } : {}),
+      }}
+    >
+      {ready && (
+        <ResolvedChartContainer {...props} width={width} height={height} />
+      )}
     </div>
   );
 }
+
+/** How long a measured dimension may stay 0 before the dev warning names the
+ *  deadlock (see {@link AutoSizeContainer}). Long enough for any real layout
+ *  pass; a chart legitimately gated this long is not painting anyway. */
+const ZERO_SIZE_WARNING_MS = 600;
 
 /** {@link ChartContainer} with its width resolved to a concrete pixel number. */
 function ResolvedChartContainer({
@@ -801,6 +915,7 @@ function ResolvedChartContainer({
   maxBandWidth,
   bandAlign = 'start',
   width,
+  height,
   rowGap = 0,
   showAxis = true,
   trackerPosition,
@@ -834,7 +949,11 @@ function ResolvedChartContainer({
   grid = true,
   sessionDividers = 'none',
   children,
-}: Omit<ChartContainerProps, 'width'> & { width: number }) {
+}: Omit<ChartContainerProps, 'width' | 'height'> & {
+  width: number;
+  /** Resolved height in px, or `undefined` for the classic unmanaged mode. */
+  height?: number | undefined;
+}) {
   // ── Legacy cursor props (deprecated) ───────────────────────────────────────
   // The string surface keeps working for one minor: the resolved mode is
   // synthesized into the equivalent mounted preset below (`<LegacyCursor>`),
@@ -842,6 +961,11 @@ function ResolvedChartContainer({
   // *explicitly* set (never on the defaults). Mounted cursor components in the
   // same scope override the shim. See docs/rfcs/interaction.md §9 / A4.4.
   const cursor = cursorProp ?? DEFAULT_CURSOR_MODE;
+
+  // [PND-HEIGHT] Whether this container owns vertical layout (see the
+  // `height` prop). Carried on the frame so a `<ChartRow flex>` can tell a
+  // home that can size it from one that never will.
+  const managesHeight = height !== undefined;
 
   // [PND-IGNITECAT] The declared slot list, normalized to `null` when absent
   // and held by **content** identity. An inline `categories={['a', 'b']}` is a
@@ -2101,6 +2225,7 @@ function ResolvedChartContainer({
   const frame = useMemo<ContainerFrame>(
     () => ({
       timeRange: timeRangeTuple,
+      managesHeight,
       width,
       theme: theme ?? defaultTheme,
       plotWidth,
@@ -2183,6 +2308,7 @@ function ResolvedChartContainer({
     }),
     [
       timeRangeTuple,
+      managesHeight,
       width,
       theme,
       plotWidth,
@@ -2281,7 +2407,24 @@ function ResolvedChartContainer({
           // brush band. An explicit `cursor` prop (any mode) still wins.
           implicit={cursorProp === undefined}
         />
-        <div style={{ width: `${width}px` }}>
+        <div
+          style={{
+            width: `${width}px`,
+            // [PND-HEIGHT] A managed height makes the outer box a flex
+            // column: the rows block below flexes, the axis strip keeps its
+            // natural height at the bottom, and CSS subtracts one from the
+            // other. That subtraction being layout rather than arithmetic is
+            // the feature — the strip's height varies with label, font size,
+            // calendar bands and pill lanes, so no constant is correct.
+            ...(height !== undefined
+              ? {
+                  height: `${height}px`,
+                  display: 'flex',
+                  flexDirection: 'column',
+                }
+              : {}),
+          }}
+        >
           <div
             style={{
               display: 'flex',
@@ -2290,6 +2433,11 @@ function ResolvedChartContainer({
               // The positioned ancestor for overlay chrome (`<Legend>`): the
               // card anchors to the rows block, never the axis strip below.
               position: 'relative',
+              // The rows block takes what the axis strip leaves. `minHeight:
+              // 0` lets it shrink below its content — without it a flex
+              // child's floor is its content and nothing can ever get
+              // smaller.
+              ...(height !== undefined ? { flex: '1 1 0%', minHeight: 0 } : {}),
             }}
           >
             {children}
