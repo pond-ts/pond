@@ -29,10 +29,10 @@ Four consumer-filed gaps arrived from estela's dogfooding within a week, and
 they are **not four unrelated asks**. They are two systematic gaps, each with
 the same character: _the mechanism already exists and only points one way._
 
-| **X/Y asymmetry**                                                                                   | **`<BarList>` lags `<BarChart>`**                                                          |
-| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [PND-AXISGUT] / [#607] — the container auto-reserves Y gutter _widths_ but not the X strip _height_ | [PND-LISTHOVER] / [#608] — layers carry `hovered` / `onHover`; the list has selection only |
-| [PND-XLOG] / [#649] — `<YAxis scale="log">` exists; `<XAxis>` has no `scale` at all                 | [PND-LISTCOLOR] / [#650] — bars have `binColors`; a list column has one `as` for every row |
+| **X/Y asymmetry**                                                                                   | **`<BarList>` lags `<BarChart>`**                                                                        |
+| --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| [PND-AXISGUT] / [#607] — the container auto-reserves Y gutter _widths_ but not the X strip _height_ | [PND-LISTHOVER] / [#608] — layers carry `hovered` / `onHover`; the list has selection only               |
+| [PND-XLOG] / [#649] — `<YAxis scale="log">` exists; `<XAxis>` has no `scale` at all — **SHIPPED**   | [PND-LISTCOLOR] / [#650] — bars have `binColors`; a list column has one `as` for every row — **SHIPPED** |
 
 Why the framing earns its place: each family is **cheaper than four separate
 fixes and more coherent**. The log/symlog domain resolution, tick ladder and dev
@@ -69,6 +69,53 @@ container's x-scale resolution, and every consumer of `info.time` /
 `trackerPosition` / the region-cursor snap sees a log domain. Worth checking what
 `zoomRange` / `panRange` do under it, since they assume linear span arithmetic.
 
+**SHIPPED 2026-08-12** ([#653]) as **`<ChartContainer xScale>`**, not
+`<XAxis scale>` as the issue asked. Recorded because the issue's shape was
+rejected on purpose.
+
+**The justification, in its non-circular form** (pjm's, after the merge; the
+version first written down was weaker). Not "there is one x scale and the
+container builds it" — that is an implementation fact standing in for a reason,
+and it builds it only because we put it there. The actual reason is a
+**requirement imposed by the layout: the rows are stacked vertically, so a given
+pixel column must mean the same x in every one of them,** or the stack does not
+line up and a cursor at one pixel reads a different value per row. Scale and
+range are shared _by requirement_, and a shared thing is declared once, by the
+thing that contains them. `<YAxis>` is the genuine opposite for the same reason —
+each row carries its own quantity, so its scale **must** be per-row.
+
+**This yields the test for what belongs on the container:** _does it define the
+mapping or the domain?_ `range`, `xScale`, `spacing`, `bandAlign`,
+`discontinuities`, `calendar`, `origin` and the viewport props all pass — so
+does a future `xLinearWindow` ([PND-XSYMKNEE]), which settles its shape rather
+than leaving it a consolation prize. Every `<XAxis>` prop fails it and should:
+they style a scale the axis only draws.
+
+**`showAxis` fails the test too, and that is [PND-XAXISOWN] stated precisely.**
+It says nothing about the mapping or the domain — it is "does the container draw
+a strip", pure presentation that landed on the container because it was
+x-shaped. The complaint is not that the default is annoying; it is that the prop
+is on the wrong object.
+
+**The parenthetical prediction above was correct, and was the more valuable
+half.** `panRange` / `zoomRange` snapped to integers unconditionally — right for
+milliseconds, wrong for any value axis. estela's [0.5, 10800]-second domain
+snapped its floor to **0**, which is coarse under linear and _fatal_ under log.
+Fixed first as a standalone bug (`ViewportOptions { snap?, log? }`, default
+unchanged) before the feature landed on top.
+
+**Three silent failures closed, which became the wave's theme:** a log domain
+reaching zero now falls back and warns; `xScale` on a **time** axis now warns
+instead of doing nothing; and `xIsLog` probes **both** `base()` and
+`constant()` — the first cut probed only `base`, so every **symlog** axis was
+silently treated as linear, because d3 splits the two accessors across
+`scaleLog` and `scaleSymlog`.
+
+**Blind alley worth not repeating:** the first `snap` guard inferred the axis
+kind from the domain's **magnitude** (span ≥ 10 ⇒ time). It broke two existing
+time guarantees, because a 0.2 ms span and a 0.2-unit value span are
+indistinguishable by size. The kind must be passed, never sniffed.
+
 ### [PND-LISTCOLOR] — `<BarList>` per-row bar colour — [#650]
 
 `BarListColumn` carries exactly two fields, `column` and `as`, so one theme role
@@ -87,8 +134,48 @@ fill**, so a row keeps its own colour while live — which is the same rule as
 `selection is a mark, not a recolour of the data` below, and the reason a
 `binColors` bar is the one deliberate exception to it.
 
+**SHIPPED 2026-08-12** ([#653]) as **`<BarList barColors>`** — an array aligned
+to the rows you passed, `undefined` or a short entry falling back to the
+column's `as` / theme fill, exactly mirroring `binColors`.
+
+**One decision the issue did not raise: colours key on `row.key`, not on render
+position.** A positional array is the obvious reading of "aligned to the rows
+you passed", and it is wrong the moment a `sortBy` is applied — the ramp would
+stay bolted to the slots and repaint whichever rows now sit in them, so the
+colours would silently stop describing the data. Keying on the row makes the
+colour follow its datum through any reorder.
+
+The state-treatment rule landed as written above: a per-row colour makes the
+fill load-bearing, so selection pops **opacity** and never swaps the fill.
+
+### [PND-XSYMKNEE] — x `'symlog'` has no `linearWindow` — [#653]
+
+`xScale="symlog"` constructs `scaleSymlog()` and never calls `.constant()`, so
+the knee — where the linear régime around zero gives way to the logarithmic one
+— sits at **d3's default of absolute 1**, and no prop can move it. `<YAxis>`
+pairs `scale: 'symlog'` with `linearWindow`, a **fraction of the resolved
+domain**; x has no counterpart.
+
+**The fixed default is domain-insensitive in the way that matters.** On a
+`[0, 5_000_000]` domain the linear band is ±1 — invisible, so symlog degrades to
+log. On a `[0, 3]` domain that same ±1 makes a third of the axis linear. The
+feature works; where its two régimes meet is simply arbitrary relative to the
+data.
+
+Found by pjm's question about x-vs-y prop symmetry, immediately after [#653] went
+green — not by a consumer, and not by the PR's own tests, which exercised symlog
+**detection** (the `constant()` probe above) and never symlog **placement**.
+Same species as the three silent defaults that PR closed, which is why it is
+recorded rather than left implicit.
+
+The likely shape is `xLinearWindow` on the container beside `xScale`, defined as
+the same domain fraction `<YAxis linearWindow>` uses, so the two axes describe
+the knee identically. Deferred rather than folded into [#653]: it is a new
+public prop, and the merge was already approved on the surface as reviewed.
+
 [#649]: https://github.com/pond-ts/pond/issues/649
 [#650]: https://github.com/pond-ts/pond/issues/650
+[#653]: https://github.com/pond-ts/pond/pull/653
 
 ### [PND-LISTHOVER] — `<BarList>` has selection but no hover — [#608]
 
@@ -190,6 +277,19 @@ present rather than assuming one.
 It is also the concrete cost of the shape pjm named while building [PND-XLOG]:
 had at least one `<XAxis>` been **mandatory**, there would be no implicit strip
 to conflict with, the scale props would live on it, and x would mirror y.
+
+**Stated against the ownership test** ([PND-XLOG] above): container props earn
+their place by defining the **mapping or the domain**, which is what forces them
+to be shared across stacked rows. `showAxis` defines neither. It is "does the
+container draw a strip" — presentation, which landed on the container only
+because it was x-shaped, at a time when nothing distinguished "x-related" from
+"scale-defining". So the precise complaint is **not that the default is
+annoying; it is that the prop is on the wrong object**, and the two-axes
+collision is what that misplacement looks like from a consumer's seat. Useful
+because it sets the fix's direction: presentation belongs with `<XAxis>`, so
+mounted-wins is the correction and `showAxis` is the compatibility shim, rather
+than mounted-wins being a special case bolted onto a prop that stays where it
+is.
 
 ### [PND-AXISGUT] — The X-axis strip doesn't participate in layout — [#607]
 
