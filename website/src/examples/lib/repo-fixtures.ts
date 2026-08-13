@@ -18,8 +18,13 @@ import {
  * columns, exactly like the Niño 3.4 grid's years.
  */
 
+// Range-keyed, not point-keyed, and it matters: a week IS a span, and a
+// point-keyed series would make <HeatMap> infer each cell's bin from the
+// midpoints to its neighbours — every cell would straddle weekStart ± 3.5
+// days and the hover hit would report a key 3.5 days early. Same reasoning,
+// same kind, as the day-ahead price fixture's auction hours.
 const commitSchema = [
-  { name: 'time', kind: 'time' },
+  { name: 'timeRange', kind: 'timeRange' },
   { name: 'sun', kind: 'number' },
   { name: 'mon', kind: 'number' },
   { name: 'tue', kind: 'number' },
@@ -59,11 +64,23 @@ export const COMMIT_ROW_TICKS = (['fri', 'wed', 'mon'] as const).map((d) => ({
  */
 export function commitActivity() {
   const rows: Array<
-    [number, number, number, number, number, number, number, number]
+    [
+      { start: number; end: number },
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+    ]
   > = [];
   for (let w = 0; w * 7 < COMMITS_PER_DAY.length; w += 1) {
     rows.push([
-      COMMITS_START_MS + w * COMMITS_WEEK_MS,
+      {
+        start: COMMITS_START_MS + w * COMMITS_WEEK_MS,
+        end: COMMITS_START_MS + (w + 1) * COMMITS_WEEK_MS,
+      },
       COMMITS_PER_DAY[w * 7]!,
       COMMITS_PER_DAY[w * 7 + 1]!,
       COMMITS_PER_DAY[w * 7 + 2]!,

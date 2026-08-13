@@ -55,10 +55,15 @@ and agents don't know it's Saturday.
 
 ## Build it
 
-**1. Shape the data wide.** `<HeatMap>` wants its y dimension as columns:
-one column per row of the grid, one sample per x bin. For a contribution
-grid that's a **weekly** series with seven weekday columns — the same wide
-shape the [Niño 3.4 grid](./nino34.mdx) uses for its 45 year-rows:
+**1. Shape the data wide — and key the weeks as spans.** `<HeatMap>` wants
+its y dimension as columns: one column per row of the grid, one sample per
+x bin — the same wide shape the [Niño 3.4 grid](./nino34.mdx) uses for its
+45 year-rows. The x bins here are **range-keyed** (`timeRange`, each week
+carrying its own `start`/`end`), because a week is a span: a point-keyed
+series would leave the layer to infer each cell's bin from the midpoints to
+its neighbours, and every cell would straddle its week's start by ±3.5 days.
+Same rule as bars on auction hours in
+[negative prices](./negative-prices.mdx).
 
 ```tsx
 const series = commitActivity(); // one row per week: sun, mon, … sat
