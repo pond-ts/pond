@@ -23,7 +23,7 @@ On 12 August 2026 a total solar eclipse crossed northern Spain in the last
 hours of daylight. This is what the country's power demand did: the solid line
 is what peninsular Spain actually drew, the muted one is what Red Eléctrica's
 demand model said it would draw. Hover through the shaded region — at **20:40
-CEST**, ten minutes after the umbra left the peninsula, demand ran **2.13 GW
+CEST**, eight minutes after the umbra left the peninsula, demand ran **2.13 GW
 under forecast**, 5.8% of the number the model had written down.
 
 ## The data
@@ -39,15 +39,15 @@ eclipse. **Source: Red Eléctrica.** 361 samples, 21:00 CEST on 11 August to
 | `demand`   | Measured peninsular demand, GW — 24.90 min, 40.23 max |
 | `forecast` | REE's own demand forecast, GW                         |
 
-Outside the eclipse window the model is good: the gap between the two columns
-averages **+63 MW with a standard deviation of 305 MW** over the other
-twenty-seven hours. Inside it, the gap is a wall: **every sample from 19:30
-through 21:10 — twenty-one of them — runs more than a gigawatt under
-forecast**. The first sample to break −1 GW is 19:30, the same minute the
-Moon's disc first touched the Sun over western Spain (Madrid's first contact:
-19:31). The deepest gap is not at totality but ten minutes after it; it is
-back under half a gigawatt by the time the partial phases end at 21:22, and
-gone entirely by 21:55.
+Outside the eclipse evening (taking 19:00–22:00 CEST as the window) the model
+is good: the gap between the two columns averages **+63 MW with a standard
+deviation of 305 MW** over the other twenty-seven hours. Inside it, the gap
+is a wall: **every sample from 19:30 through 21:10 — twenty-one of them —
+runs more than a gigawatt under forecast**. The first sample to break −1 GW
+is 19:30, the same minute the Moon's disc first touched the Sun over western
+Spain (Madrid's first contact: 19:31). The deepest gap lands at 20:40, eight
+minutes after the umbra left the peninsula; it is back under half a gigawatt
+three minutes after last contact (21:25), and gone entirely by 21:55.
 
 The eclipse times on the chart are Madrid's, from Spain's national observatory
 ([IGN](https://astronomia.ign.es/en/eclipses-de-sol-y-luna/eclipse-total-sol-de-12-de-agosto-2026)):
