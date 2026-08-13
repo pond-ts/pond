@@ -395,24 +395,42 @@ Genuine uncertainties, not rhetorical ones. Reviewers should start here.
 **Two feasibility questions outrank everything below**, per "The actual
 decision". The design questions are tractable; these decide the outcome.
 
-- **A. How many charts exist to break? — partly measured (2026-08-13).**
-  **958 `<ChartContainer>` call sites across 315 files in this repo alone**
-  — 180 files in `packages/charts` (the story tree), 135 in `website` (docs,
-  examples, gallery). That excludes the experiment repos and estela, which
-  are not countable from here and are the ones with real consumers behind
-  them.
+- **A. How many charts exist to break? — measured 2026-08-13.** Counting
+  *opening tags only*, brace- and string-aware, excluding `node_modules`,
+  `dist` and `build`:
 
-  Two consequences, and they are the RFC's most load-bearing facts:
+  | codebase                    | sites   | files   | spread props |
+  | --------------------------- | ------- | ------- | ------------ |
+  | `packages/` (story tree)    | 690     | 141     | **27**       |
+  | `website/` (docs, examples) | 206     | 134     | 1            |
+  | estela (real consumer)      | 14      | 11      | 0            |
+  |                             | **910** | **286** | **28**       |
 
-  1. **A codemod is mandatory, not a nice-to-have.** 958 hand-edits will not
-     happen, so §10.6 ("can the migration be mechanical?") is promoted from
-     open question to **precondition**. If the codemod cannot handle the
-     common case, the answer to this RFC is no, independent of §1–§7.
-  2. **Most of the cost is ours, which cuts _for_ the change.** The bulk of
-     the blast radius is pond's own stories and docs — painful but tractable,
-     and a codemod we write once. External consumers are a much smaller set
-     today than they will ever be again, which is the same expiry argument
-     from a different direction.
+  _(A naive `grep -c` reports 958/315; the delta is build artefacts the
+  walk excludes. Closing tags do **not** inflate it — `</ChartContainer>`
+  does not match the pattern.)_
+
+  Three consequences, and they are the RFC's most load-bearing facts:
+
+  1. **A codemod is a precondition, not an open question.** 910 hand-edits
+     will not happen. §10.6 is therefore promoted: if a codemod cannot do
+     the common case, the answer to this RFC is no, independent of §1–§7.
+  2. **28 sites spread props onto the container**, e.g.
+     `<ChartContainer width={W} showAxis={false} {...props}>`. **A codemod
+     cannot split those** — it cannot know statically whether `props`
+     carries `range` (moves to `<Domain>`) or `theme` (stays). Each is a
+     hand edit or needs a runtime shim. Mitigating: **all 28 are ours**
+     (story helpers and fixtures), and estela has **zero** — so the hazard
+     is concentrated exactly where we control it, and the pattern to check
+     for in external code is now known.
+  3. **98% of the blast radius is ours, which cuts _for_ the change.** 896
+     of 910 sites are pond's own stories and docs. estela — a real consumer
+     of six months — is **14 sites in 11 files**, and uses only six
+     container props (`theme`, `width`, `range`, `showAxis`, `origin`,
+     `onTrackerChanged`, plus `cursor`), of which four move. That is an
+     afternoon, not a migration. External consumers are a smaller set today
+     than they will ever be again — the expiry argument from a second
+     direction.
 - **B. How long is the pre-1.0 window, honestly?** The option expires at 1.0.
   If 1.0 is far off, this can wait for demand; if it is near, "later" means
   "never" and the decision is now. That date is not this RFC's to set, but
