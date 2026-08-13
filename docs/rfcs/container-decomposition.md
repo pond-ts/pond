@@ -95,7 +95,8 @@ worse, it spends the goodwill of a breaking change on the wrong break. Decide
 this first.
 
 **Update (2026-08-13): the timing is now measured, not open.** §10.A puts the
-blast radius at 910 sites of which **98% are ours**, and §10.B puts the
+blast radius at 912 sites of which **98% are ours** — all real
+consumers combined are **16 sites in 13 files**, and §10.B puts the
 pre-1.0 window at **three to six months**, gated on consumers integrating.
 Both point the same way and tighten the deadline considerably: the window is
 not "before 1.0", it is **before Ignite and SPARC integrate**, because that
@@ -413,7 +414,32 @@ decision". The design questions are tractable; these decide the outcome.
   | `packages/` (story tree)    | 690     | 141     | **27**       |
   | `website/` (docs, examples) | 206     | 134     | 1            |
   | estela (real consumer)      | 14      | 11      | 0            |
-  |                             | **910** | **286** | **28**       |
+  | **Tidal** (real consumer)   | **2**   | **2**   | 0            |
+  |                             | **912** | **288** | **28**       |
+
+  **The Tidal number is the finding, not a footnote.** Tidal is the most
+  active consumer loop in the project, and it mounts `<ChartContainer>` in
+  exactly **two files** — `PriceChart.tsx` and `VolChart.tsx`, both in its
+  `ui` package. The terminal consumes *those*, never the container directly.
+
+  **Mature consumers wrap.** A real consumer's migration surface is
+  proportional to the number of **chart component definitions** it has, not
+  the number of charts it renders — and that number is small and stays small.
+  Our 896 is not what consumer code looks like: a story tree mounts the
+  container directly hundreds of times *because that is what stories are*,
+  one per state.
+
+  Restating the table by who pays:
+
+  | | sites | files |
+  | --- | --- | --- |
+  | **ours** (stories + docs) | 896 | 275 |
+  | **all real consumers combined** | **16** | **13** |
+
+  Caveat: two consumers is not a law. Ignite and SPARC may mount directly,
+  and the wrap-rate of a consumer that has not integrated yet is unknown.
+  But the two we can measure both wrap, and the one that wraps hardest is
+  the most mature.
 
   _(A naive `grep -c` reports 958/315; the delta is build artefacts the
   walk excludes. Closing tags do **not** inflate it — `</ChartContainer>`
@@ -421,7 +447,7 @@ decision". The design questions are tractable; these decide the outcome.
 
   Three consequences, and they are the RFC's most load-bearing facts:
 
-  1. **A codemod is a precondition, not an open question.** 910 hand-edits
+  1. **A codemod is a precondition, not an open question.** 912 hand-edits
      will not happen. §10.6 is therefore promoted: if a codemod cannot do
      the common case, the answer to this RFC is no, independent of §1–§7.
   2. **28 sites spread props onto the container**, e.g.
@@ -432,14 +458,21 @@ decision". The design questions are tractable; these decide the outcome.
      (story helpers and fixtures), and estela has **zero** — so the hazard
      is concentrated exactly where we control it, and the pattern to check
      for in external code is now known.
-  3. **98% of the blast radius is ours, which cuts _for_ the change.** 896
-     of 910 sites are pond's own stories and docs. estela — a real consumer
-     of six months — is **14 sites in 11 files**, and uses only six
-     container props (`theme`, `width`, `range`, `showAxis`, `origin`,
-     `onTrackerChanged`, plus `cursor`), of which four move. That is an
-     afternoon, not a migration. External consumers are a smaller set today
-     than they will ever be again — the expiry argument from a second
-     direction.
+  3. **98% of the blast radius is ours, and the consumer half is trivial.**
+     896 of 912 sites are pond's own stories and docs. **All real consumers
+     combined are 16 sites across 13 files** — estela 14/11, Tidal 2/2.
+     Between them they use nine container props (`theme`, `width`,
+     `showAxis`, `range`, `origin`, `cursor`, `onTrackerChanged`,
+     `panZoom`, `onTimeRangeChange`, `minDuration`, `discontinuities`,
+     `rowGap`), and neither spreads. **That is an afternoon for both, and
+     most of the work is ours to do to our own stories** — mechanical, and
+     exactly the kind a codemod handles.
+
+     This is the expiry argument from a second direction, and the wrapping
+     pattern above makes it sharper: the cost is not "consumers rewrite
+     their charts", it is "consumers edit one or two wrapper files". That
+     stays true only while the wrappers are few and the consumers are ours
+     to talk to.
 - **B. How long is the pre-1.0 window? — answered by pjm, 2026-08-13.**
   **Three to six months**, gated on a set of shipping milestones rather than
   a date: Tidal shipping in some form, estela shipping (that surface is
