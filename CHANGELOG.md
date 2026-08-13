@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.59.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.60.0...HEAD
+[0.60.0]: https://github.com/pond-ts/pond/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/pond-ts/pond/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/pond-ts/pond/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/pond-ts/pond/compare/v0.56.2...v0.57.0
@@ -61,6 +62,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
 ## [Unreleased]
+
+## [0.60.0] — 2026-08-13
 
 ### Added
 
@@ -242,6 +245,17 @@ categories>` and a **horizontal** heat map reported `xKind: 'category'`, every o
 
 - **charts: `ChartContainerProps.width` is now `number | 'auto'` and optional**
   (was a required `number`). Strictly additive for callers passing a number.
+
+### Fixed
+
+- **charts: value-axis pan and zoom no longer snap to whole integers**
+  (shipped inside [#653]). `panRange`/`zoomRange` were written for a
+  millisecond axis and silently assumed every axis was one, so a value domain
+  of `[0.5, 10800]` snapped its floor to `0` and `[0.001, 1]` collapsed to
+  `[0, 1]` — fatal under a log axis, where `log(0)` is undefined. Gestures now
+  snap only on a **time** axis (`ViewportOptions.snap`), and a log x axis pans
+  by ratio and zooms in log space, keeping the value under the cursor fixed.
+  Time-axis behaviour is unchanged.
 
 ## [0.59.0] — 2026-08-11
 
