@@ -814,11 +814,19 @@ function AutoSizeContainer(props: ChartContainerProps) {
   const needWidth = typeof props.width !== 'number';
   const needHeight = props.height === 'auto';
 
+  // The needs, readable from the long-lived measure closure without going
+  // stale — `props.width` can legally flip number ↔ 'auto' without leaving
+  // this component (the dispatcher only remounts on the managed/unmanaged
+  // boundary).
+  const needsRef = useRef({ needWidth, needHeight });
+  needsRef.current = { needWidth, needHeight };
+
   useLayoutEffect(() => {
     const el = boxRef.current;
     if (el === null) return;
     const measure = () =>
       setMeasured((prev) => {
+        const need = needsRef.current;
         const r = el.getBoundingClientRect();
         // **Latch the last non-zero value, per dimension.** A box measures 0
         // whenever it is not laid out — most often because an ancestor went
@@ -831,8 +839,13 @@ function AutoSizeContainer(props: ChartContainerProps) {
         // measurement corrects it.
         const w = Math.round(r.width);
         const h = Math.round(r.height);
-        const width = w > 0 ? w : prev.width;
-        const height = h > 0 ? h : prev.height;
+        // Track only the dimensions this instance is responsible for
+        // (Layer-2 review find): a width-only container that also stored
+        // height would re-render its whole tree on every *content*-height
+        // change — the classic splitter drag, an axis strip growing a band
+        // row — where the pre-[PND-HEIGHT] width-only measure bailed.
+        const width = need.needWidth && w > 0 ? w : prev.width;
+        const height = need.needHeight && h > 0 ? h : prev.height;
         return width === prev.width && height === prev.height
           ? prev
           : { width, height };

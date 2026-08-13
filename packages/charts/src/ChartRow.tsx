@@ -183,10 +183,12 @@ export interface ChartRowProps {
    * row's box has nothing to flex into, collapses to zero, and stays gated
    * out; dev builds warn.
    *
-   * A flex row paints nothing until its first real measurement (one layout
-   * pass), and — like the container's `width="auto"` — it keeps its last
-   * non-zero height while hidden, so a `display: none` tab switch does not
-   * discard its scales.
+   * A flex row's first useful paint waits for its first measurement — by
+   * **timing**, not a gate: the first render does execute children at height
+   * 0 (a 0-height canvas draws nothing), and the layout effect's synchronous
+   * setState delivers the real height before the browser paints. Like the
+   * container's `width="auto"`, it keeps its last non-zero height while
+   * hidden, so a `display: none` tab switch does not discard its scales.
    */
   flex?: number;
   /**

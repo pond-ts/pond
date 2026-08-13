@@ -19,14 +19,10 @@ slack, the fixed row is the one the drag resizes, and the divider is a plain
 const [bottomH, setBottomH] = useState(160);
 
 <ChartContainer width="auto" height="auto">
-  <ChartRow>
-    {' '}
-    {/* flex — absorbs all slack */}
-    …price…
-  </ChartRow>
-  <div
-    role="separator" /* the drag handler sets bottomH, clamped ≥ your floor */
-  />
+  {/* flex — absorbs all slack */}
+  <ChartRow>…price…</ChartRow>
+  {/* the drag handler sets bottomH, clamped ≥ your floor */}
+  <div role="separator" />
   <ChartRow height={bottomH}>…indicator…</ChartRow>
 </ChartContainer>;
 ```

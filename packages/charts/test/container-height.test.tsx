@@ -18,7 +18,7 @@
  * browser work, verified in Storybook; what CAN drift silently here is the
  * wiring these tests pin.
  */
-import { useEffect } from 'react';
+import { Profiler, useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render } from '@testing-library/react';
 import { TimeSeries } from 'pond-ts';
@@ -395,6 +395,37 @@ describe('<ChartContainer height="auto"> — the measure pass', () => {
         got.frame!.plot.width +
         got.frame!.gutters.right,
     ).toBe(600);
+  });
+
+  it('a width-only container ignores content-height changes (no re-render)', () => {
+    // Layer-2 review find. `AutoSizeContainer` serves both dimensions, and an
+    // early version stored height in state even when only width was needed —
+    // so every *content*-height change (the classic splitter drag, an axis
+    // strip growing a band row) re-committed the whole tree where the old
+    // width-only measure bailed. Pin the bail with a Profiler (children are
+    // referentially stable, so a render counter in JSX can't see this).
+    boxSize = { width: 600, height: 300 };
+    let commits = 0;
+    renderChart(
+      <Profiler id="chart" onRender={() => (commits += 1)}>
+        <ChartContainer width="auto">
+          <ChartRow height={200}>
+            <YAxis id="v" />
+            <Layers>
+              <LineChart series={series()} column="v" axis="v" />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>
+      </Profiler>,
+    );
+    const before = commits;
+    boxSize = { width: 600, height: 700 }; // content height changed, width same
+    relayout();
+    expect(commits).toBe(before);
+    // …while a real width change still commits.
+    boxSize = { width: 480, height: 700 };
+    relayout();
+    expect(commits).toBeGreaterThan(before);
   });
 
   it('warns in dev when a measured dimension stays 0', () => {
