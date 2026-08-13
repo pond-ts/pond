@@ -1,0 +1,136 @@
+---
+title: Demand during an eclipse
+sidebar_label: Eclipse demand
+---
+
+# Demand during an eclipse
+
+A measurement drawn over the model that predicts it — and an annotation layer
+saying why they disagree. When the two curves track for thirty hours and split
+for ninety minutes, the chart's job is to make the split unmissable and name
+its cause.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryEclipseDemand from '@site/src/examples/gallery-eclipse-demand';
+
+## The chart
+
+<ChartExample name="gallery-eclipse-demand" height={330} collapsed>
+  {(width) => <GalleryEclipseDemand width={width} height={260} legend />}
+</ChartExample>
+
+On 12 August 2026 a total solar eclipse crossed northern Spain in the last
+hours of daylight. This is what the country's power demand did: the solid line
+is what peninsular Spain actually drew, the muted one is what Red Eléctrica's
+demand model said it would draw. Hover through the shaded region — at **20:40
+CEST**, eight minutes after the umbra left the peninsula, demand ran **2.13 GW
+under forecast**, 5.8% of the number the model had written down.
+
+## The data
+
+**Real measured data** — Red Eléctrica's _Seguimiento de la demanda de energía
+eléctrica_ ([demanda.ree.es](https://demanda.ree.es)), peninsular demand at
+the operator's native 5-minute cadence, retrieved the morning after the
+eclipse. **Source: Red Eléctrica.** 361 samples, 21:00 CEST on 11 August to
+03:00 CEST on the 13th, converted MW → GW in the fixture:
+
+| Column     | Meaning                                               |
+| ---------- | ----------------------------------------------------- |
+| `demand`   | Measured peninsular demand, GW — 24.90 min, 40.23 max |
+| `forecast` | REE's own demand forecast, GW                         |
+
+Outside the eclipse evening (taking 19:00–22:00 CEST as the window) the model
+is good: the gap between the two columns averages **+63 MW with a standard
+deviation of 305 MW** over the other twenty-seven hours. Inside it, the gap
+is a wall: **every sample from 19:30 through 21:10 — twenty-one of them —
+runs more than a gigawatt under forecast**. The first sample to break −1 GW
+is 19:30, the same minute the Moon's disc first touched the Sun over western
+Spain (Madrid's first contact: 19:31). The deepest gap lands at 20:40, eight
+minutes after the umbra left the peninsula; it is back under half a gigawatt
+three minutes after last contact (21:25), and gone entirely by 21:55.
+
+The eclipse times on the chart are Madrid's, from Spain's national observatory
+([IGN](https://astronomia.ign.es/en/eclipses-de-sol-y-luna/eclipse-total-sol-de-12-de-agosto-2026)):
+partial phases 19:31–21:22 CEST, the umbra crossing the north of the country
+20:27–20:32. They are astronomy, not something derivable from the demand
+columns — which is exactly why they're drawn as annotations rather than data.
+
+The grid operator had spent weeks preparing for the _generation_ side of the
+event — an expected loss of around 5 GW of solar as the shadow passed. What
+this export shows is the quieter story on the _demand_ side: a country
+stepping away from its appliances to watch, and stepping back afterwards. The
+time axis renders in **your** browser's timezone; clock times here are CEST.
+
+## Build it
+
+**1. A measurement over its model.** Two lines from one series, and one prop
+carrying the semantics: the forecast is drawn `as="muted"` — the theme's
+hairline neutral, not a data hue — so the measured curve is unmistakably the
+subject. Model first, measurement second: layers paint in JSX order, and the
+subject goes on top.
+
+```tsx
+const series = eclipseDemand();
+
+<ChartContainer range={eclipseDemandRange()} width={width}>
+  <ChartRow height={220}>
+    <YAxis id="gw" label="GW" format=".1f" width={48} />
+    <Layers>
+      <LineChart series={series} column="forecast" axis="gw" as="muted" />
+      <LineChart series={series} column="demand" axis="gw" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>;
+```
+
+…which gets you the divergence but leaves the reader to guess its cause.
+
+**2. Name the cause with annotations.** A `<Region>` spanning the partial
+phases and a `<Marker>` at totality. These are the _annotation_ register —
+they never share a hue with the data register, so a placed mark can't be
+mistaken for a series:
+
+```tsx
+<Region
+  from={ECLIPSE_MARKS.partialsBegin}
+  to={ECLIPSE_MARKS.partialsEnd}
+  label="eclipse"
+/>
+<Marker at={ECLIPSE_MARKS.totality} label="totality" />
+```
+
+**3. Choose the window honestly.** The chart at the top of this page shows
+eclipse day as a civil day — 03:00 to 03:00 CEST — so the dip sits inside the
+whole diurnal shape: the overnight trough, the 40.23 GW afternoon peak, and a
+forecast that tracks all of it until 19:30. On the gallery card a 7-hour
+window sweeps the record instead, because at card width the full day squeezes
+the story into a sliver. Pass `full` to open all thirty hours:
+
+```tsx
+<GalleryEclipseDemand width={width} full />
+```
+
+## Options to try
+
+| Option               | What it does                                            | Reach for it when                                                                     |
+| -------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `as="muted"`         | Draws a curve in the theme's neutral, off the data ramp | Any reference curve — a model, a baseline run, yesterday                              |
+| A second `<Region>`  | A narrower band inside the first                        | Marking totality's 20:27–20:32 span rather than a single instant                      |
+| `selectable={false}` | Makes a mark inert background context                   | The annotation is context, not something a click should select                        |
+| `cursor="crosshair"` | Reticle + pill snapped to the nearer curve              | Reading the gap sample by sample; nudge across it to flip between the two             |
+| `range`              | Which slice of the record is on screen                  | The zoom-vs-context tradeoff in step 3 — there is no right answer, only an honest one |
+| `curve="monotone"`   | Smooths both lines                                      | Coarser exports (REE also publishes 10-min and hourly views)                          |
+
+## See also
+
+- [`<LineChart>`](../types/linechart.mdx) — every prop
+- [Region, Baseline, Marker](../annotations/region-baseline-marker.mdx) — the
+  annotation register these marks come from
+- [Marking up charts](../../learn-charts/07-marking-up-charts.mdx) — the
+  two-register model, from the top
+- [Tides](../../charts/gallery.mdx#science--measurement) — the same
+  measurement-over-model pattern, where the gap is a storm surge
+- [Renewables vs demand](./renewables-vs-demand.mdx) — the track's other
+  demand story, told with areas instead
+- [**Storybook**](pathname:///storybook/?path=/story/annotations-scenarios--in-context) —
+  annotations in context, systematically
