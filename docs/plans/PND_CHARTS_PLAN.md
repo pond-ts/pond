@@ -287,6 +287,17 @@ because it was x-shaped, at a time when nothing distinguished "x-related" from
 annoying; it is that the prop is on the wrong object**, and the two-axes
 collision is what that misplacement looks like from a consumer's seat. Useful
 because it sets the fix's direction: presentation belongs with `<XAxis>`, so
+**Do not build this without reading
+[`docs/rfcs/container-decomposition.md`](../rfcs/container-decomposition.md)
+first.** That RFC proposes a `<Domain>` component between `<ChartContainer>`
+and `<ChartRow>` owning the shared-x props, under which **this task ceases to
+exist** — a declared `<XAxis>` inside `<Domain>` leaves no implicit strip to
+conflict with. The two are mutually exclusive in effort: if the RFC lands,
+the fix below is wasted work on a prop that stops existing. If the RFC is
+declined or deferred past a couple of releases, build the fix below
+immediately — three sightings is enough. Decide the RFC first; this is a
+scheduling question, not a design one.
+
 mounted-wins is the correction and `showAxis` is the compatibility shim, rather
 than mounted-wins being a special case bolted onto a prop that stays where it
 is.
