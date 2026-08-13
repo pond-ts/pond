@@ -21,6 +21,14 @@ import {
   ECLIPSE_STEP_MS,
   FORECAST_GW,
 } from './spain-eclipse-samples';
+import {
+  ECLIPSE_SOLAR_START_MS,
+  ECLIPSE_SOLAR_STEP_MS,
+  SOLAR_AUG09_GW,
+  SOLAR_AUG10_GW,
+  SOLAR_AUG11_GW,
+  SOLAR_ECLIPSE_DAY_GW,
+} from './spain-eclipse-solar-samples';
 
 /**
  * The Gallery's **Energy** track (plan §4, track D) — grid mix, renewables
@@ -190,12 +198,71 @@ export function eclipseDemandRange(): [number, number] {
   ];
 }
 
+const eclipseSolarSchema = [
+  { name: 'time', kind: 'time' },
+  { name: 'eclipseDay', kind: 'number' },
+  { name: 'aug09', kind: 'number' },
+  { name: 'aug10', kind: 'number' },
+  { name: 'aug11', kind: 'number' },
+] as const;
+
+/**
+ * The three ordinary days' columns, **oldest first** — the baseline pool,
+ * and the order the spaghetti view draws them in. Kept as data so the
+ * example can map over them instead of hard-coding three layers.
+ */
+export const ECLIPSE_BASELINE_DAYS = ['aug09', 'aug10', 'aug11'] as const;
+
+/**
+ * Spain's solar generation on eclipse day plus the three days before it, all
+ * at the **same clock time**, GW at 15-minute cadence — one civil day
+ * (96 rows, midnight to midnight CEST, 12 August 2026), with each earlier
+ * day's curve plotted one, two or three days forward of when it happened so
+ * the four evenings overlay.
+ *
+ * Provenance and licence live in the header of
+ * `spain-eclipse-solar-samples.ts` (short version: **real measured data**,
+ * energy-charts.info / Fraunhofer ISE, CC BY 4.0, upstream ENTSO-E). The
+ * shifted-day overlay is the chart's whole device; any page drawing this
+ * series must say the muted curves are earlier days, moved. The baseline
+ * itself is deliberately NOT baked in here — computing it is one `collapse`,
+ * and that computation belongs to the example so the docs can teach it.
+ */
+export function eclipseSolar() {
+  const rows: Array<[number, number, number, number, number]> = [];
+  for (let i = 0; i < SOLAR_ECLIPSE_DAY_GW.length; i += 1) {
+    rows.push([
+      ECLIPSE_SOLAR_START_MS + i * ECLIPSE_SOLAR_STEP_MS,
+      SOLAR_ECLIPSE_DAY_GW[i]!,
+      SOLAR_AUG09_GW[i]!,
+      SOLAR_AUG10_GW[i]!,
+      SOLAR_AUG11_GW[i]!,
+    ]);
+  }
+  return new TimeSeries({
+    name: 'spain-solar',
+    schema: eclipseSolarSchema,
+    rows,
+  });
+}
+
+/** `[begin, end]` of {@link eclipseSolar} — eclipse day, midnight to
+ *  midnight CEST, in ms. */
+export function eclipseSolarRange(): [number, number] {
+  return [
+    ECLIPSE_SOLAR_START_MS,
+    ECLIPSE_SOLAR_START_MS +
+      (SOLAR_ECLIPSE_DAY_GW.length - 1) * ECLIPSE_SOLAR_STEP_MS,
+  ];
+}
+
 /**
  * The eclipse's local circumstances over Spain, as epoch ms — the annotation
- * layer of the eclipse-demand card. Times are Madrid's (IGN, the Spanish
- * national observatory: partials 19:31–21:22 CEST; the umbra crossed northern
- * Spain 20:27–20:32, Madrid itself a >99% partial). Astronomy, not something
- * derivable from the demand columns — which is the point of overlaying it.
+ * layer of the eclipse-demand and eclipse-solar cards. Times are Madrid's
+ * (IGN, the Spanish national observatory: partials 19:31–21:22 CEST; the
+ * umbra crossed northern Spain 20:27–20:32, Madrid itself a >99% partial).
+ * Astronomy, not something derivable from the data columns — which is the
+ * point of overlaying it.
  */
 export const ECLIPSE_MARKS = {
   /** First contact over Madrid, 19:31 CEST. */
