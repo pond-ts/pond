@@ -62,10 +62,24 @@ the 5% need *opposite* treatment:
   justified by consumer signal because that signal never asks for it.
 
 So a restructure is not "deferred until we learn more". It is either done
-early or not done. The live worked example is
+early or not done. The worked example is
 [`docs/rfcs/container-decomposition.md`](docs/rfcs/container-decomposition.md),
-whose whole conclusion turns on this: 98% of its blast radius is our own code
-**today**, and the milestones above are precisely the events that spend it.
+which argued exactly that — and was then **declined on review**, which is the
+more useful half of the lesson.
+
+**The rule above is sound; it is also the shape of a trap.** "Structural work
+must precede consumers" is a real constraint, and it manufactures urgency
+that can outrun the evidence. That RFC reached "decide in weeks" while its
+own §10 questions were unresolved, and its central evidence — a 38-prop
+partition — turned out to be **overstated by 46%**, every error in the
+direction that made its case look stronger. A Codex adversarial pass caught
+it against the source in one run.
+
+So the rule needs its own guard: **urgency is a reason to review harder, not
+to review less.** When a structural change argues that the window is closing,
+that is precisely when its evidence should be checked line-by-line by
+someone who did not write it — because the argument's own logic discourages
+waiting for the falsifying signal.
 
 ---
 

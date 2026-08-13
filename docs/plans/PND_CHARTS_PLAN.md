@@ -287,16 +287,17 @@ because it was x-shaped, at a time when nothing distinguished "x-related" from
 annoying; it is that the prop is on the wrong object**, and the two-axes
 collision is what that misplacement looks like from a consumer's seat. Useful
 because it sets the fix's direction: presentation belongs with `<XAxis>`, so
-**Do not build this without reading
-[`docs/rfcs/container-decomposition.md`](../rfcs/container-decomposition.md)
-first.** That RFC proposes a `<Domain>` component between `<ChartContainer>`
-and `<ChartRow>` owning the shared-x props, under which **this task ceases to
-exist** — a declared `<XAxis>` inside `<Domain>` leaves no implicit strip to
-conflict with. The two are mutually exclusive in effort: if the RFC lands,
-the fix below is wasted work on a prop that stops existing. If the RFC is
-declined or deferred past a couple of releases, build the fix below
-immediately — three sightings is enough. Decide the RFC first; this is a
-scheduling question, not a design one.
+**Unblocked — build it.** The `<Domain>` RFC
+([`docs/rfcs/container-decomposition.md`](../rfcs/container-decomposition.md))
+would have made this task cease to exist, so it was held pending that
+decision. That RFC was **declined on review 2026-08-13**: its central
+evidence was overstated by 46%, and the reviewer's explicit finding was that
+`xAxis="auto"` **is not wasted work** — it fixes a live bug while the larger
+design fails review. Nothing is waiting on anything now.
+
+Consumer evidence, gathered while measuring the RFC's blast radius: **Tidal
+passes `showAxis` at 2 of 2 sites and estela at 5 of 14.** Every consumer we
+can measure is working around the implicit strip.
 
 mounted-wins is the correction and `showAxis` is the compatibility shim, rather
 than mounted-wins being a special case bolted onto a prop that stays where it
@@ -2252,6 +2253,15 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     readouts for **every layer in the row** — a large, non-local consequence of a
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
+
+    **The fix is located, and it is a code fix rather than the documentation
+    sentence proposed below** (Codex, reviewing the `<Domain>` RFC,
+    2026-08-13). Suppression is global because **every row runs a query over
+    **all** annotations** — `Layers.tsx:519`. Row-scope that query to the
+    row's own marks (annotations already register their `rowKey`, which is
+    how the container draws a mark's guide on the *other* rows), or make
+    global editing say so explicitly. Available today; it was wrongly claimed
+    as something only a container decomposition could fix.
 
             _Still true; no longer felt here._ The draggable marker is gone — selection
             is a click — so nothing on this page is in edit mode. But it cost a design
