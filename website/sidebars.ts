@@ -153,6 +153,8 @@ const sidebars: SidebarsConfig = {
             // Track F — science & measurement.
             'charts/gallery/nino34',
             'charts/gallery/measles',
+            // Track G — product, transport & statistical.
+            'charts/gallery/contribution-heatmap',
           ],
         },
         {

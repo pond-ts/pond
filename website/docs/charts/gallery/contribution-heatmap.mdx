@@ -1,0 +1,126 @@
+---
+title: Contribution heatmap
+sidebar_label: Contribution heatmap
+---
+
+# Contribution heatmap
+
+The GitHub profile grid, rebuilt from its own raw material — and the subject
+is this repository. Every cell is one UTC day of pond's default branch;
+colour carries the non-merge commit count. A heat map is the right shape
+whenever the question is "when was the activity?" asked across two time
+scales at once: weeks along the x axis, the shape of a week down the y.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryContributions from '@site/src/examples/gallery-contributions';
+
+## The chart
+
+<ChartExample name="gallery-contributions" height={300} collapsed>
+  {(width) => <GalleryContributions width={width} height={210} />}
+</ChartExample>
+
+Point at a cell for its day and count. Sundays are the top row, Saturdays the
+bottom — GitHub's reading — and the columns run from the repo's first week
+(12 April 2026) to the current, deliberately partial one. The brightest cell
+is **Wednesday 13 May: 35 commits**; the heaviest column is the week of
+**2 August: 129**.
+
+## The data
+
+**Real measured data — this repo's own.** The GitHub REST API's
+[`commit_activity` statistics](https://docs.github.com/en/rest/metrics/statistics)
+for `pond-ts/pond`: the numbers behind the repository's own activity graph,
+retrieved the day this card was built. **1,001 commits across 126 days** —
+18 Sunday-start UTC weeks, from first commit to the moment of retrieval.
+
+| Column        | Meaning                                              |
+| ------------- | ---------------------------------------------------- |
+| `sun` … `sat` | Non-merge commits that weekday, one row per UTC week |
+
+Three binning rules matter, and the generator refuses to emit if any stops
+holding. **Merge commits are excluded** — the API total matches
+`git rev-list --count --no-merges origin/main` exactly, which is how the
+claim was pinned. **Days are UTC**, so a late CEST evening's commits land in
+the next row. And the API serves a fixed 52-week window; the 34 leading
+all-zero weeks (the repo is four months old) are trimmed, while the current
+week keeps its honest trailing zeros — days that haven't happened yet.
+
+What the grid shows about how pond is built: 26 of the 126 days are quiet;
+the other hundred average **10 commits a day**, with a **26-day unbroken
+streak** in there. And the usual profile-heatmap tell is missing — there is
+no weekend stripe. Sundays (142 commits) outwork Thursdays (113), because
+much of this history is [multi-agent experiment sessions](https://github.com/pond-ts/pond/blob/main/CLAUDE.md),
+and agents don't know it's Saturday.
+
+## Build it
+
+**1. Shape the data wide — and key the weeks as spans.** `<HeatMap>` wants
+its y dimension as columns: one column per row of the grid, one sample per
+x bin — the same wide shape the [Niño 3.4 grid](./nino34.mdx) uses for its
+45 year-rows. The x bins here are **range-keyed** (`timeRange`, each week
+carrying its own `start`/`end`), because a week is a span: a point-keyed
+series would leave the layer to infer each cell's bin from the midpoints to
+its neighbours, and every cell would straddle its week's start by ±3.5 days.
+Same rule as bars on auction hours in
+[negative prices](./negative-prices.mdx).
+
+```tsx
+const series = commitActivity(); // one row per week: sun, mon, … sat
+
+<ChartContainer range={commitActivityRange()} width={width}>
+  <ChartRow height={210}>
+    <YAxis id="dow" ticks={COMMIT_ROW_TICKS} label="" width={44} />
+    <Layers>
+      <HeatMap series={series} columns={COMMIT_ROWS} colors={ramp} axis="dow" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>;
+```
+
+**2. Order the rows for the reading you want.** `<HeatMap>` draws the first
+column at the bottom, and the GitHub convention puts Sunday on top — so the
+row list runs `sat` → `sun`. The y ticks label only Mon / Wed / Fri (GitHub's
+three), each at its row's centre:
+
+```tsx
+export const COMMIT_ROWS = ['sat', 'fri', 'thu', 'wed', 'tue', 'mon', 'sun'];
+export const COMMIT_ROW_TICKS = [
+  { at: 1.5, label: 'Fri' },
+  { at: 3.5, label: 'Wed' },
+  { at: 5.5, label: 'Mon' },
+];
+```
+
+**3. Read cells with a real 2-D hit.** The hover readout is fed by
+`<Selector onHover>`, which resolves the cell under the pointer on both
+axes. The 1-D tracker can't do this — it samples every row at the cursor's
+x and knows nothing about y:
+
+```tsx
+<Selector onHover={setHit}>
+  <ChartRow height={210}>…</ChartRow>
+</Selector>
+```
+
+The hit's `label` is the row (the weekday column's name), its `key` is the
+week's start — together they name one day, which is what the readout prints.
+
+## Options to try
+
+| Option               | What it does                            | Reach for it when                                                                                 |
+| -------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `colors`             | The ramp the counts map into            | This card uses the site's sequential ramp; a fixed-hue ramp survives theme changes                |
+| `domain`             | Pins the colour scale's extent          | Comparing two heat maps, or keeping colours stable as data updates — see [Niño 3.4](./nino34.mdx) |
+| Re-bin x with pond   | `aggregate(Sequence.calendar('month'))` | Months instead of weeks — climate-stripes-style summaries of the same columns                     |
+| Fewer / more `ticks` | Which rows get named                    | Seven rows read fine with three labels; forty-five need explicit picks                            |
+| `timeFormat`         | The x axis's date rendering             | Weekly bins often want month names, not day-precision dates                                       |
+
+## See also
+
+- [Measles and the vaccine](./measles.mdx) — the same layer at 50 rows × 81
+  years, with a log-scaled colour domain
+- [Niño 3.4](./nino34.mdx) — the wide-series shape this grid borrows, and
+  the re-binning story
+- [**Storybook**](pathname:///storybook/?path=/story/charts-heatmap--grid) —
+  the systematic knob walk
