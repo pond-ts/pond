@@ -52,6 +52,12 @@ const cases: ReadonlyArray<readonly [id: string, file: string]> = [
   ['axes-categoryaxis--band-align-end', 'sparc-pack-end.png'],
   // The cap stops binding as categories accumulate — degrades to fill, no clip.
   ['axes-categoryaxis--cap-does-not-bind', 'sparc-pack-unbound.png'],
+
+  // ── [PND-CATFIT]: the measured label fit, on the REAL canvas path. ────────
+  // The unit tests run the no-canvas estimate fallback; this baseline is the
+  // only automated coverage of the browser's own measureText — venue-tailed
+  // keys wider than their band must middle-ellipsize and never overprint.
+  ['axes-categoryaxis--venue-tail-labels', 'catfit-venue-tail.png'],
 ];
 
 test.describe('SPARC friction wave', () => {

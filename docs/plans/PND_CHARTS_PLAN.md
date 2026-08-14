@@ -2253,11 +2253,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                    _Still true; no longer felt here._ The draggable marker is gone — selection
-                    is a click — so nothing on this page is in edit mode. But it cost a design
-                    iteration to discover, and the docs still don't mention it. **The one-line
-                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                    row's data cursor is suppressed."
+    _Still true; no longer felt here._ The draggable marker is gone — selection
+    is a click — so nothing on this page is in edit mode. But it cost a design
+    iteration to discover, and the docs still don't mention it. **The one-line
+    fix is a sentence on `editing`**: "while any mark in a row is editing, that
+    row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires

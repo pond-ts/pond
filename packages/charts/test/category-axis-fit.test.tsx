@@ -104,6 +104,30 @@ describe('thinCategoryLabels — measured fit', () => {
     }
   });
 
+  it('never splits a surrogate pair when ellipsizing', () => {
+    // Astral-plane code points (each one UTF-16 surrogate PAIR): a naive
+    // string slice through the middle emits a lone surrogate (mojibake).
+    const labels = ['𝔸𝔹ℂ𝔻𝔼𝔽𝔾ℍ𝕀𝕁𝕂𝕃𝕄', '𝕏𝕐ℤ𝕒𝕓𝕔𝕕𝕖𝕗𝕘𝕙𝕚𝕛'];
+    const slot = 40;
+    const out = thinCategoryLabels(
+      ticksFor(labels, slot),
+      slot,
+      slot * labels.length,
+      FONT_SIZE,
+      FAMILY,
+    );
+    expect(out.length).toBeGreaterThan(0);
+    for (const t of out) {
+      expect(t.label).toContain('…');
+      // No lone high surrogate (a head slice cutting mid-pair leaves one at
+      // the ellipsis)…
+      expect(t.label).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+      // …and no lone low surrogate (a tail slice cutting mid-pair starts
+      // with one).
+      expect(t.label).not.toMatch(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    }
+  });
+
   it('a degenerate width draws no labels instead of a full-length smear', () => {
     const labels = ['EDGE01-NMS-EQT', 'APEX07-NMS-EQT', 'KRONOS-ARCA-OPT'];
     // Pre-layout: zero plot width.

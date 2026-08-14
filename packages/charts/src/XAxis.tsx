@@ -92,7 +92,8 @@ const TRUNC_KEEP = 0.6;
  * share a prefix and differ in the tail (or the reverse), so keeping both ends
  * preserves whichever part distinguishes — end-truncation makes shared-prefix
  * keys visually identical. Head-heavy split (60/40). Binary search on the kept
- * character count; the result is only accepted when it *measures* within
+ * **code-point** count (a UTF-16 `slice` could split a surrogate pair and
+ * emit mojibake); the result is only accepted when it *measures* within
  * `room`, so the returned label can never overrun its space.
  */
 function ellipsizeMiddle(
@@ -101,17 +102,18 @@ function ellipsizeMiddle(
   font: string,
   fontSize: number,
 ): string {
+  const cp = Array.from(text); // code points, not UTF-16 units
   let lo = 1;
-  let hi = text.length - 1;
+  let hi = cp.length - 1;
   let best = '…';
   while (lo <= hi) {
     const k = (lo + hi) >> 1;
     const head = Math.ceil(k * 0.6);
     const tail = k - head;
     const s =
-      text.slice(0, head) +
+      cp.slice(0, head).join('') +
       '…' +
-      (tail > 0 ? text.slice(text.length - tail) : '');
+      (tail > 0 ? cp.slice(cp.length - tail).join('') : '');
     if (labelWidth(s, font, fontSize) <= room) {
       best = s;
       lo = k + 1;
