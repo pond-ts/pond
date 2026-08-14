@@ -40,38 +40,134 @@ interface PlacedTick {
 }
 
 /**
- * Thin + truncate a **category** axis's labels so a dense axis stays legible: keep
- * every `stride`-th label (so a kept label has room), and ellipsize one that still
- * overruns its space. `stride` grows with the longest label vs the per-category
- * slot width, so a few short categories keep every full label and many long ones
- * decimate. A rough `fontSize`-based width estimate (no DOM measure) — good enough
- * for placement; the exact metric is the browser's. Rotation is a later option.
+ * Measure a category label's rendered width in the axis font. A shared
+ * offscreen canvas gives the browser's own metric — the thing the old
+ * per-character estimate could only approximate, and approximated low on
+ * exactly the labels category axes carry (all-caps keys with digits and
+ * hyphens), which let "fits by the estimate" labels overprint on screen
+ * ([PND-CATFIT]). Falls back to the estimate where no canvas backend exists
+ * (SSR, test DOMs). Results are cached per font+text; a webfont that loads
+ * after first measure keeps its fallback-font metric until the cache turns
+ * over, which the fit's inter-label gap absorbs.
  */
-function thinCategoryLabels(
+const measureCache = new Map<string, number>();
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+function labelWidth(text: string, font: string, fontSize: number): number {
+  const key = `${font}|${text}`;
+  const hit = measureCache.get(key);
+  if (hit !== undefined) return hit;
+  if (measureCtx === undefined) {
+    try {
+      measureCtx =
+        typeof document === 'undefined'
+          ? null
+          : (document.createElement('canvas').getContext('2d') ?? null);
+    } catch {
+      measureCtx = null; // a DOM shim whose getContext throws → estimate path
+    }
+  }
+  let w = 0;
+  if (measureCtx !== null) {
+    measureCtx.font = font;
+    w = measureCtx.measureText(text).width;
+  }
+  // No backend, or a mock that measures everything at 0 → per-glyph estimate.
+  if (!(w > 0)) w = text.length * fontSize * 0.62;
+  if (measureCache.size > 4096) measureCache.clear();
+  measureCache.set(key, w);
+  return w;
+}
+
+/** Minimum clear space between two neighbouring drawn labels, px. */
+const LABEL_GAP = 4;
+/**
+ * A kept label may ellipsize down to this fraction of its full width before
+ * the fit prefers dropping labels (growing `stride`) instead — below it, the
+ * text no longer identifies its category.
+ */
+const TRUNC_KEEP = 0.6;
+
+/**
+ * Ellipsize `text` from the **middle** to fit `room` px: category keys often
+ * share a prefix and differ in the tail (or the reverse), so keeping both ends
+ * preserves whichever part distinguishes — end-truncation makes shared-prefix
+ * keys visually identical. Head-heavy split (60/40). Binary search on the kept
+ * character count; the result is only accepted when it *measures* within
+ * `room`, so the returned label can never overrun its space.
+ */
+function ellipsizeMiddle(
+  text: string,
+  room: number,
+  font: string,
+  fontSize: number,
+): string {
+  let lo = 1;
+  let hi = text.length - 1;
+  let best = '…';
+  while (lo <= hi) {
+    const k = (lo + hi) >> 1;
+    const head = Math.ceil(k * 0.6);
+    const tail = k - head;
+    const s =
+      text.slice(0, head) +
+      '…' +
+      (tail > 0 ? text.slice(text.length - tail) : '');
+    if (labelWidth(s, font, fontSize) <= room) {
+      best = s;
+      lo = k + 1;
+    } else {
+      hi = k - 1;
+    }
+  }
+  return best;
+}
+
+/**
+ * Thin + truncate a **category** axis's labels so a dense axis stays legible
+ * — triggered by **measured geometry**, not category count ([PND-CATFIT]):
+ * keep every `stride`-th label, and middle-ellipsize a kept one that still
+ * overruns its room. `stride` is the fewest slots the widest label needs once
+ * it may ellipsize to {@link TRUNC_KEEP} of itself, so short label sets keep
+ * every full label and long ones trade thinning against truncation instead of
+ * overprinting. `slot` is the **real band pitch** (`bandwidth()`), which a
+ * `maxBandWidth`-packed axis makes narrower than `plotWidth / n`. Rotation is
+ * a later option.
+ *
+ * Exported for tests only — not re-exported from the package index.
+ */
+export function thinCategoryLabels(
   ticks: readonly PlacedTick[],
+  slot: number,
   plotWidth: number,
   fontSize: number,
+  fontFamily: string,
 ): PlacedTick[] {
   const n = ticks.length;
-  const slot = plotWidth / n; // per-category width in px
-  // Before first layout `plotWidth` is 0 → `slot` is 0 and the stride/room math
-  // below goes to Infinity/NaN. Nothing is visible at zero width anyway, so pass
-  // the ticks through untouched until a real width arrives.
-  if (!(slot > 0)) return [...ticks];
-  const charW = fontSize * 0.62; // ~average glyph advance
-  const longest = Math.min(
-    12,
-    ticks.reduce((m, t) => Math.max(m, t.label.length), 1),
-  );
-  const stride = Math.max(1, Math.ceil((longest * charW) / slot));
-  const room = Math.max(1, Math.floor((slot * stride) / charW));
+  // Degenerate / pre-layout width: nothing can be legible, so draw NO labels.
+  // The old passthrough here was the collapsed-panel smear: these are
+  // absolutely-positioned `nowrap` divs, so at width ≈ 0 every label rendered
+  // full-length at x ≈ 0, overflowing the strip and overprinting.
+  if (!(slot > 0) || !(plotWidth > 0)) return [];
+  const font = `${fontSize}px ${fontFamily}`;
+  const widths = ticks.map((t) => labelWidth(t.label, font, fontSize));
+  const maxW = widths.reduce((m, w) => Math.max(m, w), 0);
+  // The width a kept label must be allowed: its full measure when that's
+  // modest, else the legibility floor — TRUNC_KEEP of it, but never less than
+  // ~two glyphs of text.
+  const required = Math.min(maxW, Math.max(maxW * TRUNC_KEEP, fontSize * 2));
+  const stride = Math.max(1, Math.ceil((required + LABEL_GAP) / slot));
+  const room = Math.min(slot * stride - LABEL_GAP, plotWidth - LABEL_GAP);
+  // Not even ~two glyphs fit (a collapsed strip) — an empty axis over a smear.
+  if (!(room >= fontSize * 2)) return [];
   const out: PlacedTick[] = [];
   for (let i = 0; i < n; i += stride) {
-    const s = ticks[i]!.label;
-    out.push({
-      x: ticks[i]!.x,
-      label: s.length <= room ? s : `${s.slice(0, Math.max(1, room - 1))}…`,
-    });
+    const t = ticks[i]!;
+    const label =
+      widths[i]! <= room
+        ? t.label
+        : ellipsizeMiddle(t.label, room, font, fontSize);
+    // A bare ellipsis identifies nothing — leave that tick unlabeled.
+    if (label !== '…') out.push({ x: t.x, label });
   }
   return out;
 }
@@ -132,8 +228,10 @@ export interface XAxisProps {
    * - `'auto'` — centred, but the first label left-anchors and the last
    *   right-anchors so the edge labels stay inside the plot (the old default).
    * - `'right'` — the label sits to the **right** of an extended tick that
-   *   drops from the axis line (label beside the tick, not under it) — useful
-   *   for dense or wide labels that would collide when centred.
+   *   drops from the axis line (label beside the tick, not under it) — a
+   *   *style* choice (the TradingView look). It re-anchors without measuring,
+   *   so it is **not** a remedy for colliding labels; on a category axis the
+   *   measured fit (thin + middle-ellipsize) is what prevents collisions.
    */
   align?: 'auto' | 'center' | 'right';
   /**
@@ -450,10 +548,21 @@ export function XAxis({
               flatFmt(+d) !== baseFmt(+d),
         }));
   // A category axis ticks once per category; thin + truncate its labels when they
-  // crowd (an explicit `customTicks` axis keeps its labels verbatim).
+  // crowd (an explicit `customTicks` axis keeps its labels verbatim). The slot is
+  // the scale's own band pitch — under `maxBandWidth` packing it is narrower than
+  // `plotWidth / n`, and the fit must measure against the pitch labels actually
+  // sit on.
   const placed: PlacedTick[] =
-    xKind === 'category' && customTicks === undefined && rawTicks.length > 1
-      ? thinCategoryLabels(rawTicks, plotWidth, theme.font.size)
+    xKind === 'category' && customTicks === undefined && rawTicks.length > 0
+      ? thinCategoryLabels(
+          rawTicks,
+          'bandwidth' in xScale
+            ? (xScale as { bandwidth(): number }).bandwidth()
+            : plotWidth / rawTicks.length,
+          plotWidth,
+          theme.font.size,
+          theme.font.family,
+        )
       : rawTicks;
 
   const onTop = side === 'top';
