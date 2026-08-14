@@ -77,6 +77,14 @@ include new features and type-level changes; patch bumps are strictly additive.
   rather than overprinting every label at x ≈ 0. Filed from the SPARC
   migration ([PND-CATFIT]).
 
+  **Heads-up on a deliberate visual change:** an axis whose labels previously
+  packed edge-to-edge at a borderline pitch (label within a couple of px of
+  its band) now **thins to every 2nd label** instead — clear separation
+  outranks per-band labelling at the margin. On a dense dashboard axis this
+  can read as "half the labels disappeared"; it is the fit working as
+  intended, not data loss — every band still draws its mark, and the cursor
+  readout still names every category.
+
 ## [0.60.0] — 2026-08-13
 
 ### Added
