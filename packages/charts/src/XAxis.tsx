@@ -51,6 +51,10 @@ interface PlacedTick {
  * over, which the fit's inter-label gap absorbs.
  */
 const measureCache = new Map<string, number>();
+// Module state: the first render's canvas context is kept for the process
+// lifetime. In tests this captures whatever canvas stub is installed at first
+// measure — harmless while stubs measure 0 (the estimate fallback takes over
+// per call), but a future *nonzero* canvas mock would need a reset hook here.
 let measureCtx: CanvasRenderingContext2D | null | undefined;
 function labelWidth(text: string, font: string, fontSize: number): number {
   const key = `${font}|${text}`;

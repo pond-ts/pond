@@ -3723,7 +3723,12 @@ in the safe direction.
 **Checked and deliberately out of scope:** the **y-axis categorical path**
 (horizontal charts' `binCategories`) stacks labels vertically — label height
 vs row height, a different and far less overlap-prone geometry. **Rotation**
-stays a later option. **[PND-CATID]** (display label split from category
+stays a later option. **Edge spill** (Layer-2 review find): a stride-kept
+label wider than its own band can overhang the plot edge by up to
+~(room − slot)/2 — pre-existing, and it is `align='center'`'s documented
+behaviour, with `align='auto'` the existing remedy; a fit that also clamped
+to the plot edge would be changing `align` semantics, so it is deferred as an
+`align` follow-up if a consumer hits it. **[PND-CATID]** (display label split from category
 identity) is the class-removing fix and is filed separately — see its own
 entry.
 
