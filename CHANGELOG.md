@@ -63,6 +63,28 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- `@pond-ts/charts`: the category x-axis label fit now **measures** rendered
+  label widths (offscreen-canvas `measureText` in the axis font, with a
+  per-glyph estimate fallback for SSR/test DOMs) instead of estimating by
+  character count — labels wider than their band (e.g. `SYMBOL-VENUE-TYPE`
+  keys) no longer overprint into a smear. The fit measures against the scale's
+  real band pitch (so a `maxBandWidth`-packed axis thins correctly), keeps a
+  minimum clear gap between drawn labels, truncates from the **middle**
+  (`EDGE01…EQT`) so a shared prefix or a shared tail stays distinguishable,
+  and draws **no** labels at a degenerate (collapsed / pre-layout) width
+  rather than overprinting every label at x ≈ 0. Filed from the SPARC
+  migration ([PND-CATFIT]).
+
+  **Heads-up on a deliberate visual change:** an axis whose labels previously
+  packed edge-to-edge at a borderline pitch (label within a couple of px of
+  its band) now **thins to every 2nd label** instead — clear separation
+  outranks per-band labelling at the margin. On a dense dashboard axis this
+  can read as "half the labels disappeared"; it is the fit working as
+  intended, not data loss — every band still draws its mark, and the cursor
+  readout still names every category.
+
 ## [0.60.0] — 2026-08-13
 
 ### Added

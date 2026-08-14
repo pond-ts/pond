@@ -52,7 +52,7 @@ permits reduces to that. This is not a forever project; it is moving fast and
 deliberately toward a fixed point.
 
 **The scheduling consequence, which is easy to get backwards.** The 95% and
-the 5% need *opposite* treatment:
+the 5% need _opposite_ treatment:
 
 - **Discovery work waits for consumers.** The last 5% is exactly what
   experiments and real integrations surface; designing it early guesses.
@@ -1945,6 +1945,18 @@ argument for the rest.
   [PND-BINSWATCH] is now partially resolved on the stack path only. Itemised, with
   each workaround and its cost, in
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-sparcfric--sparc-charts-friction-2026-08).
+
+- **[PND-CATID]** — **Split category display label from category identity.**
+  Second SPARC filing (2026-08-14, alongside the shipped [PND-CATFIT] label
+  fit): a category's `label` is today ALSO its selection identity
+  (`SelectInfo.mark`), so two categories that render the same string silently
+  merge into one mark, and a consumer with duplicate-prone keys carries a
+  `uniqueLabels` + `keyOfLabel` side-channel that produced two real bugs in
+  their migration in one week. Sketch: `CategoryDatum.key?: string` (defaults
+  to `label`), `mark` carries the key, the axis/readouts draw the label; the
+  container `categories` prop widens likewise. **Public type widening on the
+  selection currency — owner gate required.** Write-up in
+  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-catid--split-category-display-label-from-category-identity).
 
 - **[PND-IGNITE]** — A **third** external consumer survey: 28 distinct entries
   (`PG-n`, merged from 39 raw) across seven planned financial panes, assessed
