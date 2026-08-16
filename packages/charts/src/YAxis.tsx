@@ -3,6 +3,11 @@ import { ContainerContext, RowContext, type AxisSpec } from './context.js';
 import { resolveAxisFormat, type AxisFormat } from './format.js';
 import { useSlotKey } from './use-slot-key.js';
 import { tickValues } from './yticks.js';
+import {
+  axisMouseProps,
+  axisPointerPx,
+  type AxisMouseHandler,
+} from './axis-events.js';
 
 export interface YAxisProps {
   /** Identifier a chart links to via its `axis` prop (and the first declared is
@@ -200,6 +205,19 @@ export interface YAxisProps {
    */
   color?: string;
   /**
+   * Mouse events on this axis's gutter, with the **axis value under the
+   * pointer** ({@link AxisMouseEvent}) — a click reports the value it landed
+   * on, and this axis's `id`, so one handler can serve several axes. The lever
+   * for axis-driven UI: set a threshold by clicking the gutter, open a scale
+   * menu (`event.type === 'contextmenu'`), drill into a categorical row.
+   *
+   * **One handler takes every mouse event** — click, double-click, context
+   * menu, down/up, move, enter, leave — so switch on `event.type`. Nothing is
+   * attached when the prop is omitted, so the move events cost nothing unless
+   * you ask for them. A `hide`den axis draws no gutter and so fires nothing.
+   */
+  onMouseEvent?: AxisMouseHandler;
+  /**
    * @internal Declaration position among the row's children, injected by
    * `ChartRow` so the first-declared axis stays the default. Do not set.
    */
@@ -237,6 +255,7 @@ export function YAxis({
   hide = false,
   labelPlacement = 'rotated',
   color,
+  onMouseEvent,
   index = 0,
 }: YAxisProps) {
   const container = useContext(ContainerContext);
@@ -360,8 +379,33 @@ export function YAxis({
   // which may repeat across a mirror). Falls back to own width until reserved.
   const slotWidth = row.axisSlots.get(slot) ?? width;
 
+  // The axis value under the pointer, for `onMouseEvent` — read on the **slot**
+  // box (below), so the whole reserved gutter answers, not just this axis's own
+  // narrower content. The box is exactly the row's height and shares its top
+  // edge with the plot, so a box-local pixel inverts straight through this
+  // axis's scale. Before the row has published one there is no value to report
+  // and the event is dropped. A categorical row labels by slot, matching its
+  // ticks; every other row reads this axis's own tick format.
+  const mouse = axisMouseProps(onMouseEvent, 'y', id, (event) => {
+    if (!yScale) return null;
+    const value = yScale.invert(axisPointerPx(event, 'y', row.height));
+    return {
+      value,
+      label:
+        layerCategories !== null
+          ? (layerCategories[Math.floor(value)] ?? '')
+          : fmt(value),
+    };
+  });
+
   return (
     <div
+      // A stable hook for the gutter (see the x strip's): the axis takes no
+      // `className`, so `[data-axis-id='price']` is how a consumer styles one
+      // — or an e2e test picks it out of a dual-axis row.
+      data-axis="y"
+      data-axis-id={id}
+      {...mouse}
       style={{
         flex: `0 0 ${slotWidth}px`,
         display: 'flex',

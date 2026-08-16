@@ -63,6 +63,23 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- `@pond-ts/charts`: **`onMouseEvent` on `<XAxis>` and `<YAxis>`** — mouse
+  events on an axis strip, carrying the **axis value under the pointer** (the
+  part a consumer can't compute, since the scale lives inside the container).
+  One handler takes every mouse event on the strip (`click`, `dblclick`,
+  `contextmenu`, `mousedown`/`mouseup`, `mousemove`, `mouseenter`/`mouseleave`)
+  — switch on `event.type`. The payload (`AxisMouseEvent`, exported) carries
+  the raw React event, `axis: 'x' | 'y'`, the axis's `id` (a `<YAxis>` has one;
+  an `<XAxis>` does not), the inverted `value`, and the `label` that axis would
+  print there — the **category name** on a category axis, whose scale inverts
+  to the nearest band centre. Nothing is attached when the prop is omitted, so
+  an axis that doesn't opt in pays nothing for the move events. Axis strips now
+  also carry `data-axis="x"` / `data-axis="y"` + `data-axis-id` hooks, so a
+  consumer can style one (`[data-axis='x'] { cursor: pointer }`) despite the
+  axes taking no `className`.
+
 ### Fixed
 
 - `@pond-ts/charts`: the category x-axis label fit now **measures** rendered

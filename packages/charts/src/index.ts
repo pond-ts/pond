@@ -35,6 +35,9 @@ export type { XAxisProps } from './XAxis.js';
 // The derived-unit relabeling an `<XAxis transform>` takes (strike↔moneyness,
 // σ↔delta) — exported so consumers can name/share their transforms.
 export type { AxisTransform } from './derivedTicks.js';
+// What an axis's `onMouseEvent` hands back: the mouse event plus the axis
+// coordinate under the pointer (and the axis's `id`, when it has one).
+export type { AxisMouseEvent, AxisMouseHandler } from './axis-events.js';
 export { TimeAxis } from './TimeAxis.js';
 export { CategoryAxis } from './CategoryAxis.js';
 // Heat map — a grid of cells, bins on x and the series' columns as rows,

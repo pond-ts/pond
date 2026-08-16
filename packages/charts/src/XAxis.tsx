@@ -16,6 +16,11 @@ import {
   resolveTimeFormat,
   type AxisFormat,
 } from './format.js';
+import {
+  axisMouseProps,
+  axisPointerPx,
+  type AxisMouseHandler,
+} from './axis-events.js';
 
 /** Tick strip height (mark + value label) in CSS px. */
 const TICK_STRIP = 22;
@@ -257,6 +262,22 @@ export interface XAxisProps {
    *   on each turn is emphasized and joins its divider as one boundary line.
    */
   dateStyle?: 'flat' | 'stacked';
+  /**
+   * Mouse events on the axis strip, with the **axis value under the pointer**
+   * ({@link AxisMouseEvent}) — a click on a time axis reports the instant it
+   * landed on, a click on a category axis reports the category. The lever for
+   * axis-driven UI: pick a date by clicking its tick, open a menu on the strip
+   * (`event.type === 'contextmenu'`), drill into a category.
+   *
+   * **One handler takes every mouse event** — click, double-click, context
+   * menu, down/up, move, enter, leave — so switch on `event.type`. Nothing is
+   * attached when the prop is omitted, so the move events cost nothing unless
+   * you ask for them.
+   *
+   * The x strip has no `id` (only a `<YAxis>` does); to distinguish stacked
+   * axes, close over it: `onMouseEvent={(e) => onAxis('delta', e)}`.
+   */
+  onMouseEvent?: AxisMouseHandler;
 }
 
 /**
@@ -279,6 +300,7 @@ export function XAxis({
   color,
   align = 'center',
   dateStyle = 'flat',
+  onMouseEvent,
 }: XAxisProps = {}) {
   const container = useContext(ContainerContext);
   if (container === null) {
@@ -595,8 +617,27 @@ export function XAxis({
     (hasBands ? BAND_STRIP : 0) +
     maxPillLane * PILL_LANE_H;
 
+  // The axis coordinate under the pointer, for `onMouseEvent`. The strip is
+  // laid out flush with the plot (the left gutter is its margin, its width is
+  // `plotWidth`), so a strip-local pixel inverts straight through the shared x
+  // scale — no gutter arithmetic. The label reads the same channel a cursor
+  // pill does: the band scale's category name on a category axis (a d3 number
+  // format can't name one), this axis's readout format everywhere else.
+  const mouse = axisMouseProps(onMouseEvent, 'x', undefined, (event) => {
+    const value = +xScale.invert(axisPointerPx(event, 'x', plotWidth));
+    return {
+      value,
+      label: xKind === 'category' ? fmt(value) : readoutFmt(value),
+    };
+  });
+
   return (
     <div
+      // A stable hook for the strip: the axis takes no `className`, so this is
+      // what a consumer styling it (`[data-axis='x'] { cursor: pointer }` next
+      // to an `onMouseEvent`) or an e2e test selects on.
+      data-axis="x"
+      {...mouse}
       style={{
         position: 'relative',
         marginLeft: `${leftGutter}px`,

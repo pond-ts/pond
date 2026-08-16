@@ -72,6 +72,7 @@ auto-fitting axis — you just get no gutter or ticks.
 | `boundaryLabels` | `boolean`                                      | `true`         | `false` drops just the top & bottom extreme labels (gridlines stay).                                                                  |
 | `width`          | `number`                                       | `50`           | Gutter width in CSS px.                                                                                                               |
 | `color`          | `string`                                       | theme          | This axis's tick + title colour (presentation-only).                                                                                  |
+| `onMouseEvent`   | `(info: AxisMouseEvent) => void`               | —              | Mouse events on the gutter, with the axis value under the pointer. See [Clicking an axis](#clicking-an-axis).                         |
 
 `format` is the one prop whose inline **function** form must be hoisted or
 `useCallback`'d — it's the only prop the layout's structural change-detection
@@ -93,17 +94,18 @@ regardless of which you render.
 
 ### `<XAxis>` props
 
-| Prop        | Type                                           | Default        | Purpose                                                                                                                                                                                                 |
-| ----------- | ---------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `side`      | `'top' \| 'bottom'`                            | `'bottom'`     | Which edge. Declaration order stacks multiple strips.                                                                                                                                                   |
-| `label`     | `string`                                       | —              | Centred axis title.                                                                                                                                                                                     |
-| `format`    | `AxisFormat`                                   | container's    | Tick/cursor formatting, resolved against the axis kind.                                                                                                                                                 |
-| `ticks`     | `ReadonlyArray<{ at: number; label: string }>` | auto           | Explicit ticks in axis-value units.                                                                                                                                                                     |
-| `transform` | `{ to(v): number; from(u): number }`           | —              | Relabel the **same scale** into a derived unit (a second tick layout).                                                                                                                                  |
-| `align`     | `'auto' \| 'center' \| 'right'`                | `'center'`     | Horizontal tick-label placement.                                                                                                                                                                        |
-| `dateStyle` | `'flat' \| 'stacked'`                          | `'flat'`       | Time axis only: `flat` promotes date context inline on one row (the TradingView look); `stacked` uses a second boundary row. See [Trading-time axis](./trading-time-axis.mdx#what-changes-on-the-axis). |
-| `color`     | `string`                                       | theme          | Tick / label / rule / title colour — the lever for a stacked dual axis.                                                                                                                                 |
-| `height`    | `number`                                       | fit-to-content | Strip height in px.                                                                                                                                                                                     |
+| Prop           | Type                                           | Default        | Purpose                                                                                                                                                                                                 |
+| -------------- | ---------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `side`         | `'top' \| 'bottom'`                            | `'bottom'`     | Which edge. Declaration order stacks multiple strips.                                                                                                                                                   |
+| `label`        | `string`                                       | —              | Centred axis title.                                                                                                                                                                                     |
+| `format`       | `AxisFormat`                                   | container's    | Tick/cursor formatting, resolved against the axis kind.                                                                                                                                                 |
+| `ticks`        | `ReadonlyArray<{ at: number; label: string }>` | auto           | Explicit ticks in axis-value units.                                                                                                                                                                     |
+| `transform`    | `{ to(v): number; from(u): number }`           | —              | Relabel the **same scale** into a derived unit (a second tick layout).                                                                                                                                  |
+| `align`        | `'auto' \| 'center' \| 'right'`                | `'center'`     | Horizontal tick-label placement.                                                                                                                                                                        |
+| `dateStyle`    | `'flat' \| 'stacked'`                          | `'flat'`       | Time axis only: `flat` promotes date context inline on one row (the TradingView look); `stacked` uses a second boundary row. See [Trading-time axis](./trading-time-axis.mdx#what-changes-on-the-axis). |
+| `color`        | `string`                                       | theme          | Tick / label / rule / title colour — the lever for a stacked dual axis.                                                                                                                                 |
+| `height`       | `number`                                       | fit-to-content | Strip height in px.                                                                                                                                                                                     |
+| `onMouseEvent` | `(info: AxisMouseEvent) => void`               | —              | Mouse events on the strip, with the axis value under the pointer. See [Clicking an axis](#clicking-an-axis).                                                                                            |
 
 ### Dual x-axes — `transform`
 
@@ -129,6 +131,55 @@ crosshair pill, marker indicators, and annotation auto-labels _independently_,
 and does **not** disqualify a date style. Omit both and the readout defaults to
 a **grain-aware** format — a day-or-coarser axis reads a date, a sub-day axis
 date + clock — so a daily bar never reads a foreign-timezone time-of-day.
+
+## Clicking an axis
+
+Both axes take an `onMouseEvent` handler, and it carries the thing you can't
+work out from the DOM event alone: **the axis value under the pointer**.
+
+```tsx
+<YAxis
+  id="price"
+  onMouseEvent={({ event, id, value, label }) => {
+    if (event.type !== 'click') return;
+    setThreshold({ axis: id, at: value }); // `label` is "184.20", as the axis prints it
+  }}
+/>
+```
+
+One handler receives **every** mouse event on the strip — `click`,
+`dblclick`, `contextmenu`, `mousedown`/`mouseup`, `mousemove`,
+`mouseenter`/`mouseleave` — so switch on `event.type` and ignore the rest. The
+event itself is the ordinary React one: modifier keys, `button`,
+`preventDefault()`. Nothing is attached when you omit the prop, so an axis that
+doesn't opt in pays nothing for the move events.
+
+What arrives:
+
+| Field   | Type                  | What it is                                                                                                    |
+| ------- | --------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `event` | `React.MouseEvent`    | The raw event; `event.type` says which one fired.                                                             |
+| `axis`  | `'x' \| 'y'`          | Which axis fired, so one handler can serve both.                                                              |
+| `id`    | `string \| undefined` | The axis's `id`. A `<YAxis>` always has one; an `<XAxis>` has none.                                           |
+| `value` | `number`              | The pointer's pixel inverted through that axis's scale — epoch ms on a time axis, the number on a value axis. |
+| `label` | `string`              | `value` as that axis would print it — the **category name** on a category axis.                               |
+
+Three details worth knowing:
+
+- **`value` is continuous, not snapped to a tick** — it lands between them.
+  The exception is a **category x-axis**, whose scale inverts to the nearest
+  band centre (`i + 0.5`), so `label` names the category you clicked. A
+  categorical _row_ (horizontal bars, categories on y) is a plain slot scale
+  and doesn't snap: `Math.floor(value)` is its slot index.
+- **On a `transform`ed x-axis, `value` is the underlying value**, not the
+  derived unit — apply the same `transform.to` to read it in the strip's own
+  language.
+- **Two stacked x-axes look identical** (`id` is `undefined` for both), so
+  close over the distinction: `onMouseEvent={(e) => onAxis('delta', e)}`.
+
+Axes take no `className`, so use the `data-axis` hooks to style one — e.g.
+`[data-axis='x'] { cursor: pointer }`, or `[data-axis-id='price']` for a
+single y gutter.
 
 ## See also
 

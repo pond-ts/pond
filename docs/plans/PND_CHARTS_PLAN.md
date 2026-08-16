@@ -1507,6 +1507,31 @@ a shape:
   inside the closed night. "Drop duplicates" is under-specified whenever the
   duplicates aren't interchangeable.
 
+**Also done from this backlog: axis mouse events** — `onMouseEvent` on
+`<XAxis>` / `<YAxis>`, CHANGELOG `[Unreleased]`. Asked for as "a callback when
+the user clicks an axis"; the surface had none at all (every existing callback
+was plot-area or list-row). Decisions worth keeping:
+
+- **One `onMouseEvent`, not `onClick` + `onHover` + …** The strip is one
+  element, the events are the DOM's own, and the discriminator (`event.type`)
+  is already in the payload — a family of props would be the same handler N
+  times. It also keeps the opt-in binary: with no prop, **no** listeners are
+  attached, so nobody pays for `mousemove` they didn't ask for.
+- **The payload's reason to exist is `value`.** A consumer can attach their own
+  listener to anything; what they cannot do is invert the pixel, because the
+  scale lives inside the container. `label` rides along because on a category
+  axis the raw value (`2.5`, a band centre) is meaningless without it.
+- **No `id` prop on `<XAxis>`.** `id` is echoed back "if it has one" — a
+  `<YAxis>` needs one anyway (layers bind to it), an `<XAxis>` doesn't, and
+  adding one purely to be echoed is a prop with one use. Stacked x-strips
+  discriminate by closing over their own name at the call site.
+- **`data-axis` / `data-axis-id` attributes** shipped alongside: the axes take
+  no `className`, so a consumer who wires a click handler has no way to set
+  `cursor: pointer` on the strip. They double as the test/e2e selector.
+- **Deferred, considered:** snapping `value` to the nearest tick (the consumer
+  can round; the axis shouldn't decide), and a synthetic "which tick" field
+  (ticks are a rendering detail, not a coordinate).
+
 **Follow-up (not done):** `formatReadout` is now two channels in one field
 (`cursorFormat` vs the axis kind's default), disambiguated by a companion
 `xReadoutCustom` flag mirroring `xFormatCustom`. The reviewer's point stands
