@@ -421,6 +421,7 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 | `CandleVariant` / `ColorBy`                | OHLC mark shape / colouring strategy                                                                  | `packages/charts/src/ohlc.ts`             |
 | `AxisFormat` / `CursorFormat`              | Tick and cursor-readout formatting (d3 specifier or fn)                                               | `packages/charts/src/format.ts`           |
 | `AxisTransform`                            | Monotonic `to`/`from` pair for derived-unit x-axis relabeling                                         | `packages/charts/src/derivedTicks.ts`     |
+| `AxisMouseEvent` / `AxisMouseHandler`      | Axis `onMouseEvent` payload — the mouse event, the axis's `id`, and the value/label under the pointer | `packages/charts/src/axis-events.ts`      |
 | `Orientation`                              | Bar growth direction                                                                                  | `packages/charts/src/bars.ts`             |
 
 ---
