@@ -206,7 +206,7 @@ export interface YAxisProps {
   color?: string;
   /**
    * Mouse events on this axis's gutter, with the **axis value under the
-   * pointer** ({@link AxisMouseEvent}) — a click reports the value it landed
+   * pointer** ({@link AxisMouseHandler}, whose `AxisMouseEvent` payload carries it) — a click reports the value it landed
    * on, and this axis's `id`, so one handler can serve several axes. The lever
    * for axis-driven UI: set a threshold by clicking the gutter, open a scale
    * menu (`event.type === 'contextmenu'`), drill into a categorical row.
@@ -388,12 +388,25 @@ export function YAxis({
   // ticks; every other row reads this axis's own tick format.
   const mouse = axisMouseProps(onMouseEvent, 'y', id, (event) => {
     if (!yScale) return null;
-    const value = yScale.invert(axisPointerPx(event, 'y', row.height));
+    // Clamp on the **scale's** range, not the box: a row with a
+    // `labelPlacement="top"` axis reserves a header, so the range is
+    // `[height, topHeader]` while the box still starts at 0 (`ChartRow`).
+    const [r0, r1] = yScale.range() as [number, number];
+    const value = yScale.invert(axisPointerPx(event, 'y', [r0, r1]));
     return {
       value,
       label:
         layerCategories !== null
-          ? (layerCategories[Math.floor(value)] ?? '')
+          ? // A slot index, clamped to a real category: the domain's top edge
+            // inverts to exactly `n` (and rounding can nudge the bottom below
+            // 0), which no category occupies — the nearest one is the honest
+            // answer, matching the band scale's own `invert`.
+            (layerCategories[
+              Math.min(
+                layerCategories.length - 1,
+                Math.max(0, Math.floor(value)),
+              )
+            ] ?? '')
           : fmt(value),
     };
   });

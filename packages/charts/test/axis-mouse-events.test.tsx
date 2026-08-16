@@ -138,9 +138,16 @@ describe('<XAxis onMouseEvent>', () => {
       </ChartContainer>,
     );
 
-    // The label is a child of the strip; the handler still resolves against the
-    // strip's rect (`currentTarget`), not the label's.
-    fireEvent.click(getByText('Mid'), { clientX: PLOT / 2 });
+    // happy-dom zeroes every client rect, which would make `target` and
+    // `currentTarget` indistinguishable — the assertion would pass either way.
+    // Give the LABEL a displaced rect so the two frames disagree by 1000px:
+    // resolving against the label would clamp to the strip's left edge (value
+    // 0), so only reading the strip's own rect can produce 500.
+    const label = getByText('Mid');
+    label.getBoundingClientRect = () =>
+      ({ left: 1000, top: 0, right: 1040, bottom: 12 }) as DOMRect;
+
+    fireEvent.click(label, { clientX: PLOT / 2 });
 
     expect(seen).toHaveBeenCalledTimes(1);
     expect((seen.mock.calls[0]![0] as AxisMouseEvent).value).toBeCloseTo(
@@ -248,6 +255,36 @@ describe('<YAxis onMouseEvent>', () => {
     expect(info.label).toBe('75');
   });
 
+  it('a top-placed label reserves a header — the value stays inside the domain', () => {
+    const seen = vi.fn();
+    // `labelPlacement="top"` makes the ROW reserve a header, so its y scales
+    // run [height, topHeader] while the gutter box still starts at 0. Clamping
+    // on the box (rather than the scale's range) would invert that header band
+    // to values ABOVE the domain max — a coordinate the axis never draws.
+    const dom = draw(
+      <ChartContainer range={RANGE} width={WIDTH} showAxis={false}>
+        <ChartRow height={100}>
+          <YAxis
+            id="price"
+            min={0}
+            max={100}
+            labelPlacement="top"
+            onMouseEvent={seen}
+          />
+          <Layers>
+            <LineChart series={series()} column="v" axis="price" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    ).container;
+
+    fireEvent.click(yGutter(dom, 'price'), { clientY: 0 }); // the header band
+
+    const info = seen.mock.calls[0]![0] as AxisMouseEvent;
+    expect(info.value).toBeLessThanOrEqual(100);
+    expect(info.value).toBeCloseTo(100, 6);
+  });
+
   it('only the axis that opted in reports — the sibling stays inert', () => {
     const seen = vi.fn();
     const dom = draw(
@@ -288,6 +325,28 @@ describe('<YAxis onMouseEvent>', () => {
     const info = seen.mock.calls[0]![0] as AxisMouseEvent;
     expect(TICKERS).toContain(info.label);
     expect(info.label).toBe(TICKERS[Math.floor(info.value)]);
+  });
+
+  it('names the nearest category at the domain edges, never an empty label', () => {
+    const seen = vi.fn();
+    const dom = draw(
+      <ChartContainer width={WIDTH} showAxis={false}>
+        <ChartRow height={100}>
+          <YAxis id="cat" onMouseEvent={seen} />
+          <Layers>
+            <BarChart categories={bars} orientation="horizontal" axis="cat" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    ).container;
+
+    // The top pixel inverts to exactly `n` — a slot no category occupies — and
+    // the bottom to 0. Both must still name a category rather than report ''.
+    fireEvent.click(yGutter(dom, 'cat'), { clientY: 0 });
+    fireEvent.click(yGutter(dom, 'cat'), { clientY: 100 });
+
+    const labels = seen.mock.calls.map((c) => (c[0] as AxisMouseEvent).label);
+    expect(labels).toEqual([TICKERS[TICKERS.length - 1], TICKERS[0]]);
   });
 
   it('a hidden axis draws no gutter and so reports nothing', () => {

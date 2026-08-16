@@ -40,10 +40,17 @@ export interface AxisMouseEvent {
    */
   value: number;
   /**
-   * {@link value} formatted the way this axis formats it — the category name on
-   * a categorical axis, the axis's `format` (or the container's shared
-   * formatter) elsewhere. This is the axis's own readout channel, so it agrees
-   * with what a cursor pill would say at that pixel.
+   * {@link value} formatted the way this axis reads it — the category name on a
+   * categorical axis, the axis's `format` (or the container's shared formatter)
+   * elsewhere.
+   *
+   * Precisely: it is the axis's **readout** channel, the one the cursor pill
+   * uses — so it always agrees with the pill at that pixel, and a container
+   * `cursorFormat` shapes it exactly as it shapes the pill. That is the
+   * documented precedence (`cursorFormat` → axis `format` → container), and it
+   * is the one case where `label` can read differently from the tick text: a
+   * chart with a precise `cursorFormat` over terse ticks gets the precise form
+   * here, which is the readout it asked for.
    */
   label: string;
 }
@@ -105,21 +112,30 @@ export function axisMouseProps(
 }
 
 /**
- * The pointer's position along an axis strip, in **strip-local pixels** —
- * the coordinate the scale inverts. Read from the strip's own client rect
+ * The pointer's position along an axis strip, in **strip-local pixels** — the
+ * coordinate the scale inverts. Read from the strip's own client rect
  * (`currentTarget`, so it is the strip whichever tick label was hit), which is
  * laid out flush with the plot on that dimension: the x strip carries the left
  * gutter as a margin and is exactly `plotWidth` wide, and the y gutter is
- * exactly the row's height. Clamped to the strip, so the pixel a `mouseleave`
- * reports is still on the scale.
+ * exactly the row's height.
+ *
+ * Clamped to **the scale's range, not the strip's box** — the two are not
+ * always the same. A row carrying a `labelPlacement="top"` axis reserves a
+ * header, so its y scales run `[height, topHeader]` while the gutter box still
+ * starts at 0; clamping to the box would invert the header band to values
+ * *above* the domain and report a coordinate the axis never draws. Passing the
+ * range means a `mouseleave` off the edge — or a press in that header — still
+ * reports a value the scale actually holds.
  */
 export function axisPointerPx(
   event: ReactMouseEvent<HTMLDivElement>,
   axis: 'x' | 'y',
-  extent: number,
+  range: readonly [number, number],
 ): number {
   const rect = event.currentTarget.getBoundingClientRect();
   const px =
     axis === 'x' ? event.clientX - rect.left : event.clientY - rect.top;
-  return Math.max(0, Math.min(extent, px));
+  const lo = Math.min(range[0], range[1]);
+  const hi = Math.max(range[0], range[1]);
+  return Math.max(lo, Math.min(hi, px));
 }

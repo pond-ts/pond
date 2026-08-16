@@ -264,7 +264,7 @@ export interface XAxisProps {
   dateStyle?: 'flat' | 'stacked';
   /**
    * Mouse events on the axis strip, with the **axis value under the pointer**
-   * ({@link AxisMouseEvent}) — a click on a time axis reports the instant it
+   * ({@link AxisMouseHandler}, whose `AxisMouseEvent` payload carries it) — a click on a time axis reports the instant it
    * landed on, a click on a category axis reports the category. The lever for
    * axis-driven UI: pick a date by clicking its tick, open a menu on the strip
    * (`event.type === 'contextmenu'`), drill into a category.
@@ -624,7 +624,7 @@ export function XAxis({
   // pill does: the band scale's category name on a category axis (a d3 number
   // format can't name one), this axis's readout format everywhere else.
   const mouse = axisMouseProps(onMouseEvent, 'x', undefined, (event) => {
-    const value = +xScale.invert(axisPointerPx(event, 'x', plotWidth));
+    const value = +xScale.invert(axisPointerPx(event, 'x', [0, plotWidth]));
     return {
       value,
       label: xKind === 'category' ? fmt(value) : readoutFmt(value),

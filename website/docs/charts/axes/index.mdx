@@ -162,9 +162,9 @@ What arrives:
 | `axis`  | `'x' \| 'y'`          | Which axis fired, so one handler can serve both.                                                              |
 | `id`    | `string \| undefined` | The axis's `id`. A `<YAxis>` always has one; an `<XAxis>` has none.                                           |
 | `value` | `number`              | The pointer's pixel inverted through that axis's scale — epoch ms on a time axis, the number on a value axis. |
-| `label` | `string`              | `value` as that axis would print it — the **category name** on a category axis.                               |
+| `label` | `string`              | `value` on that axis's **readout** channel — the **category name** on a category axis.                        |
 
-Three details worth knowing:
+Four details worth knowing:
 
 - **`value` is continuous, not snapped to a tick** — it lands between them.
   The exception is a **category x-axis**, whose scale inverts to the nearest
@@ -176,6 +176,11 @@ Three details worth knowing:
   language.
 - **Two stacked x-axes look identical** (`id` is `undefined` for both), so
   close over the distinction: `onMouseEvent={(e) => onAxis('delta', e)}`.
+- **`label` is the readout channel, not the tick text.** It always agrees with
+  what the cursor pill says at that pixel, which means a container
+  `cursorFormat` shapes it (the documented `cursorFormat` → axis `format` →
+  container precedence). Set one and `label` reads in the precise form the pill
+  does, which may be finer than the terse tick beneath it.
 
 Axes take no `className`, so use the `data-axis` hooks to style one — e.g.
 `[data-axis='x'] { cursor: pointer }`, or `[data-axis-id='price']` for a
