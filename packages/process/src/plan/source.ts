@@ -62,7 +62,7 @@ export function defineSource<
 }
 
 export class UnknownSourceError extends ProcessError {
-  static override readonly code = 'UnknownSourceError';
+  static override readonly code: string = 'UnknownSourceError';
 }
 
 export class SourceRegistry {

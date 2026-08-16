@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { TimeSeries } from 'pond-ts';
+import * as exports from '../src/index.js';
 import {
   bind,
   createRegistry,
   int,
   num,
   run,
+  ParamError,
   ProcessError,
   specId,
+  UnitError,
   UnknownColumnError,
   type OpDef,
   type Registry,
@@ -401,6 +404,54 @@ describe('run — a raw input must name a column of the bound series', () => {
     );
   });
 
+  it('re-checks a WARM node after the schema drifts under it', () => {
+    // The original bug surviving through the memo: `compile` returned the
+    // cached node before looking at the current schema, and `setSource`
+    // replacing the data under compiled nodes is a supported lifecycle
+    // (`Host.add`, an async source refresh). Codex reproduced a column of
+    // 42s with `skipped: []` after swapping the source (PR #667).
+    const { registry, ran } = lenientRegistry();
+    const graph = bind(series(10), { registry, units });
+    const spec = { op: 'filler', inputs: ['px'] };
+    run(graph, { plan: [spec], select: [{ on: spec }], assemble: false });
+    expect(ran()).toBe(1);
+
+    graph.setSource(
+      TimeSeries.fromJSON({
+        name: 'other',
+        schema: [
+          { name: 'time', kind: 'time' },
+          { name: 'other', kind: 'number' },
+        ] as const,
+        rows: [[0, 1]],
+      }) as never,
+    );
+    const res = run(graph, {
+      plan: [spec],
+      select: [{ on: spec }],
+      onError: 'skip',
+      assemble: false,
+    });
+    expect(res.skipped[0]!.code).toBe('UnknownColumnError');
+    expect(res.columns).toBeUndefined();
+    expect(ran()).toBe(1);
+  });
+
+  it('names the missing column even under a TYPED parent', () => {
+    // The typed-unit pass resolves a nested input's unit before recursion
+    // reaches the nested spec, so this surfaced as `UnitError` —
+    // "is 'unitless'", which is true and names the wrong problem, and
+    // misses the one class a consumer branches on (Codex, PR #667).
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    expect(() =>
+      graph.compile({
+        op: 'annualise',
+        inputs: [{ op: 'sma', params: { period: 3 }, inputs: ['nope'] }],
+      }),
+    ).toThrow(UnknownColumnError);
+  });
+
   it('gives the nested plan form the answer the slot form already gave', () => {
     // The asymmetry was the bug: one of two request forms caught this.
     const { registry } = lenientRegistry();
@@ -502,12 +553,49 @@ describe('run — a skip carries the failure kind, not just prose', () => {
     expect(res.skipped[0]!.code).toBeUndefined();
   });
 
+  it('throws the original class under the default policy', () => {
+    // `fail` used to rebuild the error as a base `ProcessError` from its
+    // message, so `run` erased exactly the class a consumer catches on —
+    // while the docs claimed `code` matches what a throw would carry
+    // (Codex, PR #667).
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    expect(() =>
+      run(graph, { plan: [{ op: 'sma', inputs: ['nope'] }] }),
+    ).toThrow(UnknownColumnError);
+    expect(() =>
+      run(graph, {
+        plan: [{ op: 'sma', params: { period: 1 }, inputs: ['px'] }],
+      }),
+    ).toThrow(ParamError);
+    expect(() =>
+      run(graph, { plan: [{ op: 'annualise', inputs: ['px'] }] }),
+    ).toThrow(UnitError);
+  });
+
   it('is a literal per class, so a minifier cannot rename it', () => {
     // `constructor.name` would be `'t'` in a consumer's production
     // build — silently, which is the bug this string exists to avoid.
     expect(UnknownColumnError.code).toBe('UnknownColumnError');
     expect(new UnknownColumnError('x').code).toBe('UnknownColumnError');
     expect(new ProcessError('x').code).toBe('ProcessError');
+  });
+
+  it('is declared by EVERY exported error class, not inherited', () => {
+    // A subclass that forgets silently reports its parent's code, so a
+    // consumer's branch quietly lands on the wrong arm. Nothing can force
+    // the declaration at the type level — this is the guard (raised by
+    // the Layer 2 review of PR #667).
+    const classes = Object.entries(exports as Record<string, unknown>).filter(
+      (entry): entry is [string, typeof ProcessError] =>
+        typeof entry[1] === 'function' &&
+        entry[1].prototype instanceof ProcessError,
+    );
+    expect(classes.length).toBeGreaterThan(8);
+    for (const [name, cls] of classes) {
+      expect([name, cls.code]).toEqual([name, name]);
+      expect(new cls('x').code).toBe(name);
+    }
   });
 });
 

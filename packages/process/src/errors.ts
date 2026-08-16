@@ -12,6 +12,13 @@
  * bad persisted param is a broken one) then has only prose to go on
  * (Tidal, `docs/notes/tidal-process-adoption-friction-2026-08.md`).
  *
+ * Every subclass annotates `code` as `: string` rather than letting the
+ * literal type be inferred. Without it the static's type is the literal
+ * — `ParamError.code: 'ParamError'` — and a **consumer** subclassing to
+ * add its own code fails to compile with TS2417, which would make this
+ * additive field a source break for anyone already extending these
+ * classes (Codex, PR #667).
+ *
  * `code` is that discriminator, and it is a **literal string per class**
  * rather than `constructor.name` because a consumer's minifier may
  * rename the class — leaving `name` as `'t'` in a production build,
@@ -42,12 +49,12 @@ export class ProcessError extends Error {
  * so a cycle surfaces at the line that wires it, not at some later pull.
  */
 export class CycleError extends ProcessError {
-  static override readonly code = 'CycleError';
+  static override readonly code: string = 'CycleError';
 }
 
 /** Thrown when pulling through an inlet with no connection and no default. */
 export class UnconnectedInputError extends ProcessError {
-  static override readonly code = 'UnconnectedInputError';
+  static override readonly code: string = 'UnconnectedInputError';
 }
 
 /**
@@ -55,5 +62,5 @@ export class UnconnectedInputError extends ProcessError {
  * outlet is read before anything has produced a value for it.
  */
 export class MissingOutputError extends ProcessError {
-  static override readonly code = 'MissingOutputError';
+  static override readonly code: string = 'MissingOutputError';
 }

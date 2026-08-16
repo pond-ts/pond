@@ -45,7 +45,7 @@ import type { ParamValue } from './types.js';
 
 /** Thrown when a graph is built wrong — before it is ever sent. */
 export class BuilderError extends ProcessError {
-  static override readonly code = 'BuilderError';
+  static override readonly code: string = 'BuilderError';
 }
 
 /**

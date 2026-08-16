@@ -328,9 +328,20 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
   }
   const { plan, select, slotOf } = normalized;
 
-  const fail = (entry: Skipped): void => {
-    if (onError === 'throw') throw new ProcessError(entry.reason);
-    skipped.push(entry);
+  /**
+   * Reports a failure, or rethrows it — the ORIGINAL error, not a
+   * reconstruction.
+   *
+   * Rebuilding it as a base `ProcessError` from `entry.reason` erased the
+   * class on the default policy: `graph.compile` threw
+   * `UnknownColumnError` and `run` turned it into a `ProcessError`, so a
+   * consumer catching could not branch on the very class this PR added,
+   * and the documented "`code` matches what a throw would have carried"
+   * was false in one direction (Codex, PR #667).
+   */
+  const fail = (error: unknown, entry: Omit<Skipped, 'reason' | 'code'>) => {
+    if (onError === 'throw') throw error;
+    skipped.push({ ...entry, ...describe(error) });
   };
 
   // ── resolve the plan ───────────────────────────────────────
@@ -339,13 +350,12 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
       const compiled = graph.compile(spec);
       resolved.push({ id: compiled.id, spec });
     } catch (e) {
-      fail({
+      fail(e, {
         spec: {
           op: spec.op,
           params: { ...(spec.params ?? {}) },
           inputs: spec.inputs,
         },
-        ...describe(e),
       });
     }
   }
@@ -373,7 +383,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
         explainMap[id] = explain(registry, sel.on);
       }
     } catch (e) {
-      fail({ select: sel, ...describe(e) });
+      fail(e, { select: sel });
       continue;
     }
     selectors.push({ sel, id });
@@ -496,17 +506,15 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
           !declared.some((o) => o.id === sel.output)
         ) {
           const have = declared.map((o) => `'${o.id}'`).join(', ');
-          fail({
-            select: sel,
-            // Built here rather than caught, so the kind is stated
-            // rather than derived — a `Skipped` from the plan layer
-            // always carries one.
-            ...describe(
-              new ProcessError(
-                `'${compiled.spec.op}' has no output '${sel.output}' (has ${have})`,
-              ),
+          // Built here rather than caught, so the kind is stated rather
+          // than derived — a `Skipped` from the plan layer always
+          // carries one, and the throw policy raises the same object.
+          fail(
+            new ProcessError(
+              `'${compiled.spec.op}' has no output '${sel.output}' (has ${have})`,
             ),
-          });
+            { select: sel },
+          );
           continue;
         }
         // Pulling a column runs op code, which can throw like anything
@@ -535,8 +543,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
             }
           });
         } catch (e) {
-          if (onError === 'throw') throw e;
-          fail({ select: sel, ...describe(e) });
+          fail(e, { select: sel });
         }
       }
     }
@@ -547,10 +554,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
   for (const { sel, id } of selectors) {
     const compiled = graph.get(id);
     if (compiled === undefined) {
-      fail({
-        select: sel,
-        ...describe(new ProcessError(`'${id}' is not in this plan`)),
-      });
+      fail(new ProcessError(`'${id}' is not in this plan`), { select: sel });
       continue;
     }
     if (!compiled.fold) continue;
@@ -570,7 +574,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
         unit: unitOf(registry, compiled.spec, graph.units),
       });
     } catch (e) {
-      fail({ select: sel, ...describe(e) });
+      fail(e, { select: sel });
     }
   }
 

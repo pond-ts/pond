@@ -20,7 +20,7 @@ export type NoInputs = Readonly<Record<string, never>>;
 
 /** Thrown when a source is pulled before a value has been set. */
 export class UnsetSourceError extends ProcessError {
-  static override readonly code = 'UnsetSourceError';
+  static override readonly code: string = 'UnsetSourceError';
 }
 
 /** Mutable cell holding a source's current value. */

@@ -131,12 +131,26 @@ Decisions inside the fix:
 - **The key/time column is not accepted.** `series.column('time')` is
   `undefined` at runtime and rejected at the type level, so a plan naming
   it was already broken; `expandSlots` excludes it for the same reason.
-- **Compile-time, not pull-time.** Cheaper (once per distinct spec, not
-  per pull) and it is where the error can still be routed through
-  `onError` with the spec echoed. The residual: `setSource` may later
-  narrow the schema under an already-compiled node, which stays a pull
-  failure. Not worth re-validating every node on every source swap for a
-  case nothing has hit.
+- **Compile-time, not pull-time** — but on the **warm** path as well as
+  the cold one. The first cut checked only on a cache miss and the plan
+  recorded the gap as an accepted residual ("`setSource` may narrow the
+  schema under a compiled node, which stays a pull failure"). **That was
+  wrong twice over**, and the Codex review of #667 reproduced it: it is
+  not a pull failure at all — the warm node recomputes against an
+  un-widened series and emits the garbage column with `skipped: []`, so
+  the original bug survived intact through the memo — and `setSource`
+  replacing data under compiled nodes is a _supported_ lifecycle
+  (`Host.add`, an async source refresh), not an exotic case. `compile`
+  now checks before returning a cached node, and **forgets** the node
+  when the check fails: leaving it in place meant `graph.get` still
+  handed it to `run`'s selector pass, which pulled it and produced the
+  column anyway. The lesson worth keeping: _a validation placed after a
+  memo lookup is not a validation._
+- **The whole spec closure, not one level.** The typed-unit pass resolves
+  a nested input's unit before recursion reaches the nested spec, so a
+  missing column under a **typed** parent surfaced as `UnitError` — "is
+  'unitless'", true and the wrong problem, and missing the one class the
+  consumer branches on (Codex, #667).
 
 **2. `specId` validated params, so an invalid spec could not be named.**
 Reproduced: `specId(registry, {op:'sma', params:{period:0}})` throws
@@ -145,6 +159,21 @@ needs identity most — the failure paths. Shipped as the note's own first
 suggestion, `specId(registry, spec, { validate: false })`, with
 `Registry.resolveParams` taking the same option so default-application
 stays implemented once.
+
+**The first cut of this was wrong, and both reviews caught it.** `esc`
+is `String(v)`, which erases type — so `{period: '20'}` encoded exactly
+as the legal `{period: 20}`, and the broken spec **named the working
+node**. Strict mode never had that problem because `checkParam` rejects
+the string before it is encoded; leniency removed the guard while the
+encoding still assumed it. Since the id is the column name, the cache key
+_and_ the provenance citation, that is a correctness bug — and a JSON or
+form round trip turning a number into a string is the exact case the mode
+exists for. Two measures, both confined to the unvalidated branch so no
+valid id moves: the id is marked **`p1?:`** rather than `p1:` (so it can
+never equal a valid id whatever its params say, and the mark rides _up_ a
+chain), and within that branch params are encoded type-preservingly, keys
+included — leniency carries an **undeclared** key through, and a key
+spelled `a=1,b` would otherwise forge the encoding of two params.
 
 The property that makes it safe, and is pinned by test: **a valid spec
 has the same id under either mode**. Canonicalization is the same code
@@ -178,6 +207,11 @@ Two decisions inside it:
 - **Absent when the throw did not come from this package.** An op that
   blows up is not a plan-layer failure, and saying so by omission is
   more useful than inventing a code for it.
+- **The throw policy raises the original error.** `fail` rebuilt it as a
+  base `ProcessError` from its message, so `onError: 'throw'` — the
+  default — erased the very class this work added, and the documented
+  "`code` matches what a throw would have carried" was false in one
+  direction (Codex, #667). It now rethrows the caught object.
 
 **Considered and not done:**
 
@@ -198,10 +232,25 @@ Two decisions inside it:
   than failing the whole request. Deferred as a behaviour change to a
   published function with no consumer asking for it; revisit if the
   per-spec attribution is wanted on its own merits.
-- **Re-validating compiled nodes on `setSource`.** A source swap can
-  narrow the schema under an already-compiled node, which stays a pull
-  failure rather than a skip. Not worth a per-node pass on every swap
-  for a case nothing has hit.
+- **Eagerly re-validating every node on `setSource`.** The check runs
+  when a spec is next compiled — which `run` does for every plan entry,
+  every request — rather than sweeping all nodes on each source swap. A
+  caller holding a `Compiled` handle across a swap and pulling it
+  directly still bypasses it; that handle is already documented as
+  non-durable under a budget, and a sweep costs every swap to close a
+  path nothing uses.
+
+**What the review pass was worth.** Three of the five findings above are
+review output, not authoring output, and two were **high severity**: the
+id collision (Layer 2 _and_ Codex, independently) and the warm-node hole
+(Codex alone), which was the original bug still live behind the fix that
+claimed to close it. The other two — the throw policy erasing the class,
+and `static override readonly code = '…'` inferring a literal type so a
+consumer subclass fails TS2417 — were Codex alone. The pattern to keep:
+**the author's own confidence was highest exactly where the defects
+were**, since both high-severity findings sat inside claims the PR body
+asserted as guarantees. Where a PR makes a non-collision or
+always-checked claim, that claim is the thing to attack.
 
 **The process note.** Both items arrived as a filed friction doc, and
 the two questions worth asking were about **shape**, not about whether

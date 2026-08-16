@@ -79,6 +79,12 @@ include new features and type-level changes; patch bumps are strictly additive.
   stays `compile`'s job. `Registry.resolveParams` takes the same
   `{ validate: false }`.
 
+  An id that did **not** validate is minted in a separate namespace — marked
+  `p1?:` instead of `p1:`, with type-preserving param encoding — so it can
+  never collide with a legal id. Both measures are confined to that branch:
+  a valid id is byte-identical to what shipped in 0.61.0. The mark rides up a
+  chain, so a spec over an unvalidated input is unvalidated too.
+
 - `@pond-ts/process`: **`Skipped.code`** — every entry in `RunResult.skipped`
   now carries the failure's kind (`'UnknownColumnError'`, `'ParamError'`,
   `'UnitError'`, `'SlotError'`, …) beside its human `reason`. Under
@@ -92,6 +98,12 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- `@pond-ts/process`: **`run` under `onError: 'throw'` — the default — now
+  raises the original error rather than a base `ProcessError` rebuilt from its
+  message.** A caught `UnknownColumnError`, `ParamError`, `UnitError` or
+  `SlotError` reached the caller as a bare `ProcessError`, so `instanceof`
+  could not discriminate on the throw path at all.
+
 - `@pond-ts/process`: **a raw string input naming a column the bound series
   does not carry is now rejected**, at `compile`, with a new
   `UnknownColumnError`. Nothing checked it at compile or at pull: the op ran
@@ -103,6 +115,13 @@ include new features and type-level changes; patch bumps are strictly additive.
   column list, so the two request forms no longer disagree; it runs before the
   unit check, whose "is 'unitless'" answer for an absent column named the wrong
   problem. The key/time column is not a value column and is rejected too.
+
+  The check covers the **whole spec closure** (a missing column under a typed
+  parent otherwise surfaced as `UnitError`) and runs on the **warm** path as
+  well as the cold one — `setSource` replaces the data under compiled nodes by
+  design, so a memoized node could outlive the column it reads and go on
+  emitting the garbage column this fix exists to prevent. A node that fails the
+  re-check is dropped from the graph.
   (Both items reported by Tidal —
   `docs/notes/tidal-process-adoption-friction-2026-08.md`.)
 

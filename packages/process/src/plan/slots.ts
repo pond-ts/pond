@@ -34,7 +34,7 @@ import type { Input, ParamValue, Spec } from './types.js';
 
 /** Thrown when a slot graph cannot be expanded. */
 export class SlotError extends ProcessError {
-  static override readonly code = 'SlotError';
+  static override readonly code: string = 'SlotError';
 }
 
 /** One node in a slot graph. `in` names source columns or other slots. */

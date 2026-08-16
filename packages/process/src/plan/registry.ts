@@ -30,12 +30,12 @@ type OutputShape = { readonly id: string; readonly unit: string };
 
 /** Thrown when a plan names an op the registry does not have. */
 export class UnknownOpError extends ProcessError {
-  static override readonly code = 'UnknownOpError';
+  static override readonly code: string = 'UnknownOpError';
 }
 
 /** Thrown when a param is missing, mistyped, or out of range. */
 export class ParamError extends ProcessError {
-  static override readonly code = 'ParamError';
+  static override readonly code: string = 'ParamError';
 }
 
 /**

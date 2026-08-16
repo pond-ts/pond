@@ -164,7 +164,9 @@ for (const entry of result.skipped) {
 ```
 
 `code` is **absent** when the throw did not come from this package, which
-is itself the signal: op code failed, not the plan layer.
+is itself the signal: op code failed, not the plan layer. Under `'throw'`
+the original error is raised, so the same failure is `instanceof
+UnknownColumnError` there — the two paths agree on the kind.
 
 `'collect'` is the right fit for an agent tool: the diagnostics are data
 the model can repair against and retry. A renderer with stale persisted
