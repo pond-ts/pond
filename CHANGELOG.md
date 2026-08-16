@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.61.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.62.0...HEAD
+[0.62.0]: https://github.com/pond-ts/pond/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/pond-ts/pond/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/pond-ts/pond/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/pond-ts/pond/compare/v0.58.0...v0.59.0
@@ -63,6 +64,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
 ## [Unreleased]
+
+## [0.62.0] — 2026-08-16
 
 ### Added
 
