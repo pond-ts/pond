@@ -44,7 +44,9 @@ import type { SlotDef, Slots } from './slots.js';
 import type { ParamValue } from './types.js';
 
 /** Thrown when a graph is built wrong — before it is ever sent. */
-export class BuilderError extends ProcessError {}
+export class BuilderError extends ProcessError {
+  static override readonly code = 'BuilderError';
+}
 
 /**
  * The derived slot for a fold over `on` — a function of the node, the

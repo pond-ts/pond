@@ -61,7 +61,9 @@ export function defineSource<
   };
 }
 
-export class UnknownSourceError extends ProcessError {}
+export class UnknownSourceError extends ProcessError {
+  static override readonly code = 'UnknownSourceError';
+}
 
 export class SourceRegistry {
   readonly #sources = new Map<string, SourceDef>();

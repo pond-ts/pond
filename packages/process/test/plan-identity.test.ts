@@ -161,6 +161,96 @@ describe('specId — shape', () => {
   });
 });
 
+describe('specId — total under `validate: false` [PND-PROCTOTAL]', () => {
+  // The consumer case: a persisted plan holds a spec that no longer
+  // compiles, and the UI still has to name it — to label the chip it is
+  // skipping and to key the "this one is broken" state.
+  const lenient = { validate: false } as const;
+
+  it('names a spec whose param is out of range', () => {
+    expect(specId(registry, sma(0), lenient)).toBe('p1:sma(px;period=0)');
+  });
+
+  it('names a spec whose op the registry does not have', () => {
+    expect(specId(registry, { op: 'nope', inputs: ['px'] }, lenient)).toBe(
+      'p1:nope(px;)',
+    );
+  });
+
+  it('names a spec carrying a param the op does not declare', () => {
+    // Carried rather than dropped: two differently-broken specs are two
+    // ids, so a UI keyed on them does not collapse them into one.
+    const typo = { op: 'sma', params: { perid: 20 }, inputs: ['px'] };
+    const id = specId(registry, typo, lenient);
+    expect(id).toBe('p1:sma(px;perid=20,period=20)');
+    expect(id).not.toBe(specId(registry, sma(20), lenient));
+  });
+
+  it('is total through nesting — an invalid inner spec still names the outer', () => {
+    const outer = { op: 'ema', params: { period: 10 }, inputs: [sma(0)] };
+    expect(specId(registry, outer, lenient)).toBe(
+      'p1:ema(p1:sma(px;period=0);period=10)',
+    );
+  });
+
+  it('does not throw for any of the cases the strict mode rejects', () => {
+    for (const spec of [
+      sma(0),
+      sma(Number.NaN),
+      { op: 'nope', inputs: ['px'] },
+      { op: 'sma', params: { period: '20' as never }, inputs: ['px'] },
+      { op: 'sma', params: { perid: 20 }, inputs: ['px'] },
+      { op: 'ema', params: { period: 10 }, inputs: [sma(0)] },
+    ]) {
+      expect(() => specId(registry, spec)).toThrow();
+      expect(() => specId(registry, spec, lenient)).not.toThrow();
+    }
+  });
+
+  it('gives a VALID spec the same id either way — no second cache key', () => {
+    // The property the whole option rests on: a consumer may key on the
+    // lenient id and still hit the node `compile` mints.
+    for (const spec of [
+      sma(),
+      sma(20),
+      { op: 'bollinger', params: { stdDev: 2, period: 20 }, inputs: ['px'] },
+      { op: 'ema', params: { period: 10 }, inputs: [sma(20)] },
+      {
+        op: 'ema',
+        params: { period: 10 },
+        inputs: [
+          {
+            from: { op: 'bollinger', params: { period: 20 }, inputs: ['px'] },
+            output: 'Lower',
+          },
+        ],
+      },
+    ]) {
+      expect(specId(registry, spec, lenient)).toBe(specId(registry, spec));
+    }
+  });
+
+  it('still applies defaults and sorts keys, so it is a real id', () => {
+    // Leniency relaxes validity, not canonicalization — an omitted param
+    // must still collide with its explicit default.
+    expect(specId(registry, sma(), lenient)).toBe(
+      specId(registry, sma(20), lenient),
+    );
+    const a = { op: 'bollinger', params: { period: 20, stdDev: 9 } };
+    const b = { op: 'bollinger', params: { stdDev: 9, period: 20 } };
+    expect(specId(registry, { ...a, inputs: ['px'] }, lenient)).toBe(
+      specId(registry, { ...b, inputs: ['px'] }, lenient),
+    );
+  });
+
+  it('validates by default, which is the behaviour that shipped', () => {
+    expect(() => specId(registry, sma(0))).toThrow(ParamError);
+    expect(() => specId(registry, sma(0), { validate: true })).toThrow(
+      ParamError,
+    );
+  });
+});
+
 describe('refToId', () => {
   it('accepts an inline spec or an id string alike', () => {
     const id = specId(registry, sma(20));

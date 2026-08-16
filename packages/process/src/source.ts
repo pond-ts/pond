@@ -19,7 +19,9 @@ import type { PortSpec, PortSpecMap } from './types.js';
 export type NoInputs = Readonly<Record<string, never>>;
 
 /** Thrown when a source is pulled before a value has been set. */
-export class UnsetSourceError extends ProcessError {}
+export class UnsetSourceError extends ProcessError {
+  static override readonly code = 'UnsetSourceError';
+}
 
 /** Mutable cell holding a source's current value. */
 interface SourceState<T> {

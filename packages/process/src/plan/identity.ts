@@ -50,16 +50,64 @@ function esc(v: unknown): string {
   return String(v).replace(/[\\;,()=+]/g, (c) => `\\${c}`);
 }
 
+/** Options for {@link specId}. */
+export interface SpecIdOptions {
+  /**
+   * Whether the op must exist and its params must be legal — default
+   * `true`.
+   *
+   * Pass `false` to name a spec that would not compile. See
+   * {@link specId} for why identity is separable from validity.
+   */
+  readonly validate?: boolean;
+}
+
 /**
  * Canonical, versioned id for a spec — simultaneously the **column
  * name**, the **cache key**, and the **provenance citation**.
  *
  * Params are sorted by key and materialized post-defaults, so two
  * spellings of one computation collide deliberately.
+ *
+ * ## Identity is separable from validity — [PND-PROCTOTAL]
+ *
+ * By default this validates as it goes, because it resolves params to
+ * canonicalize them and an id built from a rejected param would be a
+ * cache key for a node that cannot exist.
+ *
+ * But the moments a consumer most needs an id for an **invalid** spec
+ * are exactly the failure paths: labelling the chip it is skipping,
+ * keying the "this one is broken" UI state, logging which persisted
+ * entry was rejected. Coupling the two left the consumer
+ * re-implementing canonicalization — the one thing this function exists
+ * to own — or carrying a second key beside a correct one (Tidal,
+ * `docs/notes/tidal-process-adoption-friction-2026-08.md`).
+ *
+ * So `specId(registry, spec, { validate: false })` is **total**: an
+ * unknown op keeps its given params verbatim, a known one still gets
+ * its defaults applied and its keys sorted, and nothing throws.
+ * Validity stays `compile`'s job.
+ *
+ * **A valid spec has one id under either mode.** Canonicalization is
+ * the same code path and `checkParam` never coerces, so the lenient id
+ * of a legal spec is the strict one — a consumer may key on it without
+ * a second cache line. An id minted leniently for an *illegal* spec
+ * cannot collide with a legal one either: the op name is in the id, and
+ * within an op every difference that made it illegal is still in the
+ * params.
  */
-export function specId(registry: Registry, spec: Spec): string {
-  const op = registry.get(spec.op);
-  const params = registry.resolveParams(op, spec.params);
+export function specId(
+  registry: Registry,
+  spec: Spec,
+  options: SpecIdOptions = {},
+): string {
+  const lenient = options.validate === false;
+  const op =
+    lenient && !registry.has(spec.op) ? undefined : registry.get(spec.op);
+  const params =
+    op === undefined
+      ? (spec.params ?? {})
+      : registry.resolveParams(op, spec.params, options);
   const p = Object.entries(params)
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([k, v]) => `${k}=${esc(v)}`)
@@ -70,7 +118,7 @@ export function specId(registry: Registry, spec: Spec): string {
       // `#Lower` rather than a separate field: an input picking a
       // different output is a different computation, and the id is what
       // says so.
-      const base = specId(registry, specOf(i));
+      const base = specId(registry, specOf(i), options);
       return isPicked(i) ? `${base}#${esc(i.output)}` : base;
     })
     .join('+');

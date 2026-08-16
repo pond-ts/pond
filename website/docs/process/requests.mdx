@@ -144,6 +144,28 @@ or facts. A skipped entry echoes the failing spec back _with its inputs_
 to know which one — or the failing selector, plus a reason written for a
 JSON-composing audience.
 
+It also carries a **`code`**: the failure's kind, matching the error class
+the same failure would have thrown (`'UnknownColumnError'`,
+`'ParamError'`, `'UnitError'`, `'SlotError'`, `'UnknownOpError'`, …).
+Nothing is thrown under `'skip'` / `'collect'`, so `instanceof` never
+reaches a caller reading `skipped` — and `reason` is prose for a human,
+whose wording is not a contract. Branch on `code`:
+
+```ts
+for (const entry of result.skipped) {
+  if (entry.code === 'UnknownColumnError') {
+    // The feed no longer carries a column this saved view cites.
+    dimAndOfferRemoval(entry.spec);
+  } else {
+    // Anything else is a plan the caller should repair.
+    markBroken(entry.spec, entry.reason);
+  }
+}
+```
+
+`code` is **absent** when the throw did not come from this package, which
+is itself the signal: op code failed, not the plan layer.
+
 `'collect'` is the right fit for an agent tool: the diagnostics are data
 the model can repair against and retry. A renderer with stale persisted
 configuration may prefer `'skip'` to keep valid branches on screen.

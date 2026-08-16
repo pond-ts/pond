@@ -27,7 +27,9 @@ import {
 import type { Plan, Units } from './types.js';
 
 /** Thrown when a request names a dataset the host has not been given. */
-export class UnknownDatasetError extends ProcessError {}
+export class UnknownDatasetError extends ProcessError {
+  static override readonly code = 'UnknownDatasetError';
+}
 
 /**
  * A request as it arrives over a wire.

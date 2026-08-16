@@ -64,6 +64,48 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- `@pond-ts/process`: **`specId` is total under `{ validate: false }`** — a
+  third options argument that names a spec which would not compile
+  (`specId(registry, spec, { validate: false })`). Identity used to be coupled
+  to validity, so the moments a consumer most needs an id — labelling the chip
+  it is skipping, keying "this persisted entry is broken", logging what was
+  rejected — were exactly the moments it threw, leaving the consumer to
+  re-implement canonicalization or carry a second key. Lenient mode still
+  applies defaults and sorts keys, carries an undeclared param through rather
+  than dropping it, and recurses into nested inputs; **a valid spec has the
+  same id under either mode**, so nothing needs a second cache line. Validity
+  stays `compile`'s job. `Registry.resolveParams` takes the same
+  `{ validate: false }`.
+
+- `@pond-ts/process`: **`Skipped.code`** — every entry in `RunResult.skipped`
+  now carries the failure's kind (`'UnknownColumnError'`, `'ParamError'`,
+  `'UnitError'`, `'SlotError'`, …) beside its human `reason`. Under
+  `onError: 'skip' | 'collect'` nothing is thrown, so `instanceof` — the right
+  discriminator when a consumer catches — never reached a consumer reading
+  `skipped`, leaving it to match on prose whose wording is not a contract. The
+  value is `ProcessError.code`, a **literal declared per class** rather than
+  `constructor.name`, so a consumer's minifier cannot silently rename it. It is
+  absent when the throw did not come from this package, which is itself the
+  signal: op code failed, not the plan layer.
+
+### Fixed
+
+- `@pond-ts/process`: **a raw string input naming a column the bound series
+  does not carry is now rejected**, at `compile`, with a new
+  `UnknownColumnError`. Nothing checked it at compile or at pull: the op ran
+  against an un-widened series, and one that doesn't defend its own inputs
+  appended a plausible-looking column of garbage under the spec's id — with
+  `skipped` empty and `onError` never engaged. A persisted plan citing a column
+  the feed has since dropped now skips (or throws) instead of returning a
+  value. The check is the one `expandSlots` already made against the same
+  column list, so the two request forms no longer disagree; it runs before the
+  unit check, whose "is 'unitless'" answer for an absent column named the wrong
+  problem. The key/time column is not a value column and is rejected too.
+  (Both items reported by Tidal —
+  `docs/notes/tidal-process-adoption-friction-2026-08.md`.)
+
 ## [0.61.0] — 2026-08-16
 
 ### Added

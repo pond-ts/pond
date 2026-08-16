@@ -39,7 +39,24 @@ import {
 } from './types.js';
 
 /** Thrown when an op demands an input unit its source does not carry. */
-export class UnitError extends ProcessError {}
+export class UnitError extends ProcessError {
+  static override readonly code = 'UnitError';
+}
+
+/**
+ * Thrown when a spec's raw input names a column the bound series does
+ * not carry — its own class, because a persisted plan outliving a column
+ * is the one compile failure a consumer routinely expects and wants to
+ * handle rather than report as a bug.
+ */
+export class UnknownColumnError extends ProcessError {
+  static override readonly code = 'UnknownColumnError';
+}
+
+/** The bound series' value columns — the key column is not readable as one. */
+function valueColumns(series: TimeSeries<SeriesSchema>): string[] {
+  return series.schema.slice(1).map((c) => c.name);
+}
 
 /** The per-output key a node's outlets are addressed by. */
 function outletKey(output: { id: string }): string {
@@ -388,6 +405,37 @@ export class BoundGraph {
         `${spec.op} takes ${op.inputs.length} input(s), got ${spec.inputs.length}`,
       );
     }
+
+    // A raw input is a column of the bound series and nothing else, so
+    // one that names no column is checked here — before the unit check,
+    // whose answer for an absent column would be a misleading
+    // 'unitless'.
+    //
+    // Nothing used to check it at all, at compile OR at pull: the op
+    // simply ran with `ctx.series` un-widened, and whatever a
+    // non-defensive op returned was appended under the spec's id.
+    // `skipped` stayed empty and `onError` never engaged, so a persisted
+    // plan citing a column the feed had dropped produced a
+    // plausible-looking column of garbage (Tidal,
+    // `docs/notes/tidal-process-adoption-friction-2026-08.md`). The
+    // honest outcomes are a skip or a throw, never a value.
+    //
+    // The check is not new so much as **completed**: `expandSlots`
+    // already rejects exactly this against exactly this column list, so
+    // one of the two request forms caught it and the other did not.
+    let sourceColumns: string[] | undefined;
+    spec.inputs.forEach((raw, i) => {
+      if (typeof raw !== 'string') return;
+      sourceColumns ??= valueColumns(this.series);
+      if (sourceColumns.includes(raw)) return;
+      throw new UnknownColumnError(
+        `'${spec.op}' names '${raw}' for input '${op.inputs[i]!.role}', which is not a column of the bound series — columns are ${
+          sourceColumns.length === 0
+            ? 'none'
+            : sourceColumns.map((c) => `'${c}'`).join(', ')
+        }`,
+      );
+    });
 
     // Typed inputs: an op may demand a unit its source must already
     // carry. Checked before compiling so the reason names both sides.
