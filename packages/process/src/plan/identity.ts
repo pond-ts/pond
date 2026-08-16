@@ -51,30 +51,153 @@ function esc(v: unknown): string {
 }
 
 /**
+ * Marks an id whose spec did **not** validate — see {@link specId}.
+ *
+ * A valid id is `p1:…`, so an unvalidated one differs at the character
+ * after the version and can never equal one, whatever its params say.
+ */
+const UNVALIDATED = '?';
+
+/**
+ * Type-preserving encoding, used **only** inside an unvalidated id.
+ *
+ * `esc` is `String(v)`, which erases type — so `{period: '20'}` and
+ * `{period: 20}` encode identically. Strict mode is safe from that
+ * because `checkParam` rejects the string before it is ever encoded;
+ * leniency removes that guard, and a JSON or form round-trip turning a
+ * number into a string is precisely the broken persisted spec this whole
+ * mode exists to name (found by the Layer 2 and Codex reviews of
+ * PR #667, which reproduced `'20'` colliding with `20`).
+ *
+ * Applied to keys too, because leniency carries an **undeclared** param
+ * through: a key spelled `a=1,b` would otherwise forge the encoding of
+ * two params. Neither change touches a valid id, which is the property
+ * that must not move.
+ */
+function typedEsc(v: unknown): string {
+  return esc(`${typeof v}:${String(v)}`);
+}
+
+/** Options for {@link specId}. */
+export interface SpecIdOptions {
+  /**
+   * Whether the op must exist and its params must be legal — default
+   * `true`.
+   *
+   * Pass `false` to name a spec that would not compile. See
+   * {@link specId} for why identity is separable from validity.
+   */
+  readonly validate?: boolean;
+}
+
+/**
  * Canonical, versioned id for a spec — simultaneously the **column
  * name**, the **cache key**, and the **provenance citation**.
  *
  * Params are sorted by key and materialized post-defaults, so two
  * spellings of one computation collide deliberately.
+ *
+ * ## Identity is separable from validity — [PND-PROCTOTAL]
+ *
+ * By default this validates as it goes, because it resolves params to
+ * canonicalize them and an id built from a rejected param would be a
+ * cache key for a node that cannot exist.
+ *
+ * But the moments a consumer most needs an id for an **invalid** spec
+ * are exactly the failure paths: labelling the chip it is skipping,
+ * keying the "this one is broken" UI state, logging which persisted
+ * entry was rejected. Coupling the two left the consumer
+ * re-implementing canonicalization — the one thing this function exists
+ * to own — or carrying a second key beside a correct one (Tidal,
+ * `docs/notes/tidal-process-adoption-friction-2026-08.md`).
+ *
+ * So `specId(registry, spec, { validate: false })` is **total**: an
+ * unknown op keeps its given params verbatim, a known one still gets
+ * its defaults applied and its keys sorted, and nothing throws.
+ * Validity stays `compile`'s job.
+ *
+ * **A valid spec has one id under either mode.** Canonicalization is
+ * the same code path and `checkParam` never coerces, so the lenient id
+ * of a legal spec is the strict one — a consumer may key on it without
+ * a second cache line.
+ *
+ * **An unvalidated id cannot collide with a valid one**, and that takes
+ * more than putting the params in: it is marked `p1?:` rather than
+ * `p1:`, and its params are encoded type-preservingly. Without both, a
+ * spec whose param arrived as `"20"` instead of `20` — a JSON round
+ * trip, the very case this mode is for — named the *working* node, since
+ * `String(v)` erases the difference `checkParam` would have caught. A
+ * valid id is unaffected by either measure, which is why they are
+ * confined to this branch.
+ *
+ * The mark rides **up** a chain: a spec whose nested input did not
+ * validate cannot compile either, so it is unvalidated too.
  */
-export function specId(registry: Registry, spec: Spec): string {
-  const op = registry.get(spec.op);
-  const params = registry.resolveParams(op, spec.params);
-  const p = Object.entries(params)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([k, v]) => `${k}=${esc(v)}`)
-    .join(',');
-  const inputs = spec.inputs
+export function specId(
+  registry: Registry,
+  spec: Spec,
+  options: SpecIdOptions = {},
+): string {
+  return build(registry, spec, options.validate === false).id;
+}
+
+/** An id, and whether anything in its closure failed validation. */
+function build(
+  registry: Registry,
+  spec: Spec,
+  lenient: boolean,
+): { id: string; unvalidated: boolean } {
+  let unvalidated = false;
+
+  // Inputs first: a nested spec that did not validate marks this one,
+  // and the mark has to be known before the params are encoded.
+  //
+  // `?? []` because a spec arriving from persistence may be missing the
+  // field entirely, and a mode whose promise is totality cannot answer a
+  // dropped key with a TypeError. Strict mode reaches `compile`'s arity
+  // check instead, which says what is actually wrong.
+  const inputs = (spec.inputs ?? [])
     .map((i) => {
       if (typeof i === 'string') return esc(i);
       // `#Lower` rather than a separate field: an input picking a
       // different output is a different computation, and the id is what
       // says so.
-      const base = specId(registry, specOf(i));
-      return isPicked(i) ? `${base}#${esc(i.output)}` : base;
+      const base = build(registry, specOf(i), lenient);
+      if (base.unvalidated) unvalidated = true;
+      return isPicked(i) ? `${base.id}#${esc(i.output)}` : base.id;
     })
     .join('+');
-  return `${VERSION}:${spec.op}(${inputs};${p})`;
+
+  let params: Readonly<Record<string, unknown>>;
+  if (lenient && !registry.has(spec.op)) {
+    unvalidated = true;
+    params = spec.params ?? {};
+  } else {
+    const op = registry.get(spec.op);
+    try {
+      // The strict resolve first even under leniency: when it succeeds
+      // the id is byte-identical to the validating one, which is the
+      // whole contract. Only its failure moves this spec into the
+      // unvalidated namespace.
+      params = registry.resolveParams(op, spec.params);
+    } catch (e) {
+      if (!lenient) throw e;
+      unvalidated = true;
+      params = registry.resolveParams(op, spec.params, { validate: false });
+    }
+  }
+
+  const encodeKey = unvalidated ? esc : (k: string) => k;
+  const encodeValue = unvalidated ? typedEsc : esc;
+  const p = Object.entries(params)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => `${encodeKey(k)}=${encodeValue(v)}`)
+    .join(',');
+  const mark = unvalidated ? UNVALIDATED : '';
+  return {
+    id: `${VERSION}${mark}:${spec.op}(${inputs};${p})`,
+    unvalidated,
+  };
 }
 
 /** Resolves a reference that may be an inline spec or an id string. */

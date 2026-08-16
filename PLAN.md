@@ -1852,7 +1852,7 @@ in [docs/archive/experiments-2026.md](docs/archive/experiments-2026.md)):
 
 | Track              | Agent  | Status / next                                                                     |
 | ------------------ | ------ | --------------------------------------------------------------------------------- |
-| Tidal (financial)  | Claude | Most active loop; drives [PND-STUDY] + charts friction; auto-woken on npm publish |
+| Tidal (financial)  | Claude | Most active loop; drives [PND-STUDY] + charts friction, now also `@pond-ts/process` (derive seam); auto-woken on npm publish |
 | estela (geo/power) | Claude | Waiting on [PND-FITPUB]; then adopts fit + charts from npm, deletes local copy    |
 | Dashboard          | Claude | Next: adopt `@pond-ts/charts`, report gaps/perf vs its hand-rolled charts         |
 | gRPC pipeline      | Claude | M3.5 realized; remaining: writeup + M5 extraction sweep (3 RFCs → [PND-SERVER])   |

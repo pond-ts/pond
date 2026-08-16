@@ -64,6 +64,67 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- `@pond-ts/process`: **`specId` is total under `{ validate: false }`** — a
+  third options argument that names a spec which would not compile
+  (`specId(registry, spec, { validate: false })`). Identity used to be coupled
+  to validity, so the moments a consumer most needs an id — labelling the chip
+  it is skipping, keying "this persisted entry is broken", logging what was
+  rejected — were exactly the moments it threw, leaving the consumer to
+  re-implement canonicalization or carry a second key. Lenient mode still
+  applies defaults and sorts keys, carries an undeclared param through rather
+  than dropping it, and recurses into nested inputs; **a valid spec has the
+  same id under either mode**, so nothing needs a second cache line. Validity
+  stays `compile`'s job. `Registry.resolveParams` takes the same
+  `{ validate: false }`.
+
+  An id that did **not** validate is minted in a separate namespace — marked
+  `p1?:` instead of `p1:`, with type-preserving param encoding — so it can
+  never collide with a legal id. Both measures are confined to that branch:
+  a valid id is byte-identical to what shipped in 0.61.0. The mark rides up a
+  chain, so a spec over an unvalidated input is unvalidated too.
+
+- `@pond-ts/process`: **`Skipped.code`** — every entry in `RunResult.skipped`
+  now carries the failure's kind (`'UnknownColumnError'`, `'ParamError'`,
+  `'UnitError'`, `'SlotError'`, …) beside its human `reason`. Under
+  `onError: 'skip' | 'collect'` nothing is thrown, so `instanceof` — the right
+  discriminator when a consumer catches — never reached a consumer reading
+  `skipped`, leaving it to match on prose whose wording is not a contract. The
+  value is `ProcessError.code`, a **literal declared per class** rather than
+  `constructor.name`, so a consumer's minifier cannot silently rename it. It is
+  absent when the throw did not come from this package, which is itself the
+  signal: op code failed, not the plan layer.
+
+### Fixed
+
+- `@pond-ts/process`: **`run` under `onError: 'throw'` — the default — now
+  raises the original error rather than a base `ProcessError` rebuilt from its
+  message.** A caught `UnknownColumnError`, `ParamError`, `UnitError` or
+  `SlotError` reached the caller as a bare `ProcessError`, so `instanceof`
+  could not discriminate on the throw path at all.
+
+- `@pond-ts/process`: **a raw string input naming a column the bound series
+  does not carry is now rejected**, at `compile`, with a new
+  `UnknownColumnError`. Nothing checked it at compile or at pull: the op ran
+  against an un-widened series, and one that doesn't defend its own inputs
+  appended a plausible-looking column of garbage under the spec's id — with
+  `skipped` empty and `onError` never engaged. A persisted plan citing a column
+  the feed has since dropped now skips (or throws) instead of returning a
+  value. The check is the one `expandSlots` already made against the same
+  column list, so the two request forms no longer disagree; it runs before the
+  unit check, whose "is 'unitless'" answer for an absent column named the wrong
+  problem. The key/time column is not a value column and is rejected too.
+
+  The check covers the **whole spec closure** (a missing column under a typed
+  parent otherwise surfaced as `UnitError`) and runs on the **warm** path as
+  well as the cold one — `setSource` replaces the data under compiled nodes by
+  design, so a memoized node could outlive the column it reads and go on
+  emitting the garbage column this fix exists to prevent. A node that fails the
+  re-check is dropped from the graph.
+  (Both items reported by Tidal —
+  `docs/notes/tidal-process-adoption-friction-2026-08.md`.)
+
 ## [0.61.0] — 2026-08-16
 
 ### Added

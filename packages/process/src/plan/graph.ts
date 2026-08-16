@@ -39,7 +39,24 @@ import {
 } from './types.js';
 
 /** Thrown when an op demands an input unit its source does not carry. */
-export class UnitError extends ProcessError {}
+export class UnitError extends ProcessError {
+  static override readonly code: string = 'UnitError';
+}
+
+/**
+ * Thrown when a spec's raw input names a column the bound series does
+ * not carry — its own class, because a persisted plan outliving a column
+ * is the one compile failure a consumer routinely expects and wants to
+ * handle rather than report as a bug.
+ */
+export class UnknownColumnError extends ProcessError {
+  static override readonly code: string = 'UnknownColumnError';
+}
+
+/** The bound series' value columns — the key column is not readable as one. */
+function valueColumns(series: TimeSeries<SeriesSchema>): string[] {
+  return series.schema.slice(1).map((c) => c.name);
+}
 
 /** The per-output key a node's outlets are addressed by. */
 function outletKey(output: { id: string }): string {
@@ -281,6 +298,31 @@ export class BoundGraph {
     }
   }
 
+  /**
+   * Drops a node's lookup AND its wiring — the same two halves eviction
+   * needs, without the budget's accounting.
+   *
+   * Deleting from `#nodes` alone frees nothing and leaves the node
+   * reachable from the source: `Outlet.#downstream` holds a strong
+   * `Set<Inlet>` and `Inlet.node` points back (learned on PR #571).
+   */
+  #forget(id: string): void {
+    const compiled = this.#nodes.get(id);
+    if (compiled === undefined) return;
+    for (const inlet of Object.values(
+      compiled.node.in as Record<string, { disconnect(): unknown }>,
+    )) {
+      inlet.disconnect();
+    }
+    this.#nodes.delete(id);
+    this.#lru.delete(id);
+    this.#pendingFrom.delete(id);
+    this.#fullDirty.delete(id);
+    for (const upstream of compiled.upstream) {
+      this.#nodes.get(upstream)?.dependents.delete(id);
+    }
+  }
+
   #touch(id: string): void {
     this.#lru.delete(id);
     this.#lru.add(id);
@@ -357,6 +399,52 @@ export class BoundGraph {
   }
 
   /**
+   * Every raw input in a spec's whole closure names a column the bound
+   * series carries — [PND-PROCTOTAL].
+   *
+   * Nothing used to check this, at compile OR at pull: the op simply ran
+   * with `ctx.series` un-widened, and whatever a non-defensive op
+   * returned was appended under the spec's id. `skipped` stayed empty
+   * and `onError` never engaged, so a persisted plan citing a column the
+   * feed had dropped produced a plausible-looking column of garbage
+   * (Tidal, `docs/notes/tidal-process-adoption-friction-2026-08.md`).
+   * The honest outcomes are a skip or a throw, never a value.
+   *
+   * The check is not new so much as **completed**: `expandSlots` already
+   * rejects exactly this against exactly this column list, so one of the
+   * two request forms caught it and the other did not.
+   *
+   * **The whole closure, not just this spec's own inputs**, and that
+   * matters for the error a consumer sees rather than for whether one is
+   * raised: the typed-unit pass below resolves a nested input's unit
+   * before recursion ever reaches the nested spec, so a missing column
+   * under a *typed* parent surfaced as `UnitError` — "is 'unitless'",
+   * which is true and names the wrong problem, and misses the one class
+   * a consumer branches on (Codex, PR #667).
+   */
+  #checkRawInputs(spec: Spec): void {
+    const columns = valueColumns(this.series);
+    const walk = (at: Spec): void => {
+      const def = this.registry.get(at.op);
+      at.inputs.forEach((raw, i) => {
+        if (typeof raw !== 'string') {
+          walk(specOf(raw));
+          return;
+        }
+        if (columns.includes(raw)) return;
+        throw new UnknownColumnError(
+          `'${at.op}' names '${raw}' for input '${def.inputs[i]?.role ?? i}', which is not a column of the bound series — columns are ${
+            columns.length === 0
+              ? 'none'
+              : columns.map((c) => `'${c}'`).join(', ')
+          }`,
+        );
+      });
+    };
+    walk(spec);
+  }
+
+  /**
    * Compiles a spec (and its inputs) into nodes, memoized by `specId`.
    *
    * **A returned handle is not durable under a byte budget.** Eviction
@@ -376,6 +464,25 @@ export class BoundGraph {
     const id = specId(this.registry, spec);
     const existing = this.#nodes.get(id);
     if (existing) {
+      // Re-checked on the WARM path too, not just on the way in.
+      // `setSource` replaces the data under compiled nodes by design
+      // (`Host.add`, an async source refresh), so a node can outlive the
+      // column it reads — and it then recomputes happily against an
+      // un-widened series, which is the original garbage-column bug
+      // surviving through the memo. Found by the Codex review of
+      // PR #667, reproduced: swap `px` for `other`, re-run the same
+      // spec, get a column of 42s with `skipped: []`.
+      try {
+        this.#checkRawInputs(spec);
+      } catch (e) {
+        // And FORGET it, rather than only refusing to hand it back here.
+        // A node left in place is still found by `graph.get`, which is
+        // how `run`'s selector pass reaches a node — so the plan pass
+        // reported the skip and the selector pulled the stale node
+        // anyway, producing the very column the check exists to prevent.
+        this.#forget(id);
+        throw e;
+      }
       this.#touch(id);
       return existing;
     }
@@ -388,6 +495,11 @@ export class BoundGraph {
         `${spec.op} takes ${op.inputs.length} input(s), got ${spec.inputs.length}`,
       );
     }
+
+    // After arity — an input index past the declared list is an arity
+    // problem, not a column one — and before the typed-unit pass, whose
+    // answer for an absent column is a misleading 'unitless'.
+    this.#checkRawInputs(spec);
 
     // Typed inputs: an op may demand a unit its source must already
     // carry. Checked before compiling so the reason names both sides.

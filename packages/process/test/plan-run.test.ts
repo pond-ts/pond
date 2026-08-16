@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { TimeSeries } from 'pond-ts';
+import * as exports from '../src/index.js';
 import {
   bind,
   createRegistry,
   int,
   num,
   run,
+  ParamError,
+  ProcessError,
   specId,
+  UnitError,
+  UnknownColumnError,
   type OpDef,
   type Registry,
   type Spec,
@@ -294,6 +299,303 @@ describe('run — failure policy covers selection too', () => {
         plan: [{ op: 'sma', params: { period: 1 }, inputs: ['px'] }],
       }),
     ).toThrow(/below minimum 2/);
+  });
+});
+
+describe('run — a raw input must name a column of the bound series', () => {
+  // The consumer case: a persisted plan cites a column the feed no longer
+  // carries. Nothing checked it at compile OR at pull — the op simply ran
+  // against an un-widened series, and an op that does not defend its own
+  // inputs appended a plausible column of garbage under the spec's id,
+  // with `skipped` empty and `onError` never engaged (Tidal,
+  // `docs/notes/tidal-process-adoption-friction-2026-08.md`).
+
+  /** An op that answers even when its input column is absent. */
+  function lenientRegistry(): { registry: Registry; ran: () => number } {
+    let runs = 0;
+    const registry = makeRegistry().registry.define({
+      name: 'filler',
+      family: 'test',
+      summary: 'Returns a constant for every row, reading nothing.',
+      params: {},
+      inputs: [{ role: 'source' }],
+      outputs: [{ id: '', unit: 'inherit' }],
+      run: (ctx) => {
+        runs += 1;
+        return new Array<number>(ctx.series.length).fill(42);
+      },
+    });
+    return { registry, ran: () => runs };
+  }
+
+  it('throws at compile, naming the input, the column and what is available', () => {
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    expect(() => graph.compile({ op: 'sma', inputs: ['nope'] })).toThrow(
+      UnknownColumnError,
+    );
+    expect(() => graph.compile({ op: 'sma', inputs: ['nope'] })).toThrow(
+      /'sma' names 'nope' for input 'source', which is not a column of the bound series — columns are 'px'/,
+    );
+  });
+
+  it('routes into `skipped` rather than appending a garbage column', () => {
+    const { registry, ran } = lenientRegistry();
+    const graph = bind(series(10), { registry, units });
+    const spec = { op: 'filler', inputs: ['nope'] };
+    const res = run(graph, {
+      plan: [spec],
+      select: [{ on: spec }],
+      onError: 'skip',
+      assemble: false,
+    });
+    // Twice, as any unresolvable-but-selected spec is reported: once by
+    // the plan pass, once by the selector that also named it.
+    expect(res.skipped).toHaveLength(2);
+    for (const entry of res.skipped) {
+      expect(entry.reason).toMatch(/not a column of the bound series/);
+    }
+    // Echoed with its inputs, so a caller holding two specs of one op
+    // knows which to fix — the resolution-failure shape, not a selector's.
+    expect(res.skipped[0]!.spec?.inputs).toEqual(['nope']);
+    expect(res.skipped[1]!.select).toBeDefined();
+    expect(res.columns).toBeUndefined();
+    expect(res.outputs).toEqual({});
+    expect(ran()).toBe(0);
+  });
+
+  it('is caught before the unit check, whose answer would be misleading', () => {
+    // `annualise` demands a 'variance' input. Reporting an absent column
+    // as 'unitless' names the wrong problem.
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    const res = run(graph, {
+      plan: [{ op: 'annualise', inputs: ['nope'] }],
+      onError: 'collect',
+    });
+    expect(res.skipped[0]!.reason).toMatch(/not a column of the bound series/);
+    expect(res.skipped[0]!.reason).not.toMatch(/unitless/);
+  });
+
+  it('catches it inside a nested input, not just at the top level', () => {
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    const res = run(graph, {
+      plan: [
+        {
+          op: 'scale',
+          inputs: [{ op: 'sma', params: { period: 3 }, inputs: ['nope'] }],
+        },
+      ],
+      onError: 'collect',
+    });
+    expect(res.skipped[0]!.reason).toMatch(/'sma' names 'nope'/);
+    expect(res.nodes).toHaveLength(0);
+  });
+
+  it('does not accept the key column, which is not readable as a value', () => {
+    // `series.column('time')` is undefined at runtime and rejected at the
+    // type level, so a plan naming it is broken either way — and
+    // `expandSlots` already excludes it from the column list.
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    expect(() => graph.compile({ op: 'sma', inputs: ['time'] })).toThrow(
+      UnknownColumnError,
+    );
+  });
+
+  it('re-checks a WARM node after the schema drifts under it', () => {
+    // The original bug surviving through the memo: `compile` returned the
+    // cached node before looking at the current schema, and `setSource`
+    // replacing the data under compiled nodes is a supported lifecycle
+    // (`Host.add`, an async source refresh). Codex reproduced a column of
+    // 42s with `skipped: []` after swapping the source (PR #667).
+    const { registry, ran } = lenientRegistry();
+    const graph = bind(series(10), { registry, units });
+    const spec = { op: 'filler', inputs: ['px'] };
+    run(graph, { plan: [spec], select: [{ on: spec }], assemble: false });
+    expect(ran()).toBe(1);
+
+    graph.setSource(
+      TimeSeries.fromJSON({
+        name: 'other',
+        schema: [
+          { name: 'time', kind: 'time' },
+          { name: 'other', kind: 'number' },
+        ] as const,
+        rows: [[0, 1]],
+      }) as never,
+    );
+    const res = run(graph, {
+      plan: [spec],
+      select: [{ on: spec }],
+      onError: 'skip',
+      assemble: false,
+    });
+    expect(res.skipped[0]!.code).toBe('UnknownColumnError');
+    expect(res.columns).toBeUndefined();
+    expect(ran()).toBe(1);
+  });
+
+  it('names the missing column even under a TYPED parent', () => {
+    // The typed-unit pass resolves a nested input's unit before recursion
+    // reaches the nested spec, so this surfaced as `UnitError` —
+    // "is 'unitless'", which is true and names the wrong problem, and
+    // misses the one class a consumer branches on (Codex, PR #667).
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    expect(() =>
+      graph.compile({
+        op: 'annualise',
+        inputs: [{ op: 'sma', params: { period: 3 }, inputs: ['nope'] }],
+      }),
+    ).toThrow(UnknownColumnError);
+  });
+
+  it('gives the nested plan form the answer the slot form already gave', () => {
+    // The asymmetry was the bug: one of two request forms caught this.
+    const { registry } = lenientRegistry();
+    const nested = run(bind(series(10), { registry, units }), {
+      plan: [{ op: 'filler', inputs: ['nope'] }],
+      onError: 'skip',
+    });
+    const slots = run(bind(series(10), { registry, units }), {
+      nodes: { a: { op: 'filler', in: ['nope'] } },
+      onError: 'skip',
+    });
+    expect(nested.skipped).toHaveLength(1);
+    expect(slots.skipped).toHaveLength(1);
+    for (const res of [nested, slots]) {
+      expect(res.skipped[0]!.reason).toMatch(/'nope'/);
+      expect(res.columns).toBeUndefined();
+    }
+  });
+});
+
+describe('run — a skip carries the failure kind, not just prose', () => {
+  // `onError: 'skip' | 'collect'` throws nothing, so `instanceof` — the
+  // right discriminator when a consumer catches — never reaches the
+  // consumer that reads `skipped`. A UI branching on the kind (a dropped
+  // feed column is a dimmed, removable chip; a bad persisted param is a
+  // broken one) was left matching on the reason's prose (Tidal,
+  // `docs/notes/tidal-process-adoption-friction-2026-08.md`).
+
+  it('distinguishes a missing column from a bad param', () => {
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    const res = run(graph, {
+      plan: [
+        { op: 'sma', inputs: ['nope'] },
+        { op: 'sma', params: { period: 1 }, inputs: ['px'] },
+      ],
+      onError: 'collect',
+    });
+    expect(res.skipped.map((s) => s.code)).toEqual([
+      'UnknownColumnError',
+      'ParamError',
+    ]);
+  });
+
+  it('names the kind for an unknown op, a bad unit and a bad slot alike', () => {
+    const { registry } = makeRegistry();
+    const codeFor = (request: Parameters<typeof run>[1]) =>
+      run(bind(series(10), { registry, units }), request).skipped[0]?.code;
+    expect(
+      codeFor({ plan: [{ op: 'nope', inputs: ['px'] }], onError: 'skip' }),
+    ).toBe('UnknownOpError');
+    expect(
+      codeFor({ plan: [{ op: 'annualise', inputs: ['px'] }], onError: 'skip' }),
+    ).toBe('UnitError');
+    expect(
+      codeFor({
+        nodes: { a: { op: 'sma', in: ['b'] } },
+        onError: 'skip',
+      }),
+    ).toBe('SlotError');
+  });
+
+  it('reports the base kind for a plan-layer rejection with no class', () => {
+    // Built rather than caught — a selector naming an output the node
+    // does not declare. It is still the plan layer refusing, so it
+    // carries a code like every other entry.
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    const res = run(graph, {
+      plan: [sma3],
+      select: [{ on: sma3, output: 'Upper' }],
+      onError: 'collect',
+    });
+    expect(res.skipped[0]).toMatchObject({ code: 'ProcessError' });
+  });
+
+  it('leaves the code absent when op code threw, which is the signal', () => {
+    // Not a plan-layer failure: the op itself blew up. A consumer
+    // branching on kind should not see one of the library's own.
+    const registry = makeRegistry().registry.define({
+      name: 'boom',
+      family: 'test',
+      summary: 'Throws.',
+      params: {},
+      inputs: [{ role: 'source' }],
+      outputs: [{ id: '', unit: 'inherit' }],
+      run: () => {
+        throw new TypeError('op exploded');
+      },
+    });
+    const graph = bind(series(10), { registry, units });
+    const spec = { op: 'boom', inputs: ['px'] };
+    const res = run(graph, {
+      plan: [spec],
+      select: [{ on: spec }],
+      onError: 'collect',
+    });
+    expect(res.skipped[0]!.reason).toBe('op exploded');
+    expect(res.skipped[0]!.code).toBeUndefined();
+  });
+
+  it('throws the original class under the default policy', () => {
+    // `fail` used to rebuild the error as a base `ProcessError` from its
+    // message, so `run` erased exactly the class a consumer catches on —
+    // while the docs claimed `code` matches what a throw would carry
+    // (Codex, PR #667).
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    expect(() =>
+      run(graph, { plan: [{ op: 'sma', inputs: ['nope'] }] }),
+    ).toThrow(UnknownColumnError);
+    expect(() =>
+      run(graph, {
+        plan: [{ op: 'sma', params: { period: 1 }, inputs: ['px'] }],
+      }),
+    ).toThrow(ParamError);
+    expect(() =>
+      run(graph, { plan: [{ op: 'annualise', inputs: ['px'] }] }),
+    ).toThrow(UnitError);
+  });
+
+  it('is a literal per class, so a minifier cannot rename it', () => {
+    // `constructor.name` would be `'t'` in a consumer's production
+    // build — silently, which is the bug this string exists to avoid.
+    expect(UnknownColumnError.code).toBe('UnknownColumnError');
+    expect(new UnknownColumnError('x').code).toBe('UnknownColumnError');
+    expect(new ProcessError('x').code).toBe('ProcessError');
+  });
+
+  it('is declared by EVERY exported error class, not inherited', () => {
+    // A subclass that forgets silently reports its parent's code, so a
+    // consumer's branch quietly lands on the wrong arm. Nothing can force
+    // the declaration at the type level — this is the guard (raised by
+    // the Layer 2 review of PR #667).
+    const classes = Object.entries(exports as Record<string, unknown>).filter(
+      (entry): entry is [string, typeof ProcessError] =>
+        typeof entry[1] === 'function' &&
+        entry[1].prototype instanceof ProcessError,
+    );
+    expect(classes.length).toBeGreaterThan(8);
+    for (const [name, cls] of classes) {
+      expect([name, cls.code]).toEqual([name, name]);
+      expect(new cls('x').code).toBe(name);
+    }
   });
 });
 

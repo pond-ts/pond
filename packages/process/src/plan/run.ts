@@ -187,6 +187,20 @@ export interface Skipped {
   };
   readonly select?: Select;
   readonly reason: string;
+  /**
+   * The failure's kind — {@link ProcessError.code}, e.g.
+   * `'UnknownColumnError'`. Absent when the throw did not come from this
+   * package, which is itself the useful signal: op code failed, not the
+   * plan layer.
+   *
+   * `reason` is prose for a human and its wording is not a contract.
+   * Under `onError: 'skip' | 'collect'` nothing is thrown, so without
+   * this a consumer branching on the kind — a dropped feed column is a
+   * dimmed, removable chip; a bad persisted param is a broken one — was
+   * left matching on that prose (Tidal,
+   * `docs/notes/tidal-process-adoption-friction-2026-08.md`).
+   */
+  readonly code?: string;
 }
 
 export interface RunResult {
@@ -274,6 +288,20 @@ function normalize(
   return { plan: [...expanded.values()], select, slotOf };
 }
 
+/**
+ * The `reason` and `code` a caught throw contributes to a {@link Skipped}.
+ *
+ * One place, so every failure path reports its kind the same way — the
+ * column loop and the fact loop already diverged once on `onError`
+ * itself, which is the argument for not writing this twice.
+ */
+function describe(e: unknown): { reason: string; code?: string } {
+  return {
+    reason: e instanceof Error ? e.message : String(e),
+    ...(e instanceof ProcessError && { code: e.code }),
+  };
+}
+
 export function run(graph: BoundGraph, request: RunRequest): RunResult {
   const { onError = 'throw', assemble = true } = request;
   const registry = graph.registry;
@@ -294,15 +322,26 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
       outputs: {},
       facts: [],
       explain: {},
-      skipped: [{ reason: e instanceof Error ? e.message : String(e) }],
+      skipped: [describe(e)],
       nodes: [],
     };
   }
   const { plan, select, slotOf } = normalized;
 
-  const fail = (entry: Skipped): void => {
-    if (onError === 'throw') throw new ProcessError(entry.reason);
-    skipped.push(entry);
+  /**
+   * Reports a failure, or rethrows it — the ORIGINAL error, not a
+   * reconstruction.
+   *
+   * Rebuilding it as a base `ProcessError` from `entry.reason` erased the
+   * class on the default policy: `graph.compile` threw
+   * `UnknownColumnError` and `run` turned it into a `ProcessError`, so a
+   * consumer catching could not branch on the very class this PR added,
+   * and the documented "`code` matches what a throw would have carried"
+   * was false in one direction (Codex, PR #667).
+   */
+  const fail = (error: unknown, entry: Omit<Skipped, 'reason' | 'code'>) => {
+    if (onError === 'throw') throw error;
+    skipped.push({ ...entry, ...describe(error) });
   };
 
   // ── resolve the plan ───────────────────────────────────────
@@ -311,13 +350,12 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
       const compiled = graph.compile(spec);
       resolved.push({ id: compiled.id, spec });
     } catch (e) {
-      fail({
+      fail(e, {
         spec: {
           op: spec.op,
           params: { ...(spec.params ?? {}) },
           inputs: spec.inputs,
         },
-        reason: e instanceof Error ? e.message : String(e),
       });
     }
   }
@@ -345,7 +383,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
         explainMap[id] = explain(registry, sel.on);
       }
     } catch (e) {
-      fail({ select: sel, reason: e instanceof Error ? e.message : String(e) });
+      fail(e, { select: sel });
       continue;
     }
     selectors.push({ sel, id });
@@ -468,10 +506,15 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
           !declared.some((o) => o.id === sel.output)
         ) {
           const have = declared.map((o) => `'${o.id}'`).join(', ');
-          fail({
-            select: sel,
-            reason: `'${compiled.spec.op}' has no output '${sel.output}' (has ${have})`,
-          });
+          // Built here rather than caught, so the kind is stated rather
+          // than derived — a `Skipped` from the plan layer always
+          // carries one, and the throw policy raises the same object.
+          fail(
+            new ProcessError(
+              `'${compiled.spec.op}' has no output '${sel.output}' (has ${have})`,
+            ),
+            { select: sel },
+          );
           continue;
         }
         // Pulling a column runs op code, which can throw like anything
@@ -500,11 +543,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
             }
           });
         } catch (e) {
-          if (onError === 'throw') throw e;
-          fail({
-            select: sel,
-            reason: e instanceof Error ? e.message : String(e),
-          });
+          fail(e, { select: sel });
         }
       }
     }
@@ -515,7 +554,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
   for (const { sel, id } of selectors) {
     const compiled = graph.get(id);
     if (compiled === undefined) {
-      fail({ select: sel, reason: `'${id}' is not in this plan` });
+      fail(new ProcessError(`'${id}' is not in this plan`), { select: sel });
       continue;
     }
     if (!compiled.fold) continue;
@@ -535,7 +574,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
         unit: unitOf(registry, compiled.spec, graph.units),
       });
     } catch (e) {
-      fail({ select: sel, reason: e instanceof Error ? e.message : String(e) });
+      fail(e, { select: sel });
     }
   }
 

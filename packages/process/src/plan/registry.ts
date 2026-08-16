@@ -29,10 +29,14 @@ type WithDef<Defs extends DefMap, D extends Def> = Omit<Defs, D['name']> &
 type OutputShape = { readonly id: string; readonly unit: string };
 
 /** Thrown when a plan names an op the registry does not have. */
-export class UnknownOpError extends ProcessError {}
+export class UnknownOpError extends ProcessError {
+  static override readonly code: string = 'UnknownOpError';
+}
 
 /** Thrown when a param is missing, mistyped, or out of range. */
-export class ParamError extends ProcessError {}
+export class ParamError extends ProcessError {
+  static override readonly code: string = 'ParamError';
+}
 
 /**
  * Validates one param and returns it.
@@ -250,18 +254,37 @@ export class Registry<Defs extends DefMap = {}> {
     return isFold(def) ? [] : def.outputs;
   }
 
-  /** Applies defaults, then validates every declared param. */
+  /**
+   * Applies defaults, then validates every declared param.
+   *
+   * `validate: false` applies the defaults and skips every check,
+   * including the unknown-key rejection — an undeclared param is carried
+   * through rather than refused. Total by construction, which is what
+   * lets `specId` name a spec it would refuse to compile
+   * ([PND-PROCTOTAL]). A **valid** spec resolves identically either way:
+   * `checkParam` returns its input unchanged and never coerces, so
+   * leniency cannot move an id.
+   */
   resolveParams(
     op: Def,
     given: Readonly<Record<string, ParamValue>> = {},
+    options: { validate?: boolean } = {},
   ): Params {
+    const validate = options.validate !== false;
     const out: Record<string, ParamValue> = {};
     for (const [key, def] of Object.entries(op.params)) {
       const raw = Object.hasOwn(given, key) ? given[key]! : def.default;
-      out[key] = checkParam(op.name, key, def, raw);
+      out[key] = validate ? checkParam(op.name, key, def, raw) : raw;
     }
     for (const key of Object.keys(given)) {
       if (!Object.hasOwn(op.params, key)) {
+        // Carried, not dropped: two specs differing only in a bogus param
+        // are two different broken specs, and an id that collapsed them
+        // would key one UI state onto both.
+        if (!validate) {
+          out[key] = given[key]!;
+          continue;
+        }
         throw new ParamError(
           `${op.name} has no param '${key}' — takes ${
             Object.keys(op.params)

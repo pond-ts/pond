@@ -98,6 +98,172 @@ ticket's call.
 
 ---
 
+## 2026-08 Tidal adoption friction: the two edges a real consumer found
+
+Tidal moved its derive seam onto `@pond-ts/process@0.61.0` and filed
+[`docs/notes/tidal-process-adoption-friction-2026-08.md`](../notes/tidal-process-adoption-friction-2026-08.md)
+after the first adoption day — two items, both probe-verified against the
+published dist, neither blocking. **Both shipped** (PR #667). Both are
+the shape the audit above already named: _a validation that existed
+somewhere adjacent_, and _a guarantee the consumer had to re-implement_.
+
+**1. A raw string input naming an absent column was never checked.**
+Reproduced exactly: bind `[time, x]`, run a plan whose op reads `'nope'`,
+and the op's `run` executes with `ctx.inputs.input === 'nope'` and
+`ctx.series` un-widened. Whatever it returns is appended under the spec's
+id; `skipped` stays empty and `onError` never engages. An op that doesn't
+defend its own inputs therefore produces a plausible column of garbage.
+
+The sharpening the note didn't have: **`expandSlots` already rejects
+exactly this, against exactly this column list** (it computes
+`graph.series.schema.slice(1)` to catch a slot/column collision, and
+checks input references against it in the same pass). So the slot request
+form caught it and the nested `plan: [...]` form did not — the two forms
+disagreed about what a valid plan was. `BoundGraph.compile` now runs the
+check, throwing `UnknownColumnError` (its own class: a persisted plan
+outliving a column is the one compile failure a consumer routinely
+expects and wants to branch on). Placed **after** params/arity and
+**before** the typed-unit check, whose answer for an absent column is
+`'unitless'` — true, and the wrong problem.
+
+Decisions inside the fix:
+
+- **The key/time column is not accepted.** `series.column('time')` is
+  `undefined` at runtime and rejected at the type level, so a plan naming
+  it was already broken; `expandSlots` excludes it for the same reason.
+- **Compile-time, not pull-time** — but on the **warm** path as well as
+  the cold one. The first cut checked only on a cache miss and the plan
+  recorded the gap as an accepted residual ("`setSource` may narrow the
+  schema under a compiled node, which stays a pull failure"). **That was
+  wrong twice over**, and the Codex review of #667 reproduced it: it is
+  not a pull failure at all — the warm node recomputes against an
+  un-widened series and emits the garbage column with `skipped: []`, so
+  the original bug survived intact through the memo — and `setSource`
+  replacing data under compiled nodes is a _supported_ lifecycle
+  (`Host.add`, an async source refresh), not an exotic case. `compile`
+  now checks before returning a cached node, and **forgets** the node
+  when the check fails: leaving it in place meant `graph.get` still
+  handed it to `run`'s selector pass, which pulled it and produced the
+  column anyway. The lesson worth keeping: _a validation placed after a
+  memo lookup is not a validation._
+- **The whole spec closure, not one level.** The typed-unit pass resolves
+  a nested input's unit before recursion reaches the nested spec, so a
+  missing column under a **typed** parent surfaced as `UnitError` — "is
+  'unitless'", true and the wrong problem, and missing the one class the
+  consumer branches on (Codex, #667).
+
+**2. `specId` validated params, so an invalid spec could not be named.**
+Reproduced: `specId(registry, {op:'sma', params:{period:0}})` throws
+`ParamError`. Identity was coupled to validity precisely where a consumer
+needs identity most — the failure paths. Shipped as the note's own first
+suggestion, `specId(registry, spec, { validate: false })`, with
+`Registry.resolveParams` taking the same option so default-application
+stays implemented once.
+
+**The first cut of this was wrong, and both reviews caught it.** `esc`
+is `String(v)`, which erases type — so `{period: '20'}` encoded exactly
+as the legal `{period: 20}`, and the broken spec **named the working
+node**. Strict mode never had that problem because `checkParam` rejects
+the string before it is encoded; leniency removed the guard while the
+encoding still assumed it. Since the id is the column name, the cache key
+_and_ the provenance citation, that is a correctness bug — and a JSON or
+form round trip turning a number into a string is the exact case the mode
+exists for. Two measures, both confined to the unvalidated branch so no
+valid id moves: the id is marked **`p1?:`** rather than `p1:` (so it can
+never equal a valid id whatever its params say, and the mark rides _up_ a
+chain), and within that branch params are encoded type-preservingly, keys
+included — leniency carries an **undeclared** key through, and a key
+spelled `a=1,b` would otherwise forge the encoding of two params.
+
+The property that makes it safe, and is pinned by test: **a valid spec
+has the same id under either mode**. Canonicalization is the same code
+path and `checkParam` never coerces, so a consumer may key on the lenient
+id and still hit the node `compile` mints — no second cache line. An
+undeclared param is **carried, not dropped**: two differently-broken
+specs must stay two ids, or one UI state keys onto both.
+
+**3. `Skipped.code` — the item the round-trip found, which neither the
+note nor the fix had.** Asking the consumer to check the shape before
+opening the PR turned up the gap that would have made item 1's new error
+class useless to them: **Tidal reads `RunResult.skipped`, not thrown
+errors.** They run `onError: 'skip'`, and `Skipped` carried only
+`{spec?, select?, reason}` — so `instanceof`, the discriminator the class
+exists to provide, never reaches the caller who needs it, and the only
+thing left to branch on is prose whose wording is not a contract. Their
+UI genuinely distinguishes the two: a spec skipped for a missing column
+is a dimmed-but-removable chip, a spec with bad persisted params is a
+broken one offering removal.
+
+So every `Skipped` now carries `code`, from a new `ProcessError.code`.
+Two decisions inside it:
+
+- **A literal per class, not `constructor.name`.** `ProcessError` already
+  sets `name` from `new.target.name`, and a consumer's minifier may
+  rename the class — leaving the discriminator as `'t'` in a production
+  build, silently. A `static override readonly code = '…'` per subclass
+  is one line and cannot be renamed. Every error class in the package
+  declares one, so the field means something for every failure kind
+  rather than only the new one.
+- **Absent when the throw did not come from this package.** An op that
+  blows up is not a plan-layer failure, and saying so by omission is
+  more useful than inventing a code for it.
+- **The throw policy raises the original error.** `fail` rebuilt it as a
+  base `ProcessError` from its message, so `onError: 'throw'` — the
+  default — erased the very class this work added, and the documented
+  "`code` matches what a throw would have carried" was false in one
+  direction (Codex, #667). It now rethrows the caught object.
+
+**Considered and not done:**
+
+- **A separate `specName()`.** Two names for one id, and the option is
+  visible at the call site where the leniency matters. The consumer
+  confirmed: they wrap identity in one `deriveId` facade, so there is a
+  single call site to thread `{ validate: false }` through.
+- **The same option on `explain()`.** It has the identical coupling — it
+  resolves params too, so it throws on the same broken spec. Left alone
+  as speculative, and the consumer confirmed no live need: rejected chips
+  are labelled from the config's stored label, built at add-time, not
+  from `explain()` at render time. One line away if that changes, and
+  worth doing then for the symmetry (identity **and** description total,
+  validity `compile`'s job).
+- **Making `specId` total by default.** Tempting — `compile` still
+  validates, so the throw is not load-bearing for correctness, and
+  `normalize`'s slot pass would then fail per-spec into `skipped` rather
+  than failing the whole request. Deferred as a behaviour change to a
+  published function with no consumer asking for it; revisit if the
+  per-spec attribution is wanted on its own merits.
+- **Eagerly re-validating every node on `setSource`.** The check runs
+  when a spec is next compiled — which `run` does for every plan entry,
+  every request — rather than sweeping all nodes on each source swap. A
+  caller holding a `Compiled` handle across a swap and pulling it
+  directly still bypasses it; that handle is already documented as
+  non-durable under a budget, and a sweep costs every swap to close a
+  path nothing uses.
+
+**What the review pass was worth.** Three of the five findings above are
+review output, not authoring output, and two were **high severity**: the
+id collision (Layer 2 _and_ Codex, independently) and the warm-node hole
+(Codex alone), which was the original bug still live behind the fix that
+claimed to close it. The other two — the throw policy erasing the class,
+and `static override readonly code = '…'` inferring a literal type so a
+consumer subclass fails TS2417 — were Codex alone. The pattern to keep:
+**the author's own confidence was highest exactly where the defects
+were**, since both high-severity findings sat inside claims the PR body
+asserted as guarantees. Where a PR makes a non-collision or
+always-checked claim, that claim is the thing to attack.
+
+**The process note.** Both items arrived as a filed friction doc, and
+the two questions worth asking were about **shape**, not about whether
+the pain was real — one confirmed the API form the consumer wanted
+(options arg, not an alias), and the other surfaced `Skipped.code`, which
+neither side had written down. The consumer also reports the compile-time
+check lands where they needed it: their interim per-op guard comes out on
+the release bump, keeping the ops' natural throws as cheap invariants.
+Both fixes are exercised by Tidal's derive seam (TDL-PROCESS stage 1,
+tidal PR #130) as soon as they ship.
+
+---
+
 ## Tasks
 
 ### [PND-PROCIDENT] — Node identity and lifetime: content-addressed, or params-as-Ins?
