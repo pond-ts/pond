@@ -24,10 +24,12 @@ describe('CategoryAxis stories render', () => {
       'BandAlignCenter',
       'BandAlignEnd',
       'CapDoesNotBind',
+      'CollapsedWidth',
       'CrowdedLabels',
       'HighCardinality',
       'HorizontalFunnel',
       'MaxBandWidth',
+      'NineAccountNames',
       'Select',
       'Signed',
       'SingleHue',
@@ -35,6 +37,7 @@ describe('CategoryAxis stories render', () => {
       'Tickers',
       'Transpose',
       'TransposeScrub',
+      'VenueTailLabels',
     ]);
   });
 

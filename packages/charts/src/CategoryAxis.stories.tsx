@@ -84,7 +84,10 @@ export const SingleHue: Story = {
 
 /**
  * **High cardinality (short labels).** ~30 categories — short labels (`S01`…)
- * still fit each slot, so the axis shows them all; the bars stay fixed-pitch.
+ * still fit each slot **with clear space**, so the axis shows them all; the
+ * bars stay fixed-pitch. The fit measures ([PND-CATFIT]): squeeze the same set
+ * tighter (e.g. 720px) and it thins to every 2nd rather than pack labels
+ * edge-to-edge — clear separation outranks per-band labelling at the margin.
  */
 export const HighCardinality: Story = {
   render: () => {
@@ -94,7 +97,7 @@ export const HighCardinality: Story = {
       value: Math.round(10 + 40 * Math.abs(Math.sin((i / 30) * Math.PI))),
     }));
     return (
-      <ChartContainer width={720}>
+      <ChartContainer width={840}>
         <ChartRow height={240}>
           <YAxis id="v" label="count" min={0} pad={0.08} />
           <Layers>
@@ -127,6 +130,109 @@ export const CrowdedLabels: Story = {
           </Layers>
         </ChartRow>
       </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **[PND-CATFIT] control — labels that fit are left alone.** Nine six-character
+ * names: band ≈ 82px against ≈ 37px of text, so every label draws full-length
+ * at its band centre, un-thinned and un-truncated. (Originally filed as a
+ * repro of the overprint; the filing was corrected — the collapsing was an
+ * artifact of a zero-width container, which `CollapsedWidth` below covers.
+ * This story stays as the fits-cleanly control the fit is reviewed against.)
+ */
+export const NineAccountNames: Story = {
+  render: () => {
+    const data = [
+      { label: 'EDGE01', value: 42 },
+      { label: 'APEX07', value: 31 },
+      { label: 'EDGE04', value: 27 },
+      { label: 'KRONOS', value: 55 },
+      { label: 'VULCAN', value: 19 },
+      { label: 'APEX02', value: 23 },
+      { label: 'ORION3', value: 38 },
+      { label: 'HELIX9', value: 45 },
+      { label: 'EDGE11', value: 12 },
+    ];
+    return (
+      <ChartContainer width={800}>
+        <ChartRow height={240}>
+          <YAxis id="v" label="net Δ" min={0} pad={0.08} />
+          <Layers>
+            <BarChart categories={data} gap={4} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **[PND-CATFIT] repro — labels wider than their band.** Six categories whose
+ * keys carry a venue tail (`SYMBOL-VENUE-TYPE`), each label wider than its
+ * band. Before the measured fit these drew full-pitch ellipsized labels that
+ * measured *wider* than the pitch (the char-count estimate under-measured
+ * all-caps keys) and overprinted into a smear. Now each kept label must
+ * **measure** within its room, middle-ellipsized (`EDGE01…EQT`) so both the
+ * prefix and the distinguishing tail survive. Blanking or truncating at the
+ * source is not a consumer option because the label is the selection identity.
+ */
+export const VenueTailLabels: Story = {
+  render: () => {
+    const data = [
+      { label: 'EDGE01-NMS-EQT', value: 42 },
+      { label: 'APEX07-NMS-EQT', value: 31 },
+      { label: 'KRONOS-ARCA-OPT', value: 55 },
+      { label: 'VULCAN-NMS-EQT', value: 19 },
+      { label: 'ORION3-BATS-EQT', value: 38 },
+      { label: 'HELIX9-ARCA-OPT', value: 45 },
+    ];
+    return (
+      <ChartContainer width={560}>
+        <ChartRow height={240}>
+          <YAxis id="v" label="net Δ" min={0} pad={0.08} />
+          <Layers>
+            <BarChart categories={data} gap={4} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **[PND-CATFIT] degenerate — a collapsed container.** The axis inside a
+ * zero-width parent (a resizable dashboard panel dragged shut, a hidden tab, a
+ * headless pane). The labels are absolutely-positioned `nowrap` divs, so the
+ * old passthrough drew every label full-length at x ≈ 0 — an overprinted smear
+ * overflowing a zero-width strip. The fit now draws **no labels** below
+ * legibility; the axis reappears when real width does (drag the 200px sibling
+ * for contrast).
+ */
+export const CollapsedWidth: Story = {
+  render: () => {
+    const data = [
+      { label: 'EDGE01-NMS-EQT', value: 42 },
+      { label: 'APEX07-NMS-EQT', value: 31 },
+      { label: 'KRONOS-ARCA-OPT', value: 55 },
+      { label: 'VULCAN-NMS-EQT', value: 19 },
+    ];
+    const chart = (
+      <ChartContainer width="auto">
+        <ChartRow height={160}>
+          <YAxis id="v" label="net Δ" min={0} pad={0.08} />
+          <Layers>
+            <BarChart categories={data} gap={4} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+    return (
+      <div style={{ display: 'flex', gap: 16 }}>
+        <div style={{ width: 0, overflow: 'visible' }}>{chart}</div>
+        <div style={{ width: 200 }}>{chart}</div>
+      </div>
     );
   },
 };

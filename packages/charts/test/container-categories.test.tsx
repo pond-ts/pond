@@ -397,14 +397,16 @@ describe('<ChartContainer categories> — the features the workaround forfeited'
     );
     const labels = Array.from(container.querySelectorAll('div'))
       .map((d) => d.textContent ?? '')
-      .filter((t) => /^category-n?a?m?e?-?\d*…?$/.test(t) && t.length > 0);
+      .filter((t) => /^cat\S*…/.test(t));
     // Thinned *and* truncated: 40 fifteen-character names cannot all print in
     // 320px. The exact stride is the axis's business; that the container-
     // declared axis took the thinning path at all is the guarantee — the
-    // integer-index workaround (explicit ticks) skips it entirely.
+    // integer-index workaround (explicit ticks) skips it entirely. Truncation
+    // is from the MIDDLE ([PND-CATFIT]): the ellipsis keeps both ends, so the
+    // distinguishing `-<i>` tail survives on every kept label.
     expect(labels.length).toBeGreaterThan(0);
     expect(labels.length).toBeLessThan(many.length);
-    expect(labels.some((t) => t.endsWith('…'))).toBe(true);
+    expect(labels.every((t) => /…\S*\d$/.test(t))).toBe(true);
   });
 });
 

@@ -52,12 +52,15 @@ import GalleryWindRose from '@site/src/examples/gallery-wind-rose';
 import GalleryGridMix from '@site/src/examples/gallery-grid-mix';
 import GalleryRenewables from '@site/src/examples/gallery-renewables';
 import GalleryPowerPrices from '@site/src/examples/gallery-power-prices';
+import GalleryEclipseDemand from '@site/src/examples/gallery-eclipse-demand';
+import GalleryEclipseSolar from '@site/src/examples/gallery-eclipse-solar';
 import GallerySpectrum from '@site/src/examples/gallery-spectrum';
 import GallerySeismograph from '@site/src/examples/gallery-seismograph';
 import GalleryTides from '@site/src/examples/gallery-tides';
 import GalleryAirQuality from '@site/src/examples/gallery-air-quality';
 import GalleryNino34 from '@site/src/examples/gallery-nino34';
 import GalleryMeasles from '@site/src/examples/gallery-measles';
+import GalleryContributions from '@site/src/examples/gallery-contributions';
 
 {/* ------------------------------------------------------------------ */}
 {/* Each domain section below is owned by one track (gallery plan §4). */}
@@ -371,8 +374,10 @@ NOAA or NASA numbers, not a model of them. Three of the four are one airport's
 ## Energy
 
 Grid data is where composition, crossover and signed values all turn up at
-once. All three cards are the same real weekend — Easter 2025 in Germany, the
-quietest demand day of the year meeting a big solar peak.
+once. The first three cards are the same real weekend — Easter 2025 in
+Germany, the quietest demand day of the year meeting a big solar peak. The
+last two are a different grid on a stranger evening — Spain, during the
+total solar eclipse of 12 August 2026: what demand did, and what solar did.
 
 <GalleryGrid>
 
@@ -412,6 +417,32 @@ quietest demand day of the year meeting a big solar peak.
 >
   {(width, phase) => (
     <GalleryPowerPrices width={width} phase={phase} height={190} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Demand during an eclipse"
+  blurb="Spain's demand against its forecast as the Moon crossed the Sun — a 2.13 GW dip, timed to the minute."
+  storybookHref="pathname:///storybook/?path=/story/annotations-scenarios--in-context"
+  pageHref="/docs/charts/gallery/eclipse-demand"
+  height={212}
+  autoplay={{ period: 18000, staticPhase: 0.43 }}
+>
+  {(width, phase) => (
+    <GalleryEclipseDemand width={width} phase={phase} height={190} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Solar during an eclipse"
+  blurb="Eclipse-day solar over the three evenings before it at the same clock time — a second sunset, 4.3 GW under the baseline."
+  storybookHref="pathname:///storybook/?path=/story/charts-linechart--line-styles"
+  pageHref="/docs/charts/gallery/eclipse-solar"
+  height={212}
+  autoplay={{ period: 18000, staticPhase: 0.5 }}
+>
+  {(width, phase) => (
+    <GalleryEclipseSolar width={width} phase={phase} height={190} />
   )}
 </GalleryCard>
 
@@ -532,11 +563,20 @@ and the year that isn't finished yet.
 
 ## Product, transport & statistical
 
-{/* TRACK G — replace this line with the section's blurb. */}
-
-_Cards land here as Track G ships._
+Counting what people make and do. The first card here is as meta as it gets:
+the library's own repository, drawn by the library.
 
 <GalleryGrid>
+
+<GalleryCard
+  title="Contribution heatmap"
+  blurb="The GitHub profile grid, of pond, by pond — 1,001 commits in eighteen weeks, and no weekend stripe."
+  storybookHref="pathname:///storybook/?path=/story/charts-heatmap--grid"
+  pageHref="/docs/charts/gallery/contribution-heatmap"
+  height={230}
+>
+  {(width) => <GalleryContributions width={width} height={190} compact />}
+</GalleryCard>
 
 {/* TRACK G — append product, transport & statistical cards above this line. */}
 

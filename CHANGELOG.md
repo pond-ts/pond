@@ -8,7 +8,9 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.60.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.62.0...HEAD
+[0.62.0]: https://github.com/pond-ts/pond/compare/v0.61.0...v0.62.0
+[0.61.0]: https://github.com/pond-ts/pond/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/pond-ts/pond/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/pond-ts/pond/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/pond-ts/pond/compare/v0.57.0...v0.58.0
@@ -92,6 +94,110 @@ include new features and type-level changes; patch bumps are strictly additive.
 
   Fixed-`height` rows keep their pixels everywhere, managed or not; a
   container with no `height` behaves exactly as before.
+
+## [0.62.0] — 2026-08-16
+
+### Added
+
+- `@pond-ts/process`: **`specId` is total under `{ validate: false }`** — a
+  third options argument that names a spec which would not compile
+  (`specId(registry, spec, { validate: false })`). Identity used to be coupled
+  to validity, so the moments a consumer most needs an id — labelling the chip
+  it is skipping, keying "this persisted entry is broken", logging what was
+  rejected — were exactly the moments it threw, leaving the consumer to
+  re-implement canonicalization or carry a second key. Lenient mode still
+  applies defaults and sorts keys, carries an undeclared param through rather
+  than dropping it, and recurses into nested inputs; **a valid spec has the
+  same id under either mode**, so nothing needs a second cache line. Validity
+  stays `compile`'s job. `Registry.resolveParams` takes the same
+  `{ validate: false }`.
+
+  An id that did **not** validate is minted in a separate namespace — marked
+  `p1?:` instead of `p1:`, with type-preserving param encoding — so it can
+  never collide with a legal id. Both measures are confined to that branch:
+  a valid id is byte-identical to what shipped in 0.61.0. The mark rides up a
+  chain, so a spec over an unvalidated input is unvalidated too.
+
+- `@pond-ts/process`: **`Skipped.code`** — every entry in `RunResult.skipped`
+  now carries the failure's kind (`'UnknownColumnError'`, `'ParamError'`,
+  `'UnitError'`, `'SlotError'`, …) beside its human `reason`. Under
+  `onError: 'skip' | 'collect'` nothing is thrown, so `instanceof` — the right
+  discriminator when a consumer catches — never reached a consumer reading
+  `skipped`, leaving it to match on prose whose wording is not a contract. The
+  value is `ProcessError.code`, a **literal declared per class** rather than
+  `constructor.name`, so a consumer's minifier cannot silently rename it. It is
+  absent when the throw did not come from this package, which is itself the
+  signal: op code failed, not the plan layer.
+
+### Fixed
+
+- `@pond-ts/process`: **`run` under `onError: 'throw'` — the default — now
+  raises the original error rather than a base `ProcessError` rebuilt from its
+  message.** A caught `UnknownColumnError`, `ParamError`, `UnitError` or
+  `SlotError` reached the caller as a bare `ProcessError`, so `instanceof`
+  could not discriminate on the throw path at all.
+
+- `@pond-ts/process`: **a raw string input naming a column the bound series
+  does not carry is now rejected**, at `compile`, with a new
+  `UnknownColumnError`. Nothing checked it at compile or at pull: the op ran
+  against an un-widened series, and one that doesn't defend its own inputs
+  appended a plausible-looking column of garbage under the spec's id — with
+  `skipped` empty and `onError` never engaged. A persisted plan citing a column
+  the feed has since dropped now skips (or throws) instead of returning a
+  value. The check is the one `expandSlots` already made against the same
+  column list, so the two request forms no longer disagree; it runs before the
+  unit check, whose "is 'unitless'" answer for an absent column named the wrong
+  problem. The key/time column is not a value column and is rejected too.
+
+  The check covers the **whole spec closure** (a missing column under a typed
+  parent otherwise surfaced as `UnitError`) and runs on the **warm** path as
+  well as the cold one — `setSource` replaces the data under compiled nodes by
+  design, so a memoized node could outlive the column it reads and go on
+  emitting the garbage column this fix exists to prevent. A node that fails the
+  re-check is dropped from the graph.
+  (Both items reported by Tidal —
+  `docs/notes/tidal-process-adoption-friction-2026-08.md`.)
+
+## [0.61.0] — 2026-08-16
+
+### Added
+
+- `@pond-ts/charts`: **`onMouseEvent` on `<XAxis>` and `<YAxis>`** — mouse
+  events on an axis strip, carrying the **axis value under the pointer** (the
+  part a consumer can't compute, since the scale lives inside the container).
+  One handler takes every mouse event on the strip (`click`, `dblclick`,
+  `contextmenu`, `mousedown`/`mouseup`, `mousemove`, `mouseenter`/`mouseleave`)
+  — switch on `event.type`. The payload (`AxisMouseEvent`, exported) carries
+  the raw React event, `axis: 'x' | 'y'`, the axis's `id` (a `<YAxis>` has one;
+  an `<XAxis>` does not), the inverted `value`, and the `label` that axis would
+  print there — the **category name** on a category axis, whose scale inverts
+  to the nearest band centre. Nothing is attached when the prop is omitted, so
+  an axis that doesn't opt in pays nothing for the move events. Axis strips now
+  also carry `data-axis="x"` / `data-axis="y"` + `data-axis-id` hooks, so a
+  consumer can style one (`[data-axis='x'] { cursor: pointer }`) despite the
+  axes taking no `className`.
+
+### Fixed
+
+- `@pond-ts/charts`: the category x-axis label fit now **measures** rendered
+  label widths (offscreen-canvas `measureText` in the axis font, with a
+  per-glyph estimate fallback for SSR/test DOMs) instead of estimating by
+  character count — labels wider than their band (e.g. `SYMBOL-VENUE-TYPE`
+  keys) no longer overprint into a smear. The fit measures against the scale's
+  real band pitch (so a `maxBandWidth`-packed axis thins correctly), keeps a
+  minimum clear gap between drawn labels, truncates from the **middle**
+  (`EDGE01…EQT`) so a shared prefix or a shared tail stays distinguishable,
+  and draws **no** labels at a degenerate (collapsed / pre-layout) width
+  rather than overprinting every label at x ≈ 0. Filed from the SPARC
+  migration ([PND-CATFIT]).
+
+  **Heads-up on a deliberate visual change:** an axis whose labels previously
+  packed edge-to-edge at a borderline pitch (label within a couple of px of
+  its band) now **thins to every 2nd label** instead — clear separation
+  outranks per-band labelling at the margin. On a dense dashboard axis this
+  can read as "half the labels disappeared"; it is the fit working as
+  intended, not data loss — every band still draws its mark, and the cursor
+  readout still names every category.
 
 ## [0.60.0] — 2026-08-13
 

@@ -1507,6 +1507,31 @@ a shape:
   inside the closed night. "Drop duplicates" is under-specified whenever the
   duplicates aren't interchangeable.
 
+**Also done from this backlog: axis mouse events** — `onMouseEvent` on
+`<XAxis>` / `<YAxis>`, CHANGELOG `[Unreleased]`. Asked for as "a callback when
+the user clicks an axis"; the surface had none at all (every existing callback
+was plot-area or list-row). Decisions worth keeping:
+
+- **One `onMouseEvent`, not `onClick` + `onHover` + …** The strip is one
+  element, the events are the DOM's own, and the discriminator (`event.type`)
+  is already in the payload — a family of props would be the same handler N
+  times. It also keeps the opt-in binary: with no prop, **no** listeners are
+  attached, so nobody pays for `mousemove` they didn't ask for.
+- **The payload's reason to exist is `value`.** A consumer can attach their own
+  listener to anything; what they cannot do is invert the pixel, because the
+  scale lives inside the container. `label` rides along because on a category
+  axis the raw value (`2.5`, a band centre) is meaningless without it.
+- **No `id` prop on `<XAxis>`.** `id` is echoed back "if it has one" — a
+  `<YAxis>` needs one anyway (layers bind to it), an `<XAxis>` doesn't, and
+  adding one purely to be echoed is a prop with one use. Stacked x-strips
+  discriminate by closing over their own name at the call site.
+- **`data-axis` / `data-axis-id` attributes** shipped alongside: the axes take
+  no `className`, so a consumer who wires a click handler has no way to set
+  `cursor: pointer` on the strip. They double as the test/e2e selector.
+- **Deferred, considered:** snapping `value` to the nearest tick (the consumer
+  can round; the axis shouldn't decide), and a synthetic "which tick" field
+  (ticks are a rendering detail, not a coordinate).
+
 **Follow-up (not done):** `formatReadout` is now two channels in one field
 (`cursorFormat` vs the axis kind's default), disambiguated by a companion
 `xReadoutCustom` flag mirroring `xFormatCustom`. The reviewer's point stands
@@ -2253,11 +2278,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                _Still true; no longer felt here._ The draggable marker is gone — selection
-                is a click — so nothing on this page is in edit mode. But it cost a design
-                iteration to discover, and the docs still don't mention it. **The one-line
-                fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                row's data cursor is suppressed."
+    _Still true; no longer felt here._ The draggable marker is gone — selection
+    is a click — so nothing on this page is in edit mode. But it cost a design
+    iteration to discover, and the docs still don't mention it. **The one-line
+    fix is a sentence on `editing`**: "while any mark in a row is editing, that
+    row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -3662,6 +3687,120 @@ the CSS-custom-property theme bridge removed theming from its gap list
 entirely, per-line dash removed a styling ask, the trading-axis tick-density
 fix made the session axis usable, and per-mark bar colours are the precedent it
 points at for PG-26.
+
+## [PND-CATFIT] — the category axis measures its label fit (2026-08-14)
+
+**Shipped 2026-08-14**, same-day from a SPARC-migration friction filing
+(their `pond-charts-friction-2026-08.md`, corrected in their `5d35250af`).
+The category x-axis overprinted its own labels: `thinCategoryLabels`
+estimated width by character count (`fontSize * 0.62` per glyph, longest
+capped at **12 chars**), let a kept label occupy its **full pitch** (no
+inter-label gap), and divided **`plotWidth / n`** for the slot — wrong under
+`maxBandWidth` packing. Venue-tailed keys (`SYMBOL-VENUE-TYPE`, ~15 chars of
+all-caps + digits, which the 0.62em estimate under-measures) ellipsized to a
+width _wider than the pitch they were drawn on_: measured in the repro story,
+83–91px labels on an 86px pitch, up to 5px of overlap per neighbour — a
+continuous smear.
+
+**What shipped** (all in `XAxis.tsx`; the fit stays DOM-free of the axis
+itself):
+
+- **Measured, not estimated.** A shared offscreen-canvas `measureText` in the
+  axis font (`theme.font.size` + `.family`), cached per font+text (bounded,
+  4096), falling back to the per-glyph estimate where no canvas backend
+  exists (SSR, happy-dom) — which keeps the unit tests deterministic on the
+  same widths the fit computed from.
+- **The slot is the scale's own `bandwidth()`**, not `plotWidth / n` — a
+  `maxBandWidth`-packed axis now thins on the pitch the labels actually sit
+  on (test-pinned: wide plot + 24px pitch must thin).
+- **A minimum clear gap (4px)** between drawn labels; a kept label's room is
+  `stride · slot − gap`, and an ellipsized result is only accepted when it
+  _measures_ within room — no drawn label can overrun by construction.
+- **Middle-ellipsis** (`EDGE01…EQT`, head-heavy 60/40): keys share a prefix
+  and differ in the tail _or the reverse_, and keeping both ends preserves
+  whichever part distinguishes. End-truncation made shared-prefix keys
+  visually identical. (SPARC asked for exactly this — their real keys are
+  prefix-distinct today, but same-symbol-two-venues is suffix-distinct.)
+- **Thin-vs-truncate policy:** a kept label may ellipsize down to
+  `TRUNC_KEEP = 0.6` of its measured width before the fit prefers dropping
+  labels (growing stride). Below ~two glyphs of room the axis draws nothing.
+- **Degenerate width draws NO labels.** The old `slot > 0` guard passed every
+  label through "until a real width arrives" on the theory nothing is visible
+  at zero width — false: the labels are absolutely-positioned `nowrap` divs,
+  so all of them rendered full-length at x ≈ 0, overflowing the strip. This
+  was the _second_ bug hiding in the filing: SPARC's original repro (nine
+  6-char labels "at 740px") turned out to be a collapsed measurement pane
+  (`innerWidth: 0`), i.e. this failure mode, not the fit — their corrected
+  filing split the two, and both are now fixed and separately story-pinned
+  (`VenueTailLabels`, `CollapsedWidth`, plus `NineAccountNames` kept as the
+  fits-cleanly control).
+
+**Behaviour change accepted knowingly:** at a _borderline_ pitch (short
+labels within ~2px of filling their band, e.g. 30 × `S01` at 720px) the
+measured fit now thins to every 2nd where the old estimate packed all labels
+edge-to-edge. Clear separation outranks per-band labelling at the margin; the
+`HighCardinality` story was widened to 840px so its "short labels all shown"
+teaching point stays true, with the boundary noted in its docstring. Canvas
+`measureText` also runs ~5–9% wide of DOM layout for `system-ui` (measured:
+21.03px vs 19.23px for `S30`), which effectively pads the gap — acceptable,
+in the safe direction.
+
+**Checked and deliberately out of scope:** the **y-axis categorical path**
+(horizontal charts' `binCategories`) stacks labels vertically — label height
+vs row height, a different and far less overlap-prone geometry. **Rotation**
+stays a later option. **Edge spill** (Layer-2 review find): a stride-kept
+label wider than its own band can overhang the plot edge by up to
+~(room − slot)/2 — pre-existing, and it is `align='center'`'s documented
+behaviour, with `align='auto'` the existing remedy; a fit that also clamped
+to the plot edge would be changing `align` semantics, so it is deferred as an
+`align` follow-up if a consumer hits it. **[PND-CATID]** (display label split from category
+identity) is the class-removing fix and is filed separately — see its own
+entry.
+
+## [PND-CATID] — split category display label from category identity
+
+Filed 2026-08-14 from the SPARC migration, alongside the shipped
+[PND-CATFIT] label fit. **Their assessment, worth quoting in substance: of
+the two, this is the higher-value fix** — the label fit unblocks the
+symptom, the identity split removes the class.
+
+**The problem.** On every categorical path, the category's display string IS
+its identity: `CategoryDatum` is `{ label, value }`, `categoryStack` writes
+`label` into `marks[i]`, and a click/sweep commits `SelectInfo.mark =
+label`. Consequences, all hit in the wild by one consumer inside a week:
+
+- **Two categories rendering the same string merge into one mark** — a
+  stacked chart where two segments shared a label silently collapsed.
+- **A consumer whose display strings aren't naturally unique must
+  disambiguate them** — SPARC carries a `uniqueLabels` helper synthesizing
+  distinct display strings plus a `keyOfLabel` map to recover the real key
+  from a click or sweep. One chart's labels weren't uniquified at all, so
+  clicking a bar could commit a _different row's_ key.
+- **Every display improvement is identity-constrained** — shortening,
+  prettifying, localizing a label all change the mark. ([PND-CATFIT]'s axis
+  ellipsis dodges this only because it truncates at _draw_ time, below the
+  identity layer.)
+
+**Sketch** (not committed — the shape needs the owner):
+
+- `CategoryDatum.key?: string`, defaulting to `label` — additive, every
+  existing caller unchanged.
+- `categoryStack` / the bar category path put `key` in `marks`;
+  `SelectInfo.mark` carries it; `SelectInfo.label` keeps the display string.
+- The container's `categories?: readonly string[]` widens to accept
+  `{ key, label }` entries (or grows a sibling prop) — this is the ordinal
+  axis domain, so the same key/label split applies there.
+- The axis and readouts keep drawing `label`; selection, controlled
+  `selected` echo, and `sameMark` all speak `key`.
+
+**Why this is owner-gated:** it widens the public selection currency
+(`SelectInfo.mark` semantics) and the container `categories` prop — both on
+the "human approval required" list. Duplicate-_label_ validation also needs a
+decision: today duplicate labels are structurally meaningless (they merge);
+with keys they become legal, and the container's category-agreement check
+compares label lists.
+
+**Not started.** Blocked on owner review of the sketch.
 
 ---
 

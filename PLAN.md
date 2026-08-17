@@ -1852,7 +1852,7 @@ in [docs/archive/experiments-2026.md](docs/archive/experiments-2026.md)):
 
 | Track              | Agent  | Status / next                                                                     |
 | ------------------ | ------ | --------------------------------------------------------------------------------- |
-| Tidal (financial)  | Claude | Most active loop; drives [PND-STUDY] + charts friction; auto-woken on npm publish |
+| Tidal (financial)  | Claude | Most active loop; drives [PND-STUDY] + charts friction, now also `@pond-ts/process` (derive seam); auto-woken on npm publish |
 | estela (geo/power) | Claude | Waiting on [PND-FITPUB]; then adopts fit + charts from npm, deletes local copy    |
 | Dashboard          | Claude | Next: adopt `@pond-ts/charts`, report gaps/perf vs its hand-rolled charts         |
 | gRPC pipeline      | Claude | M3.5 realized; remaining: writeup + M5 extraction sweep (3 RFCs → [PND-SERVER])   |
@@ -1945,6 +1945,18 @@ argument for the rest.
   [PND-BINSWATCH] is now partially resolved on the stack path only. Itemised, with
   each workaround and its cost, in
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-sparcfric--sparc-charts-friction-2026-08).
+
+- **[PND-CATID]** — **Split category display label from category identity.**
+  Second SPARC filing (2026-08-14, alongside the shipped [PND-CATFIT] label
+  fit): a category's `label` is today ALSO its selection identity
+  (`SelectInfo.mark`), so two categories that render the same string silently
+  merge into one mark, and a consumer with duplicate-prone keys carries a
+  `uniqueLabels` + `keyOfLabel` side-channel that produced two real bugs in
+  their migration in one week. Sketch: `CategoryDatum.key?: string` (defaults
+  to `label`), `mark` carries the key, the axis/readouts draw the label; the
+  container `categories` prop widens likewise. **Public type widening on the
+  selection currency — owner gate required.** Write-up in
+  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-catid--split-category-display-label-from-category-identity).
 
 - **[PND-IGNITE]** — A **third** external consumer survey: 28 distinct entries
   (`PG-n`, merged from 39 raw) across seven planned financial panes, assessed

@@ -91,6 +91,7 @@ export {
   shape,
 } from './plan/folds.js';
 export type { OpDescriptor } from './plan/registry.js';
+export type { SpecIdOptions } from './plan/identity.js';
 export {
   specId,
   refToId,
@@ -100,7 +101,12 @@ export {
   dependsOn,
   outputKey,
 } from './plan/identity.js';
-export { bind, BoundGraph, UnitError } from './plan/graph.js';
+export {
+  bind,
+  BoundGraph,
+  UnitError,
+  UnknownColumnError,
+} from './plan/graph.js';
 export { expandSlots, SlotError } from './plan/slots.js';
 export { plan, PlanBuilder, BuilderError } from './plan/builder.js';
 export type {
