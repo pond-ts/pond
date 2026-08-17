@@ -454,6 +454,15 @@ describe('annotation indicators', () => {
     expect(pill).toBeDefined();
     // plotWidth (300 − 2×40) + the inner axis's reserved 40.
     expect(pill!.style.left).toBe('260px');
+    // …bridged back to the plot edge, as the crosshair's pill is: the two are
+    // the same object, so they connect the same way.
+    const connector = Array.from(container.querySelectorAll('div')).find(
+      (d) => d.style.position === 'absolute' && d.style.height === '1px',
+    );
+    expect(connector).toBeDefined();
+    expect(connector!.style.left).toBe('220px');
+    expect(connector!.style.width).toBe('40px');
+    expect(connector!.style.background).toBe(pill!.style.background);
   });
 
   it('Marker indicator draws an x-axis pill on <XAxis>', () => {

@@ -71,6 +71,13 @@ function pill(c: HTMLElement): HTMLElement {
   return found[0]!;
 }
 
+/** The pill's connectors — the 1px gutter bridges (no border-radius, so `yPills`
+ *  never picks them up). */
+const connectors = (c: HTMLElement) =>
+  Array.from(c.querySelectorAll('div')).filter(
+    (d) => d.style.position === 'absolute' && d.style.height === '1px',
+  );
+
 describe('the crosshair value pill sits on the reticle axis', () => {
   it('one axis: hugs the plot edge (offset 0 — the pre-existing placement)', () => {
     const { container } = render(
@@ -354,5 +361,131 @@ describe('the crosshair value pill wears the reticle axis ink', () => {
     const p = pill(container);
     expect(p.style.right).toBe(`${plotFor(2) + AXIS_W}px`);
     expect(p.style.background).toBe('#d97a4a');
+  });
+});
+
+describe("the pill's connector bridges the gutter it crossed", () => {
+  /** One row, `n` right axes, the reticle reading the outermost. */
+  const stacked = (n: 1 | 2 | 3, color?: string) =>
+    render(
+      <ChartContainer
+        range={[0, 4]}
+        width={WIDTH}
+        trackerPosition={2}
+        showAxis={false}
+      >
+        <CrosshairCursor />
+        <ChartRow height={120}>
+          <Layers>
+            <LineChart series={hr} column="bpm" axis={`a${n - 1}`} />
+          </Layers>
+          {Array.from({ length: n }, (_, i) => (
+            <YAxis
+              key={i}
+              id={`a${i}`}
+              side="right"
+              width={AXIS_W}
+              min={100}
+              max={200}
+              {...(i === n - 1 && color !== undefined ? { color } : {})}
+            />
+          ))}
+        </ChartRow>
+      </ChartContainer>,
+    );
+
+  it('no connector when the pill is on the innermost axis (nothing to bridge)', () => {
+    // The pill already touches the plot edge where the reticle line ends, so a
+    // bridge would be zero-length ink over a tick label.
+    const { container } = stacked(1);
+    expect(pill(container).style.left).toBe(`${plotFor(1)}px`);
+    expect(connectors(container)).toEqual([]);
+  });
+
+  it('one bridge, spanning exactly the columns crossed', () => {
+    const two = stacked(2);
+    const c2 = connectors(two.container);
+    expect(c2.length).toBe(1);
+    expect(c2[0]!.style.width).toBe(`${AXIS_W}px`);
+    // Anchored at the plot's edge and running outward, so pill and bridge meet:
+    // the bridge's outer end is the pill's inner edge.
+    expect(c2[0]!.style.left).toBe(`${plotFor(2)}px`);
+    expect(pill(two.container).style.left).toBe(`${plotFor(2) + AXIS_W}px`);
+    two.unmount();
+
+    // Two columns crossed ⇒ twice the span, still one element.
+    const three = stacked(3);
+    const c3 = connectors(three.container);
+    expect(c3.length).toBe(1);
+    expect(c3[0]!.style.width).toBe(`${2 * AXIS_W}px`);
+    expect(pill(three.container).style.left).toBe(
+      `${plotFor(3) + 2 * AXIS_W}px`,
+    );
+  });
+
+  it("takes the pill's ink at half strength, so it reads as subordinate chrome", () => {
+    // It crosses another axis's tick labels (unlike the x-axis time connector,
+    // which crosses an empty strip) — full strength would slash through them.
+    const { container } = stacked(2, '#d97a4a');
+    const c = connectors(container)[0]!;
+    expect(c.style.background).toBe('#d97a4a');
+    expect(c.style.opacity).toBe('0.5');
+    expect(pill(container).style.background).toBe('#d97a4a');
+  });
+
+  it('mirrors onto the left gutter', () => {
+    const { container } = render(
+      <ChartContainer
+        range={[0, 4]}
+        width={WIDTH}
+        trackerPosition={2}
+        showAxis={false}
+      >
+        <CrosshairCursor />
+        <ChartRow height={120}>
+          <YAxis id="bpm" side="left" width={AXIS_W} min={100} max={200} />
+          <YAxis id="usd" side="left" width={AXIS_W} min={0} max={100} />
+          <Layers>
+            <LineChart series={hr} column="bpm" axis="bpm" />
+            <LineChart series={price} column="v" axis="usd" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const c = connectors(container)[0]!;
+    expect(c.style.right).toBe(`${plotFor(2)}px`);
+    expect(c.style.left).toBe('');
+    expect(c.style.width).toBe(`${AXIS_W}px`);
+  });
+
+  it('shares the pill’s clamped centre, so the two never separate', () => {
+    // A value near the row edge clamps the pill inside the row (the y-tick rule);
+    // the bridge must clamp with it or it would meet nothing.
+    const { container } = render(
+      <ChartContainer
+        range={[0, 4]}
+        width={WIDTH}
+        trackerPosition={2}
+        showAxis={false}
+      >
+        <CrosshairCursor />
+        <ChartRow height={120}>
+          <Layers>
+            {/* 177 against a [0,180] domain ⇒ near the top edge. */}
+            <LineChart series={hr} column="bpm" axis="bpm" />
+          </Layers>
+          <YAxis id="other" side="right" width={AXIS_W} min={0} max={100} />
+          <YAxis id="bpm" side="right" width={AXIS_W} min={0} max={180} />
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const p = pill(container);
+    const c = connectors(container)[0]!;
+    // 177/180 of a 120px row ⇒ py = 2, inside the half-line-height margin, so
+    // both sit at the clamp (font 11 + 5 leading ⇒ 8) rather than at py.
+    const clamp = `${(defaultTheme.font.size + 5) / 2}px`;
+    expect(p.style.top).toBe(clamp);
+    expect(c.style.top).toBe(clamp);
+    expect(c.style.transform).toBe(p.style.transform);
   });
 });

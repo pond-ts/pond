@@ -3951,6 +3951,32 @@ Decisions recorded:
   chrome by instance rather than id — is still not built; nothing has asked
   for it, and coherence is what the bug needed.)
 
+### Follow-up 2026-08-17 — the y-side connector (owner-approved)
+
+The gap this left was visible as soon as the both-sides story existed: the
+reticle's horizontal line ends at the plot edge, so a pill one column out read
+as a value floating in a gutter. The x-axis time pill has bridged that gap since
+it shipped ("so the two read as one"); the y side now does too, through a shared
+`axisPillConnector` — so the crosshair's pill and a `<Baseline indicator>` bridge
+identically, as they now place identically.
+
+Two decisions the browser settled rather than the design:
+
+- **Half opacity, where the x connector is solid.** The difference is *what each
+  crosses*: the time connector runs over an empty axis strip, this one runs over
+  another axis's tick labels — measured, not assumed (the connector's box
+  overlaps the neighbouring axis's label glyphs whenever that axis has a tick at
+  the reticle's value). At full strength it slashed the digits; at 0.5 the labels
+  stay crisp and the bridge reads as subordinate chrome, which is the weight the
+  flag cursor's staffs already use for "this line only joins two things I drew".
+- **Anchored at the pill's clamped centre, not the raw value's.** They differ
+  only where the pill is clamped inside the row (the y-tick rule), and a bridge
+  that stayed at the unclamped value would meet nothing. Pinned by a test that
+  asserts the clamp value, not merely that the two agree.
+
+Drawn only when the offset is non-zero: on the innermost axis the pill already
+touches the plot edge where the line ends.
+
 Not built, deliberately:
 
 - **`axisOffsets` on the public `useChartFrame`** — `ChartFrameRow` publishes
@@ -3963,11 +3989,6 @@ Not built, deliberately:
   pointed at a gutter its axis isn't in, and it is a published prop pair. Adding
   the offset there without settling what happens when the two disagree would
   just relocate the ambiguity. Its own change.
-- **A connector bridging the reticle's horizontal line to a pill sitting further
-  out** — the x-axis time pill draws one (`renderXAxis`, "so the two read as
-  one"), and with the pill out past an inner axis column the y side now has the
-  same gap. Left alone pending the owner's read: a 1px bridge would cross
-  another axis's tick labels, which may read worse than the gap.
 - **Clamping a pill to the gutter it sits in** — a pill is sized to content and
   deliberately unclipped, so a long formatted value can overflow past its
   gutter; an *outer*-axis pill has only its own column left before the

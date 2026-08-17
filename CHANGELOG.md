@@ -108,11 +108,19 @@ include new features and type-level changes; patch bumps are strictly additive.
   stacked scales the number is on. A single axis per side is unchanged (offset
   `0`), as is an axis that sets no colour (the theme's cursor ink).
 
+  A pill placed further out is now **bridged back to the plot edge** by a 1px
+  connector in its own colour — the y-side twin of the crosshair's x-axis time
+  connector, without which a pill a column out reads as a value floating in a
+  gutter. It draws at half opacity because, unlike the time connector's empty
+  strip, it crosses another axis's tick labels; nothing is drawn on the innermost
+  axis, where the pill already meets the line.
+
   `<YAxis color>` is now part of the axis's registered spec rather than
   presentation-only, because the pill is drawn by the row's cursor overlay, not
   by `<YAxis>`. `<Baseline indicator>` — the other on-axis value pill — got the
-  same placement fix. New `Cursors/Crosshair` stories fan the states out
-  (`AxisColor`, `StackedAxes`, `StackedAxesColored`).
+  same placement fix and the same connector. New `Cursors/Crosshair` stories fan
+  the states out (`AxisColor`, `StackedAxes`, `StackedAxesColored`,
+  `StackedAxesLeft`, `StackedAxesBothSides`).
 
   Not covered: `<YAxisIndicator>` still takes an explicit `side` alongside its
   `axis`, so it can be pointed at a gutter its axis isn't in; reconciling those

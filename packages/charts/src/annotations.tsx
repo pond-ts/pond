@@ -16,7 +16,13 @@ import {
   type LabelPlacement,
 } from './context.js';
 import type { ChartTheme } from './theme.js';
-import { flagChipStyle, flagChipX, axisPillX, axisPillStyle } from './chip.js';
+import {
+  flagChipStyle,
+  flagChipX,
+  axisPillX,
+  axisPillStyle,
+  axisPillConnector,
+} from './chip.js';
 import { useSlotKey } from './use-slot-key.js';
 
 /**
@@ -997,21 +1003,34 @@ export function Baseline({
       {indicator &&
         (() => {
           const half = container.theme.font.size / 2 + 1;
+          const side = row.axisSides.get(axisId) ?? 'left';
+          const offset = row.axisOffsets.get(axisId) ?? 0;
+          const top = `${Math.max(half, Math.min(row.height - half, y))}px`;
           return (
-            <div
-              style={{
-                ...axisPillStyle(container.theme, ann.color),
-                top: `${Math.max(half, Math.min(row.height - half, y))}px`,
-                transform: 'translateY(-50%)',
-                ...axisPillX(
-                  row.axisSides.get(axisId) ?? 'left',
-                  w,
-                  row.axisOffsets.get(axisId) ?? 0,
-                ),
-              }}
-            >
-              {fmt ? fmt(value) : String(value)}
-            </div>
+            <>
+              {/* Bridge the baseline's in-plot line to a pill sitting further
+                  out, exactly as the crosshair's does — the two pills are the
+                  same object, so they connect the same way or neither should. */}
+              {offset > 0 && (
+                <div
+                  style={{
+                    ...axisPillConnector(side, w, offset, ann.color),
+                    top,
+                    transform: 'translateY(-50%)',
+                  }}
+                />
+              )}
+              <div
+                style={{
+                  ...axisPillStyle(container.theme, ann.color),
+                  top,
+                  transform: 'translateY(-50%)',
+                  ...axisPillX(side, w, offset),
+                }}
+              >
+                {fmt ? fmt(value) : String(value)}
+              </div>
+            </>
           );
         })()}
     </>

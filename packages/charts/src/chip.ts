@@ -141,6 +141,51 @@ export function axisPillX(
     : { right: `${inner}px`, zIndex: 3 };
 }
 
+/**
+ * The **connector** for a pill placed further out than the innermost axis: a 1px
+ * bridge from the plot's `side` edge across `offset` px of gutter to the pill's
+ * inner edge, so the in-plot line and its pill read as one object rather than as
+ * a value floating in a gutter two columns away. The y-side twin of the
+ * crosshair's x-axis time connector, which exists for exactly this reason.
+ *
+ * The caller positions it vertically (`top` + a `translateY(-50%)`), at the
+ * **pill's** centre rather than the raw value's — the two agree except where the
+ * pill is clamped inside the row, and a connector attached to the pill is what
+ * sells them as one object.
+ *
+ * In the pill's own colour and above the axis column (`zIndex`, as the pill is),
+ * but at **half opacity** — unlike the x-axis time connector, which is solid.
+ * The difference is what each one crosses: the time connector runs over an empty
+ * strip, while this one runs over *another axis's tick labels* (measured: a
+ * connector at a value whose neighbouring axis has a tick at the same height
+ * overlaps that label's glyphs). Half opacity keeps the labels legible and reads
+ * the bridge as subordinate chrome — the weight the flag cursor's staffs already
+ * use for "this line only connects two things I have drawn".
+ *
+ * Only drawn when `offset > 0`: at offset `0` the pill already touches the plot
+ * edge where the line ends, so a connector would be zero-length ink over a tick
+ * label for nothing.
+ */
+export function axisPillConnector(
+  side: 'left' | 'right',
+  plotWidth: number,
+  offset: number,
+  color: string,
+): CSSProperties {
+  return {
+    position: 'absolute',
+    ...(side === 'right'
+      ? { left: `${plotWidth}px` }
+      : { right: `${plotWidth}px` }),
+    width: `${offset}px`,
+    height: '1px',
+    background: color,
+    opacity: 0.5,
+    pointerEvents: 'none',
+    zIndex: 3,
+  };
+}
+
 /** Gap (px) between a flag chip and its pole — the cursor staff or an annotation's
  *  line — so the chip floats just beside the pole rather than sitting on it. */
 const FLAG_GAP = 4;

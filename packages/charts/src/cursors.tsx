@@ -12,7 +12,13 @@ import {
 import { renderBrushBand } from './brush.js';
 import type { ChartTheme } from './theme.js';
 import type { CursorFormat } from './format.js';
-import { flagChipStyle, flagChipX, axisPillStyle, axisPillX } from './chip.js';
+import {
+  flagChipStyle,
+  flagChipX,
+  axisPillStyle,
+  axisPillX,
+  axisPillConnector,
+} from './chip.js';
 import { useSlotKey } from './use-slot-key.js';
 import { isDev } from './dev.js';
 
@@ -425,23 +431,44 @@ function buildCrosshairCursor(o: {
         const reticle = crosshairPick(f, o.snap);
         if (reticle === null) return null;
         const lh = chipLineHeight(f.theme);
+        const ink = reticle.axisColor ?? cursorInk(f.theme);
+        // Clamped inside the row like the y-tick labels; the connector shares it
+        // so the bridge always meets the pill it belongs to.
+        const top = Math.max(
+          lh / 2,
+          Math.min(f.rowHeight - lh / 2, reticle.py),
+        );
         return (
-          <div
-            style={{
-              ...axisPillStyle(
-                f.theme,
-                reticle.axisColor ?? cursorInk(f.theme),
-              ),
-              top: `${Math.max(
-                lh / 2,
-                Math.min(f.rowHeight - lh / 2, reticle.py),
-              )}px`,
-              transform: 'translateY(-50%)',
-              ...axisPillX(reticle.side, f.plotWidth, reticle.axisOffset),
-            }}
-          >
-            {reticle.formatted}
-          </div>
+          <>
+            {/* Bridge the reticle's horizontal line — which ends at the plot's
+                edge — to a pill sitting further out, so the two read as one
+                object (the x-axis time pill's connector, transposed). Nothing to
+                bridge on the innermost axis. */}
+            {reticle.axisOffset > 0 && (
+              <div
+                style={{
+                  ...axisPillConnector(
+                    reticle.side,
+                    f.plotWidth,
+                    reticle.axisOffset,
+                    ink,
+                  ),
+                  top: `${top}px`,
+                  transform: 'translateY(-50%)',
+                }}
+              />
+            )}
+            <div
+              style={{
+                ...axisPillStyle(f.theme, ink),
+                top: `${top}px`,
+                transform: 'translateY(-50%)',
+                ...axisPillX(reticle.side, f.plotWidth, reticle.axisOffset),
+              }}
+            >
+              {reticle.formatted}
+            </div>
+          </>
         );
       },
       ...(o.showTime
