@@ -67,26 +67,38 @@ include new features and type-level changes; patch bumps are strictly additive.
 ### Added
 
 - `@pond-ts/charts`: **axis pan/zoom** — the `<XAxis>` strip and each `<YAxis>`
-  gutter are now grabbable. **Drag or wheel** a strip to zoom that axis about the
-  pixel you grabbed, **double-click** to put it back (the declared `range` on x,
-  its own fit on y). Drag on a strip always _zooms_; panning stays the plot's
-  drag, so the two gestures never compete. **No new prop:** the strips follow the
-  container's existing `panZoom` — its zoom-x modes light up the x strip, its
-  zoom-y modes (`panZoomY` / `panZoomXY`) the gutters — so a chart on the
-  `'none'` default captures nothing, strips included. The x strip reuses the
-  plot's domain-space maths, so `bounds` and `minDuration` still fence the view,
-  and a trading-time axis still floors on _trading_ ms; a category axis has no
-  continuous domain and stays inert.
+  gutter are now grabbable, and **double-click** puts one back (the declared
+  `range` on x, its fit on y). No new container prop: the strips follow the
+  existing `panZoom`, and a `'none'` chart captures nothing, strips included. The
+  cursor stays an ordinary arrow at rest and becomes directional (`↕` / `↔`) only
+  while a gesture is running.
 
-  **A y gutter scales only the axis you grabbed** — its sibling on the other
-  side, and every other row, hold still. That needed a new **per-axis** pixel
-  transform (`RowFrame.axisTransforms`, layered under the container's uniform
-  `yTransform`), because the uniform one exists precisely so a _plot_ gesture
-  never has to answer "which of this row's axes does a vertical drag own?".
-  Unlike the uniform transform it is not floored at `k ≥ 1`: squashing an axis
-  you deliberately grabbed is the point, and it widens the domain rather than
-  exposing blank canvas. `ContainerFrame` also gains `seedRange` (the declared
-  view, as against the gestured `timeRange`) — the x reset's target.
+  **The x strip is the canvas gesture, moved to the axis** — drag pans, wheel
+  zooms about the pointer — reusing the plot's own domain-space maths, so
+  `bounds` and `minDuration` still fence the view, a trading-time axis still pans
+  and floors in _trading_ time, and `panZoom='pan'` leaves the wheel to the page
+  here just as it does over the plot. A category axis has no continuous domain
+  and stays inert.
+
+  **A y gutter zooms, and only the axis you grabbed** — its sibling and every
+  other row hold still. It is live whenever the chart is interactive at all,
+  deliberately _not_ gated on `panZoomY`/`panZoomXY`: the common chart is an
+  auto-fitting y with a panned and zoomed x, and scaling y there shouldn't
+  require opting the plot into vertical gestures. Per-axis scaling needed a new
+  per-axis pixel transform (`RowFrame.axisTransforms`, layered under the
+  container's uniform `yTransform`), since the uniform one exists precisely so a
+  _plot_ gesture never has to pick an axis; unlike it, this is not floored at
+  `k ≥ 1`, because squashing an axis you grabbed is the point.
+
+- `@pond-ts/charts`: **`<YAxis onDomainChange>`** — the auto-vs-manual hand-off
+  for a scaled y axis. Fires with the `[min, max]` a gutter gesture reached, and
+  with `null` when the axis is released back to auto-fit, so a UI can show the
+  bounds, badge the scale "manual", and offer a toggle back. Providing it makes
+  the axis **controlled** (the gesture only reports; `min`/`max` fed back are
+  what it draws), exactly as `onTimeRangeChange` does for the x view; omit it and
+  the axis holds the zoom itself. `ContainerFrame` also gains `seedRange` — the
+  declared view, as against the gestured `timeRange` — which is the x reset's
+  target.
 
 ## [0.61.0] — 2026-08-16
 

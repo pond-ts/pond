@@ -109,37 +109,65 @@ then ignored so they can't fight the user's pan. To drive the range externally
 
 ### Grabbing an axis
 
-The axis strips follow `panZoom` too — whichever dimension can zoom, that axis
-becomes grabbable:
+The axis strips are grabbable too:
 
-| Gesture on a strip | What it does                                                           |
-| ------------------ | ---------------------------------------------------------------------- |
-| Drag               | **Zooms** that axis about the pixel you grabbed (up / right = zoom in) |
-| Wheel              | Same, a notch at a time                                                |
-| Double-click       | Puts that axis back — the declared `range` on x, its fit on y          |
+| Gesture      | On the **x strip**                       | On a **y gutter**                  |
+| ------------ | ---------------------------------------- | ---------------------------------- |
+| Drag         | **Pans** — exactly as dragging the plot  | **Zooms that one axis** (up = in)  |
+| Wheel        | **Zooms** about the pointer, as the plot | Zooms that one axis                |
+| Double-click | Back to the declared `range`             | Releases that axis back to its fit |
+
+The cursor stays an ordinary arrow at rest — a strip is chrome you also hover,
+click and read — and becomes a directional (`↕` / `↔`) cursor only while a
+gesture is actually running.
+
+**What turns them on.** The x strip follows the plot's own x freedoms: it pans
+with `'pan'` and up, and its wheel zooms wherever the plot's does (so
+`panZoom='pan'` leaves the wheel to the page here too). A y gutter is live
+whenever the chart is interactive **at all** — deliberately _not_ gated on
+`panZoomY`/`panZoomXY`, because the common chart is an auto-fitting y with a
+panned and zoomed x, and scaling that y should not require opting the plot into
+vertical gestures (a different feature: the uniform 2-D transform a scatter or
+heat map wants). A `panZoom='none'` chart captures nothing anywhere.
+
+#### Auto or manual — reporting a y override
+
+An auto-fitting y axis stops being auto the moment the user scales it, and most
+UIs want to say so. `onDomainChange` is that hand-off: it fires with the
+`[min, max]` a gutter gesture reached, and with `null` when the axis is released
+back to auto (double-click).
 
 ```tsx
-// x strip live (zoom-x is in 'panZoom'); the y gutter needs a zoom-y mode
-<ChartContainer range={range} panZoom="panZoomXY">
-  <YAxis id="price" format="$,.2f" />
-  …
-  <XAxis />
-</ChartContainer>
+const [scale, setScale] = useState<[number, number] | null>(null); // null = auto
+
+<YAxis
+  id="price"
+  {...(scale ? { min: scale[0], max: scale[1] } : {})}
+  onDomainChange={setScale}
+/>;
 ```
 
-Three things worth knowing:
+Providing it makes the axis **controlled**, exactly as `onTimeRangeChange` does
+for the x view: the gesture only reports, and what the axis draws is the
+`min`/`max` you feed back — so your panel can show them, badge the scale
+"manual", and offer a toggle to auto (`setScale(null)`, the same thing
+double-clicking does). Omit it and the axis holds the zoom internally, which is
+why a chart with no scale UI needs no wiring.
 
-- **Drag on a strip zooms; it never pans.** Panning stays the plot's drag, so
-  the two gestures never compete for the same pixels — grab the plot to slide,
-  grab the axis to scale.
-- **A y gutter scales only the axis you grabbed.** The plot's own vertical
-  gesture scales _every_ axis in the row by one factor — that shared factor is
-  what keeps the aspect ratio fixed, and it's why a plot drag can't sensibly
-  favour the left axis over the right one. Grabbing a gutter names the axis, so
-  that one rescales and its sibling (and every other row) holds still.
-- **The x strip is the container's**, so zooming it moves every row at once —
-  the x view is shared. A category x-axis has no continuous domain and stays
-  inert.
+See [`Axes/PanZoom`](pathname:///storybook/?path=/story/axes-panzoom--auto-or-manual-y-scale)
+for the whole loop in one story.
+
+Two more things worth knowing:
+
+- **The x strip is the canvas gesture, moved to the axis** — same maths, same
+  sign, same `bounds` / `minDuration` fences — so there is one gesture vocabulary
+  for the chart rather than one per surface.
+- **A y gutter zooms only its own axis.** That's the thing the plot can't
+  express: its vertical drag scales _every_ axis in the row by a single factor
+  (the aspect lock), so it can't favour the left axis over the right. Grabbing a
+  gutter names the axis; its sibling and every other row hold still.
+- **The x view is the container's**, so panning or zooming the strip moves every
+  row at once. A category x axis has no continuous domain and stays inert.
 
 ## Sharp edges
 
@@ -165,9 +193,9 @@ Three things worth knowing:
   _is_ the panned view — there's no declared home left to go back to. Hold your
   own home range and reset it from `onMouseEvent` if you want one. (A y gutter's
   reset always works: it just drops that axis's own zoom.)
-- **A per-axis y zoom is not reported anywhere.** `onTimeRangeChange` covers the
-  x view only; a gutter zoom lives on the row and has no callback yet. Say so if
-  you need one.
+- **`onTimeRangeChange` covers the x view only** — including the x strip's pan
+  and wheel, like any other view change. A y gutter's zoom reports through that
+  axis's own `onDomainChange`.
 
 ## See also
 

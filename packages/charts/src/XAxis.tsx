@@ -1,4 +1,4 @@
-import { Fragment, useContext } from 'react';
+import { Fragment, useContext, useRef } from 'react';
 import { scaleLinear } from 'd3-scale';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import { derivedTicks, type AxisTransform } from './derivedTicks.js';
@@ -22,7 +22,12 @@ import {
   type AxisMouseHandler,
 } from './axis-events.js';
 import { useAxisGestures } from './use-axis-gestures.js';
-import { zoomRange, zoomRangeTrading } from './viewport.js';
+import {
+  panRange,
+  panRangeTrading,
+  zoomRange,
+  zoomRangeTrading,
+} from './viewport.js';
 
 /** Tick strip height (mark + value label) in CSS px. */
 const TICK_STRIP = 22;
@@ -631,7 +636,9 @@ export function XAxis({
   // scale — no gutter arithmetic. The label reads the same channel a cursor
   // pill does: the band scale's category name on a category axis (a d3 number
   // format can't name one), this axis's readout format everywhere else.
-  // Drag / wheel to zoom the shared x view, double-click to return to the
+  // The view the current pan started from — see `onDragStart`.
+  const panStartRef = useRef<[number, number] | null>(null);
+  // Drag pans and wheel zooms the shared x view, double-click returns to the
   // declared range. Enabled by the container's own `panZoom` zoom-x degree of
   // freedom — a chart that never opted in captures nothing here.
   //
@@ -639,8 +646,38 @@ export function XAxis({
   // plot's gesture (`Layers`' wheel makes the same exclusion), so the strip
   // stays inert there rather than snapping between slots.
   const gestures = useAxisGestures({
-    enabled: container.zoomX && xKind !== 'category',
     axis: 'x',
+    // Canvas parity: drag pans (with `panX`), wheel zooms (with `zoomX`), so
+    // `panZoom='pan'` leaves the wheel to the page here exactly as it does over
+    // the plot. A category axis has no continuous domain for either.
+    drag: container.panX && xKind !== 'category' ? 'pan' : 'none',
+    wheel: container.zoomX && xKind !== 'category',
+    // Snapshot the view at press: the pan is re-derived from it on every move
+    // (the plot's own approach), so a long drag can't accumulate rounding, and
+    // `roundRange`'s ms snap can't ratchet the span.
+    onDragStart: () => {
+      panStartRef.current = [container.timeRange[0], container.timeRange[1]];
+    },
+    onPan: (totalDeltaPx) => {
+      const start = panStartRef.current;
+      if (start === null) return;
+      // Dragging right moves the view EARLIER — the content follows the pointer,
+      // the sign the plot's drag uses.
+      if (container.discontinuities) {
+        // Trading-time axis: pan by an equal amount of *trading* time so the
+        // drag feels uniform across collapsed gaps (a raw-ms shift jumps).
+        const fraction = plotWidth > 0 ? -totalDeltaPx / plotWidth : 0;
+        container.applyRange(
+          panRangeTrading(start, fraction, container.discontinuities),
+        );
+        return;
+      }
+      const span = start[1] - start[0];
+      const dt = plotWidth > 0 ? -totalDeltaPx * (span / plotWidth) : 0;
+      container.applyRange(
+        panRange(start, dt, { log: container.xIsLog, snap: xKind === 'time' }),
+      );
+    },
     onZoom: (factor, pivotPx) => {
       const pivot = +xScale.invert(pivotPx);
       // The same two-branch zoom the plot uses, so an axis drag and a plot

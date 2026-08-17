@@ -9,6 +9,7 @@ import {
   type AxisMouseHandler,
 } from './axis-events.js';
 import { useAxisGestures } from './use-axis-gestures.js';
+import { zoomRange } from './viewport.js';
 
 /**
  * Clamp on a gutter drag's own zoom factor. Unlike the container's uniform
@@ -230,6 +231,37 @@ export interface YAxisProps {
    */
   onMouseEvent?: AxisMouseHandler;
   /**
+   * A gutter gesture changed this axis's visible domain — **the "auto vs manual"
+   * hand-off.** Fires with the `[min, max]` the gesture arrived at, and with
+   * `null` when the axis is released back to auto-fit (double-click).
+   *
+   * The common shape this exists for: an auto-fitting y axis on a chart whose x
+   * is panned and zoomed. The moment the user scrolls or drags the y gutter they
+   * have overridden the fit, and a UI usually wants to *say* so — show the
+   * resulting min/max, mark the scale "manual", and offer a toggle back to auto
+   * (which is the same thing double-clicking the gutter does).
+   *
+   * ```tsx
+   * const [scale, setScale] = useState<[number, number] | null>(null); // null = auto
+   * <YAxis
+   *   id="price"
+   *   {...(scale ? { min: scale[0], max: scale[1] } : {})}
+   *   onDomainChange={setScale}
+   * />
+   * ```
+   *
+   * **Providing it makes the axis controlled**, exactly as `onTimeRangeChange`
+   * does for the x view: the gesture then only *reports*, and what the axis draws
+   * is whatever `min`/`max` you feed back. Omit it and the axis holds the zoom
+   * itself (an internal per-axis transform) — which is the standalone behaviour,
+   * and why a chart with no scale UI needs no wiring at all.
+   *
+   * The reported pair is in data units, ready to hand straight back as
+   * `min`/`max`. On a `log` axis it stays positive (the zoom is done in log
+   * space), so it is always a domain the axis can actually draw.
+   */
+  onDomainChange?: (domain: readonly [number, number] | null) => void;
+  /**
    * @internal Declaration position among the row's children, injected by
    * `ChartRow` so the first-declared axis stays the default. Do not set.
    */
@@ -274,6 +306,7 @@ export function YAxis({
   labelPlacement = 'rotated',
   color,
   onMouseEvent,
+  onDomainChange,
   index = 0,
 }: YAxisProps) {
   const container = useContext(ContainerContext);
@@ -342,11 +375,39 @@ export function YAxis({
   // still (see `RowFrame.axisTransforms` for why that needs its own transform).
   const own = row.axisTransforms.get(id) ?? { k: 1, ty: 0 };
   const gestures = useAxisGestures({
-    enabled: container.zoomY,
     axis: 'y',
+    // **Not gated on the container's zoom-y freedom.** The canonical setup is an
+    // auto-fitting y axis on a chart whose *x* is panned and zoomed
+    // (`panZoom='panZoom'`), and scaling the y gutter there must not require
+    // opting the plot into vertical gestures as well — those are a different
+    // feature (the uniform 2-D transform a scatter or heat map wants). So the
+    // gutter follows whether the chart is interactive **at all**, and a
+    // `panZoom='none'` chart stays inert exactly as before.
+    drag: container.panEnabled || container.zoomEnabled ? 'zoom' : 'none',
+    wheel: container.panEnabled || container.zoomEnabled,
     onZoom: (factor, pivotPx) => {
-      // `factor` scales the domain span, so its reciprocal is the pixel-space
-      // zoom — the same relationship the plot's wheel handler uses.
+      // Read the scale at gesture time, not from the render that built this
+      // closure — a wheel notch mid-stream must compose onto what is drawn now.
+      // (Named `current`, not `scale` — that is this axis's scale-KIND prop.)
+      const current = row.yScales.get(id);
+      if (current === undefined) return;
+      if (onDomainChange !== undefined) {
+        // **Controlled**: report the domain the gesture arrived at and draw
+        // nothing ourselves — `min`/`max` coming back is what moves the axis.
+        // Computed in *domain* space (the same `zoomRange` the x view uses, with
+        // no floor and no ms snapping) so the pair handed back is in data units,
+        // ready to be shown as a min/max and fed straight back.
+        const [lo, hi] = current.domain() as [number, number];
+        const next = zoomRange([lo, hi], +current.invert(pivotPx), factor, 0, {
+          log: scale === 'log',
+          snap: false,
+        });
+        if (next[1] > next[0]) onDomainChange(next);
+        return;
+      }
+      // **Uncontrolled**: hold the zoom ourselves as this axis's own pixel
+      // transform. `factor` scales the domain span, so its reciprocal is the
+      // pixel-space zoom — the relationship the plot's wheel handler uses.
       const z = 1 / factor;
       const nk = Math.min(MAX_AXIS_K, Math.max(MIN_AXIS_K, own.k * z));
       // Re-derive the zoom the clamp actually allowed, so a gesture held at a
@@ -362,7 +423,13 @@ export function YAxis({
         ty: pivotPx * (1 - zEff) + own.ty * zEff,
       });
     },
-    onReset: () => row.applyAxisTransform(id, { k: 1, ty: 0 }),
+    // Back to auto: `null` tells a controlled consumer to drop its override (the
+    // same thing their "manual → auto" toggle does), and an uncontrolled axis
+    // drops its own transform.
+    onReset: () => {
+      if (onDomainChange !== undefined) onDomainChange(null);
+      else row.applyAxisTransform(id, { k: 1, ty: 0 });
+    },
   });
 
   // `hide`: everything above still runs — the axis is registered, so its scale

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { TimeSeries } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
@@ -9,12 +10,14 @@ import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
 
 /**
- * Axis pan/zoom — drag or wheel an axis strip to scale it, double-click to put
- * it back. Enabled by the container's `panZoom`, so each story shows which mode
- * turns which strip on. One story per surface the gesture behaves differently on.
+ * Axis pan/zoom — the strips are grabbable, and double-click puts one back.
+ * Enabled by the container's `panZoom`, so each story shows which mode turns
+ * which strip on. One story per surface the gestures behave differently on.
  *
- * Drag **zooms**; panning stays the plot's drag, so try both: drag the plot to
- * slide, drag the strip to scale.
+ * **The x strip is the canvas gesture**: drag pans, wheel zooms — the same
+ * vocabulary as dragging the plot itself, so there is one model to learn.
+ * **A y gutter zooms on drag**, which is the thing the plot cannot do per axis
+ * (its vertical drag scales every axis in the row at once).
  */
 const N = 240;
 const BASE = Date.UTC(2026, 2, 2, 9, 30, 0);
@@ -53,8 +56,12 @@ const meta = {
 export default meta;
 type Story = StoryObj;
 
-/** `panZoom="panZoom"` — the x strip scales time. Drag it, wheel it, dbl-click. */
-export const XStripZoom: Story = {
+/**
+ * `panZoom="panZoom"` — the x strip, behaving as the canvas does: **drag pans**
+ * (the span holds, the window slides), **wheel zooms** about the pointer,
+ * double-click returns to the declared range.
+ */
+export const XStripPanAndZoom: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W} showAxis={false} panZoom="panZoom">
       <ChartRow height={200}>
@@ -63,7 +70,7 @@ export const XStripZoom: Story = {
           <LineChart series={demo()} column="price" axis="price" />
         </Layers>
       </ChartRow>
-      <XAxis label="drag / wheel me — double-click to reset" />
+      <XAxis label="drag to pan · wheel to zoom · double-click to reset" />
     </ChartContainer>
   ),
 };
@@ -90,7 +97,8 @@ export const YGutterPerAxis: Story = {
 /**
  * `panZoom="panZoomXY"` — every strip is live. The plot's own vertical gesture
  * still scales both axes **together** (the uniform transform, which is what fixes
- * the aspect ratio); a gutter drag scales just that one.
+ * the aspect ratio — it's what you want on a scatter or heat map); a gutter drag
+ * scales just the one you grabbed.
  */
 export const BothAxes: Story = {
   render: () => (
@@ -115,7 +123,7 @@ export const BothAxes: Story = {
 
 /**
  * Two rows, one shared x. A gutter drag is scoped to its own row's axis — the
- * lower row doesn't move — while the x strip scales both rows at once, because
+ * lower row doesn't move — while the x strip moves both rows at once, because
  * the x view is the container's.
  */
 export const StackedRows: Story = {
@@ -145,7 +153,8 @@ export const StackedRows: Story = {
 
 /**
  * `minDuration` is the zoom-in floor for the strip exactly as for the plot —
- * drag right as hard as you like, the view stops at 30 minutes.
+ * wheel in as hard as you like, the view stops at 30 minutes. (The drag pans, so
+ * it never meets this floor.)
  */
 export const ZoomInFloor: Story = {
   render: () => (
@@ -162,14 +171,14 @@ export const ZoomInFloor: Story = {
           <LineChart series={demo()} column="price" axis="price" />
         </Layers>
       </ChartRow>
-      <XAxis label="floors at 30 minutes" />
+      <XAxis label="wheel in — floors at 30 minutes" />
     </ChartContainer>
   ),
 };
 
 /**
- * A **category** x axis has no continuous domain to zoom, so its strip stays
- * inert (no resize cursor) even under `panZoomXY` — the y gutter still zooms.
+ * A **category** x axis has no continuous domain to pan or zoom, so its strip
+ * stays inert (no grab cursor) even under `panZoomXY` — the y gutter still zooms.
  */
 export const CategoryStripInert: Story = {
   render: () => (
@@ -185,7 +194,69 @@ export const CategoryStripInert: Story = {
           <BarChart categories={desks} axis="flow" />
         </Layers>
       </ChartRow>
-      <XAxis label="inert — categories don't zoom" />
+      <XAxis label="inert — categories don't pan or zoom" />
     </ChartContainer>
   ),
+};
+
+/**
+ * **The common setup, end to end.** An auto-fitting y axis on a chart whose x is
+ * panned and zoomed — and the moment you scroll or drag the y gutter, the fit is
+ * overridden: `onDomainChange` reports the `[min, max]` the gesture reached, the
+ * panel below flips to **manual** and shows them, and the axis draws what the
+ * panel feeds back. Put it back with the toggle or by double-clicking the gutter;
+ * while it is auto, the min/max are the fit's and not yours to set.
+ *
+ * Note the gutter is live under a plain `panZoom` — scaling y does not require
+ * opting the plot into vertical gestures.
+ */
+export const AutoOrManualYScale: Story = {
+  render: function Render() {
+    const [domain, setDomain] = useState<readonly [number, number] | null>(
+      null,
+    );
+    const manual = domain !== null;
+    const fmt = (v: number) => `$${v.toFixed(2)}`;
+    return (
+      <div style={{ width: W }}>
+        <ChartContainer range={RANGE} width={W} panZoom="panZoom">
+          <ChartRow height={200}>
+            <YAxis
+              id="price"
+              format="$,.0f"
+              {...(domain ? { min: domain[0], max: domain[1] } : {})}
+              onDomainChange={setDomain}
+            />
+            <Layers>
+              <LineChart series={demo()} column="price" axis="price" />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>
+        <div
+          style={{
+            marginTop: 12,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            fontSize: 13,
+            fontFamily: 'system-ui, sans-serif',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setDomain(null)}
+            disabled={!manual}
+            style={{ padding: '4px 10px' }}
+          >
+            {manual ? 'manual → auto' : 'auto'}
+          </button>
+          <span style={{ opacity: manual ? 1 : 0.55 }}>
+            {manual
+              ? `min ${fmt(domain[0])} · max ${fmt(domain[1])}`
+              : 'min / max follow the data (scroll or drag the y axis to override)'}
+          </span>
+        </div>
+      </div>
+    );
+  },
 };

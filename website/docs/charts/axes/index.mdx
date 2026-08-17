@@ -73,6 +73,7 @@ auto-fitting axis — you just get no gutter or ticks.
 | `width`          | `number`                                       | `50`           | Gutter width in CSS px.                                                                                                               |
 | `color`          | `string`                                       | theme          | This axis's tick + title colour (presentation-only).                                                                                  |
 | `onMouseEvent`   | `(info: AxisMouseEvent) => void`               | —              | Mouse events on the gutter, with the axis value under the pointer. See [Clicking an axis](#clicking-an-axis).                         |
+| `onDomainChange` | `(domain: [number, number] \| null) => void`   | —              | A gutter gesture scaled this axis: the `[min, max]` reached, or `null` for back-to-auto. Providing it makes the axis controlled.      |
 
 `format` is the one prop whose inline **function** form must be hoisted or
 `useCallback`'d — it's the only prop the layout's structural change-detection

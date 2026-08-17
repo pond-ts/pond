@@ -1537,16 +1537,39 @@ the strips, CHANGELOG `[Unreleased]`. Asked for as "the next step on the axes";
 the plot had a full pan/zoom system and the strips captured nothing. Decisions
 worth keeping:
 
-- **Drag zooms, it does not pan.** The plot's drag already pans, and a strip
-  that panned would duplicate it while losing the gesture people actually reach
-  for on an axis. Up / right = zoom in, pivot on the grabbed pixel.
-- **No new prop — the strips follow `panZoom`.** Enablement per dimension comes
-  from the container's existing zoom degrees of freedom, so the `'none'` default
-  keeps every existing chart inert, and nobody has to say "pan/zoom on" twice.
-  The considered alternative (a per-axis `panZoom` prop, inheriting by default)
-  buys one real case — y-gutter rescaling *without* the plot capturing vertical
-  drags, which otherwise fights selection sweeps. Deferred until someone hits it;
-  the prop can be added without moving anything.
+- **The x strip is the canvas gesture; a y gutter is not.** First cut had *both*
+  strips zooming on drag (the TradingView reading). Corrected on review: x should
+  "just work the same way as canvas pan/zoom" — drag pans, wheel zooms, same
+  maths and same sign — because a second vocabulary for the same view is a cost
+  with no payoff, and the strip is better understood as another handle on the
+  canvas gesture. The y gutter keeps drag-to-zoom, because *that* gesture has no
+  canvas equivalent: the plot's vertical drag scales the whole row by one factor
+  (deliberately — it's the aspect lock, and what a scatter / heat map wants), so
+  per-axis scaling has to come from somewhere, and the gutter is where.
+- **A pan is anchored, a zoom is incremental.** The pan re-derives from the range
+  snapshotted at press (the plot's own approach) rather than accumulating deltas:
+  incremental steps re-snap to whole ms (`roundRange`) on every move and the
+  errors compound over a long drag. Pinned by a test that drags in 1px steps and
+  asserts the same landing as one jump.
+- **No new prop — the strips follow `panZoom`, but not symmetrically.** The x
+  strip takes the plot's own x freedoms (`panX` for the drag, `zoomX` for the
+  wheel). A y gutter is live whenever the chart is interactive **at all**, and
+  that asymmetry is the point: the canonical chart is an auto-fitting y with a
+  panned/zoomed x (`panZoom='panZoom'`), and requiring `panZoomY` to scale y
+  would force the plot into vertical gestures the chart doesn't want — those are
+  a different feature (the uniform 2-D transform a scatter or heat map wants).
+  `panZoom='none'` still captures nothing anywhere, so no existing chart moves.
+- **Cursor names the gesture, not the affordance.** Arrow at rest — a strip is
+  chrome you also hover, click and read, and a standing resize cursor claims the
+  whole thing is a handle — switching to `↕`/`↔` only while a drag is live (or for
+  a beat after a wheel notch, which has no press to bracket it).
+- **`onDomainChange` on `<YAxis>` is the auto/manual hand-off**, and it makes the
+  axis controlled the way `onTimeRangeChange` does for x: the gesture reports the
+  `[min, max]` it reached (or `null` for back-to-auto) and draws nothing itself,
+  because holding an internal transform *and* the min/max fed back would apply
+  the zoom twice. Uncontrolled axes keep the internal transform, so a chart with
+  no scale UI needs no wiring. Pinned by a test that asserts no transform entry
+  exists in the controlled case.
 - **A per-axis pixel transform** (`RowFrame.axisTransforms`) is the substance.
   `ContainerFrame.yTransform` is uniform *on purpose* — it sidesteps "which axis
   does a vertical gesture own?" for plot drags, and that shared factor is what

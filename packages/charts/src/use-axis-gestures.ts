@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, type CSSProperties } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 
 /**
@@ -15,27 +21,44 @@ const WHEEL_SENSITIVITY = 0.0015; // matches the plot's `ZOOM_SENSITIVITY`
  * on a strip that also zooms.
  */
 const DRAG_SLOP = 3;
+/** How long the directional cursor lingers after the last wheel notch. */
+const WHEEL_CURSOR_MS = 400;
 
-/** What a strip needs to know to turn pointer deltas into zoom. */
+/** What a strip needs to know to turn pointer input into view changes. */
 export interface AxisGestureSpec {
-  /**
-   * Whether the strip captures gestures at all. Wired from the container's
-   * `panZoom` (its zoom degree of freedom for this axis), so a chart that never
-   * opted into pan/zoom is untouched — no listeners, no resize cursor.
-   */
-  enabled: boolean;
-  /** Which pointer delta drives the zoom, and which resize cursor to show. */
+  /** Which pointer delta drives the gesture, and which cursor to show. */
   axis: 'x' | 'y';
+  /**
+   * What a **drag** on the strip does, or `'none'` when it captures no drag:
+   *
+   * - `'pan'` — slides the view, **exactly as a drag on the plot does**. Reports
+   *   the total delta from the press (anchored, not incremental) because that is
+   *   what the plot's own pan needs: it re-derives the view from the range it
+   *   snapshotted at press, so a pan can't accumulate rounding across a drag.
+   * - `'zoom'` — scales the axis about the grabbed pixel, reporting incremental
+   *   span multipliers.
+   *
+   * The x strip pans (the canvas gesture, one mental model for both surfaces);
+   * a y gutter zooms, which is the gesture the plot cannot offer per axis.
+   */
+  drag: 'none' | 'pan' | 'zoom';
+  /** Whether the **wheel** zooms this axis — again as it does over the plot. */
+  wheel: boolean;
+  /** Called on press, before any movement: the caller snapshots its view here so
+   *  a `'pan'` drag can anchor on it. */
+  onDragStart?: () => void;
+  /** Total drag delta from the press, in px (`'pan'` mode only). */
+  onPan?: (totalDeltaPx: number) => void;
   /**
    * Zoom by `factor` about `pivotPx` (strip-local pixels). `factor` is a
    * **domain-span multiplier** — `< 1` zooms in, `> 1` out — matching
-   * {@link zoomRange}'s convention, and it arrives **incrementally**: each move
-   * reports the step since the last one, so the caller composes it onto whatever
-   * the current view is rather than tracking a gesture start.
+   * {@link zoomRange}'s convention. From the wheel it is one notch; from a
+   * `'zoom'` drag it arrives **incrementally**, each move reporting the step
+   * since the last, so the caller composes onto the current view.
    */
-  onZoom: (factor: number, pivotPx: number) => void;
+  onZoom?: (factor: number, pivotPx: number) => void;
   /** Double-click — return this axis to its declared view. */
-  onReset: () => void;
+  onReset?: () => void;
 }
 
 /** What a strip spreads onto its root element to become gesture-capable. */
@@ -62,18 +85,21 @@ export interface AxisGestures {
 }
 
 /**
- * Drag-to-zoom, wheel-to-zoom and double-click-to-reset for an axis strip.
+ * Drag, wheel and double-click gestures for an axis strip.
  *
- * **Drag zooms; it does not pan** — panning stays the plot's own drag, so the
- * two gestures never compete for the same pixels. Up / right expands the axis
- * (zoom in), down / left compresses it (zoom out), and the pixel the drag
- * started on is the pivot, so the value you grabbed stays under the pointer for
- * the whole gesture.
+ * **The x strip behaves exactly as the canvas does** — drag pans, wheel zooms
+ * about the pointer — so a chart has one gesture vocabulary rather than one per
+ * surface, and the strip is simply a second place to reach the same view.
  *
- * Zoom arrives at the caller as an incremental span multiplier, which is what
- * lets the same hook drive two very different back-ends: the x strip's
- * domain-space `zoomRange` (where `bounds` / `minDuration` / the trading
- * calendar live) and a y gutter's per-axis pixel transform.
+ * **A y gutter zooms on drag**, because that is the gesture the plot cannot
+ * offer: the plot's vertical drag scales every axis in the row by one factor
+ * (the aspect lock), while grabbing a gutter names a single axis. Up expands it,
+ * down compresses it, about the grabbed pixel.
+ *
+ * The two shapes are why the drag reports differently per mode: a pan is
+ * **anchored** (total delta from the press, re-derived from a snapshot — how the
+ * plot's own pan avoids accumulating rounding), a zoom is **incremental** (a
+ * span multiplier per step, composed onto the current view).
  */
 export function useAxisGestures(spec: AxisGestureSpec): AxisGestures {
   // The live spec, read by the handlers — so the wheel listener can be attached
@@ -83,17 +109,29 @@ export function useAxisGestures(spec: AxisGestureSpec): AxisGestures {
 
   const elRef = useRef<HTMLDivElement | null>(null);
   const drag = useRef<{
-    /** Pointer position at the last reported step (deltas are incremental). */
+    /** Pointer position at the press — a pan anchors on this. */
+    start: number;
+    /** Pointer position at the last reported step (a zoom is incremental). */
     last: number;
     /** Strip-local pixel the gesture grabbed — the pivot, fixed for the drag. */
     pivot: number;
-    /** Past the slop, so this sequence is a zoom and its click is not real. */
+    /** Past the slop, so this sequence is a gesture and its click is not real. */
     committed: boolean;
-    /** Total travel, for the slop test. */
-    travel: number;
   } | null>(null);
   /** Set on release when the sequence had committed; consumed by the axis. */
   const draggedRef = useRef(false);
+  /**
+   * Whether a gesture is happening *right now* — the cursor's only input.
+   *
+   * At rest a strip shows the ordinary arrow: it is chrome you also click, hover
+   * and read, and a permanent resize cursor over it would claim the whole strip
+   * is a handle. The directional cursor appears while a drag is live (and for a
+   * moment after a wheel notch, which has no press to hang it on) — the same way
+   * a scrollbar tells you what it is doing rather than what it could do.
+   */
+  const [gesturing, setGesturing] = useState(false);
+  /** Clears the post-wheel cursor; also cancelled on unmount. */
+  const wheelIdle = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const local = (e: { clientX: number; clientY: number }): number => {
     const el = elRef.current;
@@ -117,15 +155,17 @@ export function useAxisGestures(spec: AxisGestureSpec): AxisGestures {
   const zoom = (factor: number, pivotPx: number): void => {
     if (!Number.isFinite(factor) || factor <= 0) return;
     if (!Number.isFinite(pivotPx)) return;
-    specRef.current.onZoom(factor, pivotPx);
+    specRef.current.onZoom?.(factor, pivotPx);
   };
 
   const onPointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!specRef.current.enabled || e.button !== 0) return;
-    const at = specRef.current.axis === 'x' ? e.clientX : e.clientY;
-    drag.current = { last: at, pivot: local(e), committed: false, travel: 0 };
+    const s = specRef.current;
+    if (s.drag === 'none' || e.button !== 0) return;
+    const at = s.axis === 'x' ? e.clientX : e.clientY;
+    drag.current = { start: at, last: at, pivot: local(e), committed: false };
+    s.onDragStart?.();
     // Capture so a drag that leaves the strip (very likely — the strip is
-    // ~20px tall) keeps steering the zoom until release. Feature-detected: a
+    // ~20px tall) keeps steering the gesture until release. Feature-detected: a
     // test DOM may not implement it, and the gesture works without it as long
     // as the pointer stays over the strip.
     if (typeof e.currentTarget.setPointerCapture === 'function') {
@@ -135,23 +175,32 @@ export function useAxisGestures(spec: AxisGestureSpec): AxisGestures {
 
   const onPointerMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
     const d = drag.current;
-    if (d === null || !specRef.current.enabled) return;
-    const at = specRef.current.axis === 'x' ? e.clientX : e.clientY;
-    const step = at - d.last;
-    d.travel += Math.abs(step);
-    // Below the slop the sequence is still a click: report nothing, and keep
-    // accumulating from the press point so the first real step isn't swallowed.
-    if (!d.committed && d.travel < DRAG_SLOP) return;
+    const s = specRef.current;
+    if (d === null || s.drag === 'none') return;
+    const at = s.axis === 'x' ? e.clientX : e.clientY;
+    const total = at - d.start;
+    // Below the slop the sequence is still a click: report nothing, so a click's
+    // jitter neither moves the view nor shifts the scale the click hit-tests
+    // against. The plot's own drag holds the same line, at the same 3px.
+    if (!d.committed && Math.abs(total) <= DRAG_SLOP) return;
+    if (!d.committed) setGesturing(true);
     d.committed = true;
-    d.last = at;
-    if (step !== 0) {
-      zoom(factorFor(step, DRAG_SENSITIVITY), d.pivot);
+    if (s.drag === 'pan') {
+      // Anchored on the press: the caller re-derives from the range it
+      // snapshotted in `onDragStart`, which is how the plot's pan avoids
+      // accumulating rounding over a long drag.
+      if (Number.isFinite(total)) s.onPan?.(total);
+    } else {
+      const step = at - d.last;
+      if (step !== 0) zoom(factorFor(step, DRAG_SENSITIVITY), d.pivot);
     }
+    d.last = at;
   }, []);
 
   const endDrag = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     drag.current = null;
+    setGesturing(false);
     if (d === null) return;
     if (d.committed) draggedRef.current = true;
     if (
@@ -163,26 +212,39 @@ export function useAxisGestures(spec: AxisGestureSpec): AxisGestures {
   }, []);
 
   const onDoubleClick = useCallback(() => {
-    if (specRef.current.enabled) specRef.current.onReset();
+    const s = specRef.current;
+    if (s.drag !== 'none' || s.wheel) s.onReset?.();
   }, []);
 
   // Wheel must be a native non-passive listener to `preventDefault()` the page
   // scroll — React's `onWheel` is passive. Attached once; the handler reads the
-  // live spec, and no-ops (leaving the page to scroll) while gestures are off.
+  // live spec, and no-ops (leaving the page to scroll) while the wheel is off.
   useEffect(() => {
     const el = elRef.current;
     if (el === null) return;
     const onWheel = (e: WheelEvent) => {
       const s = specRef.current;
-      if (!s.enabled) return;
+      if (!s.wheel) return;
       e.preventDefault();
       // The wheel's own axis is irrelevant here: the strip *is* the axis, so a
       // notch means "zoom me" whichever way the device reports it. `deltaY` is
       // what a mouse wheel and a two-finger scroll both produce.
       zoom(Math.exp(e.deltaY * WHEEL_SENSITIVITY), local(e));
+      // A wheel notch has no press to bracket, so the cursor is shown for a beat
+      // and re-armed by each further notch — a continuous scroll reads as one
+      // gesture rather than flickering per notch.
+      setGesturing(true);
+      if (wheelIdle.current !== null) clearTimeout(wheelIdle.current);
+      wheelIdle.current = setTimeout(
+        () => setGesturing(false),
+        WHEEL_CURSOR_MS,
+      );
     };
     el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      if (wheelIdle.current !== null) clearTimeout(wheelIdle.current);
+    };
   }, []);
 
   const setRef = useCallback((el: HTMLDivElement | null) => {
@@ -195,25 +257,33 @@ export function useAxisGestures(spec: AxisGestureSpec): AxisGestures {
     return was;
   }, []);
 
-  if (!spec.enabled) {
+  if (spec.drag === 'none' && !spec.wheel) {
     return { ref: setRef, props: {}, style: {}, consumeDrag };
   }
   return {
     ref: setRef,
     props: {
-      onPointerDown,
-      onPointerMove,
-      onPointerUp: endDrag,
-      onPointerCancel: endDrag,
+      ...(spec.drag === 'none'
+        ? {}
+        : {
+            onPointerDown,
+            onPointerMove,
+            onPointerUp: endDrag,
+            onPointerCancel: endDrag,
+          }),
       onDoubleClick,
     },
     style: {
-      cursor: spec.axis === 'x' ? 'ew-resize' : 'ns-resize',
-      // A zoom drag must not start a text selection of the tick labels.
-      userSelect: 'none',
-      // The strip owns its gestures; a two-finger scroll over it zooms rather
-      // than scrolling the page.
-      touchAction: 'none',
+      // Arrow at rest (see `gesturing`); while moving, name the direction the
+      // gesture works in — up/down over a y gutter, left/right over the x strip.
+      ...(gesturing
+        ? { cursor: spec.axis === 'x' ? 'ew-resize' : 'ns-resize' }
+        : {}),
+      // A drag must not start a text selection of the tick labels.
+      userSelect: 'none' as const,
+      // The strip owns the wheel where it takes it, so a two-finger scroll
+      // zooms rather than scrolling the page.
+      ...(spec.wheel ? { touchAction: 'none' as const } : {}),
     },
     consumeDrag,
   };

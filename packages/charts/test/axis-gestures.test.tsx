@@ -4,14 +4,16 @@
  *
  * Two claims carry the design and get the hardest tests:
  *
- * - **The x strip reuses the plot's domain-space maths**, so `minDuration` is
- *   still the zoom-in floor and the grabbed instant stays under the pointer.
+ * - **The x strip behaves exactly as the canvas does** — drag pans, wheel zooms
+ *   — reusing the plot's own domain-space maths, so the pan preserves its span,
+ *   `minDuration` is still the zoom-in floor, and a wheel holds the instant
+ *   under the pointer.
  * - **A y gutter scales only the axis you grabbed.** The container's uniform
  *   `yTransform` deliberately refuses to answer "which axis does a vertical
  *   gesture own?" (context.ts); a gutter drag answers it, so the sibling axis
  *   and every other row must hold still.
  */
-import { useContext, useEffect } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { TimeSeries } from 'pond-ts';
@@ -144,48 +146,84 @@ describe('<XAxis> drag-to-zoom', () => {
     return { dom, into };
   };
 
-  it('dragging right zooms in — the span shrinks', () => {
+  it('drag PANS — the span is preserved, as on the canvas', () => {
     const { dom, into } = mount();
     expect(span(into.c!.timeRange)).toBe(1000);
 
     dragBy(xStrip(dom), 'x', 120);
 
-    expect(span(into.c!.timeRange)).toBeLessThan(1000);
+    // A pan slides the window; scaling it would be the plot-gesture confusion
+    // this axis deliberately avoids.
+    expect(span(into.c!.timeRange)).toBe(1000);
   });
 
-  it('dragging left zooms out — the span grows', () => {
+  it('dragging right moves the view earlier — the content follows the pointer', () => {
     const { dom, into } = mount();
 
-    dragBy(xStrip(dom), 'x', -120, 200);
+    dragBy(xStrip(dom), 'x', 105); // 105px of a 350px plot over a 1000ms view
 
-    expect(span(into.c!.timeRange)).toBeGreaterThan(1000);
+    // -105/350 * 1000 = -300ms, the same sign the plot's drag uses.
+    expect(into.c!.timeRange[0]).toBeCloseTo(-300, 0);
+    expect(into.c!.timeRange[1]).toBeCloseTo(700, 0);
   });
 
-  it('holds the grabbed instant under the pointer', () => {
+  it('dragging left moves it later', () => {
+    const { dom, into } = mount();
+
+    dragBy(xStrip(dom), 'x', -70, 200);
+
+    expect(into.c!.timeRange[0]).toBeCloseTo(200, 0);
+    expect(into.c!.timeRange[1]).toBeCloseTo(1200, 0);
+  });
+
+  it('the pan is anchored on the press, not accumulated per move', () => {
+    const { dom, into } = mount();
+    // Many small moves to the same place as one big one must land identically —
+    // an incremental pan would drift here, because each step would re-snap to
+    // whole ms (`roundRange`) and the errors would compound.
+    act(() => {
+      fireEvent.pointerDown(xStrip(dom), {
+        clientX: 100,
+        clientY: 5,
+        button: 0,
+        pointerId: 1,
+      });
+      for (let x = 104; x <= 205; x += 1) {
+        fireEvent.pointerMove(xStrip(dom), {
+          clientX: x,
+          clientY: 5,
+          pointerId: 1,
+        });
+      }
+      fireEvent.pointerUp(xStrip(dom), {
+        clientX: 205,
+        clientY: 5,
+        pointerId: 1,
+      });
+    });
+
+    // -105/350 * 1000 = -300ms exactly, whatever route the pointer took.
+    expect(into.c!.timeRange[0]).toBeCloseTo(-300, 0);
+    expect(span(into.c!.timeRange)).toBe(1000);
+  });
+
+  it('a wheel notch zooms about the pointer, holding that instant', () => {
     const { dom, into } = mount();
     const grabbed = +into.c!.xScale.invert(100);
-
-    dragBy(xStrip(dom), 'x', 90, 100);
-
-    // The pivot keeps its pixel: inverting the same pixel gives the same value.
-    // Within a millisecond — a time view is snapped to whole ms (`roundRange`),
-    // so the pivot can land a fraction of a ms off and that is the floor of the
-    // model, not slack in the gesture.
-    expect(+into.c!.xScale.invert(100)).toBeCloseTo(grabbed, 0);
-  });
-
-  it('a wheel notch over the strip zooms it', () => {
-    const { dom, into } = mount();
 
     wheelOn(xStrip(dom), -240, { clientX: 100 });
 
     expect(span(into.c!.timeRange)).toBeLessThan(1000);
+    // Within a millisecond — a time view snaps to whole ms (`roundRange`), so
+    // the pivot can land a fraction of a ms off; that is the model's floor, not
+    // slack in the gesture.
+    expect(+into.c!.xScale.invert(100)).toBeCloseTo(grabbed, 0);
   });
 
   it('double-click returns to the declared range', () => {
     const { dom, into } = mount();
     dragBy(xStrip(dom), 'x', 150);
-    expect(span(into.c!.timeRange)).not.toBe(1000);
+    expect(into.c!.timeRange[0]).not.toBe(RANGE[0]);
 
     act(() => {
       fireEvent.doubleClick(xStrip(dom));
@@ -216,7 +254,9 @@ describe('<XAxis> drag-to-zoom', () => {
       </ChartContainer>,
     ).container;
 
-    dragBy(xStrip(dom), 'x', 600); // far past the floor
+    // Wheel, not drag: `minDuration` floors the ZOOM, and the strip's drag pans.
+    for (let i = 0; i < 12; i += 1)
+      wheelOn(xStrip(dom), -240, { clientX: 100 });
 
     expect(span(into.c!.timeRange)).toBeGreaterThanOrEqual(400);
   });
@@ -225,9 +265,38 @@ describe('<XAxis> drag-to-zoom', () => {
     const { dom, into } = mount({ panZoom: 'none' });
 
     dragBy(xStrip(dom), 'x', 150);
+    wheelOn(xStrip(dom), -240, { clientX: 100 });
 
+    expect(into.c!.timeRange[0]).toBe(RANGE[0]);
     expect(span(into.c!.timeRange)).toBe(1000);
     expect(xStrip(dom).style.cursor).toBe('');
+  });
+
+  it("panZoom='pan' pans on drag but leaves the wheel to the page", () => {
+    const into: { c?: ContainerFrame; r?: RowFrame } = {};
+    const dom = draw(
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="pan"
+      >
+        <ChartRow height={100}>
+          <YAxis id="v" min={0} max={50} />
+          <Layers>
+            <LineChart series={series()} column="v" axis="v" />
+          </Layers>
+          <Capture into={into} />
+        </ChartRow>
+        <XAxis />
+      </ChartContainer>,
+    ).container;
+
+    wheelOn(xStrip(dom), -240, { clientX: 100 });
+    expect(span(into.c!.timeRange)).toBe(1000); // no zoom
+
+    dragBy(xStrip(dom), 'x', 105);
+    expect(into.c!.timeRange[0]).toBeCloseTo(-300, 0); // but it pans
   });
 
   it('a category axis has no continuous domain to zoom — inert', () => {
@@ -252,8 +321,39 @@ describe('<XAxis> drag-to-zoom', () => {
     const before = into.c!.timeRange;
 
     dragBy(xStrip(dom), 'x', 150);
+    wheelOn(xStrip(dom), -240, { clientX: 100 });
 
     expect(into.c!.timeRange).toEqual(before);
+    expect(xStrip(dom).style.cursor).toBe('');
+  });
+
+  it('is an arrow at rest and a left/right cursor only while dragging', () => {
+    const { dom } = mount();
+    expect(xStrip(dom).style.cursor).toBe('');
+
+    act(() => {
+      fireEvent.pointerDown(xStrip(dom), {
+        clientX: 100,
+        clientY: 5,
+        button: 0,
+        pointerId: 1,
+      });
+      fireEvent.pointerMove(xStrip(dom), {
+        clientX: 140,
+        clientY: 5,
+        pointerId: 1,
+      });
+    });
+    expect(xStrip(dom).style.cursor).toBe('ew-resize');
+
+    act(() => {
+      fireEvent.pointerUp(xStrip(dom), {
+        clientX: 140,
+        clientY: 5,
+        pointerId: 1,
+      });
+    });
+    expect(xStrip(dom).style.cursor).toBe('');
   });
 
   it('swallows the drag’s trailing click, but not a real click', () => {
@@ -307,7 +407,7 @@ describe('<YAxis> drag-to-zoom — per axis', () => {
         range={RANGE}
         width={WIDTH + 50}
         showAxis={false}
-        panZoom="panZoomY"
+        panZoom="panZoom"
       >
         <ChartRow height={100}>
           <YAxis id="left" min={0} max={100} />
@@ -387,14 +487,71 @@ describe('<YAxis> drag-to-zoom — per axis', () => {
     expect(domainOf(into, 'right')).toEqual([0, 10]);
   });
 
-  it('stays inert when panZoom does not include y', () => {
+  it('is an arrow at rest and an up/down cursor only while dragging', () => {
+    const { dom } = mount();
+    expect(yGutter(dom, 'left').style.cursor).toBe('');
+
+    act(() => {
+      fireEvent.pointerDown(yGutter(dom, 'left'), {
+        clientX: 5,
+        clientY: 50,
+        button: 0,
+        pointerId: 1,
+      });
+      fireEvent.pointerMove(yGutter(dom, 'left'), {
+        clientX: 5,
+        clientY: 20,
+        pointerId: 1,
+      });
+    });
+    expect(yGutter(dom, 'left').style.cursor).toBe('ns-resize');
+
+    act(() => {
+      fireEvent.pointerUp(yGutter(dom, 'left'), {
+        clientX: 5,
+        clientY: 20,
+        pointerId: 1,
+      });
+    });
+    expect(yGutter(dom, 'left').style.cursor).toBe('');
+  });
+
+  it('is live under an x-only panZoom — the canonical auto-y setup', () => {
+    // Scaling the y gutter must NOT require opting the plot into vertical
+    // gestures: the common chart is an auto-fitting y with a panned/zoomed x.
     const into: { c?: ContainerFrame; r?: RowFrame } = {};
     const dom = draw(
       <ChartContainer
         range={RANGE}
         width={WIDTH}
         showAxis={false}
-        panZoom="panZoom" // x only
+        panZoom="panZoom"
+      >
+        <ChartRow height={100}>
+          <YAxis id="v" min={0} max={100} />
+          <Layers>
+            <LineChart series={series()} column="v" axis="v" />
+          </Layers>
+          <Capture into={into} />
+        </ChartRow>
+      </ChartContainer>,
+    ).container;
+    expect(into.c!.zoomY).toBe(false); // the plot itself does not zoom y
+
+    dragBy(yGutter(dom, 'v'), 'y', -60, 50);
+
+    const d = into.r!.yScales.get('v')!.domain() as [number, number];
+    expect(d[1] - d[0]).toBeLessThan(100);
+  });
+
+  it('stays inert on a non-interactive chart (panZoom off)', () => {
+    const into: { c?: ContainerFrame; r?: RowFrame } = {};
+    const dom = draw(
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="none"
       >
         <ChartRow height={100}>
           <YAxis id="v" min={0} max={100} />
@@ -410,5 +567,106 @@ describe('<YAxis> drag-to-zoom — per axis', () => {
 
     expect(into.r!.yScales.get('v')!.domain()).toEqual([0, 100]);
     expect(yGutter(dom, 'v').style.cursor).toBe('');
+  });
+});
+
+describe('<YAxis onDomainChange> — the auto/manual hand-off', () => {
+  /** The shape a scale UI actually wires: `null` domain = auto-fit. */
+  function Controlled({
+    onReport,
+  }: {
+    onReport: (d: readonly [number, number] | null) => void;
+  }) {
+    const [domain, setDomain] = useState<readonly [number, number] | null>(
+      null,
+    );
+    return (
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="panZoom"
+      >
+        <ChartRow height={100}>
+          <YAxis
+            id="price"
+            {...(domain ? { min: domain[0], max: domain[1] } : {})}
+            onDomainChange={(d) => {
+              setDomain(d);
+              onReport(d);
+            }}
+          />
+          <Layers>
+            <LineChart series={series()} column="v" axis="price" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  }
+
+  it('reports the domain the gesture reached, in data units', () => {
+    const seen = vi.fn();
+    const dom = draw(<Controlled onReport={seen} />).container;
+
+    dragBy(yGutter(dom, 'price'), 'y', -60, 50); // drag up = zoom in
+
+    expect(seen).toHaveBeenCalled();
+    const [lo, hi] = seen.mock.calls.at(-1)![0] as [number, number];
+    // The series spans 10..40, so the auto fit is that; a zoom-in narrows it.
+    expect(hi - lo).toBeLessThan(30);
+    expect(Number.isFinite(lo) && Number.isFinite(hi)).toBe(true);
+  });
+
+  it('reports null on double-click — the "back to auto" signal', () => {
+    const seen = vi.fn();
+    const dom = draw(<Controlled onReport={seen} />).container;
+    dragBy(yGutter(dom, 'price'), 'y', -60, 50);
+
+    act(() => {
+      fireEvent.doubleClick(yGutter(dom, 'price'));
+    });
+
+    expect(seen.mock.calls.at(-1)![0]).toBeNull();
+  });
+
+  it('holds no internal transform when controlled — no double-counting', () => {
+    const into: { c?: ContainerFrame; r?: RowFrame } = {};
+    const dom = draw(
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="panZoom"
+      >
+        <ChartRow height={100}>
+          <YAxis id="price" min={0} max={100} onDomainChange={() => {}} />
+          <Layers>
+            <LineChart series={series()} column="v" axis="price" />
+          </Layers>
+          <Capture into={into} />
+        </ChartRow>
+      </ChartContainer>,
+    ).container;
+
+    dragBy(yGutter(dom, 'price'), 'y', -60, 50);
+
+    // The consumer owns the domain; an internal transform on top of the min/max
+    // they feed back would apply the zoom twice.
+    expect(into.r!.axisTransforms.has('price')).toBe(false);
+    expect(into.r!.yScales.get('price')!.domain()).toEqual([0, 100]);
+  });
+
+  it('a wheel notch reports too, composing on the fed-back domain', () => {
+    const seen = vi.fn();
+    const dom = draw(<Controlled onReport={seen} />).container;
+
+    wheelOn(yGutter(dom, 'price'), -240, { clientY: 50 });
+    const first = seen.mock.calls.at(-1)![0] as [number, number];
+    wheelOn(yGutter(dom, 'price'), -240, { clientY: 50 });
+    const second = seen.mock.calls.at(-1)![0] as [number, number];
+
+    // The second notch zooms further in than the first, which only holds if the
+    // axis is reading the domain the consumer fed back.
+    expect(second[1] - second[0]).toBeLessThan(first[1] - first[0]);
   });
 });
