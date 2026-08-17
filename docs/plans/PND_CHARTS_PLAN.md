@@ -3801,3 +3801,85 @@ with keys they become legal, and the container's category-agreement check
 compares label lists.
 
 **Not started.** Blocked on owner review of the sketch.
+
+---
+
+## [PND-HEIGHT] — container-owned height (2026-08-13)
+
+Filed from a consumer follow-up to `width="auto"` (the [PND-SPARCFRIC]
+consumer), whose report opened by declining the feature we had just shipped:
+**"`width: 'auto'` doesn't help _us_"** — they must supply `<ChartRow height>`,
+which forces them to measure the box anyway, so they already hold the width and
+adopting `'auto'` would stack pond's `ResizeObserver` on top of theirs. The
+asymmetry in their words: _"pond now owns width and owns none of height."_
+
+Their cost was concrete and already drifting: `Math.max(40, height - 20)` in
+six components, `- 24` in their smoke story — two guesses at the axis strip's
+height in one codebase. **Verified against source, both guesses are wrong and
+no constant can be right**: the bare strip is `TICK_STRIP = 22`, plus 16 with a
+`label`, plus 20 when the tick ladder shows its calendar band row at the
+current grain, plus `fontSize + 6` per stacked marker pill (`XAxis.tsx:478`).
+Our own resizable-panels recipe carried `AXIS_H = 22` with a note admitting a
+container height mode "would remove this bookkeeping" — the docs predicted the
+ask.
+
+**The report's closing pattern earned its keep and belongs in the design
+principles**: _whenever the caller has to know a number pond chose, that's an
+API gap_ — third instance, after [PND-BARWIDTH] (bar-vs-band width) and
+[PND-IGNITEFRAME] (gutter arithmetic).
+
+### Shipped 2026-08-13 — `<ChartContainer height>` + `<ChartRow flex>`
+
+The load-bearing design decision: **CSS does the subtraction, not arithmetic.**
+An earlier shape had the x-axis strip _registering_ its height with the
+container (the gutter mechanism transposed) and the container computing flex
+rows' pixels. The owner's mid-build flag killed it: the splitter pattern
+(Tidal's, and the recipe's) drops a plain `<div>` between rows, whose height
+the container cannot know — pixel arithmetic either breaks the splitter or
+grows a registration API for arbitrary children. Instead the managed container
+is a **flex column** (rows block flexes, strip keeps natural height), a flex
+row is `flex: n 1 0` + `min-height: 0`, and the row **reads back** the height
+layout gave it for its y-scales. Strip subtraction, splitters, `rowGap` and
+mixed fixed/flex all fall out of flexbox; no strip registration exists.
+
+Decisions recorded:
+
+- **Omitted `height` = unmanaged (classic), not `'auto'`** — unlike width,
+  where omitted = auto. A chart must have a width; height has a legitimate
+  intrinsic mode every existing consumer is in.
+- **A bare `<ChartRow>` is `flex={1}`** — the consumer's "single-row set
+  should need no arithmetic at all", literally: `<ChartContainer width="auto"
+height="auto"><ChartRow>…` is the whole markup. Safe because `height` was
+  previously required, so no existing code omits it.
+- **Both `height` and `flex` given → dev warning, `height` wins** (the
+  long-standing prop), deterministic rather than throwing.
+- **The latch generalizes**: flex rows keep their last non-zero height while
+  hidden, as `width="auto"` does. A hidden chart is not a resized one.
+- **Standing-zero dev warning** on the container (600 ms): the deadlock the
+  width docs could only describe is now named at runtime. It matters more for
+  height, where a flex-column child's height defaults to its content — the
+  deadlock is the _default_ there.
+
+Browser-verified (happy-dom has no layout engine, so unit tests pin structure
+and read-back wiring; Storybook pinned the arithmetic): single row 320 = 297 +
+22-px strip; **StripChangesHeight** — two 300px charts, bare strip 22 vs
+labelled strip 38, flex row absorbed the 16px difference, which is the exact
+case every hand constant loses; splitter drag conserves total and repaints
+through the RO loop; `flex={3}`/`flex={1}` measures 277/92.
+
+**A test-methodology find worth generalizing** (second of its kind this wave):
+the story smoke tests were vacuous for auto-sizing stories — headless, the
+measurement gate never opens, so _none of the story's chart content executes_,
+and a story with a broken column name passed the smoke and threw only in the
+browser (it happened: `column="hr"` for a column named `bpm`). The smoke now
+stubs `getBoundingClientRect` so gates open and chart content renders; a chip
+was filed to apply the same to the older auto-width smokes. Rule: **a smoke
+test behind a gate tests the gate.**
+
+Not built, deliberately:
+
+- **`<ChartRow minHeight>` / clamps** — `min-height` on the consumer's own
+  wrapper is one CSS property; a prop would duplicate CSS with less power.
+  Reopen if a real consumer needs a floor that CSS placement can't express.
+- **Strip-height publication on `useChartFrame`** — nobody needs the number
+  once nobody subtracts it; publishing it would recreate the constant.

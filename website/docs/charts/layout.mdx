@@ -93,6 +93,50 @@ The [responsive-width recipe](../recipes/responsive-width) shows the same
 measurement done by hand, which is worth reading when you need the measured
 width for something _besides_ the chart.
 
+### Height — the container-owned column ([PND-HEIGHT])
+
+`height` works the same way: a **pixel number or `'auto'`**, with one
+difference — an _omitted_ `height` means **unmanaged**, the classic mode where
+rows declare pixel heights and the container is their sum. (Width has no such
+mode; a chart must have a width.)
+
+With a height, the container renders as a **flex column**: the rows block
+flexes, the x-axis strip keeps its natural height at the bottom, and
+`<ChartRow flex>` rows (a bare `<ChartRow>` is `flex={1}`) divide what the
+browser says is left. A full-bleed chart is zero arithmetic:
+
+```tsx
+<ChartContainer width="auto" height="auto">
+  <ChartRow>
+    <YAxis id="v" />
+    <Layers>
+      <LineChart series={s} column="v" axis="v" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+**"What the browser says is left" is the feature, not an implementation
+detail.** The axis strip's height depends on its `label`, the theme's font
+size, whether the tick ladder is showing its calendar band row at the current
+grain, and how many marker pills stack — it is not a constant a caller can
+subtract. Every consumer who tried carried a wrong number (`20`, `24`, and
+this site's own recipe had `22` — three values in the wild for one strip, and
+the strip isn't even constant). CSS does the subtraction, so there is no
+number to know.
+
+Fixed-`height` rows keep their pixels inside a managed container, and non-row
+children between rows (a draggable splitter) take their natural space — see
+the [resizable panels recipe](../recipes/resizable-panels) for that shape,
+which this reduces to a drag handler.
+
+A flex row measures the height layout gave it and builds its y-scales from
+that. Like `width="auto"`, it paints nothing until its first measurement,
+keeps its last non-zero height while hidden, and the container **warns in dev
+when a measured dimension stays 0** — which matters more for height, because
+a flex-_column_ child's height defaults to its content, so the unconstrained-
+parent deadlock is the default there rather than an edge case.
+
 For a full-height split with a **draggable divider** between panels (the
 price-over-indicator financial shape), the
 [resizable multi-panel recipe](../recipes/resizable-panels) works it end to
@@ -102,23 +146,25 @@ end on these same primitives.
 
 ### `<ChartContainer>` — layout-relevant
 
-| Prop       | Type               | Default  | Purpose                                                                                                          |
-| ---------- | ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------- |
-| `width`    | `number \| 'auto'` | `'auto'` | Overall chart width in CSS px, or `'auto'` to measure and fill. Real pixels, never `"100%"`.                     |
-| `rowGap`   | `number`           | `0`      | Vertical space between stacked rows in px (not under the axis).                                                  |
-| `showAxis` | `boolean`          | `true`   | Auto-render the shared x axis under the rows. `false` for a bare plot or to place your own `<XAxis>`.            |
-| `grid`     | `boolean`          | `true`   | Draw the vertical gridlines (a calendar-density hierarchical grid on a time axis). `false` for a clean backdrop. |
+| Prop       | Type               | Default  | Purpose                                                                                                             |
+| ---------- | ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------- |
+| `width`    | `number \| 'auto'` | `'auto'` | Overall chart width in CSS px, or `'auto'` to measure and fill. Real pixels, never `"100%"`.                        |
+| `height`   | `number \| 'auto'` | —        | Manage vertical layout: rows flex into `height` minus the axis strip. Omitted = classic mode (rows declare pixels). |
+| `rowGap`   | `number`           | `0`      | Vertical space between stacked rows in px (not under the axis).                                                     |
+| `showAxis` | `boolean`          | `true`   | Auto-render the shared x axis under the rows. `false` for a bare plot or to place your own `<XAxis>`.               |
+| `grid`     | `boolean`          | `true`   | Draw the vertical gridlines (a calendar-density hierarchical grid on a time axis). `false` for a clean backdrop.    |
 
 (`range`, `theme`, `cursor`, and the axis-kind props are covered under
 [Axes](./axes/index.mdx) and [Interaction](./interaction/cursors-and-readouts.mdx).)
 
 ### `<ChartRow>`
 
-| Prop       | Type         | Default   | Purpose                                                      |
-| ---------- | ------------ | --------- | ------------------------------------------------------------ |
-| `height`   | `number`     | — (req)   | Row height in CSS px.                                        |
-| `cursor`   | `CursorMode` | container | Cursor presentation for this row, overriding the container.  |
-| `children` | `ReactNode`  | —         | `<YAxis>` (left) · `<Layers>` · `<YAxis>` (right), in order. |
+| Prop       | Type         | Default   | Purpose                                                                                                         |
+| ---------- | ------------ | --------- | --------------------------------------------------------------------------------------------------------------- |
+| `height`   | `number`     | —         | Fixed row height in CSS px. Omit for flex sizing.                                                               |
+| `flex`     | `number`     | `1`       | Share of the container's remaining height (needs `<ChartContainer height>`). A bare `<ChartRow>` is `flex={1}`. |
+| `cursor`   | `CursorMode` | container | Cursor presentation for this row, overriding the container.                                                     |
+| `children` | `ReactNode`  | —         | `<YAxis>` (left) · `<Layers>` · `<YAxis>` (right), in order.                                                    |
 
 ## Reading the resolved layout — `useChartFrame()`
 

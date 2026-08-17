@@ -1985,6 +1985,24 @@ argument for the rest.
   close, in
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-ignite--ignite-charts-friction-2026-08-11).
 
+- **[PND-HEIGHT]** — **SHIPPED 2026-08-13.** Container-owned vertical layout:
+  `<ChartContainer height={number | 'auto'}>` renders a flex column (rows
+  block flexes, axis strip keeps natural height) and `<ChartRow flex>` rows —
+  a bare `<ChartRow>` is `flex={1}` — divide what the browser says is left,
+  reading the result back for their y-scales. Filed by the [PND-SPARCFRIC]
+  consumer as the follow-up that _declined_ `width="auto"` ("pond now owns
+  width and owns none of height"): forced to measure height anyway, they
+  carried a hand guess at the axis strip (`- 20` in six components, `- 24` in
+  a seventh) for a strip that is actually 22 _and varies_ with label, font,
+  calendar bands and pill lanes. The design constraint that shaped it: the
+  splitter pattern (Tidal / the resizable-panels recipe) puts a plain `<div>`
+  between rows, so the subtraction had to be CSS layout, not container
+  arithmetic — which is also what deleted the recipe's `AXIS_H` constant.
+  Their pattern claim is adopted into the principles: **whenever the caller
+  has to know a number pond chose, that's an API gap** (third instance:
+  [PND-BARWIDTH], [PND-IGNITEFRAME], this). Outcome + decisions in
+  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-height--container-owned-height-2026-08-13).
+
 - **[PND-ANNROLE] — annotation roles.** `theme.annotation.depth` draws a
   resting mark at 0.4 alpha, and **two consumers overrode that in opposite
   directions in one week**: the measles gallery card went louder (the vaccine

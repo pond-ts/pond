@@ -65,6 +65,36 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts: `<ChartContainer height>` + `<ChartRow flex>` — container-owned
+  vertical layout** ([PND-HEIGHT]). `height` takes a pixel number or `'auto'`
+  (measured by the same `ResizeObserver` as `width="auto"`); omitted stays the
+  classic mode where rows declare pixels. A managed container renders as a
+  **flex column** — the rows block flexes, the x-axis strip keeps its natural
+  height — and flex rows (a bare `<ChartRow>` is `flex={1}`) divide what the
+  browser says is left, then read that height back for their y-scales.
+
+  The design constraint was that **CSS does the subtraction**: the axis
+  strip's height depends on its `label`, the theme font size, the tick
+  ladder's calendar band row at the current grain, and stacked marker pills —
+  it is not a constant a caller can subtract, and every consumer who tried
+  carried a wrong one (`20` and `24` in one codebase; this site's own
+  resizable-panels recipe said `22`). It also means non-row children between
+  rows — the recipe's draggable splitter — keep taking their natural space,
+  so that recipe reduces to its drag handler: one flex row absorbing slack
+  over one fixed row the drag resizes, no `AXIS_H`, no measuring hook.
+
+  A flex row paints nothing until its first measurement, latches its last
+  non-zero height while hidden (a `display: none` tab switch keeps its
+  scales), and warns in dev when mounted in a container that never sizes it.
+  The container **warns in dev when a measured dimension stays 0** — the
+  unconstrained-parent deadlock, which for height is the _default_ (a
+  flex-column child's height is its content) rather than an edge case.
+
+  Fixed-`height` rows keep their pixels everywhere, managed or not; a
+  container with no `height` behaves exactly as before.
+
 ## [0.62.0] — 2026-08-16
 
 ### Added
