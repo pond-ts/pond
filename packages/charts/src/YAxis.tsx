@@ -8,6 +8,18 @@ import {
   axisPointerPx,
   type AxisMouseHandler,
 } from './axis-events.js';
+import { useAxisGestures } from './use-axis-gestures.js';
+
+/**
+ * Clamp on a gutter drag's own zoom factor. Unlike the container's uniform
+ * transform (floored at `k ≥ 1` so a plot gesture can't zoom every axis out into
+ * blank canvas) an axis you deliberately grabbed may squash as well as stretch —
+ * `k < 1` widens the domain, which costs nothing. The bounds exist only so a
+ * flick of the wheel can't strand the axis at a factor no further gesture can
+ * recover from.
+ */
+const MIN_AXIS_K = 0.02;
+const MAX_AXIS_K = 50;
 
 export interface YAxisProps {
   /** Identifier a chart links to via its `axis` prop (and the first declared is
@@ -237,6 +249,12 @@ const DEFAULT_TICK_COUNT = 5;
  * computes this axis's scale from the charts linked to it; the gutter then draws
  * tick marks + labels from that scale. Charts attach via `<LineChart axis="id">`
  * (default: the first axis).
+ *
+ * **Gestures.** When the container's `panZoom` can zoom y, the gutter is
+ * grabbable: drag or wheel it to scale **this axis only** — a sibling axis on the
+ * other side, and every other row, hold still — and double-click to release it
+ * back to its fit. That per-axis scaling is what the plot's vertical gesture
+ * deliberately cannot do; see {@link RowFrame.axisTransforms}.
  */
 export function YAxis({
   id,
@@ -317,6 +335,36 @@ export function YAxis({
     registerAxis(slot, spec);
   }, [registerAxis, slot, spec]);
 
+  // Drag / wheel to zoom **this** axis, double-click to release it back to the
+  // row's own fit. Enabled by the container's `panZoom` zoom-y degree of freedom.
+  // The gesture writes this axis's entry in `row.axisTransforms`, so only the
+  // gutter you grabbed rescales — the sibling axis, and every other row, hold
+  // still (see `RowFrame.axisTransforms` for why that needs its own transform).
+  const own = row.axisTransforms.get(id) ?? { k: 1, ty: 0 };
+  const gestures = useAxisGestures({
+    enabled: container.zoomY,
+    axis: 'y',
+    onZoom: (factor, pivotPx) => {
+      // `factor` scales the domain span, so its reciprocal is the pixel-space
+      // zoom — the same relationship the plot's wheel handler uses.
+      const z = 1 / factor;
+      const nk = Math.min(MAX_AXIS_K, Math.max(MIN_AXIS_K, own.k * z));
+      // Re-derive the zoom the clamp actually allowed, so a gesture held at a
+      // limit stops moving the pivot too (rather than sliding the axis).
+      const zEff = own.k === 0 ? 1 : nk / own.k;
+      row.applyAxisTransform(id, {
+        k: nk,
+        // Zoom about the grabbed pixel: p' = pivot + (p − pivot)·z, expanded
+        // through the existing transform p = ty + k·base. No pan clamp here —
+        // the plot's exists to stop zoomed content sliding off the canvas, and
+        // this transform is applied by narrowing the domain, so there is no
+        // canvas to leave.
+        ty: pivotPx * (1 - zEff) + own.ty * zEff,
+      });
+    },
+    onReset: () => row.applyAxisTransform(id, { k: 1, ty: 0 }),
+  });
+
   // `hide`: everything above still runs — the axis is registered, so its scale
   // exists and layers bind to it — and everything below (the gutter chrome)
   // does not. Placed after the last hook so the early return can't change hook
@@ -387,6 +435,8 @@ export function YAxis({
   // and the event is dropped. A categorical row labels by slot, matching its
   // ticks; every other row reads this axis's own tick format.
   const mouse = axisMouseProps(onMouseEvent, 'y', id, (event) => {
+    // See the x strip's: a zoom drag's trailing click is not a click on a value.
+    if (event.type === 'click' && gestures.consumeDrag()) return null;
     if (!yScale) return null;
     // Clamp on the **scale's** range, not the box: a row with a
     // `labelPlacement="top"` axis reserves a header, so the range is
@@ -418,8 +468,17 @@ export function YAxis({
       // — or an e2e test picks it out of a dual-axis row.
       data-axis="y"
       data-axis-id={id}
+      ref={gestures.ref}
+      {...gestures.props}
       {...mouse}
+      // See the x strip's: two `onDoubleClick`s meet here (the reset and the
+      // consumer's report) and a spread would silently drop one.
+      onDoubleClick={(e) => {
+        mouse.onDoubleClick?.(e);
+        gestures.props.onDoubleClick?.();
+      }}
       style={{
+        ...gestures.style,
         flex: `0 0 ${slotWidth}px`,
         display: 'flex',
         justifyContent: side === 'left' ? 'flex-end' : 'flex-start',

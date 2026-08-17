@@ -1532,6 +1532,44 @@ was plot-area or list-row). Decisions worth keeping:
   can round; the axis shouldn't decide), and a synthetic "which tick" field
   (ticks are a rendering detail, not a coordinate).
 
+**Also done from this backlog: axis pan/zoom** — drag / wheel / double-click on
+the strips, CHANGELOG `[Unreleased]`. Asked for as "the next step on the axes";
+the plot had a full pan/zoom system and the strips captured nothing. Decisions
+worth keeping:
+
+- **Drag zooms, it does not pan.** The plot's drag already pans, and a strip
+  that panned would duplicate it while losing the gesture people actually reach
+  for on an axis. Up / right = zoom in, pivot on the grabbed pixel.
+- **No new prop — the strips follow `panZoom`.** Enablement per dimension comes
+  from the container's existing zoom degrees of freedom, so the `'none'` default
+  keeps every existing chart inert, and nobody has to say "pan/zoom on" twice.
+  The considered alternative (a per-axis `panZoom` prop, inheriting by default)
+  buys one real case — y-gutter rescaling *without* the plot capturing vertical
+  drags, which otherwise fights selection sweeps. Deferred until someone hits it;
+  the prop can be added without moving anything.
+- **A per-axis pixel transform** (`RowFrame.axisTransforms`) is the substance.
+  `ContainerFrame.yTransform` is uniform *on purpose* — it sidesteps "which axis
+  does a vertical gesture own?" for plot drags, and that shared factor is what
+  fixes the aspect ratio. A gutter grab answers the question, so it needs its own
+  transform. Applied **sequentially** after the uniform one (each `narrow()`
+  inverts through the scale it is actually narrowing), which is what keeps it
+  right on log / symlog, where two composed `k`s would not land where two
+  applications do. Identity is stored as the *absence* of an entry, so a reset
+  restores the un-grabbed fast path.
+- **`k ≥ 1` deliberately not carried over.** The uniform floor stops a plot
+  gesture zooming every axis out into blank canvas; a grabbed axis may squash,
+  which merely widens its domain. Clamped to `[0.02, 50]` only so a wheel flick
+  can't strand it.
+- **Two bugs the tests caught, both worth remembering.** (1) `axisMouseProps`
+  and the gesture hook both supply `onDoubleClick`, and a JSX spread silently
+  keeps the last one — the reset was dead until they were composed explicitly.
+  (2) happy-dom's `WheelEvent` constructor drops `deltaY` *and* the pointer
+  position, which produced `exp(NaN)` → a `[NaN, NaN]` view; the hook now guards
+  its factor/pivot at the one choke point, which is a real-device hardening too.
+- **Known gaps, documented not fixed:** the x reset is a no-op on a controlled
+  chart (there is no declared home when `range` *is* the panned view), and a
+  per-axis y zoom has no callback — nothing to report it through yet.
+
 **Follow-up (not done):** `formatReadout` is now two channels in one field
 (`cursorFormat` vs the axis kind's default), disambiguated by a companion
 `xReadoutCustom` flag mirroring `xFormatCustom`. The reviewer's point stands

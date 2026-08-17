@@ -21,6 +21,8 @@ import {
   axisPointerPx,
   type AxisMouseHandler,
 } from './axis-events.js';
+import { useAxisGestures } from './use-axis-gestures.js';
+import { zoomRange, zoomRangeTrading } from './viewport.js';
 
 /** Tick strip height (mark + value label) in CSS px. */
 const TICK_STRIP = 22;
@@ -289,6 +291,12 @@ export interface XAxisProps {
  * numbers, with no axis-type prop here; the kind follows the data.
  *
  * `<TimeAxis>` is the time-flavoured preset (`<XAxis />`).
+ *
+ * **Gestures.** When the container's `panZoom` can zoom x, the strip is
+ * grabbable: drag or wheel it to scale the shared view about the pixel you
+ * grabbed, double-click to return to the declared `range`. Drag zooms rather
+ * than pans (the plot's drag pans), and a category axis — which has no
+ * continuous domain — stays inert.
  */
 export function XAxis({
   format,
@@ -623,7 +631,51 @@ export function XAxis({
   // scale — no gutter arithmetic. The label reads the same channel a cursor
   // pill does: the band scale's category name on a category axis (a d3 number
   // format can't name one), this axis's readout format everywhere else.
+  // Drag / wheel to zoom the shared x view, double-click to return to the
+  // declared range. Enabled by the container's own `panZoom` zoom-x degree of
+  // freedom — a chart that never opted in captures nothing here.
+  //
+  // A **category** axis has no continuous domain to zoom, exactly as for the
+  // plot's gesture (`Layers`' wheel makes the same exclusion), so the strip
+  // stays inert there rather than snapping between slots.
+  const gestures = useAxisGestures({
+    enabled: container.zoomX && xKind !== 'category',
+    axis: 'x',
+    onZoom: (factor, pivotPx) => {
+      const pivot = +xScale.invert(pivotPx);
+      // The same two-branch zoom the plot uses, so an axis drag and a plot
+      // wheel move the view by identical maths — including `minDuration` as the
+      // zoom-in floor and, on a trading axis, a floor in *trading* ms.
+      // `applyRange` then applies `bounds` for both.
+      container.applyRange(
+        container.discontinuities
+          ? zoomRangeTrading(
+              container.timeRange,
+              pivot,
+              factor,
+              container.discontinuities,
+              container.minDuration,
+            )
+          : zoomRange(
+              container.timeRange,
+              pivot,
+              factor,
+              container.minDuration,
+              {
+                log: container.xIsLog,
+                snap: xKind === 'time',
+              },
+            ),
+      );
+    },
+    onReset: () => container.applyRange(container.seedRange),
+  });
+
   const mouse = axisMouseProps(onMouseEvent, 'x', undefined, (event) => {
+    // A zoom drag ends with a trailing `click` on the strip, which would report
+    // as "clicked the axis at the value I released on" — a value the user never
+    // aimed at. Swallow exactly that one report; every other event still flows.
+    if (event.type === 'click' && gestures.consumeDrag()) return null;
     const value = +xScale.invert(axisPointerPx(event, 'x', [0, plotWidth]));
     return {
       value,
@@ -637,8 +689,19 @@ export function XAxis({
       // what a consumer styling it (`[data-axis='x'] { cursor: pointer }` next
       // to an `onMouseEvent`) or an e2e test selects on.
       data-axis="x"
+      ref={gestures.ref}
+      {...gestures.props}
       {...mouse}
+      // Both spreads carry an `onDoubleClick` — the gesture's reset and the
+      // consumer's report — and a spread silently keeps the last one. Compose
+      // them, reporting *before* the reset so the payload describes the view the
+      // user actually double-clicked in.
+      onDoubleClick={(e) => {
+        mouse.onDoubleClick?.(e);
+        gestures.props.onDoubleClick?.();
+      }}
       style={{
+        ...gestures.style,
         position: 'relative',
         marginLeft: `${leftGutter}px`,
         width: `${plotWidth}px`,

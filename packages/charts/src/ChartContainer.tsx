@@ -533,6 +533,16 @@ export interface ChartContainerProps {
    * The boolean form is the back-compat shorthand (`true` ⇒ `'panZoom'`,
    * `false` ⇒ `'none'`). Bound the reachable range with {@link bounds}
    * (zoom-out / pan extent) and {@link minDuration} (zoom-in floor).
+   *
+   * **The axis strips follow this prop too.** Whichever dimension can zoom here,
+   * that axis becomes grabbable: drag or wheel an `<XAxis>` strip (with a zoom-x
+   * mode) to scale time, drag or wheel a `<YAxis>` gutter (with a zoom-y mode) to
+   * scale **that one axis**, double-click either to put it back. Drag on a strip
+   * always *zooms* — panning stays the plot's drag, so the two never compete —
+   * and a y gutter's zoom is per axis, unlike the plot's vertical gesture which
+   * scales every axis together (see {@link ContainerFrame.yTransform} versus
+   * {@link RowFrame.axisTransforms}). A chart on the `'none'` default captures
+   * nothing anywhere, strips included.
    */
   panZoom?:
     | boolean
@@ -2084,6 +2094,14 @@ function ResolvedChartContainer({
     () => [d0, d1],
     [d0, d1],
   );
+  // The declared view (`range`), as against the gestured one above — the x
+  // strip's double-click reset target. Memoized on its endpoints for the same
+  // reason `timeRangeTuple` is: it sits on the frame, and a fresh tuple each
+  // render would re-identify it for every draw callback that reads the frame.
+  const seedRangeTuple = useMemo<readonly [number, number]>(
+    () => [seed[0], seed[1]],
+    [seed[0], seed[1]],
+  );
 
   // The per-move cursor state, split into its own context so a mousemove
   // re-identifies only this small object — not the ~50-field frame below, which
@@ -2101,6 +2119,7 @@ function ResolvedChartContainer({
   const frame = useMemo<ContainerFrame>(
     () => ({
       timeRange: timeRangeTuple,
+      seedRange: seedRangeTuple,
       width,
       theme: theme ?? defaultTheme,
       plotWidth,
@@ -2183,6 +2202,7 @@ function ResolvedChartContainer({
     }),
     [
       timeRangeTuple,
+      seedRangeTuple,
       width,
       theme,
       plotWidth,

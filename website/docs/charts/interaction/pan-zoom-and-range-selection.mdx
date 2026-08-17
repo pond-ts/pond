@@ -107,6 +107,40 @@ then ignored so they can't fight the user's pan. To drive the range externally
 — or to **follow a live sliding window** — use controlled mode: handle
 `onTimeRangeChange` and feed `range` yourself.
 
+### Grabbing an axis
+
+The axis strips follow `panZoom` too — whichever dimension can zoom, that axis
+becomes grabbable:
+
+| Gesture on a strip | What it does                                                           |
+| ------------------ | ---------------------------------------------------------------------- |
+| Drag               | **Zooms** that axis about the pixel you grabbed (up / right = zoom in) |
+| Wheel              | Same, a notch at a time                                                |
+| Double-click       | Puts that axis back — the declared `range` on x, its fit on y          |
+
+```tsx
+// x strip live (zoom-x is in 'panZoom'); the y gutter needs a zoom-y mode
+<ChartContainer range={range} panZoom="panZoomXY">
+  <YAxis id="price" format="$,.2f" />
+  …
+  <XAxis />
+</ChartContainer>
+```
+
+Three things worth knowing:
+
+- **Drag on a strip zooms; it never pans.** Panning stays the plot's drag, so
+  the two gestures never compete for the same pixels — grab the plot to slide,
+  grab the axis to scale.
+- **A y gutter scales only the axis you grabbed.** The plot's own vertical
+  gesture scales _every_ axis in the row by one factor — that shared factor is
+  what keeps the aspect ratio fixed, and it's why a plot drag can't sensibly
+  favour the left axis over the right one. Grabbing a gutter names the axis, so
+  that one rescales and its sibling (and every other row) holds still.
+- **The x strip is the container's**, so zooming it moves every row at once —
+  the x view is shared. A category x-axis has no continuous domain and stays
+  inert.
+
 ## Sharp edges
 
 - **The container never zooms itself.** `onRegionSelect` and
@@ -126,6 +160,14 @@ then ignored so they can't fight the user's pan. To drive the range externally
   `minDuration ≤ bounds` width.
 - **Mouse-only** — pan is drag, zoom is wheel; no keyboard or touch gestures
   yet.
+- **The x strip's double-click reset is a no-op when controlled.** It returns
+  the view to the declared `range`, and under `onTimeRangeChange` your `range`
+  _is_ the panned view — there's no declared home left to go back to. Hold your
+  own home range and reset it from `onMouseEvent` if you want one. (A y gutter's
+  reset always works: it just drops that axis's own zoom.)
+- **A per-axis y zoom is not reported anywhere.** `onTimeRangeChange` covers the
+  x view only; a gutter zoom lives on the row and has no callback yet. Say so if
+  you need one.
 
 ## See also
 

@@ -223,6 +223,34 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
   const [layers, setLayers] = useState<ReadonlyMap<symbol, LayerEntry>>(
     () => new Map(),
   );
+  // Per-axis pixel zoom — a drag on one gutter (see `RowFrame.axisTransforms`).
+  // Empty until an axis is actually grabbed, so a chart with no axis gestures
+  // carries no extra state and the identity branch below skips the work.
+  const [axisTransforms, setAxisTransforms] = useState<
+    ReadonlyMap<string, { k: number; ty: number }>
+  >(() => new Map());
+  const applyAxisTransform = useCallback(
+    (id: string, next: { k: number; ty: number }) => {
+      setAxisTransforms((prev) => {
+        const cur = prev.get(id);
+        if (cur !== undefined && cur.k === next.k && cur.ty === next.ty) {
+          return prev; // no-op: don't re-render (a wheel notch at a clamp)
+        }
+        const map = new Map(prev);
+        // Identity is the absence of a transform, not an entry recording one —
+        // so the reset genuinely returns the axis to the un-grabbed state and
+        // the scale memo's fast path applies again.
+        if (next.k === 1 && next.ty === 0) {
+          if (cur === undefined) return prev;
+          map.delete(id);
+        } else {
+          map.set(id, next);
+        }
+        return map;
+      });
+    },
+    [],
+  );
 
   // Registration is idempotent under value-equality: a `<YAxis>` re-fires its
   // register effect whenever its `spec` memo yields a fresh object — which an
@@ -409,14 +437,36 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       // each other in the first cut. Narrowing the domain means ticks, padding
       // and every downstream reader see an ordinary axis over the visible
       // window, and none of them need to know a transform exists.
-      if (yk !== 1 || yty !== 0) {
-        const at = (px: number) => +s.invert((px - yty) / yk);
+      //
+      // The **per-axis** transform (an axis-gutter drag) is applied the same
+      // way, immediately after — so a doubly-transformed axis is still just an
+      // ordinary axis over the doubly-narrowed window. Sequential rather than
+      // pre-composed on purpose: each step inverts through the scale it is
+      // actually narrowing, which is what keeps it correct on a log / symlog
+      // axis, where pixel→value is not affine and two composed `k`s would not
+      // land where two applications do.
+      const narrow = (k: number, ty: number) => {
+        const at = (px: number) => +s.invert((px - ty) / k);
         s.domain([at(height), at(topHeader)]);
+      };
+      if (yk !== 1 || yty !== 0) narrow(yk, yty);
+      const own = axisTransforms.get(ax.id);
+      if (own !== undefined && (own.k !== 1 || own.ty !== 0)) {
+        narrow(own.k, own.ty);
       }
       map.set(ax.id, s);
     }
     return map;
-  }, [effectiveAxes, layerList, height, defaultAxisId, topHeader, yk, yty]);
+  }, [
+    effectiveAxes,
+    layerList,
+    height,
+    defaultAxisId,
+    topHeader,
+    yk,
+    yty,
+    axisTransforms,
+  ]);
 
   // Dev-mode diagnostics for a `scale="log"` axis (see `logAxisWarning`). Three
   // things about *where* this sits are load-bearing, each of them a bug the
@@ -555,6 +605,8 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       isFirstRow,
       rowKey,
       yScales,
+      axisTransforms,
+      applyAxisTransform,
       formats,
       tickValues,
       tickCounts,
@@ -574,6 +626,8 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       isFirstRow,
       rowKey,
       yScales,
+      axisTransforms,
+      applyAxisTransform,
       formats,
       tickValues,
       tickCounts,

@@ -64,6 +64,30 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- `@pond-ts/charts`: **axis pan/zoom** — the `<XAxis>` strip and each `<YAxis>`
+  gutter are now grabbable. **Drag or wheel** a strip to zoom that axis about the
+  pixel you grabbed, **double-click** to put it back (the declared `range` on x,
+  its own fit on y). Drag on a strip always _zooms_; panning stays the plot's
+  drag, so the two gestures never compete. **No new prop:** the strips follow the
+  container's existing `panZoom` — its zoom-x modes light up the x strip, its
+  zoom-y modes (`panZoomY` / `panZoomXY`) the gutters — so a chart on the
+  `'none'` default captures nothing, strips included. The x strip reuses the
+  plot's domain-space maths, so `bounds` and `minDuration` still fence the view,
+  and a trading-time axis still floors on _trading_ ms; a category axis has no
+  continuous domain and stays inert.
+
+  **A y gutter scales only the axis you grabbed** — its sibling on the other
+  side, and every other row, hold still. That needed a new **per-axis** pixel
+  transform (`RowFrame.axisTransforms`, layered under the container's uniform
+  `yTransform`), because the uniform one exists precisely so a _plot_ gesture
+  never has to answer "which of this row's axes does a vertical drag own?".
+  Unlike the uniform transform it is not floored at `k ≥ 1`: squashing an axis
+  you deliberately grabbed is the point, and it widens the domain rather than
+  exposing blank canvas. `ContainerFrame` also gains `seedRange` (the declared
+  view, as against the gestured `timeRange`) — the x reset's target.
+
 ## [0.61.0] — 2026-08-16
 
 ### Added
