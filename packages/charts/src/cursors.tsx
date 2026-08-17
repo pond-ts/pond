@@ -321,11 +321,23 @@ function buildFlagCursor(o: { showTime: boolean }): BuiltCursor {
  * sample nearest the pointer y in the hovered row — or the first sample when
  * nothing is hovered (a pinned tracker shows a reticle in every row); free
  * mode reads the container-resolved raw-pointer measurement.
+ *
+ * It carries the picked sample's **axis placement** (side + gutter offset +
+ * axis ink) as well as its value, because the reticle reads one series and its
+ * pill has to land on *that series' axis*: with two axes on a side, the value
+ * belongs to only one of the two scales, and a pill on the other one is a
+ * number pinned to a ruler that never measured it.
  */
 function crosshairPick(
   f: ResolvedCursorFrame,
   snap: boolean,
-): { py: number; formatted: string; side: 'left' | 'right' } | null {
+): {
+  py: number;
+  formatted: string;
+  side: 'left' | 'right';
+  axisOffset: number;
+  axisColor: string | undefined;
+} | null {
   if (inBoundsX(f) === null) return null;
   if (!snap) return f.pointer;
   if (f.samples.length === 0) return null;
@@ -340,7 +352,13 @@ function crosshairPick(
         ? f.samples[0]!
         : null;
   return pick
-    ? { py: pick.py, formatted: pick.formatted, side: pick.side }
+    ? {
+        py: pick.py,
+        formatted: pick.formatted,
+        side: pick.side,
+        axisOffset: pick.axisOffset,
+        axisColor: pick.axisColor,
+      }
     : null;
 }
 
@@ -398,6 +416,11 @@ function buildCrosshairCursor(o: {
           </>
         );
       },
+      // The value pill goes **on the reticle's own axis**: its side, its offset
+      // out into that gutter (so a second axis on a side gets its own pill
+      // position rather than the innermost axis's), and its `<YAxis color>` when
+      // it has one — with several axes the pill's ink is what says which scale
+      // the number is on. An uncoloured axis keeps the cursor's own ink.
       renderYGutter: (f) => {
         const reticle = crosshairPick(f, o.snap);
         if (reticle === null) return null;
@@ -405,13 +428,16 @@ function buildCrosshairCursor(o: {
         return (
           <div
             style={{
-              ...axisPillStyle(f.theme, cursorInk(f.theme)),
+              ...axisPillStyle(
+                f.theme,
+                reticle.axisColor ?? cursorInk(f.theme),
+              ),
               top: `${Math.max(
                 lh / 2,
                 Math.min(f.rowHeight - lh / 2, reticle.py),
               )}px`,
               transform: 'translateY(-50%)',
-              ...axisPillX(reticle.side, f.plotWidth),
+              ...axisPillX(reticle.side, f.plotWidth, reticle.axisOffset),
             }}
           >
             {reticle.formatted}

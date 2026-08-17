@@ -990,7 +990,10 @@ export function Baseline({
           its y-axis (on the gutter, over the tick), independent of the near-line
           chip. An indicator always shows the axis coordinate (the formatted
           value), never the custom `label` (that stays the near-line chip).
-          Clamped inside the row like the y-tick labels (F-charts-6). */}
+          Clamped inside the row like the y-tick labels (F-charts-6). Placed at
+          the linked axis's own side *and gutter offset*, so with two axes on a
+          side it lands on the one whose scale positioned the line (the same rule
+          as the crosshair's pill; the ink stays the annotation's). */}
       {indicator &&
         (() => {
           const half = container.theme.font.size / 2 + 1;
@@ -1000,7 +1003,11 @@ export function Baseline({
                 ...axisPillStyle(container.theme, ann.color),
                 top: `${Math.max(half, Math.min(row.height - half, y))}px`,
                 transform: 'translateY(-50%)',
-                ...axisPillX(row.axisSides.get(axisId) ?? 'left', w),
+                ...axisPillX(
+                  row.axisSides.get(axisId) ?? 'left',
+                  w,
+                  row.axisOffsets.get(axisId) ?? 0,
+                ),
               }}
             >
               {fmt ? fmt(value) : String(value)}

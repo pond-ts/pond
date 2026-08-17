@@ -106,20 +106,29 @@ export function pointerStyle(
 }
 
 /**
- * CSS placing a value pill **on the axis gutter** at `side`: anchor its inner
- * edge at the plot boundary (`plotWidth`) and let it overflow outward across the
- * reserved gutter (the plot div doesn't clip), lifted with `zIndex` above the
- * sibling axis column (rendered later in the row) so it covers the tick behind
- * it. Shared by {@link YAxisIndicator}'s `placement='axis'` and the crosshair
- * cursor's per-series value pills, so both sit identically on the axis.
+ * CSS placing a value pill **on an axis gutter** at `side`: anchor its inner
+ * edge at that axis's inner edge — the plot boundary (`plotWidth`) plus the
+ * axis's own `offset` out into the gutter — and let it overflow outward (the
+ * plot div doesn't clip), lifted with `zIndex` above the sibling axis columns
+ * (rendered later in the row) so it covers the tick behind it. Shared by
+ * {@link YAxisIndicator}'s `placement='axis'` and the crosshair cursor's value
+ * pill, so both sit identically on the axis.
+ *
+ * `offset` is `0` for the innermost axis on a side (the single-axis case, and the
+ * behaviour before it existed) and the reserved widths of the axes nearer the
+ * plot for one further out — {@link RowFrame.axisOffsets}. Passing it is what
+ * puts the pill on the axis whose scale produced the number, rather than on
+ * whichever axis happens to sit against the plot.
  */
 export function axisPillX(
   side: 'left' | 'right',
   plotWidth: number,
+  offset = 0,
 ): CSSProperties {
+  const inner = plotWidth + offset;
   return side === 'right'
-    ? { left: `${plotWidth}px`, zIndex: 3 }
-    : { right: `${plotWidth}px`, zIndex: 3 };
+    ? { left: `${inner}px`, zIndex: 3 }
+    : { right: `${inner}px`, zIndex: 3 };
 }
 
 /** Gap (px) between a flag chip and its pole — the cursor staff or an annotation's

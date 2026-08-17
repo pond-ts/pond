@@ -286,6 +286,8 @@ export function Layers({ children }: LayersProps) {
     tickValues,
     tickCounts,
     axisSides,
+    axisOffsets,
+    axisColors,
   } = row;
   // x geometry is shared and lives on the container (uniform across rows), and
   // so is the x tick count — vertical gridlines must sit under the `<XAxis>`
@@ -619,14 +621,20 @@ export function Layers({ children }: LayersProps) {
       // The chip uses this layer's axis formatter, so a readout value reads
       // exactly as the axis labels it.
       const fmt = formats.get(axisId) ?? String;
-      // Which gutter the crosshair value pill hugs (the axis's own side).
+      // Where the crosshair value pill lands, and in what ink: this axis's own
+      // side, its offset out into that gutter (so the pill sits on the axis that
+      // measured the value, not the innermost one), and its `<YAxis color>`.
       const side = axisSides.get(axisId) ?? 'left';
+      const axisOffset = axisOffsets.get(axisId) ?? 0;
+      const axisColor = axisColors.get(axisId);
       for (const s of entry.layer.sampleAt(cursorTime)) {
         out.push({
           px: xScale(s.x),
           py: yScale(s.value),
           axisId,
           side,
+          axisOffset,
+          axisColor,
           formatted: fmt(s.value),
           color: s.color,
           label: s.label,
@@ -641,6 +649,8 @@ export function Layers({ children }: LayersProps) {
     yScales,
     formats,
     axisSides,
+    axisOffsets,
+    axisColors,
     xScale,
     defaultAxisId,
   ]);
@@ -1730,6 +1740,10 @@ export function Layers({ children }: LayersProps) {
       py: cursor.cursorY,
       formatted: fmt(ys.invert(cursor.cursorY)),
       side: axisSides.get(defaultAxisId) ?? 'left',
+      // The free reticle reads the row's *default* axis, so its pill belongs on
+      // that axis — at its offset, in its ink — like a snapped sample's.
+      axisOffset: axisOffsets.get(defaultAxisId) ?? 0,
+      axisColor: axisColors.get(defaultAxisId),
     };
   }, [
     wantsPointer,
@@ -1739,6 +1753,8 @@ export function Layers({ children }: LayersProps) {
     yScales,
     formats,
     axisSides,
+    axisOffsets,
+    axisColors,
     defaultAxisId,
   ]);
 
