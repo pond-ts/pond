@@ -252,6 +252,53 @@ were**, since both high-severity findings sat inside claims the PR body
 asserted as guarantees. Where a PR makes a non-collision or
 always-checked claim, that claim is the thing to attack.
 
+### The bump found three more (Tidal, on 0.62.0)
+
+Tidal adopted `0.62.0` same-day (tidal PR #133) and probe-verified the
+shipped guarantees — valid ids byte-identical, `corpusStudy` pre-check
+deleted, `p1?:` adopted as their `isBrokenId`, `Skipped.code` closing
+their "ghost spread" debt. Three items came back, all confirmed:
+
+1. **Arity was not part of validity in either mode.** `{op:'sma',
+params:{period:20}}` with no `inputs` named as `p1:sma(;period=20)` —
+   a _valid_ id for a spec that cannot compile. Partly self-inflicted:
+   the `?? []` added in #667 to make lenient mode survive a dropped key
+   turned a `TypeError` into a clean valid-looking id, and its comment
+   claimed strict mode "reaches `compile`'s arity check instead", which
+   it does not — `compile` reads `spec.inputs.length` _before_ checking
+   arity. Arity is decidable from the registry alone, so it belongs to
+   what identity can judge: `ArityError`, raised by `Registry.checkArity`,
+   used by both `specId` and `compile`.
+2. **That spec then failed as a codeless raw `TypeError`** escaping the
+   plan layer — and under the `Skipped.code` contract shipped one day
+   earlier, an absent `code` means _op code threw_. So the field's first
+   week included a case where it lied about which layer failed. Fixed by
+   (1); the class of lesson is that **a contract about "who failed" is
+   only as good as the layer's ability to fail deliberately.**
+3. **The plan pass normalized the echoed spec.** `params: null` echoed as
+   `params: {}`, whose recomputed id is the _defaulted spec's valid id_ —
+   the same collision class the #667 reviews caught in `specId`,
+   reintroduced through the echo, and unmarked. The selector pass echoed
+   the original all along, so the two passes disagreed about what the
+   caller sent. `Skipped.spec` is now verbatim, with `params` / `inputs`
+   typed `unknown` — the honest type for an echo of arbitrary JSON, and a
+   deliberate source break called out in the changelog.
+
+Also closed while there: lenient `specId` was only total over well-typed
+`Spec`s, and threw `TypeError` on `params: null`, `inputs: [null]`, and a
+non-array `inputs` — shapes `run` itself survives. Totality that stops at
+the type boundary is not totality, because **the reason to reach for
+leniency is a persisted object that no longer fits the type.**
+
+**The meta-observation, three rounds in.** Each round's fix introduced or
+exposed the next round's defect in the same place: identity naming things
+it should not. #667 fixed "invalid params get a valid id" and left "no
+inputs gets a valid id"; the review fixed the collision in `specId` and
+left the same collision in the `Skipped` echo. The invariant worth
+stating once, rather than rediscovering: **anything that mints a `p1:`
+id, or hands a consumer something they will mint one from, must have
+judged everything decidable without data — op, params, arity, shape.**
+
 **The process note.** Both items arrived as a filed friction doc, and
 the two questions worth asking were about **shape**, not about whether
 the pain was real — one confirmed the API form the consumer wanted
