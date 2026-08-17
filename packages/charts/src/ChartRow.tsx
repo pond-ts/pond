@@ -668,22 +668,32 @@ export function ChartRow({
   // every pill on the innermost axis — the wrong scale as soon as a side carries
   // two (see RowFrame.axisOffsets). Right axes are authored inner→outer, left
   // axes outer→inner, so the left list walks in reverse.
+  //
+  // Resolved per **instance** first, then collapsed to ids by the same
+  // last-declared-wins rule `axisSides` uses — so for a mirrored id (one scale
+  // registered on both sides, or a duplicate) the side and the offset always
+  // come from the *same* axis. A different rule per map (say, keeping the
+  // smallest offset) can pair one instance's side with another's offset, which
+  // is the very "pill on an axis that didn't measure it" this fixes.
   const axisOffsets = useMemo(() => {
-    const map = new Map<string, number>();
+    const byInstance = new Map<symbol, number>();
     const walk = (side: 'left' | 'right') => {
       const inward = realEntries.filter(([, spec]) => spec.side === side);
       if (side === 'left') inward.reverse();
       let offset = 0;
       for (const [key, spec] of inward) {
-        // A mirrored id (one scale on both sides, or a duplicate) keeps the
-        // innermost placement — the pre-existing behaviour for such an id.
-        const seen = map.get(spec.id);
-        if (seen === undefined || offset < seen) map.set(spec.id, offset);
+        byInstance.set(key, offset);
         offset += axisSlots.get(key) ?? spec.width;
       }
     };
     walk('right');
     walk('left');
+    // realEntries is index-sorted, the order effectiveAxes (and so axisSides)
+    // walks — hence the same winner on a repeated id.
+    const map = new Map<string, number>();
+    for (const [key, spec] of realEntries) {
+      map.set(spec.id, byInstance.get(key) ?? 0);
+    }
     return map;
   }, [realEntries, axisSlots]);
 

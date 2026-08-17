@@ -3938,11 +3938,18 @@ Decisions recorded:
   *axis* indicator (the ChartIQ price-tag), so it should read as part of the axis
   it covers. Series colour was available on the sample and deliberately not used;
   it would make the pill read as a series chip that happens to sit in a gutter.
-- **A mirrored id (one scale registered on both sides) keeps the innermost
-  placement** — `axisOffsets` takes the smaller offset on a collision, matching
-  what such an id did before the map existed. `axisSides` has the same
-  id-collapsing limitation; fixing both would mean keying the axis-edge chrome
-  by instance rather than id, which nothing has asked for.
+- **A mirrored id (one scale registered on both sides) resolves to the
+  last-declared instance, in every map.** The first cut took the *smallest*
+  offset on a collision — "keep the innermost placement, as before". The Layer-2
+  review caught that `axisSides` collapses by last-declared-wins, so the two
+  rules disagree: an id present on the right and also as the outer of two left
+  axes resolved to `side: 'left'` with the right-hand `offset: 0`, pairing one
+  instance's gutter with another's column — this very bug, through the back
+  door. `axisOffsets` is now resolved per **instance** and collapsed by the same
+  rule `axisSides` uses, so side and offset always describe one axis. Pinned by
+  a test that fails under the old rule. (The deeper fix — keying axis-edge
+  chrome by instance rather than id — is still not built; nothing has asked
+  for it, and coherence is what the bug needed.)
 
 Not built, deliberately:
 
@@ -3961,3 +3968,11 @@ Not built, deliberately:
   one"), and with the pill out past an inner axis column the y side now has the
   same gap. Left alone pending the owner's read: a 1px bridge would cross
   another axis's tick labels, which may read worse than the gap.
+- **Clamping a pill to the gutter it sits in** — a pill is sized to content and
+  deliberately unclipped, so a long formatted value can overflow past its
+  gutter; an *outer*-axis pill has only its own column left before the
+  container's edge, so it spills outside the chart box sooner than an innermost
+  one did (Layer-2 review). Truncating a number is worse than overflowing it,
+  and the fix that isn't a truncation (measure, then flip inward) is real work
+  for a case no consumer has hit — documented on `axisPillX` as a sharp edge
+  instead.

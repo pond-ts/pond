@@ -146,7 +146,7 @@ describe('the crosshair value pill sits on the reticle axis', () => {
     expect(p.style.left).toBe(`${plotFor(2)}px`);
   });
 
-  it('two left axes: the offset runs out the LEFT gutter (mirrored)', () => {
+  it('two left axes: the offset runs out the LEFT gutter (the placement mirrored)', () => {
     const { container } = render(
       <ChartContainer
         range={[0, 4]}
@@ -170,6 +170,41 @@ describe('the crosshair value pill sits on the reticle axis', () => {
     expect(p.textContent).toBe('177');
     expect(p.style.right).toBe(`${plotFor(2) + AXIS_W}px`);
     expect(p.style.left).toBe('');
+  });
+
+  it('a mirrored id takes side AND offset from the same (last-declared) axis', () => {
+    // One id registered on both sides — the degenerate case where an id-keyed
+    // map has to pick. `axisSides` picks the last declared; `axisOffsets` must
+    // pick the same one, or the pill gets one instance's gutter at another
+    // instance's column (this bug, reintroduced through the back door).
+    const { container } = render(
+      <ChartContainer
+        range={[0, 4]}
+        width={WIDTH}
+        trackerPosition={2}
+        showAxis={false}
+      >
+        <CrosshairCursor />
+        <ChartRow height={120}>
+          {/* `dup` first (a lone LEFT axis, so offset 0 on the left)… */}
+          <YAxis id="dup" side="left" width={AXIS_W} min={0} max={100} />
+          <Layers>
+            <LineChart series={price} column="v" axis="dup" />
+          </Layers>
+          {/* …then the same id on the RIGHT, outside another right axis: this
+              instance is declared last, so it wins both maps — right side, one
+              column out. */}
+          <YAxis id="other" side="right" width={AXIS_W} min={0} max={100} />
+          <YAxis id="dup" side="right" width={AXIS_W} min={0} max={100} />
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const p = pill(container);
+    expect(p.textContent).toBe('90');
+    // The right gutter, past the `other` column — one axis's placement, not two
+    // halves of different ones (the old rule gave `right` + offset 0).
+    expect(p.style.left).toBe(`${plotFor(3) + AXIS_W}px`);
+    expect(p.style.right).toBe('');
   });
 
   it("a row's axes are reserved per column, so a wider sibling row pushes the offset out", () => {

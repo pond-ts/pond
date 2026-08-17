@@ -1832,8 +1832,12 @@ export interface RowFrame {
    * carries more than one — the pill then reads as a value on a scale that never
    * measured it. Together they place it on the axis that did.
    *
-   * Keyed by id, so a **mirrored** id (one scale on both sides) keeps the
-   * innermost placement — the smaller offset wins, as before this map existed.
+   * Keyed by id, so a **mirrored** id (one scale registered on both sides, or a
+   * duplicate) resolves to the **last declared** instance — the same winner
+   * {@link axisSides} picks, deliberately, so that side and offset always
+   * describe one axis. Picking them by different rules would pair one
+   * instance's gutter with another's column, which is exactly the mis-placement
+   * this map exists to remove.
    */
   readonly axisOffsets: ReadonlyMap<string, number>;
   /** Each axis's own ink (`<YAxis color>`), keyed by id; an axis that sets none

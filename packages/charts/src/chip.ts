@@ -110,15 +110,25 @@ export function pointerStyle(
  * edge at that axis's inner edge — the plot boundary (`plotWidth`) plus the
  * axis's own `offset` out into the gutter — and let it overflow outward (the
  * plot div doesn't clip), lifted with `zIndex` above the sibling axis columns
- * (rendered later in the row) so it covers the tick behind it. Shared by
- * {@link YAxisIndicator}'s `placement='axis'` and the crosshair cursor's value
- * pill, so both sit identically on the axis.
+ * (rendered later in the row) so it covers the tick behind it. The one placement
+ * every on-axis pill goes through — the crosshair cursor's value pill, a
+ * `<Baseline indicator>`, and {@link YAxisIndicator} — so they cannot drift
+ * apart.
  *
  * `offset` is `0` for the innermost axis on a side (the single-axis case, and the
  * behaviour before it existed) and the reserved widths of the axes nearer the
  * plot for one further out — {@link RowFrame.axisOffsets}. Passing it is what
  * puts the pill on the axis whose scale produced the number, rather than on
- * whichever axis happens to sit against the plot.
+ * whichever axis happens to sit against the plot. **`YAxisIndicator` does not
+ * pass it** and so still lands innermost: it takes an explicit `side` beside its
+ * `axis`, and what an offset should mean when those two disagree is unsettled
+ * (see `[PND-XHAIRAXIS]` in the charts plan).
+ *
+ * A pill is deliberately unclipped, so a long formatted value can overflow past
+ * the gutter it sits in — further out for an outer-axis pill, which has only its
+ * own column left before the container's edge. Sized-to-content and unclipped
+ * beats truncating a number, but a very wide readout on a narrow outer axis will
+ * spill outside the chart box.
  */
 export function axisPillX(
   side: 'left' | 'right',
