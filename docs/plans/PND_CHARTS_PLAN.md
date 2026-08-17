@@ -1589,9 +1589,31 @@ worth keeping:
   (2) happy-dom's `WheelEvent` constructor drops `deltaY` *and* the pointer
   position, which produced `exp(NaN)` → a `[NaN, NaN]` view; the hook now guards
   its factor/pivot at the one choke point, which is a real-device hardening too.
-- **Known gaps, documented not fixed:** the x reset is a no-op on a controlled
-  chart (there is no declared home when `range` *is* the panned view), and a
-  per-axis y zoom has no callback — nothing to report it through yet.
+- **Known gap, documented not fixed:** the x reset is a no-op on a controlled
+  chart — there is no declared home when `range` *is* the panned view.
+- **What the Layer 2 review caught**, all fixed in the same PR, and the first is
+  the one worth remembering:
+  - **`pad` made the controlled path ratchet.** `resolveYDomain` applies `pad`
+    last and to explicit bounds too, so a scale's live domain is the *padded*
+    one; reporting it and feeding it back re-padded it, inflating by `1 + 2·pad`
+    per notch — a zoom-*in* gesture that walked the axis outward. Fixed with
+    `unpadDomain` (the inverse, beside the padding it undoes) so what a consumer
+    hands back reproduces what was drawn. **General lesson: any value read off a
+    resolved scale and returned as an input has to be run back through whatever
+    the resolver applied.**
+  - **`specRef.current` was written during render**, the pattern
+    `ChartContainer`'s `onRangeRef` comment explicitly rejects (a render React
+    abandons would publish uncommitted callbacks). Now a layout effect.
+  - **The transform was read from render scope** one line below a comment
+    insisting the scale be read at gesture time — two wheel notches in a frame
+    lost one. Now read per gesture, like the scale.
+  - **The wheel listener was bound in a `[]`-deps effect**, so a `hide` toggle
+    remounted the gutter and the listener stayed on the dead element. Now bound
+    in the ref callback, which follows the element.
+  - **Transform entries leaked on unmount** — keyed by axis id, so a later axis
+    reusing the id inherited a stranded zoom.
+  - **`panZoom='pan'` got a zooming gutter**, overriding an explicit no-zoom.
+    Gate is `zoomEnabled`, not `panEnabled || zoomEnabled`.
 
 **Follow-up (not done):** `formatReadout` is now two channels in one field
 (`cursorFormat` vs the axis kind's default), disambiguated by a companion

@@ -544,6 +544,33 @@ describe('<YAxis> drag-to-zoom — per axis', () => {
     expect(d[1] - d[0]).toBeLessThan(100);
   });
 
+  it("stays inert under panZoom='pan' — an explicit no-zoom", () => {
+    const into: { c?: ContainerFrame; r?: RowFrame } = {};
+    const dom = draw(
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="pan"
+      >
+        <ChartRow height={100}>
+          <YAxis id="v" min={0} max={100} />
+          <Layers>
+            <LineChart series={series()} column="v" axis="v" />
+          </Layers>
+          <Capture into={into} />
+        </ChartRow>
+      </ChartContainer>,
+    ).container;
+
+    dragBy(yGutter(dom, 'v'), 'y', -60, 50);
+    wheelOn(yGutter(dom, 'v'), -240, { clientY: 50 });
+
+    // A gutter gesture IS a zoom, so "drag pans, wheel is the page's" has to
+    // mean the gutter holds still as well.
+    expect(into.r!.yScales.get('v')!.domain()).toEqual([0, 100]);
+  });
+
   it('stays inert on a non-interactive chart (panZoom off)', () => {
     const into: { c?: ContainerFrame; r?: RowFrame } = {};
     const dom = draw(
@@ -668,5 +695,176 @@ describe('<YAxis onDomainChange> — the auto/manual hand-off', () => {
     // The second notch zooms further in than the first, which only holds if the
     // axis is reading the domain the consumer fed back.
     expect(second[1] - second[0]).toBeLessThan(first[1] - first[0]);
+  });
+});
+
+describe('axis gestures — Layer-2 review finds', () => {
+  it('a padded controlled axis does not ratchet outward', () => {
+    // `pad` is applied LAST and to explicit bounds too, so a scale's live domain
+    // is the padded one. Reporting that and feeding it back re-pads it — the axis
+    // then inflates by (1 + 2·pad) per notch, walking OUTWARD under a zoom-in.
+    const seen = vi.fn();
+    function Padded() {
+      const [domain, setDomain] = useState<readonly [number, number] | null>(
+        null,
+      );
+      return (
+        <ChartContainer
+          range={RANGE}
+          width={WIDTH}
+          showAxis={false}
+          panZoom="panZoom"
+        >
+          <ChartRow height={100}>
+            <YAxis
+              id="price"
+              pad={0.25}
+              {...(domain ? { min: domain[0], max: domain[1] } : {})}
+              onDomainChange={(d) => {
+                setDomain(d);
+                seen(d);
+              }}
+            />
+            <Layers>
+              <LineChart series={series()} column="v" axis="price" />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>
+      );
+    }
+    const dom = draw(<Padded />).container;
+
+    const spans: number[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      wheelOn(yGutter(dom, 'price'), -240, { clientY: 50 });
+      const d = seen.mock.calls.at(-1)![0] as [number, number];
+      spans.push(d[1] - d[0]);
+    }
+
+    // Every zoom-in notch must narrow what is reported. (Before the fix each
+    // one grew: 1.5× the pad inflation beat the 0.7× zoom.)
+    for (let i = 1; i < spans.length; i += 1) {
+      expect(spans[i]!).toBeLessThan(spans[i - 1]!);
+    }
+  });
+
+  it('reported bounds round-trip through pad — what you feed back is what you see', () => {
+    const seen = vi.fn();
+    function Padded({ pad }: { pad: number }) {
+      const [domain, setDomain] = useState<readonly [number, number] | null>(
+        null,
+      );
+      return (
+        <ChartContainer
+          range={RANGE}
+          width={WIDTH}
+          showAxis={false}
+          panZoom="panZoom"
+        >
+          <ChartRow height={100}>
+            <YAxis
+              id="price"
+              pad={pad}
+              {...(domain ? { min: domain[0], max: domain[1] } : {})}
+              onDomainChange={(d) => {
+                setDomain(d);
+                seen(d);
+              }}
+            />
+            <Layers>
+              <LineChart series={series()} column="v" axis="price" />
+            </Layers>
+            <Capture into={frames} />
+          </ChartRow>
+        </ChartContainer>
+      );
+    }
+    const frames: { c?: ContainerFrame; r?: RowFrame } = {};
+    const dom = draw(<Padded pad={0.2} />).container;
+
+    wheelOn(yGutter(dom, 'price'), -240, { clientY: 50 });
+    const reported = seen.mock.calls.at(-1)![0] as [number, number];
+    const drawn = frames.r!.yScales.get('price')!.domain() as [number, number];
+
+    // The axis re-pads what it is given, so the drawn domain is the reported
+    // bounds plus pad — and re-padding must not have compounded.
+    const span = reported[1] - reported[0];
+    expect(drawn[0]).toBeCloseTo(reported[0] - 0.2 * span, 6);
+    expect(drawn[1]).toBeCloseTo(reported[1] + 0.2 * span, 6);
+  });
+
+  it('the wheel keeps working after a hide toggle remounts the gutter', () => {
+    // The listener is bound in the ref callback, not a `[]`-deps effect: the
+    // gutter element is replaced when `hide` flips, and an effect-bound listener
+    // would stay attached to the element that went away.
+    const into: { c?: ContainerFrame; r?: RowFrame } = {};
+    function Toggle({ hide }: { hide: boolean }) {
+      return (
+        <ChartContainer
+          range={RANGE}
+          width={WIDTH}
+          showAxis={false}
+          panZoom="panZoom"
+        >
+          <ChartRow height={100}>
+            <YAxis id="v" min={0} max={100} hide={hide} />
+            <Layers>
+              <LineChart series={series()} column="v" axis="v" />
+            </Layers>
+            <Capture into={into} />
+          </ChartRow>
+        </ChartContainer>
+      );
+    }
+    const stub = stubCanvasContext();
+    const r = render(<Toggle hide={false} />);
+    try {
+      r.rerender(<Toggle hide />);
+      expect(yGutter(r.container, 'v')).toBeNull(); // gutter gone
+      r.rerender(<Toggle hide={false} />); // …and a NEW element back
+
+      wheelOn(yGutter(r.container, 'v'), -240, { clientY: 50 });
+    } finally {
+      stub.restore();
+    }
+
+    const d = into.r!.yScales.get('v')!.domain() as [number, number];
+    expect(d[1] - d[0]).toBeLessThan(100);
+  });
+
+  it('an unmounting axis leaves no transform behind for its id', () => {
+    const into: { c?: ContainerFrame; r?: RowFrame } = {};
+    function WithAxis({ show }: { show: boolean }) {
+      return (
+        <ChartContainer
+          range={RANGE}
+          width={WIDTH}
+          showAxis={false}
+          panZoom="panZoom"
+        >
+          <ChartRow height={100}>
+            {show ? <YAxis id="v" min={0} max={100} /> : null}
+            <Layers>
+              <LineChart series={series()} column="v" axis="v" />
+            </Layers>
+            <Capture into={into} />
+          </ChartRow>
+        </ChartContainer>
+      );
+    }
+    const stub = stubCanvasContext();
+    const r = render(<WithAxis show />);
+    try {
+      dragBy(yGutter(r.container, 'v'), 'y', -60, 50);
+      expect(into.r!.axisTransforms.has('v')).toBe(true);
+
+      r.rerender(<WithAxis show={false} />);
+    } finally {
+      stub.restore();
+    }
+
+    // Transforms are keyed by axis id (as scales are), so a stale entry would be
+    // inherited by any later axis reusing the id.
+    expect(into.r!.axisTransforms.has('v')).toBe(false);
   });
 });

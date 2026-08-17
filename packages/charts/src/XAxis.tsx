@@ -297,11 +297,12 @@ export interface XAxisProps {
  *
  * `<TimeAxis>` is the time-flavoured preset (`<XAxis />`).
  *
- * **Gestures.** When the container's `panZoom` can zoom x, the strip is
- * grabbable: drag or wheel it to scale the shared view about the pixel you
- * grabbed, double-click to return to the declared `range`. Drag zooms rather
- * than pans (the plot's drag pans), and a category axis — which has no
- * continuous domain — stays inert.
+ * **Gestures.** The strip is a second handle on the canvas gesture: it **pans on
+ * drag** wherever the plot pans and **zooms on wheel** wherever the plot's wheel
+ * zooms (so `panZoom='pan'` leaves the wheel to the page here too), with
+ * double-click returning to the declared `range`. Same maths as the plot's own
+ * drag, including `bounds` / `minDuration` and the trading calendar. A category
+ * axis has no continuous domain and stays inert.
  */
 export function XAxis({
   format,

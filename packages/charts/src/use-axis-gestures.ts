@@ -1,6 +1,6 @@
 import {
   useCallback,
-  useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -102,10 +102,18 @@ export interface AxisGestures {
  * span multiplier per step, composed onto the current view).
  */
 export function useAxisGestures(spec: AxisGestureSpec): AxisGestures {
-  // The live spec, read by the handlers — so the wheel listener can be attached
-  // once and still see current props (the pattern `Layers` uses for the plot's).
+  // The live spec, read by the handlers — so a listener attached once still sees
+  // current props (the pattern `Layers` uses for the plot's gestures).
+  //
+  // Published from a layout effect, **not** during render: a render React
+  // abandons under concurrent rendering would otherwise leave the ref pointing at
+  // callbacks that close over a frame that was never committed. `ChartContainer`
+  // writes `onRangeRef` the same way, for the same reason. It still lands before
+  // paint, so the first event after mount reads a current spec.
   const specRef = useRef(spec);
-  specRef.current = spec;
+  useLayoutEffect(() => {
+    specRef.current = spec;
+  });
 
   const elRef = useRef<HTMLDivElement | null>(null);
   const drag = useRef<{
@@ -137,9 +145,12 @@ export function useAxisGestures(spec: AxisGestureSpec): AxisGestures {
     const el = elRef.current;
     if (el === null) return 0;
     const r = el.getBoundingClientRect();
-    return specRef.current.axis === 'x'
-      ? e.clientX - r.left
-      : e.clientY - r.top;
+    const px =
+      specRef.current.axis === 'x' ? e.clientX - r.left : e.clientY - r.top;
+    // Clamped to the strip, as `Layers` clamps the plot's own wheel pivot: a
+    // pivot off the end would zoom about a value the axis does not draw.
+    const extent = specRef.current.axis === 'x' ? r.width : r.height;
+    return extent > 0 ? Math.max(0, Math.min(extent, px)) : px;
   };
 
   /** Pointer delta → span multiplier. Up / right = zoom in (multiplier < 1). */
@@ -217,11 +228,25 @@ export function useAxisGestures(spec: AxisGestureSpec): AxisGestures {
   }, []);
 
   // Wheel must be a native non-passive listener to `preventDefault()` the page
-  // scroll — React's `onWheel` is passive. Attached once; the handler reads the
-  // live spec, and no-ops (leaving the page to scroll) while the wheel is off.
-  useEffect(() => {
-    const el = elRef.current;
-    if (el === null) return;
+  // scroll — React's `onWheel` is passive. Bound in the **ref callback** rather
+  // than an effect: the strip element comes and goes (a `<YAxis hide>` toggle
+  // unmounts the gutter), and an effect with `[]` deps would stay attached to the
+  // first element and go silent on the replacement.
+  const onWheelRef = useRef<((e: WheelEvent) => void) | null>(null);
+  const setRef = useCallback((el: HTMLDivElement | null) => {
+    const prev = elRef.current;
+    if (prev !== null && onWheelRef.current !== null) {
+      prev.removeEventListener('wheel', onWheelRef.current);
+      onWheelRef.current = null;
+    }
+    elRef.current = el;
+    if (el === null) {
+      if (wheelIdle.current !== null) {
+        clearTimeout(wheelIdle.current);
+        wheelIdle.current = null;
+      }
+      return;
+    }
     const onWheel = (e: WheelEvent) => {
       const s = specRef.current;
       if (!s.wheel) return;
@@ -240,16 +265,18 @@ export function useAxisGestures(spec: AxisGestureSpec): AxisGestures {
         WHEEL_CURSOR_MS,
       );
     };
+    onWheelRef.current = onWheel;
     el.addEventListener('wheel', onWheel, { passive: false });
-    return () => {
-      el.removeEventListener('wheel', onWheel);
-      if (wheelIdle.current !== null) clearTimeout(wheelIdle.current);
-    };
   }, []);
 
-  const setRef = useCallback((el: HTMLDivElement | null) => {
-    elRef.current = el;
-  }, []);
+  // Nothing to detach on unmount beyond the pending cursor timer: React calls the
+  // ref callback with `null` first, which releases the listener above.
+  useLayoutEffect(
+    () => () => {
+      if (wheelIdle.current !== null) clearTimeout(wheelIdle.current);
+    },
+    [],
+  );
 
   const consumeDrag = useCallback(() => {
     const was = draggedRef.current;

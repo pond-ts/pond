@@ -1,6 +1,7 @@
 import { useContext, useEffect, useMemo } from 'react';
 import { ContainerContext, RowContext, type AxisSpec } from './context.js';
 import { resolveAxisFormat, type AxisFormat } from './format.js';
+import { unpadDomain } from './domain.js';
 import { useSlotKey } from './use-slot-key.js';
 import { tickValues } from './yticks.js';
 import {
@@ -21,6 +22,8 @@ import { zoomRange } from './viewport.js';
  */
 const MIN_AXIS_K = 0.02;
 const MAX_AXIS_K = 50;
+/** The un-grabbed transform — also what clears an axis's entry (see `ChartRow`). */
+const IDENTITY_TRANSFORM = { k: 1, ty: 0 } as const;
 
 export interface YAxisProps {
   /** Identifier a chart links to via its `axis` prop (and the first declared is
@@ -228,6 +231,9 @@ export interface YAxisProps {
    * menu, down/up, move, enter, leave — so switch on `event.type`. Nothing is
    * attached when the prop is omitted, so the move events cost nothing unless
    * you ask for them. A `hide`den axis draws no gutter and so fires nothing.
+   *
+   * A gutter that also zooms (see the component docs) still reports every event
+   * here, minus the trailing `click` a zoom drag would otherwise synthesize.
    */
   onMouseEvent?: AxisMouseHandler;
   /**
@@ -282,11 +288,14 @@ const DEFAULT_TICK_COUNT = 5;
  * tick marks + labels from that scale. Charts attach via `<LineChart axis="id">`
  * (default: the first axis).
  *
- * **Gestures.** When the container's `panZoom` can zoom y, the gutter is
- * grabbable: drag or wheel it to scale **this axis only** — a sibling axis on the
- * other side, and every other row, hold still — and double-click to release it
- * back to its fit. That per-axis scaling is what the plot's vertical gesture
- * deliberately cannot do; see {@link RowFrame.axisTransforms}.
+ * **Gestures.** Whenever the container's `panZoom` zooms at all (not only its
+ * zoom-**y** modes — an auto-fitting y on a panned, zoomed x is the case this
+ * serves), the gutter is grabbable: drag or wheel it to scale **this axis only**
+ * — a sibling axis on the other side, and every other row, hold still — and
+ * double-click to release it back to its fit. That per-axis scaling is what the
+ * plot's vertical gesture deliberately cannot do; see
+ * {@link RowFrame.axisTransforms}. Report it to a scale UI with
+ * {@link YAxisProps.onDomainChange}.
  */
 export function YAxis({
   id,
@@ -360,9 +369,18 @@ export function YAxis({
   // re-appending (which would move the first axis behind a later one and
   // silently rebind the row's default-axis charts).
   const slot = useSlotKey();
-  const { registerAxis, unregisterAxis } = row;
+  const { registerAxis, unregisterAxis, applyAxisTransform } = row;
   // Unregister on unmount only (deps are stable, so cleanup never runs early).
-  useEffect(() => () => unregisterAxis(slot), [unregisterAxis, slot]);
+  useEffect(
+    () => () => {
+      unregisterAxis(slot);
+      // Drop any gutter zoom with the axis. The row keys transforms by axis id
+      // (as it keys scales), so an entry left behind would be inherited by a
+      // later axis that happens to reuse the id.
+      applyAxisTransform(id, IDENTITY_TRANSFORM);
+    },
+    [unregisterAxis, slot, applyAxisTransform, id],
+  );
   // Register on mount + update in place on every spec change — no reorder.
   useEffect(() => {
     registerAxis(slot, spec);
@@ -373,18 +391,17 @@ export function YAxis({
   // The gesture writes this axis's entry in `row.axisTransforms`, so only the
   // gutter you grabbed rescales — the sibling axis, and every other row, hold
   // still (see `RowFrame.axisTransforms` for why that needs its own transform).
-  const own = row.axisTransforms.get(id) ?? { k: 1, ty: 0 };
   const gestures = useAxisGestures({
     axis: 'y',
-    // **Not gated on the container's zoom-y freedom.** The canonical setup is an
-    // auto-fitting y axis on a chart whose *x* is panned and zoomed
-    // (`panZoom='panZoom'`), and scaling the y gutter there must not require
-    // opting the plot into vertical gestures as well — those are a different
-    // feature (the uniform 2-D transform a scatter or heat map wants). So the
-    // gutter follows whether the chart is interactive **at all**, and a
-    // `panZoom='none'` chart stays inert exactly as before.
-    drag: container.panEnabled || container.zoomEnabled ? 'zoom' : 'none',
-    wheel: container.panEnabled || container.zoomEnabled,
+    // Gated on the container zooming **at all**, not on its zoom-*y* freedom.
+    // The canonical setup is an auto-fitting y axis on a chart whose *x* is
+    // panned and zoomed (`panZoom='panZoom'`), and scaling the gutter there must
+    // not require opting the plot into vertical gestures too — those are a
+    // different feature (the uniform 2-D transform a scatter or heat map wants).
+    // But `panZoom='pan'` is an explicit "no zoom" and is honoured: a gutter is a
+    // zoom, so `zoomEnabled` — not `panEnabled` — is the gate.
+    drag: container.zoomEnabled ? 'zoom' : 'none',
+    wheel: container.zoomEnabled,
     onZoom: (factor, pivotPx) => {
       // Read the scale at gesture time, not from the render that built this
       // closure — a wheel notch mid-stream must compose onto what is drawn now.
@@ -402,18 +419,27 @@ export function YAxis({
           log: scale === 'log',
           snap: false,
         });
-        if (next[1] > next[0]) onDomainChange(next);
+        if (!(next[1] > next[0])) return;
+        // Report the **unpadded** bounds. `pad` is applied last and to explicit
+        // bounds too, so the scale's live domain already includes it; handing
+        // that back as `min`/`max` would re-pad it and inflate the axis by
+        // `1 + 2·pad` on every notch (see `unpadDomain`).
+        onDomainChange(unpadDomain(next, pad, scale));
         return;
       }
       // **Uncontrolled**: hold the zoom ourselves as this axis's own pixel
-      // transform. `factor` scales the domain span, so its reciprocal is the
-      // pixel-space zoom — the relationship the plot's wheel handler uses.
+      // transform. Read at gesture time for the same reason the scale is: two
+      // wheel notches inside one frame both see the render-scope value, so the
+      // second would compose onto the first's *input* and the notch be lost.
+      const own = row.axisTransforms.get(id) ?? IDENTITY_TRANSFORM;
+      // `factor` scales the domain span, so its reciprocal is the pixel-space
+      // zoom — the relationship the plot's wheel handler uses.
       const z = 1 / factor;
       const nk = Math.min(MAX_AXIS_K, Math.max(MIN_AXIS_K, own.k * z));
       // Re-derive the zoom the clamp actually allowed, so a gesture held at a
       // limit stops moving the pivot too (rather than sliding the axis).
       const zEff = own.k === 0 ? 1 : nk / own.k;
-      row.applyAxisTransform(id, {
+      applyAxisTransform(id, {
         k: nk,
         // Zoom about the grabbed pixel: p' = pivot + (p − pivot)·z, expanded
         // through the existing transform p = ty + k·base. No pan clamp here —
@@ -428,7 +454,7 @@ export function YAxis({
     // drops its own transform.
     onReset: () => {
       if (onDomainChange !== undefined) onDomainChange(null);
-      else row.applyAxisTransform(id, { k: 1, ty: 0 });
+      else applyAxisTransform(id, IDENTITY_TRANSFORM);
     },
   });
 

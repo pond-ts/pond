@@ -534,15 +534,25 @@ export interface ChartContainerProps {
    * `false` ⇒ `'none'`). Bound the reachable range with {@link bounds}
    * (zoom-out / pan extent) and {@link minDuration} (zoom-in floor).
    *
-   * **The axis strips follow this prop too.** Whichever dimension can zoom here,
-   * that axis becomes grabbable: drag or wheel an `<XAxis>` strip (with a zoom-x
-   * mode) to scale time, drag or wheel a `<YAxis>` gutter (with a zoom-y mode) to
-   * scale **that one axis**, double-click either to put it back. Drag on a strip
-   * always *zooms* — panning stays the plot's drag, so the two never compete —
-   * and a y gutter's zoom is per axis, unlike the plot's vertical gesture which
-   * scales every axis together (see {@link ContainerFrame.yTransform} versus
-   * {@link RowFrame.axisTransforms}). A chart on the `'none'` default captures
-   * nothing anywhere, strips included.
+   * **The axis strips follow this prop too**, and a chart on the `'none'` default
+   * captures nothing anywhere, strips included.
+   *
+   * - An **`<XAxis>` strip behaves exactly as the plot does**: it pans on drag
+   *   wherever the plot pans (`'pan'` and up) and zooms on wheel wherever the
+   *   plot's wheel zooms — so `'pan'` leaves the wheel to the page on the strip
+   *   too. One gesture vocabulary, two places to reach it.
+   * - A **`<YAxis>` gutter zooms that one axis** on drag or wheel, gated on this
+   *   prop zooming *at all* rather than on its zoom-**y** freedom: the common
+   *   chart is an auto-fitting y with a panned/zoomed x, and scaling y there
+   *   shouldn't require opting the plot into vertical gestures (`panZoomY` /
+   *   `panZoomXY` — the uniform 2-D transform a scatter or heat map wants). A
+   *   gutter gesture *is* a zoom, so `'pan'` opts out of it as well.
+   * - **Double-click** puts either back, and a gutter zoom can be reported to the
+   *   consumer with {@link YAxisProps.onDomainChange}.
+   *
+   * The per-axis nature of a gutter zoom is the point of contrast: the plot's own
+   * vertical gesture scales every axis in the row together (see
+   * {@link ContainerFrame.yTransform} versus {@link RowFrame.axisTransforms}).
    */
   panZoom?:
     | boolean
