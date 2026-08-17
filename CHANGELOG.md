@@ -65,6 +65,39 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- `@pond-ts/process`: **`ArityError`**, and **arity is now part of what `specId`
+  can judge**. A spec whose `inputs` count does not match the op's — including
+  one carrying no `inputs` at all — was named `p1:sma(;period=20)`, a _valid_
+  id for something that cannot compile, and then died at `compile` as a bare
+  `TypeError` reading `.length` of `undefined`, reaching the consumer as a
+  `Skipped` with **no `code`** (which under that contract means "op code
+  threw"). Arity is decidable from the registry alone, so strict `specId` now
+  raises `ArityError` and lenient mode marks the id `p1?:`.
+  `Registry.checkArity(op, inputs)` is the shared check `compile` uses too.
+
+### Changed
+
+- `@pond-ts/process`: **`Skipped.spec` echoes the request verbatim**, and its
+  `params` / `inputs` are typed `unknown` accordingly. The plan pass normalized
+  `params: null` to `{}`, so recomputing an id from the echo produced the
+  _defaulted spec's valid id_ — keying a broken persisted entry's report onto a
+  legitimate node. The selector pass echoed the original all along, so the two
+  passes disagreed. **Migration:** a consumer reading `entry.spec.params` now
+  narrows it (`entry.spec.params as Record<string, unknown>`, or a guard) —
+  which is the point, since the value may be exactly the malformed thing that
+  failed.
+- `@pond-ts/process`: `specId(…, { validate: false })` is **total over
+  arbitrary JSON**, not just over well-typed specs. `params: null`, a
+  non-array `inputs`, and an input entry that is neither a column name nor a
+  spec each used to raise a `TypeError`; they are now named in the `p1?:`
+  namespace, distinctly enough that two differently-broken specs stay two ids.
+  Strict mode reports them as `ParamError` / `ArityError` / `ProcessError`
+  rather than crashing.
+
+  (All three reported by Tidal against 0.62.0, after adopting it.)
+
 ## [0.62.0] — 2026-08-16
 
 ### Added

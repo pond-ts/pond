@@ -35,7 +35,8 @@
  * Both are pinned by tests.
  */
 
-import type { Registry } from './registry.js';
+import { ProcessError } from '../errors.js';
+import { ParamError, type Registry } from './registry.js';
 import { isFold, isPicked, specOf } from './types.js';
 import type { Params, Spec, SpecRef, UnitSpec, Units } from './types.js';
 
@@ -57,6 +58,15 @@ function esc(v: unknown): string {
  * after the version and can never equal one, whatever its params say.
  */
 const UNVALIDATED = '?';
+
+/**
+ * Key under which a malformed `params` or `inputs` value is recorded in
+ * an unvalidated id, so the shape it actually had survives.
+ *
+ * Only ever emitted inside a `p1?:` id, so it cannot be confused with a
+ * declared param — and it is escaped like any other key there.
+ */
+const MALFORMED = '!malformed';
 
 /**
  * Type-preserving encoding, used **only** inside an unvalidated id.
@@ -141,55 +151,139 @@ export function specId(
   return build(registry, spec, options.validate === false).id;
 }
 
-/** An id, and whether anything in its closure failed validation. */
+/** True for an object literal a spec's `params` could legally be. */
+function isParamBag(v: unknown): v is Readonly<Record<string, unknown>> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** True for an input that is a nested spec or a picked output. */
+function isSpecLike(v: unknown): v is Spec | { from: Spec; output: string } {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    ('op' in v || 'from' in v) &&
+    !Array.isArray(v)
+  );
+}
+
+/**
+ * An id, and whether anything in its closure failed validation.
+ *
+ * **Totality is over arbitrary JSON, not over well-typed `Spec`s.** The
+ * whole reason a consumer reaches for leniency is a persisted object
+ * that no longer fits — a dropped `inputs` key, a `null` where a param
+ * bag belongs, an input that came back as a bare `null`. Answering those
+ * with a `TypeError` is the same failure as throwing `ParamError`, one
+ * layer down, so each malformed shape is **named** here rather than
+ * crashed on: marked unvalidated, and encoded distinctly enough that two
+ * differently-broken specs stay two ids (Tidal, on 0.62.0).
+ */
 function build(
   registry: Registry,
   spec: Spec,
   lenient: boolean,
 ): { id: string; unvalidated: boolean } {
   let unvalidated = false;
+  const bad = (): void => {
+    unvalidated = true;
+  };
 
-  // Inputs first: a nested spec that did not validate marks this one,
-  // and the mark has to be known before the params are encoded.
-  //
-  // `?? []` because a spec arriving from persistence may be missing the
-  // field entirely, and a mode whose promise is totality cannot answer a
-  // dropped key with a TypeError. Strict mode reaches `compile`'s arity
-  // check instead, which says what is actually wrong.
-  const inputs = (spec.inputs ?? [])
+  // The op first, because arity needs it. An unknown op under leniency
+  // leaves `op` undefined and nothing further is decidable about params
+  // or arity — both are declared BY the definition.
+  const op =
+    lenient && !registry.has(spec.op) ? undefined : registry.get(spec.op);
+  if (op === undefined) bad();
+
+  // Arity is part of validity, and decidable from the registry alone —
+  // so a spec that fails it must not be named in the valid namespace.
+  // It used to be checked only at `compile`, which meant `p1:sma(;…)`
+  // named a spec that could not exist, and then `compile` read `.length`
+  // off `undefined` and raised a codeless `TypeError` (Tidal, 0.62.0).
+  if (op !== undefined) {
+    try {
+      registry.checkArity(op, spec.inputs);
+    } catch (e) {
+      if (!lenient) throw e;
+      bad();
+    }
+  }
+
+  // Inputs next: a nested spec that did not validate marks this one, and
+  // the mark has to be known before the params are encoded.
+  const rawInputs: readonly unknown[] = Array.isArray(spec.inputs)
+    ? spec.inputs
+    : spec.inputs === undefined
+      ? // The key was dropped. Reads as an empty input list, which is
+        // what it is — the arity check above has already marked it.
+        (bad(), [])
+      : // Present but not a list. Encoded as one token so the shape it
+        // actually had survives rather than being flattened to "empty".
+        (bad(), [{ [MALFORMED]: spec.inputs }]);
+  const inputs = rawInputs
     .map((i) => {
       if (typeof i === 'string') return esc(i);
-      // `#Lower` rather than a separate field: an input picking a
-      // different output is a different computation, and the id is what
-      // says so.
-      const base = build(registry, specOf(i), lenient);
-      if (base.unvalidated) unvalidated = true;
-      return isPicked(i) ? `${base.id}#${esc(i.output)}` : base.id;
+      if (isSpecLike(i)) {
+        // `#Lower` rather than a separate field: an input picking a
+        // different output is a different computation, and the id is
+        // what says so.
+        const base = build(registry, specOf(i as never), lenient);
+        if (base.unvalidated) unvalidated = true;
+        return isPicked(i as never)
+          ? `${base.id}#${esc((i as { output: string }).output)}`
+          : base.id;
+      }
+      // Neither a column name nor a spec — `null`, a number, an array.
+      if (!lenient) {
+        throw new ProcessError(
+          `input of '${spec.op}' must be a column name or a spec, got ${JSON.stringify(i) ?? typeof i}`,
+        );
+      }
+      bad();
+      return typedEsc(
+        isParamBag(i) && MALFORMED in i
+          ? (i as Record<string, unknown>)[MALFORMED]
+          : i,
+      );
     })
     .join('+');
 
-  let params: Readonly<Record<string, unknown>>;
-  if (lenient && !registry.has(spec.op)) {
-    unvalidated = true;
-    params = spec.params ?? {};
+  // Params last, so the mark is settled before they are encoded.
+  let entries: [string, unknown][];
+  if (op === undefined) {
+    entries = Object.entries(isParamBag(spec.params) ? spec.params : {});
+    if (spec.params !== undefined && !isParamBag(spec.params)) {
+      bad();
+      entries = [[MALFORMED, spec.params]];
+    }
+  } else if (spec.params !== undefined && !isParamBag(spec.params)) {
+    // `resolveParams` would read keys off it and throw a `TypeError`.
+    if (!lenient) {
+      throw new ParamError(
+        `${spec.op} params must be an object, got ${JSON.stringify(spec.params) ?? typeof spec.params}`,
+      );
+    }
+    bad();
+    entries = [[MALFORMED, spec.params]];
   } else {
-    const op = registry.get(spec.op);
     try {
       // The strict resolve first even under leniency: when it succeeds
       // the id is byte-identical to the validating one, which is the
       // whole contract. Only its failure moves this spec into the
       // unvalidated namespace.
-      params = registry.resolveParams(op, spec.params);
+      entries = Object.entries(registry.resolveParams(op, spec.params));
     } catch (e) {
       if (!lenient) throw e;
-      unvalidated = true;
-      params = registry.resolveParams(op, spec.params, { validate: false });
+      bad();
+      entries = Object.entries(
+        registry.resolveParams(op, spec.params, { validate: false }),
+      );
     }
   }
 
   const encodeKey = unvalidated ? esc : (k: string) => k;
   const encodeValue = unvalidated ? typedEsc : esc;
-  const p = Object.entries(params)
+  const p = entries
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([k, v]) => `${encodeKey(k)}=${encodeValue(v)}`)
     .join(',');

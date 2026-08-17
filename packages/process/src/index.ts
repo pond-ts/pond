@@ -80,7 +80,7 @@ export {
   choice,
   flag,
 } from './plan/registry.js';
-export { UnknownOpError, ParamError } from './plan/registry.js';
+export { UnknownOpError, ParamError, ArityError } from './plan/registry.js';
 export type { DefMap } from './plan/registry.js';
 export { isFold } from './plan/types.js';
 export {

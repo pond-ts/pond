@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ArityError,
   ParamError,
   UnknownOpError,
   choice,
@@ -322,6 +323,74 @@ describe('specId — total under `validate: false` [PND-PROCTOTAL]', () => {
       expect(specId(registry, spec, lenient).startsWith('p1?:')).toBe(true);
     }
     expect(specId(registry, sma(20), lenient).startsWith('p1:')).toBe(true);
+  });
+
+  it('treats arity as part of validity, in both modes', () => {
+    // A spec with no `inputs` was named `p1:sma(;period=20)` — a VALID id
+    // for something that cannot compile — and then died at `compile` as a
+    // bare TypeError reading `.length` of undefined (Tidal, on 0.62.0).
+    // Arity is decidable from the registry alone, so identity can judge
+    // it, and the `p1?:` mark is only honest if it does.
+    const noInputs = { op: 'sma', params: { period: 20 } } as never;
+    expect(() => specId(registry, noInputs)).toThrow(ArityError);
+    expect(specId(registry, noInputs, lenient)).toBe(
+      'p1?:sma(;period=number:20)',
+    );
+
+    const tooMany = { op: 'sma', inputs: ['px', 'iv'] } as never;
+    expect(() => specId(registry, tooMany)).toThrow(
+      /takes 1 input\(s\), got 2/,
+    );
+    expect(specId(registry, tooMany, lenient).startsWith('p1?:')).toBe(true);
+  });
+
+  it('names the pathological shapes instead of throwing a TypeError', () => {
+    // Totality is over arbitrary JSON, not over well-typed specs — the
+    // whole reason to reach for leniency is an object that no longer
+    // fits. Each of these used to be a raw TypeError, which is the same
+    // failure as a ParamError one layer down.
+    const shapes: unknown[] = [
+      { op: 'sma', params: null, inputs: ['px'] },
+      { op: 'sma', params: 42, inputs: ['px'] },
+      { op: 'sma', inputs: [null] },
+      { op: 'sma', inputs: 'px' },
+      { op: 'sma', inputs: [['px']] },
+      { op: 'nope', params: null, inputs: null },
+    ];
+    const ids = new Set<string>();
+    for (const shape of shapes) {
+      const id = specId(registry, shape as never, lenient);
+      expect(id.startsWith('p1?:')).toBe(true);
+      ids.add(id);
+    }
+    // Distinct shapes stay distinct ids — a UI keyed on them sees one
+    // broken chip per broken entry.
+    expect(ids.size).toBe(shapes.length);
+    // And strict mode reports what is wrong rather than crashing.
+    expect(() =>
+      specId(registry, { op: 'sma', params: null, inputs: ['px'] } as never),
+    ).toThrow(ParamError);
+    expect(() =>
+      specId(registry, { op: 'sma', inputs: [null] } as never),
+    ).toThrow(/must be a column name or a spec/);
+  });
+
+  it('never names a malformed spec into the valid namespace', () => {
+    // The collision that matters: `{params: null}` must not resolve to
+    // the defaulted spec's legitimate id.
+    const defaulted = specId(registry, { op: 'sma', inputs: ['px'] });
+    for (const shape of [
+      { op: 'sma', params: null, inputs: ['px'] },
+      { op: 'sma', params: undefined, inputs: ['px'] },
+    ]) {
+      const id = specId(registry, shape as never, lenient);
+      if (shape.params === undefined) {
+        // Legitimately the defaulted spec — omitted params ARE valid.
+        expect(id).toBe(defaulted);
+      } else {
+        expect(id).not.toBe(defaulted);
+      }
+    }
   });
 
   it('validates by default, which is the behaviour that shipped', () => {
