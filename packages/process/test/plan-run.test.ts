@@ -581,6 +581,64 @@ describe('run — a skip carries the failure kind, not just prose', () => {
     expect(new ProcessError('x').code).toBe('ProcessError');
   });
 
+  it('reports a malformed spec as a plan failure, not as op code', () => {
+    // `{op:'sma'}` with no `inputs` reached `compile`, which read
+    // `.length` off `undefined`: a raw TypeError with NO code, which
+    // under this contract means "op code threw" — while the consumer's
+    // op had never run (Tidal, on 0.62.0).
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    const res = run(graph, {
+      plan: [{ op: 'sma', params: { period: 3 } } as never],
+      onError: 'skip',
+    });
+    expect(res.skipped[0]!.code).toBe('ArityError');
+    expect(res.skipped[0]!.reason).toMatch(/takes 1 input\(s\), got none/);
+  });
+
+  it('echoes the failing spec VERBATIM, so its id cannot be forged', () => {
+    // The plan pass normalized `params: null` to `{}`, so recomputing an
+    // id from the echo produced the DEFAULTED spec's valid id and keyed a
+    // broken entry's report onto a legitimate node. The selector pass
+    // echoed the original all along (Tidal, on 0.62.0).
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    const bad = { op: 'sma', params: null, inputs: ['px'] } as never;
+    const res = run(graph, { plan: [bad], onError: 'skip' });
+
+    expect(res.skipped[0]!.spec).toEqual({
+      op: 'sma',
+      params: null,
+      inputs: ['px'],
+    });
+    // The point of verbatim: the echo names itself, not the valid node.
+    const fromEcho = specId(registry, res.skipped[0]!.spec as never, {
+      validate: false,
+    });
+    expect(fromEcho).not.toBe(specId(registry, { op: 'sma', inputs: ['px'] }));
+    expect(fromEcho.startsWith('p1?:')).toBe(true);
+  });
+
+  it('agrees between the plan pass and the selector pass', () => {
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    const bad = { op: 'sma', params: null, inputs: ['px'] } as never;
+    const res = run(graph, {
+      plan: [bad],
+      select: [{ on: bad }],
+      onError: 'skip',
+    });
+    // Two entries, and they describe the same spec two ways: the plan
+    // pass echoes it under `spec`, the selector pass under `select.on`.
+    // Neither may normalize it — a consumer reconciling the two must not
+    // see them disagree about what was sent.
+    expect(res.skipped).toHaveLength(2);
+    const [planPass, selectorPass] = res.skipped;
+    expect(planPass!.spec).toEqual(bad);
+    expect(selectorPass!.select?.on).toEqual(bad);
+    expect(planPass!.spec).toEqual(selectorPass!.select?.on);
+  });
+
   it('is declared by EVERY exported error class, not inherited', () => {
     // A subclass that forgets silently reports its parent's code, so a
     // consumer's branch quietly lands on the wrong arm. Nothing can force

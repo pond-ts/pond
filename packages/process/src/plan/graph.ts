@@ -490,11 +490,7 @@ export class BoundGraph {
     const op = this.registry.get(spec.op);
     const params = this.registry.resolveParams(op, spec.params);
 
-    if (spec.inputs.length !== op.inputs.length) {
-      throw new ProcessError(
-        `${spec.op} takes ${op.inputs.length} input(s), got ${spec.inputs.length}`,
-      );
-    }
+    this.registry.checkArity(op, spec.inputs);
 
     // After arity — an input index past the declared list is an arity
     // problem, not a column one — and before the typed-unit pass, whose
