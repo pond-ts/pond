@@ -11,8 +11,10 @@ import { YAxis } from './YAxis.js';
 
 /**
  * Axis pan/zoom — the strips are grabbable, and double-click puts one back.
- * Enabled by the container's `panZoom`, so each story shows which mode turns
- * which strip on. One story per surface the gestures behave differently on.
+ * Turned on by `<ChartContainer axisPanZoom>` (`'x'` / `'y'` / `'xy'`), which is
+ * **separate from `panZoom`**: the plot's gestures and the axes' are independent
+ * opt-ins, so no chart grows axis gestures it didn't ask for. One story per
+ * surface the gestures behave differently on.
  *
  * **The x strip is the canvas gesture**: drag pans, wheel zooms — the same
  * vocabulary as dragging the plot itself, so there is one model to learn.
@@ -63,7 +65,13 @@ type Story = StoryObj;
  */
 export const XStripPanAndZoom: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} showAxis={false} panZoom="panZoom">
+    <ChartContainer
+      range={RANGE}
+      width={W}
+      showAxis={false}
+      panZoom="panZoom"
+      axisPanZoom="x"
+    >
       <ChartRow height={200}>
         <YAxis id="price" format="$,.0f" />
         <Layers>
@@ -76,12 +84,12 @@ export const XStripPanAndZoom: Story = {
 };
 
 /**
- * `panZoom="panZoomY"` — each gutter scales **itself**. Drag the left one and
+ * `axisPanZoom="y"` — each gutter scales **itself**. Drag the left one and
  * watch the right one hold still: the per-axis transform is the whole point.
  */
 export const YGutterPerAxis: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W + 60} panZoom="panZoomY">
+    <ChartContainer range={RANGE} width={W + 60} axisPanZoom="y">
       <ChartRow height={220}>
         <YAxis id="price" format="$,.0f" />
         <Layers>
@@ -95,7 +103,8 @@ export const YGutterPerAxis: Story = {
 };
 
 /**
- * `panZoom="panZoomXY"` — every strip is live. The plot's own vertical gesture
+ * `axisPanZoom="xy"` — every strip is live, and `panZoom="panZoomXY"` keeps the
+ * plot's own 2-D gesture alongside. The plot's vertical gesture
  * still scales both axes **together** (the uniform transform, which is what fixes
  * the aspect ratio — it's what you want on a scatter or heat map); a gutter drag
  * scales just the one you grabbed.
@@ -107,6 +116,7 @@ export const BothAxes: Story = {
       width={W + 60}
       showAxis={false}
       panZoom="panZoomXY"
+      axisPanZoom="xy"
     >
       <ChartRow height={220}>
         <YAxis id="price" format="$,.0f" />
@@ -133,6 +143,7 @@ export const StackedRows: Story = {
       width={W}
       showAxis={false}
       panZoom="panZoomXY"
+      axisPanZoom="xy"
     >
       <ChartRow height={140}>
         <YAxis id="price" format="$,.0f" />
@@ -163,6 +174,7 @@ export const ZoomInFloor: Story = {
       width={W}
       showAxis={false}
       panZoom="panZoom"
+      axisPanZoom="x"
       minDuration={30 * 60_000}
     >
       <ChartRow height={200}>
@@ -187,6 +199,7 @@ export const CategoryStripInert: Story = {
       categories={DESKS}
       showAxis={false}
       panZoom="panZoomXY"
+      axisPanZoom="xy"
     >
       <ChartRow height={200}>
         <YAxis id="flow" format=",.0f" />
@@ -207,7 +220,7 @@ export const CategoryStripInert: Story = {
  * panel feeds back. Put it back with the toggle or by double-clicking the gutter;
  * while it is auto, the min/max are the fit's and not yours to set.
  *
- * Note the gutter is live under a plain `panZoom` — scaling y does not require
+ * Note `axisPanZoom="y"` alongside a plain `panZoom` — scaling y does not require
  * opting the plot into vertical gestures.
  */
 export const AutoOrManualYScale: Story = {
@@ -219,7 +232,12 @@ export const AutoOrManualYScale: Story = {
     const fmt = (v: number) => `$${v.toFixed(2)}`;
     return (
       <div style={{ width: W }}>
-        <ChartContainer range={RANGE} width={W} panZoom="panZoom">
+        <ChartContainer
+          range={RANGE}
+          width={W}
+          panZoom="panZoom"
+          axisPanZoom="y"
+        >
           <ChartRow height={200}>
             <YAxis
               id="price"

@@ -475,6 +475,16 @@ export interface ContainerFrame {
    * the **aspect ratio** fixed. The x half stays in domain space, where
    * `bounds`, `minDuration` and the trading-calendar zoom maths live.
    */
+  /**
+   * Whether the **axis strips** take gestures, from `<ChartContainer axisPanZoom>`
+   * — resolved per dimension, and independent of the plot's own
+   * {@link zoomX}/{@link zoomY}. `x` gives the `<XAxis>` strip the canvas
+   * gesture (drag pans, wheel zooms); `y` makes each `<YAxis>` gutter scale its
+   * own axis. Both default to `false`, so a chart that doesn't ask keeps inert
+   * axes however interactive its plot is.
+   */
+  readonly axisPanZoomX: boolean;
+  readonly axisPanZoomY: boolean;
   /** Which axes the gestures own; pan follows zoom's degrees of freedom. */
   readonly zoomX: boolean;
   readonly zoomY: boolean;

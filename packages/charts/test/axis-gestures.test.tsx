@@ -132,6 +132,7 @@ describe('<XAxis> drag-to-zoom', () => {
         width={WIDTH}
         showAxis={false}
         panZoom={props.panZoom ?? 'panZoom'}
+        axisPanZoom="xy"
       >
         <ChartRow height={100}>
           <YAxis id="v" min={0} max={50} />
@@ -241,6 +242,7 @@ describe('<XAxis> drag-to-zoom', () => {
         width={WIDTH}
         showAxis={false}
         panZoom="panZoom"
+        axisPanZoom="xy"
         minDuration={400}
       >
         <ChartRow height={100}>
@@ -261,18 +263,23 @@ describe('<XAxis> drag-to-zoom', () => {
     expect(span(into.c!.timeRange)).toBeGreaterThanOrEqual(400);
   });
 
-  it('stays inert with panZoom off — and shows no resize cursor', () => {
+  it('stays inert with panZoom off', () => {
     const { dom, into } = mount({ panZoom: 'none' });
 
     dragBy(xStrip(dom), 'x', 150);
     wheelOn(xStrip(dom), -240, { clientX: 100 });
 
+    // `axisPanZoom` is on here, but there is no view for it to move: `panZoom`
+    // off means the container isn't holding a gestured view at all.
     expect(into.c!.timeRange[0]).toBe(RANGE[0]);
     expect(span(into.c!.timeRange)).toBe(1000);
-    expect(xStrip(dom).style.cursor).toBe('');
   });
 
-  it("panZoom='pan' pans on drag but leaves the wheel to the page", () => {
+  it("the opt-in is self-sufficient — it works over panZoom='pan'", () => {
+    // `axisPanZoom` is independent of `panZoom` in BOTH directions: the strip
+    // takes the gestures it was opted into, whatever the plot is doing. (It used
+    // to inherit the plot's wheel policy, which made `'pan'` mean "no strip
+    // zoom" — an implicit coupling nobody asked for.)
     const into: { c?: ContainerFrame; r?: RowFrame } = {};
     const dom = draw(
       <ChartContainer
@@ -280,6 +287,7 @@ describe('<XAxis> drag-to-zoom', () => {
         width={WIDTH}
         showAxis={false}
         panZoom="pan"
+        axisPanZoom="x"
       >
         <ChartRow height={100}>
           <YAxis id="v" min={0} max={50} />
@@ -292,11 +300,11 @@ describe('<XAxis> drag-to-zoom', () => {
       </ChartContainer>,
     ).container;
 
-    wheelOn(xStrip(dom), -240, { clientX: 100 });
-    expect(span(into.c!.timeRange)).toBe(1000); // no zoom
-
     dragBy(xStrip(dom), 'x', 105);
-    expect(into.c!.timeRange[0]).toBeCloseTo(-300, 0); // but it pans
+    expect(into.c!.timeRange[0]).toBeCloseTo(-300, 0);
+
+    wheelOn(xStrip(dom), -240, { clientX: 100 });
+    expect(span(into.c!.timeRange)).toBeLessThan(1000);
   });
 
   it('a category axis has no continuous domain to zoom — inert', () => {
@@ -307,6 +315,7 @@ describe('<XAxis> drag-to-zoom', () => {
         categories={TICKERS}
         showAxis={false}
         panZoom="panZoom"
+        axisPanZoom="xy"
       >
         <ChartRow height={100}>
           <YAxis id="v" min={0} max={30} />
@@ -364,6 +373,7 @@ describe('<XAxis> drag-to-zoom', () => {
         width={WIDTH}
         showAxis={false}
         panZoom="panZoom"
+        axisPanZoom="xy"
       >
         <ChartRow height={100}>
           <YAxis id="v" min={0} max={50} />
@@ -408,6 +418,7 @@ describe('<YAxis> drag-to-zoom — per axis', () => {
         width={WIDTH + 50}
         showAxis={false}
         panZoom="panZoom"
+        axisPanZoom="xy"
       >
         <ChartRow height={100}>
           <YAxis id="left" min={0} max={100} />
@@ -526,6 +537,7 @@ describe('<YAxis> drag-to-zoom — per axis', () => {
         width={WIDTH}
         showAxis={false}
         panZoom="panZoom"
+        axisPanZoom="xy"
       >
         <ChartRow height={100}>
           <YAxis id="v" min={0} max={100} />
@@ -544,41 +556,14 @@ describe('<YAxis> drag-to-zoom — per axis', () => {
     expect(d[1] - d[0]).toBeLessThan(100);
   });
 
-  it("stays inert under panZoom='pan' — an explicit no-zoom", () => {
+  it('stays inert without the axisPanZoom opt-in', () => {
     const into: { c?: ContainerFrame; r?: RowFrame } = {};
     const dom = draw(
       <ChartContainer
         range={RANGE}
         width={WIDTH}
         showAxis={false}
-        panZoom="pan"
-      >
-        <ChartRow height={100}>
-          <YAxis id="v" min={0} max={100} />
-          <Layers>
-            <LineChart series={series()} column="v" axis="v" />
-          </Layers>
-          <Capture into={into} />
-        </ChartRow>
-      </ChartContainer>,
-    ).container;
-
-    dragBy(yGutter(dom, 'v'), 'y', -60, 50);
-    wheelOn(yGutter(dom, 'v'), -240, { clientY: 50 });
-
-    // A gutter gesture IS a zoom, so "drag pans, wheel is the page's" has to
-    // mean the gutter holds still as well.
-    expect(into.r!.yScales.get('v')!.domain()).toEqual([0, 100]);
-  });
-
-  it('stays inert on a non-interactive chart (panZoom off)', () => {
-    const into: { c?: ContainerFrame; r?: RowFrame } = {};
-    const dom = draw(
-      <ChartContainer
-        range={RANGE}
-        width={WIDTH}
-        showAxis={false}
-        panZoom="none"
+        panZoom="panZoomXY"
       >
         <ChartRow height={100}>
           <YAxis id="v" min={0} max={100} />
@@ -613,6 +598,7 @@ describe('<YAxis onDomainChange> — the auto/manual hand-off', () => {
         width={WIDTH}
         showAxis={false}
         panZoom="panZoom"
+        axisPanZoom="xy"
       >
         <ChartRow height={100}>
           <YAxis
@@ -664,6 +650,7 @@ describe('<YAxis onDomainChange> — the auto/manual hand-off', () => {
         width={WIDTH}
         showAxis={false}
         panZoom="panZoom"
+        axisPanZoom="xy"
       >
         <ChartRow height={100}>
           <YAxis id="price" min={0} max={100} onDomainChange={() => {}} />
@@ -714,6 +701,7 @@ describe('axis gestures — Layer-2 review finds', () => {
           width={WIDTH}
           showAxis={false}
           panZoom="panZoom"
+          axisPanZoom="xy"
         >
           <ChartRow height={100}>
             <YAxis
@@ -760,6 +748,7 @@ describe('axis gestures — Layer-2 review finds', () => {
           width={WIDTH}
           showAxis={false}
           panZoom="panZoom"
+          axisPanZoom="xy"
         >
           <ChartRow height={100}>
             <YAxis
@@ -805,6 +794,7 @@ describe('axis gestures — Layer-2 review finds', () => {
           width={WIDTH}
           showAxis={false}
           panZoom="panZoom"
+          axisPanZoom="xy"
         >
           <ChartRow height={100}>
             <YAxis id="v" min={0} max={100} hide={hide} />
@@ -841,6 +831,7 @@ describe('axis gestures — Layer-2 review finds', () => {
           width={WIDTH}
           showAxis={false}
           panZoom="panZoom"
+          axisPanZoom="xy"
         >
           <ChartRow height={100}>
             {show ? <YAxis id="v" min={0} max={100} /> : null}
@@ -866,5 +857,125 @@ describe('axis gestures — Layer-2 review finds', () => {
     // Transforms are keyed by axis id (as scales are), so a stale entry would be
     // inherited by any later axis reusing the id.
     expect(into.r!.axisTransforms.has('v')).toBe(false);
+  });
+});
+
+describe('axisPanZoom is the opt-in — panZoom alone changes nothing', () => {
+  /** A chart exactly as it would be written before this feature existed. */
+  const legacy = (panZoom: 'pan' | 'panZoom' | 'panZoomXY') => {
+    const into: { c?: ContainerFrame; r?: RowFrame } = {};
+    const dom = draw(
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom={panZoom}
+      >
+        <ChartRow height={100}>
+          <YAxis id="v" min={0} max={100} />
+          <Layers>
+            <LineChart series={series()} column="v" axis="v" />
+          </Layers>
+          <Capture into={into} />
+        </ChartRow>
+        <XAxis />
+      </ChartContainer>,
+    ).container;
+    return { dom, into };
+  };
+
+  for (const mode of ['pan', 'panZoom', 'panZoomXY'] as const) {
+    it(`panZoom='${mode}' leaves both strips inert`, () => {
+      const { dom, into } = legacy(mode);
+      const before = into.c!.timeRange;
+      const yBefore = into.r!.yScales.get('v')!.domain();
+
+      dragBy(xStrip(dom), 'x', 120);
+      wheelOn(xStrip(dom), -240, { clientX: 100 });
+      dragBy(yGutter(dom, 'v'), 'y', -60, 50);
+      wheelOn(yGutter(dom, 'v'), -240, { clientY: 50 });
+
+      // The whole point: upgrading must not give an existing interactive chart
+      // gestures its author never asked for.
+      expect(into.c!.timeRange).toEqual(before);
+      expect(into.r!.yScales.get('v')!.domain()).toEqual(yBefore);
+      expect(into.r!.axisTransforms.size).toBe(0);
+      expect(xStrip(dom).style.cursor).toBe('');
+      expect(yGutter(dom, 'v').style.cursor).toBe('');
+    });
+  }
+
+  it('works with panZoom off entirely — axis gestures without a grabbable plot', () => {
+    // The case the independence exists for: scale the y axes while the plot
+    // keeps its drag for a selection sweep.
+    const into: { c?: ContainerFrame; r?: RowFrame } = {};
+    const dom = draw(
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="none"
+        axisPanZoom="y"
+      >
+        <ChartRow height={100}>
+          <YAxis id="v" min={0} max={100} />
+          <Layers>
+            <LineChart series={series()} column="v" axis="v" />
+          </Layers>
+          <Capture into={into} />
+        </ChartRow>
+      </ChartContainer>,
+    ).container;
+
+    dragBy(yGutter(dom, 'v'), 'y', -60, 50);
+
+    const d = into.r!.yScales.get('v')!.domain() as [number, number];
+    expect(d[1] - d[0]).toBeLessThan(100);
+  });
+
+  it("'x' and 'y' each enable only their own strip", () => {
+    const onlyX = draw(
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="panZoom"
+        axisPanZoom="x"
+      >
+        <ChartRow height={100}>
+          <YAxis id="v" min={0} max={100} />
+          <Layers>
+            <LineChart series={series()} column="v" axis="v" />
+          </Layers>
+        </ChartRow>
+        <XAxis />
+      </ChartContainer>,
+    ).container;
+    dragBy(yGutter(onlyX, 'v'), 'y', -60, 50);
+    expect(yGutter(onlyX, 'v').style.cursor).toBe(''); // y inert under 'x'
+    cleanup();
+
+    const intoY: { c?: ContainerFrame; r?: RowFrame } = {};
+    const onlyY = draw(
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="panZoom"
+        axisPanZoom="y"
+      >
+        <ChartRow height={100}>
+          <YAxis id="v" min={0} max={100} />
+          <Layers>
+            <LineChart series={series()} column="v" axis="v" />
+          </Layers>
+          <Capture into={intoY} />
+        </ChartRow>
+        <XAxis />
+      </ChartContainer>,
+    ).container;
+    const before = intoY.c!.timeRange;
+    dragBy(xStrip(onlyY), 'x', 120);
+    expect(intoY.c!.timeRange).toEqual(before); // x inert under 'y'
   });
 });

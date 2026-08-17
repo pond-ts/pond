@@ -85,6 +85,7 @@ choose whether the plot captures pan, both, or neither:
 | Prop                | Type                                      | Default  | Purpose                                                                                           |
 | ------------------- | ----------------------------------------- | -------- | ------------------------------------------------------------------------------------------------- |
 | `panZoom`           | `'none' \| 'pan' \| 'panZoom' \| boolean` | `'none'` | Which gestures the plot captures (table above). Boolean is the back-compat shorthand.             |
+| `axisPanZoom`       | `'none' \| 'x' \| 'y' \| 'xy' \| boolean` | `'none'` | Which **axis strips** take gestures — see [Grabbing an axis](#grabbing-an-axis--axispanzoom).     |
 | `bounds`            | `[number, number]`                        | —        | **Outer extent** — pan/zoom can't move the view outside it. Zoom-out ceiling; omit for no limit.  |
 | `minDuration`       | `number`                                  | `1`      | Zoom-**in** floor — the minimum visible duration in ms.                                           |
 | `onTimeRangeChange` | `([start, end]) => void`                  | —        | Fires on pan/zoom with the new range. Wire back to `range` for controlled; omit for uncontrolled. |
@@ -107,9 +108,16 @@ then ignored so they can't fight the user's pan. To drive the range externally
 — or to **follow a live sliding window** — use controlled mode: handle
 `onTimeRangeChange` and feed `range` yourself.
 
-### Grabbing an axis
+### Grabbing an axis — `axisPanZoom`
 
-The axis strips are grabbable too:
+The axis strips take gestures too, behind their **own** opt-in:
+
+| `axisPanZoom`                | What becomes grabbable                 |
+| ---------------------------- | -------------------------------------- |
+| `'none'` / `false` (default) | Nothing — the strips are inert chrome. |
+| `'x'`                        | The `<XAxis>` strip.                   |
+| `'y'`                        | Every `<YAxis>` gutter.                |
+| `'xy'` / `true`              | Both.                                  |
 
 | Gesture      | On the **x strip**                       | On a **y gutter**                  |
 | ------------ | ---------------------------------------- | ---------------------------------- |
@@ -117,18 +125,24 @@ The axis strips are grabbable too:
 | Wheel        | **Zooms** about the pointer, as the plot | Zooms that one axis                |
 | Double-click | Back to the declared `range`             | Releases that axis back to its fit |
 
+```tsx
+<ChartContainer range={range} panZoom="panZoom" axisPanZoom="xy">
+  <YAxis id="price" format="$,.2f" />
+  …
+  <XAxis />
+</ChartContainer>
+```
+
 The cursor stays an ordinary arrow at rest — a strip is chrome you also hover,
 click and read — and becomes a directional (`↕` / `↔`) cursor only while a
 gesture is actually running.
 
-**What turns them on.** The x strip follows the plot's own x freedoms: it pans
-with `'pan'` and up, and its wheel zooms wherever the plot's does (so
-`panZoom='pan'` leaves the wheel to the page here too). A y gutter is live
-whenever the chart is interactive **at all** — deliberately _not_ gated on
-`panZoomY`/`panZoomXY`, because the common chart is an auto-fitting y with a
-panned and zoomed x, and scaling that y should not require opting the plot into
-vertical gestures (a different feature: the uniform 2-D transform a scatter or
-heat map wants). A `panZoom='none'` chart captures nothing anywhere.
+**`axisPanZoom` is independent of `panZoom`, in both directions.** An interactive
+plot does not hand its axes gestures nobody asked for, and a chart can scale its
+y axes with `panZoom` off entirely — which is the combination to reach for when
+the plot's drag belongs to a selection sweep. The one thing they share is the
+view: the x strip moves the same range the plot's pan does, and reports through
+`onTimeRangeChange` the same way.
 
 #### Auto or manual — reporting a y override
 
@@ -157,7 +171,7 @@ why a chart with no scale UI needs no wiring.
 See [`Axes/PanZoom`](pathname:///storybook/?path=/story/axes-panzoom--auto-or-manual-y-scale)
 for the whole loop in one story.
 
-Two more things worth knowing:
+Three more things worth knowing:
 
 - **The x strip is the canvas gesture, moved to the axis** — same maths, same
   sign, same `bounds` / `minDuration` fences — so there is one gesture vocabulary

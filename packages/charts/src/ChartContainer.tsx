@@ -534,25 +534,9 @@ export interface ChartContainerProps {
    * `false` ⇒ `'none'`). Bound the reachable range with {@link bounds}
    * (zoom-out / pan extent) and {@link minDuration} (zoom-in floor).
    *
-   * **The axis strips follow this prop too**, and a chart on the `'none'` default
-   * captures nothing anywhere, strips included.
-   *
-   * - An **`<XAxis>` strip behaves exactly as the plot does**: it pans on drag
-   *   wherever the plot pans (`'pan'` and up) and zooms on wheel wherever the
-   *   plot's wheel zooms — so `'pan'` leaves the wheel to the page on the strip
-   *   too. One gesture vocabulary, two places to reach it.
-   * - A **`<YAxis>` gutter zooms that one axis** on drag or wheel, gated on this
-   *   prop zooming *at all* rather than on its zoom-**y** freedom: the common
-   *   chart is an auto-fitting y with a panned/zoomed x, and scaling y there
-   *   shouldn't require opting the plot into vertical gestures (`panZoomY` /
-   *   `panZoomXY` — the uniform 2-D transform a scatter or heat map wants). A
-   *   gutter gesture *is* a zoom, so `'pan'` opts out of it as well.
-   * - **Double-click** puts either back, and a gutter zoom can be reported to the
-   *   consumer with {@link YAxisProps.onDomainChange}.
-   *
-   * The per-axis nature of a gutter zoom is the point of contrast: the plot's own
-   * vertical gesture scales every axis in the row together (see
-   * {@link ContainerFrame.yTransform} versus {@link RowFrame.axisTransforms}).
+   * **This prop is about the plot only.** Gestures on the axis strips are a
+   * separate opt-in — see {@link axisPanZoom} — so turning pan/zoom on here does
+   * not silently make the axes grabbable.
    */
   panZoom?:
     | boolean
@@ -562,6 +546,32 @@ export interface ChartContainerProps {
     | 'panZoomX'
     | 'panZoomY'
     | 'panZoomXY';
+  /**
+   * Which **axis strips** take gestures — the opt-in for grabbing an axis, and
+   * **`'none'` by default** so no existing chart changes behaviour:
+   *
+   * - `'none'` (or `false`, the **default**) — the strips are inert chrome.
+   * - `'x'` — the `<XAxis>` strip **pans on drag and zooms on wheel**, exactly as
+   *   the plot's own gestures do (same maths, same sign, same {@link bounds} /
+   *   {@link minDuration} fences). Double-click returns to the declared
+   *   {@link range}. A category axis has no continuous domain and stays inert.
+   * - `'y'` — each `<YAxis>` gutter **zooms that one axis** on drag or wheel,
+   *   double-click releasing it back to its fit. Report it to a scale UI with
+   *   {@link YAxisProps.onDomainChange}.
+   * - `'xy'` (or `true`) — both.
+   *
+   * **Deliberately independent of {@link panZoom}**, in both directions. A chart
+   * can scale its y axes without letting the plot capture vertical drags (which
+   * would fight a selection sweep), and an interactive plot does not hand its
+   * axes gestures nobody asked for. The one thing they share is the view itself:
+   * the x strip moves the same range the plot's pan does, and reports through
+   * {@link onTimeRangeChange} the same way.
+   *
+   * The pairing to reach for on a time-series chart is
+   * `panZoom="panZoom" axisPanZoom="xy"` — drag the plot to pan, drag the x strip
+   * to pan, wheel either to zoom, and drag a y gutter to override its fit.
+   */
+  axisPanZoom?: boolean | 'none' | 'x' | 'y' | 'xy';
   /**
    * **Outer pan/zoom extent** — `[min, max]` (same units as {@link range}) the
    * view can never move outside. Panning into an edge stops there (the window
@@ -827,6 +837,7 @@ function ResolvedChartContainer({
   onTrackerChanged,
   onDrawStats,
   panZoom = false,
+  axisPanZoom = false,
   bounds,
   onTimeRangeChange,
   minDuration = 1,
@@ -973,6 +984,13 @@ function ResolvedChartContainer({
     panZoom === 'panZoomX' ||
     panZoom === 'panZoomXY';
   const zoomY = panZoom === 'panZoomY' || panZoom === 'panZoomXY';
+  // Axis-strip gestures are their own opt-in (see `axisPanZoom`), so they are
+  // resolved from that prop alone — never from `panZoom`, which would make every
+  // already-interactive chart grow axis gestures on upgrade.
+  const axisPanZoomX =
+    axisPanZoom === true || axisPanZoom === 'x' || axisPanZoom === 'xy';
+  const axisPanZoomY =
+    axisPanZoom === true || axisPanZoom === 'y' || axisPanZoom === 'xy';
   const panX = zoomX || panZoom === 'pan';
   const panY = zoomY;
   const panEnabled = panX || panY;
@@ -2130,6 +2148,8 @@ function ResolvedChartContainer({
     () => ({
       timeRange: timeRangeTuple,
       seedRange: seedRangeTuple,
+      axisPanZoomX,
+      axisPanZoomY,
       width,
       theme: theme ?? defaultTheme,
       plotWidth,
@@ -2213,6 +2233,8 @@ function ResolvedChartContainer({
     [
       timeRangeTuple,
       seedRangeTuple,
+      axisPanZoomX,
+      axisPanZoomY,
       width,
       theme,
       plotWidth,

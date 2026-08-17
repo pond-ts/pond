@@ -288,9 +288,8 @@ const DEFAULT_TICK_COUNT = 5;
  * tick marks + labels from that scale. Charts attach via `<LineChart axis="id">`
  * (default: the first axis).
  *
- * **Gestures.** Whenever the container's `panZoom` zooms at all (not only its
- * zoom-**y** modes — an auto-fitting y on a panned, zoomed x is the case this
- * serves), the gutter is grabbable: drag or wheel it to scale **this axis only**
+ * **Gestures.** With `<ChartContainer axisPanZoom="y">` (or `"xy"`) the gutter is
+ * grabbable: drag or wheel it to scale **this axis only**
  * — a sibling axis on the other side, and every other row, hold still — and
  * double-click to release it back to its fit. That per-axis scaling is what the
  * plot's vertical gesture deliberately cannot do; see
@@ -393,15 +392,14 @@ export function YAxis({
   // still (see `RowFrame.axisTransforms` for why that needs its own transform).
   const gestures = useAxisGestures({
     axis: 'y',
-    // Gated on the container zooming **at all**, not on its zoom-*y* freedom.
-    // The canonical setup is an auto-fitting y axis on a chart whose *x* is
-    // panned and zoomed (`panZoom='panZoom'`), and scaling the gutter there must
-    // not require opting the plot into vertical gestures too — those are a
-    // different feature (the uniform 2-D transform a scatter or heat map wants).
-    // But `panZoom='pan'` is an explicit "no zoom" and is honoured: a gutter is a
-    // zoom, so `zoomEnabled` — not `panEnabled` — is the gate.
-    drag: container.zoomEnabled ? 'zoom' : 'none',
-    wheel: container.zoomEnabled,
+    // Gated on `<ChartContainer axisPanZoom>` (its `'y'` / `'xy'` values) — the
+    // axis opt-in, deliberately independent of the plot's `panZoom`. That is what
+    // lets the canonical setup work — an auto-fitting y on a chart whose *x* is
+    // panned and zoomed — without either inheriting gestures silently or opting
+    // the plot into vertical drags (a different feature: the uniform 2-D
+    // transform a scatter or heat map wants).
+    drag: container.axisPanZoomY ? 'zoom' : 'none',
+    wheel: container.axisPanZoomY,
     onZoom: (factor, pivotPx) => {
       // Read the scale at gesture time, not from the render that built this
       // closure — a wheel notch mid-stream must compose onto what is drawn now.

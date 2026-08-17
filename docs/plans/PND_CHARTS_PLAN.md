@@ -1551,14 +1551,21 @@ worth keeping:
   incremental steps re-snap to whole ms (`roundRange`) on every move and the
   errors compound over a long drag. Pinned by a test that drags in 1px steps and
   asserts the same landing as one jump.
-- **No new prop — the strips follow `panZoom`, but not symmetrically.** The x
-  strip takes the plot's own x freedoms (`panX` for the drag, `zoomX` for the
-  wheel). A y gutter is live whenever the chart is interactive **at all**, and
-  that asymmetry is the point: the canonical chart is an auto-fitting y with a
-  panned/zoomed x (`panZoom='panZoom'`), and requiring `panZoomY` to scale y
-  would force the plot into vertical gestures the chart doesn't want — those are
-  a different feature (the uniform 2-D transform a scatter or heat map wants).
-  `panZoom='none'` still captures nothing anywhere, so no existing chart moves.
+- **`axisPanZoom` is its own prop — inheriting `panZoom` was wrong.** Three cuts
+  here, and the last is the one that shipped. (1) Inherit `panZoom` per dimension.
+  (2) Inherit, but let a y gutter follow "zooms at all" rather than zoom-*y*, so
+  the canonical auto-y-with-panned-x chart worked. (3) A separate
+  `axisPanZoom?: boolean | 'none' | 'x' | 'y' | 'xy'`, default off.
+  What killed inheritance: "opt in to `panZoom`" is opt-in to *plot* gestures,
+  and widening it means **every chart that already sets `panZoom` grows axis
+  gestures on upgrade** — a y gutter that was inert chrome becomes a scale
+  control nobody asked for. Ten story files in this repo alone set `panZoom`, so
+  the blast radius is real, and it is exactly the "behaviour shift in a common
+  path" the Layer 1 checklist says not to ship.
+  The separate prop also buys the case inheritance could never express: axis
+  gestures with `panZoom='none'`, for a chart whose plot drag belongs to a
+  selection sweep. Two independent props, one per surface, is both safer and more
+  expressive than one prop meaning two things.
 - **Cursor names the gesture, not the affordance.** Arrow at rest — a strip is
   chrome you also hover, click and read, and a standing resize cursor claims the
   whole thing is a handle — switching to `↕`/`↔` only while a drag is live (or for

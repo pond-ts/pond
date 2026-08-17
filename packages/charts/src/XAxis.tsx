@@ -297,12 +297,11 @@ export interface XAxisProps {
  *
  * `<TimeAxis>` is the time-flavoured preset (`<XAxis />`).
  *
- * **Gestures.** The strip is a second handle on the canvas gesture: it **pans on
- * drag** wherever the plot pans and **zooms on wheel** wherever the plot's wheel
- * zooms (so `panZoom='pan'` leaves the wheel to the page here too), with
- * double-click returning to the declared `range`. Same maths as the plot's own
- * drag, including `bounds` / `minDuration` and the trading calendar. A category
- * axis has no continuous domain and stays inert.
+ * **Gestures.** With `<ChartContainer axisPanZoom="x">` (or `"xy"`) the strip is a
+ * second handle on the canvas gesture: it **pans on drag** and **zooms on
+ * wheel**, with double-click returning to the declared `range`. Same maths as the
+ * plot's own drag, including `bounds` / `minDuration` and the trading calendar.
+ * A category axis has no continuous domain and stays inert.
  */
 export function XAxis({
   format,
@@ -648,11 +647,13 @@ export function XAxis({
   // stays inert there rather than snapping between slots.
   const gestures = useAxisGestures({
     axis: 'x',
-    // Canvas parity: drag pans (with `panX`), wheel zooms (with `zoomX`), so
-    // `panZoom='pan'` leaves the wheel to the page here exactly as it does over
-    // the plot. A category axis has no continuous domain for either.
-    drag: container.panX && xKind !== 'category' ? 'pan' : 'none',
-    wheel: container.zoomX && xKind !== 'category',
+    // Gated on `<ChartContainer axisPanZoom>` — the axis opt-in — and NOT on the
+    // plot's `panZoom`: inheriting that would hand every already-interactive
+    // chart gestures its author never asked for. Once opted in the strip is the
+    // canvas gesture (drag pans, wheel zooms). A category axis has no continuous
+    // domain for either.
+    drag: container.axisPanZoomX && xKind !== 'category' ? 'pan' : 'none',
+    wheel: container.axisPanZoomX && xKind !== 'category',
     // Snapshot the view at press: the pan is re-derived from it on every move
     // (the plot's own approach), so a long drag can't accumulate rounding, and
     // `roundRange`'s ms snap can't ratchet the span.

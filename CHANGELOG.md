@@ -66,29 +66,31 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
-- `@pond-ts/charts`: **axis pan/zoom** — the `<XAxis>` strip and each `<YAxis>`
-  gutter are now grabbable, and **double-click** puts one back (the declared
-  `range` on x, its fit on y). No new container prop: the strips follow the
-  existing `panZoom`, and a `'none'` chart captures nothing, strips included. The
-  cursor stays an ordinary arrow at rest and becomes directional (`↕` / `↔`) only
-  while a gesture is running.
+- `@pond-ts/charts`: **axis pan/zoom**, behind a new
+  **`<ChartContainer axisPanZoom>`** (`'none'` — the default — / `'x'` / `'y'` /
+  `'xy'`). Opted in, the `<XAxis>` strip and each `<YAxis>` gutter become
+  grabbable, and **double-click** puts one back (the declared `range` on x, its
+  fit on y). The cursor stays an ordinary arrow at rest and becomes directional
+  (`↕` / `↔`) only while a gesture is running.
+
+  **The opt-in is deliberately separate from `panZoom`, in both directions.** An
+  already-interactive chart does not grow axis gestures on upgrade — nothing
+  changes for any existing chart — and a chart can scale its y axes with
+  `panZoom` off entirely, which is what you want when the plot's drag belongs to
+  a selection sweep.
 
   **The x strip is the canvas gesture, moved to the axis** — drag pans, wheel
   zooms about the pointer — reusing the plot's own domain-space maths, so
-  `bounds` and `minDuration` still fence the view, a trading-time axis still pans
-  and floors in _trading_ time, and `panZoom='pan'` leaves the wheel to the page
-  here just as it does over the plot. A category axis has no continuous domain
-  and stays inert.
+  `bounds` and `minDuration` still fence the view and a trading-time axis still
+  pans and floors in _trading_ time. A category axis has no continuous domain and
+  stays inert.
 
   **A y gutter zooms, and only the axis you grabbed** — its sibling and every
-  other row hold still. It is live whenever the chart is interactive at all,
-  deliberately _not_ gated on `panZoomY`/`panZoomXY`: the common chart is an
-  auto-fitting y with a panned and zoomed x, and scaling y there shouldn't
-  require opting the plot into vertical gestures. Per-axis scaling needed a new
-  per-axis pixel transform (`RowFrame.axisTransforms`, layered under the
-  container's uniform `yTransform`), since the uniform one exists precisely so a
-  _plot_ gesture never has to pick an axis; unlike it, this is not floored at
-  `k ≥ 1`, because squashing an axis you grabbed is the point.
+  other row hold still. That needed a new per-axis pixel transform
+  (`RowFrame.axisTransforms`, layered under the container's uniform
+  `yTransform`), since the uniform one exists precisely so a _plot_ gesture never
+  has to pick an axis; unlike it, this is not floored at `k ≥ 1`, because
+  squashing an axis you grabbed is the point.
 
 - `@pond-ts/charts`: **`<YAxis onDomainChange>`** — the auto-vs-manual hand-off
   for a scaled y axis. Fires with the `[min, max]` a gutter gesture reached, and
