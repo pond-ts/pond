@@ -27,7 +27,9 @@ describe('Cursors/Crosshair stories render', () => {
       'MultipleSeries',
       'SingleSeries',
       'StackedAxes',
+      'StackedAxesBothSides',
       'StackedAxesColored',
+      'StackedAxesLeft',
     ]);
   });
 

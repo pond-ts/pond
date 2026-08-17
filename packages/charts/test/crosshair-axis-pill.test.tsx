@@ -172,6 +172,39 @@ describe('the crosshair value pill sits on the reticle axis', () => {
     expect(p.style.left).toBe('');
   });
 
+  it('stacked on BOTH sides: each gutter is walked independently', () => {
+    // Two axes each side — four columns, so an offset that counted the wrong
+    // side's columns (or all four) would still look plausible on one story but
+    // land in the wrong column here. The reticle's axis is the outer LEFT one,
+    // whose offset must be one *left* column, not one right column and not two.
+    const chart = (
+      <ChartContainer
+        range={[0, 4]}
+        width={WIDTH}
+        trackerPosition={2}
+        showAxis={false}
+      >
+        <CrosshairCursor />
+        <ChartRow height={120}>
+          <YAxis id="bpm" side="left" width={AXIS_W} min={100} max={200} />
+          <YAxis id="usdL" side="left" width={AXIS_W} min={0} max={100} />
+          <Layers>
+            <LineChart series={hr} column="bpm" axis="bpm" />
+            <LineChart series={price} column="v" axis="usdL" />
+          </Layers>
+          <YAxis id="inner" side="right" width={AXIS_W} min={0} max={100} />
+          <YAxis id="outer" side="right" width={AXIS_W} min={0} max={100} />
+        </ChartRow>
+      </ChartContainer>
+    );
+    const { container } = render(chart);
+    const p = pill(container);
+    expect(p.textContent).toBe('177');
+    // plotWidth is now WIDTH − 4 columns; the offset is exactly one column.
+    expect(p.style.right).toBe(`${plotFor(4) + AXIS_W}px`);
+    expect(p.style.left).toBe('');
+  });
+
   it('a mirrored id takes side AND offset from the same (last-declared) axis', () => {
     // One id registered on both sides — the degenerate case where an id-keyed
     // map has to pick. `axisSides` picks the last declared; `axisOffsets` must
