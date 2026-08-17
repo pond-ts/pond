@@ -39,7 +39,24 @@ axisPillX(side, plotWidth)
 
 which pins the pill to the plot edge — by construction the **innermost** gutter
 on that side. With one axis per side that was exact; with two, nothing in the
-model can express "the gutter belonging to axis X".
+reticle can express "the gutter belonging to axis X".
+
+**The data is already there, which makes this narrow.** `ResolvedCursorSample`
+(`context.d.ts`) carries
+
+```ts
+readonly px, py: number;
+readonly axisId: string;      // ← dropped by crosshairPick
+readonly side: 'left' | 'right';
+readonly formatted: string;
+readonly color: string;       // ← dropped by crosshairPick
+readonly label: string;
+```
+
+so both halves of this report are already resolved per sample — `crosshairPick`
+simply narrows them away. Keeping `axisId` through the pick and positioning
+from it is the entire correctness fix; keeping `color` is the entire second
+half. No new plumbing, no new frame fields.
 
 Second, smaller half: the pill's ink is
 
@@ -62,15 +79,22 @@ against.
    cursor prop. On a multi-axis row a self-identifying readout is the whole
    point of colouring the axes.
 
-## What we did instead (nothing)
+## What we did instead (nothing — and nothing was available)
 
-No consumer-side workaround was attempted, and we don't want one: the placement
-is computed inside the cursor's own render frame and `renderYGutter` has no
-per-axis hook to override. Suppressing the built-in crosshair to hand-roll a
-pill from `onTrackerChanged` plus our own gutter overlay would re-implement the
-readout channel (`cursorFormat` precedence, snapping, boundary clamping) and
-give up the crosshair we otherwise want — worse than the bug. We are shipping
-with it and reporting.
+No consumer-side workaround was attempted, and none exists short of leaving the
+cursor system: the placement happens inside the cursor's own render frame,
+`renderYGutter` has no per-axis hook, and a consumer cannot supply its own
+cursor spec either — `ResolvedCursorFrame` is documented as **"Internal for now
+(deliberately not exported from `index.ts`)"** pending the RFC Q3 contract
+publication, so the frame carrying the samples can't even be typed against
+outside the package. (That is a deliberate, reasonable state; we mention it
+only because it is what closes off the escape hatch.)
+
+Suppressing the built-in crosshair to hand-roll a pill from `onTrackerChanged`
+plus our own gutter overlay would re-implement the readout channel
+(`cursorFormat` precedence, snapping, boundary clamping) and give up the
+crosshair we otherwise want — worse than the bug. We are shipping with it and
+reporting.
 
 Logged on our side as `CHARTS_FRICTION.md` F-charts-15.
 
