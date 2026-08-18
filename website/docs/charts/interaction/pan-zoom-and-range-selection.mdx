@@ -147,7 +147,7 @@ view: the x strip moves the same range the plot's pan does, and reports through
 #### Auto or manual — reporting a y override
 
 An auto-fitting y axis stops being auto the moment the user scales it, and most
-UIs want to say so. `onDomainChange` is that hand-off: it fires with the
+UIs want to say so. `onBoundsChange` is that hand-off: it fires with the
 `[min, max]` a gutter gesture reached, and with `null` when the axis is released
 back to auto (double-click).
 
@@ -157,7 +157,7 @@ const [scale, setScale] = useState<[number, number] | null>(null); // null = aut
 <YAxis
   id="price"
   {...(scale ? { min: scale[0], max: scale[1] } : {})}
-  onDomainChange={setScale}
+  onBoundsChange={setScale}
 />;
 ```
 
@@ -209,7 +209,7 @@ Three more things worth knowing:
   reset always works: it just drops that axis's own zoom.)
 - **`onTimeRangeChange` covers the x view only** — including the x strip's pan
   and wheel, like any other view change. A y gutter's zoom reports through that
-  axis's own `onDomainChange`.
+  axis's own `onBoundsChange`.
 
 ## See also
 

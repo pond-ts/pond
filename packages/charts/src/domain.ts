@@ -30,6 +30,23 @@ import type { YScaleKind } from './context.js';
  * non-positive bound has no position and is refused, and `pad` is a fraction of
  * the *decades* spanned rather than of the difference.
  */
+export function resolveYDomain(
+  min: number | undefined,
+  max: number | undefined,
+  extents: Iterable<readonly [number, number] | null>,
+  pad = 0,
+  scale: YScaleKind = 'linear',
+): [number, number] {
+  if (scale === 'log') return resolveLogDomain(min, max, extents, pad);
+  const result = resolveBase(min, max, extents);
+  if (pad) {
+    const [lo, hi] = result;
+    const p = pad * (hi - lo);
+    return [lo - p, hi + p];
+  }
+  return result;
+}
+
 /**
  * The inverse of {@link resolveYDomain}'s `pad` — recover the bounds that, fed
  * back in as `min`/`max`, re-pad to exactly the domain passed in.
@@ -37,7 +54,7 @@ import type { YScaleKind } from './context.js';
  * **Why this has to exist.** `pad` is applied *last*, and to explicit bounds too,
  * so a scale's live domain is the **padded** one. Anything that reads a domain
  * off the scale and hands it back as bounds (a y-gutter gesture reporting through
- * `<YAxis onDomainChange>`) would otherwise re-pad an already-padded domain and
+ * `<YAxis onBoundsChange>`) would otherwise re-pad an already-padded domain and
  * inflate it by `1 + 2·pad` on every report — compounding, so a padded axis
  * walks outward a notch at a time under a gesture that should be zooming *in*.
  *
@@ -64,23 +81,6 @@ export function unpadDomain(
   const mid = (lo + hi) / 2;
   const half = (hi - lo) / (2 * shrink);
   return [mid - half, mid + half];
-}
-
-export function resolveYDomain(
-  min: number | undefined,
-  max: number | undefined,
-  extents: Iterable<readonly [number, number] | null>,
-  pad = 0,
-  scale: YScaleKind = 'linear',
-): [number, number] {
-  if (scale === 'log') return resolveLogDomain(min, max, extents, pad);
-  const result = resolveBase(min, max, extents);
-  if (pad) {
-    const [lo, hi] = result;
-    const p = pad * (hi - lo);
-    return [lo - p, hi + p];
-  }
-  return result;
 }
 
 /** Smallest positive value a log domain will fall back to when the data offers

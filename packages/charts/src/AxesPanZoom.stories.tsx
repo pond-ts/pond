@@ -215,7 +215,7 @@ export const CategoryStripInert: Story = {
 /**
  * **The common setup, end to end.** An auto-fitting y axis on a chart whose x is
  * panned and zoomed — and the moment you scroll or drag the y gutter, the fit is
- * overridden: `onDomainChange` reports the `[min, max]` the gesture reached, the
+ * overridden: `onBoundsChange` reports the `[min, max]` the gesture reached, the
  * panel below flips to **manual** and shows them, and the axis draws what the
  * panel feeds back. Put it back with the toggle or by double-clicking the gutter;
  * while it is auto, the min/max are the fit's and not yours to set.
@@ -243,7 +243,7 @@ export const AutoOrManualYScale: Story = {
               id="price"
               format="$,.0f"
               {...(domain ? { min: domain[0], max: domain[1] } : {})}
-              onDomainChange={setDomain}
+              onBoundsChange={setDomain}
             />
             <Layers>
               <LineChart series={demo()} column="price" axis="price" />

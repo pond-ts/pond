@@ -92,7 +92,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   has to pick an axis; unlike it, this is not floored at `k ≥ 1`, because
   squashing an axis you grabbed is the point.
 
-- `@pond-ts/charts`: **`<YAxis onDomainChange>`** — the auto-vs-manual hand-off
+- `@pond-ts/charts`: **`<YAxis onBoundsChange>`** — the auto-vs-manual hand-off
   for a scaled y axis. Fires with the `[min, max]` a gutter gesture reached, and
   with `null` when the axis is released back to auto-fit, so a UI can show the
   bounds, badge the scale "manual", and offer a toggle back. Providing it makes

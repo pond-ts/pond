@@ -557,7 +557,7 @@ export interface ChartContainerProps {
    *   {@link range}. A category axis has no continuous domain and stays inert.
    * - `'y'` — each `<YAxis>` gutter **zooms that one axis** on drag or wheel,
    *   double-click releasing it back to its fit. Report it to a scale UI with
-   *   {@link YAxisProps.onDomainChange}.
+   *   {@link YAxisProps.onBoundsChange}.
    * - `'xy'` (or `true`) — both.
    *
    * **Deliberately independent of {@link panZoom}**, in both directions. A chart
@@ -1016,7 +1016,14 @@ function ResolvedChartContainer({
       prev.k === k && prev.ty === next.ty ? prev : { k, ty: next.ty },
     );
   }, []);
-  const interactive = panEnabled || zoomEnabled;
+  // The x **strip**'s gestures move the same view the plot's do, so they must
+  // make the container own a view as well. Leaving `axisPanZoomX` out of this
+  // silently broke the headline combination — `axisPanZoom="x"` with the default
+  // `panZoom="none"`: `applyRange` wrote `internalRange` while `view` kept
+  // reading `seed`, so an uncontrolled strip captured the drag and drew nothing.
+  // (`axisPanZoomY` is absent on purpose: a gutter zoom is per-axis row state,
+  // not the shared x view.)
+  const interactive = panEnabled || zoomEnabled || axisPanZoomX;
 
   // The explicit base domain from `range` (a tuple or a TimeRange). `undefined`
   // ⇒ auto-fit (resolved from the layers below). Pan/zoom seeds from it; `seed`

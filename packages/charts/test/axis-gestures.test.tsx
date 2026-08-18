@@ -263,16 +263,20 @@ describe('<XAxis> drag-to-zoom', () => {
     expect(span(into.c!.timeRange)).toBeGreaterThanOrEqual(400);
   });
 
-  it('stays inert with panZoom off', () => {
+  it('works with panZoom off — the opt-in owns the view by itself', () => {
+    // This test used to assert the opposite, and was wrong to: `interactive`
+    // (which decides whether the container holds a gestured view at all) was
+    // derived from the PLOT's freedoms only, so an uncontrolled
+    // `axisPanZoom="x"` strip captured the drag, wrote `internalRange`, and kept
+    // rendering `seed` — the headline combination silently did nothing.
     const { dom, into } = mount({ panZoom: 'none' });
 
-    dragBy(xStrip(dom), 'x', 150);
-    wheelOn(xStrip(dom), -240, { clientX: 100 });
-
-    // `axisPanZoom` is on here, but there is no view for it to move: `panZoom`
-    // off means the container isn't holding a gestured view at all.
-    expect(into.c!.timeRange[0]).toBe(RANGE[0]);
+    dragBy(xStrip(dom), 'x', 105);
+    expect(into.c!.timeRange[0]).toBeCloseTo(-300, 0);
     expect(span(into.c!.timeRange)).toBe(1000);
+
+    wheelOn(xStrip(dom), -240, { clientX: 100 });
+    expect(span(into.c!.timeRange)).toBeLessThan(1000);
   });
 
   it("the opt-in is self-sufficient — it works over panZoom='pan'", () => {
@@ -582,7 +586,7 @@ describe('<YAxis> drag-to-zoom — per axis', () => {
   });
 });
 
-describe('<YAxis onDomainChange> — the auto/manual hand-off', () => {
+describe('<YAxis onBoundsChange> — the auto/manual hand-off', () => {
   /** The shape a scale UI actually wires: `null` domain = auto-fit. */
   function Controlled({
     onReport,
@@ -604,7 +608,7 @@ describe('<YAxis onDomainChange> — the auto/manual hand-off', () => {
           <YAxis
             id="price"
             {...(domain ? { min: domain[0], max: domain[1] } : {})}
-            onDomainChange={(d) => {
+            onBoundsChange={(d) => {
               setDomain(d);
               onReport(d);
             }}
@@ -653,7 +657,7 @@ describe('<YAxis onDomainChange> — the auto/manual hand-off', () => {
         axisPanZoom="xy"
       >
         <ChartRow height={100}>
-          <YAxis id="price" min={0} max={100} onDomainChange={() => {}} />
+          <YAxis id="price" min={0} max={100} onBoundsChange={() => {}} />
           <Layers>
             <LineChart series={series()} column="v" axis="price" />
           </Layers>
@@ -708,7 +712,7 @@ describe('axis gestures — Layer-2 review finds', () => {
               id="price"
               pad={0.25}
               {...(domain ? { min: domain[0], max: domain[1] } : {})}
-              onDomainChange={(d) => {
+              onBoundsChange={(d) => {
                 setDomain(d);
                 seen(d);
               }}
@@ -755,7 +759,7 @@ describe('axis gestures — Layer-2 review finds', () => {
               id="price"
               pad={pad}
               {...(domain ? { min: domain[0], max: domain[1] } : {})}
-              onDomainChange={(d) => {
+              onBoundsChange={(d) => {
                 setDomain(d);
                 seen(d);
               }}
@@ -977,5 +981,296 @@ describe('axisPanZoom is the opt-in — panZoom alone changes nothing', () => {
     const before = intoY.c!.timeRange;
     dragBy(xStrip(onlyY), 'x', 120);
     expect(intoY.c!.timeRange).toEqual(before); // x inert under 'y'
+  });
+});
+
+describe('axis gestures — Codex review finds', () => {
+  /** A controlled gutter on one axis, with whatever axis props a test needs. */
+  function Controlled({
+    onReport,
+    axis = {},
+    container = {},
+  }: {
+    onReport: (b: readonly [number, number] | null) => void;
+    axis?: Record<string, unknown>;
+    container?: Record<string, unknown>;
+  }) {
+    const [bounds, setBounds] = useState<readonly [number, number] | null>(
+      null,
+    );
+    return (
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="panZoom"
+        axisPanZoom="y"
+        {...container}
+      >
+        <ChartRow height={100}>
+          <YAxis
+            id="a"
+            {...axis}
+            {...(bounds ? { min: bounds[0], max: bounds[1] } : {})}
+            onBoundsChange={(b) => {
+              setBounds(b);
+              onReport(b);
+            }}
+          />
+          <Layers>
+            <LineChart series={series()} column="v" axis="a" />
+          </Layers>
+          <Capture into={frames} />
+        </ChartRow>
+      </ChartContainer>
+    );
+  }
+  let frames: { c?: ContainerFrame; r?: RowFrame } = {};
+  afterEach(() => {
+    frames = {};
+  });
+
+  it('does not double-apply the plot-level y transform', () => {
+    // The controlled path reads `baseYScales` — the axis's RESOLVED scale — not
+    // the visible one. Reading the visible scale meant the uniform `yTransform`
+    // was baked into the reported bounds and then applied AGAIN when they came
+    // back as min/max, so the drawn domain diverged from every reported value.
+    const seen = vi.fn();
+    const dom = draw(
+      <Controlled
+        onReport={seen}
+        axis={{ min: 0, max: 100 }}
+        container={{ panZoom: 'panZoomXY' }}
+      />,
+    ).container;
+
+    // Put the plot's own uniform y zoom in play first.
+    act(() => {
+      frames.c!.applyYTransform({ k: 2, ty: -50 });
+    });
+    expect(frames.c!.yTransform.k).toBe(2);
+
+    const reports: Array<readonly [number, number]> = [];
+    for (let i = 0; i < 3; i += 1) {
+      wheelOn(yGutter(dom, 'a'), -240, { clientY: 50 });
+      reports.push(seen.mock.calls.at(-1)![0] as [number, number]);
+    }
+
+    // Each report must be a strict zoom-in on the last — with the double-apply
+    // the reported and drawn domains pulled apart and the sequence diverged.
+    for (let i = 1; i < reports.length; i += 1) {
+      const prev = reports[i - 1]!;
+      const cur = reports[i]!;
+      expect(cur[1] - cur[0]).toBeLessThan(prev[1] - prev[0]);
+    }
+    // And the bounds stay inside the axis's own resolved domain.
+    const last = reports.at(-1)!;
+    expect(last[0]).toBeGreaterThanOrEqual(0);
+    expect(last[1]).toBeLessThanOrEqual(100);
+  });
+
+  it('never reports a non-finite bound on a hard log zoom-out', () => {
+    // A captured flick used to deliver one enormous factor; on a log axis
+    // `zoomRange` then underflowed/overflowed to [0, Infinity], which passed the
+    // old ascending-only check and poisoned the consumer's scale.
+    const seen = vi.fn();
+    const dom = draw(
+      <Controlled onReport={seen} axis={{ scale: 'log', min: 1, max: 100 }} />,
+    ).container;
+
+    act(() => {
+      fireEvent.pointerDown(yGutter(dom, 'a'), {
+        clientX: 5,
+        clientY: 50,
+        button: 0,
+        pointerId: 1,
+      });
+      fireEvent.pointerMove(yGutter(dom, 'a'), {
+        clientX: 5,
+        clientY: 60,
+        pointerId: 1,
+      });
+      // One 1000px move — the coalesced-flick case.
+      fireEvent.pointerMove(yGutter(dom, 'a'), {
+        clientX: 5,
+        clientY: 1060,
+        pointerId: 1,
+      });
+      fireEvent.pointerUp(yGutter(dom, 'a'), {
+        clientX: 5,
+        clientY: 1060,
+        pointerId: 1,
+      });
+    });
+
+    for (const call of seen.mock.calls) {
+      const b = call[0] as [number, number];
+      expect(Number.isFinite(b[0])).toBe(true);
+      expect(Number.isFinite(b[1])).toBe(true);
+      expect(b[0]).toBeGreaterThan(0); // a log axis has no position for 0
+    }
+  });
+
+  it('keeps zooming an inverted (flipped) axis', () => {
+    // `resolveYDomain` keeps an explicit [max, min] as a deliberate flip. The
+    // controlled path rejected every descending result, so adding the callback
+    // silently disabled the gesture on a flipped axis.
+    const seen = vi.fn();
+    const dom = draw(
+      <Controlled onReport={seen} axis={{ min: 100, max: 0 }} />,
+    ).container;
+
+    wheelOn(yGutter(dom, 'a'), -240, { clientY: 50 });
+
+    expect(seen).toHaveBeenCalled();
+    const b = seen.mock.calls.at(-1)![0] as [number, number];
+    expect(b[0]).toBeGreaterThan(b[1]); // orientation preserved
+    expect(Math.abs(b[0] - b[1])).toBeLessThan(100); // and it zoomed in
+  });
+
+  it('holds the grabbed pixel on an UNCONTROLLED symlog axis', () => {
+    // Uncontrolled is where symlog can be exact: `ChartRow` derives the knee from
+    // the axis's resolved domain and the pixel transform narrows that fixed
+    // curve, so inverting through it holds the grabbed pixel.
+    const into: { c?: ContainerFrame; r?: RowFrame } = {};
+    const dom = draw(
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="panZoom"
+        axisPanZoom="y"
+      >
+        <ChartRow height={100}>
+          <YAxis
+            id="a"
+            scale="symlog"
+            min={-100}
+            max={100}
+            linearWindow={0.05}
+          />
+          <Layers>
+            <LineChart series={series()} column="v" axis="a" />
+          </Layers>
+          <Capture into={into} />
+        </ChartRow>
+      </ChartContainer>,
+    ).container;
+
+    const valueAt = (px: number) => +into.r!.yScales.get('a')!.invert(px);
+    const grabbed = valueAt(25);
+
+    for (let i = 0; i < 3; i += 1) {
+      wheelOn(yGutter(dom, 'a'), -120, { clientY: 25 });
+    }
+
+    expect(valueAt(25)).toBeCloseTo(grabbed, 6);
+  });
+
+  it('a CONTROLLED symlog axis zooms monotonically, knee drift and all', () => {
+    // Controlled symlog cannot hold the pixel, and the reason is a documented
+    // property of the scale rather than a bug in the gesture: `linearWindow` is
+    // **domain-relative**, so bounds fed back re-derive the knee and reshape the
+    // curve — no choice of bounds can pin a pixel on a curve that moves with the
+    // bounds. (It is exactly why `<YAxis linearWindow>` says a 2-D gesture must
+    // not recompute the knee.) What must hold is that it stays well-behaved.
+    const seen = vi.fn();
+    const dom = draw(
+      <Controlled
+        onReport={seen}
+        axis={{ scale: 'symlog', min: -100, max: 100, linearWindow: 0.05 }}
+      />,
+    ).container;
+
+    const spans: number[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      wheelOn(yGutter(dom, 'a'), -120, { clientY: 25 });
+      const b = seen.mock.calls.at(-1)![0] as [number, number];
+      expect(Number.isFinite(b[0]) && Number.isFinite(b[1])).toBe(true);
+      spans.push(b[1] - b[0]);
+    }
+    for (let i = 1; i < spans.length; i += 1) {
+      expect(spans[i]!).toBeLessThan(spans[i - 1]!);
+    }
+  });
+
+  it('drops a live drag when the strip is hidden mid-gesture', () => {
+    // No `pointerup` can arrive on an element that unmounted, so the drag state
+    // had to be cleared when the ref goes null — otherwise re-showing the gutter
+    // resumed a gesture nobody was making, with the cursor still on.
+    const into: { c?: ContainerFrame; r?: RowFrame } = {};
+    function Toggle({ hide }: { hide: boolean }) {
+      return (
+        <ChartContainer
+          range={RANGE}
+          width={WIDTH}
+          showAxis={false}
+          panZoom="panZoom"
+          axisPanZoom="y"
+        >
+          <ChartRow height={100}>
+            <YAxis id="v" min={0} max={100} hide={hide} />
+            <Layers>
+              <LineChart series={series()} column="v" axis="v" />
+            </Layers>
+            <Capture into={into} />
+          </ChartRow>
+        </ChartContainer>
+      );
+    }
+    const stub = stubCanvasContext();
+    const r = render(<Toggle hide={false} />);
+    try {
+      // Press and commit a drag, then hide the axis without releasing.
+      act(() => {
+        fireEvent.pointerDown(yGutter(r.container, 'v'), {
+          clientX: 5,
+          clientY: 50,
+          button: 0,
+          pointerId: 1,
+        });
+        fireEvent.pointerMove(yGutter(r.container, 'v'), {
+          clientX: 5,
+          clientY: 30,
+          pointerId: 1,
+        });
+      });
+      r.rerender(<Toggle hide />);
+      r.rerender(<Toggle hide={false} />);
+
+      const afterRemount = into.r!.yScales.get('v')!.domain();
+      // A plain move with no press must not continue the old gesture…
+      act(() => {
+        fireEvent.pointerMove(yGutter(r.container, 'v'), {
+          clientX: 5,
+          clientY: 10,
+          pointerId: 1,
+        });
+      });
+      expect(into.r!.yScales.get('v')!.domain()).toEqual(afterRemount);
+      // …and the directional cursor must be gone.
+      expect(yGutter(r.container, 'v').style.cursor).toBe('');
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('pivots inside the scale range, not the gutter box, under a top label', () => {
+    // A `labelPlacement="top"` row reserves a header, so the scale range starts
+    // below 0. Clamping the pivot to the box let a press in the header zoom about
+    // an extrapolated value outside the domain.
+    const seen = vi.fn();
+    const dom = draw(
+      <Controlled
+        onReport={seen}
+        axis={{ min: 0, max: 100, labelPlacement: 'top' }}
+      />,
+    ).container;
+
+    wheelOn(yGutter(dom, 'a'), -240, { clientY: 0 }); // in the header band
+
+    const b = seen.mock.calls.at(-1)![0] as [number, number];
+    expect(b[1]).toBeLessThanOrEqual(100);
+    expect(b[0]).toBeGreaterThanOrEqual(0);
   });
 });

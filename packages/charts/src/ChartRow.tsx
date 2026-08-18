@@ -226,6 +226,8 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
   // Per-axis pixel zoom — a drag on one gutter (see `RowFrame.axisTransforms`).
   // Empty until an axis is actually grabbed, so a chart with no axis gestures
   // carries no extra state and the identity branch below skips the work.
+  // Filled by the scale memo below (see `baseYScales` on the frame).
+  const baseRef = useRef<ReadonlyMap<string, YScale>>(new Map());
   const [axisTransforms, setAxisTransforms] = useState<
     ReadonlyMap<string, { k: number; ty: number }>
   >(() => new Map());
@@ -393,6 +395,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
   const { k: yk, ty: yty } = container.yTransform;
   const yScales = useMemo(() => {
     const map = new Map<string, YScale>();
+    const bases = new Map<string, YScale>();
     for (const ax of effectiveAxes) {
       const extents: Array<readonly [number, number] | null> = needsExtents(ax)
         ? layerList
@@ -449,6 +452,11 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
         const at = (px: number) => +s.invert((px - ty) / k);
         s.domain([at(height), at(topHeader)]);
       };
+      // Snapshot before either transform: `baseYScales` is the domain the axis
+      // RESOLVED to (bounds + pad + nice), which is the space a controlled
+      // consumer's `min`/`max` live in. Reading the transformed scale instead and
+      // handing those values back re-applies the transform on top of them.
+      bases.set(ax.id, s.copy());
       if (yk !== 1 || yty !== 0) narrow(yk, yty);
       const own = axisTransforms.get(ax.id);
       if (own !== undefined && (own.k !== 1 || own.ty !== 0)) {
@@ -456,6 +464,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       }
       map.set(ax.id, s);
     }
+    baseRef.current = bases;
     return map;
   }, [
     effectiveAxes,
@@ -605,6 +614,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       isFirstRow,
       rowKey,
       yScales,
+      baseYScales: baseRef.current,
       axisTransforms,
       applyAxisTransform,
       formats,

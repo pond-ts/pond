@@ -1570,7 +1570,7 @@ worth keeping:
   chrome you also hover, click and read, and a standing resize cursor claims the
   whole thing is a handle — switching to `↕`/`↔` only while a drag is live (or for
   a beat after a wheel notch, which has no press to bracket it).
-- **`onDomainChange` on `<YAxis>` is the auto/manual hand-off**, and it makes the
+- **`onBoundsChange` on `<YAxis>` is the auto/manual hand-off**, and it makes the
   axis controlled the way `onTimeRangeChange` does for x: the gesture reports the
   `[min, max]` it reached (or `null` for back-to-auto) and draws nothing itself,
   because holding an internal transform *and* the min/max fed back would apply
@@ -1621,6 +1621,69 @@ worth keeping:
     reusing the id inherited a stranded zoom.
   - **`panZoom='pan'` got a zooming gutter**, overriding an explicit no-zoom.
     Gate is `zoomEnabled`, not `panEnabled || zoomEnabled`.
+
+**What the Codex pass caught** (run after the Claude Layer 2 pass, on the
+human's initiative — it reported **high** confidence and earned it). Three of
+these were High and none had a test:
+
+- **The controlled path double-applied the plot's uniform `yTransform`.** It read
+  the *visible* scale (`row.yScales`), reported values off it, and the consumer
+  fed them back as `min`/`max` — whereupon `ChartRow` applied the transform to
+  them again. Base `[0,100]` with plot `k=2` (visible `[25,75]`), a 0.7 gutter
+  zoom reported `[32.5,67.5]` and drew `[41.25,58.75]`; repeated notches diverge
+  from every reported value. Fixed by publishing `RowFrame.baseYScales` — each
+  axis's scale *before* any gesture transform, which is the space a controlled
+  consumer's bounds live in. **The general rule is the `pad` lesson again, one
+  level up:** a value handed back as an input has to be produced in the same
+  space the input is interpreted in.
+- **An uncontrolled `axisPanZoom="x"` with `panZoom="none"` did nothing.**
+  `interactive` (which decides whether the container holds a gestured view at
+  all) was `panEnabled || zoomEnabled`, so the strip captured the drag, wrote
+  `internalRange`, and kept rendering `seed` — the headline "independent opt-in"
+  combination was inert unless controlled. Worse, **a test asserted that as
+  intended behaviour**, which is how it survived two reviews: a test can enshrine
+  a bug as firmly as it can prevent one, and one that asserts "nothing happens"
+  deserves a second look.
+- **A hard log zoom-out could report `[0, Infinity]`.** One coalesced 1000px move
+  gives `factor ≈ 403`; value-space `zoomRange` on log `[1,100]` under/overflows,
+  and the ascending-only check passed it through to poison the consumer's scale.
+- **Inverted (flipped) axes went inert when controlled** — `resolveYDomain` keeps
+  an explicit `[max,min]` deliberately, and the guard rejected every descending
+  result, so *adding* the callback silently disabled the gesture.
+- **symlog drifted its grabbed pixel.**
+
+The last three are all fixed by one change, which is the interesting part: the
+controlled zoom now **inverts through the scale in pixel space** rather than
+doing affine arithmetic on its domain. Value-space arithmetic is only correct for
+affine scales, and neither `log` nor `symlog` is; pixel space is correct for any
+monotone scale, cannot overflow (pixels are bounded), and preserves orientation
+for free. Plus a per-event factor clamp, since one event should never be able to
+scale the view hundreds of times over.
+
+**symlog controlled mode stays approximate, and that is the scale's own policy
+rather than a bug.** `linearWindow` is a fraction of the *domain*, so bounds fed
+back re-derive the knee and reshape the curve — no choice of bounds can hold a
+pixel on a curve that moves with the bounds. It is the same fact that makes
+`linearWindow` deliberately not recompute under a 2-D gesture. The *uncontrolled*
+path is exact (the knee is anchored to the resolved domain and the pixel
+transform narrows that fixed curve), so that is what a symlog chart wanting
+pixel-exactness should use. Both are pinned by tests, and the caveat is on the
+prop.
+
+Also from that pass: a live drag survived the strip unmounting (`hide` toggled
+mid-gesture left the drag armed and the cursor on), the pivot was clamped to the
+gutter box rather than the scale's range (wrong under a `labelPlacement="top"`
+header), and `onDomainChange` was renamed **`onBoundsChange`** — with `pad` set
+it reports bounds, and the visible domain is those bounds *plus* the padding, so
+the old name was inaccurate in exactly the case `unpadDomain` exists for.
+
+**Follow-up — extract the x-view policy.** Codex agreed `Layers`' arbitration,
+tracker suppression and deferred capture should stay put, but flagged that
+`XAxis` and `Layers` now both hold the trading-vs-continuous branch, the px→domain
+conversion, the `log`/`snap` flags and `minDuration`. A pure
+`panXView`/`zoomXView` adapter in `viewport.ts` would stop a future fix landing
+on one surface only. Deliberately not done inside this PR: it edits the plot's
+pointer hot path in a change about axes.
 
 **Follow-up (not done):** `formatReadout` is now two channels in one field
 (`cursorFormat` vs the axis kind's default), disambiguated by a companion

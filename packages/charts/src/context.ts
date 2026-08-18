@@ -1802,6 +1802,19 @@ export interface RowFrame {
   readonly topInset: number;
   readonly yScales: ReadonlyMap<string, YScale>;
   /**
+   * Each axis's scale **before** any gesture transform — the domain it resolved
+   * to from `min`/`max`/`pad`/auto-fit, which is the space a controlled
+   * consumer's bounds live in.
+   *
+   * {@link yScales} carries the *visible* scales: the uniform
+   * {@link ContainerFrame.yTransform} and the axis's own
+   * {@link axisTransforms} entry have already narrowed them. A gutter gesture
+   * that reported values read off those and had them fed back as `min`/`max`
+   * would have the transforms applied a second time — the visible domain then
+   * diverges from every value the consumer was told.
+   */
+  readonly baseYScales: ReadonlyMap<string, YScale>;
+  /**
    * **Per-axis** pixel zoom, keyed by axis id — what a drag on that axis's
    * gutter produces, layered *under* the container's uniform
    * {@link ContainerFrame.yTransform}. Identity (`{ k: 1, ty: 0 }`) for any axis

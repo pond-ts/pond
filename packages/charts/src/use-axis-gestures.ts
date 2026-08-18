@@ -21,6 +21,14 @@ const WHEEL_SENSITIVITY = 0.0015; // matches the plot's `ZOOM_SENSITIVITY`
  * on a strip that also zooms.
  */
 const DRAG_SLOP = 3;
+/**
+ * Most a **single** event may scale the view. A captured drag can deliver one
+ * enormous move (a fast flick, or a coalesced move after the pointer left the
+ * strip), and `exp` of it is a factor in the hundreds — enough to overflow a log
+ * domain to `[0, Infinity]` in one step. Clamping per event keeps every gesture
+ * reachable by repetition while bounding what one event can do.
+ */
+const MAX_STEP_FACTOR = 4;
 /** How long the directional cursor lingers after the last wheel notch. */
 const WHEEL_CURSOR_MS = 400;
 
@@ -166,7 +174,11 @@ export function useAxisGestures(spec: AxisGestureSpec): AxisGestures {
   const zoom = (factor: number, pivotPx: number): void => {
     if (!Number.isFinite(factor) || factor <= 0) return;
     if (!Number.isFinite(pivotPx)) return;
-    specRef.current.onZoom?.(factor, pivotPx);
+    const clamped = Math.max(
+      1 / MAX_STEP_FACTOR,
+      Math.min(MAX_STEP_FACTOR, factor),
+    );
+    specRef.current.onZoom?.(clamped, pivotPx);
   };
 
   const onPointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
@@ -222,6 +234,16 @@ export function useAxisGestures(spec: AxisGestureSpec): AxisGestures {
     }
   }, []);
 
+  // Disabling gestures mid-drag (a prop flip, or a category axis appearing) has
+  // the same problem as the element vanishing: no release will arrive.
+  useLayoutEffect(() => {
+    if (spec.drag === 'none' && drag.current !== null) {
+      drag.current = null;
+      draggedRef.current = false;
+      setGesturing(false);
+    }
+  }, [spec.drag]);
+
   const onDoubleClick = useCallback(() => {
     const s = specRef.current;
     if (s.drag !== 'none' || s.wheel) s.onReset?.();
@@ -241,6 +263,13 @@ export function useAxisGestures(spec: AxisGestureSpec): AxisGestures {
     }
     elRef.current = el;
     if (el === null) {
+      // The strip went away mid-gesture — a `<YAxis hide>` toggle, or the axis
+      // unmounting under the pointer. Nothing will deliver its `pointerup`, so
+      // drop the drag here: otherwise re-showing the strip resumed a gesture
+      // nobody was making, and the directional cursor stayed on.
+      drag.current = null;
+      draggedRef.current = false;
+      setGesturing(false);
       if (wheelIdle.current !== null) {
         clearTimeout(wheelIdle.current);
         wheelIdle.current = null;

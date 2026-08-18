@@ -237,9 +237,13 @@ export interface YAxisProps {
    */
   onMouseEvent?: AxisMouseHandler;
   /**
-   * A gutter gesture changed this axis's visible domain — **the "auto vs manual"
-   * hand-off.** Fires with the `[min, max]` the gesture arrived at, and with
+   * A gutter gesture scaled this axis — **the "auto vs manual" hand-off.**
+   * Fires with the `[min, max]` **bounds** the gesture arrived at, and with
    * `null` when the axis is released back to auto-fit (double-click).
+   *
+   * Named for bounds rather than the domain because that is what it reports: with
+   * a `pad` set, the visible domain is these bounds *plus* the padding, and it is
+   * the bounds you hand back as `min`/`max`.
    *
    * The common shape this exists for: an auto-fitting y axis on a chart whose x
    * is panned and zoomed. The moment the user scrolls or drags the y gutter they
@@ -252,7 +256,7 @@ export interface YAxisProps {
    * <YAxis
    *   id="price"
    *   {...(scale ? { min: scale[0], max: scale[1] } : {})}
-   *   onDomainChange={setScale}
+   *   onBoundsChange={setScale}
    * />
    * ```
    *
@@ -263,10 +267,21 @@ export interface YAxisProps {
    * and why a chart with no scale UI needs no wiring at all.
    *
    * The reported pair is in data units, ready to hand straight back as
-   * `min`/`max`. On a `log` axis it stays positive (the zoom is done in log
+   * `min`/`max`.
+   *
+   * **`scale="symlog"` is approximate on this path, by construction.**
+   * {@link linearWindow} is a fraction of the *domain*, so bounds fed back
+   * re-derive the knee and reshape the curve — the grabbed pixel cannot be held
+   * on a curve that moves with the bounds. (It is the same fact that makes
+   * `linearWindow` deliberately *not* recompute under a 2-D gesture.) The zoom is
+   * still monotone and well-behaved; if you need the pixel held exactly on a
+   * symlog axis, leave this callback off and let the axis hold the zoom itself,
+   * where the knee stays anchored to the resolved domain. With an active plot-level y zoom (`panZoom="panZoomY"`/`"panZoomXY"`)
+   * the two **compose**: the bounds are the axis's own, and the plot transform
+   * still narrows what is drawn on top of them. On a `log` axis it stays positive (the zoom is done in log
    * space), so it is always a domain the axis can actually draw.
    */
-  onDomainChange?: (domain: readonly [number, number] | null) => void;
+  onBoundsChange?: (bounds: readonly [number, number] | null) => void;
   /**
    * @internal Declaration position among the row's children, injected by
    * `ChartRow` so the first-declared axis stays the default. Do not set.
@@ -294,7 +309,7 @@ const DEFAULT_TICK_COUNT = 5;
  * double-click to release it back to its fit. That per-axis scaling is what the
  * plot's vertical gesture deliberately cannot do; see
  * {@link RowFrame.axisTransforms}. Report it to a scale UI with
- * {@link YAxisProps.onDomainChange}.
+ * {@link YAxisProps.onBoundsChange}.
  */
 export function YAxis({
   id,
@@ -314,7 +329,7 @@ export function YAxis({
   labelPlacement = 'rotated',
   color,
   onMouseEvent,
-  onDomainChange,
+  onBoundsChange,
   index = 0,
 }: YAxisProps) {
   const container = useContext(ContainerContext);
@@ -403,26 +418,44 @@ export function YAxis({
     onZoom: (factor, pivotPx) => {
       // Read the scale at gesture time, not from the render that built this
       // closure — a wheel notch mid-stream must compose onto what is drawn now.
-      // (Named `current`, not `scale` — that is this axis's scale-KIND prop.)
-      const current = row.yScales.get(id);
-      if (current === undefined) return;
-      if (onDomainChange !== undefined) {
-        // **Controlled**: report the domain the gesture arrived at and draw
-        // nothing ourselves — `min`/`max` coming back is what moves the axis.
-        // Computed in *domain* space (the same `zoomRange` the x view uses, with
-        // no floor and no ms snapping) so the pair handed back is in data units,
-        // ready to be shown as a min/max and fed straight back.
-        const [lo, hi] = current.domain() as [number, number];
-        const next = zoomRange([lo, hi], +current.invert(pivotPx), factor, 0, {
-          log: scale === 'log',
-          snap: false,
-        });
-        if (!(next[1] > next[0])) return;
-        // Report the **unpadded** bounds. `pad` is applied last and to explicit
-        // bounds too, so the scale's live domain already includes it; handing
-        // that back as `min`/`max` would re-pad it and inflate the axis by
-        // `1 + 2·pad` on every notch (see `unpadDomain`).
-        onDomainChange(unpadDomain(next, pad, scale));
+      if (onBoundsChange !== undefined) {
+        // **Controlled**: report the bounds the gesture reached and draw nothing
+        // ourselves — `min`/`max` coming back is what moves the axis.
+        //
+        // Computed by inverting through the scale in **pixel** space, not by
+        // affine arithmetic on its domain. That is what makes it correct on every
+        // scale kind: `log` and `symlog` are not affine in value space, so
+        // zooming their domain numerically drifts the grabbed pixel (visibly, on
+        // symlog, whose knee is re-derived from the domain each time) and can
+        // overflow to `[0, Infinity]` on a hard log zoom-out.
+        //
+        // Read from `baseYScales` — the axis's *resolved* scale, before the
+        // container's uniform `yTransform` and this axis's own transform. The
+        // consumer's `min`/`max` live in that space, so reporting a value read
+        // off the visible scale would have the transforms applied to it twice.
+        const base = row.baseYScales.get(id);
+        if (base === undefined) return;
+        const [r0, r1] = base.range() as [number, number];
+        const lo = Math.min(r0, r1);
+        const hi = Math.max(r0, r1);
+        // Clamp into the scale's own range, not the gutter box: a
+        // `labelPlacement="top"` row reserves a header, so a press up there would
+        // otherwise pivot about a value the axis never draws.
+        const pivot = Math.max(lo, Math.min(hi, pivotPx));
+        // `factor` scales the visible span, so the pixel window scales by its
+        // reciprocal about the pivot.
+        const at = (px: number) => +base.invert(pivot + (px - pivot) * factor);
+        const next: readonly [number, number] = [at(r0), at(r1)];
+        // Orientation is preserved rather than required: `resolveYDomain` keeps
+        // an explicit `[max, min]` as a deliberate axis flip, and rejecting
+        // descending results would have made adding this callback silently
+        // disable the gesture on a flipped axis.
+        if (!Number.isFinite(next[0]) || !Number.isFinite(next[1])) return;
+        if (next[0] === next[1]) return;
+        // `pad` is applied last and to explicit bounds too, so the resolved
+        // domain already includes it; handing that back would re-pad it and
+        // inflate the axis by `1 + 2·pad` per notch (see `unpadDomain`).
+        onBoundsChange(unpadDomain(next, pad, scale));
         return;
       }
       // **Uncontrolled**: hold the zoom ourselves as this axis's own pixel
@@ -430,6 +463,13 @@ export function YAxis({
       // wheel notches inside one frame both see the render-scope value, so the
       // second would compose onto the first's *input* and the notch be lost.
       const own = row.axisTransforms.get(id) ?? IDENTITY_TRANSFORM;
+      // Same range clamp as the controlled path: keep the pivot on the scale.
+      const visible = row.yScales.get(id);
+      const vr = (visible?.range() ?? [0, 0]) as [number, number];
+      const pivot = Math.max(
+        Math.min(vr[0], vr[1]),
+        Math.min(Math.max(vr[0], vr[1]), pivotPx),
+      );
       // `factor` scales the domain span, so its reciprocal is the pixel-space
       // zoom — the relationship the plot's wheel handler uses.
       const z = 1 / factor;
@@ -444,14 +484,14 @@ export function YAxis({
         // the plot's exists to stop zoomed content sliding off the canvas, and
         // this transform is applied by narrowing the domain, so there is no
         // canvas to leave.
-        ty: pivotPx * (1 - zEff) + own.ty * zEff,
+        ty: pivot * (1 - zEff) + own.ty * zEff,
       });
     },
     // Back to auto: `null` tells a controlled consumer to drop its override (the
     // same thing their "manual → auto" toggle does), and an uncontrolled axis
     // drops its own transform.
     onReset: () => {
-      if (onDomainChange !== undefined) onDomainChange(null);
+      if (onBoundsChange !== undefined) onBoundsChange(null);
       else applyAxisTransform(id, IDENTITY_TRANSFORM);
     },
   });
