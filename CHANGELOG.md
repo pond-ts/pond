@@ -67,6 +67,44 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- `@pond-ts/charts`: **axis pan/zoom**, behind a new
+  **`<ChartContainer axisPanZoom>`** (`'none'` — the default — / `'x'` / `'y'` /
+  `'xy'`). Opted in, the `<XAxis>` strip and each `<YAxis>` gutter become
+  grabbable, and **double-click** puts one back (the declared `range` on x, its
+  fit on y). The cursor stays an ordinary arrow at rest and becomes directional
+  (`↕` / `↔`) only while a gesture is running.
+
+  **The opt-in is deliberately separate from `panZoom`, in both directions.** An
+  already-interactive chart does not grow axis gestures on upgrade — nothing
+  changes for any existing chart — and a chart can scale its y axes with
+  `panZoom` off entirely, which is what you want when the plot's drag belongs to
+  a selection sweep.
+
+  **The x strip is the canvas gesture, moved to the axis** — drag pans, wheel
+  zooms about the pointer — reusing the plot's own domain-space maths, so
+  `bounds` and `minDuration` still fence the view and a trading-time axis still
+  pans and floors in _trading_ time. A category axis has no continuous domain and
+  stays inert.
+
+  **A y gutter zooms, and only the axis you grabbed** — its sibling and every
+  other row hold still. That needed a new per-axis pixel transform
+  (`RowFrame.axisTransforms`, layered under the container's uniform
+  `yTransform`), since the uniform one exists precisely so a _plot_ gesture never
+  has to pick an axis; unlike it, this is not floored at `k ≥ 1`, because
+  squashing an axis you grabbed is the point.
+
+- `@pond-ts/charts`: **`<YAxis onBoundsChange>`** — the auto-vs-manual hand-off
+  for a scaled y axis. Fires with the `[min, max]` a gutter gesture reached, and
+  with `null` when the axis is released back to auto-fit, so a UI can show the
+  bounds, badge the scale "manual", and offer a toggle back. Providing it makes
+  the axis **controlled** (the gesture only reports; `min`/`max` fed back are
+  what it draws), exactly as `onTimeRangeChange` does for the x view; omit it and
+  the axis holds the zoom itself. `ContainerFrame` also gains `seedRange` — the
+  declared view, as against the gestured `timeRange` — which is the x reset's
+  target.
+
+### Added
+
 - **charts: `<ChartContainer height>` + `<ChartRow flex>` — container-owned
   vertical layout** ([PND-HEIGHT]). `height` takes a pixel number or `'auto'`
   (measured by the same `ResizeObserver` as `width="auto"`); omitted stays the

@@ -66,6 +66,18 @@ export type ChartXScale =
 
 export interface ContainerFrame {
   readonly timeRange: readonly [number, number];
+  /**
+   * The **declared** view — the container's `range` prop, normalized — as
+   * against {@link timeRange}, which is where gestures have moved it. The
+   * x-axis strip's double-click reset returns here.
+   *
+   * On a **controlled** chart (one passing `onTimeRangeChange`) the two are the
+   * same object of truth by construction: the consumer owns the view, so `range`
+   * *is* the panned view and there is no declared home to go back to. The reset
+   * is then a no-op, and a consumer who wants one holds their own home range and
+   * wires it through `onMouseEvent` — which is exactly the shape of that job.
+   */
+  readonly seedRange: readonly [number, number];
   readonly width: number;
   /**
    * Whether the container is managing vertical layout ([PND-HEIGHT]) — it was
@@ -471,6 +483,16 @@ export interface ContainerFrame {
    * the **aspect ratio** fixed. The x half stays in domain space, where
    * `bounds`, `minDuration` and the trading-calendar zoom maths live.
    */
+  /**
+   * Whether the **axis strips** take gestures, from `<ChartContainer axisPanZoom>`
+   * — resolved per dimension, and independent of the plot's own
+   * {@link zoomX}/{@link zoomY}. `x` gives the `<XAxis>` strip the canvas
+   * gesture (drag pans, wheel zooms); `y` makes each `<YAxis>` gutter scale its
+   * own axis. Both default to `false`, so a chart that doesn't ask keeps inert
+   * axes however interactive its plot is.
+   */
+  readonly axisPanZoomX: boolean;
+  readonly axisPanZoomY: boolean;
   /** Which axes the gestures own; pan follows zoom's degrees of freedom. */
   readonly zoomX: boolean;
   readonly zoomY: boolean;
@@ -1804,6 +1826,49 @@ export interface RowFrame {
    */
   readonly topInset: number;
   readonly yScales: ReadonlyMap<string, YScale>;
+  /**
+   * Each axis's scale **before** any gesture transform — the domain it resolved
+   * to from `min`/`max`/`pad`/auto-fit, which is the space a controlled
+   * consumer's bounds live in.
+   *
+   * {@link yScales} carries the *visible* scales: the uniform
+   * {@link ContainerFrame.yTransform} and the axis's own
+   * {@link axisTransforms} entry have already narrowed them. A gutter gesture
+   * that reported values read off those and had them fed back as `min`/`max`
+   * would have the transforms applied a second time — the visible domain then
+   * diverges from every value the consumer was told.
+   */
+  readonly baseYScales: ReadonlyMap<string, YScale>;
+  /**
+   * **Per-axis** pixel zoom, keyed by axis id — what a drag on that axis's
+   * gutter produces, layered *under* the container's uniform
+   * {@link ContainerFrame.yTransform}. Identity (`{ k: 1, ty: 0 }`) for any axis
+   * nobody has grabbed, which is every axis until one is.
+   *
+   * The uniform transform exists precisely so a *plot* gesture never has to
+   * answer "which of this row's axes does a vertical drag own?" — see
+   * {@link ContainerFrame.yTransform}. Grabbing one gutter answers it by
+   * construction, and this is where that answer lives. Both are applied the same
+   * way (narrowing the domain to the window the transform makes visible), the
+   * uniform one first, so an axis carrying both reads as an ordinary axis over
+   * the doubly-narrowed window and nothing downstream knows either exists.
+   *
+   * Unlike the uniform transform this is **not** floored at `k ≥ 1`: that floor
+   * stops a plot gesture zooming every axis out past its natural fit into blank
+   * canvas, whereas squashing one axis you deliberately grabbed is the point of
+   * the gesture (and costs nothing — a `k < 1` widens the domain rather than
+   * exposing empty plot).
+   */
+  readonly axisTransforms: ReadonlyMap<
+    string,
+    { readonly k: number; readonly ty: number }
+  >;
+  /**
+   * Set one axis's {@link axisTransforms} entry — the y counterpart of
+   * {@link ContainerFrame.applyRange}. Passing identity clears it (the
+   * double-click reset).
+   */
+  applyAxisTransform(id: string, next: { k: number; ty: number }): void;
   /** Value formatter per axis id (resolved from the axis's {@link AxisSpec.format}
    *  against its scale) — used by both the tick labels and the cursor readout, so
    *  a value reads identically in both. */

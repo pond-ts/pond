@@ -1,4 +1,4 @@
-import { Fragment, useContext } from 'react';
+import { Fragment, useContext, useRef } from 'react';
 import { scaleLinear } from 'd3-scale';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import { derivedTicks, type AxisTransform } from './derivedTicks.js';
@@ -21,6 +21,13 @@ import {
   axisPointerPx,
   type AxisMouseHandler,
 } from './axis-events.js';
+import { useAxisGestures } from './use-axis-gestures.js';
+import {
+  panRange,
+  panRangeTrading,
+  zoomRange,
+  zoomRangeTrading,
+} from './viewport.js';
 
 /** Tick strip height (mark + value label) in CSS px. */
 const TICK_STRIP = 22;
@@ -289,6 +296,12 @@ export interface XAxisProps {
  * numbers, with no axis-type prop here; the kind follows the data.
  *
  * `<TimeAxis>` is the time-flavoured preset (`<XAxis />`).
+ *
+ * **Gestures.** With `<ChartContainer axisPanZoom="x">` (or `"xy"`) the strip is a
+ * second handle on the canvas gesture: it **pans on drag** and **zooms on
+ * wheel**, with double-click returning to the declared `range`. Same maths as the
+ * plot's own drag, including `bounds` / `minDuration` and the trading calendar.
+ * A category axis has no continuous domain and stays inert.
  */
 export function XAxis({
   format,
@@ -623,7 +636,85 @@ export function XAxis({
   // scale — no gutter arithmetic. The label reads the same channel a cursor
   // pill does: the band scale's category name on a category axis (a d3 number
   // format can't name one), this axis's readout format everywhere else.
+  // The view the current pan started from — see `onDragStart`.
+  const panStartRef = useRef<[number, number] | null>(null);
+  // Drag pans and wheel zooms the shared x view, double-click returns to the
+  // declared range. Enabled by the container's own `panZoom` zoom-x degree of
+  // freedom — a chart that never opted in captures nothing here.
+  //
+  // A **category** axis has no continuous domain to zoom, exactly as for the
+  // plot's gesture (`Layers`' wheel makes the same exclusion), so the strip
+  // stays inert there rather than snapping between slots.
+  const gestures = useAxisGestures({
+    axis: 'x',
+    // Gated on `<ChartContainer axisPanZoom>` — the axis opt-in — and NOT on the
+    // plot's `panZoom`: inheriting that would hand every already-interactive
+    // chart gestures its author never asked for. Once opted in the strip is the
+    // canvas gesture (drag pans, wheel zooms). A category axis has no continuous
+    // domain for either.
+    drag: container.axisPanZoomX && xKind !== 'category' ? 'pan' : 'none',
+    wheel: container.axisPanZoomX && xKind !== 'category',
+    // Snapshot the view at press: the pan is re-derived from it on every move
+    // (the plot's own approach), so a long drag can't accumulate rounding, and
+    // `roundRange`'s ms snap can't ratchet the span.
+    onDragStart: () => {
+      panStartRef.current = [container.timeRange[0], container.timeRange[1]];
+    },
+    onPan: (totalDeltaPx) => {
+      const start = panStartRef.current;
+      if (start === null) return;
+      // Dragging right moves the view EARLIER — the content follows the pointer,
+      // the sign the plot's drag uses.
+      if (container.discontinuities) {
+        // Trading-time axis: pan by an equal amount of *trading* time so the
+        // drag feels uniform across collapsed gaps (a raw-ms shift jumps).
+        const fraction = plotWidth > 0 ? -totalDeltaPx / plotWidth : 0;
+        container.applyRange(
+          panRangeTrading(start, fraction, container.discontinuities),
+        );
+        return;
+      }
+      const span = start[1] - start[0];
+      const dt = plotWidth > 0 ? -totalDeltaPx * (span / plotWidth) : 0;
+      container.applyRange(
+        panRange(start, dt, { log: container.xIsLog, snap: xKind === 'time' }),
+      );
+    },
+    onZoom: (factor, pivotPx) => {
+      const pivot = +xScale.invert(pivotPx);
+      // The same two-branch zoom the plot uses, so an axis drag and a plot
+      // wheel move the view by identical maths — including `minDuration` as the
+      // zoom-in floor and, on a trading axis, a floor in *trading* ms.
+      // `applyRange` then applies `bounds` for both.
+      container.applyRange(
+        container.discontinuities
+          ? zoomRangeTrading(
+              container.timeRange,
+              pivot,
+              factor,
+              container.discontinuities,
+              container.minDuration,
+            )
+          : zoomRange(
+              container.timeRange,
+              pivot,
+              factor,
+              container.minDuration,
+              {
+                log: container.xIsLog,
+                snap: xKind === 'time',
+              },
+            ),
+      );
+    },
+    onReset: () => container.applyRange(container.seedRange),
+  });
+
   const mouse = axisMouseProps(onMouseEvent, 'x', undefined, (event) => {
+    // A zoom drag ends with a trailing `click` on the strip, which would report
+    // as "clicked the axis at the value I released on" — a value the user never
+    // aimed at. Swallow exactly that one report; every other event still flows.
+    if (event.type === 'click' && gestures.consumeDrag()) return null;
     const value = +xScale.invert(axisPointerPx(event, 'x', [0, plotWidth]));
     return {
       value,
@@ -637,8 +728,19 @@ export function XAxis({
       // what a consumer styling it (`[data-axis='x'] { cursor: pointer }` next
       // to an `onMouseEvent`) or an e2e test selects on.
       data-axis="x"
+      ref={gestures.ref}
+      {...gestures.props}
       {...mouse}
+      // Both spreads carry an `onDoubleClick` — the gesture's reset and the
+      // consumer's report — and a spread silently keeps the last one. Compose
+      // them, reporting *before* the reset so the payload describes the view the
+      // user actually double-clicked in.
+      onDoubleClick={(e) => {
+        mouse.onDoubleClick?.(e);
+        gestures.props.onDoubleClick?.();
+      }}
       style={{
+        ...gestures.style,
         position: 'relative',
         marginLeft: `${leftGutter}px`,
         width: `${plotWidth}px`,

@@ -575,6 +575,10 @@ export interface ChartContainerProps {
    * The boolean form is the back-compat shorthand (`true` ⇒ `'panZoom'`,
    * `false` ⇒ `'none'`). Bound the reachable range with {@link bounds}
    * (zoom-out / pan extent) and {@link minDuration} (zoom-in floor).
+   *
+   * **This prop is about the plot only.** Gestures on the axis strips are a
+   * separate opt-in — see {@link axisPanZoom} — so turning pan/zoom on here does
+   * not silently make the axes grabbable.
    */
   panZoom?:
     | boolean
@@ -584,6 +588,32 @@ export interface ChartContainerProps {
     | 'panZoomX'
     | 'panZoomY'
     | 'panZoomXY';
+  /**
+   * Which **axis strips** take gestures — the opt-in for grabbing an axis, and
+   * **`'none'` by default** so no existing chart changes behaviour:
+   *
+   * - `'none'` (or `false`, the **default**) — the strips are inert chrome.
+   * - `'x'` — the `<XAxis>` strip **pans on drag and zooms on wheel**, exactly as
+   *   the plot's own gestures do (same maths, same sign, same {@link bounds} /
+   *   {@link minDuration} fences). Double-click returns to the declared
+   *   {@link range}. A category axis has no continuous domain and stays inert.
+   * - `'y'` — each `<YAxis>` gutter **zooms that one axis** on drag or wheel,
+   *   double-click releasing it back to its fit. Report it to a scale UI with
+   *   {@link YAxisProps.onBoundsChange}.
+   * - `'xy'` (or `true`) — both.
+   *
+   * **Deliberately independent of {@link panZoom}**, in both directions. A chart
+   * can scale its y axes without letting the plot capture vertical drags (which
+   * would fight a selection sweep), and an interactive plot does not hand its
+   * axes gestures nobody asked for. The one thing they share is the view itself:
+   * the x strip moves the same range the plot's pan does, and reports through
+   * {@link onTimeRangeChange} the same way.
+   *
+   * The pairing to reach for on a time-series chart is
+   * `panZoom="panZoom" axisPanZoom="xy"` — drag the plot to pan, drag the x strip
+   * to pan, wheel either to zoom, and drag a y gutter to override its fit.
+   */
+  axisPanZoom?: boolean | 'none' | 'x' | 'y' | 'xy';
   /**
    * **Outer pan/zoom extent** — `[min, max]` (same units as {@link range}) the
    * view can never move outside. Panning into an edge stops there (the window
@@ -935,6 +965,7 @@ function ResolvedChartContainer({
   onTrackerChanged,
   onDrawStats,
   panZoom = false,
+  axisPanZoom = false,
   bounds,
   onTimeRangeChange,
   minDuration = 1,
@@ -1090,6 +1121,13 @@ function ResolvedChartContainer({
     panZoom === 'panZoomX' ||
     panZoom === 'panZoomXY';
   const zoomY = panZoom === 'panZoomY' || panZoom === 'panZoomXY';
+  // Axis-strip gestures are their own opt-in (see `axisPanZoom`), so they are
+  // resolved from that prop alone — never from `panZoom`, which would make every
+  // already-interactive chart grow axis gestures on upgrade.
+  const axisPanZoomX =
+    axisPanZoom === true || axisPanZoom === 'x' || axisPanZoom === 'xy';
+  const axisPanZoomY =
+    axisPanZoom === true || axisPanZoom === 'y' || axisPanZoom === 'xy';
   const panX = zoomX || panZoom === 'pan';
   const panY = zoomY;
   const panEnabled = panX || panY;
@@ -1115,7 +1153,14 @@ function ResolvedChartContainer({
       prev.k === k && prev.ty === next.ty ? prev : { k, ty: next.ty },
     );
   }, []);
-  const interactive = panEnabled || zoomEnabled;
+  // The x **strip**'s gestures move the same view the plot's do, so they must
+  // make the container own a view as well. Leaving `axisPanZoomX` out of this
+  // silently broke the headline combination — `axisPanZoom="x"` with the default
+  // `panZoom="none"`: `applyRange` wrote `internalRange` while `view` kept
+  // reading `seed`, so an uncontrolled strip captured the drag and drew nothing.
+  // (`axisPanZoomY` is absent on purpose: a gutter zoom is per-axis row state,
+  // not the shared x view.)
+  const interactive = panEnabled || zoomEnabled || axisPanZoomX;
 
   // The explicit base domain from `range` (a tuple or a TimeRange). `undefined`
   // ⇒ auto-fit (resolved from the layers below). Pan/zoom seeds from it; `seed`
@@ -2221,6 +2266,14 @@ function ResolvedChartContainer({
     () => [d0, d1],
     [d0, d1],
   );
+  // The declared view (`range`), as against the gestured one above — the x
+  // strip's double-click reset target. Memoized on its endpoints for the same
+  // reason `timeRangeTuple` is: it sits on the frame, and a fresh tuple each
+  // render would re-identify it for every draw callback that reads the frame.
+  const seedRangeTuple = useMemo<readonly [number, number]>(
+    () => [seed[0], seed[1]],
+    [seed[0], seed[1]],
+  );
 
   // The per-move cursor state, split into its own context so a mousemove
   // re-identifies only this small object — not the ~50-field frame below, which
@@ -2238,6 +2291,9 @@ function ResolvedChartContainer({
   const frame = useMemo<ContainerFrame>(
     () => ({
       timeRange: timeRangeTuple,
+      seedRange: seedRangeTuple,
+      axisPanZoomX,
+      axisPanZoomY,
       managesHeight,
       width,
       theme: theme ?? defaultTheme,
@@ -2321,6 +2377,9 @@ function ResolvedChartContainer({
     }),
     [
       timeRangeTuple,
+      seedRangeTuple,
+      axisPanZoomX,
+      axisPanZoomY,
       managesHeight,
       width,
       theme,

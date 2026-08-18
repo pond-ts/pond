@@ -47,6 +47,42 @@ export function resolveYDomain(
   return result;
 }
 
+/**
+ * The inverse of {@link resolveYDomain}'s `pad` — recover the bounds that, fed
+ * back in as `min`/`max`, re-pad to exactly the domain passed in.
+ *
+ * **Why this has to exist.** `pad` is applied *last*, and to explicit bounds too,
+ * so a scale's live domain is the **padded** one. Anything that reads a domain
+ * off the scale and hands it back as bounds (a y-gutter gesture reporting through
+ * `<YAxis onBoundsChange>`) would otherwise re-pad an already-padded domain and
+ * inflate it by `1 + 2·pad` on every report — compounding, so a padded axis
+ * walks outward a notch at a time under a gesture that should be zooming *in*.
+ *
+ * Both directions preserve the domain's centre, so this is the same arithmetic
+ * run backwards: in value space for linear / symlog, in log space for `'log'`
+ * (where `pad` is a fraction of the decades). A `pad` of `0` — the default — is
+ * the identity, and a log domain that is not strictly positive is returned
+ * untouched rather than taken through `log10`.
+ */
+export function unpadDomain(
+  domain: readonly [number, number],
+  pad = 0,
+  scale: YScaleKind = 'linear',
+): [number, number] {
+  const [lo, hi] = domain;
+  if (!pad) return [lo, hi];
+  const shrink = 1 + 2 * pad;
+  if (scale === 'log') {
+    if (!(lo > 0) || !(hi > lo)) return [lo, hi];
+    const midLog = (Math.log10(lo) + Math.log10(hi)) / 2;
+    const halfLog = (Math.log10(hi) - Math.log10(lo)) / (2 * shrink);
+    return [10 ** (midLog - halfLog), 10 ** (midLog + halfLog)];
+  }
+  const mid = (lo + hi) / 2;
+  const half = (hi - lo) / (2 * shrink);
+  return [mid - half, mid + half];
+}
+
 /** Smallest positive value a log domain will fall back to when the data offers
  *  nothing positive at all. Arbitrary but finite — a log scale has no natural
  *  zero to anchor on, and `[0, 1]` (the linear empty-data domain) has no
