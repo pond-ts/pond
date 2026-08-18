@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.61.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.62.0...HEAD
+[0.62.0]: https://github.com/pond-ts/pond/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/pond-ts/pond/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/pond-ts/pond/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/pond-ts/pond/compare/v0.58.0...v0.59.0
@@ -101,6 +102,130 @@ include new features and type-level changes; patch bumps are strictly additive.
   the axis holds the zoom itself. `ContainerFrame` also gains `seedRange` — the
   declared view, as against the gestured `timeRange` — which is the x reset's
   target.
+
+### Added
+
+- **charts: `<ChartContainer height>` + `<ChartRow flex>` — container-owned
+  vertical layout** ([PND-HEIGHT]). `height` takes a pixel number or `'auto'`
+  (measured by the same `ResizeObserver` as `width="auto"`); omitted stays the
+  classic mode where rows declare pixels. A managed container renders as a
+  **flex column** — the rows block flexes, the x-axis strip keeps its natural
+  height — and flex rows (a bare `<ChartRow>` is `flex={1}`) divide what the
+  browser says is left, then read that height back for their y-scales.
+
+  The design constraint was that **CSS does the subtraction**: the axis
+  strip's height depends on its `label`, the theme font size, the tick
+  ladder's calendar band row at the current grain, and stacked marker pills —
+  it is not a constant a caller can subtract, and every consumer who tried
+  carried a wrong one (`20` and `24` in one codebase; this site's own
+  resizable-panels recipe said `22`). It also means non-row children between
+  rows — the recipe's draggable splitter — keep taking their natural space,
+  so that recipe reduces to its drag handler: one flex row absorbing slack
+  over one fixed row the drag resizes, no `AXIS_H`, no measuring hook.
+
+  A flex row paints nothing until its first measurement, latches its last
+  non-zero height while hidden (a `display: none` tab switch keeps its
+  scales), and warns in dev when mounted in a container that never sizes it.
+  The container **warns in dev when a measured dimension stays 0** — the
+  unconstrained-parent deadlock, which for height is the _default_ (a
+  flex-column child's height is its content) rather than an edge case.
+
+  Fixed-`height` rows keep their pixels everywhere, managed or not; a
+  container with no `height` behaves exactly as before.
+
+### Fixed
+
+- **charts: the crosshair's value pill lands on the axis that measured the
+  value, in that axis's colour.** With two y-axes on one side, the pill was
+  placed by side alone — always against the plot edge — so a reading taken off
+  the **outer** axis appeared over the **inner** axis's ticks, in the cursor's
+  grey: a number pinned to a ruler that never measured it. The reticle picks one
+  series, so the resolved sample now carries its axis's gutter **offset** (the
+  reserved widths of the columns between it and the plot) and its
+  `<YAxis color>`, and the pill uses both — position _and_ ink say which of two
+  stacked scales the number is on. A single axis per side is unchanged (offset
+  `0`), as is an axis that sets no colour (the theme's cursor ink).
+
+  A pill placed further out is now **bridged back to the plot edge** by a 1px
+  connector in its own colour — the y-side twin of the crosshair's x-axis time
+  connector, without which a pill a column out reads as a value floating in a
+  gutter. It draws at half opacity because, unlike the time connector's empty
+  strip, it crosses another axis's tick labels; nothing is drawn on the innermost
+  axis, where the pill already meets the line.
+
+  `<YAxis color>` is now part of the axis's registered spec rather than
+  presentation-only, because the pill is drawn by the row's cursor overlay, not
+  by `<YAxis>`. `<Baseline indicator>` — the other on-axis value pill — got the
+  same placement fix and the same connector. New `Cursors/Crosshair` stories fan
+  the states out (`AxisColor`, `StackedAxes`, `StackedAxesColored`,
+  `StackedAxesLeft`, `StackedAxesBothSides`).
+
+  Not covered: `<YAxisIndicator>` still takes an explicit `side` alongside its
+  `axis`, so it can be pointed at a gutter its axis isn't in; reconciling those
+  two props is a public-API question, left for its own change.
+
+## [0.62.0] — 2026-08-16
+
+### Added
+
+- `@pond-ts/process`: **`specId` is total under `{ validate: false }`** — a
+  third options argument that names a spec which would not compile
+  (`specId(registry, spec, { validate: false })`). Identity used to be coupled
+  to validity, so the moments a consumer most needs an id — labelling the chip
+  it is skipping, keying "this persisted entry is broken", logging what was
+  rejected — were exactly the moments it threw, leaving the consumer to
+  re-implement canonicalization or carry a second key. Lenient mode still
+  applies defaults and sorts keys, carries an undeclared param through rather
+  than dropping it, and recurses into nested inputs; **a valid spec has the
+  same id under either mode**, so nothing needs a second cache line. Validity
+  stays `compile`'s job. `Registry.resolveParams` takes the same
+  `{ validate: false }`.
+
+  An id that did **not** validate is minted in a separate namespace — marked
+  `p1?:` instead of `p1:`, with type-preserving param encoding — so it can
+  never collide with a legal id. Both measures are confined to that branch:
+  a valid id is byte-identical to what shipped in 0.61.0. The mark rides up a
+  chain, so a spec over an unvalidated input is unvalidated too.
+
+- `@pond-ts/process`: **`Skipped.code`** — every entry in `RunResult.skipped`
+  now carries the failure's kind (`'UnknownColumnError'`, `'ParamError'`,
+  `'UnitError'`, `'SlotError'`, …) beside its human `reason`. Under
+  `onError: 'skip' | 'collect'` nothing is thrown, so `instanceof` — the right
+  discriminator when a consumer catches — never reached a consumer reading
+  `skipped`, leaving it to match on prose whose wording is not a contract. The
+  value is `ProcessError.code`, a **literal declared per class** rather than
+  `constructor.name`, so a consumer's minifier cannot silently rename it. It is
+  absent when the throw did not come from this package, which is itself the
+  signal: op code failed, not the plan layer.
+
+### Fixed
+
+- `@pond-ts/process`: **`run` under `onError: 'throw'` — the default — now
+  raises the original error rather than a base `ProcessError` rebuilt from its
+  message.** A caught `UnknownColumnError`, `ParamError`, `UnitError` or
+  `SlotError` reached the caller as a bare `ProcessError`, so `instanceof`
+  could not discriminate on the throw path at all.
+
+- `@pond-ts/process`: **a raw string input naming a column the bound series
+  does not carry is now rejected**, at `compile`, with a new
+  `UnknownColumnError`. Nothing checked it at compile or at pull: the op ran
+  against an un-widened series, and one that doesn't defend its own inputs
+  appended a plausible-looking column of garbage under the spec's id — with
+  `skipped` empty and `onError` never engaged. A persisted plan citing a column
+  the feed has since dropped now skips (or throws) instead of returning a
+  value. The check is the one `expandSlots` already made against the same
+  column list, so the two request forms no longer disagree; it runs before the
+  unit check, whose "is 'unitless'" answer for an absent column named the wrong
+  problem. The key/time column is not a value column and is rejected too.
+
+  The check covers the **whole spec closure** (a missing column under a typed
+  parent otherwise surfaced as `UnitError`) and runs on the **warm** path as
+  well as the cold one — `setSource` replaces the data under compiled nodes by
+  design, so a memoized node could outlive the column it reads and go on
+  emitting the garbage column this fix exists to prevent. A node that fails the
+  re-check is dropped from the graph.
+  (Both items reported by Tidal —
+  `docs/notes/tidal-process-adoption-friction-2026-08.md`.)
 
 ## [0.61.0] — 2026-08-16
 

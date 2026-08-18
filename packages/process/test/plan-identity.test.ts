@@ -161,6 +161,177 @@ describe('specId — shape', () => {
   });
 });
 
+describe('specId — total under `validate: false` [PND-PROCTOTAL]', () => {
+  // The consumer case: a persisted plan holds a spec that no longer
+  // compiles, and the UI still has to name it — to label the chip it is
+  // skipping and to key the "this one is broken" state.
+  const lenient = { validate: false } as const;
+
+  it('names a spec whose param is out of range', () => {
+    // `p1?:` — the unvalidated namespace. Params are type-tagged there,
+    // so the encoding is injective where `String(v)` was not.
+    expect(specId(registry, sma(0), lenient)).toBe(
+      'p1?:sma(px;period=number:0)',
+    );
+  });
+
+  it('names a spec whose op the registry does not have', () => {
+    expect(specId(registry, { op: 'nope', inputs: ['px'] }, lenient)).toBe(
+      'p1?:nope(px;)',
+    );
+  });
+
+  it('names a spec carrying a param the op does not declare', () => {
+    // Carried rather than dropped: two differently-broken specs are two
+    // ids, so a UI keyed on them does not collapse them into one.
+    const typo = { op: 'sma', params: { perid: 20 }, inputs: ['px'] };
+    const id = specId(registry, typo, lenient);
+    expect(id).toBe('p1?:sma(px;perid=number:20,period=number:20)');
+    expect(id).not.toBe(specId(registry, sma(20), lenient));
+  });
+
+  it('is total through nesting — an invalid inner spec still names the outer', () => {
+    // The mark rides up: an outer spec over an invalid inner cannot
+    // compile either, so it is unvalidated too.
+    const outer = { op: 'ema', params: { period: 10 }, inputs: [sma(0)] };
+    expect(specId(registry, outer, lenient)).toBe(
+      'p1?:ema(p1?:sma(px;period=number:0);period=number:10)',
+    );
+  });
+
+  it('does not throw for any of the cases the strict mode rejects', () => {
+    for (const spec of [
+      sma(0),
+      sma(Number.NaN),
+      { op: 'nope', inputs: ['px'] },
+      { op: 'sma', params: { period: '20' as never }, inputs: ['px'] },
+      { op: 'sma', params: { perid: 20 }, inputs: ['px'] },
+      { op: 'ema', params: { period: 10 }, inputs: [sma(0)] },
+      // A field dropped entirely by a persistence round trip.
+      { op: 'sma', params: { period: 0 } } as never,
+    ]) {
+      expect(() => specId(registry, spec)).toThrow();
+      expect(() => specId(registry, spec, lenient)).not.toThrow();
+    }
+  });
+
+  it('gives a VALID spec the same id either way — no second cache key', () => {
+    // The property the whole option rests on: a consumer may key on the
+    // lenient id and still hit the node `compile` mints.
+    for (const spec of [
+      sma(),
+      sma(20),
+      { op: 'bollinger', params: { stdDev: 2, period: 20 }, inputs: ['px'] },
+      { op: 'ema', params: { period: 10 }, inputs: [sma(20)] },
+      {
+        op: 'ema',
+        params: { period: 10 },
+        inputs: [
+          {
+            from: { op: 'bollinger', params: { period: 20 }, inputs: ['px'] },
+            output: 'Lower',
+          },
+        ],
+      },
+    ]) {
+      expect(specId(registry, spec, lenient)).toBe(specId(registry, spec));
+    }
+  });
+
+  it('still applies defaults and sorts keys, so it is a real id', () => {
+    // Leniency relaxes validity, not canonicalization — an omitted param
+    // must still collide with its explicit default.
+    expect(specId(registry, sma(), lenient)).toBe(
+      specId(registry, sma(20), lenient),
+    );
+    const a = { op: 'bollinger', params: { period: 20, stdDev: 9 } };
+    const b = { op: 'bollinger', params: { stdDev: 9, period: 20 } };
+    expect(specId(registry, { ...a, inputs: ['px'] }, lenient)).toBe(
+      specId(registry, { ...b, inputs: ['px'] }, lenient),
+    );
+  });
+
+  it('never collides an unvalidated id with a legal one', () => {
+    // The defect both PR #667 reviews found: `esc` is `String(v)`, so a
+    // type-invalid param encoded exactly like its legal counterpart and
+    // the broken spec NAMED THE WORKING NODE. The id is the column name,
+    // the cache key and the provenance citation, so that is a
+    // correctness bug — a JSON or form round trip turning 20 into "20"
+    // is the very case this mode exists for.
+    const cases: { valid: object; broken: object }[] = [
+      {
+        valid: { op: 'sma', params: { period: 20 }, inputs: ['px'] },
+        broken: { op: 'sma', params: { period: '20' }, inputs: ['px'] },
+      },
+      {
+        valid: { op: 'smooth', params: { method: 'ema' }, inputs: ['px'] },
+        broken: { op: 'smooth', params: { method: 0 }, inputs: ['px'] },
+      },
+      {
+        // A legal string param vs. the same text arriving as a number.
+        valid: { op: 'smooth', params: { period: 10 }, inputs: ['px'] },
+        broken: { op: 'smooth', params: { period: '10' }, inputs: ['px'] },
+      },
+    ];
+    for (const { valid, broken } of cases) {
+      const legal = specId(registry, valid as never);
+      expect(specId(registry, broken as never, lenient)).not.toBe(legal);
+      // And the legal one is untouched by the mode, as ever.
+      expect(specId(registry, valid as never, lenient)).toBe(legal);
+    }
+  });
+
+  it('keeps two broken specs apart when only their types differ', () => {
+    // Both are invalid, so neither can collide with a legal id — but a
+    // UI keyed on them must still see two chips, not one.
+    const a = { op: 'sma', params: { period: 0 }, inputs: ['px'] };
+    const b = { op: 'sma', params: { period: '0' }, inputs: ['px'] };
+    expect(specId(registry, a as never, lenient)).not.toBe(
+      specId(registry, b as never, lenient),
+    );
+  });
+
+  it('escapes an undeclared param key, which leniency lets through', () => {
+    // Strict mode rejects an undeclared key outright; carrying it means
+    // a key spelled with the id's own separators could otherwise forge
+    // the encoding of two params.
+    const forged = {
+      op: 'sma',
+      params: { 'period=20,x': 1 },
+      inputs: ['px'],
+    };
+    const id = specId(registry, forged as never, lenient);
+    expect(id).toContain('period\\=20\\,x=');
+    expect(id).not.toBe(
+      specId(
+        registry,
+        { op: 'sma', params: { period: 20, x: 1 }, inputs: ['px'] } as never,
+        lenient,
+      ),
+    );
+  });
+
+  it('marks the whole chain, so no unvalidated id starts like a valid one', () => {
+    const specs = [
+      sma(0),
+      { op: 'nope', inputs: ['px'] },
+      { op: 'ema', params: { period: 10 }, inputs: [sma(0)] },
+      { op: 'sma', params: { perid: 20 }, inputs: ['px'] },
+    ];
+    for (const spec of specs) {
+      expect(specId(registry, spec, lenient).startsWith('p1?:')).toBe(true);
+    }
+    expect(specId(registry, sma(20), lenient).startsWith('p1:')).toBe(true);
+  });
+
+  it('validates by default, which is the behaviour that shipped', () => {
+    expect(() => specId(registry, sma(0))).toThrow(ParamError);
+    expect(() => specId(registry, sma(0), { validate: true })).toThrow(
+      ParamError,
+    );
+  });
+});
+
 describe('refToId', () => {
   it('accepts an inline spec or an id string alike', () => {
     const id = specId(registry, sma(20));

@@ -22,7 +22,14 @@
   ([PND_CHARTS_PLAN.md](PND_CHARTS_PLAN.md)); Canvas async-width stays
   needs-repro awaiting Tidal's browser repro. The charts npm publish
   auto-wakes its adoption agent via the CHANGELOG — keep CHANGELOG entries
-  wave-shaped; they're a machine-read payload.
+  wave-shaped; they're a machine-read payload. **2026-08: Tidal is now a
+  `@pond-ts/process` consumer too** — its derive seam runs on process
+  `0.61.0` (TDL-PROCESS stage 1), and the first adoption day produced
+  [`docs/notes/tidal-process-adoption-friction-2026-08.md`](../notes/tidal-process-adoption-friction-2026-08.md);
+  both items shipped in #667, plus a third (`Skipped.code`) that only
+  surfaced by asking the consumer to check the fix's shape before it
+  merged — outcome and rejected alternatives in
+  [PND_PROCESS_PLAN.md](PND_PROCESS_PLAN.md).
 - **estela** (geo + power; drove `@pond-ts/fit`) — `@pond-ts/fit` landed on
   main; estela still consumes its local copy and has **not** adopted the
   shipped value-axis primitives (`scan` / `byValue`). Next: fit first

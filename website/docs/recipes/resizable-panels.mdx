@@ -9,6 +9,36 @@ smaller bottom one — with a **draggable divider** between them, where the
 **extra vertical space flows to the top panel**. The canonical financial shape:
 a price chart on top, an indicator panel (RSI, volume, a vol model) below.
 
+:::tip[The built-in way ([PND-HEIGHT])]
+With `<ChartContainer height="auto">`, this recipe collapses to its drag
+handler. The container manages vertical layout — a `flex` row absorbs the
+slack, the fixed row is the one the drag resizes, and the divider is a plain
+`<div>` between them:
+
+```tsx
+const [bottomH, setBottomH] = useState(160);
+
+<ChartContainer width="auto" height="auto">
+  {/* flex — absorbs all slack */}
+  <ChartRow>…price…</ChartRow>
+  {/* the drag handler sets bottomH, clamped ≥ your floor */}
+  <div role="separator" />
+  <ChartRow height={bottomH}>…indicator…</ChartRow>
+</ChartContainer>;
+```
+
+Gone relative to the version below: `useMeasuredSize`, the `width/height > 0`
+gate, **the `AXIS_H = 22` constant** (CSS subtracts the axis strip, which is
+not actually a constant — a `label`, calendar bands or marker pills change
+it), and the top panel's clamp arithmetic (`minHeight` on your own wrapper if
+you want a floor). The drag clamps only its own row. See the
+`Layout/Container height → ResizablePanels` story for the complete version.
+
+The hand-rolled recipe below still works and shows what the container now does
+for you — keep reading if you need the measured size for something _besides_
+the chart.
+:::
+
 It's built entirely on `@pond-ts/charts` primitives — **no library-specific
 layout API**. The mirror of this (slack to the _bottom_ panel) ships as the
 `Layout/Multi-Panel → ResizableFill` Storybook story.

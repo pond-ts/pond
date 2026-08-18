@@ -433,6 +433,38 @@ describe('annotation indicators', () => {
     without.unmount();
   });
 
+  it('Baseline indicator sits on ITS axis when a side carries two', () => {
+    // The same rule the crosshair's pill follows (crosshair-axis-pill.test):
+    // side alone puts an on-axis pill on the innermost axis, which is the wrong
+    // scale as soon as a side has two. The baseline is bound to the outer one.
+    const { container } = render(
+      <ChartContainer range={[0, 4]} width={300} showAxis={false}>
+        <ChartRow height={120}>
+          <Layers>
+            <LineChart series={series} column="v" axis="inner" />
+            <Baseline value={137} axis="outer" indicator label={false} />
+          </Layers>
+          {/* Right axes are authored inner→outer. */}
+          <YAxis id="inner" side="right" width={40} min={0} max={100} />
+          <YAxis id="outer" side="right" width={40} min={100} max={200} />
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const pill = chips(container).find((d) => d.textContent === '137');
+    expect(pill).toBeDefined();
+    // plotWidth (300 − 2×40) + the inner axis's reserved 40.
+    expect(pill!.style.left).toBe('260px');
+    // …bridged back to the plot edge, as the crosshair's pill is: the two are
+    // the same object, so they connect the same way.
+    const connector = Array.from(container.querySelectorAll('div')).find(
+      (d) => d.style.position === 'absolute' && d.style.height === '1px',
+    );
+    expect(connector).toBeDefined();
+    expect(connector!.style.left).toBe('220px');
+    expect(connector!.style.width).toBe('40px');
+    expect(connector!.style.background).toBe(pill!.style.background);
+  });
+
   it('Marker indicator draws an x-axis pill on <XAxis>', () => {
     // Sentinel timeFormat ⇒ deterministic text; the x-pill is the chip with a
     // translateX transform (showAxis default true renders the time axis).

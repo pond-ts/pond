@@ -63,6 +63,26 @@ The one deliberate exception is `binColors`, where each bar's _own_ fill pops
 for both states so a red/green volume bar keeps its meaning while live. That is
 a recolour of intensity, not of hue — the value's identity survives it.
 
+## A number the caller must know is an API gap
+
+If a consumer has to hard-code a value the library chose — a strip height, a
+default bar width, a gutter's arithmetic — the API is leaking its layout as
+folklore. The number will be re-derived in N places, it will drift (the same
+codebase carried `20` and `24` for a strip that was 22), and it will be wrong
+silently, because nothing types or tests a magic constant against the library
+that owns it.
+
+Named by the SPARC consumer across three instances: bar-vs-band width
+([PND-BARWIDTH]), the plot-rect gutter arithmetic ([PND-IGNITEFRAME] /
+`useChartFrame`), and the x-axis strip height ([PND-HEIGHT]). The fix is
+never "document the number": either **publish the resolved value** (the frame
+hook) or — better, when layout is the consumer — **restructure so the number
+stops existing** (`[PND-HEIGHT]`'s flex column, where CSS does the
+subtraction and there is nothing to know).
+
+When reviewing a workaround, ask: does it contain a literal the library also
+contains? That literal is the gap.
+
 ## Semantics to preserve
 
 ### Half-open bucketing

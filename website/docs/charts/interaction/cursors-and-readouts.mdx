@@ -28,15 +28,15 @@ the per-prop visual walk, see the `Cursors/*`
 sample; `region` is a **selection** gesture (see
 [Pan, zoom & range selection](./pan-zoom-and-range-selection.mdx)).
 
-| `cursor`      | What it draws                                                                                                                                                                                                                       |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `'none'`      | No in-chart cursor. Pair with `onTrackerChanged` for a fully off-chart readout.                                                                                                                                                     |
-| `'line'`      | **Default.** The synced vertical line only, no per-series marks.                                                                                                                                                                    |
-| `'point'`     | A dot on each series at the cursor, no line.                                                                                                                                                                                        |
-| `'inline'`    | Dots plus a value chip beside each series.                                                                                                                                                                                          |
-| `'flag'`      | Dots plus value flags. (Staffed-flag geometry lands in a later phase; for now flags stack at top.)                                                                                                                                  |
-| `'crosshair'` | The vertical line plus a dot on each series, each value pinned to its y-axis edge as an on-axis pill and the cursor time pinned to the x-axis — the ChartIQ / trading-terminal readout. Values snap to the series, not raw mouse Y. |
-| `'region'`    | Shades the bucket under the pointer and enables drag-to-select. Needs `cursorSequence` for bucket snapping; see the range-selection page.                                                                                           |
+| `cursor`      | What it draws                                                                                                                                                                                                                                                                           |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `'none'`      | No in-chart cursor. Pair with `onTrackerChanged` for a fully off-chart readout.                                                                                                                                                                                                         |
+| `'line'`      | **Default.** The synced vertical line only, no per-series marks.                                                                                                                                                                                                                        |
+| `'point'`     | A dot on each series at the cursor, no line.                                                                                                                                                                                                                                            |
+| `'inline'`    | Dots plus a value chip beside each series.                                                                                                                                                                                                                                              |
+| `'flag'`      | Dots plus value flags. (Staffed-flag geometry lands in a later phase; for now flags stack at top.)                                                                                                                                                                                      |
+| `'crosshair'` | A single reticle — the vertical line, a horizontal line and a dot on the nearest series — with that value pinned to **its own** y-axis as an on-axis pill and the cursor time pinned to the x-axis: the ChartIQ / trading-terminal readout. Values snap to the series, not raw mouse Y. |
+| `'region'`    | Shades the bucket under the pointer and enables drag-to-select. Needs `cursorSequence` for bucket snapping; see the range-selection page.                                                                                                                                               |
 
 The five hover-readout modes, switchable live:
 
@@ -160,9 +160,13 @@ shows every chart's value at the one cursor.
   follows a pointer.
 - **`flag` staffs are provisional.** Flags currently stack at the top of the
   plot rather than staffing from each point; the geometry is a later phase.
-- **`crosshair` values snap to the series,** so the axis pills read like ticks
+- **`crosshair` values snap to the series,** so the axis pill reads like a tick
   — set `crosshairSnap={false}` only if you want the horizontal line to track
   the raw pointer Y instead.
+- **The pill sits on the axis that measured the value**, including when a side
+  carries several axes (it lands on that axis's column, not against the plot),
+  and it wears that axis's `<YAxis color>` when one is set — so with stacked
+  scales the pill's position and ink both say which scale you are reading.
 - **Sync on a trading-time axis:** a follower reports the shared time back
   through its own `xScale`, which is an exact round-trip on a continuous
   (linear / time) axis — so wiring `onTrackerChanged` on every chart is a clean

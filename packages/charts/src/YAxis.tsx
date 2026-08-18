@@ -217,7 +217,14 @@ export interface YAxisProps {
    * overriding the theme's `axis.label` / `axis.title.color`. The multi-axis
    * convention of colouring each y axis to match its series (`color`
    * matching the layer's) — busy, but standard. Omit for the theme's axis
-   * colours. Presentation-only: it never re-registers the axis.
+   * colours.
+   *
+   * **Also worn by the axis-edge chrome that lands on this axis** — a
+   * `<CrosshairCursor>`'s value pill takes it when the reticle reads a series
+   * scaled here, so with several axes the pill says *which* scale the number is
+   * on (the ChartIQ price-tag convention). That is why it rides on the
+   * registered spec: the pill is drawn by the row's cursor overlay, not by this
+   * component, so a colour it never registered could not reach it.
    */
   color?: string;
   /**
@@ -359,6 +366,7 @@ export function YAxis({
       format,
       tickValues: ticks?.map((t) => t.at),
       tickCount,
+      color,
       index,
     }),
     [
@@ -375,6 +383,7 @@ export function YAxis({
       format,
       ticks,
       tickCount,
+      color,
       index,
     ],
   );

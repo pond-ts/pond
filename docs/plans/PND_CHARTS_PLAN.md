@@ -3954,3 +3954,199 @@ with keys they become legal, and the container's category-agreement check
 compares label lists.
 
 **Not started.** Blocked on owner review of the sketch.
+
+---
+
+## [PND-HEIGHT] — container-owned height (2026-08-13)
+
+Filed from a consumer follow-up to `width="auto"` (the [PND-SPARCFRIC]
+consumer), whose report opened by declining the feature we had just shipped:
+**"`width: 'auto'` doesn't help _us_"** — they must supply `<ChartRow height>`,
+which forces them to measure the box anyway, so they already hold the width and
+adopting `'auto'` would stack pond's `ResizeObserver` on top of theirs. The
+asymmetry in their words: _"pond now owns width and owns none of height."_
+
+Their cost was concrete and already drifting: `Math.max(40, height - 20)` in
+six components, `- 24` in their smoke story — two guesses at the axis strip's
+height in one codebase. **Verified against source, both guesses are wrong and
+no constant can be right**: the bare strip is `TICK_STRIP = 22`, plus 16 with a
+`label`, plus 20 when the tick ladder shows its calendar band row at the
+current grain, plus `fontSize + 6` per stacked marker pill (`XAxis.tsx:478`).
+Our own resizable-panels recipe carried `AXIS_H = 22` with a note admitting a
+container height mode "would remove this bookkeeping" — the docs predicted the
+ask.
+
+**The report's closing pattern earned its keep and belongs in the design
+principles**: _whenever the caller has to know a number pond chose, that's an
+API gap_ — third instance, after [PND-BARWIDTH] (bar-vs-band width) and
+[PND-IGNITEFRAME] (gutter arithmetic).
+
+### Shipped 2026-08-13 — `<ChartContainer height>` + `<ChartRow flex>`
+
+The load-bearing design decision: **CSS does the subtraction, not arithmetic.**
+An earlier shape had the x-axis strip _registering_ its height with the
+container (the gutter mechanism transposed) and the container computing flex
+rows' pixels. The owner's mid-build flag killed it: the splitter pattern
+(Tidal's, and the recipe's) drops a plain `<div>` between rows, whose height
+the container cannot know — pixel arithmetic either breaks the splitter or
+grows a registration API for arbitrary children. Instead the managed container
+is a **flex column** (rows block flexes, strip keeps natural height), a flex
+row is `flex: n 1 0` + `min-height: 0`, and the row **reads back** the height
+layout gave it for its y-scales. Strip subtraction, splitters, `rowGap` and
+mixed fixed/flex all fall out of flexbox; no strip registration exists.
+
+Decisions recorded:
+
+- **Omitted `height` = unmanaged (classic), not `'auto'`** — unlike width,
+  where omitted = auto. A chart must have a width; height has a legitimate
+  intrinsic mode every existing consumer is in.
+- **A bare `<ChartRow>` is `flex={1}`** — the consumer's "single-row set
+  should need no arithmetic at all", literally: `<ChartContainer width="auto"
+height="auto"><ChartRow>…` is the whole markup. Safe because `height` was
+  previously required, so no existing code omits it.
+- **Both `height` and `flex` given → dev warning, `height` wins** (the
+  long-standing prop), deterministic rather than throwing.
+- **The latch generalizes**: flex rows keep their last non-zero height while
+  hidden, as `width="auto"` does. A hidden chart is not a resized one.
+- **Standing-zero dev warning** on the container (600 ms): the deadlock the
+  width docs could only describe is now named at runtime. It matters more for
+  height, where a flex-column child's height defaults to its content — the
+  deadlock is the _default_ there.
+
+Browser-verified (happy-dom has no layout engine, so unit tests pin structure
+and read-back wiring; Storybook pinned the arithmetic): single row 320 = 297 +
+22-px strip; **StripChangesHeight** — two 300px charts, bare strip 22 vs
+labelled strip 38, flex row absorbed the 16px difference, which is the exact
+case every hand constant loses; splitter drag conserves total and repaints
+through the RO loop; `flex={3}`/`flex={1}` measures 277/92.
+
+**A test-methodology find worth generalizing** (second of its kind this wave):
+the story smoke tests were vacuous for auto-sizing stories — headless, the
+measurement gate never opens, so _none of the story's chart content executes_,
+and a story with a broken column name passed the smoke and threw only in the
+browser (it happened: `column="hr"` for a column named `bpm`). The smoke now
+stubs `getBoundingClientRect` so gates open and chart content renders; a chip
+was filed to apply the same to the older auto-width smokes. Rule: **a smoke
+test behind a gate tests the gate.**
+
+Not built, deliberately:
+
+- **`<ChartRow minHeight>` / clamps** — `min-height` on the consumer's own
+  wrapper is one CSS property; a prop would duplicate CSS with less power.
+  Reopen if a real consumer needs a floor that CSS placement can't express.
+- **Strip-height publication on `useChartFrame`** — nobody needs the number
+  once nobody subtracts it; publishing it would recreate the constant.
+
+## [PND-XHAIRAXIS] — the crosshair pill's axis (2026-08-17)
+
+Filed by the owner from the running Storybook: with the crosshair enabled and
+**several y-axes on one side**, the value pill (a) drew in the cursor's grey and
+(b) sat against the plot edge — i.e. over the **innermost** axis — no matter
+which axis produced the number. A reading taken off the outer scale therefore
+appeared over the inner scale's ticks: a number pinned to a ruler that never
+measured it, which is worse than no indicator because it reads as authoritative.
+
+**Why it was wrong rather than merely incomplete.** The resolved cursor sample
+already carried the axis it scales against (`axisId` + `side`), and side alone
+was *sufficient* while every side held one axis — the innermost axis on a side
+was the only axis. The multi-axis case doesn't degrade, it inverts: the pill
+lands on a specific wrong scale. Same shape as the recurring principle in this
+plan — the mechanism existed and only pointed one way.
+
+### Shipped 2026-08-17
+
+Two facts the drawing slot lacked, both resolved by the row (which is what owns
+the gutter layout) and carried on the finished measurement, per the interaction
+RFC's "container resolves, slots draw":
+
+- **`RowFrame.axisOffsets`** — id → px from the plot's edge to that axis's
+  *inner* edge, accumulated from the **reserved slot widths** (`axisSlots`), not
+  the axis's own `width`. That distinction is load-bearing: the container
+  reserves each column at its widest across rows and every row renders its axis
+  boxes at that reservation, so a sibling row with a wider axis moves this row's
+  offsets. Pinned by a test with a 70px axis in another row.
+- **`RowFrame.axisColors`** — id → `<YAxis color>`. This moved the prop onto the
+  **registered spec** (it was documented "presentation-only: never re-registers
+  the axis"), because the pill is drawn by the row's cursor overlay, not by
+  `<YAxis>`; a colour that stays local to the component cannot reach it. That
+  also meant adding `color` to `axisSpecEqual` — the registration guard would
+  otherwise swallow a colour change and leave the pill on the old ink while the
+  axis's own labels repainted.
+
+`axisPillX(side, plotWidth, offset)` grew the third argument, so every on-axis
+pill can be placed by the same helper. `<Baseline indicator>` — the other on-axis
+value pill, and one that already knew its `axisId` — took the same fix in the
+same pass; leaving one of two identical pills mis-placed would just be a second
+bug report.
+
+Decisions recorded:
+
+- **The pill follows the reticle's pick, not "one pill per axis".** The
+  crosshair is a single reticle by design (one series, one value), so its pill
+  goes to that series' axis. Hovering across series moves it between axes —
+  verified in the browser: the same x with the pointer near either trace puts
+  the pill on that trace's axis in that axis's ink.
+- **Ink falls back to the cursor's, not to the series colour.** An axis that
+  sets no `color` keeps `theme.cursor ?? theme.axis.label` — the pill is an
+  *axis* indicator (the ChartIQ price-tag), so it should read as part of the axis
+  it covers. Series colour was available on the sample and deliberately not used;
+  it would make the pill read as a series chip that happens to sit in a gutter.
+- **A mirrored id (one scale registered on both sides) resolves to the
+  last-declared instance, in every map.** The first cut took the *smallest*
+  offset on a collision — "keep the innermost placement, as before". The Layer-2
+  review caught that `axisSides` collapses by last-declared-wins, so the two
+  rules disagree: an id present on the right and also as the outer of two left
+  axes resolved to `side: 'left'` with the right-hand `offset: 0`, pairing one
+  instance's gutter with another's column — this very bug, through the back
+  door. `axisOffsets` is now resolved per **instance** and collapsed by the same
+  rule `axisSides` uses, so side and offset always describe one axis. Pinned by
+  a test that fails under the old rule. (The deeper fix — keying axis-edge
+  chrome by instance rather than id — is still not built; nothing has asked
+  for it, and coherence is what the bug needed.)
+
+### Follow-up 2026-08-17 — the y-side connector (owner-approved)
+
+The gap this left was visible as soon as the both-sides story existed: the
+reticle's horizontal line ends at the plot edge, so a pill one column out read
+as a value floating in a gutter. The x-axis time pill has bridged that gap since
+it shipped ("so the two read as one"); the y side now does too, through a shared
+`axisPillConnector` — so the crosshair's pill and a `<Baseline indicator>` bridge
+identically, as they now place identically.
+
+Two decisions the browser settled rather than the design:
+
+- **Half opacity, where the x connector is solid.** The difference is *what each
+  crosses*: the time connector runs over an empty axis strip, this one runs over
+  another axis's tick labels — measured, not assumed (the connector's box
+  overlaps the neighbouring axis's label glyphs whenever that axis has a tick at
+  the reticle's value). At full strength it slashed the digits; at 0.5 the labels
+  stay crisp and the bridge reads as subordinate chrome, which is the weight the
+  flag cursor's staffs already use for "this line only joins two things I drew".
+- **Anchored at the pill's clamped centre, not the raw value's.** They differ
+  only where the pill is clamped inside the row (the y-tick rule), and a bridge
+  that stayed at the unclamped value would meet nothing. Pinned by a test that
+  asserts the clamp value, not merely that the two agree.
+
+Drawn only when the offset is non-zero: on the innermost axis the pill already
+touches the plot edge where the line ends.
+
+Not built, deliberately:
+
+- **`axisOffsets` on the public `useChartFrame`** — `ChartFrameRow` publishes
+  `axisSides`, so a consumer placing its own gutter chrome has exactly the bug
+  this fixes. Left out because it is a public-surface addition (API.md + owner
+  review) and no consumer has hit it yet; it is the obvious follow-up if one
+  does.
+- **Reconciling `<YAxisIndicator side>` with its `axis`** — that component takes
+  an explicit `side` (default `'right'`) *alongside* `axis`, so it can already be
+  pointed at a gutter its axis isn't in, and it is a published prop pair. Adding
+  the offset there without settling what happens when the two disagree would
+  just relocate the ambiguity. Its own change.
+- **Clamping a pill to the gutter it sits in** — a pill is sized to content and
+  deliberately unclipped, so a long formatted value can overflow past its
+  gutter; an *outer*-axis pill has only its own column left before the
+  container's edge, so it spills outside the chart box sooner than an innermost
+  one did (Layer-2 review). Truncating a number is worse than overflowing it,
+  and the fix that isn't a truncation (measure, then flip inward) is real work
+  for a case no consumer has hit — documented on `axisPillX` as a sharp edge
+  instead.

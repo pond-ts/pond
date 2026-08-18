@@ -21,6 +21,9 @@ import {
   createRegistry,
   int,
   num,
+  ParamError,
+  ProcessError,
+  UnknownColumnError,
   port,
   source,
   type AsyncEnvelope,
@@ -175,7 +178,31 @@ replacedPx.scale({ as: 'replacement', factor: 4 });
 // @ts-expect-error The old definition's params were replaced, not intersected.
 replacedPx.scale({ as: 'old-definition', by: 4 });
 
+// ── errors a consumer extends ────────────────────────────────
+// `ProcessError.code` is declared `: string` on every subclass rather
+// than left to infer its literal type. Without that, a consumer
+// subclassing to add its own code fails with TS2417 — the field would be
+// a source break for anyone already extending these classes, which is
+// not what "additive" means (Codex, PR #667).
+class ConsumerPlanError extends ProcessError {
+  static override readonly code: string = 'ConsumerPlanError';
+}
+class ConsumerParamError extends ParamError {
+  static override readonly code: string = 'ConsumerParamError';
+}
+// A subclass that declares nothing still compiles, inheriting its
+// parent's code — documented, and the reason each package class declares
+// its own.
+class QuietError extends UnknownColumnError {}
+const codes: string[] = [
+  new ConsumerPlanError('x').code,
+  new ConsumerParamError('x').code,
+  new QuietError('x').code,
+  ConsumerPlanError.code,
+];
+
 void [
+  codes,
   rowCount,
   lo,
   snapshot,

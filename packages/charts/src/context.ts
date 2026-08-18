@@ -79,6 +79,14 @@ export interface ContainerFrame {
    */
   readonly seedRange: readonly [number, number];
   readonly width: number;
+  /**
+   * Whether the container is managing vertical layout ([PND-HEIGHT]) — it was
+   * given a `height` (number or `'auto'`), renders as a flex column, and flex
+   * rows have real space to divide. `false` is the classic mode: rows declare
+   * pixel heights and the container's height is their sum. A `<ChartRow
+   * flex>` reads this to warn when mounted somewhere it can never resolve.
+   */
+  readonly managesHeight: boolean;
   readonly theme: ChartTheme;
   /** Plot width in px after the gutters — shared by every row. */
   readonly plotWidth: number;
@@ -1467,15 +1475,24 @@ export type CursorSnapX = 'none' | 'sample' | 'sequence';
 /**
  * One resolved per-series measurement at the cursor — **finished numbers, not
  * raw materials** (interaction RFC A2.3): the sample's plot pixels, the axis it
- * scales against (id + side, so a pill can hug the right gutter), and its value
- * already formatted by that axis's formatter. A cursor slot draws these; it
- * never sees a scale, a format map, or an axis-side map.
+ * scales against (id + side + gutter offset + colour, so a pill can sit *on
+ * that* axis in *its* ink), and its value already formatted by that axis's
+ * formatter. A cursor slot draws these; it never sees a scale, a format map, or
+ * an axis-side map.
  */
 export interface ResolvedCursorSample {
   readonly px: number;
   readonly py: number;
   readonly axisId: string;
   readonly side: 'left' | 'right';
+  /** Distance in px from the plot's `side` edge to this axis's inner edge —
+   *  `0` for the innermost axis, the reserved widths of the axes between it and
+   *  the plot otherwise ({@link RowFrame.axisOffsets}). What lets an axis-edge
+   *  pill land on the axis that measured the value rather than the innermost. */
+  readonly axisOffset: number;
+  /** This axis's own `<YAxis color>`, or `undefined` for the theme's axis ink
+   *  ({@link RowFrame.axisColors}) — so an axis-edge pill matches its axis. */
+  readonly axisColor: string | undefined;
   readonly formatted: string;
   readonly color: string;
   readonly label: string;
@@ -1516,7 +1533,8 @@ export interface ResolvedCursorFrame {
   readonly flags: readonly ResolvedCursorFlag[];
   /**
    * The **raw pointer**'s y resolved against the row's default axis — position,
-   * formatted value, and axis side — or `null` when this row isn't hovered.
+   * formatted value, and that axis's placement (side + gutter offset + colour,
+   * as on {@link ResolvedCursorSample}) — or `null` when this row isn't hovered.
    * The free (non-snapping) crosshair reads this; it is resolved here because a
    * slot has no `yScale.invert` to do it itself.
    */
@@ -1524,6 +1542,8 @@ export interface ResolvedCursorFrame {
     readonly py: number;
     readonly formatted: string;
     readonly side: 'left' | 'right';
+    readonly axisOffset: number;
+    readonly axisColor: string | undefined;
   } | null;
   /** The range cursor's **band** under the pointer (bucket-snapped via the
    *  declared sequence, else the drag span), as clamped plot pixels; `null`
@@ -1772,6 +1792,11 @@ export interface AxisSpec {
    *  target; `undefined` derives the count from the row height (see
    *  {@link resolveYTickCount}). Ignored when {@link tickValues} is set. */
   readonly tickCount: number | undefined;
+  /** This axis's own ink (`<YAxis color>`), or `undefined` for the theme's.
+   *  Registered — not merely rendered — because the axis-edge chrome the row
+   *  and the cursor draw (the crosshair's value pill) has to match the axis it
+   *  sits on, and only the registry knows every axis. */
+  readonly color: string | undefined;
   /**
    * Declaration position among the row's children, injected by `ChartRow`. The
    * row sorts axes by this, so the **first declared** axis is the default
@@ -1860,6 +1885,30 @@ export interface RowFrame {
   /** The side each axis sits on, keyed by id — so an axis-edge overlay (the
    *  crosshair value pills) hugs the correct gutter. */
   readonly axisSides: ReadonlyMap<string, 'left' | 'right'>;
+  /**
+   * How far out in its gutter each axis sits, keyed by id: the px distance from
+   * the plot's edge to that axis's **inner** edge — `0` for the innermost axis
+   * on a side, the sum of the reserved widths of the axes between it and the
+   * plot for the ones beyond it (the slots of {@link ContainerFrame.leftSlots} /
+   * `rightSlots` it sits behind).
+   *
+   * The companion to {@link axisSides}: side alone puts an axis-edge pill on the
+   * *innermost* axis of that side, which is the wrong axis whenever a side
+   * carries more than one — the pill then reads as a value on a scale that never
+   * measured it. Together they place it on the axis that did.
+   *
+   * Keyed by id, so a **mirrored** id (one scale registered on both sides, or a
+   * duplicate) resolves to the **last declared** instance — the same winner
+   * {@link axisSides} picks, deliberately, so that side and offset always
+   * describe one axis. Picking them by different rules would pair one
+   * instance's gutter with another's column, which is exactly the mis-placement
+   * this map exists to remove.
+   */
+  readonly axisOffsets: ReadonlyMap<string, number>;
+  /** Each axis's own ink (`<YAxis color>`), keyed by id; an axis that sets none
+   *  is absent. The other half of matching an axis-edge pill to its axis (see
+   *  {@link axisOffsets}) — the pill takes this colour, else the theme's. */
+  readonly axisColors: ReadonlyMap<string, string>;
   /** This row's cursor-mode override, or `undefined` to inherit the container's
    *  default ({@link ContainerFrame.cursor}). */
   readonly cursor: CursorMode | undefined;
