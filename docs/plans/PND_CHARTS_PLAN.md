@@ -3883,3 +3883,117 @@ Not built, deliberately:
   Reopen if a real consumer needs a floor that CSS placement can't express.
 - **Strip-height publication on `useChartFrame`** — nobody needs the number
   once nobody subtracts it; publishing it would recreate the constant.
+
+## [PND-XHAIRAXIS] — the crosshair pill's axis (2026-08-17)
+
+Filed by the owner from the running Storybook: with the crosshair enabled and
+**several y-axes on one side**, the value pill (a) drew in the cursor's grey and
+(b) sat against the plot edge — i.e. over the **innermost** axis — no matter
+which axis produced the number. A reading taken off the outer scale therefore
+appeared over the inner scale's ticks: a number pinned to a ruler that never
+measured it, which is worse than no indicator because it reads as authoritative.
+
+**Why it was wrong rather than merely incomplete.** The resolved cursor sample
+already carried the axis it scales against (`axisId` + `side`), and side alone
+was *sufficient* while every side held one axis — the innermost axis on a side
+was the only axis. The multi-axis case doesn't degrade, it inverts: the pill
+lands on a specific wrong scale. Same shape as the recurring principle in this
+plan — the mechanism existed and only pointed one way.
+
+### Shipped 2026-08-17
+
+Two facts the drawing slot lacked, both resolved by the row (which is what owns
+the gutter layout) and carried on the finished measurement, per the interaction
+RFC's "container resolves, slots draw":
+
+- **`RowFrame.axisOffsets`** — id → px from the plot's edge to that axis's
+  *inner* edge, accumulated from the **reserved slot widths** (`axisSlots`), not
+  the axis's own `width`. That distinction is load-bearing: the container
+  reserves each column at its widest across rows and every row renders its axis
+  boxes at that reservation, so a sibling row with a wider axis moves this row's
+  offsets. Pinned by a test with a 70px axis in another row.
+- **`RowFrame.axisColors`** — id → `<YAxis color>`. This moved the prop onto the
+  **registered spec** (it was documented "presentation-only: never re-registers
+  the axis"), because the pill is drawn by the row's cursor overlay, not by
+  `<YAxis>`; a colour that stays local to the component cannot reach it. That
+  also meant adding `color` to `axisSpecEqual` — the registration guard would
+  otherwise swallow a colour change and leave the pill on the old ink while the
+  axis's own labels repainted.
+
+`axisPillX(side, plotWidth, offset)` grew the third argument, so every on-axis
+pill can be placed by the same helper. `<Baseline indicator>` — the other on-axis
+value pill, and one that already knew its `axisId` — took the same fix in the
+same pass; leaving one of two identical pills mis-placed would just be a second
+bug report.
+
+Decisions recorded:
+
+- **The pill follows the reticle's pick, not "one pill per axis".** The
+  crosshair is a single reticle by design (one series, one value), so its pill
+  goes to that series' axis. Hovering across series moves it between axes —
+  verified in the browser: the same x with the pointer near either trace puts
+  the pill on that trace's axis in that axis's ink.
+- **Ink falls back to the cursor's, not to the series colour.** An axis that
+  sets no `color` keeps `theme.cursor ?? theme.axis.label` — the pill is an
+  *axis* indicator (the ChartIQ price-tag), so it should read as part of the axis
+  it covers. Series colour was available on the sample and deliberately not used;
+  it would make the pill read as a series chip that happens to sit in a gutter.
+- **A mirrored id (one scale registered on both sides) resolves to the
+  last-declared instance, in every map.** The first cut took the *smallest*
+  offset on a collision — "keep the innermost placement, as before". The Layer-2
+  review caught that `axisSides` collapses by last-declared-wins, so the two
+  rules disagree: an id present on the right and also as the outer of two left
+  axes resolved to `side: 'left'` with the right-hand `offset: 0`, pairing one
+  instance's gutter with another's column — this very bug, through the back
+  door. `axisOffsets` is now resolved per **instance** and collapsed by the same
+  rule `axisSides` uses, so side and offset always describe one axis. Pinned by
+  a test that fails under the old rule. (The deeper fix — keying axis-edge
+  chrome by instance rather than id — is still not built; nothing has asked
+  for it, and coherence is what the bug needed.)
+
+### Follow-up 2026-08-17 — the y-side connector (owner-approved)
+
+The gap this left was visible as soon as the both-sides story existed: the
+reticle's horizontal line ends at the plot edge, so a pill one column out read
+as a value floating in a gutter. The x-axis time pill has bridged that gap since
+it shipped ("so the two read as one"); the y side now does too, through a shared
+`axisPillConnector` — so the crosshair's pill and a `<Baseline indicator>` bridge
+identically, as they now place identically.
+
+Two decisions the browser settled rather than the design:
+
+- **Half opacity, where the x connector is solid.** The difference is *what each
+  crosses*: the time connector runs over an empty axis strip, this one runs over
+  another axis's tick labels — measured, not assumed (the connector's box
+  overlaps the neighbouring axis's label glyphs whenever that axis has a tick at
+  the reticle's value). At full strength it slashed the digits; at 0.5 the labels
+  stay crisp and the bridge reads as subordinate chrome, which is the weight the
+  flag cursor's staffs already use for "this line only joins two things I drew".
+- **Anchored at the pill's clamped centre, not the raw value's.** They differ
+  only where the pill is clamped inside the row (the y-tick rule), and a bridge
+  that stayed at the unclamped value would meet nothing. Pinned by a test that
+  asserts the clamp value, not merely that the two agree.
+
+Drawn only when the offset is non-zero: on the innermost axis the pill already
+touches the plot edge where the line ends.
+
+Not built, deliberately:
+
+- **`axisOffsets` on the public `useChartFrame`** — `ChartFrameRow` publishes
+  `axisSides`, so a consumer placing its own gutter chrome has exactly the bug
+  this fixes. Left out because it is a public-surface addition (API.md + owner
+  review) and no consumer has hit it yet; it is the obvious follow-up if one
+  does.
+- **Reconciling `<YAxisIndicator side>` with its `axis`** — that component takes
+  an explicit `side` (default `'right'`) *alongside* `axis`, so it can already be
+  pointed at a gutter its axis isn't in, and it is a published prop pair. Adding
+  the offset there without settling what happens when the two disagree would
+  just relocate the ambiguity. Its own change.
+- **Clamping a pill to the gutter it sits in** — a pill is sized to content and
+  deliberately unclipped, so a long formatted value can overflow past its
+  gutter; an *outer*-axis pill has only its own column left before the
+  container's edge, so it spills outside the chart box sooner than an innermost
+  one did (Layer-2 review). Truncating a number is worse than overflowing it,
+  and the fix that isn't a truncation (measure, then flip inward) is real work
+  for a case no consumer has hit — documented on `axisPillX` as a sharp edge
+  instead.

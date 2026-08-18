@@ -120,6 +120,11 @@ function axisSpecEqual(a: AxisSpec, b: AxisSpec): boolean {
     a.labelPlacement === b.labelPlacement &&
     a.index === b.index &&
     a.tickCount === b.tickCount &&
+    // The axis-edge chrome drawn *by the row* wears this (the crosshair's value
+    // pill), so a swallowed colour change would leave the pill on the old ink
+    // while the axis's own labels repainted — the same silent-staleness the
+    // `linearWindow` note above warns about.
+    a.color === b.color &&
     Object.is(a.format, b.format) &&
     numberArraysEqual(a.tickValues, b.tickValues)
   );
@@ -410,6 +415,7 @@ export function ChartRow({
               format: undefined,
               tickValues: undefined,
               tickCount: undefined,
+              color: undefined,
               index: 0,
             },
           ],
@@ -655,6 +661,53 @@ export function ChartRow({
     return map;
   }, [effectiveAxes]);
 
+  // How far out in its gutter each axis sits: the px from the plot's edge to the
+  // axis's inner edge, walking each side plot-outward and accumulating the
+  // *reserved* slot widths (what the axis boxes actually render at, so the
+  // offset lands on the axis and not between two of them). Side alone would put
+  // every pill on the innermost axis — the wrong scale as soon as a side carries
+  // two (see RowFrame.axisOffsets). Right axes are authored inner→outer, left
+  // axes outer→inner, so the left list walks in reverse.
+  //
+  // Resolved per **instance** first, then collapsed to ids by the same
+  // last-declared-wins rule `axisSides` uses — so for a mirrored id (one scale
+  // registered on both sides, or a duplicate) the side and the offset always
+  // come from the *same* axis. A different rule per map (say, keeping the
+  // smallest offset) can pair one instance's side with another's offset, which
+  // is the very "pill on an axis that didn't measure it" this fixes.
+  const axisOffsets = useMemo(() => {
+    const byInstance = new Map<symbol, number>();
+    const walk = (side: 'left' | 'right') => {
+      const inward = realEntries.filter(([, spec]) => spec.side === side);
+      if (side === 'left') inward.reverse();
+      let offset = 0;
+      for (const [key, spec] of inward) {
+        byInstance.set(key, offset);
+        offset += axisSlots.get(key) ?? spec.width;
+      }
+    };
+    walk('right');
+    walk('left');
+    // realEntries is index-sorted, the order effectiveAxes (and so axisSides)
+    // walks — hence the same winner on a repeated id.
+    const map = new Map<string, number>();
+    for (const [key, spec] of realEntries) {
+      map.set(spec.id, byInstance.get(key) ?? 0);
+    }
+    return map;
+  }, [realEntries, axisSlots]);
+
+  // Each axis's own ink (`<YAxis color>`) — the axis-edge pill that lands on an
+  // axis wears its colour, so with several axes the number says which scale it
+  // is on. Axes that set no colour are absent (the pill falls back to theme).
+  const axisColors = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const ax of effectiveAxes) {
+      if (ax.color !== undefined) map.set(ax.id, ax.color);
+    }
+    return map;
+  }, [effectiveAxes]);
+
   const frame = useMemo<RowFrame>(
     () => ({
       height,
@@ -667,6 +720,8 @@ export function ChartRow({
       tickValues,
       tickCounts,
       axisSides,
+      axisOffsets,
+      axisColors,
       defaultAxisId,
       axisSlots,
       registerAxis,
@@ -686,6 +741,8 @@ export function ChartRow({
       tickValues,
       tickCounts,
       axisSides,
+      axisOffsets,
+      axisColors,
       defaultAxisId,
       axisSlots,
       registerAxis,

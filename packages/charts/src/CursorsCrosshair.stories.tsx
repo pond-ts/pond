@@ -4,6 +4,8 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
+import { CrosshairCursor } from './cursors.js';
+import { defaultTheme } from './theme.js';
 import {
   twoSeries,
   hrSeries,
@@ -28,10 +30,22 @@ import {
  *
  * Crosshair puts the time on the x-axis pill only — unlike `flag`/`inline`'s
  * `cursorTime`, there is no per-row time chip to opt into.
+ *
+ * The **value pill** is an *axis indicator*: it lands on the axis whose scale
+ * produced the number — its side, and its column when a side carries several —
+ * wearing that axis's `<YAxis color>` when it has one. The last three stories
+ * fan that out; they mount `<CrosshairCursor>` (the preset the deprecated
+ * `cursor="crosshair"` string above synthesizes).
  */
 const W = 620;
 const PIN = BASE + 40 * STEP;
 const s = twoSeries();
+/** The axis-colour stories paint each axis its **series'** colour (the multi-axis
+ *  convention `<YAxis color>` documents), read off the register the layer draws
+ *  in — so the pair stays matched if the default palette moves. */
+const PRIMARY = defaultTheme.line.primary!.color;
+const SECONDARY = defaultTheme.line.secondary!.color;
+const CONTEXT = defaultTheme.line.context!.color;
 
 const meta = {
   title: 'Cursors/Crosshair',
@@ -165,6 +179,132 @@ export const MultiRow: Story = {
           <LineChart series={hrSeries()} column="bpm" axis="bpm" />
         </Layers>
         <YAxis id="bpm" side="right" format=",.0f" />
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/** **Axis colour** — the value pill wears the reticle axis's own `<YAxis color>`
+ *  (falling back to the cursor's ink when the axis sets none, as every story
+ *  above shows). The pill is an *axis* indicator, so it reads as part of the axis
+ *  it covers rather than as floating cursor chrome. */
+export const AxisColor: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
+      <CrosshairCursor />
+      <ChartRow height={240}>
+        <Layers>
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+        </Layers>
+        <YAxis id="usd" side="right" format=",.0f" color={PRIMARY} />
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/** **Two axes on one side** — the pill sits on the axis that *measured* the
+ *  reticle's value, not on the innermost one. Here the reticle reads the `bpm`
+ *  series, whose axis is the **outer** of the two right-hand axes, so the pill
+ *  lands out there, over that axis's ticks; the inner `usd` axis is untouched. */
+export const StackedAxes: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
+      <CrosshairCursor />
+      <ChartRow height={240}>
+        <Layers>
+          <LineChart
+            series={hrSeries()}
+            column="bpm"
+            as="secondary"
+            axis="bpm"
+          />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+        </Layers>
+        {/* Right axes are authored inner→outer: `usd` hugs the plot, `bpm` sits
+            beyond it. */}
+        <YAxis id="usd" side="right" format=",.0f" />
+        <YAxis id="bpm" side="right" format=",.0f" />
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/** **Two axes on one side, each coloured** — position *and* ink together: the
+ *  pill is out on the `bpm` axis and in that axis's colour, so a reader who
+ *  hasn't followed the reticle across the plot can still tell which of two
+ *  stacked scales the number is on. */
+export const StackedAxesColored: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
+      <CrosshairCursor />
+      <ChartRow height={240}>
+        <Layers>
+          <LineChart
+            series={hrSeries()}
+            column="bpm"
+            as="secondary"
+            axis="bpm"
+          />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+        </Layers>
+        <YAxis id="usd" side="right" format=",.0f" color={PRIMARY} />
+        <YAxis id="bpm" side="right" format=",.0f" color={SECONDARY} />
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/** **Two axes on the LEFT** — the mirror of `StackedAxes`. Left axes are authored
+ *  **outer→inner** (the opposite of right), so `bpm` is declared first and sits
+ *  furthest from the plot; the pill runs out that way, anchored by its right edge
+ *  instead of its left. */
+export const StackedAxesLeft: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
+      <CrosshairCursor />
+      <ChartRow height={240}>
+        <YAxis id="bpm" side="left" format=",.0f" color={SECONDARY} />
+        <YAxis id="usd" side="left" format=",.0f" color={PRIMARY} />
+        <Layers>
+          <LineChart
+            series={hrSeries()}
+            column="bpm"
+            as="secondary"
+            axis="bpm"
+          />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/** **Stacked on both sides** — two axes each side, so each gutter's offsets are
+ *  walked independently (a left pill counts only left columns, a right pill only
+ *  right). The reticle reads `bpm` on the outer **left**; hover a trace to move
+ *  the pill between all four axes. */
+export const StackedAxesBothSides: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
+      <CrosshairCursor />
+      <ChartRow height={240}>
+        <YAxis id="bpm" side="left" format=",.0f" color={SECONDARY} />
+        <YAxis id="usd" side="left" format=",.0f" color={PRIMARY} />
+        <Layers>
+          <LineChart
+            series={hrSeries()}
+            column="bpm"
+            as="secondary"
+            axis="bpm"
+          />
+          <LineChart series={s} column="fast" as="primary" axis="usd" />
+          <LineChart series={s} column="slow" as="context" axis="slow" />
+        </Layers>
+        {/* Right pair: `slow` inner (carries the third trace), `spare` outer
+            with no series of its own — an axis column the reticle never picks,
+            which is what makes the offsets visible as columns. */}
+        <YAxis id="slow" side="right" format=",.0f" color={CONTEXT} />
+        <YAxis id="spare" side="right" format=",.0f" min={0} max={100} />
       </ChartRow>
     </ChartContainer>
   ),

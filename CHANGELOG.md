@@ -95,6 +95,37 @@ include new features and type-level changes; patch bumps are strictly additive.
   Fixed-`height` rows keep their pixels everywhere, managed or not; a
   container with no `height` behaves exactly as before.
 
+### Fixed
+
+- **charts: the crosshair's value pill lands on the axis that measured the
+  value, in that axis's colour.** With two y-axes on one side, the pill was
+  placed by side alone — always against the plot edge — so a reading taken off
+  the **outer** axis appeared over the **inner** axis's ticks, in the cursor's
+  grey: a number pinned to a ruler that never measured it. The reticle picks one
+  series, so the resolved sample now carries its axis's gutter **offset** (the
+  reserved widths of the columns between it and the plot) and its
+  `<YAxis color>`, and the pill uses both — position _and_ ink say which of two
+  stacked scales the number is on. A single axis per side is unchanged (offset
+  `0`), as is an axis that sets no colour (the theme's cursor ink).
+
+  A pill placed further out is now **bridged back to the plot edge** by a 1px
+  connector in its own colour — the y-side twin of the crosshair's x-axis time
+  connector, without which a pill a column out reads as a value floating in a
+  gutter. It draws at half opacity because, unlike the time connector's empty
+  strip, it crosses another axis's tick labels; nothing is drawn on the innermost
+  axis, where the pill already meets the line.
+
+  `<YAxis color>` is now part of the axis's registered spec rather than
+  presentation-only, because the pill is drawn by the row's cursor overlay, not
+  by `<YAxis>`. `<Baseline indicator>` — the other on-axis value pill — got the
+  same placement fix and the same connector. New `Cursors/Crosshair` stories fan
+  the states out (`AxisColor`, `StackedAxes`, `StackedAxesColored`,
+  `StackedAxesLeft`, `StackedAxesBothSides`).
+
+  Not covered: `<YAxisIndicator>` still takes an explicit `side` alongside its
+  `axis`, so it can be pointed at a gutter its axis isn't in; reconciling those
+  two props is a public-API question, left for its own change.
+
 ## [0.62.0] — 2026-08-16
 
 ### Added

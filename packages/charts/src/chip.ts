@@ -106,20 +106,84 @@ export function pointerStyle(
 }
 
 /**
- * CSS placing a value pill **on the axis gutter** at `side`: anchor its inner
- * edge at the plot boundary (`plotWidth`) and let it overflow outward across the
- * reserved gutter (the plot div doesn't clip), lifted with `zIndex` above the
- * sibling axis column (rendered later in the row) so it covers the tick behind
- * it. Shared by {@link YAxisIndicator}'s `placement='axis'` and the crosshair
- * cursor's per-series value pills, so both sit identically on the axis.
+ * CSS placing a value pill **on an axis gutter** at `side`: anchor its inner
+ * edge at that axis's inner edge — the plot boundary (`plotWidth`) plus the
+ * axis's own `offset` out into the gutter — and let it overflow outward (the
+ * plot div doesn't clip), lifted with `zIndex` above the sibling axis columns
+ * (rendered later in the row) so it covers the tick behind it. The one placement
+ * every on-axis pill goes through — the crosshair cursor's value pill, a
+ * `<Baseline indicator>`, and {@link YAxisIndicator} — so they cannot drift
+ * apart.
+ *
+ * `offset` is `0` for the innermost axis on a side (the single-axis case, and the
+ * behaviour before it existed) and the reserved widths of the axes nearer the
+ * plot for one further out — {@link RowFrame.axisOffsets}. Passing it is what
+ * puts the pill on the axis whose scale produced the number, rather than on
+ * whichever axis happens to sit against the plot. **`YAxisIndicator` does not
+ * pass it** and so still lands innermost: it takes an explicit `side` beside its
+ * `axis`, and what an offset should mean when those two disagree is unsettled
+ * (see `[PND-XHAIRAXIS]` in the charts plan).
+ *
+ * A pill is deliberately unclipped, so a long formatted value can overflow past
+ * the gutter it sits in — further out for an outer-axis pill, which has only its
+ * own column left before the container's edge. Sized-to-content and unclipped
+ * beats truncating a number, but a very wide readout on a narrow outer axis will
+ * spill outside the chart box.
  */
 export function axisPillX(
   side: 'left' | 'right',
   plotWidth: number,
+  offset = 0,
 ): CSSProperties {
+  const inner = plotWidth + offset;
   return side === 'right'
-    ? { left: `${plotWidth}px`, zIndex: 3 }
-    : { right: `${plotWidth}px`, zIndex: 3 };
+    ? { left: `${inner}px`, zIndex: 3 }
+    : { right: `${inner}px`, zIndex: 3 };
+}
+
+/**
+ * The **connector** for a pill placed further out than the innermost axis: a 1px
+ * bridge from the plot's `side` edge across `offset` px of gutter to the pill's
+ * inner edge, so the in-plot line and its pill read as one object rather than as
+ * a value floating in a gutter two columns away. The y-side twin of the
+ * crosshair's x-axis time connector, which exists for exactly this reason.
+ *
+ * The caller positions it vertically (`top` + a `translateY(-50%)`), at the
+ * **pill's** centre rather than the raw value's — the two agree except where the
+ * pill is clamped inside the row, and a connector attached to the pill is what
+ * sells them as one object.
+ *
+ * In the pill's own colour and above the axis column (`zIndex`, as the pill is),
+ * but at **half opacity** — unlike the x-axis time connector, which is solid.
+ * The difference is what each one crosses: the time connector runs over an empty
+ * strip, while this one runs over *another axis's tick labels* (measured: a
+ * connector at a value whose neighbouring axis has a tick at the same height
+ * overlaps that label's glyphs). Half opacity keeps the labels legible and reads
+ * the bridge as subordinate chrome — the weight the flag cursor's staffs already
+ * use for "this line only connects two things I have drawn".
+ *
+ * Only drawn when `offset > 0`: at offset `0` the pill already touches the plot
+ * edge where the line ends, so a connector would be zero-length ink over a tick
+ * label for nothing.
+ */
+export function axisPillConnector(
+  side: 'left' | 'right',
+  plotWidth: number,
+  offset: number,
+  color: string,
+): CSSProperties {
+  return {
+    position: 'absolute',
+    ...(side === 'right'
+      ? { left: `${plotWidth}px` }
+      : { right: `${plotWidth}px` }),
+    width: `${offset}px`,
+    height: '1px',
+    background: color,
+    opacity: 0.5,
+    pointerEvents: 'none',
+    zIndex: 3,
+  };
 }
 
 /** Gap (px) between a flag chip and its pole — the cursor staff or an annotation's
