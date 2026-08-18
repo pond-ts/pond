@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.62.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.63.0...HEAD
+[0.63.0]: https://github.com/pond-ts/pond/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/pond-ts/pond/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/pond-ts/pond/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/pond-ts/pond/compare/v0.59.0...v0.60.0
@@ -65,6 +66,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+## [0.63.0] — 2026-08-18
+
 ### Added
 
 - `@pond-ts/charts`: **axis pan/zoom**, behind a new
@@ -102,8 +105,6 @@ include new features and type-level changes; patch bumps are strictly additive.
   the axis holds the zoom itself. `ContainerFrame` also gains `seedRange` — the
   declared view, as against the gestured `timeRange` — which is the x reset's
   target.
-
-### Added
 
 - **charts: `<ChartContainer height>` + `<ChartRow flex>` — container-owned
   vertical layout** ([PND-HEIGHT]). `height` takes a pixel number or `'auto'`
