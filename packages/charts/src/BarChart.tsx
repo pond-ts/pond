@@ -927,8 +927,15 @@ export function BarChart<
           ...(id === undefined
             ? {}
             : {
-                hitTest: (px, py, xScale, yScale, mode): SelectInfo | null => {
-                  const baseline = resolveBarBaseline(yScale);
+                hitTest: (
+                  px,
+                  py,
+                  xScale,
+                  yScale,
+                  mode,
+                  baseYScale,
+                ): SelectInfo | null => {
+                  const baseline = resolveBarBaseline(yScale, baseYScale);
                   // No `gapPx` — the hit region is the bar's whole slot (its
                   // interval width, full plot height), not the inset rect the
                   // gap draws. See barSlotRect.
@@ -1013,14 +1020,14 @@ export function BarChart<
                         },
                       }),
               }),
-          draw: (ctx, xScale, yScale) =>
+          draw: (ctx, xScale, yScale, baseYScale) =>
             drawBars(
               ctx,
               bs,
               xScale,
               yScale,
               singleDrawStyle,
-              resolveBarBaseline(yScale),
+              resolveBarBaseline(yScale, baseYScale),
               gapPx,
               id,
               selection,
@@ -1067,7 +1074,14 @@ export function BarChart<
         ...(id === undefined
           ? {}
           : {
-              hitTest: (px, py, xScale, yScale): SelectInfo | null => {
+              hitTest: (
+                px,
+                py,
+                xScale,
+                yScale,
+                _mode,
+                baseYScale,
+              ): SelectInfo | null => {
                 // The cap reaches the hit rect ONLY for a real stack, where the
                 // rect is what resolves *which segment* was hit and so must be
                 // the drawn one. A single-series chart has one segment per slot
@@ -1091,6 +1105,7 @@ export function BarChart<
                   gapPx,
                   stackMinWidth,
                   ss.groups.length > 1 ? maxWidthPx : undefined,
+                  baseYScale,
                 );
                 if (hit === null) return null;
                 const [bi, g, begin, name, value] = hit;
@@ -1168,7 +1183,7 @@ export function BarChart<
                 });
               },
             }),
-        draw: (ctx, xScale, yScale) =>
+        draw: (ctx, xScale, yScale, baseYScale) =>
           drawStacks(
             ctx,
             ss,
@@ -1183,6 +1198,7 @@ export function BarChart<
             hover,
             bandLadder,
             layerSpans,
+            baseYScale,
           ),
       },
       axisId: axis,

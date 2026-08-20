@@ -870,6 +870,7 @@ export interface RowLayer {
     xScale: (value: number) => number,
     yScale: (value: number) => number,
     mode?: 'hover' | 'select',
+    baseYScale?: (value: number) => number,
   ): SelectInfo | null;
   /**
    * Begin a **sweep session** over this layer's marks — `<MultiSelector>`'s
@@ -947,11 +948,22 @@ export interface RowLayer {
    * {@link LayerDrawStats} (source/drawn counts + whether decimation engaged) so
    * the container can surface them via {@link ContainerProps.onDrawStats}; a
    * layer that returns `void` still contributes its measured `drawMs`.
+   *
+   * `baseYScale` is this axis's *declared* scale — resolved from `min`/`max`/
+   * auto-fit, before either the container's or this axis's own pan/zoom pixel
+   * transform narrows it (the same scale `row.baseYScales` exposes). A layer
+   * whose geometry depends on where the domain sits relative to a fixed value
+   * (a bar or stack resting on zero — see `resolveBarBaseline`) reads *that*
+   * domain for the decision, not `yScale`'s: the live scale is a *viewport*
+   * onto the axis, and a pan sliding that viewport away from zero must not
+   * relocate the bars' own baseline out from under them. Only bars currently
+   * use it; every other layer type ignores the extra argument.
    */
   draw(
     ctx: CanvasRenderingContext2D,
     xScale: (value: number) => number,
     yScale: (value: number) => number,
+    baseYScale?: (value: number) => number,
   ): LayerDrawStats | void;
 }
 

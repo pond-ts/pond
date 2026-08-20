@@ -27,12 +27,26 @@ export function resolveSelection(
     axisId: string | undefined,
   ) => ((value: number) => number) | undefined,
   mode: 'hover' | 'select' = 'hover',
+  // The axis's declared (pre-pan/zoom) scale — see `RowLayer.hitTest`. Kept
+  // alongside `yScaleFor` rather than folded into it: most callers have no
+  // base-scale lookup at hand (a bar-free row, a test harness), and every
+  // layer but bars ignores the extra argument regardless.
+  baseYScaleFor?: (
+    axisId: string | undefined,
+  ) => ((value: number) => number) | undefined,
 ): SelectInfo | null {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i]!;
     const yScale = yScaleFor(entry.axisId);
     if (yScale === undefined) continue;
-    const hit = entry.layer.hitTest?.(px, py, xScale, yScale, mode);
+    const hit = entry.layer.hitTest?.(
+      px,
+      py,
+      xScale,
+      yScale,
+      mode,
+      baseYScaleFor?.(entry.axisId),
+    );
     if (hit) return hit;
   }
   return null;

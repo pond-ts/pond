@@ -413,7 +413,7 @@ describe('<XAxis> drag-to-zoom', () => {
   });
 });
 
-describe('<YAxis> drag-to-zoom — per axis', () => {
+describe('<YAxis> drag-to-pan — per axis', () => {
   const mount = () => {
     const into: { c?: ContainerFrame; r?: RowFrame } = {};
     const dom = draw(
@@ -440,15 +440,17 @@ describe('<YAxis> drag-to-zoom — per axis', () => {
   const domainOf = (into: { r?: RowFrame }, id: string) =>
     into.r!.yScales.get(id)!.domain() as [number, number];
 
-  it('scales the grabbed axis and leaves its sibling alone', () => {
+  it('pans the grabbed axis, span preserved, and leaves its sibling alone', () => {
     const { dom, into } = mount();
     const leftBefore = domainOf(into, 'left');
     const rightBefore = domainOf(into, 'right');
 
-    dragBy(yGutter(dom, 'left'), 'y', -60, 50); // drag up = zoom in
+    dragBy(yGutter(dom, 'left'), 'y', -60, 50); // drag up = pan
 
     const leftAfter = domainOf(into, 'left');
-    expect(leftAfter[1] - leftAfter[0]).toBeLessThan(
+    expect(leftAfter).not.toEqual(leftBefore);
+    // A pan slides the view — the span holds, unlike a zoom.
+    expect(leftAfter[1] - leftAfter[0]).toBeCloseTo(
       leftBefore[1] - leftBefore[0],
     );
     // The whole point of the per-axis transform: the sibling is untouched.
@@ -467,14 +469,22 @@ describe('<YAxis> drag-to-zoom — per axis', () => {
     expect(into.c!.yTransform).toEqual({ k: 1, ty: 0 });
   });
 
-  it('dragging down zooms out — the domain widens', () => {
+  it('dragging up and down pan in opposite directions', () => {
     const { dom, into } = mount();
     const before = domainOf(into, 'left');
 
     dragBy(yGutter(dom, 'left'), 'y', 60, 20);
+    const afterDown = domainOf(into, 'left');
+    expect(afterDown).not.toEqual(before);
+    expect(afterDown[1] - afterDown[0]).toBeCloseTo(before[1] - before[0]);
 
-    const after = domainOf(into, 'left');
-    expect(after[1] - after[0]).toBeGreaterThan(before[1] - before[0]);
+    act(() => {
+      fireEvent.doubleClick(yGutter(dom, 'left'));
+    });
+    dragBy(yGutter(dom, 'left'), 'y', -60, 20);
+    const afterUp = domainOf(into, 'left');
+    expect(afterUp).not.toEqual(before);
+    expect(afterUp).not.toEqual(afterDown);
   });
 
   it('double-click releases the axis back to its fit', () => {
@@ -532,7 +542,7 @@ describe('<YAxis> drag-to-zoom — per axis', () => {
   });
 
   it('is live under an x-only panZoom — the canonical auto-y setup', () => {
-    // Scaling the y gutter must NOT require opting the plot into vertical
+    // Panning the y gutter must NOT require opting the plot into vertical
     // gestures: the common chart is an auto-fitting y with a panned/zoomed x.
     const into: { c?: ContainerFrame; r?: RowFrame } = {};
     const dom = draw(
@@ -557,7 +567,8 @@ describe('<YAxis> drag-to-zoom — per axis', () => {
     dragBy(yGutter(dom, 'v'), 'y', -60, 50);
 
     const d = into.r!.yScales.get('v')!.domain() as [number, number];
-    expect(d[1] - d[0]).toBeLessThan(100);
+    expect(d[1] - d[0]).toBeCloseTo(100);
+    expect(d).not.toEqual([0, 100]);
   });
 
   it('stays inert without the axisPanZoom opt-in', () => {
@@ -625,13 +636,55 @@ describe('<YAxis onBoundsChange> — the auto/manual hand-off', () => {
     const seen = vi.fn();
     const dom = draw(<Controlled onReport={seen} />).container;
 
-    dragBy(yGutter(dom, 'price'), 'y', -60, 50); // drag up = zoom in
+    dragBy(yGutter(dom, 'price'), 'y', -60, 50); // drag up = pan
 
     expect(seen).toHaveBeenCalled();
     const [lo, hi] = seen.mock.calls.at(-1)![0] as [number, number];
-    // The series spans 10..40, so the auto fit is that; a zoom-in narrows it.
-    expect(hi - lo).toBeLessThan(30);
+    // The series spans 10..40, so the auto fit is that; a pan shifts it without
+    // changing its width.
+    expect(hi - lo).toBeCloseTo(30);
+    expect([lo, hi]).not.toEqual([10, 40]);
     expect(Number.isFinite(lo) && Number.isFinite(hi)).toBe(true);
+  });
+
+  it('a many-small-moves controlled pan lands the same as one big move — the grabbed value does not drift under the cursor', () => {
+    // A controlled consumer feeds `min`/`max` back through `onBoundsChange`
+    // after every move, so a naive `onPan` that re-reads the base scale fresh
+    // each time would compose the anchored total delta onto a base this same
+    // drag already shifted — doubling (then quadrupling, …) the effect with
+    // every extra move the pointer makes en route to the same place.
+    const seen = vi.fn();
+    const dom = draw(<Controlled onReport={seen} />).container;
+
+    act(() => {
+      fireEvent.pointerDown(yGutter(dom, 'price'), {
+        clientX: 5,
+        clientY: 100,
+        button: 0,
+        pointerId: 1,
+      });
+      for (let y = 96; y >= 60; y -= 1) {
+        fireEvent.pointerMove(yGutter(dom, 'price'), {
+          clientX: 5,
+          clientY: y,
+          pointerId: 1,
+        });
+      }
+      fireEvent.pointerUp(yGutter(dom, 'price'), {
+        clientX: 5,
+        clientY: 60,
+        pointerId: 1,
+      });
+    });
+    const manyMoves = seen.mock.calls.at(-1)![0] as [number, number];
+
+    const seenOneMove = vi.fn();
+    const dom2 = draw(<Controlled onReport={seenOneMove} />).container;
+    dragBy(yGutter(dom2, 'price'), 'y', -40, 100);
+    const oneMove = seenOneMove.mock.calls.at(-1)![0] as [number, number];
+
+    expect(manyMoves[0]).toBeCloseTo(oneMove[0], 1);
+    expect(manyMoves[1]).toBeCloseTo(oneMove[1], 1);
   });
 
   it('reports null on double-click — the "back to auto" signal', () => {
@@ -910,7 +963,7 @@ describe('axisPanZoom is the opt-in — panZoom alone changes nothing', () => {
   }
 
   it('works with panZoom off entirely — axis gestures without a grabbable plot', () => {
-    // The case the independence exists for: scale the y axes while the plot
+    // The case the independence exists for: pan the y axes while the plot
     // keeps its drag for a selection sweep.
     const into: { c?: ContainerFrame; r?: RowFrame } = {};
     const dom = draw(
@@ -934,7 +987,8 @@ describe('axisPanZoom is the opt-in — panZoom alone changes nothing', () => {
     dragBy(yGutter(dom, 'v'), 'y', -60, 50);
 
     const d = into.r!.yScales.get('v')!.domain() as [number, number];
-    expect(d[1] - d[0]).toBeLessThan(100);
+    expect(d[1] - d[0]).toBeCloseTo(100);
+    expect(d).not.toEqual([0, 100]);
   });
 
   it("'x' and 'y' each enable only their own strip", () => {

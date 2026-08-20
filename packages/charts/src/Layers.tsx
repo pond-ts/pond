@@ -281,6 +281,7 @@ export function Layers({ children }: LayersProps) {
   const {
     layers,
     yScales,
+    baseYScales,
     formats,
     defaultAxisId,
     tickValues,
@@ -443,18 +444,25 @@ export function Layers({ children }: LayersProps) {
       const report = container.reportDrawStats;
       if (report === undefined) {
         for (const entry of layers) {
-          const yScale = yScales.get(entry.axisId ?? defaultAxisId);
+          const axisId = entry.axisId ?? defaultAxisId;
+          const yScale = yScales.get(axisId);
           if (yScale === undefined) continue;
-          entry.layer.draw(ctx, xScale, yScale);
+          entry.layer.draw(ctx, xScale, yScale, baseYScales.get(axisId));
         }
       } else {
         const infos: LayerDrawInfo[] = [];
         let totalDrawMs = 0;
         for (const entry of layers) {
-          const yScale = yScales.get(entry.axisId ?? defaultAxisId);
+          const axisId = entry.axisId ?? defaultAxisId;
+          const yScale = yScales.get(axisId);
           if (yScale === undefined) continue;
           const t0 = performance.now();
-          const stats = entry.layer.draw(ctx, xScale, yScale);
+          const stats = entry.layer.draw(
+            ctx,
+            xScale,
+            yScale,
+            baseYScales.get(axisId),
+          );
           const drawMs = performance.now() - t0;
           totalDrawMs += drawMs;
           infos.push({
@@ -472,6 +480,7 @@ export function Layers({ children }: LayersProps) {
     [
       layers,
       yScales,
+      baseYScales,
       xScale,
       xTickCount,
       defaultAxisId,
@@ -1293,8 +1302,14 @@ export function Layers({ children }: LayersProps) {
       // canvas repaints only on a mark transition — not every move (the move just
       // slides the SVG cursor). A row with no selectable layer (line/area/band)
       // resolves to null → a no-op. Uses the raw pointer, not the snapped x.
-      const hit = resolveSelection(r.layers, rawX, py, c.xScale, (axisId) =>
-        r.yScales.get(axisId ?? r.defaultAxisId),
+      const hit = resolveSelection(
+        r.layers,
+        rawX,
+        py,
+        c.xScale,
+        (axisId) => r.yScales.get(axisId ?? r.defaultAxisId),
+        'hover',
+        (axisId) => r.baseYScales.get(axisId ?? r.defaultAxisId),
       );
       // The resting BLOCK preview (a mounted <MultiSelector>): hover lights
       // every mark in the snap block under the pointer — exactly the set a
@@ -1578,6 +1593,7 @@ export function Layers({ children }: LayersProps) {
       c.xScale,
       (axisId) => r.yScales.get(axisId ?? r.defaultAxisId),
       'select',
+      (axisId) => r.baseYScales.get(axisId ?? r.defaultAxisId),
     );
     const modifiers: SelectModifiers = {
       additive: e.metaKey || e.ctrlKey,
