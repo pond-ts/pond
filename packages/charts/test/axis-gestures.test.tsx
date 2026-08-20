@@ -1123,10 +1123,56 @@ describe('axis gestures — Codex review finds', () => {
     expect(last[1]).toBeLessThanOrEqual(100);
   });
 
-  it('never reports a non-finite bound on a hard log zoom-out', () => {
-    // A captured flick used to deliver one enormous factor; on a log axis
-    // `zoomRange` then underflowed/overflowed to [0, Infinity], which passed the
-    // old ascending-only check and poisoned the consumer's scale.
+  it('the grabbed value follows the cursor on a CONTROLLED log axis pan', () => {
+    // Unlike symlog's knee, a log axis's shape doesn't depend on where the
+    // domain sits — so a controlled pan (which re-derives bounds by pixel-space
+    // inversion, same as the zoom path) is exact everywhere, not just at one
+    // pivot. A pan's invariant is a translation, not a fixed point: the value
+    // under the press should now be found under the pointer's CURRENT
+    // position, not still sitting at the press's old pixel (that pixel now
+    // shows whatever was `totalDeltaPx` away from it before the drag).
+    const seen = vi.fn();
+    const dom = draw(
+      <Controlled onReport={seen} axis={{ scale: 'log', min: 1, max: 100 }} />,
+    ).container;
+
+    const before = frames.r!.yScales.get('a')!;
+    const pressPx = 60;
+    const grabbed = +before.invert(pressPx);
+
+    const totalDeltaPx = -20;
+    dragBy(yGutter(dom, 'a'), 'y', totalDeltaPx, pressPx);
+
+    expect(seen).toHaveBeenCalled();
+    const after = frames.r!.yScales.get('a')!;
+    expect(+after.invert(pressPx + totalDeltaPx)).toBeCloseTo(grabbed, 6);
+  });
+
+  it('a CONTROLLED symlog axis pan stays well-behaved, knee drift and all', () => {
+    // Symlog's `linearWindow` is domain-relative, so a pan that re-derives
+    // bounds and feeds them back reshapes the knee — same documented caveat
+    // the zoom test above pins. What must hold for a pan is that it stays
+    // finite and keeps the domain moving the direction the drag asked for.
+    const seen = vi.fn();
+    const dom = draw(
+      <Controlled
+        onReport={seen}
+        axis={{ scale: 'symlog', min: -100, max: 100, linearWindow: 0.05 }}
+      />,
+    ).container;
+
+    dragBy(yGutter(dom, 'a'), 'y', -30, 50);
+
+    expect(seen).toHaveBeenCalled();
+    const b = seen.mock.calls.at(-1)![0] as [number, number];
+    expect(Number.isFinite(b[0]) && Number.isFinite(b[1])).toBe(true);
+    expect(b).not.toEqual([-100, 100]); // and it actually moved
+  });
+
+  it('never reports a non-finite bound on a hard log pan', () => {
+    // A captured flick used to deliver one enormous pixel delta; on a log axis
+    // inverting through it could underflow/overflow to [0, Infinity], which
+    // would pass an ascending-only check and poison the consumer's scale.
     const seen = vi.fn();
     const dom = draw(
       <Controlled onReport={seen} axis={{ scale: 'log', min: 1, max: 100 }} />,
