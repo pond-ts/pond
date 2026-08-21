@@ -422,21 +422,62 @@ export function scaleTradingTime(
 
   scale.bands = (count = 10) => {
     if (!hasCalendar()) return [];
-    const bg = bandGrainFor(resolved(count).granularity);
+    const { ticks, granularity } = resolved(count);
+    const bg = bandGrainFor(granularity);
     if (bg === undefined) return []; // year grain — nothing coarser to band
     const fmt = base.tickFormat(count, bandFormatFor(bg));
-    const out: Array<{ start: number; label: string; shaded: boolean }> = [];
+    const tickSet = new Set(ticks);
+
+    // A band's raw calendar start is a date, not necessarily a LIVE instant —
+    // a month or day beginning on a collapsed weekend/holiday clamps onto the
+    // next live moment. `bandNext`/`clampUp` are both monotonic, so every raw
+    // start that clamps to the SAME live instant is a contiguous run (a
+    // holiday week's Sat/Sun/Mon all land on the same Tuesday) — collected
+    // here as `{ s, live }` candidates before any label is built, so a run
+    // can be resolved as one group rather than emitting (and then trying to
+    // retract) a label per member.
+    const candidates: Array<{ s: number; live: number }> = [];
+    let s = bandStartOf(domain[0], bg);
     // First band starts at (or before) the domain start — the partial left
     // band whose label the renderer pins at x=0; step to each next period
     // start still inside the domain. Bounded loop as a runaway guard.
-    let s = bandStartOf(domain[0], bg);
     for (let i = 0; i < 100_000 && s < domain[1]; i++) {
-      out.push({
-        start: s,
-        label: fmt(new Date(s)),
-        shaded: bandShaded(s, bg),
-      });
+      candidates.push({ s, live: provider.clampUp(s) });
       s = bandNext(s, bg);
+    }
+
+    const out: Array<{ start: number; label: string; shaded: boolean }> = [];
+    for (let i = 0; i < candidates.length; ) {
+      const live = candidates[i]!.live;
+      let j = i;
+      while (j < candidates.length && candidates[j]!.live === live) j += 1;
+      // One label per run: prefer the member that is ITSELF live (so a
+      // Tuesday reopening after a collapsed weekend reads "Tue", not the
+      // Saturday whose raw start merely happened to clamp onto it) — a run
+      // with no live member (the whole period is inside the gap) falls back
+      // to the first, since there is no better candidate. (Every member of
+      // the group shares `live` by construction — the test is `c.s ===
+      // c.live`, i.e. THIS candidate needed no clamping at all.)
+      const rep =
+        candidates.slice(i, j).find((c) => c.s === c.live) ?? candidates[i]!;
+      // The band's raw start routinely coincides with a tick that is ALSO
+      // legitimately live (a month band and a day tick both anchored on the
+      // 1st is the ordinary stacked-axis look) — that is not the bug. Only a
+      // representative that itself needed clamping, and whose landing spot a
+      // tick already labels, duplicates one; skip it rather than draw a
+      // second, colliding label over the tick's own.
+      const collides = rep.s !== live && tickSet.has(live);
+      if (!collides) {
+        out.push({
+          start: live,
+          // Formatted from the representative's own RAW start, not the
+          // clamped one — a genuinely-live rep reads its own date; a
+          // gap-only run's rep reads whichever raw date it fell back to.
+          label: fmt(new Date(rep.s)),
+          shaded: bandShaded(rep.s, bg),
+        });
+      }
+      i = j;
     }
     return out;
   };

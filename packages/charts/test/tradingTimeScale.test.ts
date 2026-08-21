@@ -56,6 +56,87 @@ function segmentProvider(
   return self;
 }
 
+/**
+ * A real weekday-session `DiscontinuityProvider` — every non-weekend,
+ * non-`closed` calendar day is a full 24h live session; everything else
+ * (weekends, named holidays) is a removed gap. Unlike `segmentProvider`
+ * above, `clampUp`/`clampDown` are genuine (not identity stubs) — this is
+ * what exercises F-charts-21: a raw calendar anchor landing inside a
+ * collapsed gap and needing to jump to the next real session.
+ */
+function weekdaySessionProvider(
+  closed: ReadonlySet<string> = new Set(),
+): DiscontinuityProvider {
+  const DAY = 86_400_000;
+  const dayStart = (t: number): number => {
+    const d = new Date(t);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  };
+  const dateKey = (t: number): string => {
+    const d = new Date(t);
+    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  };
+  const isOpenDay = (dayStartMs: number): boolean => {
+    const dow = new Date(dayStartMs).getDay();
+    if (dow === 0 || dow === 6) return false;
+    return !closed.has(dateKey(dayStartMs));
+  };
+  // Whole-day live-time model: each open day contributes exactly one day's
+  // worth of live distance; a closed day contributes none. Sufficient for
+  // the day/month/year ladder and band logic this suite exercises — this
+  // provider does not model an intraday session window.
+  const liveMs = (t: number): number => {
+    let d = dayStart(0);
+    let total = 0;
+    const target = dayStart(t);
+    while (d < target) {
+      if (isOpenDay(d)) total += DAY;
+      d += DAY;
+    }
+    if (isOpenDay(target)) total += Math.min(t - target, DAY);
+    return total;
+  };
+  const self: DiscontinuityProvider = {
+    distance: (from, to) => liveMs(to) - liveMs(from),
+    offset: (v, amount) => {
+      let d = dayStart(v);
+      let remaining = amount + (v - d);
+      while (remaining > 0 || !isOpenDay(d)) {
+        if (isOpenDay(d)) {
+          if (remaining <= DAY) return d + Math.max(0, remaining);
+          remaining -= DAY;
+        }
+        d += DAY;
+      }
+      return d;
+    },
+    clampUp: (t) => {
+      let d = dayStart(t);
+      if (isOpenDay(d)) return t;
+      while (!isOpenDay(d)) d += DAY;
+      return d;
+    },
+    clampDown: (t) => {
+      const d = dayStart(t);
+      if (isOpenDay(d)) return t;
+      let prev = d - DAY;
+      while (!isOpenDay(prev)) prev -= DAY;
+      return prev + DAY; // that session's close
+    },
+    copy: () => self,
+    boundaries: (from, to) => {
+      const out: number[] = [];
+      let d = dayStart(from) + DAY;
+      while (d < to) {
+        if (isOpenDay(d) && d > from) out.push(d);
+        d += DAY;
+      }
+      return out;
+    },
+  };
+  return self;
+}
+
 /** A provider with no boundaries (a single live span) — exercises the
  *  even-spacing tick fallback when there is no calendar structure. */
 function singleSpanProvider(a: number, b: number): DiscontinuityProvider {
@@ -698,6 +779,54 @@ describe('bands + baseFormat (stacked date-band row)', () => {
       .domain([0, 1000])
       .range([0, 900]);
     expect(noCal.bands(10)).toEqual([]);
+  });
+
+  it("[F-charts-21] a day band collapsed onto a holiday-week seam does not duplicate the live day's label", () => {
+    // Sat Feb 14 / Sun Feb 15 / Mon Feb 16 (a named holiday) 2026 are all
+    // removed; the first live day is Tue Feb 17 — reproducing the reported
+    // "Feb14" / "Feb 17" overlap on a real (non-identity) clamping provider.
+    const provider = weekdaySessionProvider(new Set(['2026-1-16']));
+    const s = scaleTradingTime(provider)
+      .domain([
+        new Date(2026, 1, 12, 6).getTime(), // Thu Feb 12, 06:00
+        new Date(2026, 1, 18).getTime(), // Wed Feb 18
+      ])
+      .range([0, 900]);
+    const bands = s.bands(10);
+    const labels = bands.map((b) => b.label);
+    // Exactly one label per live day — no second entry for Sat/Sun/Mon
+    // riding along on the Tuesday reopening's clamped position.
+    expect(labels).toEqual([...new Set(labels)]);
+    expect(labels).toContain('Feb 17');
+    expect(labels).not.toContain('Feb 14');
+    expect(labels).not.toContain('Feb 15');
+    expect(labels).not.toContain('Feb 16');
+    // And no two bands share a rendered (pixel) position.
+    const positions = new Set(bands.map((b) => s(b.start)));
+    expect(positions.size).toBe(bands.length);
+  });
+
+  it("[F-charts-21] a month band starting on a closed weekend does not duplicate the reopening day's tick", () => {
+    // Aug 1, 2026 is a Saturday; the month collapses onto the first live
+    // session, Mon Aug 3 — which day-grain ticks already label under this
+    // ~1-week window, reproducing the reported "Aug" / "Aug 3" overlap.
+    const provider = weekdaySessionProvider();
+    const s = scaleTradingTime(provider)
+      .domain([
+        new Date(2026, 6, 30).getTime(), // Thu Jul 30
+        new Date(2026, 7, 6).getTime(), // Thu Aug 6
+      ])
+      .range([0, 900]);
+    const tickPositions = new Set(s.ticks(10).map((t) => s(t)));
+    const bands = s.bands(10);
+    // Every band's rendered PIXEL must be distinct from every tick's pixel —
+    // checking the raw instant isn't enough, since a collapsed band's own
+    // (unclamped) `start` differs numerically from the live tick it visually
+    // clamps onto; the reported bug is exactly that mismatch. The "Aug" band
+    // must not land on the same seam "Aug 3" already labels.
+    for (const b of bands) {
+      expect(tickPositions.has(s(b.start))).toBe(false);
+    }
   });
 
   it('baseFormat is terse — the grain unit with no inline promotion', () => {
