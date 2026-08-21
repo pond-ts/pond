@@ -84,6 +84,17 @@ include new features and type-level changes; patch bumps are strictly additive.
   of its actual value. It now reads the axis's declared (pre-transform)
   domain for that decision, so a pan/zoom can move the viewport without ever
   relocating a bar's own baseline.
+- `@pond-ts/charts`: **[F-charts-21] a trading-time axis's stacked date-band
+  row no longer draws a second, colliding label over a collapsed-gap seam.**
+  `scale.bands()` picked its anchors from the raw calendar (a month or day
+  start) without checking whether that instant was live, so a period
+  beginning on a collapsed weekend or holiday clamped its label onto the same
+  seam a tick (or another band) already occupied — rendering as two
+  overlapping labels (`"Aug"` over `"Aug 3"`, or worse at tight zoom, fully
+  interleaved). Bands whose raw start needed clamping now dedupe against a
+  run of other clamped starts landing on the same live instant (picking the
+  genuinely-live member as the representative when one exists) and against
+  an already-labelled tick, so a seam carries exactly one label.
 
 ## [0.63.0] — 2026-08-18
 
