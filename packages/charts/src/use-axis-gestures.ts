@@ -46,8 +46,10 @@ export interface AxisGestureSpec {
    * - `'zoom'` — scales the axis about the grabbed pixel, reporting incremental
    *   span multipliers.
    *
-   * The x strip pans (the canvas gesture, one mental model for both surfaces);
-   * a y gutter zooms, which is the gesture the plot cannot offer per axis.
+   * Both the x strip and the y gutter pan on drag — the canvas gesture, one
+   * mental model for every surface. `'zoom'` remains available for a strip
+   * that wants drag-to-zoom instead, but nothing in this repo currently wires
+   * it up: wheel is the zoom gesture everywhere now.
    */
   drag: 'none' | 'pan' | 'zoom';
   /** Whether the **wheel** zooms this axis — again as it does over the plot. */
@@ -95,19 +97,17 @@ export interface AxisGestures {
 /**
  * Drag, wheel and double-click gestures for an axis strip.
  *
- * **The x strip behaves exactly as the canvas does** — drag pans, wheel zooms
+ * **Every strip behaves exactly as the canvas does** — drag pans, wheel zooms
  * about the pointer — so a chart has one gesture vocabulary rather than one per
- * surface, and the strip is simply a second place to reach the same view.
+ * surface, and a strip is simply a second place to reach the same view. A y
+ * gutter's pan moves only *that* axis (the plot's own vertical drag, where it
+ * exists, scales every axis in the row by one factor — the aspect lock; a
+ * gutter names a single axis instead).
  *
- * **A y gutter zooms on drag**, because that is the gesture the plot cannot
- * offer: the plot's vertical drag scales every axis in the row by one factor
- * (the aspect lock), while grabbing a gutter names a single axis. Up expands it,
- * down compresses it, about the grabbed pixel.
- *
- * The two shapes are why the drag reports differently per mode: a pan is
- * **anchored** (total delta from the press, re-derived from a snapshot — how the
- * plot's own pan avoids accumulating rounding), a zoom is **incremental** (a
- * span multiplier per step, composed onto the current view).
+ * The two `drag` shapes report differently: a pan is **anchored** (total delta
+ * from the press, re-derived from a snapshot — how the plot's own pan avoids
+ * accumulating rounding), a zoom is **incremental** (a span multiplier per
+ * step, composed onto the current view).
  */
 export function useAxisGestures(spec: AxisGestureSpec): AxisGestures {
   // The live spec, read by the handlers — so a listener attached once still sees

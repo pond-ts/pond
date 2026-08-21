@@ -59,13 +59,28 @@ export function barExtent(cs: BarSeries): [number, number] | null {
  * - When the domain sits entirely below `0`: the bars hang from the **axis top**
  *   (`0` clamped down into the domain) — the symmetric case.
  *
- * I.e. `0` clamped into `[floor, top]`. The domain bounds come from the plain
- * `(value) => pixel` scale the row hands `draw`/`hitTest`; the runtime object is
- * a d3 `ScaleLinear` carrying `.domain()`, read through a localized shape rather
- * than widening the contract to d3-scale (same approach as `AreaChart`).
+ * I.e. `0` clamped into `[floor, top]`. The domain bounds come from `baseScale`
+ * when the caller has one — the axis's *declared* domain, resolved from
+ * `min`/`max`/auto-fit before any pan/zoom pixel transform narrows it — else
+ * from `yScale` itself. The runtime object is a d3 `ScaleLinear` carrying
+ * `.domain()`, read through a localized shape rather than widening the
+ * contract to d3-scale (same approach as `AreaChart`).
+ *
+ * **Reading `yScale` alone is the bug this parameter exists to avoid.** `yScale`
+ * is the *viewport* onto the axis — a gutter drag or wheel notch slides it
+ * without moving any bar's actual value. But a bare `yScale.domain()` read
+ * can't tell "the axis was deliberately configured to exclude zero" apart
+ * from "the current pan happens to have scrolled zero out of view" — so once
+ * a pan pushed the floor above zero, every bar's rendered top silently became
+ * `yScale(baseline)` instead of `yScale(value)`, reading as a bar's value
+ * changing under a gesture that never touched the data. `baseScale` is the
+ * declared domain, immune to that transform, so a transient pan can never
+ * relocate the baseline — only an author's own `<YAxis min>` can.
  */
-export function resolveBarBaseline(yScale: Scale): number {
-  const d = (yScale as unknown as { domain?: () => number[] }).domain?.();
+export function resolveBarBaseline(yScale: Scale, baseScale?: Scale): number {
+  const d = (
+    (baseScale ?? yScale) as unknown as { domain?: () => number[] }
+  ).domain?.();
   if (!d || d.length === 0) return 0;
   const floor = Math.min(d[0]!, d[d.length - 1]!);
   const top = Math.max(d[0]!, d[d.length - 1]!);
@@ -1053,8 +1068,14 @@ export function stackBase(
   orientation: Orientation,
   xScale: Scale,
   yScale: Scale,
+  // The y axis's declared (pre-pan/zoom) scale — see `resolveBarBaseline`.
+  // Vertical only: a horizontal stack's baseline lives on `xScale`, and x has
+  // no equivalent "declared, pre-transform" scale to read yet ([PND-XBASE]).
+  baseYScale?: Scale,
 ): number {
-  return resolveBarBaseline(orientation === 'vertical' ? yScale : xScale);
+  return orientation === 'vertical'
+    ? resolveBarBaseline(yScale, baseYScale)
+    : resolveBarBaseline(xScale);
 }
 
 /**
@@ -1166,9 +1187,12 @@ export function drawStacks(
   // (the group is this layer's label channel, so `rows` stays testable per
   // segment where `drawBars`' constant label lets the component resolve it).
   spans: readonly SpanSelection[] = NO_SPANS,
+  // The y axis's declared (pre-pan/zoom) scale — see `resolveBarBaseline` /
+  // `stackBase`.
+  baseYScale?: Scale,
 ): void {
   const G = ss.groups.length;
-  const base = stackBase(orientation, xScale, yScale);
+  const base = stackBase(orientation, xScale, yScale, baseYScale);
   // Threshold banding applies to a **plain** bar only. `G === 1` is exactly the
   // categorical / horizontal single-value bar (`categoryStack` builds a
   // one-group series); a genuine multi-group stack has no defined banding —
@@ -1382,11 +1406,15 @@ export function stackAt(
    *  contract is that its rect is the drawn rect, so a cap applied to one and
    *  not the other silently drifts the hit target off the ink. */
   maxSpanPx?: number,
+  // The y axis's declared (pre-pan/zoom) scale — see `resolveBarBaseline` /
+  // `stackBase`. Kept in sync with `drawStacks`' own so a hit rect never
+  // drifts from the drawn one under a live gutter pan.
+  baseYScale?: Scale,
 ):
   | [bin: number, group: number, begin: number, name: string, value: number]
   | null {
   const G = ss.groups.length;
-  const base = stackBase(orientation, xScale, yScale);
+  const base = stackBase(orientation, xScale, yScale, baseYScale);
   for (let b = 0; b < ss.length; b += 1) {
     // The same two accumulators `drawStacks` keeps — they must agree exactly or
     // the hit rect drifts from the drawn one.

@@ -1,5 +1,10 @@
-import { useContext, useEffect, useMemo } from 'react';
-import { ContainerContext, RowContext, type AxisSpec } from './context.js';
+import { useContext, useEffect, useMemo, useRef } from 'react';
+import {
+  ContainerContext,
+  RowContext,
+  type AxisSpec,
+  type YScale,
+} from './context.js';
 import { resolveAxisFormat, type AxisFormat } from './format.js';
 import { unpadDomain } from './domain.js';
 import { useSlotKey } from './use-slot-key.js';
@@ -409,11 +414,23 @@ export function YAxis({
     registerAxis(slot, spec);
   }, [registerAxis, slot, spec]);
 
-  // Drag / wheel to zoom **this** axis, double-click to release it back to the
-  // row's own fit. Enabled by the container's `panZoom` zoom-y degree of freedom.
-  // The gesture writes this axis's entry in `row.axisTransforms`, so only the
-  // gutter you grabbed rescales — the sibling axis, and every other row, hold
-  // still (see `RowFrame.axisTransforms` for why that needs its own transform).
+  // The transform this axis held at the last press — an UNCONTROLLED pan is
+  // anchored on it (see `onPan`), the same way the x strip anchors on
+  // `container.timeRange`.
+  const panStartRef = useRef<{ k: number; ty: number } | null>(null);
+  // The base scale at the last press, for a CONTROLLED pan. Snapshotted for the
+  // same reason: a controlled consumer writes `min`/`max` back after every
+  // move, so `row.baseYScales` on the *next* move already reflects this drag's
+  // own effect — reading it fresh would compose the total delta onto a base
+  // that has already moved, doubling every step's shift.
+  const panBaseRef = useRef<YScale | null>(null);
+  // Drag pans, wheel zooms **this** axis, double-click releases it back to the
+  // row's own fit — the same gesture vocabulary the x strip uses, so a gutter
+  // and the canvas agree on what a drag does. Enabled by the container's
+  // `panZoom` zoom-y degree of freedom. The gesture writes this axis's entry in
+  // `row.axisTransforms`, so only the gutter you grabbed moves — the sibling
+  // axis, and every other row, hold still (see `RowFrame.axisTransforms` for
+  // why that needs its own transform).
   const gestures = useAxisGestures({
     axis: 'y',
     // Gated on `<ChartContainer axisPanZoom>` (its `'y'` / `'xy'` values) — the
@@ -422,8 +439,44 @@ export function YAxis({
     // panned and zoomed — without either inheriting gestures silently or opting
     // the plot into vertical drags (a different feature: the uniform 2-D
     // transform a scatter or heat map wants).
-    drag: container.axisPanZoomY ? 'zoom' : 'none',
+    drag: container.axisPanZoomY ? 'pan' : 'none',
     wheel: container.axisPanZoomY,
+    // Snapshot the transform (uncontrolled) or the base scale (controlled) at
+    // press: the pan is re-derived from one of these on every move (the x
+    // strip's own approach), so a long drag can't accumulate rounding — and,
+    // for the controlled path, can't compose the total delta onto a base that
+    // this same drag's own previous move already shifted.
+    onDragStart: () => {
+      panStartRef.current = row.axisTransforms.get(id) ?? IDENTITY_TRANSFORM;
+      panBaseRef.current = row.baseYScales.get(id) ?? null;
+    },
+    onPan: (totalDeltaPx) => {
+      if (onBoundsChange !== undefined) {
+        // **Controlled**: shift the pixel window by the drag, same pixel-space
+        // inversion `onZoom` uses so the maths stays correct on `log` and
+        // `symlog` — a pan is just a zoom with every pixel shifted by the same
+        // amount rather than scaled about a pivot. Read from the *press-time*
+        // base, not the live one: `min`/`max` come back through this axis's own
+        // props after every move, so the live base already carries however far
+        // this drag has gone so far, and re-deriving the total delta against it
+        // would double-apply everything already reported.
+        const base = panBaseRef.current;
+        if (base === null) return;
+        const [r0, r1] = base.range() as [number, number];
+        const at = (px: number) => +base.invert(px - totalDeltaPx);
+        const next: readonly [number, number] = [at(r0), at(r1)];
+        if (!Number.isFinite(next[0]) || !Number.isFinite(next[1])) return;
+        if (next[0] === next[1]) return;
+        onBoundsChange(unpadDomain(next, pad, scale));
+        return;
+      }
+      // **Uncontrolled**: shift this axis's own pixel transform. Anchored on
+      // the press's `panStartRef`, not the live `row.axisTransforms` value —
+      // reading that fresh on every move would double-apply everything moved
+      // so far this drag.
+      const start = panStartRef.current ?? IDENTITY_TRANSFORM;
+      applyAxisTransform(id, { k: start.k, ty: start.ty + totalDeltaPx });
+    },
     onZoom: (factor, pivotPx) => {
       // Read the scale at gesture time, not from the render that built this
       // closure — a wheel notch mid-stream must compose onto what is drawn now.

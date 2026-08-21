@@ -16,10 +16,11 @@ import { YAxis } from './YAxis.js';
  * opt-ins, so no chart grows axis gestures it didn't ask for. One story per
  * surface the gestures behave differently on.
  *
- * **The x strip is the canvas gesture**: drag pans, wheel zooms — the same
- * vocabulary as dragging the plot itself, so there is one model to learn.
- * **A y gutter zooms on drag**, which is the thing the plot cannot do per axis
- * (its vertical drag scales every axis in the row at once).
+ * **Every strip is the canvas gesture**: drag pans, wheel zooms — the same
+ * vocabulary as dragging the plot itself, so there is one model to learn. A y
+ * gutter's pan moves only *that* axis, which is the thing the plot cannot do
+ * per axis (its vertical drag, where enabled, scales every axis in the row at
+ * once).
  */
 const N = 240;
 const BASE = Date.UTC(2026, 2, 2, 9, 30, 0);

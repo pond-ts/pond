@@ -66,6 +66,25 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- `@pond-ts/charts`: **y gutter drag now pans instead of zooming** — matching
+  the x strip's own gesture (drag pans, wheel zooms) instead of the
+  drag-to-zoom behavior it shipped with in `axisPanZoom="y"`/`"xy"`. Wheel
+  still zooms the grabbed axis about the pointer, and double-click still
+  releases it back to its fit; only the drag's own effect changed.
+
+### Fixed
+
+- `@pond-ts/charts`: **a `BarChart`'s baseline no longer relocates under a y
+  gutter pan/zoom.** `resolveBarBaseline` decided whether bars rest on zero or
+  on the axis floor by reading the axis's *live, transformed* domain — the
+  same read a pan/zoom keeps moving — so once a gesture scrolled zero out of
+  view, every bar's rendered top silently snapped to the moving floor instead
+  of its actual value. It now reads the axis's declared (pre-transform)
+  domain for that decision, so a pan/zoom can move the viewport without ever
+  relocating a bar's own baseline.
+
 ## [0.63.0] — 2026-08-18
 
 ### Added
