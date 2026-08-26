@@ -766,6 +766,39 @@ describe('<YAxis zeroAnchored> — the bar-chart baseline pin', () => {
 
     expect(into.r!.yScales.get('v')!.domain()).toEqual([0, 100]);
   });
+
+  it('falls back to the pointer pivot on a log axis, where 0 has no position', () => {
+    // scaleLog()(0) is NaN — there is no pixel to anchor on, so zeroAnchored
+    // must not silently do nothing; it should zoom exactly like an ordinary
+    // pointer-pivoted axis instead.
+    const into: { r?: RowFrame } = {};
+    const dom = draw(
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="panZoom"
+        axisPanZoom="y"
+      >
+        <ChartRow height={100}>
+          <YAxis id="v" scale="log" min={1} max={100} zeroAnchored />
+          <Layers>
+            <LineChart series={series()} column="v" axis="v" />
+          </Layers>
+          <Capture into={into} />
+        </ChartRow>
+      </ChartContainer>,
+    ).container;
+
+    const before = into.r!.yScales.get('v')!;
+    const grabbed = +before.invert(70);
+
+    wheelOn(yGutter(dom, 'v'), -240, { clientY: 70 });
+
+    const after = into.r!.yScales.get('v')!;
+    expect(after.domain()).not.toEqual(before.domain()); // it did zoom
+    expect(+after.invert(70)).toBeCloseTo(grabbed, 6); // held the POINTER's pixel
+  });
 });
 
 describe('<YAxis onBoundsChange> — the auto/manual hand-off', () => {
