@@ -495,7 +495,24 @@ export function YAxis({
         const base = panBaseRef.current;
         if (base === null) return;
         const [r0, r1] = base.range() as [number, number];
-        const at = (px: number) => +base.invert(px - totalDeltaPx);
+        // `totalDeltaPx` is a SCREEN delta, but `base` is the pre-transform
+        // scale, and the two pixel spaces differ by the container's `k` (and
+        // this axis's own, if it carries one). Translating `base` by a screen
+        // delta therefore pans by `k`× too much whenever the plot's own y zoom
+        // is engaged — the grabbed value outruns the cursor. Both transforms
+        // are applied in *pixel* space (`narrow` inverts `(px - ty) / k`), so
+        // the base↔screen relation is exactly affine for every scale kind and
+        // the correction is a plain division — no per-scale special-casing,
+        // and exact on `log` / `symlog` as well. Sibling of the pivot-space
+        // bug fixed in `onZoom`; invisible at `k === 1`, which is every test
+        // that does not first zoom the plot itself.
+        const ownK = panStartRef.current?.k ?? 1;
+        const pixelK = container.yTransform.k * ownK;
+        const deltaBasePx =
+          Number.isFinite(pixelK) && pixelK !== 0
+            ? totalDeltaPx / pixelK
+            : totalDeltaPx;
+        const at = (px: number) => +base.invert(px - deltaBasePx);
         const next: readonly [number, number] = [at(r0), at(r1)];
         if (!Number.isFinite(next[0]) || !Number.isFinite(next[1])) return;
         if (next[0] === next[1]) return;

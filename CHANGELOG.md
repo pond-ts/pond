@@ -125,6 +125,15 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- `@pond-ts/charts`: **a controlled y-gutter pan no longer overshoots the
+  cursor under a plot-level y zoom.** With `onBoundsChange` set, the drag
+  translated the axis's pre-transform scale by a _screen_ pixel delta. Those
+  two pixel spaces differ by the container's `yTransform`, so with the plot's
+  own y pan/zoom engaged (`panZoom="panZoomY"` / `"panZoomXY"`) the axis
+  panned `k`× too far and the grabbed value outran the pointer. Both
+  transforms are applied in pixel space, so the base↔screen relation is
+  exactly affine and the correction is a division — exact on `log` and
+  `symlog` too. Sibling of the zoom-pivot bug below; invisible at `k === 1`.
 - `@pond-ts/charts`: **`<YAxis zeroAnchored>` no longer lets the baseline drift
   in the controlled path.** With `onBoundsChange` set, the zoom read `0`'s
   pixel off the axis's _live_ scale but inverted it through `baseYScales`.
