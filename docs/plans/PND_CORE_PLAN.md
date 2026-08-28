@@ -162,6 +162,51 @@ that cannot show the bug. There is now a regression test for that exact
 no-op case, because it is the shape that will keep passing while a future
 change re-breaks the others.
 
+**What the edge buckets actually contain, and the usage rule it implies**
+(owner question, 2026-08-28: "range came from a charts pan/zoom — do we
+include events before `range.begin()`, partially fill, or discard?").
+
+`range` bounds the **grid only**. The event scan runs over the whole series
+with pure `[bucket.begin(), bucket.end())` membership, so the answer is not
+chosen by `aggregate` — it is decided by whether the caller's series extends
+past the range, and **the output cannot tell you which you got**. Measured on
+1440 one-minute bars, hourly grid, viewport 09:20 → 11:40:
+
+| series vs. range                        | leading   | middle | trailing |
+| --------------------------------------- | --------- | ------ | -------- |
+| extends past range, **before** this fix | _dropped_ | 60     | 60       |
+| extends past range, **after**           | **60**    | 60     | 60       |
+| pre-clipped to range, **before**        | _dropped_ | 60     | **41**   |
+| pre-clipped to range, **after**         | **40**    | 60     | **41**   |
+
+- **Complete bucket** is what you get when the series has the data. Bar heights
+  are then stable under a pan — panning changes _which_ buckets are visible,
+  never their values. This is the correct semantics: a bucket's value is a
+  property of the data and the grid, not of who is looking.
+- **Partial fill** is what you get on a pre-clipped series — silently. `40` and
+  `41` are indistinguishable from real dips.
+- **Discard** is what the leading edge did before this fix, and what nothing
+  does now.
+
+Two conclusions. First, **this fix did not create the partial-bucket problem**:
+the trailing edge always had it (`41`, silently, under either coverage). The
+old leading drop was not a policy protecting anyone from partials — it was the
+same sample-point bug, which happened to hide one of the two. The fix makes the
+treatment symmetric.
+
+Second, **the usage rule**: hand `aggregate` the full series and let `range`
+bound the grid. Do not pre-clip and then aggregate — `within(v).aggregate(...)`
+is the natural thing to type and it silently produces partial edge buckets,
+where `aggregate(grid, m, { range: v })` on the unclipped series does not.
+
+**Deferred — a `'contained'` coverage mode.** Neither before nor after can a
+consumer ask for "only buckets you could fill completely": a bucket starting
+inside the range and running past its end is emitted under _either_ mode, so a
+consumer who genuinely can only supply a clipped series has no honest option.
+That would be a third mode (only buckets lying wholly inside the range), not a
+partial-fill policy. Not built: no consumer has asked, and pond waits for the
+second signal. The vocabulary is now in place if one arrives.
+
 **Left open — per-partition grid misalignment.** `partitionBy().aggregate()`
 delegates per group, so with no explicit `range` each partition floors to its
 _own_ first event's bucket and partitions can emit misaligned grids. That was
