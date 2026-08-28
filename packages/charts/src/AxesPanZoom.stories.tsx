@@ -279,3 +279,45 @@ export const AutoOrManualYScale: Story = {
     );
   },
 };
+
+const desksSigned = DESKS.map((label, i) => ({
+  label,
+  value: -14 + i * 8, // straddles 0: -14, -6, 2, 10, 18
+}));
+
+/**
+ * `<YAxis zeroAnchored>` — the knob a bar chart wants instead of the ordinary
+ * gutter drag/zoom: **0 never moves.** Drag is inert (a pan would slide the
+ * baseline off wherever the data rests it); wheel still zooms, but every
+ * notch scales around 0's own pixel instead of the pointer's, whether that
+ * pixel sits at the plot floor (all-positive bars, left) or partway up
+ * (bars that straddle positive and negative, right).
+ */
+export const ZeroAnchoredBars: Story = {
+  render: () => (
+    <div style={{ display: 'flex', gap: 24 }}>
+      <div style={{ width: W / 2 - 12 }}>
+        <ChartContainer width={W / 2 - 12} categories={DESKS} axisPanZoom="y">
+          <ChartRow height={200}>
+            <YAxis id="flow" format=",.0f" zeroAnchored />
+            <Layers>
+              <BarChart categories={desks} axis="flow" />
+            </Layers>
+          </ChartRow>
+          <XAxis label="all-positive — baseline pinned to the floor" />
+        </ChartContainer>
+      </div>
+      <div style={{ width: W / 2 - 12 }}>
+        <ChartContainer width={W / 2 - 12} categories={DESKS} axisPanZoom="y">
+          <ChartRow height={200}>
+            <YAxis id="flow" format=",.0f" zeroAnchored />
+            <Layers>
+              <BarChart categories={desksSigned} axis="flow" />
+            </Layers>
+          </ChartRow>
+          <XAxis label="+/- — baseline pinned mid-plot" />
+        </ChartContainer>
+      </div>
+    </div>
+  ),
+};

@@ -597,6 +597,210 @@ describe('<YAxis> drag-to-pan — per axis', () => {
   });
 });
 
+describe('<YAxis zeroAnchored> — the bar-chart baseline pin', () => {
+  it('drag is inert even though axisPanZoom is on', () => {
+    const into: { r?: RowFrame } = {};
+    const dom = draw(
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="panZoom"
+        axisPanZoom="y"
+      >
+        <ChartRow height={100}>
+          <YAxis id="v" min={0} max={100} zeroAnchored />
+          <Layers>
+            <LineChart series={series()} column="v" axis="v" />
+          </Layers>
+          <Capture into={into} />
+        </ChartRow>
+      </ChartContainer>,
+    ).container;
+
+    dragBy(yGutter(dom, 'v'), 'y', -60, 50);
+
+    expect(into.r!.yScales.get('v')!.domain()).toEqual([0, 100]);
+    // No drag cursor either — there is genuinely no gesture to show one for.
+    expect(yGutter(dom, 'v').style.cursor).toBe('');
+  });
+
+  it('a wheel notch pivots on 0, not the pointer — the baseline never moves (uncontrolled)', () => {
+    const into: { r?: RowFrame } = {};
+    const dom = draw(
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="panZoom"
+        axisPanZoom="y"
+      >
+        <ChartRow height={100}>
+          <YAxis id="v" min={0} max={100} zeroAnchored />
+          <Layers>
+            <LineChart series={series()} column="v" axis="v" />
+          </Layers>
+          <Capture into={into} />
+        </ChartRow>
+      </ChartContainer>,
+    ).container;
+
+    const before = into.r!.yScales.get('v')!;
+    const zeroPxBefore = before(0);
+
+    // The wheel notch fires with the pointer nowhere near 0 (clientY: 10, far
+    // from the baseline's own pixel) — a pointer-pivoted zoom would move 0;
+    // a zero-anchored one must not.
+    wheelOn(yGutter(dom, 'v'), -240, { clientY: 10 });
+    wheelOn(yGutter(dom, 'v'), -240, { clientY: 10 });
+
+    const after = into.r!.yScales.get('v')!;
+    expect(after.domain()).not.toEqual(before.domain()); // it did zoom
+    expect(after(0)).toBeCloseTo(zeroPxBefore, 6); // but 0 held its pixel
+  });
+
+  it('holds 0 fixed on a domain that straddles positive and negative', () => {
+    const into: { r?: RowFrame } = {};
+    const dom = draw(
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="panZoom"
+        axisPanZoom="y"
+      >
+        <ChartRow height={100}>
+          <YAxis id="v" min={-50} max={50} zeroAnchored />
+          <Layers>
+            <LineChart series={series()} column="v" axis="v" />
+          </Layers>
+          <Capture into={into} />
+        </ChartRow>
+      </ChartContainer>,
+    ).container;
+
+    const before = into.r!.yScales.get('v')!;
+    const zeroPxBefore = before(0);
+    expect(zeroPxBefore).toBeCloseTo(50, 1); // roughly mid-plot
+
+    wheelOn(yGutter(dom, 'v'), -240, { clientY: 90 }); // pointer near the floor
+
+    const after = into.r!.yScales.get('v')!;
+    expect(after.domain()).not.toEqual(before.domain());
+    expect(after(0)).toBeCloseTo(zeroPxBefore, 6);
+  });
+
+  it('a wheel notch pivots on 0 in the CONTROLLED path too', () => {
+    const seen = vi.fn();
+    function Controlled() {
+      const [bounds, setBounds] = useState<readonly [number, number] | null>(
+        null,
+      );
+      return (
+        <ChartContainer
+          range={RANGE}
+          width={WIDTH}
+          showAxis={false}
+          panZoom="panZoom"
+          axisPanZoom="y"
+        >
+          <ChartRow height={100}>
+            <YAxis
+              id="v"
+              {...(bounds
+                ? { min: bounds[0], max: bounds[1] }
+                : { min: 0, max: 100 })}
+              zeroAnchored
+              onBoundsChange={(b) => {
+                setBounds(b);
+                seen(b);
+              }}
+            />
+            <Layers>
+              <LineChart series={series()} column="v" axis="v" />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>
+      );
+    }
+    const dom = draw(<Controlled />).container;
+
+    wheelOn(yGutter(dom, 'v'), -240, { clientY: 10 });
+
+    expect(seen).toHaveBeenCalled();
+    const [lo, hi] = seen.mock.calls.at(-1)![0] as [number, number];
+    // A zoom-in narrows around 0 — 0 stays strictly between (or at) the
+    // reported bounds, not shifted off toward one edge the way a
+    // pointer-pivoted zoom at clientY: 10 (near the top) would.
+    expect(lo).toBeLessThanOrEqual(0);
+    expect(hi).toBeGreaterThanOrEqual(0);
+    expect(hi - lo).toBeLessThan(100); // and it did zoom in
+  });
+
+  it('double-click still resets, even though drag is inert', () => {
+    const into: { r?: RowFrame } = {};
+    const dom = draw(
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="panZoom"
+        axisPanZoom="y"
+      >
+        <ChartRow height={100}>
+          <YAxis id="v" min={0} max={100} zeroAnchored />
+          <Layers>
+            <LineChart series={series()} column="v" axis="v" />
+          </Layers>
+          <Capture into={into} />
+        </ChartRow>
+      </ChartContainer>,
+    ).container;
+
+    wheelOn(yGutter(dom, 'v'), -240, { clientY: 10 });
+    expect(into.r!.yScales.get('v')!.domain()).not.toEqual([0, 100]);
+
+    act(() => {
+      fireEvent.doubleClick(yGutter(dom, 'v'));
+    });
+
+    expect(into.r!.yScales.get('v')!.domain()).toEqual([0, 100]);
+  });
+
+  it('falls back to the pointer pivot on a log axis, where 0 has no position', () => {
+    // scaleLog()(0) is NaN — there is no pixel to anchor on, so zeroAnchored
+    // must not silently do nothing; it should zoom exactly like an ordinary
+    // pointer-pivoted axis instead.
+    const into: { r?: RowFrame } = {};
+    const dom = draw(
+      <ChartContainer
+        range={RANGE}
+        width={WIDTH}
+        showAxis={false}
+        panZoom="panZoom"
+        axisPanZoom="y"
+      >
+        <ChartRow height={100}>
+          <YAxis id="v" scale="log" min={1} max={100} zeroAnchored />
+          <Layers>
+            <LineChart series={series()} column="v" axis="v" />
+          </Layers>
+          <Capture into={into} />
+        </ChartRow>
+      </ChartContainer>,
+    ).container;
+
+    const before = into.r!.yScales.get('v')!;
+    const grabbed = +before.invert(70);
+
+    wheelOn(yGutter(dom, 'v'), -240, { clientY: 70 });
+
+    const after = into.r!.yScales.get('v')!;
+    expect(after.domain()).not.toEqual(before.domain()); // it did zoom
+    expect(+after.invert(70)).toBeCloseTo(grabbed, 6); // held the POINTER's pixel
+  });
+});
+
 describe('<YAxis onBoundsChange> — the auto/manual hand-off', () => {
   /** The shape a scale UI actually wires: `null` domain = auto-fit. */
   function Controlled({

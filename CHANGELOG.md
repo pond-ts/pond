@@ -66,6 +66,19 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- `@pond-ts/charts`: **`<YAxis zeroAnchored>`** — pins a y-axis's zoom to the
+  value-`0` gridline instead of the pointer, and drops drag-to-pan entirely.
+  For a bar chart, whose baseline must never move: a bar rests on `0` (at the
+  plot floor for all-positive data, or somewhere mid-plot for data that
+  straddles positive and negative), and an ordinary pointer-pivoted gesture
+  would slide that baseline around the plot as you scroll. With
+  `zeroAnchored`, every wheel notch scales the axis around wherever `0`
+  currently renders, so the baseline holds regardless of how far in or out
+  you zoom. Still gated by the container's own `axisPanZoom` opt-in — this
+  changes what the gesture does, not whether it's on.
+
 ### Changed
 
 - `@pond-ts/charts`: **y gutter drag now pans instead of zooming** — matching
@@ -78,7 +91,7 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 - `@pond-ts/charts`: **a `BarChart`'s baseline no longer relocates under a y
   gutter pan/zoom.** `resolveBarBaseline` decided whether bars rest on zero or
-  on the axis floor by reading the axis's *live, transformed* domain — the
+  on the axis floor by reading the axis's _live, transformed_ domain — the
   same read a pan/zoom keeps moving — so once a gesture scrolled zero out of
   view, every bar's rendered top silently snapped to the moving floor instead
   of its actual value. It now reads the axis's declared (pre-transform)

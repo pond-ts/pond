@@ -295,6 +295,26 @@ export interface YAxisProps {
    */
   onBoundsChange?: (bounds: readonly [number, number] | null) => void;
   /**
+   * Pin the zoom to the value-**0** gridline instead of the pointer, and drop
+   * drag-to-pan entirely — for a bar chart, whose baseline must never move.
+   * A bar rests on `0` (or, straddling positive and negative, has `0`
+   * *somewhere inside* the visible range) — panning or zooming about an
+   * arbitrary pointer position would slide that baseline around the plot,
+   * which reads as the data moving under gestures that never touched it (see
+   * `resolveBarBaseline`, and [PND-XBASE] for the still-open x-axis
+   * counterpart of this exact failure mode). `zeroAnchored` sidesteps it:
+   * every wheel notch scales the axis around wherever `0` currently renders,
+   * so the baseline never moves regardless of how far in or out you scroll
+   * — whether it sits at the plot floor (all-positive bars) or in the
+   * middle (bars that straddle zero).
+   *
+   * Still gated by the container's own `axisPanZoom` opt-in (`'y'` / `'xy'`)
+   * — this only changes *what* the gesture does once enabled, not whether
+   * it's enabled. Double-click still resets to the declared/auto-fit view.
+   * Default `false`.
+   */
+  zeroAnchored?: boolean;
+  /**
    * @internal Declaration position among the row's children, injected by
    * `ChartRow` so the first-declared axis stays the default. Do not set.
    */
@@ -342,6 +362,7 @@ export function YAxis({
   color,
   onMouseEvent,
   onBoundsChange,
+  zeroAnchored = false,
   index = 0,
 }: YAxisProps) {
   const container = useContext(ContainerContext);
@@ -439,7 +460,12 @@ export function YAxis({
     // panned and zoomed — without either inheriting gestures silently or opting
     // the plot into vertical drags (a different feature: the uniform 2-D
     // transform a scatter or heat map wants).
-    drag: container.axisPanZoomY ? 'pan' : 'none',
+    //
+    // `zeroAnchored` drops the drag entirely: a pan slides the whole pixel
+    // window, which is exactly the baseline movement it exists to forbid.
+    // Wheel stays live — `onZoom` below overrides the pivot to `0`'s own
+    // pixel, so a notch narrows the axis around the baseline instead.
+    drag: !zeroAnchored && container.axisPanZoomY ? 'pan' : 'none',
     wheel: container.axisPanZoomY,
     // Snapshot the transform (uncontrolled) or the base scale (controlled) at
     // press: the pan is re-derived from one of these on every move (the x
@@ -477,7 +503,19 @@ export function YAxis({
       const start = panStartRef.current ?? IDENTITY_TRANSFORM;
       applyAxisTransform(id, { k: start.k, ty: start.ty + totalDeltaPx });
     },
-    onZoom: (factor, pivotPx) => {
+    onZoom: (factor, wheelPivotPx) => {
+      // `zeroAnchored` substitutes the wheel's own pointer pixel for wherever
+      // `0` currently renders — read off the LIVE scale (post pan/zoom, both
+      // the container's and this axis's own), which is the pixel a viewer
+      // actually sees the baseline sitting at right now. Falls back to the
+      // pointer if `0` has no position at all (a log axis, which never
+      // admits it — `scaleLog()(0)` is `NaN`) rather than silently doing
+      // nothing.
+      const zeroPx = row.yScales.get(id)?.(0);
+      const pivotPx =
+        zeroAnchored && zeroPx !== undefined && Number.isFinite(zeroPx)
+          ? zeroPx
+          : wheelPivotPx;
       // Read the scale at gesture time, not from the render that built this
       // closure — a wheel notch mid-stream must compose onto what is drawn now.
       if (onBoundsChange !== undefined) {
