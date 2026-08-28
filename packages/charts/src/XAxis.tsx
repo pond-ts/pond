@@ -858,7 +858,7 @@ export function XAxis({
                   overflow: 'hidden',
                 }}
               >
-                {b.label}
+                {b.showLabel ? b.label : ''}
               </div>
             );
           })}

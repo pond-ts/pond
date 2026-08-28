@@ -781,6 +781,35 @@ describe('bands + baseFormat (stacked date-band row)', () => {
     expect(noCal.bands(10)).toEqual([]);
   });
 
+  it('a band clamped onto a labelled tick keeps its segment boundary', () => {
+    // Aug 1 2026 is a Saturday, so the August month band clamps forward to
+    // Mon Aug 3 — which is also a day tick. Codex's claim: the collision test
+    // drops the whole entry, so August loses its boundary and July's band
+    // stretches across it carrying July's shading.
+    const provider = weekdaySessionProvider();
+    const s = scaleTradingTime(provider)
+      .domain([
+        new Date(2026, 6, 27).getTime(), // Mon Jul 27
+        new Date(2026, 7, 7).getTime(), // Fri Aug 7
+      ])
+      .range([0, 900]);
+    const bands = s.bands(10);
+
+    // The renderer spans each band [its start, the NEXT band's start), so a
+    // missing entry is a missing boundary, not a missing label: July would
+    // stretch to the plot edge carrying July's name and zebra parity across
+    // the whole of August.
+    const august = bands.find((b) => new Date(b.start).getMonth() === 7);
+    expect(august).toBeDefined();
+    expect(august!.label).toBe('August');
+    expect(august!.showLabel).toBe(false); // its text WOULD collide with the tick
+    // And the zebra parity still alternates across the kept boundary, which
+    // is the other thing the entry carries.
+    const july = bands.find((b) => new Date(b.start).getMonth() === 6);
+    expect(july).toBeDefined();
+    expect(august!.shaded).not.toBe(july!.shaded);
+  });
+
   it("[F-charts-21] a day band collapsed onto a holiday-week seam does not duplicate the live day's label", () => {
     // Sat Feb 14 / Sun Feb 15 / Mon Feb 16 (a named holiday) 2026 are all
     // removed; the first live day is Tue Feb 17 — reproducing the reported
@@ -819,14 +848,24 @@ describe('bands + baseFormat (stacked date-band row)', () => {
       .range([0, 900]);
     const tickPositions = new Set(s.ticks(10).map((t) => s(t)));
     const bands = s.bands(10);
-    // Every band's rendered PIXEL must be distinct from every tick's pixel —
-    // checking the raw instant isn't enough, since a collapsed band's own
-    // (unclamped) `start` differs numerically from the live tick it visually
-    // clamps onto; the reported bug is exactly that mismatch. The "Aug" band
-    // must not land on the same seam "Aug 3" already labels.
-    for (const b of bands) {
+    // Every band whose label is DRAWN must sit at a pixel no tick already
+    // labels — checking the raw instant isn't enough, since a collapsed
+    // band's own (unclamped) `start` differs numerically from the live tick
+    // it visually clamps onto; the reported bug is exactly that mismatch.
+    // The "Aug" text must not land on the seam "Aug 3" already labels.
+    for (const b of bands.filter((band) => band.showLabel)) {
       expect(tickPositions.has(s(b.start))).toBe(false);
     }
+    // ...but the band itself must still be there. Asserting only the line
+    // above is what let the original fix delete the whole entry: these
+    // objects are segment boundaries, not labels, so a missing August lets
+    // July run to the end of the plot under July's shading. (Found by Codex
+    // reviewing the v0.64.0 range.)
+    const august = bands.find(
+      (b) => new Date(b.start).getMonth() === 7 && b.label === 'August',
+    );
+    expect(august).toBeDefined();
+    expect(august!.showLabel).toBe(false); // suppressed text, kept boundary
   });
 
   it('baseFormat is terse — the grain unit with no inline promotion', () => {

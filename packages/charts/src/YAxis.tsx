@@ -502,10 +502,22 @@ export function YAxis({
         // is engaged — the grabbed value outruns the cursor. Both transforms
         // are applied in *pixel* space (`narrow` inverts `(px - ty) / k`), so
         // the base↔screen relation is exactly affine for every scale kind and
-        // the correction is a plain division — no per-scale special-casing,
-        // and exact on `log` / `symlog` as well. Sibling of the pivot-space
-        // bug fixed in `onZoom`; invisible at `k === 1`, which is every test
-        // that does not first zoom the plot itself.
+        // the correction is a plain division — no per-scale special-casing.
+        // The division is exact on `log` and `symlog` too; end-to-end
+        // tracking on `symlog` still drifts, because `symlogConstant` is
+        // derived from the domain and so the knee moves as the domain pans.
+        // That is pre-existing and independent of this correction — the
+        // sibling zoom test already documents it as "knee drift".
+        //
+        // `ownK` is 1 in the ordinary controlled path: `applyAxisTransform`
+        // is only ever called from the UNCONTROLLED branches, so a controlled
+        // axis carries no transform of its own. It is composed here for the
+        // one window where that is false — a consumer that pans uncontrolled
+        // and then supplies `onBoundsChange`, leaving a stale axis transform
+        // until the next reset. No test covers that window.
+        //
+        // Sibling of the pivot-space bugs in `onZoom`; invisible at
+        // `k === 1`, which is every test that does not first zoom the plot.
         const ownK = panStartRef.current?.k ?? 1;
         const pixelK = container.yTransform.k * ownK;
         const deltaBasePx =
@@ -571,10 +583,25 @@ export function YAxis({
         // `zeroAnchored` exists to forbid, and invisible without a plot-level
         // y zoom, where the two spaces coincide.
         const baseZeroPx = zeroAnchored ? base(0) : undefined;
+        // The fallback — and the ordinary, non-`zeroAnchored` case — is the
+        // pointer's own pixel, which is a SCREEN pixel and needs the same
+        // change of space. (#678 corrected only the `zeroAnchored` pivot,
+        // leaving the plain controlled wheel pivoting about the wrong point
+        // under a plot y zoom; the pan in this same file had the mirror
+        // defect on its delta. Three faces of one root cause: a screen-space
+        // pixel used where `base`'s pixel space is meant.) `ty` matters here
+        // because a pivot is an absolute position, not a delta.
+        const ownK = panStartRef.current?.k ?? 1;
+        const pixelK = container.yTransform.k * ownK;
+        const pixelTy = container.yTransform.ty;
+        const toBasePx = (screenPx: number) =>
+          Number.isFinite(pixelK) && pixelK !== 0
+            ? (screenPx - pixelTy) / pixelK
+            : screenPx;
         const controlledPivotPx =
           baseZeroPx !== undefined && Number.isFinite(baseZeroPx)
             ? baseZeroPx
-            : wheelPivotPx;
+            : toBasePx(wheelPivotPx);
         const [r0, r1] = base.range() as [number, number];
         const lo = Math.min(r0, r1);
         const hi = Math.max(r0, r1);
