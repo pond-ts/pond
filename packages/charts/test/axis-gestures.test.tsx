@@ -737,6 +737,66 @@ describe('<YAxis zeroAnchored> — the bar-chart baseline pin', () => {
     expect(hi - lo).toBeLessThan(100); // and it did zoom in
   });
 
+  it('pins 0 in the controlled path even under a plot-level y zoom', () => {
+    // Found by post-merge adversarial review of #676. The controlled branch
+    // read 0's pixel off the LIVE scale but inverted it through `baseYScales`.
+    // Those two pixel spaces differ by the container's own `yTransform`, so
+    // with the plot's y zoom active the baseline crept several px per notch —
+    // monotonically, and in exactly the gesture whose whole purpose is to hold
+    // it still. Invisible without a plot-level y zoom, where the two coincide,
+    // which is why every other test here passes either way.
+    const into: { c?: ContainerFrame; r?: RowFrame } = {};
+    function Controlled() {
+      const [bounds, setBounds] = useState<readonly [number, number] | null>(
+        null,
+      );
+      return (
+        <ChartContainer
+          range={RANGE}
+          width={WIDTH}
+          showAxis={false}
+          panZoom="panZoomXY"
+          axisPanZoom="y"
+        >
+          <ChartRow height={100}>
+            <YAxis
+              id="v"
+              {...(bounds
+                ? { min: bounds[0], max: bounds[1] }
+                : { min: -50, max: 50 })}
+              zeroAnchored
+              onBoundsChange={setBounds}
+            />
+            <Layers>
+              <LineChart series={series()} column="v" axis="v" />
+            </Layers>
+            <Capture into={into} />
+          </ChartRow>
+        </ChartContainer>
+      );
+    }
+    const dom = draw(<Controlled />).container;
+
+    // Put the container's own y transform into a non-identity state first —
+    // this is the condition that separates the two pixel spaces.
+    wheelOn(dom.querySelector('canvas') as HTMLElement, -120, {
+      clientX: 200,
+      clientY: 30,
+    });
+
+    const zeroPx = () => into.r!.yScales.get('v')!(0);
+    const before = zeroPx();
+    expect(Number.isFinite(before)).toBe(true);
+
+    // Several notches, pointer deliberately far from where 0 renders: a
+    // pointer-pivoted zoom would walk 0 away, and a drift bug would walk it
+    // away gradually rather than all at once — so assert after each.
+    for (let notch = 0; notch < 4; notch += 1) {
+      wheelOn(yGutter(dom, 'v'), -120, { clientY: 8 });
+      expect(zeroPx()).toBeCloseTo(before, 6);
+    }
+  });
+
   it('double-click still resets, even though drag is inert', () => {
     const into: { r?: RowFrame } = {};
     const dom = draw(

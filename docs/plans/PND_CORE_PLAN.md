@@ -199,6 +199,30 @@ bound the grid. Do not pre-clip and then aggregate — `within(v).aggregate(...)
 is the natural thing to type and it silently produces partial edge buckets,
 where `aggregate(grid, m, { range: v })` on the unclipped series does not.
 
+**Corrected post-merge (adversarial review of #677, 2026-08-28).** The first
+write-up of this said an explicit `range` was "honoured verbatim". That is
+false at the event level, and the test meant to pin it started on a month
+boundary, where `'overlap'` is a no-op — so it asserted nothing. What is
+actually true: `range` bounds the **grid**, not the scan. With 60 daily bars
+from 1 Jan and `range: [10 Jan, 20 Feb]`, the January bucket comes back
+complete at **31**, including the nine bars _before_ the window. The
+consequence is the property the table above describes — a bucket reads the
+same under any range containing it, so an edge bucket does not change value as
+a viewport slides across it — but it is not clipping, and the docs said it
+was. Anyone who needs the window to bound the events must narrow the series
+instead, accepting partial edge buckets in exchange.
+
+Two further corrections from the same review: a pre-realized `BoundedSequence`
+argument bypasses coverage entirely (`toBoundedSequence` short-circuits on it),
+which is correct — an explicit bucket list should not be extended with a
+bucket the caller did not ask for — but was undocumented while the docstring
+asserted coverage unconditionally; it is now the documented escape hatch for
+the old edge. And `'overlap'` moves the _trailing_ edge too against a
+non-default `sample`, because it drops the sample offset that `'sample'`
+shifts both edges by. `aggregate` hardcodes `'begin'`, so that one is a
+`bounded` contract detail rather than a behaviour change. All three are now
+pinned by tests.
+
 **Deferred — a `'contained'` coverage mode.** Neither before nor after can a
 consumer ask for "only buckets you could fill completely": a bucket starting
 inside the range and running past its end is emitted under _either_ mode, so a

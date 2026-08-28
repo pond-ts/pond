@@ -304,9 +304,15 @@ export interface YAxisProps {
    * `resolveBarBaseline`, and [PND-XBASE] for the still-open x-axis
    * counterpart of this exact failure mode). `zeroAnchored` sidesteps it:
    * every wheel notch scales the axis around wherever `0` currently renders,
-   * so the baseline never moves regardless of how far in or out you scroll
-   * — whether it sits at the plot floor (all-positive bars) or in the
-   * middle (bars that straddle zero).
+   * so the baseline holds however far in or out you scroll — whether it sits
+   * at the plot floor (all-positive bars) or in the middle (bars that
+   * straddle zero).
+   *
+   * One qualification: the pivot is clamped into the axis's own pixel range,
+   * so if `0` has been scrolled off the plot entirely the zoom pivots about
+   * the nearer edge instead and the baseline does creep. For a bar chart that
+   * is benign — the clamp lands on the same floor `resolveBarBaseline`
+   * already resolves against — but it is a creep, not a guarantee.
    *
    * Still gated by the container's own `axisPanZoom` opt-in (`'y'` / `'xy'`)
    * — this only changes *what* the gesture does once enabled, not whether
@@ -511,6 +517,9 @@ export function YAxis({
       // pointer if `0` has no position at all (a log axis, which never
       // admits it — `scaleLog()(0)` is `NaN`) rather than silently doing
       // nothing.
+      // Used by the UNCONTROLLED branch below, which composes its transform in
+      // live pixel space. The controlled branch re-reads `0` off `baseYScales`
+      // instead — see there.
       const zeroPx = row.yScales.get(id)?.(0);
       const pivotPx =
         zeroAnchored && zeroPx !== undefined && Number.isFinite(zeroPx)
@@ -535,13 +544,27 @@ export function YAxis({
         // off the visible scale would have the transforms applied to it twice.
         const base = row.baseYScales.get(id);
         if (base === undefined) return;
+        // `pivotPx` above was read off the LIVE scale — the pixel a viewer
+        // sees, which is right for the uncontrolled branch because it composes
+        // a transform in that same space. Here the inversion happens in
+        // `base`'s pixel space, and the two differ by the container's own
+        // `yTransform`, so `0` has to be re-read there. Mixing them lets the
+        // baseline drift a few px per notch whenever the plot's y pan/zoom is
+        // active (`panZoom="panZoomY"` / `"panZoomXY"`) — precisely the motion
+        // `zeroAnchored` exists to forbid, and invisible without a plot-level
+        // y zoom, where the two spaces coincide.
+        const baseZeroPx = zeroAnchored ? base(0) : undefined;
+        const controlledPivotPx =
+          baseZeroPx !== undefined && Number.isFinite(baseZeroPx)
+            ? baseZeroPx
+            : wheelPivotPx;
         const [r0, r1] = base.range() as [number, number];
         const lo = Math.min(r0, r1);
         const hi = Math.max(r0, r1);
         // Clamp into the scale's own range, not the gutter box: a
         // `labelPlacement="top"` row reserves a header, so a press up there would
         // otherwise pivot about a value the axis never draws.
-        const pivot = Math.max(lo, Math.min(hi, pivotPx));
+        const pivot = Math.max(lo, Math.min(hi, controlledPivotPx));
         // `factor` scales the visible span, so the pixel window scales by its
         // reciprocal about the pivot.
         const at = (px: number) => +base.invert(pivot + (px - pivot) * factor);

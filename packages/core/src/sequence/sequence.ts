@@ -169,8 +169,12 @@ export class Sequence {
    *   are containers that must account for every instant in the range —
    *   `aggregate` realizes its grid this way.
    *
-   * Only the leading edge differs between the two. At the trailing edge both
-   * keep a bucket that starts inside the range and runs past its end.
+   * At the default `sample: 'begin'` only the leading edge differs between the
+   * two: both keep a trailing bucket that starts inside the range and runs
+   * past its end. Against a non-default `sample` the trailing edge moves too,
+   * because `'overlap'` drops the sample offset that `'sample'` shifts both
+   * edges by — another reason to read `'overlap'` as ignoring `sample`
+   * outright rather than as a modifier on it.
    *
    * A single-instant range under `'overlap'` is the flooring primitive:
    * `sequence.bounded({ start: t, end: t }, { coverage: 'overlap' })` returns

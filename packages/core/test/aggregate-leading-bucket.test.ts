@@ -142,10 +142,10 @@ describe('aggregate — the bucket containing the first event is emitted', () =>
     expect(floored.events[0]!.begin()).toBe(Date.UTC(2024, 0, 1));
   });
 
-  it('still respects an explicit range that deliberately starts after the data', () => {
-    // An explicit range is a caller instruction, not a hint: events before it
-    // are outside the requested window and stay excluded. Only the *default*
-    // range changed.
+  it('an explicit range on a grid boundary excludes what precedes it', () => {
+    // NOTE: this case starts on a month boundary, where 'overlap' is a no-op —
+    // so it pins the range-clipping behaviour but says nothing about coverage.
+    // The off-boundary case below is the one that exercises the fix.
     const series = bars(Date.UTC(2024, 0, 10), 60);
     const clipped = series.aggregate(
       Sequence.calendar('month', { timeZone: 'UTC' }),
@@ -162,6 +162,79 @@ describe('aggregate — the bucket containing the first event is emitted', () =>
 
     expect(clipped.events[0]!.begin()).toBe(Date.UTC(2024, 1, 1));
     expect(totalOf(clipped as never)).toBe(38);
+  });
+});
+
+describe('what an explicit range bounds — the grid, not the event scan', () => {
+  // Found by post-merge adversarial review of #677: the original wording
+  // claimed an explicit `range` was "honoured verbatim", and the test meant to
+  // pin it started on a month boundary, where 'overlap' does nothing. Both the
+  // claim and the test were wrong. These pin what actually happens.
+  it('fills a leading bucket from events that precede range.begin()', () => {
+    // 60 daily bars from 1 Jan; window opens 10 Jan, mid-bucket. The January
+    // bucket is emitted complete (31) — including the nine bars from 1–9 Jan
+    // that sit *outside* the requested window.
+    const series = bars(Date.UTC(2024, 0, 1), 60);
+    const windowed = series.aggregate(
+      Sequence.calendar('month', { timeZone: 'UTC' }),
+      { volume: 'sum' },
+      {
+        range: new TimeRange({
+          start: Date.UTC(2024, 0, 10),
+          end: Date.UTC(2024, 1, 20),
+        }),
+      },
+    );
+
+    expect(windowed.events[0]!.begin()).toBe(Date.UTC(2024, 0, 1));
+    expect(windowed.events[0]!.get('volume')).toBe(31);
+    // The consequence worth stating: the window's own span is 41 days, but the
+    // result accounts for more than that, because a bucket is a property of
+    // the data and the grid rather than of the window it is viewed through.
+    expect(totalOf(windowed as never)).toBe(60);
+  });
+
+  it('reads a bucket the same under any range containing it', () => {
+    // The property the above buys, and the reason it is not a bug: an edge
+    // bucket does not change value as a viewport slides across it.
+    const series = bars(Date.UTC(2024, 0, 1), 60);
+    const grid = Sequence.calendar('month', { timeZone: 'UTC' });
+    const januaryUnder = (startDay: number) =>
+      series
+        .aggregate(
+          grid,
+          { volume: 'sum' },
+          {
+            range: new TimeRange({
+              start: Date.UTC(2024, 0, startDay),
+              end: Date.UTC(2024, 1, 20),
+            }),
+          },
+        )
+        .events[0]!.get('volume');
+
+    expect(januaryUnder(3)).toBe(31);
+    expect(januaryUnder(10)).toBe(31);
+    expect(januaryUnder(25)).toBe(31);
+  });
+
+  it('uses a pre-realized BoundedSequence exactly as given', () => {
+    // A BoundedSequence is an explicit bucket list, so coverage does not apply
+    // — pond will not extend it with a bucket the caller did not ask for. This
+    // is the documented escape hatch for anyone who wants the old edge.
+    const series = bars(Date.UTC(2024, 0, 1), 60);
+    const grid = Sequence.calendar('month', { timeZone: 'UTC' });
+    const range = new TimeRange({
+      start: Date.UTC(2024, 0, 10),
+      end: Date.UTC(2024, 1, 20),
+    });
+
+    const asGiven = series.aggregate(grid.bounded(range), { volume: 'sum' });
+    expect(asGiven.events[0]!.begin()).toBe(Date.UTC(2024, 1, 1));
+
+    // The same window through the Sequence + range path does cover.
+    const covering = series.aggregate(grid, { volume: 'sum' }, { range });
+    expect(covering.events[0]!.begin()).toBe(Date.UTC(2024, 0, 1));
   });
 });
 
@@ -245,6 +318,28 @@ describe('Sequence.bounded coverage', () => {
     expect(grid.bounded(range, { coverage: 'overlap' }).intervals()).toEqual(
       grid.bounded(range).intervals(),
     );
+  });
+
+  it("'overlap' moves the trailing edge too against a non-default sample", () => {
+    // 'overlap' drops the sample offset that 'sample' shifts *both* edges by,
+    // so "only the leading edge differs" holds at the default 'begin' only.
+    // `aggregate` hardcodes 'begin', so this is a `bounded` contract detail —
+    // pinned because the docstring now claims exactly this.
+    const grid = Sequence.calendar('month', { timeZone: 'UTC' });
+    const range = new TimeRange({
+      start: Date.UTC(2024, 0, 10),
+      end: Date.UTC(2024, 1, 20),
+    });
+
+    expect(grid.bounded(range, { sample: 'end' }).last()!.begin()).toBe(
+      Date.UTC(2024, 0, 1),
+    );
+    expect(
+      grid
+        .bounded(range, { sample: 'end', coverage: 'overlap' })
+        .last()!
+        .begin(),
+    ).toBe(Date.UTC(2024, 1, 1));
   });
 
   it("'overlap' floors correctly on the negative side of the anchor", () => {
