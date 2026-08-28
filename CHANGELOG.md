@@ -66,7 +66,36 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- `pond-ts`: **`aggregate` now emits the bucket containing the first event**,
+  where before it started at the first grid boundary _at or after_ it — so
+  every event between the two aggregated into nothing, silently. 60 daily bars
+  rolled to a calendar month came back holding 38 of them: no error, no
+  warning, no `undefined`, just a well-formed series with a third of the input
+  gone. It contradicted `aggregate`'s own documented membership rule ("point
+  events contribute to the bucket containing their timestamp") and was
+  asymmetric — the trailing partial bucket _was_ emitted. **This changes
+  results for any caller whose first event did not land exactly on a grid
+  boundary**: expect an extra leading bucket, and sums/counts that now account
+  for the previously-dropped events. Callers who worked around it by passing a
+  pre-floored explicit `range` are unaffected — the floor is now what the
+  default does. An explicit `range` is still honoured verbatim, so a window
+  that deliberately starts after the data still excludes it. `align(...)` and
+  `materialize(...)` are deliberately unchanged: their grids are _sampled_,
+  and the sample point becomes the output key. Reported by Tidal (#672).
+
 ### Added
+
+- `pond-ts`: **`Sequence.bounded(range, { coverage })`** — chooses whether a
+  range selects buckets by their sample point (`'sample'`, the default and the
+  existing behaviour) or by their extent (`'overlap'`, every bucket the range
+  touches, including the one containing `range.begin()`). `aggregate` realizes
+  its grid with `'overlap'`; alignment keeps `'sample'`. As a side benefit
+  `bounded({ start: t, end: t }, { coverage: 'overlap' })` is a flooring
+  primitive — it returns exactly the bucket containing `t` — so consumers no
+  longer have to re-derive pond's calendar anchoring by hand to floor a
+  timestamp. New exported type `SequenceCoverage`.
 
 - `@pond-ts/charts`: **`<YAxis zeroAnchored>`** — pins a y-axis's zoom to the
   value-`0` gridline instead of the pointer, and drops drag-to-pan entirely.

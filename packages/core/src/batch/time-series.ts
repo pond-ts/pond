@@ -135,6 +135,7 @@ import { Event } from '../core/event.js';
 import { PartitionedTimeSeries } from './partitioned-time-series.js';
 import type { BatchSampleStrategy } from '../sequence/sample.js';
 import { Sequence } from '../sequence/sequence.js';
+import type { SequenceCoverage } from '../sequence/sequence.js';
 import {
   type Column as ColumnarColumn,
   ColumnarStore,
@@ -540,10 +541,11 @@ function toBoundedSequence(
   sequence: SequenceLike,
   range: TemporalLike,
   sample: AlignSample,
+  coverage: SequenceCoverage = 'sample',
 ): BoundedSequence {
   return sequence instanceof BoundedSequence
     ? sequence
-    : sequence.bounded(range, { sample });
+    : sequence.bounded(range, { sample, coverage });
 }
 
 function isTimeKeyed<S extends SeriesSchema>(series: TimeSeries<S>): boolean {
@@ -2486,6 +2488,14 @@ export class TimeSeries<S extends SeriesSchema> {
    * Buckets use half-open membership semantics: `[begin, end)`. Point events contribute to the
    * bucket containing their timestamp. Interval-like events contribute to every bucket they
    * overlap under half-open overlap rules.
+   *
+   * The grid **covers** `range` rather than sampling it: the first bucket
+   * emitted is the one *containing* `range.begin()`, even when it starts
+   * before it, so every event in `range` lands in some emitted bucket. This is
+   * what distinguishes bucketing from `align(...)` / `materialize(...)`, whose
+   * grids are sampled — there the bucket's sample point becomes the output
+   * key, so a bucket starting before the range would key a point outside the
+   * window the caller asked for.
    *
    * Defaults:
    * - `range`: `series.timeRange()`
@@ -5799,7 +5809,20 @@ function aggregateInternal<S extends SeriesSchema>(
     });
   }
 
-  const buckets = toBoundedSequence(sequence, range, 'begin').intervals();
+  // Bucketing selects by extent, not by sample point: every event inside
+  // `range` must land in an emitted bucket, including the events between
+  // `range.begin()` and the first grid boundary at or after it. Alignment
+  // and materialization deliberately keep the default 'sample' coverage —
+  // there the sample point becomes the output key, so a bucket starting
+  // before the range would key a point outside the range the caller asked
+  // for. Reported by Tidal in pond-ts#672
+  // (docs/notes/tidal-aggregate-leading-bucket-2026-08.md).
+  const buckets = toBoundedSequence(
+    sequence,
+    range,
+    'begin',
+    'overlap',
+  ).intervals();
   const columns = aggregateColumns;
 
   if (isTimeKeyed(series)) {
