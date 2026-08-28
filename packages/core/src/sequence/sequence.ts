@@ -19,6 +19,22 @@ import { normalizeTimestamp } from '../core/temporal.js';
 export type { DurationInput };
 export type SequenceSample = 'begin' | 'center' | 'end';
 
+/**
+ * How `bounded(...)` decides which buckets a range selects.
+ *
+ * - `'sample'` (default) — by the bucket's **sample point**: a bucket is
+ *   selected when the instant picked by `sample` falls in the range. This is
+ *   what alignment wants, where the sample point becomes the output key.
+ * - `'overlap'` — by the bucket's **extent**: a bucket is selected when any
+ *   part of it overlaps the range, so the bucket *containing* `range.begin()`
+ *   is included even though it starts before it. This is what bucketing wants,
+ *   where every event in the range must land in some emitted bucket.
+ *
+ * `'overlap'` selects on extent alone, so `sample` does not affect which
+ * buckets it returns.
+ */
+export type SequenceCoverage = 'sample' | 'overlap';
+
 type FixedSequenceInput = {
   every: DurationInput;
   anchor?: TimestampInput;
@@ -141,7 +157,27 @@ export class Sequence {
    * Example: `sequence.bounded(new TimeRange({ start, end }))`.
    * Realizes a finite `BoundedSequence` over the supplied range.
    *
-   * Sample position controls which intervals are selected:
+   * `coverage` chooses what "over the range" means, and is the more
+   * consequential of the two options:
+   *
+   * - `'sample'` (default) — select by sample point, per the table below. The
+   *   bucket containing `range.begin()` is **excluded** when it starts before
+   *   it, because its sample point sits outside the range.
+   * - `'overlap'` — select every bucket whose extent overlaps the range,
+   *   including the one containing `range.begin()`. `sample` is then ignored:
+   *   selection is on extent, not on a point. Use this whenever the buckets
+   *   are containers that must account for every instant in the range —
+   *   `aggregate` realizes its grid this way.
+   *
+   * Only the leading edge differs between the two. At the trailing edge both
+   * keep a bucket that starts inside the range and runs past its end.
+   *
+   * A single-instant range under `'overlap'` is the flooring primitive:
+   * `sequence.bounded({ start: t, end: t }, { coverage: 'overlap' })` returns
+   * exactly the bucket containing `t`.
+   *
+   * Sample position controls which intervals are selected under
+   * `coverage: 'sample'`:
    *
    * - `'begin'` (default) — sample point is the interval's start.
    *   Includes buckets where `sample ∈ [range.begin, range.end]`.
@@ -156,9 +192,10 @@ export class Sequence {
    */
   bounded(
     range: TemporalLike,
-    options: { sample?: SequenceSample } = {},
+    options: { sample?: SequenceSample; coverage?: SequenceCoverage } = {},
   ): BoundedSequence {
     const sample = options.sample ?? 'begin';
+    const coverage = options.coverage ?? 'sample';
     const requested = toTimeRange(range);
     const intervals: Interval[] = [];
 
@@ -175,13 +212,30 @@ export class Sequence {
       // boundary case symmetric: begin-sampling at range.end() and
       // end-sampling at range.begin() would otherwise BOTH include
       // intervals whose extent sits entirely outside the range.
+      //
+      // Under `coverage: 'overlap'` selection is on extent instead, so the
+      // sample point plays no part: a bucket is in when its extent overlaps
+      // the range. `end > requested.begin()` reduces to `floor` on the same
+      // quotient `ceil` is taken of above — the one index of difference is
+      // the bucket containing `requested.begin()`. The trailing test is
+      // `begin <= requested.end()`, which is what `lastIndex` already
+      // computes at a zero offset, so only the leading edge moves.
       const sampleOffset =
-        sample === 'center' ? stepMs / 2 : sample === 'end' ? stepMs : 0;
+        coverage === 'overlap'
+          ? 0
+          : sample === 'center'
+            ? stepMs / 2
+            : sample === 'end'
+              ? stepMs
+              : 0;
       const firstIndex =
-        sample === 'end'
-          ? Math.floor((requested.begin() - sampleOffset - anchorMs) / stepMs) +
-            1
-          : Math.ceil((requested.begin() - sampleOffset - anchorMs) / stepMs);
+        coverage === 'overlap'
+          ? Math.floor((requested.begin() - anchorMs) / stepMs)
+          : sample === 'end'
+            ? Math.floor(
+                (requested.begin() - sampleOffset - anchorMs) / stepMs,
+              ) + 1
+            : Math.ceil((requested.begin() - sampleOffset - anchorMs) / stepMs);
       const lastIndex = Math.floor(
         (requested.end() - sampleOffset - anchorMs) / stepMs,
       );
@@ -218,17 +272,28 @@ export class Sequence {
           : sample === 'center'
             ? start + (end - start) / 2
             : start;
+      // Under `coverage: 'overlap'` selection is on extent, so both tests
+      // read the bucket's own start rather than its sample point.
+      const selector = coverage === 'overlap' ? start : sampleTime;
 
-      if (sampleTime > requested.end()) {
+      if (selector > requested.end()) {
         break;
       }
 
       // 'begin' and 'center': sample ∈ [requested.begin, requested.end]
       // 'end':                 sample ∈ (requested.begin, requested.end]
+      //
+      // Under 'overlap' every candidate is in: the walk starts at the bucket
+      // containing `requested.begin()` (`toPlainDateStart` floors to it), and
+      // every later bucket starts after that, so the leading test can only
+      // ever pass. This is the one line the leading-bucket drop turned on —
+      // the containing bucket was computed above and then discarded here.
       const include =
-        sample === 'end'
-          ? sampleTime > requested.begin()
-          : sampleTime >= requested.begin();
+        coverage === 'overlap'
+          ? true
+          : sample === 'end'
+            ? sampleTime > requested.begin()
+            : sampleTime >= requested.begin();
 
       if (include) {
         intervals.push(new Interval({ value: start, start, end }));

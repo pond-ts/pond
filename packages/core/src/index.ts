@@ -237,6 +237,7 @@ export type {
 } from './core/temporal.js';
 export type { DurationInput } from './core/duration.js';
 export type { SequenceSample } from './sequence/sequence.js';
+export type { SequenceCoverage } from './sequence/sequence.js';
 export type {
   LiveSeriesOptions,
   OrderingMode,

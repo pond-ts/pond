@@ -99,6 +99,123 @@ events → `undefined`; a `rateOver({ every })` variant may earn its keep
 later); dashboard-guide fixes (lead with `useLiveQuery`; document derived
 views × retention); the audit-suggested `useSyncExternalStore` migration.
 
+## [PND-AGGCOVER] — `aggregate` covers its range (2026-08-28)
+
+**Shipped.** Reported by Tidal in [#672](https://github.com/pond-ts/pond/pull/672)
+(`docs/notes/tidal-aggregate-leading-bucket-2026-08.md`, cross-ref F-charts-16):
+`aggregate` emitted the first grid boundary _at or after_ the first event, so
+events between the two aggregated into nothing — silently. 60 daily bars rolled
+to a calendar month came back holding 38.
+
+**Root cause, and why it was one line.** `Sequence.bounded()` selected buckets
+by asking whether the bucket's **sample point** fell in the range, not whether
+its **extent** overlapped it. In the fixed branch that was a `Math.ceil` on the
+first index; in the calendar branch it was starker — `toPlainDateStart` floors
+`range.begin()` to the containing bucket at the top of the loop, and the
+inclusion test one block below then discarded exactly that bucket. The flooring
+Tidal re-implemented as `floorToWindow` in the consumer was already sitting in
+pond, a few lines above the test that threw its result away.
+
+The reported asymmetry (trailing partial kept, leading dropped) falls out of the
+same test: both edges compare the bucket's _begin_, which is symmetric in sample
+terms and asymmetric in coverage terms.
+
+**The fix.** `bounded()` gained `coverage: 'sample' | 'overlap'` (new exported
+type `SequenceCoverage`); `aggregate` realizes with `'overlap'`. Because
+`'overlap'` only moves the leading edge — the trailing test `begin <=
+range.end()` is what `lastIndex` already computes — the change is provably
+confined to the bucket containing `range.begin()`.
+
+**Decisions, and what was rejected:**
+
+- **Fixed in `bounded()`, not at the `aggregate` call site.** Pre-flooring the
+  range inside `aggregate` needs a calendar floor, which means exporting or
+  duplicating `toPlainDateStart` — precisely the duplication the report was
+  filed about.
+- **Default, not opt-in** (the report's ask #1 over its ask #2). The behaviour
+  contradicted `aggregate`'s own documented membership rule, so it is a bug;
+  a flag to opt into correctness ages badly. Cost accepted: row counts and
+  sums change for any caller whose first event was off-boundary. Landed as a
+  `Changed` entry saying so in those terms, not an `Added`.
+- **`align` / `materialize` / sequence-`rolling` deliberately keep `'sample'`.**
+  Their sample point _becomes the output key_, so coverage semantics would emit
+  a point keyed before the range the caller asked for. This is the real content
+  of the fix: alignment asks "what is the value at each grid point", aggregate
+  asks "which bucket does each event fall in" — only the second owes every
+  input event a home. Now stated in `aggregate`'s docstring, next to the
+  membership rule it was contradicting.
+- **The report's ask #3 (expose the flooring) came free** rather than as a
+  separate `Sequence.floor(t)` method: `bounded({ start: t, end: t }, {
+coverage: 'overlap' })` returns exactly the bucket containing `t`. Pinned by
+  a test so it stays a supported use, not an accident.
+
+**Corroboration: live already did it right.** `LiveAggregation` derives each
+event's bucket by flooring the event's _own_ timestamp
+(`live/live-aggregation.ts` `#bucketFor`), so the live path never dropped a
+leading event. Batch and live disagreed on where a bucket grid starts; this
+fix removes that divergence rather than creating one.
+
+**Why it hid for four waves:** UTC-midnight daily bars land exactly on
+day/week/month boundaries, so flooring is a no-op — and Tidal's own fixtures
+were anchored on 1 Jan 2024, a Monday that is also a month start, the one date
+that cannot show the bug. There is now a regression test for that exact
+no-op case, because it is the shape that will keep passing while a future
+change re-breaks the others.
+
+**What the edge buckets actually contain, and the usage rule it implies**
+(owner question, 2026-08-28: "range came from a charts pan/zoom — do we
+include events before `range.begin()`, partially fill, or discard?").
+
+`range` bounds the **grid only**. The event scan runs over the whole series
+with pure `[bucket.begin(), bucket.end())` membership, so the answer is not
+chosen by `aggregate` — it is decided by whether the caller's series extends
+past the range, and **the output cannot tell you which you got**. Measured on
+1440 one-minute bars, hourly grid, viewport 09:20 → 11:40:
+
+| series vs. range                        | leading   | middle | trailing |
+| --------------------------------------- | --------- | ------ | -------- |
+| extends past range, **before** this fix | _dropped_ | 60     | 60       |
+| extends past range, **after**           | **60**    | 60     | 60       |
+| pre-clipped to range, **before**        | _dropped_ | 60     | **41**   |
+| pre-clipped to range, **after**         | **40**    | 60     | **41**   |
+
+- **Complete bucket** is what you get when the series has the data. Bar heights
+  are then stable under a pan — panning changes _which_ buckets are visible,
+  never their values. This is the correct semantics: a bucket's value is a
+  property of the data and the grid, not of who is looking.
+- **Partial fill** is what you get on a pre-clipped series — silently. `40` and
+  `41` are indistinguishable from real dips.
+- **Discard** is what the leading edge did before this fix, and what nothing
+  does now.
+
+Two conclusions. First, **this fix did not create the partial-bucket problem**:
+the trailing edge always had it (`41`, silently, under either coverage). The
+old leading drop was not a policy protecting anyone from partials — it was the
+same sample-point bug, which happened to hide one of the two. The fix makes the
+treatment symmetric.
+
+Second, **the usage rule**: hand `aggregate` the full series and let `range`
+bound the grid. Do not pre-clip and then aggregate — `within(v).aggregate(...)`
+is the natural thing to type and it silently produces partial edge buckets,
+where `aggregate(grid, m, { range: v })` on the unclipped series does not.
+
+**Deferred — a `'contained'` coverage mode.** Neither before nor after can a
+consumer ask for "only buckets you could fill completely": a bucket starting
+inside the range and running past its end is emitted under _either_ mode, so a
+consumer who genuinely can only supply a clipped series has no honest option.
+That would be a third mode (only buckets lying wholly inside the range), not a
+partial-fill policy. Not built: no consumer has asked, and pond waits for the
+second signal. The vocabulary is now in place if one arrives.
+
+**Left open — per-partition grid misalignment.** `partitionBy().aggregate()`
+delegates per group, so with no explicit `range` each partition floors to its
+_own_ first event's bucket and partitions can emit misaligned grids. That was
+already true before this fix (each partition previously started at its own
+first boundary) and is unchanged by it, but it means a per-entity rollup still
+needs an explicit `range` to produce a shared grid. Parked below rather than
+fixed here — it wants its own decision about whether the partitioned default
+should be the parent's extent.
+
 ## Parking lot
 
 - `unpivot` (wide-to-long) — manual workaround documented; promote on a real
@@ -115,3 +232,7 @@ views × retention); the audit-suggested `useSyncExternalStore` migration.
   `fillOp` / `mapOp` / `collapseOp`).
 - Tighter `DurationString` template-literal type — bounded-union dead end
   documented in `utils/duration.ts`.
+- Per-partition `aggregate` grids: with no explicit `range` each partition
+  floors to its own first event's bucket, so partitions can emit misaligned
+  grids. Workaround (an explicit `range`) is one argument; promote if a
+  consumer hits it. See [PND-AGGCOVER].

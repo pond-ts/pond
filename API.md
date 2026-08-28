@@ -164,7 +164,7 @@ Deliberately small — the ordering-based slice of the algebra, no calendar ops
 | Operation schemas | `RollingSchema`, `RollingAlignment`, `AlignSchema`, `DiffSchema`, `SmoothSchema`, `SmoothMethod`, `FillStrategy`, `FillMapping`                    | `packages/core/src/schema/index.ts`                                |
 | Column/data kinds | `Column`, `KeyColumn`, `ColumnKind`, `ScalarKind`, `ScalarValue`, `ColumnValue`, `ArrayValue`, `ValidityBitmap`                                    | `packages/core/src/columnar/`                                      |
 | JSON wire format  | `JsonRowFormat`, `JsonRowForSchema`, `JsonObjectRowForSchema`, `JsonValueForKind`, `JsonTimestampInput`, `JsonTimeRangeInput`, `JsonIntervalInput` | `packages/core/src/schema/index.ts`                                |
-| Temporal utility  | `TemporalLike`, `DurationInput`, `CalendarUnit`, `TimeZoneOptions`, `KeyLike`, `BatchSampleStrategy`                                               | `packages/core/src/core/`, `packages/core/src/sequence/`           |
+| Temporal utility  | `TemporalLike`, `DurationInput`, `CalendarUnit`, `TimeZoneOptions`, `KeyLike`, `BatchSampleStrategy`, `SequenceSample`, `SequenceCoverage`         | `packages/core/src/core/`, `packages/core/src/sequence/`           |
 
 The `pond-ts/types` subpath re-exports the schema-as-contract types with zero
 runtime (`packages/core/src/schema/public.ts`).
