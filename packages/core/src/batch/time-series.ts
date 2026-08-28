@@ -2497,6 +2497,23 @@ export class TimeSeries<S extends SeriesSchema> {
    * key, so a bucket starting before the range would key a point outside the
    * window the caller asked for.
    *
+   * `range` bounds the **grid, not the event scan**. Every bucket is filled
+   * from every event it contains, so a leading bucket that starts before
+   * `range.begin()` also sums the events in front of it when the series has
+   * them. That is what makes a bucket's value independent of the window it is
+   * viewed through — the same bucket reads the same under any `range` — but it
+   * means a narrow `range` over a wide series does *not* clip contributions to
+   * the window. To bound the events as well, narrow the series (`within(...)`)
+   * rather than the grid; note that this instead leaves the edge buckets
+   * partially filled, which is the trade being made either way.
+   *
+   * Coverage applies to a grid this call realizes. A pre-realized
+   * `BoundedSequence` is an explicit bucket list and is used exactly as given
+   * — pond will not extend it with a bucket the caller did not ask for — so
+   * `aggregate(seq.bounded(r), ...)` keeps whatever leading edge `bounded`
+   * produced. Pass the `Sequence` itself with `{ range }` to get the covering
+   * grid.
+   *
    * Defaults:
    * - `range`: `series.timeRange()`
    *

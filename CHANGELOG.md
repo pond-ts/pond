@@ -80,10 +80,17 @@ include new features and type-level changes; patch bumps are strictly additive.
   boundary**: expect an extra leading bucket, and sums/counts that now account
   for the previously-dropped events. Callers who worked around it by passing a
   pre-floored explicit `range` are unaffected — the floor is now what the
-  default does. An explicit `range` is still honoured verbatim, so a window
-  that deliberately starts after the data still excludes it. `align(...)` and
+  default does. **Note what `range` does and does not bound:** it selects the
+  grid, not the event scan, so the leading bucket is filled from every event it
+  contains — including events _before_ `range.begin()` when the series has
+  them. On a window narrower than the series (a chart viewport, say) the edge
+  bucket is therefore a complete bucket rather than a clipped one, which is
+  what keeps bar heights stable under a pan; if you need the window to bound
+  the events too, narrow the series rather than the grid. `align(...)` and
   `materialize(...)` are deliberately unchanged: their grids are _sampled_,
-  and the sample point becomes the output key. Reported by Tidal (#672).
+  and the sample point becomes the output key. A pre-realized
+  `BoundedSequence` argument is an explicit bucket list, used as given and
+  unaffected by any of this. Reported by Tidal (#672).
 
 ### Added
 
@@ -118,6 +125,15 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- `@pond-ts/charts`: **`<YAxis zeroAnchored>` no longer lets the baseline drift
+  in the controlled path.** With `onBoundsChange` set, the zoom read `0`'s
+  pixel off the axis's _live_ scale but inverted it through `baseYScales`.
+  Those two pixel spaces differ by the container's own `yTransform`, so with
+  the plot's y pan/zoom active (`panZoom="panZoomY"` / `"panZoomXY"`) the
+  baseline crept a few pixels per wheel notch — monotonically, in exactly the
+  gesture whose purpose is to hold it still. It was invisible without a
+  plot-level y zoom, where the two spaces coincide. Found by a post-merge
+  adversarial review of #676.
 - `@pond-ts/charts`: **a `BarChart`'s baseline no longer relocates under a y
   gutter pan/zoom.** `resolveBarBaseline` decided whether bars rest on zero or
   on the axis floor by reading the axis's _live, transformed_ domain — the
