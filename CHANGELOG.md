@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.63.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.64.0...HEAD
+[0.64.0]: https://github.com/pond-ts/pond/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/pond-ts/pond/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/pond-ts/pond/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/pond-ts/pond/compare/v0.60.0...v0.61.0
@@ -66,31 +67,7 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
-### Changed
-
-- `pond-ts`: **`aggregate` now emits the bucket containing the first event**,
-  where before it started at the first grid boundary _at or after_ it — so
-  every event between the two aggregated into nothing, silently. 60 daily bars
-  rolled to a calendar month came back holding 38 of them: no error, no
-  warning, no `undefined`, just a well-formed series with a third of the input
-  gone. It contradicted `aggregate`'s own documented membership rule ("point
-  events contribute to the bucket containing their timestamp") and was
-  asymmetric — the trailing partial bucket _was_ emitted. **This changes
-  results for any caller whose first event did not land exactly on a grid
-  boundary**: expect an extra leading bucket, and sums/counts that now account
-  for the previously-dropped events. Callers who worked around it by passing a
-  pre-floored explicit `range` are unaffected — the floor is now what the
-  default does. **Note what `range` does and does not bound:** it selects the
-  grid, not the event scan, so the leading bucket is filled from every event it
-  contains — including events _before_ `range.begin()` when the series has
-  them. On a window narrower than the series (a chart viewport, say) the edge
-  bucket is therefore a complete bucket rather than a clipped one, which is
-  what keeps bar heights stable under a pan; if you need the window to bound
-  the events too, narrow the series rather than the grid. `align(...)` and
-  `materialize(...)` are deliberately unchanged: their grids are _sampled_,
-  and the sample point becomes the output key. A pre-realized
-  `BoundedSequence` argument is an explicit bucket list, used as given and
-  unaffected by any of this. Reported by Tidal (#672).
+## [0.64.0] — 2026-08-28
 
 ### Added
 
@@ -120,6 +97,30 @@ include new features and type-level changes; patch bumps are strictly additive.
   not whether it's on.
 
 ### Changed
+
+- `pond-ts`: **`aggregate` now emits the bucket containing the first event**,
+  where before it started at the first grid boundary _at or after_ it — so
+  every event between the two aggregated into nothing, silently. 60 daily bars
+  rolled to a calendar month came back holding 38 of them: no error, no
+  warning, no `undefined`, just a well-formed series with a third of the input
+  gone. It contradicted `aggregate`'s own documented membership rule ("point
+  events contribute to the bucket containing their timestamp") and was
+  asymmetric — the trailing partial bucket _was_ emitted. **This changes
+  results for any caller whose first event did not land exactly on a grid
+  boundary**: expect an extra leading bucket, and sums/counts that now account
+  for the previously-dropped events. Callers who worked around it by passing a
+  pre-floored explicit `range` are unaffected — the floor is now what the
+  default does. **Note what `range` does and does not bound:** it selects the
+  grid, not the event scan, so the leading bucket is filled from every event it
+  contains — including events _before_ `range.begin()` when the series has
+  them. On a window narrower than the series (a chart viewport, say) the edge
+  bucket is therefore a complete bucket rather than a clipped one, which is
+  what keeps bar heights stable under a pan; if you need the window to bound
+  the events too, narrow the series rather than the grid. `align(...)` and
+  `materialize(...)` are deliberately unchanged: their grids are _sampled_,
+  and the sample point becomes the output key. A pre-realized
+  `BoundedSequence` argument is an explicit bucket list, used as given and
+  unaffected by any of this. Reported by Tidal (#672).
 
 - `@pond-ts/charts`: **y gutter drag now pans instead of zooming** — matching
   the x strip's own gesture (drag pans, wheel zooms) instead of the
