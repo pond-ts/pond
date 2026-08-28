@@ -193,7 +193,7 @@ export interface TradingTimeScale {
    * The **date bands** — the segmented second row of the stacked style. One
    * entry per next-coarser calendar period touching the domain (day bands
    * under intraday ticks, month bands under day ticks, year bands under
-   * month/quarter ticks), each `{ start, label, shaded }`: the period's start
+   * month/quarter ticks), each `{ start, label, showLabel, shaded }`: the period's start
    * instant (the first band's `start` may precede the domain — its label pins
    * at the left edge), the left-aligned label, and a stable zebra `shaded`
    * flag keyed to the band's calendar identity (pan/zoom-invariant). The
@@ -201,9 +201,21 @@ export interface TradingTimeScale {
    * emphasizes the top-row tick sitting at each `start`. Empty at year grain
    * (nothing coarser to band) and without a calendar provider.
    */
-  bands(
-    count?: number,
-  ): Array<{ start: number; label: string; shaded: boolean }>;
+  bands(count?: number): Array<{
+    start: number;
+    label: string;
+    /**
+     * Whether the renderer should DRAW `label`. `false` when this band's start
+     * was clamped onto a live instant a tick already labels — the text would
+     * collide, but the band itself must still be emitted, because each entry
+     * is a segment boundary (the next entry's `start` closes it) and carries
+     * that segment's `shaded` parity. Dropping the entry instead deletes the
+     * period from the row, letting the previous band stretch across it under
+     * the wrong identity and shading.
+     */
+    showLabel: boolean;
+    shaded: boolean;
+  }>;
   domain(): [number, number];
   domain(next: readonly [number, number]): TradingTimeScale;
   range(): [number, number];
@@ -446,7 +458,12 @@ export function scaleTradingTime(
       s = bandNext(s, bg);
     }
 
-    const out: Array<{ start: number; label: string; shaded: boolean }> = [];
+    const out: Array<{
+      start: number;
+      label: string;
+      showLabel: boolean;
+      shaded: boolean;
+    }> = [];
     for (let i = 0; i < candidates.length; ) {
       const live = candidates[i]!.live;
       let j = i;
@@ -467,16 +484,23 @@ export function scaleTradingTime(
       // tick already labels, duplicates one; skip it rather than draw a
       // second, colliding label over the tick's own.
       const collides = rep.s !== live && tickSet.has(live);
-      if (!collides) {
-        out.push({
-          start: live,
-          // Formatted from the representative's own RAW start, not the
-          // clamped one — a genuinely-live rep reads its own date; a
-          // gap-only run's rep reads whichever raw date it fell back to.
-          label: fmt(new Date(rep.s)),
-          shaded: bandShaded(rep.s, bg),
-        });
-      }
+      // Emit the band either way. A collision suppresses only its TEXT — the
+      // entry is also this period's segment boundary (the next entry's
+      // `start` closes it) and owns its zebra parity, so skipping it deletes
+      // the period from the row rather than de-duplicating a label: the
+      // preceding band then runs on to the next surviving start under its own
+      // shading and name. (Aug 1 2026 is a Saturday, so the August band
+      // clamps onto Mon Aug 3, which is already a day tick — dropping it left
+      // July painted across the whole of August.)
+      out.push({
+        start: live,
+        // Formatted from the representative's own RAW start, not the
+        // clamped one — a genuinely-live rep reads its own date; a
+        // gap-only run's rep reads whichever raw date it fell back to.
+        label: fmt(new Date(rep.s)),
+        showLabel: !collides,
+        shaded: bandShaded(rep.s, bg),
+      });
       i = j;
     }
     return out;

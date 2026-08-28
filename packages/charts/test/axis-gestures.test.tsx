@@ -797,6 +797,122 @@ describe('<YAxis zeroAnchored> — the bar-chart baseline pin', () => {
     }
   });
 
+  it('a controlled wheel zoom holds the pointer value under a plot y zoom', () => {
+    // The third face of the same root cause, found by the Layer-2 review of
+    // the pan fix. #678 corrected the `zeroAnchored` pivot only, so the
+    // ORDINARY controlled gutter wheel still fed a screen pixel into `base`'s
+    // pixel space. No `zeroAnchored` here — that is the point.
+    const into: { c?: ContainerFrame; r?: RowFrame } = {};
+    function Controlled() {
+      const [bounds, setBounds] = useState<readonly [number, number] | null>(
+        null,
+      );
+      return (
+        <ChartContainer
+          range={RANGE}
+          width={WIDTH}
+          showAxis={false}
+          panZoom="panZoomXY"
+          axisPanZoom="y"
+        >
+          <ChartRow height={100}>
+            <YAxis
+              id="v"
+              {...(bounds
+                ? { min: bounds[0], max: bounds[1] }
+                : { min: -50, max: 50 })}
+              onBoundsChange={setBounds}
+            />
+            <Layers>
+              <LineChart series={series()} column="v" axis="v" />
+            </Layers>
+            <Capture into={into} />
+          </ChartRow>
+        </ChartContainer>
+      );
+    }
+    const dom = draw(<Controlled />).container;
+
+    wheelOn(dom.querySelector('canvas') as HTMLElement, -120, {
+      clientX: 200,
+      clientY: 30,
+    });
+    expect(into.c!.yTransform.k).not.toBe(1);
+
+    const liveAt = (px: number) => into.r!.yScales.get('v')!.invert(px);
+    const POINTER = 35;
+    const under = liveAt(POINTER);
+
+    // A zoom's invariant: the value under the pointer stays under the pointer.
+    for (let notch = 0; notch < 3; notch += 1) {
+      wheelOn(yGutter(dom, 'v'), -120, { clientY: POINTER });
+      expect(liveAt(POINTER)).toBeCloseTo(under, 6);
+    }
+  });
+
+  it('a controlled gutter pan tracks the cursor under a plot-level y zoom', () => {
+    // Sibling of the zoom-pivot bug above, found while sweeping #673 during the
+    // v0.64.0 release check — its Layer-2 review flagged exactly this surface
+    // ("the controlled-pan sign convention and pixel-space composition") as
+    // below-high confidence, and the Codex pass that would have covered it was
+    // never run. `totalDeltaPx` is a screen delta applied to the pre-transform
+    // `base` scale, so with the plot's y zoom engaged the axis panned k× too
+    // far. Invisible at k === 1, which is every other pan test here.
+    const into: { c?: ContainerFrame; r?: RowFrame } = {};
+    function Controlled() {
+      const [bounds, setBounds] = useState<readonly [number, number] | null>(
+        null,
+      );
+      return (
+        <ChartContainer
+          range={RANGE}
+          width={WIDTH}
+          showAxis={false}
+          panZoom="panZoomXY"
+          axisPanZoom="y"
+        >
+          <ChartRow height={100}>
+            <YAxis
+              id="v"
+              {...(bounds
+                ? { min: bounds[0], max: bounds[1] }
+                : { min: -50, max: 50 })}
+              onBoundsChange={setBounds}
+            />
+            <Layers>
+              <LineChart series={series()} column="v" axis="v" />
+            </Layers>
+            <Capture into={into} />
+          </ChartRow>
+        </ChartContainer>
+      );
+    }
+    const dom = draw(<Controlled />).container;
+
+    // Engage the container's own y transform (k !== 1).
+    wheelOn(dom.querySelector('canvas') as HTMLElement, -120, {
+      clientX: 200,
+      clientY: 30,
+    });
+    const k = into.c!.yTransform.k;
+    const liveAt = (px: number) => into.r!.yScales.get('v')!.invert(px);
+    const PRESS = 40;
+    const DELTA = 20;
+    const grabbed = liveAt(PRESS);
+
+    dragBy(yGutter(dom, 'v'), 'y', DELTA, PRESS);
+
+    // The grabbed value should now sit at PRESS + DELTA.
+    const landed = liveAt(PRESS + DELTA);
+    // The invariant for a pan is that the grabbed value follows the cursor to
+    // its NEW pixel — not that a fixed pixel keeps its value, which a pan is
+    // supposed to change. (#673's own review response records getting this
+    // backwards on the first attempt.)
+    expect(k).not.toBe(1); // the condition that separates the two pixel spaces
+    expect(landed).toBeCloseTo(grabbed, 6);
+    expect(liveAt(PRESS)).not.toBeCloseTo(grabbed, 6); // and it did move
+  });
+
   it('double-click still resets, even though drag is inert', () => {
     const into: { r?: RowFrame } = {};
     const dom = draw(

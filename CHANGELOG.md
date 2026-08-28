@@ -111,9 +111,13 @@ include new features and type-level changes; patch bumps are strictly additive.
   straddles positive and negative), and an ordinary pointer-pivoted gesture
   would slide that baseline around the plot as you scroll. With
   `zeroAnchored`, every wheel notch scales the axis around wherever `0`
-  currently renders, so the baseline holds regardless of how far in or out
-  you zoom. Still gated by the container's own `axisPanZoom` opt-in — this
-  changes what the gesture does, not whether it's on.
+  currently renders, so the baseline holds however far in or out you zoom.
+  One qualification: the pivot is clamped into the axis's pixel range, so once
+  `0` has been scrolled off the plot the zoom pivots about the nearer edge and
+  the baseline does creep — benign for bars, where that clamp coincides with
+  the declared floor, but not an unconditional guarantee. Still gated by the
+  container's own `axisPanZoom` opt-in — this changes what the gesture does,
+  not whether it's on.
 
 ### Changed
 
@@ -125,6 +129,35 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- `@pond-ts/charts`: **a trading-time date band clamped onto a labelled tick
+  keeps its segment boundary.** The F-charts-21 collision fix dropped the whole
+  `{ start, label, shaded }` entry, but `<XAxis>` spans each band
+  `[its start, the next band's start)` and takes its zebra parity from
+  `shaded` — so removing an entry deleted the _period_, not a duplicate label,
+  and the preceding band ran on to the next surviving boundary under its own
+  name and shading. (Aug 1 2026 is a Saturday, so the August band clamps onto
+  Mon Aug 3, already a day tick — August vanished and July painted across it.)
+  `bands()` entries now carry **`showLabel`**, and only the text is suppressed.
+  Found by Codex reviewing the v0.64.0 range.
+- `@pond-ts/charts`: **a controlled y-gutter wheel zoom no longer pivots about
+  the wrong point under a plot-level y zoom.** The `zeroAnchored` pivot was
+  corrected above, but the ordinary (non-anchored) controlled wheel still fed
+  the pointer's _screen_ pixel into the pre-transform scale's pixel space, so
+  the value under the pointer slid out from under it — ~0.14 units per notch at
+  `k = 1.198`. Third and last face of one root cause: a screen-space pixel used
+  where `base`'s pixel space is meant.
+- `@pond-ts/charts`: **a controlled y-gutter pan no longer overshoots the
+  cursor under a plot-level y zoom.** With `onBoundsChange` set, the drag
+  translated the axis's pre-transform scale by a _screen_ pixel delta. Those
+  two pixel spaces differ by the container's `yTransform`, so with the plot's
+  own y pan/zoom engaged (`panZoom="panZoomY"` / `"panZoomXY"`) the axis
+  panned `k`× too far and the grabbed value outran the pointer. Both
+  transforms are applied in pixel space, so the base↔screen relation is
+  exactly affine and the correction is a division, on `log` and `symlog` as
+  well. (The division is exact on all three; end-to-end tracking on `symlog`
+  still drifts, because its knee is re-derived from the panned domain — a
+  pre-existing property the sibling zoom test already documents.) Invisible at
+  `k === 1`.
 - `@pond-ts/charts`: **`<YAxis zeroAnchored>` no longer lets the baseline drift
   in the controlled path.** With `onBoundsChange` set, the zoom read `0`'s
   pixel off the axis's _live_ scale but inverted it through `baseYScales`.
