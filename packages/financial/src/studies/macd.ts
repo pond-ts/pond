@@ -45,9 +45,10 @@ const MACD_SCRATCH = '__macdLine__';
  * oracle already pins. TA-Lib instead seeds each EMA on the SMA of its first
  * `n` values, so its MACD differs slightly from this one.
  *
- * That delta is small and shrinking, unlike RSI's: measured on the package's
- * oracle input, **0.142 at worst on a line whose magnitude reaches 3.74**
- * (≈3.8%), falling to **0.0033 (0.19%) by bar 79**. It is small because MACD
+ * That delta is small and shrinking, unlike RSI's. Measured on the package's
+ * oracle input, as a fraction of the line's own magnitude (3.74) throughout:
+ * **3.80% at the first bar the two share, decaying to 0.089% by bar 79** —
+ * and the signal line likewise, 2.10% to 0.132%. It is small because MACD
  * is a *difference* of two EMAs, so the seed error largely cancels, and
  * because it decays at `(1−α)^k` with `α = 2/13` and `2/27` — far faster than
  * RSI's `1/14`.

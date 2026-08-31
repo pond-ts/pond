@@ -413,6 +413,19 @@ describe('macd', () => {
     expect(() => macd(withLine as never)).toThrow(); // macdLine already there
   });
 
+  it('is all-undefined when the slow period exceeds the series', () => {
+    const short = bars([1, 2, 3, 4, 5]);
+    const r = macd(short, { fastPeriod: 2, slowPeriod: 9, signalPeriod: 3 });
+    for (const name of ['macdLine', 'macdSignal', 'macdHist']) {
+      const v = col(r, name);
+      expect(v, name).toHaveLength(5);
+      expect(
+        v.every((x) => x === undefined),
+        name,
+      ).toBe(true);
+    }
+  });
+
   it('runs over a non-default column', () => {
     const r = macd(sma(bars(rising), { period: 2 }), {
       column: 'sma',

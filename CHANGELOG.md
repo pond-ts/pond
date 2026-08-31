@@ -85,8 +85,6 @@ signalPeriod = 9, column = 'close', prefix = 'macd' }`, appending
   `ema(fast) − ema(slow)` inside this package, which is the worse surprise —
   and is pinned by a test.
 
-### Added
-
 - `@pond-ts/financial`: **`rsi(...)`** — Wilder's Relative Strength Index, the
   first of the [PND-STUDY] named indicators. `{ period = 14, column = 'close',
 output = 'rsi' }`, length-preserving warm-up (`period` rows, not `period − 1`

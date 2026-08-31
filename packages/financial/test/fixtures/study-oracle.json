@@ -6,6 +6,7 @@
       "sma": "close.rolling(n).mean()",
       "ema": "close.ewm(span=n, adjust=False).mean(); first n-1 masked",
       "bollingerStd": "rolling(n).std(ddof=0) [population]",
+      "macd": "fast/slow EMA on POND's ewm(adjust=False) first-sample seed, not TA-Lib's SMA seed; each column warms up when it can",
       "rsi": "Wilder: seed = mean of first n diffs, then (prev*(n-1) + x)/n; cross-checked against TA-Lib"
     }
   },
