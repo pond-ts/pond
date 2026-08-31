@@ -23,6 +23,7 @@ import {
   envelope,
   percentChange,
   rsi,
+  macd,
 } from '../src/index.js';
 
 interface OracleCase {
@@ -34,6 +35,9 @@ interface OracleCase {
     percent?: number;
     periods?: number;
     maType?: 'sma' | 'ema';
+    fastPeriod?: number;
+    slowPeriod?: number;
+    signalPeriod?: number;
   };
   expected: Record<string, Array<number | null>>;
 }
@@ -90,6 +94,15 @@ function run(c: OracleCase): unknown {
       return percentChange(series(), p as { periods?: number });
     case 'rsi':
       return rsi(series(), p as { period?: number });
+    case 'macd':
+      return macd(
+        series(),
+        p as {
+          fastPeriod?: number;
+          slowPeriod?: number;
+          signalPeriod?: number;
+        },
+      );
     default:
       // A fixture case whose study has no dispatch here must fail loudly, not
       // silently skip — the guard for future fan-out studies.

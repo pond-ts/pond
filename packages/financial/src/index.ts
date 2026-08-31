@@ -44,3 +44,5 @@ export type { PercentChangeOptions } from './studies/percent-change.js';
 export { percentChange } from './studies/percent-change.js';
 export type { RsiOptions } from './studies/rsi.js';
 export { rsi } from './studies/rsi.js';
+export type { MacdOptions } from './studies/macd.js';
+export { macd } from './studies/macd.js';

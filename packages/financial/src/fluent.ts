@@ -58,6 +58,8 @@ import type { EnvelopeOptions } from './studies/envelope.js';
 import { percentChange as percentChangeStudy } from './studies/percent-change.js';
 import type { RsiOptions } from './studies/rsi.js';
 import { rsi as rsiStudy } from './studies/rsi.js';
+import type { MacdOptions } from './studies/macd.js';
+import { macd as macdStudy } from './studies/macd.js';
 import type { PercentChangeOptions } from './studies/percent-change.js';
 
 /** A series schema with one optional number column appended — the shape
@@ -124,6 +126,15 @@ declare module 'pond-ts' {
     rsi<const Output extends string = 'rsi'>(
       options?: RsiOptions<S, Output>,
     ): TimeSeries<AppendOpt<S, Output>>;
+    /** Fluent MACD. */
+    macd<const Prefix extends string = 'macd'>(
+      options?: MacdOptions<S, Prefix>,
+    ): TimeSeries<
+      AppendOpt<
+        AppendOpt<AppendOpt<S, `${Prefix}Line`>, `${Prefix}Signal`>,
+        `${Prefix}Hist`
+      >
+    >;
   }
 }
 
@@ -195,4 +206,10 @@ proto.rsi = function (
   options?: RsiOptions<SeriesSchema, string>,
 ) {
   return rsiStudy(this, options);
+};
+proto.macd = function (
+  this: TimeSeries<SeriesSchema>,
+  options?: MacdOptions<SeriesSchema, string>,
+) {
+  return macdStudy(this, options);
 };

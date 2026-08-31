@@ -69,6 +69,24 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- `@pond-ts/financial`: **`macd(...)`** — Moving Average Convergence/Divergence,
+  the second [PND-STUDY] named indicator. `{ fastPeriod = 12, slowPeriod = 26,
+signalPeriod = 9, column = 'close', prefix = 'macd' }`, appending
+  `macdLine` / `macdSignal` / `macdHist`, plus a fluent `.macd()`.
+
+  Two deliberate deltas from TA-Lib, both documented on the study:
+  **each column warms up when it can** (the line at bar 25, signal and
+  histogram at 33) where TA-Lib masks all three back to 33, keeping eight real
+  values it discards; and the EMAs are **pond's own** (`α = 2/(span+1)` seeded
+  on the first sample — what `ema()` already ships) rather than TA-Lib's
+  SMA-seeded ones. The second is a _seed_ difference, so it decays: measured
+  at 3.8% of the line's magnitude at the first shared bar, 0.089% by bar 79.
+  Seeding TA-Lib's way would make `macd()` disagree with
+  `ema(fast) − ema(slow)` inside this package, which is the worse surprise —
+  and is pinned by a test.
+
+### Added
+
 - `@pond-ts/financial`: **`rsi(...)`** — Wilder's Relative Strength Index, the
   first of the [PND-STUDY] named indicators. `{ period = 14, column = 'close',
 output = 'rsi' }`, length-preserving warm-up (`period` rows, not `period − 1`

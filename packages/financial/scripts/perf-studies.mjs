@@ -7,7 +7,7 @@
 // run from `packages/financial/` after `npm run build` at the repo root.
 import { performance } from 'node:perf_hooks';
 import { TimeSeries } from 'pond-ts';
-import { bollinger, ema, rsi, sma } from '../dist/index.js';
+import { bollinger, ema, macd, rsi, sma } from '../dist/index.js';
 
 const PERIOD = 20;
 
@@ -90,6 +90,7 @@ function scaleResults(length) {
       benchmark('sma({ period: 20 })', () => sma(series, { period: PERIOD })),
       benchmark('ema({ period: 20 })', () => ema(series, { period: PERIOD })),
       benchmark('rsi({ period: 14 })', () => rsi(series, { period: 14 })),
+      benchmark('macd({ 12, 26, 9 })', () => macd(series)),
       benchmark('bollinger({ period: 20 })', () =>
         bollinger(series, { period: PERIOD }),
       ),

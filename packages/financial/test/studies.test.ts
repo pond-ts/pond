@@ -12,6 +12,7 @@ import {
   envelope,
   percentChange,
   rsi,
+  macd,
 } from '../src/index.js';
 
 /** A close-only bar series at 1ms spacing (value = the close). */
@@ -321,5 +322,106 @@ describe('rsi', () => {
     const v = col(rsi(bars([1, 2, 3]), { period: 5 }), 'rsi');
     expect(v).toHaveLength(3);
     expect(v.every((x) => x === undefined)).toBe(true);
+  });
+});
+
+describe('macd', () => {
+  const rising = Array.from({ length: 60 }, (_, i) => 100 + i);
+
+  it('each column warms up when it can, not all at the slowest', () => {
+    // The line is defined once the SLOW ema is (bar slow-1); the signal a
+    // further signalPeriod-1 bars on. TA-Lib masks the line back to the
+    // signal's start and throws those values away; we keep them.
+    const r = macd(bars(rising), {
+      fastPeriod: 3,
+      slowPeriod: 7,
+      signalPeriod: 4,
+    });
+    const line = col(r, 'macdLine');
+    const signal = col(r, 'macdSignal');
+    const hist = col(r, 'macdHist');
+
+    expect(line[5]).toBeUndefined();
+    expect(line[6]).toBeDefined(); // slowPeriod - 1
+    expect(signal[8]).toBeUndefined();
+    expect(signal[9]).toBeDefined(); // + signalPeriod - 1
+    expect(hist[8]).toBeUndefined();
+    expect(hist[9]).toBeDefined();
+    expect(line).toHaveLength(60); // length-preserving
+  });
+
+  it('the line is exactly ema(fast) − ema(slow) from this package', () => {
+    // The internal-consistency property that decided the seed convention: if
+    // this ever fails, macd() and ema() have drifted apart and the reason for
+    // NOT matching TA-Lib's seed has evaporated.
+    const src = bars(rising);
+    const f = col(ema(src, { period: 3, output: 'f' }), 'f');
+    const sl = col(ema(src, { period: 7, output: 's' }), 's');
+    const line = col(
+      macd(src, { fastPeriod: 3, slowPeriod: 7, signalPeriod: 4 }),
+      'macdLine',
+    );
+    for (let i = 0; i < rising.length; i += 1) {
+      if (f[i] === undefined || sl[i] === undefined) {
+        expect(line[i]).toBeUndefined();
+      } else {
+        expect(line[i]).toBeCloseTo(f[i]! - sl[i]!, 12);
+      }
+    }
+  });
+
+  it('the histogram is exactly line − signal', () => {
+    const r = macd(bars(rising), {
+      fastPeriod: 3,
+      slowPeriod: 7,
+      signalPeriod: 4,
+    });
+    const line = col(r, 'macdLine');
+    const signal = col(r, 'macdSignal');
+    const hist = col(r, 'macdHist');
+    for (let i = 0; i < rising.length; i += 1) {
+      if (signal[i] === undefined) expect(hist[i]).toBeUndefined();
+      else expect(hist[i]).toBeCloseTo(line[i]! - signal[i]!, 12);
+    }
+  });
+
+  it('honours a custom prefix and leaves no scratch column behind', () => {
+    const r = macd(bars(rising), { prefix: 'x' });
+    expect(col(r, 'xLine')[30]).toBeDefined();
+    expect(col(r, 'xSignal')[40]).toBeDefined();
+    expect(col(r, 'xHist')[40]).toBeDefined();
+    // The signal EMA is taken over a scratch column; it must not survive.
+    expect(
+      (r as unknown as { column(n: string): unknown }).column('__macdLine__'),
+    ).toBeUndefined();
+  });
+
+  it('rejects a fast period that is not shorter than the slow one', () => {
+    expect(() =>
+      macd(bars(rising), { fastPeriod: 26, slowPeriod: 26 }),
+    ).toThrow(TypeError);
+    expect(() =>
+      macd(bars(rising), { fastPeriod: 30, slowPeriod: 26 }),
+    ).toThrow(TypeError);
+  });
+
+  it('rejects non-positive or fractional periods, and a colliding prefix', () => {
+    expect(() => macd(bars(rising), { signalPeriod: 0 })).toThrow(TypeError);
+    expect(() => macd(bars(rising), { fastPeriod: 2.5 })).toThrow(TypeError);
+    expect(() => macd(bars(rising), { prefix: 'clo' as never })).not.toThrow();
+    const withLine = macd(bars(rising));
+    expect(() => macd(withLine as never)).toThrow(); // macdLine already there
+  });
+
+  it('runs over a non-default column', () => {
+    const r = macd(sma(bars(rising), { period: 2 }), {
+      column: 'sma',
+      fastPeriod: 3,
+      slowPeriod: 7,
+      signalPeriod: 4,
+      prefix: 'smaMacd',
+    });
+    expect(col(r, 'smaMacdLine')[20]).toBeDefined();
+    expect(col(r, 'smaMacdSignal')[20]).toBeDefined();
   });
 });

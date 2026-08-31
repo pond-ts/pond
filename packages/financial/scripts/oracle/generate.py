@@ -177,6 +177,70 @@ def rsi(n: int) -> dict:
     return {"rsi": col(r)}
 
 
+def macd(fast: int, slow: int, sig: int) -> dict:
+    """MACD on POND'S EMA (first-sample seed), not TA-Lib's (SMA seed).
+
+    Deliberate: seeding TA-Lib's way here would make macd() disagree with
+    ema(fast) - ema(slow) inside our own package. The delta is measured and
+    documented in studies/macd.ts; it is sub-percent and shrinking, unlike
+    RSI's, because MACD is a DIFFERENCE of two EMAs so the seed error largely
+    cancels. TA-Lib parity is therefore asserted only as a BOUND here, not as
+    equality — which is the honest thing to check when the definitions differ
+    on purpose.
+
+    Each column warms up when it can, rather than all three waiting for the
+    slowest (TA-Lib masks the line back to where the signal is valid).
+    """
+    fast_e = s.ewm(span=fast, adjust=False).mean()
+    fast_e.iloc[: fast - 1] = math.nan
+    slow_e = s.ewm(span=slow, adjust=False).mean()
+    slow_e.iloc[: slow - 1] = math.nan
+    line = fast_e - slow_e
+
+    # The signal is an EMA of the line, whose own warm-up shifts past the
+    # line's leading NaNs -- the same thing our kernel does.
+    valid = line.dropna()
+    sig_e = valid.ewm(span=sig, adjust=False).mean()
+    sig_e.iloc[: sig - 1] = math.nan
+    signal = pd.Series(math.nan, index=s.index, dtype="float64")
+    signal.loc[valid.index] = sig_e
+    hist = line - signal
+
+    if talib is not None:
+        mt, st, _ = talib.MACD(
+            np.asarray(closes, dtype=float),
+            fastperiod=fast,
+            slowperiod=slow,
+            signalperiod=sig,
+        )
+        both = (~np.isnan(mt)) & (~np.asarray(line.isna()))
+        d = np.abs(np.asarray(line, dtype=float)[both] - mt[both])
+        scale = float(np.nanmax(np.abs(mt)))
+        worst, tail = float(d.max()), float(d[-1])
+        # The delta from TA-Lib here is a SEED difference, so what it must do
+        # is DECAY: a differing seed washes out of a recursion, a differing
+        # recursion does not. Asserting a fixed tolerance would be the wrong
+        # shape - it is 3.8% at the first comparable bar and 10.6% at short
+        # spans, both entirely transient. Asserting convergence instead
+        # tolerates the deliberate difference while still failing loudly if
+        # the recursion itself is wrong.
+        assert tail < worst, (
+            f"MACD({fast},{slow},{sig}) delta from TA-Lib is not decaying "
+            f"(worst {worst:.6f}, tail {tail:.6f}) - that is a recursion "
+            "difference, not the documented seed difference"
+        )
+        assert tail / scale < 0.01, (
+            f"MACD({fast},{slow},{sig}) still {tail / scale:.3%} from TA-Lib "
+            "at the last bar - too far to be seed transient alone"
+        )
+        print(
+            f"  macd({fast},{slow},{sig}): seed transient {worst / scale:.2%} "
+            f"at the first shared bar, decayed to {tail / scale:.3%} by the last"
+        )
+
+    return {"macdLine": col(line), "macdSignal": col(signal), "macdHist": col(hist)}
+
+
 cases = [
     {"study": "sma", "params": {"period": 20}, "expected": sma(20)},
     {"study": "sma", "params": {"period": 5}, "expected": sma(5)},
@@ -218,6 +282,16 @@ cases = [
     },
     {"study": "rsi", "params": {"period": 14}, "expected": rsi(14)},
     {"study": "rsi", "params": {"period": 5}, "expected": rsi(5)},
+    {
+        "study": "macd",
+        "params": {"fastPeriod": 12, "slowPeriod": 26, "signalPeriod": 9},
+        "expected": macd(12, 26, 9),
+    },
+    {
+        "study": "macd",
+        "params": {"fastPeriod": 3, "slowPeriod": 7, "signalPeriod": 4},
+        "expected": macd(3, 7, 4),
+    },
 ]
 
 out = {

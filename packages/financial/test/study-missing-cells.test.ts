@@ -8,6 +8,7 @@ import {
   percentChange,
   envelope,
   rsi,
+  macd,
 } from '../src/index.js';
 
 /* -------------------------------------------------------------------------- */
@@ -116,6 +117,24 @@ describe('[PND-STUDYBOX] warm-up heads read as undefined, not NaN', () => {
     const v = cells(out, 'pctChange');
     expect(v[0]).toBeUndefined();
     expect(v[1]).toBeCloseTo(1, 10);
+  });
+
+  it('macd warms up per column without leaking NaN', () => {
+    const out = macd(bars(rising), {
+      fastPeriod: 3,
+      slowPeriod: 7,
+      signalPeriod: 4,
+    });
+    for (const name of ['macdLine', 'macdSignal', 'macdHist']) {
+      const v = cells(out, name);
+      expect(
+        v.every((x) => !Number.isNaN(x as number)),
+        name,
+      ).toBe(true);
+    }
+    // Line before signal — the per-column warm-up, not a single shared one.
+    expect(cells(out, 'macdLine')[6]).toBeDefined();
+    expect(cells(out, 'macdSignal')[6]).toBeUndefined();
   });
 
   it('rsi warms up without leaking NaN', () => {
