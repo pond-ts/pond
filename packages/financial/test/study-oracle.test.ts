@@ -22,6 +22,7 @@ import {
   zScore,
   envelope,
   percentChange,
+  rsi,
 } from '../src/index.js';
 
 interface OracleCase {
@@ -87,6 +88,8 @@ function run(c: OracleCase): unknown {
       );
     case 'percentChange':
       return percentChange(series(), p as { periods?: number });
+    case 'rsi':
+      return rsi(series(), p as { period?: number });
     default:
       // A fixture case whose study has no dispatch here must fail loudly, not
       // silently skip — the guard for future fan-out studies.

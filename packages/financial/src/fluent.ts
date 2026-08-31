@@ -56,6 +56,8 @@ import type { ZScoreOptions } from './studies/z-score.js';
 import { envelope as envelopeStudy } from './studies/envelope.js';
 import type { EnvelopeOptions } from './studies/envelope.js';
 import { percentChange as percentChangeStudy } from './studies/percent-change.js';
+import type { RsiOptions } from './studies/rsi.js';
+import { rsi as rsiStudy } from './studies/rsi.js';
 import type { PercentChangeOptions } from './studies/percent-change.js';
 
 /** A series schema with one optional number column appended — the shape
@@ -117,6 +119,10 @@ declare module 'pond-ts' {
     /** Fluent percent change (rate of change). */
     percentChange<const Output extends string = 'pctChange'>(
       options?: PercentChangeOptions<S, Output>,
+    ): TimeSeries<AppendOpt<S, Output>>;
+    /** Fluent Wilder RSI. */
+    rsi<const Output extends string = 'rsi'>(
+      options?: RsiOptions<S, Output>,
     ): TimeSeries<AppendOpt<S, Output>>;
   }
 }
@@ -183,4 +189,10 @@ proto.percentChange = function (
   options?: PercentChangeOptions<SeriesSchema, string>,
 ) {
   return percentChangeStudy(this, options);
+};
+proto.rsi = function (
+  this: TimeSeries<SeriesSchema>,
+  options?: RsiOptions<SeriesSchema, string>,
+) {
+  return rsiStudy(this, options);
 };

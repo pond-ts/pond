@@ -31,11 +31,12 @@ TypeScript still matches, and commit the updated JSON.
 
 An oracle only helps if its conventions match ours — the defaults will not:
 
-| study     | pandas                                        | note                                             |
-| --------- | --------------------------------------------- | ------------------------------------------------ |
-| SMA       | `close.rolling(n).mean()`                     | —                                                |
-| EMA       | `close.ewm(span=n, adjust=False).mean()`      | `adjust=False` (recursive); **not** the default  |
-| Bollinger | `middle ± k · close.rolling(n).std(ddof=0)`   | **population** stdev (TA-Lib's), not pandas' ddof=1 |
+| study     | pandas                                                          | note                                                                                                                                                                                                                                 |
+| --------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| SMA       | `close.rolling(n).mean()`                                       | —                                                                                                                                                                                                                                    |
+| EMA       | `close.ewm(span=n, adjust=False).mean()`                        | `adjust=False` (recursive); **not** the default                                                                                                                                                                                      |
+| Bollinger | `middle ± k · close.rolling(n).std(ddof=0)`                     | **population** stdev (TA-Lib's), not pandas' ddof=1                                                                                                                                                                                  |
+| RSI       | Wilder: seed = mean of first `n` diffs, then `(prev·(n−1)+x)/n` | **cross-checked against TA-Lib** — the generator asserts the warm-up mask _and_ the values, and fails rather than writing a drifted fixture. A first-sample-seeded EMA of the same `α` is a different indicator (7+ RSI points out). |
 
 The EMA head is masked to the first `n-1` rows to match our length-preserving
 `minSamples: n` warm-up. The input series is deliberately never flat, so the
@@ -44,7 +45,8 @@ doesn't arise here.
 
 ## Phase 2 (named indicators)
 
-RSI / MACD / ATR / stochastics will add **TA-Lib** (`pip install TA-Lib`,
+**RSI has landed** and does exactly this — see the table above. The remaining
+MACD / ATR / stochastics add **TA-Lib** (`pip install TA-Lib`,
 needs the C library — `brew install ta-lib`) alongside pandas, as the
 industry-standard cross-check. Because those indicators have multiple published
 definitions (Wilder smoothing, etc.), the oracle documents any delta from

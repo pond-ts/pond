@@ -7,7 +7,7 @@
 // run from `packages/financial/` after `npm run build` at the repo root.
 import { performance } from 'node:perf_hooks';
 import { TimeSeries } from 'pond-ts';
-import { bollinger, ema, sma } from '../dist/index.js';
+import { bollinger, ema, rsi, sma } from '../dist/index.js';
 
 const PERIOD = 20;
 
@@ -89,6 +89,7 @@ function scaleResults(length) {
       benchmark('hand-rolled ema floor', () => handRolledEma(close)),
       benchmark('sma({ period: 20 })', () => sma(series, { period: PERIOD })),
       benchmark('ema({ period: 20 })', () => ema(series, { period: PERIOD })),
+      benchmark('rsi({ period: 14 })', () => rsi(series, { period: 14 })),
       benchmark('bollinger({ period: 20 })', () =>
         bollinger(series, { period: PERIOD }),
       ),
