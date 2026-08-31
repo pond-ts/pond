@@ -7,6 +7,7 @@ import {
   zScore,
   percentChange,
   envelope,
+  rsi,
 } from '../src/index.js';
 
 /* -------------------------------------------------------------------------- */
@@ -116,6 +117,17 @@ describe('[PND-STUDYBOX] warm-up heads read as undefined, not NaN', () => {
     expect(v[0]).toBeUndefined();
     expect(v[1]).toBeCloseTo(1, 10);
   });
+
+  it('rsi warms up without leaking NaN', () => {
+    // rsi is the first study to hand-roll its own NaN derivation (the
+    // gain/loss split), so it is the most likely to leak one into a
+    // user-visible column rather than reading back as `undefined`.
+    const out = rsi(bars(rising), { period: 5 });
+    const v = cells(out, 'rsi');
+    expect(v.slice(0, 5).every((x) => x === undefined)).toBe(true);
+    expect(typeof v[5]).toBe('number');
+    expect(v.every((x) => !Number.isNaN(x as number))).toBe(true);
+  });
 });
 
 describe('[PND-STUDYBOX] the study-specific guards still produce missing', () => {
@@ -123,6 +135,17 @@ describe('[PND-STUDYBOX] the study-specific guards still produce missing', () =>
   // are the only per-cell guards that survived the NaN-propagation
   // simplification, so they are the ones worth pinning.
   const flat = Array.from({ length: 10 }, () => 42);
+
+  it('rsi emits missing on a flat window (0/0 has no relative strength)', () => {
+    // And the value is `undefined`, not NaN — the deliberate delta from
+    // TA-Lib, which reports 0 here and so cannot distinguish "no movement"
+    // from "every bar fell".
+    const out = rsi(bars(flat), { period: 3 });
+    const v = cells(out, 'rsi');
+    expect(v[3]).toBeUndefined();
+    expect(v[9]).toBeUndefined();
+    expect(v.every((x) => !Number.isNaN(x as number))).toBe(true);
+  });
 
   it('bollinger emits missing bands where σ = 0', () => {
     const out = bollinger(bars(flat), { period: 5 });

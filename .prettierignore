@@ -27,3 +27,9 @@ brand/Pond Brand Spec.html
 # reformats a multi-line `{/* … */}` into escaped markdown (`\*`, collapsed
 # lists) — which shreds it. It's a template, never a built page.
 website/docs/charts/gallery/_template.mdx
+
+# Machine-generated oracle fixture. `scripts/oracle/generate.py` is the sole
+# author and json.dumps decides its shape; letting prettier reflow it makes
+# every regeneration produce a whole-file diff on top of whatever actually
+# changed, which is exactly the review signal the fixture exists to give.
+packages/financial/test/fixtures/study-oracle.json

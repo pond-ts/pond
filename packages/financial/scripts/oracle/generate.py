@@ -157,9 +157,20 @@ def rsi(n: int) -> dict:
 
     if talib is not None:
         ref = pd.Series(talib.RSI(np.asarray(closes, dtype=float), timeperiod=n))
+        # Compare the WARM-UPS before the values. `nanmax(abs(a - b))` is blind
+        # to any index where only one side is NaN — the difference there is
+        # itself NaN and gets skipped — so a series emitting one bar earlier
+        # than TA-Lib, with an arbitrarily wrong value in that slot, would pass
+        # at 0.0. Which is precisely the off-by-one this assert exists to
+        # catch, so it has to be checked as a mask, not a magnitude.
+        assert list(r.isna()) == list(ref.isna()), (
+            f"RSI({n}) warm-up differs from TA-Lib: "
+            f"ours first valid {r.first_valid_index()}, "
+            f"TA-Lib {ref.first_valid_index()}"
+        )
         delta = float(np.nanmax(np.abs(r - ref)))
         assert delta < 1e-9, f"RSI({n}) disagrees with TA-Lib by {delta}"
-        print(f"  rsi({n}): matches TA-Lib to {delta:.3g}")
+        print(f"  rsi({n}): matches TA-Lib to {delta:.3g} (warm-ups identical)")
     else:
         print(f"  rsi({n}): pandas only - TA-Lib not installed, cross-check SKIPPED")
 

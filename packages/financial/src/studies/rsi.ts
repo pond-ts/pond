@@ -31,7 +31,8 @@ export interface RsiOptions<S extends SeriesSchema, Output extends string> {
  *
  * ## Definition
  *
- * This is **TA-Lib's RSI**, which is Wilder's original: the gain/loss averages
+ * This is **TA-Lib's RSI**, which is Wilder's original (with one deliberate
+ * delta on a flat window — see *Edges*): the gain/loss averages
  * are seeded on the arithmetic mean of the first `period` differences and then
  * carried by `avg[i] = (avg[i−1]·(period−1) + x[i]) / period`. Verified against
  * TA-Lib bar-for-bar in the oracle fixture — agreement to `1.4e-14`.
@@ -48,9 +49,15 @@ export interface RsiOptions<S extends SeriesSchema, Output extends string> {
  * ## Edges
  *
  * - **No losses in the window** (`avgLoss = 0`) → RSI `100`, the limit of the
- *   formula rather than a division by zero. `avgGain = 0` alongside it (a
- *   perfectly flat window) has no defined relative strength and yields
- *   `undefined`.
+ *   formula rather than a division by zero.
+ * - **A perfectly flat window** (`avgGain = avgLoss = 0`) → `undefined`.
+ *   **This is a deliberate delta from TA-Lib**, which returns `0` there. The
+ *   ratio is `0/0`: there is no relative strength to report, and `0` is the
+ *   same value TA-Lib gives for "every bar fell", so it conflates the
+ *   strongest possible downtrend with no movement at all. pond's studies
+ *   distinguish "no answer" from "an answer that happens to be zero"
+ *   everywhere else, so it does here too. Everything outside this case
+ *   matches TA-Lib to `1.4e-14`.
  * - **A leading gap shifts the start, it doesn't kill the study.** Running
  *   over another study's output (whose own warm-up leaves missing rows at the
  *   head) begins that many bars later and is otherwise unaffected.
