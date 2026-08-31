@@ -177,6 +177,87 @@ def rsi(n: int) -> dict:
     return {"rsi": col(r)}
 
 
+def macd(fast: int, slow: int, sig: int) -> dict:
+    """MACD on POND'S EMA (first-sample seed), not TA-Lib's (SMA seed).
+
+    Deliberate: seeding TA-Lib's way here would make macd() disagree with
+    ema(fast) - ema(slow) inside our own package. The delta is measured and
+    documented in studies/macd.ts; it is sub-percent and shrinking, unlike
+    RSI's, because MACD is a DIFFERENCE of two EMAs so the seed error largely
+    cancels. TA-Lib parity is therefore asserted only as a BOUND here, not as
+    equality — which is the honest thing to check when the definitions differ
+    on purpose.
+
+    Each column warms up when it can, rather than all three waiting for the
+    slowest (TA-Lib masks the line back to where the signal is valid).
+    """
+    fast_e = s.ewm(span=fast, adjust=False).mean()
+    fast_e.iloc[: fast - 1] = math.nan
+    slow_e = s.ewm(span=slow, adjust=False).mean()
+    slow_e.iloc[: slow - 1] = math.nan
+    line = fast_e - slow_e
+
+    # The signal is an EMA of the line, whose own warm-up shifts past the
+    # line's leading NaNs -- the same thing our kernel does.
+    valid = line.dropna()
+    sig_e = valid.ewm(span=sig, adjust=False).mean()
+    sig_e.iloc[: sig - 1] = math.nan
+    signal = pd.Series(math.nan, index=s.index, dtype="float64")
+    signal.loc[valid.index] = sig_e
+    hist = line - signal
+
+    if talib is not None:
+        mt, st, _ = talib.MACD(  # st is the signal - checked below too
+            np.asarray(closes, dtype=float),
+            fastperiod=fast,
+            slowperiod=slow,
+            signalperiod=sig,
+        )
+        scale = float(np.nanmax(np.abs(mt)))
+
+        # The delta from TA-Lib here is a SEED difference, so what it must do
+        # is DECAY - a differing seed washes out of a recursion, a differing
+        # recursion does not. A fixed tolerance is therefore the wrong shape:
+        # the transient is 3.8% at the first shared bar and 10.6% at short
+        # spans. What discriminates is the TAIL.
+        #
+        # Only the tail. An earlier version also asserted `tail < worst` as
+        # the "is it decaying" check; a review showed it is vacuous - it holds
+        # for every wrong alpha, including 1/n, which is 43% out at the tail
+        # and still decaying. Measured separation at (12,26,9), tail as a
+        # fraction of scale:
+        #
+        #     correct 2/(n+1)   0.089%      <- passes
+        #     wrong   2/(n+2)   2.304%
+        #     wrong   2/n       2.818%
+        #     wrong   1/n      42.850%
+        #
+        # so 0.5% sits ~25x clear of the correct value and ~5x below the
+        # nearest wrong one. Both the line AND the signal are checked: the
+        # signal is the novel piece here (an EMA of a derived array, whose
+        # warm-up shifts past the line's own), so leaving it unchecked would
+        # have exempted exactly the part worth checking.
+        for label, ours, ref in (
+            ("line", line, mt),
+            ("signal", signal, st),
+        ):
+            both = (~np.isnan(ref)) & (~np.asarray(ours.isna()))
+            d = np.abs(np.asarray(ours, dtype=float)[both] - ref[both])
+            worst, tail = float(d.max()), float(d[-1])
+            assert tail / scale < 0.005, (
+                f"MACD({fast},{slow},{sig}) {label} is {tail / scale:.3%} from "
+                "TA-Lib at the last bar - too far to be the seed transient, "
+                "which points at the recursion rather than the seed"
+            )
+            print(
+                f"  macd({fast},{slow},{sig}) {label}: seed transient "
+                f"{worst / scale:.2%} at the first shared bar, "
+                f"decayed to {tail / scale:.3%} by the last"
+            )
+
+    return {"macdLine": col(line), "macdSignal": col(signal), "macdHist": col(hist)}
+
+
 cases = [
     {"study": "sma", "params": {"period": 20}, "expected": sma(20)},
     {"study": "sma", "params": {"period": 5}, "expected": sma(5)},
@@ -218,6 +299,16 @@ cases = [
     },
     {"study": "rsi", "params": {"period": 14}, "expected": rsi(14)},
     {"study": "rsi", "params": {"period": 5}, "expected": rsi(5)},
+    {
+        "study": "macd",
+        "params": {"fastPeriod": 12, "slowPeriod": 26, "signalPeriod": 9},
+        "expected": macd(12, 26, 9),
+    },
+    {
+        "study": "macd",
+        "params": {"fastPeriod": 3, "slowPeriod": 7, "signalPeriod": 4},
+        "expected": macd(3, 7, 4),
+    },
 ]
 
 out = {
@@ -231,6 +322,10 @@ out = {
             "sma": "close.rolling(n).mean()",
             "ema": "close.ewm(span=n, adjust=False).mean(); first n-1 masked",
             "bollingerStd": "rolling(n).std(ddof=0) [population]",
+            "macd": (
+                "fast/slow EMA on POND's ewm(adjust=False) first-sample seed, "
+                "not TA-Lib's SMA seed; each column warms up when it can"
+            ),
             "rsi": (
                 "Wilder: seed = mean of first n diffs, then "
                 "(prev*(n-1) + x)/n; cross-checked against TA-Lib"
