@@ -11,6 +11,7 @@ import {
   zScore,
   envelope,
   percentChange,
+  rsi,
 } from '../src/index.js';
 
 /** A close-only bar series at 1ms spacing (value = the close). */
@@ -212,5 +213,113 @@ describe('percentChange', () => {
     expect(() => percentChange(bars([1, 2]), { periods: 0 })).toThrow(
       /positive integer/,
     );
+  });
+});
+
+describe('rsi', () => {
+  it('needs period+1 bars: the first `period` rows are undefined', () => {
+    // RSI is built from DIFFERENCES, so a period-bar average of them needs
+    // period+1 bars. Off-by-one here is the classic RSI mistake.
+    const r = rsi(bars([1, 2, 3, 4, 5, 6]), { period: 3 });
+    const v = col(r, 'rsi');
+    expect(v.slice(0, 3).every((x) => x === undefined)).toBe(true);
+    expect(v[3]).toBeDefined();
+    expect(v).toHaveLength(6); // length-preserving
+  });
+
+  it('is 100 when the window has no losses', () => {
+    // Monotonically rising: avgLoss is 0, the ratio diverges, RSI's limit
+    // is 100 — not a division by zero and not undefined.
+    const v = col(rsi(bars([1, 2, 3, 4, 5, 6]), { period: 3 }), 'rsi');
+    expect(v[3]).toBe(100);
+    expect(v[5]).toBe(100);
+  });
+
+  it('is 0 when the window has no gains', () => {
+    const v = col(rsi(bars([6, 5, 4, 3, 2, 1]), { period: 3 }), 'rsi');
+    expect(v[3]).toBe(0);
+  });
+
+  it('is undefined on a perfectly flat window (no relative strength)', () => {
+    // avgGain and avgLoss are both 0: the ratio is 0/0, which has no value
+    // rather than a conventional one.
+    const v = col(rsi(bars([5, 5, 5, 5, 5, 5]), { period: 3 }), 'rsi');
+    expect(v[3]).toBeUndefined();
+    expect(v[5]).toBeUndefined();
+  });
+
+  it('stays within 0..100', () => {
+    const closes = Array.from(
+      { length: 60 },
+      (_, i) => 100 + 10 * Math.sin(i / 4) + i * 0.3,
+    );
+    for (const x of col(rsi(bars(closes), { period: 14 }), 'rsi')) {
+      if (x !== undefined) {
+        expect(x).toBeGreaterThanOrEqual(0);
+        expect(x).toBeLessThanOrEqual(100);
+      }
+    }
+  });
+
+  it('defaults to period 14 and the `rsi` output name, and honours both', () => {
+    const closes = Array.from({ length: 40 }, (_, i) => 100 + (i % 5) - 2);
+    const def = rsi(bars(closes));
+    expect(col(def, 'rsi')[13]).toBeUndefined(); // period 14 → 14 warm-up rows
+    expect(col(def, 'rsi')[14]).toBeDefined();
+
+    const named = rsi(bars(closes), { period: 5, output: 'momentum' });
+    expect(col(named, 'momentum')[5]).toBeDefined();
+    expect(col(named, 'rsi')[5]).toBeUndefined(); // no default column written
+  });
+
+  it('runs over any numeric column, including another study output', () => {
+    // The uniform-shape rule: never hard-code `close`.
+    const chained = rsi(
+      sma(bars([1, 3, 2, 5, 4, 7, 6, 9, 8, 11]), { period: 2 }),
+      {
+        column: 'sma',
+        period: 3,
+        output: 'smaRsi',
+      },
+    );
+    expect(col(chained, 'smaRsi')[9]).toBeDefined();
+  });
+
+  it('propagates an interior gap, but only shifts for a leading one', () => {
+    // The asymmetry is inherent to a recursion and is documented as such: a
+    // leading gap (a chained study's warm-up) moves the seed; an interior one
+    // has no state to carry across and poisons what follows.
+    const withHole = new TimeSeries({
+      name: 'bars',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'close', kind: 'number', required: false },
+      ] as const,
+      rows: [
+        [0, 1],
+        [1, 2],
+        [2, 3],
+        [3, 4],
+        [4, undefined],
+        [5, 6],
+        [6, 7],
+        [7, 8],
+      ] as Array<[number, number | undefined]>,
+    });
+    const v = col(rsi(withHole as never, { period: 3 }), 'rsi');
+    expect(v[3]).toBeDefined(); // seeded before the hole
+    expect(v[7]).toBeUndefined(); // and never recovers after it
+  });
+
+  it('rejects a non-positive or fractional period, and a colliding output', () => {
+    expect(() => rsi(bars([1, 2, 3]), { period: 0 })).toThrow(TypeError);
+    expect(() => rsi(bars([1, 2, 3]), { period: 2.5 })).toThrow(TypeError);
+    expect(() => rsi(bars([1, 2, 3]), { output: 'close' })).toThrow();
+  });
+
+  it('is all-undefined when the period exceeds the available differences', () => {
+    const v = col(rsi(bars([1, 2, 3]), { period: 5 }), 'rsi');
+    expect(v).toHaveLength(3);
+    expect(v.every((x) => x === undefined)).toBe(true);
   });
 });

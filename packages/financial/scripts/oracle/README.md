@@ -31,11 +31,11 @@ TypeScript still matches, and commit the updated JSON.
 
 An oracle only helps if its conventions match ours — the defaults will not:
 
-| study     | pandas                                        | note                                             |
-| --------- | --------------------------------------------- | ------------------------------------------------ |
-| SMA       | `close.rolling(n).mean()`                     | —                                                |
-| EMA       | `close.ewm(span=n, adjust=False).mean()`      | `adjust=False` (recursive); **not** the default  |
-| Bollinger | `middle ± k · close.rolling(n).std(ddof=0)`   | **population** stdev (TA-Lib's), not pandas' ddof=1 |
+| study     | pandas                                      | note                                                |
+| --------- | ------------------------------------------- | --------------------------------------------------- |
+| SMA       | `close.rolling(n).mean()`                   | —                                                   |
+| EMA       | `close.ewm(span=n, adjust=False).mean()`    | `adjust=False` (recursive); **not** the default     |
+| Bollinger | `middle ± k · close.rolling(n).std(ddof=0)` | **population** stdev (TA-Lib's), not pandas' ddof=1 |
 
 The EMA head is masked to the first `n-1` rows to match our length-preserving
 `minSamples: n` warm-up. The input series is deliberately never flat, so the

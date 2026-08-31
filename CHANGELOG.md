@@ -67,6 +67,24 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- `@pond-ts/financial`: **`rsi(...)`** — Wilder's Relative Strength Index, the
+  first of the [PND-STUDY] named indicators. `{ period = 14, column = 'close',
+output = 'rsi' }`, length-preserving warm-up (`period` rows, not `period − 1`
+  — RSI averages _differences_, so it needs one extra bar), and a fluent
+  `.rsi()`. Verified against **TA-Lib** bar-for-bar in the oracle fixture,
+  agreeing to `1.4e-14`.
+
+  Worth knowing which RSI this is: the gain/loss averages are seeded on the
+  arithmetic mean of the first `period` differences, then carried by Wilder's
+  recursion — TA-Lib's definition and Wilder's original. Implementations that
+  instead smooth with a plain first-sample-seeded EMA of the same `α = 1/period`
+  produce a **materially different** series: on this package's own oracle input
+  the two sit up to **7.03 RSI points** apart, and are still `0.15` apart 65
+  bars later. That is enough to move a reading across the conventional 70/30
+  thresholds, so it is a definition choice rather than a rounding detail.
+
 ## [0.64.0] — 2026-08-28
 
 ### Added

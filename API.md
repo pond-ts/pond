@@ -434,17 +434,18 @@ All are pure `(series, options) → TimeSeries` appending output columns;
 `column` defaults to `'close'`; periods are bar counts; warm-up is
 length-preserving (`undefined` head rows).
 
-| Study                       | Output column(s)                    | Options gist                                        | Source                                             |
-| --------------------------- | ----------------------------------- | --------------------------------------------------- | -------------------------------------------------- |
-| `sma`                       | `sma`                               | `{ period, column?, output? }`                      | `packages/financial/src/studies/moving-average.ts` |
-| `ema`                       | `ema`                               | `{ period, column?, output? }` (α = 2/(period+1))   | `packages/financial/src/studies/moving-average.ts` |
-| `bollinger`                 | `bbMiddle`, `bbUpper`, `bbLower`    | `{ period, stdDev?, column?, prefix? }`             | `packages/financial/src/studies/bollinger.ts`      |
-| `envelope`                  | `envMiddle`, `envUpper`, `envLower` | `{ period, percent?, maType?, column?, prefix? }`   | `packages/financial/src/studies/envelope.ts`       |
-| `rollingStdev`              | `stdev`                             | `{ period, column?, output? }` (population, ddof=0) | `packages/financial/src/studies/rolling-stat.ts`   |
-| `rollingMin` / `rollingMax` | `min` / `max`                       | `{ period, column?, output? }` (Donchian edges)     | `packages/financial/src/studies/rolling-stat.ts`   |
-| `rollingPercentile`         | `p{q}` (e.g. `p90`)                 | `{ period, q, column?, output? }`                   | `packages/financial/src/studies/rolling-stat.ts`   |
-| `zScore`                    | `zscore`                            | `{ period, column?, output? }`                      | `packages/financial/src/studies/z-score.ts`        |
-| `percentChange`             | `pctChange`                         | `{ periods?, column?, output? }`                    | `packages/financial/src/studies/percent-change.ts` |
+| Study                       | Output column(s)                    | Options gist                                         | Source                                             |
+| --------------------------- | ----------------------------------- | ---------------------------------------------------- | -------------------------------------------------- |
+| `sma`                       | `sma`                               | `{ period, column?, output? }`                       | `packages/financial/src/studies/moving-average.ts` |
+| `ema`                       | `ema`                               | `{ period, column?, output? }` (α = 2/(period+1))    | `packages/financial/src/studies/moving-average.ts` |
+| `bollinger`                 | `bbMiddle`, `bbUpper`, `bbLower`    | `{ period, stdDev?, column?, prefix? }`              | `packages/financial/src/studies/bollinger.ts`      |
+| `envelope`                  | `envMiddle`, `envUpper`, `envLower` | `{ period, percent?, maType?, column?, prefix? }`    | `packages/financial/src/studies/envelope.ts`       |
+| `rollingStdev`              | `stdev`                             | `{ period, column?, output? }` (population, ddof=0)  | `packages/financial/src/studies/rolling-stat.ts`   |
+| `rollingMin` / `rollingMax` | `min` / `max`                       | `{ period, column?, output? }` (Donchian edges)      | `packages/financial/src/studies/rolling-stat.ts`   |
+| `rollingPercentile`         | `p{q}` (e.g. `p90`)                 | `{ period, q, column?, output? }`                    | `packages/financial/src/studies/rolling-stat.ts`   |
+| `zScore`                    | `zscore`                            | `{ period, column?, output? }`                       | `packages/financial/src/studies/z-score.ts`        |
+| `percentChange`             | `pctChange`                         | `{ periods?, column?, output? }`                     | `packages/financial/src/studies/percent-change.ts` |
+| `rsi`                       | `rsi`                               | `{ period?, column?, output? }` (Wilder, default 14) | `packages/financial/src/studies/rsi.ts`            |
 
 Adding a study? Follow `packages/financial/src/studies/README.md` (uniform
 shape + pandas oracle case + fluent method are all REQUIRED).
