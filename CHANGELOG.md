@@ -117,6 +117,44 @@ output = 'rsi' }`, length-preserving warm-up (`period` rows, not `period − 1`
   bars later. That is enough to move a reading across the conventional 70/30
   thresholds, so it is a definition choice rather than a rounding detail.
 
+- `@pond-ts/financial`: **`momentum(...)`** — the absolute `period`-bar
+  difference, `value − value[i − period]`. `{ period = 10, column = 'close',
+output = 'momentum' }`, warm-up `period` rows, plus a fluent `.momentum()`.
+  Verified against **TA-Lib's `MOM`** bar-for-bar in the oracle: exact
+  agreement with identical warm-up masks. The additive companion to
+  `percentChange`'s ratio; it is in the price's units and scales with them
+  (pinned by a property test).
+
+- `@pond-ts/financial`: **`historicalVolatility(...)`** — the standard
+  deviation of log returns over `period` bars, annualised.
+  `{ period = 20, annualize = 252, column = 'close', output = 'hv' }`, plus a
+  fluent `.historicalVolatility()`. Warm-up is `period` rows, not
+  `period − 1` — `period` returns need `period + 1` prices, the same
+  off-by-one RSI and ATR have.
+
+  TA-Lib has no HV to arbitrate the conventions, so they are pinned on the
+  study and in the pandas oracle (`np.log(s).diff().rolling(n).std(ddof=0)
+· √annualize`): **population σ** (`ddof = 0`, the package convention shared
+  with Bollinger / `rollingStdev` / `zScore`; a sample σ is
+  `√(n/(n−1))` larger — 2.6% at 20); **log returns**, not simple; annualised
+  by `√annualize` with `252` the default for daily bars and an **option**
+  rather than a hidden constant (`1` for per-bar σ, `252·390` for one-minute
+  bars); and a **decimal** (`0.18` = 18%), the form volatility is consumed
+  in. Scale-invariant, pinned by a property test. A non-positive price has
+  no log return: both returns touching it are missing (explicitly, since
+  `ln(−4/−5)` is a finite non-answer). A leading gap shifts the start so the
+  first window still covers `period` real returns, matching pandas'
+  `min_periods` and the Wilder-family studies — the σ is computed by calling
+  the range-exact kernel on the returns array directly, because a scratch
+  column through `rollingValues` counts rows and would emit one bar early
+  over one return too few.
+
+- `@pond-ts/financial`: **`percentChange` is ROC** — TA-Lib's `ROC` is the same
+  `(price / prevPrice − 1) × 100`, and the oracle now cross-checks the study
+  against it: exact agreement (`0.0`) with identical warm-up masks at both
+  periods. Documented on the study and in API.md; there is deliberately no
+  separate `roc` study.
+
 ## [0.64.0] — 2026-08-28
 
 ### Added

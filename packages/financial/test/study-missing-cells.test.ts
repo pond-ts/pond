@@ -9,6 +9,8 @@ import {
   envelope,
   rsi,
   macd,
+  momentum,
+  historicalVolatility,
 } from '../src/index.js';
 
 /* -------------------------------------------------------------------------- */
@@ -233,5 +235,50 @@ describe('[PND-STUDYBOX] gaps in the source propagate', () => {
     expect(v[4]).toBeCloseTo(102, 10);
     expect(v[5]).toBeCloseTo(102.5, 10);
     expect(v.some((x) => typeof x === 'number' && Number.isNaN(x))).toBe(false);
+  });
+});
+
+describe('[PND-STUDYBOX] the difference-built studies warm up by `period` rows', () => {
+  // Both are built on differences, so they cost one bar more than a rolling
+  // study of the same period. What is pinned is WHERE the missing rows are —
+  // not "no NaN", which `withColumn` makes unfalsifiable.
+  const wavy = Array.from(
+    { length: 30 },
+    (_, i) => 100 + 6 * Math.sin(i / 2.5),
+  );
+
+  it('momentum: the first `period` rows, then values', () => {
+    const out = momentum(bars(wavy), { period: 5 });
+    const v = cells(out, 'momentum');
+    expect(v.slice(0, 5).every((x) => x === undefined)).toBe(true);
+    expect(v[5]).toBeCloseTo(wavy[5]! - wavy[0]!, 10);
+    expect(nullCountOf(out, 'momentum')).toBe(5);
+  });
+
+  it('historicalVolatility: the first `period` rows, then values', () => {
+    const out = historicalVolatility(bars(wavy), { period: 5 });
+    const v = cells(out, 'hv');
+    expect(v.slice(0, 5).every((x) => x === undefined)).toBe(true);
+    expect(typeof v[5]).toBe('number');
+    expect(nullCountOf(out, 'hv')).toBe(5);
+  });
+
+  it('historicalVolatility: a non-positive price reads as missing, never as a number', () => {
+    // With period 1 every window is a single return, so this pins the
+    // FOOTPRINT: exactly the two returns that touch the bad price are gone.
+    // (A zero price alone would pass without the guard — `ln(0)` is
+    // `-Infinity`, which the kernel already skips. What the explicit guard
+    // buys is the negative-price case, `ln(-4/-5)` being finite; that is
+    // pinned in studies.test.ts.)
+    const out = historicalVolatility(bars([100, 101, 0, 102, 103]), {
+      period: 1,
+      annualize: 1,
+    });
+    const v = cells(out, 'hv');
+    expect(v[1]).toBe(0); // one return: σ of a single value
+    expect(v[2]).toBeUndefined(); // return INTO the zero
+    expect(v[3]).toBeUndefined(); // return OUT of it
+    expect(v[4]).toBe(0);
+    expect(nullCountOf(out, 'hv')).toBe(3); // bar 0 + the two above
   });
 });

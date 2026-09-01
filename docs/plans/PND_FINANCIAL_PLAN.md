@@ -49,6 +49,24 @@ each study is a vocabulary wrapper following the studies README checklist
 (uniform `column`/`output` shape, bar-count periods, length-preserving
 warm-up, fluent method, oracle case).
 
+**Landed (returns fan-out): `momentum`, `historicalVolatility`; ROC resolved
+as already shipped.** ROC was checked before being built: TA-Lib `ROC` and
+`percentChange` agree exactly (`0.0`, identical masks) on the fixture, so the
+deliverable was a TA-Lib cross-check in the generator plus doc notes, not a
+duplicate study. Momentum matches TA-Lib `MOM` exactly. HV has no TA-Lib
+reference, so its four conventions were decided and pinned in the pandas
+oracle: population σ (package convention), log returns, `√annualize` with
+`252` as an option not a constant, decimal output. Two shapes worth carrying
+forward: (1) a study built on **differences** whose σ goes through the
+rolling kernel must call `rollingMeanSdInto` on the returns array directly —
+a scratch column through `rollingValues` counts _rows_, so the leading
+missing return makes it emit one bar early over one return too few; (2) HV
+steps over a leading run of missing returns (Wilder-kernel convention) so
+the first window covers `period` real returns, matching pandas
+`min_periods`, rather than the rolling family's "rows, not contributors"
+contract that `sma∘sma` pins. Interior gaps still follow the rolling
+contract (σ over the finite returns in the window).
+
 ### [PND-SFOLD] — K6 stateful-fold kernel (studies Phase 3)
 
 A few Phase-3 studies (PSAR, SuperTrend, etc.) need the K6 stateful-fold

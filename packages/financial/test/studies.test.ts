@@ -14,6 +14,8 @@ import {
   rsi,
   macd,
   atr,
+  momentum,
+  historicalVolatility,
 } from '../src/index.js';
 
 /** A close-only bar series at 1ms spacing (value = the close). */
@@ -550,5 +552,263 @@ describe('atr', () => {
     const v = col(atr(ohlc(steady(3)), { period: 9 }), 'atr');
     expect(v).toHaveLength(3);
     expect(v.every((x) => x === undefined)).toBe(true);
+  });
+});
+
+describe('momentum', () => {
+  // Oscillating on purpose: a linear series has constant momentum, so a
+  // lookback shifted by one bar gives the same answer and pins nothing.
+  const zig = [100, 103, 101, 106, 102];
+
+  it('is v − v[−period]; the first `period` rows are undefined', () => {
+    const v = col(momentum(bars(zig), { period: 2 }), 'momentum');
+    expect(v).toHaveLength(5);
+    expect(v[0]).toBeUndefined();
+    expect(v[1]).toBeUndefined();
+    expect(v[2]).toBeCloseTo(1, 12); // 101 − 100
+    expect(v[3]).toBeCloseTo(3, 12); // 106 − 103
+    expect(v[4]).toBeCloseTo(1, 12); // 102 − 101
+  });
+
+  it('defaults to period 10 and the `momentum` output name, and honours both', () => {
+    const closes = Array.from({ length: 20 }, (_, i) => 100 + 7 * Math.sin(i));
+    const def = momentum(bars(closes));
+    const v = col(def, 'momentum');
+    expect(v[9]).toBeUndefined();
+    expect(v[10]).toBeCloseTo(closes[10]! - closes[0]!, 12);
+
+    const named = momentum(bars(closes), { period: 3, output: 'mom3' });
+    expect(col(named, 'mom3')[3]).toBeCloseTo(closes[3]! - closes[0]!, 12);
+    expect(col(named, 'momentum')[3]).toBeUndefined(); // no default written
+  });
+
+  it('runs over any numeric column, including another study output', () => {
+    const src = sma(bars(zig), { period: 2 });
+    const m = col(
+      momentum(src, { column: 'sma', period: 1, output: 'dm' }),
+      'dm',
+    );
+    const s = col(src, 'sma');
+    // sma(2) starts at 1, so the first difference of it lands on 2.
+    expect(m[1]).toBeUndefined();
+    expect(m[2]).toBeCloseTo(s[2]! - s[1]!, 12);
+    expect(m[4]).toBeCloseTo(s[4]! - s[3]!, 12);
+  });
+
+  it('a missing cell at either end of the look-back makes the difference missing', () => {
+    const withHole = new TimeSeries({
+      name: 'bars',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'close', kind: 'number', required: false },
+      ] as const,
+      rows: [
+        [0, 100],
+        [1, 103],
+        [2, 101],
+        [3, 106],
+        [4, undefined],
+        [5, 105],
+        [6, 109],
+        [7, 104],
+      ] as Array<[number, number | undefined]>,
+    });
+    const v = col(momentum(withHole as never, { period: 2 }), 'momentum');
+    expect(v[3]).toBeCloseTo(3, 12); // before the hole
+    expect(v[4]).toBeUndefined(); // the hole itself
+    expect(v[5]).toBeCloseTo(-1, 12); // 105 − 106, straddles it
+    expect(v[6]).toBeUndefined(); // the hole is its predecessor
+    expect(v[7]).toBeCloseTo(-1, 12); // recovered: 104 − 105
+  });
+
+  it('rejects a non-positive or fractional period, and a colliding output', () => {
+    expect(() => momentum(bars(zig), { period: 0 })).toThrow(TypeError);
+    expect(() => momentum(bars(zig), { period: 1.5 })).toThrow(TypeError);
+    expect(() => momentum(bars(zig), { output: 'close' })).toThrow();
+  });
+
+  it('is all-undefined when the period reaches past the first bar', () => {
+    const v = col(momentum(bars(zig), { period: 5 }), 'momentum');
+    expect(v).toHaveLength(5);
+    expect(v.every((x) => x === undefined)).toBe(true);
+  });
+});
+
+describe('historicalVolatility', () => {
+  // Oscillating on purpose: a geometric series has CONSTANT log returns and
+  // therefore zero volatility, so a test on it cannot tell log from simple
+  // returns, population from sample, or a right lookback from a shifted one.
+  const six = [100, 102, 99, 103, 98, 104];
+  // pandas: np.log(s).diff().rolling(3).std(ddof=0)
+  const sixP3 = [
+    0.029217496740224568, 0.038309335084548916, 0.04749393808548082,
+  ];
+
+  it('is the population σ of log returns over `period` bars, as a decimal', () => {
+    const v = col(
+      historicalVolatility(bars(six), { period: 3, annualize: 1 }),
+      'hv',
+    );
+    expect(v).toHaveLength(6);
+    expect(v[3]).toBeCloseTo(sixP3[0]!, 12);
+    expect(v[4]).toBeCloseTo(sixP3[1]!, 12);
+    expect(v[5]).toBeCloseTo(sixP3[2]!, 12);
+  });
+
+  it('needs period+1 bars: the first `period` rows are undefined', () => {
+    // HV is a σ of RETURNS, so `period` of them need `period + 1` prices —
+    // the same off-by-one RSI and ATR have. A rolling window over the
+    // returns column counted by ROWS would land one bar early, over one
+    // return too few.
+    const v = col(
+      historicalVolatility(bars(six), { period: 3, annualize: 1 }),
+      'hv',
+    );
+    expect(v.slice(0, 3).every((x) => x === undefined)).toBe(true);
+    expect(v[3]).toBeDefined();
+    const v5 = col(historicalVolatility(bars(six), { period: 5 }), 'hv');
+    expect(v5[4]).toBeUndefined();
+    expect(v5[5]).toBeDefined();
+  });
+
+  it('annualises by √annualize, and defaults annualize to 252', () => {
+    const raw = col(
+      historicalVolatility(bars(six), { period: 3, annualize: 1 }),
+      'hv',
+    );
+    const def = col(historicalVolatility(bars(six), { period: 3 }), 'hv');
+    const hundred = col(
+      historicalVolatility(bars(six), { period: 3, annualize: 100 }),
+      'hv',
+    );
+    // pandas: ... * sqrt(252) — the annualised number, not just the ratio.
+    expect(def[3]).toBeCloseTo(0.46381338183884735, 12);
+    expect(def[5]).toBeCloseTo(raw[5]! * Math.sqrt(252), 12);
+    expect(hundred[5]).toBeCloseTo(raw[5]! * 10, 12);
+  });
+
+  it('is a POPULATION σ (ddof = 0), the package convention', () => {
+    // Two returns: the population σ is half their gap; a sample σ would be
+    // 1/√2 of it — 41% larger.
+    const v = col(
+      historicalVolatility(bars(six), { period: 2, annualize: 1 }),
+      'hv',
+    );
+    const r1 = Math.log(102 / 100);
+    const r2 = Math.log(99 / 102);
+    expect(v[2]).toBeCloseTo(Math.abs(r1 - r2) / 2, 12);
+  });
+
+  it('uses LOG returns, not simple returns', () => {
+    // Up 100% then down 50%: log returns are ±ln 2 (σ = ln 2), simple
+    // returns are +1 and −0.5 (σ = 0.75). Symmetry is the point of the log.
+    const v = col(
+      historicalVolatility(bars([100, 200, 100]), { period: 2, annualize: 1 }),
+      'hv',
+    );
+    expect(v[2]).toBeCloseTo(Math.LN2, 12);
+  });
+
+  it('defaults to period 20 and the `hv` output name, and honours both', () => {
+    const closes = Array.from({ length: 25 }, (_, i) => 100 + 5 * Math.sin(i));
+    const def = historicalVolatility(bars(closes));
+    expect(col(def, 'hv')[19]).toBeUndefined();
+    expect(col(def, 'hv')[20]).toBeDefined();
+
+    const named = historicalVolatility(bars(closes), {
+      period: 3,
+      output: 'vol',
+    });
+    expect(col(named, 'vol')[3]).toBeDefined();
+    expect(col(named, 'hv')[3]).toBeUndefined(); // no default column written
+  });
+
+  it('a non-positive price has no log return', () => {
+    // The guard is explicit: `Math.log(-4 / -5)` is a finite number that is
+    // not a return, so a run of negative prices must read as missing, not
+    // as a volatility.
+    const neg = col(
+      historicalVolatility(bars([-5, -4, -3, -2, -1]), {
+        period: 2,
+        annualize: 1,
+      }),
+      'hv',
+    );
+    expect(neg).toHaveLength(5);
+    expect(neg.every((x) => x === undefined)).toBe(true);
+
+    // A zero price kills the two returns that touch it (its own and the
+    // next bar's). At period 2 the window that holds only those two has
+    // nothing to compute from; once it has passed the study recovers.
+    const zero = col(
+      historicalVolatility(bars([100, 101, 0, 102, 103, 104]), {
+        period: 2,
+        annualize: 1,
+      }),
+      'hv',
+    );
+    expect(zero[3]).toBeUndefined();
+    expect(zero[5]).toBeCloseTo(
+      Math.abs(Math.log(103 / 102) - Math.log(104 / 103)) / 2,
+      12,
+    );
+  });
+
+  it('a leading gap shifts the start rather than shrinking the first window', () => {
+    // Over sma(3): the source starts at bar 2, the first return at bar 3,
+    // and the first FULL window of 4 returns ends on bar 6. A rows-counted
+    // window would emit at bar 3 over a single return — a σ of 0, read as
+    // "no volatility" where there is simply no data yet.
+    const wavy = Array.from(
+      { length: 30 },
+      (_, i) => 100 + 6 * Math.sin(i / 2.5) + i * 0.1,
+    );
+    const src = sma(bars(wavy), { period: 3 });
+    const v = col(
+      historicalVolatility(src, { column: 'sma', period: 4, annualize: 1 }),
+      'hv',
+    );
+    expect(v.slice(0, 6).every((x) => x === undefined)).toBe(true);
+    expect(v[6]).toBeDefined();
+    // And the value is the σ over exactly those four returns of the SMA.
+    const s = col(src, 'sma') as number[];
+    const r = [3, 4, 5, 6].map((i) => Math.log(s[i]! / s[i - 1]!));
+    const mean = r.reduce((a, b) => a + b, 0) / 4;
+    const sd = Math.sqrt(r.reduce((a, b) => a + (b - mean) ** 2, 0) / 4);
+    expect(v[6]).toBeCloseTo(sd, 12);
+  });
+
+  it('rejects a bad period or annualize, and a colliding output', () => {
+    expect(() => historicalVolatility(bars(six), { period: 0 })).toThrow(
+      TypeError,
+    );
+    expect(() => historicalVolatility(bars(six), { period: 2.5 })).toThrow(
+      TypeError,
+    );
+    expect(() => historicalVolatility(bars(six), { annualize: 0 })).toThrow(
+      /annualize/,
+    );
+    expect(() => historicalVolatility(bars(six), { annualize: -252 })).toThrow(
+      /annualize/,
+    );
+    expect(() =>
+      historicalVolatility(bars(six), { annualize: Number.NaN }),
+    ).toThrow(/annualize/);
+    expect(() =>
+      historicalVolatility(bars(six), { output: 'close' }),
+    ).toThrow();
+  });
+
+  it('is all-undefined when the period exceeds the available returns', () => {
+    // Three prices give two returns; a period of 3 needs a fourth price.
+    const v = col(
+      historicalVolatility(bars([100, 102, 99]), { period: 3 }),
+      'hv',
+    );
+    expect(v).toHaveLength(3);
+    expect(v.every((x) => x === undefined)).toBe(true);
+    expect(col(historicalVolatility(bars([100]), { period: 1 }), 'hv')).toEqual(
+      [undefined],
+    );
   });
 });

@@ -447,10 +447,12 @@ per input.
 | `rollingMin` / `rollingMax` | `min` / `max`                        | `{ period, column?, output? }` (Donchian edges)                           | `packages/financial/src/studies/rolling-stat.ts`   |
 | `rollingPercentile`         | `p{q}` (e.g. `p90`)                  | `{ period, q, column?, output? }`                                         | `packages/financial/src/studies/rolling-stat.ts`   |
 | `zScore`                    | `zscore`                             | `{ period, column?, output? }`                                            | `packages/financial/src/studies/z-score.ts`        |
-| `percentChange`             | `pctChange`                          | `{ periods?, column?, output? }`                                          | `packages/financial/src/studies/percent-change.ts` |
+| `percentChange`             | `pctChange`                          | `{ periods?, column?, output? }` (= ROC; TA-Lib-verified)                 | `packages/financial/src/studies/percent-change.ts` |
 | `rsi`                       | `rsi`                                | `{ period?, column?, output? }` (Wilder, default 14)                      | `packages/financial/src/studies/rsi.ts`            |
 | `macd`                      | `macdLine`, `macdSignal`, `macdHist` | `{ fastPeriod?, slowPeriod?, signalPeriod?, column?, prefix? }` (12/26/9) | `packages/financial/src/studies/macd.ts`           |
 | `atr`                       | `atr`                                | `{ period?, high?, low?, close?, output? }` (Wilder, default 14)          | `packages/financial/src/studies/atr.ts`            |
+| `momentum`                  | `momentum`                           | `{ period?, column?, output? }` (`v − v[−period]`, default 10)            | `packages/financial/src/studies/momentum.ts`       |
+| `historicalVolatility`      | `hv`                                 | `{ period?, annualize?, column?, output? }` (σ of log returns, ×√252)     | `packages/financial/src/studies/volatility.ts`     |
 
 Adding a study? Follow `packages/financial/src/studies/README.md` (uniform
 shape + pandas oracle case + fluent method are all REQUIRED).
