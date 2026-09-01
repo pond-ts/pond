@@ -48,3 +48,7 @@ export type { MacdOptions } from './studies/macd.js';
 export { macd } from './studies/macd.js';
 export type { AtrOptions } from './studies/atr.js';
 export { atr } from './studies/atr.js';
+export type { MomentumOptions } from './studies/momentum.js';
+export { momentum } from './studies/momentum.js';
+export type { HistoricalVolatilityOptions } from './studies/volatility.js';
+export { historicalVolatility } from './studies/volatility.js';

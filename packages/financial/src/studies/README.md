@@ -11,6 +11,15 @@ The worked references are `moving-average.ts` (`sma`/`ema`), `bollinger.ts`
 
 ## The checklist
 
+### 0. Check it isn't already shipped under another name
+
+The corpus names the same formula more than once. **ROC is `percentChange`**
+— TA-Lib's `ROC` is `(price / prevPrice − 1) × 100`, and the oracle
+cross-checks `percentChange` against it (exact agreement, identical warm-up).
+Before writing a study, compute the reference against the existing surface
+over the fixture's closes; if it agrees, the deliverable is the cross-check
+and a doc note, not a second study that differs invisibly.
+
 ### 1. Write the study — `studies/<name>.ts`
 
 - A pure `(series, options) => series` function, generic over the schema `S`

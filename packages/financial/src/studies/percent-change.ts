@@ -24,6 +24,12 @@ export interface PercentChangeOptions<
  * `undefined` for the first `periods` rows (no look-back) and where the prior
  * value is `0`/missing. `periods` counts **bars**, so it's gap-correct on a
  * trading axis.
+ *
+ * **This is ROC.** TA-Lib's `ROC` is the same formula, and the oracle
+ * cross-checks this study against it: exact agreement (`0.0`) with identical
+ * warm-up masks at every period tested. There is deliberately no separate
+ * `roc` study — one primitive rather than two that differ invisibly. The
+ * additive form (`value − value[i − periods]`) is {@link momentum}.
  */
 export function percentChange<
   S extends SeriesSchema,

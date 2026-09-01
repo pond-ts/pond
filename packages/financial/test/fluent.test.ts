@@ -7,7 +7,13 @@
  */
 import { describe, it, expect } from 'vitest';
 import { TimeSeries } from 'pond-ts';
-import { sma, ema, bollinger } from '../src/index.js';
+import {
+  sma,
+  ema,
+  bollinger,
+  momentum,
+  historicalVolatility,
+} from '../src/index.js';
 import '../src/fluent.js';
 
 const closeSchema = [
@@ -94,5 +100,27 @@ describe('fluent studies (opt-in prototype augmentation)', () => {
     for (const c of ['sma', 'e', 'bbMiddle', 'bbUpper', 'bbLower']) {
       expect(col(fluent, c)).toEqual(col(functional, c));
     }
+  });
+
+  it('mounts momentum and historicalVolatility', () => {
+    const study = bars()
+      .momentum({ period: 2 })
+      .historicalVolatility({ period: 3, annualize: 1, output: 'vol' });
+    const last = study.events.at(-1)!.data();
+    expect(typeof last.momentum).toBe('number');
+    expect(typeof last.vol).toBe('number');
+    expect(col(study, 'momentum')).toEqual(
+      col(momentum(bars(), { period: 2 }), 'momentum'),
+    );
+    expect(col(study, 'vol')).toEqual(
+      col(
+        historicalVolatility(bars(), {
+          period: 3,
+          annualize: 1,
+          output: 'vol',
+        }),
+        'vol',
+      ),
+    );
   });
 });

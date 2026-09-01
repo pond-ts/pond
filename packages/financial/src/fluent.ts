@@ -63,6 +63,10 @@ import { macd as macdStudy } from './studies/macd.js';
 import type { AtrOptions } from './studies/atr.js';
 import { atr as atrStudy } from './studies/atr.js';
 import type { PercentChangeOptions } from './studies/percent-change.js';
+import type { MomentumOptions } from './studies/momentum.js';
+import { momentum as momentumStudy } from './studies/momentum.js';
+import type { HistoricalVolatilityOptions } from './studies/volatility.js';
+import { historicalVolatility as historicalVolatilityStudy } from './studies/volatility.js';
 
 /** A series schema with one optional number column appended — the shape
  *  `TimeSeries.withColumn` (and hence `sma`) yields. */
@@ -141,6 +145,14 @@ declare module 'pond-ts' {
         `${Prefix}Hist`
       >
     >;
+    /** Fluent momentum (absolute `period`-bar difference). */
+    momentum<const Output extends string = 'momentum'>(
+      options?: MomentumOptions<S, Output>,
+    ): TimeSeries<AppendOpt<S, Output>>;
+    /** Fluent historical volatility (annualised σ of log returns). */
+    historicalVolatility<const Output extends string = 'hv'>(
+      options?: HistoricalVolatilityOptions<S, Output>,
+    ): TimeSeries<AppendOpt<S, Output>>;
   }
 }
 
@@ -224,4 +236,16 @@ proto.macd = function (
   options?: MacdOptions<SeriesSchema, string>,
 ) {
   return macdStudy(this, options);
+};
+proto.momentum = function (
+  this: TimeSeries<SeriesSchema>,
+  options?: MomentumOptions<SeriesSchema, string>,
+) {
+  return momentumStudy(this, options);
+};
+proto.historicalVolatility = function (
+  this: TimeSeries<SeriesSchema>,
+  options?: HistoricalVolatilityOptions<SeriesSchema, string>,
+) {
+  return historicalVolatilityStudy(this, options);
 };
