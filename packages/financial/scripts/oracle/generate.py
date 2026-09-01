@@ -52,19 +52,43 @@ closes = [
 ]
 s = pd.Series(closes, dtype="float64")
 
-# High/low for the bar studies (ATR and later stochastics/Donchian). Derived
-# deterministically from the same close series, with a width that VARIES so a
-# constant-range bug cannot pass, and a deliberate gap-up/gap-down pair so the
-# |high - prevClose| / |low - prevClose| terms of true range are exercised
-# rather than dominated by high-low on every bar.
-highs = [round(c + 0.6 + 0.5 * abs(math.sin(i / 4)), 4) for i, c in enumerate(closes)]
-lows = [round(c - 0.6 - 0.5 * abs(math.cos(i / 3)), 4) for i, c in enumerate(closes)]
-for i in (17, 41):  # gap up, then gap down: the true-range terms that matter
-    highs[i] = round(highs[i] + 4.0, 4)
-    lows[i] = round(lows[i] + 3.5, 4)
-for i in (29, 55):
-    highs[i] = round(highs[i] - 3.5, 4)
-    lows[i] = round(lows[i] - 4.0, 4)
+# High/low for the bar studies (ATR, and later stochastics/Donchian).
+#
+# Built AROUND each close rather than displaced from it, so `low <= close <=
+# high` holds on every bar. An earlier version injected four artificial gap
+# bars by shifting high and low without moving close, which left the close
+# outside its own range - harmless for ATR (true range never reads the
+# current close) but wrong for any study that does, which is exactly what
+# these arrays are earmarked for next.
+#
+# The half-widths VARY, so a constant-range bug cannot pass. They are also
+# deliberately SMALLER than the close series' own bar-to-bar moves, which
+# reach 1.41: that makes genuine gaps arise from the data instead of being
+# painted on, so `|high - prevClose|` and `|low - prevClose|` win on real
+# bars. The assert below is what holds that true if the series ever changes.
+highs = [
+    round(c + 0.35 + 0.5 * abs(math.sin(i / 4)), 4) for i, c in enumerate(closes)
+]
+lows = [
+    round(c - 0.35 - 0.5 * abs(math.cos(i / 3)), 4) for i, c in enumerate(closes)
+]
+assert all(
+    lo <= c <= hi for lo, c, hi in zip(lows, closes, highs)
+), "oracle bars must satisfy low <= close <= high"
+
+_wins = {"hl": 0, "hc": 0, "lc": 0}
+for _i in range(1, N):
+    _terms = {
+        "hl": highs[_i] - lows[_i],
+        "hc": abs(highs[_i] - closes[_i - 1]),
+        "lc": abs(lows[_i] - closes[_i - 1]),
+    }
+    _wins[max(_terms, key=lambda k: _terms[k])] += 1
+assert all(v > 0 for v in _wins.values()), (
+    f"each true-range term must win on some bar, got {_wins} - the fixture "
+    "would not distinguish an implementation that dropped one"
+)
+
 h = pd.Series(highs, dtype="float64")
 low_s = pd.Series(lows, dtype="float64")
 

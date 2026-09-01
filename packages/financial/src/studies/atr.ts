@@ -9,6 +9,7 @@ import {
   assertPeriod,
   columnValues,
 } from '../kernels/rolling.js';
+import { trueRangeValues } from '../kernels/true-range.js';
 import { wilderValues } from '../kernels/wilder.js';
 
 export interface AtrOptions<S extends SeriesSchema, Output extends string> {
@@ -41,6 +42,9 @@ export interface AtrOptions<S extends SeriesSchema, Output extends string> {
  * needs a previous close, so it is undefined on bar 0 and a `period`-bar
  * average of it first lands on bar `period` — the same off-by-one {@link rsi}
  * has, for the same reason.
+ *
+ * The true-range derivation itself is {@link trueRangeValues}, shared with
+ * the other Wilder-family studies rather than owned here.
  *
  * ## Three inputs, not one
  *
@@ -91,26 +95,20 @@ export function atr<
   const wide = series as unknown as TimeSeries<SeriesSchema>;
   assertNoColumn(wide, output);
 
-  const high = columnValues(wide, highName);
-  const low = columnValues(wide, lowName);
-  const close = columnValues(wide, closeName);
-  const length = high.length;
+  // True range lives in a kernel rather than here: ADX, NATR, Keltner and
+  // SuperTrend all need the same array, and a study is options-validation
+  // plus kernel calls.
+  const tr = trueRangeValues(
+    columnValues(wide, highName),
+    columnValues(wide, lowName),
+    columnValues(wide, closeName),
+  );
 
-  // True range. Bar 0 has no previous close, and `start = 1` below is what
-  // tells the smoother so. Missing cells are NaN and propagate through the
-  // comparisons on their own ([PND-STUDYBOX]) — `Math.max` returns NaN if any
-  // argument is NaN, which is the answer we want: an unknown close makes the
-  // whole true range unknown.
-  const tr = new Float64Array(length);
-  tr[0] = NaN;
-  for (let i = 1; i < length; i += 1) {
-    const prevClose = close[i - 1]!;
-    tr[i] = Math.max(
-      high[i]! - low[i]!,
-      Math.abs(high[i]! - prevClose),
-      Math.abs(low[i]! - prevClose),
-    );
-  }
-
+  // `start = 1` because TR[0] is undefined (no previous close). Strictly this
+  // is redundant — `wilderValues` steps over a leading NaN anyway, so passing
+  // 0 gives the same answer, and a review confirmed no test distinguishes
+  // them. It is kept because it states at the call site WHY the first bar is
+  // skipped, rather than leaving that to be inferred from gap-handling that
+  // exists for an unrelated reason.
   return series.withColumn(output, wilderValues(tr, period, 1));
 }

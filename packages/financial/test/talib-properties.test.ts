@@ -112,6 +112,31 @@ describe('[talib] scale invariance', () => {
     }
   });
 
+  it('atr scales LINEARLY with the input', () => {
+    // ATR is an absolute quantity in the price's units — it deliberately does
+    // not normalise, so tripling every price triples it.
+    const ohlc = (k: number) =>
+      new TimeSeries({
+        name: 'bars',
+        schema: [
+          { name: 'time', kind: 'time' },
+          { name: 'high', kind: 'number' },
+          { name: 'low', kind: 'number' },
+          { name: 'close', kind: 'number' },
+        ] as const,
+        rows: Array.from({ length: 30 }, (_, i) => {
+          const c = 100 + 8 * Math.sin(i / 3);
+          return [i, (c + 1.2) * k, (c - 0.9) * k, c * k];
+        }) as Array<[number, number, number, number]>,
+      });
+    const base = col(atr(ohlc(1), { period: 4 }), 'atr');
+    const scaled = col(atr(ohlc(3), { period: 4 }), 'atr');
+    for (let i = 0; i < base.length; i += 1) {
+      if (base[i] === undefined) expect(scaled[i], `bar ${i}`).toBeUndefined();
+      else expect(scaled[i]! / 3, `bar ${i}`).toBeCloseTo(base[i]!, 9);
+    }
+  });
+
   it('macd scales LINEARLY with the input, rather than being invariant', () => {
     // The companion property, and the reason scale invariance is a real
     // assertion rather than a truism: MACD is a difference of prices, so it
@@ -172,6 +197,30 @@ describe('[talib] a study over another study composes its warm-up', () => {
     const defined = v.slice(6) as number[];
     expect(defined.some((x) => x > 0 && x < 100)).toBe(true);
     expect(new Set(defined).size).toBeGreaterThan(1);
+  });
+
+  it('atr over a study output composes its warm-up', () => {
+    // ATR's close can be redirected at another study's output, whose warm-up
+    // must shift the Wilder seed rather than poison it.
+    const n = 30;
+    const src = new TimeSeries({
+      name: 'bars',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'high', kind: 'number' },
+        { name: 'low', kind: 'number' },
+        { name: 'close', kind: 'number' },
+      ] as const,
+      rows: Array.from({ length: n }, (_, i) => {
+        const c = 100 + 5 * Math.sin(i / 3);
+        return [i, c + 1, c - 1, c];
+      }) as Array<[number, number, number, number]>,
+    });
+    const smoothed = sma(src, { period: 3, output: 'sc' });
+    const v = col(atr(smoothed, { period: 4, close: 'sc', output: 'a' }), 'a');
+    expect(v).toHaveLength(n);
+    // sma(3) first valid at 2, so TR first valid at 3, seed 4 bars on: 6.
+    expect(firstValid(v)).toBe(6);
   });
 
   it('macd over sma composes too', () => {
@@ -266,6 +315,29 @@ describe('[talib] all-missing input yields all-missing output', () => {
         name,
       ).toBe(true);
     }
+  });
+
+  it('atr', () => {
+    const allMissingBars = new TimeSeries({
+      name: 'bars',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'high', kind: 'number', required: false },
+        { name: 'low', kind: 'number', required: false },
+        { name: 'close', kind: 'number', required: false },
+      ] as const,
+      rows: Array.from({ length: 20 }, (_, i) => [
+        i,
+        undefined,
+        undefined,
+        undefined,
+      ]) as Array<
+        [number, number | undefined, number | undefined, number | undefined]
+      >,
+    });
+    const v = col(atr(allMissingBars as never, { period: 5 }), 'atr');
+    expect(v).toHaveLength(20);
+    expect(v.every((x) => x === undefined)).toBe(true);
   });
 
   it('sma and ema', () => {
