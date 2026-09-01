@@ -25,6 +25,8 @@ import {
   rsi,
   macd,
   atr,
+  momentum,
+  historicalVolatility,
 } from '../src/index.js';
 
 interface OracleCase {
@@ -39,6 +41,7 @@ interface OracleCase {
     fastPeriod?: number;
     slowPeriod?: number;
     signalPeriod?: number;
+    annualize?: number;
   };
   expected: Record<string, Array<number | null>>;
 }
@@ -126,6 +129,13 @@ function run(c: OracleCase): unknown {
           slowPeriod?: number;
           signalPeriod?: number;
         },
+      );
+    case 'momentum':
+      return momentum(series(), p as { period?: number });
+    case 'historicalVolatility':
+      return historicalVolatility(
+        series(),
+        p as { period?: number; annualize?: number },
       );
     default:
       // A fixture case whose study has no dispatch here must fail loudly, not

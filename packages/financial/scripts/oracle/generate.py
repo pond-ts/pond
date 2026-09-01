@@ -168,7 +168,27 @@ def envelope_ema(n: int, percent: float) -> dict:
 
 
 def percent_change(periods: int) -> dict:
-    return {"pctChange": col(s.pct_change(periods) * 100)}
+    pc = s.pct_change(periods) * 100
+
+    if talib is not None:
+        # percentChange IS rate-of-change: TA-Lib's ROC is the same
+        # `(price / prevPrice - 1) * 100`. Cross-checked here so the package
+        # can say so with a number, rather than shipping a duplicate `roc`
+        # study that differs invisibly. Mask first, then magnitude (see rsi).
+        ref = pd.Series(talib.ROC(np.asarray(closes, dtype=float), timeperiod=periods))
+        assert list(pc.isna()) == list(ref.isna()), (
+            f"percentChange({periods}) warm-up differs from TA-Lib ROC: "
+            f"ours first valid {pc.first_valid_index()}, "
+            f"TA-Lib {ref.first_valid_index()}"
+        )
+        delta = float(np.nanmax(np.abs(pc - ref)))
+        assert delta < 1e-9, f"percentChange({periods}) disagrees with TA-Lib ROC by {delta}"
+        print(
+            f"  percentChange({periods}): matches TA-Lib ROC to {delta:.3g} "
+            "(warm-ups identical)"
+        )
+
+    return {"pctChange": col(pc)}
 
 
 def rsi(n: int) -> dict:
@@ -340,6 +360,55 @@ def atr(n: int) -> dict:
     return {"atr": col(a)}
 
 
+def momentum(n: int) -> dict:
+    """Momentum: the absolute n-bar difference, `s[i] - s[i-n]`.
+
+    The additive companion to percent_change's ratio. No smoothing, no seed,
+    so TA-Lib's MOM must agree EXACTLY -- asserted below, mask first.
+    """
+    m = s.diff(n)
+
+    if talib is not None:
+        ref = pd.Series(talib.MOM(np.asarray(closes, dtype=float), timeperiod=n))
+        assert list(m.isna()) == list(ref.isna()), (
+            f"momentum({n}) warm-up differs from TA-Lib MOM: ours first valid "
+            f"{m.first_valid_index()}, TA-Lib {ref.first_valid_index()}"
+        )
+        delta = float(np.nanmax(np.abs(m - ref)))
+        assert delta < 1e-9, f"momentum({n}) disagrees with TA-Lib MOM by {delta}"
+        print(f"  momentum({n}): matches TA-Lib MOM to {delta:.3g} (warm-ups identical)")
+
+    return {"momentum": col(m)}
+
+
+def historical_volatility(n: int, annualize: float) -> dict:
+    """Historical volatility: population stdev of LOG returns, annualised.
+
+        hv = ln(s).diff().rolling(n).std(ddof=0) * sqrt(annualize)
+
+    Four conventions, each of which produces a different number if it goes
+    the other way, and none of which TA-Lib can arbitrate (it has no HV):
+
+      - POPULATION stdev (ddof=0) -- the package convention, shared with
+        Bollinger / rollingStdev / zScore. ddof=1 is sqrt(n/(n-1)) larger.
+      - LOG returns, not simple returns (symmetric, additive across bars,
+        which is what makes sqrt-time annualisation legitimate).
+      - annualised by sqrt(annualize); 252 for daily bars, 1 for per-bar.
+      - a DECIMAL (0.18 = 18%), not a percent.
+
+    The first return is undefined (bar 0 has no predecessor), so the first
+    value lands on bar n -- `n` returns need `n + 1` prices. pandas' rolling
+    requires n non-NaN contributors, which is exactly that warm-up.
+    """
+    r = np.log(s).diff()
+    hv = r.rolling(n).std(ddof=0) * math.sqrt(annualize)
+    assert hv.first_valid_index() == n, (
+        f"historicalVolatility({n}) first valid at {hv.first_valid_index()}, "
+        f"expected {n} -- the fixture would pin the wrong warm-up"
+    )
+    return {"hv": col(hv)}
+
+
 cases = [
     {"study": "sma", "params": {"period": 20}, "expected": sma(20)},
     {"study": "sma", "params": {"period": 5}, "expected": sma(5)},
@@ -393,6 +462,18 @@ cases = [
     },
     {"study": "atr", "params": {"period": 14}, "expected": atr(14)},
     {"study": "atr", "params": {"period": 3}, "expected": atr(3)},
+    {"study": "momentum", "params": {"period": 10}, "expected": momentum(10)},
+    {"study": "momentum", "params": {"period": 3}, "expected": momentum(3)},
+    {
+        "study": "historicalVolatility",
+        "params": {"period": 20, "annualize": 252},
+        "expected": historical_volatility(20, 252),
+    },
+    {
+        "study": "historicalVolatility",
+        "params": {"period": 10, "annualize": 1},
+        "expected": historical_volatility(10, 1),
+    },
 ]
 
 out = {
@@ -417,6 +498,15 @@ out = {
             "rsi": (
                 "Wilder: seed = mean of first n diffs, then "
                 "(prev*(n-1) + x)/n; cross-checked against TA-Lib"
+            ),
+            "percentChange": (
+                "pct_change(n) * 100; IS rate-of-change, cross-checked "
+                "against TA-Lib ROC"
+            ),
+            "momentum": "diff(n); cross-checked against TA-Lib MOM",
+            "historicalVolatility": (
+                "log(close).diff().rolling(n).std(ddof=0) * sqrt(annualize) "
+                "[population, log returns, decimal]; no TA-Lib HV exists"
             ),
         },
     },

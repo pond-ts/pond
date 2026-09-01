@@ -45,7 +45,15 @@
  */
 import { describe, expect, it } from 'vitest';
 import { TimeSeries } from 'pond-ts';
-import { atr, ema, macd, rsi, sma } from '../src/index.js';
+import {
+  atr,
+  ema,
+  historicalVolatility,
+  macd,
+  momentum,
+  rsi,
+  sma,
+} from '../src/index.js';
 
 const closeSchema = [
   { name: 'time', kind: 'time' },
@@ -351,5 +359,85 @@ describe('[talib] all-missing input yields all-missing output', () => {
         (x) => x === undefined,
       ),
     ).toBe(true);
+  });
+
+  it('momentum and historicalVolatility', () => {
+    const m = col(momentum(allMissing as never, { period: 3 }), 'momentum');
+    expect(m).toHaveLength(20);
+    expect(m.every((x) => x === undefined)).toBe(true);
+    const h = col(
+      historicalVolatility(allMissing as never, { period: 3 }),
+      'hv',
+    );
+    expect(h).toHaveLength(20);
+    expect(h.every((x) => x === undefined)).toBe(true);
+  });
+});
+
+describe('[talib] momentum and historical volatility: scale and composition', () => {
+  // Oscillating: a geometric series has constant log returns (HV ≡ 0, which
+  // is scale-invariant for the wrong reason), and a linear one has constant
+  // momentum (a shifted lookback passes).
+  const wavy = Array.from(
+    { length: 40 },
+    (_, i) => 100 + 8 * Math.sin(i / 3) + 3 * Math.sin(i / 1.3),
+  );
+
+  it('momentum scales LINEARLY with the input', () => {
+    // A difference of prices is in the price's units, like ATR and MACD.
+    const k = 1000;
+    const base = col(momentum(bars(wavy), { period: 4 }), 'momentum');
+    const scaled = col(
+      momentum(bars(wavy.map((x) => x * k)), { period: 4 }),
+      'momentum',
+    );
+    expect(firstValid(base)).toBe(4);
+    for (let i = 0; i < base.length; i += 1) {
+      if (base[i] === undefined) expect(scaled[i], `bar ${i}`).toBeUndefined();
+      else expect(scaled[i]! / k, `bar ${i}`).toBeCloseTo(base[i]!, 9);
+    }
+  });
+
+  it('historicalVolatility is INVARIANT under scaling the input', () => {
+    // Log returns are ratios, so a constant factor cancels — at 1e5 and at
+    // 1e-5, where the RSI test above showed float error can bite.
+    const base = col(historicalVolatility(bars(wavy), { period: 6 }), 'hv');
+    expect(firstValid(base)).toBe(6);
+    expect(base.slice(6).every((x) => x! > 0)).toBe(true);
+    for (const k of [1e5, 1e-5]) {
+      const scaled = col(
+        historicalVolatility(bars(wavy.map((x) => x * k)), { period: 6 }),
+        'hv',
+      );
+      for (let i = 0; i < base.length; i += 1) {
+        if (base[i] === undefined)
+          expect(scaled[i], `×${k} bar ${i}`).toBeUndefined();
+        else expect(scaled[i], `×${k} bar ${i}`).toBeCloseTo(base[i]!, 9);
+      }
+    }
+  });
+
+  it('momentum over sma composes its warm-up', () => {
+    const src = sma(bars(wavy), { period: 3 });
+    const v = col(
+      momentum(src, { column: 'sma', period: 4, output: 'm' }),
+      'm',
+    );
+    expect(v).toHaveLength(wavy.length);
+    // sma(3) first valid at 2; a 4-bar difference of it needs 4 more.
+    expect(firstValid(v)).toBe(6);
+    expect(v.slice(6).every((x) => x !== undefined)).toBe(true);
+  });
+
+  it('historicalVolatility over sma composes its warm-up', () => {
+    const src = sma(bars(wavy), { period: 3 });
+    const v = col(
+      historicalVolatility(src, { column: 'sma', period: 4, output: 'h' }),
+      'h',
+    );
+    expect(v).toHaveLength(wavy.length);
+    // sma(3) first valid at 2; 4 returns of it need 4 more bars.
+    expect(firstValid(v)).toBe(6);
+    expect(v.slice(6).every((x) => x !== undefined && x > 0)).toBe(true);
   });
 });
