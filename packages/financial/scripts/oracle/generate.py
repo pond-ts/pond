@@ -52,6 +52,22 @@ closes = [
 ]
 s = pd.Series(closes, dtype="float64")
 
+# High/low for the bar studies (ATR and later stochastics/Donchian). Derived
+# deterministically from the same close series, with a width that VARIES so a
+# constant-range bug cannot pass, and a deliberate gap-up/gap-down pair so the
+# |high - prevClose| / |low - prevClose| terms of true range are exercised
+# rather than dominated by high-low on every bar.
+highs = [round(c + 0.6 + 0.5 * abs(math.sin(i / 4)), 4) for i, c in enumerate(closes)]
+lows = [round(c - 0.6 - 0.5 * abs(math.cos(i / 3)), 4) for i, c in enumerate(closes)]
+for i in (17, 41):  # gap up, then gap down: the true-range terms that matter
+    highs[i] = round(highs[i] + 4.0, 4)
+    lows[i] = round(lows[i] + 3.5, 4)
+for i in (29, 55):
+    highs[i] = round(highs[i] - 3.5, 4)
+    lows[i] = round(lows[i] - 4.0, 4)
+h = pd.Series(highs, dtype="float64")
+low_s = pd.Series(lows, dtype="float64")
+
 
 def col(series: pd.Series) -> list:
     """A pandas Series -> JSON list; NaN / non-finite (missing) -> null."""
@@ -258,6 +274,48 @@ def macd(fast: int, slow: int, sig: int) -> dict:
     return {"macdLine": col(line), "macdSignal": col(signal), "macdHist": col(hist)}
 
 
+def atr(n: int) -> dict:
+    """Wilder's ATR, as TA-Lib defines it.
+
+    TR = max(high-low, |high-prevClose|, |low-prevClose|), undefined on bar 0
+    (no previous close); then the same Wilder recursion RSI uses, seeded on
+    the mean of the first n true ranges, so the first value lands on bar n.
+
+    Computed in pandas so the fixture regenerates without the C library, and
+    asserted against TA-Lib -- both the values AND the warm-up mask -- when it
+    is installed.
+    """
+    prev = s.shift(1)
+    tr = pd.concat(
+        [(h - low_s), (h - prev).abs(), (low_s - prev).abs()], axis=1
+    ).max(axis=1)
+    tr.iloc[0] = math.nan
+
+    a = pd.Series(math.nan, index=s.index, dtype="float64")
+    a.iloc[n] = tr.iloc[1 : n + 1].mean()
+    for i in range(n + 1, len(s)):
+        a.iloc[i] = (a.iloc[i - 1] * (n - 1) + tr.iloc[i]) / n
+
+    if talib is not None:
+        ref = pd.Series(
+            talib.ATR(
+                np.asarray(highs, dtype=float),
+                np.asarray(lows, dtype=float),
+                np.asarray(closes, dtype=float),
+                timeperiod=n,
+            )
+        )
+        assert list(a.isna()) == list(ref.isna()), (
+            f"ATR({n}) warm-up differs from TA-Lib: ours first valid "
+            f"{a.first_valid_index()}, TA-Lib {ref.first_valid_index()}"
+        )
+        delta = float(np.nanmax(np.abs(a - ref)))
+        assert delta < 1e-9, f"ATR({n}) disagrees with TA-Lib by {delta}"
+        print(f"  atr({n}): matches TA-Lib to {delta:.3g} (warm-ups identical)")
+
+    return {"atr": col(a)}
+
+
 cases = [
     {"study": "sma", "params": {"period": 20}, "expected": sma(20)},
     {"study": "sma", "params": {"period": 5}, "expected": sma(5)},
@@ -309,6 +367,8 @@ cases = [
         "params": {"fastPeriod": 3, "slowPeriod": 7, "signalPeriod": 4},
         "expected": macd(3, 7, 4),
     },
+    {"study": "atr", "params": {"period": 14}, "expected": atr(14)},
+    {"study": "atr", "params": {"period": 3}, "expected": atr(3)},
 ]
 
 out = {
@@ -322,6 +382,10 @@ out = {
             "sma": "close.rolling(n).mean()",
             "ema": "close.ewm(span=n, adjust=False).mean(); first n-1 masked",
             "bollingerStd": "rolling(n).std(ddof=0) [population]",
+            "atr": (
+                "TR = max(h-l, |h-prevC|, |l-prevC|), TR[0] undefined; Wilder "
+                "seed = mean of first n TRs; cross-checked against TA-Lib"
+            ),
             "macd": (
                 "fast/slow EMA on POND's ewm(adjust=False) first-sample seed, "
                 "not TA-Lib's SMA seed; each column warms up when it can"
@@ -332,7 +396,7 @@ out = {
             ),
         },
     },
-    "input": {"closes": closes},
+    "input": {"closes": closes, "highs": highs, "lows": lows},
     "cases": cases,
 }
 

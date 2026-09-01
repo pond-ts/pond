@@ -432,7 +432,10 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 
 All are pure `(series, options) → TimeSeries` appending output columns;
 `column` defaults to `'close'`; periods are bar counts; warm-up is
-length-preserving (`undefined` head rows).
+length-preserving (`undefined` head rows). A **multi-input** study (`atr`)
+names each input instead of taking one `column`, each defaulting to its
+`DEFAULT_OHLCV` name — the same "never hard-code a column" rule applied
+per input.
 
 | Study                       | Output column(s)                     | Options gist                                                              | Source                                             |
 | --------------------------- | ------------------------------------ | ------------------------------------------------------------------------- | -------------------------------------------------- |
@@ -447,6 +450,7 @@ length-preserving (`undefined` head rows).
 | `percentChange`             | `pctChange`                          | `{ periods?, column?, output? }`                                          | `packages/financial/src/studies/percent-change.ts` |
 | `rsi`                       | `rsi`                                | `{ period?, column?, output? }` (Wilder, default 14)                      | `packages/financial/src/studies/rsi.ts`            |
 | `macd`                      | `macdLine`, `macdSignal`, `macdHist` | `{ fastPeriod?, slowPeriod?, signalPeriod?, column?, prefix? }` (12/26/9) | `packages/financial/src/studies/macd.ts`           |
+| `atr`                       | `atr`                                | `{ period?, high?, low?, close?, output? }` (Wilder, default 14)          | `packages/financial/src/studies/atr.ts`            |
 
 Adding a study? Follow `packages/financial/src/studies/README.md` (uniform
 shape + pandas oracle case + fluent method are all REQUIRED).

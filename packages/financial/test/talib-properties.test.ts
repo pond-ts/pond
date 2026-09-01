@@ -28,6 +28,7 @@
  *   - `test_EMAEMA`   a study over another study's output: length preserved,
  *                     warm-up composed
  *   - `test_input_allnans`  all-missing in, all-missing out
+ *   - `test_input_lengths`  multi-input studies and mismatched inputs
  *
  * What the all-missing tests actually pin is that a study handed nothing
  * usable neither throws nor INVENTS a value. They do not, and cannot, pin
@@ -44,7 +45,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { TimeSeries } from 'pond-ts';
-import { ema, macd, rsi, sma } from '../src/index.js';
+import { atr, ema, macd, rsi, sma } from '../src/index.js';
 
 const closeSchema = [
   { name: 'time', kind: 'time' },
@@ -186,6 +187,48 @@ describe('[talib] a study over another study composes its warm-up', () => {
     // sma(3) first valid at 2; the slow EMA needs 4 more; the signal 2 more.
     expect(firstValid(col(r, 'mLine'))).toBe(6);
     expect(firstValid(col(r, 'mSignal'))).toBe(8);
+  });
+});
+
+describe("[talib] a multi-input study's inputs cannot disagree in length", () => {
+  /*
+   * TA-Lib's `test_input_lengths` exists because its functions take separate
+   * arrays: `ATR(high, low, close)` with a short `low` is a caller error it
+   * must detect and raise on. Converting it literally is impossible here, and
+   * that is the finding rather than a gap — pond's multi-input studies read
+   * COLUMNS OF ONE SERIES, so unequal lengths are unrepresentable. The check
+   * that upstream needs at every call site is discharged by the type.
+   *
+   * What remains testable is the part that IS still a caller error: naming a
+   * column that is not there.
+   */
+  const bar = (n: number) =>
+    new TimeSeries({
+      name: 'bars',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'high', kind: 'number' },
+        { name: 'low', kind: 'number' },
+        { name: 'close', kind: 'number' },
+      ] as const,
+      rows: Array.from({ length: n }, (_, i) => [i, 101, 99, 100]) as Array<
+        [number, number, number, number]
+      >,
+    });
+
+  it('atr over aligned columns needs no length check', () => {
+    const v = col(atr(bar(12) as never, { period: 3 }), 'atr');
+    expect(v).toHaveLength(12);
+    expect(v[3]).toBeCloseTo(2, 12);
+  });
+
+  it('atr reads all-missing when an input column is misnamed', () => {
+    const v = col(
+      atr(bar(12) as never, { period: 3, low: 'nope' as never }),
+      'atr',
+    );
+    expect(v).toHaveLength(12);
+    expect(v.every((x) => x === undefined)).toBe(true);
   });
 });
 

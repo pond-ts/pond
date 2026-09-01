@@ -69,6 +69,22 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- `@pond-ts/financial`: **`atr(...)`** — Wilder's Average True Range, the third
+  [PND-STUDY] named indicator, plus a fluent `.atr()`. `{ period = 14,
+high = 'high', low = 'low', close = 'close', output = 'atr' }`. Verified
+  against **TA-Lib** bar-for-bar in the oracle — exact agreement at both
+  periods tested, with identical warm-up.
+
+  **The first multi-input study.** Where every study so far took a single
+  `column`, ATR names each of its three inputs, each defaulting to its
+  `DEFAULT_OHLCV` name — the same "never hard-code a column" rule applied per
+  input rather than a new mechanism. Because the inputs are columns of one
+  series they are aligned by construction, so the mismatched-length error
+  array-based libraries must check for at every call is unrepresentable here.
+
+  Warm-up is `period` rows, not `period − 1`: true range needs a previous
+  close, so bar 0 has none.
+
 - `@pond-ts/financial`: **`macd(...)`** — Moving Average Convergence/Divergence,
   the second [PND-STUDY] named indicator. `{ fastPeriod = 12, slowPeriod = 26,
 signalPeriod = 9, column = 'close', prefix = 'macd' }`, appending

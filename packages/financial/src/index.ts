@@ -46,3 +46,5 @@ export type { RsiOptions } from './studies/rsi.js';
 export { rsi } from './studies/rsi.js';
 export type { MacdOptions } from './studies/macd.js';
 export { macd } from './studies/macd.js';
+export type { AtrOptions } from './studies/atr.js';
+export { atr } from './studies/atr.js';

@@ -60,6 +60,8 @@ import type { RsiOptions } from './studies/rsi.js';
 import { rsi as rsiStudy } from './studies/rsi.js';
 import type { MacdOptions } from './studies/macd.js';
 import { macd as macdStudy } from './studies/macd.js';
+import type { AtrOptions } from './studies/atr.js';
+import { atr as atrStudy } from './studies/atr.js';
 import type { PercentChangeOptions } from './studies/percent-change.js';
 
 /** A series schema with one optional number column appended — the shape
@@ -125,6 +127,10 @@ declare module 'pond-ts' {
     /** Fluent Wilder RSI. */
     rsi<const Output extends string = 'rsi'>(
       options?: RsiOptions<S, Output>,
+    ): TimeSeries<AppendOpt<S, Output>>;
+    /** Fluent Wilder ATR. */
+    atr<const Output extends string = 'atr'>(
+      options?: AtrOptions<S, Output>,
     ): TimeSeries<AppendOpt<S, Output>>;
     /** Fluent MACD. */
     macd<const Prefix extends string = 'macd'>(
@@ -206,6 +212,12 @@ proto.rsi = function (
   options?: RsiOptions<SeriesSchema, string>,
 ) {
   return rsiStudy(this, options);
+};
+proto.atr = function (
+  this: TimeSeries<SeriesSchema>,
+  options?: AtrOptions<SeriesSchema, string>,
+) {
+  return atrStudy(this, options);
 };
 proto.macd = function (
   this: TimeSeries<SeriesSchema>,
