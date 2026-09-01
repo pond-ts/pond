@@ -24,6 +24,7 @@ import {
   percentChange,
   rsi,
   macd,
+  atr,
 } from '../src/index.js';
 
 interface OracleCase {
@@ -43,7 +44,7 @@ interface OracleCase {
 }
 interface Oracle {
   meta: { oracle: string };
-  input: { closes: number[] };
+  input: { closes: number[]; highs: number[]; lows: number[] };
   cases: OracleCase[];
 }
 
@@ -63,6 +64,27 @@ function series(): TimeSeries<never> {
       { name: 'close', kind: 'number' },
     ],
     rows: oracle.input.closes.map((c, i) => [i, c]),
+  }) as unknown as TimeSeries<never>;
+}
+
+/** The same bars with high/low, for the studies that read a whole bar. Kept
+ *  separate so the close-only cases stay on exactly the series they were
+ *  generated against. */
+function ohlcSeries(): TimeSeries<never> {
+  return new TimeSeries({
+    name: 'oracle',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'high', kind: 'number' },
+      { name: 'low', kind: 'number' },
+      { name: 'close', kind: 'number' },
+    ],
+    rows: oracle.input.closes.map((c, i) => [
+      i,
+      oracle.input.highs[i]!,
+      oracle.input.lows[i]!,
+      c,
+    ]),
   }) as unknown as TimeSeries<never>;
 }
 
@@ -94,6 +116,8 @@ function run(c: OracleCase): unknown {
       return percentChange(series(), p as { periods?: number });
     case 'rsi':
       return rsi(series(), p as { period?: number });
+    case 'atr':
+      return atr(ohlcSeries(), p as { period?: number });
     case 'macd':
       return macd(
         series(),

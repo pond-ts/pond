@@ -13,6 +13,7 @@ import {
   percentChange,
   rsi,
   macd,
+  atr,
 } from '../src/index.js';
 
 /** A close-only bar series at 1ms spacing (value = the close). */
@@ -436,5 +437,118 @@ describe('macd', () => {
     });
     expect(col(r, 'smaMacdLine')[20]).toBeDefined();
     expect(col(r, 'smaMacdSignal')[20]).toBeDefined();
+  });
+});
+
+describe('atr', () => {
+  const ohlcSchema = [
+    { name: 'time', kind: 'time' },
+    { name: 'high', kind: 'number' },
+    { name: 'low', kind: 'number' },
+    { name: 'close', kind: 'number' },
+  ] as const;
+
+  const ohlc = (rows: Array<[number, number, number]>) =>
+    new TimeSeries({
+      name: 'bars',
+      schema: ohlcSchema,
+      rows: rows.map(([h, l, c], i) => [i, h, l, c]) as Array<
+        [number, number, number, number]
+      >,
+    });
+
+  /** n bars of a steady 2-wide range with no gaps: TR is exactly 2 every bar. */
+  const steady = (n: number): Array<[number, number, number]> =>
+    Array.from({ length: n }, () => [101, 99, 100]);
+
+  it('warms up over `period` rows — one more than the average needs', () => {
+    // True range needs a PREVIOUS close, so bar 0 has none and a period-bar
+    // average of TR first lands on bar `period`, not `period - 1`.
+    const v = col(atr(ohlc(steady(10)), { period: 3 }), 'atr');
+    expect(v).toHaveLength(10);
+    expect(v.slice(0, 3).every((x) => x === undefined)).toBe(true);
+    expect(v[3]).toBeCloseTo(2, 12);
+  });
+
+  it('takes the widest of the three spans, not just high − low', () => {
+    // Bar 1 gaps far above bar 0's close. The three spans are:
+    //   high - low            = 119 - 117 =  2
+    //   |high - prevClose|    = |119-100| = 19   <- widest
+    //   |low  - prevClose|    = |117-100| = 17
+    // An implementation using plain high-low range would report 2.
+    const v = col(
+      atr(
+        ohlc([
+          [101, 99, 100],
+          [119, 117, 118],
+          [119, 117, 118],
+        ]),
+        { period: 1 },
+      ),
+      'atr',
+    );
+    expect(v[1]).toBeCloseTo(19, 12);
+  });
+
+  it('is the units of the price, and scales with it', () => {
+    // ATR does not normalise — deliberately. Doubling every price doubles it.
+    const base = col(atr(ohlc(steady(10)), { period: 3 }), 'atr');
+    const scaled = col(
+      atr(ohlc(steady(10).map(([h, l, c]) => [h * 3, l * 3, c * 3])), {
+        period: 3,
+      }),
+      'atr',
+    );
+    for (let i = 0; i < base.length; i += 1) {
+      if (base[i] === undefined) expect(scaled[i]).toBeUndefined();
+      else expect(scaled[i]! / 3).toBeCloseTo(base[i]!, 12);
+    }
+  });
+
+  it('reads redirected high/low/close columns', () => {
+    // The three-input analogue of the uniform `column` rule: never hard-code.
+    const s = new TimeSeries({
+      name: 'bars',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'h2', kind: 'number' },
+        { name: 'l2', kind: 'number' },
+        { name: 'c2', kind: 'number' },
+      ] as const,
+      rows: Array.from({ length: 10 }, (_, i) => [i, 101, 99, 100]) as Array<
+        [number, number, number, number]
+      >,
+    });
+    // No `as never` on the series: the point of this test is that the real
+    // schema flows through, so `high: 'h2'` is accepted by
+    // `NumericColumnNameForSchema<S>` rather than needing a cast.
+    const v = col(
+      atr(s, { period: 3, high: 'h2', low: 'l2', close: 'c2' }),
+      'atr',
+    );
+    expect(v[3]).toBeCloseTo(2, 12);
+  });
+
+  it('reads all-missing when a named column is absent', () => {
+    // A misnamed column reads as all-missing rather than throwing — the same
+    // answer `columnValues` gives any study pointed at a column that is not
+    // there.
+    const v = col(
+      atr(ohlc(steady(10)), { period: 3, high: 'nope' as never }),
+      'atr',
+    );
+    expect(v.every((x) => x === undefined)).toBe(true);
+  });
+
+  it('rejects a bad period and a colliding output', () => {
+    expect(() => atr(ohlc(steady(5)), { period: 0 })).toThrow(TypeError);
+    expect(() => atr(ohlc(steady(5)), { period: 1.5 })).toThrow(TypeError);
+    expect(() => atr(ohlc(steady(5)), { output: 'close' })).toThrow();
+  });
+
+  it('is all-undefined when the period exceeds the bars available', () => {
+    const v = col(atr(ohlc(steady(3)), { period: 9 }), 'atr');
+    expect(v).toHaveLength(3);
+    expect(v.every((x) => x === undefined)).toBe(true);
   });
 });
