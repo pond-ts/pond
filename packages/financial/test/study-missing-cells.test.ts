@@ -125,19 +125,19 @@ describe('[PND-STUDYBOX] warm-up heads read as undefined, not NaN', () => {
       slowPeriod: 7,
       signalPeriod: 4,
     });
-    for (const name of ['macdLine', 'macdSignal', 'macdHist']) {
-      const v = cells(out, name);
-      expect(
-        v.every((x) => !Number.isNaN(x as number)),
-        name,
-      ).toBe(true);
-    }
     // Line before signal — the per-column warm-up, not a single shared one.
+    // (No `!isNaN` assertion here: `withColumn` maps NaN to missing on its
+    // typed door, so such a check can never fire and would read as coverage
+    // it isn't. What is worth pinning is WHERE the missing rows are.)
+    expect(cells(out, 'macdLine')[5]).toBeUndefined();
     expect(cells(out, 'macdLine')[6]).toBeDefined();
-    expect(cells(out, 'macdSignal')[6]).toBeUndefined();
+    // signal = EMA(4) of the line, whose warm-up shifts past the line's own:
+    // 6 + 4 - 1 = 9, not 8.
+    expect(cells(out, 'macdSignal')[8]).toBeUndefined();
+    expect(cells(out, 'macdSignal')[9]).toBeDefined();
   });
 
-  it('rsi warms up without leaking NaN', () => {
+  it('rsi warms up length-preservingly', () => {
     // rsi is the first study to hand-roll its own NaN derivation (the
     // gain/loss split), so it is the most likely to leak one into a
     // user-visible column rather than reading back as `undefined`.

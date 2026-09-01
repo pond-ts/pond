@@ -86,7 +86,11 @@ indicator should join the ones that apply to it:
   and _compose_ the warm-up, not empty the column. `rsi(sma(...))` shipped in
   review returning nothing at all; TA-Lib has had a standing test for that
   shape for years and we did not.
-- **all-missing input** → all-missing output, with no NaN leak.
+- **all-missing input** → all-missing output: the study must neither throw
+  nor invent a value. (Not "no NaN leak" — `withColumn` maps `NaN` to missing
+  on its typed door, so a leaked `NaN` reaches any reader as `undefined`.
+  That guarantee is core's and is tested there; a study test asserting it
+  would pass vacuously.)
 
 These are converted from TA-Lib's own suite (BSD 2-Clause, attributed in the
 file header) precisely because they are _property_ tests — copying more of

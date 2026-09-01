@@ -8,8 +8,10 @@
  * notice and disclaimer. The upstream LICENSE file names no individual
  * copyright holder, so attribution is to the project.
  *
- *   BSD 2-Clause License. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS
- *   AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES ARE
+ *   BSD 2-Clause License. Redistributions of source code must retain the
+ *   above copyright notice, this list of conditions and the following
+ *   disclaimer. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+ *   CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES ARE
  *   DISCLAIMED. See https://github.com/TA-Lib/ta-lib-python/blob/master/LICENSE
  *
  * ## Why these, and not TA-Lib's value tables
@@ -26,6 +28,13 @@
  *   - `test_EMAEMA`   a study over another study's output: length preserved,
  *                     warm-up composed
  *   - `test_input_allnans`  all-missing in, all-missing out
+ *
+ * What the all-missing tests actually pin is that a study handed nothing
+ * usable neither throws nor INVENTS a value. They do not, and cannot, pin
+ * "no NaN leaks into a column": `withColumn` maps `NaN` to missing on its
+ * typed door ([PND-WCNAN]), so a leaked `NaN` would arrive at any reader as
+ * `undefined` and read as a pass. That guarantee belongs to core and is
+ * tested there; claiming it here would be coverage this file does not have.
  *
  * The middle one is not hypothetical for us. `rsi(sma(...))` shipped in
  * review returning an entirely empty column, because a leading NaN landed in
@@ -140,12 +149,28 @@ describe('[talib] a study over another study composes its warm-up', () => {
     // study's own warm-up must SHIFT the Wilder seed, not poison it — a
     // recursion carries state forward forever, so poisoning empties the
     // whole column rather than delaying it.
-    const src = sma(bars(rising), { period: 3 });
+    //
+    // The source OSCILLATES deliberately. A monotonic one (an earlier draft
+    // used `100 + i`) sends every bar through RSI's `avgLoss === 0` branch,
+    // so the whole test passes on a constant 100 and pins nothing but the
+    // shape — mutating that branch to emit 0, or deleting it outright,
+    // survived. With a source that falls as well as rises, the same test
+    // also pins the values.
+    const wavy = Array.from(
+      { length: 30 },
+      (_, i) => 100 + 6 * Math.sin(i / 2.5) + i * 0.1,
+    );
+    const src = sma(bars(wavy), { period: 3 });
     const v = col(rsi(src, { column: 'sma', period: 4, output: 'r' }), 'r');
-    expect(v).toHaveLength(rising.length);
+    expect(v).toHaveLength(wavy.length);
     // sma(3) first valid at 2; rsi(4) needs 4 differences after that.
     expect(firstValid(v)).toBe(6);
     expect(v.slice(6).every((x) => x !== undefined)).toBe(true);
+    // Strictly interior values: proof the arithmetic ran rather than the
+    // no-losses shortcut, which is what a monotonic source hid.
+    const defined = v.slice(6) as number[];
+    expect(defined.some((x) => x > 0 && x < 100)).toBe(true);
+    expect(new Set(defined).size).toBeGreaterThan(1);
   });
 
   it('macd over sma composes too', () => {
