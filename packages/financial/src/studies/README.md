@@ -72,6 +72,30 @@ default output / `prefix` naming, and edge handling (e.g. σ = 0 → `undefined`
 warm-up shape, `period > length`). Aim for a real assertion, not just
 "doesn't throw."
 
+### 5b. Cover the properties, not just the values —
+
+`test/talib-properties.test.ts`
+
+The oracle checks **values** on a clean, never-flat, gap-free input. The
+property tests cover what that input is designed to avoid, and a named
+indicator should join the ones that apply to it:
+
+- **scale behaviour** — invariant (RSI) or linear (MACD)? Both are real
+  assertions; pick the one your study should satisfy.
+- **composition** — running over another study's output must preserve length
+  and _compose_ the warm-up, not empty the column. `rsi(sma(...))` shipped in
+  review returning nothing at all; TA-Lib has had a standing test for that
+  shape for years and we did not.
+- **all-missing input** → all-missing output: the study must neither throw
+  nor invent a value. (Not "no NaN leak" — `withColumn` maps `NaN` to missing
+  on its typed door, so a leaked `NaN` reaches any reader as `undefined`.
+  That guarantee is core's and is tested there; a study test asserting it
+  would pass vacuously.)
+
+These are converted from TA-Lib's own suite (BSD 2-Clause, attributed in the
+file header) precisely because they are _property_ tests — copying more of
+its value tables would only duplicate the oracle.
+
 ### 6. CHANGELOG
 
 Add the study under `## [Unreleased] → Added` in the root `CHANGELOG.md`.
