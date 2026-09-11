@@ -2825,10 +2825,30 @@ multiplier 1, the regime the argument covers.
 the 105-study corpus into a `@pond-ts/process` registry means declaring each
 study's name, input roles, numeric params with bounds and defaults, and
 output suffixes with units — all of which the package carries only in
-types TypeScript erases. Parsed out of the 0.66.0 type surface: twelve
-distinct input shapes, six output arities, zero to four params — ~400
-facts, each a silent wrong answer if mistyped, re-checked per release.
-Tidal stopped before transcribing and asked for a runtime descriptor.
+types TypeScript erases. Tidal's report put the corpus at twelve distinct
+input shapes, six output arities and zero to four params — ~400 facts, each
+a silent wrong answer if mistyped, re-checked per release — and stopped
+before transcribing to ask for a runtime descriptor.
+
+**Tidal's correction (2026-09-11), and what it proves.** Two of those
+figures were wrong, and the way they were wrong is the ask restated: three
+independent parses of the same 0.66.0 `.d.ts` files (Tidal's original, its
+reviewer's, its re-derivation) gave three different input-column
+distributions, because _whether a field is a data input or a knob_ is a
+judgement the type surface does not settle. Only the study count and the
+output-arity distribution survived all three. The catalog draws exactly
+that line — `inputs` and `params` are distinct fields, classified
+mechanically by `defineStudy` — so the disagreement cannot recur. From the
+catalog itself (109 fluent methods, the authority now): inputs `1 ×47 ·
+2 ×23 · 3 ×22 · 4 ×17` over thirteen distinct role sets; params `0 ×15 ·
+1 ×50 · 2 ×24 · 3 ×13 · 4 ×7`; outputs `1 ×74 · 2 ×19 · 3 ×10 · 5 ×3 · 7 ×1
+· 10 ×1 · 12 ×1`; units `inherit 77 · percent 47 · ratio 29 · delta 15 ·
+volume 8 · signal 6 · index 3 · bars 1` over 186 output columns. Tidal
+also noted that API.md's per-study table already held most of these facts
+as prose; it is a hand transcription (the builders used it as a
+cross-check, never the authority), its options cell is a signature that
+does not draw the input/knob line, and it carries no bounds or ranges —
+evidence for the descriptor, not a substitute.
 
 **Shape.** `StudyDescriptor` is modelled on process's `OpDef` (its words:
 `role`, `id`, `unit`, `suggest`) so a consumer maps rather than interprets
