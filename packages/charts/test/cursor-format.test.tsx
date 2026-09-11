@@ -158,11 +158,20 @@ describe('axis-strip pill precedence: cursorFormat → axis format → container
   });
 
   /** The axis pill, told apart from a tick label by its `axisPillStyle`
-   *  rounding (tick labels carry no background and no border radius). */
+   *  rounding (`src/chip.ts` — the in-plot chip is deliberately
+   *  `borderRadius: '0'`, "the rounded pill is reserved for axis
+   *  indicators", so this separates pill from chip and from tick label). */
+  const isPill = (el: HTMLElement) => el.style.borderRadius === '3px';
   const pillTexts = (root: HTMLElement) =>
     Array.from(root.querySelectorAll('div'))
-      .filter((el) => el.style.borderRadius === '3px')
+      .filter(isPill)
       .map((el) => el.textContent ?? '');
+  /** Every rendered label that is NOT the pill — the tick labels. */
+  const tickTexts = (root: HTMLElement) =>
+    Array.from(root.querySelectorAll('div'))
+      .filter((el) => el.childElementCount === 0 && !isPill(el))
+      .map((el) => el.textContent ?? '')
+      .filter((t) => t.length > 0);
 
   it('the same precedence holds on a TIME axis: cursorFormat beats the explicit axis format for the pill', () => {
     const day = 86400_000;
@@ -206,14 +215,20 @@ describe('axis-strip pill precedence: cursorFormat → axis format → container
         <XAxis format="%d" />
       </ChartContainer>
     );
-    // cursorFormat set: the pill reads it; the '%d' ticks are unmoved.
+    // cursorFormat set: the pill reads it.
     const withCursor = render(chart('%Y-%m-%d'));
     expect(pillTexts(withCursor.container)).toEqual([YMD]);
+    const ticksWith = tickTexts(withCursor.container);
     withCursor.unmount();
     // cursorFormat unset: the pill agrees with the explicit axis format.
     const without = render(chart());
     expect(pillTexts(without.container)).toEqual([DD]);
     expect(within(without.container).queryByText(YMD)).toBeNull();
+    // …and the ticks are unmoved by cursorFormat — identical either way.
+    // Compared directly rather than pattern-matched, so the assertion needs
+    // no guess about which days d3 picks (which is itself zone-dependent).
+    expect(ticksWith.length).toBeGreaterThan(0); // not vacuously equal
+    expect(ticksWith).toEqual(tickTexts(without.container));
   });
 });
 
