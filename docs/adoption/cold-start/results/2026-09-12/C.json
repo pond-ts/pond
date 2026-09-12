@@ -1,0 +1,69 @@
+{
+  "arm": "C",
+  "model": ["claude-opus-5[1m]"],
+  "turns": 43,
+  "cost_usd": 2.8007205000000006,
+  "duration_s": 448,
+  "tools": {
+    "Bash": 40,
+    "Skill": 1
+  },
+  "installs": [
+    "2>&1 | tail -5",
+    "pond-ts@^0.67.0 2>&1 | tail -3 && echo \"=== files ===\" && ls node_modules/pond-ts/ && for m in baseline outliers dedupe partitionBy collect toPoints fromPoints fromJSON column groupBy aggregate; do printf \"%-14s %s\\n\" \"$m\" \"$(grep -c \"    $m\" node_modules/pond-ts/dist/TimeSeries.d.ts)\"; done",
+    "&& npm start",
+    "===\" && npm install 2>&1 | tail -3 && echo \"=== npm start ===\" && time npm start 2>&1 | tail -30"
+  ],
+  "searches": [
+    "for m in baseline outliers dedupe partitionBy collect toPoints fromPoints fromColumns fromJSON column byColumn byValue smooth tail groupBy aggregate rolling; do printf \"%-14s %s\\n\" \"$m\" \"$(grep -c \"    $m\" node_modules/pond-ts/dist/TimeSeries.d.ts)\"; done && echo \"=== npm view versions ===\" && npm view pond-ts versions --json 2>/dev/null | tail -5"
+  ],
+  "web": [],
+  "reads": [],
+  "skills": ["pond-ts"],
+  "firstPondMention": 7,
+  "deps": ["pond-ts", "@types/node", "tsx", "typescript"],
+  "usesPond": true,
+  "run": {
+    "ok": true,
+    "ms": 700,
+    "tail": [
+      "  api-10    51",
+      "",
+      "Three worst breaches (by ms above the upper band):",
+      "  1. api-07  2026-09-02T06:00:00.000Z  p95=444.85ms  upper=316.296ms  +128.554ms (3.164 sigma)",
+      "  2. api-03  2026-09-01T06:00:00.000Z  p95=213.42ms  upper=149.216ms  +64.204ms (3.286 sigma)",
+      "  3. api-01  2026-09-03T05:50:00.000Z  p95=146ms  upper=102.016ms  +43.984ms (3.315 sigma)",
+      "",
+      "Wrote out/p95.csv (6674 rows), out/baseline.csv (6674), out/breaches.csv (508) in 337 ms"
+    ]
+  },
+  "compare": {
+    "p95": {
+      "rows": 6674,
+      "ref_rows": 6674,
+      "matched_1e3": 6674,
+      "off": 0,
+      "unknown_bucket": 0,
+      "max_rel_err": 3.91e-15,
+      "off_samples": []
+    },
+    "breaches": {
+      "got": 508,
+      "ref": 508,
+      "common": 508,
+      "only_in_arm": 0,
+      "only_in_ref": 0
+    },
+    "worst3_arm_by_exceedance": [
+      ["api-07", "2026-09-02T06:00:00.000Z", 128.6],
+      ["api-03", "2026-09-01T06:00:00.000Z", 64.2],
+      ["api-01", "2026-09-03T05:50:00.000Z", 44]
+    ],
+    "worst3_ref": [
+      ["api-07", "2026-09-02T06:00:00+00:00", 444.9],
+      ["api-03", "2026-09-01T06:00:00+00:00", 213.4],
+      ["api-01", "2026-09-03T05:50:00+00:00", 146]
+    ]
+  },
+  "final": ", both argued in NOTES.md: the trailing window is `(t-1h, t]` and so **includes the current bucket**, which slightly damps the spike being tested for (the standard reading, but a stricter detector would flag marginally more); and `upper`/`lower` are left blank where `sd == 0` — the 10 first-ever buckets, one per host — rather than emitting a zero-width band that would flag everything.\n\nDONE\n\nnpm packages used:\n- **`pond-ts`** — runtime, the only production dependency\n- `tsx` — dev, runs TypeScript directly so there's no build step\n- `typescript` — dev, `npm run typecheck`\n- `@types/node` — dev"
+}

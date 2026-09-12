@@ -36,23 +36,39 @@ review corrected it — `reduce` is not on `PartitionedTimeSeries` at all).
 The workaround every agent found is to name the column in the mapping
 (`host: 'first'`), which is what the runtime injection does anyway.
 
-**Fix shape.** `PartitionedTimeSeries<S, K>`'s `K` is the partition **value**
-type (`toMap(): Map<K, …>`), not the `by` column names — those exist only on
-the runtime `by` field. So the fix needs a new type parameter captured at
-`partitionBy(by)` — `PartitionedTimeSeries<S, K, By extends keyof S-columns>`
-— and the two schema-replacing operators' result schema becomes
-`[S[0], ...Pick<S value columns, By>, ...mapping outputs]` (order/kind from
-`S`; a mapping key that already names a `By` column wins, matching the
-runtime rule). Every operator's return type has to thread `By` through;
-`baseline` / `smooth` today already drop `K` in their return type
-(`PartitionedTimeSeries<…>` without `K`) — fold that into the same pass.
-`toMap()`'s per-partition series legitimately lack the column and stay as
-they are.
+**Fix shape (corrected by the Codex pass on #723).** Three facts from the
+source constrain it:
 
-**Acceptance.** The snippet above compiles; a type-level test in `test-d/`
-pins it for both `aggregate` and `rolling`; the arm-C / arm-D `TS2345` detour
-disappears on a re-run of the harness; the guide's "one sharp edge"
-paragraph can be deleted.
+- The runtime (`partitioned-time-series.ts` `augmentMappingWithPartitionCols`)
+  spreads the user's mapping first and then **appends** each `by` column that
+  the mapping does not already name, as a `'first'`-style spec, in `by` order.
+  So the injected columns come **after** the mapping outputs, and a mapping key
+  that names a `by` column wins **including its kind** — `host: 'count'`
+  yields an optional-number `host`, not the source's string.
+- `aggregate` and sequence-driven `rolling` produce an **`interval`** key
+  column, not `S[0]`, so a result schema written as `[S[0], …]` is wrong for
+  them.
+- `PartitionedTimeSeries<S, K>`'s `K` is the partition **value** type
+  (`toMap(): Map<K, …>`), and the runtime `by` field is typed as every
+  possible value-column name, so the selected literals cannot be recovered
+  from today's types. A new generic **is** required.
+
+Therefore: capture `By` at `partitionBy(by)` as the element union of the
+column(s) passed (single string or array — `partitionBy` accepts both), and
+have `aggregate` / `rolling` return the **existing** `AggregateSchema` /
+`RollingSchema` applied to the mapping augmented at the type level with
+`{ [C in Exclude<By, keyof Mapping>]: 'first' }`. That reproduces the runtime
+exactly — same key column, same order (mapping outputs then injected `by`
+columns), same "existing key wins, kind and all" rule — without inventing a
+second schema shape. `baseline` / `smooth` dropping `K` in their return types
+is folded into the same pass.
+
+**Acceptance.** The snippet above compiles; type-level tests in `test-d/` pin
+it for `aggregate` and `rolling`, for a single `by` column **and** a
+multi-column `partitionBy(['region', 'host'])`, and for the
+"mapping-key-wins" case (`host: 'count'` stays optional-number); the arm-C /
+arm-D `TS2345` detour disappears on a re-run of the harness; the guide's "one
+sharp edge" paragraph can be deleted.
 
 ### [PND-COLAPI] — Bundle-safe column API + validity-aware bulk read
 

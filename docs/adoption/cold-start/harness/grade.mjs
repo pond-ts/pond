@@ -91,35 +91,89 @@ try {
   run = { ok: false, error: String(e.stderr || e.message).slice(-600) };
 }
 let compare = null;
+// Value-level comparison against reference.py --full: per-(host,bucket) p95
+// within tolerance, breach identities (set diff), and the arm's own worst-3.
+// Convention mismatches (nearest-rank p95, sample sd, warm-up gates) show up
+// as counted disagreements — read them with the arm's NOTES.md, not as pass/fail.
 try {
   const ref = JSON.parse(
     execSync(
-      `python3 ${path.join(S, 'harness/reference.py')} ${path.join(S, 'data/latency.csv')}`,
+      `python3 ${path.join(S, 'harness/reference.py')} ${path.join(S, 'data/latency.csv')} --full`,
+      { maxBuffer: 64 << 20 },
     ).toString(),
   );
-  const p95 = readFileSync(path.join(dir, 'out/p95.csv'), 'utf8')
-    .trim()
-    .split('\n');
-  const br = readFileSync(path.join(dir, 'out/breaches.csv'), 'utf8')
-    .trim()
-    .split('\n')
-    .slice(1);
-  const perHost = {};
-  for (const l of br) {
-    const h = l.split(',')[0];
-    perHost[h] = (perHost[h] || 0) + 1;
+  const keyOf = (host, ts) => {
+    const t = /^\d+$/.test(ts)
+      ? Number(ts) * (ts.length > 10 ? 1 : 1000)
+      : Date.parse(ts);
+    return `${host}|${Math.floor(t / 1000)}`;
+  };
+  const csv = (f) =>
+    readFileSync(path.join(dir, 'out', f), 'utf8')
+      .trim()
+      .split('\n')
+      .slice(1)
+      .map((l) => l.split(','));
+  const p95 = csv('p95.csv'); // host,bucket_start,p95,count
+  let matched = 0,
+    off = 0,
+    missing = 0,
+    maxRel = 0;
+  const offSamples = [];
+  for (const [host, ts, v] of p95) {
+    const k = keyOf(host, ts);
+    const r = ref.p95[k];
+    if (r === undefined) {
+      missing++;
+      continue;
+    }
+    const got = Number(v);
+    const rel = Math.abs(got - r) / Math.max(1e-9, Math.abs(r));
+    maxRel = Math.max(maxRel, rel);
+    if (rel <= 1e-3) matched++;
+    else {
+      off++;
+      if (offSamples.length < 3)
+        offSamples.push({ k, got, ref: Number(r.toFixed(3)) });
+    }
   }
+  const br = csv('breaches.csv'); // host,bucket_start,p95,upper
+  const gotSet = new Set(br.map(([h, ts]) => keyOf(h, ts)));
+  const refSet = new Set(ref.breach_set);
+  const onlyGot = [...gotSet].filter((k) => !refSet.has(k));
+  const onlyRef = [...refSet].filter((k) => !gotSet.has(k));
+  const worst3 = br
+    .map(([h, ts, p, u]) => ({ h, ts, exceed: Number(p) - Number(u) }))
+    .filter((x) => Number.isFinite(x.exceed))
+    .sort((a, b) => b.exceed - a.exceed)
+    .slice(0, 3)
+    .map((x) => [
+      x.h,
+      new Date(Number(keyOf(x.h, x.ts).split('|')[1]) * 1000).toISOString(),
+      Number(x.exceed.toFixed(1)),
+    ]);
   compare = {
-    ref_buckets: ref.buckets,
-    got_buckets: p95.length - 1,
-    ref_breaches: Object.values(ref.breaches).reduce((a, b) => a + b, 0),
-    got_breaches: br.length,
-    per_host_ref: ref.breaches,
-    per_host_got: perHost,
-    ref_worst3: ref.worst3,
+    p95: {
+      rows: p95.length,
+      ref_rows: Object.keys(ref.p95).length,
+      matched_1e3: matched,
+      off,
+      unknown_bucket: missing,
+      max_rel_err: Number(maxRel.toExponential(2)),
+      off_samples: offSamples,
+    },
+    breaches: {
+      got: gotSet.size,
+      ref: refSet.size,
+      common: gotSet.size - onlyGot.length,
+      only_in_arm: onlyGot.length,
+      only_in_ref: onlyRef.length,
+    },
+    worst3_arm_by_exceedance: worst3,
+    worst3_ref: ref.worst3,
   };
 } catch (e) {
-  compare = { error: String(e.message).slice(0, 200) };
+  compare = { error: String(e.message).slice(0, 300) };
 }
 console.log(
   JSON.stringify(

@@ -1,0 +1,65 @@
+{
+  "arm": "B",
+  "model": ["claude-opus-5[1m]"],
+  "turns": 41,
+  "cost_usd": 3.1901269999999995,
+  "duration_s": 526,
+  "tools": {
+    "Bash": 40
+  },
+  "installs": [
+    "-D typescript@5 @types/node@22 2>&1 | tail -5",
+    "npm start      # compiles src/ with tsc, then runs dist/main.js",
+    "--silent && npm start) 2>&1 | tail -32"
+  ],
+  "searches": [],
+  "web": [],
+  "reads": [],
+  "skills": [],
+  "firstPondMention": 6,
+  "deps": ["pond-ts", "@types/node", "typescript"],
+  "usesPond": true,
+  "run": {
+    "ok": true,
+    "ms": 1035,
+    "tail": [
+      "",
+      "Three worst breaches overall (by ms above the band)",
+      "host                bucket_start     p95    upper    excess  sigmas",
+      "api-07  2026-09-02T06:00:00.000Z  444.85  316.296  +128.554    3.2σ",
+      "api-03  2026-09-01T06:00:00.000Z  213.42  149.216   +64.204    3.3σ",
+      "api-01  2026-09-03T05:50:00.000Z     146  102.016   +43.984    3.3σ",
+      "",
+      "Done in 0.3s"
+    ]
+  },
+  "compare": {
+    "p95": {
+      "rows": 6674,
+      "ref_rows": 6674,
+      "matched_1e3": 6674,
+      "off": 0,
+      "unknown_bucket": 0,
+      "max_rel_err": 3.91e-15,
+      "off_samples": []
+    },
+    "breaches": {
+      "got": 504,
+      "ref": 508,
+      "common": 504,
+      "only_in_arm": 0,
+      "only_in_ref": 4
+    },
+    "worst3_arm_by_exceedance": [
+      ["api-07", "2026-09-02T06:00:00.000Z", 128.6],
+      ["api-03", "2026-09-01T06:00:00.000Z", 64.2],
+      ["api-01", "2026-09-03T05:50:00.000Z", 44]
+    ],
+    "worst3_ref": [
+      ["api-07", "2026-09-02T06:00:00+00:00", 444.9],
+      ["api-03", "2026-09-01T06:00:00+00:00", 213.4],
+      ["api-01", "2026-09-03T05:50:00+00:00", 146]
+    ]
+  },
+  "final": "ed once a **full** trailing hour is available (`minSamples: 12`, leaving 110 warm-up rows with empty band columns — a band fitted to 2–3 samples flags noise), and `lower` is reported unclamped, so it is often negative — latency is right-skewed, so the lower band carries no real information here.\n\nResults: 504 breaches across 6,674 bucket-hours, spread evenly (43–56 per host, no single bad host); the worst is api-07 at 2026-09-02T06:00, p95 444.85 ms against a 316.30 ms band.\n\nDONE\n\nnpm packages used:\n- `pond-ts` (runtime — the only runtime dependency)\n- `typescript` (dev)\n- `@types/node` (dev)"
+}

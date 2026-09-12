@@ -36,9 +36,13 @@ work. Charting was deliberately left out of this run so the sessions stay
 Node-only; the charts skill was installed in C/D but had nothing to trigger
 on.
 
-**Reference answer** computed independently (`reference.py`): 6,674 buckets;
-per-host breach counts; the three worst breaches. Used to check that each
-arm's output is _right_, not just that it ran.
+**Reference answer** computed independently (`reference.py`, conventions
+stated at the top of the file: interpolated p95, population sd, a
+**time-based** trailing hour including the current bucket, bands from the
+first bucket): 6,674 buckets, 508 breaches, the three worst. `grade.mjs`
+compares each arm's p95 per (host, bucket) within 0.1 %, diffs breach
+identities as sets, and recomputes the arm's worst-3 by exceedance — so an
+arm's output is checked for being _right_, not just for running.
 
 **Measured per arm:** library chosen and the first turn pond is mentioned;
 what the agent searched or fetched (`npm search` / `npm view` / `curl` /
@@ -55,13 +59,16 @@ reference; API misuses against the guide's pitfall list.
 | C   | **pond-ts** | turn 7: `pond-ts` skill auto-triggered ("covers exactly this shape of work")                                                                   | 43    | 448 s | $2.80 | ✅          | 6 674 ✅ · **508 ✅** · worst-3 ✅                                     |
 | D   | **pond-ts** | turn 6: skill auto-triggered; **removed the pre-installed `arquero`** ("not time-aware, can't express a `(t−1h, t]` window")                   | 36    | 415 s | $2.49 | ✅          | 6 674 ✅ · 504 breaches · worst-3 ✅                                   |
 
-All four produced runnable, self-consistent code. B, C and D used the
-reference's conventions (interpolated p95, population sd, trailing window
-including the current bucket, bands from the first bucket); the 504-vs-508
-gap in B and D is a deliberate `minSamples: 12` warm-up gate on `baseline`
-(no band until a full hour of buckets), not an error. A chose and documented
-different conventions (nearest-rank p95, sample n−1 sd), so its 478 is not
-comparable and is not a correctness verdict either way.
+All four produced runnable, self-consistent code. The grader compares
+**values**, not counts: every p95 the three pond arms wrote equals the
+reference to floating-point noise, and their breach sets are the reference's
+set (C) or the reference's set minus the four first-hour buckets suppressed
+by a deliberate `minSamples: 12` warm-up gate on `baseline` (B, D). A chose
+and documented different conventions (nearest-rank p95, sample n−1 sd), so
+its values differ where those conventions bite and its breach set overlaps
+the reference on 441 of 478 — self-consistent, not comparable, and not a
+correctness verdict either way. Per-arm grader output is committed under
+[`docs/adoption/cold-start/results/2026-09-12/`](../adoption/cold-start/results/2026-09-12/).
 
 ### What the channels did
 
@@ -137,8 +144,8 @@ assignable to parameter of type '"count" | "p95"'` and converged on the
   skills well".
 - Keep n = 1 per arm until a channel-2 intervention exists worth measuring;
   channel 3 is already at 2/2.
-- Commit `grade.mjs` output per arm next run (a few KB each) so the
-  per-arm turn / cost / channel evidence is inspectable in review; the raw
+- Keep committing `grade.mjs` output per arm (done for run 1 under
+  `results/`) so the per-arm evidence is inspectable in review; the raw
   transcripts stay session-local.
 
 ## Caveats

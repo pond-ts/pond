@@ -1,0 +1,81 @@
+{
+  "arm": "A",
+  "model": ["claude-opus-5[1m]"],
+  "turns": 23,
+  "cost_usd": 1.9489449999999995,
+  "duration_s": 449,
+  "tools": {
+    "Bash": 22
+  },
+  "installs": [
+    "2>&1 | tail -5 && echo \"=== START ===\" && time npm start 2>&1 | tail -40",
+    "&& npm start",
+    "&& npm start ===\" && time (npm install --silent && npm start) 2>&1 | tail -32"
+  ],
+  "searches": [],
+  "web": [],
+  "reads": [],
+  "skills": [],
+  "firstPondMention": 32,
+  "deps": ["@types/node", "typescript"],
+  "usesPond": false,
+  "run": {
+    "ok": true,
+    "ms": 818,
+    "tail": [
+      "  api-10     48  ############################",
+      "",
+      "Three worst breaches (by ms above the upper band):",
+      "  1. api-07   2026-09-02T06:00:00.000Z  p95   445.3 ms  vs upper  330.91 ms  (+114.39 ms, 1.346x)",
+      "  2. api-03   2026-09-01T06:00:00.000Z  p95   213.9 ms  vs upper 156.365 ms  (+57.535 ms, 1.368x)",
+      "  3. api-05   2026-09-03T01:45:00.000Z  p95   170.6 ms  vs upper 124.569 ms  (+46.031 ms, 1.37x)",
+      "",
+      "Done in 234 ms"
+    ]
+  },
+  "compare": {
+    "p95": {
+      "rows": 6674,
+      "ref_rows": 6674,
+      "matched_1e3": 1337,
+      "off": 5337,
+      "unknown_bucket": 0,
+      "max_rel_err": 0.787,
+      "off_samples": [
+        {
+          "k": "api-01|1788220800",
+          "got": 27.5,
+          "ref": 27.465
+        },
+        {
+          "k": "api-01|1788221100",
+          "got": 148.4,
+          "ref": 130.5
+        },
+        {
+          "k": "api-01|1788221400",
+          "got": 27.7,
+          "ref": 27.54
+        }
+      ]
+    },
+    "breaches": {
+      "got": 478,
+      "ref": 508,
+      "common": 441,
+      "only_in_arm": 37,
+      "only_in_ref": 67
+    },
+    "worst3_arm_by_exceedance": [
+      ["api-07", "2026-09-02T06:00:00.000Z", 114.4],
+      ["api-03", "2026-09-01T06:00:00.000Z", 57.5],
+      ["api-05", "2026-09-03T01:45:00.000Z", 46]
+    ],
+    "worst3_ref": [
+      ["api-07", "2026-09-02T06:00:00+00:00", 444.9],
+      ["api-03", "2026-09-01T06:00:00+00:00", 213.4],
+      ["api-01", "2026-09-03T05:50:00+00:00", 146]
+    ]
+  },
+  "final": "exact-half rounding at the 5e-4 tolerance (54.4375 → `54.438`, delta exactly 0.0005), confirmed as formatting, not arithmetic.\n\nTwo deliberate choices you may want to overrule, both documented: the current bucket sits **inside** its own window (the plain reading of \"trailing rolling\", but it lets a spike partly mask itself — one-line change), and `lower` is left negative on 1,863 rows rather than clamped, since the column is defined as a formula.\n\nDONE\n\n**npm packages used:** none at runtime — zero runtime dependencies. Dev dependencies only:\n- `typescript` (^5.5.4)\n- `@types/node` (^20.14.10)"
+}
