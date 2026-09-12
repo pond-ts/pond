@@ -1095,15 +1095,11 @@ harness hands it (an installed skill, an `AGENTS.md`). Baseline 2026-09-12:
 zero npm keywords on every package, `pond-ts` **last** in `npm search "time
 series"`, not indexed by Context7, a bare-URL `llms.txt` with a 1.2 MB full
 dump, dead docs links in two shipped READMEs and eight docs pages.
-[PND-ADOPTLINKS] / [PND-LLMSTXT] / [PND-AGENTGUIDE] shipped in #722 (outcomes in
-the breakout). Plan:
+[PND-ADOPTMETA] / [PND-ADOPTLINKS] / [PND-LLMSTXT] / [PND-AGENTGUIDE] shipped
+(#722 + owner-applied GitHub topics; outcomes in the breakout). Plan:
 [PND_ADOPTION_PLAN.md](docs/plans/PND_ADOPTION_PLAN.md) (baseline table,
 per-task reasoning, deferred alternatives).
 
-- **[PND-ADOPTMETA]** — `keywords` / `homepage` / `bugs` on all six manifests
-  with per-package search terms (npm side shipped in the first tranche);
-  **owner action open:** GitHub description + topics via the `gh repo edit`
-  in the breakout plan.
 - **[PND-SKILL]** — Claude Code plugin marketplace in-repo
   (`.claude-plugin/marketplace.json` + `plugins/pond-ts/` with `pond-ts`,
   `pond-charts`, `pond-financial` skills; install via
