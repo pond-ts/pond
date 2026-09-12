@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.68.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.69.0...HEAD
+[0.69.0]: https://github.com/pond-ts/pond/compare/v0.68.0...v0.69.0
 [0.68.0]: https://github.com/pond-ts/pond/compare/v0.67.0...v0.68.0
 [0.67.0]: https://github.com/pond-ts/pond/compare/v0.66.0...v0.67.0
 [0.66.0]: https://github.com/pond-ts/pond/compare/v0.65.0...v0.66.0
@@ -71,18 +72,7 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
-### Fixed
-
-- **`pond-ts`: two type-level corners of [PND-PARTCOL] (0.68.0) found by the Codex pass on #724.** (1) On a broad `TimeSeries<SeriesSchema>` with a _literal_ partition column, the injected `'first'` could not look up a kind and typed the column as `undefined`; `WithPartitionColumns` now takes the schema and leaves the mapping alone when the schema is broad, so the result type is exactly 0.67's. (2) `By` had no variance pin, so `PartitionedTimeSeries<S, K, 'host'>` accepted a view partitioned by `region` (and an untyped view could be narrowed to any column); a phantom contravariant member now rejects both while a specialised view still assigns to the legacy `PartitionedTimeSeries<S>` shape. Type tests cover both plus the `K`-survives-`smooth`/`baseline` claim. No runtime change.
-- **Docs said a wall-clock string without `parse.timeZone` throws. It never
-  did** ([PND-TZDOCS]) — it is read as UTC, silently. `creating.mdx`, the
-  agent guide (`AGENTS.md`) and the decision table now say so and describe
-  how the shift shows up. The agent guide also gains the one time-zone rule:
-  pass the same `timeZone` to `Sequence.calendar` and `<ChartContainer>`.
-  The aggregation page cross-links `Sequence.calendar` for weekly / monthly
-  bars (issue #358 item 1, supersedes #359). The finance gallery's off-chart
-  readout takes the calendar's zone instead of hard-coding New York; the
-  Niño 3.4 heat map's year grain uses `Sequence.calendar('year')`.
+## [0.69.0] — 2026-09-13
 
 ### Added
 
@@ -121,9 +111,6 @@ include new features and type-level changes; patch bumps are strictly additive.
   further wiring.
 - `@pond-ts/charts` now depends on `d3-time-format` directly (it was already
   a transitive dependency via `d3-scale`).
-
-### Added
-
 - **`TimeZone` — the zone-calendar primitive ([PND-TZCAL]).** `pond-ts`
   exports `TimeZone.of(id)` (interned; also `TimeZone.UTC`,
   `TimeZone.local()`) with `startOf(unit, t)`, `next(unit, t)`, `parts(t)`,
@@ -150,6 +137,19 @@ include new features and type-level changes; patch bumps are strictly additive.
   before, an unknown unit silently produced wrong buckets (the two unit
   dispatchers fell through to different defaults — the 2026-06 audit's §6
   finding) and an unknown zone failed only on first `bounded()`.
+
+### Fixed
+
+- **`pond-ts`: two type-level corners of [PND-PARTCOL] (0.68.0) found by the Codex pass on #724.** (1) On a broad `TimeSeries<SeriesSchema>` with a _literal_ partition column, the injected `'first'` could not look up a kind and typed the column as `undefined`; `WithPartitionColumns` now takes the schema and leaves the mapping alone when the schema is broad, so the result type is exactly 0.67's. (2) `By` had no variance pin, so `PartitionedTimeSeries<S, K, 'host'>` accepted a view partitioned by `region` (and an untyped view could be narrowed to any column); a phantom contravariant member now rejects both while a specialised view still assigns to the legacy `PartitionedTimeSeries<S>` shape. Type tests cover both plus the `K`-survives-`smooth`/`baseline` claim. No runtime change.
+- **Docs said a wall-clock string without `parse.timeZone` throws. It never
+  did** ([PND-TZDOCS]) — it is read as UTC, silently. `creating.mdx`, the
+  agent guide (`AGENTS.md`) and the decision table now say so and describe
+  how the shift shows up. The agent guide also gains the one time-zone rule:
+  pass the same `timeZone` to `Sequence.calendar` and `<ChartContainer>`.
+  The aggregation page cross-links `Sequence.calendar` for weekly / monthly
+  bars (issue #358 item 1, supersedes #359). The finance gallery's off-chart
+  readout takes the calendar's zone instead of hard-coding New York; the
+  Niño 3.4 heat map's year grain uses `Sequence.calendar('year')`.
 
 ## [0.68.0] — 2026-09-13
 
