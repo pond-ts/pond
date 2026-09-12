@@ -16,7 +16,16 @@ re-run against the build wrote `{ p95, count }` with no `host`, called
 exactly (see the note). Two small follow-ups it surfaced: the injected `By`
 columns are typed `required: false` like every aggregate output although the
 runtime always fills them (agents add needless `undefined` guards), and
-[PND-DISTINCT] below. Implemented exactly as the corrected fix shape below:
+[PND-DISTINCT] below. **Codex pass on #724 (after merge) found two unsound corners, fixed in the
+follow-up PR:** a broad schema with a literal column typed the injected field
+as `undefined` (now guarded — `WithPartitionColumns<S, Mapping, By>` leaves a
+broad schema's mapping alone), and `By` had no variance, so
+`PartitionedTimeSeries<S, K, 'host'>` accepted a `region` view (now a phantom
+`declare readonly __partitionColumns?: (by: By) => void` pins it
+contravariantly; specialised → legacy assignment still works). Lesson: a
+generic that appears only inside a conditional in return positions has no
+variance to TypeScript — pin it explicitly. Implemented exactly as the
+corrected fix shape below:
 `PartitionedTimeSeries<S, K, By extends string = never>`, `partitionBy`
 overloads capture `By` (`const Col` — single string or array element union,
 and alongside typed `groups`), `aggregate` / `rolling` return
