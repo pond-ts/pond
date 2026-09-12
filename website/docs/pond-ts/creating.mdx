@@ -619,8 +619,11 @@ const monthly = Sequence.calendar('month', {
 });
 ```
 
-Supported units: `'day'`, `'week'`, `'month'`. Pass to `aggregate` or
-`align` exactly like a fixed-step sequence.
+Supported units: `'day'`, `'week'`, `'month'`, `'quarter'`, `'year'`; any
+other unit throws `RangeError`. Pass to `aggregate` or `align` exactly like a
+fixed-step sequence. Boundaries come from `TimeZone`, the same primitive the
+charts' time axis places ticks with, so a bucket edge and the tick that labels
+it are one instant.
 
 ### When it matters
 

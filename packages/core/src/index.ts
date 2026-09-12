@@ -227,6 +227,13 @@ export type {
   CalendarUnit,
   TimeZoneOptions,
 } from './core/calendar.js';
+export { TimeZone } from './core/time-zone.js';
+export type {
+  Disambiguation,
+  StartOfOptions,
+  ZonedParts,
+  ZonedPartsInput,
+} from './core/time-zone.js';
 export type {
   EventKey,
   IntervalInput,

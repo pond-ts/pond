@@ -71,6 +71,35 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`TimeZone` — the zone-calendar primitive ([PND-TZCAL]).** `pond-ts`
+  exports `TimeZone.of(id)` (interned; also `TimeZone.UTC`,
+  `TimeZone.local()`) with `startOf(unit, t)`, `next(unit, t)`, `parts(t)`,
+  `instant(parts, { disambiguation })`, `offsetAt(t)` and
+  `abbreviation(t, { locale })`. Temporal underneath, but each zone caches its
+  offset transitions as it discovers them, so steady-state calls are integer
+  arithmetic: `startOf('day')` went from ~24 µs to ~23 ns per call, and a
+  three-year hourly series aggregated to `America/New_York` days from 38 ms
+  to 0.5 ms. `Sequence.calendar`, `TimeRange.fromCalendar` and
+  `Interval.fromCalendar` now bucket through it (no behaviour change; pinned
+  against Temporal on eight zones including southern-hemisphere DST, a
+  30-minute DST shift, a +05:30 zone, a day with no midnight and Samoa's
+  skipped day). This is the primitive the charts' time axis will place and
+  label ticks with, so a bucket edge and the tick that labels it are one
+  instant. First task of the time-zone plan
+  (`docs/plans/PND_TIMEZONE_PLAN.md`).
+- **`CalendarUnit` gains `'quarter'` and `'year'`** for
+  `Sequence.calendar`, `TimeRange.fromCalendar` and `Interval.fromCalendar`.
+
+### Changed
+
+- **`Sequence.calendar` validates its inputs at construction.** An unknown
+  unit (`'hour'`) or zone (`'Nowhere'`) now throws `RangeError` immediately;
+  before, an unknown unit silently produced wrong buckets (the two unit
+  dispatchers fell through to different defaults — the 2026-06 audit's §6
+  finding) and an unknown zone failed only on first `bounded()`.
+
 ## [0.68.0] — 2026-09-13
 
 ### Added

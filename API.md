@@ -45,7 +45,7 @@ next door is the point.
 | `TimeSeries`            | Immutable time-indexed collection, columnar storage                                                                                                     | `packages/core/src/batch/time-series.ts`             |
 | `ValueSeries`           | Series keyed by a monotonic non-time value axis                                                                                                         | `packages/core/src/batch/value-series.ts`            |
 | `PartitionedTimeSeries` | Scoped view for per-partition stateful transforms; `<S, K, By>` — `By` is the partition column names, carried into `aggregate` / `rolling` result types | `packages/core/src/batch/partitioned-time-series.ts` |
-| `Sequence`              | Infinite grid of time buckets (daily, hourly, every N)                                                                                                  | `packages/core/src/sequence/sequence.ts`             |
+| `Sequence`              | Infinite grid of time buckets: fixed-step (hourly, every N) or calendar (day/week/month/quarter/year in an IANA zone, default UTC)                      | `packages/core/src/sequence/sequence.ts`             |
 | `BoundedSequence`       | Finite ordered list of explicit interval buckets                                                                                                        | `packages/core/src/sequence/bounded-sequence.ts`     |
 
 Static constructors on `TimeSeries`: `fromJSON()` (row tuples/objects),
@@ -99,13 +99,14 @@ Value-axis wire types
 
 ### Temporal keys & events
 
-| Export        | Purpose                                       | Source                                 |
-| ------------- | --------------------------------------------- | -------------------------------------- |
-| `Time`        | Point-in-time event key                       | `packages/core/src/core/time.ts`       |
-| `TimeRange`   | Interval event key (start/end)                | `packages/core/src/core/time-range.ts` |
-| `Interval`    | Labeled time-interval event key               | `packages/core/src/core/interval.ts`   |
-| `Event`       | Immutable event: temporal key + typed payload | `packages/core/src/core/event.ts`      |
-| `toTimeRange` | Coerce temporal values to `TimeRange`         | `packages/core/src/core/time-range.ts` |
+| Export        | Purpose                                                                                                                                                             | Source                                 |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `Time`        | Point-in-time event key                                                                                                                                             | `packages/core/src/core/time.ts`       |
+| `TimeRange`   | Interval event key (start/end)                                                                                                                                      | `packages/core/src/core/time-range.ts` |
+| `Interval`    | Labeled time-interval event key                                                                                                                                     | `packages/core/src/core/interval.ts`   |
+| `TimeZone`    | IANA zone as a calendar: `startOf` / `next` / `parts` / `instant` / `offsetAt` / `abbreviation`; interned, transition-cached; what `Sequence.calendar` buckets with | `packages/core/src/core/time-zone.ts`  |
+| `Event`       | Immutable event: temporal key + typed payload                                                                                                                       | `packages/core/src/core/event.ts`      |
+| `toTimeRange` | Coerce temporal values to `TimeRange`                                                                                                                               | `packages/core/src/core/time-range.ts` |
 
 ### TimeSeries methods (all in `packages/core/src/batch/time-series.ts`)
 
@@ -158,14 +159,14 @@ Deliberately small — the ordering-based slice of the algebra, no calendar ops
 
 ### Key exported types (batch)
 
-| Type group        | Names                                                                                                                                              | Source                                                             |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| Schema contract   | `SeriesSchema`, `RowForSchema`, `EventForSchema`, `EventDataForSchema`, `EventKeyForSchema`, `TimeSeriesInput`, `TimeSeriesJsonInput`              | `packages/core/src/schema/index.ts`                                |
-| Aggregation specs | `AggregateReducer`, `AggregateMap`, `AggregateOutputMap`, `AggregateSchema`, `BinReducerName`, `BinOutput`                                         | `packages/core/src/schema/index.ts`, `packages/core/src/column.ts` |
-| Operation schemas | `RollingSchema`, `RollingAlignment`, `AlignSchema`, `DiffSchema`, `SmoothSchema`, `SmoothMethod`, `FillStrategy`, `FillMapping`                    | `packages/core/src/schema/index.ts`                                |
-| Column/data kinds | `Column`, `KeyColumn`, `ColumnKind`, `ScalarKind`, `ScalarValue`, `ColumnValue`, `ArrayValue`, `ValidityBitmap`                                    | `packages/core/src/columnar/`                                      |
-| JSON wire format  | `JsonRowFormat`, `JsonRowForSchema`, `JsonObjectRowForSchema`, `JsonValueForKind`, `JsonTimestampInput`, `JsonTimeRangeInput`, `JsonIntervalInput` | `packages/core/src/schema/index.ts`                                |
-| Temporal utility  | `TemporalLike`, `DurationInput`, `CalendarUnit`, `TimeZoneOptions`, `KeyLike`, `BatchSampleStrategy`, `SequenceSample`, `SequenceCoverage`         | `packages/core/src/core/`, `packages/core/src/sequence/`           |
+| Type group        | Names                                                                                                                                                                                                           | Source                                                             |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Schema contract   | `SeriesSchema`, `RowForSchema`, `EventForSchema`, `EventDataForSchema`, `EventKeyForSchema`, `TimeSeriesInput`, `TimeSeriesJsonInput`                                                                           | `packages/core/src/schema/index.ts`                                |
+| Aggregation specs | `AggregateReducer`, `AggregateMap`, `AggregateOutputMap`, `AggregateSchema`, `BinReducerName`, `BinOutput`                                                                                                      | `packages/core/src/schema/index.ts`, `packages/core/src/column.ts` |
+| Operation schemas | `RollingSchema`, `RollingAlignment`, `AlignSchema`, `DiffSchema`, `SmoothSchema`, `SmoothMethod`, `FillStrategy`, `FillMapping`                                                                                 | `packages/core/src/schema/index.ts`                                |
+| Column/data kinds | `Column`, `KeyColumn`, `ColumnKind`, `ScalarKind`, `ScalarValue`, `ColumnValue`, `ArrayValue`, `ValidityBitmap`                                                                                                 | `packages/core/src/columnar/`                                      |
+| JSON wire format  | `JsonRowFormat`, `JsonRowForSchema`, `JsonObjectRowForSchema`, `JsonValueForKind`, `JsonTimestampInput`, `JsonTimeRangeInput`, `JsonIntervalInput`                                                              | `packages/core/src/schema/index.ts`                                |
+| Temporal utility  | `TemporalLike`, `DurationInput`, `CalendarUnit`, `TimeZoneOptions`, `Disambiguation`, `ZonedParts`, `ZonedPartsInput`, `StartOfOptions`, `KeyLike`, `BatchSampleStrategy`, `SequenceSample`, `SequenceCoverage` | `packages/core/src/core/`, `packages/core/src/sequence/`           |
 
 The `pond-ts/types` subpath re-exports the schema-as-contract types with zero
 runtime (`packages/core/src/schema/public.ts`).
