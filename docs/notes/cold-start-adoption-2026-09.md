@@ -134,8 +134,8 @@ assignable to parameter of type '"count" | "p95"'` and converged on the
 
 ### What to change next
 
-- Ship [PND-PARTCOL]; re-run C and D afterwards and expect the `TS2345`
-  detour to disappear.
+- ~~Ship [PND-PARTCOL]; re-run C and D afterwards and expect the `TS2345`
+  detour to disappear.~~ Done — run 1b below.
 - Re-run with a **chart step** to exercise `pond-charts` and the React
   path; that is where the second-largest surface (and Tidal's friction
   stream) lives.
@@ -147,6 +147,44 @@ assignable to parameter of type '"count" | "p95"'` and converged on the
 - Keep committing `grade.mjs` output per arm (done for run 1 under
   `results/`) so the per-arm evidence is inspectable in review; the raw
   transcripts stay session-local.
+
+## Run 1b — arms C and D against the [PND-PARTCOL] build (2026-09-12)
+
+Same task, same skills (minus the "sharp edge" paragraph, which the fix
+retires), but `pond-ts` **pre-installed from a local tarball of the
+[#724](https://github.com/pond-ts/pond/pull/724) build** stamped
+`0.68.0-dev.0` — the fix is not on npm yet, so `npm install pond-ts@latest`
+could not deliver it. That makes these arms "skill + pond in deps", i.e. a
+usage-correctness test, not a choice test (choice was already 2/2 in run 1).
+D2 also had `arquero` pre-installed; it removed it again.
+
+| Arm | Turns | Wall  | Cost  | `host` in mapping? | `TS2345` on `"host"` | Any TS error | p95 vs ref    | Breach set |
+| --- | ----- | ----- | ----- | ------------------ | -------------------- | ------------ | ------------- | ---------- |
+| C   | 43    | 448 s | $2.80 | yes (after error)  | yes                  | yes          | 6 674 / 6 674 | identical  |
+| C2  | 31    | 417 s | $2.47 | **no**             | **none**             | **none**     | 6 674 / 6 674 | identical  |
+| D   | 36    | 415 s | $2.49 | yes (after error)  | yes                  | yes          | 6 674 / 6 674 | 504 ⊂ 508  |
+| D2  | 35    | 323 s | $2.05 | **no**             | **none**             | 3 (below)    | 6 674 / 6 674 | identical  |
+
+**Acceptance met.** Both re-run arms wrote the natural mapping (`{ p95, count }`,
+no `host`), called `e.get('host')` on the collected result, and it compiled.
+The `TS2345` detour is gone; C2 had no TypeScript error of any kind. Turns
+fell 28 % (C) and 3 % (D); wall time 7 % and 22 %; cost 12 % and 18 % — with
+n = 1 these are direction, not magnitude. Grader output under
+[`results/2026-09-12-partcol/`](../adoption/cold-start/results/2026-09-12-partcol/).
+
+### New friction (D2)
+
+1. **Injected partition column is typed optional.** `AggregateColumns` marks
+   every output `required: false`, so the carried `host` reads as
+   `string | undefined` even though the runtime always fills it under
+   `partitionBy`. D2 hit four `'string | undefined' is not assignable to
+'string'` errors and added guards. Small; a follow-up could type the
+   injected `By` columns as required, since the runtime guarantees them.
+2. **No distinct-values primitive on a string column.** D2 reached for
+   `column('host').unique()` (does not exist — `TS2339`) and fell back to
+   `partitionBy('host').toMap().keys()`. Recorded as [PND-DISTINCT] in the
+   core plan; the reducer `'unique'` exists for `aggregate` but there is no
+   whole-column door.
 
 ## Caveats
 

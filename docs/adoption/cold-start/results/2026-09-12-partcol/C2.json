@@ -1,0 +1,70 @@
+{
+  "arm": "C2",
+  "model": ["claude-opus-5[1m]"],
+  "turns": 31,
+  "cost_usd": 2.4652515,
+  "duration_s": 417,
+  "tools": {
+    "Bash": 28,
+    "Skill": 1
+  },
+  "installs": [
+    "2>&1 | tail -5",
+    "--silent 2>&1 | tail -3 && npm start 2>&1 | tail -8)",
+    "&& npm start` reads `data/latency.csv` and writes `out/p95.csv`,",
+    "--silent 2>&1 | tail -2"
+  ],
+  "searches": [
+    "cd <runs>/C2\necho \"=== registry reachable? ===\"\ntimeout 25 npm view typescript version 2>&1 | tail -3\necho \"=== RollingAlignment ===\"\ngrep -rn \"RollingAlignment\" node_modules/pond-ts/dist/*.d.ts node_modules/pond-ts/dist/**/*.d.ts 2>/dev/null | grep \"type RollingAlignment\" | head -3\necho \"=== percentile impl ===\"\ngrep -rn \"percentile\" node_modules/pond-ts/dist/column.d.ts | head -5",
+    "cd <runs>/C2\necho \"=== registry reachable? ===\"\nnpm view typescript version --fetch-timeout=15000 --fetch-retries=0 2>&1 | tail -4"
+  ],
+  "web": [],
+  "reads": [],
+  "skills": ["pond-ts"],
+  "firstPondMention": 5,
+  "deps": ["pond-ts", "typescript", "@types/node"],
+  "usesPond": true,
+  "run": {
+    "ok": true,
+    "ms": 1004,
+    "tail": [
+      "  api-10    51  (7.6% of 667 buckets)",
+      "",
+      "Three worst breaches (by margin over the upper band):",
+      "  api-07  2026-09-02T06:00:00.000Z  p95=444.85ms  upper=316.296ms  (+128.554ms, 1.41x)",
+      "  api-03  2026-09-01T06:00:00.000Z  p95=213.42ms  upper=149.216ms  (+64.204ms, 1.43x)",
+      "  api-01  2026-09-03T05:50:00.000Z  p95=146ms  upper=102.016ms  (+43.984ms, 1.43x)",
+      "",
+      "Wrote out/p95.csv, out/baseline.csv, out/breaches.csv in 337ms"
+    ]
+  },
+  "compare": {
+    "p95": {
+      "rows": 6674,
+      "ref_rows": 6674,
+      "matched_1e3": 6674,
+      "off": 0,
+      "unknown_bucket": 0,
+      "max_rel_err": 3.91e-15,
+      "off_samples": []
+    },
+    "breaches": {
+      "got": 508,
+      "ref": 508,
+      "common": 508,
+      "only_in_arm": 0,
+      "only_in_ref": 0
+    },
+    "worst3_arm_by_exceedance": [
+      ["api-07", "2026-09-02T06:00:00.000Z", 128.6],
+      ["api-03", "2026-09-01T06:00:00.000Z", 64.2],
+      ["api-01", "2026-09-03T05:50:00.000Z", 44]
+    ],
+    "worst3_ref": [
+      ["api-07", "2026-09-02T06:00:00+00:00", 444.9],
+      ["api-03", "2026-09-01T06:00:00+00:00", 213.4],
+      ["api-01", "2026-09-03T05:50:00+00:00", 146]
+    ]
+  },
+  "final": "buckets (written as empty cells, 50 rows), because a stdev over 1–2 points collapses `upper` onto the series and manufactures false breaches. The resulting 7.6% breach rate is above the ~2.3% normality would suggest — expected for a right-skewed, spiky p95 series, but if this is for alerting rather than reporting, requiring two consecutive breaches or a median/MAD band would be the next move.\n\nDONE\n\nnpm packages used:\n- `pond-ts` (runtime — vendored `file:vendor/pond-ts-0.68.0-dev.tgz`)\n- `typescript` (dev)\n- `@types/node` (dev)\n\nNo CSV or stats library; parsing is hand-rolled in `src/csv.ts`."
+}

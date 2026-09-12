@@ -2883,18 +2883,16 @@ export class TimeSeries<S extends SeriesSchema> {
   >(
     by: Col | readonly [Col],
     options: { groups: Groups },
-  ): PartitionedTimeSeries<S, Groups[number]>;
-  partitionBy(
-    by:
-      | (keyof EventDataForSchema<S> & string)
-      | ReadonlyArray<keyof EventDataForSchema<S> & string>,
-  ): PartitionedTimeSeries<S>;
+  ): PartitionedTimeSeries<S, Groups[number], Col>;
+  partitionBy<const Col extends keyof EventDataForSchema<S> & string>(
+    by: Col | ReadonlyArray<Col>,
+  ): PartitionedTimeSeries<S, string, Col>;
   partitionBy(
     by:
       | (keyof EventDataForSchema<S> & string)
       | ReadonlyArray<keyof EventDataForSchema<S> & string>,
     options?: { groups?: ReadonlyArray<string> },
-  ): PartitionedTimeSeries<S> {
+  ): PartitionedTimeSeries<S, string, keyof EventDataForSchema<S> & string> {
     return new PartitionedTimeSeries(this, by, options);
   }
 
