@@ -1,5 +1,6 @@
-import { Fragment, useContext, useRef } from 'react';
+import { Fragment, useContext, useMemo, useRef } from 'react';
 import { scaleLinear } from 'd3-scale';
+import { TimeZone } from 'pond-ts';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import { derivedTicks, type AxisTransform } from './derivedTicks.js';
 import {
@@ -253,6 +254,18 @@ export interface XAxisProps {
    */
   align?: 'auto' | 'center' | 'right';
   /**
+   * Render **this strip** in an IANA zone other than the container's — the
+   * second axis of a two-zone pair (`<XAxis />` in the container's zone below
+   * the plot, `<XAxis side="top" timeZone="Asia/Tokyo" />` above it). Same
+   * pixel mapping, its own calendar: day ticks on *this* zone's midnights,
+   * labels, the date bands and this strip's cursor / marker pills reading in
+   * it. Time axis only; ignored under a `transform` or explicit `ticks`. A
+   * container `cursorFormat` still wins for the pill (it is its own channel);
+   * a container `timeFormat` string is re-resolved in this zone. Omit to
+   * follow the container's `timeZone` (or the viewer's zone).
+   */
+  timeZone?: string | undefined;
+  /**
    * How a **time** axis lays out its date context (ignored on value / category
    * axes, and whenever a custom `format`, `transform`, or explicit `ticks`
    * owns the labels).
@@ -313,6 +326,7 @@ export function XAxis({
   color,
   align = 'center',
   dateStyle = 'flat',
+  timeZone,
   onMouseEvent,
 }: XAxisProps = {}) {
   const container = useContext(ContainerContext);
@@ -324,14 +338,45 @@ export function XAxis({
   // gridlines and `formatTime` use, so labels and grid stay on the same instants
   // (width-derived on a trading-time axis).
   const {
-    xScale,
+    xScale: containerScale,
     plotWidth,
     leftGutter,
     theme,
-    formatTime,
+    formatTime: containerFormatTime,
     xKind,
     xTickCount,
   } = container;
+  // A per-strip zone: the container's shared scale re-derived with its
+  // calendar in `timeZone` — identical pixel mapping, so every `xScale(v)`
+  // below lands where the plot puts it, but ticks / labels / bands / this
+  // strip's pills come from this zone's ladder. Canonicalised (and validated)
+  // so an unknown id throws by name and `'utc'` / `'UTC'` memoize as one.
+  const zonedScale = useMemo(() => {
+    if (
+      timeZone === undefined ||
+      xKind !== 'time' ||
+      !('withTimeZone' in containerScale)
+    ) {
+      return undefined;
+    }
+    const id = TimeZone.of(timeZone).id;
+    const s = containerScale as TradingTimeScale;
+    return s.timeZone() === id ? undefined : s.withTimeZone(id);
+  }, [containerScale, timeZone, xKind]);
+  const xScale = zonedScale ?? containerScale;
+  // The label formatter this strip falls back to when no explicit `format`
+  // shapes it. The container's `formatTime` was resolved in the container's
+  // zone; a zoned strip needs the same channel in its own — the grain-aware
+  // default, or the container's `timeFormat` specifier re-resolved (a
+  // function `timeFormat` receives epoch ms and is used verbatim either way).
+  const formatTime: (epochMs: number) => string = useMemo(() => {
+    if (zonedScale === undefined) return containerFormatTime;
+    const custom = container.timeFormat;
+    if (typeof custom === 'function') return custom;
+    return custom === undefined
+      ? zonedScale.readoutFormat(xTickCount)
+      : resolveTimeFormat(zonedScale, xTickCount, custom);
+  }, [zonedScale, containerFormatTime, container.timeFormat, xTickCount]);
 
   // The cursor's x-axis slot: did the mounted cursor in effect register one
   // (`renderXAxis` — the crosshair's time pill)? While hovering, that is the

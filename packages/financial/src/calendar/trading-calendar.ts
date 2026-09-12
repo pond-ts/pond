@@ -90,22 +90,44 @@ export class TradingCalendar {
   readonly #opens: readonly number[];
   /** date → index, for O(1) by-date lookup. */
   readonly #byDate: ReadonlyMap<string, number>;
+  /**
+   * The exchange's IANA zone, when known. A rules calendar carries its
+   * `SessionRules.timeZone`; an explicit-list calendar carries the zone it
+   * was given, else `undefined`. Read by the charts container (structurally,
+   * via `TradingCalendarLike.timeZone`) as the time axis's default zone, so
+   * `<ChartContainer calendar={cal}>` renders in exchange time wherever it is
+   * viewed — [PND-TZFIN].
+   */
+  readonly timeZone: string | undefined;
 
-  private constructor(sessions: readonly Session[]) {
+  private constructor(
+    sessions: readonly Session[],
+    timeZone: string | undefined,
+  ) {
     this.#sessions = sessions;
     this.#opens = sessions.map((s) => s.open);
     this.#byDate = new Map(sessions.map((s, i) => [s.date, i]));
+    this.timeZone = timeZone;
   }
 
-  /** Build a calendar from an explicit session list (validated + sorted). The first-class path. */
-  static fromSessions(sessions: Iterable<Session>): TradingCalendar {
-    return new TradingCalendar(normalizeSessions(sessions));
+  /**
+   * Build a calendar from an explicit session list (validated + sorted). The
+   * first-class path. Pass `timeZone` (the exchange's IANA zone) so a chart
+   * given this calendar renders its axis in exchange time; the session
+   * instants themselves are zone-independent.
+   */
+  static fromSessions(
+    sessions: Iterable<Session>,
+    options: { timeZone?: string | undefined } = {},
+  ): TradingCalendar {
+    return new TradingCalendar(normalizeSessions(sessions), options.timeZone);
   }
 
-  /** Build a calendar by generating sessions from {@link SessionRules} over a date range. */
+  /** Build a calendar by generating sessions from {@link SessionRules} over a date range. Keeps `rules.timeZone` as {@link timeZone}. */
   static fromRules(rules: SessionRules, range: DateRange): TradingCalendar {
     return new TradingCalendar(
       normalizeSessions(generateSessions(rules, range)),
+      rules.timeZone,
     );
   }
 

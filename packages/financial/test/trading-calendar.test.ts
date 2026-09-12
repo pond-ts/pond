@@ -19,6 +19,23 @@ const sessions: Session[] = [
 ];
 
 describe('TradingCalendar — construction', () => {
+  it('keeps the exchange zone: fromRules carries rules.timeZone, fromSessions takes it as an option', () => {
+    const byRules = TradingCalendar.fromRules(
+      { timeZone: 'America/New_York', open: '09:30', close: '16:00' },
+      { from: '2021-01-04', to: '2021-01-06' },
+    );
+    expect(byRules.timeZone).toBe('America/New_York');
+    expect(TradingCalendar.fromSessions(sessions).timeZone).toBeUndefined();
+    expect(
+      TradingCalendar.fromSessions(sessions, { timeZone: 'Asia/Tokyo' })
+        .timeZone,
+    ).toBe('Asia/Tokyo');
+    // The shape the charts container reads structurally (`TradingCalendarLike`).
+    const like: { timeZone?: string | undefined; discontinuities: unknown } =
+      byRules;
+    expect(like.timeZone).toBe('America/New_York');
+  });
+
   it('fromSessions and fromRules agree on the schedule', () => {
     const byList = TradingCalendar.fromSessions(sessions);
     const byRules = TradingCalendar.fromRules(

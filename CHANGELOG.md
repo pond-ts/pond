@@ -73,6 +73,44 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`<ChartContainer timeZone>` — the time axis in any IANA zone
+  ([PND-TZAXIS]).** Day / week / month ticks land on that zone's midnights,
+  Mondays and month starts; labels, the stacked date bands, the hierarchical
+  grid, session dividers and every cursor / marker / annotation readout read
+  in it. **Omitted ⇒ the viewer's zone**, exactly as before. The d3 specifier
+  strings on `timeFormat` / `cursorFormat` are unchanged; `%Z` / `%z` now read
+  the zone's abbreviation / offset. Sub-day ticks align to the zone's wall
+  clock, so a 6 h grain reads 00 / 06 / 12 / 18 across a DST jump instead of
+  drifting by an hour until the next midnight. The resolved zone is on the
+  chart context as `timeZone`. Built on core's `TimeZone` ([PND-TZCAL]), so a
+  `Sequence.calendar('day', { timeZone })` bucket edge and the tick that
+  labels it are one instant — pinned by a cross-package test.
+- **`<XAxis timeZone>` — a second strip in another zone.** Two time axes
+  over one shared mapping, each ticking and labelling (and pilling) in its
+  own zone: `<XAxis side="top" timeZone="America/New_York" />` above a
+  UTC container's own strip below. Backed by
+  `TradingTimeScale.withTimeZone(zone)` / `.timeZone()` and an optional
+  `DiscontinuityProvider.withTimeZone` (the identity provider re-derives its
+  day anchors; a trading calendar's session opens are zone-independent).
+- **`TradingCalendarLike.timeZone?`** — a calendar that carries its exchange
+  zone supplies the axis default (`calendar={cal}` renders in exchange time
+  wherever it is viewed); an explicit `timeZone` prop wins.
+- `scaleTradingTime(provider, { timeZone })` and
+  `identityProvider({ timeZone })` take the zone directly for consumers
+  building the scale themselves; `identityProvider`, `TradingCalendarLike`
+  and `ScaleTimeZoneOptions` are now exported. Internally the tick ladder
+  runs on a `TickCalendar` seam whose local implementation is the previous
+  `Date` arithmetic verbatim — the default path is unchanged.
+- **`TradingCalendar.timeZone` ([PND-TZFIN]).** `@pond-ts/financial`'s
+  calendar keeps the zone its sessions were resolved in — `fromRules` carries
+  `rules.timeZone`, `fromSessions(list, { timeZone })` takes it — so
+  `<ChartContainer calendar={cal}>` renders the axis in exchange time with no
+  further wiring.
+- `@pond-ts/charts` now depends on `d3-time-format` directly (it was already
+  a transitive dependency via `d3-scale`).
+
+### Added
+
 - **`TimeZone` — the zone-calendar primitive ([PND-TZCAL]).** `pond-ts`
   exports `TimeZone.of(id)` (interned; also `TimeZone.UTC`,
   `TimeZone.local()`) with `startOf(unit, t)`, `next(unit, t)`, `parts(t)`,

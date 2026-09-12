@@ -1,5 +1,8 @@
-import { scaleTime } from 'd3-scale';
+import { scaleTime, scaleUtc } from 'd3-scale';
+import { utcFormat } from 'd3-time-format';
+import { TimeZone } from 'pond-ts';
 import {
+  type TickCalendar,
   bandFormatFor,
   bandGrainFor,
   bandNext,
@@ -16,9 +19,74 @@ import {
   majorFormatFor,
   nominalStepMs,
   readoutFormatFor,
+  tickCalendarFor,
   type TickGranularity,
   type TimeGrain,
 } from './tickLadder.js';
+
+/** Zone options shared by {@link scaleTradingTime} and {@link identityProvider}. */
+export interface ScaleTimeZoneOptions {
+  /**
+   * The IANA zone the axis's calendar runs in — ticks on that zone's
+   * midnights / Mondays / month starts, labels and readouts reading in it.
+   * **Omitted ⇒ the runtime's local zone** (the browser's), exactly as before
+   * the option existed. Any id `Intl` knows (`'UTC'`, `'Europe/Berlin'`, …);
+   * an unknown id throws `RangeError`.
+   */
+  timeZone?: string | undefined;
+}
+
+/**
+ * The d3 time-specifier formatter for a zone. Local (no zone) is d3's own
+ * `timeFormat` through the scale, untouched. A named zone formats a
+ * **civil-shifted** date — the instant moved by the zone's offset and then
+ * read in UTC — so every `%Y %m %d %H %M %S %a %b %p …` directive reads in the
+ * zone for free; `%Z` / `%z`, which the shift would render `UTC` / `+0000`,
+ * are substituted per instant from the zone itself. The two directives that
+ * print the *instant* rather than a wall-clock field — `%s` (epoch seconds)
+ * and `%Q` (epoch ms) — read the shifted instant, i.e. offset by the zone;
+ * they have no meaning on a zoned axis.
+ */
+function zonedFormatter(
+  zone: TimeZone,
+  specifier: string,
+): (date: Date) => string {
+  // Tokenise so an escaped percent (`%%`) is never read as the start of a
+  // directive: `'%%Z'` is a literal `%Z`, not the zone name.
+  const tokens = specifier.match(/%%|%[Zz]|[^%]+|%/g) ?? [];
+  const hasZoneName = tokens.some((tok) => tok === '%Z' || tok === '%z');
+  if (!hasZoneName) {
+    const f = utcFormat(specifier);
+    return (d) => {
+      const t = +d;
+      return f(new Date(t + zone.offsetAt(t)));
+    };
+  }
+  const cache = new Map<string, (date: Date) => string>();
+  return (d) => {
+    const t = +d;
+    const offset = zone.offsetAt(t);
+    const sign = offset < 0 ? '-' : '+';
+    const abs = Math.abs(offset) / 60_000;
+    const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+    const mm = String(abs % 60).padStart(2, '0');
+    const resolved = tokens
+      .map((tok) =>
+        tok === '%Z'
+          ? zone.abbreviation(t).replace(/%/g, '%%')
+          : tok === '%z'
+            ? `${sign}${hh}${mm}`
+            : tok,
+      )
+      .join('');
+    let f = cache.get(resolved);
+    if (f === undefined) {
+      f = utcFormat(resolved);
+      cache.set(resolved, f);
+    }
+    return f(new Date(t + offset));
+  };
+}
 
 /**
  * The structural discontinuity-provider surface `scaleTradingTime` consumes to
@@ -50,6 +118,15 @@ export interface DiscontinuityProvider {
    * `TradingCalendar.discontinuities()` provider supplies it.)
    */
   boundaries?(from: number, to: number): number[];
+  /**
+   * Optional: the same provider with its calendar in another zone. Only a
+   * provider whose gap topology *depends* on a zone needs it — the identity
+   * provider, whose "sessions" are calendar days and therefore move with the
+   * zone; a trading calendar's session opens are instants and do not. Used by
+   * {@link TradingTimeScale.withTimeZone} so a second `<XAxis timeZone>` can
+   * re-derive its day anchors in its own zone.
+   */
+  withTimeZone?(timeZone: string | undefined): DiscontinuityProvider;
 }
 
 /**
@@ -67,6 +144,14 @@ export interface TradingCalendarLike {
   discontinuities(options?: {
     spacing?: 'proportional' | 'uniform';
   }): DiscontinuityProvider;
+  /**
+   * Optional: the exchange's IANA zone. When present and the container has no
+   * explicit `timeZone`, the axis renders in it — ticks on exchange-local day
+   * starts, labels and readouts in exchange time — instead of the viewer's
+   * zone. A `@pond-ts/financial` `TradingCalendar` built `fromRules` carries
+   * its rules' zone here.
+   */
+  readonly timeZone?: string | undefined;
 }
 
 /**
@@ -221,6 +306,18 @@ export interface TradingTimeScale {
   range(): [number, number];
   range(next: readonly [number, number]): TradingTimeScale;
   copy(): TradingTimeScale;
+  /**
+   * The same pixel mapping (provider, domain, range) with its **calendar in
+   * another zone** — `undefined` for runtime-local. The scale's own zone is
+   * unchanged; this is how a second `<XAxis timeZone>` strip ticks and labels
+   * in its own zone over the container's shared x mapping. A provider that
+   * exposes {@link DiscontinuityProvider.withTimeZone} re-derives its day
+   * anchors; any other keeps its instants (a trading calendar's session opens
+   * are zone-independent).
+   */
+  withTimeZone(timeZone: string | undefined): TradingTimeScale;
+  /** The IANA zone this scale's calendar runs in; `undefined` = runtime-local. */
+  timeZone(): string | undefined;
 }
 
 // Grain selection lives in `tickLadder.ts` (the full hour1…year ladder plus
@@ -230,29 +327,33 @@ export type { TickGranularity, TimeGrain } from './tickLadder.js';
 
 /**
  * The trivial gap-free {@link DiscontinuityProvider}: live time **is** wall
- * time, and every local midnight is a "session open". Backing a plain
+ * time, and every midnight (in `timeZone`, default runtime-local) is a
+ * "session open". Backing a plain
  * continuous time axis with `scaleTradingTime(identityProvider())` runs it
  * through the same logical tick ladder as a trading-calendar axis — calendar
  * days are the day anchors, so a year of data ticks on month starts and an
  * afternoon ticks on clock-aligned hours, instead of d3's mixed multi-scale
  * default.
  */
-export function identityProvider(): DiscontinuityProvider {
+export function identityProvider(
+  options: ScaleTimeZoneOptions = {},
+): DiscontinuityProvider {
+  const cal = tickCalendarFor(options.timeZone);
   const self: DiscontinuityProvider = {
     clampUp: (t) => t,
     clampDown: (t) => t,
     distance: (from, to) => to - from,
     offset: (v, amount) => v + amount,
     copy: () => self,
+    withTimeZone: (timeZone) => identityProvider({ timeZone }),
     boundaries: (from, to) => {
       const out: number[] = [];
-      const d = new Date(from);
-      // First local midnight strictly after `from`; step by calendar day (not
-      // 24h) so DST transitions stay on midnight.
-      let cur = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
-      while (cur.getTime() < to) {
-        if (cur.getTime() > from) out.push(cur.getTime());
-        cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 1);
+      // First midnight (in the zone) strictly after `from`; step by calendar
+      // day (not 24h) so DST transitions stay on midnight.
+      let cur = cal.nextDay(from);
+      while (cur < to) {
+        if (cur > from) out.push(cur);
+        cur = cal.nextDay(cur);
       }
       return out;
     },
@@ -266,11 +367,32 @@ export function identityProvider(): DiscontinuityProvider {
  */
 export function scaleTradingTime(
   provider: DiscontinuityProvider,
+  options: ScaleTimeZoneOptions = {},
 ): TradingTimeScale {
   let domain: [number, number] = [0, 1];
   let range: [number, number] = [0, 1];
-  // A private d3 time scale, kept in sync with the domain, purely for tickFormat.
+  const zone =
+    options.timeZone === undefined ? undefined : TimeZone.of(options.timeZone);
+  const cal: TickCalendar = tickCalendarFor(zone?.id);
+  // A private d3 time scale purely for formatting. Local: d3's own `timeFormat`
+  // (and its multi-scale default) untouched. Zoned: the same specifiers on a
+  // civil-shifted date via `utcFormat`, and a `scaleUtc` multi-scale default
+  // on the shifted date so the fallback picks its unit in the zone too.
   const base = scaleTime();
+  const baseUtc = zone === undefined ? undefined : scaleUtc();
+  const fmt = (count: number, specifier?: string): ((d: Date) => string) => {
+    if (zone === undefined) {
+      return specifier === undefined
+        ? base.tickFormat(count)
+        : base.tickFormat(count, specifier);
+    }
+    if (specifier !== undefined) return zonedFormatter(zone, specifier);
+    const def = baseUtc!.tickFormat(count);
+    return (d) => {
+      const t = +d;
+      return def(new Date(t + zone.offsetAt(t)));
+    };
+  };
 
   const totalLive = (): number => provider.distance(domain[0], domain[1]);
 
@@ -321,7 +443,7 @@ export function scaleTradingTime(
     if (laddered?.key !== key) {
       laddered = {
         key,
-        value: buildTicks(provider, sessionOpens(), domain[1], count),
+        value: buildTicks(provider, sessionOpens(), domain[1], count, cal),
       };
     }
     return laddered.value;
@@ -344,8 +466,8 @@ export function scaleTradingTime(
   };
 
   scale.tickFormat = (count = 10, specifier?: string) => {
-    if (specifier !== undefined) return base.tickFormat(count, specifier);
-    const defFmt = base.tickFormat(count);
+    if (specifier !== undefined) return fmt(count, specifier);
+    const defFmt = fmt(count);
     if (!hasCalendar()) return defFmt; // no calendar → d3 multi-scale default
     // Anchor labels at the grain {@link ticks} chose — one uniform format per
     // grain (hours as `%H:%M`, days/weeks as `%b %d`, months/quarters as `%b`,
@@ -355,7 +477,7 @@ export function scaleTradingTime(
     // the dividers drawn at these instants agree.
     const { ticks, granularity } = resolved(count);
     const anchors = new Set(ticks);
-    const anchorFmt = base.tickFormat(count, majorFormatFor(granularity));
+    const anchorFmt = fmt(count, majorFormatFor(granularity));
     return (d: Date) => (anchors.has(+d) ? anchorFmt(d) : defFmt(d));
   };
 
@@ -364,10 +486,10 @@ export function scaleTradingTime(
     const { ticks, granularity } = resolved(count);
     const bg = boundaryGrainFor(granularity);
     if (bg === undefined) return () => undefined;
-    const fmt = base.tickFormat(count, boundaryFormatFor(bg));
+    const bfmt = fmt(count, boundaryFormatFor(bg));
     const labelled = new Map<number, string>();
-    for (const t of boundaryTicks(ticks, granularity, domain[0])) {
-      labelled.set(t, fmt(new Date(t)));
+    for (const t of boundaryTicks(ticks, granularity, domain[0], cal)) {
+      labelled.set(t, bfmt(new Date(t)));
     }
     return (value: number) => labelled.get(value);
   };
@@ -377,7 +499,7 @@ export function scaleTradingTime(
     // tickFormat. (The cursor readout doesn't route through here; it uses
     // readoutFormat, grain-aware.) Without a calendar there are no ladder
     // anchors, so every value falls through to the default.
-    const defFmt = base.tickFormat(count);
+    const defFmt = fmt(count);
     if (!hasCalendar()) return (value: number) => defFmt(new Date(value));
     const { ticks, granularity } = resolved(count);
     // Seed the promotion walk from the previous **live** instant before the
@@ -389,13 +511,14 @@ export function scaleTradingTime(
       ticks,
       granularity,
       provider.clampDown(domain[0] - 1),
+      cal,
     );
     // One d3 formatter per distinct specifier; most ticks share the base one.
     const bySpec = new Map<string, (d: Date) => string>();
     const fmtFor = (spec: string) => {
       let f = bySpec.get(spec);
       if (f === undefined) {
-        f = base.tickFormat(count, spec);
+        f = fmt(count, spec);
         bySpec.set(spec, f);
       }
       return f;
@@ -410,23 +533,20 @@ export function scaleTradingTime(
     // inline promotion (that context lives in the band row). Anchors get the
     // grain's flat base format; a non-tick instant (the cursor) reads the d3
     // multi-scale default, so the crosshair still shows a full timestamp.
-    const defFmt = base.tickFormat(count);
+    const defFmt = fmt(count);
     if (!hasCalendar()) return (value: number) => defFmt(new Date(value));
     const { ticks, granularity } = resolved(count);
     const anchors = new Set(ticks);
-    const terse = base.tickFormat(count, flatBaseFormatFor(granularity));
+    const terse = fmt(count, flatBaseFormatFor(granularity));
     return (value: number) =>
       anchors.has(value) ? terse(new Date(value)) : defFmt(new Date(value));
   };
 
   scale.readoutFormat = (count = 10) => {
-    const defFmt = base.tickFormat(count);
+    const defFmt = fmt(count);
     if (!hasCalendar()) return (value: number) => defFmt(new Date(value));
-    const fmt = base.tickFormat(
-      count,
-      readoutFormatFor(resolved(count).granularity),
-    );
-    return (value: number) => fmt(new Date(value));
+    const rfmt = fmt(count, readoutFormatFor(resolved(count).granularity));
+    return (value: number) => rfmt(new Date(value));
   };
 
   scale.grain = (count = 10) =>
@@ -437,7 +557,7 @@ export function scaleTradingTime(
     const { ticks, granularity } = resolved(count);
     const bg = bandGrainFor(granularity);
     if (bg === undefined) return []; // year grain — nothing coarser to band
-    const fmt = base.tickFormat(count, bandFormatFor(bg));
+    const bandFmt = fmt(count, bandFormatFor(bg));
     const tickSet = new Set(ticks);
 
     // A band's raw calendar start is a date, not necessarily a LIVE instant —
@@ -449,13 +569,13 @@ export function scaleTradingTime(
     // can be resolved as one group rather than emitting (and then trying to
     // retract) a label per member.
     const candidates: Array<{ s: number; live: number }> = [];
-    let s = bandStartOf(domain[0], bg);
+    let s = bandStartOf(domain[0], bg, cal);
     // First band starts at (or before) the domain start — the partial left
     // band whose label the renderer pins at x=0; step to each next period
     // start still inside the domain. Bounded loop as a runaway guard.
     for (let i = 0; i < 100_000 && s < domain[1]; i++) {
       candidates.push({ s, live: provider.clampUp(s) });
-      s = bandNext(s, bg);
+      s = bandNext(s, bg, cal);
     }
 
     const out: Array<{
@@ -497,9 +617,9 @@ export function scaleTradingTime(
         // Formatted from the representative's own RAW start, not the
         // clamped one — a genuinely-live rep reads its own date; a
         // gap-only run's rep reads whichever raw date it fell back to.
-        label: fmt(new Date(rep.s)),
+        label: bandFmt(new Date(rep.s)),
         showLabel: !collides,
-        shaded: bandShaded(rep.s, bg),
+        shaded: bandShaded(rep.s, bg, cal),
       });
       i = j;
     }
@@ -511,8 +631,7 @@ export function scaleTradingTime(
     const { granularity } = resolved(count);
     const bg = boundaryGrainFor(granularity);
     if (bg === undefined) return undefined;
-    const fmt = base.tickFormat(count, boundaryFormatFor(bg));
-    return fmt(new Date(domain[0]));
+    return fmt(count, boundaryFormatFor(bg))(new Date(domain[0]));
   };
 
   /** Memoized like {@link resolved}: the draw pass asks once per frame, and
@@ -535,7 +654,7 @@ export function scaleTradingTime(
     if (gridMemo?.key !== key) {
       gridMemo = {
         key,
-        value: buildGridLevels(provider, sessionOpens(), domain[1], cap)
+        value: buildGridLevels(provider, sessionOpens(), domain[1], cap, cal)
           .map((l) => ({
             granularity: l.granularity,
             // The first open is the domain start itself — a window edge, not
@@ -575,7 +694,16 @@ export function scaleTradingTime(
   scale.range = rangeFn;
 
   scale.copy = (): TradingTimeScale =>
-    scaleTradingTime(provider.copy()).domain(domain).range(range);
+    scaleTradingTime(provider.copy(), options).domain(domain).range(range);
+
+  scale.withTimeZone = (timeZone): TradingTimeScale =>
+    scaleTradingTime(provider.withTimeZone?.(timeZone) ?? provider.copy(), {
+      timeZone,
+    })
+      .domain(domain)
+      .range(range);
+
+  scale.timeZone = () => zone?.id;
 
   return scale;
 }
