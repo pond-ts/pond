@@ -79,10 +79,38 @@ Sequence.calendar('week', { timeZone: 'Europe/Madrid', weekStartsOn: 1 });
 Sequence.calendar('month', { timeZone: 'UTC' });
 ```
 
-The `timeZone` option is required because calendar boundaries are not
-millisecond-fixed — a "day" in `America/New_York` is 24 hours except
-on DST transition days, where it's 23 or 25. The library uses the
-`@js-temporal/polyfill` to compute the boundaries correctly.
+`timeZone` defaults to `'UTC'`; pass a zone because calendar boundaries
+are not millisecond-fixed — a "day" in `America/New_York` is 24 hours
+except on DST transition days, where it's 23 or 25. Boundaries are
+computed by [`TimeZone`](#timezone), which is IANA-correct (Temporal
+underneath) and caches each zone's offset transitions, so bucketing a
+long series costs the same as fixed-step arithmetic. An unknown unit or
+zone throws `RangeError` at construction.
+
+### `TimeZone`
+
+The zone primitive `Sequence.calendar` buckets with, exported for callers
+who need the same answers directly — a chart axis placing ticks, a report
+labelling a bucket in the zone it was cut in:
+
+```ts
+import { TimeZone } from 'pond-ts';
+
+const tz = TimeZone.of('Australia/Sydney'); // interned; TimeZone.UTC, TimeZone.local()
+tz.startOf('week', t, { weekStartsOn: 1 }); // first instant of the local week containing t
+tz.next('month', t); // exclusive end of the local month containing t
+tz.parts(t); // { year, month, day, hour, minute, second, millisecond, weekday }
+tz.instant({ year: 2026, month: 4, day: 5, hour: 2, minute: 30 }); // wall clock → instant
+tz.offsetAt(t); // ms east of UTC
+tz.abbreviation(t, { locale: 'en-AU' }); // 'AEDT'
+```
+
+`instant()` resolves a repeated or skipped wall time the way Temporal
+does (`disambiguation: 'compatible'` by default — earlier for a
+fall-back, forward past the gap for a spring-forward; `'earlier'`,
+`'later'` and `'reject'` are the alternatives). A `TimeZone` holds no
+instant of its own: `Time`, `TimeRange` and `Interval` stay plain UTC
+milliseconds, and the zone is a parameter to whatever interprets them.
 
 ### When calendar vs fixed-step matters
 
