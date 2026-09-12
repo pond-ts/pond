@@ -16,6 +16,7 @@ import {
   localTickCalendar,
   zonedTickCalendar,
 } from '../src/tickLadder.js';
+import { axisLabels, expectedLabel } from './zone-labels.js';
 
 afterEach(cleanup);
 
@@ -128,11 +129,11 @@ describe('scaleTradingTime({ timeZone }) — ticks, labels, readouts in the zone
     for (const t of ticks) {
       expect(flat(t)).toBe(String(ny.parts(t).day));
     }
-    // The readout at day grain is a date in the zone.
+    // The readout at day grain is a date in the zone — derived through the
+    // same formatter path, never a literal.
     const readout = s.readoutFormat(8);
-    const p = ny.parts(ticks[0]!);
     expect(readout(ticks[0]!)).toBe(
-      `${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][p.month - 1]} ${p.day}, ${p.year}`,
+      expectedLabel(ticks[0]!, '%b %-d, %Y', ny.id),
     );
   });
 
@@ -458,23 +459,21 @@ describe('<ChartContainer timeZone> — the prop and the calendar default', () =
     // `03:00` in UTC; 15:30Z reads `21:00` in Kolkata; Tokyo's midnight at
     // 15:00Z is the day turn `Jun 3`), and switching back restores the
     // original set exactly.
-    const labels = (c: HTMLElement) =>
-      new Set(
-        Array.from(c.querySelectorAll('*'))
-          .filter((el) => el.children.length === 0)
-          .map((t) => t.textContent ?? '')
-          .filter((t) => /^\d{2}:\d{2}$|^[A-Z][a-z]{2} \d{1,2}$/.test(t)),
-      );
+    const labels = axisLabels;
     const { rerender, container } = render(chart('UTC'));
     const utc = labels(container);
-    expect(utc.has('03:00')).toBe(true);
+    expect(utc.has(expectedLabel(start + 3 * HOUR, '%H:%M', 'UTC'))).toBe(true);
     rerender(chart('Asia/Kolkata'));
     const kolkata = labels(container);
-    expect(kolkata.has('21:00')).toBe(true);
+    expect(
+      kolkata.has(expectedLabel(start + 15.5 * HOUR, '%H:%M', 'Asia/Kolkata')),
+    ).toBe(true);
     expect(kolkata).not.toEqual(utc);
     rerender(chart('Asia/Tokyo'));
     const tokyo = labels(container);
-    expect(tokyo.has('Jun 3')).toBe(true);
+    expect(
+      tokyo.has(expectedLabel(start + 15 * HOUR, '%b %-d', 'Asia/Tokyo')),
+    ).toBe(true);
     expect(tokyo).not.toEqual(kolkata);
     rerender(chart('UTC'));
     expect(labels(container)).toEqual(utc);
