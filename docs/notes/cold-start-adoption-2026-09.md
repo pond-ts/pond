@@ -137,6 +137,9 @@ assignable to parameter of type '"count" | "p95"'` and converged on the
   skills well".
 - Keep n = 1 per arm until a channel-2 intervention exists worth measuring;
   channel 3 is already at 2/2.
+- Commit `grade.mjs` output per arm next run (a few KB each) so the
+  per-arm turn / cost / channel evidence is inspectable in review; the raw
+  transcripts stay session-local.
 
 ## Caveats
 
