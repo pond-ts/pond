@@ -333,3 +333,12 @@ the same pass._
   `@latest` re-run waits for the v0.68.0 release. Two small follow-ups
   surfaced ([PND-DISTINCT]; optional typing of injected columns), both in
   PND_CORE_PLAN.
+- **2026-09-13** — **[PND-ADOPTMETA] shipped in full.** npm side went out in
+  v0.68.0 (`keywords` / `homepage` / `bugs` live on the registry; `npm view
+pond-ts keywords` confirms). Owner applied the GitHub description and
+  topics (now 16: added `time-series`, `timeseries`, `streaming`, `react`,
+  `canvas`, `technical-analysis`, `trading`, `ohlc`, `llms-txt`,
+  `ai-agents`). Root + package READMEs gained npm / CI / license / docs
+  badges (#727). First post-publish re-measure: `pond-ts` **absent** from the
+  top 20 for `npm search "time series"` (was 20th) — read as npm search-index
+  lag, not a ranking verdict; re-measure after a few days and record here.
