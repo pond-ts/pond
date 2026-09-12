@@ -2976,10 +2976,11 @@ Documented, none blocking:
 - **`neighbourSpans` point-key slot widths on the discontinuous axis**
   (interval-keyed bars from `aggregate(barSequence)` — the primary path —
   are immune).
-- **Exact exchange-tz tick grain** — the current grain buckets by
-  runtime-local calendar.
-- **Timezone control for the cursor readout** — the grain-aware default
-  (#484 follow-up) sidesteps the daily-bar case, but true exchange-/display-tz
-  handling is its own design conversation.
+- **Exact exchange-tz tick grain** and **timezone control for the cursor
+  readout** — _moved 2026-09-13_ to
+  [PND_TIMEZONE_PLAN.md](PND_TIMEZONE_PLAN.md) ([PND-TZFIN] keeps the
+  rules' zone on `TradingCalendar`; [PND-TZAXIS] renders the axis and
+  readouts in it, explicit `timeZone` prop winning). The "own design
+  conversation" this item deferred is that plan.
 - Overnight sessions in `TradingCalendar.fromRules` (explicit-list only for
   now).
