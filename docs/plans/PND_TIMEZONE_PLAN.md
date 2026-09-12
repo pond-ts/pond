@@ -311,6 +311,16 @@ React hook surface" rule.
 
 #### [PND-TZFIN] — financial: `TradingCalendar` keeps its zone
 
+**In review inside [#732](https://github.com/pond-ts/pond/pull/732)** —
+the Layer 2 review pointed out the docs already described it, so it rides
+with the axis. `fromRules` keeps `rules.timeZone`; `fromSessions(list, {
+timeZone })` takes it; the class exposes `timeZone`. #732 also grew a
+per-strip `<XAxis timeZone>` (two time axes in two zones over one mapping,
+via `TradingTimeScale.withTimeZone`) at the owner's request — the item the
+plan had parked with [PND-XAXISOWN]; it turned out not to need that work
+because a zoned strip is a re-derived scale, not a mounted axis winning over
+the container.
+
 `fromRules` stores `rules.timeZone`; `TradingCalendar` exposes `timeZone:
 string | undefined` (undefined for explicit-list calendars built without one;
 the constructor gains an optional `timeZone` for that path). Satisfies the
@@ -414,7 +424,7 @@ which is why this waits.
 
 #### Also parked
 
-- `'local'` sentinel and per-`<XAxis>` zone (with [PND-XAXISOWN]).
+- `'local'` sentinel (per-`<XAxis>` zone shipped in #732).
 - Lazy-loading `@js-temporal/polyfill` behind the first zone call, and a
   native-`Temporal` fast path once V8 ships it unflagged — a bundle-size item
   for [PND-AUDIT] #108, listed here because [PND-TZCAL] is where the import
