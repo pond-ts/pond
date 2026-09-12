@@ -332,6 +332,19 @@ two (point-key slot widths, overnight sessions) stay there.
 
 #### [PND-TZTEST] — tests and CI for zone correctness
 
+**Done 2026-09-13.** The CI matrix landed by merging #721 (a
+`TZ=Australia/Sydney` leg on the 24.x verify job; no `TZ` pin in any vitest
+config, as that PR argued). The cross-package agreement test landed in #732.
+The rest is the sweep PR (`test/timezone-sweep`): eight core tests running
+`aggregate` / `align` / `materialize` / `fromCalendar` over non-UTC calendar
+sequences (Kolkata, New York fall-back, Sydney October, Monday-local =
+Sunday-UTC, Berlin quarters), and the charts helper `expectedLabel` /
+`axisLabels`. Two things the sweep taught: a southern-hemisphere zone is the
+cheapest way to catch a "week = 7 × 24 h" assumption (Sydney's October week
+is 167 h), and the helper is worth more than the tests — writing the
+rerender assertion with it removed three wrong guesses about which labels a
+zone would show.
+
 - **Land the CI matrix.** Merge #721's `TZ=Australia/Sydney` leg on the
   `24.x` job (the PR is review-complete; it is the matrix the audit asked
   for). Keep the rule it records: no `TZ` pin in any vitest config.
@@ -434,15 +447,15 @@ which is why this waits.
 
 ## Sequencing and size
 
-| Order | Task           | Size             | Depends on               |
-| ----- | -------------- | ---------------- | ------------------------ |
-| 1     | [PND-TZCAL]    | in review (#728) | —                        |
-| 2     | [PND-TZAXIS] 1 | in review (#732) | TZCAL                    |
-| 3     | [PND-TZAXIS] 2 | in #732          | TZAXIS 1                 |
-| 4     | [PND-TZFIN]    | hours            | —                        |
-| 5     | [PND-TZAXIS] 3 | in #732          | TZAXIS 2, TZFIN          |
-| 6     | [PND-TZTEST]   | ~1 day           | TZCAL, TZAXIS (parallel) |
-| 7     | [PND-TZDOCS]   | ~1 day           | all of the above         |
+| Order | Task           | Size                   | Depends on               |
+| ----- | -------------- | ---------------------- | ------------------------ |
+| 1     | [PND-TZCAL]    | in review (#728)       | —                        |
+| 2     | [PND-TZAXIS] 1 | in review (#732)       | TZCAL                    |
+| 3     | [PND-TZAXIS] 2 | in #732                | TZAXIS 1                 |
+| 4     | [PND-TZFIN]    | hours                  | —                        |
+| 5     | [PND-TZAXIS] 3 | in #732                | TZAXIS 2, TZFIN          |
+| 6     | [PND-TZTEST]   | done (#721 + sweep PR) | TZCAL, TZAXIS (parallel) |
+| 7     | [PND-TZDOCS]   | ~1 day                 | all of the above         |
 
 Phase 1 is roughly one and a half weeks of focused work, five to six PRs, two
 human gates (TZCAL's export + `CalendarUnit`; TZAXIS's prop). Each code PR
