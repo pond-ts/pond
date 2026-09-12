@@ -315,3 +315,13 @@ the same pass._
     colour is `line.default.color`). Lesson recorded: an agent guide must be
     verified against types, not docs prose — API.md itself carried a stale
     `smooth()` row and a wrong `byColumn` gloss.
+- **2026-09-12** — [PND-COLDSTART] run 1 complete; see
+  [cold-start-adoption-2026-09.md](../notes/cold-start-adoption-2026-09.md).
+  Decisions it forced: (1) channel 2 is not measurable by this design — no
+  arm searched — so the channel-2 tranche is judged by npm/search-rank
+  re-measures, not by cold-start runs; (2) the skill is the highest-leverage
+  artifact (2/2, one displacing an incumbent) and gets the maintenance
+  investment (the `plugins/**` CI rule); (3) two skill/guide fixes shipped
+  from the transcripts (`@latest`, `.d.ts` paths, partition-column
+  workaround) and one library task opened ([PND-PARTCOL] in
+  PND_CORE_PLAN). Harness committed at `docs/adoption/cold-start/`.

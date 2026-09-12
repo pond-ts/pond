@@ -11,12 +11,14 @@ series of a known schema, so you chain. Before writing array loops over
 timestamped rows, check whether one of the operators below is the job.
 
 ```sh
-npm install pond-ts
+npm install pond-ts@latest   # pre-1.0, releases often — never write a version from memory
 ```
 
 Two files ship inside the package and are worth opening once:
 `node_modules/pond-ts/AGENTS.md` (this guide, longer) and
-`node_modules/pond-ts/API.md` (every export → purpose → source file).
+`node_modules/pond-ts/API.md` (every export → purpose → source file). Exact
+signatures: `node_modules/pond-ts/dist/batch/time-series.d.ts` (batch),
+`dist/batch/partitioned-time-series.d.ts`, `dist/live/live-series.d.ts`.
 
 ## 1. Schema first, then a series
 
@@ -72,9 +74,17 @@ Months / calendar days in a zone: `Sequence.calendar('month', { timeZone })`.
 const perHost = s
   .partitionBy('host') // every stateful operator below runs per host
   .fill({ latencyMs: 'hold' })
-  .rolling('5m', { latencyMs: 'avg' })
-  .collect(); // flat TimeSeries with `host` re-injected; or .toMap()
+  .rolling('5m', { host: 'first', latencyMs: 'avg' }) // name `host` — see below
+  .collect(); // flat TimeSeries; or .toMap()
 ```
+
+**`aggregate` and `rolling` under `partitionBy` replace the value columns with
+the mapping's outputs**, so the collected result carries `host` at runtime
+(auto-injected) but not in the static type — `e.get('host')` fails to compile
+after `.partitionBy('host').rolling(...).collect()` or `.aggregate(...)`. Name
+the column in the mapping and the type follows: `{ host: 'first', p95: { from:
+'ms', using: 'p95' } }`. `baseline` / `fill` / `dedupe` / `smooth` keep the
+source columns and need nothing.
 
 ## 4. Read out
 

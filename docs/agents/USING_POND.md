@@ -33,7 +33,9 @@ Docs: <https://pond-ts.org> · index for agents: <https://pond-ts.org/llms.txt>
 | GPS / power / heart-rate activity analytics                             | `@pond-ts/fit`                       | `'@pond-ts/fit'`                                      |
 | Computations as JSON plans with caching + provenance (experimental)     | `@pond-ts/process`                   | `'@pond-ts/process'`                                  |
 
-All six release together under one version. Keep their ranges in step — a
+All six release together under one version and release often. Install with
+`@latest` rather than a version written from memory (a cold-start agent once
+wrote `^0.3.0` and spent turns on a 2024 API); keep their ranges in step — a
 pre-1.0 caret (`^0.67.0`) does **not** span minors.
 
 ## The idioms that cover most jobs
@@ -96,10 +98,16 @@ sigma: 2 })` appends avg / sd / upper / lower in one pass;
 ```ts
 const perHost = s
   .partitionBy('host') // every stateful operator below runs per host
-  .rolling('5m', { latencyMs: 'avg' })
-  .collect(); // one flat TimeSeries, `host` re-injected as a column
+  .rolling('5m', { host: 'first', latencyMs: 'avg' }) // name `host` — see below
+  .collect(); // one flat TimeSeries
 // or .toMap() → Map<host, TimeSeries>
 ```
+
+One sharp edge: `aggregate` and `rolling` **replace the value columns with the
+mapping's outputs**, so under `partitionBy` the collected result has `host` at
+runtime (auto-injected) but not in the static type, and `e.get('host')` is a
+compile error. Name it in the mapping — `{ host: 'first', … }` — and the type
+carries it. `baseline`, `fill`, `dedupe` and `smooth` keep the source columns.
 
 ### 4. Clean, fill, join, read out
 

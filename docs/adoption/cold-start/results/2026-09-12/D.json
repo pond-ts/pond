@@ -1,0 +1,67 @@
+{
+  "arm": "D",
+  "model": ["claude-opus-5[1m]"],
+  "turns": 36,
+  "cost_usd": 2.4916259999999992,
+  "duration_s": 415,
+  "tools": {
+    "Bash": 33,
+    "Skill": 1
+  },
+  "installs": [
+    "pond-ts 2>&1 | tail -5",
+    "2>&1 | tail -4",
+    "&& npm start     # tsc, then node dist/main.js",
+    "&& npm start ===\""
+  ],
+  "searches": [],
+  "web": [],
+  "reads": [],
+  "skills": ["pond-ts"],
+  "firstPondMention": 6,
+  "deps": ["pond-ts", "@types/node", "typescript"],
+  "usesPond": true,
+  "run": {
+    "ok": true,
+    "ms": 906,
+    "tail": [
+      "    api-10   50  ##################################################",
+      "",
+      "  three worst breaches (by ms over the upper band)",
+      "    api-07  2026-09-02T06:00:00.000Z  p95 444.85 ms  vs upper 316.296 ms  (+128.554 ms)",
+      "    api-03  2026-09-01T06:00:00.000Z  p95 213.42 ms  vs upper 149.216 ms  (+64.204 ms)",
+      "    api-01  2026-09-03T05:50:00.000Z  p95 146 ms  vs upper 102.016 ms  (+43.984 ms)",
+      "",
+      "Done in 0.4s"
+    ]
+  },
+  "compare": {
+    "p95": {
+      "rows": 6674,
+      "ref_rows": 6674,
+      "matched_1e3": 6674,
+      "off": 0,
+      "unknown_bucket": 0,
+      "max_rel_err": 3.91e-15,
+      "off_samples": []
+    },
+    "breaches": {
+      "got": 504,
+      "ref": 508,
+      "common": 504,
+      "only_in_arm": 0,
+      "only_in_ref": 4
+    },
+    "worst3_arm_by_exceedance": [
+      ["api-07", "2026-09-02T06:00:00.000Z", 128.6],
+      ["api-03", "2026-09-01T06:00:00.000Z", 64.2],
+      ["api-01", "2026-09-03T05:50:00.000Z", 44]
+    ],
+    "worst3_ref": [
+      ["api-07", "2026-09-02T06:00:00+00:00", 444.9],
+      ["api-03", "2026-09-01T06:00:00+00:00", 213.4],
+      ["api-01", "2026-09-03T05:50:00+00:00", 146]
+    ]
+  },
+  "final": "95 latency is right-skewed and autocorrelated, not normal. These bands are a practical heuristic, not a calibrated test.\n\nClean checkout `npm install && npm start` runs in **2.2s** total (compile included), well under the 30s budget.\n\nDONE\n\nnpm packages used:\n- **`pond-ts`** (runtime) — the only runtime dependency\n- **`typescript`** (dev)\n- **`@types/node`** (dev)\n\nCSV parsing uses no package (the file is unquoted, LF-terminated, always three fields — verified — so a validated `split` is correct). I removed the starter's `arquero`, which isn't time-aware and can't express a `(t−1h, t]` window."
+}
