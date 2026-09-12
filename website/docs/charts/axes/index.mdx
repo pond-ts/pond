@@ -133,6 +133,50 @@ and does **not** disqualify a date style. Omit both and the readout defaults to
 a **grain-aware** format — a day-or-coarser axis reads a date, a sub-day axis
 date + clock — so a daily bar never reads a foreign-timezone time-of-day.
 
+### Time zones
+
+By default the time axis renders in the **viewer's zone** — the browser's,
+whatever that is — which is what every chart did before there was a knob. To
+render in a named zone, give the container an IANA id:
+
+```tsx
+<ChartContainer timeZone="Europe/Berlin" …>
+```
+
+Everything that reads time follows: day ticks land on Berlin midnights (23 or
+25 hours apart across a DST change), week and month ticks on Berlin Mondays
+and month starts, labels and the stacked date bands read Berlin dates, and
+the crosshair pill, marker indicators and annotation auto-labels read Berlin
+time. The `timeFormat` / `cursorFormat` specifier strings are unchanged; a
+`%Z` now reads the zone's abbreviation (`CEST`) and `%z` its offset. Sub-day
+ticks align to the zone's wall clock, so a 6 h grain reads 00 / 06 / 12 / 18
+on both sides of a DST jump. Function formatters still receive epoch ms; the
+resolved zone is on the chart context as `timeZone` (`undefined` = local).
+
+**The one idiom.** A zoned axis and a zoned aggregate should be given the
+_same_ zone, once — the same core primitive (`TimeZone`) cuts the buckets and
+places the ticks, so a bucket edge and the tick that labels it are one
+instant:
+
+```tsx
+const timeZone = 'Europe/Berlin';
+const daily = series.aggregate(Sequence.calendar('day', { timeZone }), {
+  kwh: 'sum',
+});
+<ChartContainer timeZone={timeZone} …>
+```
+
+The two defaults differ on purpose: `Sequence.calendar` defaults to **UTC**
+(a deterministic answer wherever the code runs), the axis to the **viewer's
+zone** (what a reader expects a clock to say). Passing the zone to both is
+what removes the asymmetry.
+
+**Trading calendars carry their zone.** A `@pond-ts/financial`
+`TradingCalendar.fromRules({ timeZone: 'America/New_York', … })` exposes that
+zone, and `<ChartContainer calendar={cal}>` renders in it with no further
+wiring — a NYSE chart reads New York time in Sydney. An explicit `timeZone`
+prop still wins (a display zone over the exchange zone).
+
 ## Clicking an axis
 
 Both axes take an `onMouseEvent` handler, and it carries the thing you can't

@@ -73,6 +73,31 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`<ChartContainer timeZone>` — the time axis in any IANA zone
+  ([PND-TZAXIS]).** Day / week / month ticks land on that zone's midnights,
+  Mondays and month starts; labels, the stacked date bands, the hierarchical
+  grid, session dividers and every cursor / marker / annotation readout read
+  in it. **Omitted ⇒ the viewer's zone**, exactly as before. The d3 specifier
+  strings on `timeFormat` / `cursorFormat` are unchanged; `%Z` / `%z` now read
+  the zone's abbreviation / offset. Sub-day ticks align to the zone's wall
+  clock, so a 6 h grain reads 00 / 06 / 12 / 18 across a DST jump instead of
+  drifting by an hour until the next midnight. The resolved zone is on the
+  chart context as `timeZone`. Built on core's `TimeZone` ([PND-TZCAL]), so a
+  `Sequence.calendar('day', { timeZone })` bucket edge and the tick that
+  labels it are one instant — pinned by a cross-package test.
+- **`TradingCalendarLike.timeZone?`** — a calendar that carries its exchange
+  zone supplies the axis default (`calendar={cal}` renders in exchange time
+  wherever it is viewed); an explicit `timeZone` prop wins.
+- `scaleTradingTime(provider, { timeZone })` and
+  `identityProvider({ timeZone })` take the zone directly for consumers
+  building the scale themselves; the tick ladder's calendar helpers take an
+  optional `TickCalendar` (`localTickCalendar` — today's `Date` arithmetic,
+  the default — or `zonedTickCalendar(TimeZone)`).
+- `@pond-ts/charts` now depends on `d3-time-format` directly (it was already
+  a transitive dependency via `d3-scale`).
+
+### Added
+
 - **`TimeZone` — the zone-calendar primitive ([PND-TZCAL]).** `pond-ts`
   exports `TimeZone.of(id)` (interned; also `TimeZone.UTC`,
   `TimeZone.local()`) with `startOf(unit, t)`, `next(unit, t)`, `parts(t)`,

@@ -1,3 +1,4 @@
+import { TimeZone } from 'pond-ts';
 import type { DiscontinuityProvider } from './tradingTimeScale.js';
 
 /**
@@ -96,36 +97,166 @@ function isSubDay(g: TickGranularity): boolean {
   return g !== 'day' && SUB_DAY_GRAINS.some((r) => r.g === g);
 }
 
+// --- The calendar seam ([PND-TZAXIS]) ---------------------------------------
+//
+// Every calendar question the ladder asks — which day / month / year an
+// instant is in, where that day starts, how long the month is — goes through
+// a {@link TickCalendar}. Two implementations: {@link localTickCalendar} is
+// the runtime's own zone through `Date`'s local accessors (bit-for-bit the
+// pre-seam code, and the default when no `timeZone` is given), and
+// {@link zonedTickCalendar} is any IANA zone through core's `TimeZone` — the
+// same primitive `Sequence.calendar` buckets with, so a zoned axis's day tick
+// and a zoned daily aggregate's bucket edge are one instant by construction.
+
+/** The calendar operations the tick ladder needs. Months are `1…12`. */
+export interface TickCalendar {
+  /** Midnight of the day containing `t`. */
+  startOfDay(t: number): number;
+  /** Midnight of the day after the one containing `t`. */
+  nextDay(t: number): number;
+  /** Midnight of the Monday of the week containing `t`. */
+  startOfWeek(t: number): number;
+  /** The civil date of `t`. */
+  parts(t: number): { year: number; month: number; day: number };
+  /** Midnight of the first of `month` (`1…12`; `13` carries into the next year, `0` into the previous). */
+  monthStart(year: number, month: number): number;
+  /** Days in `month` of `year`. */
+  daysInMonth(year: number, month: number): number;
+  /**
+   * The first clock-aligned `stepMs` multiple at or after `t`, counted from
+   * `t`'s own midnight — 00:00 / 03:00 / 06:00 … for a 3 h step. The local
+   * calendar steps **fixed milliseconds** from midnight (so on a DST day the
+   * later anchors drift off the wall clock by the shift, until the next
+   * midnight re-anchors — the pre-seam behaviour, kept); a zoned calendar
+   * aligns to the **wall clock**, so 6 h anchors read 00 / 06 / 12 / 18 on
+   * both sides of the jump, with one short or long gap at the transition.
+   * Always `>= t`.
+   */
+  nextAligned(t: number, stepMs: number): number;
+}
+
+/** The runtime-local calendar — `Date`'s local accessors, exactly as the
+ *  ladder computed before it had a zone. The default {@link TickCalendar}. */
+export const localTickCalendar: TickCalendar = {
+  startOfDay: (t) => {
+    const d = new Date(t);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  },
+  nextDay: (t) => {
+    const d = new Date(t);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+  },
+  startOfWeek: (t) => {
+    const d = new Date(t);
+    const dow = (d.getDay() + 6) % 7; // 0 = Monday
+    // Local midnight of this week's Monday (Date normalizes a negative date).
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate() - dow).getTime();
+  },
+  parts: (t) => {
+    const d = new Date(t);
+    return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+  },
+  monthStart: (year, month) => new Date(year, month - 1, 1).getTime(),
+  daysInMonth: (year, month) => new Date(year, month, 0).getDate(),
+  nextAligned: (t, stepMs) => {
+    const d = new Date(t);
+    const midnight = new Date(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate(),
+    ).getTime();
+    return midnight + Math.ceil((t - midnight) / stepMs) * stepMs;
+  },
+};
+
+/** A {@link TickCalendar} for an IANA zone, on core's `TimeZone`. */
+export function zonedTickCalendar(zone: TimeZone): TickCalendar {
+  const monthStart = (year: number, month: number): number => {
+    // Normalise an overflowed month the way the Date constructor does.
+    const total = year * 12 + (month - 1);
+    const y = Math.floor(total / 12);
+    const m = total - y * 12 + 1;
+    return zone.instant({ year: y, month: m, day: 1 });
+  };
+  return {
+    startOfDay: (t) => zone.startOf('day', t),
+    nextDay: (t) => zone.next('day', t),
+    startOfWeek: (t) => zone.startOf('week', t),
+    parts: (t) => {
+      const p = zone.parts(t);
+      return { year: p.year, month: p.month, day: p.day };
+    },
+    monthStart,
+    daysInMonth: (year, month) =>
+      Math.round(
+        (monthStart(year, month + 1) - monthStart(year, month)) / DAY_MS,
+      ),
+    nextAligned: (t, stepMs) => {
+      const p = zone.parts(t);
+      const sinceMidnight =
+        ((p.hour * 60 + p.minute) * 60 + p.second) * 1000 + p.millisecond;
+      // Walk wall-clock multiples of the step until one resolves at or after
+      // `t`: a repeated hour (fall-back) can resolve a wall time to its
+      // earlier reading, which sits before a `t` in the later one.
+      for (let k = Math.ceil(sinceMidnight / stepMs); ; k += 1) {
+        const target = k * stepMs;
+        if (target >= DAY_MS) return zone.next('day', t);
+        const hour = Math.floor(target / HOUR_MS);
+        const minute = Math.floor((target - hour * HOUR_MS) / MIN_MS);
+        const second = Math.floor((target % MIN_MS) / SEC_MS);
+        const millisecond = target % SEC_MS;
+        const at = zone.instant({
+          year: p.year,
+          month: p.month,
+          day: p.day,
+          hour,
+          minute,
+          second,
+          millisecond,
+        });
+        if (at >= t) return at;
+      }
+    },
+  };
+}
+
+/** Resolve an optional IANA id to the calendar the ladder should use: the
+ *  runtime-local calendar when `timeZone` is undefined, else the zone's. */
+export function tickCalendarFor(timeZone: string | undefined): TickCalendar {
+  return timeZone === undefined
+    ? localTickCalendar
+    : zonedTickCalendar(TimeZone.of(timeZone));
+}
+
 /**
- * The local-time bucket key for `t` at grain `g` — two instants in the same
- * day / week / month / quarter / year share a key. Local time (not UTC) so it
- * agrees with the local `scaleTime` label formatter; the exchange's own time
- * zone is unknown to the scale (the deferred refinement), and a session open
- * sits well inside its local day, so runtime-local grouping matches the
- * exchange day in every ordinary case. Hour grains are never bucketed (each
- * anchor is its own tick), so they key by identity.
+ * The calendar bucket key for `t` at grain `g` — two instants in the same
+ * day / week / month / quarter / year share a key. Computed in `cal`'s zone
+ * (runtime-local by default) so it agrees with the label formatter for the
+ * same zone; a trading axis passes its exchange zone so the grain buckets by
+ * the exchange day rather than the viewer's. Hour grains are never bucketed
+ * (each anchor is its own tick), so they key by identity.
  */
-export function bucketKey(t: number, g: TickGranularity): number {
+export function bucketKey(
+  t: number,
+  g: TickGranularity,
+  cal: TickCalendar = localTickCalendar,
+): number {
   if (isSubDay(g)) return t;
-  const d = new Date(t);
   switch (g) {
     case 'day':
-      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-    case 'week': {
-      const dow = (d.getDay() + 6) % 7; // 0 = Monday
-      // Local midnight of this week's Monday (Date normalizes a negative date).
-      return new Date(
-        d.getFullYear(),
-        d.getMonth(),
-        d.getDate() - dow,
-      ).getTime();
+      return cal.startOfDay(t);
+    case 'week':
+      return cal.startOfWeek(t);
+    case 'month': {
+      const p = cal.parts(t);
+      return p.year * 12 + (p.month - 1);
     }
-    case 'month':
-      return d.getFullYear() * 12 + d.getMonth();
-    case 'quarter':
-      return d.getFullYear() * 4 + Math.floor(d.getMonth() / 3);
+    case 'quarter': {
+      const p = cal.parts(t);
+      return p.year * 4 + Math.floor((p.month - 1) / 3);
+    }
     case 'year':
-      return d.getFullYear();
+      return cal.parts(t).year;
     default:
       return t;
   }
@@ -135,11 +266,12 @@ export function bucketKey(t: number, g: TickGranularity): number {
 function firstOfEachBucket(
   opens: readonly number[],
   g: TickGranularity,
+  cal: TickCalendar,
 ): number[] {
   const out: number[] = [];
   let prev: number | undefined;
   for (const t of opens) {
-    const k = bucketKey(t, g);
+    const k = bucketKey(t, g, cal);
     if (k !== prev) {
       out.push(t);
       prev = k;
@@ -157,11 +289,6 @@ const COARSENING_LADDER: readonly TickGranularity[] = [
 /** Nominal days per month — the band gate: the session-stride band applies
  *  while a nominal month still affords ≥ 2 marks at the span-derived budget. */
 const DAYS_PER_MONTH = 30.44;
-
-/** Days in the local month containing `d`. */
-function daysInLocalMonth(d: Date): number {
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-}
 
 /**
  * Whether index `i` marks in a month of `n` sessions/days at stride `k`. Two
@@ -211,15 +338,16 @@ function monthMark(i: number, k: number, n: number): boolean {
 function subdivideMonthsByDay(
   opens: readonly number[],
   gapDays: number,
+  cal: TickCalendar,
 ): number[] {
   const k = Math.max(2, Math.ceil(gapDays - 1e-9));
   const out: number[] = [];
   let prev: { month: number; dom: number } | null = null;
   for (const t of opens) {
-    const d = new Date(t);
-    const month = d.getFullYear() * 12 + d.getMonth();
-    const dom = d.getDate();
-    const monthLen = daysInLocalMonth(d);
+    const p = cal.parts(t);
+    const month = p.year * 12 + (p.month - 1);
+    const dom = p.day;
+    const monthLen = cal.daysInMonth(p.year, p.month);
     // Scan window: same month → since the previous open's date; the first
     // open of a new month → from day 1 (a weekend month-start snaps here);
     // the window's first open → its own exact day only (see doc above).
@@ -275,13 +403,15 @@ function subdivideMonthsBySession(
   opens: readonly number[],
   gapDays: number,
   provider: DiscontinuityProvider,
+  cal: TickCalendar,
 ): number[] {
   const monthKeyOf = (t: number): number => {
-    const d = new Date(t);
-    return d.getFullYear() * 12 + d.getMonth();
+    const p = cal.parts(t);
+    return p.year * 12 + (p.month - 1);
   };
   const monthStartOf = (key: number): number =>
-    new Date(Math.floor(key / 12), key % 12, 1).getTime();
+    cal.monthStart(Math.floor(key / 12), (key % 12) + 1);
+  const dayOf = (t: number): number => cal.parts(t).day;
   const strideOf = (count: number, extentDays: number): number =>
     Math.max(2, Math.ceil((gapDays * count) / Math.max(1, extentDays) - 1e-9));
   // Full-month roster: session count + the per-month stride its calendar-day
@@ -299,9 +429,7 @@ function subdivideMonthsBySession(
       const extentDays =
         sessions.length === 0
           ? 0
-          : new Date(sessions[sessions.length - 1]!).getDate() -
-            new Date(sessions[0]!).getDate() +
-            1;
+          : dayOf(sessions[sessions.length - 1]!) - dayOf(sessions[0]!) + 1;
       r = { count, stride: strideOf(count, extentDays) };
       rosters.set(key, r);
     }
@@ -328,15 +456,12 @@ function subdivideMonthsBySession(
       const worldStart =
         !exact && pre === 0 && provider.distance(t, t + MIN_MS) > 0;
       const count = Math.max(1, sessions.length + (worldStart ? 1 : 0));
-      const rosterFirstDom =
-        sessions.length > 0 ? new Date(sessions[0]!).getDate() : 31;
+      const rosterFirstDom = sessions.length > 0 ? dayOf(sessions[0]!) : 31;
       const firstDom = worldStart
-        ? Math.min(new Date(t).getDate(), rosterFirstDom)
+        ? Math.min(dayOf(t), rosterFirstDom)
         : rosterFirstDom;
       const lastDom =
-        sessions.length > 0
-          ? new Date(sessions[sessions.length - 1]!).getDate()
-          : new Date(t).getDate();
+        sessions.length > 0 ? dayOf(sessions[sessions.length - 1]!) : dayOf(t);
       const stride = strideOf(count, lastDom - firstDom + 1);
       rosters.set(key, { count, stride });
       if ((exact || worldStart) && monthMark(pre, stride, count)) {
@@ -400,6 +525,7 @@ export function coarsenCalendar(
   count: number,
   spanDays?: number,
   provider?: DiscontinuityProvider,
+  cal: TickCalendar = localTickCalendar,
 ): { ticks: number[]; granularity: TickGranularity } {
   if (opens.length <= count) return { ticks: [...opens], granularity: 'day' };
   // Per-month uniform session stride. Band-gated to spans where a nominal
@@ -413,16 +539,16 @@ export function coarsenCalendar(
   if (dailyDense && DAYS_PER_MONTH / gapDays >= 2) {
     const ticks =
       provider?.boundaries !== undefined
-        ? subdivideMonthsBySession(opens, gapDays, provider)
-        : subdivideMonthsByDay(opens, gapDays);
+        ? subdivideMonthsBySession(opens, gapDays, provider, cal)
+        : subdivideMonthsByDay(opens, gapDays, cal);
     if (ticks.length > 0) return { ticks, granularity: 'day' };
   }
   for (const g of COARSENING_LADDER) {
-    const ticks = firstOfEachBucket(opens, g);
+    const ticks = firstOfEachBucket(opens, g, cal);
     if (ticks.length <= count) return { ticks, granularity: g };
   }
   // Coarser than yearly isn't a calendar grain — decimate the year starts.
-  const yearly = firstOfEachBucket(opens, 'year');
+  const yearly = firstOfEachBucket(opens, 'year', cal);
   const step = Math.ceil(yearly.length / count);
   return {
     ticks: yearly.filter((_, i) => i % step === 0),
@@ -454,6 +580,7 @@ export function buildGridLevels(
   opens: readonly number[],
   domainEnd: number,
   cap: number,
+  cal: TickCalendar = localTickCalendar,
 ): Array<{ granularity: TickGranularity; values: number[] }> {
   const out: Array<{ granularity: TickGranularity; values: number[] }> = [];
   if (cap < 1 || opens.length === 0) return out;
@@ -461,7 +588,7 @@ export function buildGridLevels(
   for (const { g, step } of SUB_DAY_GRAINS) {
     if (opens.length + Math.floor(liveSpan / step) > cap) continue;
     const budget = cap + opens.length + 4;
-    const anchors = stepAnchors(provider, opens, domainEnd, step, budget);
+    const anchors = stepAnchors(provider, opens, domainEnd, step, budget, cal);
     if (anchors.length > budget) continue;
     if (anchors.length > opens.length) {
       out.push({ granularity: g, values: anchors });
@@ -471,7 +598,7 @@ export function buildGridLevels(
     out.push({ granularity: 'day', values: [...opens] });
   }
   for (const g of COARSENING_LADDER) {
-    const values = firstOfEachBucket(opens, g);
+    const values = firstOfEachBucket(opens, g, cal);
     if (values.length <= cap) out.push({ granularity: g, values });
   }
   return out;
@@ -508,58 +635,42 @@ export function nominalStepMs(g: TickGranularity): number {
 /**
  * Whether `t` sits exactly on a calendar instant of grain `g` — a local
  * midnight at day grain, a month / quarter / year start, a clock-aligned
- * step multiple (relative to `t`'s own local midnight, the same convention
- * as {@link nextAligned}) on the sub-day rungs. The window-edge genuineness
+ * step multiple (relative to `t`'s own midnight, the calendar's
+ * `nextAligned` convention) on the sub-day rungs. The window-edge genuineness
  * test in {@link buildTicks} — the only way a **continuous** axis's edge tick
  * survives, since a gap-free provider has no dead time to probe.
  *
- * The sub-day test shares {@link nextAligned}'s **fixed-elapsed-ms** rung
+ * The sub-day test shares the local calendar's **fixed-elapsed-ms** rung
  * convention **by design** — so an edge tick is judged aligned iff it is one
  * of the instants {@link stepAnchors} would actually generate. On the two DST
  * transition days a wall-clock `03:00` is then *not* "aligned" to `hour3`
  * (only 2h elapsed since midnight) while `04:00` is — the same drift the
- * anchors themselves take, and the already-deferred exchange-tz grain
- * refinement (see `nextAligned`), not a fresh inconsistency. It only decides
+ * anchors themselves take (a zoned calendar aligns to the wall clock instead),
+ * not a fresh inconsistency. It only decides
  * whether the *window-edge* tick is kept on those days — nil practical impact
  * (Codex review, #479).
  */
-function alignedToGrain(t: number, g: TickGranularity): boolean {
-  const d = new Date(t);
-  const midnight = new Date(
-    d.getFullYear(),
-    d.getMonth(),
-    d.getDate(),
-  ).getTime();
+function alignedToGrain(
+  t: number,
+  g: TickGranularity,
+  cal: TickCalendar,
+): boolean {
+  const midnight = cal.startOfDay(t);
   const sub = SUB_DAY_GRAINS.find((r) => r.g === g);
-  if (sub !== undefined) return (t - midnight) % sub.step === 0;
+  if (sub !== undefined) return cal.nextAligned(t, sub.step) === t;
   if (t !== midnight) return false;
+  const p = cal.parts(t);
   switch (g) {
     case 'month':
-      return d.getDate() === 1;
+      return p.day === 1;
     case 'quarter':
-      return d.getDate() === 1 && d.getMonth() % 3 === 0;
+      return p.day === 1 && (p.month - 1) % 3 === 0;
     case 'year':
-      return d.getDate() === 1 && d.getMonth() === 0;
+      return p.day === 1 && p.month === 1;
     default:
       // 'day' (and the unreachable 'week' — there is no week rung).
       return true;
   }
-}
-
-/** The first clock-aligned `stepMs` multiple at or after `t`, relative to `t`'s
- *  own local midnight — so a 3-hour step lands on 00:00 / 03:00 / 06:00 local,
- *  whatever the session open was. Fixed-ms stepping from midnight, so on a DST
- *  transition day the later anchors drift off the wall-clock grid by the shift
- *  (labels stay truthful — they format the real instant); exchange-tz grain is
- *  the already-deferred refinement. */
-function nextAligned(t: number, stepMs: number): number {
-  const d = new Date(t);
-  const midnight = new Date(
-    d.getFullYear(),
-    d.getMonth(),
-    d.getDate(),
-  ).getTime();
-  return midnight + Math.ceil((t - midnight) / stepMs) * stepMs;
 }
 
 /**
@@ -577,13 +688,22 @@ function stepAnchors(
   domainEnd: number,
   stepMs: number,
   cap: number,
+  cal: TickCalendar,
 ): number[] {
   const out: number[] = [];
   for (let i = 0; i < opens.length; i++) {
     const open = opens[i]!;
     const end = i + 1 < opens.length ? opens[i + 1]! : domainEnd;
     out.push(open);
-    for (let t = nextAligned(open + 1, stepMs); t < end; t += stepMs) {
+    // Each next anchor is re-aligned through the calendar rather than
+    // `t += stepMs`: identical for the local calendar (an aligned `t` steps
+    // to `t + stepMs`), and what lets a zoned calendar stay on the wall clock
+    // across a DST jump.
+    for (
+      let t = cal.nextAligned(open + 1, stepMs);
+      t < end;
+      t = cal.nextAligned(t + 1, stepMs)
+    ) {
       if (provider.offset(open, provider.distance(open, t)) === t) {
         out.push(t);
         if (out.length > cap) return out;
@@ -608,6 +728,7 @@ export function buildTicks(
   opens: readonly number[],
   domainEnd: number,
   cap: number,
+  cal: TickCalendar = localTickCalendar,
 ): { ticks: number[]; granularity: TickGranularity } {
   const result = ((): { ticks: number[]; granularity: TickGranularity } => {
     if (opens.length <= cap) {
@@ -634,7 +755,14 @@ export function buildTicks(
         // phase ticks), try the coarser rungs, whose smaller estimates
         // leave the budget room to finish.
         const budget = cap + opens.length + 4;
-        const ticks = stepAnchors(provider, opens, domainEnd, step, budget);
+        const ticks = stepAnchors(
+          provider,
+          opens,
+          domainEnd,
+          step,
+          budget,
+          cal,
+        );
         if (ticks.length > budget) continue;
         // A clock rung must earn its labels: if it adds no intraday anchor
         // beyond the opens themselves, it's really day grain (a row of
@@ -656,6 +784,7 @@ export function buildTicks(
       cap,
       (domainEnd - opens[0]!) / DAY_MS,
       provider,
+      cal,
     );
   })();
   // Round anchors to integer milliseconds: a pan/zoom domain comes from
@@ -687,7 +816,7 @@ export function buildTicks(
     const genuine =
       provider.distance(edge, edge + 1) > 0 && // live (a dead edge never ticks)
       (provider.distance(edge - 1, edge) === 0 || // a session open, or…
-        alignedToGrain(edge, result.granularity)); // …exactly on the grain
+        alignedToGrain(edge, result.granularity, cal)); // …exactly on the grain
     if (!genuine) t.shift();
   }
   // Drop a cramped **leading partial-period** anchor: a genuine first tick
@@ -849,46 +978,51 @@ export function bandFormatFor(g: TickGranularity): string {
  * same-shade day-bands side by side on a gappy calendar. A rare, cosmetic
  * consequence of keeping the shade fixed to the date rather than the slot.
  */
-export function bandShaded(t: number, g: TickGranularity): boolean {
-  const d = new Date(t);
+export function bandShaded(
+  t: number,
+  g: TickGranularity,
+  cal: TickCalendar = localTickCalendar,
+): boolean {
+  const p = cal.parts(t);
   let index: number;
   switch (g) {
     case 'day':
-      // UTC of the local Y/M/D — an integer calendar-day count, DST-immune.
-      index = Math.floor(
-        Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86_400_000,
-      );
+      // UTC of the calendar Y/M/D — an integer calendar-day count, DST-immune.
+      index = Math.floor(Date.UTC(p.year, p.month - 1, p.day) / 86_400_000);
       break;
     case 'month':
-      index = d.getFullYear() * 12 + d.getMonth();
+      index = p.year * 12 + (p.month - 1);
       break;
     default: // year
-      index = d.getFullYear();
+      index = p.year;
   }
   return ((index % 2) + 2) % 2 === 1;
 }
 
-/** The local-time start of the band grain `g` containing `t` (the band's left
- *  edge): local midnight, month start, or Jan 1. Through the Date ctor so DST
- *  and month/year overflow normalize correctly. */
-export function bandStartOf(t: number, g: TickGranularity): number {
-  const d = new Date(t);
-  if (g === 'day')
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  if (g === 'month')
-    return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
-  return new Date(d.getFullYear(), 0, 1).getTime(); // year
+/** The start of the band grain `g` containing `t` (the band's left edge) in
+ *  `cal`'s zone: midnight, month start, or Jan 1. */
+export function bandStartOf(
+  t: number,
+  g: TickGranularity,
+  cal: TickCalendar = localTickCalendar,
+): number {
+  if (g === 'day') return cal.startOfDay(t);
+  const p = cal.parts(t);
+  if (g === 'month') return cal.monthStart(p.year, p.month);
+  return cal.monthStart(p.year, 1); // year
 }
 
 /** The start of the band grain `g` **after** the one containing `t` — the next
- *  local midnight / month start / Jan 1. */
-export function bandNext(t: number, g: TickGranularity): number {
-  const d = new Date(t);
-  if (g === 'day')
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
-  if (g === 'month')
-    return new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
-  return new Date(d.getFullYear() + 1, 0, 1).getTime(); // year
+ *  midnight / month start / Jan 1 in `cal`'s zone. */
+export function bandNext(
+  t: number,
+  g: TickGranularity,
+  cal: TickCalendar = localTickCalendar,
+): number {
+  if (g === 'day') return cal.nextDay(t);
+  const p = cal.parts(t);
+  if (g === 'month') return cal.monthStart(p.year, p.month + 1);
+  return cal.monthStart(p.year + 1, 1); // year
 }
 
 /**
@@ -905,6 +1039,7 @@ export function boundaryTicks(
   ticks: readonly number[],
   granularity: TickGranularity,
   domainStart?: number,
+  cal: TickCalendar = localTickCalendar,
 ): number[] {
   const bg = boundaryGrainFor(granularity);
   if (bg === undefined) return [];
@@ -915,9 +1050,9 @@ export function boundaryTicks(
   // day turn); a first tick in the same period is not (no tick-hopping
   // context on a live window).
   let prev: number | undefined =
-    domainStart !== undefined ? bucketKey(domainStart, bg) : undefined;
+    domainStart !== undefined ? bucketKey(domainStart, bg, cal) : undefined;
   for (const t of ticks) {
-    const k = bucketKey(t, bg);
+    const k = bucketKey(t, bg, cal);
     if (prev !== undefined && k !== prev) out.push(t);
     prev = k;
   }
@@ -1013,6 +1148,7 @@ export function flatFormats(
   ticks: readonly number[],
   granularity: TickGranularity,
   domainStart?: number,
+  cal: TickCalendar = localTickCalendar,
 ): string[] {
   const base = flatBaseFormatFor(granularity);
   const levels = flatPromotionLevels(granularity);
@@ -1021,13 +1157,13 @@ export function flatFormats(
   // the period boundary is.
   const prev = new Map<TickGranularity, number>();
   if (domainStart !== undefined) {
-    for (const L of levels) prev.set(L, bucketKey(domainStart - 1, L));
+    for (const L of levels) prev.set(L, bucketKey(domainStart - 1, L, cal));
   }
   return ticks.map((t) => {
     let spec = base;
     let promoted = false;
     for (const L of levels) {
-      const k = bucketKey(t, L);
+      const k = bucketKey(t, L, cal);
       // Coarsest changed level wins; still update every level's bucket so a
       // year turn (which also turns the month/day) leaves them all current.
       if (!promoted && prev.has(L) && prev.get(L) !== k) {

@@ -306,6 +306,14 @@ export interface ContainerFrame {
    * tick labels) without moving them.
    */
   readonly formatReadout?: ((value: number) => string) | undefined;
+  /**
+   * The IANA zone the time axis renders in — the container's resolved
+   * `timeZone` (explicit prop, else the calendar's), canonical id; `undefined`
+   * when the axis is in the runtime's local zone. For a consumer's own
+   * formatter (`timeFormat` / `cursorFormat` functions receive epoch ms) to
+   * read the same zone the ticks do.
+   */
+  readonly timeZone: string | undefined;
   /** Whether an explicit container `timeFormat` shaped {@link formatTime}. The
    *  x axis suppresses its boundary (second) label row when it's set — a
    *  custom format owns the whole label, so the ladder mustn't second-line it. */
