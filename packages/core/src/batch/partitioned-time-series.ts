@@ -40,11 +40,22 @@ type AlignSample = 'begin' | 'center' | 'end';
  * is the same rule at the type level: keys the user wrote win (kind and
  * all — `host: 'count'` stays an optional number), the rest are added as
  * `'first'` and so keep the source column's kind. `By` defaults to `never`
- * on an untyped view, which leaves the mapping untouched.
+ * on an untyped view, which leaves the mapping untouched; a widened
+ * `string` `By` does too (see the conditional). One knowing lie: when the
+ * partition column is a union-typed variable (`c: 'host' | 'region'`), the
+ * type names both as `string | undefined` while the runtime carries only
+ * the one actually passed — harmless because injected columns are already
+ * optional.
  */
-export type WithPartitionColumns<Mapping, By extends string> = Mapping & {
-  readonly [C in Exclude<By, keyof Mapping>]: 'first';
-};
+export type WithPartitionColumns<Mapping, By extends string> = string extends By
+  ? // Non-literal partition column (a `string` variable on a broad
+    // schema): we cannot name what the runtime injects, and an index
+    // signature here would swallow every output column's type. Leave
+    // the mapping alone — the same result type as before [PND-PARTCOL].
+    Mapping
+  : Mapping & {
+      readonly [C in Exclude<By, keyof Mapping>]: 'first';
+    };
 
 /**
  * View over a `TimeSeries` that scopes stateful transforms to within

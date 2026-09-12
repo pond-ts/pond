@@ -3,7 +3,7 @@
 // it (`augmentMappingWithPartitionCols`); these assertions pin that the type
 // now says the same thing, for `aggregate` and `rolling`, single and
 // composite partitions, and the "mapping key wins" rule.
-import { Sequence, TimeSeries } from '../src/index.js';
+import { Sequence, TimeSeries, type SeriesSchema } from '../src/index.js';
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -83,3 +83,24 @@ const host6: string | undefined = filled.at(0)!.get('host');
 const ms6: number | undefined = filled.at(0)!.get('ms');
 void host6;
 void ms6;
+
+// ── rolling(sequence, window, mapping) overload — same augmentation ────
+const gridRolled = s
+  .partitionBy('host')
+  .rolling(Sequence.every('1m'), '5m', { ms: 'avg' })
+  .collect();
+const host7: string | undefined = gridRolled.at(0)!.get('host');
+void host7;
+
+// ── broad schema + non-literal column: no regression ────────────────────
+// `By` widens to `string`; an index signature would have swallowed every
+// output column's type (review finding on #724). The guard leaves the
+// mapping alone, so outputs stay narrow exactly as on main.
+declare const broad: TimeSeries<SeriesSchema>;
+declare const anyCol: string;
+const broadOut = broad
+  .partitionBy(anyCol)
+  .aggregate(Sequence.every('5m'), { cpu: 'avg' })
+  .collect();
+const cpuBroad: number | undefined = broadOut.at(0)!.get('cpu');
+void cpuBroad;

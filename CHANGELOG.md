@@ -86,7 +86,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   configures docs-MCP indexing. Plan and baseline:
   `docs/plans/PND_ADOPTION_PLAN.md`.
 
-- **Agent guide + skill hardened by the first cold-start run** (`docs/agents/USING_POND.md`, shipped as `AGENTS.md`; `plugins/pond-ts/skills/pond-ts`): install with `@latest`, the `.d.ts` paths that carry signatures, and the partition-column-after-`aggregate` sharp edge with its workaround. Cold-start harness committed at `docs/adoption/cold-start/`.
+- **Agent guide + skill hardened by the first cold-start run** (`docs/agents/USING_POND.md`, shipped as `AGENTS.md`; `plugins/pond-ts/skills/pond-ts`): install with `@latest` and the `.d.ts` paths that carry signatures. Cold-start harness committed at `docs/adoption/cold-start/`.
 
 ### Fixed
 
