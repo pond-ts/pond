@@ -72,6 +72,26 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- `@pond-ts/financial`: **`StudyOutput.id` documents the `@pond-ts/process`
+  bridge**, and a new `test/catalog-process.test.ts` pins it. The field is a
+  *financial column suffix*; process's `OutputDef.id` is a *process outlet
+  id*; they share a name and are different namespaces. Process names its own
+  columns (`specId + OutputDef.id`) and matches an op's return to its outputs
+  positionally, so a study's own column names never reach it — which means a
+  registry bridging the two chooses its own suffixes, and for the **twelve**
+  multi-output studies that claim the bare prefix (`trix`, `superTrend`,
+  `klinger`, …) it must: process rejects `''` on a multi-output op, because
+  there the column would be named exactly the spec id, itself a legal column
+  reference. The map is `outputs.length > 1 && id === ''` → `'value'` — not
+  `id === ''`, which would rename all seventy-odd single-output columns for
+  nothing. Reported by a consumer that hit the throw at module load and
+  worked around it by hand. No API change: the descriptors, the studies and
+  the guard are all unchanged, and the round-trip test is what stops the two
+  packages drifting — `catalog.test.ts` validates a descriptor against its
+  *study*, so it is structurally blind to a cross-package disagreement.
+
 ## [0.69.0] — 2026-09-13
 
 ### Added

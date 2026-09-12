@@ -125,6 +125,28 @@ export interface StudyOutput {
    * **bare prefix** — the primary line of a study whose companions carry
    * suffixes (`superTrend`'s `st` beside `stTrend`, `klinger`'s `kvo` beside
    * `kvoSignal`); at most one output may claim it.
+   *
+   * **This is a `@pond-ts/financial` column suffix, not a
+   * `@pond-ts/process` outlet id.** The two are separate namespaces that
+   * happen to share a field name, and a registry bridging them must map
+   * between them rather than pass this through.
+   *
+   * Process names an op's columns itself, as `specId + OutputDef.id`, and
+   * its `toColumns` matches an op's return to its declared outputs
+   * **positionally** — a study's own column names never reach it. So the
+   * suffixes a bridge declares are free, and for the twelve multi-output
+   * studies that claim the bare prefix they are not merely free but
+   * *forced*: process rejects `''` on a multi-output op, because there the
+   * column would be named exactly the spec id, which is itself a legal
+   * column reference. Give those twelve a name — `'value'` is what
+   * process already calls a bare outlet — and leave every other suffix
+   * alone: `''` is legal on a **single**-output op, where the column *is*
+   * the spec id, so rewriting it there would rename all seventy-odd of
+   * them for nothing. The map is `outputs.length > 1 && id === ''`, not
+   * `id === ''`.
+   *
+   * `test/catalog-process.test.ts` pins that round trip, including the
+   * rejection, so neither package can drift from it silently.
    */
   readonly id: string;
   readonly unit: StudyUnit;
