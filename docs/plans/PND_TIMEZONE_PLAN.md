@@ -165,6 +165,22 @@ view**, viewer-local by default, with instants untouched underneath.
 
 #### [PND-TZCAL] — core: a public zone-calendar primitive, `quarter` / `year`, unit validation
 
+**In review as [#728](https://github.com/pond-ts/pond/pull/728) (opened
+2026-09-13).** Landed as designed, with three decisions made in the build:
+the name is `TimeZone` (not `Zone` / `ZoneCalendar` — it reads as the noun
+`Sequence.calendar` and the charts' `timeZone` prop already use, and the
+collision with `Temporal.TimeZone` is moot since Temporal removed that class);
+`abbreviation(t, { locale })` takes a locale because `Intl` short names are a
+locale question (`en-US` knows `EST` but reports Sydney as `GMT+11`; `en-AU`
+the reverse) — pretending one locale is neutral would have baked a US-centric
+`%Z` into the axis; and the offset-transition cache is a sorted array of
+half-open segments discovered via `getTimeZoneTransition`, with a
+last-hit fast path. Measured (before = v0.68.0 dist): `startOf('day')`
+~24 µs → ~23 ns per call warm; a three-year hourly series to New York days
+37.96 ms → 0.54 ms; Lord Howe 39.21 ms → 0.19 ms. Pinned against Temporal on
+eight zones including a day with no midnight (São Paulo 2018) and a skipped
+day (Apia 2011). Not done here: the lazy polyfill import (parked below).
+
 **Scope.** Export one small object that answers every zone question the
 library and the axis need, implemented on the existing Temporal helpers in
 `core/calendar.ts` with a per-zone **offset-transition cache** (IANA offsets
@@ -392,15 +408,15 @@ which is why this waits.
 
 ## Sequencing and size
 
-| Order | Task           | Size    | Depends on               |
-| ----- | -------------- | ------- | ------------------------ |
-| 1     | [PND-TZCAL]    | ~2 days | —                        |
-| 2     | [PND-TZAXIS] 1 | ~2 days | TZCAL                    |
-| 3     | [PND-TZAXIS] 2 | ~1 day  | TZAXIS 1                 |
-| 4     | [PND-TZFIN]    | hours   | —                        |
-| 5     | [PND-TZAXIS] 3 | ~1 day  | TZAXIS 2, TZFIN          |
-| 6     | [PND-TZTEST]   | ~1 day  | TZCAL, TZAXIS (parallel) |
-| 7     | [PND-TZDOCS]   | ~1 day  | all of the above         |
+| Order | Task           | Size             | Depends on               |
+| ----- | -------------- | ---------------- | ------------------------ |
+| 1     | [PND-TZCAL]    | in review (#728) | —                        |
+| 2     | [PND-TZAXIS] 1 | ~2 days          | TZCAL                    |
+| 3     | [PND-TZAXIS] 2 | ~1 day           | TZAXIS 1                 |
+| 4     | [PND-TZFIN]    | hours            | —                        |
+| 5     | [PND-TZAXIS] 3 | ~1 day           | TZAXIS 2, TZFIN          |
+| 6     | [PND-TZTEST]   | ~1 day           | TZCAL, TZAXIS (parallel) |
+| 7     | [PND-TZDOCS]   | ~1 day           | all of the above         |
 
 Phase 1 is roughly one and a half weeks of focused work, five to six PRs, two
 human gates (TZCAL's export + `CalendarUnit`; TZAXIS's prop). Each code PR
