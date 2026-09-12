@@ -71,6 +71,18 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Docs said a wall-clock string without `parse.timeZone` throws. It never
+  did** ([PND-TZDOCS]) — it is read as UTC, silently. `creating.mdx`, the
+  agent guide (`AGENTS.md`) and the decision table now say so and describe
+  how the shift shows up. The agent guide also gains the one time-zone rule:
+  pass the same `timeZone` to `Sequence.calendar` and `<ChartContainer>`.
+  The aggregation page cross-links `Sequence.calendar` for weekly / monthly
+  bars (issue #358 item 1, supersedes #359). The finance gallery's off-chart
+  readout takes the calendar's zone instead of hard-coding New York; the
+  Niño 3.4 heat map's year grain uses `Sequence.calendar('year')`.
+
 ### Added
 
 - **`<ChartContainer timeZone>` — the time axis in any IANA zone

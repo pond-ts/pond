@@ -91,6 +91,7 @@ export default function GalleryPriceVolume({
       {live ? (
         <TrackerReadout
           tracker={tracker}
+          timeZone={set.calendar.timeZone}
           idle={`Hover for ${set.symbol}; drag to pan, wheel to zoom`}
           format={(s) =>
             s.label === 'volume'
