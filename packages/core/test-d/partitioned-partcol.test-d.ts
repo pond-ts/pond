@@ -129,10 +129,16 @@ const broadLit = broad
 broadLit.at(0)!.get('host');
 const cpuBroadLit: number | undefined = broadLit.at(0)!.get('cpu');
 void cpuBroadLit;
-// The `Equal` helper is kept for the literal-column probe below.
-type _Probe = Equal<typeof cpuBroadLit, number | undefined>;
-const probeOk: _Probe = true;
-void probeOk;
+// Exact-type probe on the unannotated expression (an annotated const would
+// be tautological): `cpu` is precisely `number | undefined`, not the broad
+// value union the pre-guard build produced.
+const cpuIsNumber: Equal<
+  NonNullable<ReturnType<typeof broadLit.at>> extends { get(f: 'cpu'): infer V }
+    ? V
+    : never,
+  number | undefined
+> = true;
+void cpuIsNumber;
 
 // (2) `By` is pinned contravariantly: a view partitioned by `region` cannot
 // be claimed as one partitioned by `host` …

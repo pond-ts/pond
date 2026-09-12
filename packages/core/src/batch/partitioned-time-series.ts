@@ -125,6 +125,12 @@ export class PartitionedTimeSeries<
    * assigns to the legacy `PartitionedTimeSeries<S>` / `<S, K>` shape.
    * Without it `By` only appears inside a conditional in return positions
    * and TypeScript treats it as freely convertible (Codex finding on #724).
+   *
+   * Spelling note: **`never` (the default) is the "any / unknown column"
+   * view**, and it is the top of this pin — every specialised view assigns
+   * to it. `string` is the *bottom* (a `string`-typed `By` assigns to any
+   * literal), so do not write `PartitionedTimeSeries<S, K, string>` to mean
+   * "any column"; the `partitionBy` overloads never produce it.
    */
   declare readonly __partitionColumns?: (by: By) => void;
   /**
