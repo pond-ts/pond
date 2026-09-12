@@ -79,7 +79,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   `instant(parts, { disambiguation })`, `offsetAt(t)` and
   `abbreviation(t, { locale })`. Temporal underneath, but each zone caches its
   offset transitions as it discovers them, so steady-state calls are integer
-  arithmetic: `startOf('day')` went from ~24 µs to ~20 ns per call, and a
+  arithmetic: `startOf('day')` went from ~24 µs to ~23 ns per call, and a
   three-year hourly series aggregated to `America/New_York` days from 38 ms
   to 0.5 ms. `Sequence.calendar`, `TimeRange.fromCalendar` and
   `Interval.fromCalendar` now bucket through it (no behaviour change; pinned

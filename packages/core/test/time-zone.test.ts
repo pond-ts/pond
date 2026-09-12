@@ -277,6 +277,91 @@ describe('TimeZone — DST edges', () => {
   });
 });
 
+describe('TimeZone — segment cache', () => {
+  // Zones used nowhere else in this file: instances are interned, so these
+  // are the only way to get a cache that has never seen an instant.
+  const oracleOffset = (ms: number, zone: string) =>
+    zdt(ms, zone).offsetNanoseconds / 1_000_000;
+
+  it('a first query exactly at a transition does not poison the prior segment', () => {
+    // Regression (#728 review): `getTimeZoneTransition('previous')` is
+    // strictly before its receiver while the offset *at* a transition is
+    // already the new one, so asking at the transition itself paired the
+    // summer offset with the start of the winter segment.
+    const zone = 'America/Chicago';
+    const tz = TimeZone.of(zone);
+    const springForward = Date.UTC(2025, 2, 9, 8); // 02:00 CST → 03:00 CDT
+    expect(tz.offsetAt(springForward)).toBe(-5 * HOUR);
+    const midJanuary = Date.UTC(2025, 0, 15, 12);
+    expect(tz.offsetAt(midJanuary)).toBe(-6 * HOUR);
+    expect(tz.startOf('day', midJanuary)).toBe(Date.UTC(2025, 0, 15, 6));
+    const oneMsBefore = springForward - 1;
+    expect(tz.offsetAt(oneMsBefore)).toBe(-6 * HOUR);
+  });
+
+  it('an ascending hourly walk through a transition leaves every hour correct', () => {
+    const zone = 'Europe/Paris';
+    const tz = TimeZone.of(zone);
+    // March 1–20 hourly: every hourly series contains the transition instant.
+    for (let t = Date.UTC(2025, 2, 1); t < Date.UTC(2025, 2, 20); t += HOUR) {
+      tz.offsetAt(t);
+    }
+    // Then every hour of the year, in order, against Temporal.
+    let mismatches = 0;
+    for (let t = Date.UTC(2025, 0, 1); t < Date.UTC(2026, 0, 1); t += HOUR) {
+      if (tz.offsetAt(t) !== oracleOffset(t, zone)) mismatches += 1;
+    }
+    expect(mismatches).toBe(0);
+  });
+
+  it('segments inserted in shuffled order agree with Temporal', () => {
+    const zone = 'America/Denver';
+    const tz = TimeZone.of(zone);
+    // Deterministic shuffle of instants across 2020–2026, including the
+    // exact transition instants for each year.
+    const instants: number[] = [];
+    for (
+      let t = Date.UTC(2020, 0, 1);
+      t < Date.UTC(2027, 0, 1);
+      t += 37 * HOUR
+    ) {
+      instants.push(t);
+    }
+    for (let y = 2020; y <= 2026; y += 1) {
+      let z = zdt(Date.UTC(y, 0, 1), zone);
+      for (let i = 0; i < 2; i += 1) {
+        const next = z.getTimeZoneTransition('next');
+        if (next === null) break;
+        instants.push(next.epochMilliseconds);
+        z = next;
+      }
+    }
+    let seed = 42;
+    for (let i = instants.length - 1; i > 0; i -= 1) {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      const j = seed % (i + 1);
+      [instants[i], instants[j]] = [instants[j]!, instants[i]!];
+    }
+    for (const t of instants) {
+      expect(tz.offsetAt(t), `offset at ${new Date(t).toISOString()}`).toBe(
+        oracleOffset(t, zone),
+      );
+    }
+    // And once more in order, now that the cache holds every segment.
+    for (const t of [...instants].sort((a, b) => a - b)) {
+      expect(tz.offsetAt(t)).toBe(oracleOffset(t, zone));
+      expect(tz.startOf('day', t)).toBe(oracleStartOf('day', t, zone));
+    }
+  });
+
+  it('accepts a fixed-offset identifier as a single-segment zone', () => {
+    const tz = TimeZone.of('+05:30');
+    expect(tz.id).toBe('+05:30');
+    expect(tz.offsetAt(Date.UTC(1990, 0, 1))).toBe(5.5 * HOUR);
+    expect(tz.offsetAt(Date.UTC(2090, 0, 1))).toBe(5.5 * HOUR);
+  });
+});
+
 describe('TimeZone — calendar units', () => {
   const berlin = TimeZone.of('Europe/Berlin');
   const t = Date.UTC(2025, 7, 20, 10); // 2025-08-20 12:00 CEST
@@ -331,10 +416,23 @@ describe('TimeZone — identity and lookup', () => {
     );
   });
 
-  it('rejects a non-finite instant and an impossible date', () => {
+  it('rejects a non-finite instant and an impossible wall-clock time', () => {
     expect(() => TimeZone.UTC.parts(Number.NaN)).toThrow(RangeError);
     expect(() =>
       TimeZone.UTC.instant({ year: 2025, month: 13, day: 1 }),
+    ).toThrow(RangeError);
+    // Reject, don't roll over: Feb 30 is not March 2, hour 25 is not 01:00 tomorrow.
+    expect(() =>
+      TimeZone.UTC.instant({ year: 2025, month: 2, day: 30 }),
+    ).toThrow(RangeError);
+    expect(() =>
+      TimeZone.UTC.instant({ year: 2024, month: 2, day: 29 }),
+    ).not.toThrow();
+    expect(() =>
+      TimeZone.UTC.instant({ year: 2025, month: 1, day: 1, hour: 25 }),
+    ).toThrow(RangeError);
+    expect(() =>
+      TimeZone.UTC.instant({ year: 2025, month: 1, day: 1, minute: 60 }),
     ).toThrow(RangeError);
   });
 });

@@ -300,4 +300,23 @@ describe('calendar math — fractional epoch milliseconds', () => {
     // millisecond spanning [-6, -5), so it must floor to -6, not -5.
     expect(utc.startOf('day', -5.5)).toBe(utc.startOf('day', -6));
   });
+
+  it('realizes a calendar sequence over a fractional range', () => {
+    const sequence = Sequence.calendar('month', { timeZone: 'UTC' });
+    const bounded = () =>
+      sequence.bounded(new TimeRange({ start: JAN + 0.37, end: APR + 0.91 }));
+    expect(bounded).not.toThrow();
+    // Every emitted boundary is a whole millisecond, and the fraction shifts
+    // nothing but inclusion at the edges: `JAN + 0.37` is after January's
+    // start, so January is legitimately not in range.
+    const b = bounded();
+    const begins = Array.from({ length: b.length }, (_, i) => b.at(i)!.begin());
+    expect(begins.every(Number.isInteger)).toBe(true);
+    const whole = sequence.bounded(
+      new TimeRange({ start: JAN + 1, end: APR + 1 }),
+    );
+    expect(begins).toEqual(
+      Array.from({ length: whole.length }, (_, i) => whole.at(i)!.begin()),
+    );
+  });
 });

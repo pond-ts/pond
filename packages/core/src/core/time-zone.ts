@@ -102,6 +102,14 @@ function civilFromDays(days: number): [number, number, number] {
   return [m <= 2 ? y + 1 : y, m, d];
 }
 
+/** Days in a proleptic-Gregorian month. */
+function daysInMonth(year: number, month: number): number {
+  return (
+    daysFromCivil(month === 12 ? year + 1 : year, (month % 12) + 1, 1) -
+    daysFromCivil(year, month, 1)
+  );
+}
+
 /** ISO weekday (1 = Monday … 7 = Sunday) for a day number; day 0 was a Thursday. */
 function weekdayFromDays(days: number): ZonedParts['weekday'] {
   return ((((days % 7) + 7 + 3) % 7) + 1) as ZonedParts['weekday'];
@@ -168,6 +176,8 @@ export class TimeZone {
    * Example: `TimeZone.of('Australia/Sydney')`. Looks up a zone by IANA
    * identifier. Throws `RangeError` for an identifier the runtime does not
    * know. Case-insensitive on input; `id` reports the canonical spelling.
+   * A fixed-offset identifier such as `'+05:30'` is accepted too, as
+   * Temporal accepts it, and behaves as a zone with a single segment.
    */
   static of(id: string): TimeZone {
     const hit = registry.get(id);
@@ -337,12 +347,25 @@ export class TimeZone {
     return created;
   }
 
-  /** Ask Temporal for the offset at `t` and the transitions bracketing it. */
+  /**
+   * Ask Temporal for the offset at `t` and the transitions bracketing it.
+   *
+   * `getTimeZoneTransition('previous')` is *strictly* before its receiver,
+   * while the offset at a transition instant is already the new one — so
+   * asking at `t` itself, when `t` *is* a transition, would pair the new
+   * offset with the start of the old segment and poison the cache for the
+   * whole preceding stretch (every hourly series crosses a DST instant
+   * exactly). Asking from `t + 1 ms` returns transitions `<= t`, which is
+   * the segment start we want; `'next'` from `t` is strictly after, which
+   * is the exclusive end we want.
+   */
   #discoverSegment(t: number): Segment {
     const zoned = Temporal.Instant.fromEpochMilliseconds(t).toZonedDateTimeISO(
       this.id,
     );
-    const previous = zoned.getTimeZoneTransition('previous');
+    const previous = Temporal.Instant.fromEpochMilliseconds(t + 1)
+      .toZonedDateTimeISO(this.id)
+      .getTimeZoneTransition('previous');
     const next = zoned.getTimeZoneTransition('next');
     return {
       start: previous === null ? -Infinity : previous.epochMilliseconds,
@@ -405,25 +428,32 @@ export class TimeZone {
 
   static #civilMs(parts: ZonedPartsInput): number {
     const { year, month, day } = parts;
+    const hour = parts.hour ?? 0;
+    const minute = parts.minute ?? 0;
+    const second = parts.second ?? 0;
+    const millisecond = parts.millisecond ?? 0;
+    const inRange = (v: number, lo: number, hi: number) =>
+      Number.isInteger(v) && v >= lo && v <= hi;
     if (
       !Number.isInteger(year) ||
-      !Number.isInteger(month) ||
-      month < 1 ||
-      month > 12 ||
-      !Number.isInteger(day) ||
-      day < 1 ||
-      day > 31
+      !inRange(month, 1, 12) ||
+      !inRange(day, 1, daysInMonth(year, month)) ||
+      !inRange(hour, 0, 23) ||
+      !inRange(minute, 0, 59) ||
+      !inRange(second, 0, 59) ||
+      !inRange(millisecond, 0, 999)
     ) {
-      throw new RangeError(
-        `invalid calendar date ${JSON.stringify({ year, month, day })}`,
-      );
+      // Reject rather than roll over: `{ month: 2, day: 30 }` is a caller
+      // error, not February 30th, and silently landing on March 2nd is how
+      // a bucket edge ends up in the wrong month.
+      throw new RangeError(`invalid wall-clock time ${JSON.stringify(parts)}`);
     }
     return (
       daysFromCivil(year, month, day) * MS_PER_DAY +
-      (parts.hour ?? 0) * MS_PER_HOUR +
-      (parts.minute ?? 0) * 60_000 +
-      (parts.second ?? 0) * 1_000 +
-      (parts.millisecond ?? 0)
+      hour * MS_PER_HOUR +
+      minute * 60_000 +
+      second * 1_000 +
+      millisecond
     );
   }
 
