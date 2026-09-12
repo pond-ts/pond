@@ -90,6 +90,7 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **`pond-ts`: the partition column is now in the static type after a partitioned `aggregate` / `rolling` ([PND-PARTCOL]).** `series.partitionBy('host').aggregate(seq, { p95: { from: 'ms', using: 'p95' } }).collect()` always carried `host` at runtime (auto-injected as `'first'`) but the result type omitted it, so `e.get('host')` failed to compile — every fresh agent in the cold-start experiment hit or pre-empted it. `PartitionedTimeSeries` gains a third type parameter `By` (the partition column names, captured by `partitionBy`, default `never`), and the two schema-replacing operators are typed over `WithPartitionColumns<Mapping, By>` — the user's keys win, kind and all; missing partition columns are added as `'first'`. Composite partitions and typed `groups` carry through; `smooth` / `baseline` under `partitionBy` now also keep `K`. Additive: untyped views are unchanged.
 - `@pond-ts/charts` and `@pond-ts/fit` READMEs (rendered on npm) and eight
   docs pages pointed at the retired `pjm17971.github.io/pond-ts` site /
   `pjm17971/pond-ts` repo; now `pond-ts.org` / `pond-ts/pond`.

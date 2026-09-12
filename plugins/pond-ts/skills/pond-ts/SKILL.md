@@ -74,17 +74,14 @@ Months / calendar days in a zone: `Sequence.calendar('month', { timeZone })`.
 const perHost = s
   .partitionBy('host') // every stateful operator below runs per host
   .fill({ latencyMs: 'hold' })
-  .rolling('5m', { host: 'first', latencyMs: 'avg' }) // name `host` — see below
-  .collect(); // flat TimeSeries; or .toMap()
+  .rolling('5m', { latencyMs: 'avg' })
+  .collect(); // flat TimeSeries, `host` carried through; or .toMap()
 ```
 
-**`aggregate` and `rolling` under `partitionBy` replace the value columns with
-the mapping's outputs**, so the collected result carries `host` at runtime
-(auto-injected) but not in the static type — `e.get('host')` fails to compile
-after `.partitionBy('host').rolling(...).collect()` or `.aggregate(...)`. Name
-the column in the mapping and the type follows: `{ host: 'first', p95: { from:
-'ms', using: 'p95' } }`. `baseline` / `fill` / `dedupe` / `smooth` keep the
-source columns and need nothing.
+`aggregate` and `rolling` under `partitionBy` carry the partition column
+through in the runtime **and** the static type (pond-ts ≥ 0.68), so
+`e.get('host')` compiles on the collected result. On 0.67 or older, name it
+in the mapping: `{ host: 'first', p95: { from: 'ms', using: 'p95' } }`.
 
 ## 4. Read out
 

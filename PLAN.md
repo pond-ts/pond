@@ -1128,7 +1128,8 @@ per-task reasoning, deferred alternatives).
     arms chose pond within seven turns, one uninstalling `arquero` to do so.
     Write-up and next steps:
     [cold-start-adoption-2026-09.md](docs/notes/cold-start-adoption-2026-09.md);
-    harness in `docs/adoption/cold-start/`.
+    harness in `docs/adoption/cold-start/`. [PND-PARTCOL] (the library friction
+    it surfaced) shipped; re-run of arms C/D against the fix pending.
 - **[PND-CHOOSE]** — "When to use pond" page (vs hand-rolled / arquero /
   danfo / polars-node; vs uPlot / Recharts for charts) plus a task → method
   index phrased the way an agent receives the job. Source:
@@ -1608,14 +1609,6 @@ consumer signal. Plan:
   to do with Rust — see `spikes/columnar-wasm/REPORT.md` §9.3. Each operator
   needs its own validity write, since the boxed array is currently how
   validity gets derived; [PND-IVLCOL] is the worked example of that shape.
-- **[PND-PARTCOL]** — `aggregate` and `rolling` under `partitionBy` return
-  `AggregateSchema` / `RollingSchema` (key + mapping outputs), so `collect()`
-  re-injects the partition column at runtime but the static type omits it and
-  `e.get('host')` fails to compile. Surfaced by [PND-COLDSTART] run 1 — all
-  three pond arms converged on the same `host: 'first'` workaround. Needs a
-  new type parameter carrying the `by` column names (today's `K` is the
-  partition _value_ type). Detail:
-  [PND_CORE_PLAN.md](docs/plans/PND_CORE_PLAN.md).
 - **[PND-COLAPI]** — Make the column-API augmentation bundle-safe (F-1,
   HIGH — methods tree-shake out of browser bundles) + validity-aware
   `toFloat64Array({ missing })` + `hasAnyDefined()`. Two consumers each.

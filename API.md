@@ -40,13 +40,13 @@ next door is the point.
 
 ### Series classes & construction
 
-| Export                  | Purpose                                                | Source                                               |
-| ----------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
-| `TimeSeries`            | Immutable time-indexed collection, columnar storage    | `packages/core/src/batch/time-series.ts`             |
-| `ValueSeries`           | Series keyed by a monotonic non-time value axis        | `packages/core/src/batch/value-series.ts`            |
-| `PartitionedTimeSeries` | Scoped view for per-partition stateful transforms      | `packages/core/src/batch/partitioned-time-series.ts` |
-| `Sequence`              | Infinite grid of time buckets (daily, hourly, every N) | `packages/core/src/sequence/sequence.ts`             |
-| `BoundedSequence`       | Finite ordered list of explicit interval buckets       | `packages/core/src/sequence/bounded-sequence.ts`     |
+| Export                  | Purpose                                                                                                                                                 | Source                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `TimeSeries`            | Immutable time-indexed collection, columnar storage                                                                                                     | `packages/core/src/batch/time-series.ts`             |
+| `ValueSeries`           | Series keyed by a monotonic non-time value axis                                                                                                         | `packages/core/src/batch/value-series.ts`            |
+| `PartitionedTimeSeries` | Scoped view for per-partition stateful transforms; `<S, K, By>` — `By` is the partition column names, carried into `aggregate` / `rolling` result types | `packages/core/src/batch/partitioned-time-series.ts` |
+| `Sequence`              | Infinite grid of time buckets (daily, hourly, every N)                                                                                                  | `packages/core/src/sequence/sequence.ts`             |
+| `BoundedSequence`       | Finite ordered list of explicit interval buckets                                                                                                        | `packages/core/src/sequence/bounded-sequence.ts`     |
 
 Static constructors on `TimeSeries`: `fromJSON()` (row tuples/objects),
 `fromColumns()` (struct-of-arrays; `number` + `string` value columns),

@@ -33,6 +33,20 @@ type AlignMethod = 'hold' | 'linear';
 type AlignSample = 'begin' | 'center' | 'end';
 
 /**
+ * The mapping a partitioned `aggregate` / `rolling` actually runs with
+ * ([PND-PARTCOL]). The runtime (`augmentMappingWithPartitionCols`) appends
+ * every partition column the user's mapping does not already name as a
+ * `'first'` spec, so the collected series carries the partition key. This
+ * is the same rule at the type level: keys the user wrote win (kind and
+ * all — `host: 'count'` stays an optional number), the rest are added as
+ * `'first'` and so keep the source column's kind. `By` defaults to `never`
+ * on an untyped view, which leaves the mapping untouched.
+ */
+export type WithPartitionColumns<Mapping, By extends string> = Mapping & {
+  readonly [C in Exclude<By, keyof Mapping>]: 'first';
+};
+
+/**
  * View over a `TimeSeries` that scopes stateful transforms to within
  * each partition. Created by `TimeSeries.partitionBy(by)`.
  *
@@ -78,6 +92,7 @@ type AlignSample = 'begin' | 'center' | 'end';
 export class PartitionedTimeSeries<
   S extends SeriesSchema,
   K extends string = string,
+  By extends string = never,
 > {
   readonly source: TimeSeries<S>;
   readonly by: ReadonlyArray<keyof EventDataForSchema<S> & string>;
@@ -211,12 +226,16 @@ export class PartitionedTimeSeries<
   // pre-validated source — partition values cannot change inside a
   // per-partition transform. JS-private (`static #fromValidated`) so
   // the trusted path is unreachable from outside the class.
-  static #fromValidated<SX extends SeriesSchema, KX extends string>(
+  static #fromValidated<
+    SX extends SeriesSchema,
+    KX extends string,
+    BX extends string,
+  >(
     source: TimeSeries<SX>,
     by: ReadonlyArray<keyof EventDataForSchema<SX> & string>,
     groups: ReadonlyArray<KX> | undefined,
-  ): PartitionedTimeSeries<SX, KX> {
-    const p = new PartitionedTimeSeries<SX, KX>(source, by);
+  ): PartitionedTimeSeries<SX, KX, BX> {
+    const p = new PartitionedTimeSeries<SX, KX, BX>(source, by);
     if (groups !== undefined) {
       // groups was already validated when the user constructed the
       // upstream view; partition values are preserved through any
@@ -426,8 +445,8 @@ export class PartitionedTimeSeries<
   // can't be called from outside the class.
   private rewrap<R extends SeriesSchema>(
     out: TimeSeries<R>,
-  ): PartitionedTimeSeries<R, K> {
-    return PartitionedTimeSeries.#fromValidated<R, K>(
+  ): PartitionedTimeSeries<R, K, By> {
+    return PartitionedTimeSeries.#fromValidated<R, K, By>(
       out,
       this.by as unknown as ReadonlyArray<keyof EventDataForSchema<R> & string>,
       this.groups,
@@ -448,7 +467,7 @@ export class PartitionedTimeSeries<
    * reservoir. Safe by construction; no `unsafeGlobal: true` token.
    * See {@link TimeSeries.sample}.
    */
-  sample(strategy: BatchSampleStrategy): PartitionedTimeSeries<S, K> {
+  sample(strategy: BatchSampleStrategy): PartitionedTimeSeries<S, K, By> {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
         g.sample(strategy),
@@ -460,7 +479,7 @@ export class PartitionedTimeSeries<
   fill(
     strategy: FillStrategy | FillMapping<S>,
     options?: { limit?: number; maxGap?: DurationInput },
-  ): PartitionedTimeSeries<S, K> {
+  ): PartitionedTimeSeries<S, K, By> {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
         g.fill(strategy, options),
@@ -476,7 +495,7 @@ export class PartitionedTimeSeries<
    *
    * See {@link TimeSeries.dedupe}.
    */
-  dedupe(options?: { keep?: DedupeKeep<S> }): PartitionedTimeSeries<S, K> {
+  dedupe(options?: { keep?: DedupeKeep<S> }): PartitionedTimeSeries<S, K, By> {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
         g.dedupe(options),
@@ -492,7 +511,7 @@ export class PartitionedTimeSeries<
       sample?: AlignSample;
       range?: TemporalLike;
     },
-  ): PartitionedTimeSeries<AlignSchema<S>, K> {
+  ): PartitionedTimeSeries<AlignSchema<S>, K, By> {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
         g.align(sequence, options),
@@ -518,7 +537,7 @@ export class PartitionedTimeSeries<
       select?: 'first' | 'last' | 'nearest';
       range?: TemporalLike;
     },
-  ): PartitionedTimeSeries<MaterializeSchema<S>, K> {
+  ): PartitionedTimeSeries<MaterializeSchema<S>, K, By> {
     const partitionCols = this.by as ReadonlyArray<string>;
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) => {
@@ -572,7 +591,11 @@ export class PartitionedTimeSeries<
     window: DurationInput,
     mapping: Mapping,
     options?: { alignment?: RollingAlignment; minSamples?: number },
-  ): PartitionedTimeSeries<RollingSchema<S, Mapping>, K>;
+  ): PartitionedTimeSeries<
+    RollingSchema<S, WithPartitionColumns<Mapping, By>>,
+    K,
+    By
+  >;
   rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     sequence: SequenceLike,
     window: DurationInput,
@@ -583,7 +606,11 @@ export class PartitionedTimeSeries<
       range?: TemporalLike;
       minSamples?: number;
     },
-  ): PartitionedTimeSeries<AggregateSchema<S, Mapping>, K>;
+  ): PartitionedTimeSeries<
+    AggregateSchema<S, WithPartitionColumns<Mapping, By>>,
+    K,
+    By
+  >;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   rolling(...args: any[]): any {
     // `rolling` arg shapes: `(window, mapping, opts?)` or
@@ -629,7 +656,9 @@ export class PartitionedTimeSeries<
   ): PartitionedTimeSeries<
     Output extends string
       ? SmoothAppendSchema<S, Output>
-      : SmoothSchema<S, Target>
+      : SmoothSchema<S, Target>,
+    K,
+    By
   > {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
@@ -660,7 +689,9 @@ export class PartitionedTimeSeries<
       };
     },
   ): PartitionedTimeSeries<
-    BaselineSchema<S, AvgName, SdName, UpperName, LowerName>
+    BaselineSchema<S, AvgName, SdName, UpperName, LowerName>,
+    K,
+    By
   > {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
@@ -678,7 +709,7 @@ export class PartitionedTimeSeries<
       alignment?: RollingAlignment;
       minSamples?: number;
     },
-  ): PartitionedTimeSeries<S, K> {
+  ): PartitionedTimeSeries<S, K, By> {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
         g.outliers(col, options),
@@ -690,7 +721,7 @@ export class PartitionedTimeSeries<
   diff<const Target extends NumericColumnNameForSchema<S>>(
     columns: Target | readonly Target[],
     options?: { drop?: boolean },
-  ): PartitionedTimeSeries<DiffSchema<S, Target>, K> {
+  ): PartitionedTimeSeries<DiffSchema<S, Target>, K, By> {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
         g.diff(columns, options),
@@ -702,7 +733,7 @@ export class PartitionedTimeSeries<
   rate<const Target extends NumericColumnNameForSchema<S>>(
     columns: Target | readonly Target[],
     options?: { drop?: boolean },
-  ): PartitionedTimeSeries<DiffSchema<S, Target>, K> {
+  ): PartitionedTimeSeries<DiffSchema<S, Target>, K, By> {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
         g.rate(columns, options),
@@ -714,7 +745,7 @@ export class PartitionedTimeSeries<
   pctChange<const Target extends NumericColumnNameForSchema<S>>(
     columns: Target | readonly Target[],
     options?: { drop?: boolean },
-  ): PartitionedTimeSeries<DiffSchema<S, Target>, K> {
+  ): PartitionedTimeSeries<DiffSchema<S, Target>, K, By> {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
         g.pctChange(columns, options),
@@ -730,7 +761,7 @@ export class PartitionedTimeSeries<
       | 'min'
       | 'count'
       | ((acc: number, value: number) => number);
-  }): PartitionedTimeSeries<DiffSchema<S, Targets>, K> {
+  }): PartitionedTimeSeries<DiffSchema<S, Targets>, K, By> {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
         g.cumulative(spec),
@@ -743,7 +774,7 @@ export class PartitionedTimeSeries<
     source: Source,
     step: ScanStep<A>,
     init: A,
-  ): PartitionedTimeSeries<DiffSchema<S, Source>, K>;
+  ): PartitionedTimeSeries<DiffSchema<S, Source>, K, By>;
   scan<
     const Source extends NumericColumnNameForSchema<S>,
     const Name extends string,
@@ -753,7 +784,7 @@ export class PartitionedTimeSeries<
     step: ScanStep<A>,
     init: A,
     options: { output: Name },
-  ): PartitionedTimeSeries<AppendColumn<S, Name, 'number'>, K>;
+  ): PartitionedTimeSeries<AppendColumn<S, Name, 'number'>, K, By>;
   scan(
     source: string,
     step: (acc: any, value: number, index: number) => readonly [any, number],
@@ -771,7 +802,7 @@ export class PartitionedTimeSeries<
   shift<const Target extends NumericColumnNameForSchema<S>>(
     columns: Target | readonly Target[],
     n: number,
-  ): PartitionedTimeSeries<DiffSchema<S, Target>, K> {
+  ): PartitionedTimeSeries<DiffSchema<S, Target>, K, By> {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
         g.shift(columns, n),
@@ -784,7 +815,11 @@ export class PartitionedTimeSeries<
     sequence: SequenceLike,
     mapping: Mapping,
     options?: { range?: TemporalLike },
-  ): PartitionedTimeSeries<AggregateSchema<S, Mapping>, K>;
+  ): PartitionedTimeSeries<
+    AggregateSchema<S, WithPartitionColumns<Mapping, By>>,
+    K,
+    By
+  >;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   aggregate(...args: any[]): any {
     // `aggregate(sequence, mapping, opts?)` — mapping is at index 1.

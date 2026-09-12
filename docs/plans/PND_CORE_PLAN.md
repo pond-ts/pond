@@ -10,6 +10,23 @@
 
 ### [PND-PARTCOL] — partition key in the static type after partitioned `aggregate` / `rolling`
 
+**Shipped 2026-09-12.** Implemented exactly as the corrected fix shape below:
+`PartitionedTimeSeries<S, K, By extends string = never>`, `partitionBy`
+overloads capture `By` (`const Col` — single string or array element union,
+and alongside typed `groups`), `aggregate` / `rolling` return
+`AggregateSchema | RollingSchema` over `WithPartitionColumns<Mapping, By>`
+(`Mapping & { [C in Exclude<By, keyof Mapping>]: 'first' }`), every operator
+threads `By`, and `smooth` / `baseline` regained `K`. Type tests in
+`test-d/partitioned-partcol.test-d.ts` cover single + composite partitions,
+mapping-key-wins (`host: 'count'` → number), chaining into `baseline`, typed
+groups, and that schema-preserving operators are untouched. No runtime
+change; 2 941 runtime tests unchanged. Decision: `By` defaults to `never`
+rather than "all columns" so an untyped `PartitionedTimeSeries<S>` keeps
+today's result types. Not done here: the live side.
+`LivePartitionedSeries` already carries a `ByCol` type parameter; whether
+its clock-trigger `rolling` / `aggregate` result types name the auto-injected
+column was not verified in this pass — check before assuming parity.
+
 **Surfaced by:** [PND-COLDSTART] run 1
 ([cold-start-adoption-2026-09.md](../notes/cold-start-adoption-2026-09.md)) —
 three independent fresh agents all had to work around it, the same way.
