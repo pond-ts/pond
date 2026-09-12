@@ -3,7 +3,8 @@
 > Breakout plan for the **Agent adoption** roadmap section in
 > [PLAN.md](../../PLAN.md). Tasks: [PND-ADOPTMETA], [PND-ADOPTLINKS],
 > [PND-LLMSTXT], [PND-AGENTGUIDE], [PND-SKILL], [PND-CONTEXT7],
-> [PND-COLDSTART], [PND-CHOOSE], [PND-ERRLINKS]. Opened 2026-09-12.
+> [PND-COLDSTART], [PND-CHOOSE], [PND-ERRLINKS], [PND-PREDECESSORS]. Opened
+> 2026-09-12.
 
 Status: in flight — the metadata / guide / skill / llms.txt tranche is the
 first PR; the cold-start experiment is the measurement loop that decides what
@@ -39,18 +40,18 @@ larger. Everything is doc / metadata / tooling — no runtime changes.
 
 Numbers to beat. Re-measure after each tranche lands.
 
-| Channel                                | Finding                                                                                                                                              |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| npm `keywords`                         | **None** on any of the six packages. `homepage` and `bugs` absent too — the npm page has no docs link.                                               |
-| `npm search "time series"`             | `pond-ts` is **20th of 20** results. `npm search "time series typescript"`: not in the top 20.                                                       |
-| npm downloads, last 30 days            | core 2 591 · react 2 362 · charts 1 905 · financial 1 926 · fit 1 295 · process 1 086 — consistent with CI + the constellation agents, not organic   |
-| GitHub repo card                       | description "Timeseries platform"; 6 topics (`typescript`, `immutable`, `charts`, `financial`, `fitness`, `timeseries-analysis`); 2 stars            |
-| `pond-ts.org/llms.txt`                 | Exists (8.9 KB) but is a bare URL list — no per-page description, no package sections, no pointer to API.md or the repo                              |
-| `pond-ts.org/llms-full.txt`            | 1.22 MB in one file — too large for most agents' single-fetch budget; no per-package split                                                           |
-| Context7 (`context7.com/pond-ts/pond`) | **Not indexed** (404). No `context7.json` in the repo                                                                                                |
-| Tarball contents                       | ✅ `API.md` ships in every package (agent-facing map). ❌ No usage guide for an agent that lands in `node_modules/pond-ts/`                          |
-| Package READMEs                        | `@pond-ts/charts` and `@pond-ts/fit` READMEs point at the **dead** `pjm17971.github.io/pond-ts` site and `pjm17971/pond-ts` repo; two docs pages too |
-| Installable agent tooling              | None — no Claude Code plugin/skill, no Cursor rules, no Codex `AGENTS.md` snippet for consumers                                                      |
+| Channel                                | Finding                                                                                                                                                |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| npm `keywords`                         | **None** on any of the six packages. `homepage` and `bugs` absent too — the npm page has no docs link.                                                 |
+| `npm search "time series"`             | `pond-ts` is **20th of 20** results. `npm search "time series typescript"`: not in the top 20.                                                         |
+| npm downloads, last 30 days            | core 2 591 · react 2 362 · charts 1 905 · financial 1 926 · fit 1 295 · process 1 086 — consistent with CI + the constellation agents, not organic     |
+| GitHub repo card                       | description "Timeseries platform"; 6 topics (`typescript`, `immutable`, `charts`, `financial`, `fitness`, `timeseries-analysis`); 2 stars              |
+| `pond-ts.org/llms.txt`                 | Exists (8.9 KB) but is a bare URL list — no per-page description, no package sections, no pointer to API.md or the repo                                |
+| `pond-ts.org/llms-full.txt`            | 1.22 MB in one file — too large for most agents' single-fetch budget; no per-package split                                                             |
+| Context7 (`context7.com/pond-ts/pond`) | **Not indexed** (404). No `context7.json` in the repo                                                                                                  |
+| Tarball contents                       | ✅ `API.md` ships in every package (agent-facing map). ❌ No usage guide for an agent that lands in `node_modules/pond-ts/`                            |
+| Package READMEs                        | `@pond-ts/charts` and `@pond-ts/fit` READMEs point at the **dead** `pjm17971.github.io/pond-ts` site and `pjm17971/pond-ts` repo; eight docs pages too |
+| Installable agent tooling              | None — no Claude Code plugin/skill, no Cursor rules, no Codex `AGENTS.md` snippet for consumers                                                        |
 
 ## Tasks
 
@@ -81,9 +82,11 @@ gh repo edit pond-ts/pond \
 
 ### [PND-ADOPTLINKS] — fix dead links in shipped READMEs and docs
 
-`packages/charts/README.md`, `packages/fit/README.md`,
-`website/docs/recipes/error-rate-dashboard.mdx`,
-`website/docs/how-to-guides/dashboard-guide.mdx` all point at the pre-migration
+`packages/charts/README.md`, `packages/fit/README.md` and eight docs pages
+(`recipes/error-rate-dashboard`, `how-to-guides/dashboard-guide`,
+`how-to-guides/categorical-charts`, `charts/index`, `charts/axes/value-axis`,
+`financial/index`, `learn-charts/index`, `pond-ts/transforms/cleaning`) all
+point at the pre-migration
 `pjm17971.github.io/pond-ts` site or `pjm17971/pond-ts` repo (see
 `MIGRATION.md`). The GitHub redirect covers the repo; the Pages URL is dead.
 These READMEs are what the npm page renders — a dead docs link on the npm page
@@ -186,6 +189,36 @@ for public repos.
 Claude Code / Cursor sessions; an agent that _does_ think of pond and asks
 Context7 today gets a Go worker-pool library called Pond instead.
 
+### [PND-PREDECESSORS] — notices on the unmaintained predecessors
+
+pond's two predecessors are still the first thing an agent (or a person) finds
+for these problems, because they are what the training data knows: `pondjs`
+pulls ~10.5k downloads / month and `react-timeseries-charts` ~6.4k against
+pond-ts's ~2.6k (2026-09-12), with no release since 2019, 118 and 126 open
+issues, and **no mention of a successor** in either README or any issue.
+
+**Ship:** `docs/adoption/predecessors/` — an issue body and a README notice
+block per repo, plus the posting commands. Written in the first person for
+Peter, who wrote both libraries at ESnet: the authorship is what makes a
+"this is the continuation" notice credible rather than spam, so they must be
+posted from his account, not an agent identity. Each states plainly that
+pond-ts is not an ESnet project.
+
+**Why both an issue and a README PR:** the maintainers may never merge the PR
+(the repos have had no commit since 2019/2020), but an open PR titled
+"README: point to the maintained successor" is itself indexed and visible on
+the repo's PR tab, and the issue is searchable. Either one gives a reader a
+path out.
+
+**Measure:** the download ratio (pondjs+rtc : pond-ts) at each re-measure, and
+referrer traffic to pond-ts.org if analytics exist. Record the posted URLs
+here.
+
+**Considered, not doing:** asking ESnet to archive or transfer the repos
+(their call; the issue asks for a note or an archive, nothing more), and
+publishing a `pondjs@next` / deprecation on npm (pond does not own those
+package names).
+
 ### [PND-COLDSTART] — the cold-start adoption experiment (measurement loop)
 
 The experiment that tells us whether any of the above works. Follows the
@@ -209,8 +242,9 @@ chart. TypeScript." Arms:
 pipeline, count of API misuses (against the guide's gotcha list), number of
 docs fetches and which URLs, whether the final code would pass review.
 
-**Outputs:** `experiments/cold-start/` (task, harness notes, per-run
-transcripts summary), a friction note into `docs/notes/`, and the numbers
+**Outputs:** `experiments/cold-start/` for the task, harness notes and per-run
+transcript summaries (note `experiments/` is gitignored — scratch by
+convention), a **committed** friction note into `docs/notes/`, and the numbers
 feed the next revision of the guide + skill descriptions. Re-run after each
 tranche; the arm-A number is the one that tells us whether channel 2 is
 moving at all.
@@ -257,7 +291,27 @@ _Record decisions + reasoning here as tasks land; remove them from PLAN.md in
 the same pass._
 
 - **2026-09-12** — plan opened; baseline measured (table above). First tranche
-  PR: [PND-ADOPTMETA] (npm side), [PND-ADOPTLINKS], [PND-LLMSTXT],
-  [PND-AGENTGUIDE], [PND-SKILL] (Claude plugin only), [PND-CONTEXT7] (config
-  file only). GitHub-topics edit and the Context7 submission are owner
-  actions and stay open on the PLAN entries until done.
+  landed as [#722](https://github.com/pond-ts/pond/pull/722): [PND-ADOPTMETA]
+  (npm side), [PND-ADOPTLINKS], [PND-LLMSTXT], [PND-AGENTGUIDE], [PND-SKILL]
+  (Claude plugin only), [PND-CONTEXT7] (config file only). GitHub-topics edit
+  and the Context7 submission are owner actions and stay open on the PLAN
+  entries until done.
+  - **[PND-ADOPTLINKS] shipped.** Two READMEs + eight docs pages. Decision: the
+    boundary-safe rewrite (`pjm17971/pond-ts/` with the trailing slash) because
+    `pjm17971/pond-ts-dashboard` shares the prefix and a naive sweep
+    corrupted those links on the first pass.
+  - **[PND-LLMSTXT] shipped.** Descriptions come from `frontMatter.description`
+    → the page's first prose paragraph → Docusaurus' excerpt, in that order,
+    because the excerpt is the first _line_ only and the introduction page's
+    excerpt was an MDX editorial comment. `learn-charts` is its own area so
+    the charts dump stays under ~520 KB. The pure shaping is unit-checked by
+    `website/scripts/check-llms-txt.mjs`, run in the site's `prebuild` so the
+    `docs-build` CI job exercises it. 36 typedoc-mirror pages have no
+    description (no prose); adding `description:` front matter is the
+    per-page upgrade path.
+  - **[PND-AGENTGUIDE] shipped.** Every quoted call was checked against the
+    built `.d.ts`; the review caught three more (count windows are
+    `{ count: n }`, `byColumn` is numeric binning not group-by, theme line
+    colour is `line.default.color`). Lesson recorded: an agent guide must be
+    verified against types, not docs prose — API.md itself carried a stale
+    `smooth()` row and a wrong `byColumn` gloss.

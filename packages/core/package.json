@@ -17,7 +17,6 @@
     "realtime",
     "metrics",
     "telemetry",
-    "ohlc",
     "immutable",
     "columnar",
     "arrow",

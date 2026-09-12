@@ -40,23 +40,24 @@ round-trips. Kinds: `time`, `number`, `string`, `boolean`, `array`.
 
 ## 2. Pick the verb
 
-| Job                                      | Call                                                                                                         | Rows out            |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------- |
-| Downsample into buckets                  | `s.aggregate(Sequence.every('5m'), { latencyMs: 'avg', n: { from: 'latencyMs', using: 'count' } })`          | one per bucket      |
-| Put rows on a regular grid, no reduction | `s.align(Sequence.every('10s'), { method: 'hold' \| 'linear' })`                                             | one per grid point  |
-| Sliding statistic                        | `s.rolling('5m', { latencyMs: 'avg' })` · `s.rolling(100, …)` for a count window                             | one per input event |
-| Rolling mean ± kσ bands in one pass      | `s.baseline('latencyMs', { window: '1h', sigma: 2 })` → `avg / sd / upper / lower`                           | one per input event |
-| Only the rows outside the band           | `s.outliers('latencyMs', { window: '1h', sigma: 2 })`                                                        | subset              |
-| Whole-series summary                     | `s.reduce({ latencyMs: 'p99' })` or `s.column('latencyMs').percentile(99)`                                   | one value           |
-| Fill gaps                                | `s.fill({ latencyMs: 'hold' \| 'linear' \| 'zero' \| 'bfill' })`                                             | same                |
-| Drop duplicate keys                      | `s.dedupe()`                                                                                                 | fewer               |
-| Rate of change                           | `s.diff()`, `s.rate()`, `s.pctChange()`, `s.cumulative()`                                                    | same                |
-| Smooth a noisy column                    | `s.smooth('latencyMs', 'ema', { alpha: 0.3 })` — methods `ema` / `movingAverage` / `loess`; `output` renames | same                |
-| Time-range slicing                       | `s.within(range)`, `s.tail('10m')`, `s.before(t)`, `s.after(t)`, `s.slice(i, j)`                             | subset              |
-| Columns                                  | `s.select('a', 'b')`, `s.rename({ a: 'b' })`, `s.map(…)`, `s.withColumn(…)`                                  | same                |
-| Join two series on time                  | `a.join(b)`; many: `TimeSeries.joinMany([...])`                                                              | union / inner       |
-| Group by a column value (order-free)     | `s.groupBy('host')`, `s.byColumn('host')`                                                                    | groups              |
-| Key by a quantity instead of time        | `s.byValue('distanceKm')` → `ValueSeries` (same operators minus calendar ones)                               | same                |
+| Job                                             | Call                                                                                                                  | Rows out            |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| Downsample into buckets                         | `s.aggregate(Sequence.every('5m'), { latencyMs: 'avg', n: { from: 'latencyMs', using: 'count' } })`                   | one per bucket      |
+| Put rows on a regular grid, no reduction        | `s.align(Sequence.every('10s'), { method: 'hold' \| 'linear' })`                                                      | one per grid point  |
+| Sliding statistic                               | `s.rolling('5m', { latencyMs: 'avg' })` · `s.rolling({ count: 100 }, …)` for a count window (a bare number is **ms**) | one per input event |
+| Rolling mean ± kσ bands in one pass             | `s.baseline('latencyMs', { window: '1h', sigma: 2 })` → `avg / sd / upper / lower`                                    | one per input event |
+| Only the rows outside the band                  | `s.outliers('latencyMs', { window: '1h', sigma: 2 })`                                                                 | subset              |
+| Whole-series summary                            | `s.reduce({ latencyMs: 'p99' })` or `s.column('latencyMs').percentile(99)`                                            | one value           |
+| Fill gaps                                       | `s.fill({ latencyMs: 'hold' \| 'linear' \| 'zero' \| 'bfill' })`                                                      | same                |
+| Drop duplicate keys                             | `s.dedupe()`                                                                                                          | fewer               |
+| Rate of change                                  | `s.diff()`, `s.rate()`, `s.pctChange()`, `s.cumulative()`                                                             | same                |
+| Smooth a noisy column                           | `s.smooth('latencyMs', 'ema', { alpha: 0.3 })` — methods `ema` / `movingAverage` / `loess`; `output` renames          | same                |
+| Time-range slicing                              | `s.within(range)`, `s.tail('10m')`, `s.before(t)`, `s.after(t)`, `s.slice(i, j)`                                      | subset              |
+| Columns                                         | `s.select('a', 'b')`, `s.rename({ a: 'b' })`, `s.map(…)`, `s.withColumn(…)`                                           | same                |
+| Join two series on time                         | `a.join(b)`; many: `TimeSeries.joinMany([...])`                                                                       | union / inner       |
+| Group by a column value                         | `s.groupBy('host')` → `Map<string, TimeSeries>`                                                                       | groups              |
+| Histogram: bin a numeric column, reduce per bin | `s.byColumn('latencyMs', { width: 50 }, { n: { from: 'latencyMs', using: 'count' } })` — or `{ edges: [...] }`        | one per bin         |
+| Key by a quantity instead of time               | `s.byValue('distanceKm')` → `ValueSeries` (same operators minus calendar ones)                                        | same                |
 
 Reducers: `sum avg mean min max count first last median stdev difference`
 and `p<N>` (`'p95'`); `keep unique samples top<N>` for non-numeric columns.

@@ -61,7 +61,7 @@ import {
 | Layer          | Reads                                                                      | Note                                                          |
 | -------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------- |
 | `LineChart`    | one numeric `column`                                                       | `curve` smooths drawing only; denoise data with `smooth()`    |
-| `AreaChart`    | one `column`, fill from `baseline`                                         | `fill` must be a CSS hex                                      |
+| `AreaChart`    | one `column`, filled down to `baseline` (a number)                         | fill colour comes from `theme.area`, not a prop               |
 | `BandChart`    | `lower` + `upper` columns                                                  | always breaks on a gap                                        |
 | `ScatterChart` | `column` (+ optional `radius` / `color`)                                   | selectable when the layer is given an `id` prop               |
 | `BarChart`     | `series` **xor** `bins` **xor** `categories`; `column` **xor** `columns[]` | one-of rules throw; `orientation="horizontal"` for histograms |
@@ -92,9 +92,11 @@ any live view with `useSnapshot`; pass the snapshot as `series`. Push into
 
 Omit `theme` to get `defaultTheme`. Pass one `ChartTheme` object on the
 container (`theme={{ ...defaultTheme, line: { ... } }}`), or derive one from
-CSS variables with `cssVarTheme(defaultTheme, (readVar) => ({ line: { stroke:
-readVar('--accent') } }))`. Never colour per component when a theme slot
-exists.
+CSS variables with `cssVarTheme(defaultTheme, (readVar) => ({ line: {
+default: { color: readVar('--accent') } } }))` — every slot is `{ default:
+Style, [semantic]: Style }` and a `LineStyle` has `color` / `width`, an
+`AreaStyle` adds `fill` / `fillOpacity`. Never colour per component when a
+theme slot exists.
 
 ## Pitfalls
 

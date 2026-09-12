@@ -1094,7 +1094,9 @@ it can find (`npm search`, the npm page, `llms.txt`, a docs MCP), and what its
 harness hands it (an installed skill, an `AGENTS.md`). Baseline 2026-09-12:
 zero npm keywords on every package, `pond-ts` **last** in `npm search "time
 series"`, not indexed by Context7, a bare-URL `llms.txt` with a 1.2 MB full
-dump, dead docs links in two shipped READMEs. Plan:
+dump, dead docs links in two shipped READMEs and eight docs pages.
+[PND-ADOPTLINKS] / [PND-LLMSTXT] / [PND-AGENTGUIDE] shipped in #722 (outcomes in
+the breakout). Plan:
 [PND_ADOPTION_PLAN.md](docs/plans/PND_ADOPTION_PLAN.md) (baseline table,
 per-task reasoning, deferred alternatives).
 
@@ -1102,18 +1104,6 @@ per-task reasoning, deferred alternatives).
   with per-package search terms (npm side shipped in the first tranche);
   **owner action open:** GitHub description + topics via the `gh repo edit`
   in the breakout plan.
-- **[PND-ADOPTLINKS]** — Dead `pjm17971.github.io` / `pjm17971/pond-ts` links
-  in the charts + fit READMEs and two docs pages → `pond-ts.org` /
-  `pond-ts/pond`. Shipped in the first tranche.
-- **[PND-LLMSTXT]** — llmstxt.org-shaped index (titles + descriptions from the
-  docs plugin's metadata, one section per docs area, `Optional` links to
-  API.md / agent guide / CHANGELOG) plus per-section `llms-<area>.txt` dumps
-  so one fetch stays small. Shipped in the first tranche; verify on the next
-  docs deploy.
-- **[PND-AGENTGUIDE]** — `docs/agents/USING_POND.md` shipped as `AGENTS.md`
-  in every tarball: decision table by task shape, the five idioms, the
-  mistakes agents actually make, where to read next. Shipped in the first
-  tranche.
 - **[PND-SKILL]** — Claude Code plugin marketplace in-repo
   (`.claude-plugin/marketplace.json` + `plugins/pond-ts/` with `pond-ts`,
   `pond-charts`, `pond-financial` skills; install via
@@ -1123,6 +1113,14 @@ per-task reasoning, deferred alternatives).
 - **[PND-CONTEXT7]** — `context7.json` in the repo (shipped); **owner action
   open:** submit `pond-ts/pond` at context7.com so a docs-MCP lookup for
   "pond" stops returning the Go worker-pool library.
+- **[PND-PREDECESSORS]** — Point the two unmaintained predecessors at their
+  successors. `esnet/pond` (`pondjs`, last release 2019, ~10.5k downloads /
+  month) and `esnet/react-timeseries-charts` (last release 2019, ~6.4k / month)
+  still outdraw pond 4:1 and mention no successor anywhere. Drafts — an issue
+  and a README notice per repo, in the original author's voice — are in
+  `docs/adoption/predecessors/`; **owner action:** post them from Peter's own
+  account (commands in that folder's README), then record the URLs in the
+  breakout plan.
 - **[PND-COLDSTART]** — The measurement loop: fresh agents, one realistic
   task, four harness arms (nothing / pond in deps / skill installed / skill +
   a competitor in deps). Measures whether pond gets chosen, via which channel,

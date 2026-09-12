@@ -163,14 +163,15 @@ const [live, snap] = useLiveSeries({
   <ChartRow height={240}>
     <YAxis id="ms" />
     <Layers>
-      <LineChart series={snap} column="latencyMs" axis="ms" />
+      {snap && <LineChart series={snap} column="latencyMs" axis="ms" />}
     </Layers>
   </ChartRow>
 </ChartContainer>;
 ```
 
 Charts read a pond series directly — do the maths in pond (`rolling`,
-`aggregate`, `align`) and hand the result to a layer. `width` is a pixel
+`aggregate`, `align`) and hand the result to a layer. `useLiveSeries`'s snapshot is `null` before the first
+push, hence the guard. `width` is a pixel
 number or `'auto'` (the parent then needs a definite width, or nothing draws).
 Hooks: `useTimeSeries`, `useLiveSeries`, `useSnapshot`, `useLiveQuery`,
 `useDerived`, `useWindow`, `useCurrent`, `useLatest`.

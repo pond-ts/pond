@@ -15,8 +15,6 @@
     "cache",
     "provenance",
     "worker-threads",
-    "agents",
-    "llm",
     "pond-ts"
   ],
   "homepage": "https://pond-ts.org/docs/process/",

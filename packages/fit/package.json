@@ -17,8 +17,6 @@
     "power",
     "heart-rate",
     "training-load",
-    "fit-file",
-    "strava",
     "pond-ts"
   ],
   "homepage": "https://pond-ts.org/docs/fit/",

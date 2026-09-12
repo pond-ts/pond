@@ -125,7 +125,8 @@ Value-axis wire types
   `arrayContainsAny()`, `arrayAggregate()`, `arrayExplode()`
 - **Gap fill / dedupe**: `fill()`, `materialize()`, `dedupe()`
 - **Aggregate/group**: `aggregate(sequence, spec)`, `reduce()`, `groupBy()`,
-  `partitionBy()`, `byColumn()` (order-free, by column value),
+  `partitionBy()`, `byColumn(col, bins, mapping)` (numeric binning of a column into
+  fixed-`width` or explicit-`edges` bins, then reduce per bin — histograms),
   `rollingByColumn()`, `byValue(axis)` (project onto a `ValueSeries`)
 - **Windowing/smoothing**: `rolling(window, spec, opts)`, `smooth(column,
 method, opts)` (`'ema'` / `'movingAverage'` / `'loess'`), `align(method, opts)`
