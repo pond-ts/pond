@@ -2,6 +2,27 @@
   "name": "@pond-ts/process",
   "version": "0.67.0",
   "description": "Computations as data over pond-ts: processing graphs authored fluently or composed as JSON, resolved against a declared op vocabulary with content-addressed caching, provenance, and per-node timings. Experimental, pre-1.0.",
+  "keywords": [
+    "time-series",
+    "timeseries",
+    "typescript",
+    "streaming",
+    "analytics",
+    "dataflow",
+    "pipeline",
+    "dag",
+    "processing-graph",
+    "cache",
+    "provenance",
+    "worker-threads",
+    "agents",
+    "llm",
+    "pond-ts"
+  ],
+  "homepage": "https://pond-ts.org/docs/process/",
+  "bugs": {
+    "url": "https://github.com/pond-ts/pond/issues"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,13 +49,14 @@
   "files": [
     "dist",
     "CHANGELOG.md",
-    "API.md"
+    "API.md",
+    "AGENTS.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"test-dts/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"test-dts/**/*.ts\"",
-    "prepack": "cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && cp ../../API.md ./API.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
+    "prepack": "cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && cp ../../API.md ./API.md && cp ../../docs/agents/USING_POND.md ./AGENTS.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
     "test": "npm run test:type && npm run test:dts && npm run test:runtime",
     "test:type": "tsc -p tsconfig.types.json",
     "test:dts": "npm run build && tsc -p tsconfig.dts.json",

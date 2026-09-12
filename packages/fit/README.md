@@ -61,8 +61,8 @@ Speed.mps(5.5).format('imperial'); // "12.3 mph"
 
 ## Documentation
 
-Guides and the full API live at **<https://pjm17971.github.io/pond-ts/>**.
-Source and issues: [github.com/pjm17971/pond-ts](https://github.com/pjm17971/pond-ts).
+Guides and the full API live at **<https://pond-ts.org/docs/fit/>**.
+Source and issues: [github.com/pond-ts/pond](https://github.com/pond-ts/pond).
 
 ## License
 

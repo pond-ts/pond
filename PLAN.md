@@ -1085,6 +1085,56 @@ financial hub, and the in-site API reference for core + charts). Plan:
   documentation-backlog items (pushMany guidance, bench-honesty callout, GC
   snippet, no-NaN guarantee, tie semantics, latency pattern) as one MDX pass.
 
+### Agent adoption
+
+Pond is built by agents and its next consumers are agents: a session told
+"compute per-host rolling p95 from this CSV and chart it" in a repo that has
+never heard of pond picks a library in thirty seconds from what it knows, what
+it can find (`npm search`, the npm page, `llms.txt`, a docs MCP), and what its
+harness hands it (an installed skill, an `AGENTS.md`). Baseline 2026-09-12:
+zero npm keywords on every package, `pond-ts` **last** in `npm search "time
+series"`, not indexed by Context7, a bare-URL `llms.txt` with a 1.2 MB full
+dump, dead docs links in two shipped READMEs. Plan:
+[PND_ADOPTION_PLAN.md](docs/plans/PND_ADOPTION_PLAN.md) (baseline table,
+per-task reasoning, deferred alternatives).
+
+- **[PND-ADOPTMETA]** — `keywords` / `homepage` / `bugs` on all six manifests
+  with per-package search terms (npm side shipped in the first tranche);
+  **owner action open:** GitHub description + topics via the `gh repo edit`
+  in the breakout plan.
+- **[PND-ADOPTLINKS]** — Dead `pjm17971.github.io` / `pjm17971/pond-ts` links
+  in the charts + fit READMEs and two docs pages → `pond-ts.org` /
+  `pond-ts/pond`. Shipped in the first tranche.
+- **[PND-LLMSTXT]** — llmstxt.org-shaped index (titles + descriptions from the
+  docs plugin's metadata, one section per docs area, `Optional` links to
+  API.md / agent guide / CHANGELOG) plus per-section `llms-<area>.txt` dumps
+  so one fetch stays small. Shipped in the first tranche; verify on the next
+  docs deploy.
+- **[PND-AGENTGUIDE]** — `docs/agents/USING_POND.md` shipped as `AGENTS.md`
+  in every tarball: decision table by task shape, the five idioms, the
+  mistakes agents actually make, where to read next. Shipped in the first
+  tranche.
+- **[PND-SKILL]** — Claude Code plugin marketplace in-repo
+  (`.claude-plugin/marketplace.json` + `plugins/pond-ts/` with `pond-ts`,
+  `pond-charts`, `pond-financial` skills; install via
+  `/plugin marketplace add pond-ts/pond`). Shipped in the first tranche.
+  Cursor rules + Codex snippet deferred until the skill has survived one
+  cold-start run.
+- **[PND-CONTEXT7]** — `context7.json` in the repo (shipped); **owner action
+  open:** submit `pond-ts/pond` at context7.com so a docs-MCP lookup for
+  "pond" stops returning the Go worker-pool library.
+- **[PND-COLDSTART]** — The measurement loop: fresh agents, one realistic
+  task, four harness arms (nothing / pond in deps / skill installed / skill +
+  a competitor in deps). Measures whether pond gets chosen, via which channel,
+  and how many idiom mistakes the result carries. Outputs to
+  `experiments/cold-start/` + a friction note; re-run after each tranche.
+- **[PND-CHOOSE]** — "When to use pond" page (vs hand-rolled / arquero /
+  danfo / polars-node; vs uPlot / Recharts for charts) plus a task → method
+  index phrased the way an agent receives the job. Source:
+  `docs/notes/agent-workloads-2026-07.md` §3.
+- **[PND-ERRLINKS]** — Errors agents hit carry the fix and a `pond-ts.org`
+  URL. Deferred until [PND-COLDSTART] shows which errors are actually hit.
+
 ### Accessibility — audit and fixes, library-wide
 
 Pond's interaction surface grew one gesture at a time — cursors, selection, the
@@ -1969,15 +2019,16 @@ Canonical roster (philosophy in CLAUDE.md; detail + queued coordination in
 [PND_EXPERIMENTS_PLAN.md](docs/plans/PND_EXPERIMENTS_PLAN.md); full histories
 in [docs/archive/experiments-2026.md](docs/archive/experiments-2026.md)):
 
-| Track              | Agent  | Status / next                                                                                                                |
-| ------------------ | ------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| Tidal (financial)  | Claude | Most active loop; drives [PND-STUDY] + charts friction, now also `@pond-ts/process` (derive seam); auto-woken on npm publish |
-| estela (geo/power) | Claude | Waiting on [PND-FITPUB]; then adopts fit + charts from npm, deletes local copy                                               |
-| Dashboard          | Claude | Next: adopt `@pond-ts/charts`, report gaps/perf vs its hand-rolled charts                                                    |
-| gRPC pipeline      | Claude | M3.5 realized; remaining: writeup + M5 extraction sweep (3 RFCs → [PND-SERVER])                                              |
-| Webapp telemetry   | Codex  | In production; watch for friction reports                                                                                    |
-| Charts experiment  | Claude | First `@pond-ts/charts` package consumer; annotation dogfood, ongoing                                                        |
-| Robustness audits  | fresh  | Re-run as the available model improves; residue → [PND-AUDIT] ([PND-LIVFIX] shipped 2026-09-06)                              |
+| Track               | Agent  | Status / next                                                                                                                |
+| ------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| Tidal (financial)   | Claude | Most active loop; drives [PND-STUDY] + charts friction, now also `@pond-ts/process` (derive seam); auto-woken on npm publish |
+| estela (geo/power)  | Claude | Waiting on [PND-FITPUB]; then adopts fit + charts from npm, deletes local copy                                               |
+| Dashboard           | Claude | Next: adopt `@pond-ts/charts`, report gaps/perf vs its hand-rolled charts                                                    |
+| gRPC pipeline       | Claude | M3.5 realized; remaining: writeup + M5 extraction sweep (3 RFCs → [PND-SERVER])                                              |
+| Webapp telemetry    | Codex  | In production; watch for friction reports                                                                                    |
+| Charts experiment   | Claude | First `@pond-ts/charts` package consumer; annotation dogfood, ongoing                                                        |
+| Robustness audits   | fresh  | Re-run as the available model improves; residue → [PND-AUDIT] ([PND-LIVFIX] shipped 2026-09-06)                              |
+| Cold-start adoption | fresh  | [PND-COLDSTART] — not yet run; first tranche of [PND_ADOPTION_PLAN.md](docs/plans/PND_ADOPTION_PLAN.md) lands first          |
 
 ---
 

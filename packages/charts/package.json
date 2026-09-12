@@ -2,7 +2,29 @@
   "name": "@pond-ts/charts",
   "version": "0.67.0",
   "private": false,
-  "description": "Canvas-rendered, streaming-first time-series charts for pond-ts",
+  "description": "Canvas-rendered, streaming-first React time-series charts for pond-ts: line, area, band, bar, scatter, box, candlestick, with cursors, selection and annotations",
+  "keywords": [
+    "time-series",
+    "timeseries",
+    "typescript",
+    "streaming",
+    "analytics",
+    "react",
+    "charts",
+    "canvas",
+    "visualization",
+    "line-chart",
+    "candlestick",
+    "ohlc",
+    "realtime",
+    "dashboard",
+    "react-timeseries-charts",
+    "pond-ts"
+  ],
+  "homepage": "https://pond-ts.org/docs/charts/",
+  "bugs": {
+    "url": "https://github.com/pond-ts/pond/issues"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -25,11 +47,12 @@
   "files": [
     "dist",
     "CHANGELOG.md",
-    "API.md"
+    "API.md",
+    "AGENTS.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepack": "cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && cp ../../API.md ./API.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
+    "prepack": "cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && cp ../../API.md ./API.md && cp ../../docs/agents/USING_POND.md ./AGENTS.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
     "test": "npm run test:type && npm run test:runtime",
     "test:type": "tsc -p tsconfig.types.json",
     "test:runtime": "vitest run",

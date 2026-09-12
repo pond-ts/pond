@@ -202,6 +202,26 @@ The full guide is at **<https://pond-ts.org/>**.
   — TypeDoc output, every public class and method.
 - **[CHANGELOG](./CHANGELOG.md)** — what shipped in each release.
 
+## For coding agents
+
+pond is built by agents and expects to be used by them. Three things exist so
+an agent can go from "never heard of pond" to working code without a human in
+the loop:
+
+- **`AGENTS.md` + `API.md` ship inside every npm tarball** —
+  `node_modules/pond-ts/AGENTS.md` is a one-read guide (which package for
+  which task, the idioms, the mistakes agents make); `API.md` maps every
+  public export to its source file. Source:
+  [docs/agents/USING_POND.md](docs/agents/USING_POND.md), [API.md](API.md).
+- **<https://pond-ts.org/llms.txt>** — every docs page with a one-line
+  description, plus `llms-<area>.txt` single-fetch dumps per package.
+- **Claude Code plugin** — skills for core, charts and financial, versioned
+  with the library:
+  ```
+  /plugin marketplace add pond-ts/pond
+  /plugin install pond-ts@pond-ts
+  ```
+
 ## Examples
 
 - **[pond-ts-dashboard](https://github.com/pjm17971/pond-ts-dashboard)**

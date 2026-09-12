@@ -2,7 +2,36 @@
   "name": "@pond-ts/financial",
   "version": "0.67.0",
   "private": false,
-  "description": "Financial-market domain library on pond-ts — trading calendars, session-aligned bar building, and market analytics",
+  "description": "Financial-market domain library on pond-ts: trading calendars, session-aligned OHLCV bars, and 60+ oracle-verified technical studies (SMA, EMA, RSI, MACD, Bollinger, ATR, VWAP, …)",
+  "keywords": [
+    "time-series",
+    "timeseries",
+    "typescript",
+    "streaming",
+    "analytics",
+    "finance",
+    "trading",
+    "technical-analysis",
+    "technical-indicators",
+    "ohlc",
+    "ohlcv",
+    "candlestick",
+    "sma",
+    "ema",
+    "rsi",
+    "macd",
+    "bollinger-bands",
+    "atr",
+    "vwap",
+    "trading-calendar",
+    "market-hours",
+    "quant",
+    "pond-ts"
+  ],
+  "homepage": "https://pond-ts.org/docs/financial/",
+  "bugs": {
+    "url": "https://github.com/pond-ts/pond/issues"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -37,13 +66,14 @@
   "files": [
     "dist",
     "CHANGELOG.md",
-    "API.md"
+    "API.md",
+    "AGENTS.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
-    "prepack": "cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && cp ../../API.md ./API.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
+    "prepack": "cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && cp ../../API.md ./API.md && cp ../../docs/agents/USING_POND.md ./AGENTS.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
     "test": "npm run test:type && npm run test:runtime",
     "test:type": "tsc -p tsconfig.types.json",
     "test:runtime": "vitest run",

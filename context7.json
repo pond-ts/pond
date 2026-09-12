@@ -1,0 +1,18 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "pond-ts",
+  "description": "Typed time series for TypeScript: batch TimeSeries + streaming LiveSeries with aggregate / rolling / align / fill / partitionBy, React canvas charts (@pond-ts/charts), financial studies + trading calendars (@pond-ts/financial).",
+  "folders": ["website/docs", "docs/agents"],
+  "excludeFolders": ["website/docs/api", "website/docs/charts/gallery"],
+  "excludeFiles": ["_template.mdx"],
+  "rules": [
+    "Declare the schema with `as const` — without it every column type widens to string and inference breaks downstream.",
+    "Downsample with `series.aggregate(Sequence.every('5m'), { col: 'avg' })`; regrid without reducing with `series.align(Sequence.every('1m'), { method: 'hold' | 'linear' })`; sliding statistics with `series.rolling('5m', { col: 'avg' })`.",
+    "`Sequence.every()` only takes fixed-length durations (s/m/h/d). For months or calendar days in a zone use `Sequence.calendar('month', { timeZone })`.",
+    "Wall-clock timestamp strings without an offset throw unless you pass `parse: { timeZone }` to `fromJSON`; ms numbers and `Z`/offset strings need nothing.",
+    "Series are immutable: every operator returns a new series. Rows must be time-ordered; pass `sort: true` to sort unsorted input on construction.",
+    "Per-entity statistics: `series.partitionBy('host').rolling(...).collect()` — the partition key is re-injected as a column on collect.",
+    "Charts read a pond series directly: `<ChartContainer width><ChartRow height><Layers><LineChart series={s} column=\"cpu\" /></Layers></ChartRow></ChartContainer>`; `@pond-ts/charts` peers on `pond-ts`, `@pond-ts/react` and React 18/19.",
+    "Financial studies append columns and preserve row count (warm-up rows are undefined): `import '@pond-ts/financial/fluent'` then `bars.sma({ period: 20 }).rsi({ period: 14 })`, or call `sma(bars, { period: 20 })` as a function."
+  ]
+}

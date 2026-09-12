@@ -70,6 +70,28 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **Agent adoption tranche ([PND-ADOPTMETA] / [PND-ADOPTLINKS] /
+  [PND-LLMSTXT] / [PND-AGENTGUIDE] / [PND-SKILL] / [PND-CONTEXT7]).** Every
+  package now declares `keywords`, `homepage` and `bugs` (there were none —
+  `pond-ts` ranked last in `npm search "time series"`). Every tarball ships an
+  `AGENTS.md` (source `docs/agents/USING_POND.md`): which package for which
+  task, the core idioms, the mistakes agents make. `pond-ts.org/llms.txt` is
+  now llmstxt.org-shaped (titles + descriptions per page, one section per
+  docs area, `Optional` links to `API.md` / the agent guide) with per-area
+  `llms-<area>.txt` dumps so a single fetch stays small. A Claude Code plugin
+  marketplace lives in the repo (`/plugin marketplace add pond-ts/pond`) with
+  `pond-ts`, `pond-charts` and `pond-financial` skills. `context7.json`
+  configures docs-MCP indexing. Plan and baseline:
+  `docs/plans/PND_ADOPTION_PLAN.md`.
+
+### Fixed
+
+- `@pond-ts/charts` and `@pond-ts/fit` READMEs (rendered on npm) and eight
+  docs pages pointed at the retired `pjm17971.github.io/pond-ts` site /
+  `pjm17971/pond-ts` repo; now `pond-ts.org` / `pond-ts/pond`.
+
 ## [0.67.0] — 2026-09-11
 
 ### Added

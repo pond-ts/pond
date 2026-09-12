@@ -62,8 +62,8 @@ instead of time, with no axis-type prop.
 ## Documentation
 
 Guides, the component reference, and live examples live at
-**<https://pjm17971.github.io/pond-ts/>**. Source and issues:
-[github.com/pjm17971/pond-ts](https://github.com/pjm17971/pond-ts).
+**<https://pond-ts.org/docs/charts/>**. Source and issues:
+[github.com/pond-ts/pond](https://github.com/pond-ts/pond).
 
 ## License
 

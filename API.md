@@ -128,7 +128,7 @@ Value-axis wire types
   `partitionBy()`, `byColumn()` (order-free, by column value),
   `rollingByColumn()`, `byValue(axis)` (project onto a `ValueSeries`)
 - **Windowing/smoothing**: `rolling(window, spec, opts)`, `smooth(column,
-method)` (EMA / Butterworth / Savitzky-Golay), `align(method, opts)`
+method, opts)` (`'ema'` / `'movingAverage'` / `'loess'`), `align(method, opts)`
 - **Differential/statistical**: `diff()`, `rate()`, `pctChange()`,
   `cumulative()`, `scan()` (custom stateful reducer), `shift()`, `baseline()`
   (rolling avg/sd/bands), `outliers()` (deviation from baseline)

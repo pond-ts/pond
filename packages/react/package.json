@@ -1,7 +1,24 @@
 {
   "name": "@pond-ts/react",
   "version": "0.67.0",
-  "description": "React hooks for pond-ts live time series",
+  "description": "React hooks for pond-ts: subscribe to LiveSeries and derived views with throttled snapshots",
+  "keywords": [
+    "time-series",
+    "timeseries",
+    "typescript",
+    "streaming",
+    "analytics",
+    "react",
+    "hooks",
+    "live",
+    "realtime",
+    "dashboard",
+    "pond-ts"
+  ],
+  "homepage": "https://pond-ts.org/docs/react/",
+  "bugs": {
+    "url": "https://github.com/pond-ts/pond/issues"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -24,11 +41,12 @@
   "files": [
     "dist",
     "CHANGELOG.md",
-    "API.md"
+    "API.md",
+    "AGENTS.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepack": "cp ../../README.md ./README.md && cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && cp ../../API.md ./API.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
+    "prepack": "cp ../../README.md ./README.md && cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && cp ../../API.md ./API.md && cp ../../docs/agents/USING_POND.md ./AGENTS.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
     "test": "npm run test:type && npm run test:runtime",
     "test:type": "tsc -p tsconfig.types.json",
     "test:runtime": "vitest run"
