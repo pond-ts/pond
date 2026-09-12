@@ -2,7 +2,27 @@
   "name": "@pond-ts/fit",
   "version": "0.67.0",
   "private": false,
-  "description": "Fitness & activity domain library on pond-ts — quantities, canonical activity series, and analytics (geo, power, zones, splits)",
+  "description": "Fitness & activity domain library on pond-ts: typed quantities, canonical activity series, and analytics (geo distance/elevation, power NP/IF/TSS, zones, splits)",
+  "keywords": [
+    "time-series",
+    "timeseries",
+    "typescript",
+    "streaming",
+    "analytics",
+    "fitness",
+    "cycling",
+    "running",
+    "gps",
+    "geo",
+    "power",
+    "heart-rate",
+    "training-load",
+    "pond-ts"
+  ],
+  "homepage": "https://pond-ts.org/docs/fit/",
+  "bugs": {
+    "url": "https://github.com/pond-ts/pond/issues"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -25,13 +45,14 @@
   "files": [
     "dist",
     "CHANGELOG.md",
-    "API.md"
+    "API.md",
+    "AGENTS.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
-    "prepack": "cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && cp ../../API.md ./API.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
+    "prepack": "cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && cp ../../API.md ./API.md && cp ../../docs/agents/USING_POND.md ./AGENTS.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
     "test": "npm run test:type && npm run test:runtime",
     "test:type": "tsc -p tsconfig.types.json",
     "test:runtime": "vitest run",

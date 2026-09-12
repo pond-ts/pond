@@ -12,9 +12,9 @@
     "build:api:react": "typedoc --options typedoc.react.json",
     "build:api:charts": "typedoc --options typedoc.charts.json",
     "docusaurus": "docusaurus",
-    "prestart": "npm run check:gallery-links && npm run build:api && npm run build:api-model",
+    "prestart": "npm run check:gallery-links && npm run check:llms-txt && npm run build:api && npm run build:api-model",
     "start": "docusaurus start",
-    "prebuild": "npm run check:gallery-links && npm run build:api && npm run build:api-model",
+    "prebuild": "npm run check:gallery-links && npm run check:llms-txt && npm run build:api && npm run build:api-model",
     "build": "docusaurus build",
     "swizzle": "docusaurus swizzle",
     "predeploy": "npm run build:api && npm run build:api-model",
@@ -24,7 +24,8 @@
     "write-translations": "docusaurus write-translations",
     "write-heading-ids": "docusaurus write-heading-ids",
     "typecheck": "tsc",
-    "check:gallery-links": "node scripts/check-gallery-links.mjs"
+    "check:gallery-links": "node scripts/check-gallery-links.mjs",
+    "check:llms-txt": "node scripts/check-llms-txt.mjs"
   },
   "dependencies": {
     "@docusaurus/core": "3.10.0",

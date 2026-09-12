@@ -10,7 +10,7 @@ with `arrayAggregate`, fan out per host with `arrayExplode`, and repeat
 the whole thing against a `LiveSeries` for a streaming view.
 
 The complete runnable version lives at
-[`packages/core/test/error-rate-dashboard.test.ts`](https://github.com/pjm17971/pond-ts/blob/main/packages/core/test/error-rate-dashboard.test.ts)
+[`packages/core/test/error-rate-dashboard.test.ts`](https://github.com/pond-ts/pond/blob/main/packages/core/test/error-rate-dashboard.test.ts)
 — every assertion here is backed by that test, so this page can't drift.
 
 ## Scenario
@@ -321,7 +321,7 @@ guide for when to reach for `useCurrent` vs `LiveAggregation` vs batch
 ## What gets tested
 
 The E2E test at
-[`packages/core/test/error-rate-dashboard.test.ts`](https://github.com/pjm17971/pond-ts/blob/main/packages/core/test/error-rate-dashboard.test.ts)
+[`packages/core/test/error-rate-dashboard.test.ts`](https://github.com/pond-ts/pond/blob/main/packages/core/test/error-rate-dashboard.test.ts)
 exercises every step above against the same fixture used on this page:
 
 - `arrayContainsAny` filter count

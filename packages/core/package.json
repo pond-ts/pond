@@ -1,7 +1,31 @@
 {
   "name": "pond-ts",
   "version": "0.67.0",
-  "description": "TypeScript-first time series primitives",
+  "description": "Typed time series for TypeScript: schema-driven TimeSeries + streaming LiveSeries with aggregate, rolling, align, fill, partitionBy and typed columns",
+  "keywords": [
+    "time-series",
+    "timeseries",
+    "typescript",
+    "streaming",
+    "analytics",
+    "rolling-window",
+    "aggregate",
+    "resample",
+    "downsample",
+    "partition",
+    "live",
+    "realtime",
+    "metrics",
+    "telemetry",
+    "immutable",
+    "columnar",
+    "arrow",
+    "pondjs"
+  ],
+  "homepage": "https://pond-ts.org/docs/pond-ts/",
+  "bugs": {
+    "url": "https://github.com/pond-ts/pond/issues"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -29,13 +53,14 @@
   "files": [
     "dist",
     "CHANGELOG.md",
-    "API.md"
+    "API.md",
+    "AGENTS.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"test-d/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"test-d/**/*.ts\"",
-    "prepack": "cp ../../README.md ./README.md && cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && cp ../../API.md ./API.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
+    "prepack": "cp ../../README.md ./README.md && cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && cp ../../API.md ./API.md && cp ../../docs/agents/USING_POND.md ./AGENTS.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
     "test": "npm run test:type && npm run test:runtime",
     "test:runtime": "vitest run",
     "test:type": "tsc -p tsconfig.types.json",

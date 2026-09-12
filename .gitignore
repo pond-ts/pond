@@ -27,6 +27,7 @@ packages/*/README.md
 packages/*/LICENSE
 packages/*/CHANGELOG.md
 packages/*/API.md
+packages/*/AGENTS.md
 
 # Python bytecode (oracle generator)
 __pycache__/

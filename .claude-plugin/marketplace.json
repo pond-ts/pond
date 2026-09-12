@@ -1,0 +1,15 @@
+{
+  "name": "pond-ts",
+  "owner": {
+    "name": "pond-ts",
+    "url": "https://github.com/pond-ts/pond"
+  },
+  "description": "Skills that teach Claude Code to build with the pond-ts time-series packages: core series, React canvas charts, financial studies.",
+  "plugins": [
+    {
+      "name": "pond-ts",
+      "source": "./plugins/pond-ts",
+      "description": "Typed time series in TypeScript with pond-ts: TimeSeries / LiveSeries idioms, @pond-ts/charts composition, @pond-ts/financial studies."
+    }
+  ]
+}
