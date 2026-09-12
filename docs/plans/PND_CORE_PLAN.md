@@ -10,7 +10,13 @@
 
 ### [PND-PARTCOL] — partition key in the static type after partitioned `aggregate` / `rolling`
 
-**Shipped 2026-09-12.** Implemented exactly as the corrected fix shape below:
+**Shipped 2026-09-12 (#724); confirmed by cold-start run 1b** — arms C and D
+re-run against the build wrote `{ p95, count }` with no `host`, called
+`get('host')` on the collected result, compiled, and matched the reference
+exactly (see the note). Two small follow-ups it surfaced: the injected `By`
+columns are typed `required: false` like every aggregate output although the
+runtime always fills them (agents add needless `undefined` guards), and
+[PND-DISTINCT] below. Implemented exactly as the corrected fix shape below:
 `PartitionedTimeSeries<S, K, By extends string = never>`, `partitionBy`
 overloads capture `By` (`const Col` — single string or array element union,
 and alongside typed `groups`), `aggregate` / `rolling` return
@@ -86,6 +92,18 @@ multi-column `partitionBy(['region', 'host'])`, and for the
 "mapping-key-wins" case (`host: 'count'` stays optional-number); the arm-C /
 arm-D `TS2345` detour disappears on a re-run of the harness; the guide's "one
 sharp edge" paragraph can be deleted.
+
+### [PND-DISTINCT] — distinct values of a string column
+
+**Surfaced by:** cold-start run 1b (D2). The agent reached for
+`series.column('host').unique()` — `TS2339`, no such method on
+`StringColumn` — and fell back to `partitionBy('host').toMap().keys()`, which
+builds ten `TimeSeries` to read ten names. `'unique'` exists as an
+`aggregate` reducer but there is no whole-column door. Shape to consider:
+`column(name).distinct(): ReadonlyArray<string>` on string (and number)
+columns, dict-encoded fast path where the column is dictionary-backed
+(the same path `_distinctPartitionKeys` already takes). Small; queue behind
+[PND-COLAPI].
 
 ### [PND-COLAPI] — Bundle-safe column API + validity-aware bulk read
 

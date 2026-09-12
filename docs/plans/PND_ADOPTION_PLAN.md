@@ -325,3 +325,11 @@ the same pass._
   from the transcripts (`@latest`, `.d.ts` paths, partition-column
   workaround) and one library task opened ([PND-PARTCOL] in
   PND_CORE_PLAN). Harness committed at `docs/adoption/cold-start/`.
+- **2026-09-12** — [PND-PARTCOL] shipped (#724) and run 1b re-ran arms C/D
+  against a local tarball of that build: acceptance met (no `host` in the
+  mapping, no `TS2345`, exact match; C2 had zero TS errors). Decision: the
+  re-run used pond pre-installed from the tarball because the fix is not on
+  npm — a usage-correctness test, stated as such in the note; a true
+  `@latest` re-run waits for the v0.68.0 release. Two small follow-ups
+  surfaced ([PND-DISTINCT]; optional typing of injected columns), both in
+  PND_CORE_PLAN.

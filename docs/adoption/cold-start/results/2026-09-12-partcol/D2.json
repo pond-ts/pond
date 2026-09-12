@@ -1,0 +1,67 @@
+{
+  "arm": "D2",
+  "model": ["claude-opus-5[1m]"],
+  "turns": 35,
+  "cost_usd": 2.0531705,
+  "duration_s": 323,
+  "tools": {
+    "Bash": 32,
+    "Skill": 1
+  },
+  "installs": [
+    "--save-dev typescript @types/node 2>&1 | tail -5",
+    "--save-dev typescript @types/node 2>&1 | tail -5",
+    "2>&1 | tail -3 && npm run build 2>&1 | tail -30",
+    "2>&1 | tail -3 && npm start 2>&1 | tail -8) && ls -la out"
+  ],
+  "searches": [],
+  "web": [],
+  "reads": [],
+  "skills": ["pond-ts"],
+  "firstPondMention": 3,
+  "deps": ["pond-ts", "@types/node", "typescript"],
+  "usesPond": true,
+  "run": {
+    "ok": true,
+    "ms": 752,
+    "tail": [
+      "  api-07     44",
+      "",
+      "Worst three breaches:",
+      "  api-07   2026-09-02T06:00:00.000Z  p95 444.9 ms  vs upper 316.3 ms  (+128.6 ms)",
+      "  api-03   2026-09-01T06:00:00.000Z  p95 213.4 ms  vs upper 149.2 ms  (+64.2 ms)",
+      "  api-01   2026-09-03T05:50:00.000Z  p95 146.0 ms  vs upper 102.0 ms  (+44.0 ms)",
+      "",
+      "Wrote out/p95.csv, out/baseline.csv, out/breaches.csv in 338 ms"
+    ]
+  },
+  "compare": {
+    "p95": {
+      "rows": 6674,
+      "ref_rows": 6674,
+      "matched_1e3": 6674,
+      "off": 0,
+      "unknown_bucket": 0,
+      "max_rel_err": 3.91e-15,
+      "off_samples": []
+    },
+    "breaches": {
+      "got": 508,
+      "ref": 508,
+      "common": 508,
+      "only_in_arm": 0,
+      "only_in_ref": 0
+    },
+    "worst3_arm_by_exceedance": [
+      ["api-07", "2026-09-02T06:00:00.000Z", 128.6],
+      ["api-03", "2026-09-01T06:00:00.000Z", 64.2],
+      ["api-01", "2026-09-03T05:50:00.000Z", 44]
+    ],
+    "worst3_ref": [
+      ["api-07", "2026-09-02T06:00:00+00:00", 444.9],
+      ["api-03", "2026-09-01T06:00:00+00:00", 213.4],
+      ["api-01", "2026-09-03T05:50:00+00:00", 146]
+    ]
+  },
+  "final": "00Z` (p95 444.9 ms vs upper 316.3 ms).\n\nTwo judgment calls flagged in NOTES rather than buried: `minSamples: 6` gates the first 25 minutes per host (those rows are still written, with empty band columns), and the current bucket sits inside its own baseline — the plain reading of the spec, self-damping, and a one-line shift if you'd rather score against the prior hour.\n\nI dropped the pre-seeded `arquero` dependency; the NOTES paragraph explains what it and a hand-rolled version would have cost against pond-ts.\n\nDONE\n- `pond-ts` (runtime — the only one)\n- `typescript` (dev)\n- `@types/node` (dev)"
+}
