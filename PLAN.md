@@ -1134,8 +1134,9 @@ per-task reasoning, deferred alternatives).
   Cursor rules + Codex snippet deferred until the skill has survived one
   cold-start run.
 - **[PND-CONTEXT7]** — `context7.json` shipped (#722); repo **submitted at
-  context7.com on 2026-09-13**. Remaining: confirm `context7.com/pond-ts/pond`
-  resolves once indexed (was 404 at submission), then close.
+  context7.com on 2026-09-13**; the page `context7.com/pond-ts/pond` now
+  exists in state `initial` (no snippets yet). Remaining: confirm the index
+  finalises and its `llms.txt` serves content, then close.
 - **[PND-PREDECESSORS]** — Point the two unmaintained predecessors at their
   successors. `esnet/pond` (`pondjs`, last release 2019, ~10.5k downloads /
   month) and `esnet/react-timeseries-charts` (last release 2019, ~6.4k / month)

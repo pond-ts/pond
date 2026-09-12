@@ -358,7 +358,8 @@ pond-ts keywords` confirms). Owner applied the GitHub description and
   top 20 for `npm search "time series"` (was 20th) — read as npm search-index
   lag, not a ranking verdict; re-measure after a few days and record here.
 - **2026-09-13** — [PND-CONTEXT7] owner action done: Peter submitted
-  `pond-ts/pond` at context7.com/add-library. Still 404 at submission time;
-  verify on the next re-measure and record the indexed state. Note from
+  `pond-ts/pond` at context7.com/add-library. Within the hour the page
+  existed in state `initial` (title/description registered, no snippets);
+  verify it finalises on the next re-measure and record the snippet count. Note from
   run 1: no cold-start arm consulted a docs tool, so this channel serves
   agents that already suspect pond exists — worth having, not the lever.
