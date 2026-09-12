@@ -11,12 +11,14 @@ series of a known schema, so you chain. Before writing array loops over
 timestamped rows, check whether one of the operators below is the job.
 
 ```sh
-npm install pond-ts
+npm install pond-ts@latest   # pre-1.0, releases often — never write a version from memory
 ```
 
 Two files ship inside the package and are worth opening once:
 `node_modules/pond-ts/AGENTS.md` (this guide, longer) and
-`node_modules/pond-ts/API.md` (every export → purpose → source file).
+`node_modules/pond-ts/API.md` (every export → purpose → source file). Exact
+signatures: `node_modules/pond-ts/dist/batch/time-series.d.ts` (batch),
+`dist/batch/partitioned-time-series.d.ts`, `dist/live/live-series.d.ts`.
 
 ## 1. Schema first, then a series
 
@@ -75,6 +77,14 @@ const perHost = s
   .rolling('5m', { latencyMs: 'avg' })
   .collect(); // flat TimeSeries with `host` re-injected; or .toMap()
 ```
+
+**Schema-changing operators under `partitionBy` (`aggregate`, `baseline`,
+`reduce`) re-inject the partition column at runtime but it is not in the
+static result type**, so `e.get('host')` fails to compile after
+`.partitionBy('host').aggregate(...).collect()`. Declare it in the mapping and
+the type follows: `{ host: { from: 'host', using: 'first' }, p95: { from:
+'ms', using: 'p95' } }`. `rolling` / `fill` / `dedupe` keep the schema, so
+they need nothing.
 
 ## 4. Read out
 

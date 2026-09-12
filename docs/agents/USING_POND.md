@@ -33,7 +33,9 @@ Docs: <https://pond-ts.org> · index for agents: <https://pond-ts.org/llms.txt>
 | GPS / power / heart-rate activity analytics                             | `@pond-ts/fit`                       | `'@pond-ts/fit'`                                      |
 | Computations as JSON plans with caching + provenance (experimental)     | `@pond-ts/process`                   | `'@pond-ts/process'`                                  |
 
-All six release together under one version. Keep their ranges in step — a
+All six release together under one version and release often. Install with
+`@latest` rather than a version written from memory (a cold-start agent once
+wrote `^0.3.0` and spent turns on a 2024 API); keep their ranges in step — a
 pre-1.0 caret (`^0.67.0`) does **not** span minors.
 
 ## The idioms that cover most jobs
@@ -100,6 +102,12 @@ const perHost = s
   .collect(); // one flat TimeSeries, `host` re-injected as a column
 // or .toMap() → Map<host, TimeSeries>
 ```
+
+One sharp edge: operators that **change the schema** (`aggregate`, `baseline`,
+`reduce`) re-inject `host` at runtime but not in the static type, so
+`e.get('host')` on the collected result is a compile error. Name it in the
+mapping — `{ host: { from: 'host', using: 'first' }, … }` — and the type
+carries it.
 
 ### 4. Clean, fill, join, read out
 

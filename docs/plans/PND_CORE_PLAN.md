@@ -8,6 +8,41 @@
 
 ## Tasks
 
+### [PND-PARTCOL] — partition key in the static type after partitioned schema-changing operators
+
+**Surfaced by:** [PND-COLDSTART] run 1
+([cold-start-adoption-2026-09.md](../notes/cold-start-adoption-2026-09.md)) —
+three independent fresh agents all had to work around it.
+
+**The gap.** `PartitionedTimeSeries.aggregate` / `baseline` / `reduce` call
+`augmentMappingWithPartitionCols` so the collected series carries the
+partition column at runtime (documented: "auto-inject"). The return type,
+however, is the plain aggregate schema, so:
+
+```ts
+const p95 = s
+  .partitionBy('host')
+  .aggregate(Sequence.every('5m'), { p95: { from: 'ms', using: 'p95' } })
+  .collect();
+p95.events[0].get('host'); // TS2345: '"host"' is not assignable to '"p95"'
+```
+
+The workaround every agent found is to name the column in the mapping
+(`host: 'first'` / `{ from: 'host', using: 'first' }`), which also happens to
+be what the runtime does anyway.
+
+**Fix shape.** Thread the partition column(s) through the result type: the
+`PartitionedTimeSeries<S, K>` already knows `K` (the `by` argument), so the
+schema-changing operators' result schema becomes
+`AggregateSchema<S, Mapping> ∪ Pick<S, K>`. Order and kind come from `S`.
+Schema-preserving operators (`rolling`, `fill`, `dedupe`, `smooth`) are
+unaffected. Check `toMap()` too — its per-partition series legitimately lack
+the column and should stay as they are.
+
+**Acceptance.** The snippet above compiles; the arm-C / arm-D `TS2345` detour
+disappears on a re-run; the guide's "one sharp edge" paragraph can be
+deleted. Type-level test in `test-d/`.
+
 ### [PND-COLAPI] — Bundle-safe column API + validity-aware bulk read
 
 The top charts→core carry-forward (F-1, HIGH): the prototype-augmented

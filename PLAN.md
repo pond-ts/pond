@@ -1121,11 +1121,23 @@ per-task reasoning, deferred alternatives).
   `docs/adoption/predecessors/`; **owner action:** post them from Peter's own
   account (commands in that folder's README), then record the URLs in the
   breakout plan.
-- **[PND-COLDSTART]** — The measurement loop: fresh agents, one realistic
-  task, four harness arms (nothing / pond in deps / skill installed / skill +
-  a competitor in deps). Measures whether pond gets chosen, via which channel,
-  and how many idiom mistakes the result carries. Outputs to
-  `experiments/cold-start/` + a friction note; re-run after each tranche.
+- **[PND-COLDSTART]** — The measurement loop: fresh headless agents, one
+  realistic task, four harness arms. **Run 1 (2026-09-12, `claude-opus-5`,
+  n = 1 per arm):** nothing-installed arm never mentioned pond and hand-rolled
+  correct code; pond-in-deps arm read the tarball `AGENTS.md` and used pond;
+  both skill arms chose pond within seven turns, one **uninstalling
+  `arquero`** to do so; all pond code idiomatic, outputs matched the
+  reference. Channel 2 (npm / llms.txt / web) was touched by no arm. Write-up:
+  [cold-start-adoption-2026-09.md](docs/notes/cold-start-adoption-2026-09.md);
+  harness: `docs/adoption/cold-start/`. Next: re-run after [PND-PARTCOL],
+  add a chart step, add a Codex arm.
+- **[PND-PARTCOL]** — **Library friction from run 1.** After a schema-changing
+  operator under `partitionBy` (`aggregate`, `baseline`, `reduce`),
+  `collect()` re-injects the partition column at runtime but the static
+  result type omits it, so `e.get('host')` is a compile error. All three
+  pond arms hit or pre-empted it and converged on the same workaround
+  (`host: 'first'` in the mapping). Carry the partition key in the type.
+  Detail: [PND_CORE_PLAN.md](docs/plans/PND_CORE_PLAN.md).
 - **[PND-CHOOSE]** — "When to use pond" page (vs hand-rolled / arquero /
   danfo / polars-node; vs uPlot / Recharts for charts) plus a task → method
   index phrased the way an agent receives the job. Source:
