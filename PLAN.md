@@ -1053,6 +1053,55 @@ width="auto">`, and an omitted `width` means the same. Three consumers hit
   - **`categories` + horizontal + a multi-group stack** is untried; only the
     one-segment case has a story.
 
+### Time zones
+
+Two asks, in order: an **arbitrary IANA zone on the chart time axis** (ticks
+on that zone's midnights / Mondays / month starts, labels, bands, grid and
+cursor readouts all in it — today everything is runtime-local with no knob),
+and **aggregations in that zone** (`Sequence.calendar(unit, { timeZone })`
+already buckets day / week / month DST-correctly in batch; the gaps are
+`quarter` / `year`, unit validation, the live path, and the zone being
+unrecoverable from the output). Design: a zone is a parameter, never state on
+`Time` / `TimeRange` / `Interval`; **one** zone-arithmetic implementation in
+core, consumed by charts, so the bucket `aggregate` used and the tick that
+labels it are the same instant; defaults do not move (core UTC, charts
+viewer-local); the d3 specifier strings stay the format API. Plan:
+[PND_TIMEZONE_PLAN.md](docs/plans/PND_TIMEZONE_PLAN.md).
+
+- **[PND-TZCAL]** — core: a public zone-calendar primitive (working name
+  `TimeZone`: `startOf` / `next` / `parts` / `instant` / `offsetAt` /
+  `abbreviation`, Temporal-backed with an offset-transition cache);
+  `CalendarUnit` gains `'quarter'` / `'year'`; `Sequence.calendar` throws on
+  unknown units (closes the audit's `calendar('hour')` hole);
+  `Sequence.calendar` moves onto the primitive with no behaviour change. Perf
+  check + human gate (new export, widened union).
+- **[PND-TZAXIS]** — charts: `<ChartContainer timeZone>`; the tick ladder's
+  nine local-calendar helpers go behind a `TickCalendar` seam (`local` =
+  today's code verbatim, `zoned` = the core primitive); labels and readouts
+  render via `utcFormat` on a civil-shifted date with `%Z` / `%z`
+  special-cased; the trading axis inherits its calendar's zone, explicit prop
+  wins. Feature-axis stories on `defaultTheme`, one zoned e2e baseline. Perf
+  check + human gate (new prop, widened `TradingCalendarLike`).
+- **[PND-TZFIN]** — financial: `TradingCalendar` keeps `rules.timeZone` and
+  exposes it, so `calendar={cal}` renders in the exchange zone. Absorbs the
+  two timezone items of [PND-TCAL].
+- **[PND-TZTEST]** — land #721's `TZ=Australia/Sydney` CI leg; core
+  fall-back / half-hour / southern-hemisphere / non-UTC-aggregate tests; a
+  cross-package test pinning that charts' zoned day ticks equal
+  `Sequence.calendar('day')`'s bucket starts; a derive-don't-pin label
+  helper.
+- **[PND-TZDOCS]** — fix `creating.mdx`'s claim that a bare wall-clock
+  string throws (it defaults to UTC; keep that, fix the prose); a "Time
+  zones" section on the axes page with the one idiom (same `timeZone` to
+  `Sequence.calendar` and `ChartContainer`) and the core-UTC / charts-local
+  asymmetry stated once; `tracker-readout.tsx` stops hard-coding New York;
+  agent docs rule; land #359.
+- **Phase 2, consumer-gated:** **[PND-TZLIVE]** calendar sequences on
+  `LiveAggregation` / `Trigger.clock` (today a `TypeError`); **[PND-TZFLOW]**
+  the zone flows from the sequence to the aggregate's output so the chart can
+  default to it; **[PND-TZDAYGRID]** sub-day grids anchored at zone-local
+  midnight.
+
 ### Docs site, landing, and API reference
 
 The docs-site wave shipped P0–P1 and most of P2/P3 (Learn track, the
@@ -1418,8 +1467,9 @@ pandas-oracle-verified) have shipped. Plan:
   builder wave and land as one PR. Breakout:
   `docs/plans/PND_FINANCIAL_PLAN.md`.
 - **[PND-TCAL]** — Trading-time deferred items: point-key slot widths on the
-  discontinuous axis, exchange-tz tick grain, cursor timezone control,
-  overnight sessions in `fromRules`.
+  discontinuous axis, overnight sessions in `fromRules`. (Exchange-tz tick
+  grain and cursor timezone control moved to [PND-TZFIN] / [PND-TZAXIS] in
+  the Time zones section.)
 
 ### Live layer
 
