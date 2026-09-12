@@ -1,5 +1,9 @@
 # @pond-ts/fit
 
+[![npm](https://img.shields.io/npm/v/@pond-ts/fit?label=%40pond-ts%2Ffit)](https://www.npmjs.com/package/@pond-ts/fit)
+[![CI](https://github.com/pond-ts/pond/actions/workflows/ci.yml/badge.svg)](https://github.com/pond-ts/pond/actions/workflows/ci.yml)
+[![docs](https://img.shields.io/badge/docs-pond--ts.org-1f6feb)](https://pond-ts.org/docs/fit/)
+
 **Fitness & activity analytics on [pond-ts](https://www.npmjs.com/package/pond-ts).**
 
 Turn raw activity streams (GPS, power, heart rate, cadence, …) into a typed,

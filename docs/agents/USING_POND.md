@@ -60,8 +60,9 @@ const s = TimeSeries.fromJSON({
 ```
 
 Time cells accept ms-since-epoch numbers, `Date`s, or ISO strings **with an
-offset** (`…Z`, `…+01:00`). A wall-clock string with no offset throws unless
-you pass `parse: { timeZone: 'America/New_York' }`.
+offset** (`…Z`, `…+01:00`). A wall-clock string with no offset is read as
+**UTC** unless you pass `parse: { timeZone: 'America/New_York' }` — it does
+not throw, it silently shifts by the zone's offset.
 
 Other doors: `TimeSeries.fromPoints(points)` for wide `{ ts, a, b }` rows,
 `fromColumns` for struct-of-arrays / `Float64Array`, `fromArrow` for an Arrow
@@ -214,7 +215,8 @@ them; `import { STUDIES } from '@pond-ts/financial/catalog'` lists them at runti
    event); `align` puts rows on a grid without reducing.
 3. **`Sequence.every('1M')` for months.** Not fixed-length → use
    `Sequence.calendar('month', { timeZone })`.
-4. **Wall-clock strings without a zone.** `'2025-01-01T09:00'` throws; add
+4. **Wall-clock strings without a zone.** `'2025-01-01T09:00'` is read as
+   UTC — no error, every instant shifted by your offset. Add
    `parse: { timeZone }` or use offset strings / ms numbers.
 5. **Unsorted rows.** The constructor throws and names the row; pass
    `sort: true` rather than sorting by hand.
@@ -227,6 +229,13 @@ them; `import { STUDIES } from '@pond-ts/financial/catalog'` lists them at runti
 9. **Reaching for a chart-library adapter first.** If the project uses React,
    `@pond-ts/charts` consumes the series with no adapter; `toPoints()` is the
    bridge for other libraries.
+10. **Aggregating in one zone and charting in another.** `Sequence.calendar`
+    defaults to **UTC**; a chart's time axis defaults to the **viewer's**
+    zone. Pass the same `timeZone` to both — `Sequence.calendar('day', {
+timeZone })` and `<ChartContainer timeZone={timeZone}>` — and a bucket
+    edge and the tick that labels it are one instant. A
+    `TradingCalendar.fromRules` carries its zone; `calendar={cal}` renders in
+    it with no further wiring.
 
 ## Where to read next
 

@@ -1053,6 +1053,33 @@ width="auto">`, and an omitted `width` means the same. Three consumers hit
   - **`categories` + horizontal + a multi-group stack** is untried; only the
     one-segment case has a story.
 
+### Time zones
+
+Two asks, in order: an **arbitrary IANA zone on the chart time axis** (ticks
+on that zone's midnights / Mondays / month starts, labels, bands, grid and
+cursor readouts all in it — today everything is runtime-local with no knob),
+and **aggregations in that zone** (`Sequence.calendar(unit, { timeZone })`
+already buckets day / week / month DST-correctly in batch; the gaps are
+`quarter` / `year`, unit validation, the live path, and the zone being
+unrecoverable from the output). Design: a zone is a parameter, never state on
+`Time` / `TimeRange` / `Interval`; **one** zone-arithmetic implementation in
+core, consumed by charts, so the bucket `aggregate` used and the tick that
+labels it are the same instant; defaults do not move (core UTC, charts
+viewer-local); the d3 specifier strings stay the format API. Plan:
+[PND_TIMEZONE_PLAN.md](docs/plans/PND_TIMEZONE_PLAN.md).
+
+- **Phase 1 shipped 2026-09-13** — [PND-TZCAL] (#728: `TimeZone`,
+  `quarter` / `year`, unit validation), [PND-TZAXIS] + [PND-TZFIN] (#732:
+  `<ChartContainer timeZone>`, `<XAxis timeZone>` for a second strip in
+  another zone, `TradingCalendar.timeZone`), [PND-TZTEST] (#721 Sydney CI
+  leg + #733 non-UTC operator sweep), [PND-TZDOCS] (docs PR). Outcomes and
+  the decisions the build settled are in the breakout plan.
+- **Phase 2, consumer-gated:** **[PND-TZLIVE]** calendar sequences on
+  `LiveAggregation` / `Trigger.clock` (today a `TypeError`); **[PND-TZFLOW]**
+  the zone flows from the sequence to the aggregate's output so the chart can
+  default to it; **[PND-TZDAYGRID]** sub-day grids anchored at zone-local
+  midnight.
+
 ### Docs site, landing, and API reference
 
 The docs-site wave shipped P0–P1 and most of P2/P3 (Learn track, the
@@ -1095,32 +1122,29 @@ harness hands it (an installed skill, an `AGENTS.md`). Baseline 2026-09-12:
 zero npm keywords on every package, `pond-ts` **last** in `npm search "time
 series"`, not indexed by Context7, a bare-URL `llms.txt` with a 1.2 MB full
 dump, dead docs links in two shipped READMEs and eight docs pages.
-[PND-ADOPTLINKS] / [PND-LLMSTXT] / [PND-AGENTGUIDE] shipped in #722 (outcomes in
-the breakout). Plan:
+[PND-ADOPTMETA] / [PND-ADOPTLINKS] / [PND-LLMSTXT] / [PND-AGENTGUIDE] shipped
+(#722 + owner-applied GitHub topics; outcomes in the breakout). Plan:
 [PND_ADOPTION_PLAN.md](docs/plans/PND_ADOPTION_PLAN.md) (baseline table,
 per-task reasoning, deferred alternatives).
 
-- **[PND-ADOPTMETA]** — `keywords` / `homepage` / `bugs` on all six manifests
-  with per-package search terms (npm side shipped in the first tranche);
-  **owner action open:** GitHub description + topics via the `gh repo edit`
-  in the breakout plan.
 - **[PND-SKILL]** — Claude Code plugin marketplace in-repo
   (`.claude-plugin/marketplace.json` + `plugins/pond-ts/` with `pond-ts`,
   `pond-charts`, `pond-financial` skills; install via
   `/plugin marketplace add pond-ts/pond`). Shipped in the first tranche.
   Cursor rules + Codex snippet deferred until the skill has survived one
   cold-start run.
-- **[PND-CONTEXT7]** — `context7.json` in the repo (shipped); **owner action
-  open:** submit `pond-ts/pond` at context7.com so a docs-MCP lookup for
-  "pond" stops returning the Go worker-pool library.
+- **[PND-CONTEXT7]** — `context7.json` shipped (#722); repo **submitted at
+  context7.com on 2026-09-13**; the page `context7.com/pond-ts/pond` now
+  exists in state `initial` (no snippets yet). Remaining: confirm the index
+  finalises and its `llms.txt` serves content, then close.
 - **[PND-PREDECESSORS]** — Point the two unmaintained predecessors at their
   successors. `esnet/pond` (`pondjs`, last release 2019, ~10.5k downloads /
   month) and `esnet/react-timeseries-charts` (last release 2019, ~6.4k / month)
   still outdraw pond 4:1 and mention no successor anywhere. Drafts — an issue
   and a README notice per repo, in the original author's voice — are in
-  `docs/adoption/predecessors/`; **owner action:** post them from Peter's own
-  account (commands in that folder's README), then record the URLs in the
-  breakout plan.
+  `docs/adoption/predecessors/`. Posted: both issues and the
+  react-timeseries-charts README PR (URLs in the breakout); **owner action
+  open:** the `esnet/pond` README PR.
 - **[PND-COLDSTART]** — The measurement loop: fresh headless agents, one
   realistic task, four harness arms (nothing / pond in deps / skills / skills
   - a competitor). **Run 1 (2026-09-12, n = 1 per arm):** the no-harness arm
@@ -1418,8 +1442,9 @@ pandas-oracle-verified) have shipped. Plan:
   builder wave and land as one PR. Breakout:
   `docs/plans/PND_FINANCIAL_PLAN.md`.
 - **[PND-TCAL]** — Trading-time deferred items: point-key slot widths on the
-  discontinuous axis, exchange-tz tick grain, cursor timezone control,
-  overnight sessions in `fromRules`.
+  discontinuous axis, overnight sessions in `fromRules`. (Exchange-tz tick
+  grain and cursor timezone control moved to [PND-TZFIN] / [PND-TZAXIS] in
+  the Time zones section.)
 
 ### Live layer
 

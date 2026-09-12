@@ -1,5 +1,9 @@
 # @pond-ts/process
 
+[![npm](https://img.shields.io/npm/v/@pond-ts/process?label=%40pond-ts%2Fprocess)](https://www.npmjs.com/package/@pond-ts/process)
+[![CI](https://github.com/pond-ts/pond/actions/workflows/ci.yml/badge.svg)](https://github.com/pond-ts/pond/actions/workflows/ci.yml)
+[![docs](https://img.shields.io/badge/docs-pond--ts.org-1f6feb)](https://pond-ts.org/docs/process/)
+
 > **Experimental.** Pre-1.0, and the API is expected to move as friction
 > reports land — pin an exact version. The design iterates in the open
 > against

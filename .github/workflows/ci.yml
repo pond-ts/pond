@@ -19,6 +19,27 @@ jobs:
         node-version:
           - 18.x
           - 24.x
+        # One leg runs east of UTC. Chart formatters render in the runner's
+        # **local** zone, so a test pinning a `Date.UTC(...)` fixture against
+        # a hardcoded literal ('2026-01-06') really asserts "local == UTC" —
+        # true on a stock UTC runner, false on a dev machine that isn't. CI
+        # was structurally unable to see that class: green here while the
+        # suite failed in Sydney (#540 finding 4 was the same, from UTC-10).
+        #
+        # Deliberately NOT a `TZ` pin in the vitest configs — that would make
+        # the false assumption permanent rather than merely invisible. Tests
+        # derive expected text from the same local-time path the formatter
+        # uses (see charts' elapsed-axis / cursor-format tests); this leg is
+        # what keeps them honest. `include` attaches to the two jobs that
+        # already exist, so the guard costs no extra CI minutes.
+        include:
+          - node-version: 18.x
+            tz: UTC
+          - node-version: 24.x
+            tz: Australia/Sydney
+
+    env:
+      TZ: ${{ matrix.tz }}
 
     steps:
       - name: Check out repository

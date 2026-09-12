@@ -62,6 +62,7 @@ export default function GalleryBollinger({
       {phase === undefined ? (
         <TrackerReadout
           tracker={tracker}
+          timeZone={set.calendar.timeZone}
           idle={`Hover to read every layer's value at one session (${set.symbol})`}
           format={(s) => price.format(s.value)}
           only={['inner lower', 'secondary', 'inner upper', set.symbol]}

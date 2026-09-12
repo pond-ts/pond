@@ -17,3 +17,10 @@ export type {
   CalendarUnit,
   TimeZoneOptions,
 } from './calendar.js';
+export { TimeZone } from './time-zone.js';
+export type {
+  Disambiguation,
+  StartOfOptions,
+  ZonedParts,
+  ZonedPartsInput,
+} from './time-zone.js';

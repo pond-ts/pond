@@ -4,11 +4,9 @@ import {
   type CalendarUnit,
   type WeekStartsOn,
   normalizeWeekStartsOn,
-  nextCalendarStart,
-  plainDateToStart,
   resolveTimeZone,
-  toPlainDateStart,
 } from '../core/calendar.js';
+import { TimeZone, assertCalendarUnit } from '../core/time-zone.js';
 import { parseDuration } from '../core/duration.js';
 import type { DurationInput } from '../core/duration.js';
 import { Interval } from '../core/interval.js';
@@ -73,8 +71,10 @@ export class Sequence {
       this.#anchorMs = normalizeTimestamp(input.anchor ?? 0, 'anchor');
     } else {
       this.#kind = 'calendar';
+      assertCalendarUnit(input.unit);
       this.#calendarUnit = input.unit;
-      this.#timeZone = input.timeZone;
+      // Resolve eagerly so an unknown zone fails here, not on first `bounded()`.
+      this.#timeZone = TimeZone.of(input.timeZone).id;
       this.#weekStartsOn = normalizeWeekStartsOn(input.weekStartsOn);
     }
     Object.freeze(this);
@@ -111,7 +111,10 @@ export class Sequence {
    * Creates an unbounded calendar-aware sequence.
    *
    * Calendar sequences step by local calendar boundaries in an IANA time zone instead of by a
-   * fixed millisecond duration. Supported units are `"day"`, `"week"`, and `"month"`.
+   * fixed millisecond duration. Supported units are `"day"`, `"week"`, `"month"`, `"quarter"`
+   * and `"year"`; any other unit throws `RangeError`. Boundaries come from `TimeZone`, the
+   * same primitive the charts' time axis places ticks with, so a bucket edge and the tick
+   * that labels it are one instant.
    *
    * Defaults:
    * - `timeZone`: `"UTC"`
@@ -254,22 +257,13 @@ export class Sequence {
       return new BoundedSequence(intervals);
     }
 
-    const timeZone = this.#timeZone!;
+    const zone = TimeZone.of(this.#timeZone!);
     const unit = this.#calendarUnit!;
-    const weekStartsOn = this.#weekStartsOn!;
-    let currentDate = toPlainDateStart(
-      requested.begin(),
-      timeZone,
-      unit,
-      weekStartsOn,
-    );
+    const startOptions = { weekStartsOn: this.#weekStartsOn! };
+    let start = zone.startOf(unit, requested.begin(), startOptions);
 
     while (true) {
-      const currentStart = plainDateToStart(currentDate, timeZone);
-      const nextDate = nextCalendarStart(currentDate, unit);
-      const nextStart = plainDateToStart(nextDate, timeZone);
-      const start = currentStart.epochMilliseconds;
-      const end = nextStart.epochMilliseconds;
+      const end = zone.next(unit, start, startOptions);
       const sampleTime =
         sample === 'end'
           ? end
@@ -288,7 +282,7 @@ export class Sequence {
       // 'end':                 sample ∈ (requested.begin, requested.end]
       //
       // Under 'overlap' every candidate is in: the walk starts at the bucket
-      // containing `requested.begin()` (`toPlainDateStart` floors to it), and
+      // containing `requested.begin()` (`zone.startOf` floors to it), and
       // every later bucket starts after that, so the leading test can only
       // ever pass. This is the one line the leading-bucket drop turned on —
       // the containing bucket was computed above and then discarded here.
@@ -303,7 +297,7 @@ export class Sequence {
         intervals.push(new Interval({ value: start, start, end }));
       }
 
-      currentDate = nextDate;
+      start = end;
     }
 
     return new BoundedSequence(intervals);

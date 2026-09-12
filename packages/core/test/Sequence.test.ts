@@ -256,7 +256,7 @@ describe('Sequence', () => {
   });
 });
 
-import { toPlainDateStart } from '../src/core/calendar.js';
+import { TimeZone } from '../src/core/time-zone.js';
 
 describe('calendar math — fractional epoch milliseconds', () => {
   // Regression: `Temporal.Instant.fromEpochMilliseconds` refuses a fractional
@@ -267,18 +267,22 @@ describe('calendar math — fractional epoch milliseconds', () => {
   // the exception unmounted the whole page.
   const JAN = Date.UTC(2020, 0, 1);
   const APR = Date.UTC(2020, 3, 1);
+  const utc = TimeZone.UTC;
 
   it('does not throw on a fractional instant', () => {
-    expect(() => toPlainDateStart(JAN + 0.37, 'UTC', 'month', 1)).not.toThrow();
+    expect(() => utc.startOf('month', JAN + 0.37)).not.toThrow();
+    expect(() =>
+      Sequence.calendar('month').bounded(
+        new TimeRange({ start: JAN + 0.5, end: APR }),
+      ),
+    ).not.toThrow();
   });
 
   it('puts a fraction in the same bucket as the millisecond containing it', () => {
     // The sub-millisecond part cannot change which calendar bucket an instant
     // falls in — boundaries are themselves whole milliseconds.
-    for (const unit of ['day', 'week', 'month'] as const) {
-      expect(toPlainDateStart(JAN + 0.37, 'UTC', unit, 1).toString()).toBe(
-        toPlainDateStart(JAN, 'UTC', unit, 1).toString(),
-      );
+    for (const unit of ['day', 'week', 'month', 'quarter', 'year'] as const) {
+      expect(utc.startOf(unit, JAN + 0.37)).toBe(utc.startOf(unit, JAN));
     }
   });
 
@@ -286,17 +290,15 @@ describe('calendar math — fractional epoch milliseconds', () => {
     // One microsecond before a month boundary is still the previous month;
     // rounding up would skip a bucket exactly where a zoom tends to land.
     const lastMsOfMarch = APR - 1;
-    expect(
-      toPlainDateStart(lastMsOfMarch + 0.99, 'UTC', 'month', 1).toString(),
-    ).toBe(toPlainDateStart(lastMsOfMarch, 'UTC', 'month', 1).toString());
+    expect(utc.startOf('month', lastMsOfMarch + 0.99)).toBe(
+      utc.startOf('month', lastMsOfMarch),
+    );
   });
 
   it('floors negative epochs toward the containing millisecond', () => {
     // Pre-1970 `Math.floor` and `Math.trunc` disagree: -5.5 lies inside the
     // millisecond spanning [-6, -5), so it must floor to -6, not -5.
-    expect(toPlainDateStart(-5.5, 'UTC', 'day', 1).toString()).toBe(
-      toPlainDateStart(-6, 'UTC', 'day', 1).toString(),
-    );
+    expect(utc.startOf('day', -5.5)).toBe(utc.startOf('day', -6));
   });
 
   it('realizes a calendar sequence over a fractional range', () => {

@@ -157,8 +157,36 @@ describe('axis-strip pill precedence: cursorFormat → axis format → container
     expect(within(container).getByText('+530.0')).toBeTruthy();
   });
 
+  /** The axis pill, told apart from a tick label by its `axisPillStyle`
+   *  rounding (`src/chip.ts` — the in-plot chip is deliberately
+   *  `borderRadius: '0'`, "the rounded pill is reserved for axis
+   *  indicators", so this separates pill from chip and from tick label). */
+  const isPill = (el: HTMLElement) => el.style.borderRadius === '3px';
+  const pillTexts = (root: HTMLElement) =>
+    Array.from(root.querySelectorAll('div'))
+      .filter(isPill)
+      .map((el) => el.textContent ?? '');
+  /** Every rendered label that is NOT the pill — the tick labels. */
+  const tickTexts = (root: HTMLElement) =>
+    Array.from(root.querySelectorAll('div'))
+      .filter((el) => el.childElementCount === 0 && !isPill(el))
+      .map((el) => el.textContent ?? '')
+      .filter((t) => t.length > 0);
+
   it('the same precedence holds on a TIME axis: cursorFormat beats the explicit axis format for the pill', () => {
     const day = 86400_000;
+    // The marker instant, plus the text the pill must read. The pill formats in
+    // the RUNNER'S OWN zone, so both expectations are derived the same way d3
+    // would rather than hardcoded: 13:37 UTC is still Jan 6 in UTC but already
+    // Jan 7 in AEDT, so a literal '2026-01-06' fails east of UTC+10:23. The
+    // elapsed-axis strips derive their wall clock the same way (#540 finding 4).
+    const AT = Date.UTC(2026, 0, 6, 13, 37);
+    const local = new Date(AT);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const YMD = `${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(
+      local.getDate(),
+    )}`; // '%Y-%m-%d'
+    const DD = pad(local.getDate()); // '%d'
     const t = new TimeSeries({
       name: 't',
       schema: [
@@ -181,24 +209,26 @@ describe('axis-strip pill precedence: cursorFormat → axis format → container
           <YAxis id="a" min={0} max={10} />
           <Layers>
             <LineChart series={t} column="v" axis="a" />
-            {/* An off-tick instant so the pill never collides with a label. */}
-            <Marker at={Date.UTC(2026, 0, 6, 13, 37)} label={false} indicator />
+            <Marker at={AT} label={false} indicator />
           </Layers>
         </ChartRow>
         <XAxis format="%d" />
       </ChartContainer>
     );
-    // cursorFormat set: the pill reads it; the '%d' ticks are unmoved.
+    // cursorFormat set: the pill reads it.
     const withCursor = render(chart('%Y-%m-%d'));
-    expect(within(withCursor.container).getByText('2026-01-06')).toBeTruthy();
+    expect(pillTexts(withCursor.container)).toEqual([YMD]);
+    const ticksWith = tickTexts(withCursor.container);
     withCursor.unmount();
-    // cursorFormat unset: the pill agrees with the explicit axis format
-    // (getAllByText — a '%d' tick can share the pill's text).
+    // cursorFormat unset: the pill agrees with the explicit axis format.
     const without = render(chart());
-    expect(within(without.container).getAllByText('06').length).toBeGreaterThan(
-      0,
-    );
-    expect(within(without.container).queryByText('2026-01-06')).toBeNull();
+    expect(pillTexts(without.container)).toEqual([DD]);
+    expect(within(without.container).queryByText(YMD)).toBeNull();
+    // …and the ticks are unmoved by cursorFormat — identical either way.
+    // Compared directly rather than pattern-matched, so the assertion needs
+    // no guess about which days d3 picks (which is itself zone-dependent).
+    expect(ticksWith.length).toBeGreaterThan(0); // not vacuously equal
+    expect(ticksWith).toEqual(tickTexts(without.container));
   });
 });
 

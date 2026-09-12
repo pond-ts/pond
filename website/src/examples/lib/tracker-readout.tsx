@@ -24,8 +24,17 @@ export function TrackerReadout({
   idle,
   only,
   rename,
+  timeZone,
 }: {
   tracker: TrackerInfo | null;
+  /**
+   * The IANA zone the date reads in. Give it the **same zone the chart's axis
+   * renders in** — a `TradingCalendar`'s `timeZone` for a market chart, the
+   * container's `timeZone` prop otherwise — so the readout and the axis agree
+   * on which day an instant belongs to. Omitted ⇒ the viewer's zone, which is
+   * also the axis default.
+   */
+  timeZone?: string | undefined;
   /** Render one sample's value. Defaults to a plain 2-dp number. */
   format?: (sample: TrackerSample) => string;
   /** Placeholder shown before the pointer has entered the chart. */
@@ -44,7 +53,7 @@ export function TrackerReadout({
     year: 'numeric',
     month: 'short',
     day: '2-digit',
-    timeZone: 'America/New_York',
+    ...(timeZone === undefined ? {} : { timeZone }),
   });
 
   if (tracker === null) {

@@ -214,6 +214,21 @@ path out.
 referrer traffic to pond-ts.org if analytics exist. Record the posted URLs
 here.
 
+**Posted (owner, 2026-09-12/13):**
+
+- `esnet/pond` — issue [#297](https://github.com/esnet/pond/issues/297)
+  "Successor: pond-ts (TypeScript rewrite by the original author)". README
+  PR: **not yet posted.**
+- `esnet/react-timeseries-charts` — issue
+  [#511](https://github.com/esnet/react-timeseries-charts/issues/511)
+  "Successor: @pond-ts/charts …" and README PR
+  [#512](https://github.com/esnet/react-timeseries-charts/pull/512) "Point
+  to the maintained successor in README".
+
+Re-measure the pondjs / react-timeseries-charts : pond-ts download ratio
+against the 2026-09-12 baseline (10 494 / 6 420 : 2 591) at the next
+adoption re-measure.
+
 **Considered, not doing:** asking ESnet to archive or transfer the repos
 (their call; the issue asks for a note or an archive, nothing more), and
 publishing a `pondjs@next` / deprecation on npm (pond does not own those
@@ -333,3 +348,18 @@ the same pass._
   `@latest` re-run waits for the v0.68.0 release. Two small follow-ups
   surfaced ([PND-DISTINCT]; optional typing of injected columns), both in
   PND_CORE_PLAN.
+- **2026-09-13** — **[PND-ADOPTMETA] shipped in full.** npm side went out in
+  v0.68.0 (`keywords` / `homepage` / `bugs` live on the registry; `npm view
+pond-ts keywords` confirms). Owner applied the GitHub description and
+  topics (now 16: added `time-series`, `timeseries`, `streaming`, `react`,
+  `canvas`, `technical-analysis`, `trading`, `ohlc`, `llms-txt`,
+  `ai-agents`). Root + package READMEs gained npm / CI / license / docs
+  badges (#727). First post-publish re-measure: `pond-ts` **absent** from the
+  top 20 for `npm search "time series"` (was 20th) — read as npm search-index
+  lag, not a ranking verdict; re-measure after a few days and record here.
+- **2026-09-13** — [PND-CONTEXT7] owner action done: Peter submitted
+  `pond-ts/pond` at context7.com/add-library. Within the hour the page
+  existed in state `initial` (title/description registered, no snippets);
+  verify it finalises on the next re-measure and record the snippet count. Note from
+  run 1: no cold-start arm consulted a docs tool, so this channel serves
+  agents that already suspect pond exists — worth having, not the lever.

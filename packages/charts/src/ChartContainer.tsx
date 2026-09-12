@@ -17,7 +17,7 @@ import {
 } from './tradingTimeScale.js';
 import { scaleBand } from './bandScale.js';
 import { scaleElapsed } from './elapsed.js';
-import { Sequence, BoundedSequence } from 'pond-ts';
+import { Sequence, BoundedSequence, TimeZone } from 'pond-ts';
 import type { Interval, TimeRange } from 'pond-ts';
 import {
   ContainerContext,
@@ -287,6 +287,29 @@ export interface ChartContainerProps {
    * calendar reference (build it once, not inline in JSX).
    */
   calendar?: TradingCalendarLike;
+  /**
+   * The IANA **time zone the time axis renders in** — ticks land on that
+   * zone's midnights / Mondays / month starts, labels, grid, date bands,
+   * session dividers and every cursor / marker readout read in it.
+   * **Omitted ⇒ the viewer's own zone** (the runtime's), which is what every
+   * chart did before this prop existed; `'UTC'` or any id `Intl` knows
+   * (`'Europe/Berlin'`, `'Australia/Sydney'`, …) names one. A trading
+   * {@link calendar} that carries a `timeZone` (a `@pond-ts/financial`
+   * `TradingCalendar.fromRules`) supplies the default, so a NYSE chart reads
+   * New York time wherever it is viewed; an explicit prop still wins. The
+   * calendar's zone is used even when a low-level {@link discontinuities}
+   * provider overrides its gap topology — the calendar still says which
+   * exchange this is.
+   *
+   * Pair it with the aggregate that produced the data — the same primitive
+   * (`TimeZone`) places these ticks and cuts `Sequence.calendar` buckets, so
+   * `Sequence.calendar('day', { timeZone })` and `<ChartContainer timeZone>`
+   * given the same zone put a bucket edge and its tick on one instant.
+   * Function formatters (`timeFormat`, `cursorFormat`) still receive epoch ms;
+   * read the resolved zone from the chart context. An unknown id throws
+   * `RangeError`. Only affects a **time** axis.
+   */
+  timeZone?: string | undefined;
   /**
    * The trading axis **metric**, when a {@link calendar} is supplied
    * (trading-calendar RFC Q7). `'proportional'` (default) keeps time
@@ -988,6 +1011,7 @@ function ResolvedChartContainer({
   theme,
   discontinuities,
   calendar,
+  timeZone: timeZoneProp,
   spacing,
   xScale: xScaleKind = 'linear',
   grid = true,
@@ -1896,6 +1920,13 @@ function ResolvedChartContainer({
   );
   const xDiscontinuities =
     resolvedKind === 'time' ? (discontinuities ?? calendarProvider) : undefined;
+  // The axis zone: the explicit prop, else the calendar's exchange zone, else
+  // runtime-local (`undefined`). Canonicalised through `TimeZone.of` so a bad
+  // id fails here, once, with its name, and so `'utc'` and `'UTC'` are one key.
+  const timeZone = useMemo(() => {
+    const id = timeZoneProp ?? calendar?.timeZone;
+    return id === undefined ? undefined : TimeZone.of(id).id;
+  }, [timeZoneProp, calendar]);
   // The shared x-side tick count — labels, x gridlines, session dividers, and
   // `formatTime` all pass this one value, so they derive from the same instants
   // (the alignment previously held by three hardcoded constants agreeing).
@@ -2092,7 +2123,7 @@ function ResolvedChartContainer({
       // sessions. Same tickFormat surface as scaleTime, so the readout is shared.
       // `xTickCount` reaches `tickFormat` too: the trading scale picks its anchor
       // grain from the count, so labels sit on the exact instants the ticks do.
-      const s = scaleTradingTime(xDiscontinuities)
+      const s = scaleTradingTime(xDiscontinuities, { timeZone })
         .domain([d0, d1])
         .range([0, plotWidth]);
       if (elapsedOrigin !== undefined) return elapsedTime(s, elapsedOrigin);
@@ -2108,7 +2139,7 @@ function ResolvedChartContainer({
     // never d3's mixed multi-scale default. Interactions stay on continuous
     // time math: the frame's `discontinuities` remains undefined, and identity
     // distance/offset are plain subtraction/addition anyway.
-    const s = scaleTradingTime(identityProvider())
+    const s = scaleTradingTime(identityProvider({ timeZone }), { timeZone })
       .domain([d0, d1])
       .range([0, plotWidth]);
     if (elapsedOrigin !== undefined) return elapsedTime(s, elapsedOrigin);
@@ -2130,6 +2161,7 @@ function ResolvedChartContainer({
     elapsedOrigin,
     xDiscontinuities,
     xTickCount,
+    timeZone,
   ]);
 
   // The crosshair pixel (see resolveCursorX). A stored hoverX is a *plot* pixel;
@@ -2332,6 +2364,8 @@ function ResolvedChartContainer({
       onEditAnnotation,
       formatTime,
       formatReadout,
+      timeZone,
+      timeFormat,
       xFormatCustom: timeFormat !== undefined,
       xReadoutCustom: cursorFormat !== undefined,
       xTickCount,
@@ -2417,6 +2451,7 @@ function ResolvedChartContainer({
       onEditAnnotation,
       formatTime,
       formatReadout,
+      timeZone,
       timeFormat,
       cursorFormat,
       xTickCount,

@@ -108,10 +108,12 @@ export type {
 // The union the container's shared x scale resolves to — named so a consumer
 // reading `ChartFrame.xScale` can write down its type.
 export type { ChartXScale } from './context.js';
-export { scaleTradingTime } from './tradingTimeScale.js';
+export { scaleTradingTime, identityProvider } from './tradingTimeScale.js';
 export type {
   TradingTimeScale,
   DiscontinuityProvider,
+  TradingCalendarLike,
+  ScaleTimeZoneOptions,
   TimeGrain,
 } from './tradingTimeScale.js';
 // The ordinal category (band) scale — the transpose view's "columns on x" axis.

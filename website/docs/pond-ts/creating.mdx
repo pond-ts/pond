@@ -207,8 +207,8 @@ mix freely:
 - **ISO string** — parsed by the same rules as `Date.parse`. If the
   string carries an offset (`Z`, `+02:00`), the offset is used as-is.
   If it doesn't (a **wall-clock string** like `'2025-01-01T09:00'`),
-  you must supply `parse.timeZone` or the library doesn't know what
-  wall you mean.
+  it is read in `parse.timeZone`, which **defaults to UTC**. Pass the
+  zone the clock was on, or every instant lands offset by that zone.
 
 ### Wall-clock strings: `parse.timeZone`
 
@@ -233,12 +233,12 @@ ts.at(0)!.begin();
 
 ### Does this input need `parse.timeZone`?
 
-| Input shape                   | Example                    | `parse.timeZone`?                  |
-| ----------------------------- | -------------------------- | ---------------------------------- |
-| Number (ms since epoch)       | `1735689600000`            | Ignored — UTC by definition.       |
-| String with offset (`Z`)      | `'2025-01-01T09:00Z'`      | Ignored — offset is authoritative. |
-| String with offset (`±hh:mm`) | `'2025-01-01T09:00+01:00'` | Ignored — offset is authoritative. |
-| Wall-clock string (no offset) | `'2025-01-01T09:00'`       | **Required.** Throws without it.   |
+| Input shape                   | Example                    | `parse.timeZone`?                   |
+| ----------------------------- | -------------------------- | ----------------------------------- |
+| Number (ms since epoch)       | `1735689600000`            | Ignored — UTC by definition.        |
+| String with offset (`Z`)      | `'2025-01-01T09:00Z'`      | Ignored — offset is authoritative.  |
+| String with offset (`±hh:mm`) | `'2025-01-01T09:00+01:00'` | Ignored — offset is authoritative.  |
+| Wall-clock string (no offset) | `'2025-01-01T09:00'`       | **Read as UTC** unless you pass it. |
 
 If your upstream data source is a spreadsheet, a log scraper, or a
 database export without a zone column, you're almost certainly in the
@@ -619,8 +619,11 @@ const monthly = Sequence.calendar('month', {
 });
 ```
 
-Supported units: `'day'`, `'week'`, `'month'`. Pass to `aggregate` or
-`align` exactly like a fixed-step sequence.
+Supported units: `'day'`, `'week'`, `'month'`, `'quarter'`, `'year'`; any
+other unit throws `RangeError`. Pass to `aggregate` or `align` exactly like a
+fixed-step sequence. Boundaries come from `TimeZone`, the same primitive the
+charts' time axis places ticks with, so a bucket edge and the tick that labels
+it are one instant.
 
 ### When it matters
 
@@ -647,11 +650,19 @@ TimeSeries.fromJSON({
   rows: [['2025-01-01T09:00', 0.42]],
   // no parse.timeZone
 });
-// Throws — ambiguous local string; needs a zone context.
+// Does NOT throw: the string is read as 09:00 UTC. If the clock was on
+// Madrid time, every instant is now one hour late — silently.
 ```
 
-Either add `parse.timeZone` or switch to an offset-qualified string
-(`'2025-01-01T09:00Z'`) or a number (`Date.parse('2025-01-01T09:00Z')`).
+The library cannot tell a Madrid 09:00 from a UTC 09:00, so it takes the
+deterministic reading (UTC, the same on every machine) rather than the
+runtime's zone (different on every machine). That keeps a pipeline
+reproducible, but it means the mistake is quiet: the series looks right and
+is shifted by your offset. How you notice — a daily aggregate whose buckets
+start at 23:00 or 01:00 local, a chart whose morning peak sits an hour off
+the tick. **Pin the zone where the text becomes an epoch:** add
+`parse.timeZone`, or switch to an offset-qualified string
+(`'2025-01-01T09:00+01:00'`) or a number (`Date.parse('2025-01-01T09:00Z')`).
 
 ### Mixed timestamp formats
 
