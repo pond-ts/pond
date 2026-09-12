@@ -1,5 +1,9 @@
 # @pond-ts/financial
 
+[![npm](https://img.shields.io/npm/v/@pond-ts/financial?label=%40pond-ts%2Ffinancial)](https://www.npmjs.com/package/@pond-ts/financial)
+[![CI](https://github.com/pond-ts/pond/actions/workflows/ci.yml/badge.svg)](https://github.com/pond-ts/pond/actions/workflows/ci.yml)
+[![docs](https://img.shields.io/badge/docs-pond--ts.org-1f6feb)](https://pond-ts.org/docs/financial/)
+
 **Technical studies and a trading calendar on [pond-ts](https://www.npmjs.com/package/pond-ts).**
 
 Twenty oracle-verified studies (moving averages, bands, RSI, MACD, ATR,

@@ -1,5 +1,10 @@
 # pond-ts
 
+[![npm](https://img.shields.io/npm/v/pond-ts?label=pond-ts)](https://www.npmjs.com/package/pond-ts)
+[![CI](https://github.com/pond-ts/pond/actions/workflows/ci.yml/badge.svg)](https://github.com/pond-ts/pond/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/npm/l/pond-ts)](https://github.com/pond-ts/pond/blob/main/LICENSE)
+[![docs](https://img.shields.io/badge/docs-pond--ts.org-1f6feb)](https://pond-ts.org)
+
 **Highly optimised, fully typed Timeseries library for TypeScript**
 
 Schema-driven events, composable batch transforms, push-based streaming
