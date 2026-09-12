@@ -1,5 +1,9 @@
 # @pond-ts/charts
 
+[![npm](https://img.shields.io/npm/v/@pond-ts/charts?label=%40pond-ts%2Fcharts)](https://www.npmjs.com/package/@pond-ts/charts)
+[![CI](https://github.com/pond-ts/pond/actions/workflows/ci.yml/badge.svg)](https://github.com/pond-ts/pond/actions/workflows/ci.yml)
+[![docs](https://img.shields.io/badge/docs-pond--ts.org-1f6feb)](https://pond-ts.org/docs/charts/)
+
 **React charts for [pond-ts](https://www.npmjs.com/package/pond-ts) time series.**
 
 A composable charting layer built directly on pond-ts series: a canvas data
