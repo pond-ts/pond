@@ -363,3 +363,9 @@ pond-ts keywords` confirms). Owner applied the GitHub description and
   verify it finalises on the next re-measure and record the snippet count. Note from
   run 1: no cold-start arm consulted a docs tool, so this channel serves
   agents that already suspect pond exists — worth having, not the lever.
+- **2026-09-13** — [PND-CONTEXT7] **closed.** The index finalised within
+  hours of submission: `context7.com/pond-ts/pond` in state `finalized`,
+  1,000 snippets / ~1.04 M tokens, and its `llms.txt` serves content. A
+  docs-MCP lookup for "pond-ts" now returns pond rather than the Go
+  worker-pool library. Re-measure the snippet count occasionally; the
+  `context7.json` rules ride along with every snippet.
