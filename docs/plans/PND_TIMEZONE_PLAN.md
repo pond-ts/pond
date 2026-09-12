@@ -229,6 +229,22 @@ merging.
 
 #### [PND-TZAXIS] — charts: `timeZone` on `ChartContainer`, zone-aware ladder, labels and readouts
 
+**In review as [#732](https://github.com/pond-ts/pond/pull/732) (opened
+2026-09-13), one PR rather than three — the seam, the formatting and the
+prop each stayed small enough.** Held to decisions 3–5: the local path is
+the pre-seam `Date` arithmetic verbatim behind a `TickCalendar` interface
+(six calendar ops plus `nextAligned`), zoned formatting is `utcFormat` on a
+civil-shifted date with `%Z` / `%z` substituted, defaults unchanged. One
+thing the build settled beyond the plan: **sub-day alignment is a calendar
+operation** — the local calendar keeps its documented fixed-ms drift across
+a DST day, the zoned one aligns to the wall clock (00 / 06 / 12 / 18 on both
+sides of the jump), which is the behaviour the plan promised and the first
+cut did not deliver until `stepAnchors` re-aligned each anchor through the
+calendar instead of `t += step`. Measured: a warm zoned ladder frame is at
+or below the local one at 30 d / 365 d / 3650 d domains; a cold first frame
+is 1–4 ms. The cross-package agreement test ([PND-TZTEST]'s item) landed
+here. Baselines for the two zoned e2e stories are CI-generated.
+
 **Scope.** `ChartContainer` gains `timeZone?: string` (undefined = runtime
 local, `'UTC'` or any IANA id otherwise). The resolved zone flows through the
 existing `useMemo` at `ChartContainer.tsx:1920` into `scaleTradingTime(provider,
@@ -411,10 +427,10 @@ which is why this waits.
 | Order | Task           | Size             | Depends on               |
 | ----- | -------------- | ---------------- | ------------------------ |
 | 1     | [PND-TZCAL]    | in review (#728) | —                        |
-| 2     | [PND-TZAXIS] 1 | ~2 days          | TZCAL                    |
-| 3     | [PND-TZAXIS] 2 | ~1 day           | TZAXIS 1                 |
+| 2     | [PND-TZAXIS] 1 | in review (#732) | TZCAL                    |
+| 3     | [PND-TZAXIS] 2 | in #732          | TZAXIS 1                 |
 | 4     | [PND-TZFIN]    | hours            | —                        |
-| 5     | [PND-TZAXIS] 3 | ~1 day           | TZAXIS 2, TZFIN          |
+| 5     | [PND-TZAXIS] 3 | in #732          | TZAXIS 2, TZFIN          |
 | 6     | [PND-TZTEST]   | ~1 day           | TZCAL, TZAXIS (parallel) |
 | 7     | [PND-TZDOCS]   | ~1 day           | all of the above         |
 
