@@ -1122,22 +1122,13 @@ per-task reasoning, deferred alternatives).
   account (commands in that folder's README), then record the URLs in the
   breakout plan.
 - **[PND-COLDSTART]** — The measurement loop: fresh headless agents, one
-  realistic task, four harness arms. **Run 1 (2026-09-12, `claude-opus-5`,
-  n = 1 per arm):** nothing-installed arm never mentioned pond and hand-rolled
-  correct code; pond-in-deps arm read the tarball `AGENTS.md` and used pond;
-  both skill arms chose pond within seven turns, one **uninstalling
-  `arquero`** to do so; all pond code idiomatic, outputs matched the
-  reference. Channel 2 (npm / llms.txt / web) was touched by no arm. Write-up:
-  [cold-start-adoption-2026-09.md](docs/notes/cold-start-adoption-2026-09.md);
-  harness: `docs/adoption/cold-start/`. Next: re-run after [PND-PARTCOL],
-  add a chart step, add a Codex arm.
-- **[PND-PARTCOL]** — **Library friction from run 1.** After a schema-changing
-  operator under `partitionBy` (`aggregate`, `baseline`, `reduce`),
-  `collect()` re-injects the partition column at runtime but the static
-  result type omits it, so `e.get('host')` is a compile error. All three
-  pond arms hit or pre-empted it and converged on the same workaround
-  (`host: 'first'` in the mapping). Carry the partition key in the type.
-  Detail: [PND_CORE_PLAN.md](docs/plans/PND_CORE_PLAN.md).
+  realistic task, four harness arms (nothing / pond in deps / skills / skills
+  - a competitor). **Run 1 (2026-09-12, n = 1 per arm):** the no-harness arm
+    never mentioned pond; the deps arm read the tarball `AGENTS.md`; both skill
+    arms chose pond within seven turns, one uninstalling `arquero` to do so.
+    Write-up and next steps:
+    [cold-start-adoption-2026-09.md](docs/notes/cold-start-adoption-2026-09.md);
+    harness in `docs/adoption/cold-start/`.
 - **[PND-CHOOSE]** — "When to use pond" page (vs hand-rolled / arquero /
   danfo / polars-node; vs uPlot / Recharts for charts) plus a task → method
   index phrased the way an agent receives the job. Source:
@@ -1617,6 +1608,14 @@ consumer signal. Plan:
   to do with Rust — see `spikes/columnar-wasm/REPORT.md` §9.3. Each operator
   needs its own validity write, since the boxed array is currently how
   validity gets derived; [PND-IVLCOL] is the worked example of that shape.
+- **[PND-PARTCOL]** — `aggregate` and `rolling` under `partitionBy` return
+  `AggregateSchema` / `RollingSchema` (key + mapping outputs), so `collect()`
+  re-injects the partition column at runtime but the static type omits it and
+  `e.get('host')` fails to compile. Surfaced by [PND-COLDSTART] run 1 — all
+  three pond arms converged on the same `host: 'first'` workaround. Needs a
+  new type parameter carrying the `by` column names (today's `K` is the
+  partition _value_ type). Detail:
+  [PND_CORE_PLAN.md](docs/plans/PND_CORE_PLAN.md).
 - **[PND-COLAPI]** — Make the column-API augmentation bundle-safe (F-1,
   HIGH — methods tree-shake out of browser bundles) + validity-aware
   `toFloat64Array({ missing })` + `hasAnyDefined()`. Two consumers each.

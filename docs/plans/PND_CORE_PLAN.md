@@ -8,16 +8,18 @@
 
 ## Tasks
 
-### [PND-PARTCOL] — partition key in the static type after partitioned schema-changing operators
+### [PND-PARTCOL] — partition key in the static type after partitioned `aggregate` / `rolling`
 
 **Surfaced by:** [PND-COLDSTART] run 1
 ([cold-start-adoption-2026-09.md](../notes/cold-start-adoption-2026-09.md)) —
-three independent fresh agents all had to work around it.
+three independent fresh agents all had to work around it, the same way.
 
-**The gap.** `PartitionedTimeSeries.aggregate` / `baseline` / `reduce` call
-`augmentMappingWithPartitionCols` so the collected series carries the
-partition column at runtime (documented: "auto-inject"). The return type,
-however, is the plain aggregate schema, so:
+**The gap.** `PartitionedTimeSeries.aggregate` and `.rolling` return
+`PartitionedTimeSeries<AggregateSchema<S, Mapping>, K>` /
+`<RollingSchema<S, Mapping>, K>` — the key column plus the mapping's outputs.
+The runtime calls `augmentMappingWithPartitionCols` so the collected series
+carries the partition column (documented as auto-inject), but the type does
+not:
 
 ```ts
 const p95 = s
@@ -27,21 +29,30 @@ const p95 = s
 p95.events[0].get('host'); // TS2345: '"host"' is not assignable to '"p95"'
 ```
 
+`baseline`, `smooth`, `fill`, `dedupe` keep `S`'s value columns and are not
+affected (an earlier draft of this task listed `baseline` and `reduce`; the
+review corrected it — `reduce` is not on `PartitionedTimeSeries` at all).
+
 The workaround every agent found is to name the column in the mapping
-(`host: 'first'` / `{ from: 'host', using: 'first' }`), which also happens to
-be what the runtime does anyway.
+(`host: 'first'`), which is what the runtime injection does anyway.
 
-**Fix shape.** Thread the partition column(s) through the result type: the
-`PartitionedTimeSeries<S, K>` already knows `K` (the `by` argument), so the
-schema-changing operators' result schema becomes
-`AggregateSchema<S, Mapping> ∪ Pick<S, K>`. Order and kind come from `S`.
-Schema-preserving operators (`rolling`, `fill`, `dedupe`, `smooth`) are
-unaffected. Check `toMap()` too — its per-partition series legitimately lack
-the column and should stay as they are.
+**Fix shape.** `PartitionedTimeSeries<S, K>`'s `K` is the partition **value**
+type (`toMap(): Map<K, …>`), not the `by` column names — those exist only on
+the runtime `by` field. So the fix needs a new type parameter captured at
+`partitionBy(by)` — `PartitionedTimeSeries<S, K, By extends keyof S-columns>`
+— and the two schema-replacing operators' result schema becomes
+`[S[0], ...Pick<S value columns, By>, ...mapping outputs]` (order/kind from
+`S`; a mapping key that already names a `By` column wins, matching the
+runtime rule). Every operator's return type has to thread `By` through;
+`baseline` / `smooth` today already drop `K` in their return type
+(`PartitionedTimeSeries<…>` without `K`) — fold that into the same pass.
+`toMap()`'s per-partition series legitimately lack the column and stay as
+they are.
 
-**Acceptance.** The snippet above compiles; the arm-C / arm-D `TS2345` detour
-disappears on a re-run; the guide's "one sharp edge" paragraph can be
-deleted. Type-level test in `test-d/`.
+**Acceptance.** The snippet above compiles; a type-level test in `test-d/`
+pins it for both `aggregate` and `rolling`; the arm-C / arm-D `TS2345` detour
+disappears on a re-run of the harness; the guide's "one sharp edge"
+paragraph can be deleted.
 
 ### [PND-COLAPI] — Bundle-safe column API + validity-aware bulk read
 

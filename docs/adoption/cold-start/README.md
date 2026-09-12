@@ -18,6 +18,9 @@ node grade.mjs A   # per arm: channel evidence, deps, npm start result, diff vs 
 ```
 
 `run-arm.sh` uses `--setting-sources project,local` (no user-level context),
-`--no-session-persistence`, `--permission-mode bypassPermissions` (the arm
-directory is disposable), and caps at 90 turns / $10. Requires a logged-in
-`claude` CLI (`claude auth status`).
+`--no-session-persistence`, and caps at 90 turns / $10. It also passes
+`--permission-mode bypassPermissions`, which **scopes nothing**: the session
+runs unattended with your user's full access to the machine, the arm directory
+is merely where it starts. Run it only on a machine or account you would trust
+an unattended agent with, or inside a container / sandbox. Requires a
+logged-in `claude` CLI (`claude auth status`).

@@ -55,10 +55,13 @@ reference; API misuses against the guide's pitfall list.
 | C   | **pond-ts** | turn 7: `pond-ts` skill auto-triggered ("covers exactly this shape of work")                                                                   | 43    | 448 s | $2.80 | ✅          | 6 674 ✅ · **508 ✅** · worst-3 ✅                                     |
 | D   | **pond-ts** | turn 6: skill auto-triggered; **removed the pre-installed `arquero`** ("not time-aware, can't express a `(t−1h, t]` window")                   | 36    | 415 s | $2.49 | ✅          | 6 674 ✅ · 504 breaches · worst-3 ✅                                   |
 
-All four produced correct, runnable code. The 504-vs-508 gap in B and D is a
-deliberate `minSamples: 12` warm-up gate on `baseline` (no band until a full
-hour of buckets), not an error; C emitted bands from the first bucket, as the
-reference does. A's 478 comes from its own rolling convention.
+All four produced runnable, self-consistent code. B, C and D used the
+reference's conventions (interpolated p95, population sd, trailing window
+including the current bucket, bands from the first bucket); the 504-vs-508
+gap in B and D is a deliberate `minSamples: 12` warm-up gate on `baseline`
+(no band until a full hour of buckets), not an error. A chose and documented
+different conventions (nearest-rank p95, sample n−1 sd), so its 478 is not
+comparable and is not a correctness verdict either way.
 
 ### What the channels did
 
@@ -83,8 +86,9 @@ reference does. A's 478 comes from its own rolling convention.
   bare `dedupe` keys on time alone), `aggregate` with `'p95'`, `baseline`.
   Zero instances of the guide's pitfall list. C and B each reimplemented the
   pipeline in plain JS to cross-check pond's numbers, and both matched.
-- **Cost of choosing pond: +30–60 % turns and dollars** over hand-rolling,
-  spent almost entirely on signature verification (reading `.d.ts`, spike
+- **Cost of choosing pond: +57 / +78 / +87 % turns (D / B / C vs A) and
+  +28 / +64 / +44 % dollars** over hand-rolling, spent almost entirely on
+  signature verification (reading `.d.ts`, spike
   scripts). The hand-rolled arm spent that budget on writing and testing a
   rolling window instead. The trade the agents themselves made explicit:
   A's `NOTES.md` argues the maths is "forty lines"; B/C/D's argue the
@@ -92,17 +96,18 @@ reference does. A's 478 comes from its own rolling convention.
 
 ### Friction — library-actionable
 
-1. **Partition column vanishes from the static type after a
-   schema-changing operator under `partitionBy`** ([PND-PARTCOL]).
-   `.partitionBy('host').aggregate(...).collect()` re-injects `host` at
-   runtime (`augmentMappingWithPartitionCols`) but the result type is the
-   aggregate schema alone, so `e.get('host')` is a compile error. All three
-   pond arms handled it: B pre-empted from the `.d.ts` docs, C and D hit
-   `TS2345: Argument of type '"host"' is not assignable to parameter of type
-'"count" | "p95"'` and converged on the same workaround, naming the
-   column in the mapping (`host: 'first'`). Three independent agents
-   reaching the same workaround is the signal that the type should carry
-   the partition key.
+1. **Partition column vanishes from the static type after `aggregate` or
+   `rolling` under `partitionBy`** ([PND-PARTCOL]). Both operators' result
+   schema is the key plus the mapping's outputs (`AggregateSchema` /
+   `RollingSchema`), and `collect()` re-injects `host` at runtime
+   (`augmentMappingWithPartitionCols`) but not in the type, so `e.get('host')`
+   is a compile error. All three pond arms handled it: B pre-empted from the
+   `.d.ts` docs, C and D hit `TS2345: Argument of type '"host"' is not
+assignable to parameter of type '"count" | "p95"'` and converged on the
+   same workaround, naming the column in the mapping (`host: 'first'`).
+   Three independent agents reaching the same workaround is the signal that
+   the type should carry the partition key. (`baseline`, `fill`, `dedupe`,
+   `smooth` keep the source columns and are not affected.)
 2. **Version written from memory.** C wrote `"pond-ts": "^0.3.0"` into
    `package.json` unprompted, installed a 2024 API, noticed "the installed
    0.3.0 API differs from the skill's description", and reinstalled

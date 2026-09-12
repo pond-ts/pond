@@ -1,6 +1,13 @@
-# Independent reference for grading: dedupe exact rows, sort by (host, ts),
-# drop blank ms, bucket to 5 min, p95 = linear interpolation (numpy default),
-# trailing 1h (12 buckets incl. current) mean/sd (population), breaches.
+# Independent reference for grading. Conventions (an arm may legitimately
+# choose others — compare only when they match):
+#   - exact-duplicate rows collapsed; blank `ms` dropped; sorted by time
+#   - 5-minute buckets anchored to the epoch; p95 = linear interpolation
+#     between order statistics (numpy default), not nearest-rank
+#   - trailing window = the current bucket plus the previous 11 present
+#     buckets (row-count window over the per-host bucket series), mean and
+#     POPULATION sd (ddof=0); bands emitted from the first bucket (no warm-up)
+#   - breach: p95 > mean + 2*sd; worst-3 ranked by exceedance over the upper
+#     band, not by p95
 import csv, sys, math, json
 from collections import defaultdict
 from datetime import datetime, timezone

@@ -74,17 +74,17 @@ Months / calendar days in a zone: `Sequence.calendar('month', { timeZone })`.
 const perHost = s
   .partitionBy('host') // every stateful operator below runs per host
   .fill({ latencyMs: 'hold' })
-  .rolling('5m', { latencyMs: 'avg' })
-  .collect(); // flat TimeSeries with `host` re-injected; or .toMap()
+  .rolling('5m', { host: 'first', latencyMs: 'avg' }) // name `host` — see below
+  .collect(); // flat TimeSeries; or .toMap()
 ```
 
-**Schema-changing operators under `partitionBy` (`aggregate`, `baseline`,
-`reduce`) re-inject the partition column at runtime but it is not in the
-static result type**, so `e.get('host')` fails to compile after
-`.partitionBy('host').aggregate(...).collect()`. Declare it in the mapping and
-the type follows: `{ host: { from: 'host', using: 'first' }, p95: { from:
-'ms', using: 'p95' } }`. `rolling` / `fill` / `dedupe` keep the schema, so
-they need nothing.
+**`aggregate` and `rolling` under `partitionBy` replace the value columns with
+the mapping's outputs**, so the collected result carries `host` at runtime
+(auto-injected) but not in the static type — `e.get('host')` fails to compile
+after `.partitionBy('host').rolling(...).collect()` or `.aggregate(...)`. Name
+the column in the mapping and the type follows: `{ host: 'first', p95: { from:
+'ms', using: 'p95' } }`. `baseline` / `fill` / `dedupe` / `smooth` keep the
+source columns and need nothing.
 
 ## 4. Read out
 

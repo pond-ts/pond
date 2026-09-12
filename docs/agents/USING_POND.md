@@ -98,16 +98,16 @@ sigma: 2 })` appends avg / sd / upper / lower in one pass;
 ```ts
 const perHost = s
   .partitionBy('host') // every stateful operator below runs per host
-  .rolling('5m', { latencyMs: 'avg' })
-  .collect(); // one flat TimeSeries, `host` re-injected as a column
+  .rolling('5m', { host: 'first', latencyMs: 'avg' }) // name `host` — see below
+  .collect(); // one flat TimeSeries
 // or .toMap() → Map<host, TimeSeries>
 ```
 
-One sharp edge: operators that **change the schema** (`aggregate`, `baseline`,
-`reduce`) re-inject `host` at runtime but not in the static type, so
-`e.get('host')` on the collected result is a compile error. Name it in the
-mapping — `{ host: { from: 'host', using: 'first' }, … }` — and the type
-carries it.
+One sharp edge: `aggregate` and `rolling` **replace the value columns with the
+mapping's outputs**, so under `partitionBy` the collected result has `host` at
+runtime (auto-injected) but not in the static type, and `e.get('host')` is a
+compile error. Name it in the mapping — `{ host: 'first', … }` — and the type
+carries it. `baseline`, `fill`, `dedupe` and `smooth` keep the source columns.
 
 ### 4. Clean, fill, join, read out
 
