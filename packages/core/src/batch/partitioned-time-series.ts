@@ -13,6 +13,7 @@ import type {
   DedupeKeep,
   DiffSchema,
   EventDataForSchema,
+  ValueColumnsForSchema,
   EventForSchema,
   FillMapping,
   FillStrategy,
@@ -47,15 +48,24 @@ type AlignSample = 'begin' | 'center' | 'end';
  * the one actually passed — harmless because injected columns are already
  * optional.
  */
-export type WithPartitionColumns<Mapping, By extends string> = string extends By
-  ? // Non-literal partition column (a `string` variable on a broad
-    // schema): we cannot name what the runtime injects, and an index
-    // signature here would swallow every output column's type. Leave
-    // the mapping alone — the same result type as before [PND-PARTCOL].
+export type WithPartitionColumns<
+  S extends SeriesSchema,
+  Mapping,
+  By extends string,
+> = string extends By
+  ? // Non-literal partition column (a `string` variable): we cannot name
+    // what the runtime injects, and an index signature here would swallow
+    // every output column's type. Leave the mapping alone — the same result
+    // type as before [PND-PARTCOL].
     Mapping
-  : Mapping & {
-      readonly [C in Exclude<By, keyof Mapping>]: 'first';
-    };
+  : string extends ValueColumnsForSchema<S>[number]['name']
+    ? // Broad schema (`TimeSeries<SeriesSchema>`): the column's kind cannot
+      // be looked up, so an injected `'first'` would resolve to `never` and
+      // read as `undefined`. Leave the mapping alone here too.
+      Mapping
+    : Mapping & {
+        readonly [C in Exclude<By, keyof Mapping>]: 'first';
+      };
 
 /**
  * View over a `TimeSeries` that scopes stateful transforms to within
@@ -107,6 +117,16 @@ export class PartitionedTimeSeries<
 > {
   readonly source: TimeSeries<S>;
   readonly by: ReadonlyArray<keyof EventDataForSchema<S> & string>;
+  /**
+   * Phantom, erased at runtime. Pins `By` **contravariantly** so a view
+   * partitioned by one column cannot be assigned where a view partitioned
+   * by another is claimed (`PartitionedTimeSeries<S, K, 'host'>` ←
+   * `partitionBy('region')` is an error), while a specialised view still
+   * assigns to the legacy `PartitionedTimeSeries<S>` / `<S, K>` shape.
+   * Without it `By` only appears inside a conditional in return positions
+   * and TypeScript treats it as freely convertible (Codex finding on #724).
+   */
+  declare readonly __partitionColumns?: (by: By) => void;
   /**
    * Declared partition values when `partitionBy(col, { groups })` was
    * used. When set, `toMap` iterates in declared order (not insertion
@@ -603,7 +623,7 @@ export class PartitionedTimeSeries<
     mapping: Mapping,
     options?: { alignment?: RollingAlignment; minSamples?: number },
   ): PartitionedTimeSeries<
-    RollingSchema<S, WithPartitionColumns<Mapping, By>>,
+    RollingSchema<S, WithPartitionColumns<S, Mapping, By>>,
     K,
     By
   >;
@@ -618,7 +638,7 @@ export class PartitionedTimeSeries<
       minSamples?: number;
     },
   ): PartitionedTimeSeries<
-    AggregateSchema<S, WithPartitionColumns<Mapping, By>>,
+    AggregateSchema<S, WithPartitionColumns<S, Mapping, By>>,
     K,
     By
   >;
@@ -827,7 +847,7 @@ export class PartitionedTimeSeries<
     mapping: Mapping,
     options?: { range?: TemporalLike },
   ): PartitionedTimeSeries<
-    AggregateSchema<S, WithPartitionColumns<Mapping, By>>,
+    AggregateSchema<S, WithPartitionColumns<S, Mapping, By>>,
     K,
     By
   >;

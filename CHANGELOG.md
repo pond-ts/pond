@@ -71,6 +71,10 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pond-ts`: two type-level corners of [PND-PARTCOL] (0.68.0) found by the Codex pass on #724.** (1) On a broad `TimeSeries<SeriesSchema>` with a _literal_ partition column, the injected `'first'` could not look up a kind and typed the column as `undefined`; `WithPartitionColumns` now takes the schema and leaves the mapping alone when the schema is broad, so the result type is exactly 0.67's. (2) `By` had no variance pin, so `PartitionedTimeSeries<S, K, 'host'>` accepted a view partitioned by `region` (and an untyped view could be narrowed to any column); a phantom contravariant member now rejects both while a specialised view still assigns to the legacy `PartitionedTimeSeries<S>` shape. Type tests cover both plus the `K`-survives-`smooth`/`baseline` claim. No runtime change.
+
 ## [0.68.0] — 2026-09-13
 
 ### Added

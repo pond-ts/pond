@@ -3,7 +3,12 @@
 // it (`augmentMappingWithPartitionCols`); these assertions pin that the type
 // now says the same thing, for `aggregate` and `rolling`, single and
 // composite partitions, and the "mapping key wins" rule.
-import { Sequence, TimeSeries, type SeriesSchema } from '../src/index.js';
+import {
+  PartitionedTimeSeries,
+  Sequence,
+  TimeSeries,
+  type SeriesSchema,
+} from '../src/index.js';
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -104,3 +109,59 @@ const broadOut = broad
   .collect();
 const cpuBroad: number | undefined = broadOut.at(0)!.get('cpu');
 void cpuBroad;
+
+// ── Codex findings on #724 ─────────────────────────────────────────────
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
+    ? true
+    : false;
+
+// (1) Broad schema + LITERAL column: the injected `'first'` cannot look up a
+// kind on `TimeSeries<SeriesSchema>` and used to resolve to `undefined`.
+// The guard now leaves the mapping alone, so the result schema is exactly
+// main's — the mapping's columns only. The type does not claim `host` (an
+// honest "unknown" beats a wrong `undefined`), and `cpu` stays narrow.
+const broadLit = broad
+  .partitionBy('host')
+  .aggregate(Sequence.every('5m'), { cpu: 'avg' })
+  .collect();
+// @ts-expect-error — broad schema: `host` is not claimed by the type (as on main)
+broadLit.at(0)!.get('host');
+const cpuBroadLit: number | undefined = broadLit.at(0)!.get('cpu');
+void cpuBroadLit;
+// The `Equal` helper is kept for the literal-column probe below.
+type _Probe = Equal<typeof cpuBroadLit, number | undefined>;
+const probeOk: _Probe = true;
+void probeOk;
+
+// (2) `By` is pinned contravariantly: a view partitioned by `region` cannot
+// be claimed as one partitioned by `host` …
+// @ts-expect-error — By='region' is not assignable to By='host'
+const claimed: PartitionedTimeSeries<typeof schema, string, 'host'> =
+  s.partitionBy('region');
+void claimed;
+// … and an untyped (legacy) view cannot be narrowed to a specific column …
+declare const legacy: PartitionedTimeSeries<typeof schema>;
+// @ts-expect-error — By=never cannot be widened to 'host'
+const narrowed: PartitionedTimeSeries<typeof schema, string, 'host'> = legacy;
+void narrowed;
+// … while a specialised view still assigns to the legacy shapes.
+const asLegacy: PartitionedTimeSeries<typeof schema> = s.partitionBy('host');
+const asLegacyK: PartitionedTimeSeries<typeof schema, string> =
+  s.partitionBy('host');
+void asLegacy;
+void asLegacyK;
+
+// (3) Typed `K` survives `smooth` and `baseline` (CHANGELOG claim).
+const smoothed = s
+  .partitionBy('host', { groups: ['a', 'b'] })
+  .smooth('ms', 'ema', { alpha: 0.3 });
+const smoothedMap: Map<'a' | 'b', unknown> = smoothed.toMap();
+void smoothedMap;
+const based = s
+  .partitionBy('host', { groups: ['a', 'b'] })
+  .baseline('ms', { window: '1h', sigma: 2 });
+const basedMap: Map<'a' | 'b', unknown> = based.toMap();
+void basedMap;
+const basedHost: string | undefined = based.collect().at(0)!.get('host');
+void basedHost;
