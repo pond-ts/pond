@@ -1,6 +1,6 @@
 {
   "name": "pond-ts",
-  "version": "0.67.0",
+  "version": "0.68.0",
   "description": "Typed time series for TypeScript: schema-driven TimeSeries + streaming LiveSeries with aggregate, rolling, align, fill, partitionBy and typed columns",
   "keywords": [
     "time-series",

@@ -1,8 +1,11 @@
 {
   "name": "pond-ts",
   "description": "Build time-series features with the pond-ts packages: load, bucket, roll, partition and stream timestamped data (pond-ts); draw it with React canvas charts (@pond-ts/charts); compute technical studies over OHLCV bars (@pond-ts/financial).",
-  "version": "0.67.0",
-  "author": { "name": "pond-ts", "url": "https://github.com/pond-ts/pond" },
+  "version": "0.68.0",
+  "author": {
+    "name": "pond-ts",
+    "url": "https://github.com/pond-ts/pond"
+  },
   "homepage": "https://pond-ts.org",
   "repository": "https://github.com/pond-ts/pond",
   "license": "MIT",
