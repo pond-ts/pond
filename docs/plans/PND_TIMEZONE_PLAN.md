@@ -365,6 +365,26 @@ zone would show.
 
 #### [PND-TZDOCS] — docs: state the contract once, fix the contradiction
 
+**Done 2026-09-13 (`docs/timezones` PR).** `creating.mdx`'s "throws without
+`parse.timeZone`" became "read as UTC, silently" in the prose, the decision
+table and the pitfall, which now says how the shift shows up (buckets
+starting at 23:00 or 01:00 local, a peak an hour off its tick). The agent
+guide (`docs/agents/USING_POND.md`, shipped as every tarball's `AGENTS.md`)
+got the same correction and mistake #10: pass the same `timeZone` to
+`Sequence.calendar` and `<ChartContainer>`. The aggregation page carries the
+`Sequence.calendar` cross-link from #359 with its link fixed (#359 closed as
+superseded; its PLAN.md hunk was stale). The finance gallery's
+`TrackerReadout` takes the calendar's zone instead of hard-coding New York —
+the finance cards pass `set.calendar.timeZone`, which [PND-TZFIN] made real;
+Track D can now reuse it. The Niño 3.4 heat map's year grain is
+`Sequence.calendar('year')` instead of a 370-day fixed step. The axes page's
+"Time zones" section shipped earlier in #732. Decision kept: default-UTC
+rather than throwing — a throw is a breaking change nobody asked for, and
+the pitfall text now carries the weight instead.
+
+**Phase 1 is complete.** Every task shipped between #728 and this PR; the
+remaining entries below are Phase 2, consumer-gated.
+
 - `website/docs/pond-ts/creating.mdx:205-247, 637-652`: a bare wall-clock
   string **defaults to UTC**; it does not throw. Rewrite the pitfall as "you
   probably meant a zone, and here is how you would notice" (the air-quality
@@ -455,7 +475,7 @@ which is why this waits.
 | 4     | [PND-TZFIN]    | hours              | —                        |
 | 5     | [PND-TZAXIS] 3 | in #732            | TZAXIS 2, TZFIN          |
 | 6     | [PND-TZTEST]   | done (#721 + #733) | TZCAL, TZAXIS (parallel) |
-| 7     | [PND-TZDOCS]   | ~1 day             | all of the above         |
+| 7     | [PND-TZDOCS]   | done (docs PR)     | all of the above         |
 
 Phase 1 is roughly one and a half weeks of focused work, five to six PRs, two
 human gates (TZCAL's export + `CalendarUnit`; TZAXIS's prop). Each code PR

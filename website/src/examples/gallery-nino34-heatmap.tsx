@@ -165,10 +165,10 @@ function periodLabel(grain: Grain, key: number): string {
  *
  * **Granularity** re-bins the *x* axis with pond's ordinary `aggregate`; the
  * chart redraws whatever comes out. Day is the series as it stands (365 cells
- * per row); month is `Sequence.calendar('month')` (12); year is one cell per
- * row — climate stripes stood on end. (`Sequence.calendar` has no `'year'`
- * unit, so that one is a fixed `'370d'` step anchored at 1 January, sized past
- * the record's end so exactly one bucket covers it.) The rows are identical in
+ * per row); month is `Sequence.calendar('month')` (12); year is
+ * `Sequence.calendar('year')`, one cell per row — climate stripes stood on
+ * end. (Both default to UTC, which is the zone the day-of-year rows were cut
+ * in.) The rows are identical in
  * all three: the y dimension is columns, so it is fixed by the data, and
  * everything about resolution belongs to x where pond already owns it.
  *
@@ -199,10 +199,7 @@ export default function GalleryNino34Heatmap({
   const series = useMemo<TimeSeries<SeriesSchema>>(() => {
     const source = measure === 'sst' ? ninoWideByYear : ninoWideAnomalyByYear();
     if (grain === 'day') return source;
-    const seq =
-      grain === 'month'
-        ? Sequence.calendar('month')
-        : Sequence.every('370d', { anchor: NINO34_YEAR_RANGE[0] });
+    const seq = Sequence.calendar(grain === 'month' ? 'month' : 'year');
     return source.aggregate(seq, MEAN_BY_YEAR);
   }, [grain, measure]);
 
