@@ -1438,8 +1438,9 @@ the **y-oriented region cursor** for horizontal histograms
 parked until a real consumer needs it); the **`pointercancel` clear-only
 fix** — the region cursor currently commits the span on `pointercancel`
 (pre-existing; should clear instead — Layer-2 follow-up from #509). Timezone
-control for the cursor readout is tracked with the trading-time work
-([PND-TCAL] in [PND_FINANCIAL_PLAN.md](PND_FINANCIAL_PLAN.md)).
+control for the cursor readout is [PND-TZAXIS] in
+[PND_TIMEZONE_PLAN.md](PND_TIMEZONE_PLAN.md) (moved from [PND-TCAL]
+2026-09-13).
 
 **Done from this backlog:** tracker-label-by-`as` (F-charts-8 §3) shipped in
 #511 — BandChart edges and Candlestick `showOHLC` pills adopted BoxPlot's
@@ -2606,7 +2607,9 @@ value`" — but the in-chart reticle (`Layers.tsx`, `pick.value`) takes the
   an off-chart two-value readout for renewables-vs-demand (the crosshair shows
   one series at a time) and skipped it rather than stamp a German grid chart
   with New York dates. A `time` formatter prop, defaulting to today's
-  behaviour, unblocks reuse.
+  behaviour, unblocks reuse. Picked up by [PND-TZDOCS] in
+  [PND_TIMEZONE_PLAN.md](PND_TIMEZONE_PLAN.md): the readout follows the
+  container's `timeZone` once [PND-TZAXIS] lands.
 
 - **A Gallery card's `staticPhase` is an unverifiable magic number, and all
   three Track D cards had it wrong.** `staticPhase` is both the first-paint and
