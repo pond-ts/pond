@@ -1114,9 +1114,9 @@ per-task reasoning, deferred alternatives).
   month) and `esnet/react-timeseries-charts` (last release 2019, ~6.4k / month)
   still outdraw pond 4:1 and mention no successor anywhere. Drafts — an issue
   and a README notice per repo, in the original author's voice — are in
-  `docs/adoption/predecessors/`; **owner action:** post them from Peter's own
-  account (commands in that folder's README), then record the URLs in the
-  breakout plan.
+  `docs/adoption/predecessors/`. Posted: both issues and the
+  react-timeseries-charts README PR (URLs in the breakout); **owner action
+  open:** the `esnet/pond` README PR.
 - **[PND-COLDSTART]** — The measurement loop: fresh headless agents, one
   realistic task, four harness arms (nothing / pond in deps / skills / skills
   - a competitor). **Run 1 (2026-09-12, n = 1 per arm):** the no-harness arm

@@ -214,6 +214,21 @@ path out.
 referrer traffic to pond-ts.org if analytics exist. Record the posted URLs
 here.
 
+**Posted (owner, 2026-09-12/13):**
+
+- `esnet/pond` — issue [#297](https://github.com/esnet/pond/issues/297)
+  "Successor: pond-ts (TypeScript rewrite by the original author)". README
+  PR: **not yet posted.**
+- `esnet/react-timeseries-charts` — issue
+  [#511](https://github.com/esnet/react-timeseries-charts/issues/511)
+  "Successor: @pond-ts/charts …" and README PR
+  [#512](https://github.com/esnet/react-timeseries-charts/pull/512) "Point
+  to the maintained successor in README".
+
+Re-measure the pondjs / react-timeseries-charts : pond-ts download ratio
+against the 2026-09-12 baseline (10 494 / 6 420 : 2 591) at the next
+adoption re-measure.
+
 **Considered, not doing:** asking ESnet to archive or transfer the repos
 (their call; the issue asks for a note or an archive, nothing more), and
 publishing a `pondjs@next` / deprecation on npm (pond does not own those
