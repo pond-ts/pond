@@ -8,18 +8,36 @@
 **Highly optimised, fully typed Timeseries library for TypeScript**
 
 Schema-driven events, composable batch transforms, push-based streaming
-ingest, multi-entity partitioning, and an optional React integration —
-all strict TypeScript end to end, all immutable.
+ingest, multi-entity partitioning — and, optionally, React hooks and
+canvas charts that read the series directly. All strict TypeScript end to
+end, all immutable.
 
 **pond-ts** is the TypeScript-first successor to
 [pondjs](https://github.com/esnet/pond), rewritten from scratch with a
 focus on type safety, composability, and the live-streaming patterns
 that pondjs never grew.
 
+## The packages
+
+Three packages carry most projects. The core has no dependency on the other
+two; add them only if you render.
+
+| Package                                                                           | What it is                                                                                                                                                                                         | Needs                                    |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| **[`pond-ts`](https://www.npmjs.com/package/pond-ts)** — core                     | `TimeSeries` (batch) and `LiveSeries` (streaming) with one operator vocabulary: aggregate, rolling, align, fill, partition, join, typed columns. Node or browser, no React.                        | nothing                                  |
+| **[`@pond-ts/charts`](https://www.npmjs.com/package/@pond-ts/charts)** — optional | Declarative React charts on a canvas data plane that consume a pond series with no adapter: line, area, band, bar, scatter, box, candlestick, heat map; cursors, selection, pan/zoom, annotations. | `pond-ts`, `@pond-ts/react`, React 18/19 |
+| **[`@pond-ts/react`](https://www.npmjs.com/package/@pond-ts/react)** — optional   | Hooks to own a series in a component and read live views on a throttled snapshot cadence (`useLiveSeries`, `useSnapshot`, …).                                                                      | `pond-ts`, React 18/19                   |
+
 ```sh
-npm install pond-ts                 # core
-npm install @pond-ts/react          # React hooks (optional)
+npm install pond-ts                                   # core — enough for Node pipelines and non-React apps
+npm install @pond-ts/charts @pond-ts/react pond-ts    # add the React chart stack
 ```
+
+Two domain packages ([`@pond-ts/financial`](#domain-packages) for markets,
+[`@pond-ts/fit`](#domain-packages) for activity data) and one experimental
+runtime ([`@pond-ts/process`](#domain-packages)) sit on top — see
+[Domain packages](#domain-packages) below. All six release together under
+one version; keep them in step.
 
 - **Typed schemas** — declare once, every transform downstream narrows
   off it. `event.get('cpu')` returns `number | undefined` straight from
@@ -113,6 +131,43 @@ The full live surface (`filter`, `map`, `select`, `window`, `aggregate`,
 `sample`) is incremental — events flow, views emit, retention bounds
 memory.
 
+## Quick start: charts (React)
+
+`@pond-ts/charts` reads a `TimeSeries` or `LiveSeries` directly — do the maths
+in pond, hand the result to a layer. Rows share one x scale, so they pan,
+zoom and track the cursor together.
+
+```tsx
+import {
+  BandChart,
+  ChartContainer,
+  ChartRow,
+  Layers,
+  LineChart,
+  YAxis,
+} from '@pond-ts/charts';
+
+// `bands` is the baseline() result from the batch quick start:
+// cpu + avg / sd / upper / lower columns.
+export function CpuChart({ width }: { width: number }) {
+  return (
+    <ChartContainer width={width} cursor="crosshair" panZoom>
+      <ChartRow height={240}>
+        <YAxis id="cpu" format=".0%" />
+        <Layers>
+          <BandChart series={bands} lower="lower" upper="upper" axis="cpu" />
+          <LineChart series={bands} column="cpu" axis="cpu" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  );
+}
+```
+
+Pass `width="auto"` to measure the parent instead. Live data renders through
+the same layers: own the series with `useLiveSeries` from `@pond-ts/react`
+and pass its snapshot as `series`.
+
 ## Quick start: multi-entity
 
 `partitionBy` routes events into per-key buffers. Every stateful
@@ -187,6 +242,26 @@ it is behind. Run locally:
 npm run build && node packages/core/bench/vs-pondjs.cjs
 ```
 
+## Domain packages
+
+Optional, domain-specific, all on plain pond series:
+
+- **[`@pond-ts/financial`](https://www.npmjs.com/package/@pond-ts/financial)**
+  — sixty-plus oracle-verified technical studies (SMA, EMA, RSI, MACD,
+  Bollinger, ATR, VWAP, …) that append columns to a bar series, a fluent
+  `bars.sma({ period: 20 }).rsi({ period: 14 })` form, and a
+  `TradingCalendar` so session-aligned bars, rolling windows and chart axes
+  stop at the close.
+- **[`@pond-ts/fit`](https://www.npmjs.com/package/@pond-ts/fit)** — fitness
+  and activity analytics: typed quantities with units, canonical activity
+  series, geo (distance, elevation, best efforts), power (NP / IF / TSS,
+  curves), heart-rate zones, splits.
+- **[`@pond-ts/process`](https://www.npmjs.com/package/@pond-ts/process)** —
+  **experimental.** Computations as data: processing graphs authored fluently
+  or composed as JSON, resolved against a declared op vocabulary with
+  content-addressed caching, provenance and per-node timings. The API is
+  expected to move.
+
 ## Documentation
 
 The full guide is at **<https://pond-ts.org/>**.
@@ -238,20 +313,22 @@ the loop:
 
 ## Develop
 
-The repo is an npm-workspaces monorepo with two published packages
-(`pond-ts`, `@pond-ts/react`). Node 18+ for runtime; Node 20+ for the
+The repo is an npm-workspaces monorepo with six published packages
+(`pond-ts`, `@pond-ts/react`, `@pond-ts/charts`, `@pond-ts/financial`,
+`@pond-ts/fit`, `@pond-ts/process`). Node 18+ for runtime; Node 20+ for the
 docs site (Docusaurus).
 
 ```sh
-npm install         # one-time, hoists deps for both packages
+npm install         # one-time, hoists deps for all packages
 npm run build       # build both packages
 npm test            # runtime + type-level tests on both packages
 npm run format      # prettier write across the repo
 npm run verify      # format check + build + test (CI parity)
 ```
 
-`packages/core/` is the `pond-ts` package; `packages/react/` is
-`@pond-ts/react`. Docs live in `website/`.
+Each package lives under `packages/<name>/` (`core` is `pond-ts`, the rest
+match their scoped names). Docs live in `website/` — its own npm root, not a
+workspace.
 
 ## License
 
