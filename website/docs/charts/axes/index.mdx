@@ -104,6 +104,7 @@ regardless of which you render.
 | `transform`    | `{ to(v): number; from(u): number }`           | —              | Relabel the **same scale** into a derived unit (a second tick layout).                                                                                                                                  |
 | `align`        | `'auto' \| 'center' \| 'right'`                | `'center'`     | Horizontal tick-label placement.                                                                                                                                                                        |
 | `dateStyle`    | `'flat' \| 'stacked'`                          | `'flat'`       | Time axis only: `flat` promotes date context inline on one row (the TradingView look); `stacked` uses a second boundary row. See [Trading-time axis](./trading-time-axis.mdx#what-changes-on-the-axis). |
+| `timeZone`     | `string`                                       | container's    | Time axis only: render **this strip** in another IANA zone — the second axis of a two-zone pair. See [Time zones](#time-zones).                                                                         |
 | `color`        | `string`                                       | theme          | Tick / label / rule / title colour — the lever for a stacked dual axis.                                                                                                                                 |
 | `height`       | `number`                                       | fit-to-content | Strip height in px.                                                                                                                                                                                     |
 | `onMouseEvent` | `(info: AxisMouseEvent) => void`               | —              | Mouse events on the strip, with the axis value under the pointer. See [Clicking an axis](#clicking-an-axis).                                                                                            |
@@ -170,6 +171,23 @@ The two defaults differ on purpose: `Sequence.calendar` defaults to **UTC**
 (a deterministic answer wherever the code runs), the axis to the **viewer's
 zone** (what a reader expects a clock to say). Passing the zone to both is
 what removes the asymmetry.
+
+**Two strips, two zones.** A second `<XAxis timeZone>` renders in its own
+zone over the same pixel mapping — the container's zone below the plot, say,
+and the exchange's or a colleague's above it:
+
+```tsx
+<ChartContainer timeZone="UTC" …>
+  <XAxis side="top" timeZone="America/New_York" label="New York" />
+  <ChartRow>…</ChartRow>
+  <XAxis label="UTC" />
+</ChartContainer>
+```
+
+Same instants, different calendars: each strip's day turns sit on its own
+midnight, and each strip's cursor pill reads its own zone. A container
+`cursorFormat` still wins for the pill; a container `timeFormat` string is
+re-resolved in the strip's zone.
 
 **Trading calendars carry their zone.** A `@pond-ts/financial`
 `TradingCalendar.fromRules({ timeZone: 'America/New_York', … })` exposes that

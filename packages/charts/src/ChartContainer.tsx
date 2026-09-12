@@ -296,7 +296,10 @@ export interface ChartContainerProps {
    * (`'Europe/Berlin'`, `'Australia/Sydney'`, …) names one. A trading
    * {@link calendar} that carries a `timeZone` (a `@pond-ts/financial`
    * `TradingCalendar.fromRules`) supplies the default, so a NYSE chart reads
-   * New York time wherever it is viewed; an explicit prop still wins.
+   * New York time wherever it is viewed; an explicit prop still wins. The
+   * calendar's zone is used even when a low-level {@link discontinuities}
+   * provider overrides its gap topology — the calendar still says which
+   * exchange this is.
    *
    * Pair it with the aggregate that produced the data — the same primitive
    * (`TimeZone`) places these ticks and cuts `Sequence.calendar` buckets, so
@@ -2362,6 +2365,7 @@ function ResolvedChartContainer({
       formatTime,
       formatReadout,
       timeZone,
+      timeFormat,
       xFormatCustom: timeFormat !== undefined,
       xReadoutCustom: cursorFormat !== undefined,
       xTickCount,

@@ -1,10 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { TimeSeries } from 'pond-ts';
+import { Sequence, TimeSeries } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { CrosshairCursor } from './cursors.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
+import { BarChart } from './BarChart.js';
+import { XAxis } from './XAxis.js';
 import { TimeAxis } from './TimeAxis.js';
 import { YAxis } from './YAxis.js';
 import { identityProvider } from './tradingTimeScale.js';
@@ -34,9 +36,16 @@ function week(): TimeSeries<typeof schema> {
   const rows: Array<[number, number]> = [];
   for (let i = 0; i < 8 * 24; i++) {
     const hourOfDay = i % 24;
+    // A daily curve whose amplitude drifts day to day, so daily totals differ
+    // and a bar per day reads as data rather than a flat row.
+    const day = Math.floor(i / 24);
+    const amplitude = 30 * (1 + 0.35 * Math.sin(day * 1.3));
     rows.push([
       start + i * HOUR,
-      40 + 30 * Math.sin(((hourOfDay - 6) / 24) * 2 * Math.PI) + (i % 5),
+      40 +
+        amplitude * Math.sin(((hourOfDay - 6) / 24) * 2 * Math.PI) +
+        (i % 5) +
+        6 * day * 0.5,
     ]);
   }
   return new TimeSeries({ name: 'load', schema, rows });
@@ -83,12 +92,27 @@ function Chart({
   );
 }
 
+const ZONES = [
+  'UTC',
+  'America/New_York',
+  'America/Los_Angeles',
+  'Europe/Berlin',
+  'Asia/Kolkata',
+  'Asia/Tokyo',
+  'Australia/Sydney',
+  'Australia/Lord_Howe',
+  'Pacific/Apia',
+] as const;
+
 const meta = {
   title: 'Axes/TimeAxis/TimeZone',
   parameters: { layout: 'centered' },
-} satisfies Meta;
+  argTypes: {
+    timeZone: { control: 'select', options: ZONES },
+  },
+} satisfies Meta<{ timeZone: string }>;
 export default meta;
-type Story = StoryObj;
+type Story = StoryObj<{ timeZone: string }>;
 
 /** No `timeZone`: the viewer's zone, as every chart rendered before the prop. */
 export const Local: Story = { render: () => <Chart /> };
@@ -177,4 +201,71 @@ export const AbbreviationInFormat: Story = {
       <TimeAxis />
     </ChartContainer>
   ),
+};
+
+/** Change the zone in the controls panel: ticks move to the new zone's
+ *  midnights and every label re-reads, on the same data and pixel mapping. */
+export const PickAZone: Story = {
+  args: { timeZone: 'Europe/Berlin' },
+  render: ({ timeZone }) => <Chart timeZone={timeZone} cursor />,
+};
+
+/** Two strips, two zones on one shared mapping: the container's zone (UTC)
+ *  below the plot, a second `<XAxis timeZone>` above it in New York time.
+ *  Same instants, different calendars — the top strip's day turns sit at New
+ *  York midnight, the bottom strip's at 00:00Z. */
+export const DualZones: Story = {
+  render: () => (
+    <ChartContainer
+      range={dayRange}
+      width={WIDTH}
+      showAxis={false}
+      grid
+      timeZone="UTC"
+    >
+      <XAxis side="top" timeZone="America/New_York" label="New York" />
+      <ChartRow height={220}>
+        <YAxis id="y" label="load" />
+        <Layers>
+          <LineChart series={series} column="load" />
+        </Layers>
+      </ChartRow>
+      <XAxis label="UTC" />
+    </ChartContainer>
+  ),
+};
+
+/**
+ * Aggregate, then chart, in one zone: the hourly series rolled up to
+ * **calendar days** with `Sequence.calendar('day', { timeZone })` and drawn as
+ * bars in a container given the same zone. Each bar spans exactly one day tick
+ * to the next — including the 23 h spring-forward day in a DST zone — because
+ * the same primitive cuts the buckets and places the ticks. Pick another zone
+ * in the controls panel and both move together.
+ */
+export const DailyBucketsInZone: Story = {
+  args: { timeZone: 'America/New_York' },
+  render: ({ timeZone }) => {
+    const daily = series.aggregate(Sequence.calendar('day', { timeZone }), {
+      load: 'sum',
+    });
+    return (
+      <ChartContainer
+        range={range}
+        width={WIDTH}
+        showAxis={false}
+        grid
+        timeZone={timeZone}
+      >
+        <ChartRow height={220}>
+          <YAxis id="y" label="load / day" min={0} />
+          <Layers>
+            <BarChart series={daily} column="load" gap={3} />
+            <CrosshairCursor />
+          </Layers>
+        </ChartRow>
+        <TimeAxis dateStyle="stacked" />
+      </ChartContainer>
+    );
+  },
 };

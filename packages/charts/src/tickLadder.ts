@@ -133,6 +133,15 @@ export interface TickCalendar {
    * Always `>= t`.
    */
   nextAligned(t: number, stepMs: number): number;
+  /**
+   * The anchor after an aligned anchor `t` at `stepMs`. The local calendar
+   * steps `t + stepMs` — fixed elapsed milliseconds, the pre-seam loop
+   * verbatim, which is what keeps a session that spans a DST midnight (a
+   * futures 18:00 → 17:00 session) ticking exactly as it did. A zoned
+   * calendar re-aligns through {@link nextAligned} so the anchors stay on
+   * the wall clock across the jump.
+   */
+  nextAnchor(t: number, stepMs: number): number;
 }
 
 /** The runtime-local calendar — `Date`'s local accessors, exactly as the
@@ -167,6 +176,7 @@ export const localTickCalendar: TickCalendar = {
     ).getTime();
     return midnight + Math.ceil((t - midnight) / stepMs) * stepMs;
   },
+  nextAnchor: (t, stepMs) => t + stepMs,
 };
 
 /** A {@link TickCalendar} for an IANA zone, on core's `TimeZone`. */
@@ -191,7 +201,11 @@ export function zonedTickCalendar(zone: TimeZone): TickCalendar {
       Math.round(
         (monthStart(year, month + 1) - monthStart(year, month)) / DAY_MS,
       ),
-    nextAligned: (t, stepMs) => {
+    nextAligned: zonedNextAligned,
+    nextAnchor: (t, stepMs) => zonedNextAligned(t + 1, stepMs),
+  };
+  function zonedNextAligned(t: number, stepMs: number): number {
+    {
       const p = zone.parts(t);
       const sinceMidnight =
         ((p.hour * 60 + p.minute) * 60 + p.second) * 1000 + p.millisecond;
@@ -216,8 +230,8 @@ export function zonedTickCalendar(zone: TimeZone): TickCalendar {
         });
         if (at >= t) return at;
       }
-    },
-  };
+    }
+  }
 }
 
 /** Resolve an optional IANA id to the calendar the ladder should use: the
@@ -695,14 +709,13 @@ function stepAnchors(
     const open = opens[i]!;
     const end = i + 1 < opens.length ? opens[i + 1]! : domainEnd;
     out.push(open);
-    // Each next anchor is re-aligned through the calendar rather than
-    // `t += stepMs`: identical for the local calendar (an aligned `t` steps
-    // to `t + stepMs`), and what lets a zoned calendar stay on the wall clock
-    // across a DST jump.
+    // Stepping is the calendar's: local is `t + stepMs` (the pre-seam loop,
+    // so a session spanning a DST midnight ticks exactly as before), zoned
+    // re-aligns each anchor to the wall clock across a DST jump.
     for (
       let t = cal.nextAligned(open + 1, stepMs);
       t < end;
-      t = cal.nextAligned(t + 1, stepMs)
+      t = cal.nextAnchor(t, stepMs)
     ) {
       if (provider.offset(open, provider.distance(open, t)) === t) {
         out.push(t);

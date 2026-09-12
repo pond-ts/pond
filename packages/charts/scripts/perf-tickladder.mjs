@@ -54,7 +54,11 @@ function time(makeScale, repeats = 7) {
 
 const start = Date.UTC(2020, 0, 1);
 const results = [];
-for (const days of [30, 365, 3650]) {
+// One never-touched zone per domain row for the cold measurement: TimeZone
+// interns by id, so a zone reused across rows would be warm from the second
+// row on. Each is a DST zone (a transition cache to build).
+const COLD_ZONES = ['America/Denver', 'America/Chicago', 'America/Halifax'];
+[30, 365, 3650].forEach((days, i) => {
   const domain = [start, start + days * DAY];
   const row = { domainDays: days };
   const make = (timeZone) => () =>
@@ -62,23 +66,23 @@ for (const days of [30, 365, 3650]) {
       .domain(domain)
       .range([0, WIDTH]);
   row['local (pre-seam path) ms'] = time(make(undefined));
-  // Cold: the zone's transition cache has not seen this domain. TimeZone
-  // interns by id, so use a zone nothing else in this process touched.
-  const cold = make('America/Denver');
-  const s = cold();
+  // Cold: includes `TimeZone.of` (inside `scaleTradingTime`) and every
+  // transition discovery the domain needs.
+  const coldZone = COLD_ZONES[i];
   const t0 = performance.now();
+  const s = make(coldZone)();
   s.ticks(COUNT);
   s.flatFormat(COUNT);
   s.gridLevels(4);
   s.bands(COUNT);
-  row['zoned cold first frame ms'] = Number(
+  row[`zoned cold first frame (${coldZone}) ms`] = Number(
     (performance.now() - t0).toFixed(3),
   );
-  row['zoned warm (America/Denver) ms'] = time(cold);
+  row['zoned warm (America/New_York) ms'] = time(make('America/New_York'));
   row['zoned warm (UTC) ms'] = time(make('UTC'));
   row['zoned warm (Australia/Lord_Howe) ms'] = time(
     make('Australia/Lord_Howe'),
   );
   results.push(row);
-}
+});
 console.log(JSON.stringify(results, null, 2));

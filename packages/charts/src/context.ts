@@ -314,6 +314,12 @@ export interface ContainerFrame {
    * read the same zone the ticks do.
    */
   readonly timeZone: string | undefined;
+  /**
+   * The container's raw `timeFormat` prop, for a strip that must re-resolve it
+   * in another zone (`<XAxis timeZone>`): a specifier string is re-resolved
+   * against that strip's zoned scale, a function is used verbatim.
+   */
+  readonly timeFormat: AxisFormat | undefined;
   /** Whether an explicit container `timeFormat` shaped {@link formatTime}. The
    *  x axis suppresses its boundary (second) label row when it's set — a
    *  custom format owns the whole label, so the ladder mustn't second-line it. */

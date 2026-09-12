@@ -25,7 +25,7 @@ import {
 } from './tickLadder.js';
 
 /** Zone options shared by {@link scaleTradingTime} and {@link identityProvider}. */
-export interface TimeZoneOptions {
+export interface ScaleTimeZoneOptions {
   /**
    * The IANA zone the axis's calendar runs in — ticks on that zone's
    * midnights / Mondays / month starts, labels and readouts reading in it.
@@ -42,13 +42,19 @@ export interface TimeZoneOptions {
  * **civil-shifted** date — the instant moved by the zone's offset and then
  * read in UTC — so every `%Y %m %d %H %M %S %a %b %p …` directive reads in the
  * zone for free; `%Z` / `%z`, which the shift would render `UTC` / `+0000`,
- * are substituted per instant from the zone itself.
+ * are substituted per instant from the zone itself. The two directives that
+ * print the *instant* rather than a wall-clock field — `%s` (epoch seconds)
+ * and `%Q` (epoch ms) — read the shifted instant, i.e. offset by the zone;
+ * they have no meaning on a zoned axis.
  */
 function zonedFormatter(
   zone: TimeZone,
   specifier: string,
 ): (date: Date) => string {
-  const hasZoneName = /%[Zz]/.test(specifier);
+  // Tokenise so an escaped percent (`%%`) is never read as the start of a
+  // directive: `'%%Z'` is a literal `%Z`, not the zone name.
+  const tokens = specifier.match(/%%|%[Zz]|[^%]+|%/g) ?? [];
+  const hasZoneName = tokens.some((tok) => tok === '%Z' || tok === '%z');
   if (!hasZoneName) {
     const f = utcFormat(specifier);
     return (d) => {
@@ -64,10 +70,15 @@ function zonedFormatter(
     const abs = Math.abs(offset) / 60_000;
     const hh = String(Math.floor(abs / 60)).padStart(2, '0');
     const mm = String(abs % 60).padStart(2, '0');
-    // `%%` escapes a literal percent inside a d3 specifier.
-    const resolved = specifier
-      .replace(/%Z/g, zone.abbreviation(t).replace(/%/g, '%%'))
-      .replace(/%z/g, `${sign}${hh}${mm}`);
+    const resolved = tokens
+      .map((tok) =>
+        tok === '%Z'
+          ? zone.abbreviation(t).replace(/%/g, '%%')
+          : tok === '%z'
+            ? `${sign}${hh}${mm}`
+            : tok,
+      )
+      .join('');
     let f = cache.get(resolved);
     if (f === undefined) {
       f = utcFormat(resolved);
@@ -107,6 +118,15 @@ export interface DiscontinuityProvider {
    * `TradingCalendar.discontinuities()` provider supplies it.)
    */
   boundaries?(from: number, to: number): number[];
+  /**
+   * Optional: the same provider with its calendar in another zone. Only a
+   * provider whose gap topology *depends* on a zone needs it — the identity
+   * provider, whose "sessions" are calendar days and therefore move with the
+   * zone; a trading calendar's session opens are instants and do not. Used by
+   * {@link TradingTimeScale.withTimeZone} so a second `<XAxis timeZone>` can
+   * re-derive its day anchors in its own zone.
+   */
+  withTimeZone?(timeZone: string | undefined): DiscontinuityProvider;
 }
 
 /**
@@ -286,6 +306,18 @@ export interface TradingTimeScale {
   range(): [number, number];
   range(next: readonly [number, number]): TradingTimeScale;
   copy(): TradingTimeScale;
+  /**
+   * The same pixel mapping (provider, domain, range) with its **calendar in
+   * another zone** — `undefined` for runtime-local. The scale's own zone is
+   * unchanged; this is how a second `<XAxis timeZone>` strip ticks and labels
+   * in its own zone over the container's shared x mapping. A provider that
+   * exposes {@link DiscontinuityProvider.withTimeZone} re-derives its day
+   * anchors; any other keeps its instants (a trading calendar's session opens
+   * are zone-independent).
+   */
+  withTimeZone(timeZone: string | undefined): TradingTimeScale;
+  /** The IANA zone this scale's calendar runs in; `undefined` = runtime-local. */
+  timeZone(): string | undefined;
 }
 
 // Grain selection lives in `tickLadder.ts` (the full hour1…year ladder plus
@@ -304,7 +336,7 @@ export type { TickGranularity, TimeGrain } from './tickLadder.js';
  * default.
  */
 export function identityProvider(
-  options: TimeZoneOptions = {},
+  options: ScaleTimeZoneOptions = {},
 ): DiscontinuityProvider {
   const cal = tickCalendarFor(options.timeZone);
   const self: DiscontinuityProvider = {
@@ -313,6 +345,7 @@ export function identityProvider(
     distance: (from, to) => to - from,
     offset: (v, amount) => v + amount,
     copy: () => self,
+    withTimeZone: (timeZone) => identityProvider({ timeZone }),
     boundaries: (from, to) => {
       const out: number[] = [];
       // First midnight (in the zone) strictly after `from`; step by calendar
@@ -334,7 +367,7 @@ export function identityProvider(
  */
 export function scaleTradingTime(
   provider: DiscontinuityProvider,
-  options: TimeZoneOptions = {},
+  options: ScaleTimeZoneOptions = {},
 ): TradingTimeScale {
   let domain: [number, number] = [0, 1];
   let range: [number, number] = [0, 1];
@@ -662,6 +695,15 @@ export function scaleTradingTime(
 
   scale.copy = (): TradingTimeScale =>
     scaleTradingTime(provider.copy(), options).domain(domain).range(range);
+
+  scale.withTimeZone = (timeZone): TradingTimeScale =>
+    scaleTradingTime(provider.withTimeZone?.(timeZone) ?? provider.copy(), {
+      timeZone,
+    })
+      .domain(domain)
+      .range(range);
+
+  scale.timeZone = () => zone?.id;
 
   return scale;
 }

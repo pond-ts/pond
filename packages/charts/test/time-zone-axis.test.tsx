@@ -5,6 +5,7 @@ import { ChartContainer } from '../src/ChartContainer.js';
 import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { LineChart } from '../src/LineChart.js';
+import { BarChart } from '../src/BarChart.js';
 import { XAxis } from '../src/XAxis.js';
 import { identityProvider, scaleTradingTime } from '../src/tradingTimeScale.js';
 import {
@@ -186,9 +187,14 @@ describe('scaleTradingTime({ timeZone }) — ticks, labels, readouts in the zone
     expect(f(new Date(winter))).toBe(
       `11:00 ${ny.abbreviation(winter)} (-0500)`,
     );
-    // A literal percent survives the substitution.
+    // A literal percent survives the substitution, and an escaped `%%Z` is
+    // the two characters `%Z`, not the zone name.
     expect(s.tickFormat(6, '%H%% %Z')(new Date(summer))).toBe(
       `12% ${ny.abbreviation(summer)}`,
+    );
+    expect(s.tickFormat(6, '%H %%Z %%z')(new Date(summer))).toBe('12 %Z %z');
+    expect(s.tickFormat(6, '%%%Z')(new Date(summer))).toBe(
+      `%${ny.abbreviation(summer)}`,
     );
   });
 
@@ -239,6 +245,99 @@ describe('scaleTradingTime({ timeZone }) — ticks, labels, readouts in the zone
     expect(() =>
       scaleTradingTime(identityProvider(), { timeZone: 'Nowhere/City' }),
     ).toThrow(RangeError);
+  });
+});
+
+describe('the local default path is the pre-seam code', () => {
+  it('sub-day anchors of a session spanning a local DST midnight step fixed ms, as before', () => {
+    // Review finding on #732: `stepAnchors` must keep `t + step` stepping for
+    // the local calendar, so a futures-style session that crosses a DST
+    // midnight ticks exactly as it did before the seam. Reference: the
+    // pre-seam loop, reimplemented here with local Date arithmetic — fixed
+    // ms from the session open's own local midnight, `t += step`. Runs on
+    // whatever zone the runner is in; on a DST zone the session below
+    // straddles a transition, on UTC it is a plain equivalence check.
+    const localMidnight = (t: number) => {
+      const d = new Date(t);
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    };
+    const oldAnchors = (open: number, end: number, step: number) => {
+      const out = [open];
+      const m = localMidnight(open + 1);
+      for (
+        let t = m + Math.ceil((open + 1 - m) / step) * step;
+        t < end;
+        t += step
+      ) {
+        out.push(t);
+      }
+      return out;
+    };
+    // Sessions opening 18:00 local and running 47 h, one per week across
+    // the year: every DST transition of the runner's zone is crossed by one.
+    for (let week = 0; week < 52; week += 1) {
+      const d = new Date(2025, 0, 4 + week * 7, 18); // local 18:00
+      const open = d.getTime();
+      const end = open + 47 * HOUR;
+      const provider = {
+        clampUp: (t: number) => t,
+        clampDown: (t: number) => t,
+        distance: (a: number, b: number) => b - a,
+        offset: (v: number, amt: number) => v + amt,
+        copy() {
+          return this;
+        },
+        boundaries: () => [] as number[],
+      };
+      // The ladder picks the finest clock rung with `1 + floor(47h / step)`
+      // anchors under the cap: 17 → 3 h (16 fit; 1 h would need 48), 9 → 6 h,
+      // 5 → 12 h.
+      for (const [cap, step] of [
+        [17, 3 * HOUR],
+        [9, 6 * HOUR],
+        [5, 12 * HOUR],
+      ] as const) {
+        const s = scaleTradingTime(provider)
+          .domain([open, end])
+          .range([0, 4000]);
+        const ticks = s.ticks(cap);
+        expect(s.grain(cap)).toBe('hour');
+        // The ladder may drop the window-edge open and a cramped lead; compare
+        // the interior anchors, which must be exactly the old sequence.
+        const expected = oldAnchors(open, end, step).filter(
+          (t) => t > open + step / 2,
+        );
+        const got = ticks.filter((t) => t > open + step / 2);
+        expect(got, `week ${week} step ${step / HOUR}h`).toEqual(expected);
+      }
+    }
+  });
+});
+
+describe('scale.withTimeZone — one mapping, another calendar', () => {
+  it('keeps the pixel mapping and re-derives ticks and labels in the new zone', () => {
+    const start = Date.UTC(2025, 5, 2);
+    const utc = scaleTradingTime(identityProvider({ timeZone: 'UTC' }), {
+      timeZone: 'UTC',
+    })
+      .domain([start, start + 3 * DAY])
+      .range([0, 900]);
+    const tokyo = utc.withTimeZone('Asia/Tokyo');
+    expect(tokyo.timeZone()).toBe('Asia/Tokyo');
+    expect(utc.timeZone()).toBe('UTC');
+    for (const t of [start, start + 5 * HOUR, start + 2.5 * DAY]) {
+      expect(tokyo(t)).toBe(utc(t));
+      expect(tokyo.invert(utc(t))).toBe(t);
+    }
+    const jst = TimeZone.of('Asia/Tokyo');
+    const utcTicks = utc.ticks(6);
+    const tokyoTicks = tokyo.ticks(6);
+    expect(tokyoTicks).not.toEqual(utcTicks);
+    for (const t of tokyoTicks) expect(t).toBe(jst.startOf('day', t));
+    for (const t of utcTicks) expect(t % DAY).toBe(0);
+    expect(tokyo.tickFormat(6, '%H:%M')(new Date(start))).toBe('09:00');
+    // `undefined` goes back to the runtime-local calendar.
+    expect(tokyo.withTimeZone(undefined).timeZone()).toBeUndefined();
   });
 });
 
@@ -309,6 +408,129 @@ describe('<ChartContainer timeZone> — the prop and the calendar default', () =
     // The explicit prop overrides the calendar: 12:00 Tokyo is 03:00 UTC.
     const overridden = renderWith('UTC');
     expect(overridden.getAllByText('03:00').length).toBeGreaterThan(0);
+  });
+
+  it('two strips, two zones: <XAxis timeZone> renders its own zone over the shared mapping', () => {
+    const start = Date.UTC(2025, 5, 2);
+    const { getAllByText } = render(
+      <ChartContainer
+        range={[start + 2 * HOUR, start + 18 * HOUR]}
+        width={800}
+        showAxis={false}
+        timeZone="UTC"
+      >
+        <XAxis side="top" timeZone="Asia/Tokyo" label="Tokyo" />
+        <ChartRow height={120}>
+          <Layers>
+            <LineChart series={series(start, 24)} column="v" />
+          </Layers>
+        </ChartRow>
+        <XAxis label="UTC" />
+      </ChartContainer>,
+    );
+    // The same instant, 03:00Z, reads 12:00 on the Tokyo strip and 03:00 on
+    // the UTC one; both strips are present at once.
+    expect(getAllByText('12:00').length).toBeGreaterThan(0);
+    expect(getAllByText('03:00').length).toBeGreaterThan(0);
+    expect(getAllByText('Tokyo').length).toBe(1);
+    expect(getAllByText('UTC').length).toBe(1);
+  });
+
+  it('a zone change on rerender relabels the axis', () => {
+    const start = Date.UTC(2025, 5, 2);
+    const chart = (timeZone: string) => (
+      <ChartContainer
+        range={[start + 2 * HOUR, start + 18 * HOUR]}
+        width={800}
+        showAxis={false}
+        timeZone={timeZone}
+      >
+        <ChartRow height={120}>
+          <Layers>
+            <LineChart series={series(start, 24)} column="v" />
+          </Layers>
+        </ChartRow>
+        <XAxis />
+      </ChartContainer>
+    );
+    // The rendered tick labels as a set; each zone's set must differ from
+    // the last, carry a label that is only right in that zone (03:00Z reads
+    // `03:00` in UTC; 15:30Z reads `21:00` in Kolkata; Tokyo's midnight at
+    // 15:00Z is the day turn `Jun 3`), and switching back restores the
+    // original set exactly.
+    const labels = (c: HTMLElement) =>
+      new Set(
+        Array.from(c.querySelectorAll('*'))
+          .filter((el) => el.children.length === 0)
+          .map((t) => t.textContent ?? '')
+          .filter((t) => /^\d{2}:\d{2}$|^[A-Z][a-z]{2} \d{1,2}$/.test(t)),
+      );
+    const { rerender, container } = render(chart('UTC'));
+    const utc = labels(container);
+    expect(utc.has('03:00')).toBe(true);
+    rerender(chart('Asia/Kolkata'));
+    const kolkata = labels(container);
+    expect(kolkata.has('21:00')).toBe(true);
+    expect(kolkata).not.toEqual(utc);
+    rerender(chart('Asia/Tokyo'));
+    const tokyo = labels(container);
+    expect(tokyo.has('Jun 3')).toBe(true);
+    expect(tokyo).not.toEqual(kolkata);
+    rerender(chart('UTC'));
+    expect(labels(container)).toEqual(utc);
+  });
+
+  it("daily buckets cut in a zone sit exactly between that zone's day ticks", () => {
+    // Hourly data across the New York spring-forward, aggregated to calendar
+    // days in New York and drawn as bars in a New York axis: every bucket
+    // edge is a day tick, including the 23 h day.
+    const ny = TimeZone.of('America/New_York');
+    const start = ny.instant({ year: 2025, month: 3, day: 6 });
+    const hourly = series(start, 8 * 24);
+    const daily = hourly.aggregate(
+      Sequence.calendar('day', { timeZone: 'America/New_York' }),
+      { v: 'sum' },
+    );
+    // 192 hourly points from Mar 6 00:00: the 23 h spring-forward day means
+    // they reach 01:00 on Mar 14 — a ninth (partial) New York day.
+    expect(daily.length).toBe(9);
+    const edges = new Set<number>();
+    for (const e of daily.events) {
+      const k = e.key() as { begin(): number; end(): number };
+      edges.add(k.begin());
+      edges.add(k.end());
+      expect(k.begin()).toBe(ny.startOf('day', k.begin()));
+    }
+    const s = scaleTradingTime(identityProvider({ timeZone: ny.id }), {
+      timeZone: ny.id,
+    })
+      .domain([start, start + 8 * DAY])
+      .range([0, 900]);
+    for (const t of s.ticks(9)) expect(edges.has(t)).toBe(true);
+    // The 23 h bucket is there, and it is Mar 9.
+    const short = daily.events.find((e) => {
+      const k = e.key() as { begin(): number; end(): number };
+      return k.end() - k.begin() === 23 * HOUR;
+    });
+    expect(short).toBeDefined();
+    expect(ny.parts((short!.key() as { begin(): number }).begin()).day).toBe(9);
+    // And the chart renders the bars in that zone without complaint.
+    const { getAllByText } = render(
+      <ChartContainer
+        range={[start, start + 8 * DAY - HOUR]}
+        width={900}
+        showAxis={false}
+        timeZone="America/New_York"
+      >
+        <ChartRow height={120}>
+          <Layers>
+            <BarChart series={daily} column="v" gap={2} />
+          </Layers>
+        </ChartRow>
+        <XAxis />
+      </ChartContainer>,
+    );
+    expect(getAllByText('9').length).toBeGreaterThan(0); // Mar 9, the 23 h day
   });
 
   it('throws a RangeError naming an unknown zone', () => {

@@ -85,14 +85,27 @@ include new features and type-level changes; patch bumps are strictly additive.
   chart context as `timeZone`. Built on core's `TimeZone` ([PND-TZCAL]), so a
   `Sequence.calendar('day', { timeZone })` bucket edge and the tick that
   labels it are one instant — pinned by a cross-package test.
+- **`<XAxis timeZone>` — a second strip in another zone.** Two time axes
+  over one shared mapping, each ticking and labelling (and pilling) in its
+  own zone: `<XAxis side="top" timeZone="America/New_York" />` above a
+  UTC container's own strip below. Backed by
+  `TradingTimeScale.withTimeZone(zone)` / `.timeZone()` and an optional
+  `DiscontinuityProvider.withTimeZone` (the identity provider re-derives its
+  day anchors; a trading calendar's session opens are zone-independent).
 - **`TradingCalendarLike.timeZone?`** — a calendar that carries its exchange
   zone supplies the axis default (`calendar={cal}` renders in exchange time
   wherever it is viewed); an explicit `timeZone` prop wins.
 - `scaleTradingTime(provider, { timeZone })` and
   `identityProvider({ timeZone })` take the zone directly for consumers
-  building the scale themselves; the tick ladder's calendar helpers take an
-  optional `TickCalendar` (`localTickCalendar` — today's `Date` arithmetic,
-  the default — or `zonedTickCalendar(TimeZone)`).
+  building the scale themselves; `identityProvider`, `TradingCalendarLike`
+  and `ScaleTimeZoneOptions` are now exported. Internally the tick ladder
+  runs on a `TickCalendar` seam whose local implementation is the previous
+  `Date` arithmetic verbatim — the default path is unchanged.
+- **`TradingCalendar.timeZone` ([PND-TZFIN]).** `@pond-ts/financial`'s
+  calendar keeps the zone its sessions were resolved in — `fromRules` carries
+  `rules.timeZone`, `fromSessions(list, { timeZone })` takes it — so
+  `<ChartContainer calendar={cal}>` renders the axis in exchange time with no
+  further wiring.
 - `@pond-ts/charts` now depends on `d3-time-format` directly (it was already
   a transitive dependency via `d3-scale`).
 
