@@ -86,6 +86,7 @@
     "pond-ts": "^0.69.0"
   },
   "devDependencies": {
+    "@pond-ts/process": "^0.69.0",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"
   }
