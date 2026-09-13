@@ -1434,8 +1434,18 @@ pandas-oracle-verified) have shipped. Plan:
   `@pond-ts/financial/catalog` exports one `StudyDescriptor` per fluent
   method, shaped like process's `OpDef`; `defineStudy` checks each against
   its options interface at compile time and `test/catalog.test.ts` runs each
-  against its study. Seam landed; the six family files are being filled by a
-  builder wave and land as one PR. Breakout:
+  against its study. **Shipped complete in v0.67.0** (all 109 fluent
+  methods). The consumer adopted it the same day — its picker went 29 → 81
+  studies, and the `unit` rule caught a live bug (an RSI landing on the
+  volume axis). F-charts-27 (the catalog/process output-id "contradiction")
+  resolved in #736 with no code change: the two `id` fields are different
+  namespaces, now documented and pinned by a cross-package round-trip test.
+  **Left open only for the two undecided consumer asks** — F-charts-26
+  (no per-output _mark_: nothing says `macdHist` is a histogram, nothing
+  pairs `bbUpper`/`bbLower` as a band) and F-charts-28 (`nearest` on charts'
+  `TrackerSample`) — which are one question about how much rendering
+  semantics belongs in a data package. Close this task, or split those two
+  out, once that is decided. Breakout:
   `docs/plans/PND_FINANCIAL_PLAN.md`.
 - **[PND-TCAL]** — Trading-time deferred items: point-key slot widths on the
   discontinuous axis, overnight sessions in `fromRules`. (Exchange-tz tick
