@@ -619,10 +619,13 @@ To cut a release from `main`:
 1. Bump the `version` field in **every** `packages/*/package.json`. Keep
    them lock-step — the release tag covers the whole monorepo.
 2. **Widen every inter-package range to the new minor** — on a minor bump this
-   is not optional, and it is easy to miss. The cross-package references are
-   **`peerDependencies`** (not `dependencies`) and they live in **five**
+   is not optional, and it is easy to miss. Most cross-package references are
+   **`peerDependencies`** (not `dependencies`), and they live in **five**
    manifests: `react`, `charts`, `fit`, `financial`, `process` all peer on
-   `pond-ts`, and `charts` additionally peers on `@pond-ts/react`. Sweep with:
+   `pond-ts`, and `charts` additionally peers on `@pond-ts/react`. There is
+   also one **`devDependency`** — `financial` on `@pond-ts/process`, for the
+   catalog's cross-package round-trip test — so do not sweep by field name.
+   The grep below is by range and catches every kind:
 
    ```
    grep -n '"\^0\.<previous-minor>' packages/*/package.json

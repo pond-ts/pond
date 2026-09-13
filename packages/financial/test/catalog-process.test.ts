@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { bind, createRegistry, run } from '@pond-ts/process';
-import type { OutputDef } from '@pond-ts/process';
+import type { OpContext, OpDef, OutputDef, Registry } from '@pond-ts/process';
 import { STUDIES } from '../src/catalog/index.js';
 import type { StudyDescriptor, StudyOutput } from '../src/catalog/index.js';
 import {
@@ -44,8 +44,16 @@ function outletId(d: StudyDescriptor, output: StudyOutput): string {
   return d.outputs.length > 1 && output.id === '' ? 'value' : output.id;
 }
 
-/** One `OpDef` per descriptor, bridged. */
-function toOpDef(d: StudyDescriptor) {
+/**
+ * One `OpDef` per descriptor, bridged.
+ *
+ * Annotated as `OpDef` rather than handed to `define` through a cast: the
+ * point of this file is that the documented bridge is something a consumer
+ * can actually write, and a cast would prove only that `define`'s RUNTIME
+ * validation passes while hiding any type-level mismatch from the very
+ * reader following the doc.
+ */
+function toOpDef(d: StudyDescriptor): OpDef {
   return {
     name: d.name,
     family: d.family,
@@ -57,10 +65,7 @@ function toOpDef(d: StudyDescriptor) {
     outputs: d.outputs.map(
       (o): OutputDef => ({ id: outletId(d, o), unit: o.unit }),
     ),
-    run: (ctx: {
-      series: unknown;
-      inputs: Readonly<Record<string, string>>;
-    }) => {
+    run: (ctx: OpContext) => {
       const options: Record<string, unknown> = {
         ...minimalOptions(d),
         // The plan layer binds each input column under its role, so the
@@ -69,7 +74,7 @@ function toOpDef(d: StudyDescriptor) {
           d.inputs.map((i) => [i.role, ctx.inputs[i.role]]),
         ),
       };
-      const out = d.run(ctx.series as never, options) as never;
+      const out = d.run(ctx.series, options);
       const columns = expectedColumns(d).map((name) => columnValues(out, name));
       // `toColumns` unwraps a single-output return rather than indexing
       // it, so a one-output op hands back the column itself.
@@ -87,16 +92,29 @@ describe('the catalog registers into a @pond-ts/process registry', () => {
     // One registry, every study — `define` validates at call time, so a
     // descriptor process cannot express throws here rather than at a
     // consumer's module load.
-    let reg = createRegistry();
-    for (const d of STUDIES) reg = reg.define(toOpDef(d) as never);
+    // `define` is generic over a literal def to build a typed registry;
+    // this file builds one from 109 runtime values, so the accumulator is
+    // the untyped `Registry`. `toOpDef`'s own return is annotated, which
+    // is where the bridge's types are actually checked.
+    let reg: Registry = createRegistry();
+    for (const d of STUDIES) reg = reg.define(toOpDef(d));
 
-    // Asserted rather than left to the loop not throwing: every study is
-    // retrievable, under its own name, declaring one outlet per column.
-    const registry = reg as unknown as {
-      get(n: string): { outputs: readonly OutputDef[] };
-    };
+    // Asserted on what the registry HOLDS, not on what was handed to it:
+    // comparing the stored ids back to `d.outputs.length` would be true by
+    // construction and would pass under a broken bridge.
     for (const d of STUDIES) {
-      expect(registry.get(d.name).outputs.length).toBe(d.outputs.length);
+      const def = reg.get(d.name);
+      // `Def` is `OpDef | FoldDef`; narrowing here also pins that a study
+      // registers as a column-producing op and never as a fold.
+      if (!('outputs' in def))
+        throw new Error(`${d.name} registered as a fold`);
+      const stored: readonly OutputDef[] = def.outputs;
+      expect(stored.map((o) => o.id)).toEqual(
+        d.outputs.map((o) => outletId(d, o)),
+      );
+      // The invariant the guard enforces, restated positively: nothing
+      // multi-output reached the registry carrying a bare id.
+      if (stored.length > 1) expect(stored.map((o) => o.id)).not.toContain('');
     }
   });
 

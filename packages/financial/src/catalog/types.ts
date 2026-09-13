@@ -138,12 +138,17 @@ export interface StudyOutput {
    * studies that claim the bare prefix they are not merely free but
    * *forced*: process rejects `''` on a multi-output op, because there the
    * column would be named exactly the spec id, which is itself a legal
-   * column reference. Give those twelve a name — `'value'` is what
-   * process already calls a bare outlet — and leave every other suffix
-   * alone: `''` is legal on a **single**-output op, where the column *is*
-   * the spec id, so rewriting it there would rename all seventy-odd of
-   * them for nothing. The map is `outputs.length > 1 && id === ''`, not
-   * `id === ''`.
+   * column reference. Give those twelve a name, and leave every other
+   * suffix alone: `''` is legal on a **single**-output op, where the
+   * column *is* the spec id, so rewriting it there would rename all
+   * seventy-odd of them for nothing. The map is
+   * `outputs.length > 1 && id === ''`, not `id === ''`.
+   *
+   * `'value'` is the natural name to map to — it is what process's own
+   * `outletKey` calls a bare outlet — but it is a *choice*, not something
+   * process requires: any suffix legal on a multi-output op will do.
+   * Process emits no `value` column of its own accord; a bridge that
+   * picks this name is what produces `${specId}value`.
    *
    * `test/catalog-process.test.ts` pins that round trip, including the
    * rejection, so neither package can drift from it silently.
