@@ -2944,6 +2944,69 @@ per study that the studies do not yet make uniformly; a second pass once a
 consumer asks. Nine families are the assessment's §6 groups with `'price'`
 and `'session'` split out.
 
+**F-charts-27 — the catalog/process "contradiction", and why nothing moved**
+(landed 2026-09-13, #736). Tidal reported that registering the catalog into
+a `@pond-ts/process` registry throws at module load for the twelve
+multi-output studies claiming the bare prefix (`trix`, `superTrend`,
+`klinger`, `kst`, `rainbowOscillator`, `priceMomentumOscillator`,
+`stochasticMomentumIndex`, `fisherTransform`, `relativeVigorIndex`,
+`trueStrengthIndex`, `parabolicSar`, `atrTrailingStop`), and proposed either
+naming those primaries in the catalog or having `defineStudy` reject `''` at
+authoring time.
+
+**Both proposals were wrong, and the report's framing hid why.**
+`StudyOutput.id` is a _suffix_: the column is `${prefix}${id}`, so `trix`
+really does append a column named `trix` (verified by running the twelve).
+"Name the primary, as `macd` already does with `Line`" therefore means
+_rename twelve shipped studies' public output columns_ — a breaking change
+for every consumer of those studies, catalog or not, since the columns
+predate the catalog by several releases. That cost was not visible in the
+report.
+
+The third option — relaxing process's guard — was also rejected, after
+checking whether it is load-bearing. It is: `specId` is a structured string
+(`v1:trix(close;period=15)`), `columnsOf` names columns `specId + id`, and a
+raw string input to a spec _is_ a column name. A bare output on a
+multi-output op would emit a column named exactly a legal spec id. The guard
+earns its place.
+
+**What was actually true:** the two `id` fields are different namespaces
+sharing a name. Process names its own columns and `toColumns` matches an
+op's return to its declared outputs _positionally_, so a study's own column
+names never reach it. A bridge picks its own suffixes freely. Tidal's
+`Value` workaround was not a workaround but the correct bridge, arrived at
+by accident. Decision: change no code — document the bridge on
+`StudyOutput.id` and pin it with `test/catalog-process.test.ts`.
+
+Two things worth keeping:
+
+- **The narrow map.** `outputs.length > 1 && id === ''` → `'value'`, _not_
+  `id === ''`. The broad version (copying process's `outletKey`, which names
+  _outlets_, not columns) would rename all seventy-odd single-output
+  columns to `specIdvalue`. The first draft of the fix made exactly this
+  error and the new test caught it before the prose shipped — which is the
+  argument for writing the test before the doc.
+- **Why `catalog.test.ts` could not have caught this.** It validates a
+  descriptor against its own _study_, so it is structurally blind to a
+  disagreement with a different package. That blind spot is how F-charts-27
+  reached a consumer at all, and the cross-package round-trip is the thing
+  that closes it.
+
+**Considered and deferred: an exported adapter.** The bridge lives only in
+the test, so the next consumer hand-rolls three documented lines. Declined
+because there is one consumer and the package's design argument is that
+studies are a thin vocabulary over a small kernel — a new public export to
+save three lines inverts that. **Revisit when a second consumer needs it**;
+that is the trigger, not a general tidiness urge.
+
+**Still open from the same consumer**, both undecided by the owner:
+F-charts-26 (no per-output _mark_ — `macd`'s three outputs are all `delta`,
+so nothing says which is the histogram; and nothing pairs `bbUpper` with
+`bbLower` as a band) and F-charts-28 (`nearest: boolean` on charts'
+`TrackerSample`). Both are the same underlying question — how much
+_rendering_ semantics belongs in a data package — which is why they are
+worth deciding together rather than one at a time.
+
 ### [PND-BBFLAT] — `bollinger` on a flat window
 
 Tidal's F-charts-24: `bollinger` emits `undefined` for both bands when
