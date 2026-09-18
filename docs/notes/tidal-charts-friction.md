@@ -52,3 +52,111 @@ opt-in. Happy to test a canary build against the terminal. No rush; we've shippe
 around it, but it's the most visible rough edge left in the layout.
 
 — Tidal agent (on Peter's behalf)
+
+---
+
+## F-charts-11 — `@pond-ts/financial`: no pointwise column transform (only windowed studies)
+
+**Where.** Tidal's derive seam builds a realized-vol line from a daily variance
+column: `√(ccVar·252)·100` — a pure elementwise map, surfaced as a first-class
+catalog metric and composable under the corpus studies (an SMA over it smooths
+it; verified on live SpiderRock data).
+
+**Symptom.** `@pond-ts/financial` (0.48) exports only **windowed / statistical**
+studies — `sma`, `ema`, `bollinger`, `rollingStdev/Min/Max/Percentile`,
+`zScore`, `envelope`, `percentChange`. There's no pointwise `value → value`
+transform, and no `annualizedVol`/`realizedVol` domain op. Core's `withColumn`
+appends from an array, but there's no "new column as `f(existing column)`"
+helper — so the calc round-trips `toObjects()` → map → `withColumn`, and the
+annualization convention lives app-side instead of in the corpus.
+
+**Workaround (Tidal-side).** A local `realizedVol` op in our derive `OPS` map
+doing exactly that round-trip (gaps/negatives/overflow → `undefined`, so the
+packed column stays NaN-free). Works, but it's domain math the library could
+own.
+
+**Ask (either resolves it).**
+
+1. **`@pond-ts/financial`**: a pointwise `transform(series, { column, fn,
+   output })` — or the domain op directly, `annualizedVol({ column,
+   periodsPerYear, output })` — so realized-vol-from-variance lives beside the
+   studies it composes with.
+2. **core**: an ergonomic `TimeSeries.deriveColumn(source, fn, output)` (the
+   elementwise sibling of `withColumn`), and (1) becomes a one-liner anywhere.
+
+## F-charts-12 — BarChart: no per-bar (direction) coloring on the single-series vertical path
+
+**Where.** Direction-colored volume bars — green rise / red fall, the market
+convention Tidal's new settings dialog defaults bars *and* candles to.
+`<Candlestick colorBy='direction'>` already does this natively; bars can't.
+
+**Symptom.** A single-series vertical `<BarChart series column>` draws every bar
+in ONE fill (`theme.bar[as].fill`). The two existing color inputs don't reach
+it: `colors` is per-**group** (stacks), and `binColors`/`binFills` is honored
+only in the stacked/oriented draw path (`drawOriented`) — the single-series
+vertical `drawBars` reads `style.fill` alone. A stacked workaround (two groups,
+one zero per bin) paints correctly but **loses the crosshair readout**, since
+`sampleAt` is single-series-vertical only.
+
+**Workaround (Tidal-side).** Split the aggregated column into `<col>__up` /
+`<col>__dn` halves (direction = the window's `close >= open` from an
+`ohlcWindow` roll-up over the same bucket grid; value-vs-previous for non-OHLC)
+and draw two single-series layers — rise under the series id, fall under
+`<id>__down` with its own theme fill. Pixel-identical and keeps `sampleAt`, but
+costs an extra layer + two derived columns per split bar, and the `__down`
+tracker label leaks into the host (suffix-normalized there).
+
+**Ask (best-first).**
+
+1. Honor **`binColors`** on the single-series vertical path (indexed by bar
+   order, exactly as the oriented path already does) — smallest change, fully
+   general.
+2. Or a **`colorBy`** on `BarChart` mirroring `<Candlestick colorBy>` —
+   `'direction'` (from OHLC context or sign-of-delta) / a `(row) => color`
+   callback. Either collapses our two-layer workaround back to one declaration.
+
+> **Thank you for F-charts-12** — `binColors` on the single-series vertical path
+> (#542) is exactly ask (1), and it collapses our two-layer `__up`/`__dn` split-bar
+> workaround back to one `<BarChart>`. We'll adopt it on the next charts bump.
+
+## F-charts-13 — `<Layers>` z-index injection is silently lost through a Fragment
+
+**Severity:** low — a **DX / observability** ask, not a library defect. Our bug to
+own; the friction is that it's invisible.
+
+**Where.** We added user-controlled draw order (a layers panel: reorder metrics
+front/back, move them between rows). Reordering changed our list but **nothing on
+the canvas**.
+
+**Why.** `<Layers>` z-orders by declaration position, injected as a prop:
+`Children.map(children, (child, index) => cloneElement(child, { index }))`. Our
+per-series render helper returned `<Fragment key={id}>{primary}{cmp}</Fragment>`
+(grouping a series with its dashed compare counterpart) — so the **Fragment**
+received `index` and the draw layers inside never did. Every layer kept its
+default index, and z-order followed **mount order** instead of JSX order. It had
+been wrong since our first multi-series chart; nothing surfaced it until order
+became user-facing.
+
+The docblock does say *"Draw layers must be direct children of `<Layers>` for the
+index to reach them"* — so this is documented behaviour, correctly. The problem is
+purely that violating it **fails silently**: charts render normally, z-order is
+just inert. Diagnosing it took reading `Layers.js`.
+
+**Our fix.** The layer builder returns a **flat array** of keyed elements
+(`ReactNode[]`, rendered with `flatMap`) — arrays are flattened by `Children.map`,
+so each layer stays a direct child with its own z slot. Locked with an e2e that
+reorders and asserts the canvas repaints (verified to fail on the Fragment
+version).
+
+**Ask — any one is cheap, in preference order.**
+
+1. **Dev-only warning** when `cloneElement` targets something that isn't a draw
+   layer (a Fragment, a wrapper component): *"a draw layer must be a direct child
+   of `<Layers>`; a Fragment swallows its z index"*. Turns a silent
+   mis-render into a one-line diagnosis.
+2. **Descend through Fragments** when injecting, so grouping is free and the
+   constraint disappears.
+3. **An explicit `zIndex` / `order` prop** on the draw layers, making z independent
+   of JSX position. Best fit for a consumer that owns order as *data* (ours lives
+   in a state machine and is user-reorderable) — it would also let us drop the
+   render-time `reverse()` we now do to map "first in list" → "painted last".
