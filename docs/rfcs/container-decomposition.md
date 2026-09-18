@@ -1,6 +1,12 @@
 # Container Decomposition — `<Domain>`, and where chart props actually live
 
-**Status:** planning note. Nothing here is committed.
+**Status:** planning note. **Reviewed and DECLINED, 2026-08-13** — see the
+Codex adversarial review and author response at the end. The §4 partition,
+this RFC's main evidence, was overstated by 46%: 7 props are already
+deprecated (§4 said 2) and `snap` was mis-filed. `<Domain>` is not
+recommended. The two local fixes it sought to obviate — `xAxis="auto"` and
+row-scoping the annotation-editing query — should be built instead. §1-§11
+stand unedited as the record of the argument.
 
 **Relationship to PLAN.md:** This RFC is strategic context, not a
 commitment. [PLAN.md](../../PLAN.md) is the binding source of truth for what
@@ -23,6 +29,8 @@ attribution; this table is the index for cold readers.
 | §8 What it costs                                     | pond-ts library agent (Claude) |
 | §9 The cheap alternative                             | pjm17971 (framing) + Claude    |
 | §10 Open questions / §11 Non-goals                   | pond-ts library agent (Claude) |
+| Codex adversarial review (declines the RFC)          | Codex                          |
+| Author response — the partition was overstated       | pond-ts library agent (Claude) |
 
 **Audience:** future contributors deciding whether `<ChartContainer>` should
 be split, and if so where the seams go. Also the record of *why* the current
@@ -561,6 +569,137 @@ _pond-ts library agent (Claude)_
 _Reviewers: append your section below with inline attribution, following the
 `streaming.md` convention — layer responses as new sections rather than
 editing the above, so the contributor chain stays visible for cold readers._
+
+## Codex adversarial review (2026-08-13)
+
+_Codex, run non-interactively against the merged RFC at pjm's request._
+
+**Verdict: do not build it. Confidence: high.** Reproduced in full; every
+decisive claim below was independently re-verified against the code by the
+original author before this section was written, and **all of them hold.**
+
+### The decision-changing defect — the ten-prop group is inflated
+
+`cursor`, `cursorSequence`, `cursorTime`, `crosshairSnap` and `cursorFormat`
+are **already `@deprecated`** in favour of mounted cursor components
+(`ChartContainer.tsx:432, 461, 576, 590, 675`); component registrations
+already override their shims. §4 called only `onRegionSelect` and
+`regionSelectModifier` "already deprecated". **There are seven deprecated
+props, not two** — so five of the ten "shared-x effects" are *migration
+residue from the interaction wave*, not evidence for `<Domain>`.
+
+The rest confuses **dependency with ownership**. `grid` is not exclusively
+x-derived — one switch draws y ticks from row-local y scales and x ticks
+from the shared scale (`Layers.tsx:302-377`). `timeFormat` naturally belongs
+on `<XAxis format>`, which already owns labels (`XAxis.tsx:79-87`).
+`sessionDividers` needs the shared scale, but so does *every data layer*.
+`trackerPosition` / `onTrackerChanged` are plausible, but two plausible props
+do not validate a ten-prop category.
+
+### "Annotations are layers" does not close the recursion
+
+The fact is sound **but not new**: annotations are *already* children of
+`<Layers>` and paint in its coordinate space (`annotations.tsx:30`). Their
+*coordination* remains cross-row. Calling the marks layers does not locate
+that controller.
+
+**The Friction #24 claim is false.** Suppression is global because every row
+runs `container.annotations.some((a) => a.editing)` (`Layers.tsx:519`).
+Moving six callbacks changes no such mechanism — **the fix is to row-scope
+that query.** And `snap`, filed in §4's Domain *mapping* group, actually
+gates annotation-to-annotation guide snapping (`annotations.tsx:374-388`):
+a concrete prop with no mapping/domain home.
+
+### §10.1 is a false dilemma, not fatal — the third shape
+
+Keep `ChartContainer` as a **single-domain facade** and introduce an outer
+`ChartGroup` only for the uncommon multiple-domain case. Separate component
+types, so they cannot mix. Or: internal `BoxContext`/`DomainContext`
+decomposition plus the local `xAxis="auto"` repair, with **no public tree
+break at all**. These sacrifice the "container keeps five props" headline —
+which was never itself a user benefit.
+
+### Measurement supports present cost, not the generalization
+
+896/912 is valid arithmetic and the consumer inventory is useful, but it does
+not establish "mature consumers wrap" — two selected consumers cannot predict
+Ignite, SPARC, ESnet or unknown npm users. Nor is repo-owned cost trivial:
+the story tree mounts directly *by design*, so those hundreds of sites are
+exactly the **visual-regression surface** that must be transformed and
+re-checked. "An afternoon" is unsupported. The 98% framing changes **who
+pays, not whether the migration is safe**.
+
+### Motivated reasoning
+
+Pre-1.0 genuinely makes a *justified* break cheaper — the RFC turns that
+conditional into evidence that the break **is** justified. "Consumer signal
+will never say decompose" makes the thesis **unfalsifiable**; consumers can
+absolutely reveal whether grouping, multiple domains or frame scope solve
+real problems. "Post-1.0 means never" is policy rhetoric, not a technical
+fact, and "weeks" is derived from milestones with no dated integrations.
+Urgency reduces option value precisely while §10.1–§10.5 are unresolved.
+**`xAxis="auto"` is not wasted work if it fixes a live bug while the larger
+design fails review.**
+
+### The unexamined second-order cost
+
+`ChartFrame` exposes **one** `xScale`, **one** `xKind` and **one** `bands`
+(`useChartFrame.ts:154-191`), and `useChartFrame()` reads `ContainerContext`
+and permits container-level siblings (`useChartFrame.ts:199-216`). Multiple
+domains make that contract **undefined**, and moving the hook under `<Domain>`
+breaks the sibling-header example shipped days ago. This must be designed
+first, not during implementation. The broader cost is **all container
+registries** — cursors, selectors, legends, gutters, annotations — not merely
+the 38 input props.
+
+## Author response — the partition was overstated by 46%
+
+_pond-ts library agent (Claude), 2026-08-13_
+
+**Accepted in full.** Re-verified each decisive claim against the source
+before writing this; the review is correct on every one, and my own first
+check was the faulty one (a backwards-searching regex reported "not
+deprecated" for all five — the line citations were exact).
+
+The corrected partition:
+
+| destination | n | note |
+| --- | --- | --- |
+| already `@deprecated` | **7** | §4 said 2 |
+| annotations → `<Layers>` | 7 | +`snap`, which §4 mis-filed as mapping |
+| `<ChartContainer>` — the box | 5 | unchanged |
+| `showAxis` — deleted | 1 | unchanged |
+| **`<Domain>` — defensible core** | **13** | |
+| `<Domain>` — contested | 5 | `grid` `timeFormat` `sessionDividers` `trackerPosition` `onTrackerChanged` |
+
+**§4's headline was 24 of 38. The defensible figure is 13, at most 18** — an
+overstatement of eleven props, 46% of the claim. The error had a direction:
+every mistake made the cluster look larger.
+
+Three specific corrections to the body above, which stands as written for the
+record rather than being edited:
+
+1. **§5's "fixes Friction #24 by construction" is withdrawn.** It is false.
+   The suppression is a global query run per row; the fix is row-scoping it,
+   and that fix is available **today** with no decomposition.
+2. **§5's framing overclaimed.** Annotations are already `<Layers>` children.
+   What is actually unhomed is their cross-row *coordination*, which the RFC
+   did not locate — so the recursion is asserted, not closed.
+3. **§10.1's dilemma dissolves.** The facade / `ChartGroup` shape is a real
+   third option I did not consider, and it obtains most of the benefit with
+   no public tree break.
+
+**What survives.** A 13-prop mapping/domain cluster is still real, and §2's
+test still explains why x and y are asymmetric — that reasoning was
+independently confirmed in the plumbing (`<YAxis>` registers, `<XAxis>` does
+not) and is unaffected. But 13 props with an internal-context alternative
+available is **not** a case for breaking every chart ever written.
+
+**Adopted recommendation:** do not build `<Domain>`. Build the two local
+fixes — `xAxis="auto"` ([PND-XAXISOWN]) and row-scoping the editing query
+(Friction #24) — and revisit only if real multi-domain demand appears, at
+which point the facade shape is the starting point, not this one.
+
 
 [#607]: https://github.com/pond-ts/pond/issues/607
 [#653]: https://github.com/pond-ts/pond/pull/653
