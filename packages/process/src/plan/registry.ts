@@ -39,6 +39,23 @@ export class ParamError extends ProcessError {
 }
 
 /**
+ * Thrown when a spec's input list does not match the op's declared
+ * arity — including a spec carrying no `inputs` at all.
+ *
+ * Its own class because arity is decidable from the **registry alone**,
+ * with no data bound: it is part of what `specId` can judge, and a spec
+ * that fails it must not be named in the valid id namespace. Before
+ * this, a spec with no `inputs` was named `p1:sma(;period=20)` — a valid
+ * id for something that cannot compile — and then died at `compile` as a
+ * bare `TypeError` reading `.length` of undefined, reaching the consumer
+ * as a `Skipped` with no `code` at all, which under that contract means
+ * "op code threw" (Tidal, on 0.62.0).
+ */
+export class ArityError extends ProcessError {
+  static override readonly code: string = 'ArityError';
+}
+
+/**
  * Validates one param and returns it.
  *
  * Reports what it actually received, including the type. A caller
@@ -295,6 +312,29 @@ export class Registry<Defs extends DefMap = {}> {
       }
     }
     return out;
+  }
+
+  /**
+   * Checks a spec's input list against the op's declared arity.
+   *
+   * Lives here beside `get` and `resolveParams` — the three things
+   * decidable about a spec from the definition alone, before any data is
+   * bound — so `specId` and `compile` ask the same question once.
+   */
+  checkArity(op: Def, inputs: unknown): void {
+    const want = op.inputs.length;
+    if (!Array.isArray(inputs)) {
+      throw new ArityError(
+        `${op.name} takes ${want} input(s), got none — 'inputs' is ${
+          inputs === undefined ? 'missing' : (JSON.stringify(inputs) ?? 'unset')
+        }`,
+      );
+    }
+    if (inputs.length !== want) {
+      throw new ArityError(
+        `${op.name} takes ${want} input(s), got ${inputs.length}`,
+      );
+    }
   }
 
   /** Grouped for a picker. */

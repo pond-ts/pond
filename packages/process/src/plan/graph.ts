@@ -457,8 +457,8 @@ export class BoundGraph {
    * one, nothing is ever evicted.
    *
    * Validation happens here rather than at pull time so a bad plan is
-   * rejected before any work: params first, then arity, then the typed
-   * input check.
+   * rejected before any work: the op must exist, then arity, then params
+   * (all three via strict `specId`), then the typed input check.
    */
   compile(spec: Spec): Compiled {
     const id = specId(this.registry, spec);
@@ -490,11 +490,7 @@ export class BoundGraph {
     const op = this.registry.get(spec.op);
     const params = this.registry.resolveParams(op, spec.params);
 
-    if (spec.inputs.length !== op.inputs.length) {
-      throw new ProcessError(
-        `${spec.op} takes ${op.inputs.length} input(s), got ${spec.inputs.length}`,
-      );
-    }
+    this.registry.checkArity(op, spec.inputs);
 
     // After arity — an input index past the declared list is an arity
     // problem, not a column one — and before the typed-unit pass, whose

@@ -26,7 +26,7 @@ import { columnsOf, explain, refToId, unitOf } from './identity.js';
 import { expandSlots, type Slots } from './slots.js';
 import { specId } from './identity.js';
 import { specOf } from './types.js';
-import type { Input, Plan, Spec, SpecRef } from './types.js';
+import type { Plan, Spec, SpecRef } from './types.js';
 
 /** What to do when a spec or a selector fails. Covers both, not just resolution. */
 export type ErrorPolicy = 'throw' | 'skip' | 'collect';
@@ -176,14 +176,22 @@ export interface NodeTiming {
 
 export interface Skipped {
   /**
-   * The spec that failed, echoed back — including `inputs`, because a
-   * plan may hold two specs of the same op and a caller retrying needs
-   * to know which one it was.
+   * The spec that failed, echoed back **verbatim** — including `inputs`,
+   * because a plan may hold two specs of the same op and a caller
+   * retrying needs to know which one it was.
+   *
+   * `params` and `inputs` are typed `unknown` because this is an echo of
+   * whatever arrived, and what arrives is exactly what may be malformed.
+   * The plan pass used to normalize — `params: null` came back as `{}` —
+   * which was not merely lossy: recomputing an id from the echo then
+   * produced the **defaulted spec's valid id**, so a broken persisted
+   * entry's report keyed onto a legitimate node (Tidal, on 0.62.0). The
+   * selector pass echoed the original all along, so the two disagreed.
    */
   readonly spec?: {
     op: string;
-    params: Record<string, unknown>;
-    inputs: readonly Input[];
+    params?: unknown;
+    inputs?: unknown;
   };
   readonly select?: Select;
   readonly reason: string;
@@ -351,11 +359,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
       resolved.push({ id: compiled.id, spec });
     } catch (e) {
       fail(e, {
-        spec: {
-          op: spec.op,
-          params: { ...(spec.params ?? {}) },
-          inputs: spec.inputs,
-        },
+        spec: { op: spec.op, params: spec.params, inputs: spec.inputs },
       });
     }
   }
