@@ -180,9 +180,118 @@ describe('drawBand — M4 decimation (Phase 3)', () => {
       (v) => v,
       style,
       undefined,
+      undefined,
       false,
     );
     // 300 samples × 2 edges = 600 verts, not decimated.
     expect(penCount(calls)).toBe(600);
+  });
+});
+
+/**
+ * `sessionBreaks` (the `boundaries` arg to `drawBand`) breaks the envelope at a
+ * trading-axis discontinuity even though a sample sits on each side — the fill
+ * ends at the close and re-starts at the open. A *scale* break, composable with
+ * the NaN *data* gaps, mirroring `drawLine`.
+ */
+describe('drawBand sessionBreaks (boundaries)', () => {
+  it('breaks the envelope at a boundary between two finite samples (two subpaths)', () => {
+    const { ctx, calls } = recordingContext();
+    // 4 samples, boundary 1.5 → run [0,2) then run [2,4): two closed polygons.
+    drawBand(
+      ctx,
+      bs([0, 1, 2, 3], [0, 0, 0, 0], [2, 2, 2, 2]),
+      identity,
+      identity,
+      style,
+      undefined,
+      [1.5],
+    );
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(2);
+    expect(calls.filter((c) => c.name === 'closePath')).toHaveLength(2);
+    expect(calls.filter((c) => c.name === 'fill')).toHaveLength(1);
+    // No upper-edge lineTo from the close (1,2) to the open (2,2): the break is a
+    // pen-up, not a fill bridging the collapsed gap.
+    const seq = calls.filter((c) => c.type === 'call').map((c) => c.name);
+    expect(seq).toEqual([
+      'save',
+      'beginPath',
+      'moveTo', // run 1 upper[0]
+      'lineTo', // upper[1]
+      'lineTo', // lower[1]
+      'lineTo', // lower[0]
+      'closePath',
+      'moveTo', // run 2 upper[2]
+      'lineTo', // upper[3]
+      'lineTo', // lower[3]
+      'lineTo', // lower[2]
+      'closePath',
+      'fill',
+      'restore',
+    ]);
+  });
+
+  it('no boundary in range ⇒ identical to a plain single-pass draw', () => {
+    const plain = recordingContext();
+    drawBand(
+      plain.ctx,
+      bs([0, 1, 2], [0, 0, 0], [2, 2, 2]),
+      identity,
+      identity,
+      style,
+    );
+    const bounded = recordingContext();
+    drawBand(
+      bounded.ctx,
+      bs([0, 1, 2], [0, 0, 0], [2, 2, 2]),
+      identity,
+      identity,
+      style,
+      undefined,
+      [100],
+    );
+    expect(bounded.calls).toEqual(plain.calls);
+  });
+
+  it('composes with a NaN data gap inside a run', () => {
+    const { ctx, calls } = recordingContext();
+    // NaN at index 1 (data gap) AND a session break at 2.5 (scale gap):
+    // sample 0 alone, sample 2 alone, sample 3 alone → three subpaths.
+    drawBand(
+      ctx,
+      bs([0, 1, 2, 3], [0, NaN, 0, 0], [2, 2, 2, 2]),
+      identity,
+      identity,
+      style,
+      undefined,
+      [2.5],
+    );
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(3);
+    expect(calls.filter((c) => c.name === 'fill')).toHaveLength(1);
+  });
+
+  it('decimates AND splits into per-session subpaths at a session break', () => {
+    const { ctx, calls } = recordingContext();
+    (ctx as unknown as { canvas: { width: number } }).canvas = { width: 10 };
+    const n = 5000;
+    const dense = bs(
+      Array.from({ length: n }, (_, i) => i),
+      Array.from({ length: n }, (_, i) => i),
+      Array.from({ length: n }, (_, i) => i + 100),
+    );
+    const pxScale = scaleLinear()
+      .domain([0, n])
+      .range([0, n]) as unknown as Scale;
+    // A session-break instant at x=2500 (mid-range): the union aligns a column
+    // edge to it and bakes in a NaN sample, so the decimated envelope splits.
+    drawBand(ctx, dense, pxScale, identity, style, undefined, [2500]);
+    const pen = calls.filter(
+      (c) => c.name === 'moveTo' || c.name === 'lineTo',
+    ).length;
+    // Decimated — far fewer than the 10000-vertex full-res fill.
+    expect(pen).toBeLessThan(100);
+    // Two per-session polygons: a clean pen-up at the break, not a sliver across it.
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(2);
+    expect(calls.filter((c) => c.name === 'closePath')).toHaveLength(2);
   });
 });

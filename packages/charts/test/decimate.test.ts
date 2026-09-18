@@ -280,6 +280,54 @@ describe('decimateBand', () => {
   });
 });
 
+describe('decimateBand — session-break edge union', () => {
+  const dense = (n: number) => {
+    const x = Array.from({ length: n }, (_, i) => i);
+    return band(
+      x,
+      x.map((i) => i),
+      x.map((i) => i + 1000),
+    );
+  };
+
+  it('unions boundary instants into the column edges and bakes in a NaN break', () => {
+    // 8000 samples, W=4 → columns [0,2000),[2000,4000),[4000,6000),[6000,8000].
+    const n = 8000;
+    const b = dense(n);
+    const noBreak = decimateBand(b, pxScale(0, n), stubCtx(4), 2);
+    expect(noBreak.length).toBe(4);
+    // A break at 3000 splits [2000,4000) into two columns (+1 sample) AND emits
+    // one NaN sample at the break instant (+1) so the sessions never connect.
+    const withBreak = decimateBand(b, pxScale(0, n), stubCtx(4), 2, [3000]);
+    expect(withBreak.length).toBe(noBreak.length + 2);
+    const breakIdx = Array.from(withBreak.x).indexOf(3000);
+    expect(breakIdx).toBeGreaterThan(0);
+    expect(Number.isNaN(withBreak.lower[breakIdx]!)).toBe(true);
+    expect(Number.isNaN(withBreak.upper[breakIdx]!)).toBe(true);
+    // Neither side's column straddles the break: the closing column's max upper
+    // is from samples < 3000, the opening column's min lower from samples ≥ 3000.
+    expect(withBreak.upper[breakIdx - 1]).toBe(2999 + 1000);
+    expect(withBreak.lower[breakIdx + 1]).toBe(3000);
+  });
+
+  it('a break exactly on a column edge adds only the NaN sample', () => {
+    const n = 8000;
+    const b = dense(n);
+    const out = decimateBand(b, pxScale(0, n), stubCtx(4), 2, [2000]);
+    expect(out.length).toBe(4 + 1);
+    const i = Array.from(out.x).indexOf(2000);
+    expect(Number.isNaN(out.lower[i]!)).toBe(true);
+  });
+
+  it('a break outside the visible domain is dropped (no edge, no NaN)', () => {
+    const n = 8000;
+    const b = dense(n);
+    const out = decimateBand(b, pxScale(0, n), stubCtx(4), 2, [-100, 9000]);
+    expect(out.length).toBe(4);
+    expect(Array.from(out.lower).every((v) => Number.isFinite(v))).toBe(true);
+  });
+});
+
 describe('decimateM4 — session-break edge union', () => {
   it('unions boundary instants into the bucket edges (splits the straddling bucket)', () => {
     // 8000 samples, W=4 → buckets [0,2000),[2000,4000),[4000,6000),[6000,8000].

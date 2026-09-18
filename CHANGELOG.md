@@ -72,6 +72,21 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- `@pond-ts/charts`: **`<BandChart sessionBreaks>`** — the same trading-axis
+  session break `<LineChart>` has had since v0.45.0. On a discontinuous
+  (`discontinuities` / `calendar`) axis the fill previously ran a near-vertical
+  sliver from one session's last sample to the next session's first, because
+  the collapsed overnight gap put them a pixel apart; `sessionBreaks` ends the
+  envelope at the close and re-starts it at the open, so a band and its centre
+  line break in step. A **scale** break, orthogonal to the NaN **data** gaps a
+  band always breaks at; default `false` (unchanged output). Decimation
+  composes: `decimateBand` folds each break instant into the pixel-column
+  edges and bakes a `NaN` sample at it, so no column merges two sessions'
+  envelopes. Stories `Trading time axis / SessionBreaksBand` and
+  `Decimation / TradingSessionBreaksBand`.
+
 ### Changed
 
 - `@pond-ts/financial`: **`StudyOutput.id` documents the `@pond-ts/process`

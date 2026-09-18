@@ -42,12 +42,31 @@ export interface BandChartCommon<
    */
   curve?: Curve;
   /**
+   * Break the envelope at each **trading-axis discontinuity** (a session / day /
+   * lunch close→open) when the container renders on a trading-time axis (a
+   * `discontinuities` / `calendar` provider). **Omitted ⇒ `false`**: the fill
+   * connects the last pre-close sample straight to the next open across the
+   * collapsed gap (a near-vertical sliver). `true` ends the fill at the close
+   * and re-starts it at the open — the intraday look, where one session's
+   * envelope shouldn't visually flow into the next. Same semantics as
+   * {@link LineChart}'s `sessionBreaks`, so a band and its centre line break in
+   * step.
+   *
+   * This is a **scale** break (driven by the axis's collapsed gaps), orthogonal
+   * to a **data** break (a NaN run on either edge, which a band always breaks
+   * at). A no-op on a continuous axis (no provider) or a provider without
+   * `boundaries`.
+   */
+  sessionBreaks?: boolean;
+  /**
    * **M4 viewport decimation** (charts decimator wave). **Omitted ⇒ `true`**:
    * once the visible envelope is denser than ~2 samples per device pixel, it is
    * drawn from the per-pixel-column **min(lower) / max(upper)** — the widest band
    * the samples span, so it covers the same pixels from O(plot width) points.
    * Applies with a linear `curve`; pass `false` to always fill every sample, or
    * `{ threshold }` to tune. Shares {@link LineChart}'s `DecimateOption`.
+   * Composes with {@link sessionBreaks}: the break instants are folded into the
+   * pixel-column edges so no column merges two sessions' envelopes.
    */
   decimate?: DecimateOption;
   /**
@@ -100,6 +119,10 @@ export type BandChartProps<
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 > = BandChartCommon<S, VS> & BandChartSource<S, VS>;
 
+/** Stable empty boundary list — so `sessionBreaks={false}` keeps a referentially
+ *  constant array and the layer entry isn't rebuilt every render. */
+const NO_BREAKS: readonly number[] = [];
+
 /**
  * A variance-band draw layer: fills the envelope between the `lower` and `upper`
  * columns of `series` (typically `rollingByColumn` percentiles), gap-aware, and
@@ -127,6 +150,7 @@ export function BandChart<
   as: semantic,
   axis,
   curve,
+  sessionBreaks = false,
   decimate = true,
   legend,
   index = 0,
@@ -147,6 +171,18 @@ export function BandChart<
         : bandFromTimeSeries(series, lower, upper),
     [series, lower, upper],
   );
+  // Trading-axis session breaks: the collapse instants inside this band's span
+  // (session/day/lunch opens the axis skips). Data instants, not pixels — so the
+  // set is view-independent (pan/zoom reuse it). Only computed when opted in and
+  // the container carries a boundary-reporting discontinuity provider. The same
+  // lookup `<LineChart>` does, so a band and its centre line break identically.
+  const sessionBreakInstants = useMemo<readonly number[]>(() => {
+    const provider = container.discontinuities;
+    if (!sessionBreaks || provider?.boundaries === undefined || bs.length < 2) {
+      return NO_BREAKS;
+    }
+    return provider.boundaries(bs.x[0]!, bs.x[bs.length - 1]!);
+  }, [sessionBreaks, container.discontinuities, bs]);
   // Styling: semantic identifier → theme band style. The single styling channel.
   const { band } = container.theme;
   const style =
@@ -234,7 +270,16 @@ export function BandChart<
           ];
         },
         draw: (ctx, xScale, yScale) =>
-          drawBand(ctx, bs, xScale, yScale, style, curveFactory, decimate),
+          drawBand(
+            ctx,
+            bs,
+            xScale,
+            yScale,
+            style,
+            curveFactory,
+            sessionBreakInstants,
+            decimate,
+          ),
       },
       axisId: axis,
       index,
@@ -246,6 +291,7 @@ export function BandChart<
       upper,
       style,
       curveFactory,
+      sessionBreakInstants,
       decimate,
       axis,
       index,

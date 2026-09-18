@@ -494,12 +494,22 @@ export function m4Polyline(
  * `upper` are finite **together** per sample (the paired-percentile shape bands
  * are built from); a column where only one edge has finite samples would bin a
  * band segment that no single sample carried.
+ *
+ * `boundaries` are trading-axis session-break instants (`<BandChart
+ * sessionBreaks>`), handled exactly as {@link decimateM4} does for a line: each
+ * in-domain instant is unioned into the bucket edges so no column merges two
+ * sessions' envelopes across the discontinuity, **and** a `NaN` sample is
+ * emitted at the instant so the fill ends at the close and re-starts at the
+ * open — otherwise the closing and opening columns would sit as adjacent finite
+ * samples and the envelope would flow straight across the collapsed gap. The
+ * caller's `sessionRuns` then sees the break baked in and passes no boundaries.
  */
 export function decimateBand(
   band: BandSeries,
   xScale: Scale,
   ctx: CanvasRenderingContext2D,
   k = 2,
+  boundaries: readonly number[] = [],
 ): BandSeries {
   if (!shouldDecimateCount(band.length, ctx, k)) return band;
   const dom = scaleDomain(xScale);
@@ -508,7 +518,17 @@ export function decimateBand(
   const plotWidthCss = scaleRangeWidth(xScale);
   if (invert === null || plotWidthCss === null) return band;
   const W = deviceBucketCount(ctx);
-  const edges = pixelEdges(invert, plotWidthCss, W);
+  const pixels = pixelEdges(invert, plotWidthCss, W);
+  // Session-break instants inside the visible domain — unioned into the edges
+  // (so a column never straddles a break) AND marked as explicit break samples.
+  // `mergeGapEdges` keeps their exact values, so the set matches the edges.
+  const breaks =
+    boundaries.length > 0
+      ? boundaries.filter((b) => b > dom[0] && b < dom[1])
+      : [];
+  const edges =
+    breaks.length > 0 ? mergeGapEdges(pixels, breaks, dom[0], dom[1]) : pixels;
+  const buckets = edges.length - 1;
   const lowerMin = new Float64Column(band.lower, band.length).binBy(
     band.x,
     edges,
@@ -519,15 +539,36 @@ export function decimateBand(
     edges,
     'max',
   );
-  const x = new Float64Array(W);
-  const lower = new Float64Array(W);
-  const upper = new Float64Array(W);
-  for (let b = 0; b < W; b += 1) {
-    x[b] = (edges[b]! + edges[b + 1]!) / 2; // column centre
-    lower[b] = lowerMin[b]!; // NaN on an empty column → the fill break
-    upper[b] = upperMax[b]!;
+  const breakAt = breaks.length > 0 ? new Set(breaks) : null;
+  // One sample per column + one NaN break slot per session break; trimmed below
+  // (a break that coincides with the first edge emits nothing).
+  const cap = buckets + (breakAt === null ? 0 : breakAt.size);
+  const x = new Float64Array(cap);
+  const lower = new Float64Array(cap);
+  const upper = new Float64Array(cap);
+  let n = 0;
+  for (let b = 0; b < buckets; b += 1) {
+    // Explicit session break: this column opens a new session → end the fill
+    // first. A NaN on both edges is the band's own gap signal (`.defined`).
+    if (breakAt !== null && b > 0 && breakAt.has(edges[b]!)) {
+      x[n] = edges[b]!;
+      lower[n] = NaN;
+      upper[n] = NaN;
+      n += 1;
+    }
+    x[n] = (edges[b]! + edges[b + 1]!) / 2; // column centre
+    lower[n] = lowerMin[b]!; // NaN on an empty column → the fill break
+    upper[n] = upperMax[b]!;
+    n += 1;
   }
-  return { x, lower, upper, length: W };
+  return n === cap
+    ? { x, lower, upper, length: n }
+    : {
+        x: x.subarray(0, n),
+        lower: lower.subarray(0, n),
+        upper: upper.subarray(0, n),
+        length: n,
+      };
 }
 
 /**

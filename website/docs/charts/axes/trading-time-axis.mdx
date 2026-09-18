@@ -124,10 +124,12 @@ need `uniform` bar-width spacing over a custom period. The `dateStyle` (on
   look, crowding lines fading out), `'labeled'` only at the seams the axis also
   labels. Independent of `grid` — `sessionDividers="all"` with `grid={false}`
   is separators on a clean plot.
-- **Line breaks at sessions.** A `LineChart` can set `sessionBreaks` to break
-  the line at each session discontinuity instead of connecting across the
-  collapsed gap. This is a **scale** break (driven by the axis's collapsed
-  gaps), orthogonal to `gaps` (a data break) — set both independently.
+- **Lines and bands break at sessions.** A `LineChart` or `BandChart` can set
+  `sessionBreaks` to break the line / fill at each session discontinuity
+  instead of connecting across the collapsed gap. This is a **scale** break
+  (driven by the axis's collapsed gaps), orthogonal to `gaps` (a data break) —
+  set both independently. Set it on the band and its centre line together so
+  they break in step.
 
 ## See also
 

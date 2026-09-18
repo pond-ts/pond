@@ -2066,7 +2066,12 @@ consumers), `hasAnyDefined()`/`allMissing()`, the protobuf columnar wire
 - Column → semantic-identifier **app-level registry** (global `column → as`
   mapping); composes above the per-chart `as` prop; estela adoption decides.
 - Band gap treatment (a filled envelope's break wants its own design; bands
-  always break honestly for now).
+  always break honestly for now). **Scale** breaks are a separate matter and
+  shipped: `<BandChart sessionBreaks>` (2026-09) mirrors the line layer —
+  `sessionRuns` per-session subpaths in `drawBand`, break instants unioned into
+  `decimateBand`'s column edges with a baked-in `NaN` sample — so a band and
+  its centre line break in step on a trading axis. What stays parked is the
+  _data_-gap `gaps` mode vocabulary (dashed / step / fade) for a fill.
 - M4.3 brush — skipped, no drivers.
 - **Annotation overlay stacking order** — every mark (now including `<Zone>`'s
   fill) paints _above_ the data canvas. A background band wants to be behind

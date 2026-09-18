@@ -18,6 +18,7 @@ import {
   WIDTH,
   provider,
   gappingTicks,
+  gappingEnvelope,
   weekdaySessions,
   rangeOf,
 } from './tradingAxis.fixture.js';
@@ -272,6 +273,43 @@ export const TradingSessionBreaks: Story = {
         <Layers>
           <LineChart
             series={tradingLine}
+            column="price"
+            as="power"
+            axis="p"
+            sessionBreaks
+          />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+const tradingEnvelope = gappingEnvelope(tradingSessions, 3_000); // 3s ticks
+
+/** The band twin of {@link TradingSessionBreaks}: a ~40k-sample `lo`/`hi`
+ *  envelope on a trading-time axis with `sessionBreaks`, decimated — the
+ *  break instants are unioned into the pixel-column edges, so no column merges
+ *  two sessions' envelopes and the fill ends cleanly at each close. */
+export const TradingSessionBreaksBand: Story = {
+  render: () => (
+    <ChartContainer
+      width={WIDTH}
+      range={rangeOf(tradingSessions)}
+      discontinuities={provider(tradingSessions)}
+      panZoom
+    >
+      <ChartRow height={260}>
+        <YAxis id="p" side="right" />
+        <Layers>
+          <BandChart
+            series={tradingEnvelope}
+            lower="lo"
+            upper="hi"
+            axis="p"
+            sessionBreaks
+          />
+          <LineChart
+            series={tradingEnvelope}
             column="price"
             as="power"
             axis="p"
