@@ -3540,8 +3540,6 @@ otherwise overstates this:**
   Still open for a consumer who zooms.
 - **`maxBarWidth`'s hit-target asymmetry didn't bite** — their stack's bars are wide
   relative to the cap. A denser stack is the case that would find it.
-- **The knee-derived label precision fix is likewise unexercised** for the same
-  hidden-axis reason.
 
 **The correction they made, which is the most valuable thing the exercise
 produced.** I accepted "same knee" as "same curve" and wrote it into the plan and
