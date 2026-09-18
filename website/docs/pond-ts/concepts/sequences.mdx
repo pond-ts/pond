@@ -79,6 +79,9 @@ Sequence.calendar('week', { timeZone: 'Europe/Madrid', weekStartsOn: 1 });
 Sequence.calendar('month', { timeZone: 'UTC' });
 ```
 
+A month is not a duration, so `Sequence.every('1M')` **throws** — reach for
+`Sequence.calendar('month', …)` instead.
+
 `timeZone` defaults to `'UTC'`; pass a zone because calendar boundaries
 are not millisecond-fixed — a "day" in `America/New_York` is 24 hours
 except on DST transition days, where it's 23 or 25. Boundaries are

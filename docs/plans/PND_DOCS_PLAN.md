@@ -112,3 +112,41 @@ The remaining documentation-backlog items, landed as one MDX pass
 
 (The former highest-priority backlog item — value-axis docs — shipped across
 #382/#383/#421/#446 and the `charts/value-axis` reference page; done.)
+
+### [PND-VSDOC] — `creating.mdx` gets its `ValueSeries` section — SHIPPED
+
+Filed by [PND-VSIO] against PR #564, which had restructured the ingest page
+around JSON / columnar / Arrow and deliberately skipped `ValueSeries` on the
+grounds that a section following the page's own shape would be "two-thirds
+empty" — at the time its whole surface was `fromColumns`. [PND-VSIO] filled
+the other two-thirds, so the section earned its place and landed in the same
+PR (#564, after merging main).
+
+**Decisions worth keeping:**
+
+- **A peer `## ValueSeries` section, not woven through.** The alternative was
+  covering the value-keyed twin inline in each of JSON / Columnar / Arrow.
+  Rejected: it roughly doubles every section to say "and the same again with
+  an axis", and it buries the `TimeSeries` narrative the page is actually
+  organized around. The peer section mirrors the page's shape in miniature
+  (JSON / Columnar / Arrow subsections) and leads with a twin-door table, so
+  the repetition is one table rather than three paragraphs.
+- **The section documents only the divergences.** Shared behaviour (`sort`,
+  gap rules, adopt-vs-copy, monotonic-key contract) is stated once as "reread
+  the sections above and substitute the axis for time." What's spelled out is
+  only what actually differs: no timestamp parsing / no `parse.timeZone`,
+  `axis` required on `fromArrow`, the axis read unscaled, and `toColumns()`.
+- **The `TimeSeries.toColumns()` asymmetry was stated, not hidden — and then
+  it evaporated.** The section originally said plainly that `toColumns` was
+  `ValueSeries`-only, and why (store-generic exporter, but the two-edged
+  `timeRange` / `interval` wire shape undecided — [PND-TSCOLS]). [PND-TSCOLS]
+  then shipped it and [PND-FLATKEY] decided the wire shape, both while this
+  PR was open, so the asymmetry and its explanation came back out. The
+  instinct still generalizes: **document a gap with its reason rather than
+  omitting it**, and the prose stays cheap to retract when the gap closes —
+  a paragraph naming a specific parked decision is easy to find and delete,
+  where a silent omission leaves nothing to notice.
+- **The deep dive stays the tour.** `value-series.mdx` (rewritten by
+  [PND-VSIO] into Doors in / Doors out) keeps door-by-door depth plus reading
+  and slicing; `creating.mdx` cross-links to it rather than competing.
+  Content-ownership rule applied.
