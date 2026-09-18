@@ -1063,7 +1063,8 @@ Maintained SciChart dependency or head-to-head harness (the validation is a
 disposable one-off). Transient brush-to-zoom (still no driver). Chasing
 dense-scatter WebGL parity. _(Persistent **range editing** — the esnet
 traffic driver that arrived after this section was written — is now its own
-track: see `range-editing.md`. M4.3 is un-skipped for that, not for brush.)_ Over-claiming: report where canvas loses, numbers
+track: see `range-editing.md` — an RFC only, not adopted into PLAN; M4.3
+itself stays skipped.)_ Over-claiming: report where canvas loses, numbers
 are directional, no cherry-picked sizes.
 
 ### Dashboard use-case review (dashboard agent)
