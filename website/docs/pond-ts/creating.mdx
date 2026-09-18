@@ -208,10 +208,12 @@ Rows must be in non-decreasing key order, same as the constructor; pass
 `fromJSON` accepts two timestamp formats per event key, and they can mix freely:
 
 - **Number** — milliseconds since the Unix epoch, UTC. No ambiguity.
-- **ISO string** — parsed by the same rules as `Date.parse`. If the
+- **ISO string** — parsed as ISO-8601, strictly (not `Date.parse`: a
+  non-ISO string like `'Jan 1 2025'` throws rather than guessing). If the
   string carries an offset (`Z`, `+02:00`), the offset is used as-is.
   If it doesn't (a **wall-clock string** like `'2025-01-01T09:00'`),
-  it is read in `parse.timeZone`, which **defaults to UTC**. Pass the
+  it is read in `parse.timeZone`, which **defaults to UTC** — never the
+  runtime's zone, which is where it differs from `Date.parse`. Pass the
   zone the clock was on, or every instant lands offset by that zone.
 
 #### Wall-clock strings: `parse.timeZone`
@@ -272,8 +274,9 @@ const ts = TimeSeries.fromJSON({
 });
 ```
 
-Object rows and array rows can't mix within a single `rows` array. The library
-picks the format based on the first row.
+Each row is read on its own shape, so a payload that mixes object rows and
+array rows still ingests. Don't lean on that — pick one shape per payload; a
+mix usually means two producers disagree about the contract.
 
 #### Missing values
 
@@ -345,10 +348,10 @@ preserves:
 
 It does **not** preserve:
 
-- Schema `required: true | false` flags that differ from validation defaults —
-  declare them explicitly on both sides if you need that narrowing to survive.
 - Comments, whitespace, or any non-payload metadata you might be tempted to
   attach.
+
+(`toJSON` emits the schema verbatim, so `required: false` flags do survive.)
 
 If the two ends of a round-trip share the same `schema` tuple (as `const`),
 TypeScript's type-narrowing on `.get()` is preserved through the round-trip at
@@ -640,14 +643,14 @@ supply `S` as `fromArrow<MySchema>(…)` for downstream typing — pond takes th
 trust and does not verify the fields match, exactly as `fromEvents` trusts its
 schema.)
 
-| Option     | Default                              | Meaning                                                                                      |
-| ---------- | ------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `name`     | `'arrow'`                            | Series name.                                                                                 |
-| `time`     | the field named `'time'`             | Which column is the time key. Throws if absent.                                              |
-| `timeUnit` | read from the Arrow `Timestamp` type | `'second' \| 'millisecond' \| 'microsecond' \| 'nanosecond'`. An explicit value always wins. |
-| `columns`  | every non-time field                 | Value columns to include, in order.                                                          |
-| `keyKind`  | `'time'`                             | `'timeRange'` / `'interval'` to read a [flattened two-edged key](#two-edged-keys) back.      |
-| `sort`     | `false`                              | Sort by time key first (disables adoption).                                                  |
+| Option     | Default                                  | Meaning                                                                                                                                                    |
+| ---------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`     | `'arrow'`                                | Series name.                                                                                                                                               |
+| `time`     | the field named for `keyKind` (`'time'`) | Which column is the time key. Throws if absent. With a two-edged `keyKind` the key is read from the conventionally named fields and passing `time` throws. |
+| `timeUnit` | read from the Arrow `Timestamp` type     | `'second' \| 'millisecond' \| 'microsecond' \| 'nanosecond'`. An explicit value always wins.                                                               |
+| `columns`  | every non-time field                     | Value columns to include, in order.                                                                                                                        |
+| `keyKind`  | `'time'`                                 | `'timeRange'` / `'interval'` to read a [flattened two-edged key](#two-edged-keys) back.                                                                    |
+| `sort`     | `false`                                  | Sort by time key first (disables adoption).                                                                                                                |
 
 **Column handling.** The time key accepts `Timestamp`, `Date32`/`Date64`, and
 plain int/float columns, all normalized to epoch ms: a `Timestamp`'s raw-unit
