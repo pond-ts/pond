@@ -356,6 +356,11 @@ describe('specId — total under `validate: false` [PND-PROCTOTAL]', () => {
       { op: 'sma', inputs: 'px' },
       { op: 'sma', inputs: [['px']] },
       { op: 'nope', params: null, inputs: null },
+      // A non-array `inputs` versus a one-element array holding the same
+      // value: the wrapper's marker is what keeps these two apart.
+      { op: 'sma', inputs: null },
+      { op: 'sma', inputs: 5 },
+      { op: 'sma', inputs: [5] },
     ];
     const ids = new Set<string>();
     for (const shape of shapes) {

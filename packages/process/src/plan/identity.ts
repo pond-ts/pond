@@ -91,8 +91,8 @@ function typedEsc(v: unknown): string {
 /** Options for {@link specId}. */
 export interface SpecIdOptions {
   /**
-   * Whether the op must exist and its params must be legal — default
-   * `true`.
+   * Whether the op must exist, its params must be legal, and its
+   * `inputs` count must match the op's arity — default `true`.
    *
    * Pass `false` to name a spec that would not compile. See
    * {@link specId} for why identity is separable from validity.
@@ -123,8 +123,10 @@ export interface SpecIdOptions {
  *
  * So `specId(registry, spec, { validate: false })` is **total**: an
  * unknown op keeps its given params verbatim, a known one still gets
- * its defaults applied and its keys sorted, and nothing throws.
- * Validity stays `compile`'s job.
+ * its defaults applied and its keys sorted, and nothing throws — a
+ * malformed shape is **named** (marked `p1?:`), not rejected. Validity
+ * stays `compile`'s job, with one exception decidable from the registry
+ * alone: arity, which strict mode judges here too (`ArityError`).
  *
  * **A valid spec has one id under either mode.** Canonicalization is
  * the same code path and `checkParam` never coerces, so the lenient id
@@ -240,11 +242,14 @@ function build(
         );
       }
       bad();
-      return typedEsc(
-        isParamBag(i) && MALFORMED in i
-          ? (i as Record<string, unknown>)[MALFORMED]
-          : i,
-      );
+      // A non-array `inputs` was wrapped above so its shape survives; keep
+      // the marker in the token, or `{ inputs: null }` and `{ inputs: [null] }`
+      // would mint the same id — two differently-broken specs, one chip.
+      return isParamBag(i) && MALFORMED in i
+        ? esc(
+            `${MALFORMED}:${typeof (i as Record<string, unknown>)[MALFORMED]}:${String((i as Record<string, unknown>)[MALFORMED])}`,
+          )
+        : typedEsc(i);
     })
     .join('+');
 

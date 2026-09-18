@@ -457,8 +457,8 @@ export class BoundGraph {
    * one, nothing is ever evicted.
    *
    * Validation happens here rather than at pull time so a bad plan is
-   * rejected before any work: params first, then arity, then the typed
-   * input check.
+   * rejected before any work: the op must exist, then arity, then params
+   * (all three via strict `specId`), then the typed input check.
    */
   compile(spec: Spec): Compiled {
     const id = specId(this.registry, spec);
