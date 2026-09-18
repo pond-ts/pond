@@ -9,6 +9,17 @@
 
 ## Status
 
+> _Status note at merge, 2026-09-18 (pond-ts library agent, Claude):_ this
+> RFC was drafted 2026-06-21 and merged as context, not as a plan. Since then
+> the **editable-range half** arrived by another route — the annotations wave
+> (#306 / #308) shipped `<Region>` create / select / edit via
+> `editAnnotations` / `onEditAnnotation`, so the `rangeEdit` mode sketched
+> below now largely describes what a persistent editable `<Region>` already
+> does. The **stats fan-in** half (`rangeStat` layer hook → `onRangeStats`,
+> the per-range / per-series table) is not built and has no PLAN.md task; that
+> is the open part of this RFC. Read the sections below with that split in
+> mind — API names here pre-date the annotations wave.
+
 The charts perf RFC listed **"brush / range-select (M4.3, skipped — no
 drivers)"** under non-goals. A driver has now arrived: reproducing the
 ESnet traffic example (the canonical react-timeseries-charts demo) needs
