@@ -24,14 +24,16 @@ sample fills only where **both** edges are finite. View builder (for custom draw
 
 ## Props
 
-| Prop     | Type                        | Default     | Purpose                              |
-| -------- | --------------------------- | ----------- | ------------------------------------ |
-| `series` | `TimeSeries \| ValueSeries` | — (req)     | The source series.                   |
-| `lower`  | `string`                    | — (req)     | Column for the band's lower edge.    |
-| `upper`  | `string`                    | — (req)     | Column for the band's upper edge.    |
-| `as`     | `string`                    | `'default'` | Style role → `theme.band[as]`.       |
-| `axis`   | `string`                    | row default | Which `<YAxis id>` to scale against. |
-| `curve`  | `Curve`                     | `'linear'`  | Both edges drawn with this curve.    |
+| Prop            | Type                        | Default     | Purpose                                                          |
+| --------------- | --------------------------- | ----------- | ---------------------------------------------------------------- |
+| `series`        | `TimeSeries \| ValueSeries` | — (req)     | The source series.                                               |
+| `lower`         | `string`                    | — (req)     | Column for the band's lower edge.                                |
+| `upper`         | `string`                    | — (req)     | Column for the band's upper edge.                                |
+| `as`            | `string`                    | `'default'` | Style role → `theme.band[as]`.                                   |
+| `axis`          | `string`                    | row default | Which `<YAxis id>` to scale against.                             |
+| `curve`         | `Curve`                     | `'linear'`  | Both edges drawn with this curve.                                |
+| `sessionBreaks` | `boolean`                   | `false`     | Break the fill at trading-axis session discontinuities.          |
+| `decimate`      | `DecimateOption`            | `true`      | M4 viewport decimation (min-lower / max-upper per pixel column). |
 
 ## Variants
 
@@ -39,6 +41,12 @@ sample fills only where **both** edges are finite. View builder (for custom draw
   sparse envelope; `'monotone'` smooths the two edges asymmetrically.
 - **Two-tone spread** — not a prop: compose a wider `outer` band, then a
   narrower `inner` one, then a line on top (what the hero above does).
+- **`sessionBreaks`** — a **scale** break at session boundaries on a
+  [trading-time axis](../axes/trading-time-axis.mdx): the fill ends at each
+  close and re-starts at the next open instead of running a near-vertical
+  sliver across the collapsed gap. Same prop as `LineChart`'s, so a band and
+  its centre line break in step. Orthogonal to a **data** gap (below); a no-op
+  on a continuous axis.
 
 ## Interaction & theming
 
@@ -60,6 +68,8 @@ sample fills only where **both** edges are finite. View builder (for custom draw
 
 - [AreaChart](./areachart.mdx) — a fill to a baseline, not between two edges.
 - Storybook: [`Charts/BandChart`](pathname:///storybook/?path=/story/charts-bandchart--rolling-percentiles)
-  — `RollingPercentiles`, `TwoTone`, `WithGap`.
+  — `RollingPercentiles`, `TwoTone`, `WithGap`;
+  [`Axes/TradingTimeAxis`](pathname:///storybook/?path=/story/axes-tradingtimeaxis--session-breaks-band)
+  — `SessionBreaksBand`.
 - The [API reference](/docs/api/charts/band-chart) — the full
   `BandChartProps` type.

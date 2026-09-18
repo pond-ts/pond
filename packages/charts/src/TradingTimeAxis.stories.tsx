@@ -5,6 +5,7 @@ import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { Candlestick } from './Candlestick.js';
+import { BandChart } from './BandChart.js';
 import { LineChart } from './LineChart.js';
 import { TimeAxis } from './TimeAxis.js';
 import { YAxis } from './YAxis.js';
@@ -17,6 +18,7 @@ import {
   barSeq,
   calendarOf,
   candles,
+  gappingEnvelope,
   gappingTicks,
   provider,
   rangeOf,
@@ -128,6 +130,56 @@ export const IntradaySessions: Story = {
           </Layers>
         </ChartRow>
       </ChartContainer>
+    );
+  },
+};
+
+/** A 5-minute **band** (a `lo`/`hi` envelope around the price) across three
+ *  sessions, with `sessionBreaks`, its centre line breaking in step: the fill
+ *  ends at each session's close and re-starts at the next open, instead of the
+ *  near-vertical sliver bridging the collapsed overnight gap. Top row omits it
+ *  (connected close→open) for contrast. */
+export const SessionBreaksBand: Story = {
+  render: () => {
+    const s = weekdaySessions(3);
+    const env = gappingEnvelope(s, 5 * MIN);
+    const row = (broken: boolean) => (
+      <ChartRow height={150}>
+        <YAxis id="p" />
+        <Layers>
+          <BandChart
+            series={env}
+            lower="lo"
+            upper="hi"
+            axis="p"
+            sessionBreaks={broken}
+          />
+          <LineChart
+            series={env}
+            column="price"
+            axis="p"
+            sessionBreaks={broken}
+          />
+        </Layers>
+      </ChartRow>
+    );
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <ChartContainer
+          width={WIDTH}
+          range={rangeOf(s)}
+          discontinuities={provider(s)}
+        >
+          {row(false)}
+        </ChartContainer>
+        <ChartContainer
+          width={WIDTH}
+          range={rangeOf(s)}
+          discontinuities={provider(s)}
+        >
+          {row(true)}
+        </ChartContainer>
+      </div>
     );
   },
 };

@@ -217,6 +217,35 @@ export function gappingTicks(
   return new TimeSeries({ name: 'ticks', schema: tickSchema, rows });
 }
 
+export const envelopeSchema = [
+  { name: 'time', kind: 'time' },
+  { name: 'price', kind: 'number' },
+  { name: 'lo', kind: 'number' },
+  { name: 'hi', kind: 'number' },
+] as const;
+
+/** {@link gappingTicks} plus a `lo` / `hi` envelope around the price (a slowly
+ *  breathing spread), so a `<BandChart>` on the trading axis shows the same
+ *  overnight jump the line does: connected, the fill runs a near-vertical sliver
+ *  from one session's close to the next open; with `sessionBreaks` it ends at
+ *  the close and re-starts at the open. */
+export function gappingEnvelope(
+  sessions: Session[],
+  stepMs: number,
+): TimeSeries<typeof envelopeSchema> {
+  const rows: Array<[number, number, number, number]> = [];
+  let i = 0;
+  sessions.forEach((s, si) => {
+    const base = 100 + si * 6; // each session gaps ~6 above the last
+    for (let t = s.open; t < s.close; t += stepMs, i++) {
+      const price = base + 4 * Math.sin(i / 18) + 1.5 * Math.sin(i / 3.5);
+      const spread = 1.5 + 0.8 * Math.sin(i / 40);
+      rows.push([t, price, price - spread, price + spread]);
+    }
+  });
+  return new TimeSeries({ name: 'envelope', schema: envelopeSchema, rows });
+}
+
 export const OHLC = {
   open: { from: 'price', using: 'first' },
   high: { from: 'price', using: 'max' },
