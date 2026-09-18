@@ -84,8 +84,8 @@ include new features and type-level changes; patch bumps are strictly additive.
   band always breaks at; default `false` (unchanged output). Decimation
   composes: `decimateBand` folds each break instant into the pixel-column
   edges and bakes a `NaN` sample at it, so no column merges two sessions'
-  envelopes. Stories `Trading time axis / SessionBreaksBand` and
-  `Decimation / TradingSessionBreaksBand`.
+  envelopes. Stories `Axes/TradingTimeAxis / SessionBreaksBand` and
+  `Performance/Decimation / TradingSessionBreaksBand`.
 
 ### Changed
 

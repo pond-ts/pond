@@ -540,8 +540,11 @@ export function decimateBand(
     'max',
   );
   const breakAt = breaks.length > 0 ? new Set(breaks) : null;
-  // One sample per column + one NaN break slot per session break; trimmed below
-  // (a break that coincides with the first edge emits nothing).
+  // One sample per column + one NaN break slot per session break. `breaks` are
+  // strictly inside the domain and `mergeGapEdges` keeps every one, so each
+  // lands on some `edges[b]` with `b > 0` and the arrays fill exactly; the
+  // subarray trim below is a guard against a provider instant that sorts ahead
+  // of the first pixel edge under float rounding, not an expected path.
   const cap = buckets + (breakAt === null ? 0 : breakAt.size);
   const x = new Float64Array(cap);
   const lower = new Float64Array(cap);
