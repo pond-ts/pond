@@ -4367,6 +4367,53 @@ example once this lands.
 
 ---
 
+## [PND-AREAZERO] — `<AreaChart>` fills to zero by default (2026-09-23)
+
+**Report (owner):** "Area chart rendering may be wrong. It should render to the
+0 value (or an optional reference level default 0), not to the bottom of the
+chart."
+
+**What the code did.** `baseline` already existed and already took a number,
+but omitting it meant "the axis lower bound" — a deliberate _elevation form_,
+documented as such. With auto-fit that floor sits just under the lowest value,
+so the fill's height encoded distance from the data minimum, not the value.
+
+**Decision.** Flip the default to `0` and keep the old look reachable as
+`baseline="floor"`. Reasons: an area's filled height reads as magnitude, and
+the common chart libraries default an area to a zero baseline (Vega-Lite's
+zero-including scale, Highcharts' `threshold: 0`, Plotly's `tozeroy`), so the
+floor default was the surprising one. The floor form is still genuinely useful
+— a price "mountain", an elevation profile — which is why it is an option and
+not deleted. Four docs-site examples that are exactly those shapes
+(`gallery-price-volume`, `gallery-activity`, `getting-started-ride`,
+`core-byvalue`) now say `baseline="floor"`; the rest are quantities where zero
+is the honest reference and take the new default.
+
+**Considered, not done:** keeping the floor default and only documenting
+`baseline={0}` (leaves the misleading picture as the zero-effort path);
+Recharts-style `'auto'` (zero when the domain holds it, else the floor —
+the rendering then changes meaning with the data, which is the thing being
+fixed). The name `'floor'` matches the vocabulary the code, CHANGELOG and docs
+already use for the axis lower bound.
+
+**Found on the way:** `areaHitIndex` took `yScale(baseline)` as-is, so on a log
+axis `baseline={0}` gave a `NaN` bound and every point in the x span hit. The
+draw already fell back to the floor; the hit test now does the same. With `0`
+the default this would have hit every selectable area on a log axis.
+
+**Found by the Layer-2 review (PR #741):** a `0` baseline pulled into a log
+axis's extent gives `[0, max]`, and the log fit, finding no positive low end,
+collapses the domain onto the max (10…1e5 fitted `[1e4, 1e6]`). This already
+happened with an explicit `baseline={0}`, but the new default would have
+spread it to every area on a log axis. Fix: `RowLayer.yExtent(scale?)` now
+receives the axis kind, and an area leaves a baseline ≤ 0 out of a log fit.
+Symlog still pulls zero in, because zero has a position there. Also from the
+review: a baseline outside a pinned domain is now clamped into it, as
+`resolveBarBaseline` does, so the fade isn't anchored off-plot. **Not fixed
+here:** `barExtent` reports `[0, max]` too, and `resolveYDomain` given
+`[[0, 1e5]]` on a log axis returns `[1e4, 1e6]`, so a bar layer alone on an
+auto-fit log axis collapses the same way. That is a separate change.
+
 ## Moved from PLAN.md — 2026-09-23 cleanup
 
 PLAN.md holds future work only, so these write-ups of shipped (or partly

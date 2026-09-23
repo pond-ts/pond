@@ -80,7 +80,8 @@ export const Line: Story = {
 };
 
 /**
- * The same five modes on an **area** (elevation form — rests on the axis floor).
+ * The same five modes on an **area** (resting on the default zero baseline,
+ * which the pinned `min={0}` makes the bottom of each row).
  * In every mode the *fill* obeys the mode (only `none` fills across the gap); the
  * `dashed` / `step` / `fade` connectors apply to the **outline** while the fill
  * stays broken — so the shade is always honest about the gap.

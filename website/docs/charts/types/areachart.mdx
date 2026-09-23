@@ -23,23 +23,27 @@ the same `ChartSeries` a `LineChart` uses.
 
 ## Props
 
-| Prop       | Type                        | Default          | Purpose                                                          |
-| ---------- | --------------------------- | ---------------- | ---------------------------------------------------------------- |
-| `series`   | `TimeSeries \| ValueSeries` | — (req)          | The source series.                                               |
-| `column`   | `string`                    | — (req)          | Numeric column to fill from.                                     |
-| `readout`  | `string`                    | —                | Second column reported at the cursor (mirrors `<LineChart>`).    |
-| `as`       | `string`                    | `'default'`      | Style role → `theme.area[as]` (outline + graded fill).           |
-| `axis`     | `string`                    | row default      | Which `<YAxis id>` to scale against.                             |
-| `baseline` | `number`                    | axis lower bound | The floor the fill rests on. A fixed number is auto-fit-visible. |
-| `curve`    | `Curve`                     | `'linear'`       | Outline + fill-edge interpolation.                               |
-| `gaps`     | `GapMode`                   | `'empty'`        | Gap rendering (fill/outline coupled — see cautions).             |
+| Prop       | Type                        | Default     | Purpose                                                       |
+| ---------- | --------------------------- | ----------- | ------------------------------------------------------------- |
+| `series`   | `TimeSeries \| ValueSeries` | — (req)     | The source series.                                            |
+| `column`   | `string`                    | — (req)     | Numeric column to fill from.                                  |
+| `readout`  | `string`                    | —           | Second column reported at the cursor (mirrors `<LineChart>`). |
+| `as`       | `string`                    | `'default'` | Style role → `theme.area[as]` (outline + graded fill).        |
+| `axis`     | `string`                    | row default | Which `<YAxis id>` to scale against.                          |
+| `baseline` | `number \| 'floor'`         | `0`         | The level the fill rests on. Pulled into the auto-fit domain. |
+| `curve`    | `Curve`                     | `'linear'`  | Outline + fill-edge interpolation.                            |
+| `gaps`     | `GapMode`                   | `'empty'`   | Gap rendering (fill/outline coupled — see cautions).          |
 
 ## Variants
 
-- **`baseline`** — omit it for the **elevation** form (fill rests on the axis
-  floor); pass `0` (or any number) for the **above-below** form (positive up,
-  negative down). The two-colour traffic look is two `<AreaChart>`s with `in` /
-  `out` roles, each `baseline={0}`.
+- **`baseline`** — omit it and the fill rests on **zero**: values above fill
+  up, values below fill down, and zero is pulled into the axis so you can see
+  where the fill starts. Pass another number for a different reference level
+  (a target, an index's base of 100). Pass `'floor'` for the **elevation**
+  form: the fill rests on the bottom of the plot and the axis hugs the data —
+  for a price or an elevation profile, where starting at zero would flatten the
+  shape. The two-colour traffic look is two `<AreaChart>`s with `in` / `out`
+  roles over the default zero.
 - **`curve`** — `'linear'` (default) / `'monotone'` / `'natural'` / `'basis'` /
   `'step'`.
 - **`gaps`** — `'empty'` (default) / `'none'` / `'dashed'` / `'step'` /
@@ -74,6 +78,7 @@ the same `ChartSeries` a `LineChart` uses.
 
 - [LineChart](./linechart.mdx) — the unfilled counterpart.
 - Storybook: [`Charts/AreaChart`](pathname:///storybook/?path=/story/charts-areachart--elevation)
-  — `Elevation`, `AboveBelowAxis`, `TrafficAreas`.
+  — `ZeroBaseline`, `Elevation`, `ReferenceLevel`, `AboveBelowAxis`,
+  `TrafficAreas`.
 - The [API reference](/docs/api/charts/area-chart) — the full
   `AreaChartProps` type.

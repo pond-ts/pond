@@ -270,10 +270,10 @@ export const NegativeInData: Story = {
     ),
 };
 
-/** **An area on a log axis.** `AreaChart` fills to the axis floor: an omitted
- *  baseline already resolves there, and an explicit `baseline={0}` — natural,
- *  and correct on a linear axis — is clamped to it rather than scaling to
- *  `NaN` and dropping the whole filled path. */
+/** **An area on a log axis.** `AreaChart` fills to the axis floor: its
+ *  baseline of `0` (the default, written out here) — correct on a linear axis —
+ *  has no position on a log one, so it is clamped to the floor rather than
+ *  scaling to `NaN` and dropping the whole filled path. */
 export const AreaBaseline: Story = {
   render: () =>
     chart(
