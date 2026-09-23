@@ -369,3 +369,21 @@ pond-ts keywords` confirms). Owner applied the GitHub description and
   docs-MCP lookup for "pond-ts" now returns pond rather than the Go
   worker-pool library. Re-measure the snippet count occasionally; the
   `context7.json` rules ride along with every snippet.
+
+---
+
+## Moved from PLAN.md — 2026-09-23 cleanup
+
+PLAN.md holds future work only, so these write-ups of shipped (or partly
+shipped) tasks were moved here **verbatim** when it was cleaned up on
+2026-09-23. Where a PLAN.md entry remains, it now carries only what is still
+open; the text below is the entry as it read before the cleanup.
+
+### [PND-SKILL] — as it read in PLAN.md
+
+- **[PND-SKILL]** — Claude Code plugin marketplace in-repo
+  (`.claude-plugin/marketplace.json` + `plugins/pond-ts/` with `pond-ts`,
+  `pond-charts`, `pond-financial` skills; install via
+  `/plugin marketplace add pond-ts/pond`). Shipped in the first tranche.
+  Cursor rules + Codex snippet deferred until the skill has survived one
+  cold-start run.

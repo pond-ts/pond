@@ -3047,3 +3047,187 @@ Documented, none blocking:
   conversation" this item deferred is that plan.
 - Overnight sessions in `TradingCalendar.fromRules` (explicit-list only for
   now).
+
+---
+
+## Moved from PLAN.md — 2026-09-23 cleanup
+
+PLAN.md holds future work only, so these write-ups of shipped (or partly
+shipped) tasks were moved here **verbatim** when it was cleaned up on
+2026-09-23. Where a PLAN.md entry remains, it now carries only what is still
+open; the text below is the entry as it read before the cleanup.
+
+### [PND-SHIFTFRAME] — as it read in PLAN.md
+
+- **[PND-SHIFTFRAME]** — **Shipped.** `rollingDeviationSd` in
+  `packages/financial/src/kernels/rolling.ts`; `zScore` rewired onto it.
+  Worst relative error against an exact reference over 200k rows:
+  `1e15 + ((i%7)−3)` **1.0e+0 → 4.1e-15**, `1e9 + sin` **4.1e+0 → 4.9e-12**,
+  benign random walk **3.9e-6 → 4.4e-11**. Three things the plan did not
+  anticipate, all worth carrying forward:
+  - **Welford needed shifting too.** The first cut shifted only the mean and
+    left σ on the raw values, which improved the pathological case by three
+    orders of magnitude and stopped there — `d = x − wMean` is the same
+    subtraction of two near-equal large numbers. Welford is stable relative
+    to the _conditioning_ of the problem, and raw large-magnitude values are
+    what make it ill-conditioned. "Variance is translation-invariant so
+    Welford is fine" was the wrong reading, and only an exact reference
+    caught it.
+  - **The fix cost `zScore` its parallelism.** The stable kernel returns a
+    deviation, not a mean, so `withWorkers` no longer hooks it: the study
+    went from the fastest accelerated one (2.44×) to sequential. Accepted —
+    a 2.44× on an answer that could be 100% wrong is not a speedup — but it
+    says a numerical class is not a full account of an operator. See
+    [`docs/rfcs/numerical-classes.md`](docs/rfcs/numerical-classes.md), where
+    this is now the tested case rather than the hypothetical one.
+
+    It also cost a test canary, which is the more general lesson: four tests
+    proved the parallel path had run by observing that `zScore` disagreed
+    with the sequential answer. That only ever worked because the accelerated
+    result was inferior, and it evaporated the moment that was fixed.
+    Replaced with `parallelDispatches()`, an explicit count.
+
+  - **A constant rebuild interval was wrong at both ends**, found by a Codex
+    pass and fixed in `20639a4`. The kernel rebuilt its incremental state
+    every 1024 rows. Too rarely for a short window — at `period 2`, where
+    every non-flat window has `|z|` exactly 1, drift through ~500 turnovers
+    reached **1.7e-6**, breaking the `<1e-9` claim outright. Too often for a
+    long one — the rebuild is `O(period)`, so firing it on a row count made
+    the kernel `O(N + N·period/1024)`: **81 ms at `period 100k`** against 7 ms
+    at `period 20`, with the "flat in `period`" claim only ever tested to 1024. Rebuilding once per **window turnover** (`period` rows) fixes both
+    with one rule, and is _faster_ — the magnitude heuristic it replaced was
+    computing a `sqrt` on every row. Now 22.8–26.1 ns/row across `period` 2 to
+    100k. The lesson for the next kernel: a threshold in rows is a threshold
+    in the wrong unit when the work per row scales with a window.
+
+### [PND-STUDY] — as it read in PLAN.md
+
+- **[PND-STUDY]** — Studies Phase-1 breadth is **landed** (RSI, MACD, ATR,
+  momentum, HV, ROC-as-`percentChange`, stochastics, %R, Donchian, OBV,
+  rolling VWAP — each oracle-verified with a fluent method; PRs #681 onward).
+  **Phase 2 is under way**: the K2 moving-average engine (#695) and its first
+  ten consumers (#696, #697) closed the Phase-1 **ATR bands** leftover; batch
+  two added the volume / money-flow group (#699; VROC is a recipe on
+  `percentChange`) and the momentum tail (#700); batch three added the
+  Wilder directional group (`directionalMovement` → `dmi*`, `aroon` on the
+  O(N) monotonic-deque `barsSinceExtremeValues`, `vortex`, #702) and the
+  volatility tail (`chaikinVolatility`, `massIndex`, `choppinessIndex`,
+  `ulcerIndex`, `verticalHorizontalFilter`, `gopalakrishnanRangeIndex`,
+  `relativeVolatilityIndex` → `relVol`, #703 — none of which TA-Lib
+  implements, so every oracle case is a pandas replication asserting the
+  first-valid bar plus a measured separation from the plausible wrong turn);
+  batch four added the **K7 regression family** (`linearRegression` →
+  `linreg*`, `timeSeriesForecast`, `chandeForecastOscillator`,
+  `centerOfGravity` on the one-pass `linearRegressionValues` kernel, #705;
+  `linreg`/`tsf` deliberately not a `MaType`) and the **K8 two-series
+  family** (`correlation`, `beta`, `priceRelative`, `performanceIndex` on
+  the new `rollingBivariateValues` kernel — the comparison series is a
+  `benchmark` **column** on the already joined series, never a second
+  `TimeSeries`, so alignment stays `align` + `joinMany`'s job).
+  Phase 3 then landed the **K6 stateful fold** ([PND-SFOLD], now closed):
+  `foldRows` — a per-bar fold with carried state over several row-aligned
+  columns, whose one rule is that a missing cell **resets** the machine (a
+  SAR that did not see a bar cannot know whether it flipped) — with six
+  consumers: `parabolicSar` (bar-for-bar TA-Lib `SAR`), `superTrend`,
+  `atrTrailingStop`, `negativeVolumeIndex`, `positiveVolumeIndex` and
+  `klinger`. The kernel is exported from `@pond-ts/financial` like the
+  other kernels but **not promoted to core**; what a core
+  `scanRows` would additionally need is recorded in the financial plan so
+  that promotion starts from evidence rather than a guess.
+  Batch five's second half added the **moving-average stacks and smoothed
+  momentum tail** (§6.1/§6.3): `guppy` (the fixed twelve), `rainbow` +
+  `rainbowOscillator`, `kst`, `priceMomentumOscillator` (DecisionPoint's
+  `2/n` smoothing via an internal raw-alpha EMA), `stochasticRsi` (TA-Lib
+  `STOCHRSI`, on a new O(N) deque extremes kernel), `trueStrengthIndex`,
+  `movingAverageDeviation` (points; the percent form is `disparityIndex`).
+  Batch six added the **momentum and trend leftovers** (§6.3/§6.4/§6.1):
+  `stochasticMomentumIndex`, `fisherTransform` and `schaffTrendCycle` (two
+  more K6 state machines), `prettyGoodOscillator`, `swingIndex` +
+  `accumulativeSwingIndex` (Wilder's `limit` is a **required** option — the
+  second after `benchmark`), `randomWalkIndex` (the corpus' **G2**
+  multi-horizon window, shipped `O(N·period)` on a kernel of its own), `ravi`,
+  `trendIntensityIndex` and `specialK` — whose 724-bar warm-up is why the
+  oracle fixture now carries a second, 900-bar close-only input.
+  Batch six's second half added the **bands and price-transform tail**
+  (§6.2/§6.8): `typicalPrice`, `medianPrice`, `weightedClose`,
+  `averagePrice` and `balanceOfPower` (all TA-Lib exact), `starcBands`,
+  `highLowBands` (spelled `percent` like `envelope`), `bollingerBandwidth`
+  and `bollingerPercentB` (one rolling pass each, cheaper than `bollinger`),
+  `primeNumberBands` / `primeNumberOscillator` (trial division; ~6.5 s per
+  1M bars at 1e7 prices, documented) and Bill Williams'
+  `marketFacilitationIndex` (output `bwmfi` — `mfi` is money flow).
+  Batch seven added the **volume and miscellaneous leftovers** (§6.6/§6.1):
+  `twiggsMoneyFlow`, `tradeVolumeIndex` (`minTick` required — the third
+  required option), `shinoharaIntensityRatio`, `elderImpulse` (a numeric
+  +1/0/−1 verdict), `movingAverageCross` (the cross EVENT as a signal
+  column) and `anchoredVwap` (the user-anchored form; the session-reset
+  form still waits on [PND-TCAL]).
+  Batch eight opened the calendar gate: `sessionVwap` and `pivotPoints`
+  (standard / Fibonacci / Woodie / Camarilla) anchor on `TradingCalendar`
+  sessions or a session-id column — the two doors run one `sessionIdValues`
+  walk, which also made `tagSessions` 5× faster, bit-identical.
+  Its second half shipped **Ichimoku** (displacement as data — every column
+  keyed to the bar it is computed from, `ichimokuOffsets` for the chart —
+  and Chikou raw, not pre-shifted, because a look-ahead column would be the
+  package's only one) and **ZigZag** in its batch form (confirmed pivots,
+  direction and the interpolated line; the last leg is absent by design and
+  the live repaint contract is the recorded ask). The charts asks this
+  creates — C2 per-layer `xOffsetBars` with forward projection space, and C3
+  crossing-band fill for the cloud — are tracked as [PND-XOFFSET] under
+  `@pond-ts/charts`.
+  **One hundred and five studies shipped** — every corpus row that needed only
+  a kernel is in. What remains of the 124 is gated on core capabilities, not
+  on `@pond-ts/financial`:
+  - **G5 — forward displacement past the series end** (2): Alligator and
+    Gator Oscillator. Ichimoku settled the door — emit on the bar the value
+    is computed from and hand the chart an offset map — so these are a
+    small batch once [PND-XOFFSET] gives the offset somewhere to land.
+  - **G6 — repainting studies** (4): Darvas Box, Fractal Chaos Bands and
+    Oscillator, Williams Fractals. Each is a `foldRows` machine that
+    _rewrites earlier bars_ when a pivot confirms, which the batch layer
+    can express (a final pass — ZigZag is the shipped precedent) but the
+    live layer cannot without a repaint contract ([PND-LIVE] question).
+    Ship batch-only with a documented "confirmed at bar N" column, or wait
+    for the contract — a decision.
+  - **G4 — calendar-gated** (2): Projected Aggregate Volume and Projected
+    Volume at Time. Both need a per-session volume profile over prior
+    sessions on top of the `sessionIdValues` walk; low value, deferred.
+  - **Skipped by decision** (6): GoNoGo Trend (F-LEGAL), Depth of Market and
+    Option Sentiment (F-DATA), Volume Chart / Underlay and Valuation Lines
+    (F-CHART), Volume Profile (a `byColumn` recipe, not a study).
+    Package-wide questions surfaced by the wave, none blocking:
+    `ema()`'s first-sample seed vs TA-Lib's SMA seed (the engine proves every
+    EMA-family formula on TA-Lib's seed and bounds the transient, so the
+    convention is settled by precedent unless a consumer asks); the
+    Wilder-vs-`ema` interior-gap asymmetry (**decided 2026-09-06: kept**,
+    documented per study, decision record in the financial plan); a
+    monotonic-deque fast path for core's rolling min/max, for which `aroon`
+    (107 ms vs `donchian`'s 246 ms at 1M bars) is the measured evidence; and
+    `rollingValues`' reducer-dependent answer to a misnamed column
+    (`stdev`/`avg` read all-missing, `max`/`min` throw — pinned both ways in
+    #703; the two-series studies added a third answer, `assertColumn`
+    throwing on a required `benchmark`; unifying it moves shipped studies so
+    it waits for a consumer).
+
+### [PND-STUDYCAT] — as it read in PLAN.md
+
+- **[PND-STUDYCAT]** — **Runtime study catalog** (Tidal F-charts-25). A
+  consumer registering the corpus into a `@pond-ts/process` registry was
+  hand-transcribing ~400 facts (inputs, params with defaults and bounds,
+  output suffixes and units) from `.d.ts` files, re-checked per release.
+  `@pond-ts/financial/catalog` exports one `StudyDescriptor` per fluent
+  method, shaped like process's `OpDef`; `defineStudy` checks each against
+  its options interface at compile time and `test/catalog.test.ts` runs each
+  against its study. **Shipped complete in v0.67.0** (all 109 fluent
+  methods). The consumer adopted it the same day — its picker went 29 → 81
+  studies, and the `unit` rule caught a live bug (an RSI landing on the
+  volume axis). F-charts-27 (the catalog/process output-id "contradiction")
+  resolved in #736 with no code change: the two `id` fields are different
+  namespaces, now documented and pinned by a cross-package round-trip test.
+  **Left open only for the two undecided consumer asks** — F-charts-26
+  (no per-output _mark_: nothing says `macdHist` is a histogram, nothing
+  pairs `bbUpper`/`bbLower` as a band) and F-charts-28 (`nearest` on charts'
+  `TrackerSample`) — which are one question about how much rendering
+  semantics belongs in a data package. Close this task, or split those two
+  out, once that is decided. Breakout:
+  `docs/plans/PND_FINANCIAL_PLAN.md`.

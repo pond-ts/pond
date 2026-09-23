@@ -116,6 +116,12 @@ Definition of done:
 
 ## [PND-FITPUB] — `@pond-ts/fit` first-publish pass
 
+**Status 2026-09-23:** `@pond-ts/fit` is now `private: false` and publishes
+lock-step with the other packages (0.70.0 on npm), so "first publish" has
+happened by default. The deliberate pass below is still undone — none of
+`simplify`, `elevationProfile`, `profileByDistance` or `rollingSpread` is
+exported from `src/index.ts` today.
+
 `@pond-ts/fit` landed on main (#288/#290/#293) but is still `private` /
 unpublished. Before first publish:
 

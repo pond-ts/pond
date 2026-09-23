@@ -432,3 +432,74 @@ Per the repo's experiment method, three:
    the warm-vs-cold numbers M1 makes visible.
 3. **A how-to guide** in `website/docs/how-to-guides/`, first-person and
    grounded in the working app.
+
+---
+
+## Moved from PLAN.md — 2026-09-23 cleanup
+
+PLAN.md holds future work only. Every milestone of this demo has landed, so
+the PLAN.md section body was moved here **verbatim** when PLAN.md was cleaned
+up on 2026-09-23; PLAN.md now carries a short pointer to this file.
+
+A three-panel web app where a prompt becomes a process plan, the plan resolves
+against a bound dataset, and the result is charted — clicking a node in the
+pipeline shows that node's output. It is a demo, but its primary job is to
+**decide the library's shape**: six open tickets in the process section rest on
+questions no argument settles, and each milestone here answers one. Plan:
+[PND_PROCESS_DEMO_PLAN.md](docs/plans/PND_PROCESS_DEMO_PLAN.md).
+
+Pinned before any code: the bound graph is **long-lived, wherever it lives** —
+per-request construction is what is fatal, not any particular host. A long-lived
+worker and a long-lived server prove different things (client-side execution and
+an off-main-thread UI, versus the MCP shape with one cache shared across
+sessions). The worker topology is **coupled to [PND-PROCCOL]**: crossing a
+thread boundary costs 48.6 ms per 500k-value answer boxed versus 0.5 ms
+transferred, so without columns a worker spends more time marshalling than
+computing. `as` names an output rather than windowing it; `registry.toJsonSchema()`
+is the agent's contract, not a hand-written prompt.
+
+- **[PND-DEMOM0]** — The plan layer, headless: `bind`, registry, `specId`,
+  `run`, `explain`, typed and tested. Decides [PND-PROCSUB] (does anything
+  outside the plan layer still import the engine?) and [PND-PROCIDENT] (`run()`
+  cannot be written without choosing how a param is identified).
+- **[PND-DEMOM1]** — A long-lived host (worker or server) holding
+  `Map<datasetId, BoundGraph>`, one seeded dataset, submit-and-return, still
+  no UI. Response carries **per-node
+  computed-vs-cached and a duration** — the architecture is invisible without
+  it. Decides [PND-PROCTERM].
+- **[PND-DEMOM2]** — Three panels, `raw` tabs only; agent composes plans from
+  the registry schema. Decides [PND-PROCSCHEMA]: is the projection enough to
+  compose valid plans unaided, and can the agent self-correct from `skipped`
+  reasons? Landed as `apps/process-demo`, outside the root `workspaces` so a
+  demo build never gates a release. The composer sits behind a seam: without
+  `ANTHROPIC_API_KEY` it falls back to an offline keyword matcher that exercises
+  every panel and **settles nothing about the registry**, and says so.
+- **[PND-DEMOM3]** — Results charts via `@pond-ts/charts`, chosen by key kind
+  (time → line, multi-output → band). Decided the remainder of [PND-PROCCOL],
+  and **not as the fork it was framed as**: charts already traverses columnar,
+  so the layers' `series` + `column` signature was fine — what was wrong was
+  assembling on the producer side, where a `TimeSeries` cannot cross a wire.
+  Landed `run({ assemble: false })` + `RunResult.columns`; the browser rebuilds
+  with `TimeSeries.fromColumns`, which adopts buffers zero-copy. Drawing costs
+  **transport, not compute** (5.72 MB for two studies at 150k rows vs 5 ms to
+  encode) — a second argument for the worker topology. [PND-LIVELYR] did not
+  bite.
+- **[PND-DEMOM4]** — Pipeline graph with clickable nodes (React Flow + dagre),
+  labelled by `explain` and badged cached/Nms; clicking shows that node's
+  output. **Landed, and the "costs almost nothing" claim held** — clicking a
+  node is one more `columns: true` selector on an id the response already
+  names, including a _nested_ spec that never appears at the plan's top level.
+  Two additions, both the response failing to describe its own graph:
+  `NodeTiming.inputs` (the edges — underivable without reimplementing
+  `specId`) and `NodeTiming.pulled` (`nodes` had reported only the subset a
+  selector reached, so the view drew a plan with branches missing).
+
+- **[PND-DEMOM5]** — Conversational refinement: follow-up prompts that adjust an
+  existing plan. **Landed, and it decided [PND-PROCIDENT].** "smoother" → "try
+  200 instead" → "back to how it was" returns in **2.811 ms against 75.071 ms
+  cold**, the node a straight cache hit at 0.004 ms — because a
+  content-addressed `sma(50)` is never invalidated by a detour, only unused.
+  Three nodes resident afterwards is the bill, and the case for
+  [PND-PROCCACHE]'s engine-wide budget. The capacity dial is deliberately not
+  here: there is no node cache to tune yet, and rushing one to make a demo
+  slider work would let the demo design the library.
