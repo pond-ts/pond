@@ -965,3 +965,54 @@ the current loops are at the floor for an allocating export.
 | `toObjects` / `toJSON` (objects) | ~21 ms   | N objects, C property writes each        |
 | `toColumns`                      | 5–12 ms  | C arrays, **no** per-row allocation      |
 | `toArrow`                        | 0.008 ms | a buffer handoff — O(C), not O(N·C)      |
+
+---
+
+## Moved from PLAN.md — 2026-09-23 cleanup
+
+PLAN.md holds future work only, so these write-ups of shipped (or partly
+shipped) tasks were moved here **verbatim** when it was cleaned up on
+2026-09-23. Where a PLAN.md entry remains, it now carries only what is still
+open; the text below is the entry as it read before the cleanup.
+
+### [PND-KERNEL] — as it read in PLAN.md
+
+- **[PND-KERNEL]** — Kernel algorithm wins surfaced by the Rust/WASM spike
+  (`spikes/columnar-wasm/`, report + benchmarks committed). The spike says
+  **not now, not in this order** on porting the substrate (revised from an
+  earlier "no-go" — see REPORT.md §9: a Rust core is worth 1.3–4.3× on the
+  numeric kernel, and 2.2–2.6× end to end on the reduce family, but the
+  TypeScript work below is 5–10× larger and comes first). The control
+  experiment isolated four wins that are pure algorithm and land in
+  TypeScript. Two have shipped:
+  - **Quickselect for `reducePercentileColumn`** — measured 12.9× on
+    `median`/`p95` at 1M rows.
+  - **Blocked (8-accumulator) `sum`/`mean`** — 2.51× dense, 2.22× through a
+    validity bitmap, **`close.mean()` 0.47 ms → 0.19 ms** end to end. The
+    semantics decision this was blocked on is made and recorded in
+    [blocked-summation.md](docs/notes/blocked-summation.md): reassociate
+    above a 32-cell threshold, leave shorter runs bit-identical. Worth
+    noting the direction — blocked summation is _more_ accurate than
+    sequential (error grows as O((n/k)·ε + k·ε) rather than O(n·ε)), so the
+    trade was speed **and** precision against reproducibility of the exact
+    previous bits, not speed against accuracy.
+
+  Remaining: a branchless finite guard for `allFinite: false` reductions,
+  and blocking the guarded sum path (measured **1.84×**, deliberately not
+  taken — after [PND-WCNAN] almost nothing lands there; see the note).
+
+  **Correction: the 4-lane `Float64Column.minMax` is _not_ bit-identical**,
+  as this entry previously claimed. `+0` and `-0` compare equal, so
+  `lo <= x ? lo : x` keeps whichever the traversal reached first, and
+  lane-parallel traversal reaches a different one — verified: 16 cells, all
+  `1` except `values[1] = +0` and `values[4] = -0`, sequential gives `+0`
+  and 4-lane gives `-0` (`===` equal, `Object.is` not — and vitest's `toBe`
+  uses `Object.is`). `minMax` explicitly commits to matching
+  `[col.min(), col.max()]` (PR #153), so the lane form would break that
+  commitment on `±0` input for 1.27–1.50× on an operation already costing
+  0.49 ms. Not worth it as scoped; if it is ever wanted, it needs a signed
+  zero fixup in the combine, not a straight lane split.
+
+  Acceptance benchmarks already exist in
+  `spikes/columnar-wasm/bench/controls.mjs`; each control is checked against
+  pond-ts's answer before it is timed.

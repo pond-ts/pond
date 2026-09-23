@@ -366,3 +366,29 @@ should be the parent's extent.
   floors to its own first event's bucket, so partitions can emit misaligned
   grids. Workaround (an explicit `range`) is one argument; promote if a
   consumer hits it. See [PND-AGGCOVER].
+
+---
+
+## Moved from PLAN.md — 2026-09-23 cleanup
+
+PLAN.md holds future work only, so these write-ups of shipped (or partly
+shipped) tasks were moved here **verbatim** when it was cleaned up on
+2026-09-23. Where a PLAN.md entry remains, it now carries only what is still
+open; the text below is the entry as it read before the cleanup.
+
+### [PND-SPLITCOST] — as it read in PLAN.md
+
+- **[PND-SPLITCOST]** — **Shipped.** `partitionBy`+`toMap` **18.1 → 12.7 ms**
+  at 500×1000 (**25.2 → 12.4 ms** interleaved, **33.9 → 22.3 ms** at 1M), and
+  `_distinctPartitionKeys` **4.9 → 1.0 ms** (9.2 → 1.2 interleaved). Two
+  changes: a **dict-encoded fast path** (a dictionary-backed string column
+  already carries an integer per row, so grouping indexes an array instead of
+  building and hashing a key string per row — symbols are exactly what dict
+  encoding is for) and a **two-pass fill** (count, then fill an exactly sized
+  `Int32Array`, replacing a boxed push per row plus a copy per group).
+  Benchmark: `packages/core/scripts/perf-partition.mjs`, which also covers the
+  interleaved layout so the fast path is not measured only where it flatters.
+  Q11 is now 36.5 ms with the split at 30% (was 43%). Remaining, unmeasured:
+  the ~7 ms of `withRowSelection` + `TimeSeries` construction per group — a
+  contiguous-range slice could avoid the gather where partitions happen to be
+  consecutive.
