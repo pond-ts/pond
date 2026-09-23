@@ -1783,7 +1783,9 @@ export interface CursorEntry {
    * with its render frame when it is the hovered row, and with `null` when the
    * pointer is elsewhere; the cursor picks the snapped sample from the frame
    * and calls the consumer only when that pick changes. Only set when the
-   * consumer passed `onSnap`, so a crosshair nobody listens to costs nothing.
+   * consumer passed `onSnap`, so a crosshair nobody listens to never picks or
+   * builds a report (each row still looks up its snap owner, two short
+   * filters over the registered cursors).
    */
   readonly reportSnap?: ((f: ResolvedCursorFrame | null) => void) | undefined;
 }

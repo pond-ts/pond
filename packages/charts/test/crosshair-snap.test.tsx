@@ -209,3 +209,145 @@ describe('<CrosshairCursor onSnap>', () => {
     expect(seen).toEqual(['0:high', '1:low']);
   });
 });
+
+describe('<CrosshairCursor onSnap> across its own lifecycle', () => {
+  /** Two lines in one row, with the cursor before or after the row and an
+   *  optional pinned tracker. */
+  function Chart(props: {
+    onSnap?: (s: CursorSnap | null) => void;
+    snap?: boolean;
+    cursorLast?: boolean;
+    mounted?: boolean;
+    trackerPosition?: number;
+  }) {
+    const { onSnap, snap = true, cursorLast = false, mounted = true } = props;
+    const cursor = mounted ? (
+      <CrosshairCursor snap={snap} {...(onSnap ? { onSnap } : {})} />
+    ) : null;
+    return (
+      <ChartContainer
+        range={[0, 4]}
+        width={WIDTH}
+        showAxis={false}
+        theme={theme}
+        {...(props.trackerPosition !== undefined
+          ? { trackerPosition: props.trackerPosition }
+          : {})}
+      >
+        {cursorLast ? null : cursor}
+        <ChartRow height={HEIGHT}>
+          <Layers>
+            <LineChart series={low} column="low" as="low" axis="v" />
+            <LineChart series={high} column="high" as="high" axis="v" />
+          </Layers>
+          <YAxis id="v" side="right" width={40} min={0} max={100} />
+        </ChartRow>
+        {cursorLast ? cursor : null}
+      </ChartContainer>
+    );
+  }
+
+  it('switching to free mode while snapped reports null', () => {
+    const calls: (CursorSnap | null)[] = [];
+    const onSnap = (s: CursorSnap | null) => calls.push(s);
+    const { container, rerender } = render(<Chart onSnap={onSnap} />);
+    fireEvent.pointerMove(surfaces(container)[0]!, {
+      clientX: 130,
+      clientY: 5,
+    });
+    expect(calls).toHaveLength(1);
+    // The rebuilt cursor must remember what the consumer was told, or its
+    // free-mode `null` would look like "no change" and be swallowed.
+    rerender(<Chart onSnap={onSnap} snap={false} />);
+    fireEvent.pointerMove(surfaces(container)[0]!, {
+      clientX: 132,
+      clientY: 6,
+    });
+    expect(calls).toEqual([expect.objectContaining({ label: 'high' }), null]);
+  });
+
+  it('unmounting while snapped reports null', () => {
+    const calls: (CursorSnap | null)[] = [];
+    const onSnap = (s: CursorSnap | null) => calls.push(s);
+    const { container, rerender } = render(<Chart onSnap={onSnap} />);
+    fireEvent.pointerMove(surfaces(container)[0]!, {
+      clientX: 130,
+      clientY: 5,
+    });
+    rerender(<Chart onSnap={onSnap} mounted={false} />);
+    expect(calls.at(-1)).toBeNull();
+    expect(calls).toHaveLength(2);
+  });
+
+  it('a cursor declared after the rows still calls the current callback', () => {
+    // Rows report from passive effects; if the callback ref were also written
+    // in a passive effect, a cursor declared *after* the rows would be updated
+    // too late, and a callback that changed in the same commit as the move
+    // would be called stale.
+    const seen: string[] = [];
+    let bumpAndMove: () => void = () => {};
+    function Parent() {
+      const [n, setN] = useState(0);
+      return (
+        <div
+          ref={(el) => {
+            if (el === null) return;
+            bumpAndMove = () =>
+              act(() => {
+                setN((v) => v + 1);
+                fireEvent.pointerMove(surfaces(el)[0]!, {
+                  clientX: 130,
+                  clientY: 5,
+                });
+              });
+          }}
+        >
+          <Chart
+            cursorLast
+            onSnap={(s) => seen.push(`${n}:${s?.label ?? 'null'}`)}
+          />
+        </div>
+      );
+    }
+    render(<Parent />);
+    bumpAndMove();
+    expect(seen).toEqual(['1:high']);
+  });
+
+  it('a crosshair mounted inside a row reports, then lets go on leave', () => {
+    const calls: (CursorSnap | null)[] = [];
+    const { container } = render(
+      <ChartContainer
+        range={[0, 4]}
+        width={WIDTH}
+        showAxis={false}
+        theme={theme}
+      >
+        <ChartRow height={HEIGHT}>
+          <CrosshairCursor onSnap={(s) => calls.push(s)} />
+          <Layers>
+            <LineChart series={low} column="low" as="low" axis="v" />
+            <LineChart series={high} column="high" as="high" axis="v" />
+          </Layers>
+          <YAxis id="v" side="right" width={40} min={0} max={100} />
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const [surface] = surfaces(container);
+    fireEvent.pointerMove(surface!, { clientX: 130, clientY: 95 });
+    fireEvent.pointerOut(surface!);
+    expect(calls).toEqual([expect.objectContaining({ label: 'low' }), null]);
+  });
+
+  it('a pinned tracker with no pointer draws a coloured dot but reports nothing', () => {
+    // Documented: with no pointer there is no "snapped by the user" point. The
+    // reticle still centres on the first series, and its dot wears that
+    // series' colour.
+    const calls: (CursorSnap | null)[] = [];
+    const { container } = render(
+      <Chart onSnap={(s) => calls.push(s)} trackerPosition={2} />,
+    );
+    expect(centreDot(container).getAttribute('fill')).toBe(RED);
+    expect(calls).toEqual([]);
+  });
+});

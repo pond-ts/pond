@@ -1,4 +1,11 @@
-import { useContext, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import {
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from 'react';
 import type { Sequence, BoundedSequence } from 'pond-ts';
 import {
   ContainerContext,
@@ -394,31 +401,55 @@ function toCursorSnap(s: ResolvedCursorSample): CursorSnap {
   };
 }
 
+/** A {@link CursorSnap}'s identity for change detection — every field, so a
+ *  new axis format under a still pointer (same point, new `formatted`) is a
+ *  change the consumer hears about too. */
+function snapKey(s: CursorSnap | null): string | null {
+  return s === null
+    ? null
+    : [s.axisId, s.label, s.x, s.value, s.readout, s.color, s.formatted].join(
+        '\u0000',
+      );
+}
+
 /**
  * The crosshair's snap reporter: picks the snapped sample from a hovered row's
  * frame (`null` = nothing snapped) and calls the consumer only when the pick
  * **changes** — rows re-render on every pointer move, and a callback that fired
  * per move while the reticle sat still would make every consumer dedupe.
- * Reads the callback through a ref, so an inline `onSnap` doesn't rebuild the
- * cursor spec on every parent render.
+ *
+ * Its state belongs to the mounted `<CrosshairCursor>`, not to this reporter:
+ * the reporter is rebuilt whenever `snap` / `showTime` / `format` change, and
+ * a fresh "last reported" would swallow the `null` that toggling to free mode
+ * owes a consumer still holding a point. `live` goes false on unmount, so a
+ * row still holding the old registration for one more commit can't report a
+ * point after the unmount's final `null`. The callback is read through a ref
+ * so an inline `onSnap` doesn't rebuild the cursor spec on every parent render.
  */
 function snapReporter(
   onSnapRef: { readonly current: ((s: CursorSnap | null) => void) | undefined },
+  state: { readonly current: SnapReportState },
   snap: boolean,
 ): (f: ResolvedCursorFrame | null) => void {
-  let last: string | null = null;
   return (f) => {
+    const st = state.current;
+    if (!st.live) return;
     // Free mode follows the pointer, not a series: there is nothing to report.
     const pick = f !== null && snap ? snappedSample(f) : null;
     const info = pick === null ? null : toCursorSnap(pick);
-    const key =
-      info === null
-        ? null
-        : `${info.axisId}\u0000${info.label}\u0000${info.x}\u0000${info.value}\u0000${info.color}`;
-    if (key === last) return;
-    last = key;
+    const key = snapKey(info);
+    if (key === st.last) return;
+    st.last = key;
     onSnapRef.current?.(info);
   };
+}
+
+/** A `<CrosshairCursor>`'s snap-report state (see {@link snapReporter}). */
+interface SnapReportState {
+  /** The {@link snapKey} of what the consumer was last told. */
+  last: string | null;
+  /** False once the cursor has unmounted. */
+  live: boolean;
 }
 
 /** `cursor="crosshair"` as a spec: the dashed reticle (renderPlot), the axis
@@ -759,14 +790,36 @@ export function CrosshairCursor({
   format,
   onSnap,
 }: CrosshairCursorProps = {}) {
-  // Latest callback in a ref (written after commit), so an inline `onSnap`
-  // doesn't re-register the cursor on every parent render; the spec is rebuilt
-  // only when a callback appears or goes away.
+  // Latest callback in a ref, so an inline `onSnap` doesn't re-register the
+  // cursor on every parent render; the spec is rebuilt only when a callback
+  // appears or goes away. Written in a *layout* effect: the rows report from
+  // passive effects, and every layout effect in a commit runs before any
+  // passive one — so a row always calls this commit's callback, wherever the
+  // cursor sits in the tree relative to the rows.
   const onSnapRef = useRef(onSnap);
-  useEffect(() => {
+  useLayoutEffect(() => {
     onSnapRef.current = onSnap;
   });
+  // What the consumer was last told, shared across reporter rebuilds (see
+  // `snapReporter`).
+  const reportState = useRef<SnapReportState>({ last: null, live: true });
   const listening = onSnap !== undefined;
+  // A consumer who stops listening is owed nothing more; a fresh listener
+  // starts from "nothing reported yet".
+  if (!listening) reportState.current.last = null;
+  // Unmounting while snapped lets go of the point, the same as the pointer
+  // leaving would. (`live` is re-set on mount for StrictMode's
+  // unmount-remount.)
+  useEffect(() => {
+    const st = reportState.current;
+    st.live = true;
+    return () => {
+      st.live = false;
+      if (st.last === null) return;
+      st.last = null;
+      onSnapRef.current?.(null);
+    };
+  }, []);
   useCursorMount(
     useMemo(
       () =>
@@ -774,7 +827,9 @@ export function CrosshairCursor({
           snap,
           showTime,
           format,
-          reportSnap: listening ? snapReporter(onSnapRef, snap) : undefined,
+          reportSnap: listening
+            ? snapReporter(onSnapRef, reportState, snap)
+            : undefined,
         }),
       [snap, showTime, format, listening],
     ),
