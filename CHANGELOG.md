@@ -90,6 +90,15 @@ include new features and type-level changes; patch bumps are strictly additive.
   reticle drawn by a controlled `trackerPosition` with no pointer on the chart
   also reports `null`. Story `Cursors/Crosshair / SnapReadout`.
 
+- `@pond-ts/charts`: **`<CrosshairCursor>` snaps to box plots.** Its vertical
+  line lands on the centre of the box under the pointer and its horizontal
+  line on the quantile nearest the pointer (`upper` / `q3` / `median` / `q1` /
+  `lower`), with that value on the y-axis pill and reported by `onSnap`. A box
+  used to be skipped by the crosshair entirely: the line sat wherever the
+  pointer was and there was no value to read. The flag cursor still shows the
+  box's one consolidated flag, and the point / inline / flag cursors still draw
+  no per-quantile dots on a box. Story `Cursors/Crosshair / BoxPlot`.
+
 ### Changed
 
 - `@pond-ts/charts`: the **crosshair's centre dot is drawn in the snapped

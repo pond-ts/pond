@@ -593,6 +593,7 @@ export function Layers({ children }: LayersProps) {
     [editingActive, sweeping, restingBrush, container.cursors, row.rowKey],
   );
   const wantsSamples = cursorEntries.some((e) => e.wants.samples);
+  const wantsReticle = cursorEntries.some((e) => e.wants.reticle);
   const wantsFlags = cursorEntries.some((e) => e.wants.flags);
   const wantsBand = cursorEntries.some((e) => e.wants.band);
   const wantsPointer = cursorEntries.some((e) => e.wants.pointer);
@@ -613,14 +614,24 @@ export function Layers({ children }: LayersProps) {
   // slides under it. Empty when not hovering — or when no effective cursor
   // declared a need — so the data canvas is never touched and a line-only
   // cursor never pays the per-layer walk.
-  const trackerSamples = useMemo<readonly ResolvedCursorSample[]>(() => {
-    if (cursorTime === null || !wantsSamples) return [];
-    const out: ResolvedCursorSample[] = [];
+  //
+  // Two lists from one walk. `samples` feeds the per-series marks (dots,
+  // chips), so a layer with a consolidated flag (BoxPlot) is left out — it
+  // renders that flag instead (its values still fan to the off-chart readout
+  // via sampleAt on the container). `reticle` feeds the crosshair's pick,
+  // which lands on ONE value, so a box's quantiles are candidates there
+  // ([PND-BOXPLT]).
+  const { samples: trackerSamples, reticle: reticleSamples } = useMemo<{
+    samples: readonly ResolvedCursorSample[];
+    reticle: readonly ResolvedCursorSample[];
+  }>(() => {
+    if (cursorTime === null || (!wantsSamples && !wantsReticle))
+      return { samples: [], reticle: [] };
+    const samples: ResolvedCursorSample[] = [];
+    const reticle: ResolvedCursorSample[] = [];
     for (const entry of layers) {
-      // A layer with a consolidated flag (BoxPlot) renders that, not per-sample
-      // dots/chips — skip it here (its values still fan to the off-chart readout
-      // via sampleAt on the container).
-      if (entry.layer.cursorFlag) continue;
+      const toSamples = wantsSamples && !entry.layer.cursorFlag;
+      if (!toSamples && !wantsReticle) continue;
       const axisId = entry.axisId ?? defaultAxisId;
       const yScale = yScales.get(axisId);
       if (yScale === undefined) continue;
@@ -634,7 +645,7 @@ export function Layers({ children }: LayersProps) {
       const axisOffset = axisOffsets.get(axisId) ?? 0;
       const axisColor = axisColors.get(axisId);
       for (const s of entry.layer.sampleAt(cursorTime)) {
-        out.push({
+        const r: ResolvedCursorSample = {
           px: xScale(s.x),
           py: yScale(s.value),
           x: s.x,
@@ -647,13 +658,16 @@ export function Layers({ children }: LayersProps) {
           formatted: fmt(s.value),
           color: s.color,
           label: s.label,
-        });
+        };
+        if (toSamples) samples.push(r);
+        if (wantsReticle) reticle.push(r);
       }
     }
-    return out;
+    return { samples, reticle };
   }, [
     cursorTime,
     wantsSamples,
+    wantsReticle,
     layers,
     yScales,
     formats,
@@ -1286,7 +1300,8 @@ export function Layers({ children }: LayersProps) {
         const t = +c.xScale.invert(rawX);
         for (let i = r.layers.length - 1; i >= 0; i -= 1) {
           const entry = r.layers[i]!;
-          if (entry.layer.cursorFlag) continue;
+          // Box plots included ([PND-BOXPLT]): a box's samples sit at its
+          // centre, so the reticle lands mid-box.
           const s = entry.layer.sampleAt(t)[0];
           if (s !== undefined) {
             px = c.xScale(s.x);
@@ -1855,6 +1870,7 @@ export function Layers({ children }: LayersProps) {
     rowKey: row.rowKey,
     hoveredRowKey: cursor.cursorRowKey,
     samples: trackerSamples,
+    reticleSamples,
     flags: trackerFlags,
     pointer,
     band,

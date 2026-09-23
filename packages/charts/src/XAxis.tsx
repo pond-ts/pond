@@ -973,6 +973,7 @@ export function XAxis({
             rowKey: null,
             hoveredRowKey: cursor.cursorRowKey,
             samples: [],
+            reticleSamples: [],
             flags: [],
             pointer: null,
             band: null,

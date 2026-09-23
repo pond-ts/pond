@@ -152,6 +152,7 @@ interface BuiltCursor {
 
 const NO_WANTS: CursorWants = {
   samples: false,
+  reticle: false,
   flags: false,
   band: false,
   pointer: false,
@@ -357,14 +358,15 @@ function buildFlagCursor(o: {
  * hovered while another is, or when there is nothing to snap to.
  */
 function snappedSample(f: ResolvedCursorFrame): ResolvedCursorSample | null {
-  if (inBoundsX(f) === null || f.samples.length === 0) return null;
+  const samples = f.reticleSamples;
+  if (inBoundsX(f) === null || samples.length === 0) return null;
   const cy = f.cursorY;
   if (f.hoveredRowKey === f.rowKey && cy !== null) {
-    return f.samples.reduce((a, b) =>
+    return samples.reduce((a, b) =>
       Math.abs(b.py - cy) < Math.abs(a.py - cy) ? b : a,
     );
   }
-  return f.hoveredRowKey === null ? f.samples[0]! : null;
+  return f.hoveredRowKey === null ? samples[0]! : null;
 }
 
 /**
@@ -617,7 +619,7 @@ function buildCrosshairCursor(o: {
           }
         : {}),
     },
-    wants: { ...NO_WANTS, samples: true, pointer: !o.snap },
+    wants: { ...NO_WANTS, reticle: true, pointer: !o.snap },
     ownsGesture: true,
     format: o.format,
     reportSnap: o.reportSnap,

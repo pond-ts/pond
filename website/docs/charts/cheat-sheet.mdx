@@ -41,19 +41,18 @@ the in-plot histogram stays `<BarChart orientation="horizontal">`.
 Which x-axis kinds each layer supports, whether it reads out under the cursor,
 whether its marks are selectable, and how it handles a `NaN` gap.
 
-| Layer        | X-axis kinds            | Cursor readout                          | Selection       | Gap handling                             |
-| ------------ | ----------------------- | --------------------------------------- | --------------- | ---------------------------------------- |
-| LineChart    | time · value            | ✅ all modes                            | —               | `gaps` prop — all 5 modes                |
-| AreaChart    | time · value            | ✅ (rides the value edge)               | —               | `gaps` prop — fill+outline coupled       |
-| BandChart    | time · value            | ✅ (both edge values)                   | —               | always breaks (no `gaps` prop)           |
-| ScatterChart | time · value            | ✅ (snaps to nearest point)             | ✅ **id-gated** | `NaN` point not drawn                    |
-| BarChart     | time · value · category | ⚠️ single-series vertical only          | ✅ **id-gated** | `NaN` bucket → no bar                    |
-| BoxPlot      | time · value            | ✅ but **opts out** of crosshair x-snap | —               | box missing a present quantile → nothing |
-| Candlestick  | **time only**           | ✅ **participates** in crosshair x-snap | —               | candle missing any OHLC → nothing        |
+| Layer        | X-axis kinds            | Cursor readout                             | Selection       | Gap handling                             |
+| ------------ | ----------------------- | ------------------------------------------ | --------------- | ---------------------------------------- |
+| LineChart    | time · value            | ✅ all modes                               | —               | `gaps` prop — all 5 modes                |
+| AreaChart    | time · value            | ✅ (rides the value edge)                  | —               | `gaps` prop — fill+outline coupled       |
+| BandChart    | time · value            | ✅ (both edge values)                      | —               | always breaks (no `gaps` prop)           |
+| ScatterChart | time · value            | ✅ (snaps to nearest point)                | ✅ **id-gated** | `NaN` point not drawn                    |
+| BarChart     | time · value · category | ⚠️ single-series vertical only             | ✅ **id-gated** | `NaN` bucket → no bar                    |
+| BoxPlot      | time · value            | ✅ crosshair snaps to the nearest quantile | —               | box missing a present quantile → nothing |
+| Candlestick  | **time only**           | ✅ **participates** in crosshair x-snap    | —               | candle missing any OHLC → nothing        |
 
 Only **ScatterChart** and **BarChart** are selectable (both gated on an `id`).
-The **BoxPlot-opts-out / Candlestick-opts-in** crosshair asymmetry is the one to
-remember. `category` axis is **BarChart-only** (its `categories` mode).
+`category` axis is **BarChart-only** (its `categories` mode).
 
 ## Container, row & axis knobs
 

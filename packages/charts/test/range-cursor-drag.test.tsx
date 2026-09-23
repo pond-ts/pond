@@ -463,6 +463,7 @@ describe('resolveRangeDrag — who gets the released span', () => {
     ownsGesture: true,
     wants: {
       samples: false,
+      reticle: false,
       flags: false,
       band: false,
       pointer: false,

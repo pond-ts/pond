@@ -1129,8 +1129,22 @@ a shared geometry abstraction. Candlestick would add its own `ohlcAt` under
 the same contract when it gains selection (deferred — not requested by the
 report; the earlier "shared geometry helper" framing is superseded by the
 per-mark idiom the codebase already uses). **Still open in this wave:**
-`ValueSeries` widening, range-only mode polish, px `offset`, line-only shape,
-and the `cursorFlag` x-snap reconciliation.
+`ValueSeries` widening, range-only mode polish, px `offset`, line-only shape.
+
+**Crosshair snap — DONE (2026-09-23).** The crosshair now snaps to a box: x to
+the box centre, y to the quantile nearest the pointer, with the value pill and
+`onSnap` following. The old exclusion (`if (entry.layer.cursorFlag) continue`)
+did two jobs at once, and only one of them was right. Keeping a box's values
+out of the **per-series marks** (point / inline / flag dots and chips) is right,
+because the box draws its own consolidated flag and per-quantile dots would
+repeat it. Keeping them out of the **crosshair** was not: the reticle picks
+one value, so the five quantiles are things to land on, not marks that
+duplicate anything. The fix splits the two. `Layers` resolves a second list,
+`reticleSamples` (every layer, boxes included), which the crosshair declares
+through a new `CursorWants.reticle` and `snappedSample` reads; `samples` keeps
+the old exclusion for the per-series marks. The x-snap loop simply stopped
+skipping boxes, since a box's `sampleAt` already anchors at the box centre.
+Both new fields are internal (the cursor contract is unpublished, RFC Q3).
 
 ### [PND-CHARTAPI] / [PND-BARSEM] / [PND-HCAT] / [PND-VSADAPT] — the 2026-08 API review — DONE
 

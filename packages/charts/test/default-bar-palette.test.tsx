@@ -407,6 +407,7 @@ function frame(
     rowKey: null,
     hoveredRowKey: null,
     samples: [],
+    reticleSamples: [],
     flags: [],
     pointer: null,
     band,

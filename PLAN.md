@@ -263,9 +263,8 @@ breakout plan. Plan:
   re-decide whether either is still wanted now that `<MultiSelector>` exists.
   RFC: [selection.md](docs/rfcs/selection.md).
 - **[PND-BOXPLT]** — Finish BoxPlot: ValueSeries widening, range-only mode,
-  px `offset` for same-x pairs, line-only shape, join the cursor x-snap, and
-  selection `id` via rect-containment `hitTest` (#508 item 5; Candlestick
-  takes the same geometry helper).
+  px `offset` for same-x pairs, line-only shape. (Selection `id` and the
+  crosshair snap are done — see the breakout plan.)
 - **[PND-BOXHIT]** — **`<BoxPlot>`'s hit area is the mark's bounding box, not
   its ink — and on `shape="whisker"` those differ by 25×.** Measured at box
   centre: with the solid shape, ink and hit are both ~50px wide everywhere

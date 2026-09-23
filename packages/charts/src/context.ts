@@ -822,8 +822,8 @@ export interface RowLayer {
    * {@link BoxPlot} implements it (low/q1/median/q3/high on one flag at the box's
    * top-centre); line/area/bar/scatter omit it and use the per-sample flag from
    * {@link sampleAt}. `null` when nothing is under the cursor. (`sampleAt` still
-   * fans the same values to the off-chart readout; `cursorFlag` is the in-chart
-   * presentation only.)
+   * fans the same values to the off-chart readout and to the crosshair, which
+   * snaps to them; `cursorFlag` only replaces the per-series dots and chips.)
    */
   cursorFlag?(time: number): CursorFlag | null;
   /**
@@ -1522,8 +1522,18 @@ export interface ResolvedCursorFrame {
    *  it is drawing in the row the pointer is in). */
   readonly hoveredRowKey: symbol | null;
   /** Per-series resolved measurements at the cursor time (empty when the
-   *  effective cursors declared no need for them, or nothing is hovered). */
+   *  effective cursors declared no need for them, or nothing is hovered). A
+   *  layer that consolidates its readout into one flag (BoxPlot) is left out:
+   *  per-series dots and chips would repeat that flag. */
   readonly samples: readonly ResolvedCursorSample[];
+  /**
+   * The crosshair's candidates: every layer's resolved samples, **including**
+   * a consolidated-flag layer's (a box plot's five quantiles). The reticle
+   * picks one value, so a box's quantiles are things it can land on rather
+   * than marks that would repeat the box's flag. Empty unless a cursor
+   * declared {@link CursorWants.reticle}.
+   */
+  readonly reticleSamples: readonly ResolvedCursorSample[];
   /** Resolved consolidated flags (BoxPlot) — the flag cursor's one-chip form. */
   readonly flags: readonly ResolvedCursorFlag[];
   /**
@@ -1663,8 +1673,11 @@ export interface CursorSpec {
 /** What a cursor needs the container to resolve per pointer move — declared at
  *  registration so a line-only cursor never pays for per-sample measurement. */
 export interface CursorWants {
-  /** Per-series {@link ResolvedCursorSample}s (dots, chips, the reticle pick). */
+  /** Per-series {@link ResolvedCursorSample}s (dots, chips). */
   readonly samples: boolean;
+  /** {@link ResolvedCursorFrame.reticleSamples} — the crosshair's pick,
+   *  box plots included. */
+  readonly reticle: boolean;
   /** Consolidated {@link ResolvedCursorFlag}s (the flag cursor only). */
   readonly flags: boolean;
   /** The range band (+ the degenerate band line). */

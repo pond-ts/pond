@@ -4,10 +4,12 @@ import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
+import { BoxPlot } from './BoxPlot.js';
 import { YAxis } from './YAxis.js';
 import { CrosshairCursor } from './cursors.js';
 import { defaultTheme } from './theme.js';
 import type { CursorSnap } from './context.js';
+import { TimeSeries } from 'pond-ts';
 import {
   twoSeries,
   hrSeries,
@@ -327,4 +329,83 @@ function SnapReadoutDemo() {
  *  the two lines and the text below follows. */
 export const SnapReadout: Story = {
   render: () => <SnapReadoutDemo />,
+};
+
+/** Six 10-step boxes across the fixture range, each with visible spread. */
+function boxSeries() {
+  const width = 10 * STEP;
+  const rows = Array.from({ length: 6 }, (_, i) => {
+    const begin = BASE + i * width;
+    const mid = 100 + 12 * Math.sin(i / 1.3);
+    const spread = 8 + 3 * Math.cos(i);
+    return [
+      [begin, begin + width],
+      mid - spread,
+      mid - spread / 2,
+      mid,
+      mid + spread / 2,
+      mid + spread,
+    ];
+  });
+  return new TimeSeries({
+    name: 'boxes',
+    schema: [
+      { name: 'timeRange', kind: 'timeRange' },
+      { name: 'lo', kind: 'number' },
+      { name: 'q1', kind: 'number' },
+      { name: 'med', kind: 'number' },
+      { name: 'q3', kind: 'number' },
+      { name: 'hi', kind: 'number' },
+    ] as const,
+    rows: rows as never,
+  });
+}
+
+/** The `BoxPlot` story's body: a box plot plus the latest `onSnap` report. */
+function BoxPlotDemo() {
+  const [snap, setSnap] = useState<CursorSnap | null>(null);
+  return (
+    <div>
+      <ChartContainer range={RANGE} width={W}>
+        <CrosshairCursor onSnap={setSnap} />
+        <ChartRow height={240}>
+          <Layers>
+            <BoxPlot
+              series={boxSeries()}
+              lower="lo"
+              q1="q1"
+              median="med"
+              q3="q3"
+              upper="hi"
+              axis="v"
+              gap={14}
+            />
+          </Layers>
+          <YAxis id="v" side="right" format=",.0f" />
+        </ChartRow>
+      </ChartContainer>
+      <div
+        style={{
+          fontFamily: defaultTheme.font.family,
+          fontSize: 12,
+          marginTop: 8,
+          color: snap?.color ?? defaultTheme.axis.label,
+        }}
+      >
+        {snap === null
+          ? 'Not snapped — hover a box'
+          : `Snapped to ${snap.label}: ${snap.formatted}`}
+      </div>
+    </div>
+  );
+}
+
+/** **On a box plot** ([PND-BOXPLT]) — the reticle snaps to the box: the
+ *  vertical line to the box centre, the horizontal line to the quantile
+ *  nearest the pointer, whose value goes on the y-axis pill and to `onSnap`.
+ *  Hover-driven: move up and down inside a box and the reading steps through
+ *  `hi` / `q3` / `med` / `q1` / `lo`. */
+export const BoxPlotSnap: Story = {
+  name: 'BoxPlot',
+  render: () => <BoxPlotDemo />,
 };
