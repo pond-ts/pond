@@ -40,6 +40,7 @@ underneath, one shared tick set. See
 
 ```tsx
 <ChartContainer width={620} origin="data">
+  <LineCursor />
   <ChartRow height={180}>
     <YAxis id="hr" label="bpm" />
     <Layers>
@@ -59,7 +60,7 @@ you'd get labels at `00:05` over a gridline at `10:35`.
 
 `origin` changes two things and only two: **where the ticks sit** and **what
 they say**. Everything else stays in absolute axis units — a `range`, a
-`<Marker at>`, an `onRegionSelect` span, `trackerPosition`, the data itself.
+`<Marker at>`, a `<RangeCursor onDragRelease>` span, `trackerPosition`, the data itself.
 There is no second coordinate system to keep straight; you never convert.
 
 ## Ticks sit at round durations, measured from the origin
@@ -105,8 +106,9 @@ the [flat date style](./index.mdx) makes on a calendar axis.
 Ticks stay terse; the crosshair pill and `<Marker indicator>` pills add
 seconds — `00:05:12` under a `00:05` axis. Same shape, more precision: the
 elapsed twin of the grain-aware readout a calendar axis gives you. A
-container [`cursorFormat`](./index.mdx) still overrides it, and a
-`cursorFormat` **function** receives the elapsed default as its `defaultText`.
+[`<CrosshairCursor format>`](../interaction/cursors-and-readouts.mdx) still
+overrides it, and a `format` **function** receives the elapsed default as its
+`defaultText`.
 
 ## Two label systems, one scale
 
@@ -137,6 +139,7 @@ _travelled_ (`0` … `4,000`) instead of distance _recorded_ (`2,000` …
 
 ```tsx
 <ChartContainer width={560} origin="data">
+  <LineCursor />
   {/* series is a ValueSeries — see the value-axis page */}
   <XAxis label="Metres ridden" />
 </ChartContainer>

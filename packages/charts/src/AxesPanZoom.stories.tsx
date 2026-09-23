@@ -8,6 +8,7 @@ import { LineChart } from './LineChart.js';
 import { BarChart } from './BarChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * Axis pan/zoom — the strips are grabbable, and double-click puts one back.
@@ -73,6 +74,7 @@ export const XStripPanAndZoom: Story = {
       panZoom="panZoom"
       axisPanZoom="x"
     >
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="price" format="$,.0f" />
         <Layers>
@@ -91,6 +93,7 @@ export const XStripPanAndZoom: Story = {
 export const YGutterPerAxis: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W + 60} axisPanZoom="y">
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="price" format="$,.0f" />
         <Layers>
@@ -119,6 +122,7 @@ export const BothAxes: Story = {
       panZoom="panZoomXY"
       axisPanZoom="xy"
     >
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="price" format="$,.0f" />
         <Layers>
@@ -146,6 +150,7 @@ export const StackedRows: Story = {
       panZoom="panZoomXY"
       axisPanZoom="xy"
     >
+      <LineCursor />
       <ChartRow height={140}>
         <YAxis id="price" format="$,.0f" />
         <Layers>
@@ -178,6 +183,7 @@ export const ZoomInFloor: Story = {
       axisPanZoom="x"
       minDuration={30 * 60_000}
     >
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="price" format="$,.0f" />
         <Layers>
@@ -202,6 +208,7 @@ export const CategoryStripInert: Story = {
       panZoom="panZoomXY"
       axisPanZoom="xy"
     >
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="flow" format=",.0f" />
         <Layers>
@@ -239,6 +246,7 @@ export const AutoOrManualYScale: Story = {
           panZoom="panZoom"
           axisPanZoom="y"
         >
+          <LineCursor />
           <ChartRow height={200}>
             <YAxis
               id="price"
@@ -298,6 +306,7 @@ export const ZeroAnchoredBars: Story = {
     <div style={{ display: 'flex', gap: 24 }}>
       <div style={{ width: W / 2 - 12 }}>
         <ChartContainer width={W / 2 - 12} categories={DESKS} axisPanZoom="y">
+          <LineCursor />
           <ChartRow height={200}>
             <YAxis id="flow" format=",.0f" zeroAnchored />
             <Layers>
@@ -309,6 +318,7 @@ export const ZeroAnchoredBars: Story = {
       </div>
       <div style={{ width: W / 2 - 12 }}>
         <ChartContainer width={W / 2 - 12} categories={DESKS} axisPanZoom="y">
+          <LineCursor />
           <ChartRow height={200}>
             <YAxis id="flow" format=",.0f" zeroAnchored />
             <Layers>

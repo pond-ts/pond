@@ -6,6 +6,7 @@ import {
   Layers,
   LineChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -48,7 +49,8 @@ export default function GalleryLatencyPercentiles({
       : scanWindow(LATENCY_RANGE[0], LATENCY_RANGE[1], 150 * 60_000, phase);
 
   return (
-    <ChartContainer range={range} width={width} theme={theme} cursor="line">
+    <ChartContainer range={range} width={width} theme={theme}>
+      <LineCursor />
       <ChartRow height={height}>
         <YAxis
           id="ms"

@@ -11,6 +11,7 @@ import { YAxis } from './YAxis.js';
 import { Selector } from './selectors.js';
 import { defaultTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
+import { LineCursor, FlagCursor, CrosshairCursor } from './cursors.js';
 
 const N = 48;
 /** Fixed base epoch (2026-01-01 12:00 UTC) + 1-minute step → deterministic. */
@@ -75,6 +76,7 @@ export const Encoded: Story = {
     const t = trades();
     return (
       <ChartContainer range={TIME_RANGE} width={620}>
+        <LineCursor />
         <ChartRow height={300}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -92,7 +94,7 @@ export const Encoded: Story = {
 };
 
 /**
- * **`cursor='flag'` — the point readout.** Hover: a flag rises from the nearest
+ * **`<FlagCursor>` — the point readout.** Hover: a flag rises from the nearest
  * point to a value chip near the top (the scatter flag is point-anchored, like
  * line/area). A per-point 2D-nearest `inline` readout and a staff from the dot's
  * top for large encoded marks are later refinements.
@@ -101,7 +103,8 @@ export const CursorFlag: Story = {
   render: () => {
     const t = trades();
     return (
-      <ChartContainer range={TIME_RANGE} width={620} cursor="flag">
+      <ChartContainer range={TIME_RANGE} width={620}>
+        <FlagCursor />
         <ChartRow height={300}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -129,6 +132,7 @@ export const Labelled: Story = {
     const t = trades();
     return (
       <ChartContainer range={TIME_RANGE} width={620}>
+        <LineCursor />
         <ChartRow height={300}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -157,6 +161,7 @@ export const OverLine: Story = {
     const t = trades();
     return (
       <ChartContainer range={TIME_RANGE} width={620}>
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -205,6 +210,7 @@ function ControlledSelectDemo() {
         )}
       </div>
       <ChartContainer range={TIME_RANGE} width={620}>
+        <LineCursor />
         <Selector selected={sel} onSelect={setSel}>
           <ChartRow height={280}>
             <YAxis id="price" label="price" />
@@ -259,6 +265,7 @@ export const MultiSelected: Story = {
     const t = trades();
     return (
       <ChartContainer range={TIME_RANGE} width={620}>
+        <LineCursor />
         <Selector
           enabled={false}
           selected={[tradeMark(8), tradeMark(24), tradeMark(40)]}
@@ -292,6 +299,7 @@ export const MultiHovered: Story = {
     const t = trades();
     return (
       <ChartContainer range={TIME_RANGE} width={620}>
+        <LineCursor />
         <Selector enabled={false} hovered={[20, 21, 22, 23, 24].map(tradeMark)}>
           <ChartRow height={300}>
             <YAxis id="price" label="price" />
@@ -322,6 +330,7 @@ export const MultiSelectedAndHovered: Story = {
     const t = trades();
     return (
       <ChartContainer range={TIME_RANGE} width={620}>
+        <LineCursor />
         <Selector
           enabled={false}
           selected={[tradeMark(8), tradeMark(24)]}
@@ -399,6 +408,7 @@ function smileChain() {
 export const ValueAxis: Story = {
   render: () => (
     <ChartContainer timeFormat=",.0f" width={520}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="iv" format=".0%" />
         <Layers>
@@ -418,6 +428,7 @@ export const ValueAxis: Story = {
 export const ValueAxisEncoded: Story = {
   render: () => (
     <ChartContainer timeFormat=",.0f" width={520}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="iv" format=".0%" />
         <Layers>
@@ -444,12 +455,8 @@ export const ValueAxisSmile: Story = {
   render: () => {
     const chain = smileChain();
     return (
-      <ChartContainer
-        timeFormat=",.0f"
-        cursor="crosshair"
-        showAxis={false}
-        width={620}
-      >
+      <ChartContainer timeFormat=",.0f" showAxis={false} width={620}>
+        <CrosshairCursor />
         <ChartRow height={260}>
           <YAxis id="iv" label="implied vol" format=".1%" />
           <Layers>
@@ -479,6 +486,7 @@ export const ValueAxisSmile: Story = {
 export const ValueAxisLabelled: Story = {
   render: () => (
     <ChartContainer timeFormat=",.0f" width={520}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="iv" format=".1%" />
         <Layers>
@@ -496,7 +504,7 @@ export const ValueAxisLabelled: Story = {
 /**
  * **Value axis + flag cursor.** Scatter's `sampleAt` bisecting the **strike**
  * axis: hover and the staff snaps to the nearest drawn mark, the flag reading
- * its IV, `cursorTime` showing the strike. Proves the tracker readout follows
+ * its IV, `showTime` showing the strike. Proves the tracker readout follows
  * the pointer on a value axis, not just time.
  */
 export const ValueAxisFlag: Story = {
@@ -505,13 +513,8 @@ export const ValueAxisFlag: Story = {
     const lo = chain.axisAt(0);
     const hi = chain.axisAt(chain.length - 1);
     return (
-      <ChartContainer
-        range={[lo, hi]}
-        timeFormat=",.0f"
-        cursor="flag"
-        cursorTime
-        width={520}
-      >
+      <ChartContainer range={[lo, hi]} timeFormat=",.0f" width={520}>
+        <FlagCursor showTime />
         <ChartRow height={220}>
           <YAxis id="iv" format=".1%" />
           <Layers>
@@ -537,6 +540,7 @@ export const PanZoomXY: Story = {
     const t = trades();
     return (
       <ChartContainer range={TIME_RANGE} width={620} panZoom="panZoomXY">
+        <LineCursor />
         <ChartRow height={300}>
           <YAxis id="price" label="price" />
           <Layers>

@@ -5,6 +5,8 @@ import {
   Layers,
   Legend,
   YAxis,
+  CrosshairCursor,
+  LineCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -80,7 +82,7 @@ const PAINT_ORDER = [
  * the three days, so the solar bulge grows and collapses as it crosses. Every
  * other embed passes no phase and gets the whole weekend.
  *
- * `cursor="crosshair"` snaps its reticle to the **nearest band edge** under the
+ * `<CrosshairCursor />` snaps its reticle to the **nearest band edge** under the
  * pointer and prints that edge's value — which on a stack is a *cumulative*
  * total, not one band's output. On the top edge that is total generation, which
  * is the number worth reading here.
@@ -107,7 +109,9 @@ export default function GalleryGridMix({
       : scanWindow(begin, end, 14 * HOUR, phase);
 
   return (
-    <ChartContainer range={range} width={width} theme={theme} cursor={cursor}>
+    <ChartContainer range={range} width={width} theme={theme}>
+      {cursor === 'crosshair' && <CrosshairCursor />}
+      {cursor === 'line' && <LineCursor />}
       <ChartRow height={height}>
         <YAxis id="gw" label="GW" format=",.0f" min={0} width={56} />
         <Layers>

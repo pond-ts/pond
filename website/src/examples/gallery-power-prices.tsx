@@ -5,6 +5,8 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  CrosshairCursor,
+  LineCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -28,7 +30,7 @@ const HOUR = 3_600_000;
  * "conventional exception" the palette reserves for a signed quantity.
  *
  * Two opt-in interactions, both of which have to work **below** the zero line
- * as well as above it: `cursor="crosshair"` prints the hour's price against the
+ * as well as above it: `<CrosshairCursor />` prints the hour's price against the
  * axis (at the axis's own tick format — one formatter serves both, by design),
  * and an `id` turns on hit-testing, so a bar lights on hover and outlines on
  * click. A negative bar's rect runs *downward* from zero, and both channels
@@ -62,7 +64,9 @@ export default function GalleryPowerPrices({
       : scanWindow(begin, end, 26 * HOUR, phase);
 
   return (
-    <ChartContainer range={range} width={width} theme={theme} cursor={cursor}>
+    <ChartContainer range={range} width={width} theme={theme}>
+      {cursor === 'crosshair' && <CrosshairCursor />}
+      {cursor === 'line' && <LineCursor />}
       <ChartRow height={height}>
         <YAxis id="eur" label="EUR / MWh" format=",.0f" width={58} />
         <Layers>

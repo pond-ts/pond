@@ -10,6 +10,8 @@ import {
   LineChart,
   Marker,
   YAxis,
+  LineCursor,
+  CrosshairCursor,
 } from '@pond-ts/charts';
 import { computePower } from '@pond-ts/fit';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -168,11 +170,11 @@ export default function GettingStartedRide() {
             range={rideSeries.timeRange()}
             width={width}
             theme={theme}
-            cursor="crosshair"
             origin="data"
             panZoom="panZoom"
             bounds={RIDE_BOUNDS}
           >
+            <CrosshairCursor />
             <ChartRow height={220}>
               <YAxis id="w" label="watts" min={0} width={52} />
               <Layers>
@@ -224,6 +226,7 @@ export default function GettingStartedRide() {
               width={histogramWidth}
               theme={theme}
             >
+              <LineCursor />
               <ChartRow height={BOTTOM_H}>
                 <YAxis
                   id="min"

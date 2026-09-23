@@ -10,6 +10,7 @@ import { Selector } from './selectors.js';
 import { defaultTheme } from './theme.js';
 import type { ChartTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * `<BarChart>` is also pond's **histogram** primitive: stacked bars (a group-by
@@ -108,6 +109,7 @@ export const IncidentsStacked: Story = {
     const byHost = incidentsByHost();
     return (
       <ChartContainer range={[BASE, BASE + HOUR]} width={660}>
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="count" label="incidents" min={0} pad={0.06} />
           <Layers>
@@ -181,6 +183,7 @@ export const RiskBands: Story = {
     const byBand = riskByBand();
     return (
       <ChartContainer range={[BASE, BASE + HOUR]} width={660}>
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="count" label="hosts" min={0} pad={0.06} />
           <Layers>
@@ -214,6 +217,7 @@ export const RiskBandsThemeRoles: Story = {
     const byBand = riskByBand();
     return (
       <ChartContainer range={[BASE, BASE + HOUR]} width={660} theme={riskTheme}>
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="count" label="hosts" min={0} pad={0.06} />
           <Layers>
@@ -285,6 +289,7 @@ export const HeartRateZones: Story = {
     const zoneTicks = HR_ZONES.map((label, i) => ({ at: i + 0.5, label }));
     return (
       <ChartContainer width={660}>
+        <LineCursor />
         <ChartRow height={230}>
           <YAxis id="zone" label="zone" width={92} ticks={zoneTicks} />
           <Layers>
@@ -320,6 +325,7 @@ export const HeartRateZonesColored: Story = {
     const zoneTicks = HR_ZONES.map((label, i) => ({ at: i + 0.5, label }));
     return (
       <ChartContainer width={660}>
+        <LineCursor />
         <ChartRow height={230}>
           <YAxis id="zone" label="zone" width={92} ticks={zoneTicks} />
           <Layers>
@@ -387,6 +393,7 @@ export const PowerDistribution: Story = {
     const bins = powerDistribution();
     return (
       <ChartContainer range={[0, 300]} width={660}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="secs" label="seconds" min={0} pad={0.06} />
           <Layers>
@@ -420,6 +427,7 @@ export const HorizontalSingle: Story = {
     const ticks = cats.map((label, i) => ({ at: i + 0.5, label }));
     return (
       <ChartContainer width={620}>
+        <LineCursor />
         <ChartRow height={200}>
           <YAxis id="verb" label="method" width={80} ticks={ticks} />
           <Layers>
@@ -468,6 +476,7 @@ function HoverSelectDemo() {
         )}
       </div>
       <ChartContainer range={[BASE, BASE + HOUR]} width={660}>
+        <LineCursor />
         <Selector onSelect={setSel}>
           <ChartRow height={260}>
             <YAxis id="count" label="incidents" min={0} pad={0.06} />

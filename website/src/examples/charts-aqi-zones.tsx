@@ -7,6 +7,7 @@ import {
   LineChart,
   YAxis,
   Zone,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import {
@@ -49,6 +50,7 @@ export default function ChartsAqiZones({ width }: { width: number }) {
       bounds={[range.begin(), range.end()]}
       minDuration={60 * 60 * 1000}
     >
+      <LineCursor />
       <ChartRow height={260}>
         {/* Pinned to 0–200 rather than fitted to the data: the point of the
             chart is where the readings sit *within the scale*, and an axis that

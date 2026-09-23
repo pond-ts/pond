@@ -5,6 +5,7 @@ import {
   Layers,
   LineChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -36,6 +37,7 @@ export default function GalleryDashboard({
 
   return (
     <ChartContainer range={range} width={width} theme={theme}>
+      <LineCursor />
       <ChartRow height={90}>
         <YAxis id="rps" side="right" format=",.0f" width={46} />
         <Layers>

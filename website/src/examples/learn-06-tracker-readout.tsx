@@ -6,6 +6,7 @@ import {
   LineChart,
   YAxis,
   type TrackerInfo,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { singleHostSeries } from './lib/server-metrics';
@@ -37,9 +38,9 @@ export default function LearnTrackerReadout() {
         range={series.timeRange()}
         width={560}
         theme={theme}
-        cursor="line"
         onTrackerChanged={setInfo}
       >
+        <LineCursor />
         <ChartRow height={200}>
           <YAxis id="pct" side="right" format=".0%" />
           <Layers>

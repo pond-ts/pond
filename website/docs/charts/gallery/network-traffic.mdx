@@ -92,12 +92,14 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { siteTotal, TRAFFIC_RANGE } from './lib/cern-traffic';
 
 const total = siteTotal();
 
 <ChartContainer range={TRAFFIC_RANGE} width={640} theme={theme}>
+  <LineCursor />
   <ChartRow height={220}>
     <YAxis id="gbps" side="right" label="Gbps" width={52} />
     <Layers>
@@ -172,7 +174,7 @@ which is the entire reason to put them in a column.
 
 | Option                                           | What it does                                                        | Reach for it when                                                            |
 | ------------------------------------------------ | ------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `cursor="crosshair"` on `<ChartContainer>`       | Both halves read out at the hovered time                            | Always, on a mirrored chart — the pair of numbers is the point               |
+| `<CrosshairCursor />` in `<ChartContainer>`      | Both halves read out at the hovered time                            | Always, on a mirrored chart — the pair of numbers is the point               |
 | `legend="to site"` on each `<AreaChart>`         | Names the layer for `<Legend>` and the readout                      | The direction isn't obvious from position alone, e.g. in a small multiple    |
 | `baseline="floor"` on the `out` layer            | It fills to the axis floor instead of the zero line                 | Never here — zero is the default, and the negated `out` column hangs from it |
 | `stack` the directions instead of mirroring them | Gives total-crossing-the-router, losing the in/out split            | You care about capacity, not direction                                       |
@@ -186,7 +188,7 @@ which is the entire reason to put them in a column.
   and the flat-fill roles
 - [`<YAxis>`](../axes/value-axis.mdx) — `format`, `label`, `labelPlacement`
 - [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — what
-  `cursor="crosshair"` gives you
+  `<CrosshairCursor />` gives you
 - [Feeding charts pond data](../../learn-charts/03-feeding-charts-pond-data.mdx)
   — `fromJSON`, `mapColumns`, and the wire shapes
 - [**Storybook**](pathname:///storybook/?path=/story/charts-areachart--baseline)

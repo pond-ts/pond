@@ -7,6 +7,7 @@ import { LineChart } from './LineChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
 import { defaultTheme } from './theme.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * Axis behaviours, one per story, so we can eyeball each in isolation — the
@@ -56,6 +57,7 @@ const W = 560;
 export const LeftAxis: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="pct" format=".0%" />
         <Layers>
@@ -70,6 +72,7 @@ export const LeftAxis: Story = {
 export const RightAxis: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="price" side="right" format="$,.0f" />
         <Layers>
@@ -84,6 +87,7 @@ export const RightAxis: Story = {
 export const DualAxis: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="pct" side="left" format=".0%" />
         <YAxis id="price" side="right" format="$,.0f" />
@@ -110,6 +114,7 @@ export const DualAxis: Story = {
 export const AxisLabels: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis
           id="pct"
@@ -136,6 +141,7 @@ export const AxisLabels: Story = {
 export const ExplicitTicks: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis
           id="pct"
@@ -163,6 +169,7 @@ export const ExplicitTicks: Story = {
 export const TickCount: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={260}>
         <YAxis id="pct" label="%" tickCount={3} />
         <Layers>
@@ -183,6 +190,7 @@ export const TickCount: Story = {
 export const HeightDerivedDensity: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="pct" label="tall" />
         <Layers>
@@ -209,6 +217,7 @@ export const HeightDerivedDensity: Story = {
 export const DomainAutoVsExplicit: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="auto" side="left" format=".3f" />
         <YAxis id="tight" side="right" min={0.137} max={0.263} format=".3f" />
@@ -229,6 +238,7 @@ export const DomainAutoVsExplicit: Story = {
 export const PaddedDomain: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="tight" side="left" min={0.137} max={0.263} format=".3f" />
         <YAxis
@@ -261,6 +271,7 @@ export const PaddedDomain: Story = {
 export const SuppressBoundaryLabels: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="all" side="left" format=".0%" />
         <YAxis id="trimmed" side="right" boundaryLabels={false} format=".0%" />
@@ -282,6 +293,7 @@ export const SuppressBoundaryLabels: Story = {
 export const XAxisBottom: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W} showAxis={false}>
+      <LineCursor />
       <ChartRow height={180}>
         <YAxis id="pct" format=".0%" />
         <Layers>
@@ -297,6 +309,7 @@ export const XAxisBottom: Story = {
 export const XAxisTop: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W} showAxis={false}>
+      <LineCursor />
       <XAxis side="top" label="Time" />
       <ChartRow height={180}>
         <YAxis id="pct" format=".0%" />
@@ -316,6 +329,7 @@ export const XAxisTop: Story = {
 export const XAxisTopRightAlign: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W} showAxis={false}>
+      <LineCursor />
       <XAxis side="top" align="right" />
       <ChartRow height={180}>
         <YAxis id="pct" format=".0%" />
@@ -340,6 +354,7 @@ function AlignExample({ align }: { align: 'auto' | 'center' | 'right' }) {
         align="{align}"
       </div>
       <ChartContainer range={RANGE} width={W} showAxis={false}>
+        <LineCursor />
         <ChartRow height={120}>
           <YAxis id="pct" format=".0%" />
           <Layers>
@@ -377,6 +392,7 @@ export const XTickAlignment: Story = {
 export const HorizontalLabel: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="pct" label="IV %" labelPlacement="top" format=".0%" />
         <YAxis
@@ -417,6 +433,7 @@ export const ThemedTitle: Story = {
         },
       }}
     >
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="pct" label="Implied volatility" format=".0%" />
         <Layers>
@@ -437,6 +454,7 @@ export const ThemedTitle: Story = {
 export const HiddenAxis: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="pct" min={0} max={0.6} hide />
         <Layers>
@@ -457,6 +475,7 @@ export const HiddenAxis: Story = {
 export const HiddenVsShown: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={140}>
         {/* `label=""` suppresses the title; without it the axis paints its
             binding id ("a") down the gutter — [PND-AXISTITLE]. */}
@@ -484,6 +503,7 @@ export const HiddenVsShown: Story = {
 export const HiddenAxisWithGrid: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W} grid>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="pct" min={0} max={0.6} hide />
         <Layers>
@@ -552,6 +572,7 @@ const pdChart = (xScale?: 'log') => (
     showAxis={false}
     {...(xScale ? { xScale } : {})}
   >
+    <LineCursor />
     <ChartRow height={260}>
       <YAxis id="w" label="watts" />
       <Layers>

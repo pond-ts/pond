@@ -97,7 +97,7 @@ no series ever takes — so a placed mark is never mistaken for data.
 | `lower="p01" upper="p99"` symmetric about p50 | A true envelope rather than an upward-only one   | Latency that can be anomalously **fast** too (cache hits)                |
 | `<Baseline onChange>`                         | Drag the objective                               | The SLO is under discussion — see [SLA & incidents](./sla-incidents.mdx) |
 | Log-scaled `<YAxis>`                          | Compresses the tail so the median stays readable | p99/p50 exceeds ~10× and the median flattens to the floor                |
-| `cursor="crosshair"`                          | Reads one point rather than the whole slice      | Reading a single value off the tail                                      |
+| `<CrosshairCursor />`                         | Reads one point rather than the whole slice      | Reading a single value off the tail                                      |
 
 ## See also
 

@@ -35,6 +35,7 @@ between them:
 
 ```tsx
 <ChartContainer range={s.timeRange()} width={560} rowGap={8}>
+  <LineCursor />
   <ChartRow height={140}>
     <YAxis id="pct" side="right" format=".0%" />
     <Layers>
@@ -81,7 +82,9 @@ box, measures it, and mounts the chart at that pixel width, re-rendering as the
 box resizes — so a flex column, a grid cell or the window all just work:
 
 ```tsx
-<ChartContainer width="auto">…</ChartContainer>
+<ChartContainer width="auto">
+  <LineCursor />…
+</ChartContainer>
 ```
 
 Nothing paints until a real width exists, so an auto container is briefly an
@@ -107,6 +110,7 @@ browser says is left. A full-bleed chart is zero arithmetic:
 
 ```tsx
 <ChartContainer width="auto" height="auto">
+  <LineCursor />
   <ChartRow>
     <YAxis id="v" />
     <Layers>
@@ -154,17 +158,16 @@ end on these same primitives.
 | `showAxis` | `boolean`          | `true`   | Auto-render the shared x axis under the rows. `false` for a bare plot or to place your own `<XAxis>`.               |
 | `grid`     | `boolean`          | `true`   | Draw the vertical gridlines (a calendar-density hierarchical grid on a time axis). `false` for a clean backdrop.    |
 
-(`range`, `theme`, `cursor`, and the axis-kind props are covered under
+(`range`, `theme`, the cursor components, and the axis-kind props are covered under
 [Axes](./axes/index.mdx) and [Interaction](./interaction/cursors-and-readouts.mdx).)
 
 ### `<ChartRow>`
 
-| Prop       | Type         | Default   | Purpose                                                                                                         |
-| ---------- | ------------ | --------- | --------------------------------------------------------------------------------------------------------------- |
-| `height`   | `number`     | —         | Fixed row height in CSS px. Omit for flex sizing.                                                               |
-| `flex`     | `number`     | `1`       | Share of the container's remaining height (needs `<ChartContainer height>`). A bare `<ChartRow>` is `flex={1}`. |
-| `cursor`   | `CursorMode` | container | Cursor presentation for this row, overriding the container.                                                     |
-| `children` | `ReactNode`  | —         | `<YAxis>` (left) · `<Layers>` · `<YAxis>` (right), in order.                                                    |
+| Prop       | Type        | Default | Purpose                                                                                                                      |
+| ---------- | ----------- | ------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `height`   | `number`    | —       | Fixed row height in CSS px. Omit for flex sizing.                                                                            |
+| `flex`     | `number`    | `1`     | Share of the container's remaining height (needs `<ChartContainer height>`). A bare `<ChartRow>` is `flex={1}`.              |
+| `children` | `ReactNode` | —       | `<YAxis>` (left) · `<Layers>` · `<YAxis>` (right), in order. A cursor component here overrides the container's for this row. |
 
 ## Reading the resolved layout — `useChartFrame()`
 
@@ -197,6 +200,7 @@ function SlotHeader() {
 }
 
 <ChartContainer width="auto">
+  <LineCursor />
   <SlotHeader />
   <ChartRow height={200}>…</ChartRow>
 </ChartContainer>;

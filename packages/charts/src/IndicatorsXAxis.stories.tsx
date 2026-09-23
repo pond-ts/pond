@@ -12,6 +12,7 @@ import {
   STEP,
   RANGE,
 } from './story-data.fixture.js';
+import { LineCursor, CrosshairCursor } from './cursors.js';
 
 /**
  * **X-axis indicators** — a value pinned to the x-axis edge as an on-axis pill.
@@ -20,7 +21,7 @@ import {
  *  - **`<Marker indicator>`** — a static x-pill at the marker's `at`, in the
  *    annotation colour. The pill echoes the marker's `label` if one is set,
  *    else the axis's formatted `at` value (also the `label={false}` case).
- *  - **`cursor="crosshair"`** — the hovered time, pinned live to the x-axis
+ *  - **`<CrosshairCursor>`** — the hovered time, pinned live to the x-axis
  *    (pinned here via the controlled `trackerPosition` for a static shot).
  * Both pills share one `<XAxis>` per container (not per row), so a marker
  * living inside any one row's `<Layers>` still surfaces on the shared axis —
@@ -43,6 +44,7 @@ type Story = StoryObj;
 export const MarkerPill: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -60,6 +62,7 @@ export const MarkerPill: Story = {
 export const MarkerPillWithChip: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -77,6 +80,7 @@ export const MarkerPillWithChip: Story = {
 export const MarkerPillLabelled: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -93,6 +97,7 @@ export const MarkerPillLabelled: Story = {
 export const MultipleMarkerPills: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -112,6 +117,7 @@ export const MultipleMarkerPills: Story = {
 export const StackedPills: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -131,6 +137,7 @@ export const StackedPills: Story = {
 export const MarkerPillOnSecondRow: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={150}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -148,17 +155,13 @@ export const MarkerPillOnSecondRow: Story = {
   ),
 };
 
-/** **Crosshair time** — `cursor="crosshair"` pins the hovered time to the
+/** **Crosshair time** — `<CrosshairCursor>` pins the hovered time to the
  *  x-axis (pinned here via `trackerPosition` for a static shot; interactively
  *  it tracks the pointer). */
 export const CrosshairTime: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="crosshair"
-      trackerPosition={at(40)}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={at(40)}>
+      <CrosshairCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />

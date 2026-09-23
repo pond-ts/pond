@@ -7,6 +7,7 @@ import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { Baseline } from './annotations.js';
 import { priceSeries, RANGE } from './story-data.fixture.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * `<Baseline>` — a horizontal value line on a chart, in the amber annotation
@@ -22,6 +23,7 @@ const H = 220;
 function Chart({ children }: { children: ReactNode }) {
   return (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={H}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -160,6 +162,7 @@ export const Multiple: Story = {
 export const DualAxis: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={H}>
         <YAxis id="usd" side="left" min={150} max={220} format=",.0f" />
         <Layers>
@@ -179,6 +182,7 @@ export const DualAxis: Story = {
 export const DomainExtreme: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={H}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />

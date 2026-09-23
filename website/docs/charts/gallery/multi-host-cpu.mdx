@@ -109,13 +109,13 @@ would have to be a zero.
 
 ## Options to try
 
-| Option                                 | What it does                                | Reach for it when                                                 |
-| -------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------- |
-| `gaps="dashed"` / `"none"` / `"break"` | How a missing run is drawn                  | Always decide this explicitly on scraped data                     |
-| `<YAxis format=".0%" min={0} max={1}>` | Pins the axis to 0–100% instead of the data | Utilisation, where "how close to full" beats "how much it varied" |
-| `<Legend placement>`                   | Names the lines                             | More than two series — position alone doesn't identify a host     |
-| `cursor="line"` vs `"crosshair"`       | Reads all series at one time vs one point   | Comparing hosts at an instant — `"line"` is the right one here    |
-| One `<ChartRow>` per host              | Small multiples instead of overlay          | The lines overlap so much that the overlay is unreadable          |
+| Option                                    | What it does                                | Reach for it when                                                 |
+| ----------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------- |
+| `gaps="dashed"` / `"none"` / `"break"`    | How a missing run is drawn                  | Always decide this explicitly on scraped data                     |
+| `<YAxis format=".0%" min={0} max={1}>`    | Pins the axis to 0–100% instead of the data | Utilisation, where "how close to full" beats "how much it varied" |
+| `<Legend placement>`                      | Names the lines                             | More than two series — position alone doesn't identify a host     |
+| `<LineCursor />` vs `<CrosshairCursor />` | Reads all series at one time vs one point   | Comparing hosts at an instant — the line is the right one here    |
+| One `<ChartRow>` per host                 | Small multiples instead of overlay          | The lines overlap so much that the overlay is unreadable          |
 
 ## See also
 

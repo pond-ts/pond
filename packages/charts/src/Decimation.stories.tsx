@@ -22,6 +22,7 @@ import {
   weekdaySessions,
   rangeOf,
 } from './tradingAxis.fixture.js';
+import { LineCursor } from './cursors.js';
 
 const BASE = Date.UTC(2026, 0, 1, 12, 0, 0);
 const STEP = 1_000; // 1s grid
@@ -131,6 +132,7 @@ const cloud = bigScatter(N);
 export const Default: Story = {
   render: () => (
     <ChartContainer width={720} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <Layers>
           <LineChart series={series} column="v" as="power" />
@@ -146,6 +148,7 @@ export const Default: Story = {
 export const Off: Story = {
   render: () => (
     <ChartContainer width={720} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <Layers>
           <LineChart series={series} column="v" as="power" decimate={false} />
@@ -165,6 +168,7 @@ export const Off: Story = {
 export const Scatter: Story = {
   render: () => (
     <ChartContainer width={720} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <Layers>
           <ScatterChart series={cloud} column="v" />
@@ -180,6 +184,7 @@ export const Scatter: Story = {
 export const ScatterOff: Story = {
   render: () => (
     <ChartContainer width={720} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <Layers>
           <ScatterChart series={cloud} column="v" decimate={false} />
@@ -195,6 +200,7 @@ export const ScatterOff: Story = {
 export const SpikePreserved: Story = {
   render: () => (
     <ChartContainer width={720} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <Layers>
           <LineChart series={spiky} column="v" as="power" />
@@ -210,6 +216,7 @@ export const SpikePreserved: Story = {
 export const GappyDashed: Story = {
   render: () => (
     <ChartContainer width={720} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <Layers>
           <LineChart series={gappy} column="v" as="power" gaps="dashed" />
@@ -225,6 +232,7 @@ export const GappyDashed: Story = {
 export const Area: Story = {
   render: () => (
     <ChartContainer width={720} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <Layers>
           <AreaChart series={series} column="v" as="power" />
@@ -240,6 +248,7 @@ export const Area: Story = {
 export const Band: Story = {
   render: () => (
     <ChartContainer width={720} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <Layers>
           <BandChart series={bandSeries} lower="lo" upper="hi" />
@@ -268,6 +277,7 @@ export const TradingSessionBreaks: Story = {
       discontinuities={provider(tradingSessions)}
       panZoom
     >
+      <LineCursor />
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -298,6 +308,7 @@ export const TradingSessionBreaksBand: Story = {
       discontinuities={provider(tradingSessions)}
       panZoom
     >
+      <LineCursor />
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -354,6 +365,7 @@ const candleSeries = bigCandles(60_000);
 export const Candles: Story = {
   render: () => (
     <ChartContainer width={720} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -372,6 +384,7 @@ export const Candles: Story = {
 export const CandlesZoomed: Story = {
   render: () => (
     <ChartContainer width={720} range={[BASE, BASE + 40 * STEP]} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -388,6 +401,7 @@ export const CandlesZoomed: Story = {
 export const CandlesOff: Story = {
   render: () => (
     <ChartContainer width={720} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -438,6 +452,7 @@ const boxSeries = bigBoxes(20_000);
 export const Boxes: Story = {
   render: () => (
     <ChartContainer width={720} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -463,6 +478,7 @@ export const Boxes: Story = {
 export const BoxesZoomed: Story = {
   render: () => (
     <ChartContainer width={720} range={[BASE, BASE + 40 * STEP]} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -487,6 +503,7 @@ export const BoxesZoomed: Story = {
 export const BoxesOff: Story = {
   render: () => (
     <ChartContainer width={720} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -535,6 +552,7 @@ const barSeries = bigBars(100_000);
 export const Bars: Story = {
   render: () => (
     <ChartContainer width={720} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <Layers>
           <BarChart series={barSeries} column="v" as="power" />
@@ -550,6 +568,7 @@ export const Bars: Story = {
 export const BarsOff: Story = {
   render: () => (
     <ChartContainer width={720} panZoom>
+      <LineCursor />
       <ChartRow height={260}>
         <Layers>
           <BarChart series={barSeries} column="v" as="power" decimate={false} />
@@ -569,6 +588,7 @@ function DrawStatsPanel() {
   return (
     <div>
       <ChartContainer width={720} onDrawStats={setFrame} panZoom>
+        <LineCursor />
         <ChartRow height={220}>
           <Layers>
             <LineChart series={series} column="v" as="power" />

@@ -5,6 +5,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { AreaChart } from './AreaChart.js';
 import { YAxis } from './YAxis.js';
+import { LineCursor } from './cursors.js';
 
 const N = 60;
 /** Fixed base epoch (2026-01-01 12:00 UTC) + 1-minute step, so the time axis
@@ -112,6 +113,7 @@ export const ZeroBaseline: Story = {
     const e = elevation();
     return (
       <ChartContainer range={TIME_RANGE} width={560}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="m" label="m" />
           <Layers>
@@ -135,6 +137,7 @@ export const Elevation: Story = {
     const e = elevation();
     return (
       <ChartContainer range={TIME_RANGE} width={560}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="m" label="m" />
           <Layers>
@@ -163,6 +166,7 @@ export const ReferenceLevel: Story = {
     const e = elevation();
     return (
       <ChartContainer range={TIME_RANGE} width={560}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="m" label="m" />
           <Layers>
@@ -193,6 +197,7 @@ export const AboveBelowAxis: Story = {
     const t = traffic();
     return (
       <ChartContainer range={TIME_RANGE} width={560}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="mbps" label="Mb/s" />
           <Layers>
@@ -217,6 +222,7 @@ export const TrafficAreas: Story = {
     const t = siteTraffic();
     return (
       <ChartContainer range={TIME_RANGE} width={640}>
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="bps" label="Gbps" />
           <Layers>

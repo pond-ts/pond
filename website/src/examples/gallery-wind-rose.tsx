@@ -8,6 +8,8 @@ import {
   Region,
   ScatterChart,
   YAxis,
+  LineCursor,
+  CrosshairCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import {
@@ -165,6 +167,7 @@ export default function GalleryWindRose({
       // already name.
       editAnnotations={interactive}
     >
+      <LineCursor />
       <ChartRow height={interactive ? 172 : 76}>
         <YAxis
           id="dir"
@@ -213,15 +216,11 @@ export default function GalleryWindRose({
   );
 
   const histogram = (
-    <ChartContainer
-      width={width}
-      theme={theme}
-      showAxis={false}
-      // On an **ordinal** axis the crosshair degrades to a vertical line plus
-      // the hovered category's name, pinned over its own axis label: there is
-      // no continuous x to read back, so no horizontal arm and no value pill.
-      cursor="crosshair"
-    >
+    <ChartContainer width={width} theme={theme} showAxis={false}>
+      {/* On an **ordinal** axis the crosshair degrades to a vertical line plus
+          the hovered category's name, pinned over its own axis label: there is
+          no continuous x to read back, so no horizontal arm and no value pill. */}
+      <CrosshairCursor />
       <ChartRow height={interactive ? 196 : 100}>
         <YAxis
           id="pct"

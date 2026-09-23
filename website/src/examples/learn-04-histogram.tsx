@@ -4,6 +4,7 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { allHostsSeries } from './lib/server-metrics';
@@ -22,6 +23,7 @@ export default function Histogram() {
 
   return (
     <ChartContainer range={[20, 90]} width={560} theme={theme}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="count" label="minutes" min={0} width={44} />
         <Layers>

@@ -22,10 +22,10 @@ import GalleryRainfall from '@site/src/examples/gallery-rainfall';
 This one is the full width of the page and it moves: **drag across the plot to
 zoom into that span**, **wheel to zoom in and out**, **Reset to 2024** to get
 back. The view is clamped to 2024 by `bounds`, so no gesture can strand you off
-the end of the data. [Build it](#the-gestures) has the four props, including
+the end of the data. [Build it](#the-gestures) has the four pieces, including
 the gesture conflict you have to resolve on purpose.
 
-The shading that follows the pointer is `cursor="region"`, and it's exactly
+The shading that follows the pointer is `<RangeCursor />`, and it's exactly
 **one day** wide, because the bar layer hands the cursor its own bins. At the
 full-year zoom a day is under two pixels and you'll barely see it; drag into
 the wet fortnight at the end of February and it becomes an obvious block, one
@@ -142,7 +142,7 @@ plot that's most of what stops the wet season reading as a solid block.
 
 ### The gestures
 
-Four props, and one of them exists to settle an argument between the other
+Four pieces, and one of them exists to settle an argument between the other
 two:
 
 ```tsx
@@ -151,28 +151,29 @@ const [range, setRange] = useState(SEA_BOUNDS);
 <ChartContainer
   range={range}
   bounds={SEA_BOUNDS}
-  cursor="region"
   panZoom="panZoom"
   onTimeRangeChange={setRange}
-  onRegionSelect={setRange}
 >
+  <RangeCursor onDragRelease={(span) => setRange(span.x)} />
+  {/* rows */}
+</ChartContainer>;
 ```
 
-- **`cursor="region"`** shades the bucket under the pointer, and turns a drag
-  into a span selection delivered to `onRegionSelect`. Wiring that callback
-  straight to `setRange` is the whole of drag-to-zoom.
-- **The buckets come free.** `cursorSequence` is the explicit way to define
+- **`<RangeCursor>`** shades the bucket under the pointer, and turns a drag
+  into a span selection delivered to `onDragRelease`. Wiring that callback's
+  `span.x` straight to `setRange` is the whole of drag-to-zoom.
+- **The buckets come free.** Its `sequence` prop is the explicit way to define
   them, but with none given the container falls back to the **first bar
   layer's own bins** — so the highlight and the selection are already
   day-aligned here. On a row with no bar layer you'd need the sequence.
 - **`panZoom="panZoom"`** is drag-to-pan plus wheel-zoom. But an unmodified
-  region-drag **preempts pan**: drag always selects. That's deliberate here —
+  range-cursor drag **preempts pan**: drag always selects. That's deliberate here —
   on a year of daily bars, zooming to a span is worth more than panning, and
-  wheel-zoom still works. Set **`regionSelectModifier="shift"`** to reverse the
+  wheel-zoom still works. Set **`<RangeCursor dragModifier="shift">`** to reverse the
   priority: plain drag pans, shift-drag selects.
 - **The range must be controlled.** Uncontrolled, the container holds the view
   itself and _ignores later `range` props by design_, so they can't fight a
-  user's pan — which also means `onRegionSelect` would have nothing to write
+  user's pan — which also means `onDragRelease` would have nothing to write
   to. Hold it in state, feed `onTimeRangeChange` back into it.
 - **`bounds`** is the outer pan/zoom extent. Pinned to 2024, no gesture can
   strand the reader in blank canvas past the end of the record.
@@ -190,15 +191,15 @@ when the two quantities don't genuinely belong in the same rectangle.
 
 ## Options to try
 
-| Option                          | What it does                                         | Reach for it when                                                       |
-| ------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
-| `regionSelectModifier="shift"`  | Plain drag pans; shift-drag selects a span           | Panning is the commoner gesture for your readers                        |
-| `cursor="crosshair"`            | A crosshair and one axis-pinned value pill instead   | Reading exact values matters more than selecting spans (it replaces it) |
-| `onTrackerChanged`              | Every layer's value at the cursor, outside the chart | You need both axes' numbers at once — an in-chart pill only reads one   |
-| A second `<ChartRow>`           | Daily and total in stacked rows, one time axis       | The two units don't belong in one rectangle after all                   |
-| `<AreaChart baseline={0}>`      | Fills the running total instead of stroking it       | The total is the subject and the daily bars are context                 |
-| `binColors` on the bars         | One colour per bar, from your own rule               | Flagging days over a threshold, or colouring by season                  |
-| `aggregate` on a calendar month | Twelve monthly totals instead of 366 daily bars      | The daily texture is noise for the question you're asking               |
+| Option                               | What it does                                         | Reach for it when                                                       |
+| ------------------------------------ | ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| `<RangeCursor dragModifier="shift">` | Plain drag pans; shift-drag selects a span           | Panning is the commoner gesture for your readers                        |
+| `<CrosshairCursor />`                | A crosshair and one axis-pinned value pill instead   | Reading exact values matters more than selecting spans (it replaces it) |
+| `onTrackerChanged`                   | Every layer's value at the cursor, outside the chart | You need both axes' numbers at once — an in-chart pill only reads one   |
+| A second `<ChartRow>`                | Daily and total in stacked rows, one time axis       | The two units don't belong in one rectangle after all                   |
+| `<AreaChart baseline={0}>`           | Fills the running total instead of stroking it       | The total is the subject and the daily bars are context                 |
+| `binColors` on the bars              | One colour per bar, from your own rule               | Flagging days over a threshold, or colouring by season                  |
+| `aggregate` on a calendar month      | Twelve monthly totals instead of 366 daily bars      | The daily texture is noise for the question you're asking               |
 
 That last one is worth spelling out, because the obvious guess is wrong twice.
 There is no `rollup`, and **there is no month duration** — pond's

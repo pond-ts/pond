@@ -6,6 +6,7 @@ import {
   Layers,
   LineChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { latencyPercentileBand } from './lib/gallery-fixtures';
@@ -20,6 +21,7 @@ export default function ChartsLegend({ width }: { width: number }) {
 
   return (
     <ChartContainer range={band.timeRange()} width={width} theme={theme}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="ms" label="latency (ms)" width={56} />
         <Layers>

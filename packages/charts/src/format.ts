@@ -19,7 +19,8 @@ export type AxisFormat = string | ((value: number) => string);
 
 /**
  * How to format the **cursor / marker readout** on the x axis
- * ({@link ChartContainerProps.cursorFormat}) — time or value kind. Either:
+ * (the `format` prop on a cursor such as `<CrosshairCursor>`) — time or
+ * value kind. Either:
  *
  * - a d3 specifier **string** applied uniformly: a [time specifier]
  *   (https://github.com/d3/d3-time-format#locale_format) on a time axis

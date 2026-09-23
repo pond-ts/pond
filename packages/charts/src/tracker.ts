@@ -1,12 +1,11 @@
 /**
- * Cursor geometry helpers — pure functions deciding *what* the cursor draws
- * ({@link cursorParts}) and *where* it sits ({@link resolveCursorX}). The marks
+ * Cursor geometry helpers — pure functions deciding *where* the cursor sits
+ * ({@link resolveCursorX}) and which bucket it shades. The marks
  * themselves render as an SVG overlay in `Layers` (no cursor canvas); these
  * helpers stay pure, so they're unit-tested directly.
  */
 
 import type { Interval } from 'pond-ts';
-import type { CursorMode } from './context.js';
 
 /**
  * The interval in the sorted, non-overlapping `buckets` that contains `t`
@@ -84,55 +83,6 @@ export function bandRect(
   return x1 > x0 ? { x0, x1 } : null;
 }
 
-/** Default cursor mode — the synced vertical line (cursor enabled on the
- *  container by default; pair with an off-chart readout via `onTrackerChanged`). */
-export const DEFAULT_CURSOR_MODE: CursorMode = 'line';
-
-/**
- * Decompose a {@link CursorMode} into what it draws: the shared vertical line,
- * the per-series dots, and which value chip (if any). The modes are exclusive
- * presets — `line` is line-only, `point` / `inline` / `flag` are dot-based with
- * no line, `none` draws nothing. `flag` raises a staff from each point to a
- * value flag stacked near the top of the row (drawn in `Layers`).
- *
- * **Superseded by the mounted cursor presets** (`cursors.tsx` — each mode's
- * drawing now lives in its component's registered spec): `Layers` no longer
- * reads this. Kept, with its tests, for the life of the `cursor` string-prop
- * deprecation window as the pinned record of what each mode drew; delete both
- * when the modes go.
- */
-export function cursorParts(mode: CursorMode): {
-  readonly line: boolean;
-  readonly dots: boolean;
-  readonly chip: 'none' | 'inline' | 'flag' | 'axis';
-  /** `region` mode: a shaded **band** over the bucket under the pointer (from
-   *  `cursorSequence`), drawn by `Layers`; no line/dots/chip of its own. */
-  readonly band: boolean;
-} {
-  const base = { line: false, dots: false, chip: 'none', band: false } as const;
-  switch (mode) {
-    case 'line':
-      return { ...base, line: true };
-    case 'point':
-      return { ...base, dots: true };
-    case 'inline':
-      return { ...base, dots: true, chip: 'inline' };
-    case 'flag':
-      return { ...base, dots: true, chip: 'flag' };
-    case 'crosshair':
-      // A single reticle (not per-series): `Layers` draws the dashed vertical +
-      // full-width horizontal lines, the centre dot, and one value pill itself
-      // (so no generic line/dots here); the x-time pill is on `<XAxis>`.
-      return { ...base, chip: 'axis' };
-    case 'region':
-      // A shaded band over the bucket under the pointer — `Layers` resolves the
-      // bucket from `cursorBuckets` and draws the rect (cropped through xScale).
-      return { ...base, band: true };
-    case 'none':
-      return { ...base };
-  }
-}
-
 /**
  * The crosshair's plot-pixel x from the tracker inputs. **A live local pointer
  * always wins:** a chart the user is actively hovering (`hoverX` non-null) shows
@@ -149,8 +99,8 @@ export function cursorParts(mode: CursorMode): {
  *
  * `null` and `undefined` are **equivalent** — both mean "no controlled position"
  * (a hovered chart still tracks its pointer; a non-hovered one shows nothing). To
- * force a chart to never show a cursor at all, use `cursor="none"`, not
- * `trackerPosition={null}`.
+ * force a chart to never show a cursor at all, mount no cursor component, rather
+ * than relying on `trackerPosition={null}`.
  */
 export function resolveCursorX(
   trackerPosition: number | null | undefined,

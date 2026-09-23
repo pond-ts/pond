@@ -4,6 +4,7 @@ import {
   Layers,
   LineChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { allHostsSeries, HOSTS } from './lib/server-metrics';
@@ -17,6 +18,7 @@ export default function PartitionMulti() {
 
   return (
     <ChartContainer range={series.timeRange()} width={560} theme={theme}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="pct" side="right" format=".0%" />
         <Layers>

@@ -159,6 +159,7 @@ import {
   Layers,
   LineChart,
   YAxis,
+  CrosshairCursor,
 } from '@pond-ts/charts';
 
 const [live, snap] = useLiveSeries({
@@ -167,7 +168,8 @@ const [live, snap] = useLiveSeries({
   retention: { maxAge: '10m' },
 });
 
-<ChartContainer width={800} cursor="crosshair" panZoom>
+<ChartContainer width={800} panZoom>
+  <CrosshairCursor />
   <ChartRow height={240}>
     <YAxis id="ms" />
     <Layers>

@@ -5,6 +5,7 @@ import {
   Layers,
   LineChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { LiveSeries } from 'pond-ts';
 import { useSnapshot } from '@pond-ts/react';
@@ -57,6 +58,7 @@ export default function LearnLiveSeries() {
 
   return (
     <ChartContainer range={snapshot.timeRange()} width={560} theme={theme}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="pct" side="right" format=".0%" />
         <Layers>

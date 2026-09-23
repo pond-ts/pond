@@ -5,18 +5,25 @@ import {
   Layers,
   LineChart,
   YAxis,
-  type CursorMode,
+  LineCursor,
+  PointCursor,
+  InlineCursor,
+  FlagCursor,
+  CrosshairCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { singleHostSeries } from './lib/server-metrics';
 
-const MODES: readonly CursorMode[] = [
-  'line',
-  'point',
-  'inline',
-  'flag',
-  'crosshair',
-];
+// One cursor component per mode — mount one to get that cursor.
+const CURSORS = {
+  line: <LineCursor />,
+  point: <PointCursor />,
+  inline: <InlineCursor />,
+  flag: <FlagCursor />,
+  crosshair: <CrosshairCursor />,
+} as const;
+type CursorMode = keyof typeof CURSORS;
+const MODES = Object.keys(CURSORS) as CursorMode[];
 
 export default function LearnCursorModes() {
   const theme = useSiteChartTheme();
@@ -47,12 +54,8 @@ export default function LearnCursorModes() {
           </button>
         ))}
       </div>
-      <ChartContainer
-        range={series.timeRange()}
-        width={560}
-        theme={theme}
-        cursor={mode}
-      >
+      <ChartContainer range={series.timeRange()} width={560} theme={theme}>
+        {CURSORS[mode]}
         <ChartRow height={220}>
           <YAxis id="pct" side="right" format=".0%" />
           <Layers>

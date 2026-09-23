@@ -8,6 +8,7 @@ import { LineChart } from './LineChart.js';
 import { Candlestick } from './Candlestick.js';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
+import { RangeCursor } from './cursors.js';
 import { priceSeries, RANGE } from './story-data.fixture.js';
 import {
   MIN,
@@ -20,13 +21,17 @@ import {
 } from './tradingAxis.fixture.js';
 
 /**
- * `cursor="region"` — instead of a line or reticle, a shaded **band** highlights
- * the **bucket** under the pointer. The bucketing is `cursorSequence`: a pond
+ * `<RangeCursor>` — instead of a line or reticle, a shaded **band** highlights
+ * the **bucket** under the pointer. The bucketing is its `sequence`: a pond
  * `Sequence` (duration or calendar-aware — `Sequence.every('15m')`,
  * `Sequence.calendar('week')`) realized over the view, or a `BoundedSequence`
  * (e.g. a trading calendar's `sessionSequence()`) used as-is. The band maps
  * through the x scale, so on a **trading-time** axis the closed part of a bucket
  * collapses and it crops to the live session(s). **Hover the plot** to see it.
+ *
+ * This group is the bucket fan-out (durations, sessions, calendar weeks,
+ * aggregation grids, value axes, histogram bins); the drag knobs
+ * (`dragModifier`, `enableDrag`, …) are fanned out under `Cursors/Range`.
  */
 const meta = {
   title: 'Cursors/Region',
@@ -39,15 +44,11 @@ const W = 640;
 
 /** **Fixed-duration bucket.** A plain time chart with `Sequence.every('15m')` —
  *  hover and the band shades the 15-minute window the pointer is in. The general
- *  (non-trading) region cursor. */
+ *  (non-trading) range cursor. */
 export const Default: Story = {
   render: () => (
-    <ChartContainer
-      width={W}
-      range={RANGE}
-      cursor="region"
-      cursorSequence={Sequence.every('15m')}
-    >
+    <ChartContainer width={W} range={RANGE}>
+      <RangeCursor sequence={Sequence.every('15m')} />
       <ChartRow height={240}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="p" />
@@ -70,9 +71,8 @@ export const Sessions: Story = {
         width={W}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        cursor="region"
-        cursorSequence={sessionSeq(s)}
       >
+        <RangeCursor sequence={sessionSeq(s)} />
         <ChartRow height={240}>
           <YAxis id="p" side="right" />
           <Layers>
@@ -97,9 +97,8 @@ export const CroppedToSessions: Story = {
         width={W}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        cursor="region"
-        cursorSequence={Sequence.calendar('week')}
       >
+        <RangeCursor sequence={Sequence.calendar('week')} />
         <ChartRow height={240}>
           <YAxis id="p" side="right" />
           <Layers>
@@ -112,8 +111,8 @@ export const CroppedToSessions: Story = {
 };
 
 /** **Aggregation-aligned.** 5-minute ticks aggregated to **1-hour** candles, with
- *  the region cursor driven by the **same** 1-hour windows — the one
- *  `barSequence` feeds both `aggregate` and `cursorSequence`. So hovering a candle
+ *  the range cursor driven by the **same** 1-hour windows — the one
+ *  `barSequence` feeds both `aggregate` and the cursor's `sequence`. So hovering a candle
  *  shades exactly the bucket that produced it: the band frames the candle's hour,
  *  the last (truncated) bar of each session included. */
 export const AggregationAligned: Story = {
@@ -126,9 +125,8 @@ export const AggregationAligned: Story = {
         width={W}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        cursor="region"
-        cursorSequence={hourGrid}
       >
+        <RangeCursor sequence={hourGrid} />
         <ChartRow height={240}>
           <YAxis id="p" side="right" />
           <Layers>
@@ -140,10 +138,10 @@ export const AggregationAligned: Story = {
   },
 };
 
-/** **Drag to select → zoom.** Providing `onRegionSelect` makes the region cursor
+/** **Drag to select → zoom.** Providing `onDragRelease` makes the range cursor
  *  **draggable**: drag across the plot and the band extends **bucket by bucket**
  *  (here 1-hour candles), and on release it fires once with the selected
- *  `[lo, hi]` span (epoch ms here — the neutral pair). The cursor doesn't keep the
+ *  `{ x: [lo, hi] }` span (epoch ms here — the neutral pair). The cursor doesn't keep the
  *  range — the callback does. This demo
  *  zooms the view to the selection (the container doesn't zoom itself; that's the
  *  consumer's job); **Reset** restores the full range. */
@@ -164,14 +162,11 @@ function DragToSelectDemo() {
       >
         Reset zoom
       </button>
-      <ChartContainer
-        width={W}
-        range={range}
-        discontinuities={provider(s)}
-        cursor="region"
-        cursorSequence={hourGrid}
-        onRegionSelect={(r) => setRange([r[0], r[1]])}
-      >
+      <ChartContainer width={W} range={range} discontinuities={provider(s)}>
+        <RangeCursor
+          sequence={hourGrid}
+          onDragRelease={(span) => setRange([span.x[0], span.x[1]])}
+        />
         <ChartRow height={220}>
           <YAxis id="p" side="right" />
           <Layers>
@@ -184,9 +179,9 @@ function DragToSelectDemo() {
 }
 export const DragToSelect: Story = { render: () => <DragToSelectDemo /> };
 
-/** **Freeform (no sequence).** Omit `cursorSequence` and the region cursor is the
+/** **Freeform (no sequence).** Omit `sequence` and the range cursor is the
  *  degenerate case: it renders as a **line** on hover, and a drag selects a
- *  **freeform** range (no bucket snapping) — the same `onRegionSelect` fires on
+ *  **freeform** range (no bucket snapping) — the same `onDragRelease` fires on
  *  release. Here it zooms; **Reset** restores the full range. */
 function FreeformDemo() {
   const full: [number, number] = [RANGE[0], RANGE[1]];
@@ -202,12 +197,10 @@ function FreeformDemo() {
       >
         Reset zoom
       </button>
-      <ChartContainer
-        width={W}
-        range={range}
-        cursor="region"
-        onRegionSelect={(r) => setRange([r[0], r[1]])}
-      >
+      <ChartContainer width={W} range={range}>
+        <RangeCursor
+          onDragRelease={(span) => setRange([span.x[0], span.x[1]])}
+        />
         <ChartRow height={220}>
           <Layers>
             <LineChart series={priceSeries()} column="price" axis="p" />
@@ -220,11 +213,11 @@ function FreeformDemo() {
 }
 export const Freeform: Story = { render: () => <FreeformDemo /> };
 
-/** **Value axis (freeform).** The region cursor also works on a **value** x-axis —
+/** **Value axis (freeform).** The range cursor also works on a **value** x-axis —
  *  here a distance-keyed ride (`byValue('cumDist')`), x in metres. Bucket snapping
- *  needs a `cursorSequence`, which is time-only, so a value axis is always
+ *  needs a `sequence`, which is time-only, so a value axis is always
  *  **freeform**: hover draws a line, a drag shades the raw span, and
- *  `onRegionSelect` fires the selected **distance** window as a neutral `[lo, hi]`
+ *  `onDragRelease` fires the selected **distance** window as a neutral `x: [lo, hi]`
  *  (axis units, not a `TimeRange`) — the gesture that maps onto a distance / strike
  *  range. Here it zooms the value axis; **Reset** restores the full span. */
 function ValueAxisSelectDemo() {
@@ -258,12 +251,10 @@ function ValueAxisSelectDemo() {
       >
         Reset zoom
       </button>
-      <ChartContainer
-        width={W}
-        range={range}
-        cursor="region"
-        onRegionSelect={(r) => setRange([r[0], r[1]])}
-      >
+      <ChartContainer width={W} range={range}>
+        <RangeCursor
+          onDragRelease={(span) => setRange([span.x[0], span.x[1]])}
+        />
         <ChartRow height={220}>
           <Layers>
             <LineChart series={ride} column="hr" axis="a" />
@@ -278,11 +269,11 @@ export const ValueAxisSelect: Story = {
   render: () => <ValueAxisSelectDemo />,
 };
 
-/** **Histogram (bin-snapped).** On a histogram the region cursor snaps to the
- *  **bars** — no `cursorSequence` needed: hover highlights the bar under the
- *  pointer, a drag extends **bar by bar**, and `onRegionSelect` returns the
- *  selected bin range `[lo, hi]` at the bar edges. (The `BarChart` publishes its
- *  bins as the snap buckets; the same machinery a `cursorSequence` drives on a
+/** **Histogram (bin-snapped).** On a histogram the range cursor snaps to the
+ *  **bars** — no `sequence` needed: hover highlights the bar under the
+ *  pointer, a drag extends **bar by bar**, and `onDragRelease` returns the
+ *  selected bin range `x: [lo, hi]` at the bar edges. (The `BarChart` publishes its
+ *  bins as the snap buckets; the same machinery a `sequence` drives on a
  *  time axis.) Here it zooms the value axis to the selected bars; **Reset**
  *  restores the full span. */
 function HistogramBinsDemo() {
@@ -308,12 +299,10 @@ function HistogramBinsDemo() {
       >
         Reset zoom
       </button>
-      <ChartContainer
-        width={W}
-        range={range}
-        cursor="region"
-        onRegionSelect={(r) => setRange([r[0], r[1]])}
-      >
+      <ChartContainer width={W} range={range}>
+        <RangeCursor
+          onDragRelease={(span) => setRange([span.x[0], span.x[1]])}
+        />
         <ChartRow height={220}>
           <YAxis id="s" label="seconds" min={0} side="right" />
           <Layers>
@@ -326,11 +315,11 @@ function HistogramBinsDemo() {
 }
 export const HistogramBins: Story = { render: () => <HistogramBinsDemo /> };
 
-/** **Pan + shift-select-to-zoom.** With `panZoom` on, `regionSelectModifier="shift"`
+/** **Pan + shift-select-to-zoom.** With `panZoom` on, `dragModifier="shift"`
  *  shares the drag: **shift-drag** selects a range → **zooms** to it, then **plain
  *  drag pans** the zoomed view (and the wheel zooms). Controlled (`onTimeRangeChange`
  *  + `range`) so the pan gesture and the shift-select write the same range. Without
- *  the modifier a region-drag would preempt pan entirely. */
+ *  the modifier a range-drag would preempt pan entirely. */
 function PanAndSelectDemo() {
   const s = weekdaySessions(3);
   const hourGrid = barSeq(s, 60 * MIN);
@@ -354,11 +343,12 @@ function PanAndSelectDemo() {
         discontinuities={provider(s)}
         panZoom
         onTimeRangeChange={setRange}
-        cursor="region"
-        cursorSequence={hourGrid}
-        regionSelectModifier="shift"
-        onRegionSelect={(r) => setRange([r[0], r[1]])}
       >
+        <RangeCursor
+          sequence={hourGrid}
+          dragModifier="shift"
+          onDragRelease={(span) => setRange([span.x[0], span.x[1]])}
+        />
         <ChartRow height={220}>
           <YAxis id="p" side="right" />
           <Layers>

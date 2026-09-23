@@ -8,6 +8,7 @@ import {
   LineChart,
   YAxis,
   type TrackerInfo,
+  CrosshairCursor,
 } from '@pond-ts/charts';
 import '@pond-ts/financial/fluent';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -79,9 +80,9 @@ export default function GalleryBollinger({
         width={width}
         theme={theme}
         calendar={set.calendar}
-        cursor="crosshair"
         onTrackerChanged={setTracker}
       >
+        <CrosshairCursor />
         <ChartRow height={height}>
           <YAxis id="price" side="right" format={set.priceFormat} width={62} />
           <Layers>

@@ -5,6 +5,7 @@ import {
   Layers,
   LineChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { latencyPercentileBand } from './lib/gallery-fixtures';
@@ -18,6 +19,7 @@ export default function GalleryBand({ width }: { width: number }) {
 
   return (
     <ChartContainer range={series.timeRange()} width={width} theme={theme}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="ms" side="right" label="ms" format=",.0f" width={44} />
         <Layers>

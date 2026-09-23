@@ -5,6 +5,7 @@ import {
   Layers,
   Legend,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -64,7 +65,8 @@ export default function GalleryTrafficByInterface({
   const order = names.map((_, i) => i).reverse();
 
   return (
-    <ChartContainer range={range} width={width} theme={theme} cursor="line">
+    <ChartContainer range={range} width={width} theme={theme}>
+      <LineCursor />
       <ChartRow height={height}>
         <YAxis
           id="gbps"

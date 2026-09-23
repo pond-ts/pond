@@ -4,6 +4,7 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { elevationProfile } from './lib/gallery-fixtures';
@@ -16,6 +17,7 @@ export default function GalleryActivity({ width }: { width: number }) {
 
   return (
     <ChartContainer range={series.timeRange()} width={width} theme={theme}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="m" side="right" label="m" format=",.0f" width={44} />
         <Layers>

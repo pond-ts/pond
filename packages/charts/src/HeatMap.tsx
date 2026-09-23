@@ -212,9 +212,9 @@ function marksOf(set: readonly SelectInfo[]): readonly StackMark[] {
  * theme, and the M5 "theme tokens optional-with-default" gate has to land
  * first. Borrowing defers that decision instead of pre-empting it.
  *
- * **Pair it with `<ChartContainer cursor="none">`.** The container's default is
- * the shared vertical line, and on a grid that is a *second, weaker* cursor
- * competing with the one that already works: the cell under the pointer takes an
+ * **Mount no cursor component with it.** A `<LineCursor>` draws the shared
+ * vertical line, and on a grid that is a *second, weaker* cursor competing
+ * with the one that already works: the cell under the pointer takes an
  * outline, which says both axes at once. The line says only x, and a heat map's
  * x position is rarely the question. The pointer's own crosshair shape plus the
  * cell outline is the whole affordance.

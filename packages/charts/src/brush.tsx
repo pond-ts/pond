@@ -33,8 +33,7 @@ import type {
  *    `DRAG_SLOP` — a plain click stays a click and selects one mark (§8.1:
  *    the two are separated by movement, not modifier).
  * 3. **The range drag** ({@link resolveRangeDrag}) — a drag-enabled
- *    `<RangeCursor>` in the hovered row's effective cursor set, else the
- *    legacy `cursor="region"` + `onRegionSelect` container props. Preempts
+ *    `<RangeCursor>` in the hovered row's effective cursor set. Preempts
  *    pan — unless a `dragModifier` is declared **and pan is enabled**, in
  *    which case a plain drag falls through to pan and only a modifier-held
  *    drag brushes. (With pan off there is no gesture to share, so the
@@ -51,9 +50,8 @@ import type {
  */
 
 /** What a completed range drag calls with the released `[start, end]`
- *  (axis units, `start ≤ end`). Resolved once at pointer-down — the component
- *  path wraps `onDragRelease` (the `{ x }` payload), the legacy path wraps
- *  `onRegionSelect` (the bare pair). */
+ *  (axis units, `start ≤ end`). Resolved once at pointer-down, wrapping the
+ *  `<RangeCursor>`'s `onDragRelease` (the `{ x }` payload). */
 export interface RangeDrag {
   readonly release: (start: number, end: number) => void;
   /** The modifier the drag needs — only enforced while pan is enabled. */
@@ -62,48 +60,28 @@ export interface RangeDrag {
 
 /**
  * Resolve whether a press could start a **range drag**, and who gets the
- * released span. Two sources, component first:
- *
- * 1. **A mounted `<RangeCursor>`** — the hovered row's effective
- *    gesture-owning cursor (`owner`), when it carries `onDragRelease` and is
- *    not frozen (`enableDrag={false}` — the OFF switch, which also suppresses
- *    the legacy fallback: the consumer wired the new API and asked for no
- *    gesture). A `<RangeCursor>` without `onDragRelease` has nothing to fire,
- *    so it does not claim — the legacy props keep working underneath it
- *    during the deprecation window (exactly the step-2 behaviour).
- * 2. **The legacy container props** — `cursor="region"` + `onRegionSelect`
- *    (+ `regionSelectModifier`), byte-for-byte today's semantics, including
- *    the bare-pair payload.
+ * released span: the hovered row's effective gesture-owning cursor (`owner`),
+ * when it is a `<RangeCursor>` carrying `onDragRelease` and is not frozen
+ * (`enableDrag={false}` — the OFF switch). A `<RangeCursor>` without
+ * `onDragRelease` has nothing to fire, so it does not claim.
  *
  * Continuous x only (time or value): a category axis has no span to drag
- * (an ordinal-slot select is a different gesture), so both paths gate on it.
+ * (an ordinal-slot select is a different gesture).
  */
 export function resolveRangeDrag(
-  c: Pick<
-    ContainerFrame,
-    'cursor' | 'onRegionSelect' | 'regionSelectModifier' | 'xKind'
-  >,
+  c: Pick<ContainerFrame, 'xKind'>,
   owner: CursorEntry | undefined,
 ): RangeDrag | null {
   if (c.xKind !== 'time' && c.xKind !== 'value') return null;
-  if (owner !== undefined && !owner.legacy && owner.onDragRelease) {
-    // Frozen: the gesture is off without unwiring the callback (§6's
-    // `enableDrag`-as-disabler) — and the legacy fallback stays off too.
-    if (owner.enableDrag === false) return null;
-    const cb = owner.onDragRelease;
-    return {
-      release: (start, end) => cb({ x: [start, end] }),
-      modifier: owner.dragModifier,
-    };
-  }
-  if (c.cursor === 'region' && c.onRegionSelect !== undefined) {
-    const cb = c.onRegionSelect;
-    return {
-      release: (start, end) => cb([start, end]),
-      modifier: c.regionSelectModifier,
-    };
-  }
-  return null;
+  if (owner === undefined || !owner.onDragRelease) return null;
+  // Frozen: the gesture is off without unwiring the callback (§6's
+  // `enableDrag`-as-disabler).
+  if (owner.enableDrag === false) return null;
+  const cb = owner.onDragRelease;
+  return {
+    release: (start, end) => cb({ x: [start, end] }),
+    modifier: owner.dragModifier,
+  };
 }
 
 /** Who owns the drag a pointer-down might start (see the module doc's
@@ -150,8 +128,8 @@ export function resolveBrushClaim(opts: {
 
 /**
  * Dev-warn (once per plot surface) when a press found BOTH a mounted
- * `<MultiSelector>` and a live range drag (a drag-enabled `<RangeCursor>`, or
- * the legacy region props) competing for it — the sweep wins (see the module
+ * `<MultiSelector>` and a live range drag (a drag-enabled `<RangeCursor>`)
+ * competing for it — the sweep wins (see the module
  * doc's precedence), and a silent shadow would hide the loser exactly the way
  * A1.5 said docs alone couldn't.
  */
@@ -159,8 +137,8 @@ export function warnSweepShadowsRangeDrag(warned: { current: boolean }): void {
   if (warned.current) return;
   warned.current = true;
   console.warn(
-    '[pond-charts] a <MultiSelector> and a drag-enabled <RangeCursor> (or ' +
-      'the legacy onRegionSelect props) are both in scope for this plot — ' +
+    '[pond-charts] a <MultiSelector> and a drag-enabled <RangeCursor> are ' +
+      'both in scope for this plot — ' +
       'the sweep claims the drag and the range drag never fires. Mount one ' +
       'drag owner per scope, or freeze the cursor with enableDrag={false}. ' +
       'See docs/rfcs/interaction.md A1.5 / §8.1.',

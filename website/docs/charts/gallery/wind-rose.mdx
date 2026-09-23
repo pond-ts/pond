@@ -39,7 +39,7 @@ It is not a one-week wobble: **53 of the 337** day-aligned 30-day windows in
 September.
 
 Hovering the histogram names the sector under the pointer, in a pill over its
-own axis label. That's what `cursor="crosshair"` does on an **ordinal** axis:
+own axis label. That's what `<CrosshairCursor />` does on an **ordinal** axis:
 a vertical line plus the category's name, with no horizontal arm and no value
 pill, because there's no continuous x position to read back. The strip has no
 cursor at all — it's in annotation-edit mode so the band can be grabbed, and
@@ -251,14 +251,14 @@ plot.
 
 ## Options to try
 
-| Option                               | What it does                                    | Reach for it when                                                                                                                                                                |
-| ------------------------------------ | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cursor="region"` + `onRegionSelect` | Drag anywhere on the plot to select a span      | You want free-form span selection and don't need a mark that persists — it's the [rainfall card's](./rainfall.mdx) gesture, and it needs the cursor `editAnnotations` takes away |
-| `<Region edges={false}>`             | Shades the span with no vertical side lines     | The band is background context rather than the thing being manipulated                                                                                                           |
-| `<Region label="…">`                 | A chip flying off the band's left edge          | The window's own extent is the readout — here it's off, since the dates sit under the strip                                                                                      |
-| `binColors`                          | One colour per bar, in data order               | Colouring the four quadrants, or lighting the window's strongest sector                                                                                                          |
-| `orientation="horizontal"`           | Categories down the y axis, bars running across | Long labels — `NNE` is fine, `us-east-1a` is not (note it makes the container's x a **value** axis, so it can't share one with a time row)                                       |
-| `<BarList>`                          | A ranked table with bars, not a chart           | The categories are entities to be ranked, not slots on an axis                                                                                                                   |
+| Option                        | What it does                                    | Reach for it when                                                                                                                                                                |
+| ----------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<RangeCursor onDragRelease>` | Drag anywhere on the plot to select a span      | You want free-form span selection and don't need a mark that persists — it's the [rainfall card's](./rainfall.mdx) gesture, and it needs the cursor `editAnnotations` takes away |
+| `<Region edges={false}>`      | Shades the span with no vertical side lines     | The band is background context rather than the thing being manipulated                                                                                                           |
+| `<Region label="…">`          | A chip flying off the band's left edge          | The window's own extent is the readout — here it's off, since the dates sit under the strip                                                                                      |
+| `binColors`                   | One colour per bar, in data order               | Colouring the four quadrants, or lighting the window's strongest sector                                                                                                          |
+| `orientation="horizontal"`    | Categories down the y axis, bars running across | Long labels — `NNE` is fine, `us-east-1a` is not (note it makes the container's x a **value** axis, so it can't share one with a time row)                                       |
+| `<BarList>`                   | A ranked table with bars, not a chart           | The categories are entities to be ranked, not slots on an axis                                                                                                                   |
 
 ## See also
 
@@ -266,6 +266,6 @@ plot.
 - [`<BarChart>`](../types/barchart.mdx) — the `categories` form, gaps, colours
 - [Region, baseline, marker](../annotations/region-baseline-marker.mdx) — the annotation register
 - [Editing and creating](../annotations/editing-and-creating.mdx) — `editAnnotations`, `onChange`, handles
-- [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — what each `cursor` mode draws
+- [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — what each cursor component draws
 - [**Storybook**](pathname:///storybook/?path=/story/axes-categoryaxis--tickers)
   — the systematic knob walk

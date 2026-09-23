@@ -315,18 +315,6 @@ describe('enableDrag — the OFF switch', () => {
     expect(onTimeRangeChange).toHaveBeenCalled();
   });
 
-  it('frozen also suppresses the LEGACY fallback — the consumer wired the new API', () => {
-    const onDragRelease = vi.fn();
-    const onRegionSelect = vi.fn();
-    const { surface } = mount(
-      <RangeCursor onDragRelease={onDragRelease} enableDrag={false} />,
-      { onRegionSelect },
-    );
-    drag(surface, 60, 200);
-    expect(onDragRelease).not.toHaveBeenCalled();
-    expect(onRegionSelect).not.toHaveBeenCalled();
-  });
-
   it('without onDragRelease there is nothing to fire — no gesture starts', () => {
     const { surface, frame } = mount(<RangeCursor />);
     act(() => surface.dispatchEvent(pointer('pointerdown', 60, 1)));
@@ -372,76 +360,6 @@ describe('dragModifier="shift" — only enforced while pan is enabled', () => {
     drag(surface, 200, 60);
     expect(onDragRelease).toHaveBeenCalledTimes(1);
     expect(onTimeRangeChange).not.toHaveBeenCalled();
-  });
-});
-
-describe('the legacy path keeps working underneath (deprecation window)', () => {
-  it('cursor="region" + onRegionSelect still fires the bare pair', () => {
-    const onRegionSelect = vi.fn();
-    const { surface, frame } = mount(null, {
-      cursor: 'region',
-      onRegionSelect,
-    });
-    const plotWidth = frame().plotWidth;
-    drag(surface, 60, 200);
-    expect(onRegionSelect).toHaveBeenCalledTimes(1);
-    const pair = onRegionSelect.mock.calls[0]![0] as [number, number];
-    expect(Array.isArray(pair)).toBe(true);
-    expect(pair[0]).toBeCloseTo((60 / plotWidth) * 1000, 6);
-    expect(pair[1]).toBeCloseTo((200 / plotWidth) * 1000, 6);
-  });
-
-  it('a mounted <RangeCursor> WITHOUT drag props leaves the legacy drag live (step-2 compat)', () => {
-    const onRegionSelect = vi.fn();
-    const { surface } = mount(<RangeCursor />, {
-      cursor: 'region',
-      onRegionSelect,
-    });
-    drag(surface, 60, 200);
-    expect(onRegionSelect).toHaveBeenCalledTimes(1);
-  });
-
-  it('a mounted <RangeCursor onDragRelease> takes the gesture over the legacy props', () => {
-    const onRegionSelect = vi.fn();
-    const onDragRelease = vi.fn();
-    const { surface } = mount(<RangeCursor onDragRelease={onDragRelease} />, {
-      cursor: 'region',
-      onRegionSelect,
-    });
-    drag(surface, 60, 200);
-    expect(onDragRelease).toHaveBeenCalledTimes(1);
-    expect(onRegionSelect).not.toHaveBeenCalled();
-  });
-
-  it('onRegionSelect / regionSelectModifier dev-warn, naming the replacement', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      mount(null, {
-        cursor: 'region',
-        onRegionSelect: () => {},
-        regionSelectModifier: 'shift',
-      });
-      const dep = warn.mock.calls
-        .map((c) => String(c[0]))
-        .filter((m) => m.includes('deprecated cursor props'));
-      expect(dep.length).toBe(1);
-      expect(dep[0]).toContain('onRegionSelect → <RangeCursor onDragRelease>');
-      expect(dep[0]).toContain(
-        'regionSelectModifier → <RangeCursor dragModifier>',
-      );
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it('the new props do NOT warn', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      mount(<RangeCursor onDragRelease={() => {}} dragModifier="shift" />);
-      expect(warn).not.toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
   });
 });
 
@@ -538,16 +456,10 @@ describe('resolveBrushClaim — the drag-claim precedence (RFC A1.5 / A2.7)', ()
 });
 
 describe('resolveRangeDrag — who gets the released span', () => {
-  const legacyFree = {
-    cursor: 'line',
-    onRegionSelect: undefined,
-    regionSelectModifier: undefined,
-    xKind: 'time',
-  } as const;
+  const time = { xKind: 'time' } as const;
   const entry = (over: Partial<CursorEntry>): CursorEntry => ({
     spec: {},
     rowKey: null,
-    legacy: false,
     ownsGesture: true,
     wants: {
       samples: false,
@@ -559,62 +471,38 @@ describe('resolveRangeDrag — who gets the released span', () => {
     ...over,
   });
 
-  it('a drag-enabled component owner wins and wraps the { x } payload', () => {
+  it('a drag-enabled owner claims and wraps the { x } payload', () => {
     const seen: RangeSpan[] = [];
     const d = resolveRangeDrag(
-      legacyFree,
-      entry({ onDragRelease: (s) => seen.push(s), enableDrag: true }),
+      time,
+      entry({
+        onDragRelease: (s) => seen.push(s),
+        enableDrag: true,
+        dragModifier: 'shift',
+      }),
     );
     expect(d).not.toBeNull();
+    expect(d!.modifier).toBe('shift');
     d!.release(3, 7);
     expect(seen).toEqual([{ x: [3, 7] }]);
   });
 
-  it('a frozen owner (enableDrag false) blocks BOTH paths', () => {
+  it('a frozen owner (enableDrag false) does not claim', () => {
     const d = resolveRangeDrag(
-      {
-        ...legacyFree,
-        cursor: 'region',
-        onRegionSelect: () => {},
-      },
+      time,
       entry({ onDragRelease: () => {}, enableDrag: false }),
     );
     expect(d).toBeNull();
   });
 
-  it('an owner without onDragRelease falls through to the legacy props', () => {
-    const pairs: (readonly [number, number])[] = [];
-    const d = resolveRangeDrag(
-      {
-        ...legacyFree,
-        cursor: 'region',
-        onRegionSelect: (r) => pairs.push(r),
-        regionSelectModifier: 'shift',
-      },
-      entry({}),
-    );
-    expect(d).not.toBeNull();
-    expect(d!.modifier).toBe('shift');
-    d!.release(1, 2);
-    expect(pairs).toEqual([[1, 2]]);
+  it('an owner without onDragRelease, or no owner at all, does not claim', () => {
+    expect(resolveRangeDrag(time, entry({}))).toBeNull();
+    expect(resolveRangeDrag(time, undefined)).toBeNull();
   });
 
-  it('a LEGACY-shim owner never claims the component path', () => {
+  it('a category axis has no span to drag', () => {
     const d = resolveRangeDrag(
-      legacyFree,
-      entry({ legacy: true, onDragRelease: () => {}, enableDrag: true }),
-    );
-    expect(d).toBeNull();
-  });
-
-  it('a category axis has no span to drag — both paths gate off', () => {
-    const d = resolveRangeDrag(
-      {
-        cursor: 'region',
-        onRegionSelect: () => {},
-        regionSelectModifier: undefined,
-        xKind: 'category',
-      },
+      { xKind: 'category' },
       entry({ onDragRelease: () => {}, enableDrag: true }),
     );
     expect(d).toBeNull();

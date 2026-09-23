@@ -4,6 +4,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
+import { LineCursor } from './cursors.js';
 import {
   twoSeries,
   hrSeries,
@@ -13,11 +14,11 @@ import {
 } from './story-data.fixture.js';
 
 /**
- * `cursor="line"` (the **default**) — a single synced vertical line at the
+ * `<LineCursor>` — a single synced vertical line at the
  * cursor, **no marks over the data**; values are meant to be surfaced *outside*
  * the chart (`onTrackerChanged`). Its signature is **cross-row sync**: one line
  * spans every row on the shared x. Fan-out: live single-row and multi-row hover,
- * the `cursorTime` chip, and an externally-driven (`trackerPosition`) shot.
+ * the `showTime` chip, and an externally-driven (`trackerPosition`) shot.
  */
 const W = 560;
 const s = twoSeries();
@@ -31,11 +32,12 @@ export default meta;
 type Story = StoryObj;
 
 /** **Interactive** — hover-driven (no `trackerPosition` pin), so you can test
- *  the default cursor yourself: the synced vertical line follows the pointer, no
- *  marks on the data. `cursorTime` adds the time chip at the axis. */
+ *  the line cursor yourself: the synced vertical line follows the pointer, no
+ *  marks on the data. `showTime` adds the time chip at the axis. */
 export const Interactive: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} cursorTime>
+    <ChartContainer range={RANGE} width={W}>
+      <LineCursor showTime />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={s} column="fast" as="primary" axis="usd" />
@@ -51,7 +53,8 @@ export const Interactive: Story = {
  *  common x, the time chip shows once at the bottom. */
 export const MultiRowSync: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} cursorTime>
+    <ChartContainer range={RANGE} width={W}>
+      <LineCursor showTime />
       <ChartRow height={150}>
         <Layers>
           <LineChart series={s} column="fast" as="primary" axis="usd" />
@@ -74,12 +77,8 @@ export const MultiRowSync: Story = {
  *  static pin; hovering is ignored while a controlled position is set. */
 export const Controlled: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursorTime
-      trackerPosition={BASE + 45 * STEP}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={BASE + 45 * STEP}>
+      <LineCursor showTime />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={s} column="fast" as="primary" axis="usd" />

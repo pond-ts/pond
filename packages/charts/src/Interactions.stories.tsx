@@ -8,6 +8,14 @@ import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { defaultTheme } from './theme.js';
 import type { TrackerInfo } from './context.js';
+import {
+  LineCursor,
+  FlagCursor,
+  InlineCursor,
+  // Aliased: the `PointCursor` story below keeps its name (its id is pinned
+  // by the e2e baselines).
+  PointCursor as PointCursorPreset,
+} from './cursors.js';
 
 const N = 60;
 /** Fixed base epoch (2026-01-01 12:00 UTC) + 1-minute step → deterministic. */
@@ -33,10 +41,11 @@ function demo(phase = 0, amp = 40, mid = 50) {
  * M4 interaction stories — the cursor tracker. The cursor lives on a per-row
  * overlay canvas above the data; the hovered time + every series' value live on
  * `ChartContainer`, so the cursor syncs across rows and the values can be
- * surfaced *outside* the chart. Presentation is the **`cursor` mode**
- * (`'line' | 'point' | 'inline' | 'flag' | 'none'`) — set on the container
- * (default `'line'`) or per-row. `'flag'` raises a staff from each data point to
- * a value flag stacked near the top.
+ * surfaced *outside* the chart. Presentation is the **mounted cursor component**
+ * (`<LineCursor>` / `<PointCursor>` / `<InlineCursor>` / `<FlagCursor>`) — a
+ * child of the container, or of a `<ChartRow>` for a per-row override; mount
+ * none for no cursor. `<FlagCursor>` raises a staff from each data point to a
+ * value flag stacked near the top.
  */
 const meta = {
   title: 'Cursors/Scenarios',
@@ -67,7 +76,7 @@ function Rows() {
 }
 
 /**
- * **Cross-row cursor sync (default `cursor='line'`).** Hover the plot — the
+ * **Cross-row cursor sync (`<LineCursor>`).** Hover the plot — the
  * synced vertical line spans both rows (shared x), no marks over the data.
  * Surface the values outside via `onTrackerChanged` (see `OutsideReadout`).
  * (Apps can also drive the cursor with `trackerPosition` — an external time
@@ -76,43 +85,47 @@ function Rows() {
 export const CursorSync: Story = {
   render: () => (
     <ChartContainer range={TIME_RANGE} width={560}>
+      <LineCursor />
       <Rows />
     </ChartContainer>
   ),
 };
 
 /**
- * **`cursor='flag'`.** Hover the plot — a staff rises from each data point to a
+ * **`<FlagCursor>`.** Hover the plot — a staff rises from each data point to a
  * value flag stacked near the top, kept out of the data's way.
  */
 export const FlagReadout: Story = {
   render: () => (
-    <ChartContainer range={TIME_RANGE} width={560} cursor="flag">
+    <ChartContainer range={TIME_RANGE} width={560}>
+      <FlagCursor />
       <Rows />
     </ChartContainer>
   ),
 };
 
 /**
- * **`cursor='inline'`.** Hover the plot — dots + a value chip beside each at the
+ * **`<InlineCursor>`.** Hover the plot — dots + a value chip beside each at the
  * point's height. Most direct, but it sits over the data — the "chart ick" the
  * others avoid.
  */
 export const InlineReadout: Story = {
   render: () => (
-    <ChartContainer range={TIME_RANGE} width={560} cursor="inline">
+    <ChartContainer range={TIME_RANGE} width={560}>
+      <InlineCursor />
       <Rows />
     </ChartContainer>
   ),
 };
 
 /**
- * **`cursor='point'`.** Hover the plot — a dot rides each series at the cursor,
+ * **`<PointCursor>`.** Hover the plot — a dot rides each series at the cursor,
  * no line and no text. Pair with an off-chart readout for the values.
  */
 export const PointCursor: Story = {
   render: () => (
-    <ChartContainer range={TIME_RANGE} width={560} cursor="point">
+    <ChartContainer range={TIME_RANGE} width={560}>
+      <PointCursorPreset />
       <Rows />
     </ChartContainer>
   ),
@@ -120,7 +133,7 @@ export const PointCursor: Story = {
 
 /**
  * **Axis `format` — d3 specifiers + a custom fn, each matched by the readout.**
- * `cursor='inline'`, so every row's readout uses the *same* formatter as its
+ * `<InlineCursor>`, so every row's readout uses the *same* formatter as its
  * ticks: a percent (`.0%`), a grouped thousands (`,.0f`), an SI prefix (`.2s`),
  * and a custom `(v) => \`${v} ms\`` function. The last row is **dual-axis** —
  * `%` left, count right — proving the formatter is resolved **per axis**. (Axis
@@ -128,7 +141,8 @@ export const PointCursor: Story = {
  */
 export const Formats: Story = {
   render: () => (
-    <ChartContainer range={TIME_RANGE} width={560} cursor="inline">
+    <ChartContainer range={TIME_RANGE} width={560}>
+      <InlineCursor />
       <ChartRow height={90}>
         <YAxis id="pct" label="ratio" min={0} max={1} format=".0%" />
         <Layers>
@@ -200,28 +214,24 @@ export const Formats: Story = {
 };
 
 /**
- * **Cursor time (`cursorTime`).** Hover — the cursor's time shows **once, atop
+ * **Cursor time (`showTime`).** Hover — the cursor's time shows **once, atop
  * the first row's readout** (it's shared across rows), formatted to match the
  * time axis. Here `timeFormat='%I:%M %p'` (reads `12:30 PM`); omit it for d3's
- * multi-scale default. Works with any readout mode (shown with `flag`).
+ * multi-scale default. Works with any readout preset (shown with
+ * `<FlagCursor showTime>`).
  */
 export const CursorTime: Story = {
   render: () => (
-    <ChartContainer
-      range={TIME_RANGE}
-      width={560}
-      cursor="flag"
-      cursorTime
-      timeFormat="%I:%M %p"
-    >
+    <ChartContainer range={TIME_RANGE} width={560} timeFormat="%I:%M %p">
+      <FlagCursor showTime />
       <Rows />
     </ChartContainer>
   ),
 };
 
 /**
- * **The preferred surface: readout *outside* the chart.** The default
- * `cursor='line'` (line only, no in-chart values); `onTrackerChanged` feeds a
+ * **The preferred surface: readout *outside* the chart.** A
+ * `<LineCursor>` (line only, no in-chart values); `onTrackerChanged` feeds a
  * panel above the chart. Hover — the panel updates with the time + each series'
  * value, color-matched.
  */
@@ -256,6 +266,7 @@ function OutsideReadoutDemo() {
         )}
       </div>
       <ChartContainer range={TIME_RANGE} width={560} onTrackerChanged={setInfo}>
+        <LineCursor />
         <Rows />
       </ChartContainer>
     </div>
@@ -287,6 +298,7 @@ function ControlledCursorDemo() {
         style={{ display: 'block', width: '560px', marginBottom: '8px' }}
       />
       <ChartContainer range={TIME_RANGE} width={560} trackerPosition={t}>
+        <LineCursor />
         <Rows />
       </ChartContainer>
     </div>
@@ -326,6 +338,7 @@ function SyncedChartsDemo() {
       trackerPosition={sharedTime}
       onTrackerChanged={(info) => setSharedTime(info?.time ?? null)}
     >
+      <LineCursor />
       <ChartRow height={120}>
         <YAxis id={id} min={0} max={100} />
         <Layers>
@@ -364,6 +377,7 @@ export const PanZoom: Story = {
       panZoom
       minDuration={2 * STEP}
     >
+      <LineCursor />
       <Rows />
     </ChartContainer>
   ),
@@ -378,6 +392,7 @@ export const PanZoom: Story = {
 export const PanOnly: Story = {
   render: () => (
     <ChartContainer range={TIME_RANGE} width={560} panZoom="pan">
+      <LineCursor />
       <Rows />
     </ChartContainer>
   ),
@@ -402,6 +417,7 @@ export const Bounded: Story = {
         bounds={TIME_RANGE}
         minDuration={5 * STEP}
       >
+        <LineCursor />
         <Rows />
       </ChartContainer>
     );

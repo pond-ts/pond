@@ -4,6 +4,7 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { computePower } from '@pond-ts/fit';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -40,6 +41,7 @@ export default function GettingStartedZones() {
 
   return (
     <ChartContainer width={680} theme={theme}>
+      <LineCursor />
       <ChartRow height={210}>
         <YAxis id="zone" label="power zone" width={116} ticks={ticks} />
         <Layers>

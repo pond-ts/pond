@@ -441,9 +441,8 @@ export interface MultiSelectorProps {
  *
  * - The shared brush band becomes the **resting cursor**, spanning the snap
  *   block under the pointer (the `sequence` bucket, else the layer's own
- *   bin/slot), replacing the container's implicit `'line'` default. An
- *   explicitly chosen cursor — a mounted component, or a legacy `cursor`
- *   string the consumer actually set — still wins the surface.
+ *   bin/slot), when no cursor component is mounted for the row. A mounted
+ *   cursor still wins the surface.
  * - Hover is **block-scoped**: pointing at any one mark of a block lights
  *   (and reports) every mark in it. Rest and drag share one code path — the
  *   same snap buckets, the same layer session — so what the rest previews and

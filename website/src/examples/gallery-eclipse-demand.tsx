@@ -7,6 +7,7 @@ import {
   Marker,
   Region,
   YAxis,
+  CrosshairCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -57,12 +58,8 @@ export default function GalleryEclipseDemand({
           [begin + 6 * HOUR, end];
 
   return (
-    <ChartContainer
-      range={range}
-      width={width}
-      theme={theme}
-      cursor="crosshair"
-    >
+    <ChartContainer range={range} width={width} theme={theme}>
+      <CrosshairCursor />
       <ChartRow height={height}>
         <YAxis id="gw" label="GW" format=".1f" width={48} />
         <Layers>

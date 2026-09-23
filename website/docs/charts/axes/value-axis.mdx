@@ -198,10 +198,10 @@ across delta.
 
 ## Interacting with a value axis
 
-Cursors, region-select, and annotations all work identically on a value axis
+Cursors, range-select, and annotations all work identically on a value axis
 — they read positions off the shared scale, and a value scale is just
-another continuous scale to them. Nothing about `cursor="region"`,
-`onRegionSelect`, `<Region>`, `<Marker>`, or `<Baseline>` changes; only the
+another continuous scale to them. Nothing about `<RangeCursor>`,
+`onDragRelease`, `<Region>`, `<Marker>`, or `<Baseline>` changes; only the
 units on the x axis do. See the
 [`Cursors/Region`](pathname:///storybook/?path=/story/cursors-region--value-axis-select)
 and [`Annotations/Scenarios`](pathname:///storybook/?path=/story/annotations-scenarios--value-axis)

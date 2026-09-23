@@ -28,6 +28,7 @@ import {
   withHalfDay,
 } from './tradingAxis.fixture.js';
 import { defaultTheme } from './theme.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * Trading-time x axis — the discontinuous axis that collapses closed-market
@@ -56,6 +57,7 @@ export const WeekendSkip: Story = {
         range={rangeOf(s)}
         discontinuities={provider(s)}
       >
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="p" />
           <Layers>
@@ -78,6 +80,7 @@ export const HolidayGap: Story = {
         range={rangeOf(s)}
         discontinuities={provider(s)}
       >
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="p" />
           <Layers>
@@ -100,6 +103,7 @@ export const HalfDay: Story = {
         range={rangeOf(s)}
         discontinuities={provider(s)}
       >
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="p" />
           <Layers>
@@ -123,6 +127,7 @@ export const IntradaySessions: Story = {
         range={rangeOf(s)}
         discontinuities={provider(s)}
       >
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="p" />
           <Layers>
@@ -170,6 +175,7 @@ export const SessionBreaksBand: Story = {
           range={rangeOf(s)}
           discontinuities={provider(s)}
         >
+          <LineCursor />
           {row(false)}
         </ChartContainer>
         <ChartContainer
@@ -177,6 +183,7 @@ export const SessionBreaksBand: Story = {
           range={rangeOf(s)}
           discontinuities={provider(s)}
         >
+          <LineCursor />
           {row(true)}
         </ChartContainer>
       </div>
@@ -213,6 +220,7 @@ export const SessionBreaks: Story = {
           range={rangeOf(s)}
           discontinuities={provider(s)}
         >
+          <LineCursor />
           {row(false)}
         </ChartContainer>
         <ChartContainer
@@ -220,6 +228,7 @@ export const SessionBreaks: Story = {
           range={rangeOf(s)}
           discontinuities={provider(s)}
         >
+          <LineCursor />
           {row(true)}
         </ChartContainer>
       </div>
@@ -245,6 +254,7 @@ export const ContinuousVsTrading: Story = {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <ChartContainer width={WIDTH} range={rangeOf(s)}>
+          <LineCursor />
           {row}
         </ChartContainer>
         <ChartContainer
@@ -252,6 +262,7 @@ export const ContinuousVsTrading: Story = {
           range={rangeOf(s)}
           discontinuities={provider(s)}
         >
+          <LineCursor />
           {row}
         </ChartContainer>
       </div>
@@ -272,6 +283,7 @@ export const DailyMonths: Story = {
         range={rangeOf(s)}
         discontinuities={provider(s)}
       >
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="p" />
           <Layers>
@@ -297,6 +309,7 @@ export const YearDaily: Story = {
         range={rangeOf(s)}
         discontinuities={provider(s)}
       >
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="p" />
           <Layers>
@@ -321,6 +334,7 @@ export const YearDailyNarrow: Story = {
         range={rangeOf(s)}
         discontinuities={provider(s)}
       >
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="p" />
           <Layers>
@@ -363,6 +377,7 @@ export const DateStyleDaily: Story = {
           discontinuities={provider(s)}
           showAxis={false}
         >
+          <LineCursor />
           {row}
           <TimeAxis /> {/* dateStyle="flat" is the default */}
         </ChartContainer>
@@ -372,6 +387,7 @@ export const DateStyleDaily: Story = {
           discontinuities={provider(s)}
           showAxis={false}
         >
+          <LineCursor />
           {row}
           <TimeAxis dateStyle="stacked" />
         </ChartContainer>
@@ -407,6 +423,7 @@ export const DateStyleIntraday: Story = {
           discontinuities={provider(s)}
           showAxis={false}
         >
+          <LineCursor />
           {row}
           <TimeAxis />
         </ChartContainer>
@@ -416,6 +433,7 @@ export const DateStyleIntraday: Story = {
           discontinuities={provider(s)}
           showAxis={false}
         >
+          <LineCursor />
           {row}
           <TimeAxis dateStyle="stacked" />
         </ChartContainer>
@@ -734,6 +752,7 @@ function DateStylePanZoomDemo() {
         grid={grid}
         sessionDividers={markers ? 'all' : 'none'}
       >
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="p" side="right" />
           <Layers>
@@ -797,6 +816,7 @@ export const SpacingProportionalVsUniform: Story = {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <ChartContainer width={WIDTH} range={rangeOf(s)} calendar={cal}>
+          <LineCursor />
           {row}
         </ChartContainer>
         <ChartContainer
@@ -805,6 +825,7 @@ export const SpacingProportionalVsUniform: Story = {
           calendar={cal}
           spacing="uniform"
         >
+          <LineCursor />
           {row}
         </ChartContainer>
       </div>

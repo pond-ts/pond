@@ -547,12 +547,10 @@ export function Layers({ children }: LayersProps) {
   //
   // - `blockPreview` — the fact ("this row previews blocks"). It also scopes
   //   the resting hover to the snap block (handlePointerMove).
-  // - `restingBand` — the brush band is this row's resting CURSOR, replacing
-  //   the shim's un-asked-for `'line'` default. Any *explicitly chosen*
-  //   cursor still wins: a mounted component, or a legacy `cursor` string the
-  //   consumer actually set — both register non-`implicit` entries and keep
-  //   their own slots (a mounted `<RangeCursor>` already draws this same
-  //   band; a `<CrosshairCursor>` keeps its crosshair).
+  // - `restingBand` — the brush band is this row's resting CURSOR when no
+  //   cursor component is mounted for the row. A mounted cursor still wins
+  //   and keeps its own slots (a mounted `<RangeCursor>` already draws this
+  //   same band; a `<CrosshairCursor>` keeps its crosshair).
   //
   // Which of the two the row gets is the TOPMOST sweep-capable layer's
   // business (§8's z-order rule again, and the same rule `beginTopmostSweep`
@@ -571,16 +569,15 @@ export function Layers({ children }: LayersProps) {
     !rectPreview &&
     !topmostSweepSpanOnly(layers) &&
     layers.some((e) => e.layer.beginSweep !== undefined);
-  // The resting brush replaces the implicit cursor either way; only its SHAPE
-  // differs. A 2-D row gets no band: its snap block is a whole x column while
+  // The resting brush is the row's cursor when no cursor component is
+  // mounted for it (a mounted cursor was asked for, so it wins); only its
+  // SHAPE differs. A 2-D row gets no band: its snap block is a whole x column while
   // a drag there captures a rect, so a band would advertise a set the gesture
   // never selects (the same reason the block hover opts out).
   const restingBrush =
     (blockPreview || rectPreview) &&
     !editingActive &&
-    effectiveCursorEntries(container.cursors, row.rowKey).every(
-      (e) => e.implicit === true,
-    );
+    effectiveCursorEntries(container.cursors, row.rowKey).length === 0;
   // …and a **transposed** row gets none yet: the resting block preview is
   // resolved from the shared x buckets, so a y-cutting row would draw a band
   // over a column its drag can never select. Suppressed rather than
@@ -757,7 +754,7 @@ export function Layers({ children }: LayersProps) {
   // (#508 item 7). Trusted human-paced input hides this (React flushes
   // trusted discrete events synchronously); the ref is correct under both.
   // The release sink rides the ref too, so what fires is what the press
-  // resolved — a `<RangeCursor onDragRelease>` or the legacy `onRegionSelect`.
+  // resolved — the `<RangeCursor onDragRelease>`.
   const rangeDragRef = useRef<{
     anchor: number;
     release: (start: number, end: number) => void;
@@ -1007,7 +1004,7 @@ export function Layers({ children }: LayersProps) {
         gestureOwner(effectiveCursorEntries(c.cursors, r.rowKey)),
       );
       // ONE brush recognizer arbitrates every drag claim — annotation-create,
-      // the sweep, the range drag (component or legacy), pan — in a
+      // the sweep, the range drag, pan — in a
       // documented order (RFC A1.5 / A2.7; see brush.tsx). This handler only
       // routes.
       const claim = resolveBrushClaim({
@@ -1060,8 +1057,7 @@ export function Layers({ children }: LayersProps) {
         }
         return;
       }
-      // Range drag (a drag-enabled <RangeCursor>, or the legacy
-      // `cursor="region"` + `onRegionSelect`): anchor the selection at the
+      // Range drag (a drag-enabled <RangeCursor>): anchor the selection at the
       // press; the band then extends as the pointer moves (bucket by bucket
       // with a sequence, freeform without), and release commits the span to
       // whichever sink the claim resolved. Continuous x only, and gated
@@ -1455,7 +1451,7 @@ export function Layers({ children }: LayersProps) {
       }
       // End a range drag: commit the anchor→pointer span as a one-shot range —
       // to the sink the press resolved (`<RangeCursor onDragRelease>`'s
-      // `{ x: [lo, hi] }`, or the legacy `onRegionSelect` bare pair) — then
+      // `{ x: [lo, hi] }`) — then
       // clear the anchor: the cursor **reverts** to the single-bucket
       // highlight (it does not keep the range). The anchor is read from the
       // ref, never the state mirror — under a batched pointer stream the
@@ -1789,7 +1785,7 @@ export function Layers({ children }: LayersProps) {
   // The range cursor's band (continuous x axis — time or value): shade the
   // span under the pointer. With snap buckets (a sequence / a histogram's
   // bins) the band snaps to the bucket (and extends bucket by bucket under a
-  // legacy drag); with none it's the **freeform** case — a bare hover draws a
+  // drag); with none it's the **freeform** case — a bare hover draws a
   // plain line (`bandLine`), a drag shades the raw `[anchor, pointer]`. Edges
   // map through `xScale`, so on a trading-time axis the band crops to live time.
   // A live <MultiSelector> sweep shades the same band — and so does its

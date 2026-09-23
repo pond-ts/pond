@@ -185,7 +185,7 @@ reading guide.
 | ------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------- |
 | `legend={label}`                | Names the layer's `<Legend>` row            | Always, on a stack — `s6` means nothing to a reader                           |
 | `<Legend placement="top-left">` | Draws the key inside the plot               | The band order is the legend order, so it doubles as a reading guide          |
-| `cursor="crosshair"`            | Snaps a reticle + value pill to a band edge | Reading the top edge as a running total; `"line"` (the default) has no pill   |
+| `<CrosshairCursor />`           | Snaps a reticle + value pill to a band edge | Reading the top edge as a running total; `<LineCursor />` has no pill         |
 | `curve="monotone"`              | Smooths every outline                       | Coarser cadences, where 15-minute steps would read as noise                   |
 | `gaps="none"`                   | Bridges straight across missing samples     | A feed with dropouts, where a hole in the middle of a stack reads as bad data |
 | `as="tonalA1"` vs `"tonalB1"`   | Which family a band belongs to              | The grouping in your data changes — a 5+3 split, or one family for everything |

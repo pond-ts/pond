@@ -89,10 +89,12 @@ import {
   Layers,
   LineChart,
   XAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 
 // `million` is a TimeSeries with ~1,000,000 rows.
 <ChartContainer width={900} panZoom>
+  <LineCursor />
   <ChartRow height={280}>
     <Layers>
       <LineChart series={million} column="value" as="signal" />

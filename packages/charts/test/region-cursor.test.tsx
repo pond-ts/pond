@@ -10,6 +10,7 @@ import { LineChart } from '../src/LineChart.js';
 import { BarChart } from '../src/BarChart.js';
 import { YAxis } from '../src/YAxis.js';
 import { ContainerContext, type ContainerFrame } from '../src/context.js';
+import { RangeCursor } from '../src/cursors.js';
 import * as regionStories from '../src/CursorsRegion.stories.js';
 
 afterEach(cleanup);
@@ -22,10 +23,16 @@ function Capture({ sink }: { sink: (f: ContainerFrame) => void }) {
   return null;
 }
 
-function frameOf(props: Record<string, unknown>): ContainerFrame {
+function frameOf(props: {
+  range: [number, number];
+  sequence?: Sequence | BoundedSequence;
+}): ContainerFrame {
   let frame: ContainerFrame | null = null;
   render(
-    <ChartContainer width={320} {...props}>
+    <ChartContainer width={320} range={props.range}>
+      <RangeCursor
+        {...(props.sequence !== undefined ? { sequence: props.sequence } : {})}
+      />
       <Capture sink={(f) => (frame = f)} />
     </ChartContainer>,
   );
@@ -37,15 +44,14 @@ const H = 3_600_000;
 const D0 = Date.UTC(2026, 0, 5) + 9.5 * H;
 const D1 = Date.UTC(2026, 0, 14) + 16 * H;
 
-describe('cursor="region" bucket realization', () => {
+describe('<RangeCursor> bucket realization', () => {
   it('a Sequence includes the bucket containing the view start (leading partial)', () => {
     // `Sequence.bounded` (sample 'begin') alone would drop the first week — its
     // Monday-midnight start precedes D0 — so the region band would go blank at
     // the left. The container widens the realized range back by one bucket.
     const f = frameOf({
       range: [D0, D1],
-      cursor: 'region',
-      cursorSequence: Sequence.calendar('week'),
+      sequence: Sequence.calendar('week'),
     });
     const buckets = f.cursorBuckets!;
     expect(buckets).not.toBeUndefined();
@@ -67,19 +73,18 @@ describe('cursor="region" bucket realization', () => {
     ]);
     const f = frameOf({
       range: [D0, D1],
-      cursor: 'region',
-      cursorSequence: bs,
+      sequence: bs,
     });
     expect(f.cursorBuckets).toEqual(bs.intervals());
   });
 
-  it('no cursorSequence ⇒ cursorBuckets is undefined', () => {
-    const f = frameOf({ range: [D0, D1], cursor: 'region' });
+  it('no sequence ⇒ cursorBuckets is undefined', () => {
+    const f = frameOf({ range: [D0, D1] });
     expect(f.cursorBuckets).toBeUndefined();
   });
 
   it('bucket snapping is gated off a value axis, but the region cursor stays freeform-active', () => {
-    // A value-keyed (distance) row makes this a value axis; a time cursorSequence
+    // A value-keyed (distance) row makes this a value axis; a time sequence
     // realized over a value domain would otherwise shade the whole plot — so the
     // *buckets* are gated off (snapping is time-only). The region cursor itself is
     // NOT gated: it falls back to the freeform raw-span drag on a value axis, and
@@ -100,11 +105,8 @@ describe('cursor="region" bucket realization', () => {
 
     let frame: ContainerFrame | null = null;
     render(
-      <ChartContainer
-        width={320}
-        cursor="region"
-        cursorSequence={Sequence.daily()}
-      >
+      <ChartContainer width={320}>
+        <RangeCursor sequence={Sequence.daily()} />
         <ChartRow height={100}>
           <YAxis id="a" min={100} max={160} />
           <Layers>
@@ -119,7 +121,7 @@ describe('cursor="region" bucket realization', () => {
   });
 });
 
-describe('cursor="region" snaps to a histogram\'s bins', () => {
+describe("<RangeCursor> snaps to a histogram's bins", () => {
   const HIST = [
     { start: 0, end: 20, secs: 5 },
     { start: 20, end: 40, secs: 12 },
@@ -127,11 +129,19 @@ describe('cursor="region" snaps to a histogram\'s bins', () => {
   ];
   const render_ = (
     extra: ReactElement,
-    props: Record<string, unknown> = {},
+    props: { range?: [number, number]; sequence?: Sequence } = {},
   ) => {
     let frame: ContainerFrame | null = null;
     render(
-      <ChartContainer width={320} cursor="region" {...props}>
+      <ChartContainer
+        width={320}
+        {...(props.range !== undefined ? { range: props.range } : {})}
+      >
+        <RangeCursor
+          {...(props.sequence !== undefined
+            ? { sequence: props.sequence }
+            : {})}
+        />
         <ChartRow height={100}>
           <YAxis id="s" min={0} />
           <Layers>{extra}</Layers>
@@ -145,7 +155,7 @@ describe('cursor="region" snaps to a histogram\'s bins', () => {
   it('a vertical histogram publishes its bins as the region snap buckets', () => {
     const f = render_(<BarChart bins={HIST} column="secs" />);
     expect(f.xKind).toBe('value');
-    // The bins become the cursor buckets — no cursorSequence needed.
+    // The bins become the cursor buckets — no sequence needed.
     expect((f.cursorBuckets ?? []).map((b) => [b.begin(), b.end()])).toEqual([
       [0, 20],
       [20, 40],
@@ -162,8 +172,8 @@ describe('cursor="region" snaps to a histogram\'s bins', () => {
     expect(f.cursorBuckets).toBeUndefined();
   });
 
-  it('an explicit cursorSequence still wins on a time-axis histogram', () => {
-    // A time-keyed bar chart + an explicit cursorSequence: the sequence is the
+  it('an explicit sequence still wins on a time-axis histogram', () => {
+    // A time-keyed bar chart + an explicit sequence: the sequence is the
     // author's intent and takes precedence over the auto bin buckets.
     const byHour = new TimeSeries({
       name: 'events',
@@ -179,7 +189,7 @@ describe('cursor="region" snaps to a histogram\'s bins', () => {
     });
     const f = render_(<BarChart series={byHour} column="n" />, {
       range: [D0, D0 + 3 * H],
-      cursorSequence: Sequence.calendar('week'),
+      sequence: Sequence.calendar('week'),
     });
     expect(f.xKind).toBe('time');
     // Weekly buckets (from the sequence), not the per-hour bar bins.
@@ -189,7 +199,7 @@ describe('cursor="region" snaps to a histogram\'s bins', () => {
 
   it('a time-axis histogram with NO sequence snaps to its own bars', () => {
     // The bin-fallback isn't value-axis-only: a time-keyed bar chart with no
-    // cursorSequence snaps to the bars it draws (one bucket per bar).
+    // sequence snaps to the bars it draws (one bucket per bar).
     const byHour = new TimeSeries({
       name: 'events',
       schema: [

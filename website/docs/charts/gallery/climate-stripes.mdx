@@ -73,6 +73,7 @@ build. Hand `<HeatMap>` the column and the ramp:
 const ramp = useSequentialRamp(); // 8 theme colours, dark → light
 
 <ChartContainer range={[FIRST, LAST]} width={640} theme={theme}>
+  <LineCursor />
   <ChartRow height={200}>
     {/* One row, so the layer's own [0, 1] extent is the whole plot. Empty
         `ticks` and zero width take the axis off the canvas: a single unnamed
@@ -158,14 +159,14 @@ whose drawn value is a layout device — the in-chart pill is the wrong tool and
 | `useSequentialRamp(4)`                  | Fewer, wider steps, spread across the whole ramp  | You want a coarser reading, or the eight steps aren't distinguishable at size |
 | Draw `anomaly` and drop the `width={0}` | Puts a real value axis back, bar height = anomaly | You'd rather encode the value as height and keep colour as reinforcement      |
 | `gap={1}`                               | Hairline separations between stripes              | The reader should count years rather than read a gradient                     |
-| `cursor="region"`                       | Shades the whole stripe under the pointer         | The stripe itself should light up, rather than a line running through it      |
+| `<RangeCursor />`                       | Shades the whole stripe under the pointer         | The stripe itself should light up, rather than a line running through it      |
 | `<Marker>` at a notable year            | An annotated callout in the annotation register   | One year needs naming — a Pinatubo dip, an El Niño peak                       |
 
 ## See also
 
 - [`<BarChart>`](../types/barchart.mdx) — `binColors`, gaps, and the dense-bar path
 - [Theming](../theming.mdx) — roles, ramps, and why there are no literals above
-- [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — the cursor modes, and `onTrackerChanged`
+- [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — the cursor components, and `onTrackerChanged`
 - [Value axes](../axes/value-axis.mdx) — pinning and suppressing an axis
 - [**Storybook**](pathname:///storybook/?path=/story/charts-barchart--bin-colors)
   — the systematic knob walk

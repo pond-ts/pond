@@ -11,6 +11,7 @@ import { Selector } from './selectors.js';
 import { transposeRow } from './data.js';
 import { defaultTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * The **ordinal category x-axis** (categorical-axis RFC, Phase 1): one bar per
@@ -55,6 +56,7 @@ const PALETTE = [
 export const Tickers: Story = {
   render: () => (
     <ChartContainer width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="net Δ" min={0} pad={0.08} />
         <Layers>
@@ -72,6 +74,7 @@ export const Tickers: Story = {
 export const SingleHue: Story = {
   render: () => (
     <ChartContainer width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="net Δ" min={0} pad={0.08} />
         <Layers>
@@ -98,6 +101,7 @@ export const HighCardinality: Story = {
     }));
     return (
       <ChartContainer width={840}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="v" label="count" min={0} pad={0.08} />
           <Layers>
@@ -123,6 +127,7 @@ export const CrowdedLabels: Story = {
     }));
     return (
       <ChartContainer width={720}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="v" label="orders" min={0} pad={0.08} />
           <Layers>
@@ -157,6 +162,7 @@ export const NineAccountNames: Story = {
     ];
     return (
       <ChartContainer width={800}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="v" label="net Δ" min={0} pad={0.08} />
           <Layers>
@@ -190,6 +196,7 @@ export const VenueTailLabels: Story = {
     ];
     return (
       <ChartContainer width={560}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="v" label="net Δ" min={0} pad={0.08} />
           <Layers>
@@ -220,6 +227,7 @@ export const CollapsedWidth: Story = {
     ];
     const chart = (
       <ChartContainer width="auto">
+        <LineCursor />
         <ChartRow height={160}>
           <YAxis id="v" label="net Δ" min={0} pad={0.08} />
           <Layers>
@@ -265,6 +273,7 @@ function SelectDemo() {
         )}
       </div>
       <ChartContainer width={640}>
+        <LineCursor />
         <Selector onSelect={setSel}>
           <ChartRow height={240}>
             <YAxis id="v" label="net Δ" min={0} pad={0.08} />
@@ -304,6 +313,7 @@ export const Signed: Story = {
     ];
     return (
       <ChartContainer width={640}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="v" label="day P&L" pad={0.1} />
           <Layers>
@@ -357,6 +367,7 @@ export const Transpose: Story = {
     const data = transposeRow(wideSeries(), { at: 'last' });
     return (
       <ChartContainer width={640}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="v" label="value" min={0} pad={0.08} />
           <Layers>
@@ -405,6 +416,7 @@ function ScrubDemo() {
         />
       </div>
       <ChartContainer width={640}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="v" label="value" min={0} pad={0.08} />
           <Layers>
@@ -433,6 +445,7 @@ export const HorizontalFunnel: Story = {
     // `showAxis={false}` because the explicit <XAxis> below carries the label;
     // leaving the default on would render the shared axis twice.
     <ChartContainer width={560} showAxis={false}>
+      <LineCursor />
       <ChartRow height={200}>
         {/* A wider gutter: the derived category labels are words, not numbers. */}
         <YAxis id="stage" width={96} />
@@ -465,6 +478,7 @@ export const HorizontalFunnel: Story = {
 export const MaxBandWidth: Story = {
   render: () => (
     <ChartContainer width={640} maxBandWidth={44}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="net Δ" min={0} pad={0.08} />
         <Layers>
@@ -491,6 +505,7 @@ export const StablePitch: Story = {
   render: () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <ChartContainer width={640} maxBandWidth={44}>
+        <LineCursor />
         <ChartRow height={130}>
           <YAxis id="a" label="" min={0} pad={0.08} />
           <Layers>
@@ -503,6 +518,7 @@ export const StablePitch: Story = {
         </ChartRow>
       </ChartContainer>
       <ChartContainer width={640} maxBandWidth={44}>
+        <LineCursor />
         <ChartRow height={130}>
           <YAxis id="b" label="" min={0} pad={0.08} />
           <Layers>
@@ -521,6 +537,7 @@ export const StablePitch: Story = {
 export const BandAlignCenter: Story = {
   render: () => (
     <ChartContainer width={640} maxBandWidth={44} bandAlign="center">
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="net Δ" min={0} pad={0.08} />
         <Layers>
@@ -537,6 +554,7 @@ export const BandAlignCenter: Story = {
 export const BandAlignEnd: Story = {
   render: () => (
     <ChartContainer width={640} maxBandWidth={44} bandAlign="end">
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="net Δ" min={0} pad={0.08} />
         <Layers>
@@ -560,6 +578,7 @@ export const CapDoesNotBind: Story = {
     }));
     return (
       <ChartContainer width={640} maxBandWidth={44}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="v" label="" min={0} pad={0.08} />
           <Layers>

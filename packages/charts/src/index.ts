@@ -246,12 +246,11 @@ export { Selector, MultiSelector } from './selectors.js';
 export type { SelectorProps, MultiSelectorProps } from './selectors.js';
 
 // Public interaction types — the callback params for the tracker + selection
-// (`onTrackerChanged`, `onSelect`), the `cursor` mode, the point a
-// `<CrosshairCursor>` snapped to (`onSnap`), and the span a
+// (`onTrackerChanged`, `onSelect`), the point a `<CrosshairCursor>`
+// snapped to (`onSnap`), and the span a
 // `<RangeCursor>` drag releases (`onDragRelease` — `{ x: [lo, hi], y? }`,
 // RFC A3.3's uniform 1-D/2-D shape).
 export type {
-  CursorMode,
   CursorSnap,
   TrackerInfo,
   TrackerSample,

@@ -22,7 +22,7 @@ import { BarChart } from '../src/BarChart.js';
 import { LineChart } from '../src/LineChart.js';
 import { YAxis } from '../src/YAxis.js';
 import { MultiSelector, Selector } from '../src/selectors.js';
-import { CrosshairCursor, RangeCursor } from '../src/cursors.js';
+import { CrosshairCursor, LineCursor, RangeCursor } from '../src/cursors.js';
 import { resolveBrushClaim } from '../src/brush.js';
 import { selectionContains } from '../src/span.js';
 import {
@@ -1172,16 +1172,20 @@ describe('the resting block preview (band as resting cursor, block-scoped hover)
     expect(frame().hovered.map((h) => h.value)).toEqual([5, 6, 7, 8]);
   });
 
-  it('an explicitly chosen legacy cursor string also wins', () => {
+  it('a mounted <LineCursor /> also wins', () => {
     const { surface, pxAt, dom } = seqMount(
       <MultiSelector sequence={Sequence.calendar('day')} />,
     );
-    // Contrast case: same mount but with `cursor="line"` SET on the container.
+    // Contrast case: same mount plus a mounted `<LineCursor />`.
     const explicit = mount({
-      children: <MultiSelector sequence={Sequence.calendar('day')} />,
+      children: (
+        <>
+          <MultiSelector sequence={Sequence.calendar('day')} />
+          <LineCursor />
+        </>
+      ),
       layers: <BarChart series={sixHourBars()} column="v" axis="a" id="q" />,
       range: [D0, D1],
-      props: { cursor: 'line' },
     });
     const lines = (d: HTMLElement) =>
       Array.from(d.querySelectorAll('svg line')).filter(
@@ -1195,7 +1199,7 @@ describe('the resting block preview (band as resting cursor, block-scoped hover)
         pointer('pointermove', explicit.pxAt(D0 + 1.6 * DAY), 0),
       ),
     );
-    // Implicit default: band, no line. Explicit `cursor="line"`: the line.
+    // No cursor mounted: band, no line. `<LineCursor />` mounted: the line.
     expect(lines(dom as HTMLElement)).toHaveLength(0);
     expect(dom.querySelector('svg rect')).not.toBeNull();
     expect(lines(explicit.dom as HTMLElement).length).toBeGreaterThan(0);

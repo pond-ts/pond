@@ -73,9 +73,11 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 
 <ChartContainer range={[from, to]} width={680} theme={theme}>
+  <LineCursor />
   <ChartRow height={240}>
     <YAxis id="price" side="right" format="$,.2f" width={62} />
     <Layers>
@@ -153,8 +155,8 @@ const bars = useMemo(() => rangeWindow(allBars, range), [allBars, range]);
 ```
 
 `panZoom="panZoom"` is **drag to pan, wheel to zoom**. There is no drag-to-zoom
-gesture: drag-to-select-a-span is `cursor="region"` with `onRegionSelect`, and
-`cursor` takes a single value, so it can't be combined with the crosshair.
+gesture: drag-to-select-a-span is `<RangeCursor onDragRelease>`, and a scope has
+one gesture-owning cursor, so it can't be combined with the crosshair.
 :::
 
 ## Options to try

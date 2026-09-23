@@ -8,6 +8,7 @@ import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
 import { sanFranciscoTemperatures } from './sf-temperatures.fixture.js';
+import { LineCursor } from './cursors.js';
 
 const N = 60;
 const BASE = Date.UTC(2026, 0, 1, 12, 0, 0);
@@ -89,6 +90,7 @@ export const TwoTone: Story = {
     const v = variance();
     return (
       <ChartContainer range={TIME_RANGE} width={560}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="v" label="v" min={0} max={100} />
           <Layers>
@@ -108,6 +110,7 @@ export const WithGap: Story = {
     const g = bandWithGap();
     return (
       <ChartContainer range={TIME_RANGE} width={480}>
+        <LineCursor />
         <ChartRow height={200}>
           <YAxis id="v" label="v" min={0} max={100} />
           <Layers>
@@ -139,6 +142,7 @@ export const SanFranciscoTemperature: Story = {
     const timeRange: [number, number] = [begins[0]!, begins[sf.length - 1]!];
     return (
       <ChartContainer range={timeRange} width={720} theme={d3BandTheme}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="degF" label="°F" />
           <Layers>
@@ -195,6 +199,7 @@ export const RollingPercentiles: Story = {
     const timeRange: [number, number] = [begins[0]!, begins[b.length - 1]!];
     return (
       <ChartContainer range={timeRange} width={560}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="v" label="v" />
           <Layers>

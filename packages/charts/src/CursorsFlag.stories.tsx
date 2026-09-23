@@ -13,11 +13,12 @@ import {
   N,
   RANGE,
 } from './story-data.fixture.js';
+import { FlagCursor } from './cursors.js';
 
 /**
- * `cursor="flag"` — a dot on each series at the cursor, each value flying as a
+ * `<FlagCursor>` — a dot on each series at the cursor, each value flying as a
  * **flag** on a staff stacked near the top of the row. These stories fan out:
- * single vs multiple series, the `cursorTime` time chip (caps the stack),
+ * single vs multiple series, the `showTime` time chip (caps the stack),
  * multi-row (one shared cursor, the time chip shows once), and a near-right-edge
  * pin (the flag flips left of its staff so it stays in-plot). The cursor is
  * pinned with a controlled `trackerPosition` for a static shot — no hover.
@@ -27,21 +28,16 @@ const s = twoSeries();
 
 function Chart({
   pin,
-  cursorTime,
+  showTime = false,
   children,
 }: {
   pin: number;
-  cursorTime?: boolean;
+  showTime?: boolean;
   children: ReactNode;
 }) {
   return (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="flag"
-      cursorTime={cursorTime ?? false}
-      trackerPosition={pin}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={pin}>
+      <FlagCursor showTime={showTime} />
       <ChartRow height={220}>
         <Layers>{children}</Layers>
         <YAxis id="usd" side="right" format=",.0f" />
@@ -63,7 +59,8 @@ type Story = StoryObj;
  *  a static regression shot; this is the live one. */
 export const Interactive: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} cursor="flag" cursorTime>
+    <ChartContainer range={RANGE} width={W}>
+      <FlagCursor showTime />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={s} column="fast" as="primary" axis="usd" />
@@ -94,10 +91,10 @@ export const MultipleSeries: Story = {
   ),
 };
 
-/** **With time** — `cursorTime` caps the flag stack with the cursor's time. */
+/** **With time** — `showTime` caps the flag stack with the cursor's time. */
 export const WithTime: Story = {
   render: () => (
-    <Chart pin={BASE + 45 * STEP} cursorTime>
+    <Chart pin={BASE + 45 * STEP} showTime>
       <LineChart series={s} column="fast" as="primary" axis="usd" />
       <LineChart series={s} column="slow" as="secondary" axis="usd" />
     </Chart>
@@ -108,13 +105,8 @@ export const WithTime: Story = {
  *  shows once, atop the first row, not repeated on the second. */
 export const MultiRow: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="flag"
-      cursorTime
-      trackerPosition={BASE + 45 * STEP}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={BASE + 45 * STEP}>
+      <FlagCursor showTime />
       <ChartRow height={150}>
         <Layers>
           <LineChart series={s} column="fast" as="primary" axis="usd" />
@@ -135,7 +127,7 @@ export const MultiRow: Story = {
  *  time chip) flip to the left of their staffs so they stay in-plot. */
 export const NearRightEdge: Story = {
   render: () => (
-    <Chart pin={BASE + (N - 3) * STEP} cursorTime>
+    <Chart pin={BASE + (N - 3) * STEP} showTime>
       <LineChart series={s} column="fast" as="primary" axis="usd" />
       <LineChart series={s} column="slow" as="secondary" axis="usd" />
     </Chart>

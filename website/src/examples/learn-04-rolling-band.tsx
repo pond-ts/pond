@@ -5,6 +5,7 @@ import {
   Layers,
   LineChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { singleHostSeries } from './lib/server-metrics';
@@ -18,6 +19,7 @@ export default function RollingBand() {
 
   return (
     <ChartContainer range={banded.timeRange()} width={560} theme={theme}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="pct" side="right" format=".0%" />
         <Layers>

@@ -24,6 +24,7 @@ import { HeatMap } from '../src/HeatMap.js';
 import { LineChart } from '../src/LineChart.js';
 import { YAxis } from '../src/YAxis.js';
 import { MultiSelector } from '../src/selectors.js';
+import { LineCursor } from '../src/cursors.js';
 import { RowContext, type RowFrame } from '../src/context.js';
 import { stubCanvasContext } from './canvas-mock.js';
 
@@ -310,15 +311,24 @@ describe('the resting brush takes its shape from the row', () => {
     expect(lines(dom).filter((l) => !l.includes('→60,120'))).toHaveLength(0);
   });
 
-  it('no <MultiSelector>, no cross — the row keeps its ordinary cursor', () => {
+  it('no <MultiSelector>, no cross — a mounted cursor draws its own mark', () => {
     // The brush is the selector's RESTING state, so without one mounted the
-    // row keeps the implicit line it always had. Worth pinning as the pair to
-    // the case above: the cross *replaces* that line rather than joining it.
+    // row shows whatever cursor is mounted. Worth pinning as the pair to the
+    // case above: the cross *replaces* that line rather than joining it.
+    const { dom } = mountRow(
+      <ScatterChart series={points()} column="v" axis="a" id="s" />,
+      <LineCursor />,
+    );
+    hover(dom, 60, 40);
+    expect(lines(dom)).toEqual(['60,0→60,120']); // one full-height rule
+  });
+
+  it('no <MultiSelector> and no cursor mounted — nothing draws', () => {
     const { dom } = mountRow(
       <ScatterChart series={points()} column="v" axis="a" id="s" />,
     );
     hover(dom, 60, 40);
-    expect(lines(dom)).toEqual(['60,0→60,120']); // one full-height rule
+    expect(lines(dom)).toEqual([]);
   });
 
   it('the cross draws only in the row under the pointer', () => {

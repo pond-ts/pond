@@ -4,6 +4,7 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { Sequence } from 'pond-ts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -17,6 +18,7 @@ export default function AggregateBars() {
 
   return (
     <ChartContainer range={buckets.timeRange()} width={560} theme={theme}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="pct" side="right" format=".0%" min={0} />
         <Layers>

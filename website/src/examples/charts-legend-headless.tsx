@@ -6,6 +6,7 @@ import {
   ScatterChart,
   useChartLegend,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 
@@ -113,6 +114,7 @@ export default function ChartsLegendHeadless({ width }: { width: number }) {
 
   return (
     <ChartContainer range={series.timeRange()} width={width} theme={theme}>
+      <LineCursor />
       <ChipRow />
       <ChartRow height={200}>
         <YAxis id="ms" label="latency (ms)" width={56} />

@@ -8,6 +8,7 @@ import { ScatterChart } from './ScatterChart.js';
 import { BandChart } from './BandChart.js';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * `<ChartContainer categories>` — the ordinal axis declared at the
@@ -67,6 +68,7 @@ type Story = StoryObj;
 export const Default: Story = {
   render: () => (
     <ChartContainer width={W} categories={TICKERS}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="v" min={0} max={70} />
         <Layers>
@@ -85,6 +87,7 @@ export const Default: Story = {
 export const LineOverBars: Story = {
   render: () => (
     <ChartContainer width={W} categories={TICKERS}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="v" min={0} max={70} />
         <Layers>
@@ -103,6 +106,7 @@ export const LineOverBars: Story = {
 export const PointsOverBars: Story = {
   render: () => (
     <ChartContainer width={W} categories={TICKERS}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="v" min={0} max={70} />
         <Layers>
@@ -121,6 +125,7 @@ export const PointsOverBars: Story = {
 export const EnvelopeOverBars: Story = {
   render: () => (
     <ChartContainer width={W} categories={TICKERS}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="v" min={0} max={70} />
         <Layers>
@@ -147,6 +152,7 @@ export const CappedPitch: Story = {
       maxBandWidth={56}
       bandAlign="center"
     >
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="v" min={0} max={70} />
         <Layers>
@@ -179,6 +185,7 @@ export const ManyThinnedLabels: Story = {
     });
     return (
       <ChartContainer width={420} categories={many}>
+        <LineCursor />
         <ChartRow height={180}>
           <YAxis id="v" min={0} max={40} />
           <Layers>
@@ -197,6 +204,7 @@ export const ManyThinnedLabels: Story = {
 export const MultiRow: Story = {
   render: () => (
     <ChartContainer width={W} categories={TICKERS} rowGap={8}>
+      <LineCursor />
       <ChartRow height={130}>
         <YAxis id="v" min={0} max={70} />
         <Layers>

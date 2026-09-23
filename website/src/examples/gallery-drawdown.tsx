@@ -5,6 +5,7 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  CrosshairCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import {
@@ -62,8 +63,8 @@ export default function GalleryDrawdown({
       width={width}
       theme={theme}
       calendar={set.calendar}
-      cursor="crosshair"
     >
+      <CrosshairCursor />
       <ChartRow height={height}>
         <YAxis id="dd" label="drawdown" side="right" format=".0%" width={62} />
         <Layers>

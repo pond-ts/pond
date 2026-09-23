@@ -5,6 +5,7 @@ import {
   Layers,
   ScatterChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { LiveSeries } from 'pond-ts';
 import { useSnapshot } from '@pond-ts/react';
@@ -147,6 +148,7 @@ export default function CoreSamplingLive() {
       <div ref={boxRef} style={{ width: '100%' }}>
         {ready ? (
           <ChartContainer range={view} width={width} theme={theme}>
+            <LineCursor />
             <ChartRow height={HEIGHT}>
               <YAxis
                 id="val"

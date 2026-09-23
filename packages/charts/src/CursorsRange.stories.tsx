@@ -19,9 +19,8 @@ import { priceSeries, RANGE } from './story-data.fixture.js';
  * `ChartContainer.range` accepts, which is the name-level coherence the
  * component is named for).
  *
- * The legacy `cursor="region"` + `onRegionSelect` stories remain under
- * `Cursors/Region` for the deprecation window — they pin the old surface;
- * these pin the new one.
+ * The band itself — bucketed by durations, trading sessions, calendar weeks,
+ * value axes and histogram bins — is fanned out under `Cursors/Region`.
  */
 const W = 620;
 

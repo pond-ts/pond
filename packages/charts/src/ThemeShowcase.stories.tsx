@@ -11,6 +11,7 @@ import { Baseline, Marker } from './annotations.js';
 import { estelaTheme, type ChartTheme } from './theme.js';
 import { docsTheme, docsThemeDark } from './docs-theme.fixture.js';
 import { twoSeries, RANGE, BASE, STEP } from './story-data.fixture.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * **The deliberate theming exceptions.** Every other story in this Storybook
@@ -57,6 +58,7 @@ function Showcase({ theme }: { theme: ChartTheme }) {
   const s = twoSeries();
   return (
     <ChartContainer range={RANGE} width={640} theme={theme}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="usd" side="right" format=",.0f" min={120} max={240} />
         <Layers>

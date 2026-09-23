@@ -6,7 +6,7 @@
  *
  * Two things change, and only these two: **where the ticks sit** and **what they
  * say**. The pixel mapping is untouched, and so are the data coordinates — a
- * mark's `at`, the container's `range`, an `onRegionSelect` span are all still
+ * mark's `at`, the container's `range`, a `<RangeCursor onDragRelease>` span are all still
  * absolute axis units. Relabeling only.
  *
  * Where the ticks sit is the part that can't be done with `<XAxis transform>`:

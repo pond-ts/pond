@@ -9,6 +9,7 @@ import {
   Selector,
   YAxis,
   type SelectInfo,
+  LineCursor,
 } from '@pond-ts/charts';
 import {
   useSiteChartTheme,
@@ -323,6 +324,7 @@ export default function GalleryNino34Heatmap({
         // reason, same prop, as the day-of-year chart above.
         timeFormat="%b"
       >
+        <LineCursor />
         {/* `onHover` reports the **cell under the pointer** — a real 2-D hit,
             which is what a grid needs and what `onTrackerChanged` cannot give:
             the tracker samples every row at the cursor's x and knows nothing

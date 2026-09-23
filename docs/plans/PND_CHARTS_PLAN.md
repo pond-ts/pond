@@ -3121,6 +3121,32 @@ actually on; the renderer sorts for the box. And the rect is **row-local
 state**, not container state like the band: an x-range means the same thing in
 every row, a y-range only means something against the axis that measured it.
 
+**Shipped, [PND-INTERACTCONF] — the old cursor props removed (2026-09-23).**
+`<ChartContainer>`'s `cursor`, `cursorTime`, `crosshairSnap`, `cursorFormat`,
+`cursorSequence`, `onRegionSelect`, `regionSelectModifier`, `<ChartRow cursor>`
+and the `CursorMode` type are gone, along with the internal shim that turned
+them into mounted cursors. The decision that unblocked it
+([#647](https://github.com/pond-ts/pond/issues/647)), made by the owner:
+**mounting no cursor means no cursor.** The implicit `'line'` default was the
+only reason `cursor="none"` had to exist, so keeping the default would have
+kept a removed prop alive. What followed from that:
+
+- **Capability kept, not dropped.** `cursorFormat` was the one prop with no
+  component home on four of the five presets, so `format` now sits on
+  `<LineCursor>` / `<PointCursor>` / `<InlineCursor>` / `<FlagCursor>` too. The
+  readout is still one chart-wide channel: the first mounted cursor that sets
+  `format` shapes it (the per-row version is still the A8.4 open item).
+- **"No cursor in this row only"** used to be `<ChartRow cursor="none">`. It is
+  now "mount the cursors per row" — a row with its own mounts ignores the
+  container's, so the row that wants nothing simply has no mount.
+- **The `<MultiSelector>` resting band shows by default** on a row with no
+  cursor. It was hidden before because the implicit line counted as a mounted
+  cursor. This is the behaviour the resting preview was designed for.
+- **Every example and story that relied on the implicit line now mounts
+  `<LineCursor />` explicitly**, so the site and the visual baselines look the
+  same as before. That is deliberate: the change is to the default, not to
+  what the examples should show.
+
 **Deferred but considered:** namespaced component names (`Cursor.Crosshair`,
 `Selection.Brush`) — rejected, nothing in the package exports a namespaced
 compound today and flat names keep 1:1 parity with the mode strings they

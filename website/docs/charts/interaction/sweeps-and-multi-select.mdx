@@ -15,6 +15,7 @@ reports in a plural currency.
 
 ```tsx
 <ChartContainer range={range} width={720}>
+  <LineCursor />
   <MultiSelector
     selected={sel}
     onHover={setPreview}
@@ -189,7 +190,7 @@ Pass a **stable reference**; the realized buckets memoize on it.
 - **Modifier policy is yours.** pond reports the chord and holds no set. If
   ⌘-drag should union and a plain drag should replace, that is your handler's
   decision, in your state.
-- **`shift` is taken on a continuous axis** by `regionSelectModifier` — see
+- **`shift` is taken on a continuous axis** by `<RangeCursor dragModifier>` — see
   [pan, zoom & range selection](./pan-zoom-and-range-selection.mdx).
 - **A span never matches another layer's marks.** `id` is part of the test, so
   two layers swept together produce two spans, not one shared one.

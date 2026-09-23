@@ -7,6 +7,7 @@ import { LineChart } from './LineChart.js';
 import { AreaChart } from './AreaChart.js';
 import { YAxis } from './YAxis.js';
 import { type GapMode } from './gaps.js';
+import { LineCursor } from './cursors.js';
 
 const N = 48;
 /** Fixed base epoch (2026-01-01 12:00 UTC) + 1-minute step → deterministic. */
@@ -66,6 +67,7 @@ export const Line: Story = {
     const s = sineWithGap();
     return (
       <ChartContainer range={TIME_RANGE} width={520}>
+        <LineCursor />
         {MODES.map((mode) => (
           <ChartRow key={mode} height={90}>
             <YAxis id="v" label={mode} min={0} max={100} />
@@ -91,6 +93,7 @@ export const Area: Story = {
     const s = sineWithGap();
     return (
       <ChartContainer range={TIME_RANGE} width={520}>
+        <LineCursor />
         {MODES.map((mode) => (
           <ChartRow key={mode} height={90}>
             <YAxis id="v" label={mode} min={0} max={100} />

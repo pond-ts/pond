@@ -7,6 +7,7 @@ import { LineChart } from './LineChart.js';
 import { XAxis } from './XAxis.js';
 import { defaultTheme } from './theme.js';
 import type { ChartTheme } from './theme.js';
+import { LineCursor, FlagCursor } from './cursors.js';
 
 const N = 60;
 /** Fixed base epoch (2026-01-01 12:00 UTC) + 1-minute step, so the time axis
@@ -87,6 +88,7 @@ type Story = StoryObj;
 export const ValueAxisDistance: Story = {
   render: () => (
     <ChartContainer timeFormat=",.0f" width={480}>
+      <LineCursor />
       <ChartRow height={200}>
         <Layers>
           <LineChart series={rideByDistance()} column="hr" as="heartrate" />
@@ -98,8 +100,8 @@ export const ValueAxisDistance: Story = {
 
 /**
  * **Value axis + flag cursor.** HR over distance with a hover-driven
- * `cursor="flag"` — move the pointer and the staff rides the nearest data
- * point, the flag reading its HR; `cursorTime` shows the x position (e.g.
+ * `<FlagCursor>` — move the pointer and the staff rides the nearest data
+ * point, the flag reading its HR; `showTime` shows the x position (e.g.
  * `1,200`) atop the staff. Proves the cursor / flag readout follows the pointer
  * on a value axis (`sampleAt` bisects the distance axis), not just time.
  */
@@ -108,13 +110,8 @@ export const ValueAxisFlag: Story = {
     const series = rideByDistance();
     const maxDist = series.axisAt(series.length - 1);
     return (
-      <ChartContainer
-        range={[0, maxDist]}
-        timeFormat=",.0f"
-        cursor="flag"
-        cursorTime
-        width={480}
-      >
+      <ChartContainer range={[0, maxDist]} timeFormat=",.0f" width={480}>
+        <FlagCursor showTime />
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="hr" as="heartrate" />
@@ -137,6 +134,7 @@ export const ValueAxisLabeled: Story = {
     const maxDist = series.axisAt(series.length - 1);
     return (
       <ChartContainer range={[0, maxDist]} showAxis={false} width={480}>
+        <LineCursor />
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="hr" as="heartrate" />
@@ -154,6 +152,7 @@ export const WithGap: Story = {
     const series = sineWithGap();
     return (
       <ChartContainer range={TIME_RANGE} width={480}>
+        <LineCursor />
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" />
@@ -170,6 +169,7 @@ export const Flat: Story = {
     const series = flat();
     return (
       <ChartContainer range={TIME_RANGE} width={480}>
+        <LineCursor />
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" as="context" />
@@ -246,6 +246,7 @@ export const Themed: Story = {
     const series = sineWithGap();
     return (
       <ChartContainer range={TIME_RANGE} width={480} theme={darkTheme}>
+        <LineCursor />
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" />
@@ -328,6 +329,7 @@ export const SemanticFoam: Story = {
     const series = sineWithGap();
     return (
       <ChartContainer range={TIME_RANGE} width={480} theme={foamTheme}>
+        <LineCursor />
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" as="foam" />
@@ -381,6 +383,7 @@ export const LineStyles: Story = {
     const series = trio();
     return (
       <ChartContainer range={TIME_RANGE} width={480} theme={dashTheme}>
+        <LineCursor />
         <ChartRow height={220}>
           <Layers>
             <LineChart series={series} column="observed" as="observed" />
@@ -432,6 +435,7 @@ export const GapAwareSmooth: Story = {
     });
     return (
       <ChartContainer range={TIME_RANGE} width={520} theme={foamTheme}>
+        <LineCursor />
         <ChartRow height={220}>
           <Layers>
             <LineChart series={sm} column="v" />

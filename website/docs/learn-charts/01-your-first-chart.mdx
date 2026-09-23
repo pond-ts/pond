@@ -28,16 +28,17 @@ step.
 
 ## Render one line
 
-Here's the whole chart — hover it, the crosshair is live:
+Here's the whole chart — hover it, the cursor is live:
 
 <ChartExample name="first-chart" height={260}>
   <FirstChart />
 </ChartExample>
 
-Four pieces, four lines:
+Five pieces, one line each:
 
 ```tsx
 <ChartContainer range={series.timeRange()} width={560} theme={theme}>
+  <LineCursor />
   <ChartRow height={220}>
     <Layers>
       <LineChart series={series} column="cpu" axis="pct" />
@@ -55,10 +56,13 @@ Four pieces, four lines:
 - **`LineChart`** — a draw layer. It reads `column` off `series` and paints
   it. `axis="pct"` says "scale against the y axis named `pct`."
 - **`YAxis`** — the y axis itself, `id="pct"` is what `axis="pct"` links to.
+- **`LineCursor`** — the hover cursor, a vertical line that follows the
+  pointer. Mount a cursor component to get a cursor; mount none for no cursor.
+  [Chapter 6](./06-cursors-readouts-zoom.mdx) covers the others.
 
 That's the whole vocabulary for chapter 1. Charts are **composed, not
 configured** — there's no `<Chart type="line" data={...} />` prop-soup to
-learn; you'll recognise every one of these five components again in every
+learn; you'll recognise every one of these six components again in every
 chapter that follows.
 
 :::tip[Bring your own data]
@@ -115,7 +119,7 @@ fills it, which is usually what you want in an app.
 
 You rendered a real, interactive chart from four components:
 `ChartContainer` → `ChartRow` → `Layers` → a draw layer, plus one `YAxis` to
-scale against. Every chart in this library, however complex, is this same
+scale against and a `LineCursor` to hover with. Every chart in this library, however complex, is this same
 shape nested deeper.
 
 **Next: [Anatomy of a chart](./anatomy-of-a-chart)** — what happens when

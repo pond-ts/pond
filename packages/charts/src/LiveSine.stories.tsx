@@ -8,7 +8,21 @@ import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { defaultTheme, estelaTheme, type ChartTheme } from './theme.js';
-import type { CursorMode, TrackerInfo } from './context.js';
+import type { TrackerInfo } from './context.js';
+import {
+  FlagCursor,
+  InlineCursor,
+  LineCursor,
+  PointCursor,
+} from './cursors.js';
+
+/** The in-chart cursor presets the playground switches between. */
+const CURSORS = {
+  line: LineCursor,
+  point: PointCursor,
+  inline: InlineCursor,
+  flag: FlagCursor,
+} as const;
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -86,7 +100,7 @@ interface LiveSineArgs {
   pushMs: number;
   windowSize: number;
   /** Cursor method: in-chart `line`/`point`/`inline`/`flag`, or a panel `outside`. */
-  cursor: CursorMode | 'outside';
+  cursor: keyof typeof CURSORS | 'outside';
   theme: 'default' | 'estela' | 'light';
 }
 
@@ -113,6 +127,8 @@ function LiveSineMonitor({
         ? estelaTheme
         : defaultTheme;
   const outside = cursor === 'outside';
+  // `outside` keeps the plain line in-chart; the values go to the panel.
+  const Cursor = CURSORS[outside ? 'line' : cursor];
   const [info, setInfo] = useState<TrackerInfo | null>(null);
 
   // A fresh series per parameter set, so changing any control restarts the feed
@@ -187,9 +203,9 @@ function LiveSineMonitor({
         range={timeRange}
         width={620}
         theme={theme}
-        cursor={outside ? 'line' : cursor}
         {...(outside ? { onTrackerChanged: setInfo } : {})}
       >
+        <Cursor />
         <ChartRow height={280}>
           <YAxis id="v" label="v" min={yMin} max={yMax} />
           <Layers>

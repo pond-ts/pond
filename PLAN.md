@@ -112,15 +112,6 @@ breakout plan. Plan:
   selection currency, state ladder (`theme.list`), range gesture and keyboard
   parity shipped 2026-08-10, and `<BoxPlot>` joined the sweep (write-up in the
   breakout plan). Left:
-  - **Remove the deprecated cursor props.** CHANGELOG 0.58.0 promised them
-    "one more minor"; they are still in 0.70.0 (`<ChartContainer cursor>`,
-    `cursorSequence`, `onRegionSelect`, `regionSelectModifier`, `cursorTime`,
-    `crosshairSnap`, `cursorFormat`, and `<ChartRow cursor>`). **Blocked on a
-    decision,
-    [#647](https://github.com/pond-ts/pond/issues/647):** mounting no cursor
-    still gets the implicit `'line'` default, so `cursor="none"` is the only
-    way to say "no cursor" and it is one of the props being removed. Decide
-    what an unmounted cursor means, then remove.
   - `format` is a container-wide channel and cannot be honoured per row
     without reworking the readout plumbing (A8.4).
   - The list's **per-row bullet target marker** — `theme.list` carries

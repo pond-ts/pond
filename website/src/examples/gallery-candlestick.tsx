@@ -4,6 +4,7 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  CrosshairCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { useMemo, useState } from 'react';
@@ -64,10 +65,10 @@ export default function GalleryCandlestick({
       width={width}
       theme={theme}
       calendar={set.calendar}
-      cursor="crosshair"
       panZoom={live ? 'panZoom' : 'none'}
       onTimeRangeChange={setPanned}
     >
+      <CrosshairCursor />
       <ChartRow height={height}>
         <YAxis id="price" side="right" format={set.priceFormat} width={62} />
         <Layers>

@@ -5,6 +5,7 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  CrosshairCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import {
@@ -59,12 +60,8 @@ export default function GalleryTrafficDashboard({
 
   return (
     <div className={styles.panel}>
-      <ChartContainer
-        range={TRAFFIC_RANGE}
-        width={width}
-        theme={theme}
-        cursor="crosshair"
-      >
+      <ChartContainer range={TRAFFIC_RANGE} width={width} theme={theme}>
+        <CrosshairCursor />
         <ChartRow height={chartHeight}>
           <YAxis
             id="gbps"

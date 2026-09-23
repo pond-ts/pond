@@ -9,6 +9,7 @@ import { YAxis } from './YAxis.js';
 import { MultiSelector, Selector } from './selectors.js';
 import { defaultTheme } from './theme.js';
 import type { SelectInfo, SelectionEntry } from './context.js';
+import { LineCursor, FlagCursor } from './cursors.js';
 
 const N = 24;
 /** Fixed base epoch (2026-01-01 00:00 UTC) + hourly buckets → deterministic. */
@@ -99,6 +100,7 @@ export const Buckets: Story = {
     const v = hourlyVolume();
     return (
       <ChartContainer range={TIME_RANGE} width={640}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="count" label="req" min={0} />
           <Layers>
@@ -121,6 +123,7 @@ export const Diverging: Story = {
     const f = netFlow();
     return (
       <ChartContainer range={TIME_RANGE} width={640}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="flow" label="net" />
           <Layers>
@@ -152,6 +155,7 @@ export const BinColors: Story = {
     );
     return (
       <ChartContainer range={TIME_RANGE} width={640}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="flow" label="net" />
           <Layers>
@@ -172,7 +176,7 @@ export const BinColors: Story = {
 /**
  * **Hover + select.** Hover the plot — the bar **under the cursor** lights up
  * (hover-highlight) and a flag rises from its top-centre with the value
- * (`cursor='flag'`). Click a bar — it stays lit **with an outline** and the panel
+ * (`<FlagCursor>`). Click a bar — it stays lit **with an outline** and the panel
  * above shows the selection; click empty space to clear. Hover and select both
  * resolve by containment (the flag reads the same bar you click) and match the
  * bar's key **and** this series' label, so they're unambiguous across series
@@ -204,7 +208,8 @@ function HoverSelectDemo() {
           </span>
         )}
       </div>
-      <ChartContainer range={TIME_RANGE} width={640} cursor="flag">
+      <ChartContainer range={TIME_RANGE} width={640}>
+        <FlagCursor />
         <Selector onSelect={setSel}>
           <ChartRow height={240}>
             <YAxis id="count" label="req" min={0} />
@@ -243,6 +248,7 @@ export const ControlledSelection: Story = {
     };
     return (
       <ChartContainer range={TIME_RANGE} width={640}>
+        <LineCursor />
         <Selector enabled={false} selected={pinned}>
           <ChartRow height={240}>
             <YAxis id="count" label="req" min={0} />
@@ -284,6 +290,7 @@ export const MarkSelection: Story = {
     };
     return (
       <ChartContainer range={TIME_RANGE} width={640}>
+        <LineCursor />
         <Selector enabled={false} selected={pinned}>
           <ChartRow height={240}>
             <YAxis id="count" label="req" min={0} />
@@ -325,6 +332,7 @@ export const HoverVsSelectColours: Story = {
     };
     return (
       <ChartContainer range={TIME_RANGE} width={640}>
+        <LineCursor />
         <Selector enabled={false} selected={pinned}>
           <ChartRow height={240}>
             <YAxis id="count" label="req" min={0} />
@@ -420,6 +428,7 @@ export const MaxBarWidth: Story = {
           {width}px pane · {capped ? 'maxBarWidth={14}' : 'uncapped'}
         </div>
         <ChartContainer range={TIME_RANGE} width={width}>
+          <LineCursor />
           <ChartRow height={160}>
             <YAxis id="count" label="req" min={0} />
             <Layers>

@@ -69,6 +69,7 @@ plot band, its own y axis, still sharing the container's x axis and cursor:
 
 ```tsx
 <ChartContainer range={series.timeRange()} width={560} theme={theme}>
+  <LineCursor />
   <ChartRow height={140}>
     <YAxis id="pct" side="right" label="cpu" format=".0%" />
     <Layers>

@@ -8,6 +8,7 @@ import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import type { ChartTheme } from './theme.js';
 import { defaultTheme } from './theme.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * A **full multi-panel layout** the way a financial tool assembles it (the Tidal
@@ -249,6 +250,7 @@ function MultiPanelDemo() {
       <div ref={boxRef} style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
         {ready && (
           <ChartContainer width={width} theme={chartTheme}>
+            <LineCursor />
             <ChartRow height={volHeight}>
               <YAxis
                 id="vol"

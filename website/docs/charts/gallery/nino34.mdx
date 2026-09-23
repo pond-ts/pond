@@ -389,8 +389,8 @@ reach −0.5 at some point, and eight more lines would bury the pack.
 
 ### What hover can honestly do
 
-`cursor="line"` — the default — draws the shared vertical rule and no values.
-That is the right mode here, and not a compromise: `crosshair` pins **one**
+`<LineCursor />` draws the shared vertical rule and no values.
+That is the right cursor here, and not a compromise: `<CrosshairCursor />` pins **one**
 value pill per row, and with 45 lines under the pointer that pill would be
 reading one of them essentially at random. There is no in-chart readout that can
 identify which grey line you are near, so the chart doesn't pretend to have one.
@@ -399,7 +399,10 @@ What it does instead is take the readout off the chart, keyed on the cursor's
 time:
 
 ```tsx
-<ChartContainer cursor="line" onTrackerChanged={setTracker}>
+<ChartContainer onTrackerChanged={setTracker}>
+  <LineCursor />
+  {/* rows */}
+</ChartContainer>
 ```
 
 `onTrackerChanged` hands over `{ time, values }`; the strip above the chart uses
@@ -561,7 +564,7 @@ single-row case (`columns.length === 1`) of this same layer.
 - [`<LineChart>`](../types/linechart.mdx) — `gaps`, `decimate`, `curve` and the rest
 - [`<Region>`, `<Baseline>`, `<Marker>`](../annotations/region-baseline-marker.mdx) — the annotation register these thresholds live in
 - [Theming](../theming.mdx) — roles, including `line.muted`, and why there are no literals above
-- [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — the cursor modes and `onTrackerChanged`
+- [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — the cursor components and `onTrackerChanged`
 - [Climate stripes](./climate-stripes.mdx) — the other card whose readout has to live off-chart
 - [**Storybook**](pathname:///storybook/?path=/story/charts-linechart--line-styles)
   — the systematic knob walk

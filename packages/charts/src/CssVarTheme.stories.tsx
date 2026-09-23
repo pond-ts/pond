@@ -8,6 +8,7 @@ import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { defaultTheme } from './theme.js';
 import { useChartTheme } from './useChartTheme.js';
+import { LineCursor } from './cursors.js';
 
 const N = 80;
 const BASE = Date.UTC(2026, 0, 1, 12, 0, 0);
@@ -98,6 +99,7 @@ function CssVarThemedChart() {
         Toggle theme (now: {dark ? 'dark' : 'light'})
       </button>
       <ChartContainer range={RANGE} width={520} theme={theme}>
+        <LineCursor />
         <ChartRow height={220}>
           <YAxis id="v" label="v" />
           <Layers>

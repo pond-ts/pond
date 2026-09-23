@@ -6,6 +6,7 @@ import {
   Layers,
   ScatterChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { LiveSeries, Sequence } from 'pond-ts';
 import { useSnapshot } from '@pond-ts/react';
@@ -165,6 +166,7 @@ export default function CoreAggregate() {
       <div ref={boxRef} style={{ width: '100%' }}>
         {ready ? (
           <ChartContainer range={view} width={width} theme={theme}>
+            <LineCursor />
             <ChartRow height={HEIGHT}>
               <YAxis id="val" side="right" format=".0%" min={0} max={1} />
               <Layers>

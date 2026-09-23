@@ -145,13 +145,15 @@ import {
   Layers,
   LineChart,
   YAxis,
+  CrosshairCursor,
 } from '@pond-ts/charts';
 
 // `bands` is the baseline() result from the batch quick start:
 // cpu + avg / sd / upper / lower columns.
 export function CpuChart({ width }: { width: number }) {
   return (
-    <ChartContainer width={width} cursor="crosshair" panZoom>
+    <ChartContainer width={width} panZoom>
+      <CrosshairCursor />
       <ChartRow height={240}>
         <YAxis id="cpu" format=".0%" />
         <Layers>

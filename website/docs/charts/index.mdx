@@ -83,7 +83,9 @@ Charts are composed, not configured — the same nesting react-timeseries-charts
 users will recognise:
 
 - **`<ChartContainer>`** — owns the shared x axis (time or value, inferred from
-  the data), the view `range`, overall `width`, `theme`, and cursor mode.
+  the data), the view `range`, overall `width`, and `theme`. A cursor is a
+  component mounted inside it (`<LineCursor />`, `<CrosshairCursor />`, …);
+  mount none for no cursor.
 - **`<ChartRow>`** — one stacked plot band with its own y axis / height. A
   container holds one or more rows sharing the x axis.
 - **`<Layers>`** — the mandatory z-stack inside a row; children draw

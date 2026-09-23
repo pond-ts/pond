@@ -8,6 +8,7 @@ import {
   LineChart,
   ScatterChart,
   YAxis,
+  FlagCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { householdPower } from './lib/household-power';
@@ -113,13 +114,13 @@ export default function ChartsHero() {
           bounds={extent}
           width={width}
           theme={theme}
-          cursor="flag"
           panZoom="panZoom"
           // Gridlines are `--pond-muted` at 0.28; the raw cloud is the brand
           // hue at 0.3. Close enough in weight that the grid reads as another
           // scatter of points. The envelope already gives the eye a reference.
           grid={false}
         >
+          <FlagCursor />
           <ChartRow height={ROW_HEIGHT}>
             <YAxis
               id="kw"

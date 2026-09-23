@@ -23,6 +23,7 @@ import {
   markFirstPaint,
   type StaticScenario,
 } from './harness.js';
+import { LineCursor } from '../cursors.js';
 
 /**
  * **Performance bench stories — not visual baselines.** These live under
@@ -132,6 +133,7 @@ function StaticRender({ size, scenario }: StaticArgs) {
       panZoom
       onTimeRangeChange={setRange}
     >
+      <LineCursor />
       <ChartRow height={HEIGHT}>
         <YAxis id="v" label="v" min={0} max={100} />
         <Layers>
@@ -245,12 +247,7 @@ function LiveLine({ windowSize, pushMs, batch }: Omit<LiveArgs, 'scenario'>) {
   const timeRange = snapshotRange(snapshot);
   if (!snapshot || timeRange === null) return null;
   return (
-    <ChartContainer
-      range={timeRange}
-      width={WIDTH}
-      theme={estelaTheme}
-      cursor="none"
-    >
+    <ChartContainer range={timeRange} width={WIDTH} theme={estelaTheme}>
       <ChartRow height={HEIGHT}>
         <YAxis id="v" label="v" min={0} max={100} />
         <Layers>
@@ -289,12 +286,7 @@ function LiveThree({ windowSize, pushMs, batch }: Omit<LiveArgs, 'scenario'>) {
   const timeRange = snapshotRange(snapshot);
   if (!snapshot || timeRange === null) return null;
   return (
-    <ChartContainer
-      range={timeRange}
-      width={WIDTH}
-      theme={estelaTheme}
-      cursor="none"
-    >
+    <ChartContainer range={timeRange} width={WIDTH} theme={estelaTheme}>
       <ChartRow height={HEIGHT}>
         <YAxis id="v" label="v" min={0} max={100} />
         <Layers>

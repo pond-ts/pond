@@ -19,6 +19,7 @@ slack, the fixed row is the one the drag resizes, and the divider is a plain
 const [bottomH, setBottomH] = useState(160);
 
 <ChartContainer width="auto" height="auto">
+  <LineCursor />
   {/* flex — absorbs all slack */}
   <ChartRow>…price…</ChartRow>
   {/* the drag handler sets bottomH, clamped ≥ your floor */}
@@ -71,6 +72,7 @@ import {
   LineChart,
   YAxis,
   type ChartTheme,
+  LineCursor,
 } from '@pond-ts/charts';
 
 const AXIS_H = 22; // TimeAxis strip the container reserves below the rows (see notes)
@@ -134,6 +136,7 @@ export function PriceWithIndicator({
     <div ref={boxRef} style={{ height: '100%', minHeight: 0, minWidth: 0 }}>
       {width > 0 && height > 0 && (
         <ChartContainer width={width} theme={theme}>
+          <LineCursor />
           <ChartRow height={top}>
             <YAxis id="price" side="right" format="$,.2f" />
             <Layers>

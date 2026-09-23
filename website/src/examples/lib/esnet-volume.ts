@@ -66,7 +66,7 @@ export const VOLUME_LAST = VOLUME_MONTHS - 1;
 
 /**
  * The three inbound series as one `TimeSeries`. One series rather than three
- * because the chart reads all of them at one instant: `cursor="line"` prints
+ * because the chart reads all of them at one instant: `<LineCursor />` prints
  * every column at the hovered month from a single sample.
  */
 export function volumeSeries(): TimeSeries<typeof VOLUME_SCHEMA> {

@@ -23,7 +23,7 @@ import GalleryBollinger from '@site/src/examples/gallery-bollinger';
 </ChartExample>
 
 Hover: the strip above the chart reads all four layers at that session — band
-edges, middle line, close — because the in-chart crosshair can't. `cursor="crosshair"`
+edges, middle line, close — because the in-chart crosshair can't. `<CrosshairCursor />`
 draws **one** pill per row, not one per series, so a row carrying a band, a line
 and a candle still gets a single value pinned to the axis. Several layers at one
 instant is `onTrackerChanged`'s job; the mechanics are under
@@ -126,13 +126,16 @@ different, and less honest, chart.
 
 ### Reading four layers at one cursor
 
-`cursor="crosshair"` is a per-**row** reticle: shared vertical line, a dot, and
+`<CrosshairCursor />` is a per-**row** reticle: shared vertical line, a dot, and
 one value pill on the row's y-axis. It does not fan a pill out per series, so
 on this chart it reports a single number for four layers. The full set comes off
 the chart:
 
 ```tsx
-<ChartContainer cursor="crosshair" onTrackerChanged={setTracker}>
+<ChartContainer onTrackerChanged={setTracker}>
+  <CrosshairCursor />
+  {/* rows */}
+</ChartContainer>
 ```
 
 `TrackerInfo.values` then carries one sample per layer. One catch worth knowing

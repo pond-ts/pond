@@ -11,6 +11,7 @@ import { Baseline, Marker } from '../src/annotations.js';
 import { XAxis } from '../src/XAxis.js';
 import { YAxisIndicator, createLiveValue } from '../src/indicators.js';
 import { contrastText } from '../src/chip.js';
+import { CrosshairCursor, LineCursor } from '../src/cursors.js';
 
 afterEach(cleanup);
 
@@ -242,20 +243,20 @@ describe('YAxisIndicator isolation', () => {
 });
 
 /**
- * The crosshair CursorMode pins each series' value to its y-axis (an on-axis
+ * The crosshair cursor pins each series' value to its y-axis (an on-axis
  * pill). Driven by a controlled `trackerPosition` (a time) so the cursor is
  * deterministic — no fragile pointer-event / layout simulation.
  */
-describe("cursor='crosshair'", () => {
+describe('<CrosshairCursor />', () => {
   const crosshairAt = (mode: 'crosshair' | 'line') =>
     render(
       <ChartContainer
         range={[0, 4]}
         width={300}
-        cursor={mode}
         trackerPosition={2}
         showAxis={false}
       >
+        {mode === 'crosshair' ? <CrosshairCursor /> : <LineCursor />}
         <ChartRow height={120}>
           <YAxis id="a" min={0} max={100} side="right" />
           <Layers>
@@ -272,7 +273,7 @@ describe("cursor='crosshair'", () => {
     expect(within(container).queryByText('9')).not.toBeNull();
   });
 
-  it("'line' mode draws no value pill (control)", () => {
+  it('<LineCursor /> draws no value pill (control)', () => {
     const { container } = crosshairAt('line');
     expect(within(container).queryByText('9')).toBeNull();
   });
@@ -284,10 +285,10 @@ describe("cursor='crosshair'", () => {
       <ChartContainer
         range={[0, 4]}
         width={300}
-        cursor="crosshair"
         trackerPosition={2}
         timeFormat={() => 'T!'}
       >
+        <CrosshairCursor />
         <ChartRow height={120}>
           <YAxis id="a" min={0} max={100} side="right" />
           <Layers>
@@ -324,10 +325,10 @@ describe("cursor='crosshair'", () => {
       <ChartContainer
         range={[0, 4]}
         width={300}
-        cursor="crosshair"
         trackerPosition={2}
         showAxis={false}
       >
+        <CrosshairCursor />
         <ChartRow height={120}>
           <YAxis id="L" min={0} max={100} side="left" />
           <Layers>
@@ -355,18 +356,17 @@ describe("cursor='crosshair'", () => {
     );
 
   it('does not also draw a per-row time chip — the time lives only on the x-axis pill', () => {
-    // Regression: `cursorTime` + crosshair once double-showed the time — a
+    // Regression: `showTime` + crosshair once double-showed the time — a
     // per-row flag chip atop the row *and* the x-axis pill. The per-row chip
     // (flag/line modes' readout) must be suppressed for crosshair.
     const { container } = render(
       <ChartContainer
         range={[0, 4]}
         width={300}
-        cursor="crosshair"
-        cursorTime
         trackerPosition={2}
         timeFormat={() => 'TT'}
       >
+        <CrosshairCursor showTime />
         <ChartRow height={120}>
           <YAxis id="a" min={0} max={100} side="right" />
           <Layers>
@@ -389,11 +389,11 @@ describe("cursor='crosshair'", () => {
       <ChartContainer
         range={[0, 4]}
         width={300}
-        cursor="crosshair"
         trackerPosition={2}
         timeFormat={() => 'CONTAINER'}
         showAxis={false}
       >
+        <CrosshairCursor />
         <ChartRow height={120}>
           <YAxis id="a" min={0} max={100} side="right" />
           <Layers>

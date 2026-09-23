@@ -14,6 +14,7 @@ import { YAxis } from './YAxis.js';
 import { Selector } from './selectors.js';
 import type { SelectInfo } from './context.js';
 import { twoSeries, hrSeries, RANGE } from './story-data.fixture.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * `<Legend>` — the series key, rendered from the layers' own registrations:
@@ -39,6 +40,7 @@ type Story = StoryObj;
 export const Default: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="v" min={140} max={230} />
         <Layers>
@@ -57,6 +59,7 @@ export const Default: Story = {
 export const MixedMarkSwatches: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="v" min={120} max={240} />
         <Layers>
@@ -83,6 +86,7 @@ export const MixedMarkSwatches: Story = {
 export const StackedBarGroups: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="v" min={0} max={500} />
         <Layers>
@@ -103,6 +107,7 @@ export const StackedBarGroups: Story = {
 export const PlacementTopLeft: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={180}>
         <YAxis id="v" min={140} max={230} />
         <Layers>
@@ -118,6 +123,7 @@ export const PlacementTopLeft: Story = {
 export const PlacementBottomLeft: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={180}>
         <YAxis id="v" min={140} max={230} />
         <Layers>
@@ -133,6 +139,7 @@ export const PlacementBottomLeft: Story = {
 export const PlacementBottomRight: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={180}>
         <YAxis id="v" min={140} max={230} />
         <Layers>
@@ -149,6 +156,7 @@ export const PlacementBottomRight: Story = {
 export const OptOutAndRename: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="v" min={140} max={230} />
         <Layers>
@@ -179,6 +187,7 @@ export const OptOutAndRename: Story = {
 export const DedupSharedIdentity: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="v" min={140} max={230} />
         <Layers>
@@ -197,6 +206,7 @@ export const DedupSharedIdentity: Story = {
 export const ScopedPerRow: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={130}>
         <YAxis id="v" min={140} max={230} />
         <Layers>
@@ -221,6 +231,7 @@ export const ScopedPerRow: Story = {
 export const MultiRowOrder: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={140}>
         <YAxis id="v" min={140} max={230} />
         <Layers>
@@ -249,6 +260,7 @@ export const InteractiveSelect: Story = {
     return (
       <div>
         <ChartContainer range={RANGE} width={W}>
+          <LineCursor />
           <Selector onSelect={setSel}>
             <ChartRow height={200}>
               <YAxis id="v" min={100} max={230} />
@@ -374,6 +386,7 @@ export const HeadlessCustomLegend: Story = {
     // resolved colours.
     return (
       <ChartContainer range={RANGE} width={W}>
+        <LineCursor />
         {/* Declared before the row ⇒ the chips sit ABOVE the plot. */}
         <ChipRow />
         <ChartRow height={200}>

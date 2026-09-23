@@ -73,6 +73,7 @@ chart — `snapshot.timeRange()` for the moving window and nothing else new:
 
 ```tsx
 <ChartContainer range={snapshot.timeRange()} width={640} theme={theme}>
+  <LineCursor />
   <ChartRow height={220}>
     <YAxis id="rps" side="right" label="req/s" format=",.0f" width={54} />
     <Layers>

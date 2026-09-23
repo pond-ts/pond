@@ -5,6 +5,8 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  CrosshairCursor,
+  LineCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -46,7 +48,9 @@ export default function GalleryNetworkTraffic({
       : scanWindow(TRAFFIC_RANGE[0], TRAFFIC_RANGE[1], 90 * 60_000, phase);
 
   return (
-    <ChartContainer range={range} width={width} theme={theme} cursor={cursor}>
+    <ChartContainer range={range} width={width} theme={theme}>
+      {cursor === 'crosshair' && <CrosshairCursor />}
+      {cursor === 'line' && <LineCursor />}
       <ChartRow height={height}>
         <YAxis
           id="gbps"

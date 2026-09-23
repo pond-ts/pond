@@ -48,7 +48,8 @@ Two `<ChartRow>`s in one `<ChartContainer>` is the stacked-panel layout — same
 time axis, independent value axes:
 
 ```tsx
-<ChartContainer range={SLA_RANGE} width={640} theme={theme} cursor="line">
+<ChartContainer range={SLA_RANGE} width={640} theme={theme}>
+  <LineCursor />
   <ChartRow height={150}>
     <YAxis id="err" side="right" format=".2%" width={52} />
     <Layers>
@@ -85,7 +86,7 @@ dragged to:
 ```tsx
 const [incident, setIncident] = useState({ from, to });
 
-<ChartContainer editAnnotations cursor="none" …>
+<ChartContainer editAnnotations …>
   <Region from={incident.from} to={incident.to} onChange={setIncident} />
 ```
 
@@ -94,7 +95,7 @@ moves unless you store it.** The annotation is a controlled component. If you
 pass `onChange` and drop the value on the floor, the mark springs back — which
 is correct, and surprises everyone once.
 
-Note `cursor="none"` alongside `editAnnotations`: a crosshair chasing the
+Note there's no cursor component in the editable version: a cursor chasing the
 pointer while you're dragging a region is two things competing for the same
 gesture.
 

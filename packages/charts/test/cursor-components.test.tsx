@@ -99,33 +99,15 @@ describe('cursor presets mounted at the container', () => {
       </ChartContainer>,
     );
 
-  it('<CrosshairCursor /> pins the series value to the y axis (parity with cursor="crosshair")', () => {
+  it('<CrosshairCursor /> pins the series value to the y axis', () => {
     // series at t=2 ⇒ v=9; the [0,100] axis has no "9" tick, so the pill is
-    // the only "9" on screen — the same assertion the legacy mode passes.
+    // the only "9" on screen.
     const { container } = pinned(<CrosshairCursor />);
     expect(within(container).queryByText('9')).not.toBeNull();
   });
 
-  it('<LineCursor /> draws no value pill (control), and a mounted component overrides the legacy prop', () => {
-    // The mounted <LineCursor> shadows the container-scope legacy shim, so
-    // even an explicit legacy cursor="crosshair" yields no reticle pill.
-    const { container } = render(
-      <ChartContainer
-        range={[0, 4]}
-        width={300}
-        cursor="crosshair"
-        trackerPosition={2}
-        showAxis={false}
-      >
-        <LineCursor />
-        <ChartRow height={120}>
-          <YAxis id="a" min={0} max={100} side="right" />
-          <Layers>
-            <LineChart series={series} column="v" axis="a" />
-          </Layers>
-        </ChartRow>
-      </ChartContainer>,
-    );
+  it('<LineCursor /> draws no value pill (control)', () => {
+    const { container } = pinned(<LineCursor />);
     expect(within(container).queryByText('9')).toBeNull();
     // …but the line still draws (a solid, non-dashed vertical).
     const lines = Array.from(container.querySelectorAll('svg line')).filter(
@@ -220,9 +202,9 @@ describe('cursor presets mounted at the container', () => {
 });
 
 describe('the per-row override reaches the x axis (the string-gate bug fix)', () => {
-  /** Two rows; the SECOND carries the crosshair (component or legacy prop).
-   *  Returns the render plus the two plot surfaces for pointer simulation. */
-  function twoRows(secondRow: 'component' | 'legacy') {
+  /** Two rows; only the SECOND mounts a cursor (a crosshair). Returns the
+   *  render plus the two plot surfaces for pointer simulation. */
+  function twoRows() {
     const res = render(
       <ChartContainer range={[0, 4]} width={300} timeFormat={() => 'T!'}>
         <ChartRow height={100}>
@@ -231,22 +213,13 @@ describe('the per-row override reaches the x axis (the string-gate bug fix)', ()
           </Layers>
           <YAxis id="a" min={0} max={100} side="right" />
         </ChartRow>
-        {secondRow === 'component' ? (
-          <ChartRow height={100}>
-            <CrosshairCursor />
-            <Layers>
-              <LineChart series={hr} column="bpm" axis="b" />
-            </Layers>
-            <YAxis id="b" min={0} max={200} side="right" />
-          </ChartRow>
-        ) : (
-          <ChartRow height={100} cursor="crosshair">
-            <Layers>
-              <LineChart series={hr} column="bpm" axis="b" />
-            </Layers>
-            <YAxis id="b" min={0} max={200} side="right" />
-          </ChartRow>
-        )}
+        <ChartRow height={100}>
+          <CrosshairCursor />
+          <Layers>
+            <LineChart series={hr} column="bpm" axis="b" />
+          </Layers>
+          <YAxis id="b" min={0} max={200} side="right" />
+        </ChartRow>
       </ChartContainer>,
     );
     const surfaces = Array.from(res.container.querySelectorAll('canvas')).map(
@@ -256,26 +229,16 @@ describe('the per-row override reaches the x axis (the string-gate bug fix)', ()
   }
 
   it('hovering the crosshair row shows the x-axis time pill (mounted component)', () => {
-    const { container, bottom } = twoRows('component');
+    const { container, bottom } = twoRows();
     expect(xPillIn(container)).toBeUndefined(); // nothing hovered yet
     fireEvent.pointerMove(bottom, { clientX: 150, clientY: 50 });
     expect(xPillIn(container)?.textContent).toBe('T!');
   });
 
-  it('hovering the OTHER row (container-default line) shows no pill', () => {
-    const { container, top } = twoRows('component');
+  it('hovering the OTHER row (no cursor mounted there) shows no pill', () => {
+    const { container, top } = twoRows();
     fireEvent.pointerMove(top, { clientX: 150, clientY: 50 });
     expect(xPillIn(container)).toBeUndefined();
-  });
-
-  it('the legacy <ChartRow cursor="crosshair"> shim gets the same fix', () => {
-    // Before this wave the x pill was gated on the CONTAINER default
-    // (`container.cursor === 'crosshair'`), which a per-row override never
-    // reached — the code comment admitted a row-level crosshair had no time
-    // pill. The mount-registered slot closes that seam for the shim too.
-    const { container, bottom } = twoRows('legacy');
-    fireEvent.pointerMove(bottom, { clientX: 150, clientY: 50 });
-    expect(xPillIn(container)?.textContent).toBe('T!');
   });
 });
 
@@ -406,7 +369,7 @@ describe('<RangeCursor>', () => {
   });
 });
 
-describe('deprecation + duplicate-gesture-owner dev warnings', () => {
+describe('duplicate-gesture-owner dev warnings', () => {
   const chart = (
     props: Partial<Parameters<typeof ChartContainer>[0]>,
     cursorEl?: React.ReactNode,
@@ -422,69 +385,11 @@ describe('deprecation + duplicate-gesture-owner dev warnings', () => {
     </ChartContainer>
   );
 
-  it('an explicit legacy cursor prop warns once, naming the replacement', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      render(chart({ cursor: 'crosshair' }));
-      const messages = warn.mock.calls.map((c) => String(c[0]));
-      const dep = messages.filter((m) => m.includes('deprecated cursor props'));
-      expect(dep.length).toBe(1);
-      expect(dep[0]).toContain('<CrosshairCursor>');
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it('crosshairSnap / cursorTime / cursorSequence / cursorFormat each warn', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      render(
-        chart({
-          crosshairSnap: false,
-          cursorTime: true,
-          cursorFormat: '.2f',
-          cursorSequence: Sequence.every('1m'),
-        }),
-      );
-      const dep = warn.mock.calls
-        .map((c) => String(c[0]))
-        .filter((m) => m.includes('deprecated cursor props'));
-      expect(dep.length).toBe(1);
-      expect(dep[0]).toContain('crosshairSnap');
-      expect(dep[0]).toContain('cursorTime');
-      expect(dep[0]).toContain('cursorFormat');
-      expect(dep[0]).toContain('cursorSequence');
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it('the defaults (no legacy props) and mounted presets do NOT warn', () => {
+  it('mounted presets do NOT warn', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       render(chart({}, <CrosshairCursor />));
       expect(warn).not.toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it('<ChartRow cursor> warns, naming the in-row mount', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      render(
-        <ChartContainer range={[0, 4]} width={300} showAxis={false}>
-          <ChartRow height={100} cursor="point">
-            <Layers>
-              <LineChart series={series} column="v" />
-            </Layers>
-          </ChartRow>
-        </ChartContainer>,
-      );
-      const dep = warn.mock.calls
-        .map((c) => String(c[0]))
-        .filter((m) => m.includes('<ChartRow cursor="point">'));
-      expect(dep.length).toBe(1);
     } finally {
       warn.mockRestore();
     }

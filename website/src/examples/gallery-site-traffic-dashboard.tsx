@@ -11,6 +11,7 @@ import {
   type ChartTheme,
   type ListCellSpec,
   type ListRow,
+  LineCursor,
 } from '@pond-ts/charts';
 import {
   COUNT,
@@ -250,7 +251,6 @@ export default function GallerySiteTrafficDashboard({
           width={width}
           theme={replicaTheme}
           grid={gridlines}
-          cursor="line"
           // Drag to pan, wheel to zoom — but only over ground the capture
           // covers. `bounds` is the fixture's full extent, so the window
           // clamps at the first and last sample instead of drifting off into
@@ -264,6 +264,7 @@ export default function GallerySiteTrafficDashboard({
           onTimeRangeChange={setRange}
           onTrackerChanged={onTracker}
         >
+          <LineCursor />
           <ChartRow height={chartHeight}>
             <YAxis
               id="bps"

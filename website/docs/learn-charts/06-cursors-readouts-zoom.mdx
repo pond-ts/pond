@@ -13,35 +13,40 @@ import LearnZoom from '@site/src/examples/learn-06-zoom';
 
 :::info[You will learn]
 
-- The five `cursor` modes, and when to reach for each
+- The five cursor components, and when to reach for each
 - `onTrackerChanged` — reading the hovered value outside the chart
-- The select-to-zoom loop: `cursor="region"` → `onRegionSelect` → `range`
+- The select-to-zoom loop: `<RangeCursor onDragRelease>` → `range`
   :::
 
-Every chart in this track has had a cursor without you setting one —
-`cursor` defaults to `'line'`, the synced vertical line you've been
-hovering since chapter 1. This chapter is the rest of that knob.
+Every chart in this track has mounted a `<LineCursor />` — the synced
+vertical line you've been hovering since chapter 1. A cursor is a component
+you mount inside `<ChartContainer>`: mount one to get a cursor, mount none for
+no cursor. This chapter is the rest of that family.
 
-## Five modes, one prop
+## Five cursors, one slot
 
 <ChartExample name="learn-06-cursor-modes" height={280}>
   <LearnCursorModes />
 </ChartExample>
 
 ```tsx
-<ChartContainer cursor="crosshair" /* or 'line' | 'point' | 'inline' | 'flag' */>
+<ChartContainer>
+  {/* or LineCursor | PointCursor | InlineCursor | FlagCursor */}
+  <CrosshairCursor />
+  {/* rows */}
+</ChartContainer>
 ```
 
-- **`line`** (default) — a synced vertical line across every row.
-- **`point`** — a dot on the series itself, no line.
-- **`inline`** — an in-chart value readout drawn near the cursor.
-- **`flag`** — an in-chart readout in a flag-shaped chip.
-- **`crosshair`** — a vertical **and** horizontal line, with axis-pill
-  readouts on both axes. Snaps to the nearest data point by default
-  (`crosshairSnap={false}` for a free reticle).
+- **`<LineCursor />`** — a synced vertical line across every row.
+- **`<PointCursor />`** — a dot on the series itself, no line.
+- **`<InlineCursor />`** — an in-chart value readout drawn near the cursor.
+- **`<FlagCursor />`** — an in-chart readout in a flag-shaped chip.
+- **`<CrosshairCursor />`** — a vertical **and** horizontal line, with
+  axis-pill readouts on both axes. Snaps to the nearest data point by default
+  (`<CrosshairCursor snap={false} />` for a free reticle).
 
-There's a sixth value, `'none'`, and a seventh, `'region'` — that one is
-this chapter's payoff, below.
+Mount nothing and the chart has no cursor. There's a sixth component,
+`<RangeCursor />` — that one is this chapter's payoff, below.
 
 ## Reading the value outside the chart
 
@@ -56,7 +61,8 @@ page, not just inside the chart:
 ```tsx
 const [info, setInfo] = useState<TrackerInfo | null>(null);
 
-<ChartContainer cursor="line" onTrackerChanged={setInfo}>
+<ChartContainer onTrackerChanged={setInfo}>
+  <LineCursor />
   {/* rows */}
 </ChartContainer>;
 
@@ -67,9 +73,9 @@ const [info, setInfo] = useState<TrackerInfo | null>(null);
 
 `TrackerInfo` carries `time` plus one `TrackerSample` (`x`, `value`,
 `color`, `label`) per series under the cursor — the same data every
-in-chart readout draws from, just handed to you instead. `cursorTime`
-(a boolean on `ChartContainer`) shows the cursor's time atop an in-chart
-`flag`/`inline` readout, if you want it there too. For programmatic
+in-chart readout draws from, just handed to you instead. `showTime`
+(a boolean on the cursor component — `<FlagCursor showTime />`) shows the
+cursor's time atop an in-chart flag/inline readout, if you want it there too. For programmatic
 control rather than mouse-driven — highlighting a specific instant from
 outside, say a table row hover — a controlled `trackerPosition` (epoch
 ms) drives the same cursor without a real pointer event. It's a
@@ -80,9 +86,9 @@ omit it or pass `null` for no controlled position.
 
 ## The payoff: select-to-zoom
 
-`cursor="region"` turns the cursor into a **drag-to-select** tool.
-Combine it with `onRegionSelect` and a bit of state, and you have the
-whole zoom loop in about a dozen lines:
+`<RangeCursor />` is a **drag-to-select** cursor. Give it an
+`onDragRelease` and a bit of state, and you have the whole zoom loop in
+about a dozen lines:
 
 <ChartExample name="learn-06-zoom" height={260}>
   <LearnZoom />
@@ -92,20 +98,17 @@ whole zoom loop in about a dozen lines:
 const fullRange = series.timeRange();
 const [range, setRange] = useState(fullRange);
 
-<ChartContainer
-  range={range}
-  cursor="region"
-  onRegionSelect={(r) => setRange(r)}
->
+<ChartContainer range={range}>
+  <RangeCursor onDragRelease={(span) => setRange(span.x)} />
   {/* rows */}
 </ChartContainer>;
 
 <button onClick={() => setRange(fullRange)}>Reset zoom</button>;
 ```
 
-`onRegionSelect` hands back a neutral `[lo, hi]` pair — the container
+`onDragRelease` hands back `{ x: [lo, hi] }` — the container
 never zooms itself, your `setRange` closes the loop by feeding the
-selection straight back into `range`. A "reset" button is just
+selection's `x` straight back into `range`. A "reset" button is just
 `setRange(fullRange)`. This is the same `range` prop every chart in this
 track has passed a static value to since chapter 1 — controlling it is
 nothing new, just a new source for the value.
@@ -113,7 +116,7 @@ nothing new, just a new source for the value.
 ## Two drags that look alike
 
 Worth separating now, because they use the same gesture and you will meet both:
-`cursor="region"` drags out a **time range** — a view concern, which is why it
+`<RangeCursor>` drags out a **time range** — a view concern, which is why it
 pairs with `setRange`. A `<MultiSelector>` drag looks identical but selects the
 **data marks** inside a range instead, and hands you those.
 
@@ -122,16 +125,16 @@ different questions. This chapter is the range one. The marks one is
 reference-only: [selection & hover](../charts/interaction/selection-and-hover.mdx)
 and [sweeps & multi-select](../charts/interaction/sweeps-and-multi-select.mdx).
 
-One conflict to know about: `regionSelectModifier="shift"` claims the shift
+One conflict to know about: `<RangeCursor dragModifier="shift">` claims the shift
 chord, so if you later want shift to mean something in a selection handler on the
 same chart, decide which one owns it.
 
 ## Recap
 
-Five cursor modes cover reading a hovered value in five different visual
+Five cursor components cover reading a hovered value in five different visual
 styles; `onTrackerChanged` moves that same reading outside the chart;
-`cursor="region"` turns the cursor into a drag-to-select tool, and
-`onRegionSelect` + a controlled `range` is the whole zoom loop.
+`<RangeCursor>` is a drag-to-select cursor, and its `onDragRelease` + a
+controlled `range` is the whole zoom loop.
 
 **Next: [Marking up charts](./marking-up-charts)** — placing a mark
 _on_ a chart, rather than just reading what's there.

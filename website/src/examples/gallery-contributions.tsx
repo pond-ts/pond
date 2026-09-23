@@ -7,6 +7,7 @@ import {
   Selector,
   YAxis,
   type SelectInfo,
+  LineCursor,
 } from '@pond-ts/charts';
 import {
   useSequentialRamp,
@@ -88,6 +89,7 @@ export default function GalleryContributions({
         </div>
       )}
       <ChartContainer range={commitActivityRange()} width={width} theme={theme}>
+        <LineCursor />
         <Selector onHover={setHit}>
           <ChartRow height={height}>
             {/* `label=""` — "dow" is plumbing, not a label; the three

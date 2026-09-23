@@ -7,6 +7,7 @@ import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
 import { MultiSelector, Selector } from './selectors.js';
+import { LineCursor } from './cursors.js';
 import type { SelectInfo, SelectionEntry, SpanSelection } from './context.js';
 
 /**
@@ -190,13 +191,18 @@ export const SweepCategories = { render: () => <CategoryDemo /> };
 /** One horizontal time-bar chart, with whatever selector the story mounts. */
 function HBars({
   selected,
+  lineCursor = false,
   children,
 }: {
   selected: readonly SelectionEntry[];
+  /** Mount a `<LineCursor>` — the click-only `<Selector>` keeps an ordinary
+   *  cursor; under `<MultiSelector>` the resting brush band is the cursor. */
+  lineCursor?: boolean;
   children: React.ReactElement<{ selected?: readonly SelectionEntry[] }>;
 }) {
   return (
     <ChartContainer range={[0, 12]} width={420}>
+      {lineCursor && <LineCursor />}
       {cloneElement(
         children,
         { selected },
@@ -308,7 +314,7 @@ function VersusDemo() {
   return (
     <div style={{ display: 'flex', gap: 32 }}>
       <div>
-        <HBars selected={one}>
+        <HBars selected={one} lineCursor>
           <Selector onSelect={(hit) => setOne(hit === null ? [] : [hit])} />
         </HBars>
         <p style={caption}>

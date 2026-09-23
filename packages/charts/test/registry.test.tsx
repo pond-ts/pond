@@ -10,6 +10,7 @@ import { BoxPlot } from '../src/BoxPlot.js';
 import { Selector } from '../src/selectors.js';
 import { YAxis } from '../src/YAxis.js';
 import { RowContext } from '../src/context.js';
+import { FlagCursor } from '../src/cursors.js';
 
 afterEach(cleanup);
 
@@ -405,12 +406,8 @@ describe('axis placement by side', () => {
 describe('cursor overlay (flag, DOM/SVG)', () => {
   it('renders the SVG dot + staff and the DOM value flag at a controlled cursor', () => {
     const { container, getByText } = render(
-      <ChartContainer
-        range={[0, 4]}
-        width={300}
-        cursor="flag"
-        trackerPosition={2}
-      >
+      <ChartContainer range={[0, 4]} width={300} trackerPosition={2}>
+        <FlagCursor />
         <ChartRow height={120}>
           {/* tickCount=5 ⇒ ticks 0/2/4/6/8/10 — so the sampled value 5 is not a
               tick label and the chip text below is unambiguous. */}
@@ -446,14 +443,13 @@ describe('cursor-time renders on the first row only', () => {
       <ChartContainer
         range={[0, 4]}
         width={300}
-        cursor="flag"
-        cursorTime
         timeFormat={() => 'TIME'}
         trackerPosition={2}
         // No time axis, so the sentinel 'TIME' comes only from the cursor chip
         // (the formatter is shared with the axis ticks by design — #269).
         showAxis={false}
       >
+        <FlagCursor showTime />
         <ChartRow height={100}>
           {/* value 3 at t=2 — not a tick of [0,10] (0,2,4,6,8,10). */}
           <YAxis id="a" min={0} max={10} />
@@ -507,9 +503,9 @@ describe('box cursor — consolidated flag (all values, one chip)', () => {
       <ChartContainer
         range={[0, 20]}
         width={300}
-        cursor="flag"
         trackerPosition={5} // inside box 0 ([0,10])
       >
+        <FlagCursor />
         <ChartRow height={200}>
           <YAxis id="a" min={0} max={100} />
           <Layers>
