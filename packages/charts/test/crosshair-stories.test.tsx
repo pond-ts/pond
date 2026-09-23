@@ -26,6 +26,7 @@ describe('Cursors/Crosshair stories render', () => {
       'MultiRow',
       'MultipleSeries',
       'SingleSeries',
+      'SnapReadout',
       'StackedAxes',
       'StackedAxesBothSides',
       'StackedAxesColored',

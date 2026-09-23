@@ -73,6 +73,24 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- `@pond-ts/charts`: **`<CrosshairCursor onSnap>`** — tells you what the
+  crosshair is snapped to: the series (`label`, `color`, `axisId`) and the
+  point (`x`, `value`, `formatted`, plus `readout` when the layer has one), as
+  a new exported **`CursorSnap`** type. Fires only when the snapped point
+  changes, and with `null` when the pointer leaves. With `snap={false}` the
+  reticle follows the pointer rather than a series, so it stays `null`; a
+  reticle drawn by a controlled `trackerPosition` with no pointer on the chart
+  also reports `null`. Story `Cursors/Crosshair / SnapReadout`.
+
+### Changed
+
+- `@pond-ts/charts`: the **crosshair's centre dot is drawn in the snapped
+  series' colour** rather than the cursor ink, so the reticle shows which line
+  it is reading. The free reticle (`snap={false}`) has no series under it and
+  keeps the cursor ink. Applies to the legacy `cursor="crosshair"` too.
+
 ## [0.70.0] — 2026-09-18
 
 ### Added
