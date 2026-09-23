@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
@@ -6,6 +7,7 @@ import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { CrosshairCursor } from './cursors.js';
 import { defaultTheme } from './theme.js';
+import type { CursorSnap } from './context.js';
 import {
   twoSeries,
   hrSeries,
@@ -308,4 +310,45 @@ export const StackedAxesBothSides: Story = {
       </ChartRow>
     </ChartContainer>
   ),
+};
+
+/** The `SnapReadout` story's body: a chart plus a line of text showing the
+ *  latest `onSnap` report. */
+function SnapReadoutDemo() {
+  const [snap, setSnap] = useState<CursorSnap | null>(null);
+  return (
+    <div>
+      <ChartContainer range={RANGE} width={W}>
+        <CrosshairCursor onSnap={setSnap} />
+        <ChartRow height={240}>
+          <Layers>
+            <LineChart series={s} column="fast" as="primary" axis="usd" />
+            <LineChart series={s} column="slow" as="secondary" axis="usd" />
+          </Layers>
+          <YAxis id="usd" side="right" format=",.0f" />
+        </ChartRow>
+      </ChartContainer>
+      <div
+        style={{
+          fontFamily: defaultTheme.font.family,
+          fontSize: 12,
+          marginTop: 8,
+          color: snap?.color ?? defaultTheme.axis.label,
+        }}
+      >
+        {snap === null
+          ? 'Not snapped — hover a line'
+          : `Snapped to ${snap.label} (axis ${snap.axisId}) at ` +
+            `${new Date(snap.x).toISOString()}: ${snap.formatted}`}
+      </div>
+    </div>
+  );
+}
+
+/** **Snap readout** — `<CrosshairCursor onSnap>` reports what the reticle is
+ *  snapped to: the series (label, colour, axis) and the point (time, value).
+ *  The centre dot wears the snapped series' colour. Hover-driven: move between
+ *  the two lines and the text below follows. */
+export const SnapReadout: Story = {
+  render: () => <SnapReadoutDemo />,
 };

@@ -1464,6 +1464,25 @@ export interface TrackerInfo {
 }
 
 /**
+ * What a `<CrosshairCursor>` is **snapped to** — the one data point its reticle
+ * centres on, handed to `<CrosshairCursor onSnap>`. The same fields as a
+ * {@link TrackerSample} (the point's `x` and `value`, the series `label` and
+ * `color`, the optional `readout`), plus the y axis it was read against and the
+ * value exactly as the crosshair's axis pill shows it.
+ *
+ * Where {@link TrackerInfo} lists *every* series at the cursor time, this is
+ * the single one the reticle picked — the series nearest the pointer's height
+ * in the row being hovered.
+ */
+export interface CursorSnap extends TrackerSample {
+  /** The id of the `<YAxis>` the value is measured against (the row's default
+   *  axis id when the layer names none). */
+  readonly axisId: string;
+  /** The value formatted by that axis's formatter — the axis pill's text. */
+  readonly formatted: string;
+}
+
+/**
  * The in-chart cursor presentation for a row (the synced vertical line is shared
  * across rows). Exclusive modes — pick one:
  *
@@ -1514,6 +1533,13 @@ export type CursorSnapX = 'none' | 'sample' | 'sequence';
 export interface ResolvedCursorSample {
   readonly px: number;
   readonly py: number;
+  /** The sample's raw x (epoch ms on a time axis) — what `px` was scaled from. */
+  readonly x: number;
+  /** The sample's raw value — what `py` and `formatted` were made from. */
+  readonly value: number;
+  /** The layer's `readout` source value, when it has one (see
+   *  {@link TrackerSample.readout}). */
+  readonly readout?: number;
   readonly axisId: string;
   readonly side: 'left' | 'right';
   /** Distance in px from the plot's `side` edge to this axis's inner edge —
@@ -1757,6 +1783,16 @@ export interface CursorEntry {
   /** The cursor's readout format (the `cursorFormat` successor) — resolved by
    *  the container into the shared readout channel. */
   readonly format?: CursorFormat | undefined;
+  /**
+   * The crosshair's snap report (`<CrosshairCursor onSnap>`). A row calls it
+   * with its render frame when it is the hovered row, and with `null` when the
+   * pointer is elsewhere; the cursor picks the snapped sample from the frame
+   * and calls the consumer only when that pick changes. Only set when the
+   * consumer passed `onSnap`, so a crosshair nobody listens to never picks or
+   * builds a report (each row still looks up its snap owner, two short
+   * filters over the registered cursors).
+   */
+  readonly reportSnap?: ((f: ResolvedCursorFrame | null) => void) | undefined;
 }
 
 /** A registered layer plus the axis id it draws against. */
