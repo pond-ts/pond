@@ -84,7 +84,9 @@ export interface AreaChartCommon<
    *   price, an elevation profile.
    *
    * On a **log** axis zero has no position, so a baseline at or below zero
-   * falls back to the axis floor.
+   * falls back to the axis floor and is not pulled into the domain. On an axis
+   * pinned so that it excludes the baseline, the fill rests on the nearest
+   * edge (the baseline is clamped into the domain, as a bar's is).
    */
   baseline?: number | 'floor';
   /**
@@ -224,8 +226,9 @@ export type AreaChartProps<
  *  it to the call signature, so this reads the bound through a localized,
  *  documented shape rather than widening `drawArea`'s contract to d3-scale. */
 /**
- * The area's baseline in **data** units: the caller's `baseline` when it has a
- * finite position on this axis, else the axis floor.
+ * The area's baseline in **data** units: the caller's `baseline`, clamped into
+ * the axis domain, when it has a finite position on this axis; else the axis
+ * floor.
  *
  * The fallback is not defensive padding — it's the log case. `baseline={0}` is
  * the natural thing to write and is correct on a linear axis; on a log axis
@@ -239,14 +242,17 @@ export function resolveAreaBaseline(
   baseline: number | undefined,
   yScale: (value: number) => number,
 ): number {
-  const floor = domainFloor(yScale);
-  if (baseline === undefined) return floor;
-  return Number.isFinite(yScale(baseline)) ? baseline : floor;
-}
-
-function domainFloor(yScale: (value: number) => number): number {
   const d = (yScale as unknown as { domain?: () => number[] }).domain?.();
-  return d && d.length > 0 ? d[0]! : 0;
+  const floor = d && d.length > 0 ? d[0]! : 0;
+  if (baseline === undefined) return floor;
+  if (!Number.isFinite(yScale(baseline))) return floor;
+  if (!d || d.length === 0) return baseline;
+  // Clamped into the domain, as a bar's baseline is: under an explicit
+  // `<YAxis min={40}>` the default 0 is off the plot, and a fill resting
+  // there would anchor its fade (and a gap's `'fade'` connector) off-plot.
+  const lo = Math.min(d[0]!, d[d.length - 1]!);
+  const hi = Math.max(d[0]!, d[d.length - 1]!);
+  return Math.min(hi, Math.max(lo, baseline));
 }
 
 /**
@@ -381,7 +387,17 @@ export function AreaChart<
     () => ({
       layer: {
         as: semantic,
-        yExtent: () => areaExtent(cs, baseValue),
+        // A baseline with no position on a log axis (zero, the default) is
+        // left out of the fit: the draw rests it on the floor anyway, and an
+        // extent of `[0, max]` gives the log fit no positive low end, so it
+        // would collapse the domain onto the max and clip the series.
+        yExtent: (scale) =>
+          areaExtent(
+            cs,
+            scale === 'log' && baseValue !== undefined && baseValue <= 0
+              ? undefined
+              : baseValue,
+          ),
         // The container infers the shared x scale's kind from its layers — a
         // ValueSeries plots on a value axis, a TimeSeries on time.
         xKind: series instanceof ValueSeries ? 'value' : 'time',

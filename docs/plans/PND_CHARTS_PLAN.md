@@ -4401,6 +4401,19 @@ axis `baseline={0}` gave a `NaN` bound and every point in the x span hit. The
 draw already fell back to the floor; the hit test now does the same. With `0`
 the default this would have hit every selectable area on a log axis.
 
+**Found by the Layer-2 review (PR #741):** a `0` baseline pulled into a log
+axis's extent gives `[0, max]`, and the log fit, finding no positive low end,
+collapses the domain onto the max (10…1e5 fitted `[1e4, 1e6]`). This already
+happened with an explicit `baseline={0}`, but the new default would have
+spread it to every area on a log axis. Fix: `RowLayer.yExtent(scale?)` now
+receives the axis kind, and an area leaves a baseline ≤ 0 out of a log fit.
+Symlog still pulls zero in, because zero has a position there. Also from the
+review: a baseline outside a pinned domain is now clamped into it, as
+`resolveBarBaseline` does, so the fade isn't anchored off-plot. **Not fixed
+here:** `barExtent` reports `[0, max]` too, and `resolveYDomain` given
+`[[0, 1e5]]` on a log axis returns `[1e4, 1e6]`, so a bar layer alone on an
+auto-fit log axis collapses the same way. That is a separate change.
+
 ## Moved from PLAN.md — 2026-09-23 cleanup
 
 PLAN.md holds future work only, so these write-ups of shipped (or partly

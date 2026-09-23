@@ -792,8 +792,13 @@ export interface RowLayer {
    * when the layer was given no `as`.
    */
   readonly as?: string | undefined;
-  /** This layer's finite-value `[min, max]`, or `null` if it has none. */
-  yExtent(): [number, number] | null;
+  /**
+   * This layer's finite-value `[min, max]`, or `null` if it has none. `scale`
+   * is the kind of the axis the extent is being fitted to, for a layer whose
+   * extent depends on it (an area's zero baseline has no position on a log
+   * axis, so it must not be pulled into one).
+   */
+  yExtent(scale?: YScaleKind): [number, number] | null;
   /**
    * The **kind of x axis** this layer's data lives on — `'time'` for a
    * `TimeSeries`, `'value'` for a `ValueSeries`, `'category'` for a categorical

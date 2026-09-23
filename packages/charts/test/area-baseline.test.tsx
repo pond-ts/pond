@@ -42,7 +42,11 @@ const high = () =>
 /** Render one area, returning the row's resolved y scale and the draw log. */
 function mount(
   node: React.ReactNode,
-  axis: { min?: number; max?: number } = {},
+  axis: {
+    min?: number;
+    max?: number;
+    scale?: 'linear' | 'log' | 'symlog';
+  } = {},
 ) {
   let rf: RowFrame | null = null;
   function Capture() {
@@ -144,6 +148,59 @@ describe('`<AreaChart baseline>` — where the fill is drawn', () => {
       axis,
     );
     expect(fillYs(calls)).toContain(y(25));
+  });
+});
+
+describe('`<AreaChart baseline>` — non-linear and pinned axes', () => {
+  /** Five points spanning four decades, 10…1e5. */
+  const decades = () =>
+    new TimeSeries({
+      name: 'x',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      rows: Array.from({ length: 5 }, (_, i) => [T(i), 10 ** (i + 1)]) as [
+        number,
+        number,
+      ][],
+    });
+
+  it('a log axis fits the data, not the default 0', () => {
+    // Zero has no position on a log axis. Pulled into the extent it left the
+    // log fit with `[0, 1e5]`, no positive low end, and a domain collapsed
+    // onto the max (`[1e4, 1e6]`) that clipped most of the series.
+    const log = { scale: 'log' as const };
+    const byDefault = mount(
+      <AreaChart series={decades()} column="v" axis="a" />,
+      log,
+    ).domain;
+    cleanup();
+    const floor = mount(
+      <AreaChart series={decades()} column="v" axis="a" baseline="floor" />,
+      log,
+    ).domain;
+    expect(byDefault).toEqual(floor);
+    expect(byDefault[0]).toBeLessThanOrEqual(10);
+  });
+
+  it('a symlog axis still pulls 0 in — zero has a position there', () => {
+    const { domain } = mount(
+      <AreaChart series={high()} column="v" axis="a" />,
+      { scale: 'symlog' },
+    );
+    expect(domain[0]).toBeLessThanOrEqual(0);
+  });
+
+  it('a pinned axis above 0 clamps the fill to its floor, as a bar does', () => {
+    // Off the plot, the fill would clip the same but anchor its fade below it.
+    const { y, calls } = mount(
+      <AreaChart series={high()} column="v" axis="a" />,
+      { min: 40, max: 100 },
+    );
+    const ys = fillYs(calls);
+    expect(ys).toContain(y(40));
+    expect(ys).not.toContain(y(0));
   });
 });
 

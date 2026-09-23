@@ -88,8 +88,10 @@ include new features and type-level changes; patch bumps are strictly additive.
   `baseline` whose data sits far from zero will now show zero on its axis; add
   `baseline="floor"` to keep the previous rendering. Charts that already wrote
   `baseline={0}`, or whose axis already started at zero, are unchanged. On a
-  log axis nothing changes (zero has no position there, so it still falls back
-  to the floor).
+  log axis nothing changes: zero has no position there, so it rests on the
+  floor and is not pulled into the domain. On an axis pinned above zero
+  (`<YAxis min={40}>`) the baseline is clamped to the axis floor, as a bar's is,
+  so the fill's fade stays on the plot.
 
 ### Fixed
 
@@ -98,6 +100,12 @@ include new features and type-level changes; patch bumps are strictly additive.
   scale; the draw already fell back to the axis floor, but the hit test used
   the `NaN` pixel, and a `NaN` bound fails neither range check. It now resolves
   the baseline the same way the draw does.
+- **charts:** **`<AreaChart baseline={0}>` on an auto-fit log axis clipped
+  most of its series.** The zero baseline was pulled into the extent, which
+  left the log fit with no positive low end, so the domain collapsed around the
+  largest value (data from 10 to 1e5 fitted `[1e4, 1e6]`). A baseline at or
+  below zero is now left out of a log axis's fit. A layer's `yExtent` receives
+  the axis's scale kind for this.
 
 ## [0.70.0] — 2026-09-18
 
