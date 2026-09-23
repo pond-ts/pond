@@ -73,6 +73,24 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- `@pond-ts/charts`: **`<CrosshairCursor onSnap>`** — tells you what the
+  crosshair is snapped to: the series (`label`, `color`, `axisId`) and the
+  point (`x`, `value`, `formatted`, plus `readout` when the layer has one), as
+  a new exported **`CursorSnap`** type. Fires only when the snapped point
+  changes, and with `null` when the pointer leaves. With `snap={false}` the
+  reticle follows the pointer rather than a series, so it stays `null`; a
+  reticle drawn by a controlled `trackerPosition` with no pointer on the chart
+  also reports `null`. Story `Cursors/Crosshair / SnapReadout`.
+
+### Changed
+
+- `@pond-ts/charts`: the **crosshair's centre dot is drawn in the snapped
+  series' colour** rather than the cursor ink, so the reticle shows which line
+  it is reading. The free reticle (`snap={false}`) has no series under it and
+  keeps the cursor ink. Applies to the legacy `cursor="crosshair"` too.
+
 ## [0.70.0] — 2026-09-18
 
 ### Added
@@ -103,8 +121,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 - `@pond-ts/financial`: **`StudyOutput.id` documents the `@pond-ts/process`
   bridge**, and a new `test/catalog-process.test.ts` pins it. The field is a
-  *financial column suffix*; process's `OutputDef.id` is a *process outlet
-  id*; they share a name and are different namespaces. Process names its own
+  _financial column suffix_; process's `OutputDef.id` is a _process outlet
+  id_; they share a name and are different namespaces. Process names its own
   columns (`specId + OutputDef.id`) and matches an op's return to its outputs
   positionally, so a study's own column names never reach it — which means a
   registry bridging the two chooses its own suffixes, and for the **twelve**
@@ -117,7 +135,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   worked around it by hand. No API change: the descriptors, the studies and
   the guard are all unchanged, and the round-trip test is what stops the two
   packages drifting — `catalog.test.ts` validates a descriptor against its
-  *study*, so it is structurally blind to a cross-package disagreement.
+  _study_, so it is structurally blind to a cross-package disagreement.
 - `@pond-ts/process`: **`Skipped.spec` echoes the request verbatim**, and its
   `params` / `inputs` are typed `unknown` accordingly. The plan pass normalized
   `params: null` to `{}`, so recomputing an id from the echo produced the
@@ -136,7 +154,6 @@ include new features and type-level changes; patch bumps are strictly additive.
   rather than crashing.
 
   (All three reported by Tidal against 0.62.0, after adopting it.)
-
 
 ## [0.69.0] — 2026-09-13
 

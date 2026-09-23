@@ -640,6 +640,9 @@ export function Layers({ children }: LayersProps) {
         out.push({
           px: xScale(s.x),
           py: yScale(s.value),
+          x: s.x,
+          value: s.value,
+          ...(s.readout !== undefined ? { readout: s.readout } : {}),
           axisId,
           side,
           axisOffset,
@@ -1861,6 +1864,31 @@ export function Layers({ children }: LayersProps) {
     theme: container.theme,
     xAxis: null,
   };
+
+  // The crosshair's snap report (`<CrosshairCursor onSnap>`). The snap owner is
+  // read from the unfiltered entries, so a row whose cursor is hidden (editing,
+  // a sweep, the resting brush) still reports "nothing snapped" rather than
+  // leaving the consumer on a stale point. Only the hovered row reports a
+  // point; the other rows report `null` — unless the hovered row has the same
+  // owner, in which case it speaks for all of them (two rows calling at once
+  // would flap). The cursor dedupes, so repeated calls are free.
+  const snapOwner = gestureOwner(
+    effectiveCursorEntries(container.cursors, row.rowKey),
+  );
+  const hoveredRowKey = cursor.cursorRowKey;
+  useEffect(() => {
+    const report = snapOwner?.reportSnap;
+    if (report === undefined) return;
+    if (hoveredRowKey === row.rowKey) {
+      report(cursorEntries.includes(snapOwner!) ? cursorRenderFrame : null);
+    } else if (
+      hoveredRowKey === null ||
+      gestureOwner(effectiveCursorEntries(container.cursors, hoveredRowKey)) !==
+        snapOwner
+    ) {
+      report(null);
+    }
+  });
 
   // Cross-row guide lines: the x-positions of annotations on the OTHER rows
   // (markers + region edges), so a mark on one row reads against this row's data +

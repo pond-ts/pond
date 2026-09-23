@@ -1,13 +1,15 @@
-import { useContext, useEffect, useMemo, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import type { Sequence, BoundedSequence } from 'pond-ts';
 import {
   ContainerContext,
   RowContext,
   type CursorEntry,
   type CursorMode,
+  type CursorSnap,
   type CursorWants,
   type RangeSpan,
   type ResolvedCursorFrame,
+  type ResolvedCursorSample,
 } from './context.js';
 import { renderBrushBand } from './brush.js';
 import type { ChartTheme } from './theme.js';
@@ -136,6 +138,7 @@ interface BuiltCursor {
   readonly onDragRelease?: ((span: RangeSpan) => void) | undefined;
   readonly enableDrag?: boolean | undefined;
   readonly dragModifier?: 'shift' | undefined;
+  readonly reportSnap?: ((f: ResolvedCursorFrame | null) => void) | undefined;
 }
 
 const NO_WANTS: CursorWants = {
@@ -323,10 +326,26 @@ function buildFlagCursor(o: { showTime: boolean }): BuiltCursor {
 }
 
 /**
+ * The sample the snapping crosshair centres on in a row: the one nearest the
+ * pointer y in the hovered row — or the first sample when nothing is hovered
+ * (a pinned tracker shows a reticle in every row). `null` in a row that isn't
+ * hovered while another is, or when there is nothing to snap to.
+ */
+function snappedSample(f: ResolvedCursorFrame): ResolvedCursorSample | null {
+  if (inBoundsX(f) === null || f.samples.length === 0) return null;
+  const cy = f.cursorY;
+  if (f.hoveredRowKey === f.rowKey && cy !== null) {
+    return f.samples.reduce((a, b) =>
+      Math.abs(b.py - cy) < Math.abs(a.py - cy) ? b : a,
+    );
+  }
+  return f.hoveredRowKey === null ? f.samples[0]! : null;
+}
+
+/**
  * The crosshair's single reticle centre for a row: with `snap` (default) the
- * sample nearest the pointer y in the hovered row — or the first sample when
- * nothing is hovered (a pinned tracker shows a reticle in every row); free
- * mode reads the container-resolved raw-pointer measurement.
+ * {@link snappedSample}; free mode reads the container-resolved raw-pointer
+ * measurement.
  *
  * It carries the picked sample's **axis placement** (side + gutter offset +
  * axis ink) as well as its value, because the reticle reads one series and its
@@ -343,20 +362,13 @@ function crosshairPick(
   side: 'left' | 'right';
   axisOffset: number;
   axisColor: string | undefined;
+  /** The snapped series' colour; `undefined` in free mode, where the reticle
+   *  sits on the pointer rather than on any one series. */
+  color: string | undefined;
 } | null {
   if (inBoundsX(f) === null) return null;
-  if (!snap) return f.pointer;
-  if (f.samples.length === 0) return null;
-  const hoveredRow = f.hoveredRowKey === f.rowKey;
-  const cy = f.cursorY;
-  const pick =
-    hoveredRow && cy !== null
-      ? f.samples.reduce((a, b) =>
-          Math.abs(b.py - cy) < Math.abs(a.py - cy) ? b : a,
-        )
-      : f.hoveredRowKey === null
-        ? f.samples[0]!
-        : null;
+  if (!snap) return f.pointer && { ...f.pointer, color: undefined };
+  const pick = snappedSample(f);
   return pick
     ? {
         py: pick.py,
@@ -364,8 +376,49 @@ function crosshairPick(
         side: pick.side,
         axisOffset: pick.axisOffset,
         axisColor: pick.axisColor,
+        color: pick.color,
       }
     : null;
+}
+
+/** The consumer-facing {@link CursorSnap} for a resolved sample. */
+function toCursorSnap(s: ResolvedCursorSample): CursorSnap {
+  return {
+    x: s.x,
+    value: s.value,
+    color: s.color,
+    label: s.label,
+    ...(s.readout !== undefined ? { readout: s.readout } : {}),
+    axisId: s.axisId,
+    formatted: s.formatted,
+  };
+}
+
+/**
+ * The crosshair's snap reporter: picks the snapped sample from a hovered row's
+ * frame (`null` = nothing snapped) and calls the consumer only when the pick
+ * **changes** — rows re-render on every pointer move, and a callback that fired
+ * per move while the reticle sat still would make every consumer dedupe.
+ * Reads the callback through a ref, so an inline `onSnap` doesn't rebuild the
+ * cursor spec on every parent render.
+ */
+function snapReporter(
+  onSnapRef: { readonly current: ((s: CursorSnap | null) => void) | undefined },
+  snap: boolean,
+): (f: ResolvedCursorFrame | null) => void {
+  let last: string | null = null;
+  return (f) => {
+    // Free mode follows the pointer, not a series: there is nothing to report.
+    const pick = f !== null && snap ? snappedSample(f) : null;
+    const info = pick === null ? null : toCursorSnap(pick);
+    const key =
+      info === null
+        ? null
+        : `${info.axisId}\u0000${info.label}\u0000${info.x}\u0000${info.value}\u0000${info.color}`;
+    if (key === last) return;
+    last = key;
+    onSnapRef.current?.(info);
+  };
 }
 
 /** `cursor="crosshair"` as a spec: the dashed reticle (renderPlot), the axis
@@ -375,6 +428,7 @@ function buildCrosshairCursor(o: {
   snap: boolean;
   showTime: boolean;
   format?: CursorFormat | undefined;
+  reportSnap?: ((f: ResolvedCursorFrame | null) => void) | undefined;
 }): BuiltCursor {
   return {
     spec: {
@@ -409,11 +463,14 @@ function buildCrosshairCursor(o: {
                   strokeDasharray="3 3"
                   shapeRendering="crispEdges"
                 />
+                {/* The centre dot takes the snapped series' colour, so the
+                    reticle says which line it is reading; free mode has no
+                    series under it and keeps the cursor ink. */}
                 <circle
                   cx={x}
                   cy={reticle.py}
                   r={3}
-                  fill={ink}
+                  fill={reticle.color ?? ink}
                   stroke={background}
                   strokeWidth={background ? 1 : 0}
                 />
@@ -514,6 +571,7 @@ function buildCrosshairCursor(o: {
     wants: { ...NO_WANTS, samples: true, pointer: !o.snap },
     ownsGesture: true,
     format: o.format,
+    reportSnap: o.reportSnap,
   };
 }
 
@@ -581,6 +639,7 @@ function useCursorMount(
             onDragRelease: built.onDragRelease,
             enableDrag: built.enableDrag,
             dragModifier: built.dragModifier,
+            reportSnap: built.reportSnap,
             rowKey,
             legacy,
             ...(implicit ? { implicit } : {}),
@@ -675,19 +734,49 @@ export interface CrosshairCursorProps {
    *  shapes marker indicators + annotation auto-labels, as `cursorFormat`
    *  did). */
   format?: CursorFormat;
+  /**
+   * Tells you what the reticle is **snapped to** — the series (`label`,
+   * `color`, `axisId`) and the point (`x`, `value`, `formatted`) its centre dot
+   * sits on — and `null` when it lets go (the pointer leaves the chart, or
+   * moves to a row with no data under it). Fires only when the snapped point
+   * **changes**, not on every pointer move.
+   *
+   * Reports the pointer's snap only: with `snap={false}` the reticle follows
+   * the pointer rather than a series, so this stays `null`; and a reticle
+   * shown by a controlled `trackerPosition` with no pointer on the chart
+   * reports `null` too. For every series' value at the cursor time, use the
+   * container's `onTrackerChanged`.
+   */
+  onSnap?: (snap: CursorSnap | null) => void;
 }
 
 /** The inspection **reticle** — `cursor="crosshair"`: dashed cross lines, a
- *  centre dot, the value pinned to its y axis, the time pinned to the x axis. */
+ *  centre dot in the snapped series' colour, the value pinned to its y axis,
+ *  the time pinned to the x axis. */
 export function CrosshairCursor({
   snap = true,
   showTime = true,
   format,
+  onSnap,
 }: CrosshairCursorProps = {}) {
+  // Latest callback in a ref (written after commit), so an inline `onSnap`
+  // doesn't re-register the cursor on every parent render; the spec is rebuilt
+  // only when a callback appears or goes away.
+  const onSnapRef = useRef(onSnap);
+  useEffect(() => {
+    onSnapRef.current = onSnap;
+  });
+  const listening = onSnap !== undefined;
   useCursorMount(
     useMemo(
-      () => buildCrosshairCursor({ snap, showTime, format }),
-      [snap, showTime, format],
+      () =>
+        buildCrosshairCursor({
+          snap,
+          showTime,
+          format,
+          reportSnap: listening ? snapReporter(onSnapRef, snap) : undefined,
+        }),
+      [snap, showTime, format, listening],
     ),
     false,
   );
