@@ -79,10 +79,8 @@ const list = (fx: ChartFixture, sel: readonly SelectInfo[]) =>
 // ── <Selector> ─────────────────────────────────────────────────────────────
 
 /**
- * The `<Selector>` feature set for one chart type. `<RangeCursor>` is mounted
- * only where the fixture declares it draws — on an ordinal axis it does not,
- * and mounting one there costs the row its cursor entirely — so those columns
- * mount a plain `<LineCursor>` instead.
+ * The `<Selector>` feature set for one chart type, each with a `<RangeCursor>`
+ * mounted (on an ordinal axis it shades the slot under the pointer).
  */
 export interface SelectorStories {
   MountedAtContainer: Story;
@@ -95,7 +93,7 @@ export interface SelectorStories {
 }
 
 export function makeSelectorStories(fx: ChartFixture): SelectorStories {
-  const Cursor = () => (fx.rangeCursor ? <RangeCursor /> : <LineCursor />);
+  const Cursor = () => <RangeCursor />;
 
   return {
     /** **Mounted at the container** — the ordinary case: one `<Selector>` as a

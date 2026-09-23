@@ -148,6 +148,14 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- `@pond-ts/charts`: **`<RangeCursor>` on a category axis now shades the bar
+  under the pointer.** It used to draw nothing there, so mounting one left the
+  row with no cursor at all. The band covers the whole slot, the way a
+  bucketed band covers a bucket on a time axis. The drag stays off on a
+  category axis (`onDragRelease` never fires there, and the chart now warns
+  in development when it is wired); dragging across bars to get them back is
+  what `<MultiSelector>` does. Story `Cursors/Range / CategoryAxis`.
+
 - **charts:** **A selectable `<AreaChart>` on a log axis with `baseline={0}`
   counted every point over its x span as a hit.** Zero maps to `NaN` on a log
   scale; the draw already fell back to the axis floor, but the hit test used

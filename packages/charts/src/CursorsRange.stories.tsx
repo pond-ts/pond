@@ -5,6 +5,7 @@ import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
+import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
 import { RangeCursor } from './cursors.js';
 import { priceSeries, RANGE } from './story-data.fixture.js';
@@ -18,6 +19,9 @@ import { priceSeries, RANGE } from './story-data.fixture.js';
  * (`onDragRelease` → `setRange` — the payload's `x` is exactly what
  * `ChartContainer.range` accepts, which is the name-level coherence the
  * component is named for).
+ *
+ * `CategoryAxis` shows the cursor on a category axis: the band shades the
+ * slot under the pointer, and the drag is off there ([PND-ORDCURSOR]).
  *
  * The band itself — bucketed by durations, trading sessions, calendar weeks,
  * value axes and histogram bins — is fanned out under `Cursors/Region`.
@@ -203,3 +207,31 @@ function DragToZoomDemo() {
   );
 }
 export const DragToZoom: Story = { render: () => <DragToZoomDemo /> };
+
+const SERVICES = [
+  { label: 'api', value: 42 },
+  { label: 'auth', value: 18 },
+  { label: 'billing', value: 27 },
+  { label: 'cache', value: 9 },
+  { label: 'db', value: 33 },
+];
+
+/** **On a category axis** ([PND-ORDCURSOR]). The band shades the whole slot
+ *  under the pointer, the way a bucketed band shades a bucket on a time axis.
+ *  The drag is **off** here even with `onDragRelease` wired (the container
+ *  dev-warns): a numeric span means nothing on a category axis, and dragging
+ *  across bars to get them back is `<MultiSelector>`'s gesture. Before the
+ *  fix this chart showed no cursor at all. */
+export const CategoryAxis: Story = {
+  render: () => (
+    <ChartContainer width={W}>
+      <RangeCursor />
+      <ChartRow height={220}>
+        <YAxis id="n" min={0} max={50} label="errors" />
+        <Layers>
+          <BarChart categories={SERVICES} axis="n" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};

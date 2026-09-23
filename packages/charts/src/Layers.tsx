@@ -16,7 +16,7 @@ import {
 } from 'react';
 import { Canvas } from './Canvas.js';
 import { drawGrid, drawDividers, dividerAlphas, thinPixels } from './grid.js';
-import { bandRect, regionSpan } from './tracker.js';
+import { bandRect, categorySlots, regionSpan } from './tracker.js';
 import { effectiveCursorEntries, gestureOwner } from './cursors.js';
 import {
   renderBrushBand,
@@ -1802,15 +1802,25 @@ export function Layers({ children }: LayersProps) {
   // not ALSO shade an x band: `sweeping` alone would resolve one from the
   // pointer's bucket and lay a full-height column across the horizontal band
   // the drag is actually drawing.
+  //
+  // A `<RangeCursor>` on a **category** axis shades the slot under the
+  // pointer ([PND-ORDCURSOR]). Its buckets are the unit slots `[i, i+1)` —
+  // a vertical bar layer already publishes exactly those as `cursorBuckets`;
+  // a category row with no bar layer (a heat map) gets them from the band
+  // scale's domain. The range *drag* stays off there (`resolveRangeDrag`): it
+  // reports a numeric span, and a category chart selects slots, which is
+  // `<MultiSelector>`'s gesture.
   const bandActive =
-    (wantsBand &&
-      (container.xKind === 'time' || container.xKind === 'value')) ||
+    wantsBand ||
     (sweeping && sweepRect === null && sweepBandY === null) ||
     restingBand;
   const band: { x0: number; x1: number } | null =
     bandActive && cursorTime !== null
       ? bandRect(
-          container.cursorBuckets ?? [],
+          container.cursorBuckets ??
+            (container.xKind === 'category'
+              ? categorySlots(xScale.domain())
+              : []),
           cursorTime,
           (v) => xScale(v),
           plotWidth,

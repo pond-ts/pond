@@ -5,7 +5,7 @@
  * helpers stay pure, so they're unit-tested directly.
  */
 
-import type { Interval } from 'pond-ts';
+import { Interval } from 'pond-ts';
 
 /**
  * The interval in the sorted, non-overlapping `buckets` that contains `t`
@@ -81,6 +81,23 @@ export function bandRect(
   const x0 = Math.max(0, xScale(span.start));
   const x1 = Math.min(plotWidth, xScale(span.end));
   return x1 > x0 ? { x0, x1 } : null;
+}
+
+/**
+ * The unit slots `[i, i+1)` of a category axis, from its band scale's domain
+ * (`[0, n]`) — the buckets a `<RangeCursor>` snaps to there when no bar layer
+ * has published its own (a bar layer's are the same slots). Empty for an
+ * empty axis.
+ */
+export function categorySlots(domain: readonly unknown[]): Interval[] {
+  const lo = Number(domain[0]);
+  const n = Math.max(0, Math.round(Number(domain[1]) - lo));
+  const out: Interval[] = [];
+  for (let i = 0; i < n; i += 1) {
+    const b = lo + i;
+    out.push(new Interval({ value: b, start: b, end: b + 1 }));
+  }
+  return out;
 }
 
 /**

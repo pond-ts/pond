@@ -33,10 +33,11 @@ import {
  *
  * That is not hypothetical: half a built matrix already surfaced two defects —
  * categorical hover being ink-only where the time axis claims the whole slot,
- * and `<RangeCursor>` on an ordinal axis suppressing the row's cursor entirely.
+ * and `<RangeCursor>` on an ordinal axis suppressing the row's cursor entirely
+ * (since fixed: it shades the slot there, [PND-ORDCURSOR]).
  *
- * **Capabilities are declared, not assumed.** `sequence` and `rangeCursor` are
- * absent on fixtures that cannot support them, so the factory omits those
+ * **Capabilities are declared, not assumed.** `sequence` is absent on
+ * fixtures that cannot support it, so the factory omits those
  * stories rather than generating one that silently does nothing. A gap in the
  * matrix is information; a story that renders nothing is a trap.
  */
@@ -73,10 +74,6 @@ export interface ChartFixture {
   readonly sweep: boolean;
   /** A snapping sequence, where the axis has one. Ordinal axes do not. */
   readonly sequence?: () => Sequence | BoundedSequence;
-  /** Whether `<RangeCursor>` draws here — it gates on a continuous x
-   *  (`brush.tsx`), so mounting one on a category axis is not just inert, it
-   *  takes the row's cursor with it. */
-  readonly rangeCursor: boolean;
   /**
    * Present only where the x axis **collapses closed-market time**, which is
    * what makes a snap block's relationship to the session grid a question at
@@ -143,8 +140,6 @@ export const categoricalBars: ChartFixture = {
   picks: SERVICES.map((c) => ({ label: c.label, info: svc(c.label) })),
   describe: (hit) => hit.mark ?? hit.label,
   // No `sequence`: a time bucketing over ordinal slots is meaningless.
-  // No `rangeCursor`: it gates on a continuous x.
-  rangeCursor: false,
   sweep: true,
 };
 
@@ -214,7 +209,6 @@ export const timeBars: ChartFixture = {
    * bar so the buckets line up with the data rather than with the epoch.
    */
   sequence: () => Sequence.every('7d', { anchor: D0 }),
-  rangeCursor: true,
   sweep: true,
 };
 
@@ -293,7 +287,6 @@ export const stackedBars: ChartFixture = {
       ? isoDay(hit.key)
       : `${isoDay(hit.key)}·${hit.label}`,
   sequence: () => Sequence.every('7d', { anchor: D0 }),
-  rangeCursor: true,
   sweep: true,
 };
 
@@ -410,7 +403,6 @@ const boxFixture = (
   /** Three 10-minute boxes per bucket — coarser than the mark, so the snap has
    *  something to do (the lesson `timeBars` learned with its `'1d'`). */
   sequence: () => Sequence.every('30m', { anchor: BOX_BASE }),
-  rangeCursor: true,
 });
 
 /** The default shape: a q1→q3 body with thin stems and end caps. The stems are
@@ -495,7 +487,6 @@ export const candles: ChartFixture = {
   describe: (hit) => isoDay(hit.key),
   sweep: true,
   sequence: () => Sequence.every('5d', { anchor: D0 }),
-  rangeCursor: true,
 };
 
 // ── The 2-D family: scatter and heat map ──────────────────────────────────
@@ -576,7 +567,6 @@ export const scatterPoints: ChartFixture = {
   // A **2-D** sweep: the drag cuts a free rect, and the committed span carries
   // a `y` window alongside `x` ([PND-INTERACT2D]).
   sweep: true,
-  rangeCursor: true,
 };
 
 /**
@@ -635,7 +625,6 @@ export const heatGrid: ChartFixture = {
   // A **2-D** sweep, snapped in both dimensions — bins on x, rows on y — so a
   // capture is always a contiguous rectangle of cells ([PND-INTERACT2D]).
   sweep: true,
-  rangeCursor: true,
 };
 
 // ── Trading sessions (a discontinuous time axis) ───────────────────────────
@@ -739,7 +728,6 @@ export const tradingSessions: ChartFixture = {
   // the same bucketing `sessions.conforming` names, so the generated story and
   // the session pair below agree about what "conforming" means.
   sequence: () => sessionSeq(SESSIONS),
-  rangeCursor: true,
   sweep: true,
   sessions: {
     conforming: () => sessionSeq(SESSIONS),

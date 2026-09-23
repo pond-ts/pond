@@ -2063,6 +2063,28 @@ function ResolvedChartContainer({
         'value axis you can scale.',
     );
   }
+  // [PND-ORDCURSOR] A `<RangeCursor onDragRelease>` on a category axis draws
+  // its slot band but never starts a drag (`resolveRangeDrag`): the callback
+  // would silently never fire, so say so once. Same `sources.size` guard as
+  // above — the kind is 'time' until the layers register.
+  const rangeDragOnCategory =
+    resolvedKind === 'category' &&
+    sources.size > 0 &&
+    cursors.some(
+      (e) => e.onDragRelease !== undefined && e.enableDrag !== false,
+    );
+  const warnedRangeDragOnCategoryRef = useRef(false);
+  useEffect(() => {
+    if (!isDev || !rangeDragOnCategory) return;
+    if (warnedRangeDragOnCategoryRef.current) return;
+    warnedRangeDragOnCategoryRef.current = true;
+    console.warn(
+      '[pond-charts] <RangeCursor onDragRelease> is mounted on a category x ' +
+        'axis, where the range drag is off: the band shades the slot under the ' +
+        'pointer, but `onDragRelease` never fires. To drag across bars and get ' +
+        'them back, mount a <MultiSelector> instead.',
+    );
+  }, [rangeDragOnCategory]);
   const xIsLog = ((s: unknown) => {
     const probe = s as { base?: unknown; constant?: unknown };
     return (

@@ -43,8 +43,10 @@ interface RangeCursorProps {
   meaningless on a value axis. With no `sequence` the range cursor is the
   degenerate free-drag case (pixel-precise, no snapping), which is what a
   value-axis selection uses.
-- Range selection works on a **time or value** x axis; it's excluded on a
-  category axis.
+- Range selection works on a **time or value** x axis. On a **category**
+  axis the `<RangeCursor>` band still shades the bar under the pointer, but
+  the drag is off and `onDragRelease` never fires. To drag across bars and get
+  them back, mount a `<MultiSelector>`.
 
 ## The select-to-zoom loop
 

@@ -320,7 +320,7 @@ A1.5/A2.7).
 | `InlineCursor`    | `showTime?`, `format?`                                        | Dots + a value chip beside each                                                                                                                        | `packages/charts/src/cursors.tsx` |
 | `FlagCursor`      | `showTime?`, `format?`                                        | Dots + staffed value flags stacked at the top                                                                                                          | `packages/charts/src/cursors.tsx` |
 | `CrosshairCursor` | `snap?`, `showTime?`, `format?`, `onSnap?`                    | The inspection reticle: dashed cross, centre dot in the snapped series' colour, y value pill, x time pill; `onSnap` reports the snapped series + point | `packages/charts/src/cursors.tsx` |
-| `RangeCursor`     | `sequence?`, `onDragRelease?`, `enableDrag?`, `dragModifier?` | The hover-time band + the drag: release fires once with a `RangeSpan`, then reverts                                                                    | `packages/charts/src/cursors.tsx` |
+| `RangeCursor`     | `sequence?`, `onDragRelease?`, `enableDrag?`, `dragModifier?` | The hover-time band + the drag: release fires once with a `RangeSpan`, then reverts; on a category axis the band shades the slot and the drag is off   | `packages/charts/src/cursors.tsx` |
 
 ### Components — standalone row lists (DOM tables, no `<ChartContainer>`)
 

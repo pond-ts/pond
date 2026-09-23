@@ -21,6 +21,7 @@ describe('Cursors/Range stories', () => {
 
   it('exposes the drag fan-out (one story per knob + the zoom scenario)', () => {
     expect(entries.map(([n]) => n).sort()).toEqual([
+      'CategoryAxis',
       'DragDisabled',
       'DragModifierPanOff',
       'DragModifierWithPan',

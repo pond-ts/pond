@@ -66,7 +66,9 @@ export interface RangeDrag {
  * `onDragRelease` has nothing to fire, so it does not claim.
  *
  * Continuous x only (time or value): a category axis has no span to drag
- * (an ordinal-slot select is a different gesture).
+ * (an ordinal-slot select is `<MultiSelector>`'s gesture). The range cursor's
+ * hover band still draws there — over the slot — and the container dev-warns
+ * that the drag is off ([PND-ORDCURSOR]).
  */
 export function resolveRangeDrag(
   c: Pick<ContainerFrame, 'xKind'>,

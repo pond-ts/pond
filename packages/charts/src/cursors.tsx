@@ -890,7 +890,8 @@ export interface RangeCursorProps {
    * trading calendar's sessions). A drag extends **bucket by bucket** over
    * these. **Omit ⇒ freeform**: the cursor renders as a plain line and a drag
    * spans the raw `[lo, hi]` (a bar/histogram layer's bins still snap both
-   * when present). Time axis only. Pass a stable
+   * when present). Time axis only; on a category axis the band always
+   * snaps to the slot under the pointer. Pass a stable
    * reference (the buckets memoize on it).
    */
   sequence?: Sequence | BoundedSequence;
@@ -908,7 +909,11 @@ export interface RangeCursorProps {
    * so drag-to-zoom is `onDragRelease={(s) => setRange(s.x)}`.
    *
    * The drag **preempts pan** unless {@link dragModifier} shares the gesture.
-   * Continuous x only (a category axis is excluded).
+   * Continuous x only: on a **category** axis the hover band still shades the
+   * slot under the pointer, but the drag never starts — a numeric span means
+   * nothing there, and dragging across bars is `<MultiSelector>`'s gesture
+   * (it reports the bars). The container dev-warns when this is wired on a
+   * category axis.
    */
   onDragRelease?: (span: RangeSpan) => void;
   /**
@@ -934,7 +939,8 @@ export interface RangeCursorProps {
  * The **range** cursor (RFC A4.1 names
  * it for what it emits: a live extent — and, dragged, exactly what
  * `ChartContainer.range` accepts — against the annotation `<Region>`'s fixed
- * mark). Hover shades the bucket under the pointer; wiring
+ * mark). Hover shades the bucket under the pointer (on a category axis, the
+ * slot); wiring
  * {@link RangeCursorProps.onDragRelease} adds the drag, which fires once on
  * release and reverts (RFC §6: a region is deliberately a cursor **and** a
  * drag that fires and resets). The gesture rides the shared brush recognizer

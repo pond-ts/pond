@@ -1989,7 +1989,25 @@ group count.
 stacked and time-axis bar chart, or the difference is documented as
 intentional with the reason.
 
-### [PND-ORDCURSOR] — `<RangeCursor>` on an ordinal axis removes the cursor
+### [PND-ORDCURSOR] — `<RangeCursor>` on an ordinal axis removes the cursor — DONE
+
+**Shipped 2026-09-23: the slot band.** On a category axis the band now shades
+the whole slot under the pointer. The buckets are the unit slots `[i, i+1)`:
+a vertical bar layer already publishes those as `cursorBuckets`, and a
+category row without one (a transposed heat map) gets them from the band
+scale's domain (`categorySlots` in `tracker.ts`). The only code change in
+`Layers.tsx` is dropping the continuous-x gate on the band. **The drag stays
+off** on a category axis (`resolveRangeDrag` unchanged): its payload is a
+numeric span, which means nothing there, and a drag across bars that reports
+the bars is `<MultiSelector>`'s job. Because a wired `onDragRelease` would now
+silently never fire, the container dev-warns once. The selection matrix's
+`rangeCursor` fixture flag existed only to route around this bug, so it is
+gone and every column mounts `<RangeCursor>`. With the implicit line cursor
+also gone this wave, "leave the row as it was" would have meant "no cursor",
+which is why the band was the right fix rather than a no-op mount.
+
+The original write-up:
+
 
 `<RangeCursor>` gates its band on a continuous x
 ([brush.tsx](../../packages/charts/src/brush.tsx)). On a category axis it

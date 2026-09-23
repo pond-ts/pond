@@ -284,12 +284,6 @@ yScale, mode)` and uses `mode` to let hover claim the whole slot while
   reports nothing on a categorical or stacked chart and reports the bar on a
   time-axis one. Carries a design question — which segment an above-the-ink
   hover should report on a stack — which is why it isn't a one-liner.
-- **[PND-ORDCURSOR]** — **`<RangeCursor>` on an ordinal axis takes the row's
-  cursor with it.** It gates on a continuous x (`brush.tsx`), so on a category
-  axis mounting one is not merely inert — the row ends up with no cursor at
-  all. Either draw a slot-band there or make the mount a no-op that leaves the
-  row's other cursor alone; silently removing a cursor is the one option that
-  isn't defensible.
 - **[PND-TICKGAP]** — **The trading axis's tick budget doesn't bound label
   spacing under collapse.** `TRADING_TICK_PX` budgets 65px of plot per tick and
   picks the finest grain that fits, but a wall-clock anchor that falls in

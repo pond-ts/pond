@@ -157,7 +157,7 @@ describe('the selection matrix covers the same features in every column', () => 
   it('the session pair is generated only where the axis has seams', () => {
     // A fixture that declares no `sessions` gets no session stories — the
     // capability is declared, not assumed, so a column can never carry a cell
-    // that silently demonstrates nothing (the rule `rangeCursor` earned).
+    // that silently demonstrates nothing.
     expect(makeSessionStories(categoricalBars)).toBeNull();
     expect(makeSessionStories(timeBars)).toBeNull();
     expect(makeSessionStories(tradingSessions)).not.toBeNull();
