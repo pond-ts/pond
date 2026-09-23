@@ -73,6 +73,32 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **charts:** **`<AreaChart>` fills to zero by default.** An omitted `baseline`
+  used to rest the fill on the bottom of the plot, which on auto-fit data sits
+  just under the lowest value — so a series running 50–90 drew 60 as a sliver
+  and 90 as a slab several times its size, and the fill's height said nothing
+  about the value. The default is now `0`: zero is pulled into the auto-fit
+  domain and each fill is as tall as its value, the usual reading of an area.
+  A number still sets another reference level. The old look is one prop away:
+  **`baseline="floor"`** rests the fill on the bottom of the plot and adds
+  nothing to the domain — for a price or an elevation profile, where starting
+  at zero would flatten the shape. **Migration:** an `<AreaChart>` with no
+  `baseline` whose data sits far from zero will now show zero on its axis; add
+  `baseline="floor"` to keep the previous rendering. Charts that already wrote
+  `baseline={0}`, or whose axis already started at zero, are unchanged. On a
+  log axis nothing changes (zero has no position there, so it still falls back
+  to the floor).
+
+### Fixed
+
+- **charts:** **A selectable `<AreaChart>` on a log axis with `baseline={0}`
+  counted every point over its x span as a hit.** Zero maps to `NaN` on a log
+  scale; the draw already fell back to the axis floor, but the hit test used
+  the `NaN` pixel, and a `NaN` bound fails neither range check. It now resolves
+  the baseline the same way the draw does.
+
 ## [0.70.0] — 2026-09-18
 
 ### Added

@@ -113,7 +113,12 @@ export default function GalleryPriceVolume({
         <ChartRow height={priceHeight}>
           <YAxis id="price" side="right" format={set.priceFormat} width={62} />
           <Layers>
-            <AreaChart series={bars} column="close" axis="price" />
+            <AreaChart
+              series={bars}
+              column="close"
+              axis="price"
+              baseline="floor"
+            />
           </Layers>
         </ChartRow>
         <ChartRow height={volumeHeight}>

@@ -208,6 +208,7 @@ export default function GettingStartedRide() {
                   series={rideSeries}
                   column="elevation"
                   axis="ele"
+                  baseline="floor"
                   legend="elevation"
                 />
               </Layers>

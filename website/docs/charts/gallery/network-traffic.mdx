@@ -170,13 +170,13 @@ which is the entire reason to put them in a column.
 
 ## Options to try
 
-| Option                                           | What it does                                                        | Reach for it when                                                                       |
-| ------------------------------------------------ | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `cursor="crosshair"` on `<ChartContainer>`       | Both halves read out at the hovered time                            | Always, on a mirrored chart — the pair of numbers is the point                          |
-| `legend="to site"` on each `<AreaChart>`         | Names the layer for `<Legend>` and the readout                      | The direction isn't obvious from position alone, e.g. in a small multiple               |
-| Drop `baseline` on the `out` layer               | It fills to the axis floor instead of the zero line                 | Never here — but it's the default, and it's why the negate-plus-`baseline` pair matters |
-| `stack` the directions instead of mirroring them | Gives total-crossing-the-router, losing the in/out split            | You care about capacity, not direction                                                  |
-| Swap `siteTotal()` for `stackedTraffic('in')`    | Breaks one direction down by interface — see the sibling page below | "How much?" has become "whose?"                                                         |
+| Option                                           | What it does                                                        | Reach for it when                                                            |
+| ------------------------------------------------ | ------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `cursor="crosshair"` on `<ChartContainer>`       | Both halves read out at the hovered time                            | Always, on a mirrored chart — the pair of numbers is the point               |
+| `legend="to site"` on each `<AreaChart>`         | Names the layer for `<Legend>` and the readout                      | The direction isn't obvious from position alone, e.g. in a small multiple    |
+| `baseline="floor"` on the `out` layer            | It fills to the axis floor instead of the zero line                 | Never here — zero is the default, and the negated `out` column hangs from it |
+| `stack` the directions instead of mirroring them | Gives total-crossing-the-router, losing the in/out split            | You care about capacity, not direction                                       |
+| Swap `siteTotal()` for `stackedTraffic('in')`    | Breaks one direction down by interface — see the sibling page below | "How much?" has become "whose?"                                              |
 
 ## See also
 

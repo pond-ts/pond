@@ -16,7 +16,8 @@ const TIME_RANGE: readonly [number, number] = [BASE, BASE + (N - 1) * STEP];
 /**
  * An elevation profile: a positive-only sine rolling between ~120 and ~480 m,
  * with a coast (gap) from index 25–31 so the fill + outline must break. The
- * elevation form rests on the axis floor and grades down from the line.
+ * elevation form (`baseline="floor"`) rests on the axis floor and grades down
+ * from the line.
  */
 function elevation() {
   const rows: Array<[number, number | undefined]> = [];
@@ -100,12 +101,13 @@ export default meta;
 type Story = StoryObj;
 
 /**
- * The elevation form (driver: estela elevation). One `<AreaChart>` with no
- * `baseline` rests on the axis floor; the graded shade fades from the themed
- * outline down to the bottom. The coast reads as a break in both the fill and
- * the outline — never a bridge to the floor.
+ * **The default: the fill rests on zero.** No `baseline` — an area measures size
+ * from zero, so the axis is pulled down to include it and each value's fill is
+ * as tall as the value. The same elevation profile as {@link Elevation}, whose
+ * data never nears zero: compare the two to see what the default costs a series
+ * whose interest is its shape.
  */
-export const Elevation: Story = {
+export const ZeroBaseline: Story = {
   render: () => {
     const e = elevation();
     return (
@@ -122,8 +124,65 @@ export const Elevation: Story = {
 };
 
 /**
+ * The elevation form (driver: estela elevation). `baseline="floor"` rests the
+ * fill on the bottom of the plot and adds nothing to the domain, so the axis
+ * hugs the data; the graded shade fades from the themed outline down to the
+ * bottom. The coast reads as a break in both the fill and the outline — never a
+ * bridge to the floor.
+ */
+export const Elevation: Story = {
+  render: () => {
+    const e = elevation();
+    return (
+      <ChartContainer range={TIME_RANGE} width={560}>
+        <ChartRow height={240}>
+          <YAxis id="m" label="m" />
+          <Layers>
+            <AreaChart
+              series={e}
+              column="elev"
+              as="default"
+              curve="monotone"
+              baseline="floor"
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **A reference level other than zero.** `baseline={300}` on the same profile:
+ * stretches above 300 m fill up, stretches below it fill down, each side's
+ * shade fading toward the 300 m line — the above/below form around a level
+ * that means something in the data (a target, a par value, an index's base).
+ */
+export const ReferenceLevel: Story = {
+  render: () => {
+    const e = elevation();
+    return (
+      <ChartContainer range={TIME_RANGE} width={560}>
+        <ChartRow height={240}>
+          <YAxis id="m" label="m" />
+          <Layers>
+            <AreaChart
+              series={e}
+              column="elev"
+              as="default"
+              curve="monotone"
+              baseline={300}
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
  * The above/below-axis form (driver: esnet traffic). Two `<AreaChart>`s share a
- * fixed `baseline={0}`: `in` (blue) fills up, `out` (rose, stored
+ * `baseline={0}` (the default, written out): `in` (blue) fills up, `out` (rose, stored
  * negative) fills down. Each side's shade fades toward the zero axis. Two layers
  * + two `as` roles — the single styling channel, composed (no per-component
  * colour). The y-axis includes 0 because the fixed baseline is pulled into the

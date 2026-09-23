@@ -19,7 +19,12 @@ export default function GalleryActivity({ width }: { width: number }) {
       <ChartRow height={200}>
         <YAxis id="m" side="right" label="m" format=",.0f" width={44} />
         <Layers>
-          <AreaChart series={series} column="elevation" axis="m" />
+          <AreaChart
+            series={series}
+            column="elevation"
+            axis="m"
+            baseline="floor"
+          />
         </Layers>
       </ChartRow>
     </ChartContainer>

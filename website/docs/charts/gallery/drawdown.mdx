@@ -108,7 +108,7 @@ role in the theme, not a hex in the chart.
 
 | Option                                        | What it does                                         | Reach for it when                                                                          |
 | --------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Drop `baseline`                               | Fills to the axis floor instead of zero              | The quantity has no meaningful zero (an elevation profile)                                 |
+| `baseline="floor"`                            | Fills to the axis floor instead of zero              | The quantity has no meaningful zero (an elevation profile)                                 |
 | A second row with the price                   | Price above, underwater curve below, one cursor      | Readers need to connect a dip to the price move that caused it                             |
 | `<Baseline value={-0.1}>`                     | A marked threshold across the plot                   | You have a policy line — a 10% stop, a risk limit                                          |
 | `curve="monotone"`                            | Smooths the edge without moving the points           | Dense daily data reads as noise at card size                                               |

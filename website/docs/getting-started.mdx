@@ -323,6 +323,7 @@ no reshaping into `{x, y}` objects:
         series={ride}
         column="elevation"
         axis="ele"
+        baseline="floor"
         legend="elevation"
       />
     </Layers>
@@ -350,6 +351,9 @@ everywhere in pond charts:
 - **`<Legend>`** takes no data. It enumerates the registered layers and draws
   each one's _resolved_ style, so the key can't drift from the plot. `legend="…"`
   names a row.
+- **`baseline="floor"`** rests the elevation fill on the bottom of its row. An
+  area fills from zero by default, which is right for a quantity like traffic;
+  for an elevation profile, starting at sea level would flatten the hills.
 - **`as="muted"` / `as="primary"`** are **style roles**, not colours. The theme
   decides what each one looks like — here `muted` renders the raw trace in a
   neutral grey so the `primary` moving average reads through it. That's why

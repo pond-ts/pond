@@ -152,7 +152,7 @@ export default function CoreByValue() {
             format={blank}
           />
           <Layers>
-            <AreaChart series={top} column="ele" axis="ele" />
+            <AreaChart series={top} column="ele" axis="ele" baseline="floor" />
             <LineChart series={top} column="pace" axis="pace" as="secondary" />
           </Layers>
         </ChartRow>

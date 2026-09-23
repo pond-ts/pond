@@ -123,8 +123,9 @@ export function fillAffineArea(
  * The `[min, max]` vertical extent an area occupies — the finite values of
  * `cs.y` widened to include `baseline`, since the fill spans from each value to
  * the baseline (so the baseline must be in-domain or the fill clips). `null` if
- * no value is finite. When `baseline` is `undefined` the area rests on the
- * axis's own lower bound (resolved later), so only the values constrain the
+ * no value is finite. When `baseline` is `undefined` (`<AreaChart
+ * baseline="floor">`) the area rests on the axis's own lower bound (resolved
+ * later), so only the values constrain the
  * domain — matching {@link yExtent}.
  *
  * NaN values (the gap signal) are ignored, so a coast doesn't drag the domain.
@@ -159,10 +160,10 @@ export function areaExtent(
  *
  * Two forms, selected by `baseline`:
  *
- * - **Elevation** (`baseline` = the axis lower bound, supplied as the resolved
- *   `baselineValue`): the line sits above the baseline, the shade grades down
+ * - **Floor** (`<AreaChart baseline="floor">` — the axis lower bound,
+ *   supplied as the resolved `baselineValue`): the line sits above the baseline, the shade grades down
  *   from it — the estela elevation look.
- * - **Above/below axis** (`baseline` = `0`): positive values fill up, negative
+ * - **Above/below a level** (`baseline` = `0`, the default, or any number): positive values fill up, negative
  *   fill down (d3's `area` handles the zero crossing in one path). The gradient
  *   is anchored at the baseline pixel so each side grades *away* from the axis —
  *   opaque at the line, transparent at the axis — in both directions. Compose
@@ -592,8 +593,13 @@ export function areaHitIndex(
   // slope and not a staircase. Guard the degenerate same-pixel pair.
   const t = xi === xj ? 0 : (px - xj) / (xi - xj);
   const edgePx = yScale(yj + (yi - yj) * Math.max(0, Math.min(1, t)));
-  const basePx =
-    baseline === undefined ? baselinePxFromScale(yScale) : yScale(baseline);
+  // A baseline with no position on this axis (zero on a log axis) falls back
+  // to the axis floor — the same resolution the draw uses. Without it `basePx`
+  // is NaN, both range checks below are false, and every point hits.
+  const fixedPx = baseline === undefined ? NaN : yScale(baseline);
+  const basePx = Number.isFinite(fixedPx)
+    ? fixedPx
+    : baselinePxFromScale(yScale);
   const top = Math.min(edgePx, basePx) - tolerance;
   const bottom = Math.max(edgePx, basePx) + tolerance;
   if (py < top || py > bottom) return null;
