@@ -23,7 +23,13 @@ import { LineChart } from '../src/LineChart.js';
 import { Marker } from '../src/annotations.js';
 import { XAxis } from '../src/XAxis.js';
 import { YAxis } from '../src/YAxis.js';
-import { CrosshairCursor } from '../src/cursors.js';
+import {
+  CrosshairCursor,
+  FlagCursor,
+  InlineCursor,
+  LineCursor,
+  PointCursor,
+} from '../src/cursors.js';
 import type { CursorFormat } from '../src/format.js';
 import { ContainerContext, type ContainerFrame } from '../src/context.js';
 
@@ -295,5 +301,55 @@ describe('the #508 leak: timeFormat + cursorFormat together', () => {
     // into the labels the moment timeFormat disqualified the ladder).
     expect(labels.some((l) => /^\d{4}-\d{2}-\d{2}$/.test(l))).toBe(false);
     expect(labels.some((l) => /^2026$/.test(l))).toBe(true);
+  });
+});
+
+describe('format on every cursor preset feeds the readout channel', () => {
+  // `format` used to live on the container (`cursorFormat`); it now rides on
+  // whichever cursor is mounted, so each preset must carry it through. A
+  // value-axis `<Marker indicator>` pill reads the channel with no pointer.
+  const presets = {
+    LineCursor: <LineCursor format="+.3f" />,
+    PointCursor: <PointCursor format="+.3f" />,
+    InlineCursor: <InlineCursor format="+.3f" />,
+    FlagCursor: <FlagCursor format="+.3f" />,
+    CrosshairCursor: <CrosshairCursor format="+.3f" />,
+  };
+  for (const [name, cursor] of Object.entries(presets)) {
+    it(`<${name} format> shapes the marker pill`, () => {
+      const { container } = render(
+        <ChartContainer range={[0, 2400]} width={480} showAxis={false}>
+          {cursor}
+          <ChartRow height={120}>
+            <YAxis id="a" min={0} max={200} />
+            <Layers>
+              <LineChart series={rideByDistance()} column="hr" axis="a" />
+              <Marker at={530} label={false} indicator />
+            </Layers>
+          </ChartRow>
+          <XAxis />
+        </ChartContainer>,
+      );
+      expect(within(container).getByText('+530.000')).toBeTruthy();
+    });
+  }
+
+  it('the first mounted cursor with a format wins', () => {
+    const { container } = render(
+      <ChartContainer range={[0, 2400]} width={480} showAxis={false}>
+        <LineCursor />
+        <PointCursor format="+.1f" />
+        <FlagCursor format="+.3f" />
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={200} />
+          <Layers>
+            <LineChart series={rideByDistance()} column="hr" axis="a" />
+            <Marker at={530} label={false} indicator />
+          </Layers>
+        </ChartRow>
+        <XAxis />
+      </ChartContainer>,
+    );
+    expect(within(container).getByText('+530.0')).toBeTruthy();
   });
 });

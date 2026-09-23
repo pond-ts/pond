@@ -106,13 +106,13 @@ const legacyC = {
   regionSelectModifier: undefined,
   xKind: 'time',
 };
-const mkEntry = (ownsGesture, legacy) => ({
+const mkEntry = (ownsGesture) => ({
   spec: {},
   rowKey: null,
-  legacy,
   ownsGesture,
   wants: {
     samples: false,
+    reticle: false,
     flags: false,
     band: false,
     pointer: false,
@@ -144,9 +144,7 @@ const DOWNS = 10_000;
 }
 for (const C of [2, 8]) {
   const rowKey = Symbol('row');
-  const entries = Array.from({ length: C }, (_, i) =>
-    mkEntry(i === C - 1, i === 0),
-  );
+  const entries = Array.from({ length: C }, (_, i) => mkEntry(i === C - 1));
   const r = benchmark(
     `DOWN   after: resolve claim, C=${C} entries x${DOWNS}`,
     () => {
@@ -179,7 +177,7 @@ for (const C of [2, 8]) {
   const buckets = makeBuckets(B);
   const xScale = scaleLinear().domain([0, B]).range([0, PLOT_W]);
   const rowKey = Symbol('row');
-  const entries = [mkEntry(false, true), mkEntry(true, false)];
+  const entries = [mkEntry(false), mkEntry(true)];
   const r = benchmark(`DRAG   full gesture, B=${B}, ${MOVES} moves`, () => {
     const claim = resolveBrushClaim({
       creating: false,

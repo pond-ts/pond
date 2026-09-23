@@ -3171,9 +3171,11 @@ kept a removed prop alive. What followed from that:
 - **"No cursor in this row only"** used to be `<ChartRow cursor="none">`. It is
   now "mount the cursors per row" — a row with its own mounts ignores the
   container's, so the row that wants nothing simply has no mount.
-- **The `<MultiSelector>` resting band shows by default** on a row with no
-  cursor. It was hidden before because the implicit line counted as a mounted
-  cursor. This is the behaviour the resting preview was designed for.
+- **The `<MultiSelector>` resting band is unchanged.** It already replaced
+  the implicit line; now it shows whenever no cursor is mounted, and any
+  mounted cursor replaces it. So a `<MultiSelector>` row must **not** gain a
+  `<LineCursor />` in migration (the Layer-2 review caught the changelog
+  advising exactly that).
 - **Every example and story that relied on the implicit line now mounts
   `<LineCursor />` explicitly**, so the site and the visual baselines look the
   same as before. That is deliberate: the change is to the default, not to

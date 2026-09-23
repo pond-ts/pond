@@ -97,7 +97,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   used to be skipped by the crosshair entirely: the line sat wherever the
   pointer was and there was no value to read. The flag cursor still shows the
   box's one consolidated flag, and the point / inline / flag cursors still draw
-  no per-quantile dots on a box. Story `Cursors/Crosshair / BoxPlot`.
+  no per-quantile dots on a box. In a row with a box and a line, the vertical
+  line snaps to whichever of the two is drawn on top, the same rule as for two
+  lines. Story `Cursors/Crosshair / BoxPlot`.
 
 ### Changed
 
@@ -138,7 +140,7 @@ include new features and type-level changes; patch bumps are strictly additive.
 
   | Before                                           | After                                                                        |
   | ------------------------------------------------ | ---------------------------------------------------------------------------- |
-  | no `cursor` prop (the implicit line)             | `<LineCursor />`                                                             |
+  | no `cursor` prop (the implicit line)             | `<LineCursor />` (not on a `<MultiSelector>` row — see below)                |
   | `cursor="line" \| "point" \| "inline" \| "flag"` | `<LineCursor />` / `<PointCursor />` / `<InlineCursor />` / `<FlagCursor />` |
   | `cursor="crosshair"` + `crosshairSnap={false}`   | `<CrosshairCursor snap={false} />`                                           |
   | `cursorTime`                                     | `showTime` on the cursor                                                     |
@@ -152,8 +154,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   Mount the cursor as a child of `<ChartContainer>` for every row, or inside
   one `<ChartRow>` for that row only. A row that should have no cursor while
   its siblings have one: mount the cursors per row instead of at the
-  container. With a `<MultiSelector>` and no cursor mounted, the row now shows
-  the selector's resting band (it used to be hidden under the implicit line).
+  container. **Don't add `<LineCursor />` to a row with a `<MultiSelector>`**:
+  there the selector's resting band is the cursor (as it already was under the
+  implicit line), and any mounted cursor replaces the band.
 
 ### Fixed
 

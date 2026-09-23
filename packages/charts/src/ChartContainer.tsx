@@ -1995,9 +1995,9 @@ function ResolvedChartContainer({
     // or a time-axis histogram with no explicit sequence). `binIntervals` is only
     // published by a vertical bar layer, so this is a no-op for
     // line/area/scatter rows. On a **category** axis the bins are the unit
-    // slots `[i, i+1)`: the region cursor never reads them (its band gates on
-    // a continuous axis), but the `<MultiSelector>` sweep's band snaps over
-    // them so it runs slot-edge to slot-edge — the band scale's `invert`
+    // slots `[i, i+1)`: the `<RangeCursor>` band shades the slot under the
+    // pointer ([PND-ORDCURSOR]), and the `<MultiSelector>` sweep's band snaps
+    // over them so it runs slot-edge to slot-edge — the band scale's `invert`
     // returns slot *centres*, and a centre-to-centre band disagreed with the
     // snapped-outward span the release commits (RFC A7.6's edge rule).
     //

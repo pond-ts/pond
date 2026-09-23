@@ -1797,8 +1797,7 @@ export function Layers({ children }: LayersProps) {
       ? (container.formatReadout ?? formatTime)(cursorTime)
       : null;
 
-  // The range cursor's band (continuous x axis — time or value): shade the
-  // span under the pointer. With snap buckets (a sequence / a histogram's
+  // The range cursor's band: shade the span under the pointer. With snap buckets (a sequence / a histogram's
   // bins) the band snaps to the bucket (and extends bucket by bucket under a
   // drag); with none it's the **freeform** case — a bare hover draws a
   // plain line (`bandLine`), a drag shades the raw `[anchor, pointer]`. Edges
@@ -1822,9 +1821,21 @@ export function Layers({ children }: LayersProps) {
   // pointer ([PND-ORDCURSOR]). Its buckets are the unit slots `[i, i+1)` —
   // a vertical bar layer already publishes exactly those as `cursorBuckets`;
   // a category row with no bar layer (a heat map) gets them from the band
-  // scale's domain. The range *drag* stays off there (`resolveRangeDrag`): it
-  // reports a numeric span, and a category chart selects slots, which is
-  // `<MultiSelector>`'s gesture.
+  // scale's domain (`categoryBandSlots`). The range *drag* stays off there
+  // (`resolveRangeDrag`): it reports a numeric span, and a category chart
+  // selects slots, which is `<MultiSelector>`'s gesture.
+  // The slot fallback is for the cursor's band only: a sweep or the resting
+  // brush keeps reading `cursorBuckets` alone, exactly as before. Memoized on
+  // the scale, so a pointer move doesn't rebuild the slots.
+  const categoryBandSlots = useMemo(
+    () =>
+      wantsBand &&
+      container.xKind === 'category' &&
+      container.cursorBuckets === undefined
+        ? categorySlots(xScale.domain())
+        : undefined,
+    [wantsBand, container.xKind, container.cursorBuckets, xScale],
+  );
   const bandActive =
     wantsBand ||
     (sweeping && sweepRect === null && sweepBandY === null) ||
@@ -1832,10 +1843,7 @@ export function Layers({ children }: LayersProps) {
   const band: { x0: number; x1: number } | null =
     bandActive && cursorTime !== null
       ? bandRect(
-          container.cursorBuckets ??
-            (container.xKind === 'category'
-              ? categorySlots(xScale.domain())
-              : []),
+          container.cursorBuckets ?? categoryBandSlots ?? [],
           cursorTime,
           (v) => xScale(v),
           plotWidth,
