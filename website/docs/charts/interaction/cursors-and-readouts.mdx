@@ -10,35 +10,43 @@ import LearnTrackerReadout from '@site/src/examples/learn-06-tracker-readout';
 # Cursors & readouts
 
 The **cursor** is how a chart reports the value under the pointer. It's a
-per-row presentation set with the `cursor` prop on `<ChartContainer>` (a row
-can override the container default); the vertical time line itself is **shared
-across every row** in the container, so hovering one row moves the cursor on
-all of them.
+component you mount as a child of `<ChartContainer>` — mount one to get a
+cursor, mount none for no cursor. Mounted inside a `<ChartRow>` instead, it
+overrides the container's cursor for that row. The vertical time line itself
+is **shared across every row** in the container, so hovering one row moves the
+cursor on all of them.
 
-This page is the complete mode + prop reference. For the guided first pass —
+```tsx
+<ChartContainer range={range} width={560}>
+  <CrosshairCursor />
+  <ChartRow height={200}>{/* … */}</ChartRow>
+</ChartContainer>
+```
+
+This page is the complete component + prop reference. For the guided first pass —
 building up from a bare line cursor to a trading-terminal crosshair — see
 [Learn charts, chapter 6](../../learn-charts/cursors-readouts-zoom). For
 the per-prop visual walk, see the `Cursors/*`
 [Storybook groups](pathname:///storybook/?path=/story/cursors-line--interactive).
 
-## The seven modes
+## The cursor components
 
-`cursor` takes one of seven exclusive `CursorMode` values. Every mode except
-`none` and `region` is an **in-chart readout** — it draws marks at the hovered
-sample; `region` is a **selection** gesture (see
+Six components, one per presentation. Every one except `<RangeCursor>` is an
+**in-chart readout** — it draws marks at the hovered sample; `<RangeCursor>` is
+a **selection** gesture (see
 [Pan, zoom & range selection](./pan-zoom-and-range-selection.mdx)).
 
-| `cursor`      | What it draws                                                                                                                                                                                                                                                                           |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `'none'`      | No in-chart cursor. Pair with `onTrackerChanged` for a fully off-chart readout.                                                                                                                                                                                                         |
-| `'line'`      | **Default.** The synced vertical line only, no per-series marks.                                                                                                                                                                                                                        |
-| `'point'`     | A dot on each series at the cursor, no line.                                                                                                                                                                                                                                            |
-| `'inline'`    | Dots plus a value chip beside each series.                                                                                                                                                                                                                                              |
-| `'flag'`      | Dots plus value flags. (Staffed-flag geometry lands in a later phase; for now flags stack at top.)                                                                                                                                                                                      |
-| `'crosshair'` | A single reticle — the vertical line, a horizontal line and a dot on the nearest series — with that value pinned to **its own** y-axis as an on-axis pill and the cursor time pinned to the x-axis: the ChartIQ / trading-terminal readout. Values snap to the series, not raw mouse Y. |
-| `'region'`    | Shades the bucket under the pointer and enables drag-to-select. Needs `cursorSequence` for bucket snapping; see the range-selection page.                                                                                                                                               |
+| Component             | What it draws                                                                                                                                                                                                                                                                           |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| _(none mounted)_      | No in-chart cursor. Pair with `onTrackerChanged` for a fully off-chart readout.                                                                                                                                                                                                         |
+| `<LineCursor />`      | The synced vertical line only, no per-series marks.                                                                                                                                                                                                                                     |
+| `<PointCursor />`     | A dot on each series at the cursor, no line.                                                                                                                                                                                                                                            |
+| `<InlineCursor />`    | Dots plus a value chip beside each series.                                                                                                                                                                                                                                              |
+| `<FlagCursor />`      | Dots plus value flags. (Staffed-flag geometry lands in a later phase; for now flags stack at top.)                                                                                                                                                                                      |
+| `<CrosshairCursor />` | A single reticle — the vertical line, a horizontal line and a dot on the nearest series — with that value pinned to **its own** y-axis as an on-axis pill and the cursor time pinned to the x-axis: the ChartIQ / trading-terminal readout. Values snap to the series, not raw mouse Y. |
+| `<RangeCursor />`     | Shades the bucket under the pointer and enables drag-to-select. Takes a `sequence` for bucket snapping; see the range-selection page.                                                                                                                                                   |
 
-The five hover-readout modes, switchable live:
+The five hover-readout cursors, switchable live:
 
 <ChartExample name="learn-06-cursor-modes" height={300}>
   <LearnCursorModes />
@@ -46,7 +54,7 @@ The five hover-readout modes, switchable live:
 
 ## Off-chart readouts — `onTrackerChanged`
 
-Any mode (including `'none'` and `'line'`) can drive a readout you render
+Any cursor (or none at all) can drive a readout you render
 yourself — a legend, a stat row, a table beside the chart. `onTrackerChanged`
 fires on hover with a snapshot of the cursor time and every series' value
 there, and fires with `null` when the pointer leaves:
@@ -78,15 +86,20 @@ changing).
 
 ## Cursor props
 
-All of these are on `<ChartContainer>`:
+On `<ChartContainer>`:
 
-| Prop               | Type                     | Default  | Purpose                                                                                                                            |
-| ------------------ | ------------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `cursor`           | `CursorMode`             | `'line'` | The in-chart cursor presentation (a `<ChartRow>` can override per row).                                                            |
-| `onTrackerChanged` | `(info \| null) => void` | —        | Hover snapshot for an off-chart readout; `null` on leave.                                                                          |
-| `trackerPosition`  | `number \| null`         | —        | **Followed** cursor position (epoch ms) for when this chart isn't the one hovered. A local hover wins over it. `null`/omit = none. |
-| `cursorTime`       | `boolean`                | `false`  | Show the cursor's time atop the in-chart readout, formatted by `timeFormat`.                                                       |
-| `crosshairSnap`    | `boolean`                | `true`   | `crosshair` reticle Y-snapping. `false` = free reticle (`yScale.invert(pointerY)`), no snap.                                       |
+| Prop               | Type                     | Default | Purpose                                                                                                                            |
+| ------------------ | ------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `onTrackerChanged` | `(info \| null) => void` | —       | Hover snapshot for an off-chart readout; `null` on leave.                                                                          |
+| `trackerPosition`  | `number \| null`         | —       | **Followed** cursor position (epoch ms) for when this chart isn't the one hovered. A local hover wins over it. `null`/omit = none. |
+
+On the cursor components:
+
+| Prop       | On                                                                           | Default                               | Purpose                                                                                                            |
+| ---------- | ---------------------------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `showTime` | `LineCursor`, `PointCursor`, `InlineCursor`, `FlagCursor`, `CrosshairCursor` | `false` (`true` on `CrosshairCursor`) | Show the cursor's time atop the in-chart readout (the crosshair pins it to the x axis), formatted by `timeFormat`. |
+| `snap`     | `CrosshairCursor`                                                            | `true`                                | Reticle Y-snapping. `false` = free reticle (`yScale.invert(pointerY)`), no snap.                                   |
+| `format`   | `CrosshairCursor`                                                            | —                                     | Format for the x-axis time pill (also shapes marker indicators and annotation auto-labels).                        |
 
 `trackerPosition` is the one to reach for when the cursor should follow
 something other than this chart's own mouse — a playback head, a value
@@ -94,8 +107,8 @@ picked in a sibling component, or **another chart's cursor** (below). It is
 a _followed_ position, not a hard pin: a live hover on this chart always
 wins over it, so a chart is never stuck showing an external cursor while the
 user is pointing at it. The vertical line always snaps its **x** to the data
-grid so the time readout stays clean, in every mode. To force a chart to
-_never_ show a cursor, use `cursor="none"` — not `trackerPosition={null}`.
+grid so the time readout stays clean, with every cursor. To force a chart to
+_never_ show a cursor, mount no cursor component — not `trackerPosition={null}`.
 
 ## Syncing cursors across charts
 
@@ -128,6 +141,7 @@ function Dashboard({ cpu, mem }: { cpu: TimeSeries; mem: TimeSeries }) {
       trackerPosition={cursor} // follow the shared time…
       onTrackerChanged={(info) => setCursor(info?.time ?? null)} // …and report ours
     >
+      <LineCursor />
       <ChartRow height={120}>
         <YAxis id={id} min={0} max={100} />
         <Layers>
@@ -158,10 +172,10 @@ shows every chart's value at the one cursor.
 
 - **Mouse-only.** There is no keyboard or touch cursor yet — the readout
   follows a pointer.
-- **`flag` staffs are provisional.** Flags currently stack at the top of the
+- **`<FlagCursor>` staffs are provisional.** Flags currently stack at the top of the
   plot rather than staffing from each point; the geometry is a later phase.
-- **`crosshair` values snap to the series,** so the axis pill reads like a tick
-  — set `crosshairSnap={false}` only if you want the horizontal line to track
+- **`<CrosshairCursor>` values snap to the series,** so the axis pill reads like a tick
+  — set `<CrosshairCursor snap={false} />` only if you want the horizontal line to track
   the raw pointer Y instead.
 - **The pill sits on the axis that measured the value**, including when a side
   carries several axes (it lands on that axis's column, not against the plot),
@@ -179,7 +193,7 @@ shows every chart's value at the one cursor.
 ## See also
 
 - [Learn charts, chapter 6](../../learn-charts/cursors-readouts-zoom) —
-  the tutorial that builds these up one mode at a time.
+  the tutorial that builds these up one cursor at a time.
 - [Selection & hover](./selection-and-hover.mdx) — clicking a data mark
   (distinct from the hover readout).
 - [Sweeps & multi-select](./sweeps-and-multi-select.mdx) — dragging across a
@@ -188,7 +202,7 @@ shows every chart's value at the one cursor.
   the **marks** in one. They share the drag band renderer, and `sequence` snaps
   both.
 - [Pan, zoom & range selection](./pan-zoom-and-range-selection.mdx) — the
-  `region` cursor and the select-to-zoom loop.
+  `<RangeCursor>` and the select-to-zoom loop.
 - Storybook: [`Cursors/Scenarios/Synced Charts`](pathname:///storybook/?path=/story/cursors-scenarios--synced-charts) —
   the cross-chart sync worked example.
 - Storybook: [`Cursors/Line`](pathname:///storybook/?path=/story/cursors-line--interactive),

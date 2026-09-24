@@ -22,6 +22,7 @@ import { Layers } from '../src/Layers.js';
 import { LineChart } from '../src/LineChart.js';
 import { YAxis } from '../src/YAxis.js';
 import { ContainerContext, type ContainerFrame } from '../src/context.js';
+import { RangeCursor } from '../src/cursors.js';
 
 afterEach(cleanup);
 
@@ -60,12 +61,8 @@ function pointer(type: string, x: number, buttons: number): Event {
 function mount(onRegionSelect: (r: readonly [number, number]) => void) {
   let frame: ContainerFrame | null = null;
   const { container } = render(
-    <ChartContainer
-      range={[0, 1000]}
-      width={320}
-      cursor="region"
-      onRegionSelect={onRegionSelect}
-    >
+    <ChartContainer range={[0, 1000]} width={320}>
+      <RangeCursor onDragRelease={(span) => onRegionSelect(span.x)} />
       <ChartRow height={120}>
         <YAxis id="a" min={0} max={10} />
         <Layers>

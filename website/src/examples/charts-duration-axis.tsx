@@ -5,6 +5,7 @@ import {
   LineChart,
   XAxis,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { TimeSeries } from 'pond-ts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -33,6 +34,7 @@ export default function ChartsDurationAxis() {
 
   return (
     <ChartContainer showAxis={false} width={560} theme={theme} origin="data">
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="hr" label="bpm" width={44} />
         <Layers>

@@ -41,6 +41,7 @@ import {
   YAxis,
   defaultTheme,
   type ChartTheme,
+  LineCursor,
 } from '@pond-ts/charts';
 
 export interface Frames {
@@ -404,6 +405,7 @@ function Figure(props: {
           onTimeRangeChange: props.onRangeChange,
         })}
       >
+        <LineCursor />
         <ChartRow height={170}>
           <YAxis
             id="y"

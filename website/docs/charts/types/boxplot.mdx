@@ -55,17 +55,19 @@ q3, upper })` / `boxFromValueSeries`.
 
 ## Interaction & theming
 
-- **Cursor:** reads the box **under** the cursor (span containment) and shows a
-  single consolidated flag at the box top with every quantile in one row, each
-  coloured to its piece. This **opts the box out** of the crosshair reticle
-  x-snap (unlike [Candlestick](./candlestick.mdx), which opts in).
+- **Cursor:** reads the box **under** the cursor (span containment). The flag
+  cursor shows a single consolidated flag at the box top with every quantile in
+  one row, each coloured to its piece. The crosshair **snaps to the box**: its
+  vertical line lands on the box centre and its horizontal line on the quantile
+  nearest the pointer, with that value on the y-axis pill. `onSnap` reports that
+  quantile: its `label` is the quantile's column name, or `"<as> q3"` style
+  when the box has an `as`.
 - **Selection:** **id-gated** — set `id` and a box is clickable (the same
   `selected`/`onSelect`, `hovered`/`onHover` contract Line/Scatter/Bar carry). A
   click anywhere in a box (body or whisker — a range-only bid→ask segment
   included) selects it via rect-containment; the selected box outlines, a
   hovered one lights fainter. `key` is the box's `x` (its span begin). Without
-  `id` the box is display-only. Independent of the cursor opt-out above — a box
-  is selectable whether or not the reticle snaps to it.
+  `id` the box is display-only. Independent of the cursor.
 - **Theming:** the `theme.box` slot (`BoxStyle` with fill / stroke / median /
   whisker); the selection outline reuses `stroke` (no new token).
 

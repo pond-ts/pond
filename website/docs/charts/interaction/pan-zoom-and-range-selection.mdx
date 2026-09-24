@@ -19,33 +19,38 @@ prop reference. See
 the narrative and the [`Cursors/Region`](pathname:///storybook/?path=/story/cursors-region--drag-to-select)
 Storybook group for the per-variant walk.
 
-## Range selection — `cursor="region"`
+## Range selection — `<RangeCursor>`
 
-Setting `cursor="region"` and providing `onRegionSelect` makes the region
+Mounting a `<RangeCursor>` and giving it an `onDragRelease` makes the range
 cursor **draggable**: the user drags across the plot and, on release, you get
-the selected range once.
+the selected span once.
 
 ```ts
-cursor="region"
-cursorSequence?: Sequence | BoundedSequence; // bucket snapping (time axis only)
-onRegionSelect?: (range: readonly [number, number]) => void; // [lo, hi] on release
+interface RangeCursorProps {
+  sequence?: Sequence | BoundedSequence; // bucket snapping (time axis only)
+  onDragRelease?: (span: RangeSpan) => void; // { x: [lo, hi] } on release
+  enableDrag?: boolean; // false freezes the drag without unwiring the callback
+  dragModifier?: 'shift'; // with pan on: plain drag pans, shift-drag selects
+}
 ```
 
-- **`onRegionSelect` fires once, on release,** with `[lo, hi]` — always
-  ordered low-to-high regardless of drag direction. Providing it is what turns
-  the region cursor draggable; it's a **notification** — the container never
-  zooms itself in response.
-- **`cursorSequence`** snaps the shaded band to buckets (whole minutes, whole
+- **`onDragRelease` fires once, on release,** with `{ x: [lo, hi] }` — `x`
+  always ordered low-to-high regardless of drag direction. Providing it is what
+  turns the range cursor draggable; it's a **notification** — the container
+  never zooms itself in response.
+- **`sequence`** snaps the shaded band to buckets (whole minutes, whole
   sessions) as the drag extends, and is **time-axis only** — a "minute" is
-  meaningless on a value axis. With no `cursorSequence` the region cursor is
-  the degenerate free-drag case (pixel-precise, no snapping), which is what a
+  meaningless on a value axis. With no `sequence` the range cursor is the
+  degenerate free-drag case (pixel-precise, no snapping), which is what a
   value-axis selection uses.
-- Range selection works on a **time or value** x axis; it's excluded on a
-  category axis.
+- Range selection works on a **time or value** x axis. On a **category**
+  axis the `<RangeCursor>` band still shades the bar under the pointer, but
+  the drag is off and `onDragRelease` never fires. To drag across bars and get
+  them back, mount a `<MultiSelector>`.
 
 ## The select-to-zoom loop
 
-Zooming is `onRegionSelect` → your state → controlled `range`. The container
+Zooming is `onDragRelease` → your state → controlled `range`. The container
 draws whatever `range` you give it; the selection callback proposes a new one;
 you decide whether to apply it. A "reset" is just setting `range` back to the
 full extent.
@@ -53,11 +58,8 @@ full extent.
 ```tsx
 const [range, setRange] = useState(full);
 
-<ChartContainer
-  range={range}
-  cursor="region"
-  onRegionSelect={(r) => setRange(r)}
->
+<ChartContainer range={range}>
+  <RangeCursor onDragRelease={(span) => setRange(span.x)} />
   {/* … */}
 </ChartContainer>;
 ```
@@ -66,7 +68,7 @@ const [range, setRange] = useState(full);
   <LearnZoom />
 </ChartExample>
 
-Because the container never zooms on its own, the same `onRegionSelect` can
+Because the container never zooms on its own, the same `onDragRelease` can
 drive anything a range means in your app — a filter, a fetch, a linked chart —
 not only a zoom.
 
@@ -127,6 +129,7 @@ The axis strips take gestures too, behind their **own** opt-in:
 
 ```tsx
 <ChartContainer range={range} panZoom="panZoom" axisPanZoom="xy">
+  <LineCursor />
   <YAxis id="price" format="$,.2f" />
   …
   <XAxis />
@@ -185,11 +188,11 @@ Three more things worth knowing:
 
 ## Sharp edges
 
-- **The container never zooms itself.** `onRegionSelect` and
+- **The container never zooms itself.** `onDragRelease` and
   `onTimeRangeChange` are notifications; a controlled `range` is the only thing
   that actually changes what's shown. This is deliberate — a range means
   different things in different apps.
-- **`cursorSequence` is time-axis only.** Bucket snapping needs a temporal
+- **`<RangeCursor sequence>` is time-axis only.** Bucket snapping needs a temporal
   grid; value-axis and category selections don't take one.
 - **Uncontrolled `panZoom` stops tracking `range`** once the user grabs it —
   if you need the view to follow live data, go controlled.
@@ -215,12 +218,12 @@ Three more things worth knowing:
 
 - [Learn charts, chapter 6](../../learn-charts/cursors-readouts-zoom) —
   the select-to-zoom loop taught end to end.
-- [Cursors & readouts](./cursors-and-readouts.mdx) — the other six cursor
-  modes (the readouts, as opposed to `region`'s selection).
+- [Cursors & readouts](./cursors-and-readouts.mdx) — the other five cursor
+  components (the readouts, as opposed to `<RangeCursor>`'s selection).
 - [Sweeps & multi-select](./sweeps-and-multi-select.mdx) — the _other_ drag
-  that selects. `region` gives you a **time range**; a `<MultiSelector>` sweep
+  that selects. `<RangeCursor>` gives you a **time range**; a `<MultiSelector>` sweep
   gives you the **marks** inside one. Worth reading together, because
-  `regionSelectModifier="shift"` claims the shift chord that a selection
+  `<RangeCursor dragModifier="shift">` claims the shift chord that a selection
   handler might otherwise want.
 - Storybook: [`Cursors/Region`](pathname:///storybook/?path=/story/cursors-region--drag-to-select)
   — `DragToSelect`, `Freeform`, `Sessions`, `ValueAxisSelect`, `PanAndSelect`.

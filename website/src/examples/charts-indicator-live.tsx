@@ -7,6 +7,7 @@ import {
   YAxis,
   YAxisIndicator,
   createLiveValue,
+  CrosshairCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { singleHostSeries } from './lib/server-metrics';
@@ -51,12 +52,8 @@ export default function ChartsIndicatorLive() {
   }, [live, rand, last]);
 
   return (
-    <ChartContainer
-      range={series.timeRange()}
-      width={560}
-      theme={theme}
-      cursor="crosshair"
-    >
+    <ChartContainer range={series.timeRange()} width={560} theme={theme}>
+      <CrosshairCursor />
       <ChartRow height={220}>
         <YAxis id="pct" side="right" format=".0%" />
         <Layers>

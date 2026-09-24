@@ -5,6 +5,7 @@ import {
   HeatMap,
   Layers,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import {
   useSiteChartTheme,
@@ -102,6 +103,7 @@ export default function GalleryClimateStripes({
           );
         }}
       >
+        <LineCursor />
         <ChartRow height={200}>
           {/* One row, so the layer's own `[0, 1]` extent is the whole plot.
               `hide` takes the axis off the canvas entirely ([PND-AXISHIDE]):

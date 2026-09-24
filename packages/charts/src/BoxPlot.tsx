@@ -364,9 +364,11 @@ export function BoxPlot<
           // The readout reads the box **under the cursor** (boxIndexAtTime — span
           // containment, not nearest-by-begin which flips past a wide box's
           // midpoint), anchored at the box **centre** `(x + xEnd) / 2`. Outside
-          // every box → no readout. Off-chart fan-in only; the in-chart flag is
-          // `cursorFlag`. `push` skips a non-finite quantile, so an absent
-          // (range-only) q1/q3/median simply doesn't read out.
+          // every box → no readout. Feeds the off-chart readout and the
+          // crosshair (its x-snap lands mid-box, its y-snap on the nearest
+          // quantile); the in-chart flag is `cursorFlag`. `push` skips a
+          // non-finite quantile, so an absent (range-only) q1/q3/median simply
+          // doesn't read out.
           if (bx.length === 0) return [];
           const i = boxIndexAtTime(bx, x);
           if (i < 0) return [];

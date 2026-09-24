@@ -286,11 +286,11 @@ no reshaping into `{x, y}` objects:
 <ChartContainer
   range={ride.timeRange()}
   width={width}
-  cursor="crosshair"
   origin="data"
   panZoom="panZoom"
   bounds={rideBounds}
 >
+  <CrosshairCursor />
   <ChartRow height={220}>
     <YAxis id="w" label="watts" min={0} />
     <Layers>
@@ -335,8 +335,9 @@ no reshaping into `{x, y}` objects:
 A few things worth naming, because they're the conventions you'll meet
 everywhere in pond charts:
 
-- **`cursor="crosshair"`** on the container is the whole hover interaction — it
-  reads values off every layer at once.
+- **`<CrosshairCursor />`** inside the container is the whole hover
+  interaction — it reads values off every layer at once. A cursor is a
+  component you mount; mount none and the chart has no cursor.
 - **`panZoom="panZoom"`** adds drag-to-pan and wheel-to-zoom, and **`bounds`**
   fences them to the ride's own extent so you can't wander off into empty time.
   (`"pan"` if you want dragging but would rather the wheel kept scrolling the
@@ -367,6 +368,7 @@ container — because its x-axis is watts, not time:
 
 ```tsx
 <ChartContainer range={[0, 450]} width={histogramWidth}>
+  <LineCursor />
   <ChartRow height={130}>
     <YAxis id="min" label="minutes" min={0} max={pedallingPeak} />
     <Layers>

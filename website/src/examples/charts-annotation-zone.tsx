@@ -6,6 +6,7 @@ import {
   YAxis,
   Zone,
   type ChartTheme,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { singleHostSeries } from './lib/server-metrics';
@@ -55,6 +56,7 @@ export default function ChartsAnnotationZone({ width }: { width: number }) {
       bounds={[range.begin(), range.end()]}
       minDuration={5 * 60 * 1000}
     >
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="pct" side="right" format=".0%" min={0} max={1} />
         <Layers>

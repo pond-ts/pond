@@ -6,6 +6,7 @@ import {
   LineChart,
   YAxis,
   type DrawStatsFrame,
+  LineCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -83,6 +84,7 @@ export default function GallerySeismograph({
         onDrawStats={onDrawStats}
         timeFormat="%H:%M:%S"
       >
+        <LineCursor />
         <ChartRow height={height}>
           <YAxis id="v" label="velocity (µm/s)" format=",.0f" width={62} />
           <Layers>

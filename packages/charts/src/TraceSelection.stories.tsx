@@ -8,6 +8,7 @@ import { LineChart } from './LineChart.js';
 import { AreaChart } from './AreaChart.js';
 import { YAxis } from './YAxis.js';
 import { MultiSelector } from './selectors.js';
+import { LineCursor } from './cursors.js';
 import { isSpanSelection, sameMark } from './span.js';
 import type { SelectionEntry } from './context.js';
 
@@ -80,6 +81,9 @@ function Demo({ kind }: { kind: 'line' | 'area' }) {
   return (
     <div style={{ width: 560 }}>
       <ChartContainer range={[D0, D0 + (N - 1) * DAY]} width={560}>
+        {/* A trace has no blocks, so there is no resting brush band to stand
+            in as the cursor — mount the line explicitly. */}
+        <LineCursor />
         <MultiSelector
           selected={sel}
           onSelect={(hits, _m, spans) => {

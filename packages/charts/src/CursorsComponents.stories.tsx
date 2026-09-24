@@ -22,12 +22,10 @@ import {
 } from './story-data.fixture.js';
 
 /**
- * **Cursor components** — the mounted-preset successors of the `cursor` string
- * modes (interaction RFC §4 / A4.1). Mount one as a child of
- * `<ChartContainer>` (the default for every row) or **inside a `<ChartRow>`**
- * (the per-row override, replacing `<ChartRow cursor>`). Mount nothing for no
- * cursor (during the deprecation window the legacy default still synthesizes
- * a `<LineCursor>`; `cursor="none"` opts out).
+ * **Cursor components** — the in-chart cursor presets (interaction RFC §4 /
+ * A4.1). Mount one as a child of `<ChartContainer>` (the default for every
+ * row) or **inside a `<ChartRow>`** (the per-row override). Mount nothing for
+ * no cursor.
  *
  * One story per preset (each mounted at the container), then the mount-point
  * axis (in-row, the multi-row override), stacking, and the no-cursor case.
@@ -47,8 +45,7 @@ const meta = {
 export default meta;
 type Story = StoryObj;
 
-/** `<LineCursor />` — the synced vertical line (the container default's
- *  component form). Hover to see it track. */
+/** `<LineCursor />` — the synced vertical line. Hover to see it track. */
 export const Line: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
@@ -96,7 +93,7 @@ export const Inline: Story = {
 };
 
 /** `<FlagCursor showTime />` — staffed value flags stacked near the top, the
- *  shared time atop the stack (`showTime`, the `cursorTime` successor). */
+ *  shared time atop the stack (`showTime`). */
 export const Flag: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
@@ -129,7 +126,7 @@ export const Crosshair: Story = {
 };
 
 /** `<CrosshairCursor snap={false} />` — the **free** reticle: the horizontal
- *  line + value follow the pointer y (the `crosshairSnap={false}` successor).
+ *  line + value follow the pointer y.
  *  Hover-driven — hover the plot to see it. */
 export const CrosshairFree: Story = {
   render: () => (
@@ -146,8 +143,8 @@ export const CrosshairFree: Story = {
 };
 
 /** `<RangeCursor sequence />` — the hover-time **band**: the 15-minute bucket
- *  under the pointer, snapped to the sequence (the `cursor="region"` +
- *  `cursorSequence` successor). The drag lands in the next step. */
+ *  under the pointer, snapped to the sequence. The drag is fanned out under
+ *  `Cursors/Range`. */
 export const Range: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
@@ -179,7 +176,7 @@ export const RangeFreeform: Story = {
 };
 
 /** `showTime` on a render-only preset — the shared time atop the readout,
- *  once, on the first row (the `cursorTime` successor). */
+ *  once, on the first row. */
 export const ShowTime: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
@@ -256,12 +253,12 @@ export const StackedRenderOnly: Story = {
   ),
 };
 
-/** **No cursor.** During the deprecation window mounting nothing still keeps
- *  the legacy `'line'` default (the shim), so opting out is `cursor="none"`;
- *  once the window closes, mounting nothing IS the no-cursor case. */
+/** **No cursor.** Mount nothing — there is no implicit default, so a chart
+ *  with no cursor component shows no cursor (the tracker still reports via
+ *  `onTrackerChanged`). */
 export const NoCursor: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} cursor="none">
+    <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={s} column="fast" as="primary" axis="usd" />

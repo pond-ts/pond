@@ -9,6 +9,7 @@ import {
   Marker,
   Region,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -63,9 +64,9 @@ export default function GallerySlaIncidents({
       range={range}
       width={width}
       theme={theme}
-      cursor={editable ? 'none' : 'line'}
       editAnnotations={editable}
     >
+      {!editable && <LineCursor />}
       <ChartRow height={showBudget ? Math.round(height * 0.62) : height}>
         <YAxis id="err" side="right" format=".2%" width={52} />
         <Layers>

@@ -95,6 +95,7 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 
 // Five hosts is past the point where distinct hues help — a five-colour stack
@@ -105,6 +106,7 @@ const ramp = useSequentialRamp(HOSTS.length); // ['#0c444b', … '#bbe8df']
 const hostColors = Object.fromEntries(HOSTS.map((h, i) => [h, ramp[i]]));
 
 <ChartContainer range={[hourStart, hourEnd]} width={660}>
+  <LineCursor />
   <ChartRow height={260}>
     <YAxis id="count" label="incidents" min={0} pad={0.06} />
     <Layers>
@@ -239,6 +241,7 @@ const ZONES = ['Recovery', 'Endurance', 'Aerobic', 'Threshold', 'Max'];
 const zoneTicks = ZONES.map((label, i) => ({ at: i + 0.5, label }));
 
 <ChartContainer width={660}>
+  <LineCursor />
   <ChartRow height={230}>
     <YAxis id="zone" label="zone" width={92} ticks={zoneTicks} />
     <Layers>
@@ -288,6 +291,7 @@ from the bins, so the x ticks read as watts:
 
 ```tsx
 <ChartContainer range={[0, 300]} width={660}>
+  <LineCursor />
   <ChartRow height={240}>
     <YAxis id="secs" label="seconds" min={0} pad={0.06} />
     <Layers>
@@ -314,6 +318,7 @@ segment's `label` carries the group name and `value` its magnitude:
 
 ```tsx
 <ChartContainer>
+  <LineCursor />
   <Selector onSelect={(hit) => hit && console.log(hit.label, hit.value)}>
     …
     <BarChart series={byHost} column="n" colors={hostColors} id="incidents" />
@@ -322,7 +327,7 @@ segment's `label` carries the group name and `value` its magnitude:
 ```
 
 Hover and click work in both orientations (they hit-test by pixel). The in-chart
-`flag` / `crosshair` value cursor — the one that scrubs along x — is drawn for
+`<FlagCursor>` / `<CrosshairCursor>` value cursor — the one that scrubs along x — is drawn for
 the single-series **vertical** case only; stacked and horizontal charts read out
 through `onHover` / `onSelect` instead.
 

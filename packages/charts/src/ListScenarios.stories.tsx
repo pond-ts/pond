@@ -12,6 +12,7 @@ import { YAxis } from './YAxis.js';
 import { defaultTheme, estelaTheme } from './theme.js';
 import type { ChartTheme } from './theme.js';
 import type { ListRow } from './list.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * The list family's use-case anchors — full compositions from real pond
@@ -331,6 +332,7 @@ export const HoverLinkedChart: StoryObj = {
           Splits — hover either surface
         </h3>
         <ChartContainer range={SPLIT_RANGE} width={760}>
+          <LineCursor />
           <Selector
             hovered={pinned}
             onHover={(hit) => setKey(hit?.mark ?? null)}

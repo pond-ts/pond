@@ -4,6 +4,7 @@ import {
   Layers,
   LineChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { singleHostSeries } from './lib/server-metrics';
@@ -21,6 +22,7 @@ export default function LearnValueAxis() {
 
   return (
     <ChartContainer range={[0, elapsed.length - 1]} width={560} theme={theme}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="pct" side="right" format=".0%" />
         <Layers>

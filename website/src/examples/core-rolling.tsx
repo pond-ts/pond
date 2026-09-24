@@ -8,6 +8,7 @@ import {
   Region,
   ScatterChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { Sequence, TimeSeries } from 'pond-ts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -165,6 +166,7 @@ export default function CoreRolling() {
             width={width}
             theme={theme}
           >
+            <LineCursor />
             <ChartRow height={HEIGHT}>
               <YAxis id="val" side="left" label="value" min={0.2} max={0.85} />
               <Layers>

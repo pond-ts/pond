@@ -5,6 +5,7 @@ import {
   LineChart,
   ScatterChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { smileChain } from './lib/value-axis-fixtures';
@@ -18,6 +19,7 @@ export default function ChartsValueAxisNative() {
 
   return (
     <ChartContainer timeFormat=",.0f" width={560} theme={theme}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="iv" label="implied vol" format=".1%" width={60} />
         <Layers>

@@ -75,6 +75,7 @@ subject goes on top.
 const series = eclipseDemand();
 
 <ChartContainer range={eclipseDemandRange()} width={width}>
+  <LineCursor />
   <ChartRow height={220}>
     <YAxis id="gw" label="GW" format=".1f" width={48} />
     <Layers>
@@ -114,14 +115,14 @@ the story into a sliver. Pass `full` to open all thirty hours:
 
 ## Options to try
 
-| Option               | What it does                                            | Reach for it when                                                                     |
-| -------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `as="muted"`         | Draws a curve in the theme's neutral, off the data ramp | Any reference curve — a model, a baseline run, yesterday                              |
-| A second `<Region>`  | A narrower band inside the first                        | Marking totality's 20:27–20:32 span rather than a single instant                      |
-| `selectable={false}` | Makes a mark inert background context                   | The annotation is context, not something a click should select                        |
-| `cursor="crosshair"` | Reticle + pill snapped to the nearer curve              | Reading the gap sample by sample; nudge across it to flip between the two             |
-| `range`              | Which slice of the record is on screen                  | The zoom-vs-context tradeoff in step 3 — there is no right answer, only an honest one |
-| `curve="monotone"`   | Smooths both lines                                      | Coarser exports (REE also publishes 10-min and hourly views)                          |
+| Option                | What it does                                            | Reach for it when                                                                     |
+| --------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `as="muted"`          | Draws a curve in the theme's neutral, off the data ramp | Any reference curve — a model, a baseline run, yesterday                              |
+| A second `<Region>`   | A narrower band inside the first                        | Marking totality's 20:27–20:32 span rather than a single instant                      |
+| `selectable={false}`  | Makes a mark inert background context                   | The annotation is context, not something a click should select                        |
+| `<CrosshairCursor />` | Reticle + pill snapped to the nearer curve              | Reading the gap sample by sample; nudge across it to flip between the two             |
+| `range`               | Which slice of the record is on screen                  | The zoom-vs-context tradeoff in step 3 — there is no right answer, only an honest one |
+| `curve="monotone"`    | Smooths both lines                                      | Coarser exports (REE also publishes 10-min and hourly views)                          |
 
 ## See also
 

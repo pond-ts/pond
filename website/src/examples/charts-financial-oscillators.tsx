@@ -6,6 +6,7 @@ import {
   Layers,
   LineChart,
   YAxis,
+  CrosshairCursor,
 } from '@pond-ts/charts';
 import '@pond-ts/financial/fluent';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -42,8 +43,8 @@ export default function ChartsFinancialOscillators({
       width={width}
       theme={theme}
       calendar={set.calendar}
-      cursor="crosshair"
     >
+      <CrosshairCursor />
       <ChartRow height={170}>
         <YAxis id="price" side="right" format={set.priceFormat} width={62} />
         <Layers>

@@ -5,6 +5,7 @@ import {
   Layers,
   LineChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { TimeSeries } from 'pond-ts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -177,6 +178,7 @@ export default function CoreSmoothing() {
       <div ref={boxRef} style={{ width: '100%' }}>
         {width > 0 ? (
           <ChartContainer range={RANGE} width={width} theme={theme}>
+            <LineCursor />
             <ChartRow height={HEIGHT}>
               <YAxis
                 id="v"

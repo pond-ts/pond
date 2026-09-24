@@ -128,7 +128,7 @@ _relabeling_, not the axis-kind mixing that throws — the scale is unchanged.
 Two independent channels. **Labels:** `ChartContainer`'s `timeFormat` (or a
 per-instance `<XAxis format>`) shapes the tick labels; a custom label format
 _owns the labels_, so it opts the axis out of the `dateStyle` date styles
-(flat / stacked). **Readout:** `ChartContainer`'s `cursorFormat` shapes the
+(flat / stacked). **Readout:** `<CrosshairCursor format>` shapes the
 crosshair pill, marker indicators, and annotation auto-labels _independently_,
 and does **not** disqualify a date style. Omit both and the readout defaults to
 a **grain-aware** format — a day-or-coarser axis reads a date, a sub-day axis
@@ -148,7 +148,7 @@ Everything that reads time follows: day ticks land on Berlin midnights (23 or
 25 hours apart across a DST change), week and month ticks on Berlin Mondays
 and month starts, labels and the stacked date bands read Berlin dates, and
 the crosshair pill, marker indicators and annotation auto-labels read Berlin
-time. The `timeFormat` / `cursorFormat` specifier strings are unchanged; a
+time. The `timeFormat` / `<CrosshairCursor format>` specifier strings are unchanged; a
 `%Z` now reads the zone's abbreviation (`CEST`) and `%z` its offset. Sub-day
 ticks align to the zone's wall clock, so a 6 h grain reads 00 / 06 / 12 / 18
 on both sides of a DST jump. Function formatters still receive epoch ms; the
@@ -178,6 +178,7 @@ and the exchange's or a colleague's above it:
 
 ```tsx
 <ChartContainer timeZone="UTC" …>
+  <LineCursor />
   <XAxis side="top" timeZone="America/New_York" label="New York" />
   <ChartRow>…</ChartRow>
   <XAxis label="UTC" />
@@ -185,8 +186,8 @@ and the exchange's or a colleague's above it:
 ```
 
 Same instants, different calendars: each strip's day turns sit on its own
-midnight, and each strip's cursor pill reads its own zone. A container
-`cursorFormat` still wins for the pill; a container `timeFormat` string is
+midnight, and each strip's cursor pill reads its own zone. A
+`<CrosshairCursor format>` still wins for the pill; a container `timeFormat` string is
 re-resolved in the strip's zone.
 
 **Trading calendars carry their zone.** A `@pond-ts/financial`
@@ -240,9 +241,9 @@ Four details worth knowing:
 - **Two stacked x-axes look identical** (`id` is `undefined` for both), so
   close over the distinction: `onMouseEvent={(e) => onAxis('delta', e)}`.
 - **`label` is the readout channel, not the tick text.** It always agrees with
-  what the cursor pill says at that pixel, which means a container
-  `cursorFormat` shapes it (the documented `cursorFormat` → axis `format` →
-  container precedence). Set one and `label` reads in the precise form the pill
+  what the cursor pill says at that pixel, which means a
+  `<CrosshairCursor format>` shapes it (the documented cursor `format` → axis
+  `format` → container precedence). Set one and `label` reads in the precise form the pill
   does, which may be finer than the terse tick beneath it.
 
 Axes take no `className`, so use the `data-axis` hooks to style one — e.g.

@@ -23,6 +23,14 @@ import { LineChart } from '../src/LineChart.js';
 import { Marker } from '../src/annotations.js';
 import { XAxis } from '../src/XAxis.js';
 import { YAxis } from '../src/YAxis.js';
+import {
+  CrosshairCursor,
+  FlagCursor,
+  InlineCursor,
+  LineCursor,
+  PointCursor,
+} from '../src/cursors.js';
+import type { CursorFormat } from '../src/format.js';
 import { ContainerContext, type ContainerFrame } from '../src/context.js';
 
 afterEach(cleanup);
@@ -52,10 +60,15 @@ const rideByDistance = () =>
     ],
   }).byValue('cumDist');
 
-function valueFrame(props: Record<string, unknown>): ContainerFrame {
+function valueFrame(allProps: Record<string, unknown>): ContainerFrame {
+  // The readout format rides on a mounted cursor, not the container.
+  const { cursorFormat, ...props } = allProps;
   let frame: ContainerFrame | null = null;
   render(
     <ChartContainer range={[0, 2400]} width={480} {...props}>
+      {cursorFormat !== undefined ? (
+        <CrosshairCursor format={cursorFormat as CursorFormat} />
+      ) : null}
       <ChartRow height={120}>
         <Layers>
           <LineChart series={rideByDistance()} column="hr" />
@@ -114,14 +127,12 @@ describe('axis-strip pill precedence: cursorFormat → axis format → container
     axisFormat?: string;
   }) {
     return render(
-      <ChartContainer
-        range={[0, 2400]}
-        width={480}
-        showAxis={false}
-        {...(props.containerFormat !== undefined
-          ? { cursorFormat: props.containerFormat }
-          : {})}
-      >
+      <ChartContainer range={[0, 2400]} width={480} showAxis={false}>
+        <CrosshairCursor
+          {...(props.containerFormat !== undefined
+            ? { format: props.containerFormat }
+            : {})}
+        />
         <ChartRow height={120}>
           <YAxis id="a" min={0} max={200} />
           <Layers>
@@ -203,8 +214,10 @@ describe('axis-strip pill precedence: cursorFormat → axis format → container
         range={[Date.UTC(2026, 0, 1), Date.UTC(2026, 0, 1) + 20 * day]}
         width={640}
         showAxis={false}
-        {...(cursorFormat !== undefined ? { cursorFormat } : {})}
       >
+        <CrosshairCursor
+          {...(cursorFormat !== undefined ? { format: cursorFormat } : {})}
+        />
         <ChartRow height={120}>
           <YAxis id="a" min={0} max={10} />
           <Layers>
@@ -235,12 +248,8 @@ describe('axis-strip pill precedence: cursorFormat → axis format → container
 describe('annotation auto-labels read the readout channel', () => {
   it('a value-axis marker auto-label is cursorFormat-shaped', () => {
     const { container } = render(
-      <ChartContainer
-        range={[0, 2400]}
-        width={480}
-        showAxis={false}
-        cursorFormat={(v: number) => `@${v.toFixed(1)}`}
-      >
+      <ChartContainer range={[0, 2400]} width={480} showAxis={false}>
+        <CrosshairCursor format={(v: number) => `@${v.toFixed(1)}`} />
         <ChartRow height={120}>
           <YAxis id="a" min={0} max={200} />
           <Layers>
@@ -274,8 +283,8 @@ describe('the #508 leak: timeFormat + cursorFormat together', () => {
         width={640}
         showAxis={false}
         timeFormat="%Y"
-        cursorFormat="%Y-%m-%d"
       >
+        <CrosshairCursor format="%Y-%m-%d" />
         <ChartRow height={120}>
           <Layers>
             <LineChart series={t} column="v" />
@@ -292,5 +301,55 @@ describe('the #508 leak: timeFormat + cursorFormat together', () => {
     // into the labels the moment timeFormat disqualified the ladder).
     expect(labels.some((l) => /^\d{4}-\d{2}-\d{2}$/.test(l))).toBe(false);
     expect(labels.some((l) => /^2026$/.test(l))).toBe(true);
+  });
+});
+
+describe('format on every cursor preset feeds the readout channel', () => {
+  // `format` used to live on the container (`cursorFormat`); it now rides on
+  // whichever cursor is mounted, so each preset must carry it through. A
+  // value-axis `<Marker indicator>` pill reads the channel with no pointer.
+  const presets = {
+    LineCursor: <LineCursor format="+.3f" />,
+    PointCursor: <PointCursor format="+.3f" />,
+    InlineCursor: <InlineCursor format="+.3f" />,
+    FlagCursor: <FlagCursor format="+.3f" />,
+    CrosshairCursor: <CrosshairCursor format="+.3f" />,
+  };
+  for (const [name, cursor] of Object.entries(presets)) {
+    it(`<${name} format> shapes the marker pill`, () => {
+      const { container } = render(
+        <ChartContainer range={[0, 2400]} width={480} showAxis={false}>
+          {cursor}
+          <ChartRow height={120}>
+            <YAxis id="a" min={0} max={200} />
+            <Layers>
+              <LineChart series={rideByDistance()} column="hr" axis="a" />
+              <Marker at={530} label={false} indicator />
+            </Layers>
+          </ChartRow>
+          <XAxis />
+        </ChartContainer>,
+      );
+      expect(within(container).getByText('+530.000')).toBeTruthy();
+    });
+  }
+
+  it('the first mounted cursor with a format wins', () => {
+    const { container } = render(
+      <ChartContainer range={[0, 2400]} width={480} showAxis={false}>
+        <LineCursor />
+        <PointCursor format="+.1f" />
+        <FlagCursor format="+.3f" />
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={200} />
+          <Layers>
+            <LineChart series={rideByDistance()} column="hr" axis="a" />
+            <Marker at={530} label={false} indicator />
+          </Layers>
+        </ChartRow>
+        <XAxis />
+      </ChartContainer>,
+    );
+    expect(within(container).getByText('+530.0')).toBeTruthy();
   });
 });

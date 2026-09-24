@@ -6,6 +6,7 @@ import {
   Marker,
   ScatterChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -46,6 +47,7 @@ export default function GalleryTides({
 
   return (
     <ChartContainer range={range} width={width} theme={theme}>
+      <LineCursor />
       <ChartRow height={height}>
         <YAxis id="m" label="metres above MLLW" format=".1f" width={62} />
         <Layers>

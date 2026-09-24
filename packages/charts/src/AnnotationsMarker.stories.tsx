@@ -7,6 +7,7 @@ import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { Marker } from './annotations.js';
 import { priceSeries, BASE, STEP, RANGE } from './story-data.fixture.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * `<Marker>` — a vertical line at an x position (a time here), in the amber
@@ -23,6 +24,7 @@ const at = (i: number) => BASE + i * STEP;
 function Chart({ children }: { children: ReactNode }) {
   return (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={H}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />

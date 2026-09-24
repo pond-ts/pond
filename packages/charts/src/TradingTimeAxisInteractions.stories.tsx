@@ -17,6 +17,7 @@ import {
   sessionSeq,
   weekdaySessions,
 } from './tradingAxis.fixture.js';
+import { LineCursor, CrosshairCursor, FlagCursor } from './cursors.js';
 
 /**
  * Interaction coverage for the **trading-time (discontinuous) axis** — the
@@ -35,8 +36,8 @@ type Story = StoryObj;
 
 // ── Cursors ────────────────────────────────────────────────────────────────
 
-/** **Crosshair + snap on candlesticks.** `cursor="crosshair"` with the default
- *  `crosshairSnap` — **hover the plot**: the reticle snaps its **x** to the
+/** **Crosshair + snap on candlesticks.** `<CrosshairCursor>` with the default
+ *  `snap` — **hover the plot**: the reticle snaps its **x** to the
  *  nearest candle and reads the time on the x-axis pill, all resolved through the
  *  trading-time scale (`invert(pointer) → sampleAt → scale`), so the overnight
  *  gaps stay collapsed behind it and the snap lands on a real bar. */
@@ -49,8 +50,8 @@ export const CrosshairSnap: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        cursor="crosshair"
       >
+        <CrosshairCursor />
         <ChartRow height={260}>
           <YAxis id="p" side="right" />
           <Layers>
@@ -62,7 +63,7 @@ export const CrosshairSnap: Story = {
   },
 };
 
-/** **Free crosshair** (`crosshairSnap={false}`) — the reticle follows the raw
+/** **Free crosshair** (`snap={false}`) — the reticle follows the raw
  *  pointer y; the vertical line still resolves its **x** through the trading-time
  *  scale, so the time readout stays on the live grid. Hover the plot to see it. */
 export const CrosshairFree: Story = {
@@ -74,9 +75,8 @@ export const CrosshairFree: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        cursor="crosshair"
-        crosshairSnap={false}
       >
+        <CrosshairCursor snap={false} />
         <ChartRow height={260}>
           <YAxis id="p" side="right" />
           <Layers>
@@ -88,7 +88,7 @@ export const CrosshairFree: Story = {
   },
 };
 
-/** **Flag cursor across sessions.** `cursor="flag"` + `cursorTime` — hover and a
+/** **Flag cursor across sessions.** `<FlagCursor showTime>` — hover and a
  *  staff rises from the candle to a value flag; the shared time reads once atop.
  *  Confirms the readout tracks the candle under the pointer across gaps. */
 export const FlagOnCandles: Story = {
@@ -100,9 +100,8 @@ export const FlagOnCandles: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
-        cursor="flag"
-        cursorTime
       >
+        <FlagCursor showTime />
         <ChartRow height={260}>
           <YAxis id="p" side="right" />
           <Layers>
@@ -130,6 +129,7 @@ export const RegionAcrossSessions: Story = {
         range={rangeOf(s)}
         discontinuities={provider(s)}
       >
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="p" side="right" />
           <Layers>
@@ -157,6 +157,7 @@ function EditableRegionDemo() {
       discontinuities={provider(s)}
       editAnnotations
     >
+      <LineCursor />
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -193,6 +194,7 @@ function SnappingDemo() {
       discontinuities={provider(s)}
       editAnnotations
     >
+      <LineCursor />
       <ChartRow height={260}>
         <YAxis id="p" side="right" />
         <Layers>
@@ -229,6 +231,7 @@ export const PanZoom: Story = {
         panZoom
         minDuration={30 * MIN}
       >
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="p" side="right" />
           <Layers>

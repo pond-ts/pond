@@ -11,7 +11,6 @@ import {
   ContainerContext,
   RowContext,
   type CursorEntry,
-  type CursorMode,
   type CursorSnap,
   type CursorWants,
   type RangeSpan,
@@ -32,16 +31,19 @@ import { useSlotKey } from './use-slot-key.js';
 import { isDev } from './dev.js';
 
 /**
- * Cursor **presets** — the mounted-component successors of the `cursor` string
- * modes (interaction RFC §4 / A4.1): `<LineCursor>`, `<PointCursor>`,
- * `<InlineCursor>`, `<FlagCursor>`, `<CrosshairCursor>`, `<RangeCursor>`.
+ * Cursor **presets** (interaction RFC §4 / A4.1): `<LineCursor>`,
+ * `<PointCursor>`, `<InlineCursor>`, `<FlagCursor>`, `<CrosshairCursor>`,
+ * `<RangeCursor>`. **A chart shows a cursor only when one is mounted** —
+ * mounting none means no in-chart cursor (hover still reports through
+ * `onTrackerChanged`).
  *
  * Each preset registers a `CursorSpec` with the container (the
  * `registerAxis` / `registerLayer` idiom): **declared** snap plus render slots
  * taking resolved geometry. The container resolves — the x-snap, the
  * per-sample measurements, the band — and the slots draw (RFC A2.3). Mount a
  * preset as a child of `<ChartContainer>` (the default for every row) or
- * inside a `<ChartRow>` (the per-row override, replacing `<ChartRow cursor>`).
+ * inside a `<ChartRow>` (the per-row override: a row with its own mounts
+ * ignores the container's).
  *
  * Render-only presets may stack; **one cursor owns snap and gesture per
  * scope**, resolved to the hovered row's innermost mount (RFC A2.5) — the
@@ -135,7 +137,7 @@ function cursorLine(f: ResolvedCursorFrame): ReactNode {
 }
 
 /** What a spec builder hands `useCursorMount` — the spec plus the registration
- *  fields that ride alongside it (everything but scope + legacy). */
+ *  fields that ride alongside it (everything but scope). */
 interface BuiltCursor {
   readonly spec: CursorEntry['spec'];
   readonly wants: CursorWants;
@@ -150,14 +152,18 @@ interface BuiltCursor {
 
 const NO_WANTS: CursorWants = {
   samples: false,
+  reticle: false,
   flags: false,
   band: false,
   pointer: false,
   time: false,
 };
 
-/** `cursor="line"` as a spec: the synced vertical line only (+ optional time). */
-function buildLineCursor(o: { showTime: boolean }): BuiltCursor {
+/** `<LineCursor>` as a spec: the synced vertical line only (+ optional time). */
+function buildLineCursor(o: {
+  showTime: boolean;
+  format?: CursorFormat | undefined;
+}): BuiltCursor {
   return {
     spec: {
       snapX: 'none',
@@ -168,11 +174,15 @@ function buildLineCursor(o: { showTime: boolean }): BuiltCursor {
     },
     wants: { ...NO_WANTS, time: o.showTime },
     ownsGesture: false,
+    format: o.format,
   };
 }
 
-/** `cursor="point"` as a spec: a dot on each series, no line. */
-function buildPointCursor(o: { showTime: boolean }): BuiltCursor {
+/** `<PointCursor>` as a spec: a dot on each series, no line. */
+function buildPointCursor(o: {
+  showTime: boolean;
+  format?: CursorFormat | undefined;
+}): BuiltCursor {
   return {
     spec: {
       snapX: 'none',
@@ -183,12 +193,16 @@ function buildPointCursor(o: { showTime: boolean }): BuiltCursor {
     },
     wants: { ...NO_WANTS, samples: true, time: o.showTime },
     ownsGesture: false,
+    format: o.format,
   };
 }
 
-/** `cursor="inline"` as a spec: dots + a value chip beside each, clamped
+/** `<InlineCursor>` as a spec: dots + a value chip beside each, clamped
  *  within the row and flipped left near the right edge. */
-function buildInlineCursor(o: { showTime: boolean }): BuiltCursor {
+function buildInlineCursor(o: {
+  showTime: boolean;
+  format?: CursorFormat | undefined;
+}): BuiltCursor {
   return {
     spec: {
       snapX: 'none',
@@ -227,14 +241,18 @@ function buildInlineCursor(o: { showTime: boolean }): BuiltCursor {
     },
     wants: { ...NO_WANTS, samples: true, time: o.showTime },
     ownsGesture: false,
+    format: o.format,
   };
 }
 
-/** `cursor="flag"` as a spec: dots + staffed value flags stacked near the top
+/** `<FlagCursor>` as a spec: dots + staffed value flags stacked near the top
  *  of the row, plus the consolidated one-chip flag for `cursorFlag` layers
  *  (BoxPlot). The time readout (when shown, first row) tops the stack and the
  *  staffs start just below it. */
-function buildFlagCursor(o: { showTime: boolean }): BuiltCursor {
+function buildFlagCursor(o: {
+  showTime: boolean;
+  format?: CursorFormat | undefined;
+}): BuiltCursor {
   // The flag stack's top: below the time readout when this row shows it.
   const flagBase = (f: ResolvedCursorFrame) =>
     FLAG_TOP +
@@ -329,6 +347,7 @@ function buildFlagCursor(o: { showTime: boolean }): BuiltCursor {
     },
     wants: { ...NO_WANTS, samples: true, flags: true, time: o.showTime },
     ownsGesture: false,
+    format: o.format,
   };
 }
 
@@ -339,14 +358,15 @@ function buildFlagCursor(o: { showTime: boolean }): BuiltCursor {
  * hovered while another is, or when there is nothing to snap to.
  */
 function snappedSample(f: ResolvedCursorFrame): ResolvedCursorSample | null {
-  if (inBoundsX(f) === null || f.samples.length === 0) return null;
+  const samples = f.reticleSamples;
+  if (inBoundsX(f) === null || samples.length === 0) return null;
   const cy = f.cursorY;
   if (f.hoveredRowKey === f.rowKey && cy !== null) {
-    return f.samples.reduce((a, b) =>
+    return samples.reduce((a, b) =>
       Math.abs(b.py - cy) < Math.abs(a.py - cy) ? b : a,
     );
   }
-  return f.hoveredRowKey === null ? f.samples[0]! : null;
+  return f.hoveredRowKey === null ? samples[0]! : null;
 }
 
 /**
@@ -452,7 +472,7 @@ interface SnapReportState {
   live: boolean;
 }
 
-/** `cursor="crosshair"` as a spec: the dashed reticle (renderPlot), the axis
+/** `<CrosshairCursor>` as a spec: the dashed reticle (renderPlot), the axis
  *  value pill (renderYGutter), and the x-axis time pill (renderXAxis). Declares
  *  `snapX: 'sample'` — the container snaps the shared cursorX to the data grid. */
 function buildCrosshairCursor(o: {
@@ -599,14 +619,14 @@ function buildCrosshairCursor(o: {
           }
         : {}),
     },
-    wants: { ...NO_WANTS, samples: true, pointer: !o.snap },
+    wants: { ...NO_WANTS, reticle: true, pointer: !o.snap },
     ownsGesture: true,
     format: o.format,
     reportSnap: o.reportSnap,
   };
 }
 
-/** `cursor="region"` as a spec: the hover-time **band** — the bucket under the
+/** `<RangeCursor>` as a spec: the hover-time **band** — the bucket under the
  *  pointer (sequence-snapped; freeform = a plain line until a drag shades the
  *  raw span) — plus the drag registration the brush recognizer reads
  *  (`resolveRangeDrag`). The container resolves the band; the shared
@@ -640,13 +660,7 @@ function buildRangeCursor(o: {
  * Update-in-place on a prop change (the entry memo), unregister on unmount —
  * the `registerAxis` discipline.
  */
-function useCursorMount(
-  built: BuiltCursor | null,
-  legacy: boolean,
-  /** The container shim's un-asked-for `'line'` default (see
-   *  {@link CursorEntry.implicit}) — never set by component mounts. */
-  implicit = false,
-): void {
+function useCursorMount(built: BuiltCursor | null): void {
   const container = useContext(ContainerContext);
   if (container === null) {
     throw new Error(
@@ -672,10 +686,8 @@ function useCursorMount(
             dragModifier: built.dragModifier,
             reportSnap: built.reportSnap,
             rowKey,
-            legacy,
-            ...(implicit ? { implicit } : {}),
           },
-    [built, rowKey, legacy, implicit],
+    [built, rowKey],
   );
   const { registerCursor, unregisterCursor } = container;
   useEffect(() => {
@@ -692,15 +704,17 @@ export interface LineCursorProps {
   /** Show the cursor's time atop the readout (once, on the first row),
    *  formatted by the container's readout channel. Default `false`. */
   showTime?: boolean;
+  /** The readout format for the time this cursor shows (and for marker
+   *  indicators + annotation auto-labels) — the shared readout channel; see
+   *  {@link CrosshairCursorProps.format}. */
+  format?: CursorFormat;
 }
 
-/** The synced vertical cursor **line** — `cursor="line"` as a component (the
- *  container default during the deprecation window). Pair with an off-chart
- *  readout via `onTrackerChanged`. */
-export function LineCursor({ showTime = false }: LineCursorProps = {}) {
+/** The synced vertical cursor **line**. Pair with an off-chart readout via
+ *  `onTrackerChanged`. */
+export function LineCursor({ showTime = false, format }: LineCursorProps = {}) {
   useCursorMount(
-    useMemo(() => buildLineCursor({ showTime }), [showTime]),
-    false,
+    useMemo(() => buildLineCursor({ showTime, format }), [showTime, format]),
   );
   return null;
 }
@@ -708,13 +722,19 @@ export function LineCursor({ showTime = false }: LineCursorProps = {}) {
 export interface PointCursorProps {
   /** Show the cursor's time atop the readout (first row). Default `false`. */
   showTime?: boolean;
+  /** The readout format for the time this cursor shows (and for marker
+   *  indicators + annotation auto-labels) — the shared readout channel; see
+   *  {@link CrosshairCursorProps.format}. */
+  format?: CursorFormat;
 }
 
-/** A **dot on each series** at the cursor, no line — `cursor="point"`. */
-export function PointCursor({ showTime = false }: PointCursorProps = {}) {
+/** A **dot on each series** at the cursor, no line. */
+export function PointCursor({
+  showTime = false,
+  format,
+}: PointCursorProps = {}) {
   useCursorMount(
-    useMemo(() => buildPointCursor({ showTime }), [showTime]),
-    false,
+    useMemo(() => buildPointCursor({ showTime, format }), [showTime, format]),
   );
   return null;
 }
@@ -722,13 +742,19 @@ export function PointCursor({ showTime = false }: PointCursorProps = {}) {
 export interface InlineCursorProps {
   /** Show the cursor's time atop the readout (first row). Default `false`. */
   showTime?: boolean;
+  /** The readout format for the time this cursor shows (and for marker
+   *  indicators + annotation auto-labels) — the shared readout channel; see
+   *  {@link CrosshairCursorProps.format}. */
+  format?: CursorFormat;
 }
 
-/** Dots **plus a value chip beside each** — `cursor="inline"`. */
-export function InlineCursor({ showTime = false }: InlineCursorProps = {}) {
+/** Dots **plus a value chip beside each**. */
+export function InlineCursor({
+  showTime = false,
+  format,
+}: InlineCursorProps = {}) {
   useCursorMount(
-    useMemo(() => buildInlineCursor({ showTime }), [showTime]),
-    false,
+    useMemo(() => buildInlineCursor({ showTime, format }), [showTime, format]),
   );
   return null;
 }
@@ -736,14 +762,17 @@ export function InlineCursor({ showTime = false }: InlineCursorProps = {}) {
 export interface FlagCursorProps {
   /** Show the cursor's time atop the flag stack (first row). Default `false`. */
   showTime?: boolean;
+  /** The readout format for the time this cursor shows (and for marker
+   *  indicators + annotation auto-labels) — the shared readout channel; see
+   *  {@link CrosshairCursorProps.format}. */
+  format?: CursorFormat;
 }
 
-/** Dots + **staffed value flags** stacked near the top of the row —
- *  `cursor="flag"`. A `cursorFlag` layer (BoxPlot) consolidates onto one flag. */
-export function FlagCursor({ showTime = false }: FlagCursorProps = {}) {
+/** Dots + **staffed value flags** stacked near the top of the row — a `cursorFlag` layer (BoxPlot)
+ *  consolidates onto one flag. */
+export function FlagCursor({ showTime = false, format }: FlagCursorProps = {}) {
   useCursorMount(
-    useMemo(() => buildFlagCursor({ showTime }), [showTime]),
-    false,
+    useMemo(() => buildFlagCursor({ showTime, format }), [showTime, format]),
   );
   return null;
 }
@@ -760,10 +789,29 @@ export interface CrosshairCursorProps {
    *  **Default `true`** — the time pill is the crosshair's readout; there is
    *  no per-row time chip to opt into. */
   showTime?: boolean;
-  /** Readout format for the x-axis time pill — the `cursorFormat` successor,
-   *  resolved by the container into the shared readout channel (it also
-   *  shapes marker indicators + annotation auto-labels, as `cursorFormat`
-   *  did). */
+  /**
+   * The **cursor / marker readout** format — the x-axis time pill, marker
+   * axis indicators, and annotation auto-labels — **independent of the tick
+   * labels** on both axis kinds: it does **not** disqualify the `dateStyle`
+   * ladder (time), and it never moves the tick labels (value). It beats an
+   * explicit `<XAxis format>` for the **readout only** — pill precedence is
+   * `format → axis format → container` — so terse ticks can pair with a
+   * precise readout (`+2.0σ` labels, `+1.83σ` pill).
+   *
+   * **Omitted ⇒ the axis's own formatter.** On a time axis that default is
+   * grain-aware: the readout formats at the axis's granularity, so a
+   * day-or-coarser axis reads a **date** (never a time-of-day) and a sub-day
+   * axis reads date + clock. On a value axis it is the tick formatter.
+   *
+   * A d3 specifier **string** formats uniformly (time specifier on a time
+   * axis, number specifier on a value axis); a **function**
+   * `(value, { grain, defaultText }) => string` receives the axis's resolved
+   * coarse grain (`undefined` on a value axis) and the default readout text,
+   * so it can branch on the zoom level and pass `defaultText` through. One
+   * channel per chart: when several mounted cursors set `format`, the first
+   * mounted wins. (A category axis reads names, and a `transform`ed axis's
+   * pill speaks its derived unit — neither consults it.)
+   */
   format?: CursorFormat;
   /**
    * Tells you what the reticle is **snapped to** — the series (`label`,
@@ -781,7 +829,7 @@ export interface CrosshairCursorProps {
   onSnap?: (snap: CursorSnap | null) => void;
 }
 
-/** The inspection **reticle** — `cursor="crosshair"`: dashed cross lines, a
+/** The inspection **reticle**: dashed cross lines, a
  *  centre dot in the snapped series' colour, the value pinned to its y axis,
  *  the time pinned to the x axis. */
 export function CrosshairCursor({
@@ -833,7 +881,6 @@ export function CrosshairCursor({
         }),
       [snap, showTime, format, listening],
     ),
-    false,
   );
   return null;
 }
@@ -845,7 +892,8 @@ export interface RangeCursorProps {
    * trading calendar's sessions). A drag extends **bucket by bucket** over
    * these. **Omit ⇒ freeform**: the cursor renders as a plain line and a drag
    * spans the raw `[lo, hi]` (a bar/histogram layer's bins still snap both
-   * when present). Time axis only, like `cursorSequence`. Pass a stable
+   * when present). Time axis only; on a category axis the band always
+   * snaps to the slot under the pointer. Pass a stable
    * reference (the buckets memoize on it).
    */
   sequence?: Sequence | BoundedSequence;
@@ -863,8 +911,11 @@ export interface RangeCursorProps {
    * so drag-to-zoom is `onDragRelease={(s) => setRange(s.x)}`.
    *
    * The drag **preempts pan** unless {@link dragModifier} shares the gesture.
-   * Continuous x only (a category axis is excluded, as for the legacy
-   * `onRegionSelect`).
+   * Continuous x only: on a **category** axis the hover band still shades the
+   * slot under the pointer, but the drag never starts — a numeric span means
+   * nothing there, and dragging across bars is `<MultiSelector>`'s gesture
+   * (it reports the bars). The container dev-warns when this is wired on a
+   * category axis.
    */
   onDragRelease?: (span: RangeSpan) => void;
   /**
@@ -882,16 +933,16 @@ export interface RangeCursorProps {
    * and you want **plain drag to pan, shift-drag to select**. **Only
    * enforced while pan is enabled** (with pan off there is no gesture
    * conflict, so either drag selects). Omitted ⇒ the drag preempts pan.
-   * The `regionSelectModifier` successor.
    */
   dragModifier?: 'shift';
 }
 
 /**
- * The **range** cursor — `cursor="region"` as a component (RFC A4.1 renames
+ * The **range** cursor (RFC A4.1 names
  * it for what it emits: a live extent — and, dragged, exactly what
  * `ChartContainer.range` accepts — against the annotation `<Region>`'s fixed
- * mark). Hover shades the bucket under the pointer; wiring
+ * mark). Hover shades the bucket under the pointer (on a category axis, the
+ * slot); wiring
  * {@link RangeCursorProps.onDragRelease} adds the drag, which fires once on
  * release and reverts (RFC §6: a region is deliberately a cursor **and** a
  * drag that fires and resets). The gesture rides the shared brush recognizer
@@ -909,83 +960,23 @@ export function RangeCursor({
         buildRangeCursor({ sequence, onDragRelease, enableDrag, dragModifier }),
       [sequence, onDragRelease, enableDrag, dragModifier],
     ),
-    false,
   );
   return null;
 }
 
 /**
- * The deprecation shim (internal): synthesizes the preset equivalent of a
- * legacy `cursor` string — the container's `cursor` prop (or its `'line'`
- * default), and `<ChartRow cursor>` inside a row. Registers as `legacy`, so a
- * component-mounted cursor in the same scope overrides it.
- */
-export function LegacyCursor({
-  mode,
-  showTime,
-  snap,
-  sequence,
-  implicit = false,
-}: {
-  mode: CursorMode;
-  /** The container's `cursorTime` (the in-plot time readout opt-in). */
-  showTime: boolean;
-  /** The container's `crosshairSnap` (the reticle y-snap). */
-  snap: boolean;
-  sequence?: Sequence | BoundedSequence | undefined;
-  /** This shim carries the container's un-asked-for `'line'` DEFAULT (no
-   *  `cursor` prop set) — the only cursor a mounted `<MultiSelector>`'s
-   *  resting block preview replaces (see {@link CursorEntry.implicit}). */
-  implicit?: boolean;
-}) {
-  const built = useMemo<BuiltCursor | null>(() => {
-    switch (mode) {
-      case 'line':
-        return buildLineCursor({ showTime });
-      case 'point':
-        return buildPointCursor({ showTime });
-      case 'inline':
-        return buildInlineCursor({ showTime });
-      case 'flag':
-        return buildFlagCursor({ showTime });
-      case 'crosshair':
-        // The legacy crosshair always pins the time to the x axis; its y-snap
-        // is the container's `crosshairSnap`. (`cursorTime` is deliberately
-        // NOT forwarded — crosshair has no per-row time chip.)
-        return buildCrosshairCursor({ snap, showTime: true });
-      case 'region':
-        return buildRangeCursor({ sequence });
-      case 'none':
-        return null;
-    }
-  }, [mode, showTime, snap, sequence]);
-  useCursorMount(built, true, implicit);
-  return null;
-}
-
-/** Drop a scope's legacy (shim-synthesized) entries when the scope also has a
- *  component-mounted cursor — mounting a component overrides the string prop. */
-function dropShadowedLegacy(
-  entries: readonly CursorEntry[],
-): readonly CursorEntry[] {
-  return entries.some((e) => !e.legacy)
-    ? entries.filter((e) => !e.legacy)
-    : entries;
-}
-
-/**
  * The cursors in effect for a row: the row's own mounts when it has any (the
- * per-row override — nearest mount wins, exactly `row.cursor ?? container
- * .cursor`'s semantics), else the container-scoped mounts. Within a scope,
- * component mounts shadow the legacy shim.
+ * per-row override — nearest mount wins), else the container-scoped mounts.
+ * A row that wants no cursor while its siblings have one mounts the cursors
+ * per row rather than at the container.
  */
 export function effectiveCursorEntries(
   all: readonly CursorEntry[],
   rowKey: symbol,
 ): readonly CursorEntry[] {
   const rowEntries = all.filter((e) => e.rowKey === rowKey);
-  if (rowEntries.length > 0) return dropShadowedLegacy(rowEntries);
-  return dropShadowedLegacy(all.filter((e) => e.rowKey === null));
+  if (rowEntries.length > 0) return rowEntries;
+  return all.filter((e) => e.rowKey === null);
 }
 
 /** The scope's single snap/gesture owner (RFC A2.5) — first mount wins; the
@@ -1010,7 +1001,7 @@ export function xAxisCursorEntries(
   if (hoveredRowKey !== null) return effectiveCursorEntries(all, hoveredRowKey);
   const out: CursorEntry[] = [];
   const seenRows = new Set<symbol>();
-  out.push(...dropShadowedLegacy(all.filter((e) => e.rowKey === null)));
+  out.push(...all.filter((e) => e.rowKey === null));
   for (const e of all) {
     if (e.rowKey === null || seenRows.has(e.rowKey)) continue;
     seenRows.add(e.rowKey);
@@ -1031,7 +1022,7 @@ export function warnOnDuplicateGestureOwners(
   if (!isDev || warned.current) return;
   const scopes = new Set<symbol | null>(all.map((e) => e.rowKey));
   for (const scope of scopes) {
-    const entries = dropShadowedLegacy(all.filter((e) => e.rowKey === scope));
+    const entries = all.filter((e) => e.rowKey === scope);
     if (entries.filter((e) => e.ownsGesture).length > 1) {
       warned.current = true;
       console.warn(
@@ -1043,36 +1034,5 @@ export function warnOnDuplicateGestureOwners(
       );
       return;
     }
-  }
-}
-
-/** @internal The dev deprecation notice for a legacy cursor prop — one line
- *  naming the replacement, shared by the container and row shims. */
-export function legacyCursorWarning(lines: readonly string[]): string {
-  return (
-    '[pond-charts] deprecated cursor props (they keep working this minor, ' +
-    'removed next): ' +
-    lines.join('; ') +
-    '. Mount a cursor component instead (docs/rfcs/interaction.md §9).'
-  );
-}
-
-/** @internal The preset name a legacy `cursor` mode maps to (for warnings). */
-export function presetNameFor(mode: CursorMode): string {
-  switch (mode) {
-    case 'line':
-      return '<LineCursor>';
-    case 'point':
-      return '<PointCursor>';
-    case 'inline':
-      return '<InlineCursor>';
-    case 'flag':
-      return '<FlagCursor>';
-    case 'crosshair':
-      return '<CrosshairCursor>';
-    case 'region':
-      return '<RangeCursor>';
-    case 'none':
-      return 'nothing (mount no cursor)';
   }
 }

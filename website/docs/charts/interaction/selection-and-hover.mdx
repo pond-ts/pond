@@ -26,6 +26,7 @@ and it **wraps what it applies to** rather than sitting beside it:
 
 ```tsx
 <ChartContainer range={range} width={720}>
+  <LineCursor />
   <Selector selected={sel} onSelect={setSel}>
     <ChartRow height={180}>
       <YAxis id="v" />
@@ -133,8 +134,8 @@ _programmatic_ select (a `<Legend>` chip), which is how you can tell a click
 from a chip.
 
 `shift` is already the drag chord for
-[`regionSelectModifier`](./pan-zoom-and-range-selection.mdx) on a continuous
-axis, so a shift-click there may also be the start of a region drag. It is
+[`<RangeCursor dragModifier>`](./pan-zoom-and-range-selection.mdx) on a
+continuous axis, so a shift-click there may also be the start of a range drag. It is
 reported for completeness; think before you give it a second meaning.
 
 ## A trace has no marks

@@ -67,12 +67,7 @@ function mounter(divId, width, height) {
 
 function Frame({ width, height, range, children }) {
   return (
-    <ChartContainer
-      width={width}
-      theme={estelaTheme}
-      cursor="none"
-      range={range}
-    >
+    <ChartContainer width={width} theme={estelaTheme} range={range}>
       <ChartRow height={height - AXIS_STRIP}>{children}</ChartRow>
     </ChartContainer>
   );

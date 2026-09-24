@@ -8,6 +8,7 @@ import {
   Region,
   YAxis,
   YAxisIndicator,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { singleHostSeries } from './lib/server-metrics';
@@ -24,6 +25,7 @@ export default function LearnAnnotations() {
 
   return (
     <ChartContainer range={series.timeRange()} width={560} theme={theme}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="pct" side="right" format=".0%" />
         <Layers>

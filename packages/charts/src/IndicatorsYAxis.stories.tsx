@@ -7,6 +7,7 @@ import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { YAxisIndicator, createLiveValue } from './indicators.js';
 import { priceSeries, RANGE } from './story-data.fixture.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * `<YAxisIndicator>` — a value pill pinned to a y-axis edge (the ChartIQ /
@@ -31,6 +32,7 @@ type Story = StoryObj;
 export const StaticValue: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -53,6 +55,7 @@ export const StaticValue: Story = {
 export const Pointer: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -76,6 +79,7 @@ export const Pointer: Story = {
 export const SideRight: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -98,6 +102,7 @@ export const SideRight: Story = {
 export const SideLeft: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -120,6 +125,7 @@ export const SideLeft: Story = {
 export const DefaultFormat: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -136,6 +142,7 @@ export const DefaultFormat: Story = {
 export const CustomFormat: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -157,6 +164,7 @@ export const CustomFormat: Story = {
 export const FunctionFormat: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -178,6 +186,7 @@ export const FunctionFormat: Story = {
 export const LineOff: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -199,6 +208,7 @@ export const LineOff: Story = {
 export const LineOn: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -221,6 +231,7 @@ export const LineOn: Story = {
 export const DefaultColor: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -237,6 +248,7 @@ export const DefaultColor: Story = {
 export const CustomColor: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -277,6 +289,7 @@ function LiveDemo() {
   }, [live]);
   return (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -317,6 +330,7 @@ function SourceOverridesValueDemo() {
   }, [live]);
   return (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -356,6 +370,7 @@ function DualLiveDemo() {
   }, [bid, ask]);
   return (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />

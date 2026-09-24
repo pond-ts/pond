@@ -112,15 +112,6 @@ breakout plan. Plan:
   selection currency, state ladder (`theme.list`), range gesture and keyboard
   parity shipped 2026-08-10, and `<BoxPlot>` joined the sweep (write-up in the
   breakout plan). Left:
-  - **Remove the deprecated cursor props.** CHANGELOG 0.58.0 promised them
-    "one more minor"; they are still in 0.70.0 (`<ChartContainer cursor>`,
-    `cursorSequence`, `onRegionSelect`, `regionSelectModifier`, `cursorTime`,
-    `crosshairSnap`, `cursorFormat`, and `<ChartRow cursor>`). **Blocked on a
-    decision,
-    [#647](https://github.com/pond-ts/pond/issues/647):** mounting no cursor
-    still gets the implicit `'line'` default, so `cursor="none"` is the only
-    way to say "no cursor" and it is one of the props being removed. Decide
-    what an unmounted cursor means, then remove.
   - `format` is a container-wide channel and cannot be honoured per row
     without reworking the readout plumbing (A8.4).
   - The list's **per-row bullet target marker** — `theme.list` carries
@@ -272,9 +263,8 @@ breakout plan. Plan:
   re-decide whether either is still wanted now that `<MultiSelector>` exists.
   RFC: [selection.md](docs/rfcs/selection.md).
 - **[PND-BOXPLT]** — Finish BoxPlot: ValueSeries widening, range-only mode,
-  px `offset` for same-x pairs, line-only shape, join the cursor x-snap, and
-  selection `id` via rect-containment `hitTest` (#508 item 5; Candlestick
-  takes the same geometry helper).
+  px `offset` for same-x pairs, line-only shape. (Selection `id` and the
+  crosshair snap are done — see the breakout plan.)
 - **[PND-BOXHIT]** — **`<BoxPlot>`'s hit area is the mark's bounding box, not
   its ink — and on `shape="whisker"` those differ by 25×.** Measured at box
   centre: with the solid shape, ink and hit are both ~50px wide everywhere
@@ -293,12 +283,6 @@ yScale, mode)` and uses `mode` to let hover claim the whole slot while
   reports nothing on a categorical or stacked chart and reports the bar on a
   time-axis one. Carries a design question — which segment an above-the-ink
   hover should report on a stack — which is why it isn't a one-liner.
-- **[PND-ORDCURSOR]** — **`<RangeCursor>` on an ordinal axis takes the row's
-  cursor with it.** It gates on a continuous x (`brush.tsx`), so on a category
-  axis mounting one is not merely inert — the row ends up with no cursor at
-  all. Either draw a slot-band there or make the mount a no-op that leaves the
-  row's other cursor alone; silently removing a cursor is the one option that
-  isn't defensible.
 - **[PND-TICKGAP]** — **The trading axis's tick budget doesn't bound label
   spacing under collapse.** `TRADING_TICK_PX` budgets 65px of plot per tick and
   picks the finest grain that fits, but a wall-clock anchor that falls in

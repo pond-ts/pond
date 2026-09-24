@@ -10,6 +10,8 @@ import { TimeAxis } from '../src/TimeAxis.js';
 import { YAxis } from '../src/YAxis.js';
 import { defaultTheme } from '../src/theme.js';
 import { ContainerContext, type ContainerFrame } from '../src/context.js';
+import { CrosshairCursor } from '../src/cursors.js';
+import type { CursorFormat } from '../src/format.js';
 import {
   type DiscontinuityProvider,
   type TradingCalendarLike,
@@ -45,10 +47,15 @@ const provider: DiscontinuityProvider = (() => {
   return self;
 })();
 
-function frameOf(props: Record<string, unknown>): ContainerFrame {
+function frameOf(allProps: Record<string, unknown>): ContainerFrame {
+  // The readout format rides on a mounted cursor, not the container.
+  const { cursorFormat, ...props } = allProps;
   let frame: ContainerFrame | null = null;
   render(
     <ChartContainer range={[0, 300]} width={320} {...props}>
+      {cursorFormat !== undefined ? (
+        <CrosshairCursor format={cursorFormat as CursorFormat} />
+      ) : null}
       <Capture sink={(f) => (frame = f)} />
     </ChartContainer>,
   );

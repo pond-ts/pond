@@ -6,6 +6,7 @@ import {
   Legend,
   LineChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -53,7 +54,8 @@ export default function GalleryMultiHostCpu({
         scanWindow(FLEET_RANGE[0], FLEET_RANGE[1], 6 * 3_600_000, phase);
 
   return (
-    <ChartContainer range={range} width={width} theme={theme} cursor="line">
+    <ChartContainer range={range} width={width} theme={theme}>
+      <LineCursor />
       <ChartRow height={height}>
         <YAxis id="pct" side="right" format=".0%" width={44} max={1} min={0} />
         <Layers>

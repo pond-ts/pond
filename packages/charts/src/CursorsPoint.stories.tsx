@@ -5,9 +5,10 @@ import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { twoSeries, BASE, STEP, RANGE } from './story-data.fixture.js';
+import { PointCursor } from './cursors.js';
 
 /**
- * `cursor="point"` — a dot rides each series at the cursor, **no line and no
+ * `<PointCursor>` — a dot rides each series at the cursor, **no line and no
  * text**. The bare readout: pair it with an off-chart display (`onTrackerChanged`)
  * for the values. Fan-out: the live hover story, plus single/multiple series
  * pinned for a static regression shot.
@@ -27,7 +28,8 @@ type Story = StoryObj;
  *  line, no chip. The other stories pin a controlled position for a static shot. */
 export const Interactive: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} cursor="point">
+    <ChartContainer range={RANGE} width={W}>
+      <PointCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={s} column="fast" as="primary" axis="usd" />
@@ -42,12 +44,8 @@ export const Interactive: Story = {
 /** **Single series** — one dot on the series at the cursor. */
 export const SingleSeries: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="point"
-      trackerPosition={BASE + 45 * STEP}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={BASE + 45 * STEP}>
+      <PointCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={s} column="fast" as="primary" axis="usd" />
@@ -61,12 +59,8 @@ export const SingleSeries: Story = {
 /** **Multiple series** — a dot on each series at the shared cursor. */
 export const MultipleSeries: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="point"
-      trackerPosition={BASE + 45 * STEP}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={BASE + 45 * STEP}>
+      <PointCursor />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={s} column="fast" as="primary" axis="usd" />

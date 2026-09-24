@@ -5,6 +5,8 @@ import {
   Layers,
   LineChart,
   YAxis,
+  CrosshairCursor,
+  LineCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -43,7 +45,9 @@ export default function GalleryTemperatureRange({
       : scanWindow(SEA_BOUNDS[0], SEA_BOUNDS[1], 112 * DAY_MS, phase);
 
   return (
-    <ChartContainer range={range} width={width} theme={theme} cursor={cursor}>
+    <ChartContainer range={range} width={width} theme={theme}>
+      {cursor === 'crosshair' && <CrosshairCursor />}
+      {cursor === 'line' && <LineCursor />}
       <ChartRow height={220}>
         <YAxis
           id="c"

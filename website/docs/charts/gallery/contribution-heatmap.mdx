@@ -69,6 +69,7 @@ Same rule as bars on auction hours in
 const series = commitActivity(); // one row per week: sun, mon, … sat
 
 <ChartContainer range={commitActivityRange()} width={width}>
+  <LineCursor />
   <ChartRow height={210}>
     <YAxis id="dow" ticks={COMMIT_ROW_TICKS} label="" width={44} />
     <Layers>

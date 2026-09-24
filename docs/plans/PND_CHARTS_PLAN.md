@@ -1129,8 +1129,22 @@ a shared geometry abstraction. Candlestick would add its own `ohlcAt` under
 the same contract when it gains selection (deferred — not requested by the
 report; the earlier "shared geometry helper" framing is superseded by the
 per-mark idiom the codebase already uses). **Still open in this wave:**
-`ValueSeries` widening, range-only mode polish, px `offset`, line-only shape,
-and the `cursorFlag` x-snap reconciliation.
+`ValueSeries` widening, range-only mode polish, px `offset`, line-only shape.
+
+**Crosshair snap — DONE (2026-09-23).** The crosshair now snaps to a box: x to
+the box centre, y to the quantile nearest the pointer, with the value pill and
+`onSnap` following. The old exclusion (`if (entry.layer.cursorFlag) continue`)
+did two jobs at once, and only one of them was right. Keeping a box's values
+out of the **per-series marks** (point / inline / flag dots and chips) is right,
+because the box draws its own consolidated flag and per-quantile dots would
+repeat it. Keeping them out of the **crosshair** was not: the reticle picks
+one value, so the five quantiles are things to land on, not marks that
+duplicate anything. The fix splits the two. `Layers` resolves a second list,
+`reticleSamples` (every layer, boxes included), which the crosshair declares
+through a new `CursorWants.reticle` and `snappedSample` reads; `samples` keeps
+the old exclusion for the per-series marks. The x-snap loop simply stopped
+skipping boxes, since a box's `sampleAt` already anchors at the box centre.
+Both new fields are internal (the cursor contract is unpublished, RFC Q3).
 
 ### [PND-CHARTAPI] / [PND-BARSEM] / [PND-HCAT] / [PND-VSADAPT] — the 2026-08 API review — DONE
 
@@ -1989,7 +2003,25 @@ group count.
 stacked and time-axis bar chart, or the difference is documented as
 intentional with the reason.
 
-### [PND-ORDCURSOR] — `<RangeCursor>` on an ordinal axis removes the cursor
+### [PND-ORDCURSOR] — `<RangeCursor>` on an ordinal axis removes the cursor — DONE
+
+**Shipped 2026-09-23: the slot band.** On a category axis the band now shades
+the whole slot under the pointer. The buckets are the unit slots `[i, i+1)`:
+a vertical bar layer already publishes those as `cursorBuckets`, and a
+category row without one (a transposed heat map) gets them from the band
+scale's domain (`categorySlots` in `tracker.ts`). The only code change in
+`Layers.tsx` is dropping the continuous-x gate on the band. **The drag stays
+off** on a category axis (`resolveRangeDrag` unchanged): its payload is a
+numeric span, which means nothing there, and a drag across bars that reports
+the bars is `<MultiSelector>`'s job. Because a wired `onDragRelease` would now
+silently never fire, the container dev-warns once. The selection matrix's
+`rangeCursor` fixture flag existed only to route around this bug, so it is
+gone and every column mounts `<RangeCursor>`. With the implicit line cursor
+also gone this wave, "leave the row as it was" would have meant "no cursor",
+which is why the band was the right fix rather than a no-op mount.
+
+The original write-up:
+
 
 `<RangeCursor>` gates its band on a continuous x
 ([brush.tsx](../../packages/charts/src/brush.tsx)). On a category axis it
@@ -3120,6 +3152,34 @@ The brush rect carries its corners **unsorted** (`(x0,y0)` = anchor,
 actually on; the renderer sorts for the box. And the rect is **row-local
 state**, not container state like the band: an x-range means the same thing in
 every row, a y-range only means something against the axis that measured it.
+
+**Shipped, [PND-INTERACTCONF] — the old cursor props removed (2026-09-23).**
+`<ChartContainer>`'s `cursor`, `cursorTime`, `crosshairSnap`, `cursorFormat`,
+`cursorSequence`, `onRegionSelect`, `regionSelectModifier`, `<ChartRow cursor>`
+and the `CursorMode` type are gone, along with the internal shim that turned
+them into mounted cursors. The decision that unblocked it
+([#647](https://github.com/pond-ts/pond/issues/647)), made by the owner:
+**mounting no cursor means no cursor.** The implicit `'line'` default was the
+only reason `cursor="none"` had to exist, so keeping the default would have
+kept a removed prop alive. What followed from that:
+
+- **Capability kept, not dropped.** `cursorFormat` was the one prop with no
+  component home on four of the five presets, so `format` now sits on
+  `<LineCursor>` / `<PointCursor>` / `<InlineCursor>` / `<FlagCursor>` too. The
+  readout is still one chart-wide channel: the first mounted cursor that sets
+  `format` shapes it (the per-row version is still the A8.4 open item).
+- **"No cursor in this row only"** used to be `<ChartRow cursor="none">`. It is
+  now "mount the cursors per row" — a row with its own mounts ignores the
+  container's, so the row that wants nothing simply has no mount.
+- **The `<MultiSelector>` resting band is unchanged.** It already replaced
+  the implicit line; now it shows whenever no cursor is mounted, and any
+  mounted cursor replaces it. So a `<MultiSelector>` row must **not** gain a
+  `<LineCursor />` in migration (the Layer-2 review caught the changelog
+  advising exactly that).
+- **Every example and story that relied on the implicit line now mounts
+  `<LineCursor />` explicitly**, so the site and the visual baselines look the
+  same as before. That is deliberate: the change is to the default, not to
+  what the examples should show.
 
 **Deferred but considered:** namespaced component names (`Cursor.Crosshair`,
 `Selection.Brush`) — rejected, nothing in the package exports a namespaced

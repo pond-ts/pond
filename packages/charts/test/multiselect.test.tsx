@@ -9,6 +9,7 @@ import { TimeSeries } from 'pond-ts';
 import { YAxis } from '../src/YAxis.js';
 import { defaultTheme } from '../src/theme.js';
 import { Selector } from '../src/selectors.js';
+import { RangeCursor } from '../src/cursors.js';
 import {
   ContainerContext,
   RowContext,
@@ -514,11 +515,11 @@ describe('precedence is the same on both draw paths', () => {
  * **Interaction with the region cursor's drag-to-select.**
  *
  * `SelectModifiers` reports `shiftKey` raw, and `shift` is already the
- * `regionSelectModifier` chord — so the obvious worry is that a shift gesture
+ * `<RangeCursor dragModifier>` chord — so the obvious worry is that a shift gesture
  * now means two things at once. It doesn't, and these pin why: the two are
  * separated by *movement*, not by the modifier.
  *
- * A drag past `DRAG_SLOP` makes the click handler bail, so `onRegionSelect`
+ * A drag past `DRAG_SLOP` makes the click handler bail, so `onDragRelease`
  * fires and `onSelect` does not. A shift-click that never moves is not a drag,
  * so it selects and commits no region. This is also the reason the library
  * exposes `shiftKey` but derives no `range` flag from it — a range gesture is
@@ -532,14 +533,11 @@ describe('shift does not collide with the region cursor', () => {
     let dom: HTMLElement;
     try {
       dom = render(
-        <ChartContainer
-          range={[0, 3]}
-          width={300}
-          cursor="region"
-          panZoom
-          regionSelectModifier="shift"
-          onRegionSelect={onRegionSelect}
-        >
+        <ChartContainer range={[0, 3]} width={300} panZoom>
+          <RangeCursor
+            dragModifier="shift"
+            onDragRelease={(span) => onRegionSelect(span.x)}
+          />
           <Selector onSelect={onSelect}>
             <ChartRow height={100}>
               <YAxis id="a" min={0} max={4} label="" />

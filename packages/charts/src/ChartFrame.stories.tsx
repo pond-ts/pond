@@ -7,6 +7,7 @@ import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
 import { useChartFrame } from './useChartFrame.js';
 import { twoSeries, RANGE } from './story-data.fixture.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * `useChartFrame()` — the container's **resolved plot geometry**, published so
@@ -114,6 +115,7 @@ function SlotHeader() {
 export const Default: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <PlotStrip />
       <ChartRow height={180}>
         <YAxis id="v" min={140} max={230} />
@@ -135,6 +137,7 @@ export const Default: Story = {
 export const WideGutter: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <PlotStrip />
       <ChartRow height={180}>
         <YAxis id="v" label="Requests / sec" min={140000} max={230000} />
@@ -153,6 +156,7 @@ export const WideGutter: Story = {
 export const DualAxis: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
+      <LineCursor />
       <PlotStrip />
       <ChartRow height={180}>
         <YAxis id="v" label="fast" min={140} max={230} />
@@ -174,6 +178,7 @@ export const DualAxis: Story = {
 export const PerSlotHeader: Story = {
   render: () => (
     <ChartContainer width={W}>
+      <LineCursor />
       <SlotHeader />
       <ChartRow height={180}>
         <YAxis id="v" label="" />
@@ -195,6 +200,7 @@ export const PerSlotHeader: Story = {
 export const CappedBands: Story = {
   render: () => (
     <ChartContainer width={W} maxBandWidth={70} bandAlign="center">
+      <LineCursor />
       <SlotHeader />
       <ChartRow height={180}>
         <YAxis id="v" label="" />
@@ -213,6 +219,7 @@ export const CappedBands: Story = {
 export const BandAlignEnd: Story = {
   render: () => (
     <ChartContainer width={W} maxBandWidth={70} bandAlign="end">
+      <LineCursor />
       <SlotHeader />
       <ChartRow height={180}>
         <YAxis id="v" label="" />
@@ -256,6 +263,7 @@ export const InPlotOverlay: Story = {
     }
     return (
       <ChartContainer range={RANGE} width={W}>
+        <LineCursor />
         <ChartRow height={220}>
           <YAxis id="v" min={140} max={230} />
           <Layers>
@@ -296,6 +304,7 @@ export const TopInset: Story = {
     }
     return (
       <ChartContainer range={RANGE} width={W}>
+        <LineCursor />
         <ChartRow height={220}>
           <YAxis
             id="v"
@@ -322,6 +331,7 @@ export const TopInset: Story = {
 export const MultiRow: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W} rowGap={8}>
+      <LineCursor />
       <PlotStrip />
       <ChartRow height={130}>
         <YAxis id="v" min={140} max={230} />

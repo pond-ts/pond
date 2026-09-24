@@ -49,7 +49,7 @@ type Story = StoryObj;
  */
 export const Stripe: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={720} cursor="none">
+    <ChartContainer range={RANGE} width={720}>
       <ChartRow height={80}>
         <YAxis id="v" label="°F" />
         <Layers>
@@ -71,7 +71,7 @@ export const Stripe: Story = {
  */
 export const Grid: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={720} cursor="none">
+    <ChartContainer range={RANGE} width={720}>
       <ChartRow height={120}>
         <YAxis id="v" label="°F" />
         <Layers>
@@ -113,7 +113,7 @@ function SelectableDemo() {
           </span>
         )}
       </div>
-      <ChartContainer range={RANGE} width={720} cursor="none">
+      <ChartContainer range={RANGE} width={720}>
         <Selector
           onSelect={setSel}
           onHover={(h: SelectInfo | null) => h && setSel(h)}
@@ -171,7 +171,7 @@ const tempCell = (i: number, row: 'low' | 'high'): SelectInfo => ({
  */
 export const MultiSelected: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={720} cursor="none">
+    <ChartContainer range={RANGE} width={720}>
       <Selector
         enabled={false}
         selected={[
@@ -208,7 +208,7 @@ export const MultiSelected: Story = {
  */
 export const MultiHovered: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={720} cursor="none">
+    <ChartContainer range={RANGE} width={720}>
       <Selector
         enabled={false}
         hovered={[100, 101, 102, 103, 104, 105].flatMap((i) => [
@@ -241,7 +241,7 @@ export const MultiHovered: Story = {
  */
 export const MultiSelectedAndHovered: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={720} cursor="none">
+    <ChartContainer range={RANGE} width={720}>
       <Selector
         enabled={false}
         selected={[tempCell(60, 'low'), tempCell(150, 'high')]}
@@ -306,11 +306,7 @@ export const ValueAxisStripe: Story = {
     const byHigh = byHighAscending;
     const axis = byHigh.axisValues();
     return (
-      <ChartContainer
-        range={[axis[0]!, axis[axis.length - 1]!]}
-        width={720}
-        cursor="none"
-      >
+      <ChartContainer range={[axis[0]!, axis[axis.length - 1]!]} width={720}>
         <ChartRow height={80}>
           <YAxis id="v" label="°F" />
           <Layers>
@@ -335,7 +331,7 @@ export const ValueAxisStripe: Story = {
  */
 export const PinnedDomain: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={720} cursor="none">
+    <ChartContainer range={RANGE} width={720}>
       <ChartRow height={120}>
         <YAxis id="v" label="°F" />
         <Layers>
@@ -389,11 +385,7 @@ export const ManyRows: Story = {
   render: () => {
     const b = bands.keyColumn().begin;
     return (
-      <ChartContainer
-        range={[b[0]!, b[bands.length - 1]!]}
-        width={720}
-        cursor="none"
-      >
+      <ChartContainer range={[b[0]!, b[bands.length - 1]!]} width={720}>
         <ChartRow height={200}>
           <YAxis id="v" label="°F" />
           <Layers>
@@ -461,7 +453,7 @@ function ExpressionGrid({ panZoom }: { panZoom?: 'none' | 'panZoomY' }) {
   // scale from the columns the layer reports. The bin axis is y, and its
   // extent is pinned on the <YAxis> instead.
   return (
-    <ChartContainer width={440} cursor="none" panZoom={panZoom ?? 'none'}>
+    <ChartContainer width={440} panZoom={panZoom ?? 'none'}>
       <ChartRow height={420}>
         <YAxis id="rank" label="gene rank" min={0} max={N} />
         <Layers>
@@ -548,7 +540,6 @@ export const PanZoomXY: Story = {
       <ChartContainer
         range={[t[0]!, t[N - 1]!]}
         width={620}
-        cursor="none"
         panZoom="panZoomXY"
       >
         <ChartRow height={420}>

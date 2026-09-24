@@ -6,6 +6,7 @@ import {
   LineChart,
   XAxis,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import {
@@ -53,6 +54,7 @@ export default function GallerySpectrum({
       width={width}
       theme={theme}
     >
+      <LineCursor />
       <XAxis
         side="top"
         transform={{ to: (f) => 1 / f, from: (p) => 1 / p }}

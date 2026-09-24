@@ -125,7 +125,7 @@ literal to inline.
 | `binColors`           | Per-bar fill, aligned to the bars in order          | The sign, a threshold breach, or a zone matters more than the series  |
 | `gap`                 | Pixels between adjacent bars                        | Dense hourly data; drop it to `0` and the bars read as a column block |
 | `<YAxis min>` / `max` | Pins the domain instead of auto-fitting             | Comparing two periods that must share a scale                         |
-| `cursor="crosshair"`  | Reticle + value pill on the bar under the pointer   | Reading a single hour off the chart without a click                   |
+| `<CrosshairCursor />` | Reticle + value pill on the bar under the pointer   | Reading a single hour off the chart without a click                   |
 | `id`                  | Turns on hit-testing — hover lights, click outlines | Any bar chart you want to feel touchable                              |
 | `id` + `onSelect`     | Reports the click as `{ id, key, value, label }`    | Drilling from an hour into what set it                                |
 | `decimate`            | Envelope-draws bars once slots fall under ~1 px     | A year of hourly prices; note `binColors` turns it off                |

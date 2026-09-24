@@ -7,6 +7,7 @@ import {
   YAxis,
   YAxisIndicator,
   createLiveValue,
+  LineCursor,
 } from '@pond-ts/charts';
 import { LiveSeries } from 'pond-ts';
 import { useSnapshot } from '@pond-ts/react';
@@ -109,12 +110,8 @@ export default function GalleryLiveTail({
   }
 
   return (
-    <ChartContainer
-      range={snapshot.timeRange()}
-      width={width}
-      theme={theme}
-      cursor="line"
-    >
+    <ChartContainer range={snapshot.timeRange()} width={width} theme={theme}>
+      <LineCursor />
       <ChartRow height={height}>
         <YAxis id="rps" side="right" label="req/s" format=",.0f" width={54} />
         <Layers>

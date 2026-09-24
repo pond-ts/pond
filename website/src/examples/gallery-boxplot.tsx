@@ -4,6 +4,7 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { hourlyLatencyBoxes, hourlyLatencyRange } from './lib/gallery-fixtures';
@@ -16,6 +17,7 @@ export default function GalleryBoxplot({ width }: { width: number }) {
 
   return (
     <ChartContainer range={hourlyLatencyRange()} width={width} theme={theme}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="ms" side="right" label="ms" format=",.0f" width={44} />
         <Layers>

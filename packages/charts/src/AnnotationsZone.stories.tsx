@@ -8,6 +8,7 @@ import { YAxis } from './YAxis.js';
 import { Zone } from './annotations.js';
 import { priceSeries, RANGE } from './story-data.fixture.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * `<Zone>` — a shaded **y-span**, the value-axis counterpart of `<Region>`.
@@ -29,6 +30,7 @@ function Chart({
 }) {
   return (
     <ChartContainer range={RANGE} width={W} theme={theme}>
+      <LineCursor />
       <ChartRow height={H}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />
@@ -235,6 +237,7 @@ export const LabelledZoneSet: Story = {
 export const DualAxis: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W} theme={banded}>
+      <LineCursor />
       <ChartRow height={H}>
         <YAxis id="usd" side="left" format=",.0f" min={140} max={230} />
         <Layers>

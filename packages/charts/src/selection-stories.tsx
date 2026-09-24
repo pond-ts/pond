@@ -13,7 +13,7 @@ import { Layers } from './Layers.js';
 import { YAxis } from './YAxis.js';
 import { Selector, MultiSelector } from './selectors.js';
 import { isSpanSelection, sameMark, selectionContains } from './span.js';
-import { RangeCursor } from './cursors.js';
+import { LineCursor, RangeCursor } from './cursors.js';
 import type { SelectInfo, SelectionEntry } from './context.js';
 import { caption, type ChartFixture } from './selection-fixtures.js';
 
@@ -26,9 +26,8 @@ import { caption, type ChartFixture } from './selection-fixtures.js';
  * to write the story. That is what makes walking the matrix a review technique
  * rather than a gallery — see CLAUDE.md → "Storybook stories".
  *
- * Stories whose subject is *not* chart-type dependent (the deprecation shim,
- * for instance) deliberately live in one column only; running them against
- * every fixture would test nothing new.
+ * Stories whose subject is *not* chart-type dependent deliberately live in one
+ * column only; running them against every fixture would test nothing new.
  */
 
 type Story = StoryObj;
@@ -80,9 +79,8 @@ const list = (fx: ChartFixture, sel: readonly SelectInfo[]) =>
 // ── <Selector> ─────────────────────────────────────────────────────────────
 
 /**
- * The `<Selector>` feature set for one chart type. `<RangeCursor>` is mounted
- * only where the fixture declares it draws — on an ordinal axis it does not,
- * and mounting one there costs the row its cursor entirely.
+ * The `<Selector>` feature set for one chart type, each with a `<RangeCursor>`
+ * mounted (on an ordinal axis it shades the slot under the pointer).
  */
 export interface SelectorStories {
   MountedAtContainer: Story;
@@ -95,7 +93,7 @@ export interface SelectorStories {
 }
 
 export function makeSelectorStories(fx: ChartFixture): SelectorStories {
-  const Cursor = () => (fx.rangeCursor ? <RangeCursor /> : null);
+  const Cursor = () => <RangeCursor />;
 
   return {
     /** **Mounted at the container** — the ordinary case: one `<Selector>` as a
@@ -135,6 +133,8 @@ export function makeSelectorStories(fx: ChartFixture): SelectorStories {
         return (
           <div>
             <ChartContainer width={640} {...fx.container}>
+              {/* The bottom row's cursor; the top row's own mount wins there. */}
+              <LineCursor />
               <ChartRow height={150}>
                 <YAxis
                   id={fx.axis.id}
@@ -226,7 +226,9 @@ export function makeSelectorStories(fx: ChartFixture): SelectorStories {
             <Chart
               fx={fx}
               selector={<Selector enabled={false} selected={sel} />}
-            />
+            >
+              <LineCursor />
+            </Chart>
             <p style={caption}>
               The buttons drive the highlight; clicking the plot does nothing.{' '}
               <strong>selected:</strong> {list(fx, sel)}

@@ -12,11 +12,12 @@ import {
   STEP,
   RANGE,
 } from './story-data.fixture.js';
+import { InlineCursor } from './cursors.js';
 
 /**
- * `cursor="inline"` — a dot on each series with its value chip **beside the dot**
+ * `<InlineCursor>` — a dot on each series with its value chip **beside the dot**
  * (in place, not stacked at the top). These stories fan out: single vs multiple
- * series, the `cursorTime` chip, the right-edge flip (`LABEL_FLIP_FRACTION` in
+ * series, the `showTime` chip, the right-edge flip (`LABEL_FLIP_FRACTION` in
  * `Layers.tsx` — past 85% of the plot width a chip flips to the dot's *left*),
  * the per-row top/bottom clamp (a chip near the row edge is nudged back inside
  * rather than clipped), and multi-row (the cursor is shared; each row clamps
@@ -28,21 +29,16 @@ const s = twoSeries();
 
 function Chart({
   pin,
-  cursorTime,
+  showTime = false,
   children,
 }: {
   pin: number;
-  cursorTime?: boolean;
+  showTime?: boolean;
   children: ReactNode;
 }) {
   return (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="inline"
-      cursorTime={cursorTime ?? false}
-      trackerPosition={pin}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={pin}>
+      <InlineCursor showTime={showTime} />
       <ChartRow height={220}>
         <Layers>{children}</Layers>
         <YAxis id="usd" side="right" format=",.0f" />
@@ -64,7 +60,8 @@ type Story = StoryObj;
  *  pin a controlled position for a static regression shot; this is the live one. */
 export const Interactive: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} cursor="inline" cursorTime>
+    <ChartContainer range={RANGE} width={W}>
+      <InlineCursor showTime />
       <ChartRow height={220}>
         <Layers>
           <LineChart series={s} column="fast" as="primary" axis="usd" />
@@ -95,10 +92,10 @@ export const MultipleSeries: Story = {
   ),
 };
 
-/** **With time** — `cursorTime` adds the cursor's time chip atop the readout. */
+/** **With time** — `showTime` adds the cursor's time chip atop the readout. */
 export const WithTime: Story = {
   render: () => (
-    <Chart pin={BASE + 45 * STEP} cursorTime>
+    <Chart pin={BASE + 45 * STEP} showTime>
       <LineChart series={s} column="fast" as="primary" axis="usd" />
       <LineChart series={s} column="slow" as="secondary" axis="usd" />
     </Chart>
@@ -141,12 +138,8 @@ export const NearBottomClamp: Story = {
  *  clamps its own chip independently. */
 export const MultiRow: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="inline"
-      trackerPosition={BASE + 45 * STEP}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={BASE + 45 * STEP}>
+      <InlineCursor />
       <ChartRow height={150}>
         <Layers>
           <LineChart series={s} column="fast" as="primary" axis="usd" />

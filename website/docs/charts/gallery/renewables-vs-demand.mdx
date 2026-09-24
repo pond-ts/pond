@@ -94,12 +94,12 @@ Nothing needs a `baseline` prop — both areas rest on zero, the default.
 | --------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------ |
 | Layer order           | Which outline is unobscured                      | Swap when the smaller quantity is the subject                                  |
 | `as="in"` / `"out"`   | The two contrasting area roles                   | Any two-quantity comparison; they carry the theme's opposed hues               |
-| `cursor="crosshair"`  | A reticle + pill on the curve nearer the pointer | Reading either quantity off the chart; the default `"line"` cursor has no pill |
+| `<CrosshairCursor />` | A reticle + pill on the curve nearer the pointer | Reading either quantity off the chart; `<LineCursor />` has no pill            |
 | `curve="monotone"`    | Smooths both outlines                            | Hourly or coarser data, where the crossing shouldn't look like a corner        |
 | `baseline={0}`        | Pins the fill floor at zero instead of the axis  | A quantity that can go negative — see [negative prices](./negative-prices.mdx) |
 | A third `<AreaChart>` | Adds another band to the comparison              | Splitting `renewable` back into wind and solar, drawn over each other          |
 
-One sharp edge: `cursor="crosshair"` draws **one** reticle per row, snapped to
+One sharp edge: `<CrosshairCursor />` draws **one** reticle per row, snapped to
 the single nearest sample — it is not a per-series fan-out, so it never shows
 both numbers at once. Two values at one instant means an off-chart readout fed
 by `<ChartContainer onTrackerChanged>`, whose `TrackerInfo.values` carries one

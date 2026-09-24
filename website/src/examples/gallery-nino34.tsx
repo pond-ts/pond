@@ -9,6 +9,7 @@ import {
   Marker,
   YAxis,
   type TrackerInfo,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import {
@@ -115,13 +116,8 @@ export default function GalleryNino34({
           // The reference year is a carrier, not information: `%b` prints month
           // abbreviations — thinned by the tick ladder to `Jan / Apr / Jul / Oct`
           // at this width — and nothing on the chart names the year the axis
-          // belongs to. (No `cursorFormat`: `cursor="line"` draws no pill.)
+          // belongs to. (No crosshair `format`: `<LineCursor>` draws no pill.)
           timeFormat="%b"
-          // `line` and not `crosshair`: a crosshair pins one value pill per row,
-          // and with 45 lines under the pointer a single pill cannot say which
-          // year it read. The vertical line marks the day; the numbers come out
-          // off-chart, named.
-          cursor="line"
           // Drag pans, wheel zooms, and `bounds` stops both at the edges of the
           // reference year — without it a drag runs off into empty canvas, which
           // on a day-of-year axis is not even a coherent place to be. Zooming
@@ -131,6 +127,11 @@ export default function GalleryNino34({
           bounds={NINO34_YEAR_RANGE}
           onTrackerChanged={setTracker}
         >
+          {/* `LineCursor` and not `CrosshairCursor`: a crosshair pins one value
+              pill per row, and with 45 lines under the pointer a single pill
+              cannot say which year it read. The vertical line marks the day;
+              the numbers come out off-chart, named. */}
+          <LineCursor />
           <ChartRow height={height}>
             <YAxis
               id="anom"

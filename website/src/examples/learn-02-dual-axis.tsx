@@ -4,6 +4,7 @@ import {
   Layers,
   LineChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { singleHostSeries } from './lib/server-metrics';
@@ -14,6 +15,7 @@ export default function DualAxis() {
 
   return (
     <ChartContainer range={series.timeRange()} width={560} theme={theme}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="pct" side="left" label="cpu" format=".0%" />
         <YAxis id="ms" side="right" label="latency (ms)" format=",.0f" />

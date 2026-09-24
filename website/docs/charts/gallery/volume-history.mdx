@@ -112,6 +112,7 @@ The minimal version is a line chart with one word changed:
 
 ```tsx
 <ChartContainer range={range} width={width} theme={theme}>
+  <LineCursor />
   <ChartRow height={300}>
     <YAxis id="bytes" scale="log" format={formatBytes} />
     <Layers>
@@ -149,21 +150,20 @@ decades itself and thins them to the row's height, so 300px of row gets
 ### Selecting a month
 
 The selection is one number — a month index — and two inputs write it. The
-chart's half is a **bucketed region cursor**:
+chart's half is a **bucketed range cursor**:
 
 ```tsx
-<ChartContainer
-  cursor="region"
-  cursorSequence={Sequence.calendar('month')}
-  onRegionSelect={([from]) => setSelected(monthIndexAt(from))}
->
+<RangeCursor
+  sequence={Sequence.calendar('month')}
+  onDragRelease={({ x: [from] }) => setSelected(monthIndexAt(from))}
+/>
 ```
 
-`cursorSequence` buckets the cursor, so the band under the pointer is a whole
+`sequence` buckets the cursor, so the band under the pointer is a whole
 calendar month rather than wherever the pixel landed — a preview of exactly
 what a click will select. And a **plain click selects it**: press and release
-without moving fires `onRegionSelect` with the single bucket under the pointer
-(measured: `[2016-12-01T00:00Z, 2017-01-01T00:00Z]`). The prop's own docs
+without moving fires `onDragRelease` with the single bucket under the pointer
+(measured: `{ x: [2016-12-01T00:00Z, 2017-01-01T00:00Z] }`). The prop's own docs
 describe a drag, so this is worth knowing — no drag is required, and the
 returned span is already snapped to real month boundaries, so there is nothing
 to round.
@@ -312,11 +312,11 @@ mark to suppress it. What ships:
 | Hover a month | **kept**    | Shades the calendar bucket — a preview of what a click selects |
 | Click a month | **kept**    | Sets the one selection; no drag needed                         |
 | Wheel-zoom    | **kept**    | Bounded to the record plus the projection's margin             |
-| Drag to pan   | **dropped** | A region-select preempts pan on pointerdown — see below        |
+| Drag to pan   | **dropped** | A range-cursor drag preempts pan on pointerdown — see below    |
 
-Pan is the one real casualty, and the reason is exact: a region-select is armed
-on `pointerdown` and **preempts pan** unless you set
-`regionSelectModifier="shift"` — but setting it would mean a plain click falls
+Pan is the one real casualty, and the reason is exact: a range-cursor drag is
+armed on `pointerdown` and **preempts pan** unless you set
+`<RangeCursor dragModifier="shift">` — but setting it would mean a plain click falls
 through to pan and never selects, which is the whole gesture. Click-to-select
 and drag-to-pan cannot both be plain-drag. The `TIME` presets do the coarse
 navigation and the wheel still zooms (unaffected in every case), so the loss is
@@ -327,7 +327,7 @@ small and the alternative — shift-clicking to pick a month — would be worse.
 | Option                                            | What it does                                                             | Reach for it when                                                          |
 | ------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
 | `<YAxis scale="log">`                             | Base-10 axis; ticks land on decades and `format` still formats the value | Data spanning more than about two orders of magnitude                      |
-| `cursor="region"` + `cursorSequence`              | A bucketed cursor whose click reports the bucket                         | Selection should land on real calendar units, not on pixels                |
+| `<RangeCursor sequence>`                          | A bucketed cursor whose click reports the bucket                         | Selection should land on real calendar units, not on pixels                |
 | `as="trendFit"` / `as="trend"` (`LineStyle.dash`) | One model, two line styles, split at a meaningful instant                | Any chart showing both what a model was fitted on and what it extrapolates |
 | `Sequence.calendar('month')`                      | A real calendar grid                                                     | Any month/week/day bucketing — there is no month _duration_                |
 | A fourth `<LineChart column="normal">`            | Draws the derived remainder as a line as well as a table row             | You want the three components to visibly sum to the total                  |
@@ -354,9 +354,9 @@ own data.
 - [`<YAxis>`](../axes/value-axis.mdx) — `scale`, `ticks`, `format`, `pad`
 - [`<Region>`](../annotations/region-baseline-marker.mdx) — the month band
 - [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — every
-  cursor mode, and which ones carry a readout
+  cursor component, and which ones carry a readout
 - [Pan, zoom and range selection](../interaction/pan-zoom-and-range-selection.mdx)
-  — `onRegionSelect`, and why it preempts pan
+  — `<RangeCursor onDragRelease>`, and why it preempts pan
 - [`<BarList>`](../types/lists.mdx) — the summary table
 - [Gaps](../gaps.mdx) — why the staggered starts are absences, not zeroes
 - [**Storybook — the log scale**](pathname:///storybook/?path=/story/axes-log-scale--log)

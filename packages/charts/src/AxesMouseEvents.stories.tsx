@@ -9,6 +9,7 @@ import { BarChart } from './BarChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
 import type { AxisMouseEvent } from './axis-events.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * `onMouseEvent` on `<XAxis>` / `<YAxis>` — every mouse event on an axis strip,
@@ -97,6 +98,7 @@ export const XAxisClick: Story = {
     return (
       <div style={{ width: W }}>
         <ChartContainer range={RANGE} width={W} showAxis={false}>
+          <LineCursor />
           <ChartRow height={180}>
             <YAxis id="price" format="$,.0f" />
             <Layers>
@@ -121,6 +123,7 @@ export const YAxisClick: Story = {
     return (
       <div style={{ width: W }}>
         <ChartContainer range={RANGE} width={W}>
+          <LineCursor />
           <ChartRow height={180}>
             <YAxis
               id="price"
@@ -145,6 +148,7 @@ export const CategoryAxisClick: Story = {
     return (
       <div style={{ width: W }}>
         <ChartContainer width={W} categories={DESKS} showAxis={false}>
+          <LineCursor />
           <ChartRow height={180}>
             <YAxis id="flow" format=",.0f" />
             <Layers>
@@ -169,6 +173,7 @@ export const EveryEventType: Story = {
     return (
       <div style={{ width: W }}>
         <ChartContainer range={RANGE} width={W} showAxis={false}>
+          <LineCursor />
           <ChartRow height={180}>
             <YAxis id="price" format="$,.0f" />
             <Layers>
@@ -194,6 +199,7 @@ export const OneHandlerManyAxes: Story = {
     return (
       <div style={{ width: W }}>
         <ChartContainer range={RANGE} width={W} showAxis={false}>
+          <LineCursor />
           <ChartRow height={180}>
             <YAxis
               id="price"

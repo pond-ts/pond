@@ -29,7 +29,6 @@ import {
   type CreateSpec,
   type GutterReq,
   type CursorEntry,
-  type CursorMode,
   type SelectInfo,
   type SelectionEntry,
   type SpanSelection,
@@ -39,12 +38,7 @@ import {
   type TrackerSource,
   type DrawStatsFrame,
 } from './context.js';
-import {
-  LegacyCursor,
-  legacyCursorWarning,
-  presetNameFor,
-  warnOnDuplicateGestureOwners,
-} from './cursors.js';
+import { warnOnDuplicateGestureOwners } from './cursors.js';
 import {
   effectiveSelectorEntries,
   resolveControlledHovered,
@@ -56,7 +50,7 @@ import { isDev } from './dev.js';
 import type { LegendItemSpec } from './swatch.js';
 import { maxSlotWidths, sum } from './slots.js';
 import { computeLabelLanes } from './annotations.js';
-import { resolveCursorX, DEFAULT_CURSOR_MODE } from './tracker.js';
+import { resolveCursorX } from './tracker.js';
 import { clampToBounds } from './viewport.js';
 import {
   resolveAxisFormat,
@@ -305,7 +299,7 @@ export interface ChartContainerProps {
    * (`TimeZone`) places these ticks and cuts `Sequence.calendar` buckets, so
    * `Sequence.calendar('day', { timeZone })` and `<ChartContainer timeZone>`
    * given the same zone put a bucket edge and its tick on one instant.
-   * Function formatters (`timeFormat`, `cursorFormat`) still receive epoch ms;
+   * Function formatters (`timeFormat`, a cursor's `format`) still receive epoch ms;
    * read the resolved zone from the chart context. An unknown id throws
    * `RangeError`. Only affects a **time** axis.
    */
@@ -482,93 +476,10 @@ export interface ChartContainerProps {
    *
    * **Omit or pass `null`** (equivalent) for no controlled position — a hovered
    * chart still tracks its pointer, a non-hovered one shows nothing. To force a
-   * chart to *never* show a cursor, use `cursor="none"`, not `trackerPosition`.
-   * See {@link onTrackerChanged}.
+   * chart to *never* show a cursor, mount no cursor component, rather than
+   * clearing `trackerPosition`. See {@link onTrackerChanged}.
    */
   trackerPosition?: number | null;
-  /**
-   * In-chart cursor presentation — the default for all rows (a row may override
-   * via `<ChartRow cursor>`). **Default `'line'`** — the synced vertical line,
-   * with values surfaced *outside* the chart via {@link onTrackerChanged}.
-   * `'point'` / `'inline'` / `'flag'` add per-series marks; `'none'` hides it.
-   * `'region'` shades the bucket under the pointer (needs {@link cursorSequence}).
-   * See {@link CursorMode}.
-   *
-   * @deprecated Mount a **cursor component** instead — `<LineCursor>` /
-   * `<PointCursor>` / `<InlineCursor>` / `<FlagCursor>` / `<CrosshairCursor>` /
-   * `<RangeCursor>` as a child of the container (or inside a `<ChartRow>` for
-   * the per-row override); mount nothing for `'none'`. This prop keeps working
-   * for one more minor by synthesizing the equivalent preset internally; a
-   * mounted cursor component overrides it. See `docs/rfcs/interaction.md` §9.
-   */
-  cursor?: CursorMode;
-  /**
-   * The bucketing for `cursor="region"` — the interval highlighted under the
-   * pointer. A pond {@link Sequence} (duration or calendar-aware —
-   * `Sequence.every('1d')`, `Sequence.calendar('month')`) is realized over the
-   * current view; a {@link BoundedSequence} (e.g. a `TradingCalendar`'s
-   * `sessionSequence()` / `barSequence()`) is used as-is, so the band can track
-   * whole **sessions**. Either way the band maps through `xScale`, so on a
-   * trading-time axis the closed part of the bucket collapses. Ignored unless
-   * `cursor="region"`.
-   *
-   * **Time axis only.** A bucket is a *time* interval, so the region cursor is
-   * gated to a **time** x-axis — on a **value** axis (a horizontal histogram, a
-   * value-keyed chart) it's a no-op (highlighting a value *band* on a horizontal
-   * histogram would be a different, y-oriented cursor).
-   *
-   * **Pass a stable reference.** The buckets are memoized on this value + the
-   * view range; a `Sequence`/`BoundedSequence` rebuilt inline every render
-   * re-realizes the buckets on each pointer move (harmless for a coarse
-   * day/session sequence, wasteful for a fine one over a wide view) — hoist it or
-   * `useMemo` it.
-   *
-   * @deprecated Use `<RangeCursor sequence={…}>` — the prop moved onto the
-   * component that uses it, where it is no longer mode-conditional. Works for
-   * one more minor; a mounted `<RangeCursor>`'s sequence wins over this.
-   */
-  cursorSequence?: Sequence | BoundedSequence;
-  /**
-   * Makes the `region` cursor **draggable**: drag across the plot and the band
-   * extends **bucket by bucket** (snapping to `cursorSequence` points); on
-   * release this fires **once** with the selected `[lo, hi]` span, and the cursor
-   * reverts to the single-bucket highlight (it does not keep the range). Typical
-   * use — zoom the view to the returned span (the container doesn't zoom itself;
-   * that's the consumer's call), or map it onto a data subscription's range params.
-   *
-   * The span is a **neutral numeric pair in axis units** — epoch ms on a **time**
-   * axis, the axis value (strike, distance, …) on a **value** axis — mirroring the
-   * polymorphic `range` input. A time consumer that wants a `TimeRange` builds one
-   * from the pair.
-   *
-   * With **no `cursorSequence`** the region cursor is the degenerate case — it
-   * renders as a **line** on hover and the drag is **freeform** (raw `[lo, hi]`, no
-   * bucket snapping); the same callback fires on release. Bucket snapping needs a
-   * `cursorSequence`, which is **time-axis only** (a time interval over a value
-   * domain is meaningless), so a **value** axis is always freeform. No-op unless
-   * `cursor="region"` on a **time** or **value** x-axis (a **category** axis is
-   * excluded — an ordinal-slot select is a different gesture).
-   *
-   * @deprecated Use `<RangeCursor onDragRelease>` — the drag moved onto the
-   * component, and the payload becomes `{ x: [lo, hi] }` (a {@link RangeSpan},
-   * forward-compatible with the 2-D drag's optional `y`) instead of the bare
-   * pair. Works for one more minor; a mounted `<RangeCursor onDragRelease>`
-   * takes over the gesture.
-   */
-  onRegionSelect?: (range: readonly [number, number]) => void;
-  /**
-   * Which modifier a region-drag needs — set `'shift'` when you also enable
-   * **pan** (`panZoom="pan"` or `"panZoom"`) and want **plain drag to pan,
-   * shift-drag to select**. It's only enforced while pan is enabled (with pan
-   * off there's no gesture conflict, so shift is optional — either drag
-   * selects). **Omitted** ⇒ a region-drag
-   * **preempts** pan (drag always selects; document that precedence for users).
-   * Wheel-zoom is unaffected in every case.
-   *
-   * @deprecated Use `<RangeCursor dragModifier>` — the prop moved onto the
-   * component alongside `onDragRelease`. Works for one more minor.
-   */
-  regionSelectModifier?: 'shift';
   /**
    * Fires on pointer move with the hovered time + every series' value there (so
    * you can render a readout outside the chart), and `null` on leave.
@@ -664,30 +575,6 @@ export interface ChartContainerProps {
   /** Zoom-in floor — the minimum visible duration in ms. Default `1`. */
   minDuration?: number;
   /**
-   * Show the cursor's time atop the in-chart readout (when a row's `cursor` draws
-   * one). **Default `false`.** Formatted by {@link timeFormat} to match the time
-   * axis.
-   *
-   * @deprecated Use `showTime` on the mounted cursor component
-   * (`<LineCursor showTime>` / `<FlagCursor showTime>` / …). Works for one
-   * more minor via the shim.
-   */
-  cursorTime?: boolean;
-  /**
-   * `cursor="crosshair"` reticle **y** snapping. **Default `true`** — the
-   * crosshair centres on the nearest **data point** (the horizontal line snaps to
-   * that sample's value). `false` — the horizontal line + centre follow the
-   * pointer **y** freely, the value read as `yScale.invert(pointerY)`. Either way
-   * the vertical line snaps its **x** to the data grid (so the time readout is
-   * clean), and both draw a full-height dashed vertical + full-width dashed
-   * horizontal line.
-   *
-   * @deprecated Use `<CrosshairCursor snap={…}>` — the prop moved onto the
-   * component, where it is no longer mode-conditional. Works for one more
-   * minor via the shim.
-   */
-  crosshairSnap?: boolean;
-  /**
    * Enter **annotation-edit mode**: suppresses the data cursor and makes editable
    * annotations (those given an `onChange`) interactive — hovering one reveals its
    * handles + highlights it, and dragging edits it. **Default `false`.** Pairs
@@ -736,43 +623,10 @@ export interface ChartContainerProps {
    * **owns the labels**, so it opts the axis out of the `dateStyle` ladder
    * (flat / stacked) by design. **Omitted ⇒ the flat/stacked date style.** To
    * shape only the cursor readout while keeping a date style, use
-   * {@link cursorFormat} instead. (For back-compat this also shapes the readout
-   * when `cursorFormat` is absent.)
+   * a mounted cursor's `format` (e.g. `<CrosshairCursor format>`) instead. (For
+   * back-compat this also shapes the readout when no cursor `format` is set.)
    */
   timeFormat?: AxisFormat;
-  /**
-   * The **cursor / marker readout** format — the crosshair x pill, marker
-   * axis indicators, and annotation auto-labels — **independent of the tick
-   * labels** on both axis kinds: it does **not** disqualify the `dateStyle`
-   * ladder (time), and it never moves the tick labels (value). It beats an
-   * explicit `<XAxis format>` for the **readout only** — pill precedence is
-   * `cursorFormat → axis format → container` — so terse ticks can pair with a
-   * precise readout (`+2.0σ` labels, `+1.83σ` pill).
-   *
-   * **Omitted ⇒ the axis's own formatter.** On a time axis that default is
-   * grain-aware: the readout formats at the axis's granularity, so a
-   * day-or-coarser axis reads a **date** (never a time-of-day) and a sub-day
-   * axis reads date + clock — a daily bar at a foreign-tz midnight no longer
-   * renders as `02 AM`. On a value axis it is the tick formatter
-   * ({@link timeFormat}-shaped, else the d3 default).
-   *
-   * A d3 specifier **string** formats uniformly (time specifier on a time
-   * axis, number specifier on a value axis); a **function**
-   * `(value, { grain, defaultText }) => string` receives the axis's resolved
-   * coarse {@link TimeGrain} (`undefined` on a value axis) and the default
-   * readout text, so it can branch on the zoom level and pass `defaultText`
-   * through for grains it doesn't override (no re-deriving the grain from the
-   * range). See {@link CursorFormat}. This is the independent readout channel;
-   * {@link timeFormat} owns the labels. (A category axis reads names, and a
-   * `transform`ed axis's pill speaks its derived unit — neither consults
-   * `cursorFormat`.)
-   *
-   * @deprecated Use `format` on the mounted cursor (`<CrosshairCursor
-   * format={…}>`) — it feeds the same shared readout channel (marker
-   * indicators and annotation auto-labels included). Works for one more
-   * minor; a mounted cursor's `format` wins over this.
-   */
-  cursorFormat?: CursorFormat;
   /**
    * Label the x axis as **offsets from a zero point** instead of absolute
    * values — the *duration* (elapsed-time) axis. A time axis reads
@@ -792,7 +646,7 @@ export interface ChartContainerProps {
    * and so does the cursor pill (one grain finer, as ever: `00:05:12`).
    *
    * This is a **labelling** mode, not a data transform: `range`, an annotation's
-   * `at`, an `onRegionSelect` span, `trackerPosition` are all still absolute
+   * `at`, a `<RangeCursor onDragRelease>` span, `trackerPosition` are all still absolute
    * axis units. Ignored on a category axis. An explicit `timeFormat` /
    * `<XAxis format>` still wins — on a time axis a d3 *time* specifier can only
    * describe an instant, so it labels the underlying wall clock (the lever for
@@ -992,12 +846,6 @@ function ResolvedChartContainer({
   bounds,
   onTimeRangeChange,
   minDuration = 1,
-  cursor: cursorProp,
-  cursorSequence: cursorSequenceProp,
-  onRegionSelect,
-  regionSelectModifier,
-  cursorTime: cursorTimeProp,
-  crosshairSnap: crosshairSnapProp,
   editAnnotations = false,
   creating = null,
   onCreate,
@@ -1006,7 +854,6 @@ function ResolvedChartContainer({
   onEditAnnotation,
   snap = true,
   timeFormat,
-  cursorFormat: cursorFormatProp,
   origin,
   theme,
   discontinuities,
@@ -1022,14 +869,6 @@ function ResolvedChartContainer({
   /** Resolved height in px, or `undefined` for the classic unmanaged mode. */
   height?: number | undefined;
 }) {
-  // ── Legacy cursor props (deprecated) ───────────────────────────────────────
-  // The string surface keeps working for one minor: the resolved mode is
-  // synthesized into the equivalent mounted preset below (`<LegacyCursor>`),
-  // and a dev warning names the replacement whenever any of the props is
-  // *explicitly* set (never on the defaults). Mounted cursor components in the
-  // same scope override the shim. See docs/rfcs/interaction.md §9 / A4.4.
-  const cursor = cursorProp ?? DEFAULT_CURSOR_MODE;
-
   // [PND-HEIGHT] Whether this container owns vertical layout (see the
   // `height` prop). Carried on the frame so a `<ChartRow flex>` can tell a
   // home that can size it from one that never will.
@@ -1052,46 +891,8 @@ function ResolvedChartContainer({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- content identity
     [categoriesKey],
   );
-  const cursorTime = cursorTimeProp ?? false;
-  const crosshairSnap = crosshairSnapProp ?? true;
-  const warnedLegacyRef = useRef(false);
-  useEffect(() => {
-    if (!isDev || warnedLegacyRef.current) return;
-    const legacy: string[] = [];
-    if (cursorProp !== undefined)
-      legacy.push(
-        `cursor="${cursorProp}" → mount ${presetNameFor(cursorProp)}`,
-      );
-    if (crosshairSnapProp !== undefined)
-      legacy.push('crosshairSnap → <CrosshairCursor snap>');
-    if (cursorTimeProp !== undefined)
-      legacy.push('cursorTime → showTime on the mounted cursor');
-    if (cursorFormatProp !== undefined)
-      legacy.push('cursorFormat → format on <CrosshairCursor>');
-    if (cursorSequenceProp !== undefined)
-      legacy.push('cursorSequence → <RangeCursor sequence>');
-    if (onRegionSelect !== undefined)
-      legacy.push(
-        'onRegionSelect → <RangeCursor onDragRelease> (the payload becomes ' +
-          '{ x: [lo, hi] })',
-      );
-    if (regionSelectModifier !== undefined)
-      legacy.push('regionSelectModifier → <RangeCursor dragModifier>');
-    if (legacy.length === 0) return;
-    warnedLegacyRef.current = true;
-    console.warn(legacyCursorWarning(legacy));
-  }, [
-    cursorProp,
-    crosshairSnapProp,
-    cursorTimeProp,
-    cursorFormatProp,
-    cursorSequenceProp,
-    onRegionSelect,
-    regionSelectModifier,
-  ]);
-
   // Mounted-cursor registry ({@link ContainerFrame.registerCursor}): the
-  // presets (and the legacy shim) register their specs here; rows and
+  // presets register their specs here; rows and
   // `<XAxis>` render the effective set. Same per-instance-slot discipline as
   // the tracker sources; register is idempotent under reference equality (the
   // presets memoize their entries on props).
@@ -1118,19 +919,14 @@ function ResolvedChartContainer({
     warnOnDuplicateGestureOwners(cursors, warnedGestureRef);
   }, [cursors]);
 
-  // The registered cursors' resolution inputs, folded into the legacy
-  // channels: a mounted `<CrosshairCursor format>` feeds the shared readout
-  // channel exactly where `cursorFormat` fed it. First **component-mounted**
-  // entry wins (the shim registers before the children mount, so a bare
-  // first-wins would let the legacy synthesis shadow a real mount); the
-  // legacy prop is the fallback during the window. (`sequence` resolves the
+  // The registered cursors' resolution inputs: a mounted cursor's `format`
+  // feeds the shared readout channel (the x pill, marker indicators,
+  // annotation auto-labels). First mounted wins. (`sequence` resolves the
   // same way, below the selector registry — a `<MultiSelector sequence>`
   // feeds the same channel.)
   const cursorFormat = useMemo(
-    () =>
-      cursors.find((e) => !e.legacy && e.format !== undefined)?.format ??
-      cursorFormatProp,
-    [cursors, cursorFormatProp],
+    () => cursors.find((e) => e.format !== undefined)?.format,
+    [cursors],
   );
 
   // Which axes the gestures own. **Pan follows zoom's degrees of freedom**: an
@@ -1311,7 +1107,7 @@ function ResolvedChartContainer({
   }, []);
 
   // Mounted-selector registry ({@link ContainerFrame.registerSelector}):
-  // `<Selector>` — and the legacy shim below — register here, and **the
+  // `<Selector>` / `<MultiSelector>` register here, and **the
   // registration is what enables a plot click** (interaction RFC §7.1). Same
   // per-instance-slot discipline as the cursors/tracker sources. Mirrored to a
   // ref because `select` / `setHovered` are `[]`-stable callbacks that must not
@@ -1346,18 +1142,16 @@ function ResolvedChartContainer({
     [selectorMap],
   );
   const selectorsRef = useRef(selectors);
-  // The shared snap-bucket sequence, folded into the legacy channel exactly as
-  // `cursorFormat` is above: a component-mounted `<RangeCursor sequence>`
-  // wins, then a mounted `<MultiSelector sequence>` (its sweep extends bucket
-  // by bucket over the same realized buckets — one channel, so the band and
-  // the sweep can never snap differently), then the legacy shim / prop.
+  // The shared snap-bucket sequence, resolved like `cursorFormat` above: a
+  // mounted `<RangeCursor sequence>` wins, then a mounted `<MultiSelector
+  // sequence>` (its sweep extends bucket by bucket over the same realized
+  // buckets — one channel, so the band and the sweep can never snap
+  // differently).
   const cursorSequence = useMemo(
     () =>
-      cursors.find((e) => !e.legacy && e.sequence !== undefined)?.sequence ??
-      selectors.find((e) => e.sequence !== undefined)?.sequence ??
       cursors.find((e) => e.sequence !== undefined)?.sequence ??
-      cursorSequenceProp,
-    [cursors, selectors, cursorSequenceProp],
+      selectors.find((e) => e.sequence !== undefined)?.sequence,
+    [cursors, selectors],
   );
   // Annotations register here so the container can do what a mark can't in
   // isolation: draw its guide line across other rows, order regions, serve snap
@@ -2170,10 +1964,10 @@ function ResolvedChartContainer({
   // hides an out-of-plot crosshair meanwhile.
   const cursorX = resolveCursorX(trackerPosition, hoverX, xScale);
 
-  // `cursor="region"` snap buckets — the intervals the band snaps to (and a drag
+  // `<RangeCursor>` snap buckets — the intervals the band snaps to (and a drag
   // extends bucket by bucket over). Two sources, in precedence order:
   //
-  // 1. **An explicit `cursorSequence`** (time axis only): realized over the view
+  // 1. **An explicit `sequence`** (time axis only): realized over the view
   //    (a `Sequence` → `.bounded`; a `BoundedSequence` used as-is). A `Sequence`
   //    bucket is a *time* interval, so it's gated to a time axis — realizing time
   //    buckets over a value domain is meaningless (it would shade the whole plot).
@@ -2201,9 +1995,9 @@ function ResolvedChartContainer({
     // or a time-axis histogram with no explicit sequence). `binIntervals` is only
     // published by a vertical bar layer, so this is a no-op for
     // line/area/scatter rows. On a **category** axis the bins are the unit
-    // slots `[i, i+1)`: the region cursor never reads them (its band gates on
-    // a continuous axis), but the `<MultiSelector>` sweep's band snaps over
-    // them so it runs slot-edge to slot-edge — the band scale's `invert`
+    // slots `[i, i+1)`: the `<RangeCursor>` band shades the slot under the
+    // pointer ([PND-ORDCURSOR]), and the `<MultiSelector>` sweep's band snaps
+    // over them so it runs slot-edge to slot-edge — the band scale's `invert`
     // returns slot *centres*, and a centre-to-centre band disagreed with the
     // snapped-outward span the release commits (RFC A7.6's edge rule).
     //
@@ -2269,6 +2063,28 @@ function ResolvedChartContainer({
         'value axis you can scale.',
     );
   }
+  // [PND-ORDCURSOR] A `<RangeCursor onDragRelease>` on a category axis draws
+  // its slot band but never starts a drag (`resolveRangeDrag`): the callback
+  // would silently never fire, so say so once. Same `sources.size` guard as
+  // above — the kind is 'time' until the layers register.
+  const rangeDragOnCategory =
+    resolvedKind === 'category' &&
+    sources.size > 0 &&
+    cursors.some(
+      (e) => e.onDragRelease !== undefined && e.enableDrag !== false,
+    );
+  const warnedRangeDragOnCategoryRef = useRef(false);
+  useEffect(() => {
+    if (!isDev || !rangeDragOnCategory) return;
+    if (warnedRangeDragOnCategoryRef.current) return;
+    warnedRangeDragOnCategoryRef.current = true;
+    console.warn(
+      '[pond-charts] <RangeCursor onDragRelease> is mounted on a category x ' +
+        'axis, where the range drag is off: the band shades the slot under the ' +
+        'pointer, but `onDragRelease` never fires. To drag across bars and get ' +
+        'them back, mount a <MultiSelector> instead.',
+    );
+  }, [rangeDragOnCategory]);
   const xIsLog = ((s: unknown) => {
     const probe = s as { base?: unknown; constant?: unknown };
     return (
@@ -2337,15 +2153,12 @@ function ResolvedChartContainer({
       rowGap,
       setHoverX,
       setHoverY,
-      crosshairSnap,
       cursorBuckets,
       regionAnchor,
       previewSpans,
       setPreviewSpans,
       setRegionAnchor,
-      onRegionSelect,
       reportDrawStats,
-      regionSelectModifier,
       draggingKey,
       setDragging,
       selected: selectedValue,
@@ -2353,8 +2166,6 @@ function ResolvedChartContainer({
       select,
       hovered: hoveredValue,
       setHovered,
-      cursor,
-      cursorTime,
       editAnnotations,
       creating,
       snap,
@@ -2424,15 +2235,12 @@ function ResolvedChartContainer({
       rightGutter,
       rowGap,
       setHoverY,
-      crosshairSnap,
       cursorBuckets,
       regionAnchor,
       previewSpans,
       setPreviewSpans,
       setRegionAnchor,
-      onRegionSelect,
       reportDrawStats,
-      regionSelectModifier,
       draggingKey,
       setDragging,
       selectedValue,
@@ -2440,8 +2248,6 @@ function ResolvedChartContainer({
       select,
       hoveredValue,
       setHovered,
-      cursor,
-      cursorTime,
       editAnnotations,
       creating,
       snap,
@@ -2500,20 +2306,6 @@ function ResolvedChartContainer({
   return (
     <ContainerContext.Provider value={frame}>
       <CursorContext.Provider value={cursorFrame}>
-        {/* The deprecation shim: the container-level legacy `cursor` string
-            (or its `'line'` default), synthesized as the equivalent mounted
-            preset. Registers as `legacy`, so mounting a cursor component
-            overrides it; rows synthesize their own for `<ChartRow cursor>`. */}
-        <LegacyCursor
-          mode={cursor}
-          showTime={cursorTime}
-          snap={crosshairSnap}
-          sequence={cursorSequenceProp}
-          // The 'line' default nobody asked for is IMPLICIT — the one cursor a
-          // <MultiSelector>'s resting block preview may replace with the
-          // brush band. An explicit `cursor` prop (any mode) still wins.
-          implicit={cursorProp === undefined}
-        />
         <div
           style={{
             width: `${width}px`,

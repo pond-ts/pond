@@ -6,6 +6,7 @@ import {
   LineChart,
   YAxis,
   Zone,
+  LineCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -60,6 +61,7 @@ export default function GalleryAirQuality({
 
   return (
     <ChartContainer range={range} width={width} theme={theme}>
+      <LineCursor />
       <ChartRow height={height}>
         <YAxis id="pm" label="PM2.5 (µg/m³)" format=",.0f" min={0} width={62} />
         <Layers>

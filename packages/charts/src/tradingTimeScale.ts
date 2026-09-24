@@ -263,13 +263,13 @@ export interface TradingTimeScale {
    * `02 AM`; a sub-day axis reads date **+** clock). This is the grain-aware
    * default the crosshair pill, marker indicators, and annotation auto-labels
    * use — replacing d3's multi-scale default, which showed local time-of-day
-   * for any off-local-midnight instant. A container `cursorFormat` overrides it.
+   * for any off-local-midnight instant. A cursor's `format` overrides it.
    */
   readoutFormat(count?: number): (value: number) => string;
   /**
    * The axis's resolved **coarse grain** ({@link TimeGrain}) at `count` — the
    * unit the ticks currently sit on (`year` … `second`), strides collapsed. A
-   * `cursorFormat` callback receives this so it can branch on the zoom level
+   * cursor `format` callback receives this so it can branch on the zoom level
    * (return a year when zoomed out, a clock when zoomed in) without
    * re-deriving the ladder the axis already ran.
    */

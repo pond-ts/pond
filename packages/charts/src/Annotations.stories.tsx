@@ -11,6 +11,7 @@ import { Region } from './annotations.js';
 import { Baseline } from './annotations.js';
 import { Marker } from './annotations.js';
 import { defaultTheme } from './theme.js';
+import { LineCursor } from './cursors.js';
 
 /** A 40-minute interval on a 1-minute grid (5:00–5:40), so the x is wall-clock. */
 const BASE = Date.UTC(2026, 0, 1, 5, 0, 0);
@@ -91,6 +92,7 @@ type Story = StoryObj;
 export const InContext: Story = {
   render: () => (
     <ChartContainer range={INTERVAL} width={680}>
+      <LineCursor />
       <ChartRow height={280}>
         <YAxis id="power" label="W" min={0} max={300} />
         <Layers>
@@ -120,6 +122,7 @@ export const ValueAxis: Story = {
     const ride = rideByDistance();
     return (
       <ChartContainer width={680} timeFormat=",.0f">
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="hr" label="bpm" />
           <Layers>
@@ -148,6 +151,7 @@ export const Selectable: Story = {
     const [sel, setSel] = useState<string | null>('interval');
     return (
       <ChartContainer range={INTERVAL} width={680} onSelectAnnotation={setSel}>
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="power" label="W" min={0} max={300} />
           <Layers>
@@ -183,6 +187,7 @@ export const Selectable: Story = {
 export const Highlight: Story = {
   render: () => (
     <ChartContainer range={INTERVAL} width={680}>
+      <LineCursor />
       <ChartRow height={260}>
         <YAxis id="power" label="W" min={0} max={300} />
         <Layers>
@@ -216,6 +221,7 @@ export const Highlight: Story = {
 export const BackgroundZones: Story = {
   render: () => (
     <ChartContainer range={INTERVAL} width={680}>
+      <LineCursor />
       <ChartRow height={260}>
         <YAxis id="power" label="W" min={0} max={300} />
         <Layers>
@@ -257,6 +263,7 @@ export const Editable: Story = {
     const [threshold, setThreshold] = useState(225);
     return (
       <ChartContainer range={INTERVAL} width={680} editAnnotations>
+        <LineCursor />
         <ChartRow height={280}>
           <YAxis id="power" label="W" min={0} max={300} />
           <Layers>
@@ -346,6 +353,7 @@ export const Select: Story = {
             setSelectedId(id); // …and it reads as selected
           }}
         >
+          <LineCursor />
           <ChartRow height={280}>
             <YAxis id="power" label="W" min={0} max={300} />
             <Layers>
@@ -528,6 +536,7 @@ export const MultiRow: Story = {
     });
     return (
       <ChartContainer range={INTERVAL} width={680} editAnnotations>
+        <LineCursor />
         <ChartRow height={170}>
           <YAxis id="power" label="W" min={0} max={300} />
           <Layers>
@@ -583,6 +592,7 @@ export const MultiRowMarkers: Story = {
     const hLabels = ['z1', 'z2', 'max'];
     return (
       <ChartContainer range={INTERVAL} width={680} editAnnotations>
+        <LineCursor />
         <ChartRow height={170}>
           <YAxis id="power" label="W" min={0} max={300} />
           <Layers>
@@ -688,6 +698,7 @@ export const Create: Story = {
             setTool(null); // spring-loaded — disarm after one
           }}
         >
+          <LineCursor />
           <ChartRow height={280}>
             <YAxis id="power" label="W" min={0} max={300} />
             <Layers>
@@ -792,6 +803,7 @@ export const PanZoomSelect: Story = {
           onTimeRangeChange={setRange}
           onSelectAnnotation={setSelectedId}
         >
+          <LineCursor />
           <ChartRow height={260}>
             <YAxis id="power" label="W" min={0} max={300} />
             <Layers>
@@ -837,6 +849,7 @@ export const Roles: Story = {
     };
     return (
       <ChartContainer range={INTERVAL} width={620} theme={theme}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="w" label="W" />
           <Layers>

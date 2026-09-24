@@ -9,6 +9,7 @@ import {
   Marker,
   Region,
   YAxis,
+  CrosshairCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -141,12 +142,8 @@ export default function GalleryEclipseSolar({
           ))}
         </div>
       ) : null}
-      <ChartContainer
-        range={range}
-        width={width}
-        theme={theme}
-        cursor="crosshair"
-      >
+      <ChartContainer range={range} width={width} theme={theme}>
+        <CrosshairCursor />
         <ChartRow height={height}>
           {anomaly ? (
             <YAxis id="gw" label="GW vs baseline" format="+.1f" width={56} />

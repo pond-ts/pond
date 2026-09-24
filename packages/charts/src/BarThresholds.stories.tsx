@@ -10,6 +10,7 @@ import { YAxis } from './YAxis.js';
 import { Selector } from './selectors.js';
 import { defaultTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * **Threshold banding** ([PND-BANDBAR2]) — one bar coloured *along its length*
@@ -66,6 +67,7 @@ const BANDS = ['#2f9e6e', '#e0a13c', '#d05353'];
 export const Default: Story = {
   render: () => (
     <ChartContainer width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -87,6 +89,7 @@ export const Default: Story = {
 export const SingleThreshold: Story = {
   render: () => (
     <ChartContainer width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -109,6 +112,7 @@ export const SingleThreshold: Story = {
 export const FiveBands: Story = {
   render: () => (
     <ChartContainer width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -133,6 +137,7 @@ export const FiveBands: Story = {
 export const FromTheme: Story = {
   render: () => (
     <ChartContainer width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -162,6 +167,7 @@ export const PerRoleLadder: Story = {
     };
     return (
       <ChartContainer width={640} theme={theme}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="v" label="" min={0} max={3.6} />
           <Layers>
@@ -186,6 +192,7 @@ export const PerRoleLadder: Story = {
 export const Signed: Story = {
   render: () => (
     <ChartContainer width={640}>
+      <LineCursor />
       <ChartRow height={260}>
         <YAxis id="v" label="" min={-3.6} max={3.6} />
         <Layers>
@@ -210,6 +217,7 @@ export const Horizontal: Story = {
     // `showAxis={false}` because the explicit <XAxis> below is the value axis;
     // leaving the container's implicit one on renders the ticks twice.
     <ChartContainer width={640} showAxis={false}>
+      <LineCursor />
       <ChartRow height={260}>
         <YAxis id="v" label="" />
         <Layers>
@@ -256,6 +264,7 @@ export const TimeSeriesBars: Story = {
         width={640}
         showAxis={false}
       >
+        <LineCursor />
         <ChartRow height={220}>
           <YAxis id="v" label="" min={0} max={3.6} />
           <Layers>
@@ -284,6 +293,7 @@ function SelectDemo() {
   return (
     <div>
       <ChartContainer width={640}>
+        <LineCursor />
         <Selector selected={sel} onSelect={setSel}>
           <ChartRow height={240}>
             <YAxis id="v" label="" min={0} max={3.6} />
@@ -317,6 +327,7 @@ export const Selectable: Story = { render: () => <SelectDemo /> };
 export const YieldsToBinColors: Story = {
   render: () => (
     <ChartContainer width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -348,6 +359,7 @@ export const YieldsToBinColors: Story = {
 export const UnsortedThresholds: Story = {
   render: () => (
     <ChartContainer width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>

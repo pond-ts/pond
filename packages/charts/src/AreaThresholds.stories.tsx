@@ -8,6 +8,7 @@ import { AreaChart } from './AreaChart.js';
 import { YAxis } from './YAxis.js';
 import { Selector } from './selectors.js';
 import type { SelectInfo } from './context.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * **Threshold banding on an area** ([PND-BANDAREA]) — the fill (and the value
@@ -109,6 +110,7 @@ const BANDS = ['#2f9e6e', '#e0a13c', '#d05353'];
 export const Default: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -127,6 +129,7 @@ export const Default: Story = {
 export const BandColors: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -148,6 +151,7 @@ export const BandColors: Story = {
 export const SingleThreshold: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -170,6 +174,7 @@ export const SingleThreshold: Story = {
 export const FiveBands: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -193,6 +198,7 @@ export const FiveBands: Story = {
 export const Signed: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="" min={-3.2} max={3.2} />
         <Layers>
@@ -217,6 +223,7 @@ export const Signed: Story = {
 export const MonotoneCurve: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -242,6 +249,7 @@ export const MonotoneCurve: Story = {
 export const WithGaps: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>
@@ -283,6 +291,7 @@ export const LogAxis: Story = {
     });
     return (
       <ChartContainer range={RANGE} width={640}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="v" label="" scale="log" min={0.2} max={4} />
           <Layers>
@@ -310,6 +319,7 @@ function SelectDemo() {
   return (
     <div>
       <ChartContainer range={RANGE} width={640}>
+        <LineCursor />
         <Selector selected={sel} onSelect={setSel}>
           <ChartRow height={240}>
             <YAxis id="v" label="" min={0} max={3.6} />
@@ -343,6 +353,7 @@ export const Selectable: Story = { render: () => <SelectDemo /> };
 export const UnsortedThresholds: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={640}>
+      <LineCursor />
       <ChartRow height={240}>
         <YAxis id="v" label="" min={0} max={3.6} />
         <Layers>

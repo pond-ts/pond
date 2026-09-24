@@ -8,6 +8,7 @@ import { LineChart } from './LineChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
 import { Marker } from './annotations.js';
+import { LineCursor, CrosshairCursor } from './cursors.js';
 
 /**
  * The **duration (elapsed) x axis** — `<ChartContainer origin>`. One story per
@@ -82,13 +83,20 @@ const W = 620;
  * concrete kind.
  */
 const chart = (
-  props: Partial<ComponentProps<typeof ChartContainer>>,
+  {
+    crosshair = false,
+    ...props
+  }: Partial<ComponentProps<typeof ChartContainer>> & {
+    /** Mount `<CrosshairCursor>` instead of the plain `<LineCursor>`. */
+    crosshair?: boolean;
+  },
   series: ReturnType<typeof ride> | ReturnType<typeof rideByDistance> = ride(
     10_000,
   ),
   axis = <XAxis />,
 ) => (
   <ChartContainer width={W} showAxis={false} {...props}>
+    {crosshair ? <CrosshairCursor /> : <LineCursor />}
     <ChartRow height={180}>
       <YAxis id="hr" label="bpm" />
       <Layers>
@@ -189,7 +197,7 @@ export const CustomFormat: Story = {
  *  finer (`00:05:12`) — the same precise-readout-over-terse-ticks split the
  *  calendar axis makes. */
 export const CrosshairReadout: Story = {
-  render: () => chart({ origin: 'data', cursor: 'crosshair' }),
+  render: () => chart({ origin: 'data', crosshair: true }),
 };
 
 /** A `<Marker indicator>` pins its instant to the axis in the axis's own
@@ -197,6 +205,7 @@ export const CrosshairReadout: Story = {
 export const MarkerIndicator: Story = {
   render: () => (
     <ChartContainer width={W} origin="data" showAxis={false}>
+      <LineCursor />
       <ChartRow height={180}>
         <YAxis id="hr" label="bpm" />
         <Layers>
@@ -213,5 +222,5 @@ export const MarkerIndicator: Story = {
  *  view's, so `00:00` travels with the first sample instead of re-zeroing at the
  *  left edge — pan past the start and the labels go negative. */
 export const PanZoom: Story = {
-  render: () => chart({ origin: 'data', panZoom: true, cursor: 'crosshair' }),
+  render: () => chart({ origin: 'data', panZoom: true, crosshair: true }),
 };

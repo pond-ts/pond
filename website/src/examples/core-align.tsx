@@ -7,6 +7,7 @@ import {
   Marker,
   ScatterChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { Sequence, TimeRange, TimeSeries } from 'pond-ts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -207,6 +208,7 @@ export default function CoreAlign() {
             width={width}
             theme={theme}
           >
+            <LineCursor />
             <ChartRow height={HEIGHT}>
               <YAxis
                 id="val"

@@ -4,10 +4,12 @@ import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
+import { BoxPlot } from './BoxPlot.js';
 import { YAxis } from './YAxis.js';
 import { CrosshairCursor } from './cursors.js';
 import { defaultTheme } from './theme.js';
 import type { CursorSnap } from './context.js';
+import { TimeSeries } from 'pond-ts';
 import {
   twoSeries,
   hrSeries,
@@ -17,12 +19,12 @@ import {
 } from './story-data.fixture.js';
 
 /**
- * `cursor="crosshair"` — a single inspection **reticle**: a full-height dashed
+ * `<CrosshairCursor>` — a single inspection **reticle**: a full-height dashed
  * vertical line + a full-width dashed horizontal line + a centre dot, with the
  * value pinned to the y-axis and the time to the **x-axis** (connected to the
  * vertical line).
  *
- * **`crosshairSnap`** (default `true`) centres the reticle on the nearest **data
+ * **`snap`** (default `true`) centres the reticle on the nearest **data
  * point** — the vertical line snaps to a sample's x, the horizontal to its value.
  * `false` is a **free** reticle following the raw pointer, the value read as
  * `yScale.invert(pointerY)`. The snap stories pin a controlled `trackerPosition`
@@ -30,14 +32,14 @@ import {
  * reticle is hover-driven (it needs the pointer y), so its story has no pin —
  * hover the plot to see it.
  *
- * Crosshair puts the time on the x-axis pill only — unlike `flag`/`inline`'s
- * `cursorTime`, there is no per-row time chip to opt into.
+ * Crosshair puts the time on the x-axis pill (its `showTime` defaults to
+ * `true`) — unlike `<FlagCursor>` / `<InlineCursor>`'s `showTime`, there is no
+ * per-row time chip.
  *
  * The **value pill** is an *axis indicator*: it lands on the axis whose scale
  * produced the number — its side, and its column when a side carries several —
  * wearing that axis's `<YAxis color>` when it has one. The last three stories
- * fan that out; they mount `<CrosshairCursor>` (the preset the deprecated
- * `cursor="crosshair"` string above synthesizes).
+ * fan that out.
  */
 const W = 620;
 const PIN = BASE + 40 * STEP;
@@ -56,18 +58,14 @@ const meta = {
 export default meta;
 type Story = StoryObj;
 
-/** **Free reticle** — `crosshairSnap={false}`: the horizontal line + centre
+/** **Free reticle** — `snap={false}`: the horizontal line + centre
  *  follow the pointer **y** freely (value = `yScale.invert(pointerY)`), while the
  *  vertical line still snaps its **x** to the data grid (a clean time readout).
  *  Hover-driven — **hover the plot** to see it (no `trackerPosition` pin). */
 export const FreeReticle: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="crosshair"
-      crosshairSnap={false}
-    >
+    <ChartContainer range={RANGE} width={W}>
+      <CrosshairCursor snap={false} />
       <ChartRow height={240}>
         <Layers>
           <LineChart series={s} column="fast" as="primary" axis="usd" />
@@ -81,12 +79,8 @@ export const FreeReticle: Story = {
 /** **Single series** — line + dot, the value pinned to the y-axis, the time on the x. */
 export const SingleSeries: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="crosshair"
-      trackerPosition={PIN}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
+      <CrosshairCursor />
       <ChartRow height={240}>
         <Layers>
           <LineChart series={s} column="fast" as="primary" axis="usd" />
@@ -101,12 +95,8 @@ export const SingleSeries: Story = {
  *  own series colour, each with its own dashed connector; one x-time pill. */
 export const MultipleSeries: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="crosshair"
-      trackerPosition={PIN}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
+      <CrosshairCursor />
       <ChartRow height={240}>
         <Layers>
           <LineChart series={s} column="fast" as="primary" axis="usd" />
@@ -122,12 +112,8 @@ export const MultipleSeries: Story = {
  *  left gutter (not the right default) with its connector reaching left. */
 export const LeftAxis: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="crosshair"
-      trackerPosition={PIN}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
+      <CrosshairCursor />
       <ChartRow height={240}>
         <YAxis id="usd" side="left" format=",.0f" />
         <Layers>
@@ -142,12 +128,8 @@ export const LeftAxis: Story = {
  *  each with a connector reaching its own gutter. */
 export const DualAxis: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="crosshair"
-      trackerPosition={PIN}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
+      <CrosshairCursor />
       <ChartRow height={240}>
         <YAxis id="L" side="left" format=",.0f" />
         <Layers>
@@ -164,12 +146,8 @@ export const DualAxis: Story = {
  *  value on its own axis; the x-time pill shows once, on the shared x-axis. */
 export const MultiRow: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="crosshair"
-      trackerPosition={PIN}
-    >
+    <ChartContainer range={RANGE} width={W} trackerPosition={PIN}>
+      <CrosshairCursor />
       <ChartRow height={150}>
         <Layers>
           <LineChart series={s} column="fast" as="primary" axis="usd" />
@@ -351,4 +329,83 @@ function SnapReadoutDemo() {
  *  the two lines and the text below follows. */
 export const SnapReadout: Story = {
   render: () => <SnapReadoutDemo />,
+};
+
+/** Six 10-step boxes across the fixture range, each with visible spread. */
+function boxSeries() {
+  const width = 10 * STEP;
+  const rows = Array.from({ length: 6 }, (_, i) => {
+    const begin = BASE + i * width;
+    const mid = 100 + 12 * Math.sin(i / 1.3);
+    const spread = 8 + 3 * Math.cos(i);
+    return [
+      [begin, begin + width],
+      mid - spread,
+      mid - spread / 2,
+      mid,
+      mid + spread / 2,
+      mid + spread,
+    ];
+  });
+  return new TimeSeries({
+    name: 'boxes',
+    schema: [
+      { name: 'timeRange', kind: 'timeRange' },
+      { name: 'lo', kind: 'number' },
+      { name: 'q1', kind: 'number' },
+      { name: 'med', kind: 'number' },
+      { name: 'q3', kind: 'number' },
+      { name: 'hi', kind: 'number' },
+    ] as const,
+    rows: rows as never,
+  });
+}
+
+/** The `BoxPlot` story's body: a box plot plus the latest `onSnap` report. */
+function BoxPlotDemo() {
+  const [snap, setSnap] = useState<CursorSnap | null>(null);
+  return (
+    <div>
+      <ChartContainer range={RANGE} width={W}>
+        <CrosshairCursor onSnap={setSnap} />
+        <ChartRow height={240}>
+          <Layers>
+            <BoxPlot
+              series={boxSeries()}
+              lower="lo"
+              q1="q1"
+              median="med"
+              q3="q3"
+              upper="hi"
+              axis="v"
+              gap={14}
+            />
+          </Layers>
+          <YAxis id="v" side="right" format=",.0f" />
+        </ChartRow>
+      </ChartContainer>
+      <div
+        style={{
+          fontFamily: defaultTheme.font.family,
+          fontSize: 12,
+          marginTop: 8,
+          color: snap?.color ?? defaultTheme.axis.label,
+        }}
+      >
+        {snap === null
+          ? 'Not snapped — hover a box'
+          : `Snapped to ${snap.label}: ${snap.formatted}`}
+      </div>
+    </div>
+  );
+}
+
+/** **On a box plot** ([PND-BOXPLT]) — the reticle snaps to the box: the
+ *  vertical line to the box centre, the horizontal line to the quantile
+ *  nearest the pointer, whose value goes on the y-axis pill and to `onSnap`.
+ *  Hover-driven: move up and down inside a box and the reading steps through
+ *  `hi` / `q3` / `med` / `q1` / `lo`. */
+export const BoxPlotSnap: Story = {
+  name: 'BoxPlot',
+  render: () => <BoxPlotDemo />,
 };

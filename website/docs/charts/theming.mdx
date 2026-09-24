@@ -40,9 +40,11 @@ import {
   Layers,
   LineChart,
   defaultTheme,
+  LineCursor,
 } from '@pond-ts/charts';
 
 <ChartContainer width={640} theme={defaultTheme}>
+  <LineCursor />
   <ChartRow height={220}>
     <Layers>
       <LineChart series={series} column="price" />
@@ -299,7 +301,12 @@ flips** — a `MutationObserver` watches the root's `data-theme` / `class`, so t
 canvas tracks dark/light with the rest of the page:
 
 ```tsx
-import { useChartTheme, defaultTheme, ChartContainer } from '@pond-ts/charts';
+import {
+  useChartTheme,
+  defaultTheme,
+  ChartContainer,
+  LineCursor,
+} from '@pond-ts/charts';
 
 function PriceChart({ series }) {
   const theme = useChartTheme(defaultTheme, (v) => ({
@@ -311,6 +318,7 @@ function PriceChart({ series }) {
 
   return (
     <ChartContainer width={640} theme={theme}>
+      <LineCursor />
       {/* rows … */}
     </ChartContainer>
   );

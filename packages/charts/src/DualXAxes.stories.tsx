@@ -7,6 +7,7 @@ import { LineChart } from './LineChart.js';
 import { ScatterChart } from './ScatterChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * **Dual x-axes** — two tick layouts on **one shared scale** (never two
@@ -126,6 +127,7 @@ export const SigmaWithDeltaStrip: Story = {
     const series = sigmaSmile();
     return (
       <ChartContainer showAxis={false} width={1100}>
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="iv" label="Volatility" format=".1f" />
           <Layers>
@@ -152,6 +154,7 @@ export const SeriesColoredAxes: Story = {
     const series = sigmaSmile();
     return (
       <ChartContainer showAxis={false} width={700}>
+        <LineCursor />
         <ChartRow height={220}>
           {/* Each y axis takes its series' colour — the theme's primary /
               secondary role colours, matched by hand. */}
@@ -198,6 +201,7 @@ export const MoneynessTopAxis: Story = {
     });
     return (
       <ChartContainer showAxis={false} width={620}>
+        <LineCursor />
         <XAxis
           side="top"
           transform={{ to: (k) => k / spot, from: (m) => m * spot }}

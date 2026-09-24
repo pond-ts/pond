@@ -183,14 +183,10 @@ export default function GalleryMeasles({
         )}
       </div>
 
-      <ChartContainer
-        range={[first, last]}
-        width={width}
-        theme={theme}
-        // The cell outline answers both axes; a shared vertical line would only
-        // answer x, and on a grid that is a second, weaker cursor.
-        cursor="none"
-      >
+      <ChartContainer range={[first, last]} width={width} theme={theme}>
+        {/* No cursor component: the cell outline answers both axes; a shared
+            vertical line would only answer x, and on a grid that is a second,
+            weaker cursor. */}
         <Selector onHover={setHit}>
           <ChartRow height={height}>
             <YAxis id="state" label="" width={92} />

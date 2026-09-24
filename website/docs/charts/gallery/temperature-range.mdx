@@ -21,7 +21,7 @@ import GalleryTemperatureRange from '@site/src/examples/gallery-temperature-rang
 
 Hover anywhere: a crosshair, a dot snapped to the nearest day, the date pinned
 to the time axis and the value pinned to the temperature axis. That's
-`cursor="crosshair"` and nothing else — **this chart doesn't pan or zoom**, and
+`<CrosshairCursor />` and nothing else — **this chart doesn't pan or zoom**, and
 [Options to try](#options-to-try) says which prop turns that on.
 
 The band's _width_ is the reading. It averages 5.4 °C in January and 12.9 °C in
@@ -70,6 +70,7 @@ The whole chart is one `<BandChart>` naming the two columns that bound it:
 
 ```tsx
 <ChartContainer range={SEA_BOUNDS} width={640} theme={theme}>
+  <LineCursor />
   <ChartRow height={220}>
     <YAxis
       id="c"
@@ -140,7 +141,7 @@ passing.
 | A second `<BandChart as="inner">`          | A tighter band nested inside the wide one                   | You have percentiles as well as extremes — p25/p75 inside p5/p95                    |
 | `<Baseline value={0}>`                     | A reference line in the annotation register, not a data hue | Freezing point, an SLA, a budget — a threshold the data is judged against           |
 | `curve="basis"` on the line                | Rounds the centreline's corners                             | The line is already an average and its corners are sampling artefacts               |
-| `cursor="flag"`                            | A per-layer value chip instead of one axis pill             | You want every layer's number at once — note it draws one chip **per layer**        |
+| `<FlagCursor />`                           | A per-layer value chip instead of one axis pill             | You want every layer's number at once — note it draws one chip **per layer**        |
 | `format` on the `<YAxis>`                  | Any [d3-format](https://d3js.org/d3-format) specifier       | Fahrenheit, a decimal place, a degree suffix                                        |
 
 ## See also
@@ -148,7 +149,7 @@ passing.
 - [`<BandChart>`](../types/bandchart.mdx) — every prop, and the nesting model
 - [`<LineChart>`](../types/linechart.mdx) — interpolation, gaps, roles
 - [Gaps and missing data](../gaps.mdx) — what a hole in a column does to each layer
-- [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — the cursor modes in full
+- [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — the cursor components in full
 - [Pan, zoom and range selection](../interaction/pan-zoom-and-range-selection.mdx) —
   turning on the interaction this page doesn't use
 - [**Storybook**](pathname:///storybook/?path=/story/charts-bandchart--san-francisco-temperature)

@@ -6,6 +6,7 @@ import {
   ScatterChart,
   XAxis,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { SPOT, smileChain } from './lib/value-axis-fixtures';
@@ -16,6 +17,7 @@ export default function ChartsValueAxisDual() {
 
   return (
     <ChartContainer showAxis={false} width={560} theme={theme}>
+      <LineCursor />
       {/* A second <XAxis> relabels the SAME shared scale into a derived
           unit via `transform` — one pixel mapping, two tick layouts. Here
           strike (below) and moneyness = strike / spot (above) are linearly

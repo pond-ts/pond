@@ -75,6 +75,12 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- `@pond-ts/charts`: **`format` on `<LineCursor>`, `<PointCursor>`,
+  `<InlineCursor>` and `<FlagCursor>`** — the readout format that used to be
+  the container's `cursorFormat`, now on whichever cursor you mount (it was
+  already on `<CrosshairCursor>`). The chart still has one readout channel:
+  the first mounted cursor that sets `format` shapes it.
+
 - `@pond-ts/charts`: **`<CrosshairCursor onSnap>`** — tells you what the
   crosshair is snapped to: the series (`label`, `color`, `axisId`) and the
   point (`x`, `value`, `formatted`, plus `readout` when the layer has one), as
@@ -84,12 +90,23 @@ include new features and type-level changes; patch bumps are strictly additive.
   reticle drawn by a controlled `trackerPosition` with no pointer on the chart
   also reports `null`. Story `Cursors/Crosshair / SnapReadout`.
 
+- `@pond-ts/charts`: **`<CrosshairCursor>` snaps to box plots.** Its vertical
+  line lands on the centre of the box under the pointer and its horizontal
+  line on the quantile nearest the pointer (`upper` / `q3` / `median` / `q1` /
+  `lower`), with that value on the y-axis pill and reported by `onSnap`. A box
+  used to be skipped by the crosshair entirely: the line sat wherever the
+  pointer was and there was no value to read. The flag cursor still shows the
+  box's one consolidated flag, and the point / inline / flag cursors still draw
+  no per-quantile dots on a box. In a row with a box and a line, the vertical
+  line snaps to whichever of the two is drawn on top, the same rule as for two
+  lines. Story `Cursors/Crosshair / BoxPlot`.
+
 ### Changed
 
 - `@pond-ts/charts`: the **crosshair's centre dot is drawn in the snapped
   series' colour** rather than the cursor ink, so the reticle shows which line
   it is reading. The free reticle (`snap={false}`) has no series under it and
-  keeps the cursor ink. Applies to the legacy `cursor="crosshair"` too.
+  keeps the cursor ink.
 
 - **charts:** **`<AreaChart>` fills to zero by default.** An omitted `baseline`
   used to rest the fill on the bottom of the plot, which on auto-fit data sits
@@ -109,7 +126,47 @@ include new features and type-level changes; patch bumps are strictly additive.
   (`<YAxis min={40}>`) the baseline is clamped to the axis floor, as a bar's is,
   so the fill's fade stays on the plot.
 
+### Removed
+
+- `@pond-ts/charts` (**breaking**): **the old cursor props are gone — a chart
+  shows a cursor only when you mount one.** Removed: `<ChartContainer>`'s
+  `cursor`, `cursorTime`, `crosshairSnap`, `cursorFormat`, `cursorSequence`,
+  `onRegionSelect` and `regionSelectModifier`, `<ChartRow cursor>`, and the
+  `CursorMode` type. They were deprecated in 0.58.0. The behaviour change that
+  matters most: a chart with no cursor component used to get a vertical line
+  cursor anyway; it now gets **no cursor** (hover still reports through
+  `onTrackerChanged`). Closes
+  [#647](https://github.com/pond-ts/pond/issues/647). **Migration:**
+
+  | Before                                           | After                                                                        |
+  | ------------------------------------------------ | ---------------------------------------------------------------------------- |
+  | no `cursor` prop (the implicit line)             | `<LineCursor />` (not on a `<MultiSelector>` row — see below)                |
+  | `cursor="line" \| "point" \| "inline" \| "flag"` | `<LineCursor />` / `<PointCursor />` / `<InlineCursor />` / `<FlagCursor />` |
+  | `cursor="crosshair"` + `crosshairSnap={false}`   | `<CrosshairCursor snap={false} />`                                           |
+  | `cursorTime`                                     | `showTime` on the cursor                                                     |
+  | `cursorFormat="…"`                               | `format="…"` on the cursor                                                   |
+  | `cursor="region"` + `cursorSequence={seq}`       | `<RangeCursor sequence={seq} />`                                             |
+  | `onRegionSelect={([a, b]) => …}`                 | `<RangeCursor onDragRelease={({ x: [a, b] }) => …} />`                       |
+  | `regionSelectModifier="shift"`                   | `<RangeCursor dragModifier="shift" />`                                       |
+  | `cursor="none"`                                  | mount nothing                                                                |
+  | `<ChartRow cursor="…">`                          | mount the cursor inside that `<ChartRow>`                                    |
+
+  Mount the cursor as a child of `<ChartContainer>` for every row, or inside
+  one `<ChartRow>` for that row only. A row that should have no cursor while
+  its siblings have one: mount the cursors per row instead of at the
+  container. **Don't add `<LineCursor />` to a row with a `<MultiSelector>`**:
+  there the selector's resting band is the cursor (as it already was under the
+  implicit line), and any mounted cursor replaces the band.
+
 ### Fixed
+
+- `@pond-ts/charts`: **`<RangeCursor>` on a category axis now shades the bar
+  under the pointer.** It used to draw nothing there, so mounting one left the
+  row with no cursor at all. The band covers the whole slot, the way a
+  bucketed band covers a bucket on a time axis. The drag stays off on a
+  category axis (`onDragRelease` never fires there, and the chart now warns
+  in development when it is wired); dragging across bars to get them back is
+  what `<MultiSelector>` does. Story `Cursors/Range / CategoryAxis`.
 
 - **charts:** **A selectable `<AreaChart>` on a log axis with `baseline={0}`
   counted every point over its x span as a hit.** Zero maps to `NaN` on a log

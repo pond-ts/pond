@@ -45,11 +45,11 @@ export interface AxisMouseEvent {
    * elsewhere.
    *
    * Precisely: it is the axis's **readout** channel, the one the cursor pill
-   * uses — so it always agrees with the pill at that pixel, and a container
-   * `cursorFormat` shapes it exactly as it shapes the pill. That is the
-   * documented precedence (`cursorFormat` → axis `format` → container), and it
+   * uses — so it always agrees with the pill at that pixel, and a cursor
+   * `format` shapes it exactly as it shapes the pill. That is the
+   * documented precedence (cursor `format` → axis `format` → container), and it
    * is the one case where `label` can read differently from the tick text: a
-   * chart with a precise `cursorFormat` over terse ticks gets the precise form
+   * chart with a precise cursor `format` over terse ticks gets the precise form
    * here, which is the readout it asked for.
    */
   label: string;

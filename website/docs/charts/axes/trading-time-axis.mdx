@@ -37,6 +37,7 @@ const cal = TradingCalendar.fromRules(
 );
 
 <ChartContainer calendar={cal} range={view} width={560}>
+  <LineCursor />
   <ChartRow height={220}>
     <YAxis id="price" side="right" format="$,.0f" />
     <Layers>

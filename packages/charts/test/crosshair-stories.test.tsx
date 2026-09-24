@@ -20,6 +20,7 @@ describe('Cursors/Crosshair stories render', () => {
   it('exposes one story per crosshair state (snap, sides, axis pill placement)', () => {
     expect(entries.map(([n]) => n).sort()).toEqual([
       'AxisColor',
+      'BoxPlotSnap',
       'DualAxis',
       'FreeReticle',
       'LeftAxis',

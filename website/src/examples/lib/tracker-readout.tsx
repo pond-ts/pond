@@ -4,7 +4,7 @@ import styles from './tracker-readout.module.css';
 /**
  * An **off-chart readout** driven by `<ChartContainer onTrackerChanged>`.
  *
- * Why the Gallery's finance charts need one. `cursor="crosshair"` draws a
+ * Why the Gallery's finance charts need one. `<CrosshairCursor />` draws a
  * *single* reticle per row — the shared vertical line, a dot, and **one** value
  * pill pinned to that row's y-axis. It is not a per-series fan-out: a row with
  * a band, a middle line and a candle still gets one pill, and a two-row chart

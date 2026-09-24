@@ -6,6 +6,7 @@ import {
   LineChart,
   YAxis,
   type GapMode,
+  LineCursor,
 } from '@pond-ts/charts';
 import { TimeSeries } from 'pond-ts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -72,6 +73,7 @@ export default function ChartsGapModes() {
         width={560}
         theme={theme}
       >
+        <LineCursor />
         <ChartRow height={200}>
           <YAxis id="v" side="right" min={0} max={100} />
           <Layers>

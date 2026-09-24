@@ -9,6 +9,7 @@ import { Legend } from './Legend.js';
 import { Selector } from './selectors.js';
 import { YAxis } from './YAxis.js';
 import type { SelectInfo } from './context.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * **A stacked category chart** — `<BarChart categories columns>`
@@ -64,6 +65,7 @@ function Chart({
 }) {
   return (
     <ChartContainer width={W}>
+      <LineCursor />
       {children}
       <ChartRow height={height}>
         <YAxis id="n" min={0} label="" />
@@ -102,6 +104,7 @@ export const TwoGroups = {
   render: () => (
     <div>
       <ChartContainer width={W}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="n" min={0} label="" />
           <Layers>
@@ -129,6 +132,7 @@ export const OneGroup = {
   render: () => (
     <div>
       <ChartContainer width={W}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="n" min={0} label="" />
           <Layers>
@@ -173,6 +177,7 @@ export const GapInAGroup = {
   render: () => (
     <div>
       <ChartContainer width={W}>
+        <LineCursor />
         <ChartRow height={240}>
           <YAxis id="n" min={0} label="" />
           <Layers>
@@ -265,6 +270,7 @@ export const Horizontal = {
   render: () => (
     <div>
       <ChartContainer width={W}>
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="cat" width={70} label="" />
           <Layers>

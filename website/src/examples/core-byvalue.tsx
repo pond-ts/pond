@@ -7,6 +7,7 @@ import {
   Layers,
   LineChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { Sequence, TimeSeries } from 'pond-ts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -142,6 +143,7 @@ export default function CoreByValue() {
     const blank = () => '';
     return (
       <ChartContainer range={range} width={width} theme={theme}>
+        <LineCursor />
         <ChartRow height={150}>
           <YAxis id="ele" side="left" label="elevation" pad={0.08} />
           <YAxis

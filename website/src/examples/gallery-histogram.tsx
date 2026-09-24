@@ -4,6 +4,7 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { responseTimeDistribution } from './lib/gallery-fixtures';
@@ -16,6 +17,7 @@ export default function GalleryHistogram({ width }: { width: number }) {
 
   return (
     <ChartContainer range={[0, 280]} width={width} theme={theme}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="count" label="samples" min={0} pad={0.06} width={44} />
         <Layers>

@@ -5,6 +5,7 @@ import {
   LineChart,
   Marker,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { singleHostSeries } from './lib/server-metrics';
@@ -20,6 +21,7 @@ export default function ChartsAnnotationMarker() {
 
   return (
     <ChartContainer range={series.timeRange()} width={560} theme={theme}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="pct" side="right" format=".0%" />
         <Layers>

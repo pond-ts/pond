@@ -166,7 +166,7 @@ there's no separate "financial mode", just the pieces:
 
 - **Candles** — [`<Candlestick>`](./types/candlestick.mdx) reads the four OHLC
   columns; `showOHLC` fans the full open/high/low/close to the readout.
-- **Crosshair** — `cursor="crosshair"` on `<ChartContainer>` gives the
+- **Crosshair** — a `<CrosshairCursor />` inside `<ChartContainer>` gives the
   trading-terminal reticle with on-axis pills.
 - **A volume pane** — a second `<ChartRow>` with a `<BarChart>` on the `volume`
   column and its own axis:
@@ -199,7 +199,7 @@ If you're arriving from TradingView / ChartIQ, the vocabulary maps like this:
 | Bar / Candle / Hollow style     | `<Candlestick variant>`                                                       |
 | Volume sub-pane                 | a second `<ChartRow>` with `<BarChart column="volume">`                       |
 | Pane / sub-chart                | a `<ChartRow>` ([Layout](./layout.mdx))                                       |
-| Crosshair                       | `cursor="crosshair"`                                                          |
+| Crosshair                       | `<CrosshairCursor />`                                                         |
 | OHLC legend / data window       | `<Candlestick showOHLC>`                                                      |
 | Last-price line / label         | `YAxisIndicator` + `createLiveValue`                                          |
 | Session separator               | `sessionDividers` on `<ChartContainer>`                                       |

@@ -44,6 +44,7 @@ const byElapsed = series
 
 ```tsx
 <ChartContainer range={[0, 89]} width={560}>
+  <LineCursor />
   <ChartRow height={200}>
     <Layers>
       <LineChart series={byElapsed} column="cpu" axis="pct" />
@@ -76,6 +77,7 @@ const data = transposeRow(latestCpuByHost(), { at: 'last' });
 
 ```tsx
 <ChartContainer width={560}>
+  <LineCursor />
   <ChartRow height={200}>
     <Layers>
       <BarChart categories={data} gap={8} />

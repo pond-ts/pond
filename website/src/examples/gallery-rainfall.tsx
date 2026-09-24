@@ -6,6 +6,8 @@ import {
   Layers,
   LineChart,
   YAxis,
+  CrosshairCursor,
+  RangeCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -109,21 +111,24 @@ export default function GalleryRainfall({
           range={view}
           width={width}
           theme={theme}
-          // `region` shades the bucket under the pointer and makes a drag a
-          // span selection. With no `cursorSequence` the buckets come from the
-          // first bar layer's own bins, so both the highlight and the
-          // selection land day-aligned on the bars for free.
-          cursor={interactive ? 'region' : 'crosshair'}
-          // Wheel-zoom. Drag would pan, but an unmodified region-drag
+          // Wheel-zoom. Drag would pan, but an unmodified range-cursor drag
           // **preempts** pan — which is the trade this chart wants, since
           // drag-to-zoom is the more useful gesture on a year of daily bars.
-          // `regionSelectModifier="shift"` reverses the priority.
+          // `<RangeCursor dragModifier="shift">` reverses the priority.
           panZoom={interactive ? 'panZoom' : false}
           // The view can't leave 2024 however hard you scroll.
           bounds={SEA_BOUNDS}
           onTimeRangeChange={interactive ? setRange : undefined}
-          onRegionSelect={interactive ? setRange : undefined}
         >
+          {/* `RangeCursor` shades the bucket under the pointer and makes a
+              drag a span selection. With no `sequence` the buckets come from
+              the first bar layer's own bins, so both the highlight and the
+              selection land day-aligned on the bars for free. */}
+          {interactive ? (
+            <RangeCursor onDragRelease={(span) => setRange(span.x)} />
+          ) : (
+            <CrosshairCursor />
+          )}
           <ChartRow height={220}>
             <YAxis
               id="mm"

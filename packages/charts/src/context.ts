@@ -110,23 +110,18 @@ export interface ContainerFrame {
    *  The values are on {@link CursorFrame} ({@link CursorContext}). */
   setHoverY(y: number | null, rowKey: symbol | null): void;
   /**
-   * `cursor="crosshair"` **y** snapping. **Default `true`** — the reticle centres
-   * on the nearest data point's value. `false` — the y follows the pointer freely
-   * (`yScale.invert`). The x always snaps to the data grid either way.
-   */
-  readonly crosshairSnap: boolean;
-  /**
-   * `cursor="region"` buckets — the intervals (from `cursorSequence`) realized
-   * over the current view, sorted + non-overlapping. `Layers` finds the one under
-   * the pointer and shades it (mapped through `xScale`, so on a trading-time axis
-   * the closed part of the bucket collapses). `undefined` when no `cursorSequence`
-   * is set.
+   * `<RangeCursor>` buckets — the intervals (from its `sequence`, or a
+   * `<MultiSelector sequence>`, or a bar layer's bins) realized over the
+   * current view, sorted + non-overlapping. `Layers` finds the one under the
+   * pointer and shades it (mapped through `xScale`, so on a trading-time axis
+   * the closed part of the bucket collapses). `undefined` when there is
+   * nothing to snap to.
    */
   readonly cursorBuckets: readonly Interval[] | undefined;
   /**
    * The `region`-cursor **drag anchor** in axis units (epoch ms on a time axis,
    * the axis value on a value axis), or `null` when not dragging. A drag on a
-   * region cursor (only when {@link onRegionSelect} is set) records the press
+   * range cursor (only when its `onDragRelease` is set) records the press
    * position here; the band then spans from the anchor's bucket to the pointer's
    * bucket (extending bucket by bucket), or freeform when there are no buckets.
    * Cleared on release.
@@ -155,20 +150,6 @@ export interface ContainerFrame {
   /** Set / clear the live sweep preview (see {@link previewSpans}). */
   setPreviewSpans(spans: readonly SpanSelection[]): void;
   /**
-   * One-shot callback fired when a `region`-cursor **drag** is released, with the
-   * selected `[lo, hi]` span in **axis units** — epoch ms on a time axis, the axis
-   * value on a value axis (snapped to the `cursorSequence` buckets when present,
-   * else the raw drag span). The neutral numeric pair mirrors the container's
-   * polymorphic `range` input (which never takes the axis *kind* from its value);
-   * a time-axis consumer who wants a `TimeRange` constructs one from the pair.
-   * Providing it is what makes the region cursor **draggable**; the cursor does
-   * not keep the range (it reverts to the single-bucket highlight). Typical use:
-   * zoom the view, or map the span onto a subscription's range params.
-   */
-  readonly onRegionSelect:
-    | ((range: readonly [number, number]) => void)
-    | undefined;
-  /**
    * A stable sink for per-repaint {@link DrawStatsFrame}s, or `undefined` when no
    * `onDrawStats` consumer is subscribed — the `undefined` is the signal for
    * `Layers` to skip per-layer timing entirely (zero overhead when unused). The
@@ -176,13 +157,6 @@ export interface ContainerFrame {
    * `onDrawStats` arrow doesn't thrash the draw memo.
    */
   readonly reportDrawStats: ((frame: DrawStatsFrame) => void) | undefined;
-  /**
-   * Require a modifier key held to start a region-drag — set to `'shift'` to make
-   * plain drag **pan** and **shift**-drag select, when `panZoom` is on. Only
-   * enforced while pan is enabled (with no pan there's no gesture to share, so the
-   * modifier is optional). `undefined` ⇒ a region-drag preempts pan.
-   */
-  readonly regionSelectModifier: 'shift' | undefined;
   /**
    * The selected marks — **empty when nothing is selected**, never `null`.
    * Shared across rows, insertion-ordered. A layer highlights every mark
@@ -279,13 +253,6 @@ export interface ContainerFrame {
     rowKey?: symbol,
     block?: readonly SelectInfo[],
   ): void;
-  /** The default in-chart cursor presentation for all rows ({@link CursorMode});
-   *  a row may override it via its own `cursor`. */
-  readonly cursor: CursorMode;
-  /** Show the cursor's time atop the in-chart readout (when a row's cursor draws
-   *  one), formatted by {@link formatReadout} (else {@link formatTime}, matching
-   *  the time axis). */
-  readonly cursorTime: boolean;
   /**
    * Whether the chart is in **annotation-edit mode** — suppresses the data cursor
    * and makes editable annotations interactive (hovering reveals their handles +
@@ -295,10 +262,10 @@ export interface ContainerFrame {
   readonly editAnnotations: boolean;
   /** Format an epoch-ms instant the same way the time axis labels its ticks —
    *  shared by `<TimeAxis>` and (absent {@link formatReadout}) the cursor-time
-   *  readout. Shaped by the container `timeFormat` only, never `cursorFormat`. */
+   *  readout. Shaped by the container `timeFormat` only, never a cursor `format`. */
   readonly formatTime: (epochMs: number) => string;
   /**
-   * The **readout** channel — defined only when the container's `cursorFormat`
+   * The **readout** channel — defined only when a mounted cursor's `format`
    * is set (time or value axis; a category axis reads names). Readout
    * consumers — the crosshair x pill and in-plot cursor time, marker axis
    * indicators, annotation auto-labels — read `formatReadout ?? <their label
@@ -310,7 +277,7 @@ export interface ContainerFrame {
    * The IANA zone the time axis renders in — the container's resolved
    * `timeZone` (explicit prop, else the calendar's), canonical id; `undefined`
    * when the axis is in the runtime's local zone. For a consumer's own
-   * formatter (`timeFormat` / `cursorFormat` functions receive epoch ms) to
+   * formatter (`timeFormat` / cursor `format` functions receive epoch ms) to
    * read the same zone the ticks do.
    */
   readonly timeZone: string | undefined;
@@ -325,13 +292,13 @@ export interface ContainerFrame {
    *  custom format owns the whole label, so the ladder mustn't second-line it. */
   readonly xFormatCustom: boolean;
   /**
-   * Whether an explicit container `cursorFormat` shaped {@link formatReadout} —
+   * Whether an explicit cursor `format` shaped {@link formatReadout} —
    * as opposed to the axis kind supplying its own default readout (the elapsed
    * axis's finer duration). The two are indistinguishable from the field alone,
    * and `<XAxis>` must tell them apart to honour the documented pill precedence
-   * `cursorFormat → axis format → container`: a **`cursorFormat`** outranks an
+   * `cursor format → axis format → container`: a cursor **`format`** outranks an
    * explicit `<XAxis format>`, a **default** does not. Without this the elapsed
-   * default silently occupied the `cursorFormat` slot and a wall-clock strip's
+   * default silently occupied the cursor `format` slot and a wall-clock strip's
    * pill read durations (issue #540, finding 2).
    */
   readonly xReadoutCustom: boolean;
@@ -395,7 +362,7 @@ export interface ContainerFrame {
    * fact behind {@link resolveSweep} (which builds the per-drag gesture and is
    * for the pointer-down path). Rows read this to decide the **resting block
    * preview**: with one in scope over a sweep-capable row, the shared brush
-   * band becomes the resting cursor (replacing the implicit line shim) and
+   * band becomes the resting cursor (when no cursor component is mounted) and
    * hover lights the whole snap block a drag would select. Identity changes
    * when the selector registry does, so it is safe in render memos.
    */
@@ -532,8 +499,7 @@ export interface ContainerFrame {
   readonly firstRowKey: symbol | null;
   /**
    * Register a mounted **cursor** ({@link CursorEntry}) — the `<LineCursor>` /
-   * `<CrosshairCursor>` / … presets (and the deprecation shim synthesizing them
-   * from the legacy string props) call this, keyed by the component's
+   * `<CrosshairCursor>` / … presets call this, keyed by the component's
    * per-instance slot key. The container resolves the per-row effective set
    * (row mounts override container mounts — see `effectiveCursorEntries`) and
    * the rows/`<XAxis>` render the registered slots. Update is in place;
@@ -687,8 +653,6 @@ export const ContainerContext = createContext<ContainerFrame | null>(null);
  *
  * The cursor *time* is **not** here — each consumer derives it locally from
  * `cursorX` + its own `xScale` (an in-bounds `xScale.invert`), as before.
- * ({@link ContainerFrame} still carries a `cursorTime` **boolean** — the
- * unrelated "show time in the readout" config flag.)
  */
 export interface CursorFrame {
   /**
@@ -834,7 +798,7 @@ export interface RowLayer {
   binCategories?(): readonly string[] | null;
   /**
    * A bar/histogram layer's bar `[begin, end)` spans, as pond `Interval`s — the
-   * **shared snap buckets**. When present (and no `cursorSequence` is set), a
+   * **shared snap buckets**. When present (and no cursor `sequence` is set), a
    * region drag snaps bar by bar and a `<MultiSelector>` sweep's band extends
    * bar by bar, so a histogram gets bin-aligned selection for free. Only a
    * **vertical** bar layer publishes them — a horizontal chart puts the value
@@ -858,8 +822,8 @@ export interface RowLayer {
    * {@link BoxPlot} implements it (low/q1/median/q3/high on one flag at the box's
    * top-centre); line/area/bar/scatter omit it and use the per-sample flag from
    * {@link sampleAt}. `null` when nothing is under the cursor. (`sampleAt` still
-   * fans the same values to the off-chart readout; `cursorFlag` is the in-chart
-   * presentation only.)
+   * fans the same values to the off-chart readout and to the crosshair, which
+   * snaps to them; `cursorFlag` only replaces the per-series dots and chips.)
    */
   cursorFlag?(time: number): CursorFlag | null;
   /**
@@ -1236,7 +1200,7 @@ export interface SelectModifiers {
   readonly metaKey: boolean;
   /**
    * **Note the conflict:** `shift` is already the drag chord for
-   * `<ChartContainer regionSelectModifier="shift">` on a continuous axis, so a
+   * `<RangeCursor dragModifier="shift">` on a continuous axis, so a
    * shift-click there may also be the start of a region drag. Reported for
    * completeness; think before you give it a second meaning. (There is
    * deliberately no derived `range` flag for this reason — an ordinal range
@@ -1316,9 +1280,8 @@ export interface SelectorEntry {
 
 /**
  * The span a completed `<RangeCursor>` drag reports to `onDragRelease` —
- * **one uniform shape with an optional y** (interaction RFC A3.3), not the
- * bare pair the legacy `onRegionSelect` used, and not a polymorphic union a
- * consumer must narrow.
+ * **one uniform shape with an optional y** (interaction RFC A3.3), not a bare
+ * pair and not a polymorphic union a consumer must narrow.
  *
  * `x` is `[lo, hi]` in **axis units** — epoch ms on a time axis, the axis
  * value (strike, distance, …) on a value axis — snapped to the cursor's
@@ -1483,31 +1446,6 @@ export interface CursorSnap extends TrackerSample {
 }
 
 /**
- * The in-chart cursor presentation for a row (the synced vertical line is shared
- * across rows). Exclusive modes — pick one:
- *
- * - `none` — no in-chart cursor.
- * - `line` — the synced vertical line only, no per-series marks (pair with an
- *   off-chart readout via {@link onTrackerChanged}).
- * - `point` — a dot on each series at the cursor, no line.
- * - `inline` — dots + a value chip beside each.
- * - `flag` — dots + value flags (a staffed flag from each point; the staff
- *   geometry lands in a later phase — for now flags stack at the top).
- * - `crosshair` — the synced vertical line + a dot on each series, with each
- *   series' value pinned to its y-axis edge (an on-axis pill) and the cursor
- *   time pinned to the x-axis. The ChartIQ / trading-terminal readout. Values
- *   snap to the series (the axis pills read like ticks), not the raw mouse Y.
- */
-export type CursorMode =
-  | 'none'
-  | 'line'
-  | 'point'
-  | 'inline'
-  | 'flag'
-  | 'crosshair'
-  | 'region';
-
-/**
  * How a cursor wants the shared `cursorX` snapped, **declared, resolved by the
  * container** (interaction RFC A2.3). The x-snap consults each layer's
  * `sampleAt` in the hovered row and writes the result into the shared
@@ -1584,8 +1522,18 @@ export interface ResolvedCursorFrame {
    *  it is drawing in the row the pointer is in). */
   readonly hoveredRowKey: symbol | null;
   /** Per-series resolved measurements at the cursor time (empty when the
-   *  effective cursors declared no need for them, or nothing is hovered). */
+   *  effective cursors declared no need for them, or nothing is hovered). A
+   *  layer that consolidates its readout into one flag (BoxPlot) is left out:
+   *  per-series dots and chips would repeat that flag. */
   readonly samples: readonly ResolvedCursorSample[];
+  /**
+   * The crosshair's candidates: every layer's resolved samples, **including**
+   * a consolidated-flag layer's (a box plot's five quantiles). The reticle
+   * picks one value, so a box's quantiles are things it can land on rather
+   * than marks that would repeat the box's flag. Empty unless a cursor
+   * declared {@link CursorWants.reticle}.
+   */
+  readonly reticleSamples: readonly ResolvedCursorSample[];
   /** Resolved consolidated flags (BoxPlot) — the flag cursor's one-chip form. */
   readonly flags: readonly ResolvedCursorFlag[];
   /**
@@ -1725,8 +1673,11 @@ export interface CursorSpec {
 /** What a cursor needs the container to resolve per pointer move — declared at
  *  registration so a line-only cursor never pays for per-sample measurement. */
 export interface CursorWants {
-  /** Per-series {@link ResolvedCursorSample}s (dots, chips, the reticle pick). */
+  /** Per-series {@link ResolvedCursorSample}s (dots, chips). */
   readonly samples: boolean;
+  /** {@link ResolvedCursorFrame.reticleSamples} — the crosshair's pick,
+   *  box plots included. */
+  readonly reticle: boolean;
   /** Consolidated {@link ResolvedCursorFlag}s (the flag cursor only). */
   readonly flags: boolean;
   /** The range band (+ the degenerate band line). */
@@ -1747,18 +1698,6 @@ export interface CursorEntry {
   /** Mount scope: a row's key when mounted inside a `<ChartRow>` (the per-row
    *  override), `null` when mounted at the container (the default for all rows). */
   readonly rowKey: symbol | null;
-  /** Synthesized by the deprecation shim from the legacy string props. A scope
-   *  with any non-legacy (component-mounted) cursor drops its legacy entries —
-   *  mounting a component overrides the string prop during the window. */
-  readonly legacy: boolean;
-  /**
-   * The shim entry nobody asked for: the container's `'line'` **default**,
-   * synthesized with no `cursor` prop set. A mounted `<MultiSelector>`'s
-   * resting block preview (the brush band as the resting cursor) replaces
-   * only these — an explicitly chosen cursor, component-mounted or via the
-   * legacy string prop, still wins.
-   */
-  readonly implicit?: boolean;
   /**
    * Whether this cursor owns **snap and gesture** (RFC A2.5): at most one per
    * scope (dev-warned otherwise), resolved to the hovered row's innermost
@@ -1767,21 +1706,20 @@ export interface CursorEntry {
   readonly ownsGesture: boolean;
   readonly wants: CursorWants;
   /** The range cursor's bucket sequence (realized by the container into the
-   *  shared snap buckets — the `cursorSequence` successor). */
+   *  shared snap buckets). */
   readonly sequence?: Sequence | BoundedSequence | undefined;
-  /** The range cursor's drag-release callback (the `onRegionSelect`
-   *  successor) — read by the brush recognizer (`resolveRangeDrag`), which
+  /** The range cursor's drag-release callback — read by the brush recognizer (`resolveRangeDrag`), which
    *  wraps it into the range-drag session. Only a `<RangeCursor>` sets it. */
   readonly onDragRelease?: ((span: RangeSpan) => void) | undefined;
   /** Whether the range drag is live — **resolved** at build time
    *  (`enableDrag ?? !!onDragRelease`), so `false` here means frozen: the
    *  gesture is off even though the callback is wired (§6's OFF switch). */
   readonly enableDrag?: boolean | undefined;
-  /** The modifier the range drag needs (the `regionSelectModifier`
-   *  successor) — only enforced while pan is enabled. */
+  /** The modifier the range drag needs — only enforced while pan is
+   *  enabled. */
   readonly dragModifier?: 'shift' | undefined;
-  /** The cursor's readout format (the `cursorFormat` successor) — resolved by
-   *  the container into the shared readout channel. */
+  /** The cursor's readout format — resolved by the container into the shared
+   *  readout channel. */
   readonly format?: CursorFormat | undefined;
   /**
    * The crosshair's snap report (`<CrosshairCursor onSnap>`). A row calls it
@@ -1976,9 +1914,6 @@ export interface RowFrame {
    *  is absent. The other half of matching an axis-edge pill to its axis (see
    *  {@link axisOffsets}) — the pill takes this colour, else the theme's. */
   readonly axisColors: ReadonlyMap<string, string>;
-  /** This row's cursor-mode override, or `undefined` to inherit the container's
-   *  default ({@link ContainerFrame.cursor}). */
-  readonly cursor: CursorMode | undefined;
   /** Whether this is the first (topmost) row — the shared cursor-time chip shows
    *  here only, not repeated on every row. Derived from {@link ContainerFrame.firstRowKey}. */
   readonly isFirstRow: boolean;

@@ -12,6 +12,7 @@ import {
   type ChartTheme,
   type ListCellSpec,
   type ListRow,
+  RangeCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -211,36 +212,36 @@ export default function GalleryVolumeHistory({
         width={width}
         theme={theme}
         grid={grid}
-        // ---------------------------------------------------------------
-        // One selection, set by clicking. `cursor="region"` +
-        // `cursorSequence` shades the **calendar month** under the pointer,
-        // which is a preview of exactly what a click will select, and
-        // `onRegionSelect` reports it. A plain click — press and release
-        // without moving — fires with the single bucket under the pointer
-        // (measured: `[2016-12-01Z, 2017-01-01Z]`), so no drag is needed.
-        //
-        // Deliberately **no hover readout**: the original has none, and one
-        // would be a second thing tracking the pointer alongside the band.
-        //
-        // The cost, and it is a real one: a region-select **preempts pan**
-        // on pointerdown unless `regionSelectModifier="shift"` is set — and
-        // setting it would mean plain clicks fall through to pan and never
-        // select, which is the whole gesture. So drag-to-pan is gone; the
-        // wheel still zooms (unaffected in every case) and the TIME presets
-        // do the coarse navigation. Three gestures, no conflicts.
-        // ---------------------------------------------------------------
-        cursor="region"
-        cursorSequence={MONTH_SEQUENCE}
-        {...(preview
-          ? {}
-          : {
-              onRegionSelect: ([from]: readonly [number, number]) =>
-                setSelected(clampMonth(monthIndexAt(from))),
-            })}
         panZoom={preview ? 'none' : 'panZoom'}
         bounds={PAN_BOUNDS}
         onTimeRangeChange={setRange}
       >
+        {/* ---------------------------------------------------------------
+            One selection, set by clicking. `<RangeCursor sequence>` shades
+            the **calendar month** under the pointer, which is a preview of
+            exactly what a click will select, and `onDragRelease` reports it.
+            A plain click — press and release without moving — fires with the
+            single bucket under the pointer (measured: `{ x: [2016-12-01Z,
+            2017-01-01Z] }`), so no drag is needed.
+
+            Deliberately **no hover readout**: the original has none, and one
+            would be a second thing tracking the pointer alongside the band.
+
+            The cost, and it is a real one: the drag **preempts pan** on
+            pointerdown unless `dragModifier="shift"` is set — and setting it
+            would mean plain clicks fall through to pan and never select,
+            which is the whole gesture. So drag-to-pan is gone; the wheel
+            still zooms (unaffected in every case) and the TIME presets do the
+            coarse navigation. Three gestures, no conflicts.
+            --------------------------------------------------------------- */}
+        <RangeCursor
+          sequence={MONTH_SEQUENCE}
+          onDragRelease={
+            preview
+              ? undefined
+              : ({ x: [from] }) => setSelected(clampMonth(monthIndexAt(from)))
+          }
+        />
         <ChartRow height={height}>
           <YAxis
             id="bytes"
@@ -607,7 +608,7 @@ const VOLUME_EPOCH: readonly [number, number] = [1990, 0];
 const MONTH_TZ = { timeZone: 'UTC' } as const;
 
 /**
- * The bucketing the region cursor shades, and therefore what a click selects.
+ * The bucketing the range cursor shades, and therefore what a click selects.
  *
  * `Sequence.calendar('month')`, not a duration: months are 28–31 days, so
  * there is no month *duration* to step by — `DurationUnit` stops at `d`, and

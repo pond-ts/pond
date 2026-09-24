@@ -7,6 +7,7 @@ import {
   LineChart,
   ScatterChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { LiveSeries, Sequence } from 'pond-ts';
 import { useSnapshot } from '@pond-ts/react';
@@ -112,6 +113,7 @@ export default function LearnLivePipeline() {
 
   return (
     <ChartContainer range={view} width={560} theme={theme}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="pct" side="right" format=".0%" min={0} max={1} />
         <Layers>

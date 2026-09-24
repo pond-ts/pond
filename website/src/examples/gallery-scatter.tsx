@@ -4,6 +4,7 @@ import {
   Layers,
   ScatterChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { tradeTicks, tradeTicksRange } from './lib/gallery-fixtures';
@@ -20,6 +21,7 @@ export default function GalleryScatter({ width }: { width: number }) {
 
   return (
     <ChartContainer range={tradeTicksRange()} width={width} theme={theme}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="price" side="right" format="$,.0f" width={50} />
         <Layers>

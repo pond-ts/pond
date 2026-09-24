@@ -18,6 +18,7 @@ import {
   tickSchema,
   weekdaySessions,
 } from './tradingAxis.fixture.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * The logical tick ladder, walked rung by rung — one story per grain
@@ -74,6 +75,7 @@ function tradingStory(
           discontinuities={provider(s)}
           showAxis={false}
         >
+          <LineCursor />
           <ChartRow height={220}>
             <YAxis id="p" />
             <Layers>
@@ -99,6 +101,7 @@ function tradingDailyStory(sessionCount: number, width: number): Story {
           discontinuities={provider(s)}
           showAxis={false}
         >
+          <LineCursor />
           <ChartRow height={220}>
             <YAxis id="p" />
             <Layers>
@@ -167,6 +170,7 @@ export const ContinuousYear: Story = {
     const series = continuousSeries(start, 365, 24 * 60 * MIN);
     return (
       <ChartContainer width={900} showAxis={false}>
+        <LineCursor />
         <ChartRow height={220}>
           <YAxis id="p" />
           <Layers>
@@ -187,6 +191,7 @@ export const ContinuousIntraday: Story = {
     const series = continuousSeries(start, 460, MIN);
     return (
       <ChartContainer width={WIDTH} showAxis={false}>
+        <LineCursor />
         <ChartRow height={220}>
           <YAxis id="p" />
           <Layers>

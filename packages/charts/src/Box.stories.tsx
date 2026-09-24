@@ -8,6 +8,7 @@ import { YAxis } from './YAxis.js';
 import { Selector } from './selectors.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
+import { LineCursor, FlagCursor } from './cursors.js';
 
 const BASE = Date.UTC(2026, 0, 1, 12, 0, 0);
 
@@ -122,6 +123,7 @@ export const Percentiles: Story = {
     const q = percentileBuckets();
     return (
       <ChartContainer range={rangeOf(q)} width={620}>
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="ms" label="ms" />
           <Layers>
@@ -143,7 +145,7 @@ export const Percentiles: Story = {
 };
 
 /**
- * **`cursor='flag'` — the box readout.** Hover a box: a single flag rises from
+ * **`<FlagCursor>` — the box readout.** Hover a box: a single flag rises from
  * its top-centre listing **all five values** (low / q1 / median / q3 / high),
  * each coloured to its box piece. Unlike line/bar, the box flag is one
  * consolidated chip (no per-quantile dots), with one staff.
@@ -152,7 +154,8 @@ export const CursorFlag: Story = {
   render: () => {
     const q = percentileBuckets();
     return (
-      <ChartContainer range={rangeOf(q)} width={620} cursor="flag">
+      <ChartContainer range={rangeOf(q)} width={620}>
+        <FlagCursor />
         <ChartRow height={260}>
           <YAxis id="ms" label="ms" />
           <Layers>
@@ -184,6 +187,7 @@ export const Solid: Story = {
     const q = percentileBuckets();
     return (
       <ChartContainer range={rangeOf(q)} width={620}>
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="ms" label="ms" />
           <Layers>
@@ -212,6 +216,7 @@ export const WithGap: Story = {
     const g = bucketsWithGap();
     return (
       <ChartContainer range={rangeOf(g)} width={520}>
+        <LineCursor />
         <ChartRow height={220}>
           <YAxis id="v" label="v" min={0} max={80} />
           <Layers>
@@ -253,6 +258,7 @@ export const Themed: Story = {
     const q = percentileBuckets();
     return (
       <ChartContainer range={rangeOf(q)} width={620} theme={tealBoxTheme}>
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="ms" label="ms" />
           <Layers>
@@ -307,6 +313,7 @@ export const VolSmile: Story = {
     const s = smile();
     return (
       <ChartContainer width={620}>
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="iv" label="IV" />
           <Layers>
@@ -328,6 +335,7 @@ export const VolSmileWithMid: Story = {
     const s = smile();
     return (
       <ChartContainer width={620}>
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="iv" label="IV" />
           <Layers>
@@ -365,6 +373,7 @@ export const CallPutPair: Story = {
     });
     return (
       <ChartContainer width={620}>
+        <LineCursor />
         <ChartRow height={260}>
           <YAxis id="iv" label="IV" />
           <Layers>
@@ -403,6 +412,7 @@ export const Selectable: Story = {
     const s = smile();
     return (
       <ChartContainer width={620}>
+        <LineCursor />
         <Selector
           enabled={false}
           selected={{
@@ -449,6 +459,7 @@ export const MultiSelected: Story = {
     const s = smile();
     return (
       <ChartContainer width={620}>
+        <LineCursor />
         <Selector
           enabled={false}
           selected={[smileMark(85), smileMark(105), smileMark(125)]}
@@ -476,6 +487,7 @@ export const MultiHovered: Story = {
     const s = smile();
     return (
       <ChartContainer width={620}>
+        <LineCursor />
         <Selector
           enabled={false}
           hovered={[smileMark(95), smileMark(105), smileMark(115)]}
@@ -503,6 +515,7 @@ export const MultiSelectedAndHovered: Story = {
     const s = smile();
     return (
       <ChartContainer width={620}>
+        <LineCursor />
         <Selector
           enabled={false}
           selected={[smileMark(85), smileMark(95)]}

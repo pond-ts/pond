@@ -16,7 +16,7 @@ import {
 } from 'react';
 import { Canvas } from './Canvas.js';
 import { drawGrid, drawDividers, dividerAlphas, thinPixels } from './grid.js';
-import { bandRect, regionSpan } from './tracker.js';
+import { bandRect, categorySlots, regionSpan } from './tracker.js';
 import { effectiveCursorEntries, gestureOwner } from './cursors.js';
 import {
   renderBrushBand,
@@ -547,12 +547,10 @@ export function Layers({ children }: LayersProps) {
   //
   // - `blockPreview` — the fact ("this row previews blocks"). It also scopes
   //   the resting hover to the snap block (handlePointerMove).
-  // - `restingBand` — the brush band is this row's resting CURSOR, replacing
-  //   the shim's un-asked-for `'line'` default. Any *explicitly chosen*
-  //   cursor still wins: a mounted component, or a legacy `cursor` string the
-  //   consumer actually set — both register non-`implicit` entries and keep
-  //   their own slots (a mounted `<RangeCursor>` already draws this same
-  //   band; a `<CrosshairCursor>` keeps its crosshair).
+  // - `restingBand` — the brush band is this row's resting CURSOR when no
+  //   cursor component is mounted for the row. A mounted cursor still wins
+  //   and keeps its own slots (a mounted `<RangeCursor>` already draws this
+  //   same band; a `<CrosshairCursor>` keeps its crosshair).
   //
   // Which of the two the row gets is the TOPMOST sweep-capable layer's
   // business (§8's z-order rule again, and the same rule `beginTopmostSweep`
@@ -571,16 +569,15 @@ export function Layers({ children }: LayersProps) {
     !rectPreview &&
     !topmostSweepSpanOnly(layers) &&
     layers.some((e) => e.layer.beginSweep !== undefined);
-  // The resting brush replaces the implicit cursor either way; only its SHAPE
-  // differs. A 2-D row gets no band: its snap block is a whole x column while
+  // The resting brush is the row's cursor when no cursor component is
+  // mounted for it (a mounted cursor was asked for, so it wins); only its
+  // SHAPE differs. A 2-D row gets no band: its snap block is a whole x column while
   // a drag there captures a rect, so a band would advertise a set the gesture
   // never selects (the same reason the block hover opts out).
   const restingBrush =
     (blockPreview || rectPreview) &&
     !editingActive &&
-    effectiveCursorEntries(container.cursors, row.rowKey).every(
-      (e) => e.implicit === true,
-    );
+    effectiveCursorEntries(container.cursors, row.rowKey).length === 0;
   // …and a **transposed** row gets none yet: the resting block preview is
   // resolved from the shared x buckets, so a y-cutting row would draw a band
   // over a column its drag can never select. Suppressed rather than
@@ -596,6 +593,7 @@ export function Layers({ children }: LayersProps) {
     [editingActive, sweeping, restingBrush, container.cursors, row.rowKey],
   );
   const wantsSamples = cursorEntries.some((e) => e.wants.samples);
+  const wantsReticle = cursorEntries.some((e) => e.wants.reticle);
   const wantsFlags = cursorEntries.some((e) => e.wants.flags);
   const wantsBand = cursorEntries.some((e) => e.wants.band);
   const wantsPointer = cursorEntries.some((e) => e.wants.pointer);
@@ -616,14 +614,24 @@ export function Layers({ children }: LayersProps) {
   // slides under it. Empty when not hovering — or when no effective cursor
   // declared a need — so the data canvas is never touched and a line-only
   // cursor never pays the per-layer walk.
-  const trackerSamples = useMemo<readonly ResolvedCursorSample[]>(() => {
-    if (cursorTime === null || !wantsSamples) return [];
-    const out: ResolvedCursorSample[] = [];
+  //
+  // Two lists from one walk. `samples` feeds the per-series marks (dots,
+  // chips), so a layer with a consolidated flag (BoxPlot) is left out — it
+  // renders that flag instead (its values still fan to the off-chart readout
+  // via sampleAt on the container). `reticle` feeds the crosshair's pick,
+  // which lands on ONE value, so a box's quantiles are candidates there
+  // ([PND-BOXPLT]).
+  const { samples: trackerSamples, reticle: reticleSamples } = useMemo<{
+    samples: readonly ResolvedCursorSample[];
+    reticle: readonly ResolvedCursorSample[];
+  }>(() => {
+    if (cursorTime === null || (!wantsSamples && !wantsReticle))
+      return { samples: [], reticle: [] };
+    const samples: ResolvedCursorSample[] = [];
+    const reticle: ResolvedCursorSample[] = [];
     for (const entry of layers) {
-      // A layer with a consolidated flag (BoxPlot) renders that, not per-sample
-      // dots/chips — skip it here (its values still fan to the off-chart readout
-      // via sampleAt on the container).
-      if (entry.layer.cursorFlag) continue;
+      const toSamples = wantsSamples && !entry.layer.cursorFlag;
+      if (!toSamples && !wantsReticle) continue;
       const axisId = entry.axisId ?? defaultAxisId;
       const yScale = yScales.get(axisId);
       if (yScale === undefined) continue;
@@ -637,7 +645,7 @@ export function Layers({ children }: LayersProps) {
       const axisOffset = axisOffsets.get(axisId) ?? 0;
       const axisColor = axisColors.get(axisId);
       for (const s of entry.layer.sampleAt(cursorTime)) {
-        out.push({
+        const r: ResolvedCursorSample = {
           px: xScale(s.x),
           py: yScale(s.value),
           x: s.x,
@@ -650,13 +658,16 @@ export function Layers({ children }: LayersProps) {
           formatted: fmt(s.value),
           color: s.color,
           label: s.label,
-        });
+        };
+        if (toSamples) samples.push(r);
+        if (wantsReticle) reticle.push(r);
       }
     }
-    return out;
+    return { samples, reticle };
   }, [
     cursorTime,
     wantsSamples,
+    wantsReticle,
     layers,
     yScales,
     formats,
@@ -757,7 +768,7 @@ export function Layers({ children }: LayersProps) {
   // (#508 item 7). Trusted human-paced input hides this (React flushes
   // trusted discrete events synchronously); the ref is correct under both.
   // The release sink rides the ref too, so what fires is what the press
-  // resolved — a `<RangeCursor onDragRelease>` or the legacy `onRegionSelect`.
+  // resolved — the `<RangeCursor onDragRelease>`.
   const rangeDragRef = useRef<{
     anchor: number;
     release: (start: number, end: number) => void;
@@ -1007,7 +1018,7 @@ export function Layers({ children }: LayersProps) {
         gestureOwner(effectiveCursorEntries(c.cursors, r.rowKey)),
       );
       // ONE brush recognizer arbitrates every drag claim — annotation-create,
-      // the sweep, the range drag (component or legacy), pan — in a
+      // the sweep, the range drag, pan — in a
       // documented order (RFC A1.5 / A2.7; see brush.tsx). This handler only
       // routes.
       const claim = resolveBrushClaim({
@@ -1060,8 +1071,7 @@ export function Layers({ children }: LayersProps) {
         }
         return;
       }
-      // Range drag (a drag-enabled <RangeCursor>, or the legacy
-      // `cursor="region"` + `onRegionSelect`): anchor the selection at the
+      // Range drag (a drag-enabled <RangeCursor>): anchor the selection at the
       // press; the band then extends as the pointer moves (bucket by bucket
       // with a sequence, freeform without), and release commits the span to
       // whichever sink the claim resolved. Continuous x only, and gated
@@ -1290,7 +1300,8 @@ export function Layers({ children }: LayersProps) {
         const t = +c.xScale.invert(rawX);
         for (let i = r.layers.length - 1; i >= 0; i -= 1) {
           const entry = r.layers[i]!;
-          if (entry.layer.cursorFlag) continue;
+          // Box plots included ([PND-BOXPLT]): a box's samples sit at its
+          // centre, so the reticle lands mid-box.
           const s = entry.layer.sampleAt(t)[0];
           if (s !== undefined) {
             px = c.xScale(s.x);
@@ -1455,7 +1466,7 @@ export function Layers({ children }: LayersProps) {
       }
       // End a range drag: commit the anchor→pointer span as a one-shot range —
       // to the sink the press resolved (`<RangeCursor onDragRelease>`'s
-      // `{ x: [lo, hi] }`, or the legacy `onRegionSelect` bare pair) — then
+      // `{ x: [lo, hi] }`) — then
       // clear the anchor: the cursor **reverts** to the single-bucket
       // highlight (it does not keep the range). The anchor is read from the
       // ref, never the state mirror — under a batched pointer stream the
@@ -1786,10 +1797,9 @@ export function Layers({ children }: LayersProps) {
       ? (container.formatReadout ?? formatTime)(cursorTime)
       : null;
 
-  // The range cursor's band (continuous x axis — time or value): shade the
-  // span under the pointer. With snap buckets (a sequence / a histogram's
+  // The range cursor's band: shade the span under the pointer. With snap buckets (a sequence / a histogram's
   // bins) the band snaps to the bucket (and extends bucket by bucket under a
-  // legacy drag); with none it's the **freeform** case — a bare hover draws a
+  // drag); with none it's the **freeform** case — a bare hover draws a
   // plain line (`bandLine`), a drag shades the raw `[anchor, pointer]`. Edges
   // map through `xScale`, so on a trading-time axis the band crops to live time.
   // A live <MultiSelector> sweep shades the same band — and so does its
@@ -1806,15 +1816,34 @@ export function Layers({ children }: LayersProps) {
   // not ALSO shade an x band: `sweeping` alone would resolve one from the
   // pointer's bucket and lay a full-height column across the horizontal band
   // the drag is actually drawing.
+  //
+  // A `<RangeCursor>` on a **category** axis shades the slot under the
+  // pointer ([PND-ORDCURSOR]). Its buckets are the unit slots `[i, i+1)` —
+  // a vertical bar layer already publishes exactly those as `cursorBuckets`;
+  // a category row with no bar layer (a heat map) gets them from the band
+  // scale's domain (`categoryBandSlots`). The range *drag* stays off there
+  // (`resolveRangeDrag`): it reports a numeric span, and a category chart
+  // selects slots, which is `<MultiSelector>`'s gesture.
+  // The slot fallback is for the cursor's band only: a sweep or the resting
+  // brush keeps reading `cursorBuckets` alone, exactly as before. Memoized on
+  // the scale, so a pointer move doesn't rebuild the slots.
+  const categoryBandSlots = useMemo(
+    () =>
+      wantsBand &&
+      container.xKind === 'category' &&
+      container.cursorBuckets === undefined
+        ? categorySlots(xScale.domain())
+        : undefined,
+    [wantsBand, container.xKind, container.cursorBuckets, xScale],
+  );
   const bandActive =
-    (wantsBand &&
-      (container.xKind === 'time' || container.xKind === 'value')) ||
+    wantsBand ||
     (sweeping && sweepRect === null && sweepBandY === null) ||
     restingBand;
   const band: { x0: number; x1: number } | null =
     bandActive && cursorTime !== null
       ? bandRect(
-          container.cursorBuckets ?? [],
+          container.cursorBuckets ?? categoryBandSlots ?? [],
           cursorTime,
           (v) => xScale(v),
           plotWidth,
@@ -1849,6 +1878,7 @@ export function Layers({ children }: LayersProps) {
     rowKey: row.rowKey,
     hoveredRowKey: cursor.cursorRowKey,
     samples: trackerSamples,
+    reticleSamples,
     flags: trackerFlags,
     pointer,
     band,

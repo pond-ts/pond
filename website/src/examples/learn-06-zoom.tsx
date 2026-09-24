@@ -5,6 +5,7 @@ import {
   Layers,
   LineChart,
   YAxis,
+  RangeCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { singleHostSeries } from './lib/server-metrics';
@@ -41,13 +42,8 @@ export default function LearnZoom() {
           drag on the chart to select a range
         </span>
       </div>
-      <ChartContainer
-        range={range}
-        width={560}
-        theme={theme}
-        cursor="region"
-        onRegionSelect={(r) => setRange(r)}
-      >
+      <ChartContainer range={range} width={560} theme={theme}>
+        <RangeCursor onDragRelease={(span) => setRange(span.x)} />
         <ChartRow height={200}>
           <YAxis id="pct" side="right" format=".0%" />
           <Layers>

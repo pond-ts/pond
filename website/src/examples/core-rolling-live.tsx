@@ -8,6 +8,7 @@ import {
   Region,
   ScatterChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { LiveSeries } from 'pond-ts';
 import { useSnapshot } from '@pond-ts/react';
@@ -134,6 +135,7 @@ export default function CoreRollingLive() {
       <div ref={boxRef} style={{ width: '100%' }}>
         {ready ? (
           <ChartContainer range={view} width={width} theme={theme}>
+            <LineCursor />
             <ChartRow height={HEIGHT}>
               <YAxis id="val" side="left" label="value" min={0} max={1} />
               <Layers>

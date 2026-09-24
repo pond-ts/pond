@@ -8,6 +8,7 @@ import { AreaChart } from './AreaChart.js';
 import { YAxis } from './YAxis.js';
 import { XAxis } from './XAxis.js';
 import { twoSeries, hrSeries, RANGE } from './story-data.fixture.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * `<ChartContainer height>` + `<ChartRow flex>` — container-owned vertical
@@ -63,6 +64,7 @@ export const SingleRowZeroProps: Story = {
   render: () => (
     <Frame height={320}>
       <ChartContainer range={RANGE} width="auto" height="auto">
+        <LineCursor />
         <ChartRow>
           <YAxis id="v" min={140} max={230} />
           <Layers>
@@ -82,6 +84,7 @@ export const FlexRatios: Story = {
   render: () => (
     <Frame height={400}>
       <ChartContainer range={RANGE} width="auto" height="auto" rowGap={8}>
+        <LineCursor />
         <ChartRow flex={3}>
           <YAxis id="v" min={140} max={230} />
           <Layers>
@@ -107,6 +110,7 @@ export const MixedFixedFlex: Story = {
   render: () => (
     <Frame height={380}>
       <ChartContainer range={RANGE} width="auto" height="auto" rowGap={8}>
+        <LineCursor />
         <ChartRow>
           <YAxis id="v" min={140} max={230} />
           <Layers>
@@ -132,6 +136,7 @@ export const MixedFixedFlex: Story = {
 export const NumericHeight: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={620} height={360}>
+      <LineCursor />
       <ChartRow>
         <YAxis id="v" min={140} max={230} />
         <Layers>
@@ -160,6 +165,7 @@ export const StripChangesHeight: Story = {
             height={300}
             showAxis={label === undefined}
           >
+            <LineCursor />
             <ChartRow>
               <YAxis id="v" min={140} max={230} />
               <Layers>
@@ -190,6 +196,7 @@ export const ResizablePanels: Story = {
       return (
         <Frame height={420}>
           <ChartContainer range={RANGE} width="auto" height="auto">
+            <LineCursor />
             <ChartRow>
               <YAxis id="price" side="right" min={140} max={230} />
               <Layers>
@@ -250,6 +257,7 @@ export const TooShort: Story = {
   render: () => (
     <Frame height={170}>
       <ChartContainer range={RANGE} width="auto" height="auto">
+        <LineCursor />
         <ChartRow>
           <YAxis id="v" min={140} max={230} />
           <Layers>

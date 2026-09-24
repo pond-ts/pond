@@ -7,6 +7,7 @@ import {
   Marker,
   Region,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import {
@@ -25,6 +26,7 @@ export default function GalleryAnnotated({ width }: { width: number }) {
 
   return (
     <ChartContainer range={series.timeRange()} width={width} theme={theme}>
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="ms" side="right" label="ms" format=",.0f" width={44} />
         <Layers>

@@ -4,6 +4,7 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  CrosshairCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { marketBars, sessionWindow } from './lib/financial-fixtures';
@@ -19,8 +20,8 @@ export default function FinancialCalendarChart() {
       width={560}
       theme={theme}
       calendar={set.calendar}
-      cursor="crosshair"
     >
+      <CrosshairCursor />
       <ChartRow height={220}>
         <YAxis id="price" side="right" format="$,.0f" width={50} />
         <Layers>

@@ -54,6 +54,7 @@ const snapshot = useSnapshot(live, { throttle: 400 });
 if (snapshot === null || snapshot.length === 0) return <Skeleton />;
 
 <ChartContainer range={snapshot.timeRange()} width={560}>
+  <LineCursor />
   <ChartRow height={220}>
     <Layers>
       <LineChart series={snapshot} column="cpu" axis="pct" />

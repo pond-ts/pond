@@ -7,6 +7,7 @@ import {
   Layers,
   YAxis,
   type TrackerInfo,
+  CrosshairCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import {
@@ -27,8 +28,9 @@ import { TrackerReadout } from './lib/tracker-readout';
  *  naming hues — the same pair the candles use.
  *
  *  **Interaction.** `panZoom="panZoom"` is drag-to-pan and wheel-to-zoom; there
- *  is no drag-to-zoom gesture (drag-to-select is `cursor="region"`, and
- *  `cursor` takes one value, so it can't coexist with the crosshair). The range
+ *  is no drag-to-zoom gesture (drag-to-select is `<RangeCursor>`, and a
+ *  scope has one gesture-owning cursor, so it can't coexist with the
+ *  crosshair). The range
  *  is **controlled** — held here, fed back through `onTimeRangeChange` —
  *  because the layers are handed a series cropped to the view, and an
  *  uncontrolled pan would move the view without moving the crop.
@@ -105,11 +107,11 @@ export default function GalleryPriceVolume({
         width={width}
         theme={theme}
         calendar={set.calendar}
-        cursor="crosshair"
         panZoom={live ? 'panZoom' : 'none'}
         onTimeRangeChange={setPanned}
         onTrackerChanged={setTracker}
       >
+        <CrosshairCursor />
         <ChartRow height={priceHeight}>
           <YAxis id="price" side="right" format={set.priceFormat} width={62} />
           <Layers>

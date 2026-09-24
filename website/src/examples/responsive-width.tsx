@@ -5,6 +5,7 @@ import {
   Layers,
   LineChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { singleHostSeries } from './lib/server-metrics';
@@ -58,6 +59,7 @@ export default function ResponsiveWidth() {
             width={width}
             theme={theme}
           >
+            <LineCursor />
             <ChartRow height={200}>
               <YAxis id="pct" side="right" format=".0%" />
               <Layers>

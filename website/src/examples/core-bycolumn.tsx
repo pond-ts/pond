@@ -5,6 +5,7 @@ import {
   ChartRow,
   Layers,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { LiveSeries } from 'pond-ts';
 import { useSnapshot } from '@pond-ts/react';
@@ -168,6 +169,7 @@ export default function CoreByColumn() {
       <div ref={boxRef} style={{ width: '100%' }}>
         {ready ? (
           <ChartContainer range={[0, 1]} width={width} theme={theme}>
+            <LineCursor />
             <ChartRow height={HEIGHT}>
               <YAxis id="count" side="left" label="count" min={0} width={44} />
               <Layers>

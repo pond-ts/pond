@@ -5,6 +5,7 @@ import {
   Layers,
   YAxis,
   transposeRow,
+  LineCursor,
 } from '@pond-ts/charts';
 import { TimeSeries } from 'pond-ts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -33,6 +34,7 @@ export default function LearnCategoryAxis() {
 
   return (
     <ChartContainer width={560} theme={theme}>
+      <LineCursor />
       <ChartRow height={200}>
         <YAxis id="pct" side="right" format=".0%" min={0} />
         <Layers>

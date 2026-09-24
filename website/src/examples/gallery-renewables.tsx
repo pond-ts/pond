@@ -5,6 +5,8 @@ import {
   Layers,
   Legend,
   YAxis,
+  CrosshairCursor,
+  LineCursor,
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
@@ -25,7 +27,7 @@ const HOUR = 3_600_000;
  * blend rather than one area erasing the other — the opposite of the stacked
  * card next door, where the bands must be opaque.
  *
- * `cursor="crosshair"` draws **one** reticle per row, snapped to whichever of
+ * `<CrosshairCursor />` draws **one** reticle per row, snapped to whichever of
  * the two curves is nearer the pointer's y — so it reads one of the pair at a
  * time, not both. Reading both at once needs an off-chart readout fed by
  * `onTrackerChanged`.
@@ -58,7 +60,9 @@ export default function GalleryRenewables({
       : scanWindow(begin, end, 20 * HOUR, phase);
 
   return (
-    <ChartContainer range={range} width={width} theme={theme} cursor={cursor}>
+    <ChartContainer range={range} width={width} theme={theme}>
+      {cursor === 'crosshair' && <CrosshairCursor />}
+      {cursor === 'line' && <LineCursor />}
       <ChartRow height={height}>
         <YAxis id="gw" label="GW" format=",.0f" min={0} width={56} />
         <Layers>

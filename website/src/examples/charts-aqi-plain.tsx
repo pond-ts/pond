@@ -5,6 +5,7 @@ import {
   Legend,
   LineChart,
   YAxis,
+  LineCursor,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { aqiSeries } from './lib/aqi-fixtures';
@@ -33,6 +34,7 @@ export default function ChartsAqiPlain({ width }: { width: number }) {
       bounds={[range.begin(), range.end()]}
       minDuration={60 * 60 * 1000}
     >
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="aqi" label="US EPA PM2.5 AQI" width={56} />
         <Layers>

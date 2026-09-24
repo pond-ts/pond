@@ -5,6 +5,7 @@ import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { twoSeries, RANGE } from './story-data.fixture.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * `<ChartContainer width="auto">` — fill the available width.
@@ -45,6 +46,7 @@ const chart = (
 export const Default: Story = {
   render: () => (
     <ChartContainer range={RANGE} width="auto">
+      <LineCursor />
       {chart}
     </ChartContainer>
   ),
@@ -55,7 +57,12 @@ export const Default: Story = {
  * Filling is the sensible default for a component that knows how to measure.
  */
 export const OmittedWidth: Story = {
-  render: () => <ChartContainer range={RANGE}>{chart}</ChartContainer>,
+  render: () => (
+    <ChartContainer range={RANGE}>
+      <LineCursor />
+      {chart}
+    </ChartContainer>
+  ),
 };
 
 /**
@@ -66,6 +73,7 @@ export const OmittedWidth: Story = {
 export const Fixed: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={420}>
+      <LineCursor />
       {chart}
     </ChartContainer>
   ),
@@ -80,6 +88,7 @@ export const ConstrainedParent: Story = {
   render: () => (
     <div style={{ width: 360 }}>
       <ChartContainer range={RANGE} width="auto">
+        <LineCursor />
         {chart}
       </ChartContainer>
     </div>
@@ -104,6 +113,7 @@ export const PaddedWrapper: Story = {
       }}
     >
       <ChartContainer range={RANGE} width="auto">
+        <LineCursor />
         {chart}
       </ChartContainer>
     </div>
@@ -119,6 +129,7 @@ export const FlexRow: Story = {
     <div style={{ display: 'flex', gap: 16 }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <ChartContainer range={RANGE} width="auto">
+          <LineCursor />
           <ChartRow height={160}>
             <YAxis id="v" min={140} max={230} />
             <Layers>
@@ -129,6 +140,7 @@ export const FlexRow: Story = {
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <ChartContainer range={RANGE} width="auto">
+          <LineCursor />
           <ChartRow height={160}>
             <YAxis id="w" min={140} max={230} />
             <Layers>
@@ -159,6 +171,7 @@ export const ResizableBox: Story = {
       }}
     >
       <ChartContainer range={RANGE} width="auto">
+        <LineCursor />
         {chart}
       </ChartContainer>
     </div>

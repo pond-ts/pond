@@ -10,6 +10,7 @@ import { CategoryAxis } from '../src/CategoryAxis.js';
 import { XAxis } from '../src/XAxis.js';
 import { YAxis } from '../src/YAxis.js';
 import { Marker } from '../src/annotations.js';
+import { CrosshairCursor } from '../src/cursors.js';
 import {
   provider as sessionsProvider,
   weekdaySessions,
@@ -269,12 +270,8 @@ describe('duration x axis — <ChartContainer origin>', () => {
     // The other side of the same rung: a `cursorFormat` IS allowed to beat an
     // axis `format`, so the fix above must not have flattened the precedence.
     const { container } = render(
-      <ChartContainer
-        width={300}
-        origin="data"
-        cursorFormat={() => 'PILL'}
-        showAxis={false}
-      >
+      <ChartContainer width={300} origin="data" showAxis={false}>
+        <CrosshairCursor format={() => 'PILL'} />
         <ChartRow height={120}>
           <YAxis id="a" min={0} max={200} />
           <Layers>
@@ -308,12 +305,8 @@ describe('duration x axis — <ChartContainer origin>', () => {
 
   it('hands a cursorFormat function the elapsed default text', () => {
     const { container } = render(
-      <ChartContainer
-        width={300}
-        origin="data"
-        cursorFormat={(_v, { defaultText }) => `[${defaultText}]`}
-        showAxis={false}
-      >
+      <ChartContainer width={300} origin="data" showAxis={false}>
+        <CrosshairCursor format={(_v, { defaultText }) => `[${defaultText}]`} />
         <ChartRow height={120}>
           <YAxis id="a" min={0} max={200} />
           <Layers>

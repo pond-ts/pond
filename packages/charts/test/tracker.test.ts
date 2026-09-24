@@ -3,8 +3,6 @@ import { Interval } from 'pond-ts';
 import {
   bandRect,
   bucketAt,
-  cursorParts,
-  DEFAULT_CURSOR_MODE,
   regionSpan,
   resolveCursorX,
 } from '../src/tracker.js';
@@ -133,69 +131,5 @@ describe('resolveCursorX', () => {
     // null and undefined are equivalent — both "no controlled position".
     expect(resolveCursorX(null, null, xScale)).toBeNull();
     expect(resolveCursorX(undefined, null, xScale)).toBeNull();
-  });
-});
-
-describe('cursorParts', () => {
-  it('line — the synced line only, no dots or chip', () => {
-    expect(cursorParts('line')).toEqual({
-      line: true,
-      dots: false,
-      chip: 'none',
-      band: false,
-    });
-  });
-  it('point — dots only, no line or chip', () => {
-    expect(cursorParts('point')).toEqual({
-      line: false,
-      dots: true,
-      chip: 'none',
-      band: false,
-    });
-  });
-  it('inline — dots + an inline chip, no line', () => {
-    expect(cursorParts('inline')).toEqual({
-      line: false,
-      dots: true,
-      chip: 'inline',
-      band: false,
-    });
-  });
-  it('flag — dots + a flag chip, no line', () => {
-    expect(cursorParts('flag')).toEqual({
-      line: false,
-      dots: true,
-      chip: 'flag',
-      band: false,
-    });
-  });
-  it('crosshair — a single reticle drawn by Layers (no generic line/dots)', () => {
-    // Layers draws the dashed vertical + full-width horizontal + centre dot + one
-    // value pill itself, so cursorParts asks for no generic line/dots here.
-    expect(cursorParts('crosshair')).toEqual({
-      line: false,
-      dots: false,
-      chip: 'axis',
-      band: false,
-    });
-  });
-  it('region — a band only (Layers shades the bucket under the pointer)', () => {
-    expect(cursorParts('region')).toEqual({
-      line: false,
-      dots: false,
-      chip: 'none',
-      band: true,
-    });
-  });
-  it('none — nothing', () => {
-    expect(cursorParts('none')).toEqual({
-      line: false,
-      dots: false,
-      chip: 'none',
-      band: false,
-    });
-  });
-  it('defaults to line', () => {
-    expect(DEFAULT_CURSOR_MODE).toBe('line');
   });
 });

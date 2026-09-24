@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { Sequence, TimeSeries } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
-import { CrosshairCursor } from './cursors.js';
+import { CrosshairCursor, LineCursor } from './cursors.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { BarChart } from './BarChart.js';
@@ -80,6 +80,7 @@ function Chart({
       grid
       {...(timeZone === undefined ? {} : { timeZone })}
     >
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="y" label="load" />
         <Layers>
@@ -170,6 +171,7 @@ export const FromCalendar: Story = {
         grid
         calendar={calendar}
       >
+        <LineCursor />
         <ChartRow height={220}>
           <YAxis id="y" label="load" />
           <Layers>
@@ -192,6 +194,7 @@ export const AbbreviationInFormat: Story = {
       timeZone="America/New_York"
       timeFormat="%H:%M %Z"
     >
+      <LineCursor />
       <ChartRow height={220}>
         <YAxis id="y" label="load" />
         <Layers>
@@ -223,6 +226,7 @@ export const DualZones: Story = {
       grid
       timeZone="UTC"
     >
+      <LineCursor />
       <XAxis side="top" timeZone="America/New_York" label="New York" />
       <ChartRow height={220}>
         <YAxis id="y" label="load" />

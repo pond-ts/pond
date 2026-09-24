@@ -158,9 +158,9 @@ export interface CandlestickProps<S extends SeriesSchema> {
  * supersedes `BoxPlot shape='solid'` for OHLC (which needed a quantile remap, a
  * body precompute, two overlaid layers for green/red, and a column-name tracker).
  *
- * **Cursor.** Unlike `BoxPlot`, a candle **participates in the crosshair x-snap**
- * (it exposes plain `sampleAt`, not a consolidated `cursorFlag`), so the reticle
- * lands on candles. The readout keys on `as` and shows `close` by default; pass
+ * **Cursor.** A candle **participates in the crosshair snap** (as a box plot
+ * does), so the reticle lands on candles; unlike a box plot it has no
+ * consolidated `cursorFlag`, so the flag cursor shows a chip per value. The readout keys on `as` and shows `close` by default; pass
  * `showOHLC` for the full four-pill quote.
  *
  * ```tsx
@@ -247,8 +247,8 @@ export function Candlestick<S extends SeriesSchema>({
           // The readout reads the candle **under the cursor** (containment span,
           // not nearest-by-begin), anchored at the slot centre. Outside every
           // candle → no readout. No `cursorFlag`: the samples flow through the
-          // normal per-series tracker path, which is also what keeps the candle
-          // in the crosshair x-snap (BoxPlot's cursorFlag opts out of both).
+          // normal per-series tracker path (BoxPlot's cursorFlag takes its
+          // values out of the per-series dots and chips).
           if (ohlc.length === 0) return [];
           const i = ohlcIndexAtTime(ohlc, time);
           if (i < 0 || !isFiniteOhlc(ohlc, i)) return [];

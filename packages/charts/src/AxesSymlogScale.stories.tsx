@@ -5,6 +5,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
+import { LineCursor } from './cursors.js';
 
 /**
  * **`<YAxis scale="symlog">`** — linear through zero, logarithmic beyond
@@ -79,6 +80,7 @@ function Chart({
 }) {
   return (
     <ChartContainer range={[0, 9]} width={W} showAxis={false}>
+      <LineCursor />
       <ChartRow height={height}>
         <YAxis
           id="v"
@@ -202,6 +204,7 @@ export const OneSidedDomain = {
   render: () => (
     <div>
       <ChartContainer range={[0, 9]} width={W} showAxis={false}>
+        <LineCursor />
         <ChartRow height={220}>
           <YAxis id="v" width={72} label="" scale="symlog" min={0} max={1e6} />
           <Layers>
