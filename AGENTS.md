@@ -583,26 +583,98 @@ To cut a release from `main`:
    to spot-check before releasing.
 1. Bump the `version` field in **every** `packages/*/package.json`. Keep
    them lock-step — the release tag covers the whole monorepo.
-2. If `@pond-ts/react`'s `dependencies.pond-ts` caret needs to widen to
-   the new minor (e.g. `^0.4.0` → `^0.5.0`), update it in the same pass.
-3. **Promote the `## [Unreleased]` section** to a new `## [X.Y.Z] — YYYY-MM-DD`
+2. **Widen every inter-package range to the new minor** — on a minor bump this
+   is not optional, and it is easy to miss. Most cross-package references are
+   **`peerDependencies`** (not `dependencies`), and they live in **five**
+   manifests: `react`, `charts`, `fit`, `financial`, `process` all peer on
+   `pond-ts`, and `charts` additionally peers on `@pond-ts/react`. There is
+   also one **`devDependency`** — `financial` on `@pond-ts/process`, for the
+   catalog's cross-package round-trip test — so do not sweep by field name.
+   The grep below is by range and catches every kind:
+
+   ```
+   grep -n '"\^0\.<previous-minor>' packages/*/package.json
+   ```
+
+   **Why it must be done:** pre-1.0 a caret does **not** span minors —
+   `^0.53.0` means `>=0.53.0 <0.54.0`. Publishing the set at `0.54.0` while the
+   peer ranges still say `^0.53.0` ships a release where every package's peer
+   range excludes the very versions shipping alongside it, and consumers get
+   unmet-peer errors on a clean install. (Missed during the v0.54.0 prep, which
+   is why this step now names the field, the count, and the reason.)
+
+3. **Regenerate `package-lock.json`** — `npm install --package-lock-only`, then
+   sanity-check it before committing:
+
+   ```
+   grep -c '"version": "0.<previous-minor>' package-lock.json   # want 0
+   rm -rf node_modules && npm ci                                 # must succeed
+   ```
+
+   **Why it must be done:** the lock records each **workspace** package's own
+   version, so bumping the six manifests leaves it stale — and CI installs with
+   `npm ci`, which fails outright on a lock that disagrees with the manifests
+   rather than quietly repairing it. That would red the publish workflow _after_
+   the tag is pushed, which is the worst moment to find out: the tag is already
+   public, so recovering means either force-moving it or burning a patch
+   version.
+
+   This step is easy to miss because nothing local surfaces it — `npm run
+verify` passes fine against a stale lock, since it runs on the
+   already-installed tree. It shows up only under a clean `npm ci`. (Not listed
+   here until v0.57.0, though the v0.56.2 bump did include the lock; the diff
+   should be ~12 lines, two per workspace package.)
+
+4. **Promote the `## [Unreleased]` section** to a new `## [X.Y.Z] — YYYY-MM-DD`
    heading (leaving a fresh empty `## [Unreleased]` above it), and update the
    compare-link footnotes. Entries should already be there — each feature PR
    adds its own as it lands (see "Before opening a PR"). **Still sweep**
    `git log v<previous>..HEAD` for any user-facing change that slipped in without
    an `[Unreleased]` entry and add it now — the promote-not-reconstruct flow is
-   the safety net, not a licence to skip the sweep. Group notes under
-   `Added` / `Changed` / `Fixed` / `Deprecated`. Consumers upgrading between
-   versions rely on this; skipping it compounds every release.
-4. Commit with a message like `chore: bump to vX.Y.Z`.
-5. Tag the commit: `git tag vX.Y.Z`.
-6. Push the branch, then push the tag:
+   the safety net, not a licence to skip the sweep.
+
+   **Consolidate the group headings before promoting.** `[Unreleased]`
+   accumulates a _fresh_ `### Added` / `### Changed` / `### Fixed` from each
+   merge that touches it, so by release time the same heading appears many
+   times over (v0.54.0 had **eleven** — six `Added`, three `Changed`, two
+   `Fixed`). Promoting as-is ships a version section with one entry type
+   scattered across a dozen headings. Merge them into **one group each**,
+   ordered `Added` / `Changed` / `Deprecated` / `Removed` / `Fixed` /
+   `Security`, preserving entry order within a group. Check what you're about
+   to promote:
+
+   ```
+   awk '/^## \[Unreleased\]/{f=1} /^## \[[0-9]/{if(f&&!/Unreleased/)exit} f&&/^### /' CHANGELOG.md | sort | uniq -c
+   ```
+
+   Consumers upgrading between versions rely on this; skipping it compounds
+   every release.
+
+5. Commit with a message like `chore: bump to vX.Y.Z`.
+6. Tag the commit: `git tag vX.Y.Z`.
+7. Push the branch, then push the tag:
+
    ```
    git push origin main
    git push origin vX.Y.Z
    ```
+
    `--follow-tags` only pushes annotated tags; lightweight tags (the
    default with bare `git tag`) need an explicit push.
+
+   **Cloud agent sessions cannot push the tag.** Their git proxy lets a
+   push to `main` through but answers a tag push with HTTP 403 before it
+   reaches GitHub (seen on v0.71.0). The agent pushes the bump commit and
+   the maintainer creates the tag, either from a terminal:
+
+   ```
+   git fetch origin && git tag vX.Y.Z <sha> && git push origin vX.Y.Z
+   ```
+
+   or, from a phone, with GitHub's **Releases → Draft a new release**: tag
+   `vX.Y.Z` set to "create on publish", target `main` (check `main` is
+   still the bump commit). A tag created that way triggers the same two
+   workflows as a pushed one.
 
 That's it. The `v*` tag push triggers `.github/workflows/release.yml`,
 which checks out the tag, runs `npm run verify`, then
@@ -623,6 +695,7 @@ gh workflow run docs.yml --ref main
 
 Watch the run with `gh run list --workflow=docs.yml --limit 1`. The
 deploy step runs on the same workflow, so once it completes the
-new content is live on the GitHub Pages URL. Use this for any
+new content is live on pond-ts.org (Cloudflare Pages, deployed by
+the workflow through wrangler). Use this for any
 doc-only change that doesn't justify a version bump (the dashboard
 guide adapted from `pond-ts-dashboard` is the canonical example).

@@ -743,12 +743,28 @@ verify` passes fine against a stale lock, since it runs on the
 5. Commit with a message like `chore: bump to vX.Y.Z`.
 6. Tag the commit: `git tag vX.Y.Z`.
 7. Push the branch, then push the tag:
+
    ```
    git push origin main
    git push origin vX.Y.Z
    ```
+
    `--follow-tags` only pushes annotated tags; lightweight tags (the
    default with bare `git tag`) need an explicit push.
+
+   **Cloud agent sessions cannot push the tag.** Their git proxy lets a
+   push to `main` through but answers a tag push with HTTP 403 before it
+   reaches GitHub (seen on v0.71.0). The agent pushes the bump commit and
+   the maintainer creates the tag, either from a terminal:
+
+   ```
+   git fetch origin && git tag vX.Y.Z <sha> && git push origin vX.Y.Z
+   ```
+
+   or, from a phone, with GitHub's **Releases → Draft a new release**: tag
+   `vX.Y.Z` set to "create on publish", target `main` (check `main` is
+   still the bump commit). A tag created that way triggers the same two
+   workflows as a pushed one.
 
 That's it. The `v*` tag push triggers `.github/workflows/release.yml`,
 which checks out the tag, runs `npm run verify`, then
@@ -769,6 +785,7 @@ gh workflow run docs.yml --ref main
 
 Watch the run with `gh run list --workflow=docs.yml --limit 1`. The
 deploy step runs on the same workflow, so once it completes the
-new content is live on the GitHub Pages URL. Use this for any
+new content is live on pond-ts.org (Cloudflare Pages, deployed by
+the workflow through wrangler). Use this for any
 doc-only change that doesn't justify a version bump (the dashboard
 guide adapted from `pond-ts-dashboard` is the canonical example).
