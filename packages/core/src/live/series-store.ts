@@ -459,12 +459,12 @@ function validateCachedEvent(
   //     kind-aware equality.
   // (b) when the field is **absent** from `cachedData`, the
   //     column at that row must read as `undefined` — i.e. the
-  //     event genuinely doesn't carry that column. This is the
-  //     outer-join shape: `series.join(other, { type: 'outer' })`
-  //     produces events whose data omits the other side's columns
-  //     for rows that had no match. Pre-2a TimeSeries treated this
-  //     as a row-API concern (the strict missing-field check
-  //     pre-dated outer-join via the columnar substrate); the
+  //     event genuinely doesn't carry that column. This shape was
+  //     admitted for the event-walking outer `join`, whose unmatched
+  //     rows omitted the other side's columns. `join` is column-native
+  //     now ([PND-JOINCOL]) and no longer produces it, but a caller-
+  //     supplied cache can, so the relaxation stands. Pre-2a
+  //     TimeSeries treated this as a row-API concern; the
   //     relaxation here keeps the original misalignment-detection
   //     property — a cached event whose data is missing a field
   //     for which the column DOES read a defined value still

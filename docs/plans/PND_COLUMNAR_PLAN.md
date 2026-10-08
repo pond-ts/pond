@@ -966,6 +966,112 @@ the current loops are at the floor for an allocating export.
 | `toColumns`                      | 5–12 ms  | C arrays, **no** per-row allocation      |
 | `toArrow`                        | 0.008 ms | a buffer handoff — O(C), not O(N·C)      |
 
+### [PND-JOINCOL] — column-native `join` — SHIPPED
+
+**Driver.** Tidal's friction report (2026-10-08). A one-minute view comparing
+two instruments (one year of regular-session bars, ~97.5k rows a side) spent
+1.3–1.6 s in a left `join` at 59 value columns a side. In the browser it was a
+6.6–6.9 s main-thread task, with ~5.2 s under `join` in a dev build. Tidal
+measured a consumer-side merge-walk plus gather at 77–121 ms for the same
+output, cell for cell. They chose to wait for the library rather than ship
+that as a stand-in (tracked on their side as `TDL-JOINCOL`).
+
+**What changed.** `join` was the last batch transform still walking events:
+it materialised both sides' events, ran `merge` per output row (an object
+spread over every column) and re-columnarised. It is now `joinOp`
+(`batch/operators/join.ts`):
+
+1. One merge-walk over the two key columns yields two `Int32Array`s,
+   `leftIdx` and `rightIdx`, one entry per output row; `-1` means no row on
+   that side.
+2. A side whose index is the identity passes its value columns through
+   **by reference**, and on the left side its key column too. The test is O(1): all its rows were
+   emitted and the other side emitted no one-sided rows. That always holds
+   for the primary of a `left` join and the other side of a `right` join. It
+   also holds for **both** sides when the keys match one for one, which is
+   `joinMany` over aligned inputs.
+3. Every other column is one `sliceByIndices`. The substrate's existing
+   out-of-range gather contract already marks a `-1` slot missing through
+   validity, for every kind and for chunked storage. No new gather primitive
+   was needed.
+
+`joinMany` chains `join`, so it got this for free.
+
+**The semantics kept, and the ones that took care:**
+
+- **Key order is the event walk's, restated over buffers.** `begin`, then
+  `end`, then, for interval keys only, `compareIntervalValues` on the labels.
+  That is `compareEventKeys` plus `Interval.compare`'s tiebreak. Intake orders
+  rows by `(begin, end)` only, so labels within a tie can be unsorted. Running
+  the same comparator in the same walk reproduces the old output in that case
+  too.
+- **Repeated keys pair one to one, not as a cross product.** Two left rows and
+  three right rows on one key give two matched rows plus one right-only row.
+  This was always the behaviour; it is now stated on the method and pinned.
+- **A matched row carries the left key, so only the left key column is ever
+  adopted.** Equal keys need not be identical. `compareIntervalValues` uses
+  `localeCompare`, under which a precomposed é and a decomposed é compare
+  equal, and timestamps compare by subtraction, under which `0` and `-0` are
+  equal. The first version still adopted the right key column on a `right`
+  join for timestamp keys. The Layer-2 review reproduced a `-0` leaking
+  through that path, so the right-key pass-through was removed outright. It
+  saved one ~0.2 ms gather. Tests pin both cases. The label test first missed
+  the branch it was written for: with one row a side, the left-identity
+  branch won first, and a mutant survived until the fixture gave each side a
+  row the other lacks.
+- **Mixed label types.** Numeric and string interval labels never compare
+  equal, so they never match. An outer join keeping one-sided rows from both
+  sides would produce a series with two label types. The old path threw a
+  `RangeError` when it re-columnarised that output. `gatherLabels` now throws
+  directly, and left, right and inner joins still work.
+
+**One observable change, deliberately kept.** The old path cached the merged
+events, so an unmatched row's `data()` **omitted** the other side's fields.
+Events now materialise lazily from the store, as for every other column-native
+operator, so those fields appear as `undefined`. `get()` and `toEqual` are
+unaffected; `Object.keys` and `toStrictEqual` see the change. It is called out
+in the CHANGELOG.
+
+**The second ask, declined: a `columns` option on `join`.** Tidal also asked to
+let `join` take only the columns wanted from the other side. That is already
+the composition `other.select(...)`, and `select` (with `rename`, to resolve a
+name collision) is zero-copy. It brings the 59-plus-2 case to 4 ms without a
+new parameter. A `columns` option would duplicate a primitive, which the
+Layer-1 checklist flags. The recipe is in the method doc and the website's
+`join` section, and a test pins it.
+
+**Perf** (`scripts/perf-join.mjs`). Inputs are rebuilt before every sample and
+not timed, because the old path caches its inputs' events on first use.
+Median of 7, Node 22, two runs:
+
+| Scenario (~97.5k rows a side)          | Type  | Before   | After        |
+| -------------------------------------- | ----- | -------- | ------------ |
+| 59 value cols each side                | left  | 1,868 ms | 23.8–24.3 ms |
+| 59 value cols each side                | outer | 1,844 ms | 43.6–43.7 ms |
+| 59 value cols each side                | inner | 2,123 ms | 28.9–29.2 ms |
+| 5 value cols each side (OHLCV)         | left  | 168 ms   | 4.2–4.4 ms   |
+| 59-col primary, 2-col other            | left  | 766 ms   | 4.1–4.2 ms   |
+| 1M rows, 1 col each, identical keys    | outer | 1,253 ms | 3.7–3.8 ms   |
+| 500k + 500k rows, disjoint keys, 2 + 2 | outer | 755 ms   | 22.8–23.5 ms |
+| `joinMany`, 4 × ~97.5k × 5 cols        | outer | 457 ms   | 15.3–20.3 ms |
+
+Warm and repeated on the same inputs, the 59-plus-2 left join is ~1 ms. The
+walk is 0.34 ms (an inlined loop is 0.23 ms) and each padded gather is
+~0.3 ms. The 4 ms above is mostly fresh allocation after the forced GC.
+
+**Measured, not taken: a fused padded gather.** A gather with `-1` slots costs
+~0.32 ms per 97.5k-row numeric column, against ~0.23 ms for a dense one.
+`validityGatherByIndices` makes a second pass to build the bitmap once it
+finds an out-of-range index. A single-pass value-plus-validity gather measured
+0.233 ms, which would save ~5 ms of the 24 ms at 59 columns. That change
+belongs in `Float64Column.sliceByIndices` and would help every gather, not
+only `join`, so it was left out of this PR. Take it when a gather-heavy
+consumer shows up.
+
+**Noticed in passing.** `TimeSeries.concat` still collects every input's
+events and sorts them. It is the same shape of cost, but nobody has reported
+friction, so no task was filed.
+
 ---
 
 ## Moved from PLAN.md — 2026-09-23 cleanup

@@ -532,9 +532,9 @@ Exact-key pairwise join of two series with the same key kind.
 const joined = thisWeek.join(lastWeek, {
   type: 'outer',
   onConflict: 'prefix',
-  prefixes: ['this_', 'last_'],
+  prefixes: ['this', 'last'],
 });
-// joined.schema gains both sources' columns under prefixes:
+// colliding columns get `<prefix>_` (the underscore is added for you):
 //   [time, this_cpu, this_requests, last_cpu, last_requests, ...]
 ```
 
@@ -557,7 +557,7 @@ left.join(right); // throws if both have a 'cpu' column
 // 2. prefix — rename colliding columns with one prefix per side.
 left.join(right, {
   onConflict: 'prefix',
-  prefixes: ['l_', 'r_'],
+  prefixes: ['l', 'r'], // → l_cpu, r_cpu
 });
 ```
 
@@ -585,12 +585,34 @@ Output value columns are always optional (`required: false`)
 because non-`'inner'` joins emit `undefined` cells where one side
 has no event for that key.
 
+**Repeated keys pair one to one.** If a key appears twice on the
+left and three times on the right, you get two matched rows and one
+right-only row, in order — not six. A matched row carries the left
+side's key.
+
+**Cost.** `join` works on columns, not events: one walk over the two
+key columns, then each output column is either the source column
+itself (no copy) or a single gather. Every row of the left side of a
+`'left'` join lands in the output once and in order, so its columns
+come through untouched; the same holds for the right side of a
+`'right'` join, and for both sides when the keys match one for one
+(two series on the same grid). A left join therefore costs about as
+much as the **other** side is wide. If you read only a couple of its
+columns, narrow it first; `select` and `rename` don't copy either:
+
+```ts
+const withSpy = bars.join(spy.select('close').rename({ close: 'spy' }), {
+  type: 'left',
+});
+```
+
 ## `joinMany` \{#joinmany\}
 
 `TimeSeries.joinMany([a, b, c, ...], options?)` — N-ary join.
-Static method on `TimeSeries`. Same semantics as binary `join`
-applied N-ary in one pass; avoids the awkward
-`a.join(b).join(c)` chain that builds intermediate series.
+Static method on `TimeSeries`. Same semantics as chaining binary
+`join` left to right (which is how it runs), with one `type` and one
+conflict policy for the whole list; it resolves column-name
+conflicts across all inputs up front.
 
 ```ts
 const wide = TimeSeries.joinMany(
@@ -606,7 +628,7 @@ With prefixes to disambiguate same-named columns across sources:
 TimeSeries.joinMany([cpuA, cpuB, cpuC], {
   type: 'outer',
   onConflict: 'prefix',
-  prefixes: ['a_', 'b_', 'c_'],
+  prefixes: ['a', 'b', 'c'],
 });
 // schema: [time, a_cpu, b_cpu, c_cpu]
 ```
