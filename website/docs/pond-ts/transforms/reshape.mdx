@@ -609,9 +609,10 @@ const withSpy = bars.join(spy.select('close').rename({ close: 'spy' }), {
 ## `joinMany` \{#joinmany\}
 
 `TimeSeries.joinMany([a, b, c, ...], options?)` — N-ary join.
-Static method on `TimeSeries`. Same semantics as binary `join`
-applied N-ary in one pass; avoids the awkward
-`a.join(b).join(c)` chain that builds intermediate series.
+Static method on `TimeSeries`. Same semantics as chaining binary
+`join` left to right (which is how it runs), with one `type` and one
+conflict policy for the whole list; it resolves column-name
+conflicts across all inputs up front.
 
 ```ts
 const wide = TimeSeries.joinMany(
@@ -627,7 +628,7 @@ With prefixes to disambiguate same-named columns across sources:
 TimeSeries.joinMany([cpuA, cpuB, cpuC], {
   type: 'outer',
   onConflict: 'prefix',
-  prefixes: ['a_', 'b_', 'c_'],
+  prefixes: ['a', 'b', 'c'],
 });
 // schema: [time, a_cpu, b_cpu, c_cpu]
 ```

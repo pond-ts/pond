@@ -74,9 +74,9 @@ function expectSameAsEventWalk(
   left: TimeSeries<any>,
   right: TimeSeries<any>,
   joinType: JoinType,
+  joined: TimeSeries<any> = left.join(right, { type: joinType }),
 ): void {
   const expected = eventWalkJoin(left, right, joinType);
-  const joined = left.join(right, { type: joinType }) as TimeSeries<any>;
   expect(joined.length).toBe(expected.length);
   const names = joined.schema.slice(1).map((c: { name: string }) => c.name);
   for (let r = 0; r < expected.length; r += 1) {
@@ -189,6 +189,44 @@ describe('column-native join — differential against the event walk', () => {
     });
   }
 
+  it('matches the event walk on sliced inputs (key and value buffers are offset views)', () => {
+    for (let seed = 1; seed <= 20; seed += 1) {
+      const rand = lcg(seed * 104729);
+      for (const keyKind of KEY_KINDS) {
+        const left = randomSeries(rand, keyKind, 'l', 30).slice(3, -4);
+        const right = randomSeries(rand, keyKind, 'r', 30).slice(5, -2);
+        for (const joinType of JOIN_TYPES) {
+          expectSameAsEventWalk(left, right, joinType);
+        }
+      }
+    }
+  });
+
+  it('matches the event walk through prefix conflict handling', () => {
+    const names = ['n', 's', 'b', 'a'];
+    const renamed = (p: string) =>
+      Object.fromEntries(names.map((c) => [`v${c}`, `${p}_v${c}`]));
+    for (let seed = 1; seed <= 20; seed += 1) {
+      const rand = lcg(seed * 15485863);
+      // Same prefix on both sides, so every value column collides.
+      const left = randomSeries(rand, 'time', 'v', Math.floor(rand() * 25));
+      const right = randomSeries(rand, 'time', 'v', Math.floor(rand() * 25));
+      for (const joinType of JOIN_TYPES) {
+        const joined = left.join(right, {
+          type: joinType,
+          onConflict: 'prefix',
+          prefixes: ['l', 'r'],
+        });
+        expectSameAsEventWalk(
+          left.rename(renamed('l') as any) as TimeSeries<any>,
+          right.rename(renamed('r') as any) as TimeSeries<any>,
+          joinType,
+          joined as TimeSeries<any>,
+        );
+      }
+    }
+  });
+
   it('pairs a repeated key one to one, in order — not a cross product', () => {
     const schemaL = [
       { name: 'time', kind: 'time' },
@@ -269,11 +307,31 @@ describe('column-native join — pass-through', () => {
     ]);
   });
 
-  it('right join adopts the right key and value columns by reference', () => {
+  it('right join adopts the right value columns by reference, and gathers the key', () => {
     const j = left.join(right, { type: 'right' });
-    expect(j.keyColumn()).toBe(right.keyColumn());
     expect(j.column('b')).toBe(right.column('b'));
     expect(j.toArray().map((e) => e.get('a'))).toEqual([2, undefined]);
+    // A matched row carries the LEFT key, so the right key column is never
+    // adopted — see the -0 and interval-label tests below.
+    expect(j.keyColumn()).not.toBe(right.keyColumn());
+    expect(Array.from(j.keyColumn().begin)).toEqual([10, 30]);
+  });
+
+  it('a matched row carries the left timestamp bit for bit (0 vs -0)', () => {
+    const l = new TimeSeries({
+      name: 'l',
+      schema: lSchema,
+      rows: [
+        [0, 1, 'p'],
+        [10, 2, 'q'],
+      ],
+    });
+    const r = new TimeSeries({ name: 'r', schema: rSchema, rows: [[-0, 5]] });
+    expect(Object.is(r.keyColumn().begin[0], -0)).toBe(true);
+    for (const joinType of JOIN_TYPES) {
+      const j = l.join(r, { type: joinType });
+      expect(Object.is(j.keyColumn().begin[0], 0)).toBe(true);
+    }
   });
 
   it('a one-for-one key match passes both sides through — the shared-grid joinMany case', () => {

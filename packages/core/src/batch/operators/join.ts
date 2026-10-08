@@ -23,10 +23,10 @@ import type { JoinType } from '../../schema/index.js';
  *
  * - **Pass-through.** When one side's index is the identity (each of its
  *   rows appears once, in order, with nothing interleaved), that side's
- *   value columns are adopted by reference, and so is its key column. This
- *   is always true of the primary in a `left` join and of the other side in
- *   a `right` join, and it is true of **both** sides when the two keys match
- *   one for one — the `joinMany` over a shared grid case.
+ *   value columns are adopted by reference — and, on the left, the key
+ *   column too. This is always true of the primary in a `left` join and of
+ *   the other side in a `right` join, and it is true of **both** sides when
+ *   the two keys match one for one — the `joinMany` over a shared grid case.
  * - **Gather.** Otherwise each column is one `sliceByIndices` over the match
  *   index; a `-1` slot comes out missing through the column's validity, the
  *   substrate's existing out-of-range gather contract.
@@ -131,14 +131,12 @@ export function joinOp(
   const li = leftIdx.subarray(0, len);
   const ri = rightIdx.subarray(0, len);
 
-  // A matched row carries the left key. The right key column can stand in
-  // for it only where equal keys are identical, which holds for timestamps
-  // but not for interval labels (`compareIntervalValues` uses
-  // `localeCompare`, under which distinct strings can compare equal).
-  let keys: KeyColumn;
-  if (leftIdentity) keys = lk;
-  else if (rightIdentity && rk.kind !== 'interval') keys = rk;
-  else keys = gatherKeys(lk, rk, li, ri);
+  // A matched row carries the left key, so only the left key column is ever
+  // adopted. The right one is not a safe stand-in even when its index is the
+  // identity: equal keys need not be identical — interval labels compare with
+  // `localeCompare` (a precomposed and a decomposed é are equal), and
+  // timestamps with `-`, under which `0` and `-0` are equal.
+  const keys = leftIdentity ? lk : gatherKeys(lk, rk, li, ri);
 
   const columns = new Map<string, Column>();
   for (let c = 1; c < left.schema.length; c += 1) {

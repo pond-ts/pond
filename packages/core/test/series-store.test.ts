@@ -290,14 +290,14 @@ describe('eventCache validation', () => {
     ).toThrow(/unexpected data field 'leftover'/);
   });
 
-  it('accepts cache entries MISSING a schema-declared field WHEN the column read is undefined (outer-join shape)', () => {
+  it('accepts cache entries MISSING a schema-declared field WHEN the column read is undefined (the old outer-join shape)', () => {
     // Schema declares `value: string`. Row 1 of the column reads as
     // undefined (invalid cell). A cached event whose data omits the
-    // `value` field entirely is the legitimate outer-join shape:
-    // `series.join(other, { type: 'outer' })` produces events for
-    // rows that had no match on the other side, with the other
-    // side's columns omitted. The relaxed check accepts this when
-    // the column reads as undefined at that row — the misalignment
+    // `value` field entirely is the shape the event-walking outer
+    // `join` used to produce for unmatched rows (it is column-native
+    // now, [PND-JOINCOL], and no longer does; a caller-supplied cache
+    // still can). The relaxed check accepts this when the column
+    // reads as undefined at that row — the misalignment
     // it catches (event missing field while column has a defined
     // value) is covered by the next test.
     const schema = [

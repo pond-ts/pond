@@ -984,8 +984,8 @@ spread over every column) and re-columnarised. It is now `joinOp`
 1. One merge-walk over the two key columns yields two `Int32Array`s,
    `leftIdx` and `rightIdx`, one entry per output row; `-1` means no row on
    that side.
-2. A side whose index is the identity passes its value columns, and its key
-   column, through **by reference**. The test is O(1): all its rows were
+2. A side whose index is the identity passes its value columns through
+   **by reference**, and on the left side its key column too. The test is O(1): all its rows were
    emitted and the other side emitted no one-sided rows. That always holds
    for the primary of a `left` join and the other side of a `right` join. It
    also holds for **both** sides when the keys match one for one, which is
@@ -1008,15 +1008,17 @@ spread over every column) and re-columnarised. It is now `joinOp`
 - **Repeated keys pair one to one, not as a cross product.** Two left rows and
   three right rows on one key give two matched rows plus one right-only row.
   This was always the behaviour; it is now stated on the method and pinned.
-- **A matched row carries the left key.** For timestamps the right key is
-  identical, so a `right` join can adopt the right key column. For **interval
-  labels it is not**: `compareIntervalValues` uses `localeCompare`, under
-  which a precomposed é and a decomposed é compare equal. The right-key
-  pass-through is therefore disabled for interval keys, and a test pins it.
-  That test first missed the branch it was written for: with one row a side,
-  the left-identity branch won first. A mutant that re-enabled the
-  pass-through survived until the fixture gave each side a row the other
-  lacks.
+- **A matched row carries the left key, so only the left key column is ever
+  adopted.** Equal keys need not be identical. `compareIntervalValues` uses
+  `localeCompare`, under which a precomposed é and a decomposed é compare
+  equal, and timestamps compare by subtraction, under which `0` and `-0` are
+  equal. The first version still adopted the right key column on a `right`
+  join for timestamp keys. The Layer-2 review reproduced a `-0` leaking
+  through that path, so the right-key pass-through was removed outright. It
+  saved one ~0.2 ms gather. Tests pin both cases. The label test first missed
+  the branch it was written for: with one row a side, the left-identity
+  branch won first, and a mutant survived until the fixture gave each side a
+  row the other lacks.
 - **Mixed label types.** Numeric and string interval labels never compare
   equal, so they never match. An outer join keeping one-sided rows from both
   sides would produce a series with two label types. The old path threw a
