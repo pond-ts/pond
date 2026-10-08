@@ -104,6 +104,7 @@ import { diffRateOp, type DiffRateMode } from './operators/diff-rate.js';
 import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
 import { mapOp, type ColumnMapper } from './operators/map.js';
 import { shiftOp } from './operators/shift.js';
+import { joinOp } from './operators/join.js';
 import { collapseOp, type CollapseReducer } from './operators/collapse.js';
 import {
   assertColumnValuesMatchKind,
@@ -2126,6 +2127,19 @@ export class TimeSeries<S extends SeriesSchema> {
    * Value columns from both series are included in the result and are optional because joined rows
    * may have missing values on either side. If both series use the same payload column name,
    * you can either rename one side before joining or use `{ onConflict: "prefix", prefixes: [...] }`.
+   *
+   * Keys pair **one to one** in order: a key that appears `a` times on the left and `b` times on
+   * the right gives `min(a, b)` matched rows plus `|a − b|` one-sided rows, not `a × b`. A matched
+   * row carries the left key.
+   *
+   * **Cost.** Column-native: one walk over the two key columns, then each output column is either
+   * the source column itself (no copy) or one gather. A side's columns pass through untouched
+   * whenever every one of its rows lands in the output once, in order, with nothing interleaved —
+   * always the left side of a `"left"` join and the right side of a `"right"` join, and both sides
+   * when the keys match one for one (`joinMany` over a shared grid). So the cost of a left join
+   * scales with the **other** side's width; to bring across only the columns you read, narrow it
+   * first — `select` and `rename` are themselves zero-copy:
+   * `bars.join(spy.select("close").rename({ close: "spy" }), { type: "left" })`.
    */
   join<Other extends SeriesSchema>(
     other: TimeSeries<Other>,
@@ -2165,61 +2179,15 @@ export class TimeSeries<S extends SeriesSchema> {
         .map((column) => ({ ...column, required: false as const })),
     ]) as unknown as SeriesSchema;
 
-    const joinedEvents: EventForSchema<SeriesSchema>[] = [];
-    let leftIndex = 0;
-    let rightIndex = 0;
-
-    while (leftIndex < left.events.length || rightIndex < right.events.length) {
-      const leftEvent = left.events[leftIndex];
-      const rightEvent = right.events[rightIndex];
-
-      if (leftEvent && !rightEvent) {
-        if (joinType === 'left' || joinType === 'outer') {
-          joinedEvents.push(
-            leftEvent.merge({}) as unknown as EventForSchema<SeriesSchema>,
-          );
-        }
-        leftIndex += 1;
-        continue;
-      }
-
-      if (rightEvent && !leftEvent) {
-        if (joinType === 'right' || joinType === 'outer') {
-          joinedEvents.push(
-            rightEvent.merge({}) as unknown as EventForSchema<SeriesSchema>,
-          );
-        }
-        rightIndex += 1;
-        continue;
-      }
-
-      const comparison = leftEvent!.key().compare(rightEvent!.key());
-      if (comparison === 0) {
-        joinedEvents.push(
-          leftEvent!.merge(
-            rightEvent!.data(),
-          ) as unknown as EventForSchema<SeriesSchema>,
-        );
-        leftIndex += 1;
-        rightIndex += 1;
-      } else if (comparison < 0) {
-        if (joinType === 'left' || joinType === 'outer') {
-          joinedEvents.push(
-            leftEvent!.merge({}) as unknown as EventForSchema<SeriesSchema>,
-          );
-        }
-        leftIndex += 1;
-      } else {
-        if (joinType === 'right' || joinType === 'outer') {
-          joinedEvents.push(
-            rightEvent!.merge({}) as unknown as EventForSchema<SeriesSchema>,
-          );
-        }
-        rightIndex += 1;
-      }
-    }
-
-    return TimeSeries.#fromTrustedEvents(left.name, resultSchema, joinedEvents);
+    // Column-native: merge-walk the key buffers, then pass each column
+    // through or gather it. See `joinOp`.
+    const store = joinOp(
+      left.#store.store as unknown as ColumnarStore<ColumnSchema>,
+      right.#store.store as unknown as ColumnarStore<ColumnSchema>,
+      joinType,
+      resultSchema as unknown as ColumnSchema,
+    );
+    return TimeSeries.#fromTrustedStore(left.name, resultSchema, store);
   }
 
   /**
