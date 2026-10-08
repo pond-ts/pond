@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { scaleLinear } from 'd3-scale';
-import { areaExtent, drawArea, columnFiniteExtent } from '../src/area.js';
+import { drawArea, columnFiniteExtent } from '../src/area.js';
 import { resolveCurve } from '../src/curve.js';
 import { recordingContext, type CtxCall } from './canvas-mock.js';
 import type { ChartSeries } from '../src/data.js';
@@ -53,33 +53,6 @@ function areaContext(): {
   };
   return { ctx, calls, gradients };
 }
-
-describe('areaExtent', () => {
-  it('returns [min, max] of finite values when baseline is undefined', () => {
-    expect(areaExtent(cs([0, 1, 2], [10, 30, 20]), undefined)).toEqual([
-      10, 30,
-    ]);
-  });
-  it('ignores NaN gaps', () => {
-    expect(areaExtent(cs([0, 1, 2, 3], [10, NaN, 30, 20]), undefined)).toEqual([
-      10, 30,
-    ]);
-  });
-  it('widens the extent to include a fixed baseline below the data', () => {
-    // elevation-style: baseline 0 under all-positive data pulls the floor in.
-    expect(areaExtent(cs([0, 1, 2], [10, 30, 20]), 0)).toEqual([0, 30]);
-  });
-  it('widens the extent to include a baseline above the data', () => {
-    expect(areaExtent(cs([0, 1], [-5, -2]), 0)).toEqual([-5, 0]);
-  });
-  it('keeps a baseline that straddles the data (above/below axis)', () => {
-    // signed series around 0: extent spans both signs, baseline already inside.
-    expect(areaExtent(cs([0, 1, 2], [-4, 3, -1]), 0)).toEqual([-4, 3]);
-  });
-  it('returns null when nothing is finite', () => {
-    expect(areaExtent(cs([0, 1], [NaN, NaN]), 0)).toBeNull();
-  });
-});
 
 describe('drawArea', () => {
   it('fills then strokes the outline, each in its own save/restore', () => {

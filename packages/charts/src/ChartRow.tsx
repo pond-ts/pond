@@ -487,7 +487,7 @@ export function ChartRow({
       const extents: Array<readonly [number, number] | null> = needsExtents(ax)
         ? layerList
             .filter((entry) => (entry.axisId ?? defaultAxisId) === ax.id)
-            .map((entry) => entry.layer.yExtent(ax.scale))
+            .map((entry) => entry.layer.yExtent())
         : [];
       const [lo, hi] = resolveYDomain(
         ax.min,
@@ -599,7 +599,7 @@ export function ChartRow({
         ax,
         layerList
           .filter((entry) => (entry.axisId ?? defaultAxisId) === ax.id)
-          .map((entry) => entry.layer.yExtent(ax.scale)),
+          .map((entry) => entry.layer.yExtent()),
       );
       if (message === null) warned.delete(ax.id);
       else if (warned.get(ax.id) !== message) {

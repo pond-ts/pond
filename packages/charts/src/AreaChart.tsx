@@ -7,11 +7,12 @@ import {
   fromValueSeries,
 } from './data.js';
 import type { NumericColumn, ValueNumericColumn } from './column-names.js';
-import { areaExtent, areaHitIndex, areaStateStyle, drawArea } from './area.js';
+import { areaHitIndex, areaStateStyle, drawArea } from './area.js';
 import {
   drawPartitioned,
   plotExtentOf,
   strokeSpanEdges,
+  yExtent,
   type TraceState,
 } from './line.js';
 import type { AreaStyle } from './theme.js';
@@ -70,23 +71,23 @@ export interface AreaChartCommon<
   /**
    * The value the fill rests on — the flat edge opposite the value line.
    *
-   * - **Omitted ⇒ `0`**: an area measures size from zero, so values above zero
-   *   fill up and values below it fill down, each side's shade fading toward
-   *   the zero line. Zero is pulled into the auto-fit domain, so the axis always
-   *   shows where the fill starts.
+   * - **Omitted ⇒ `0`**: values above zero fill up and values below it fill
+   *   down, each side's shade fading toward the zero line.
    * - **Another number ⇒ that reference level**, with the same behaviour (e.g.
    *   `baseline={100}` for an index that fills above and below 100). For the
    *   esnet two-colour traffic look, compose two `<AreaChart>`s (an "in" column
    *   and an "out" column, distinct `as` roles).
    * - **`'floor'` ⇒ the axis's lower bound** (the bottom of the plot): the fill
-   *   rests on whatever the axis starts at, and nothing is added to the domain.
-   *   For a series that never nears zero where zero would flatten the shape — a
-   *   price, an elevation profile.
+   *   rests on whatever the axis starts at, even when zero is on screen.
    *
-   * On a **log** axis zero has no position, so a baseline at or below zero
-   * falls back to the axis floor and is not pulled into the domain. On an axis
-   * pinned so that it excludes the baseline, the fill rests on the nearest
-   * edge (the baseline is clamped into the domain, as a bar's is).
+   * **The baseline never changes the axis range.** The axis fits the data, as
+   * it does for a `<LineChart>`, so switching `baseline` only moves where the
+   * fill stops, never the scale. A baseline outside the axis range rests the
+   * fill on the nearest edge (it is clamped into the domain, as a bar's is), so
+   * on data that never crosses zero the default looks the same as `'floor'`.
+   * To show the fill from zero, put zero on the axis: `<YAxis min={0}>`. On a
+   * **log** axis zero has no position, so a baseline at or below zero falls
+   * back to the axis floor.
    */
   baseline?: number | 'floor';
   /**
@@ -247,8 +248,9 @@ export function resolveAreaBaseline(
   if (baseline === undefined) return floor;
   if (!Number.isFinite(yScale(baseline))) return floor;
   if (!d || d.length === 0) return baseline;
-  // Clamped into the domain, as a bar's baseline is: under an explicit
-  // `<YAxis min={40}>` the default 0 is off the plot, and a fill resting
+  // Clamped into the domain, as a bar's baseline is: the baseline never
+  // widens the axis, so on data that never crosses zero (or under an explicit
+  // `<YAxis min={40}>`) the default 0 is off the plot, and a fill resting
   // there would anchor its fade (and a gap's `'fade'` connector) off-plot.
   const lo = Math.min(d[0]!, d[d.length - 1]!);
   const hi = Math.max(d[0]!, d[d.length - 1]!);
@@ -387,17 +389,9 @@ export function AreaChart<
     () => ({
       layer: {
         as: semantic,
-        // A baseline with no position on a log axis (zero, the default) is
-        // left out of the fit: the draw rests it on the floor anyway, and an
-        // extent of `[0, max]` gives the log fit no positive low end, so it
-        // would collapse the domain onto the max and clip the series.
-        yExtent: (scale) =>
-          areaExtent(
-            cs,
-            scale === 'log' && baseValue !== undefined && baseValue <= 0
-              ? undefined
-              : baseValue,
-          ),
+        // The values alone: the baseline never widens the axis (see
+        // `baseline`), so an area fits the same domain a line would.
+        yExtent: () => yExtent(cs),
         // The container infers the shared x scale's kind from its layers — a
         // ValueSeries plots on a value axis, a TimeSeries on time.
         xKind: series instanceof ValueSeries ? 'value' : 'time',

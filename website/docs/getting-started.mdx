@@ -353,8 +353,9 @@ everywhere in pond charts:
   each one's _resolved_ style, so the key can't drift from the plot. `legend="…"`
   names a row.
 - **`baseline="floor"`** rests the elevation fill on the bottom of its row. An
-  area fills from zero by default, which is right for a quantity like traffic;
-  for an elevation profile, starting at sea level would flatten the hills.
+  area fills to zero by default, the right reference for a quantity like
+  traffic; a profile is about its shape, so its fill reaches the bottom of the
+  plot wherever the axis starts (the padded axis here dips just below zero).
 - **`as="muted"` / `as="primary"`** are **style roles**, not colours. The theme
   decides what each one looks like — here `muted` renders the raw trace in a
   neutral grey so the `primary` moving average reads through it. That's why

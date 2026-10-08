@@ -39,7 +39,7 @@ export default function GalleryDashboard({
     <ChartContainer range={range} width={width} theme={theme}>
       <LineCursor />
       <ChartRow height={90}>
-        <YAxis id="rps" side="right" format=",.0f" width={46} />
+        <YAxis id="rps" side="right" format=",.0f" width={46} min={0} />
         <Layers>
           <AreaChart series={series} column="rps" axis="rps" />
         </Layers>

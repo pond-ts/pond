@@ -93,6 +93,33 @@ function siteTraffic() {
   });
 }
 
+/**
+ * A price that moves from `from` to `to` in three steps — starting exactly at
+ * `from`, ending exactly at `to`, and never leaving the range between them, so
+ * the data's extent is its two endpoints. `price(50, -100)` crosses zero;
+ * `price(100, 200)` never comes near it.
+ */
+function price(from: number, to: number) {
+  const d = to - from;
+  const rows: Array<[number, number]> = [];
+  for (let i = 0; i < N; i += 1) {
+    const t = i / (N - 1);
+    const v =
+      from +
+      (d * (1 - Math.cos(Math.PI * t))) / 2 +
+      0.06 * d * Math.sin(8 * Math.PI * t) * Math.sin(Math.PI * t);
+    rows.push([BASE + i * STEP, v]);
+  }
+  return new TimeSeries({
+    name: 'price',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'usd', kind: 'number' },
+    ] as const,
+    rows,
+  });
+}
+
 const meta = {
   title: 'Charts/AreaChart',
   parameters: { layout: 'centered' },
@@ -101,35 +128,77 @@ const meta = {
 export default meta;
 type Story = StoryObj;
 
+/** One price row — the scaffold the baseline fan-out below shares. */
+function PriceArea({
+  series,
+  baseline,
+  min,
+}: {
+  series: ReturnType<typeof price>;
+  baseline?: 'floor';
+  min?: number;
+}) {
+  return (
+    <ChartContainer range={TIME_RANGE} width={560}>
+      <LineCursor />
+      <ChartRow height={240}>
+        <YAxis id="usd" format="$,.0f" min={min} />
+        <Layers>
+          <AreaChart
+            series={series}
+            column="usd"
+            as="default"
+            {...(baseline === undefined ? {} : { baseline })}
+          />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  );
+}
+
 /**
- * **The default: the fill rests on zero.** No `baseline` — an area measures size
- * from zero, so the axis is pulled down to include it and each value's fill is
- * as tall as the value. The same elevation profile as {@link Elevation}, whose
- * data never nears zero: compare the two to see what the default costs a series
- * whose interest is its shape.
+ * **The default: the fill rests on zero.** No `baseline`, on a price that
+ * crosses zero ($50 → −$100): the stretch above zero fills down to the zero
+ * line, the stretch below fills up to it, and each side's shade fades toward
+ * it. The axis fits the data — the baseline never changes the axis range.
  */
 export const ZeroBaseline: Story = {
-  render: () => {
-    const e = elevation();
-    return (
-      <ChartContainer range={TIME_RANGE} width={560}>
-        <LineCursor />
-        <ChartRow height={240}>
-          <YAxis id="m" label="m" />
-          <Layers>
-            <AreaChart series={e} column="elev" as="default" curve="monotone" />
-          </Layers>
-        </ChartRow>
-      </ChartContainer>
-    );
-  },
+  render: () => <PriceArea series={price(50, -100)} />,
+};
+
+/**
+ * `baseline="floor"` on the same price as {@link ZeroBaseline}: the fill
+ * reaches the bottom of the plot even though zero is on screen. The axis is
+ * identical — only where the fill stops has moved.
+ */
+export const FloorCrossingZero: Story = {
+  render: () => <PriceArea series={price(50, -100)} baseline="floor" />,
+};
+
+/**
+ * **Zero below the axis.** The default on a price that never nears zero
+ * ($100 → $200): the axis still fits the data, so zero is off the plot and the
+ * fill rests on the bottom edge (the baseline is clamped into the axis range).
+ * On data like this the default draws exactly what `baseline="floor"` does.
+ */
+export const ZeroOffAxis: Story = {
+  render: () => <PriceArea series={price(100, 200)} />,
+};
+
+/**
+ * **Putting zero on the axis.** The same $100 → $200 price under
+ * `<YAxis min={0}>`: the axis is the caller's to widen, and once zero is on it
+ * the default fill reaches down to it, so each value's fill is as tall as the
+ * value.
+ */
+export const ZeroOnAxis: Story = {
+  render: () => <PriceArea series={price(100, 200)} min={0} />,
 };
 
 /**
  * The elevation form (driver: estela elevation). `baseline="floor"` rests the
- * fill on the bottom of the plot and adds nothing to the domain, so the axis
- * hugs the data; the graded shade fades from the themed outline down to the
- * bottom. The coast reads as a break in both the fill and the outline — never a
+ * fill on the bottom of the plot, wherever the axis starts; the graded shade
+ * fades from the themed outline down to the bottom. The coast reads as a break in both the fill and the outline — never a
  * bridge to the floor.
  */
 export const Elevation: Story = {
@@ -189,8 +258,8 @@ export const ReferenceLevel: Story = {
  * `baseline={0}` (the default, written out): `in` (blue) fills up, `out` (rose, stored
  * negative) fills down. Each side's shade fades toward the zero axis. Two layers
  * + two `as` roles — the single styling channel, composed (no per-component
- * colour). The y-axis includes 0 because the fixed baseline is pulled into the
- * domain.
+ * colour). The y-axis includes 0 because the data does — `in` is positive and
+ * `out` negative — not because of the baseline, which never widens the axis.
  */
 export const AboveBelowAxis: Story = {
   render: () => {

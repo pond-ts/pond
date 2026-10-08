@@ -7,6 +7,7 @@ import { ChartContainer } from '../src/ChartContainer.js';
 import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { AreaChart } from '../src/AreaChart.js';
+import { LineChart } from '../src/LineChart.js';
 import { YAxis } from '../src/YAxis.js';
 import { areaHitIndex } from '../src/area.js';
 import { RowContext, type RowFrame } from '../src/context.js';
@@ -16,12 +17,13 @@ import { stubCanvasContext, type CtxCall } from './canvas-mock.js';
 afterEach(cleanup);
 
 /**
- * **Where an area's fill stops.** An area encodes size, and size is measured
- * from zero — so the fill rests on `0` unless the caller names another level,
- * and the bottom of the plot is an explicit opt-in (`baseline="floor"`), not
- * the default. Before this, an omitted `baseline` filled to the plot's bottom,
- * which on auto-fit data like 50–90 is ~50 — so a value of 60 drew as a sliver
- * and 90 as a slab four times its size.
+ * **Where an area's fill stops — and what it does not do.** The fill rests on
+ * `0` unless the caller names another level or the bottom of the plot
+ * (`baseline="floor"`). The baseline never moves the axis: the axis fits the
+ * data, as a line's does, so switching `baseline` changes where the fill stops
+ * and nothing else. A baseline the axis doesn't reach is clamped to its nearest
+ * edge, which is why the default looks like `'floor'` on data that never
+ * crosses zero; `<YAxis min={0}>` is how a chart puts zero on screen.
  */
 
 const T = (i: number) => i * 1000;
@@ -93,27 +95,104 @@ function fillYs(calls: readonly CtxCall[]): number[] {
   return out;
 }
 
-describe('`<AreaChart baseline>` — auto-fit domain', () => {
-  it('omitted ⇒ 0: zero is pulled into the domain', () => {
-    const { domain } = mount(<AreaChart series={high()} column="v" axis="a" />);
-    expect(domain[0]).toBeLessThanOrEqual(0);
-    expect(domain[1]).toBeGreaterThanOrEqual(90);
+/** Five points, 50 … -100 — crosses zero, and no point sits exactly on it. */
+const signed = () =>
+  new TimeSeries({
+    name: 'x',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number' },
+    ] as const,
+    rows: [50, 20, -10, -60, -100].map((v, i) => [T(i), v]) as [
+      number,
+      number,
+    ][],
   });
 
-  it("'floor' ⇒ nothing is added: the domain hugs the data", () => {
+/** The domain a `<LineChart>` of the same column fits — what an area's must
+ *  match. (A fully auto-fit domain is `.nice()`d, so this, not the raw data
+ *  extent, is the reference.) */
+function lineDomain(series: ReturnType<typeof high>): [number, number] {
+  const { domain } = mount(<LineChart series={series} column="v" axis="a" />);
+  cleanup();
+  return domain;
+}
+
+/** Method calls only — a `fillStyle` set carries a gradient object, which
+ *  `toEqual` would compare by identity. */
+const ops = (calls: readonly CtxCall[]) =>
+  calls.filter((c) => c.type === 'call');
+
+describe('`<AreaChart baseline>` — never changes the auto-fit domain', () => {
+  it.each([
+    ['omitted (0)', undefined],
+    ["'floor'", 'floor' as const],
+    ['0', 0],
+    ['inside the data (70)', 70],
+    ['above the data (100)', 100],
+    ['far below the data (-1000)', -1000],
+  ])("baseline %s ⇒ the line's domain", (_, baseline) => {
+    const expected = lineDomain(high());
     const { domain } = mount(
-      <AreaChart series={high()} column="v" axis="a" baseline="floor" />,
+      <AreaChart
+        series={high()}
+        column="v"
+        axis="a"
+        {...(baseline === undefined ? {} : { baseline })}
+      />,
     );
+    expect(domain).toEqual(expected);
     expect(domain[0]).toBeGreaterThan(0);
-    expect(domain[0]).toBeLessThanOrEqual(50);
   });
 
-  it('a number ⇒ that level is pulled in, even above the data', () => {
-    const { domain } = mount(
+  it('data that never reaches 0 ⇒ the default draws exactly what floor does', () => {
+    // Zero is below the axis, so the fill is clamped to the bottom edge — the
+    // same path and the same gradient span as `baseline="floor"`.
+    const byDefault = mount(
+      <AreaChart series={high()} column="v" axis="a" />,
+    ).calls;
+    cleanup();
+    const floor = mount(
+      <AreaChart series={high()} column="v" axis="a" baseline="floor" />,
+    ).calls;
+    expect(ops(byDefault)).toEqual(ops(floor));
+    expect(ops(floor).some((c) => c.name === 'createLinearGradient')).toBe(
+      true,
+    );
+  });
+
+  it('a baseline above the data clamps the fill to the top edge', () => {
+    const { y, domain, calls } = mount(
       <AreaChart series={high()} column="v" axis="a" baseline={100} />,
     );
-    expect(domain[0]).toBeGreaterThan(0);
-    expect(domain[1]).toBeGreaterThanOrEqual(100);
+    const ys = fillYs(calls);
+    expect(ys).not.toContain(y(100));
+    expect(Math.min(...ys)).toBe(y(domain[1]));
+  });
+
+  it('data that crosses 0 ⇒ same domain either way; only the fill moves', () => {
+    const expected = lineDomain(signed());
+    const byDefault = mount(
+      <AreaChart series={signed()} column="v" axis="a" />,
+    );
+    expect(byDefault.domain).toEqual(expected);
+    expect(fillYs(byDefault.calls)).toContain(byDefault.y(0));
+    cleanup();
+    const floor = mount(
+      <AreaChart series={signed()} column="v" axis="a" baseline="floor" />,
+    );
+    expect(floor.domain).toEqual(expected);
+    expect(fillYs(floor.calls)).not.toContain(floor.y(0));
+    expect(fillYs(floor.calls)).toContain(floor.y(expected[0]));
+  });
+
+  it('`<YAxis min={0}>` is how a chart puts the fill back on zero', () => {
+    const { y, domain, calls } = mount(
+      <AreaChart series={high()} column="v" axis="a" />,
+      { min: 0 },
+    );
+    expect(domain[0]).toBe(0);
+    expect(fillYs(calls)).toContain(y(0));
   });
 });
 
@@ -167,9 +246,10 @@ describe('`<AreaChart baseline>` — non-linear and pinned axes', () => {
     });
 
   it('a log axis fits the data, not the default 0', () => {
-    // Zero has no position on a log axis. Pulled into the extent it left the
-    // log fit with `[0, 1e5]`, no positive low end, and a domain collapsed
-    // onto the max (`[1e4, 1e6]`) that clipped most of the series.
+    // Zero has no position on a log axis. When the baseline was pulled into
+    // the extent it left the log fit with `[0, 1e5]`, no positive low end,
+    // and a domain collapsed onto the max (`[1e4, 1e6]`) that clipped most of
+    // the series.
     const log = { scale: 'log' as const };
     const byDefault = mount(
       <AreaChart series={decades()} column="v" axis="a" />,
@@ -184,12 +264,12 @@ describe('`<AreaChart baseline>` — non-linear and pinned axes', () => {
     expect(byDefault[0]).toBeLessThanOrEqual(10);
   });
 
-  it('a symlog axis still pulls 0 in — zero has a position there', () => {
+  it('a symlog axis fits the data too, though zero has a position there', () => {
     const { domain } = mount(
       <AreaChart series={high()} column="v" axis="a" />,
       { scale: 'symlog' },
     );
-    expect(domain[0]).toBeLessThanOrEqual(0);
+    expect(domain).toEqual([50, 90]);
   });
 
   it('a pinned axis above 0 clamps the fill to its floor, as a bar does', () => {
