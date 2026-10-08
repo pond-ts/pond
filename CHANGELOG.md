@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.71.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.72.0...HEAD
+[0.72.0]: https://github.com/pond-ts/pond/compare/v0.71.0...v0.72.0
 [0.71.0]: https://github.com/pond-ts/pond/compare/v0.70.0...v0.71.0
 [0.70.0]: https://github.com/pond-ts/pond/compare/v0.69.0...v0.70.0
 [0.69.0]: https://github.com/pond-ts/pond/compare/v0.68.0...v0.69.0
@@ -74,14 +75,16 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+## [0.72.0] — 2026-10-08
+
 ### Changed
 
 - `pond-ts`: **`join` and `joinMany` work on columns now, not events** — 20
   to 190× faster in the cases below, with the same output. `join` used to
   build an event for every row on both sides, merge them row by row and
   rebuild the columns. Now it walks the two key columns once, then either
-  adopts each column as is or gathers it in one pass. A side's columns are
-  adopted as is whenever all its rows land in the output once and in order:
+  adopts each column as is or gathers it in one pass. A side's value columns
+  are adopted as is whenever all its rows land in the output once and in order:
   always the left side of a `left` join, the right side of a `right` join, and
   both sides when the keys match one for one (`joinMany` over a shared grid).
   One year of 1-minute bars, ~97.5k rows a side, `type: 'left'` unless noted
