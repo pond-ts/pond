@@ -142,7 +142,11 @@ function PriceArea({
     <ChartContainer range={TIME_RANGE} width={560}>
       <LineCursor />
       <ChartRow height={240}>
-        <YAxis id="usd" format="$,.0f" min={min} />
+        <YAxis
+          id="usd"
+          format="$,.0f"
+          {...(min === undefined ? {} : { min })}
+        />
         <Layers>
           <AreaChart
             series={series}
@@ -198,8 +202,8 @@ export const ZeroOnAxis: Story = {
 /**
  * The elevation form (driver: estela elevation). `baseline="floor"` rests the
  * fill on the bottom of the plot, wherever the axis starts; the graded shade
- * fades from the themed outline down to the bottom. The coast reads as a break in both the fill and the outline — never a
- * bridge to the floor.
+ * fades from the themed outline down to the bottom. The coast reads as a break
+ * in both the fill and the outline — never a bridge to the floor.
  */
 export const Elevation: Story = {
   render: () => {

@@ -77,8 +77,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
-- **charts:** **An `<AreaChart>`'s `baseline` no longer changes the y-axis
-  range.** Since v0.71.0 the default zero baseline (and any numeric baseline)
+- **charts** (**breaking**): **An `<AreaChart>`'s `baseline` no longer changes
+  the y-axis range.** Since v0.71.0 the default zero baseline (and any numeric baseline)
   was pulled into the auto-fit domain, so an area over data running $100–$200
   drew on a $0–$200 axis, and switching `baseline` rescaled the chart — and
   every other layer sharing its axis. The axis now fits the data, exactly as it

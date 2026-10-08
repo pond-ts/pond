@@ -25,9 +25,10 @@ export type Orientation = 'vertical' | 'horizontal';
  * Including `0` is where a bar differs from an area, whose baseline never
  * widens the axis: a bar's length is its value, so an all-positive series
  * auto-fits to `[0, max]` and the bars rest on a visible floor (the zero line),
- * and a series that straddles zero shows the zero line both above and below it. An explicit `<YAxis min>` still
- * wins — `resolveBarBaseline` rests the bars on that floor instead. NaN values
- * (the gap signal) are ignored, so a sparse bucket doesn't drag the domain.
+ * and a series that straddles zero shows the zero line both above and below
+ * it. An explicit `<YAxis min>` still wins — `resolveBarBaseline` rests the
+ * bars on that floor instead. NaN values (the gap signal) are ignored, so a
+ * sparse bucket doesn't drag the domain.
  */
 export function barExtent(cs: BarSeries): [number, number] | null {
   let min = Infinity;
