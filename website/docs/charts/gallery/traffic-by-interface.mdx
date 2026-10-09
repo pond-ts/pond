@@ -76,6 +76,11 @@ const order = names.map((_, i) => i).reverse();
 </Layers>;
 ```
 
+The row's axis is `<YAxis id="gbps" … min={0}>`. A stack is read from zero, and
+an area's baseline never widens the axis by itself — without `min={0}` the axis
+would start at the smallest band's lowest value and cut the bottom of the stack
+off.
+
 That only works because the fills are **opaque**. A graded or translucent fill
 would let the slabs behind show through their neighbours and the whole
 composition would turn to mud — so the `seq*` area roles set `flatFill`, which

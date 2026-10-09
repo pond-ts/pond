@@ -79,13 +79,14 @@ Then draw it. The one prop that makes this chart the shape it is:
 <AreaChart series={series} column="drawdown" axis="dd" baseline={0} />
 ```
 
-Without `baseline`, an `<AreaChart>` fills from its value line down to the
-**axis's lower bound** — the elevation-profile form, which for an all-negative
-series fills from the curve down to −25% and reads as a mountain range upside
-down. With `baseline={0}`, the fill rests on zero and hangs below it, and the
-fixed baseline is pulled into the auto-fit domain so the zero line is always on
-screen. Values on both sides of the baseline fill in both directions, which is
-the same prop the mirrored in/out traffic charts use.
+With `baseline={0}` (the default, written out here because it is the point
+of the chart) the fill rests on zero and hangs below it. With
+`baseline="floor"` it would fill from the curve down to −25% instead and read
+as a mountain range upside down. Zero is on the axis because the data reaches
+it — drawdown is exactly zero at every new high — not because of the baseline,
+which never changes the axis range. Values on both sides of the baseline fill
+in both directions, which is the same prop the mirrored in/out traffic charts
+use.
 
 Two finishing touches. A percentage axis format, since a drawdown is a
 fraction:

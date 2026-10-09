@@ -75,6 +75,9 @@ export default function GalleryTrafficByInterface({
           labelPlacement="top"
           format=",.0f"
           width={52}
+          // A stack reads from zero, and an area's baseline never moves the
+          // axis — so zero goes on it here.
+          min={0}
         />
         <Layers>
           {order.map((i) => (

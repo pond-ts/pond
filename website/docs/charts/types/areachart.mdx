@@ -30,20 +30,22 @@ the same `ChartSeries` a `LineChart` uses.
 | `readout`  | `string`                    | —           | Second column reported at the cursor (mirrors `<LineChart>`). |
 | `as`       | `string`                    | `'default'` | Style role → `theme.area[as]` (outline + graded fill).        |
 | `axis`     | `string`                    | row default | Which `<YAxis id>` to scale against.                          |
-| `baseline` | `number \| 'floor'`         | `0`         | The level the fill rests on. Pulled into the auto-fit domain. |
+| `baseline` | `number \| 'floor'`         | `0`         | The level the fill rests on. Never changes the axis range.    |
 | `curve`    | `Curve`                     | `'linear'`  | Outline + fill-edge interpolation.                            |
 | `gaps`     | `GapMode`                   | `'empty'`   | Gap rendering (fill/outline coupled — see cautions).          |
 
 ## Variants
 
 - **`baseline`** — omit it and the fill rests on **zero**: values above fill
-  up, values below fill down, and zero is pulled into the axis so you can see
-  where the fill starts. Pass another number for a different reference level
-  (a target, an index's base of 100). Pass `'floor'` for the **elevation**
-  form: the fill rests on the bottom of the plot and the axis hugs the data —
-  for a price or an elevation profile, where starting at zero would flatten the
-  shape. The two-colour traffic look is two `<AreaChart>`s with `in` / `out`
-  roles over the default zero.
+  up, values below fill down. Pass another number for a different reference
+  level (a target, an index's base of 100), or `'floor'` to rest the fill on
+  the bottom of the plot even when zero is on screen. The baseline **never
+  changes the axis range** — the axis fits the data, as a line's does — so a
+  baseline the axis doesn't reach rests the fill on the nearest edge. On data
+  that never crosses zero the default therefore looks the same as `'floor'`;
+  to fill from zero, put zero on the axis with `<YAxis min={0}>`. The
+  two-colour traffic look is two `<AreaChart>`s with `in` / `out` roles over
+  the default zero.
 - **`curve`** — `'linear'` (default) / `'monotone'` / `'natural'` / `'basis'` /
   `'step'`.
 - **`gaps`** — `'empty'` (default) / `'none'` / `'dashed'` / `'step'` /

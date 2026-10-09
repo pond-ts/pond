@@ -44,7 +44,7 @@ import { affineOf, type Affine } from './affine.js';
  * length); a `subarray` view is never the cache key here (the gradient reads the
  * pre-cull full series).
  *
- * NaN (the gap signal) is ignored — matching {@link areaExtent} / `yExtent` — so
+ * NaN (the gap signal) is ignored — matching the layer's `yExtent` — so
  * a coast doesn't drag the span. `null` when nothing is finite (the caller then
  * falls back to a flat fill).
  */
@@ -117,40 +117,6 @@ export function fillAffineArea(
       runStart = -1;
     }
   }
-}
-
-/**
- * The `[min, max]` vertical extent an area occupies — the finite values of
- * `cs.y` widened to include `baseline`, since the fill spans from each value to
- * the baseline (so the baseline must be in-domain or the fill clips). `null` if
- * no value is finite. When `baseline` is `undefined` (`<AreaChart
- * baseline="floor">`) the area rests on the axis's own lower bound (resolved
- * later), so only the values constrain the
- * domain — matching {@link yExtent}.
- *
- * NaN values (the gap signal) are ignored, so a coast doesn't drag the domain.
- */
-export function areaExtent(
-  cs: ChartSeries,
-  baseline: number | undefined,
-): [number, number] | null {
-  let min = Infinity;
-  let max = -Infinity;
-  for (let i = 0; i < cs.length; i += 1) {
-    const v = cs.y[i]!;
-    if (Number.isFinite(v)) {
-      if (v < min) min = v;
-      if (v > max) max = v;
-    }
-  }
-  if (min === Infinity) return null;
-  // The fill reaches the baseline, so it must be inside the domain (an
-  // above/below-axis area with baseline 0 has to show the zero line).
-  if (baseline !== undefined) {
-    if (baseline < min) min = baseline;
-    if (baseline > max) max = baseline;
-  }
-  return [min, max];
 }
 
 /**

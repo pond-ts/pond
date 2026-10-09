@@ -4474,6 +4474,39 @@ here:** `barExtent` reports `[0, max]` too, and `resolveYDomain` given
 `[[0, 1e5]]` on a log axis returns `[1e4, 1e6]`, so a bar layer alone on an
 auto-fit log axis collapses the same way. That is a separate change.
 
+### Follow-up — the baseline no longer widens the axis (2026-10-08)
+
+**Report (owner):** drawing a $100→$200 price and a $50→−$100 price, each with
+the default zero fill and with `'floor'`: "In theory this should not change the
+bounds of the drawing." It did for $100→$200 — `$0–$200` by default,
+`$100–$200` with `'floor'` — and not for $50→−$100, whose data already held
+zero.
+
+**Decision.** The baseline never enters the y extent: an area fits exactly the
+domain a `<LineChart>` of the same column would. `baseline` says where the fill
+stops, not what the scale is; a fill mode that rescales the chart (and every
+other layer on a shared axis) was the surprise. Putting zero on the axis is the
+axis's job — `<YAxis min={0}>`.
+
+**Consequence, accepted:** on data that never crosses zero the default baseline
+is clamped to the axis edge and draws exactly what `'floor'` does (pinned by a
+canvas-op equality test). The two differ only when the baseline is on screen.
+This walks back part of the reasoning above ("each fill is as tall as its
+value") — that reading now needs the caller to put zero on the axis.
+
+**Removed with it:** `areaExtent` (the layer now uses the shared `yExtent` from
+`line.ts`), and the `scale` argument this task added to `RowLayer.yExtent`,
+whose only user was the area's log-axis special case — with nothing pulled in,
+there is nothing to leave out of a log fit. Bars still pull zero in
+(`barExtent`): a bar's length is its value.
+
+**Not done, raised with the owner:** when the baseline is off the plot, anchor
+the gradient at the real baseline rather than the clamped edge, so the fill
+visibly runs off the bottom instead of fading out at it. **Docs-site examples**
+that relied on the pull-in for a zero-based read now say `min={0}`: the stacked
+traffic-by-interface chart, the dashboard's rps area, and the network-traffic
+one-direction snippet.
+
 ## Moved from PLAN.md — 2026-09-23 cleanup
 
 PLAN.md holds future work only, so these write-ups of shipped (or partly

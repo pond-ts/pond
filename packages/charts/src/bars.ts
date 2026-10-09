@@ -22,12 +22,13 @@ export type Orientation = 'vertical' | 'horizontal';
  * and the baseline must be in-domain or the bar clips. `null` if no value is
  * finite.
  *
- * Including `0` is the bar analog of {@link areaExtent} pulling a fixed baseline
- * into the domain: an all-positive series auto-fits to `[0, max]` so the bars
- * rest on a visible floor (the zero line), and a series that straddles zero
- * shows the zero line both above and below it. An explicit `<YAxis min>` still
- * wins — `resolveBarBaseline` rests the bars on that floor instead. NaN values
- * (the gap signal) are ignored, so a sparse bucket doesn't drag the domain.
+ * Including `0` is where a bar differs from an area, whose baseline never
+ * widens the axis: a bar's length is its value, so an all-positive series
+ * auto-fits to `[0, max]` and the bars rest on a visible floor (the zero line),
+ * and a series that straddles zero shows the zero line both above and below
+ * it. An explicit `<YAxis min>` still wins — `resolveBarBaseline` rests the
+ * bars on that floor instead. NaN values (the gap signal) are ignored, so a
+ * sparse bucket doesn't drag the domain.
  */
 export function barExtent(cs: BarSeries): [number, number] | null {
   let min = Infinity;

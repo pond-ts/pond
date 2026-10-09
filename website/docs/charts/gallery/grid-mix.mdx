@@ -113,6 +113,11 @@ between cumulative _k−1_ and cumulative _k_:
 </Layers>
 ```
 
+The row's axis is `<YAxis id="gw" … min={0}>`. A stack is read from zero, and
+an area's baseline never widens the axis by itself — without `min={0}` the axis
+would start at the smallest band's lowest value and cut the bottom of the stack
+off.
+
 That covering trick only works because the `tonalA*` / `tonalB*` roles fill
 **flat**. An area's default fill is a gradient that fades to transparent at the
 baseline — right for a single elevation profile, fatal for a stack, where it

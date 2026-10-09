@@ -75,6 +75,21 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **charts** (**breaking**): **An `<AreaChart>`'s `baseline` no longer changes
+  the y-axis range.** Since v0.71.0 the default zero baseline (and any numeric baseline)
+  was pulled into the auto-fit domain, so an area over data running $100–$200
+  drew on a $0–$200 axis, and switching `baseline` rescaled the chart — and
+  every other layer sharing its axis. The axis now fits the data, exactly as it
+  does for a `<LineChart>` of the same column; `baseline` only moves where the
+  fill stops. A baseline outside the axis range rests the fill on the nearest
+  edge, so on data that never crosses zero the default now draws the same as
+  `baseline="floor"`. **Migration:** where the fill should read from zero — a
+  stack, a quantity like throughput — put zero on the axis with
+  `<YAxis min={0}>` (`max={0}` for an all-negative series). Areas whose data
+  already reaches their baseline, or whose axis is pinned, are unchanged.
+
 ## [0.72.0] — 2026-10-08
 
 ### Changed

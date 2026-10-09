@@ -101,7 +101,7 @@ const total = siteTotal();
 <ChartContainer range={TRAFFIC_RANGE} width={640} theme={theme}>
   <LineCursor />
   <ChartRow height={220}>
-    <YAxis id="gbps" side="right" label="Gbps" width={52} />
+    <YAxis id="gbps" side="right" label="Gbps" width={52} min={0} />
     <Layers>
       <AreaChart series={total} column="in" as="in" axis="gbps" baseline={0} />
     </Layers>
@@ -109,8 +109,10 @@ const total = siteTotal();
 </ChartContainer>;
 ```
 
-That's inbound traffic, filling up from zero. It's a perfectly good chart and
-it tells you half of what you need.
+That's inbound traffic, filling up from zero. `min={0}` is what puts zero on
+the axis — an area's baseline never moves the axis by itself, so without it the
+axis would hug the traffic and the fill would rest on the bottom edge. It's a
+perfectly good chart and it tells you half of what you need.
 
 The mirror is one line of data work. Negate the `out` column, and the same
 `baseline={0}` that made the first area fill _up_ makes this one fill _down_:
