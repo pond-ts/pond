@@ -75,6 +75,34 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **core**: **`onOutOfOrder: 'throw' | 'sort' | 'clamp'` on every loader**
+  (`new TimeSeries`, `TimeSeries.fromJSON` / `fromColumns` / `fromArrow`,
+  `ValueSeries.fromJSON` / `fromColumns` / `fromArrow`), with the new
+  `OnOutOfOrder` type exported. `'throw'` is the default (unchanged); `'sort'`
+  is what `sort: true` did. **`'clamp'`** is new: rows stay in place and a key
+  earlier than its predecessor's takes that key (the running max), so a noisy
+  feed's lone backwards timestamp lands on its neighbour instead of failing the
+  ingest or being moved. Values are untouched, ties pass through, non-finite
+  keys are still rejected, value-column `Float64Array`s stay zero-copy, and a
+  caller's key buffer is never mutated. `time` keys and `ValueSeries` axes
+  only — a `timeRange` / `interval` key throws under `'clamp'`. [PND-INGEST]
+
+### Changed
+
+- **core**: Out-of-order ingest errors now suggest `{ onOutOfOrder: 'sort' }`
+  (and `'clamp'` where it applies) instead of `{ sort: true }`. Code matching
+  on the old message text needs updating.
+
+### Deprecated
+
+- **core**: **`sort?: boolean`** on the loaders above — use
+  `onOutOfOrder: 'sort'`. `sort: true` still works for this release and maps to
+  `'sort'`; it will be removed in the next minor. Passing `sort` together with
+  a conflicting `onOutOfOrder` (e.g. `sort: true, onOutOfOrder: 'clamp'`)
+  throws a `ValidationError`.
+
 ### Changed
 
 - **charts** (**breaking**): **An `<AreaChart>`'s `baseline` no longer changes

@@ -286,14 +286,14 @@ describe('TimeSeries.fromArrow', () => {
     expect(series.schema.map((c) => c.name)).toEqual(['time', 'c', 'a']);
   });
 
-  it('sorts an unordered table with { sort: true }', () => {
+  it("sorts an unordered table with { onOutOfOrder: 'sort' }", () => {
     const series = build(
       3,
       [
         { name: 'time', vector: f64([20, 0, 10]) },
         { name: 'value', vector: f64([2, 0, 1]) },
       ],
-      { sort: true },
+      { onOutOfOrder: 'sort' },
     );
     expect([
       series.at(0)!.key().begin(),
@@ -301,6 +301,32 @@ describe('TimeSeries.fromArrow', () => {
       series.at(2)!.key().begin(),
     ]).toEqual([0, 10, 20]);
     expect(col(series, 'value')).toEqual([0, 1, 2]);
+  });
+
+  it("clamps a backwards timestamp in place with { onOutOfOrder: 'clamp' }", () => {
+    const series = build(
+      3,
+      [
+        { name: 'time', vector: f64([0, 20, 10]) },
+        { name: 'value', vector: f64([0, 2, 1]) },
+      ],
+      { onOutOfOrder: 'clamp' },
+    );
+    expect([0, 1, 2].map((i) => series.at(i)!.key().begin())).toEqual([
+      0, 20, 20,
+    ]);
+    expect(col(series, 'value')).toEqual([0, 2, 1]);
+  });
+
+  it('keeps `sort: true` as a deprecated alias, refusing a conflict', () => {
+    const cols = () => [
+      { name: 'time', vector: f64([20, 0]) },
+      { name: 'value', vector: f64([2, 0]) },
+    ];
+    expect(col(build(2, cols(), { sort: true }), 'value')).toEqual([0, 2]);
+    expect(() =>
+      build(2, cols(), { sort: true, onOutOfOrder: 'clamp' }),
+    ).toThrow(/conflicting options/);
   });
 
   it('converts Int32 / Float32 value columns to Float64', () => {
@@ -345,7 +371,7 @@ describe('TimeSeries.fromArrow', () => {
         { name: 'time', vector: f64([20, 0, 10]) },
         { name: 'symbol', vector: str(['c', 'a', 'b']) },
       ],
-      { sort: true },
+      { onOutOfOrder: 'sort' },
     );
     expect(col(series, 'symbol')).toEqual(['a', 'b', 'c']);
   });

@@ -127,7 +127,7 @@ describe('ValueSeries.fromArrow', () => {
     });
     const vs = ValueSeries.fromArrow(table as never, {
       axis: 'strike',
-      sort: true,
+      onOutOfOrder: 'sort',
     });
     expect(Array.from(vs.axisValues())).toEqual([90, 95, 100]);
     expect(readCol(vs as never, 'iv')).toEqual([0.31, 0.27, 0.25]);

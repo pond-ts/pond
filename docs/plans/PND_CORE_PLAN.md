@@ -139,14 +139,6 @@ the reference **protobuf columnar codec** (packed-double blob →
 record and design rationale: the "Wire format + columnar ingress" section of
 [docs/archive/charts-wave-2026.md](../archive/charts-wave-2026.md).
 
-### [PND-INGEST] — `fromColumns({ onOutOfOrder: 'throw' | 'sort' | 'clamp' })`
-
-Reopens the #344 `clampNonDecreasing` reject with a second real signal
-(Tidal's noisy time samples): clamp (carry-forward a lone backwards blip) is
-a distinct, sometimes-more-correct op from sort. Fold the existing
-`sort?: boolean` into the enum (keep `sort: true` as a one-release alias);
-default stays `throw`.
-
 ### [PND-TSVAR] — `TimeSeries<S>` variance refactor + `toJSON` narrowing
 
 `toJSON()` returns the loose schema and `RowForSchema` can't honor
@@ -204,6 +196,48 @@ Document `rate()`/`diff()`/`pctChange()` behavior at `dt = 0` (concurrent
 events → `undefined`; a `rateOver({ every })` variant may earn its keep
 later); dashboard-guide fixes (lead with `useLiveQuery`; document derived
 views × retention); the audit-suggested `useSyncExternalStore` migration.
+
+## [PND-INGEST] — `onOutOfOrder: 'throw' | 'sort' | 'clamp'` on every loader (2026-10-10)
+
+**Shipped** (pre-1.0 review, branch `claude/1.0-on-out-of-order`). Reopened the
+#344 `clampNonDecreasing` reject on a second real signal (Tidal's noisy time
+samples — see the charts-wave archive, "clamp-on-ingest"). Every loader that
+took `sort?: boolean` now takes `onOutOfOrder?: OnOutOfOrder` (exported type):
+`new TimeSeries({ … })`, `TimeSeries.fromJSON` / `fromColumns` / `fromArrow`,
+`ValueSeries.fromJSON` / `fromColumns` / `fromArrow`. Default `'throw'`
+(unchanged behaviour); `'sort'` = the old `sort: true`.
+
+Decisions + reasoning:
+
+- **Clamp semantics: running max.** `key[i] = max(key[i], key[i-1])` where
+  `key[i-1]` is the already-clamped key — the `t = t >= prevT ? t : prevT`
+  formula from the charts-wave adoption note. Ties pass through; a clamped row
+  _ties_ its predecessor (no epsilon nudge — that would invent a timestamp).
+  Values and row order are untouched. Documented sharp edge: an early _forward_
+  outlier plateaus everything behind it — that is inherent in "carry forward",
+  and `'sort'` is the right tool for merely-unordered data.
+- **Clamp is single-edged-key only.** `time` keys and the `ValueSeries` `value`
+  axis. `timeRange` / `interval` throw up front (even on ordered data, so the
+  error is deterministic): moving `begin` alone can pass `end`, and shifting the
+  span is a duration-preserving guess. Revisit only on a real two-edged signal.
+- **`ValueSeries` gets `'clamp'` too.** The engine is shared and the semantics
+  are identical on a single-edged axis; carving it out would mean a narrower
+  option type on one class for no safety gain. No consumer has asked for it.
+- **Non-finite keys are never clamped** — a `-Infinity` would otherwise be
+  laundered into a valid key; they still reach the key-column constructor's
+  `RangeError`.
+- **Zero-copy:** clamp keeps value columns adopted (rows don't move) and copies
+  the key column on the first rewrite, so a caller's `Float64Array` is never
+  mutated. `'sort'` still disables adoption.
+- **`sort` alias:** kept one release, `@deprecated`. Both given → must agree
+  (`sort: true` ⇔ `'sort'`, `sort: false` ⇔ not `'sort'`), else
+  `ValidationError("conflicting options …")`. An unknown policy string throws.
+  **Remove `sort` in the next minor.**
+- Out-of-order error messages now name `{ onOutOfOrder: 'sort' }` (and
+  `'clamp'` for single-edged keys) instead of `{ sort: true }`.
+- Perf: clamp is one O(N) scan + at most one key-buffer copy, paid only when
+  opted in; `scripts/perf-from-columns.mjs` gained three clamp scenarios
+  (jittered / ordered / descending worst case).
 
 ## [PND-AGGCOVER] — `aggregate` covers its range (2026-08-28)
 

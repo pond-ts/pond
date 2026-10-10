@@ -13,7 +13,9 @@ import {
   validityFromPredicate,
 } from '../../columnar/index.js';
 import { ValidationError } from '../../core/errors.js';
+import type { OnOutOfOrder } from '../../schema/events.js';
 import { assertNoFlatKeyCollision, flatKeyNames } from './flat-keys.js';
+import { assertClampableKey, outOfOrderHint } from './out-of-order.js';
 
 /**
  * The per-column raw input the `fromColumns` doors accept. A `'number'` column
@@ -32,7 +34,9 @@ export type RawColumns = Record<
  * The shared columnar-ingress engine behind `TimeSeries.fromColumns` and
  * `ValueSeries.fromColumns`. Both doors are the same machine — normalize the
  * key column (adopt a `Float64Array` zero-copy, convert a `number[]`),
- * optionally sort by key (stable permutation, disables adoption), enforce the
+ * handle out-of-order keys per `onOutOfOrder` (`'sort'`: stable permutation,
+ * disables adoption; `'clamp'`: running-max carry-forward on a copied key
+ * column; `'throw'`: the default rejection), enforce the
  * non-decreasing-key invariant, pack each value column by its schema kind
  * (`'number'` → `Float64Column`, `null`/`undefined`/non-finite → `NaN` gap;
  * `'string'` → `StringColumn` via the shared dict-encode heuristic,
@@ -56,7 +60,8 @@ export function ingestColumnsToStore(input: {
   keyNoun: string;
   schema: ColumnSchema;
   columns: RawColumns;
-  sort: boolean;
+  /** Resolved policy — see `resolveOnOutOfOrder` and `OnOutOfOrder`. */
+  onOutOfOrder: OnOutOfOrder;
   /**
    * Value columns that are **already built** and should be installed as they
    * stand, bypassing the packing loop. The escape hatch for a source whose
@@ -66,13 +71,14 @@ export function ingestColumnsToStore(input: {
    * to carry a bitmap alongside the values.
    *
    * A name here must **not** also appear in `columns`, and is incompatible
-   * with `sort` (sorting permutes rows into fresh buffers, so there is
+   * with `onOutOfOrder: 'sort'` (sorting permutes rows into fresh buffers, so there is
    * nothing to adopt). Callers decide not to adopt when sorting rather than
    * handing over a column that would have to be taken apart again.
    */
   adopted?: ReadonlyMap<string, ColumnarColumn>;
 }): ColumnarStore<ColumnSchema> {
-  const { op, keyNoun, schema, columns, sort, adopted } = input;
+  const { op, keyNoun, schema, columns, onOutOfOrder, adopted } = input;
+  const sort = onOutOfOrder === 'sort';
 
   const keyDef = schema[0];
   if (keyDef === undefined) {
@@ -82,6 +88,7 @@ export function ingestColumnsToStore(input: {
   // check that before reading anything, so a colliding schema fails on the
   // schema rather than on a confusing length mismatch downstream.
   assertNoFlatKeyCollision(op, schema);
+  if (onOutOfOrder === 'clamp') assertClampableKey(op, keyDef.kind);
   const keyNames = flatKeyNames(keyDef);
 
   const keyRaw = columns[keyNames.begin];
@@ -137,7 +144,7 @@ export function ingestColumnsToStore(input: {
     }
   }
 
-  // `sort: true` — reorder every column by ascending key before construction.
+  // `'sort'` — reorder every column by ascending key before construction.
   // Compute the row permutation once (a stable sort of the index array; V8's
   // Array.sort is stable, so equal keys keep input order, matching fromJSON's
   // stable intake), then remap the key + each value column through it below.
@@ -176,6 +183,31 @@ export function ingestColumnsToStore(input: {
     end = rawEnd;
   }
 
+  // `'clamp'` — carry the key forward in place: a key earlier than the
+  // previous (already-clamped) key takes that key, i.e. the running max. Rows
+  // never move, so value columns stay adopted; the key column is copied on the
+  // first rewrite so a caller's adopted `Float64Array` is never mutated.
+  // Non-finite keys are skipped (not clamped) so the key-column constructor
+  // still rejects them — clamping must not launder a `-Infinity` into a valid
+  // timestamp. Single-edged keys only (`assertClampableKey` above), so there
+  // is no `end` to keep in step.
+  if (onOutOfOrder === 'clamp' && count > 0) {
+    let copied = false;
+    let prev = begin[0]!;
+    for (let j = 1; j < count; j += 1) {
+      const v = begin[j]!;
+      if (v < prev && Number.isFinite(v)) {
+        if (!copied) {
+          begin = begin.slice();
+          copied = true;
+        }
+        begin[j] = prev;
+      } else {
+        prev = v;
+      }
+    }
+  }
+
   // Throws on any non-finite key value (and, for a two-edged key, on any row
   // whose begin exceeds its end).
   const keys = makeKeyColumn(op, keyDef.kind, begin, end, labels, count);
@@ -185,7 +217,7 @@ export function ingestColumnsToStore(input: {
   // bisect-based operators (crop, `atTime`, range queries) rely on it, so an
   // unsorted columnar input must fail loudly here rather than build a silently
   // broken series. One O(N) scan over already-finite values — negligible next
-  // to decode. (When `sort` is set the keys are now non-decreasing, so this is
+  // to decode. (Under `'sort'` / `'clamp'` the keys are now non-decreasing, so this is
   // a cheap post-condition check rather than a rejection.)
   //
   // The `end` tiebreak mirrors the row path: equal begins are ordered by end,
@@ -195,7 +227,7 @@ export function ingestColumnsToStore(input: {
       throw new ValidationError(
         `${op}: key column '${keyNames.begin}' is out of order at index ${j} ` +
           `(${begin[j]} < ${begin[j - 1]}) — ${keyNoun} must be non-decreasing; ` +
-          `pass { sort: true } or pre-sort the columns`,
+          outOfOrderHint(keyDef.kind),
       );
     }
     if (
@@ -206,8 +238,8 @@ export function ingestColumnsToStore(input: {
       throw new ValidationError(
         `${op}: key column '${keyNames.begin}' is out of order at index ${j} ` +
           `(equal begins ${begin[j]}, but end ${end[j]} < ${end[j - 1]}) — ` +
-          `${keyNoun} must be non-decreasing by (begin, end); pass ` +
-          `{ sort: true } or pre-sort the columns`,
+          `${keyNoun} must be non-decreasing by (begin, end); ` +
+          outOfOrderHint(keyDef.kind),
       );
     }
   }

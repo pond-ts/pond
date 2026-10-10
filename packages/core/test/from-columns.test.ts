@@ -220,12 +220,12 @@ describe('TimeSeries.fromColumns', () => {
     ).toThrow();
   });
 
-  describe('sort: true', () => {
+  describe("onOutOfOrder: 'sort'", () => {
     it('sorts out-of-order rows by key, carrying every column along', () => {
       const ts = TimeSeries.fromColumns({
         name: 't',
         schema: SCHEMA,
-        sort: true,
+        onOutOfOrder: 'sort',
         columns: {
           time: [3000, 1000, 2000],
           open: [30, 10, 20],
@@ -250,7 +250,7 @@ describe('TimeSeries.fromColumns', () => {
       const ts = TimeSeries.fromColumns({
         name: 't',
         schema: SCHEMA,
-        sort: true,
+        onOutOfOrder: 'sort',
         columns: {
           time: Float64Array.from([3000, 1000, 2000]),
           open: Float64Array.from([30, 10, 20]),
@@ -268,7 +268,7 @@ describe('TimeSeries.fromColumns', () => {
       const ts = TimeSeries.fromColumns({
         name: 't',
         schema: SCHEMA,
-        sort: true,
+        onOutOfOrder: 'sort',
         columns: {
           time: [2000, 1000, 1000],
           open: [99, 11, 12], // the two 1000-keyed rows: 11 then 12
@@ -280,7 +280,7 @@ describe('TimeSeries.fromColumns', () => {
       expect(ts.at(2)?.data().open).toBe(99);
     });
 
-    it('matches fromJSON({ sort: true }) for the same unsorted data', () => {
+    it("matches fromJSON({ onOutOfOrder: 'sort' }) for the same unsorted data", () => {
       const unsorted = {
         time: [3000, 1000, 2000],
         open: [30, 10, 20],
@@ -289,13 +289,13 @@ describe('TimeSeries.fromColumns', () => {
       const cols = TimeSeries.fromColumns({
         name: 't',
         schema: SCHEMA,
-        sort: true,
+        onOutOfOrder: 'sort',
         columns: unsorted,
       });
       const rows = TimeSeries.fromJSON({
         name: 't',
         schema: SCHEMA,
-        sort: true,
+        onOutOfOrder: 'sort',
         rows: [
           [3000, 30, 3],
           [1000, 10, 1],
@@ -314,7 +314,7 @@ describe('TimeSeries.fromColumns', () => {
           { name: 'time', kind: 'time' },
           { name: 'open', kind: 'number' },
         ] as const,
-        sort: true,
+        onOutOfOrder: 'sort',
         columns: { time: buf, open },
       });
       // Mutating the source buffer after construction must NOT change the series
@@ -331,7 +331,7 @@ describe('TimeSeries.fromColumns', () => {
         TimeSeries.fromColumns({
           name: 't',
           schema: SCHEMA,
-          sort: true,
+          onOutOfOrder: 'sort',
           columns: {
             time: [2000, NaN, 1000],
             open: [20, 15, 10],
@@ -379,7 +379,7 @@ describe('TimeSeries.fromColumns', () => {
       const ts = TimeSeries.fromColumns({
         name: 't',
         schema: MIXED,
-        sort: true,
+        onOutOfOrder: 'sort',
         columns: {
           time: [3000, 1000, 2000],
           symbol: ['c', 'a', 'b'],

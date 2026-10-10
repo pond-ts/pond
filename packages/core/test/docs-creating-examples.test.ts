@@ -62,7 +62,7 @@ describe('Introduction', () => {
     expect(cpu.length).toBe(2);
   });
 
-  it('sort: true accepts out-of-order rows and is stable', () => {
+  it("onOutOfOrder: 'sort' accepts out-of-order rows and is stable", () => {
     const schema = [
       { name: 'time', kind: 'time' },
       { name: 'cpu', kind: 'number' },
@@ -80,7 +80,7 @@ describe('Introduction', () => {
       rows: rows as unknown as ConstructorParameters<
         typeof TimeSeries<typeof schema>
       >[0]['rows'],
-      sort: true,
+      onOutOfOrder: 'sort',
     });
 
     expect(cpu.toRows().map((r) => r[1])).toEqual([0.1, 0.2, 0.9]);
@@ -198,7 +198,7 @@ describe('Columnar', () => {
     expect(bars.at(1)!.get('venue')).toBeUndefined();
   });
 
-  it('### Missing values and ordering — out-of-order throws, sort: true does not', () => {
+  it('### Missing values and ordering — out-of-order throws, onOutOfOrder: sort does not', () => {
     const columns = {
       time: [1735689660000, 1735689600000],
       open: [193.4, 193.1],
@@ -215,9 +215,24 @@ describe('Columnar', () => {
         name: 'AAPL',
         schema: BARS,
         columns,
-        sort: true,
+        onOutOfOrder: 'sort',
       }).length,
     ).toBe(2);
+  });
+
+  it("### Out-of-order keys — onOutOfOrder: 'clamp' example", () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number' },
+    ] as const;
+    const s = TimeSeries.fromColumns({
+      name: 'feed',
+      schema,
+      columns: { time: [0, 10, 5, 20], v: [1, 2, 3, 4] },
+      onOutOfOrder: 'clamp',
+    });
+    expect(Array.from(s.keyColumn().begin)).toEqual([0, 10, 10, 20]);
+    expect(s.events.map((e) => e.get('v'))).toEqual([1, 2, 3, 4]);
   });
 
   // "### Float64Array columnar" reuses BARS, so it must supply `venue` too —

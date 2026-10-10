@@ -12,6 +12,8 @@ import {
   type FromArrowValueOptions,
 } from './operators/from-arrow.js';
 import { ingestColumnsToStore } from './operators/ingest-columns.js';
+import { resolveOnOutOfOrder } from './operators/out-of-order.js';
+import type { OnOutOfOrder } from '../schema/events.js';
 import { storeToColumns } from './operators/to-columns.js';
 import {
   storeToArrow,
@@ -119,36 +121,41 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
    *
    * **`Float64Array` inputs are adopted, not copied** (zero-copy): the
    * resulting series' columns alias the caller's buffers; pass a fresh buffer
-   * if that matters. (**`sort` disables the adoption** — a reorder needs its
-   * own buffers.)
+   * if that matters. (**`onOutOfOrder: 'sort'` disables the adoption** — a
+   * reorder needs its own buffers.)
    *
    * **Ordering.** The axis must be **defined, finite, and non-decreasing** —
    * it becomes the index (the same contract `byValue` enforces with
    * `assertMonotonicAxis`), so an out-of-order axis throws by default. Pass
-   * **`sort: true`** to sort the rows by axis value before construction — the
-   * stable sort every unordered snapshot wants (e.g. a keyed live feed that
-   * delivers rows in update order, not axis order).
+   * **`onOutOfOrder: 'sort'`** to sort the rows by axis value before
+   * construction — the stable sort every unordered snapshot wants (e.g. a keyed
+   * live feed that delivers rows in update order, not axis order) — or
+   * `'clamp'` to carry a backwards axis value forward in place (see
+   * {@link OnOutOfOrder}).
    *
    * **Value columns:** `number` and `string`, matching `TimeSeries.fromColumns`.
    *
    * @throws ValidationError on a non-`'value'` axis kind, a missing column, a
    *   length mismatch, an unsupported value-column kind, or an out-of-order axis
-   *   when `sort` is not set. Throws RangeError on a non-finite
+   *   under the default `onOutOfOrder: 'throw'`. Throws RangeError on a non-finite
    *   (`null`/`NaN`/`±Infinity`) axis cell — sorting can't make it valid — or
    *   a duplicate column name (the axis name repeated among the value columns).
    */
   static fromColumns<VS extends ValueSeriesSchema>(
     input: ValueSeriesColumnarInput<VS> & {
       /**
-       * Sort the rows by axis value before construction (off by default), for a
-       * payload whose rows aren't guaranteed ordered. Stable; disables the
-       * `Float64Array` zero-copy adoption (columns are reordered into fresh
-       * buffers).
+       * How to handle a row whose axis value is below the previous row's
+       * (default `'throw'`; see {@link OnOutOfOrder}). `'sort'` is stable and
+       * disables the `Float64Array` zero-copy adoption (columns are reordered
+       * into fresh buffers).
        */
+      onOutOfOrder?: OnOutOfOrder;
+      /** @deprecated Use `onOutOfOrder: 'sort'` (one-release alias). */
       sort?: boolean;
     },
   ): ValueSeries<VS> {
-    const { name, schema, columns, sort = false } = input;
+    const { name, schema, columns } = input;
+    const onOutOfOrder = resolveOnOutOfOrder('ValueSeries.fromColumns', input);
     assertAxisSchema('ValueSeries.fromColumns', schema);
 
     const store = ingestColumnsToStore({
@@ -156,7 +163,7 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
       keyNoun: 'axis values',
       schema: schema as unknown as ColumnSchema,
       columns,
-      sort,
+      onOutOfOrder,
     });
     return new ValueSeries(name, schema, store);
   }
@@ -186,24 +193,29 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
    * decoded buffer has no way to distinguish "absent" from "not a number".
    *
    * **Ordering.** As every door: the axis must be non-decreasing, or pass
-   * `sort: true` to stable-sort the rows by axis value first.
+   * `onOutOfOrder: 'sort'` to stable-sort the rows by axis value first (or
+   * `'clamp'`; see {@link OnOutOfOrder}).
    *
    * @throws ValidationError on a non-`'value'` axis kind, a row whose length
    *   disagrees with the schema, a non-finite/non-numeric axis cell, a cell
    *   that doesn't match its column's kind, a missing required cell, or an
-   *   out-of-order axis when `sort` is not set.
+   *   out-of-order axis under the default `onOutOfOrder: 'throw'`.
    */
   static fromJSON<VS extends ValueSeriesSchema>(
     input: ValueSeriesJsonInput<VS> & {
       /**
-       * Sort the rows by axis value before construction (off by default) — for
-       * reviving a wire payload whose rows aren't guaranteed ordered, without
-       * a manual pre-sort. Stable.
+       * How to handle a row whose axis value is below the previous row's
+       * (default `'throw'`; see {@link OnOutOfOrder}). `'sort'` revives a wire
+       * payload whose rows aren't guaranteed ordered without a manual
+       * pre-sort. Stable.
        */
+      onOutOfOrder?: OnOutOfOrder;
+      /** @deprecated Use `onOutOfOrder: 'sort'` (one-release alias). */
       sort?: boolean;
     },
   ): ValueSeries<VS> {
-    const { name, schema, rows, sort = false } = input;
+    const { name, schema, rows } = input;
+    const onOutOfOrder = resolveOnOutOfOrder('ValueSeries.fromJSON', input);
     assertAxisSchema('ValueSeries.fromJSON', schema);
 
     const columns = valueRowsToColumns(
@@ -218,7 +230,7 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
       keyNoun: 'axis values',
       schema: schema as unknown as ColumnSchema,
       columns,
-      sort,
+      onOutOfOrder,
     });
     return new ValueSeries(name, schema, store);
   }
@@ -252,7 +264,8 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
    *   by name rather than misread.
    *
    * The rows must be axis-ordered (as every door requires); pass
-   * `{ sort: true }` for an unordered table (which disables the adoption).
+   * `{ onOutOfOrder: 'sort' }` for an unordered table (which disables the
+   * adoption).
    *
    * **Trust contract on the type parameter:** the runtime schema is derived
    * from the Arrow fields. Supplying `VS` (`fromArrow<MySchema>(...)`) is a
@@ -277,7 +290,7 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
       keyNoun: 'axis values',
       schema: schema as unknown as ColumnSchema,
       columns,
-      sort: options.sort ?? false,
+      onOutOfOrder: resolveOnOutOfOrder('fromArrow', options),
       adopted,
     });
     return new ValueSeries(name, schema as unknown as VS, store);

@@ -100,7 +100,7 @@ describe('fromColumns — flattened timeRange key', () => {
     expect(fail).toThrow(/equal begins 0, but end 30 < 90/);
   });
 
-  it('sort: true permutes by (begin, end), edges travelling together', () => {
+  it("onOutOfOrder: 'sort' permutes by (begin, end), edges travelling together", () => {
     const series = TimeSeries.fromColumns({
       name: 'ranges',
       schema: RANGE,
@@ -109,7 +109,7 @@ describe('fromColumns — flattened timeRange key', () => {
         timeRangeEnd: [180_000, 90_000, 30_000],
         load: [3, 1, 2],
       },
-      sort: true,
+      onOutOfOrder: 'sort',
     });
     expect(
       Array.from({ length: 3 }, (_, i) => [

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TimeSeries } from '../src/index.js';
 
 /* -------------------------------------------------------------------------- */
-/* TimeSeries({ sort: true }) — sort unsorted rows on construction.            */
+/* TimeSeries({ onOutOfOrder: 'sort' }) — sort unsorted rows on construction. */
 /*                                                                             */
 /* Audit v2 §5 F3: pond requires rows in non-decreasing key order and threw    */
 /* otherwise, with no opt-in to sort (despite `fromEvents` sorting). `sort`    */
@@ -15,7 +15,7 @@ const timeSchema = [
   { name: 'tag', kind: 'string' },
 ] as const;
 
-describe('TimeSeries({ sort: true })', () => {
+describe("TimeSeries({ onOutOfOrder: 'sort' })", () => {
   it('sorts unsorted rows by key on construction', () => {
     const s = new TimeSeries({
       name: 's',
@@ -25,13 +25,13 @@ describe('TimeSeries({ sort: true })', () => {
         [1000, 10, 'a'],
         [2000, 20, 'b'],
       ] as any,
-      sort: true,
+      onOutOfOrder: 'sort',
     });
     expect(Array.from(s.keyColumn().begin)).toEqual([1000, 2000, 3000]);
     expect([0, 1, 2].map((i) => s.at(i)!.get('v'))).toEqual([10, 20, 30]);
   });
 
-  it('throws on unsorted rows by default, naming { sort: true }', () => {
+  it("throws on unsorted rows by default, naming { onOutOfOrder: 'sort' }", () => {
     const make = () =>
       new TimeSeries({
         name: 's',
@@ -42,7 +42,7 @@ describe('TimeSeries({ sort: true })', () => {
         ] as any,
       });
     expect(make).toThrow(/out of order/);
-    expect(make).toThrow(/sort: true/);
+    expect(make).toThrow(/onOutOfOrder: 'sort'/);
   });
 
   it('is stable — rows with equal keys keep their input order', () => {
@@ -54,7 +54,7 @@ describe('TimeSeries({ sort: true })', () => {
         [1000, 2, 'second'],
         [500, 0, 'early'],
       ] as any,
-      sort: true,
+      onOutOfOrder: 'sort',
     });
     expect(Array.from(s.keyColumn().begin)).toEqual([500, 1000, 1000]);
     // the two equal-key rows stay in input order (first before second)
@@ -70,7 +70,12 @@ describe('TimeSeries({ sort: true })', () => {
       [1000, 10, 'a'],
     ];
     const before = rows.map((r) => [...r]);
-    new TimeSeries({ name: 's', schema: timeSchema, rows, sort: true });
+    new TimeSeries({
+      name: 's',
+      schema: timeSchema,
+      rows,
+      onOutOfOrder: 'sort',
+    });
     expect(rows).toEqual(before);
   });
 
@@ -87,7 +92,7 @@ describe('TimeSeries({ sort: true })', () => {
         [[0, 100], 10],
         [[1000, 1100], 15],
       ] as any,
-      sort: true,
+      onOutOfOrder: 'sort',
     });
     expect(Array.from(s.keyColumn().begin)).toEqual([0, 1000, 2000]);
   });
@@ -101,7 +106,7 @@ describe('TimeSeries({ sort: true })', () => {
       name: 's',
       schema: timeSchema,
       rows,
-      sort: true,
+      onOutOfOrder: 'sort',
     });
     const b = new TimeSeries({ name: 's', schema: timeSchema, rows });
     expect(Array.from(a.keyColumn().begin)).toEqual(

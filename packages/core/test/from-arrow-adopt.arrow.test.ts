@@ -184,7 +184,7 @@ describe('[PND-ARROWNULL] declines, and still gets the right answer', () => {
       new Float64(),
     );
     const s = TimeSeries.fromArrow(new Table({ time, close }) as never, {
-      sort: true,
+      onOutOfOrder: 'sort',
     });
     const col = s.column('close' as never) as unknown as Float64Column;
     // Row j after sorting is source row n-1-j.
