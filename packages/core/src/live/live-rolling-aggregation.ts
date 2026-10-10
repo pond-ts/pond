@@ -26,7 +26,6 @@ import {
 } from './triggers.js';
 import type {
   AggregateMap,
-  AggregateOutputMap,
   AggregateSchema,
   DiffSchema,
   EventDataForSchema,
@@ -38,7 +37,6 @@ import type {
   ColumnValue,
   ValidatedAggregateMap,
 } from '../schema/index.js';
-import type { AggregateOutputMapResultSchema } from '../schema/index.js';
 
 import type { DurationInput } from '../core/duration.js';
 import { parseDuration } from '../core/duration.js';
@@ -210,7 +208,7 @@ export class LiveRollingAggregation<
   constructor(
     source: LiveSource<S>,
     window: RollingWindow,
-    mapping: AggregateMap<S> | AggregateOutputMap<S>,
+    mapping: AggregateMap<S>,
     options: LiveRollingOptions = {},
   ) {
     this.name = source.name;
@@ -251,19 +249,19 @@ export class LiveRollingAggregation<
     // by both batch (`TimeSeries.rolling/aggregate`) and live
     // (`LiveRollingAggregation`, `LiveAggregation`,
     // `LivePartitionedSyncRolling`) paths. Accepts either
-    // `AggregateMap<S>` (one reducer per existing source column) or
-    // `AggregateOutputMap<S>` (named alias outputs, multiple
-    // reducers per source column).
+    // shorthand `AggregateMap<S>` entries (one reducer per existing
+    // source column) or `{ from, using }` spec entries (named alias
+    // outputs, multiple reducers per source column).
     this.#columns = normalizeAggregateColumns(
       source.schema,
-      mapping as AggregateMap<S> | AggregateOutputMap<S>,
+      mapping as AggregateMap<S>,
     );
 
     this.schema = Object.freeze([
       source.schema[0],
       ...this.#columns.map((c) => ({
         // Output column NAME is `c.output` — same as `c.source` for
-        // AggregateMap mappings, can differ for AggregateOutputMap.
+        // AggregateMap mappings, can differ for spec entries.
         name: c.output,
         kind: c.kind,
         required: false,
@@ -308,7 +306,7 @@ export class LiveRollingAggregation<
     const warmup = this.#liveLength() < this.#minSamples;
     for (let i = 0; i < this.#columns.length; i++) {
       // Output keyed by `output` name (= source name for AggregateMap;
-      // user-chosen alias for AggregateOutputMap).
+      // user-chosen alias for spec entries).
       result[this.#columns[i]!.output] = warmup
         ? undefined
         : this.#states[i]!.snapshot();
@@ -408,13 +406,13 @@ export class LiveRollingAggregation<
     sequence: Sequence,
     mapping: M,
   ): LiveAggregation<Out, AggregateSchema<Out, M>>;
-  aggregate<const M extends AggregateOutputMap<Out>>(
+  aggregate<const M extends AggregateMap<Out>>(
     sequence: Sequence,
     mapping: M,
-  ): LiveAggregation<Out, AggregateOutputMapResultSchema<Out, M>>;
+  ): LiveAggregation<Out, AggregateSchema<Out, M>>;
   aggregate(
     sequence: Sequence,
-    mapping: AggregateMap<Out> | AggregateOutputMap<Out>,
+    mapping: AggregateMap<Out>,
   ): LiveAggregation<Out> {
     return new LiveAggregation(this as any, sequence, mapping as any);
   }

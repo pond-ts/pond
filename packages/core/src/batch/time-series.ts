@@ -10,7 +10,6 @@ import type {
   BaselineSchema,
   AggregateFunction,
   AggregateReducer,
-  AggregateOutputMap,
   AggregateOutputSpec,
   AggregateMap,
   AggregateSchema,
@@ -3716,7 +3715,7 @@ export class TimeSeries<S extends SeriesSchema> {
       minSamples?: number;
     } = {},
   ): TimeSeries<SeriesSchema> {
-    let mapping: AggregateMap<S> | AggregateOutputMap<S>;
+    let mapping: AggregateMap<S>;
     let options: {
       alignment?: RollingAlignment;
       sample?: AlignSample;
@@ -3732,25 +3731,25 @@ export class TimeSeries<S extends SeriesSchema> {
     ) {
       sequence = sequenceOrWindow;
       window = windowOrMapping as DurationInput;
-      mapping = mappingOrOptions as AggregateMap<S> | AggregateOutputMap<S>;
+      mapping = mappingOrOptions as AggregateMap<S>;
       options = maybeOptions;
     } else {
       window = sequenceOrWindow;
-      mapping = windowOrMapping as AggregateMap<S> | AggregateOutputMap<S>;
+      mapping = windowOrMapping as AggregateMap<S>;
       options =
         (mappingOrOptions as { alignment?: RollingAlignment } | undefined) ??
         {};
     }
 
-    // Normalize both mapping shapes (`AggregateMap` and `AggregateOutputMap`)
+    // Normalize both entry shapes (shorthand and `{ from, using }` spec)
     // into a uniform spec list of `{ output, source, reducer, kind }`. Source
-    // and output names can differ, which is how `AggregateOutputMap` expresses
+    // and output names can differ, which is how spec entries express
     // "multiple reducers keyed off the same source column."
     //
     // For `AggregateMap` inputs (where output === source === schema column),
     // reorder by schema-column order so the runtime row layout lines up with
     // the `RollingSchema<S, Mapping>` type's column inference. For
-    // `AggregateOutputMap` inputs the schema is erased to `SeriesSchema`, so
+    // spec-form inputs the schema is erased to `SeriesSchema`, so
     // insertion order is the natural ordering — consistent with `aggregate`.
     const isOutputMap = Object.values(mapping as Record<string, unknown>).some(
       (v) => isAggregateOutputSpec<S>(v),
@@ -5587,7 +5586,7 @@ export class TimeSeries<S extends SeriesSchema> {
       {
         [avgName]: { from: col as string, using: 'avg' as const },
         [sdName]: { from: col as string, using: 'stdev' as const },
-      } as AggregateOutputMap<SeriesSchema>,
+      } as AggregateMap<SeriesSchema>,
       rollingOptions,
     ) as unknown as TimeSeries<SeriesSchema>;
 
@@ -5689,7 +5688,7 @@ export class TimeSeries<S extends SeriesSchema> {
     const rollingMapping = {
       [ROLL_AVG]: { from: col as string, using: 'avg' as const },
       [ROLL_SD]: { from: col as string, using: 'stdev' as const },
-    } as AggregateOutputMap<SeriesSchema>;
+    } as AggregateMap<SeriesSchema>;
     const rollingOptions: {
       alignment?: RollingAlignment;
       minSamples?: number;
@@ -5770,7 +5769,7 @@ export class TimeSeries<S extends SeriesSchema> {
 function aggregateInternal<S extends SeriesSchema>(
   series: TimeSeries<S>,
   sequence: SequenceLike,
-  mapping: AggregateMap<S> | AggregateOutputMap<S>,
+  mapping: AggregateMap<S>,
   options: { range?: TemporalLike } = {},
 ): TimeSeries<SeriesSchema> {
   const range = options.range ?? series.timeRange();

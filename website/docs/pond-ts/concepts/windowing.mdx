@@ -249,7 +249,7 @@ the full reference.
 
 ## Multiple stats per window
 
-All five modes accept the `AggregateOutputMap` shape — multiple
+All five modes accept the `{ from, using }` spec shape — multiple
 named outputs, each reducing the same or different source columns:
 
 ```ts
@@ -270,7 +270,7 @@ reducers, not `O(reducers × N)` from running multiple aggregations.
 runs four reducers over **one** window (1-minute buckets). Multi-
 window rolling runs reducers over **several** windows (1m + 200ms,
 say) in one ingest pass. The two compose: each window in a
-multi-window rolling can carry its own `AggregateOutputMap` mapping.
+multi-window rolling can carry its own `{ from, using }` spec mapping.
 
 ## Bounded windows on streaming sources
 

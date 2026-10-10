@@ -20,7 +20,6 @@ import type { PublicColumnForKind, KeyColumnForSchema } from '../column.js';
 import {
   EMITS_EVICT,
   type AggregateMap,
-  type AggregateOutputMap,
   type AggregateSchema,
   type DiffSchema,
   type EventDataForSchema,
@@ -463,10 +462,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   ): LiveFusedRolling<S, FusedRollingSchema<S, FM>>;
   rolling(
     arg1: RollingWindow | FusedMapping<S>,
-    mappingOrOptions?:
-      | AggregateMap<S>
-      | AggregateOutputMap<S>
-      | LiveRollingOptions,
+    mappingOrOptions?: AggregateMap<S> | LiveRollingOptions,
     options?: LiveRollingOptions,
   ): any {
     if (typeof arg1 === 'object' && arg1 !== null && !Array.isArray(arg1)) {
@@ -479,7 +475,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     return new LiveRollingAggregation(
       this,
       arg1 as RollingWindow,
-      mappingOrOptions as AggregateMap<S> | AggregateOutputMap<S>,
+      mappingOrOptions as AggregateMap<S>,
       options,
     );
   }
