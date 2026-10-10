@@ -25,6 +25,7 @@ describe('TradingTimeAxis stories render', () => {
 
   it('exposes the expected feature-axis stories', () => {
     expect(entries.map(([n]) => n).sort()).toEqual([
+      'CloseAtBarEnd',
       'ContinuousVsTrading',
       'DailyMonths',
       'DateStyleDaily',
@@ -34,6 +35,7 @@ describe('TradingTimeAxis stories render', () => {
       'HolidayGap',
       'IntradaySessions',
       'SessionBreaks',
+      'SessionBreaksArea',
       'SessionBreaksBand',
       'SpacingProportionalVsUniform',
       'WeekendSkip',

@@ -595,3 +595,92 @@ describe('drawArea — flat fill (stacking)', () => {
     );
   });
 });
+
+describe('drawArea sessionBreaks (boundaries)', () => {
+  // Draw with the trailing positional args spelled out: curve, gaps,
+  // connector opacity, decimate, banding, then the boundaries under test.
+  const draw = (
+    ctx: CanvasRenderingContext2D,
+    series: ChartSeries,
+    boundaries: readonly number[],
+    gaps: 'empty' | 'none' | 'dashed' = 'empty',
+    scale: Scale = identity,
+  ) =>
+    drawArea(
+      ctx,
+      series,
+      scale,
+      scale,
+      style,
+      0,
+      undefined,
+      gaps,
+      undefined,
+      undefined,
+      undefined,
+      boundaries,
+    );
+  const lineTos = (calls: CtxCall[]) =>
+    calls.filter((c) => c.name === 'lineTo').map((c) => c.args);
+
+  it('ends the fill and outline at the close and re-starts at the open', () => {
+    const { ctx, calls } = areaContext();
+    // 4 points, boundary 1.5 → runs [0,2) and [2,4).
+    draw(ctx, cs([0, 1, 2, 3], [5, 6, 7, 8]), [1.5]);
+    // Per run: one area moveTo + one outline moveTo ⇒ 4; one closed polygon
+    // per run.
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(4);
+    expect(
+      calls.filter((c) => c.name === 'closePath').length,
+    ).toBeGreaterThanOrEqual(2);
+    // No edge from the close (1, 6) to the open (2, 7).
+    expect(lineTos(calls)).not.toContainEqual([2, 7]);
+    // Still one fill and one stroke for the whole layer.
+    expect(calls.filter((c) => c.name === 'fill')).toHaveLength(1);
+    expect(calls.filter((c) => c.name === 'stroke')).toHaveLength(1);
+  });
+
+  it('no boundary inside the data ⇒ the same ops as no boundaries at all', () => {
+    const a = areaContext();
+    draw(a.ctx, cs([0, 1, 2], [5, 6, 7]), [100]);
+    const b = areaContext();
+    draw(b.ctx, cs([0, 1, 2], [5, 6, 7]), []);
+    // Compare the op stream; `set` values include a fresh gradient stub per
+    // draw, so compare those by property name only.
+    const ops = (calls: CtxCall[]) =>
+      calls.map((c) => (c.type === 'call' ? [c.name, c.args] : [c.name]));
+    expect(ops(a.calls)).toEqual(ops(b.calls));
+  });
+
+  it('breaks on the affine fast path too', () => {
+    const { ctx, calls } = areaContext();
+    const linear = scaleLinear().domain([0, 3]).range([0, 3]);
+    draw(
+      ctx,
+      cs([0, 1, 2, 3], [5, 6, 7, 8]),
+      [1.5],
+      'empty',
+      linear as unknown as Scale,
+    );
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(4);
+    expect(lineTos(calls)).not.toContainEqual([2, 7]);
+  });
+
+  it("gaps='none' bridges a dropout inside a session but not across a break", () => {
+    const { ctx, calls } = areaContext();
+    // NaN at index 1 (data gap, interpolated to 6) and a break at 2.5.
+    draw(ctx, cs([0, 1, 2, 3], [5, NaN, 7, 8]), [2.5], 'none');
+    // The dropout is bridged: the run [0,3) draws through x = 1 (y = 6).
+    expect(lineTos(calls)).toContainEqual([1, 6]);
+    // The break is not: nothing joins (2, 7) to (3, 8).
+    expect(lineTos(calls)).not.toContainEqual([3, 8]);
+  });
+
+  it('draws no inferred connector across a break', () => {
+    const { ctx, calls } = areaContext();
+    // A NaN run straddling the break is a trailing gap in one run and a leading
+    // gap in the next — neither interior, so `dashed` has nothing to bridge.
+    draw(ctx, cs([0, 1, 2, 3], [5, NaN, NaN, 8]), [1.5], 'dashed');
+    expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
+  });
+});

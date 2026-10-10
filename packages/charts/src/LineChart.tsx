@@ -41,6 +41,7 @@ import {
   type LegendItemInput,
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
+import { useXOffset, type XOffset } from './x-offset.js';
 
 export interface LineChartCommon<
   S extends SeriesSchema = SeriesSchema,
@@ -109,6 +110,24 @@ export interface LineChartCommon<
    * no-op on a continuous axis (no provider) or a provider without `boundaries`.
    */
   sessionBreaks?: boolean;
+  /**
+   * Draw each row this long **after its key** — milliseconds or a duration
+   * string (`'1m'`, `'-30s'`). **Omitted ⇒ `0`**, drawn at the key. Time
+   * series only (throws on a `ValueSeries`, which has no time to move).
+   *
+   * For a value stamped at one instant that belongs at another: a 1-minute
+   * bar is keyed at its open, but its `close` is the price at the bar's
+   * **end**, so `xOffset="1m"` puts the close line where it happened — and the
+   * session's last close lands on the close, not a bar early. The series you
+   * pass is left as it is, so a `<Candlestick>` drawn from it still draws at
+   * the key; the layer moves only its own copy of the key (one pass, value
+   * columns shared).
+   *
+   * Everything this layer reports is in **drawn** time: its auto-fit extent,
+   * the tracker dot, `sessionBreaks`, a sweep's span. To move the data itself,
+   * use pond's `series.offsetTime(by)`.
+   */
+  xOffset?: XOffset;
   /**
    * **M4 viewport decimation** (charts decimator wave). **Omitted ⇒ `true`**:
    * once the visible data is denser than ~2 samples per device pixel, the line
@@ -184,7 +203,7 @@ export function LineChart<
   S extends SeriesSchema = SeriesSchema,
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 >({
-  series,
+  series: source,
   column,
   readout,
   as: semantic,
@@ -195,6 +214,7 @@ export function LineChart<
   sessionBreaks = false,
   decimate = true,
   legend,
+  xOffset,
   index = 0,
 }: LineChartProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -205,6 +225,9 @@ export function LineChart<
   if (layers === null) {
     throw new Error('<LineChart> must be rendered inside a <Layers>');
   }
+  // The series as drawn: moved by `xOffset` (the source itself when there is
+  // none), so every read below shares one axis.
+  const series = useXOffset(source, xOffset, 'LineChart');
 
   const cs = useMemo(
     () =>

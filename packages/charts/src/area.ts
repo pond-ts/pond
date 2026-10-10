@@ -3,6 +3,7 @@ import type { ChartSeries } from './data.js';
 import {
   baselinePxFromScale,
   plotExtentOf,
+  sessionRuns,
   strokeAffinePolyline,
   TRACE_HIT_PX,
   type Scale,
@@ -26,6 +27,10 @@ import {
 import { cullChartSeries } from './culling.js';
 import { decimateM4Cached, type DecimateOption } from './decimate.js';
 import { affineOf, type Affine } from './affine.js';
+
+/** Shared empty boundary list — the no-breaks default, and what `sessionRuns`
+ *  gets when a decimated series already carries its breaks as `NaN` points. */
+const EMPTY_BOUNDARIES: readonly number[] = [];
 
 /**
  * Per-buffer cache of a column's finite `[min, max]` value extent ([PND-GRADX]).
@@ -167,6 +172,7 @@ export function drawArea(
   gapConnectorOpacity: number = DEFAULT_GAP_CONNECTOR_OPACITY,
   decimate: DecimateOption = true,
   banding?: BandLadder,
+  boundaries: readonly number[] = EMPTY_BOUNDARIES,
 ): LayerDrawStats {
   const sourceCount = cs.length; // pre-cull, pre-decimation (for draw stats)
   const baselinePx = yScale(baselineValue);
@@ -215,7 +221,7 @@ export function drawArea(
   let decimated = false;
   if (decimate !== false && curve === curveLinear) {
     const k = typeof decimate === 'object' ? decimate.threshold : undefined;
-    const r = decimateM4Cached(source, xScale, ctx, k);
+    const r = decimateM4Cached(source, xScale, ctx, k, boundaries);
     cs = r.series;
     decimated = r.decimated;
   } else {
@@ -229,16 +235,45 @@ export function drawArea(
   // that cache on every frame. A no-op on an affine (linear) y scale.
   const scaledY = gapUnscalable(cs.y, cs.length, yScale);
   if (scaledY !== cs.y) cs = { ...cs, y: scaledY };
-  // `none` interpolates interior gaps so the fill + outline bridge them; every
-  // other mode keeps NaN so d3 breaks both (the inferred line bridge, if any, is
-  // a separate overlay pass below).
-  const ys = gaps === 'none' ? bridgeGaps(cs.y, cs.length) : cs.y;
+  // Split into independent index runs at each session break, exactly as
+  // `drawLine` does: no boundary inside the data ⇒ one run over the whole series
+  // (the hot path — no slicing, byte-identical to the pre-boundary draw). When
+  // decimated, `decimateM4` already baked the breaks in as `NaN` points aligned
+  // to the break instants, so pass `[]` rather than re-cut them.
+  const runs = sessionRuns(
+    cs.x,
+    cs.length,
+    decimated ? EMPTY_BOUNDARIES : boundaries,
+  );
+  const singleRun = runs.length === 1;
+  const xsOf = (s: number, e: number): Float64Array =>
+    singleRun ? cs.x : cs.x.subarray(s, e);
+  // `none` interpolates interior gaps so the fill + outline bridge them — but
+  // only *within* a run (a session break is not a dropout to interpolate over);
+  // every other mode keeps NaN so d3 breaks both (the inferred line bridge, if
+  // any, is a separate overlay pass below).
+  const ysRuns = runs.map(([s, e]) => {
+    const seg = singleRun ? cs.y : cs.y.subarray(s, e);
+    return gaps === 'none' ? bridgeGaps(seg, e - s) : seg;
+  });
   // [PND-AFFINE] fast path: with a linear curve and both scales affine, draw the
   // fill polygon + outline with inline multiply-add over the typed arrays, past
   // the per-point d3-scale + d3-shape closures (finding 1/2). A smoothing curve
   // or a non-affine (real-gap trading) x scale keeps the exact d3-area path.
   const ax = curve === curveLinear ? affineOf(xScale) : null;
   const ay = ax !== null ? affineOf(yScale) : null;
+  // The d3-area generator for a run (slow path only) — also the source of that
+  // run's outline line. Each run's generator opens its own subpath and closes
+  // its own polygon, so a run boundary is a clean break in the fill: the shade
+  // ends at the close and re-starts at the open.
+  const areaGen = (s: number) =>
+    d3area<number>()
+      .defined((v) => Number.isFinite(v))
+      .x((_, j) => xScale(cs.x[s + j]!))
+      .y0(() => baselinePx)
+      .y1((v) => yScale(v))
+      .curve(curve)
+      .context(ctx);
 
   ctx.save();
   // The fill: a vertical gradient anchored at the baseline pixel, opaque at the
@@ -248,33 +283,31 @@ export function drawArea(
   ctx.fillStyle = fill;
   ctx.globalAlpha = style.fillOpacity;
   ctx.beginPath();
-  // The d3-area generator (slow path only) — also the source of the outline line.
-  let outline: ((data: Iterable<number>) => void) | null = null;
-  if (ax !== null && ay !== null) {
-    fillAffineArea(ctx, cs.x, ys, baselinePx, ax, ay);
-  } else {
-    const gen = d3area<number>()
-      .defined((v) => Number.isFinite(v))
-      .x((_, i) => xScale(cs.x[i]!))
-      .y0(() => baselinePx)
-      .y1((v) => yScale(v))
-      .curve(curve)
-      .context(ctx);
-    gen(ys);
-    outline = gen.lineY1();
-  }
+  runs.forEach(([s, e], r) => {
+    if (ax !== null && ay !== null) {
+      fillAffineArea(ctx, xsOf(s, e), ysRuns[r]!, baselinePx, ax, ay);
+    } else {
+      areaGen(s)(ysRuns[r]!);
+    }
+  });
   ctx.fill();
   ctx.restore();
 
   // The outline on top: the area's top edge as a line (breaks at the same gaps
-  // as the fill), at full opacity over the graded fill. Banded, it strokes with
-  // the same hard-stop gradient the fill used, so the line switches hue exactly
-  // where it crosses a threshold — the whole point of the ladder is that the
-  // reader sees *where* the value sits, and the edge is the value.
+  // and session breaks as the fill), at full opacity over the graded fill.
+  // Banded, it strokes with the same hard-stop gradient the fill used, so the
+  // line switches hue exactly where it crosses a threshold — the whole point of
+  // the ladder is that the reader sees *where* the value sits, and the edge is
+  // the value.
   ctx.save();
   ctx.beginPath();
-  if (outline !== null) outline(ys);
-  else strokeAffinePolyline(ctx, cs.x, ys, ax!, ay!);
+  runs.forEach(([s, e], r) => {
+    if (ax !== null && ay !== null) {
+      strokeAffinePolyline(ctx, xsOf(s, e), ysRuns[r]!, ax, ay);
+    } else {
+      areaGen(s).lineY1()(ysRuns[r]!);
+    }
+  });
   ctx.strokeStyle = banding !== undefined ? fill : style.color;
   ctx.lineWidth = style.width;
   ctx.stroke();
@@ -282,15 +315,20 @@ export function drawArea(
 
   // Inferred bridges for the line edge (fill stays broken). `dashed` / `step`
   // are faint dashed connectors (gapConnectorOpacity); only `fade` drops to the
-  // area's own baseline pixel (the fill floor).
+  // area's own baseline pixel (the fill floor). Edges are collected **per run**
+  // so no connector spans a session break.
   if (gaps === 'dashed' || gaps === 'step' || gaps === 'fade') {
-    const edges = collectGapEdges(
-      cs.length,
-      cs.x,
-      (i) => cs.y[i]!,
-      xScale,
-      (i) => yScale(cs.y[i]!),
-    );
+    const edges: ReturnType<typeof collectGapEdges> = [];
+    for (const [s, e] of runs) {
+      const runEdges = collectGapEdges(
+        e - s,
+        xsOf(s, e),
+        (i) => cs.y[s + i]!,
+        xScale,
+        (i) => yScale(cs.y[s + i]!),
+      );
+      for (const ed of runEdges) edges.push(ed);
+    }
     if (gaps === 'dashed') {
       drawGapBridges(ctx, edges, style.color, style.width, gapConnectorOpacity);
     } else if (gaps === 'step') {

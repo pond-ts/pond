@@ -37,6 +37,7 @@ import {
   type LegendItemInput,
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
+import { useXOffset, type XOffset } from './x-offset.js';
 import { useBandLadder } from './use-band-ladder.js';
 
 export interface AreaChartCommon<
@@ -110,6 +111,21 @@ export interface AreaChartCommon<
    */
   gaps?: GapMode;
   /**
+   * End the fill (and its outline) at each **trading-axis discontinuity** — a
+   * session / day / lunch close→open — when the container renders on a
+   * trading-time axis (a `discontinuities` / `calendar` provider). **Omitted ⇒
+   * `false`**: the area runs from the last pre-close point straight to the next
+   * open, filling the collapsed gap. `true` ends the shade at the close and
+   * re-starts it at the open, the same break `<LineChart sessionBreaks>` draws,
+   * so the line and area styles of one intraday series read the same.
+   *
+   * A **scale** break, orthogonal to {@link gaps} (a **data** break, a NaN run):
+   * `gaps="none"` interpolates across a dropout but never across a session
+   * break, and no inferred gap connector spans one. A no-op on a continuous
+   * axis (no provider) or a provider without `boundaries`.
+   */
+  sessionBreaks?: boolean;
+  /**
    * **M4 viewport decimation** (charts decimator wave). **Omitted ⇒ `true`**:
    * once the visible data is denser than ~2 samples per device pixel, the fill +
    * outline are drawn from the per-pixel-column M4 buckets (a visually-lossless
@@ -178,6 +194,13 @@ export interface AreaChartCommon<
    * identity** (`as` ?? `column`). The swatch is the resolved area style.
    */
   legend?: boolean | string;
+  /**
+   * Draw each row this long **after its key** — milliseconds or a duration
+   * string. **Omitted ⇒ `0`**. Time series only. Same knob as
+   * {@link LineChartCommon.xOffset}, so an area and the line it pairs with
+   * move together.
+   */
+  xOffset?: XOffset;
   /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
@@ -257,6 +280,10 @@ export function resolveAreaBaseline(
   return Math.min(hi, Math.max(lo, baseline));
 }
 
+/** Stable empty boundary list — so `sessionBreaks={false}` keeps a referentially
+ *  constant array and the layer entry isn't rebuilt every render. */
+const NO_BREAKS: readonly number[] = [];
+
 /**
  * An area draw layer: fills between a value `column` and a `baseline`, with a
  * graded (gradient) shade — opaque at the line, transparent at the baseline —
@@ -281,7 +308,7 @@ export function AreaChart<
   S extends SeriesSchema = SeriesSchema,
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 >({
-  series,
+  series: source,
   column,
   readout,
   as: semantic,
@@ -290,10 +317,12 @@ export function AreaChart<
   baseline,
   curve,
   gaps = DEFAULT_GAP_MODE,
+  sessionBreaks = false,
   decimate = true,
   thresholds,
   bandColors,
   legend,
+  xOffset,
   index = 0,
 }: AreaChartProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -304,6 +333,9 @@ export function AreaChart<
   if (layers === null) {
     throw new Error('<AreaChart> must be rendered inside a <Layers>');
   }
+  // The series as drawn: moved by `xOffset` (the source itself when there is
+  // none), so every read below shares one axis.
+  const series = useXOffset(source, xOffset, 'AreaChart');
   // `undefined` below means "the axis floor" — the internal helpers' spelling.
   const baseValue = baseline === 'floor' ? undefined : (baseline ?? 0);
 
@@ -314,6 +346,16 @@ export function AreaChart<
         : fromTimeSeries(series, column),
     [series, column],
   );
+  // Trading-axis session breaks: the collapse instants inside this series' span.
+  // Data instants, not pixels — view-independent, so pan/zoom reuse them. The
+  // same lookup `<LineChart>` / `<BandChart>` do, so the three break alike.
+  const sessionBreakInstants = useMemo<readonly number[]>(() => {
+    const provider = container.discontinuities;
+    if (!sessionBreaks || provider?.boundaries === undefined || cs.length < 2) {
+      return NO_BREAKS;
+    }
+    return provider.boundaries(cs.x[0]!, cs.x[cs.length - 1]!);
+  }, [sessionBreaks, container.discontinuities, cs]);
   // Readout column values for a value-axis series (time path reads it off the
   // event) — the tracker reports it alongside the plotted fill so an off-chart
   // readout can show a source value. See AreaChartProps.readout.
@@ -550,6 +592,7 @@ export function AreaChart<
               gapConnectorOpacity,
               decimate,
               bandLadder,
+              sessionBreakInstants,
             );
           }
         },
@@ -569,6 +612,7 @@ export function AreaChart<
       curveFactory,
       gaps,
       gapConnectorOpacity,
+      sessionBreakInstants,
       decimate,
       bandLadder,
       axis,

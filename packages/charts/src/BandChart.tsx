@@ -13,6 +13,7 @@ import {
   type LegendItemInput,
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
+import { useXOffset, type XOffset } from './x-offset.js';
 
 export interface BandChartCommon<
   S extends SeriesSchema = SeriesSchema,
@@ -58,6 +59,13 @@ export interface BandChartCommon<
    * `boundaries`.
    */
   sessionBreaks?: boolean;
+  /**
+   * Draw each row this long **after its key** — milliseconds or a duration
+   * string. **Omitted ⇒ `0`**. Time series only. Same knob as
+   * {@link LineChartCommon.xOffset}, so a band and the line it pairs with
+   * move together.
+   */
+  xOffset?: XOffset;
   /**
    * **M4 viewport decimation** (charts decimator wave). **Omitted ⇒ `true`**:
    * once the visible envelope is denser than ~2 samples per device pixel, it is
@@ -144,7 +152,7 @@ export function BandChart<
   S extends SeriesSchema = SeriesSchema,
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 >({
-  series,
+  series: source,
   lower,
   upper,
   as: semantic,
@@ -153,6 +161,7 @@ export function BandChart<
   sessionBreaks = false,
   decimate = true,
   legend,
+  xOffset,
   index = 0,
 }: BandChartProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -163,6 +172,9 @@ export function BandChart<
   if (layers === null) {
     throw new Error('<BandChart> must be rendered inside a <Layers>');
   }
+  // The series as drawn: moved by `xOffset` (the source itself when there is
+  // none), so every read below shares one axis.
+  const series = useXOffset(source, xOffset, 'BandChart');
 
   const bs = useMemo(
     () =>

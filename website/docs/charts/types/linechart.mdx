@@ -24,16 +24,17 @@ how it renders is the `gaps` prop. For non-pond data the same view builds by han
 
 ## Props
 
-| Prop            | Type                        | Default     | Purpose                                                 |
-| --------------- | --------------------------- | ----------- | ------------------------------------------------------- |
-| `series`        | `TimeSeries \| ValueSeries` | — (req)     | The source series.                                      |
-| `column`        | `string`                    | — (req)     | Numeric column to plot as y.                            |
-| `readout`       | `string`                    | —           | Second column reported at the cursor (see below).       |
-| `as`            | `string`                    | `'default'` | Style role → `theme.line[as]`.                          |
-| `axis`          | `string`                    | row default | Which `<YAxis id>` to scale against.                    |
-| `curve`         | `Curve`                     | `'linear'`  | Path interpolation (see variants).                      |
-| `gaps`          | `GapMode`                   | `'empty'`   | How a `NaN` run renders.                                |
-| `sessionBreaks` | `boolean`                   | `false`     | Break the line at trading-axis session discontinuities. |
+| Prop            | Type                        | Default     | Purpose                                                   |
+| --------------- | --------------------------- | ----------- | --------------------------------------------------------- |
+| `series`        | `TimeSeries \| ValueSeries` | — (req)     | The source series.                                        |
+| `column`        | `string`                    | — (req)     | Numeric column to plot as y.                              |
+| `readout`       | `string`                    | —           | Second column reported at the cursor (see below).         |
+| `as`            | `string`                    | `'default'` | Style role → `theme.line[as]`.                            |
+| `axis`          | `string`                    | row default | Which `<YAxis id>` to scale against.                      |
+| `curve`         | `Curve`                     | `'linear'`  | Path interpolation (see variants).                        |
+| `gaps`          | `GapMode`                   | `'empty'`   | How a `NaN` run renders.                                  |
+| `sessionBreaks` | `boolean`                   | `false`     | Break the line at trading-axis session discontinuities.   |
+| `xOffset`       | `number \| duration`        | `0`         | Draw each row this long after its key (time series only). |
 
 ## Variants
 
@@ -47,6 +48,15 @@ how it renders is the `gaps` prop. For non-pond data the same view builds by han
 - **`sessionBreaks`** — a **scale** break (at session boundaries on a
   [trading-time axis](../axes/trading-time-axis.mdx)), orthogonal to `gaps` (a
   **data** break); set both independently.
+- **`xOffset`** — draws each row a fixed time after its key: milliseconds or a
+  duration string (`'1m'`, `'-30s'`). For a value stamped at one instant that
+  belongs at another — a 1-minute bar is keyed at its open, but its `close` is
+  the price at the bar's end, so `xOffset="1m"` puts the close line where it
+  happened and the session's last close on the close. The series is not
+  changed (a `<Candlestick>` from the same series still draws at the key); the
+  layer moves its own key, value columns shared. Everything the layer reports
+  — tracker dot, auto-fit extent, `sessionBreaks`, a sweep's span — is in
+  drawn time. To move the data itself, use pond's `series.offsetTime(by)`.
 
 ## Interaction & theming
 
