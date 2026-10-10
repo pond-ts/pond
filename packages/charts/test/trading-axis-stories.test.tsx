@@ -36,6 +36,7 @@ describe('TradingTimeAxis stories render', () => {
       'SessionBreaks',
       'SessionBreaksBand',
       'SpacingProportionalVsUniform',
+      'StraySessionLabels',
       'WeekendSkip',
       'YearDaily',
       'YearDailyNarrow',

@@ -210,8 +210,17 @@ export interface TradingTimeScale {
    * formats with the d3 multi-scale default, like {@link tickFormat}; the
    * cursor readout itself uses {@link readoutFormat} (grain-aware), so ticks
    * read terse while the crosshair reads an unambiguous date/clock.
+   *
+   * `drawn` — the subset of {@link ticks}`(count)` actually rendered, when an
+   * axis drops ticks whose labels would collide. Promotions then walk only the
+   * drawn ticks, so a dropped tick's period turn carries to the next drawn one
+   * (drop a stray `Sep 29` session open and the real open beside it reads
+   * `Sep 29`, not `15:30`). Defaults to every tick.
    */
-  flatFormat(count?: number): (value: number) => string;
+  flatFormat(
+    count?: number,
+    drawn?: readonly number[],
+  ): (value: number) => string;
   /**
    * The boundary-row label for the **domain start** — the reader's left-edge
    * context (`Jan 01` over an intraday axis, the year over a month axis),
@@ -494,14 +503,15 @@ export function scaleTradingTime(
     return (value: number) => labelled.get(value);
   };
 
-  scale.flatFormat = (count = 10) => {
+  scale.flatFormat = (count = 10, drawn?: readonly number[]) => {
     // A non-tick instant always uses the d3 multi-scale default — same as
     // tickFormat. (The cursor readout doesn't route through here; it uses
     // readoutFormat, grain-aware.) Without a calendar there are no ladder
     // anchors, so every value falls through to the default.
     const defFmt = fmt(count);
     if (!hasCalendar()) return (value: number) => defFmt(new Date(value));
-    const { ticks, granularity } = resolved(count);
+    const { ticks: all, granularity } = resolved(count);
+    const ticks = drawn ?? all;
     // Seed the promotion walk from the previous **live** instant before the
     // domain start (clampDown; identity on a continuous axis): a domain that
     // opens exactly on a month's first session then promotes that tick to the
