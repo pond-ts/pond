@@ -213,9 +213,12 @@ export function thinCategoryLabels(
  *
  * 1. a **period turn** (`bold` — the label carrying the date / month / year,
  *    or a stacked band turn) before a **session open** (`seam`), before a plain
- *    clock tick — the date stays on the open it marks;
- * 2. between two turns the **later** (it owns the ticks that follow); between
- *    two session opens, or two plain ticks, the earlier.
+ *    clock tick — a date stays on the turn it marks;
+ * 2. between two turns, or two session opens, the **later** (it owns the
+ *    ticks that follow); between two plain ticks the earlier.
+ *
+ * A blank label (a custom `format` returning `''` to thin its own labels)
+ * draws nothing, so it is always kept and never blocks another.
  *
  * Under `'auto'` an edge label's extent follows its fixed {@link
  * PlacedTick.anchor}, never its position in the drawn set — so no drop moves
@@ -241,6 +244,7 @@ export function fitTimeLabels(
     if (align === 'auto' && t.anchor === 'end') return [t.x - w, t.x];
     return [t.x - w / 2, t.x + w / 2];
   });
+  const blank = (i: number) => ticks[i]!.label.trim() === '';
   const rank = (t: PlacedTick) => (t.bold ? 2 : t.seam ? 1 : 0);
   const order = ticks
     .map((_, i) => i)
@@ -248,15 +252,17 @@ export function fitTimeLabels(
       const ri = rank(ticks[i]!);
       const rj = rank(ticks[j]!);
       if (ri !== rj) return rj - ri;
-      return ri === 2 ? j - i : i - j;
+      return ri > 0 ? j - i : i - j;
     });
   const kept: number[] = [];
   for (const i of order) {
     const [l, r] = extents[i]!;
-    const clear = kept.every((j) => {
-      const [kl, kr] = extents[j]!;
-      return r + LABEL_GAP <= kl || kr + LABEL_GAP <= l;
-    });
+    const clear =
+      blank(i) ||
+      kept.every((j) => {
+        const [kl, kr] = extents[j]!;
+        return blank(j) || r + LABEL_GAP <= kl || kr + LABEL_GAP <= l;
+      });
     if (clear) kept.push(i);
   }
   return kept.sort((i, j) => i - j);
@@ -267,8 +273,11 @@ export function fitTimeLabels(
  * `place` labels a set of tick instants (flat promotions walk only the
  * instants it is given), {@link fitTimeLabels} keeps the ones that clear,
  * and the survivors are placed again — re-labelling can promote a survivor
- * and change its width — until a pass drops nothing. Each pass only removes,
- * so it terminates.
+ * and change its width — until a pass drops nothing (each pass only removes,
+ * so it terminates). A re-label can also *narrow* a survivor (`Jan 2` becomes
+ * `2026` once the stub that turned the year is dropped), so each dropped tick
+ * is then offered back in time order and re-admitted if the whole set, placed
+ * again, still fits.
  *
  * Exported for tests only — not re-exported from the package index.
  */
@@ -279,13 +288,28 @@ export function fitTimeTicks(
   fontSize: number,
   fontFamily: string,
 ): PlacedTick[] {
+  const fits = (placed: readonly PlacedTick[]) =>
+    fitTimeLabels(placed, align, fontSize, fontFamily);
   let cur = values;
-  for (;;) {
-    const placed = place(cur);
-    const kept = fitTimeLabels(placed, align, fontSize, fontFamily);
-    if (kept.length === placed.length) return placed;
+  let placed = place(cur);
+  for (let kept = fits(placed); kept.length < placed.length; ) {
     cur = kept.map((i) => cur[i]!);
+    placed = place(cur);
+    kept = fits(placed);
   }
+  if (cur.length === values.length) return placed;
+  const drawn = new Set(cur);
+  for (const v of values) {
+    if (drawn.has(v)) continue;
+    const trial = [...cur, v].sort((a, b) => a - b);
+    const again = place(trial);
+    if (fits(again).length === again.length) {
+      cur = trial;
+      placed = again;
+      drawn.add(v);
+    }
+  }
+  return placed;
 }
 
 export interface XAxisProps {
@@ -350,8 +374,10 @@ export interface XAxisProps {
    *   category axis (thin + middle-ellipsize) and on a time axis's automatic
    *   ticks (the label that would overprint is dropped — a date / month /
    *   year turn outlasts a clock label — and the survivors are re-labelled so
-   *   the dates they show stay correct). Explicit `ticks`, `transform` ticks
-   *   and numeric axes are not fitted.
+   *   the dates they show stay correct; a blank label never blocks one). Under
+   *   `'auto'` a crowded edge costs one label: the inner neighbour at the left
+   *   edge, the edge label itself at the right. Explicit `ticks`, `transform`
+   *   ticks and numeric axes are not fitted.
    */
   align?: 'auto' | 'center' | 'right';
   /**

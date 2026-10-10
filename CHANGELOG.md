@@ -85,12 +85,14 @@ include new features and type-level changes; patch bumps are strictly additive.
   tick before it (`21:00` against the next day's `Sep 23`). A time axis now
   measures its labels and drops the one that would collide — a date / month /
   year turn outlasts a session-open clock label, which outlasts a plain one;
-  of two colliding turns the later is drawn — then re-labels the ticks it kept,
-  so the dates they show stay correct (a stray New Year's print can't take
-  `2027` with it; a Sunday-evening futures open can't caption Monday). Under
-  `align="auto"` the edge labels anchor by the full tick list, so a drop never
-  re-anchors another label. Applies to every `align` mode; explicit `ticks`
-  and `transform` ticks are untouched.
+  of two colliding turns (or opens) the later is drawn — then re-labels the
+  ticks it kept, so the dates they show stay correct (a stray New Year's print
+  can't take `2027` with it; a Sunday-evening futures open can't caption
+  Monday), and puts back any dropped tick that fits once a neighbour's label
+  narrowed. A blank label (a custom `format` returning `''`) never blocks one.
+  Under `align="auto"` the edge labels anchor by the full tick list, so a drop
+  never re-anchors another label. Applies to every `align` mode and to custom
+  `format`s; explicit `ticks` and `transform` ticks are untouched.
 
 ### Added
 

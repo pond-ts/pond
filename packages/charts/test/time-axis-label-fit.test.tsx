@@ -1,6 +1,6 @@
 /**
  * The time axis's **measured label fit** — no tick label may overprint its
- * neighbour, and dropping one may never cost the reader a date. Filed from
+ * neighbour, and the dates the survivors show must stay correct. Filed from
  * Tidal: its session calendar is derived from the bars, so one stray
  * pre-market bar becomes a one-minute session whose open (`Sep 29`, promoted —
  * it turns the day) lands a pixel left of the real `15:30` open, and the two
@@ -9,11 +9,13 @@
  * font are known: the axis.
  *
  * The contract: labels are kept greedily by priority — a period turn, then a
- * session open, then a plain clock tick; between turns the later, otherwise
- * the earlier — so within a pass a tick is only dropped by a survivor. Under
+ * session open, then a plain clock tick; between turns or opens the later,
+ * between plain ticks the earlier — so within a pass a tick is only dropped by
+ * a survivor; blank labels never block. Under
  * `'auto'` the edge ticks of the FULL list anchor inward (fixed per tick, so
  * no drop re-anchors another label). The survivors are re-labelled, so the
- * dates they show stay correct, and the fit repeats until nothing collides.
+ * dates they show stay correct, the fit repeats until nothing collides, and a
+ * dropped tick that fits again (a re-label narrowed its neighbour) returns.
  * Four earlier designs failed review: ranking without re-labelling kept stale
  * promotions (a Monday captioned with Sunday's date, a year turn that
  * vanished); always keeping the later tick, and anchoring `'auto'` by drawn
@@ -134,7 +136,36 @@ describe('fitTimeLabels — which ticks keep their labels', () => {
     }
   });
 
-  it("under 'auto' an edge collision costs one inner label — no cascade", () => {
+  it('between two session opens the later wins', () => {
+    // A stray print's open beside the real open, neither a period turn (a
+    // custom format, or a zone where the open doesn't turn the day): the real
+    // open owns the session that follows.
+    const ticks = [
+      { x: 0, label: '09:00' },
+      { x: 200, label: '10:00', seam: true },
+      { x: 204, label: '15:30', seam: true },
+      { x: 300, label: '16:00' },
+    ];
+    for (const align of ALIGNS) {
+      expect(kept(ticks, align)).toEqual(['09:00', '15:30', '16:00']);
+    }
+  });
+
+  it('a blank label never blocks another', () => {
+    // A custom format thinning its own labels: '' on two of every three
+    // ticks. The visible labels clear one another; the blanks draw nothing.
+    const long = 'Mon, 02 Mar 2026 00:00:00 GMT';
+    const pitch = est(long) / 2 + 20;
+    const ticks = Array.from({ length: 7 }, (_, i) => ({
+      x: i * pitch,
+      label: i % 3 === 0 ? long : '',
+    }));
+    for (const align of ['center', 'right'] as const) {
+      expect(kept(ticks, align)).toEqual(ticks.map((t) => t.label));
+    }
+  });
+
+  it("under 'auto' a crowded edge costs one label — no cascade", () => {
     // `auto` anchors the edge labels inward, so the first overlaps its
     // neighbour where a centred label wouldn't. The anchor belongs to the
     // tick, not to its drawn position: once the neighbour is dropped nothing
@@ -148,6 +179,8 @@ describe('fitTimeLabels — which ticks keep their labels', () => {
       anchor: edgeOf(i, 8),
     }));
     expect(kept(ticks, 'center')).toHaveLength(8);
+    // Left edge: the inner neighbour goes (plain ties keep the earlier).
+    // Right edge: the edge label itself goes, for the same reason.
     expect(kept(ticks, 'auto')).toEqual([
       '14:00:10',
       '14:00:20',
@@ -313,7 +346,55 @@ describe('fitTimeTicks — re-labels the survivors until nothing collides', () =
       'Year1@101',
       '20h@300',
     ]);
-    expect(passes).toBe(3);
+    // Three placing passes, plus a re-admission trial per dropped tick.
+    expect(passes).toBeGreaterThanOrEqual(3);
+  });
+
+  it('re-admits a dropped tick once a re-label narrows its neighbour', () => {
+    // Toy labeller: `Y…` (narrow) when the year changed since the previous
+    // drawn tick, `DayLabel…` (wide) when the day did, else the hour. The
+    // wide `DayLabel5` crowds out `12h`; once the stray `Y1` beside it is
+    // dropped, it re-labels as the narrow `Y1` — and `12h` fits again.
+    const DAY = 24 * H;
+    const YEAR = 4 * DAY;
+    const xs = new Map([
+      [3 * DAY + 2 * H, 0],
+      [3 * DAY + 12 * H, 60],
+      [YEAR + 15 * H, 100], // the stray open
+      [YEAR + DAY + 15 * H, 101], // the real open
+      [YEAR + DAY + 20 * H, 300],
+    ]);
+    const place = (vs: readonly number[]) =>
+      vs.map((v, i) => {
+        const p = vs[i - 1];
+        const label =
+          p === undefined || Math.floor(p / YEAR) !== Math.floor(v / YEAR)
+            ? `Y${Math.floor(v / YEAR)}`
+            : Math.floor(p / DAY) !== Math.floor(v / DAY)
+              ? `DayLabel${Math.floor(v / DAY)}`
+              : `${(v % DAY) / H}h`;
+        return { x: xs.get(v)!, label, bold: !label.endsWith('h') };
+      });
+    expect(place([...xs.keys()]).map((t) => t.label)).toEqual([
+      'Y0',
+      '12h',
+      'Y1',
+      'DayLabel5',
+      '20h',
+    ]);
+    const out = fitTimeTicks(
+      [...xs.keys()],
+      place,
+      'center',
+      FONT_SIZE,
+      FAMILY,
+    );
+    expect(out.map((t) => `${t.label}@${t.x}`)).toEqual([
+      'Y0@0',
+      '12h@60',
+      'Y1@101',
+      '20h@300',
+    ]);
   });
 
   it('places once when nothing collides', () => {
@@ -542,7 +623,7 @@ describe('time axis label fit — rendered', () => {
     }
   });
 
-  it("a continuous axis: no overlap in any align, and 'auto' loses at most an inner neighbour per edge", () => {
+  it("a continuous axis: no overlap in any align, and 'auto' loses at most one label per edge", () => {
     // A one-minute continuous axis whose `HH:MM:SS` labels clear one another
     // centred but not when edge-anchored. Always keeping the later tick once
     // stripped this axis down to two labels, one per pass.
@@ -569,5 +650,76 @@ describe('time axis label fit — rendered', () => {
     expect(center).toBeGreaterThanOrEqual(10);
     expect(count('right')).toBeGreaterThanOrEqual(center - 2);
     expect(count('auto')).toBeGreaterThanOrEqual(center - 2);
+  });
+  it('a custom format that blanks ticks keeps every visible label', () => {
+    // The usual thinning idiom: '' on two of every three 6h ticks. The
+    // visible labels clear one another centred, so every one draws.
+    const t0 = Date.UTC(2026, 2, 2);
+    const format = (v: number) =>
+      Math.round((v - t0) / (6 * H)) % 3 === 0 ? new Date(v).toUTCString() : '';
+    for (const align of ALIGNS) {
+      const { container: dom, unmount } = render(
+        <ChartContainer
+          range={[t0, t0 + 3 * 24 * H]}
+          width={1040}
+          timeZone="UTC"
+          showAxis={false}
+        >
+          <TimeAxis align={align} format={format} />
+        </ChartContainer>,
+      );
+      // `auto`'s left-anchored first label genuinely reaches the next visible
+      // one (the documented edge cost); the blanks never cost a label.
+      expect(drawn(dom)).toHaveLength(align === 'auto' ? 3 : 4);
+      expectNoOverlap(dom);
+      unmount();
+    }
+  });
+
+  it("'auto' anchors the edges of the full tick list inward", () => {
+    // No collisions: the first label left-aligns at its tick, the last
+    // right-aligns, the rest centre — exactly as before the fit existed.
+    const { container: dom } = render(
+      <ChartContainer
+        range={[Date.UTC(2026, 0, 5, 14, 2), Date.UTC(2026, 0, 5, 14, 58)]}
+        width={1000}
+        timeZone="UTC"
+        showAxis={false}
+      >
+        <TimeAxis align="auto" />
+      </ChartContainer>,
+    );
+    const tf = labelEls(dom).map((el) => el.style.transform);
+    expect(tf.length).toBeGreaterThanOrEqual(5);
+    expect(tf[0]).toBe('none');
+    expect(tf[tf.length - 1]).toBe('translateX(-100%)');
+    expect(tf.slice(1, -1).every((t) => t === 'translateX(-50%)')).toBe(true);
+  });
+
+  it('Tidal under an explicit format: the stray open yields to the real open', () => {
+    // `format` opts out of the ladder's flat labels, so neither open is a
+    // period turn — both are session opens, and the later (real) one wins.
+    const d29 = day(2026, 9, 29);
+    const sessions = [
+      session(day(2026, 9, 25), 13.5, 20),
+      session(day(2026, 9, 28), 13.5, 20),
+      { date: 'stray', open: d29 + 8 * H, close: d29 + 8 * H + M },
+      session(d29, 13.5, 20),
+    ];
+    const { container: dom } = render(
+      <ChartContainer
+        range={[day(2026, 9, 28) + 18 * H, d29 + 16.5 * H]}
+        width={1200}
+        timeZone="UTC"
+        discontinuities={sessionsProvider(sessions)}
+        showAxis={false}
+      >
+        <TimeAxis align="right" format="%H:%M" />
+      </ChartContainer>,
+    );
+    const text = drawn(dom).map((l) => l.text);
+    expect(text).toContain('13:30');
+    expect(text).not.toContain('08:00');
+    expectNoOverlap(dom);
   });
 });
