@@ -75,6 +75,17 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **docs**: **The versioning policy is now published** — a "Versioning"
+  section in the root README and each package README, and a
+  [Versioning](https://pond-ts.org/docs/reference/versioning) page on the
+  docs site. Pre-1.0 a minor may break (always marked **breaking** here with a
+  migration note), patches never break, all packages release in lock-step,
+  and from 1.0 the project follows semver. The page also defines the public
+  API: each package's entry-point exports as mapped in `API.md`, excluding
+  anything marked experimental or internal.
+
 ### Changed
 
 - **charts** (**breaking**): **An `<AreaChart>`'s `baseline` no longer changes
