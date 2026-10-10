@@ -2078,8 +2078,9 @@ export class TimeSeries<S extends SeriesSchema> {
    * time — positive is later, negative earlier — and keeps the key kind and
    * every value column as they are.
    *
-   * `by` is milliseconds or a duration string (`'1m'`, `'-1h'`); `0` returns
-   * the series unchanged. A `timeRange` / `interval` key moves both edges and
+   * `by` is milliseconds or a duration string (`'1m'`, `'-1h'`); a duration is
+   * a fixed length (`'1d'` is 24 h, not a calendar day). `0` returns the series
+   * unchanged. A `timeRange` / `interval` key moves both edges and
    * keeps its labels. Throws on a non-finite or unparseable offset.
    *
    * This moves the *data*: afterwards the series says each row happened at the

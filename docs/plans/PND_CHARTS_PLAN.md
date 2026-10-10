@@ -4470,6 +4470,17 @@ connector spans a break; decimated draws get the breaks baked in as NaN by
 `decimateM4Cached(…, boundaries)`, same as the line. The no-break path emits
 the same ops as before (pinned in `area.test.ts`).
 
+**Layer-2 catch (PR #747):** once decimated — the normal case for dense
+intraday data — both Line and Area passed `[]` to `sessionRuns`, so the break
+`decimateM4` bakes in (a NaN at the break instant, with the close's last point
+and the open's first point _both_ at that instant) sat inside one run and read
+as a data gap: `gaps="none"` bridged it and dashed/step/fade connected across
+it. Pre-existing for Line since the decimator wave. Fixed with
+`decimatedSessionRuns` (`line.ts`): cut at each non-finite run whose finite
+neighbours bracket a boundary, so the break is a leading gap of the next
+session. `sessionRuns` can't be reused there — its `(x[i-1], x[i]]` cut hands
+the close's last point to the next session when both share the instant.
+
 ---
 
 ## [PND-AREAZERO] — `<AreaChart>` fills to zero by default (2026-09-23)

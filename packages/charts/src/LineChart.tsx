@@ -123,6 +123,11 @@ export interface LineChartCommon<
    * the key; the layer moves only its own copy of the key (one pass, value
    * columns shared).
    *
+   * On a trading axis, an offset larger than a bar can carry a row out of its
+   * session into closed time — e.g. a negative offset on bars keyed at their
+   * open moves each session's first bar into the previous night. Keep it within
+   * the bar the value belongs to.
+   *
    * Everything this layer reports is in **drawn** time: its auto-fit extent,
    * the tracker dot, `sessionBreaks`, a sweep's span. To move the data itself,
    * use pond's `series.offsetTime(by)`.

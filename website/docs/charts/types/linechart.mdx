@@ -56,7 +56,9 @@ how it renders is the `gaps` prop. For non-pond data the same view builds by han
   changed (a `<Candlestick>` from the same series still draws at the key); the
   layer moves its own key, value columns shared. Everything the layer reports
   — tracker dot, auto-fit extent, `sessionBreaks`, a sweep's span — is in
-  drawn time. To move the data itself, use pond's `series.offsetTime(by)`.
+  drawn time. To move the data itself, use pond's `series.offsetTime(by)`. On
+  a trading axis, keep the offset within the bar: a negative offset on bars
+  keyed at their open moves each session's first bar into closed time.
 
 ## Interaction & theming
 

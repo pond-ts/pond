@@ -178,6 +178,17 @@ describe('xOffset — session breaks are looked up over the drawn span', () => {
       />,
     ],
     [
+      'AreaChart',
+      <AreaChart
+        key="ar"
+        series={bars()}
+        column="v"
+        axis="a"
+        sessionBreaks
+        xOffset="1s"
+      />,
+    ],
+    [
       'BandChart',
       <BandChart
         key="b"

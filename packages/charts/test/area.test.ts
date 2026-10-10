@@ -6,6 +6,7 @@ import { recordingContext, type CtxCall } from './canvas-mock.js';
 import type { ChartSeries } from '../src/data.js';
 import type { AreaStyle } from '../src/theme.js';
 import type { Scale } from '../src/line.js';
+import type { GapMode } from '../src/gaps.js';
 
 const cs = (x: number[], y: number[]): ChartSeries => ({
   x: Float64Array.from(x),
@@ -603,7 +604,7 @@ describe('drawArea sessionBreaks (boundaries)', () => {
     ctx: CanvasRenderingContext2D,
     series: ChartSeries,
     boundaries: readonly number[],
-    gaps: 'empty' | 'none' | 'dashed' = 'empty',
+    gaps: GapMode = 'empty',
     scale: Scale = identity,
   ) =>
     drawArea(
@@ -682,5 +683,51 @@ describe('drawArea sessionBreaks (boundaries)', () => {
     // gap in the next — neither interior, so `dashed` has nothing to bridge.
     draw(ctx, cs([0, 1, 2, 3], [5, NaN, NaN, 8]), [1.5], 'dashed');
     expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
+  });
+
+  describe('decimated', () => {
+    // A sized ctx so the decimation gate fires (see line.test.ts).
+    const sizedCtx = (widthPx: number) => {
+      const r = areaContext();
+      (r.ctx as unknown as { canvas: { width: number } }).canvas = {
+        width: widthPx,
+      };
+      (r.ctx as unknown as { getTransform: () => { a: number } }).getTransform =
+        () => ({ a: 1 });
+      return r;
+    };
+    const dense = (n: number): ChartSeries =>
+      cs(
+        Array.from({ length: n }, (_, i) => i),
+        Array.from({ length: n }, (_, i) => i),
+      );
+    // Decimated, the break is baked in as a NaN at the boundary instant; in one
+    // run it read as a data gap, so `none` filled across it and the inferred
+    // modes drew a connector over it.
+    it.each(['none', 'dashed', 'step', 'fade'] as const)(
+      'gaps=%s neither fills nor connects across a session break',
+      (gaps) => {
+        const { ctx, calls } = sizedCtx(10);
+        const x = scaleLinear().domain([0, 5000]).range([0, 5000]);
+        draw(ctx, dense(5000), [2500], gaps, x as unknown as Scale);
+        expect(
+          calls.filter((c) => c.name === 'moveTo' || c.name === 'lineTo')
+            .length,
+        ).toBeLessThan(200); // decimated
+        // Two closed polygons (one per session) in the fill.
+        expect(
+          calls.filter((c) => c.name === 'closePath').length,
+        ).toBeGreaterThanOrEqual(2);
+        expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
+        // …nor a fade (its own stroke): one stroke, the solid/outline pass.
+        expect(calls.filter((c) => c.name === 'stroke')).toHaveLength(1);
+        expect(
+          calls.some(
+            (c) =>
+              c.name === 'lineTo' && c.args[0] === 2500 && c.args[1] === 2499.5,
+          ),
+        ).toBe(false);
+      },
+    );
   });
 });

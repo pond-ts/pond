@@ -79,7 +79,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 - `pond-ts`: **`series.offsetTime(by)` moves every key by a constant** —
   milliseconds or a duration string, negative for earlier
-  (`yesterday.offsetTime('1d')` overlays yesterday on today). The key kind is
+  (`yesterday.offsetTime('1d')` overlays yesterday on today; `'1d'` is a fixed
+  24 hours, not a calendar day). The key kind is
   kept; a `timeRange` / `interval` key moves both edges and keeps its labels.
   Value columns are shared, not copied, so the cost is one pass over the key:
   0.26 ms on 97k rows × 118 columns, where rebuilding the series through its
@@ -101,6 +102,12 @@ include new features and type-level changes; patch bumps are strictly additive.
   one intraday series break alike. `gaps="none"` still interpolates a dropout
   inside a session but never across a break, and no inferred gap connector
   spans one.
+- **charts** (fix): a **decimated** `<LineChart sessionBreaks>` with
+  `gaps="none"` interpolated straight across each session break, and
+  `dashed` / `step` / `fade` drew a gap connector over it — dense intraday data
+  decimates, so this was the common case. Decimation marks the break as a gap
+  at the break instant, and the draw now cuts there instead of reading it as a
+  dropout.
 
 ### Changed
 

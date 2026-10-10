@@ -270,7 +270,9 @@ number of events.
 ### `offsetTime(by)` — move the keys in time \{#offsettime\}
 
 Moves every key by a constant — milliseconds or a duration string,
-negative for earlier. Values stay on their rows; a `timeRange` /
+negative for earlier. A duration is a fixed length: `'1d'` is 24 hours, not
+a calendar day, so across a daylight-saving change an overlay is an hour
+off. Values stay on their rows; a `timeRange` /
 `interval` key moves both edges and keeps its labels. Value columns
 are shared, not copied, so this costs one pass over the key.
 

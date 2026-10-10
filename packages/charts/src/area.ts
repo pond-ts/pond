@@ -2,6 +2,7 @@ import { area as d3area, curveLinear, type CurveFactory } from 'd3-shape';
 import type { ChartSeries } from './data.js';
 import {
   baselinePxFromScale,
+  decimatedSessionRuns,
   plotExtentOf,
   sessionRuns,
   strokeAffinePolyline,
@@ -28,8 +29,8 @@ import { cullChartSeries } from './culling.js';
 import { decimateM4Cached, type DecimateOption } from './decimate.js';
 import { affineOf, type Affine } from './affine.js';
 
-/** Shared empty boundary list — the no-breaks default, and what `sessionRuns`
- *  gets when a decimated series already carries its breaks as `NaN` points. */
+/** Shared empty boundary list — the no-breaks default (a stable reference, so
+ *  the decimation cache keyed on it keeps hitting). */
 const EMPTY_BOUNDARIES: readonly number[] = [];
 
 /**
@@ -238,13 +239,11 @@ export function drawArea(
   // Split into independent index runs at each session break, exactly as
   // `drawLine` does: no boundary inside the data ⇒ one run over the whole series
   // (the hot path — no slicing, byte-identical to the pre-boundary draw). When
-  // decimated, `decimateM4` already baked the breaks in as `NaN` points aligned
-  // to the break instants, so pass `[]` rather than re-cut them.
-  const runs = sessionRuns(
-    cs.x,
-    cs.length,
-    decimated ? EMPTY_BOUNDARIES : boundaries,
-  );
+  // decimated, the breaks are already baked in as `NaN` points at the break
+  // instants, and {@link decimatedSessionRuns} cuts there instead.
+  const runs = decimated
+    ? decimatedSessionRuns(cs.x, cs.y, cs.length, boundaries)
+    : sessionRuns(cs.x, cs.length, boundaries);
   const singleRun = runs.length === 1;
   const xsOf = (s: number, e: number): Float64Array =>
     singleRun ? cs.x : cs.x.subarray(s, e);
