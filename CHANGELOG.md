@@ -83,10 +83,18 @@ include new features and type-level changes; patch bumps are strictly additive.
   one stray pre-market print into a one-minute session whose `Sep 29` open sat
   a pixel left of the real `15:30` open, and a seam could crowd the last clock
   tick before it (`21:00` against the next day's `Sep 23`). A time axis now
-  measures its labels and drops the one that would collide: a date / month /
-  year turn beats a session open, which beats a plain clock label; between
-  two turns the later wins (it captions the ticks that follow). Applies to
-  every `align` mode; explicit `ticks` and `transform` ticks are untouched.
+  measures its labels: of two colliding ticks the later is drawn, and the
+  drawn ticks are re-labelled, so a date / month / year turn the dropped tick
+  carried moves onto the next drawn one (the real open reads `Sep 29`; a stray
+  New Year's print no longer takes `2027` with it). Applies to every `align`
+  mode; explicit `ticks` and `transform` ticks are untouched.
+
+### Added
+
+- **charts:** `TradingTimeScale.flatFormat(count, drawn?)` — `drawn` is the
+  subset of `ticks(count)` actually rendered; flat promotions walk only those,
+  so a dropped tick's period turn carries to the next drawn one. Omitted, it
+  labels every tick as before.
 
 ### Changed
 

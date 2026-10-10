@@ -50,9 +50,6 @@ interface PlacedTick {
    *  renders emphasized (bold): a band turn in stacked, an inline promotion in
    *  flat — the same boundaries in both styles. */
   readonly bold?: boolean;
-  /** This tick is a session open on a trading axis — live time starts here
-   *  after a collapsed gap. Outranks a plain tick when labels collide. */
-  readonly seam?: boolean;
 }
 
 /**
@@ -195,26 +192,20 @@ export function thinCategoryLabels(
 }
 
 /**
- * Drop **time** tick labels that would overprint a neighbour — measured, like
- * the category fit. The tick ladder spaces its clock steps by the grain, but
- * it pushes every session open unconditionally, so two anchors can land
- * closer than a label is wide: a micro-session (one stray pre-market bar in a
- * calendar derived from bars) puts its `Sep 29` open a pixel left of the real
- * `15:30` open, and a seam can sit just past the last clock tick before it
- * (`21:00` crowding the next day's `Sep 23`).
+ * Which **time** ticks keep their labels: the indices of `ticks` whose drawn
+ * extents (per `align`) clear one another by {@link LABEL_GAP}. The tick ladder
+ * spaces its clock steps by the grain, but it places every session open
+ * unconditionally, so two anchors can land closer than a label is wide — a
+ * micro-session (one stray pre-market bar in a calendar derived from bars)
+ * puts its open a pixel left of the real open, and a seam can sit just past
+ * the last clock tick before it.
  *
- * Greedy left→right over each label's drawn extent (per `align`). On a
- * collision the higher-ranked label wins: a **period turn** (`bold` — the
- * label carrying the date / month / year, the axis's only context for that
- * period), then a **session open** (`seam` — the instant actually sitting on
- * the collapsed gap's pixel), then a plain clock label. Between two turns
- * (or two opens) the **later** wins — it owns the ticks that follow, while
- * the earlier period has less than a label-width on screen (a stray weekend
- * print's `Sep 27` must not caption Monday); between two plain labels the
- * earlier stays. The losing tick goes whole — its stub would cut through the
- * winner's text.
- * Under `'auto'` the edge labels anchor inward, so a pass that drops an edge
- * label re-runs with the new edges.
+ * Greedy **right→left**, keeping the first seen: of two colliding ticks the
+ * **later** stays. That is the one that owns what follows it, and nothing is
+ * lost by dropping the earlier — the caller re-labels the survivors (see
+ * {@link fitTimeTicks}), so a period turn the dropped tick carried is promoted
+ * onto the next drawn one. A dropped tick only ever drops itself, and each
+ * dropped tick overlaps a kept one.
  *
  * Exported for tests only — not re-exported from the package index.
  */
@@ -223,48 +214,58 @@ export function fitTimeLabels(
   align: 'auto' | 'center' | 'right',
   fontSize: number,
   fontFamily: string,
-): PlacedTick[] {
-  const pass = (cur: readonly PlacedTick[]): PlacedTick[] => {
-    const n = cur.length;
-    const extents = cur.map((t, i): readonly [number, number] => {
-      const font = `${t.bold ? '700 ' : ''}${fontSize}px ${fontFamily}`;
-      const w = labelWidth(t.label, font, fontSize);
-      // Mirrors the render's placement (`labelLeft` + `labelTransform`).
-      if (align === 'right') return [t.x + 4, t.x + 4 + w];
-      if (align === 'auto' && i === 0) return [t.x, t.x + w];
-      if (align === 'auto' && i === n - 1) return [t.x - w, t.x];
-      return [t.x - w / 2, t.x + w / 2];
-    });
-    const rank = (t: PlacedTick) => (t.bold ? 2 : 0) + (t.seam ? 1 : 0);
-    // `i` displaces `j` (earlier) when it outranks it — or ties as a turn or
-    // open, since the later one owns the ticks that follow.
-    const beats = (i: number, j: number) => {
-      const ri = rank(cur[i]!);
-      const rj = rank(cur[j]!);
-      return ri > rj || (ri === rj && ri > 0);
-    };
-    const kept: number[] = [];
-    for (let i = 0; i < n; i++) {
-      // Kept labels never overlap one another, so their right edges ascend
-      // and the ones `i` collides with are a suffix. `i` must beat every one
-      // of them — popping a weaker neighbour before losing to a stronger one
-      // would drop a label that collided with no survivor.
-      let m = kept.length;
-      while (m > 0 && extents[kept[m - 1]!]![1] + LABEL_GAP > extents[i]![0]) {
-        m -= 1;
-      }
-      if (kept.slice(m).every((j) => beats(i, j))) {
-        kept.length = m;
-        kept.push(i);
-      }
+): number[] {
+  const n = ticks.length;
+  const kept: number[] = [];
+  // Kept extents start further left as the walk moves left, so a new tick
+  // need only clear the nearest kept one.
+  let clearOf = Infinity;
+  for (let i = n - 1; i >= 0; i--) {
+    const t = ticks[i]!;
+    const font = `${t.bold ? '700 ' : ''}${fontSize}px ${fontFamily}`;
+    const w = labelWidth(t.label, font, fontSize);
+    // Mirrors the render's placement (`labelLeft` + `labelTransform`).
+    const [left, right] =
+      align === 'right'
+        ? [t.x + 4, t.x + 4 + w]
+        : align === 'auto' && i === 0
+          ? [t.x, t.x + w]
+          : align === 'auto' && i === n - 1
+            ? [t.x - w, t.x]
+            : [t.x - w / 2, t.x + w / 2];
+    if (right + LABEL_GAP <= clearOf) {
+      kept.push(i);
+      clearOf = left;
     }
-    return kept.map((i) => cur[i]!);
-  };
-  let cur = pass(ticks);
-  for (let next = pass(cur); next.length < cur.length; next = pass(cur)) {
-    cur = next;
   }
-  return cur;
+  return kept.reverse();
+}
+
+/**
+ * Place a time axis's automatic ticks with no label overprinting another:
+ * `place` labels a set of tick instants (flat promotions walk only the
+ * instants it is given), {@link fitTimeLabels} keeps the ones that clear,
+ * and the survivors are placed again — re-labelling can promote a survivor
+ * (`15:30` → `Sep 29`) and widen it, and under `'auto'` a new first / last
+ * tick re-anchors — until a pass drops nothing. Each pass only removes, so it
+ * terminates.
+ *
+ * Exported for tests only — not re-exported from the package index.
+ */
+export function fitTimeTicks(
+  values: readonly number[],
+  place: (values: readonly number[]) => PlacedTick[],
+  align: 'auto' | 'center' | 'right',
+  fontSize: number,
+  fontFamily: string,
+): PlacedTick[] {
+  let cur = values;
+  for (;;) {
+    const placed = place(cur);
+    const kept = fitTimeLabels(placed, align, fontSize, fontFamily);
+    if (kept.length === placed.length) return placed;
+    cur = kept.map((i) => cur[i]!);
+  }
 }
 
 export interface XAxisProps {
@@ -327,9 +328,9 @@ export interface XAxisProps {
    *   *style* choice (the TradingView look), **not** a remedy for colliding
    *   labels. Collisions are handled by measurement, in every mode, on a
    *   category axis (thin + middle-ellipsize) and on a time axis's automatic
-   *   ticks (the label that would overprint is dropped; a date / month / year
-   *   turn beats a plain clock label). Explicit `ticks`, `transform` ticks and
-   *   numeric axes are not fitted.
+   *   ticks (of two colliding ticks the later is drawn, and a date / month /
+   *   year turn the dropped one carried moves onto it). Explicit `ticks`,
+   *   `transform` ticks and numeric axes are not fitted.
    */
   align?: 'auto' | 'center' | 'right';
   /**
@@ -685,63 +686,79 @@ export function XAxis({
     return out;
   };
 
-  const disc = xKind === 'time' ? container.discontinuities : undefined;
-  const rawTicks: PlacedTick[] = customTicks
-    ? customTicks.map((t) => ({ x: xScale(t.at), label: t.label }))
-    : derived !== null
-      ? honestDerived()
-      : // `tickValues`, not `xScale.ticks` — d3's raw `scaleLog.ticks()` is
-        // nearly a step function (see `yticks.ts`), so a log x needs the same
-        // decade ladder the y axis already builds. For a time or linear scale
-        // it defers to `scale.ticks(count)`, so this is a no-op there.
-        (
+  // The automatic tick instants (none when `ticks` or a `transform` lays the
+  // axis out). `tickValues`, not `xScale.ticks` — d3's raw `scaleLog.ticks()`
+  // is nearly a step function (see `yticks.ts`), so a log x needs the same
+  // decade ladder the y axis already builds. For a time or linear scale it
+  // defers to `scale.ticks(count)`, so this is a no-op there.
+  const autoValues: readonly number[] =
+    customTicks !== undefined || derived !== null
+      ? []
+      : (
           tickValues(
             xScale as Parameters<typeof tickValues>[0],
             xTickCount,
           ) as ReadonlyArray<number | Date>
-        ).map((d) => ({
-          x: xScale(d as number),
-          label: tickFmt(+d),
-          // A **period turn** renders emphasized (bold), consistently across
-          // styles: in stacked, a tick on a band divider (matched by pixel);
-          // in flat, a tick whose label was *promoted* to a coarser period
-          // (its flat label differs from the terse base) — the same boundaries,
-          // so `Feb` / `2026` read as strong in flat just as the band turns do.
-          bold: stacked
-            ? dividerXs.has(Math.round(xScale(d as number)))
-            : flatFmt !== undefined &&
-              baseFmt !== undefined &&
-              flatFmt(+d) !== baseFmt(+d),
-          // Live from here, dead just before: a session open on a collapsed
-          // seam (the probe `Layers` uses for session dividers, plus the live
-          // side, so an instant inside the gap doesn't qualify).
-          seam:
-            disc !== undefined &&
-            disc.distance(+d - 1, +d) <= 0 &&
-            disc.distance(+d, +d + 1) > 0,
-        }));
-  // A category axis ticks once per category; thin + truncate its labels when they
-  // crowd (an explicit `customTicks` axis keeps its labels verbatim). The slot is
-  // the scale's own band pitch — under `maxBandWidth` packing it is narrower than
-  // `plotWidth / n`, and the fit must measure against the pitch labels actually
-  // sit on.
-  const placed: PlacedTick[] =
-    xKind === 'category' && customTicks === undefined && rawTicks.length > 0
-      ? thinCategoryLabels(
-          rawTicks,
-          'bandwidth' in xScale
-            ? (xScale as { bandwidth(): number }).bandwidth()
-            : plotWidth / rawTicks.length,
-          plotWidth,
-          theme.font.size,
-          theme.font.family,
-        )
-      : // A time axis's automatic ticks drop any label that would overprint a
-        // neighbour (session opens can crowd — see `fitTimeLabels`). Explicit
-        // `ticks` stay verbatim; derived ticks have their own honesty pass.
-        xKind === 'time' && customTicks === undefined && derived === null
-        ? fitTimeLabels(rawTicks, align, theme.font.size, theme.font.family)
-        : rawTicks;
+        ).map((d) => +d);
+  // Place a set of automatic ticks: x, label, emphasis. The flat style labels
+  // only the ticks it is handed, so when the time-axis fit drops one, its
+  // period turn is promoted onto the next drawn tick instead of vanishing.
+  const placeAuto = (values: readonly number[]): PlacedTick[] => {
+    const flatDrawn =
+      flatFmt !== undefined
+        ? (xScale as TradingTimeScale).flatFormat(xTickCount, values)
+        : undefined;
+    const label = flatDrawn ?? tickFmt;
+    return values.map((v) => ({
+      x: xScale(v),
+      label: label(v),
+      // A **period turn** renders emphasized (bold), consistently across
+      // styles: in stacked, a tick on a band divider (matched by pixel);
+      // in flat, a tick whose label was *promoted* to a coarser period
+      // (its flat label differs from the terse base) — the same boundaries,
+      // so `Feb` / `2026` read as strong in flat just as the band turns do.
+      bold: stacked
+        ? dividerXs.has(Math.round(xScale(v)))
+        : flatDrawn !== undefined &&
+          baseFmt !== undefined &&
+          flatDrawn(v) !== baseFmt(v),
+    }));
+  };
+  // A time axis's automatic ticks drop any that would overprint a neighbour
+  // (session opens can crowd — see `fitTimeTicks`), re-labelling the
+  // survivors. A category axis ticks once per category; thin + truncate its
+  // labels when they crowd. The slot is the scale's own band pitch — under
+  // `maxBandWidth` packing it is narrower than `plotWidth / n`, and the fit
+  // must measure against the pitch labels actually sit on. Explicit `ticks`
+  // stay verbatim; derived ticks have their own honesty pass.
+  const placed: PlacedTick[] = (() => {
+    if (xKind === 'time' && customTicks === undefined && derived === null) {
+      return fitTimeTicks(
+        autoValues,
+        placeAuto,
+        align,
+        theme.font.size,
+        theme.font.family,
+      );
+    }
+    const raw = customTicks
+      ? customTicks.map((t) => ({ x: xScale(t.at), label: t.label }))
+      : derived !== null
+        ? honestDerived()
+        : placeAuto(autoValues);
+    if (xKind !== 'category' || customTicks !== undefined || raw.length === 0) {
+      return raw;
+    }
+    return thinCategoryLabels(
+      raw,
+      'bandwidth' in xScale
+        ? (xScale as { bandwidth(): number }).bandwidth()
+        : plotWidth / raw.length,
+      plotWidth,
+      theme.font.size,
+      theme.font.family,
+    );
+  })();
 
   const onTop = side === 'top';
   // Axis pills (marker / crosshair) sit at the same offset as the tick labels so
