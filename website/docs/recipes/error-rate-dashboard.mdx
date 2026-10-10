@@ -172,7 +172,7 @@ const fanned = perMinute.arrayExplode('host', { as: 'focusHost' });
 The same composition works on a `LiveSeries`. Filter with a plain
 `.filter()` (live variants of the array-\* predicates are still on the
 plan), then `.aggregate()` — the return value is a `LiveAggregation`
-that fires `'close'` every time a bucket is finalized.
+that fires `'event'` every time a bucket is finalized.
 
 ```ts
 import { LiveSeries } from 'pond-ts';
@@ -194,7 +194,7 @@ const errorStream = live
     tags: top(5),
   });
 
-errorStream.on('close', (bucket) => {
+errorStream.on('event', (bucket) => {
   // append a bar, fire an alert, push a notification, …
   console.log({
     start: bucket.begin(),
@@ -210,7 +210,7 @@ Four semantics to remember in the live layer:
    minute 2 will _not_ emit a closed bucket — use the batch path
    (`toTimeSeries()` + explicit `{ range }`) when you need a uniform
    grid.
-2. **`'close'` fires when the watermark crosses a bucket's end.** The
+2. **`'event'` fires when the watermark crosses a bucket's end.** The
    next event past `120_000ms` closes minute 1; until then the
    minute-1 bucket stays open and visible via `snapshot()` as a
    provisional bar.
@@ -268,7 +268,7 @@ function renderDashboard() {
 live
   .filter(isErrorEvent)
   .aggregate(Sequence.every('1m'), { host: 'unique', tags: top(5) })
-  .on('close', (bucket) => {
+  .on('event', (bucket) => {
     const hosts = (bucket.get('host') ?? []) as ReadonlyArray<string>;
     if (hosts.length >= 3) fireAlert(bucket);
   });

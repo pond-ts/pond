@@ -69,12 +69,12 @@ empty-bucket policy.
 live.aggregate(Sequence.every('5m'), {
   cpu: 'avg',
 });
-// → LiveAggregation: emits 'close' events as buckets finalize
+// → LiveAggregation: emits 'event' as each bucket finalizes
 ```
 
 A live aggregation closes a bucket once the watermark advances past
 its end — events arrive incrementally, buckets finalise
-incrementally. The accumulator emits a `'close'` event when each
+incrementally. The accumulator emits an `'event'` when each
 bucket finalises and a `'bucket'` event continuously while the
 current bucket is still open. `rolling.value()`-style continuous
 reads are also available via `.snapshot()`.

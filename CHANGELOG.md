@@ -89,6 +89,29 @@ include new features and type-level changes; patch bumps are strictly additive.
   stack, a quantity like throughput — put zero on the axis with
   `<YAxis min={0}>` (`max={0}` for an all-negative series). Areas whose data
   already reaches their baseline, or whose axis is pinned, are unchanged.
+- **core** (**breaking**): **Every `on()` overload on `LiveAggregation` and
+  `LiveRollingAggregation` now returns an unsubscribe function**, matching
+  `LiveSeries.on` / `LiveView.on`. `on('bucket')` and `on('update')` used to
+  return `this`, so those listeners could never be removed. **Migration:** a
+  chained `live.aggregate(…).on('bucket', fn)` now yields the unsubscribe
+  function, not the operator (same for `live.rolling(…).on('update', fn)`) —
+  assign the operator first, then subscribe.
+- **core** (**breaking, type-level**): **`LiveAggregation` listeners
+  (`'event'`, `'bucket'`) and `LiveRollingAggregation`'s `'event'` listener
+  receive the schema-narrowed `EventForSchema<Out>`** — the same type `at()`
+  and the `closed()` series hand out — instead of a widened
+  `Event<Interval, Record<string, …>>` / `any`. `e.get('col')` is now typed
+  per output column, and naming a column the aggregation doesn't produce is a
+  compile error. As a result a `LiveAggregation<S, Out>` is now assignable to
+  `LiveSource<Out>` ([PND-LIVESRC]). Both `on()` methods now throw a
+  `TypeError` on an unknown event type instead of silently registering the
+  listener.
+
+### Removed
+
+- **core** (**breaking**): **`LiveAggregation.on('close', fn)` is removed —
+  use `on('event', fn)`**, which it was an alias for. Untyped callers that
+  still pass `'close'` get a `TypeError` naming the replacement.
 
 ## [0.72.0] — 2026-10-08
 

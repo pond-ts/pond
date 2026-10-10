@@ -147,13 +147,13 @@ describe('multiple reducers', () => {
 // ── Subscriptions ───────────────────────────────────────────────
 
 describe('subscriptions', () => {
-  it('close fires when a bucket finalizes', () => {
+  it('event fires when a bucket finalizes', () => {
     const live = makeLive();
     const agg = new LiveAggregation(live, Sequence.every('5s'), {
       value: 'sum',
     });
     const closed: number[] = [];
-    agg.on('close', (event) => {
+    agg.on('event', (event) => {
       closed.push(event.get('value') as number);
     });
 
@@ -179,13 +179,58 @@ describe('subscriptions', () => {
     agg.dispose();
   });
 
-  it('on() returns this for chaining', () => {
+  it('every on() overload returns an unsubscribe function', () => {
     const live = makeLive();
     const agg = new LiveAggregation(live, Sequence.every('5s'), {
       value: 'sum',
     });
-    const result = agg.on('update', () => {});
-    expect(result).toBe(agg);
+    const counts = { event: 0, bucket: 0, update: 0 };
+    const offEvent = agg.on('event', () => counts.event++);
+    const offBucket = agg.on('bucket', () => counts.bucket++);
+    const offUpdate = agg.on('update', () => counts.update++);
+
+    live.push([0, 10, 'a'], [5000, 20, 'a']);
+    expect(counts).toEqual({ event: 1, bucket: 2, update: 2 });
+
+    offEvent();
+    offBucket();
+    offUpdate();
+    live.push([10000, 30, 'a']);
+    expect(counts).toEqual({ event: 1, bucket: 2, update: 2 });
+
+    // Idempotent.
+    offEvent();
+    offBucket();
+    offUpdate();
+    agg.dispose();
+  });
+
+  it('unsubscribing one listener leaves the others attached', () => {
+    const live = makeLive();
+    const agg = new LiveAggregation(live, Sequence.every('5s'), {
+      value: 'sum',
+    });
+    const a: number[] = [];
+    const b: number[] = [];
+    const offA = agg.on('event', (e) => a.push(e.get('value') as number));
+    agg.on('event', (e) => b.push(e.get('value') as number));
+    live.push([0, 10, 'a'], [5000, 20, 'a']);
+    offA();
+    live.push([10000, 30, 'a']);
+    expect(a).toEqual([10]);
+    expect(b).toEqual([10, 20]);
+    agg.dispose();
+  });
+
+  it("throws on an unknown type, naming 'event' for the removed 'close'", () => {
+    const live = makeLive();
+    const agg = new LiveAggregation(live, Sequence.every('5s'), {
+      value: 'sum',
+    });
+    expect(() => (agg as any).on('close', () => {})).toThrow(
+      /'close' was removed — use 'event'/,
+    );
+    expect(() => (agg as any).on('nope', () => {})).toThrow(TypeError);
     agg.dispose();
   });
 
@@ -523,7 +568,7 @@ describe('grace period', () => {
       { grace: '10s' },
     );
     const closedValues: number[] = [];
-    agg.on('close', (event) => {
+    agg.on('event', (event) => {
       closedValues.push(event.get('value') as number);
     });
 
@@ -703,22 +748,22 @@ describe('on("bucket")', () => {
     agg.dispose();
   });
 
-  it('fires before close when bucket finalizes', () => {
+  it('fires before event when bucket finalizes', () => {
     const live = makeLive();
     const agg = new LiveAggregation(live, Sequence.every('5s'), {
       value: 'sum',
     });
     const order: string[] = [];
     agg.on('bucket', () => order.push('bucket'));
-    agg.on('close', () => order.push('close'));
+    agg.on('event', () => order.push('event'));
 
     live.push([0, 10, 'a']);
     // bucket fires for accumulation
     expect(order).toEqual(['bucket']);
 
     live.push([5000, 20, 'a']);
-    // bucket fires for new bucket accumulation, then close fires for old bucket
-    expect(order).toEqual(['bucket', 'bucket', 'close']);
+    // bucket fires for new bucket accumulation, then event fires for old bucket
+    expect(order).toEqual(['bucket', 'bucket', 'event']);
     agg.dispose();
   });
 
@@ -777,13 +822,18 @@ describe('on("bucket")', () => {
     agg.dispose();
   });
 
-  it('returns this for chaining', () => {
+  it('returns an unsubscribe function', () => {
     const live = makeLive();
     const agg = new LiveAggregation(live, Sequence.every('5s'), {
       value: 'sum',
     });
-    const result = agg.on('bucket', () => {});
-    expect(result).toBe(agg);
+    let count = 0;
+    const off = agg.on('bucket', () => count++);
+    expect(typeof off).toBe('function');
+    live.push([0, 10, 'a']);
+    off();
+    live.push([1000, 20, 'a']);
+    expect(count).toBe(1);
     agg.dispose();
   });
 });

@@ -52,9 +52,29 @@ type PendingBucket = {
 
 type ClosedEvent = Event<Interval, Record<string, ColumnValue | undefined>>;
 
-type BucketListener = (event: ClosedEvent) => void;
-type CloseListener = (event: ClosedEvent) => void;
+/**
+ * Listener for both `'event'` (closed buckets) and `'bucket'` (the open
+ * bucket's running value). Receives the same schema-narrowed event type
+ * as {@link LiveAggregation.at} and the `closed()` series, which is what
+ * makes a `LiveAggregation<S, Out>` assignable to `LiveSource<Out>`.
+ */
+type AggregationEventListener<Out extends SeriesSchema> = (
+  event: EventForSchema<Out>,
+) => void;
 type UpdateListener = () => void;
+
+// Fail loudly on an unknown type rather than silently registering the
+// listener somewhere it will be called with the wrong arguments — in
+// particular the removed `'close'` alias, which untyped (JS) callers can
+// still pass.
+function unknownListenerType(type: never): never {
+  const hint =
+    String(type) === 'close' ? "; 'close' was removed — use 'event'" : '';
+  throw new TypeError(
+    `LiveAggregation.on: unknown event type '${String(type)}' ` +
+      `(expected 'event', 'bucket' or 'update')${hint}`,
+  );
+}
 
 export type LiveAggregationOptions = {
   grace?: DurationInput;
@@ -76,8 +96,8 @@ export class LiveAggregation<
   #watermark: number;
   readonly #closedEvents: ClosedEvent[];
 
-  readonly #onBucket: Set<BucketListener>;
-  readonly #onClose: Set<CloseListener>;
+  readonly #onBucket: Set<AggregationEventListener<Out>>;
+  readonly #onClose: Set<AggregationEventListener<Out>>;
   readonly #onUpdate: Set<UpdateListener>;
   readonly #unsubscribe: () => void;
 
@@ -166,28 +186,34 @@ export class LiveAggregation<
     return this.#buildSeries(true);
   }
 
-  on(type: 'event', fn: CloseListener): () => void;
-  on(type: 'bucket', fn: BucketListener): this;
-  on(type: 'close', fn: CloseListener): this;
-  on(type: 'update', fn: UpdateListener): this;
+  /**
+   * Subscribe to the aggregation. Every overload returns an unsubscribe
+   * function, matching `LiveSeries.on` / `LiveView.on`.
+   *
+   * - `'event'` — fires once per bucket when it closes (finalized value).
+   * - `'bucket'` — fires on every ingested event with the open bucket's
+   *   running value (provisional; may change until the bucket closes).
+   * - `'update'` — fires after every source event is ingested.
+   */
+  on(type: 'event', fn: AggregationEventListener<Out>): () => void;
+  on(type: 'bucket', fn: AggregationEventListener<Out>): () => void;
+  on(type: 'update', fn: UpdateListener): () => void;
   on(
-    type: 'event' | 'bucket' | 'close' | 'update',
-    fn: BucketListener | CloseListener | UpdateListener,
-  ): this | (() => void) {
-    if (type === 'event' || type === 'close') {
-      this.#onClose.add(fn as CloseListener);
-      if (type === 'event')
-        return () => {
-          this.#onClose.delete(fn as CloseListener);
-        };
-      return this;
-    }
-    if (type === 'bucket') {
-      this.#onBucket.add(fn as BucketListener);
-      return this;
-    }
-    this.#onUpdate.add(fn as UpdateListener);
-    return this;
+    type: 'event' | 'bucket' | 'update',
+    fn: AggregationEventListener<Out> | UpdateListener,
+  ): () => void {
+    const set: Set<(...args: any[]) => void> =
+      type === 'event'
+        ? this.#onClose
+        : type === 'bucket'
+          ? this.#onBucket
+          : type === 'update'
+            ? this.#onUpdate
+            : unknownListenerType(type);
+    set.add(fn);
+    return () => {
+      set.delete(fn);
+    };
   }
 
   // ── View transforms ─────────────────────────────────────────
@@ -388,7 +414,8 @@ export class LiveAggregation<
         record[this.#columns[i]!.output] = pending.states[i]!.snapshot();
       }
       const evt = new Event(interval, record);
-      for (const fn of this.#onBucket) fn(evt);
+      for (const fn of this.#onBucket)
+        fn(evt as unknown as EventForSchema<Out>);
     }
 
     this.#closeEligible(closeCutoff);
@@ -421,7 +448,7 @@ export class LiveAggregation<
     const evt = new Event(interval, record);
     this.#closedEvents.push(evt);
     this.#statsBucketsClosed++;
-    for (const fn of this.#onClose) fn(evt);
+    for (const fn of this.#onClose) fn(evt as unknown as EventForSchema<Out>);
   }
 
   #buildSeries(includeOpen: boolean): TimeSeries<Out> {
