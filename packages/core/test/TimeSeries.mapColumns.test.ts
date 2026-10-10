@@ -168,7 +168,7 @@ describe('mapOp on inputs the method cannot produce', () => {
     expect(store.valueAt(3, 'v')).toBe(400);
   });
 
-  it('invokes the mapper on a stored NaN (defined value) — and can clean it to a finite value', () => {
+  it('never shows the mapper a NaN: NaN in a number column is missing [PND-NANREP]', () => {
     const withNaN = numStore([0, 1000, 2000], [10, NaN, 30]);
     let sawNaN = false;
     const { store } = mapOp(
@@ -187,24 +187,16 @@ describe('mapOp on inputs the method cannot produce', () => {
         ],
       ]),
     );
-    expect(sawNaN).toBe(true); // NaN is a defined value → mapper invoked
+    expect(sawNaN).toBe(false); // the NaN cell is a gap → mapper not invoked
     expect(store.valueAt(0, 'v')).toBe(11);
-    expect(store.valueAt(1, 'v')).toBe(0); // cleaned
+    expect(store.valueAt(1, 'v')).toBeUndefined(); // gap preserved
     expect(store.valueAt(2, 'v')).toBe(31);
   });
 
   it('rejects a non-finite numeric mapper result (NaN / ±Infinity) at write', () => {
-    // Passing a stored NaN straight through would poison the packed column.
-    const withNaN = numStore([0, 1000, 2000], [10, NaN, 30]);
-    expect(() =>
-      mapOp(
-        withNaN,
-        withNaN.schema,
-        new Map([['v', (x: unknown) => x as number]]),
-      ),
-    ).toThrow(/non-finite/);
-
-    // A finite source whose mapper produces non-finite output also throws.
+    // A finite source whose mapper produces non-finite output throws: a
+    // mapper result is user intake, validated like row intake (unlike an
+    // operator's own arithmetic, where NaN is stored as missing).
     const finite = numStore([0, 1000], [1, 2]);
     for (const bad of [NaN, Infinity, -Infinity]) {
       expect(() =>

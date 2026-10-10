@@ -97,8 +97,18 @@ export class NumericOutput {
    * take the unguarded path and silently include a non-finite cell (see
    * `Float64Column.allFinite`'s safety contract), so it is derived here
    * rather than assumed from the source.
+   *
+   * A `NaN` value is **not** written: the cell stays missing. That is the
+   * NaN-means-missing rule ([PND-NANREP], see `Float64Column`) — an
+   * operator's own arithmetic (`Infinity - Infinity`, `0 * Infinity`, a
+   * custom fold) can produce `NaN`, and it must read back as a gap, not
+   * as a defined cell. `±Infinity` is written as a defined cell and
+   * clears `allFinite`. Each cell is written at most once per output, so
+   * skipping leaves the bit clear without an explicit reset.
    */
   set(i: number, value: number): void {
+    // `value !== value` is the NaN test.
+    if (value !== value) return;
     this.values[i] = value;
     this.bits[i >> 3]! |= 1 << (i & 7);
     this.#defined += 1;
@@ -109,7 +119,9 @@ export class NumericOutput {
    * Writes a defined cell already known to be finite — the caller has
    * proven it (e.g. a difference of two cells from an `allFinite`
    * source cannot be NaN, though it can overflow to ±Infinity, so this
-   * is only for cases where that has been ruled out).
+   * is only for cases where that has been ruled out). Because the value
+   * is known finite it is never `NaN`, so the NaN-means-missing check
+   * in {@link set} is not needed here.
    */
   setFinite(i: number, value: number): void {
     this.values[i] = value;

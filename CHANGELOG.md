@@ -77,6 +77,23 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **core** (**breaking**): **A `NaN` in a number column now always means
+  missing.** Intake already turned `NaN` into a gap; an operator's own
+  arithmetic could still write a _defined_ `NaN` — `diff` / `rate` /
+  `pctChange` of `Infinity - Infinity`, a `cumulative` sum that reaches
+  `Infinity` and then meets `-Infinity`, or a `cumulative` custom fold,
+  `scan` step or numeric `collapse` reducer that returns `NaN`. Those
+  cells are now stored as **missing**: `at(i)` / `get` / `read` return
+  `undefined`, `scan()` skips them, and `nullCount()` / `hasMissing()` count
+  them. Same in live `diff` / `rate` / `pctChange` / `cumulative` views and in
+  `@pond-ts/process` `RangeOutput.set` / `sealRange`. A `cumulative` that hits
+  `NaN` keeps its accumulator, so built-in folds read missing from that row on.
+  **`±Infinity` is unchanged** — it is a real number and stays a defined
+  value. Storage is unchanged (still the validity bitmap); this locks the rule
+  so a later NaN-in-buffer storage switch is invisible. **Migration:** code
+  that tested `Number.isNaN(v)` on an operator's output should test
+  `v === undefined`.
+
 - **charts** (**breaking**): **An `<AreaChart>`'s `baseline` no longer changes
   the y-axis range.** Since v0.71.0 the default zero baseline (and any numeric baseline)
   was pulled into the auto-fit domain, so an area over data running $100–$200

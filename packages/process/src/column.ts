@@ -396,7 +396,13 @@ export interface RangeOutput {
    * through {@link RangeOutput.set} per cell; most ops want `set`.
    */
   readonly bits: Uint8Array;
-  /** Marks a cell present, with its value. */
+  /**
+   * Marks a cell present, with its value. A `NaN` value marks the cell
+   * **missing** instead (same as {@link RangeOutput.clear}) — core's rule
+   * that NaN in a number column means missing ([PND-NANREP]). Direct
+   * writes through {@link RangeOutput.bits} bypass this; an op doing so
+   * must clear a `NaN` cell's bit itself.
+   */
   set(i: number, v: number): void;
   /**
    * Marks a cell missing.
@@ -449,6 +455,12 @@ export function prepareRange(
     values,
     bits,
     set(i, v) {
+      // NaN means missing: clear rather than store a defined NaN.
+      if (v !== v) {
+        values[i] = 0;
+        bits[i >> 3]! &= ~(1 << (i & 7));
+        return;
+      }
       values[i] = v;
       bits[i >> 3]! |= 1 << (i & 7);
     },
@@ -459,15 +471,28 @@ export function prepareRange(
   };
 }
 
-/** Seals a {@link RangeOutput} into a column, counting validity once. */
+/**
+ * Seals a {@link RangeOutput} into a column, counting validity once.
+ *
+ * The same pass enforces NaN-means-missing ([PND-NANREP]) for cells an op
+ * wrote straight into `values` / `bits`: a defined slot holding `NaN` has
+ * its bit cleared and is not counted, so it reads back as a gap.
+ */
 export function sealRange(out: RangeOutput, length: number): Float64Column {
   const bits = out.bits;
+  const values = out.values;
   let defined = 0;
   let allFinite = true;
   for (let i = 0; i < length; i += 1) {
     if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
+    const v = values[i]!;
+    if (v !== v) {
+      values[i] = 0;
+      bits[i >> 3]! &= ~(1 << (i & 7));
+      continue;
+    }
     defined += 1;
-    if (!Number.isFinite(out.values[i]!)) allFinite = false;
+    if (v === Infinity || v === -Infinity) allFinite = false;
   }
   if (defined === length)
     return new Float64Column(out.values, length, undefined, allFinite);

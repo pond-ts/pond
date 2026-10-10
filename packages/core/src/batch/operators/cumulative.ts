@@ -49,8 +49,16 @@ function buildApply(
  * the accumulator; a missing / undefined cell **carries** the current
  * accumulator (does not reset it), and the output is `undefined` only until
  * the first defined value (`float64ColumnFromArray` derives validity from the
- * `undefined`s). A stored NaN is a defined number — applied, matching the old
- * `typeof raw === 'number'` check.
+ * `undefined`s).
+ *
+ * **NaN means missing** ([PND-NANREP]). A source column cannot hold a defined
+ * `NaN`, but the fold itself can produce one — a `sum` that overflows to
+ * `Infinity` and then meets `-Infinity`, or a custom fold returning `NaN`.
+ * Such a row is written as **missing** (`NumericOutput.set` /
+ * `float64ColumnFromArray` both drop `NaN`). The accumulator itself is not
+ * reset: it stays `NaN`, so a built-in fold reads missing from that row on,
+ * and a custom fold receives `NaN` as `acc` and may recover. `±Infinity`
+ * accumulators stay defined cells.
  *
  * Returns the reshaped store + the output schema (targets widened to optional
  * `number`). The result-schema cast is the single trust boundary; the

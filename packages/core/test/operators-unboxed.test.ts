@@ -18,7 +18,7 @@ import { TimeSeries } from '../src/index.js';
 /* The seams that could plausibly differ, each with a case:                    */
 /*   - a leading run of missing cells (output undefined until first defined)   */
 /*   - a missing cell CARRIES the accumulator rather than resetting it         */
-/*   - a stored NaN is a *defined* number and must be folded in                */
+/*   - a computed NaN is *missing* (NaN means missing, [PND-NANREP])           */
 /*   - `allFinite` on the output must be derived, not inherited                */
 /*   - "all defined ⇒ no validity bitmap" must survive                         */
 /* -------------------------------------------------------------------------- */
@@ -42,7 +42,11 @@ function series(a: Cell[], b: Cell[] = a) {
 const readColumn = (s: TimeSeries<never>, name: string): Cell[] =>
   Array.from({ length: s.length }, (_, i) => s.column(name).at(i) as Cell);
 
-/* ── reference implementations, mirroring the pre-change boxed code ──────── */
+/* ── reference implementations, mirroring the boxed code ─────────────────── */
+/* NaN means missing ([PND-NANREP]): a NaN result is a gap, so the references */
+/* map it to `undefined` exactly as `float64ColumnFromArray` does.            */
+
+const nanToGap = (v: Cell): Cell => (v !== v ? undefined : v);
 
 function referenceCumulative(
   src: Cell[],
@@ -65,7 +69,7 @@ function referenceCumulative(
   for (let i = 0; i < src.length; i += 1) {
     const raw = src[i];
     if (typeof raw === 'number') acc = apply(acc, raw);
-    out[i] = acc;
+    out[i] = nanToGap(acc);
   }
   return out;
 }
@@ -82,10 +86,11 @@ function referenceDiff(
     const curr = src[i];
     if (typeof curr === 'number' && typeof prev === 'number') {
       const delta = curr - prev;
-      if (mode === 'pctChange') out[i] = prev !== 0 ? delta / prev : undefined;
+      if (mode === 'pctChange')
+        out[i] = prev !== 0 ? nanToGap(delta / prev) : undefined;
       else if (mode === 'rate')
-        out[i] = stepSeconds !== 0 ? delta / stepSeconds : undefined;
-      else out[i] = delta;
+        out[i] = stepSeconds !== 0 ? nanToGap(delta / stepSeconds) : undefined;
+      else out[i] = nanToGap(delta);
     } else {
       out[i] = undefined;
     }
@@ -320,9 +325,9 @@ describe('[PND-BOXFREE] defined non-finite cells, reached the only way they can 
   // *defined* non-finite cell cannot be constructed directly. It can still
   // occur: an operator whose own arithmetic overflows produces one, and
   // that column is then a legitimate input to the next operator. This is
-  // where the unboxed path's finiteness handling has to hold up, because
-  // the old boxed path treated a stored NaN as a defined number
-  // (`typeof raw === 'number'` is true for NaN) and so must the new one.
+  // where the unboxed path's finiteness handling has to hold up. ±Infinity
+  // survives as a defined cell; NaN never does — it means missing
+  // ([PND-NANREP]), on the boxed and unboxed paths alike.
   const overflowed = () =>
     new TimeSeries({
       name: 's',
@@ -357,12 +362,55 @@ describe('[PND-BOXFREE] defined non-finite cells, reached the only way they can 
     );
   });
 
-  it('Infinity - Infinity is NaN, defined, and keeps allFinite false', () => {
-    // The boxed path wrote NaN into the array and `float64ColumnFromArray`
-    // saw a number, so the cell stayed defined with allFinite false. The
-    // unboxed path must not quietly turn it into a gap.
-    const col = overflowed().diff(['a']).column('a');
-    expect(Number.isNaN(col.at(2) as number)).toBe(true);
+  it('Infinity - Infinity reads as missing everywhere [PND-NANREP]', () => {
+    // a = [MAX, Inf, Inf, Inf]; diff = [-, Inf, Inf-Inf, Inf-Inf].
+    const d = overflowed().diff(['a']);
+    const col = d.column('a');
+    expect(col.at(1)).toBe(Infinity); // overflow stays a defined value
+    expect(col.at(2)).toBeUndefined();
+    expect(col.at(3)).toBeUndefined();
+    expect(d.at(2)!.get('a')).toBeUndefined();
+    expect(col.nullCount()).toBe(3);
+    expect(col.hasMissing()).toBe(true);
+    const seen: number[] = [];
+    (col as unknown as { scan(fn: (v: number) => void): void }).scan((v) =>
+      seen.push(v),
+    );
+    expect(seen).toEqual([Infinity]);
     expect((col as unknown as { allFinite: boolean }).allFinite).toBe(false);
+  });
+
+  it('rate / pctChange of Infinity - Infinity read as missing', () => {
+    for (const mode of ['rate', 'pctChange'] as const) {
+      const col = overflowed()[mode](['a']).column('a');
+      expect(col.at(2)).toBeUndefined();
+      expect(col.nullCount()).toBe(3);
+    }
+  });
+
+  it('a cumulative sum that reaches Infinity then meets -Infinity reads as missing', () => {
+    // scan lands [Inf, -Inf, 1] as defined cells (±Infinity is a value);
+    // the running sum is Inf, Inf + -Inf = NaN → missing, and stays NaN.
+    const outs = [Infinity, -Infinity, 1, 2];
+    const withInf = overflowed().scan('b', (k) => [k + 1, outs[k]!], 0);
+    for (const reducer of ['sum'] as const) {
+      const c = withInf.cumulative({ b: reducer }).column('b');
+      expect(c.at(0)).toBe(Infinity);
+      expect(c.at(1)).toBeUndefined();
+      expect(c.at(2)).toBeUndefined();
+      expect(c.at(3)).toBeUndefined();
+      expect(c.nullCount()).toBe(3);
+      expect(c.hasMissing()).toBe(true);
+    }
+    // A custom fold that hits NaN emits a gap, then can recover.
+    const custom = withInf
+      .cumulative({ b: (acc, v) => (Number.isNaN(acc) ? v : acc + v) })
+      .column('b');
+    expect([0, 1, 2, 3].map((i) => custom.at(i))).toEqual([
+      Infinity,
+      undefined,
+      1,
+      3,
+    ]);
   });
 });

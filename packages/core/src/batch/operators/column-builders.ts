@@ -11,8 +11,9 @@ import { ValidationError } from '../../core/errors.js';
  * Build a typed {@link Column} from a per-row value array, dispatching on the
  * column's `kind`. An `undefined` cell becomes missing (its validity bit is
  * left unset, so `read(i)` returns `undefined`). These builders do **not**
- * enforce the intake contract: `float64ColumnFromArray` *stores* a non-finite
- * number (flagging the column non-finite for the guarded reducer path) rather
+ * enforce the intake contract: `float64ColumnFromArray` stores a `NaN` as a
+ * missing cell (NaN means missing, [PND-NANREP]) and *stores* `±Infinity`
+ * (flagging the column non-finite for the guarded reducer path) rather
  * than rejecting it, and the `*FromArray` builders coerce a kind mismatch to a
  * missing cell. A caller that must uphold intake (finite-or-missing, no NaN in
  * a packed numeric column) calls {@link assertColumnValuesMatchKind} first.

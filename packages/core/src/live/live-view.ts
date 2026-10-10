@@ -967,13 +967,17 @@ export function makeDiffView<
 
       if (typeof currVal === 'number' && typeof prevVal === 'number') {
         const delta = currVal - prevVal;
+        let v: number | undefined;
         if (mode === 'pctChange') {
-          outData[col] = prevVal !== 0 ? delta / prevVal : undefined;
+          v = prevVal !== 0 ? delta / prevVal : undefined;
         } else if (mode === 'rate') {
-          outData[col] = dt !== 0 ? delta / dt! : undefined;
+          v = dt !== 0 ? delta / dt! : undefined;
         } else {
-          outData[col] = delta;
+          v = delta;
         }
+        // NaN means missing ([PND-NANREP]) — e.g. `Infinity - Infinity`.
+        // Matches the batch `diff` / `rate` / `pctChange`.
+        outData[col] = v !== v ? undefined : v;
       } else {
         outData[col] = undefined;
       }
@@ -1161,12 +1165,10 @@ export function makeCumulativeView<
     const data = { ...(event.data() as Record<string, unknown>) };
     for (const [name, s] of accState) {
       const raw = data[name];
-      if (typeof raw === 'number') {
-        s.acc = s.apply(s.acc, raw);
-        data[name] = s.acc;
-      } else {
-        data[name] = s.acc;
-      }
+      if (typeof raw === 'number') s.acc = s.apply(s.acc, raw);
+      // NaN means missing ([PND-NANREP]): a fold that reaches NaN emits a
+      // gap, matching batch `cumulative`. The accumulator is kept as-is.
+      data[name] = s.acc !== s.acc ? undefined : s.acc;
     }
     return new Event(event.key(), data);
   };

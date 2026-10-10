@@ -1072,6 +1072,78 @@ consumer shows up.
 events and sorts them. It is the same shape of cost, but nobody has reported
 friction, so no task was filed.
 
+### [PND-NANREP] — NaN means missing: the rule locked, the storage deferred
+
+**Decision (pre-1.0 review, 2026-10).** The public rule is now **"a `NaN` in a
+number column means missing"**, everywhere — batch, live, and
+`@pond-ts/process` range outputs. There is no such thing as a _defined_ `NaN`
+cell. The storage is deliberately **not** changed: missing is still a cleared
+validity bit, and `definedCount` still answers `count()` / `nullCount()` /
+`hasMissing()` in O(1). Locking the rule first means the storage switch the
+measurements argue for (bitmap 1.398 ms vs NaN-in-buffer 1.118 ms on a 1M scan
+at 4% missing; 2.12 ms of bitmap↔NaN churn per `sma(20)` — numbers in PLAN.md's
+[PND-NANREP] entry) becomes a **pure internal speed-up with no visible
+change**, and can be taken post-1.0 as a patch. Taking the rule and the storage
+together would have hidden a behaviour change inside a speed-up — the same
+reason the sentinel decision above kept them apart.
+
+**What was already true.** Intake could not produce a defined `NaN`: row intake
+rejects non-finite, `fromColumns` / the Arrow doors / `withColumn`'s typed door
+map `NaN` to a gap, `pctChange` maps `0/0` to missing, and `aggregate` /
+`rolling` / `smooth` reject a non-finite result with a `ValidationError`. The
+only source left was an operator's **own arithmetic** writing a defined `NaN`.
+
+**What changed — the write chokepoints, not each operator:**
+
+- `float64ColumnFromArray` — the shared sink for every boxed operator path
+  (`collapse`, `fill`, `scan`, `shift`, the chunked fallbacks of
+  `diff` / `cumulative`, `LiveView.column()`). `NaN` → missing. (`mapColumns`
+  and `rolling` validate their results first and still **throw** on a
+  non-finite value — user-callback output is treated as intake there; this
+  PR does not change that.)
+- `NumericOutput.set` — the unboxed `diff` / `rate` / `pctChange` /
+  `cumulative` paths ([PND-BOXFREE]). `NaN` is not written.
+- `Float64ColumnBuilder` — the live series-store column build. `NaN` is written
+  as `undefined` would be, including an overwrite of a defined cell.
+- Live `diff` / `rate` / `pctChange` and `cumulative` views — row-shaped, so
+  they emit `undefined` for a `NaN` result directly.
+- `@pond-ts/process` `RangeOutput.set` clears on `NaN`; `sealRange` clears a
+  `NaN` an op wrote straight into `values` / `bits` (it already walked every
+  defined cell to derive `allFinite`, so this is free).
+
+`Float64Column`'s constructor is the trusted door and does **not** scan; its doc
+now states the obligation on a caller handing it a buffer. `ChunkedFloat64Column`
+composes chunks and inherits the rule.
+
+**Accumulators are not reset.** A `cumulative` sum that reaches `Infinity` and
+then meets `-Infinity` is `NaN` from there on, so every later row reads missing.
+A custom fold still receives `NaN` as `acc` and may recover; `scan` resumes as
+soon as its step returns a non-`NaN` value. This is the arithmetic's honest
+answer, written as a gap.
+
+**`±Infinity` stays a defined value.** It is a real (overflowed) number, distinct
+from `NaN`, and no path that previously admitted it was treated as missing, so
+the rule does not cover it: `diff` of `MAX - (-MAX)` is a defined `Infinity` and
+clears `allFinite`. Two pre-existing asymmetries were found and **left alone**
+(out of scope; recorded so they are not rediscovered):
+
+- `count()` routes through the `count` reducer, whose non-finite policy skips
+  `±Infinity`, while `nullCount()` reads the bitmap — so on a column holding a
+  defined `Infinity`, `count() + nullCount() < length`.
+- A live view can carry a defined `Infinity` (e.g. `cumulative` overflow) that
+  `toTimeSeries()` then rejects at row intake ("expected finite number"), and
+  batch `aggregate` / `rolling` / `smooth` throw on an overflowed result where
+  `diff` / `cumulative` keep it. Whether `±Infinity` should be rejected,
+  stored, or mapped to missing uniformly is a separate decision.
+
+**Perf.** One `v !== v` compare per written cell. `perf-operators-unboxed.mjs`
+(200k × 4 columns) before → after, two after-runs: all ten scenarios within
+run-to-run noise (e.g. `diff / dense` 4.01 → 4.22 / 4.14 ms, `diff / 4% missing`
+6.95 → 6.49 / 6.29 ms, `cumulative(sum) / dense` 4.22 → 4.41 / 3.96 ms).
+
+**Remaining:** the storage switch itself (NaN-in-buffer for packed numeric
+columns, `definedCount` cached as today), now unblocked and invisible.
+
 ---
 
 ## Moved from PLAN.md — 2026-09-23 cleanup
