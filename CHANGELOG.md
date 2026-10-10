@@ -75,6 +75,19 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **charts: time-axis tick labels no longer overprint each other.** The tick
+  ladder places every session open unconditionally, so two anchors could land
+  closer than a label is wide — a session calendar derived from the bars turns
+  one stray pre-market print into a one-minute session whose `Sep 29` open sat
+  a pixel left of the real `15:30` open, and a seam could crowd the last clock
+  tick before it (`21:00` against the next day's `Sep 23`). A time axis now
+  measures its labels and drops the one that would collide: a date / month /
+  year turn beats a session open, which beats a plain clock label; between
+  equals the earlier stays. Applies to every `align` mode; explicit `ticks`
+  are untouched.
+
 ### Changed
 
 - **charts** (**breaking**): **An `<AreaChart>`'s `baseline` no longer changes

@@ -139,6 +139,42 @@ export const IntradaySessions: Story = {
   },
 };
 
+/** A **stray-bar micro-session**: a calendar derived from the bars turns one
+ *  04:00 print into a one-minute session just ahead of the Tuesday open, so its
+ *  open (`Jan 6`, the day turn) lands a pixel left of the real `09:30` open.
+ *  The axis measures the labels and keeps the day turn — the `09:30` label that
+ *  used to overprint it is dropped. `align="right"`, the TradingView look the
+ *  collision was filed against (Tidal). */
+export const StraySessionLabels: Story = {
+  render: () => {
+    const s = weekdaySessions(3);
+    const strayOpen = s[1]!.open - 5.5 * H;
+    const calendar = [
+      s[0]!,
+      { date: 'stray', open: strayOpen, close: strayOpen + MIN },
+      ...s.slice(1),
+    ];
+    const bars = candles(s, barSeq(s, 30 * MIN), 5 * MIN);
+    return (
+      <ChartContainer
+        width={WIDTH}
+        range={[s[0]!.close - 2 * H, s[1]!.open + 3 * H]}
+        discontinuities={provider(calendar)}
+        timeZone="UTC"
+        showAxis={false}
+      >
+        <ChartRow height={220}>
+          <YAxis id="p" />
+          <Layers>
+            <Candlestick series={bars} axis="p" />
+          </Layers>
+        </ChartRow>
+        <TimeAxis align="right" />
+      </ChartContainer>
+    );
+  },
+};
+
 /** A 5-minute **band** (a `lo`/`hi` envelope around the price) across three
  *  sessions, with `sessionBreaks`, its centre line breaking in step: the fill
  *  ends at each session's close and re-starts at the next open, instead of the

@@ -50,6 +50,9 @@ interface PlacedTick {
    *  renders emphasized (bold): a band turn in stacked, an inline promotion in
    *  flat — the same boundaries in both styles. */
   readonly bold?: boolean;
+  /** This tick is a session open on a trading axis — live time starts here
+   *  after a collapsed gap. Outranks a plain tick when labels collide. */
+  readonly seam?: boolean;
 }
 
 /**
@@ -191,6 +194,68 @@ export function thinCategoryLabels(
   return out;
 }
 
+/**
+ * Drop **time** tick labels that would overprint a neighbour — measured, like
+ * the category fit. The tick ladder spaces its clock steps by the grain, but
+ * it pushes every session open unconditionally, so two anchors can land
+ * closer than a label is wide: a micro-session (one stray pre-market bar in a
+ * calendar derived from bars) puts its `Sep 29` open a pixel left of the real
+ * `15:30` open, and a seam can sit just past the last clock tick before it
+ * (`21:00` crowding the next day's `Sep 23`).
+ *
+ * Greedy left→right over each label's drawn extent (per `align`). On a
+ * collision the higher-ranked label wins: a **period turn** (`bold` — the
+ * label carrying the date / month / year, the axis's only context for that
+ * period), then a **session open** (`seam` — the instant actually sitting on
+ * the collapsed gap's pixel), then a plain clock label; between equals the
+ * earlier keeps its place. The losing tick goes whole — its stub would cut
+ * through the winner's text.
+ * Under `'auto'` the edge labels anchor inward, so a pass that drops an edge
+ * label re-runs with the new edges.
+ *
+ * Exported for tests only — not re-exported from the package index.
+ */
+export function fitTimeLabels(
+  ticks: readonly PlacedTick[],
+  align: 'auto' | 'center' | 'right',
+  fontSize: number,
+  fontFamily: string,
+): PlacedTick[] {
+  const pass = (cur: readonly PlacedTick[]): PlacedTick[] => {
+    const n = cur.length;
+    const extents = cur.map((t, i): readonly [number, number] => {
+      const font = `${t.bold ? '700 ' : ''}${fontSize}px ${fontFamily}`;
+      const w = labelWidth(t.label, font, fontSize);
+      // Mirrors the render's placement (`labelLeft` + `labelTransform`).
+      if (align === 'right') return [t.x + 4, t.x + 4 + w];
+      if (align === 'auto' && i === 0) return [t.x, t.x + w];
+      if (align === 'auto' && i === n - 1) return [t.x - w, t.x];
+      return [t.x - w / 2, t.x + w / 2];
+    });
+    const rank = (t: PlacedTick) => (t.bold ? 2 : 0) + (t.seam ? 1 : 0);
+    const kept: number[] = [];
+    for (let i = 0; i < n; i++) {
+      let lose = false;
+      while (kept.length > 0) {
+        const j = kept[kept.length - 1]!;
+        if (extents[j]![1] + LABEL_GAP <= extents[i]![0]) break;
+        if (rank(cur[i]!) > rank(cur[j]!)) kept.pop();
+        else {
+          lose = true;
+          break;
+        }
+      }
+      if (!lose) kept.push(i);
+    }
+    return kept.map((i) => cur[i]!);
+  };
+  let cur = pass(ticks);
+  for (let next = pass(cur); next.length < cur.length; next = pass(cur)) {
+    cur = next;
+  }
+  return cur;
+}
+
 export interface XAxisProps {
   /**
    * Tick / cursor value formatting — a d3 format/time specifier string or a
@@ -248,9 +313,10 @@ export interface XAxisProps {
    *   right-anchors so the edge labels stay inside the plot (the old default).
    * - `'right'` — the label sits to the **right** of an extended tick that
    *   drops from the axis line (label beside the tick, not under it) — a
-   *   *style* choice (the TradingView look). It re-anchors without measuring,
-   *   so it is **not** a remedy for colliding labels; on a category axis the
-   *   measured fit (thin + middle-ellipsize) is what prevents collisions.
+   *   *style* choice (the TradingView look), **not** a remedy for colliding
+   *   labels. Collisions are handled by measurement in every mode: a category
+   *   axis thins + middle-ellipsizes, a time axis drops the label that would
+   *   overprint (a date / month / year turn beats a plain clock label).
    */
   align?: 'auto' | 'center' | 'right';
   /**
@@ -606,6 +672,7 @@ export function XAxis({
     return out;
   };
 
+  const disc = xKind === 'time' ? container.discontinuities : undefined;
   const rawTicks: PlacedTick[] = customTicks
     ? customTicks.map((t) => ({ x: xScale(t.at), label: t.label }))
     : derived !== null
@@ -632,6 +699,13 @@ export function XAxis({
             : flatFmt !== undefined &&
               baseFmt !== undefined &&
               flatFmt(+d) !== baseFmt(+d),
+          // Live from here, dead just before: a session open on a collapsed
+          // seam (the probe `Layers` uses for session dividers, plus the live
+          // side, so an instant inside the gap doesn't qualify).
+          seam:
+            disc !== undefined &&
+            disc.distance(+d - 1, +d) <= 0 &&
+            disc.distance(+d, +d + 1) > 0,
         }));
   // A category axis ticks once per category; thin + truncate its labels when they
   // crowd (an explicit `customTicks` axis keeps its labels verbatim). The slot is
@@ -649,7 +723,12 @@ export function XAxis({
           theme.font.size,
           theme.font.family,
         )
-      : rawTicks;
+      : // A time axis's automatic ticks drop any label that would overprint a
+        // neighbour (session opens can crowd — see `fitTimeLabels`). Explicit
+        // `ticks` stay verbatim; derived ticks have their own honesty pass.
+        xKind === 'time' && customTicks === undefined && derived === null
+        ? fitTimeLabels(rawTicks, align, theme.font.size, theme.font.family)
+        : rawTicks;
 
   const onTop = side === 'top';
   // Axis pills (marker / crosshair) sit at the same offset as the tick labels so
