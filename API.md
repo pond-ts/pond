@@ -118,7 +118,8 @@ Value-axis wire types
 - **Temporal range**: `timeRange()`, `overlaps()`, `contains()`,
   `intersection()`, `overlapping(range)`, `containedBy(range)`, `trim(range)`,
   `after()`, `before()`, `within()`, `tail(duration)`
-- **Key-type conversion**: `asTime({ at })`, `asTimeRange()`, `asInterval()`
+- **Key-type conversion**: `asTime({ at })`, `asTimeRange()`, `asInterval()`;
+  `offsetTime(by)` moves every key by a constant (kind kept)
 - **Filter/slice**: `filter()`, `sample(strategy)`, `slice(begin, end)`
 - **Column reshape**: `select()`, `rename()`, `map()`, `mapColumns()`,
   `withColumn()`, `collapse()`

@@ -75,6 +75,40 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- `pond-ts`: **`series.offsetTime(by)` moves every key by a constant** —
+  milliseconds or a duration string, negative for earlier
+  (`yesterday.offsetTime('1d')` overlays yesterday on today; `'1d'` is a fixed
+  24 hours, not a calendar day). The key kind is
+  kept; a `timeRange` / `interval` key moves both edges and keeps its labels.
+  Value columns are shared, not copied, so the cost is one pass over the key:
+  0.26 ms on 97k rows × 118 columns, where rebuilding the series through its
+  rows took ~990 ms (`packages/core/scripts/perf-offset-time.mjs`). `0` returns
+  the series itself; a non-finite or unparseable offset throws.
+- **charts**: **`xOffset` on `<LineChart>`, `<AreaChart>` and `<BandChart>`
+  draws each row a fixed time after its key**, without touching the series. A
+  1-minute bar is keyed at its open but its `close` is the price at its end, so
+  `<LineChart column="close" xOffset="1m">` puts the line where the closes
+  happened — the session's last close on the close, not a bar early — while a
+  `<Candlestick>` from the same series still draws at the key. Previously this
+  meant rebuilding the whole series with shifted keys. Everything the layer
+  reports is in drawn time: the tracker's nearest row and dot, its auto-fit
+  x-extent, `sessionBreaks`, a sweep's span. Time series only; a non-zero
+  offset on a `ValueSeries` throws.
+- **charts**: **`<AreaChart sessionBreaks>`** ends the fill and its outline at
+  each trading-axis session close and re-starts them at the next open, as
+  `<LineChart>` and `<BandChart>` already did — so the line and area styles of
+  one intraday series break alike. `gaps="none"` still interpolates a dropout
+  inside a session but never across a break, and no inferred gap connector
+  spans one.
+- **charts** (fix): a **decimated** `<LineChart sessionBreaks>` with
+  `gaps="none"` interpolated straight across each session break, and
+  `dashed` / `step` / `fade` drew a gap connector over it — dense intraday data
+  decimates, so this was the common case. Decimation marks the break as a gap
+  at the break instant, and the draw now cuts there instead of reading it as a
+  dropout.
+
 ### Changed
 
 - **charts** (**breaking**): **An `<AreaChart>`'s `baseline` no longer changes

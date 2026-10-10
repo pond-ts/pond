@@ -346,6 +346,18 @@ needs an explicit `range` to produce a shared grid. Parked below rather than
 fixed here — it wants its own decision about whether the partitioned default
 should be the parent's extent.
 
+## `offsetTime` — constant key shift (shipped 2026-10-10)
+
+`series.offsetTime(by)` moves every key by a constant (ms or duration string,
+signed), keeping key kind and interval labels; value columns shared by
+reference. Pulled by Tidal's F-charts-20 (see `PND_CHARTS_PLAN.md` →
+[PND-XOFFSET]), where the charts `xOffset` prop is the real answer and uses
+this internally; kept as a public method because it is small and generally
+useful (overlay yesterday on today, clock-skew correction). Distinct from
+`shift` (moves values by rows, keys fixed). No monotonic re-check — a constant
+offset cannot reorder. Name taken from the consumer's ask; `shiftTime` was
+avoided as too close to `shift`. Not on `LiveSeries` / partitioned — no ask.
+
 ## Parking lot
 
 - `unpivot` (wide-to-long) — manual workaround documented; promote on a real

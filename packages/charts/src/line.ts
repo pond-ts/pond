@@ -18,10 +18,6 @@ import {
   type GapMode,
 } from './gaps.js';
 
-/** Shared empty boundary list — passed to `sessionRuns` when a decimated series
- *  already carries its session breaks as baked-in `NaN` points. */
-const EMPTY_BOUNDARIES: readonly number[] = [];
-
 /** Maps a data value to a pixel coordinate (a d3 scale is assignable to this). */
 export type Scale = (value: number) => number;
 
@@ -178,14 +174,12 @@ export function drawLine(
   // data ⇒ one run over the whole series (the hot path — no slicing, so the draw
   // is byte-identical to the pre-boundary single pass). When the series was
   // decimated, `decimateM4` already baked the session breaks in as `NaN` points
-  // (aligned to the break instants), so re-cutting here with `boundaries` would
-  // mis-attribute the boundary points — pass `[]` and let the baked-in breaks split
-  // the sessions.
-  const runs = sessionRuns(
-    cs.x,
-    cs.length,
-    decimated ? EMPTY_BOUNDARIES : boundaries,
-  );
+  // at the break instants, where `sessionRuns` would mis-attribute the boundary
+  // points — {@link decimatedSessionRuns} cuts at those baked gaps instead, so a
+  // break is never interior to a run (no `none` bridge or connector across it).
+  const runs = decimated
+    ? decimatedSessionRuns(cs.x, cs.y, cs.length, boundaries)
+    : sessionRuns(cs.x, cs.length, boundaries);
   const singleRun = runs.length === 1;
 
   // [PND-AFFINE] fast path: when the curve is linear and **both** scales are
@@ -307,6 +301,50 @@ export function sessionRuns(
       start = i;
       while (bi < bounds.length && bounds[bi]! <= cur) bi += 1;
     }
+  }
+  runs.push([start, length]);
+  return runs;
+}
+
+/**
+ * {@link sessionRuns} for a **decimated** series. `decimateM4` bakes each
+ * session break in as a `NaN` point at the break instant, with the closing
+ * column's last point and the opening column's first point **both** at that
+ * instant — so `sessionRuns`'s `(x[i-1], x[i]]` cut would hand the close's last
+ * point to the next session. Instead, cut at every non-finite run whose finite
+ * neighbours bracket a boundary (`lastX ≤ b ≤ nextX`), starting the new run at
+ * the run's first `NaN`. The break then sits as a **leading** gap of the next
+ * session: never interior, so `gaps="none"` does not interpolate across it and
+ * no inferred connector (dashed / step / fade) spans it — left in one run it
+ * read as an ordinary dropout and got both. A data gap that straddles a break
+ * is cut the same way, matching the full-resolution path. Pure + O(N).
+ */
+export function decimatedSessionRuns(
+  x: Float64Array,
+  y: Float64Array,
+  length: number,
+  boundaries: readonly number[],
+): Array<[number, number]> {
+  if (boundaries.length === 0 || length === 0) return [[0, length]];
+  const bounds =
+    boundaries.length > 1 ? [...boundaries].sort((a, b) => a - b) : boundaries;
+  const runs: Array<[number, number]> = [];
+  let start = 0;
+  let lastFinite = -1;
+  let bi = 0;
+  for (let i = 0; i < length; i += 1) {
+    if (!Number.isFinite(y[i]!)) continue;
+    if (lastFinite >= 0 && i - lastFinite > 1) {
+      const a = x[lastFinite]!;
+      const b = x[i]!;
+      while (bi < bounds.length && bounds[bi]! < a) bi += 1;
+      if (bi < bounds.length && bounds[bi]! <= b) {
+        runs.push([start, lastFinite + 1]);
+        start = lastFinite + 1;
+        while (bi < bounds.length && bounds[bi]! <= b) bi += 1;
+      }
+    }
+    lastFinite = i;
   }
   runs.push([start, length]);
   return runs;

@@ -4425,6 +4425,62 @@ the CLAUDE.md stories rule: `Layers/Offset` with `Forward`, `Back`,
 **Consumer.** Tidal draws Ichimoku; the website's financial hub gets a cloud
 example once this lands.
 
+### Shipped: the fixed-time offset (2026-10-10, Tidal F-charts-20)
+
+Tidal asked for a zero-copy way to draw a 1-minute bar's `close` at the bar's
+**end** (keyed at the open, so a close line plots one bar early; visible at the
+session's last close, 21:59 instead of 22:00). Their workaround rebuilt the
+whole 118-column series with shifted keys on every data change. They offered
+two shapes: a core `offsetTime(ms)`, or a layer `xOffset`. **Both shipped**,
+with the layer prop as the answer to their problem:
+
+- **Why charts, not data.** The data was right — the row stamped 13:30 _is_
+  the bar opening at 13:30. Only the drawing convention differs. Moving the key
+  would make open/high/low claim 13:31 too, and forces a second series beside
+  the one the candles draw from.
+- **`xOffset` is time, not bars.** Across a session break "+1 bar" lands on the
+  next morning's open; "+1m" lands on the close. Tidal's case needs the time
+  form, Ichimoku's needs the bar form — so they are two shapes, and the prop is
+  `XOffset = DurationInput` today, leaving room for a `{ bars: n }` member when
+  the bar form lands (still gated on `scaleTradingTime` intraday).
+- **Implementation: the layer moves its own key via core `offsetTime`.**
+  `useXOffset` (`x-offset.ts`) swaps the series for `series.offsetTime(x)` at
+  the top of the layer, so every read below — `cs.x`, xExtent, sessionBreaks
+  lookup, the tracker's `nearest`, sweep bounds — sees one axis without
+  per-path plumbing. Cost is one key pass (0.26 ms at 97k rows), value columns
+  shared. Rejected: offsetting inside the draw via a wrapped `xScale` — the
+  scale is read by decimation, culling, hit-testing and the trading-axis
+  scale, and a wrapper would have to be threaded through all of them.
+- **Tracker reports drawn time** (Tidal's open question). The sample's `x` is
+  where its dot sits, so it must be the drawn x; the readout values are the
+  row's. Corollary worth knowing: with `xOffset="1m"` a cursor mid-bar is
+  nearest the _previous_ row's drawn close, so line and candle can name
+  different rows — that is the honest reading (the latest close at that
+  instant), not a bug. Sweep spans are likewise in drawn time.
+- **Scope.** Line / Area / Band (the line-like layers a close or an envelope
+  would use). Scatter and the mark layers were not given it — no ask.
+
+### Shipped alongside: `<AreaChart sessionBreaks>` (2026-10-10)
+
+The other half of F-charts-20: Line had `sessionBreaks`, Band gained it in
+0.70, Area still shaded across every closed-market gap. `drawArea` now splits
+into `sessionRuns` exactly as `drawLine` does — fill, outline, `gaps="none"`
+interpolation and gap-edge collection all per run, so no fill, bridge or
+connector spans a break; decimated draws get the breaks baked in as NaN by
+`decimateM4Cached(…, boundaries)`, same as the line. The no-break path emits
+the same ops as before (pinned in `area.test.ts`).
+
+**Layer-2 catch (PR #747):** once decimated — the normal case for dense
+intraday data — both Line and Area passed `[]` to `sessionRuns`, so the break
+`decimateM4` bakes in (a NaN at the break instant, with the close's last point
+and the open's first point _both_ at that instant) sat inside one run and read
+as a data gap: `gaps="none"` bridged it and dashed/step/fade connected across
+it. Pre-existing for Line since the decimator wave. Fixed with
+`decimatedSessionRuns` (`line.ts`): cut at each non-finite run whose finite
+neighbours bracket a boundary, so the break is a leading gap of the next
+session. `sessionRuns` can't be reused there — its `(x[i-1], x[i]]` cut hands
+the close's last point to the next session when both share the instant.
+
 ---
 
 ## [PND-AREAZERO] — `<AreaChart>` fills to zero by default (2026-09-23)

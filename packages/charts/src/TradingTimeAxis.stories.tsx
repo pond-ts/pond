@@ -5,6 +5,7 @@ import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { Candlestick } from './Candlestick.js';
+import { AreaChart } from './AreaChart.js';
 import { BandChart } from './BandChart.js';
 import { LineChart } from './LineChart.js';
 import { TimeAxis } from './TimeAxis.js';
@@ -185,6 +186,99 @@ export const SessionBreaksBand: Story = {
         >
           <LineCursor />
           {row(true)}
+        </ChartContainer>
+      </div>
+    );
+  },
+};
+
+/** A 5-minute price **area** across three sessions, with `sessionBreaks`: the
+ *  shade ends at each session's close and re-starts at the next open, the same
+ *  break the line draws, instead of a fill bridging the collapsed overnight
+ *  gap. Top row omits it (connected close→open) for contrast. */
+export const SessionBreaksArea: Story = {
+  render: () => {
+    const s = weekdaySessions(3);
+    const px = gappingTicks(s, 5 * MIN);
+    const row = (broken: boolean) => (
+      <ChartRow height={150}>
+        <YAxis id="p" />
+        <Layers>
+          <AreaChart
+            series={px}
+            column="price"
+            axis="p"
+            baseline="floor"
+            sessionBreaks={broken}
+          />
+        </Layers>
+      </ChartRow>
+    );
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <ChartContainer
+          width={WIDTH}
+          range={rangeOf(s)}
+          discontinuities={provider(s)}
+        >
+          <LineCursor />
+          {row(false)}
+        </ChartContainer>
+        <ChartContainer
+          width={WIDTH}
+          range={rangeOf(s)}
+          discontinuities={provider(s)}
+        >
+          <LineCursor />
+          {row(true)}
+        </ChartContainer>
+      </div>
+    );
+  },
+};
+
+/** **Close at the bar's end** — 30-minute candles with a line through `close`,
+ *  both from the **same** series. A bar is keyed at its open, but its close is
+ *  the price at its end. Top: the line at the key, a bar early everywhere — the
+ *  session's last close sits at 15:30, not the 16:00 close. Bottom:
+ *  `xOffset={30 * MIN}` draws each close at its bar's end, so every point lands
+ *  on its candle's right edge and the last one on the close. */
+export const CloseAtBarEnd: Story = {
+  render: () => {
+    const s = weekdaySessions(2);
+    const bars = candles(s, barSeq(s, 30 * MIN), 5 * MIN);
+    const row = (offset: number | undefined) => (
+      <ChartRow height={200}>
+        <YAxis id="p" />
+        <Layers>
+          <Candlestick series={bars} axis="p" />
+          <LineChart
+            series={bars}
+            column="close"
+            axis="p"
+            sessionBreaks
+            {...(offset === undefined ? {} : { xOffset: offset })}
+          />
+        </Layers>
+      </ChartRow>
+    );
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <ChartContainer
+          width={WIDTH}
+          range={rangeOf(s)}
+          discontinuities={provider(s)}
+        >
+          <LineCursor />
+          {row(undefined)}
+        </ChartContainer>
+        <ChartContainer
+          width={WIDTH}
+          range={rangeOf(s)}
+          discontinuities={provider(s)}
+        >
+          <LineCursor />
+          {row(30 * MIN)}
         </ChartContainer>
       </div>
     );

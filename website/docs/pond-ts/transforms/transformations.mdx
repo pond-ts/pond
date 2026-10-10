@@ -267,6 +267,27 @@ For time-based shifts on irregular data, align to a regular grid
 first ([Alignment](./alignment)), then shift by the corresponding
 number of events.
 
+### `offsetTime(by)` — move the keys in time \{#offsettime\}
+
+Moves every key by a constant — milliseconds or a duration string,
+negative for earlier. A duration is a fixed length: `'1d'` is 24 hours, not
+a calendar day, so across a daylight-saving change an overlay is an hour
+off. Values stay on their rows; a `timeRange` /
+`interval` key moves both edges and keeps its labels. Value columns
+are shared, not copied, so this costs one pass over the key.
+
+```ts
+// Overlay yesterday on today: yesterday's rows, keyed a day later.
+const yesterdayOnToday = yesterday.offsetTime('1d');
+const skewFixed = sensor.offsetTime(-250); // clock ran 250 ms fast
+```
+
+`shift` moves _values_ by rows and leaves keys alone; `offsetTime`
+moves _keys_ by time and leaves values alone. If you only want a
+chart to draw a column somewhere else — a 1-minute bar's `close` at
+the bar's end — use the layer's `xOffset` prop in
+`@pond-ts/charts` instead: the series stays as it is.
+
 ## Method comparison
 
 | Method                | Output                                     |
@@ -283,5 +304,6 @@ number of events.
 | `scan(src, …)`        | Replace source, or append output column    |
 | `tail(duration)`      | Same schema; trailing temporal slice       |
 | `shift(cols, n)`      | Same schema; column values shifted         |
+| `offsetTime(by)`      | Same schema; every key moved by `by`       |
 | `Event.set(field, v)` | Single field on one event                  |
 | `Event.merge(patch)`  | Multi-field patch on one event             |

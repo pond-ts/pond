@@ -226,6 +226,27 @@ type PrefixesForSeriesTuple<T extends SeriesTuple> = {
     : never
   : never;
 
+/**
+ * Resolves an {@link TimeSeries.offsetTime} argument to signed milliseconds:
+ * a finite number as is, or a duration string with an optional leading `-`.
+ */
+function parseOffset(by: number | string): number {
+  if (typeof by === 'number') {
+    if (!Number.isFinite(by)) {
+      throw new TypeError(
+        `offsetTime: offset must be a finite number of milliseconds (got ${by})`,
+      );
+    }
+    return by;
+  }
+  if (typeof by !== 'string') {
+    throw new TypeError(`offsetTime: unsupported offset '${String(by)}'`);
+  }
+  const negative = by.startsWith('-');
+  const ms = parseDuration((negative ? by.slice(1) : by) as DurationInput);
+  return negative ? -ms : ms;
+}
+
 function toRows<S extends SeriesSchema>(
   schema: S,
   events: ReadonlyArray<EventForSchema<S>>,
@@ -2048,6 +2069,56 @@ export class TimeSeries<S extends SeriesSchema> {
     return TimeSeries.#fromTrustedStore(
       this.name,
       schema,
+      store as unknown as ColumnarStore<ColumnSchema>,
+    );
+  }
+
+  /**
+   * Example: `bars.offsetTime('1m')`. Moves every key by a constant amount of
+   * time — positive is later, negative earlier — and keeps the key kind and
+   * every value column as they are.
+   *
+   * `by` is milliseconds or a duration string (`'1m'`, `'-1h'`); a duration is
+   * a fixed length (`'1d'` is 24 h, not a calendar day). `0` returns the series
+   * unchanged. A `timeRange` / `interval` key moves both edges and
+   * keeps its labels. Throws on a non-finite or unparseable offset.
+   *
+   * This moves the *data*: afterwards the series says each row happened at the
+   * new time. To only draw a column somewhere else — a 1-minute bar's `close`
+   * at the bar's end, say — use the charts layer's `xOffset` instead, which
+   * leaves the series alone.
+   *
+   * **Cost.** One pass over the key (two for a ranged key) into a new buffer;
+   * value columns are shared by reference, not copied. A constant offset keeps
+   * the rows in order, so there is no re-sort or order check.
+   */
+  offsetTime(by: DurationInput): TimeSeries<S> {
+    const ms = parseOffset(by);
+    if (ms === 0) return this;
+    const keys = this.#store.store.keys;
+    const n = keys.length;
+    const shift = (src: Float64Array): Float64Array => {
+      const out = new Float64Array(n);
+      for (let i = 0; i < n; i += 1) out[i] = src[i]! + ms;
+      return out;
+    };
+    // A time key's `end` is its `begin` buffer, so it shifts once; a ranged key
+    // shifts both edges, and an interval keeps its label column by reference.
+    const key =
+      keys instanceof IntervalKeyColumn
+        ? new IntervalKeyColumn(
+            shift(keys.begin),
+            shift(keys.end),
+            keys.labels,
+            n,
+          )
+        : keys instanceof TimeRangeKeyColumn
+          ? new TimeRangeKeyColumn(shift(keys.begin), shift(keys.end), n)
+          : new TimeKeyColumn(shift(keys.begin), n);
+    const store = withKeyColumn(this.#store.store, this.schema[0]!, key);
+    return TimeSeries.#fromTrustedStore(
+      this.name,
+      this.schema,
       store as unknown as ColumnarStore<ColumnSchema>,
     );
   }
