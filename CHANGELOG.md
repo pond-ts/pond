@@ -84,11 +84,13 @@ include new features and type-level changes; patch bumps are strictly additive.
   a pixel left of the real `15:30` open, and a seam could crowd the last clock
   tick before it (`21:00` against the next day's `Sep 23`). A time axis now
   measures its labels and drops the one that would collide — a date / month /
-  year turn outlasts a session-open clock label, which outlasts a plain one —
-  then re-labels the ticks it kept, so no period turn is lost (a stray New
-  Year's print can't take `2027` with it; a Sunday-evening futures open can't
-  caption Monday). Applies to every `align` mode; explicit `ticks` and
-  `transform` ticks are untouched.
+  year turn outlasts a session-open clock label, which outlasts a plain one;
+  of two colliding turns the later is drawn — then re-labels the ticks it kept,
+  so the dates they show stay correct (a stray New Year's print can't take
+  `2027` with it; a Sunday-evening futures open can't caption Monday). Under
+  `align="auto"` the edge labels anchor by the full tick list, so a drop never
+  re-anchors another label. Applies to every `align` mode; explicit `ticks`
+  and `transform` ticks are untouched.
 
 ### Added
 

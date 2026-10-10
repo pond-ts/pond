@@ -53,6 +53,11 @@ interface PlacedTick {
   /** A session open on a trading axis — live time starts here after a
    *  collapsed gap. Outranks a plain clock tick when labels collide. */
   readonly seam?: boolean;
+  /** Under `align="auto"`, an automatic time tick that is the first
+   *  (`'start'`) or last (`'end'`) of the axis's **full** tick list: its label
+   *  anchors inward. Fixed per tick rather than per drawn set, so dropping a
+   *  colliding neighbour never re-anchors another label into a new collision. */
+  readonly anchor?: 'start' | 'end' | undefined;
 }
 
 /**
@@ -204,22 +209,20 @@ export function thinCategoryLabels(
  * the last clock tick before it.
  *
  * Greedy in **priority** order — each tick is kept unless it would overlap one
- * already kept, so a tick is only ever dropped by a survivor (never by a tick
- * that is itself dropped later):
+ * already kept, so within a pass a tick is only ever dropped by a survivor:
  *
  * 1. a **period turn** (`bold` — the label carrying the date / month / year,
  *    or a stacked band turn) before a **session open** (`seam`), before a plain
  *    clock tick — the date stays on the open it marks;
- * 2. under `'auto'`, the edge ticks before inner ones of the same rank — the
- *    edge label anchors inward, and dropping its inner neighbour settles that
- *    for good, where dropping the edge would re-anchor the next tick into the
- *    same collision, pass after pass;
- * 3. between two turns the **later** (it owns the ticks that follow); between
- *    two plain ticks the earlier.
+ * 2. between two turns the **later** (it owns the ticks that follow); between
+ *    two session opens, or two plain ticks, the earlier.
  *
- * A dropped turn costs no context: the caller re-labels the survivors (see
- * {@link fitTimeTicks}), so the period it opened is promoted onto the next
- * drawn tick.
+ * Under `'auto'` an edge label's extent follows its fixed {@link
+ * PlacedTick.anchor}, never its position in the drawn set — so no drop moves
+ * another label. The caller re-labels the survivors (see {@link fitTimeTicks}):
+ * a turn dropped beside a tick of a later, different period hands its period
+ * on (a stray New Year's open's `2027` moves onto the next real open). Two
+ * turns of the same level a pixel apart can't both be drawn; the later one is.
  *
  * Exported for tests only — not re-exported from the package index.
  */
@@ -229,25 +232,22 @@ export function fitTimeLabels(
   fontSize: number,
   fontFamily: string,
 ): number[] {
-  const n = ticks.length;
-  const extents = ticks.map((t, i): readonly [number, number] => {
+  const extents = ticks.map((t): readonly [number, number] => {
     const font = `${t.bold ? '700 ' : ''}${fontSize}px ${fontFamily}`;
     const w = labelWidth(t.label, font, fontSize);
     // Mirrors the render's placement (`labelLeft` + `labelTransform`).
     if (align === 'right') return [t.x + 4, t.x + 4 + w];
-    if (align === 'auto' && i === 0) return [t.x, t.x + w];
-    if (align === 'auto' && i === n - 1) return [t.x - w, t.x];
+    if (align === 'auto' && t.anchor === 'start') return [t.x, t.x + w];
+    if (align === 'auto' && t.anchor === 'end') return [t.x - w, t.x];
     return [t.x - w / 2, t.x + w / 2];
   });
   const rank = (t: PlacedTick) => (t.bold ? 2 : t.seam ? 1 : 0);
-  const edge = (i: number) => align === 'auto' && (i === 0 || i === n - 1);
   const order = ticks
     .map((_, i) => i)
     .sort((i, j) => {
       const ri = rank(ticks[i]!);
       const rj = rank(ticks[j]!);
       if (ri !== rj) return rj - ri;
-      if (edge(i) !== edge(j)) return edge(i) ? -1 : 1;
       return ri === 2 ? j - i : i - j;
     });
   const kept: number[] = [];
@@ -267,9 +267,8 @@ export function fitTimeLabels(
  * `place` labels a set of tick instants (flat promotions walk only the
  * instants it is given), {@link fitTimeLabels} keeps the ones that clear,
  * and the survivors are placed again — re-labelling can promote a survivor
- * and change its width, and under `'auto'` a new first / last tick
- * re-anchors — until a pass drops nothing. Each pass only removes, so it
- * terminates.
+ * and change its width — until a pass drops nothing. Each pass only removes,
+ * so it terminates.
  *
  * Exported for tests only — not re-exported from the package index.
  */
@@ -351,8 +350,8 @@ export interface XAxisProps {
    *   category axis (thin + middle-ellipsize) and on a time axis's automatic
    *   ticks (the label that would overprint is dropped — a date / month /
    *   year turn outlasts a clock label — and the survivors are re-labelled so
-   *   no period turn is lost). Explicit `ticks`, `transform` ticks and numeric
-   *   axes are not fitted.
+   *   the dates they show stay correct). Explicit `ticks`, `transform` ticks
+   *   and numeric axes are not fitted.
    */
   align?: 'auto' | 'center' | 'right';
   /**
@@ -752,6 +751,15 @@ export function XAxis({
         disc !== undefined &&
         disc.distance(v - 1, v) <= 0 &&
         disc.distance(v, v + 1) > 0,
+      // `auto` anchors the edge ticks of the FULL list, whichever survive.
+      anchor:
+        align !== 'auto'
+          ? undefined
+          : v === autoValues[0]
+            ? 'start'
+            : v === autoValues[autoValues.length - 1]
+              ? 'end'
+              : undefined,
     }));
   };
   // A time axis's automatic ticks drop any that would overprint a neighbour
@@ -761,8 +769,10 @@ export function XAxis({
   // `maxBandWidth` packing it is narrower than `plotWidth / n`, and the fit
   // must measure against the pitch labels actually sit on. Explicit `ticks`
   // stay verbatim; derived ticks have their own honesty pass.
+  const timeFitted =
+    xKind === 'time' && customTicks === undefined && derived === null;
   const placed: PlacedTick[] = (() => {
-    if (xKind === 'time' && customTicks === undefined && derived === null) {
+    if (timeFitted) {
       return fitTimeTicks(
         autoValues,
         placeAuto,
@@ -938,11 +948,15 @@ export function XAxis({
       }}
     >
       {placed.map((t, i) => {
-        const isFirst = i === 0;
-        const isLast = i === placed.length - 1;
         // `center`: every label centred on its tick. `auto`: centred, but the
-        // edge labels end-align so they stay within [0, plotWidth]. `right`:
-        // label left-anchored just past an extended tick (beside, not under).
+        // edge labels end-align so they stay within [0, plotWidth] — on a time
+        // axis the edges of the full tick list (`anchor`, which the label fit
+        // measured), elsewhere the first / last drawn. `right`: label
+        // left-anchored just past an extended tick (beside, not under).
+        const isFirst = timeFitted ? t.anchor === 'start' : i === 0;
+        const isLast = timeFitted
+          ? t.anchor === 'end'
+          : i === placed.length - 1;
         const labelTransform =
           align === 'right'
             ? 'none'
