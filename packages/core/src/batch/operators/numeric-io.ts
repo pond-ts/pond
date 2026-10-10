@@ -5,7 +5,6 @@ import {
   bitmapByteCount,
   validityFromBits,
 } from '../../columnar/index.js';
-import { ValidationError } from '../../core/errors.js';
 
 /**
  * Unboxed read/write helpers for element-wise numeric operators —
@@ -83,7 +82,6 @@ export class NumericOutput {
   readonly bits: Uint8Array;
   readonly length: number;
   #defined = 0;
-  #allFinite = true;
 
   constructor(length: number) {
     this.length = length;
@@ -92,36 +90,29 @@ export class NumericOutput {
   }
 
   /**
-   * Writes a defined cell. Tracks finiteness so the resulting column can
-   * claim `allFinite` honestly — a wrongly-`true` flag makes reducers
-   * take the unguarded path and silently include a non-finite cell (see
-   * `Float64Column.allFinite`'s safety contract), so it is derived here
-   * rather than assumed from the source.
+   * Writes a defined cell.
    *
-   * A `NaN` value is **not** written: the cell stays missing. That is the
-   * NaN-means-missing rule ([PND-NANREP], see `Float64Column`) — an
-   * operator's own arithmetic (`Infinity - Infinity`, `0 * Infinity`, a
-   * custom fold) can produce `NaN`, and it must read back as a gap, not
-   * as a defined cell. `±Infinity` is written as a defined cell and
-   * clears `allFinite`. Each cell is written at most once per output, so
-   * skipping leaves the bit clear without an explicit reset.
+   * A non-finite value (`NaN`, `±Infinity`) is **not** written: the
+   * cell stays missing. That is the non-finite-means-missing rule
+   * ([PND-NANREP], see `Float64Column`) — an operator's own arithmetic
+   * (`Infinity - Infinity`, a sum that overflows, a custom fold) can
+   * produce one, and it must read back as a gap, not as a defined cell.
+   * Each cell is written at most once per output, so skipping leaves the
+   * bit clear without an explicit reset. Every written cell is therefore
+   * finite, which is what lets {@link finish} claim `allFinite`.
    */
   set(i: number, value: number): void {
-    // `value !== value` is the NaN test.
-    if (value !== value) return;
+    // `value - value !== 0` is true exactly for NaN and ±Infinity.
+    if (value - value !== 0) return;
     this.values[i] = value;
     this.bits[i >> 3]! |= 1 << (i & 7);
     this.#defined += 1;
-    if (!Number.isFinite(value)) this.#allFinite = false;
   }
 
   /**
    * Writes a defined cell already known to be finite — the caller has
-   * proven it (e.g. a difference of two cells from an `allFinite`
-   * source cannot be NaN, though it can overflow to ±Infinity, so this
-   * is only for cases where that has been ruled out). Because the value
-   * is known finite it is never `NaN`, so the NaN-means-missing check
-   * in {@link set} is not needed here.
+   * proven it (e.g. a running count), so the non-finite check in
+   * {@link set} is not needed here.
    */
   setFinite(i: number, value: number): void {
     this.values[i] = value;
@@ -135,18 +126,14 @@ export class NumericOutput {
     if (this.#defined !== this.length) {
       validity = validityFromBits(this.bits, this.length);
     }
-    return new Float64Column(
-      this.values,
-      this.length,
-      validity,
-      this.#allFinite,
-    );
+    // Every written cell is finite (`set` drops non-finite values).
+    return new Float64Column(this.values, this.length, validity, true);
   }
 }
 
 /**
- * Builds a numeric column from a `Float64Array` in which **`NaN` means
- * missing** — [PND-WCNAN].
+ * Builds a numeric column from a `Float64Array` in which **a non-finite
+ * value means missing** — [PND-WCNAN], [PND-NANREP].
  *
  * The asymmetry with the boxed intake is deliberate and is the whole
  * point. A `ReadonlyArray<number | undefined>` already has a missing
@@ -161,11 +148,10 @@ export class NumericOutput {
  * of `sma(20)`'s 22 ms at 500k bars. The dashboard adapter hit the same
  * wall from the other side (~25 ms/tick at 360k rows).
  *
- * `±Infinity` is still rejected. It is not a gap, it is a value the
- * numeric intake contract excludes — the reducer non-finite policy needs
- * defined cells to be finite so `allFinite` can be claimed, and letting
- * it through here would put a non-finite cell into a column flagged
- * all-finite.
+ * `±Infinity` is a gap here too, exactly like `NaN`: a non-finite number
+ * in a number column means missing, everywhere (see `Float64Column`). It
+ * used to be rejected; it now follows how this door treats `NaN`, as
+ * `fromColumns` always has. (The boxed door rejects both alike.)
  *
  * The buffer is **copied, not adopted**. `TimeSeries.fromColumns` adopts,
  * but it is documented as the zero-copy door and callers opt into that by
@@ -176,7 +162,6 @@ export class NumericOutput {
  */
 export function float64ColumnFromTypedArray(
   values: Float64Array,
-  label: string,
 ): Float64Column {
   const length = values.length;
   const owned = new Float64Array(length);
@@ -184,20 +169,14 @@ export function float64ColumnFromTypedArray(
   let defined = 0;
   for (let i = 0; i < length; i += 1) {
     const v = values[i]!;
-    // `v !== v` is the NaN test — the gap marker, not an error.
-    if (v !== v) continue;
-    if (v === Infinity || v === -Infinity) {
-      throw new ValidationError(
-        `${label}: index ${i} is ${v > 0 ? 'Infinity' : '-Infinity'}; ` +
-          'numeric columns accept finite values, or NaN to mark a gap',
-      );
-    }
+    // `v - v !== 0` is true exactly for NaN and ±Infinity — the gap marker.
+    if (v - v !== 0) continue;
     owned[i] = v;
     bits[i >> 3]! |= 1 << (i & 7);
     defined += 1;
   }
   const validity =
     defined === length ? undefined : validityFromBits(bits, length);
-  // Every defined cell was finite-checked above.
+  // Every defined cell passed the finite test above.
   return new Float64Column(owned, length, validity, true);
 }

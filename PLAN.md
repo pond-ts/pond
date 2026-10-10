@@ -671,11 +671,17 @@ consumer signal. Plan:
   `spikes/columnar-wasm/bench/controls.mjs`.
 
 - **[PND-NANREP]** — **Semantics half done; only the storage switch remains.**
-  The public rule "a `NaN` in a number column means missing" is now locked
-  everywhere (batch, live, `@pond-ts/process` range outputs) — operators'
-  own arithmetic (`Infinity - Infinity`, a fold reaching `NaN`) stores a gap,
-  never a defined `NaN`; `±Infinity` stays a defined value. Decision and
-  findings in the breakout plan. What remains is switching packed numeric
+  The public rule "a non-finite number (`NaN`, `±Infinity`) in a number
+  column means missing" is now locked everywhere (batch, live,
+  `@pond-ts/process` range outputs) — operators' own arithmetic (an overflow,
+  `Infinity - Infinity`, a reducer result past `MAX_VALUE`) stores a gap,
+  never a defined non-finite cell, and operators that used to throw on one no
+  longer do. Decision and findings in the breakout plan. Two follow-ups:
+  (1) every library-built number column is now `allFinite`, so the flag and
+  the guarded `reduceColumn` loops can be removed as an internal cleanup;
+  (2) `@pond-ts/financial` comments and one oracle case description still say
+  "`withColumn` rejects `±Infinity`" — stale wording, guards still correct.
+  What remains is switching packed numeric
   storage from the validity bitmap to NaN-in-buffer — now a pure internal
   speed-up with no visible change, deferred post-1.0. The case for it:
   whether the validity bitmap earns its keep on **numeric** columns. Measured

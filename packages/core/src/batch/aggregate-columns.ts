@@ -1,4 +1,8 @@
-import { resolveReducer, rollingStateFor } from '../reducers/index.js';
+import {
+  finiteOrMissing,
+  resolveReducer,
+  rollingStateFor,
+} from '../reducers/index.js';
 import type { ArrayValue, Column, ColumnSchema } from '../columnar/index.js';
 import {
   BooleanColumn,
@@ -10,7 +14,6 @@ import {
   stringColumnFromArray,
   validityFromBits,
 } from '../columnar/index.js';
-import { ValidationError } from '../core/errors.js';
 import type { Interval } from '../core/interval.js';
 import { assertCellKind } from './validate.js';
 import type {
@@ -253,7 +256,9 @@ function reduceBucket(
   for (let p = 0; p < plans.length; p += 1) {
     const plan = plans[p]!;
     if (plan.kind === 'reduce') {
-      out[p] = plan.reduce(plan.column, start, scan);
+      // A non-finite result (an overflow) is missing — same as every
+      // reducer result path (`finiteOrMissing`, [PND-NANREP]).
+      out[p] = finiteOrMissing(plan.reduce(plan.column, start, scan));
     } else if (plan.which === 'first') {
       // First defined cell in [start, scan); scans past missing cells and
       // past non-finite numeric cells (reducer non-finite policy,
@@ -357,14 +362,13 @@ function intervalKeysForBuckets(
  * row intake, so every check row intake performed is performed here:
  *
  * - Cell kinds go through the *same* `assertCellKind` (shared, not
- *   copied), so a reducer that overflows to `Infinity` still raises the
- *   same `ValidationError` with the same message rather than silently
- *   landing a non-finite cell in a column flagged `allFinite`.
+ *   copied). A reducer that overflows to `Infinity` never reaches it:
+ *   `reduceBucket` maps a non-finite result to missing, exactly as the
+ *   row path's `applyAggregateReducer` does ([PND-NANREP]).
  * - Numeric columns are stamped `allFinite: true` on the same
- *   justification the row path uses — every surviving cell was
- *   finite-checked above. Dropping that flag would be safe but would
- *   quietly deoptimise every downstream reduction of an aggregate
- *   result.
+ *   justification the row path uses — every surviving cell is finite.
+ *   Dropping that flag would be safe but would quietly deoptimise every
+ *   downstream reduction of an aggregate result.
  * - Missing cells (an empty bucket, or an all-missing one) set no
  *   validity bit, so they read back as `undefined` — **not** `NaN`. That
  *   is the sentinel decision this change forces, resolved in favour of
@@ -496,7 +500,8 @@ export function tryAggregateColumnarStore(
     switch (kinds[c]) {
       case 'number':
         // `allFinite: true` on the same grounds the row path claims it:
-        // `assertCellKind` rejected every non-finite cell above, so a
+        // a non-finite result was mapped to missing in `reduceBucket`,
+        // and `assertCellKind` rejects any other non-finite cell, so a
         // surviving column is provably finite.
         column = new Float64Column(numberBufs[c]!, bucketCount, validity, true);
         break;
@@ -533,8 +538,8 @@ export function tryAggregateColumnarStore(
  * result column. That removes the generic sweep's per-row costs: the
  * `snapshotWindow` result-array allocation, the boxed accumulator rows, the
  * polymorphic `col.read(i)` per add/remove, and the post-pass
- * `assertColumnValuesMatchKind` + re-pack over boxed values (each written
- * value is finite-asserted inline instead, same rejection class + message).
+ * `assertColumnValuesMatchKind` + re-pack over boxed values (a non-finite
+ * result is written as a missing cell inline instead).
  *
  * Returns `null` — caller takes the generic sweep — when any column doesn't
  * qualify: a custom-function reducer, a non-`'number'` output kind
@@ -800,14 +805,12 @@ function sweepRollingColumn(
             : Math.sqrt(Math.max(0, wM2 / wN))
           : state!.snapshot();
     if (v === undefined) continue; // missing cell (e.g. all-missing window)
-    if (typeof v !== 'number' || !Number.isFinite(v)) {
-      // Same rejection class + message as the generic path's post-pass
-      // `assertColumnValuesMatchKind` (e.g. a `sum` overflow to Infinity)
-      // — checked at write time since there is no post-pass here.
-      throw new ValidationError(
-        `rolling column '${spec.output}': result ${String(v)} is not a valid 'number' value`,
-      );
-    }
+    // A non-finite result (e.g. a `sum` overflow to Infinity) is a missing
+    // cell — a non-finite number in a number column means missing
+    // ([PND-NANREP]), matching the generic sweep, whose states'
+    // snapshots map it via `finiteOrMissing`. (`v - v !== 0` is true
+    // exactly for NaN and ±Infinity.)
+    if (typeof v !== 'number' || v - v !== 0) continue;
     outValues[index] = v;
     outBits[index >> 3]! |= 1 << (index & 7);
     outDefined += 1;
@@ -815,6 +818,6 @@ function sweepRollingColumn(
 
   const outValidity =
     outDefined === rowCount ? undefined : validityFromBits(outBits, rowCount);
-  // Every written cell was finite-asserted above → `allFinite`.
+  // Every written cell passed the finite test above → `allFinite`.
   return new Float64Column(outValues, rowCount, outValidity, true);
 }

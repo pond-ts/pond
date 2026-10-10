@@ -51,14 +51,14 @@ function buildApply(
  * the first defined value (`float64ColumnFromArray` derives validity from the
  * `undefined`s).
  *
- * **NaN means missing** ([PND-NANREP]). A source column cannot hold a defined
- * `NaN`, but the fold itself can produce one — a `sum` that overflows to
- * `Infinity` and then meets `-Infinity`, or a custom fold returning `NaN`.
- * Such a row is written as **missing** (`NumericOutput.set` /
- * `float64ColumnFromArray` both drop `NaN`). The accumulator itself is not
- * reset: it stays `NaN`, so a built-in fold reads missing from that row on,
- * and a custom fold receives `NaN` as `acc` and may recover. `±Infinity`
- * accumulators stay defined cells.
+ * **A non-finite result means missing** ([PND-NANREP]). A source column
+ * cannot hold a non-finite value, but the fold itself can produce one — a
+ * `sum` that overflows to `±Infinity`, or a custom fold returning `NaN` /
+ * `Infinity`. Such a row is written as **missing** (`NumericOutput.set` /
+ * `float64ColumnFromArray` both drop it). The accumulator itself is not
+ * reset: an overflowed `sum` stays `±Infinity` (or `NaN`), so a built-in
+ * fold reads missing from that row on, and a custom fold receives the
+ * non-finite `acc` and may recover.
  *
  * Returns the reshaped store + the output schema (targets widened to optional
  * `number`). The result-schema cast is the single trust boundary; the

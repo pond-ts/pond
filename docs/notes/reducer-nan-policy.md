@@ -19,17 +19,30 @@ single overflowed cell can't poison a whole bucket's `min` or a window's
 
 ### Three-layer contract
 
-| Layer                                                                                                 | Policy                                                           | Why                                                                                                                                                                                                                  |
-| ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Intake** (row API, `mapColumns`)                                                                    | **Strict** — reject non-finite                                   | User data should be finite; a NaN at the boundary is a bug, caught loud. (Already true.)                                                                                                                             |
-| **Computed writers** (`cumulative`/`diff`/`rate`/`pctChange`/`collapse`, `Float64Column` direct ctor) | **Permissive** — pack honest `±Infinity`; store `NaN` as missing | An overflow on a legitimately huge series is an honest computed result, not a bug. Don't throw. (Resolves #113 — **no builder throw**.) `Inf−Inf` is `NaN`, and NaN in a number column means missing ([PND-NANREP]). |
-| **Reducers**                                                                                          | **Robust** — skip non-finite as missing                          | Degenerate values are exceptional; ignore them and reduce the valid data.                                                                                                                                            |
+| Layer                                                                                                                       | Policy                                                          | Why                                                                                                                                                                                                                                                    |
+| --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Intake** (row API, boxed `withColumn`)                                                                                    | **Strict** — reject non-finite                                  | User data should be finite; a NaN at the boundary is a bug, caught loud. (Already true.) The columnar doors (`fromColumns`, `fromArrow`, typed `withColumn`) read a non-finite value as a gap instead.                                                 |
+| **Computed writers** (`cumulative`/`diff`/`rate`/`pctChange`/`collapse`/`mapColumns`/`rolling`/`aggregate`/`smooth`/`scan`) | **Permissive** — store a non-finite result as **missing**       | An overflow on a legitimately huge series is an honest computed result, not a bug. Don't throw. (Resolves #113 — **no builder throw**.) A non-finite number in a number column means missing ([PND-NANREP]), so it lands as a gap, not a defined cell. |
+| **Reducers**                                                                                                                | **Robust** — skip non-finite input; non-finite result → missing | Degenerate values are exceptional; ignore them and reduce the valid data. A result that overflows answers `undefined`.                                                                                                                                 |
 
-So `±Infinity` can exist inside a packed column (via the permissive middle
-layer) but is invisible to reduction — symmetric with how `undefined`
-(validity-clear) already works. A `NaN` cannot: since [PND-NANREP] every
-writer stores it as a missing cell (validity bit cleared), so it is missing
-to every reader, not only to reducers.
+Since [PND-NANREP] (2026-10, first for `NaN`, then extended to `±Infinity`)
+**no number column holds a non-finite value**: every writer stores `NaN` /
+`Infinity` / `-Infinity` as a missing cell (validity bit cleared), so it is
+missing to every reader, not only to reducers. The input half of the reducer
+policy is therefore belt-and-braces for a column built through the trusted
+`Float64Column` constructor — the one remaining way to hold such a cell — and
+the `allFinite` flag is always `true` on a library-built column. The flag and
+the guarded `reduceColumn` loops are kept for now; removing them is a later
+internal cleanup.
+
+**Reducer results.** Every reducer result path — `bucketStateFor` /
+`rollingStateFor` snapshots (built-in and custom), the row `reduce` filter,
+`reduceColumn` on the `reduce()` fast path, and `aggregate`'s columnar
+`reduceBucket` — maps a non-finite result to `undefined` (`finiteOrMissing`).
+That covers `aggregate`, `rolling`, `byColumn`, `rollingByColumn`, `baseline`
+and the live accumulators in one place, and keeps batch `reduce()` and live
+`reduce` in agreement. The column-level methods (`col.sum()`, `col.mean()`, …)
+are not routed through it: they still return `Infinity` on an overflowing sum.
 
 ## What this fixes (survey findings)
 

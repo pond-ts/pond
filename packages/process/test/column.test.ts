@@ -73,16 +73,17 @@ describe('packColumn', () => {
     ]);
   });
 
-  it('sets allFinite only when every defined cell is finite', () => {
-    // A wrongly-true flag makes core's reducers take an unguarded path
-    // and silently return a wrong result, so this is correctness, not
-    // optimisation.
+  it('packs NaN and ±Infinity as missing, so the column is always allFinite', () => {
+    // A non-finite number in a number column means missing ([PND-NANREP]):
+    // every defined cell is finite, so the flag is always honest.
     expect(packColumn([1, 2, 3]).allFinite).toBe(true);
     expect(packColumn([1, undefined, 3]).allFinite).toBe(true);
-    expect(packColumn([1, Infinity, 3]).allFinite).toBe(false);
-    expect(packColumn([1, -Infinity]).allFinite).toBe(false);
-    // NaN is missing rather than non-finite, so it does not clear the flag.
-    expect(packColumn([1, NaN, 3]).allFinite).toBe(true);
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      const c = packColumn([1, bad, 3]);
+      expect(c.allFinite).toBe(true);
+      expect(c.at(1)).toBeUndefined();
+      expect(c.validity!.definedCount).toBe(2);
+    }
   });
 
   it('round-trips through a bitmap boundary', () => {

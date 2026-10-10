@@ -975,9 +975,10 @@ export function makeDiffView<
         } else {
           v = delta;
         }
-        // NaN means missing ([PND-NANREP]) — e.g. `Infinity - Infinity`.
-        // Matches the batch `diff` / `rate` / `pctChange`.
-        outData[col] = v !== v ? undefined : v;
+        // A non-finite result means missing ([PND-NANREP]) — e.g.
+        // `Infinity - Infinity`, or a delta that overflows. Matches the
+        // batch `diff` / `rate` / `pctChange`.
+        outData[col] = v === undefined || v - v !== 0 ? undefined : v;
       } else {
         outData[col] = undefined;
       }
@@ -1166,9 +1167,11 @@ export function makeCumulativeView<
     for (const [name, s] of accState) {
       const raw = data[name];
       if (typeof raw === 'number') s.acc = s.apply(s.acc, raw);
-      // NaN means missing ([PND-NANREP]): a fold that reaches NaN emits a
-      // gap, matching batch `cumulative`. The accumulator is kept as-is.
-      data[name] = s.acc !== s.acc ? undefined : s.acc;
+      // A non-finite result means missing ([PND-NANREP]): a fold that
+      // overflows or reaches NaN emits a gap, matching batch `cumulative`.
+      // The accumulator is kept as-is.
+      data[name] =
+        s.acc === undefined || s.acc - s.acc !== 0 ? undefined : s.acc;
     }
     return new Event(event.key(), data);
   };

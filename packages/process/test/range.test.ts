@@ -1049,27 +1049,40 @@ describe('[PND-PROCRANGE] multi-output ranged recompute', () => {
   });
 });
 
-describe('[PND-NANREP] range outputs store NaN as missing', () => {
-  it('set(i, NaN) marks the cell missing, even over an earlier set', () => {
-    const out = prepareRange(3, 0, undefined);
+describe('[PND-NANREP] range outputs store non-finite as missing', () => {
+  it('set(i, NaN / ±Infinity) marks the cell missing, even over an earlier set', () => {
+    const out = prepareRange(4, 0, undefined);
     out.set(0, 1);
     out.set(1, 2);
     out.set(1, NaN); // overwrite a defined cell
-    out.set(2, Infinity);
-    const col = sealRange(out, 3);
-    expect([0, 1, 2].map((i) => col.read(i))).toEqual([1, undefined, Infinity]);
-    expect(col.validity!.definedCount).toBe(2);
-    expect(col.allFinite).toBe(false);
+    out.set(2, 3);
+    out.set(2, Infinity); // overwrite a defined cell
+    out.set(3, -Infinity);
+    const col = sealRange(out, 4);
+    expect([0, 1, 2, 3].map((i) => col.read(i))).toEqual([
+      1,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(col.validity!.definedCount).toBe(1);
+    expect(col.allFinite).toBe(true);
   });
 
-  it('sealRange clears a NaN written straight into values / bits', () => {
-    const out = prepareRange(2, 0, undefined);
+  it('sealRange clears a non-finite value written straight into values / bits', () => {
+    const out = prepareRange(4, 0, undefined);
     out.values[0] = NaN;
-    out.bits[0]! |= 0b11;
     out.values[1] = 5;
-    const col = sealRange(out, 2);
-    expect(col.read(0)).toBeUndefined();
-    expect(col.read(1)).toBe(5);
+    out.values[2] = Infinity;
+    out.values[3] = -Infinity;
+    out.bits[0]! |= 0b1111;
+    const col = sealRange(out, 4);
+    expect([0, 1, 2, 3].map((i) => col.read(i))).toEqual([
+      undefined,
+      5,
+      undefined,
+      undefined,
+    ]);
     expect(col.validity!.definedCount).toBe(1);
     expect(col.allFinite).toBe(true);
   });

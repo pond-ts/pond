@@ -126,13 +126,27 @@ describe('TimeSeries.withColumn — validation', () => {
     );
   });
 
-  it('rejects non-finite values (NaN / ±Infinity), matching intake', () => {
+  it('boxed door rejects non-finite values (NaN / ±Infinity), matching intake', () => {
     expect(() => base().withColumn('x', [1, 2, NaN, 4])).toThrow(
       ValidationError,
     );
-    expect(() =>
-      base().withColumn('x', new Float64Array([1, 2, Infinity, 4])),
-    ).toThrow(ValidationError);
+    expect(() => base().withColumn('x', [1, 2, Infinity, 4])).toThrow(
+      ValidationError,
+    );
+  });
+
+  it('typed door stores non-finite values (NaN / ±Infinity) as missing', () => {
+    const s2 = base().withColumn(
+      'x',
+      new Float64Array([1, Infinity, NaN, -Infinity]),
+    );
+    expect([0, 1, 2, 3].map((i) => s2.at(i)!.get('x'))).toEqual([
+      1,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(s2.column('x').nullCount()).toBe(3);
   });
 
   it('throws when the name collides with an existing column', () => {

@@ -134,12 +134,11 @@ export function columnBytes(column: Column): number {
  * array-out (`rollingValues`, `emaValues`) — this confines the boxing to
  * one pass, instead of the boxed array being retained as the node value.
  *
- * `NaN` is treated as **missing**, matching what a study's warm-up
- * means, and never packed as a defined cell: core's reducer non-finite
- * policy requires that a column flagged `allFinite` contain no `NaN`,
- * and a wrongly-set flag makes reducers take an unguarded path and
- * silently return a wrong result. `allFinite` is therefore computed by
- * inspecting every defined cell, not assumed.
+ * A non-finite value (`NaN`, `±Infinity`) is treated as **missing** —
+ * `NaN` is what a study's warm-up means, and a non-finite number in a
+ * number column means missing ([PND-NANREP]) — and never packed as a
+ * defined cell. Every defined cell is therefore finite and the column is
+ * `allFinite`.
  */
 export function packColumn(
   values: ArrayLike<number | undefined | null>,
@@ -148,27 +147,26 @@ export function packColumn(
   const buffer = new Float64Array(length);
   const bits = new Uint8Array(bitmapByteCount(length));
   let defined = 0;
-  let allFinite = true;
 
   for (let i = 0; i < length; i += 1) {
     const v = values[i];
-    if (v === undefined || v === null || Number.isNaN(v)) continue;
+    // `v - v !== 0` is true exactly for NaN and ±Infinity.
+    if (v === undefined || v === null || v - v !== 0) continue;
     buffer[i] = v;
     bits[i >> 3]! |= 1 << (i & 7);
     defined += 1;
-    if (!Number.isFinite(v)) allFinite = false;
   }
 
   // No gaps: omit the bitmap entirely rather than carry an all-ones one.
   // A gapless column is also the case `appendColumn` can round-trip
   // without boxing, so this is worth detecting.
   if (defined === length)
-    return new Float64Column(buffer, length, undefined, allFinite);
+    return new Float64Column(buffer, length, undefined, true);
   return new Float64Column(
     buffer,
     length,
     new PackedValidity(bits, length, defined),
-    allFinite,
+    true,
   );
 }
 
@@ -397,11 +395,11 @@ export interface RangeOutput {
    */
   readonly bits: Uint8Array;
   /**
-   * Marks a cell present, with its value. A `NaN` value marks the cell
-   * **missing** instead (same as {@link RangeOutput.clear}) — core's rule
-   * that NaN in a number column means missing ([PND-NANREP]). Direct
-   * writes through {@link RangeOutput.bits} bypass this; an op doing so
-   * must clear a `NaN` cell's bit itself.
+   * Marks a cell present, with its value. A non-finite value (`NaN`,
+   * `±Infinity`) marks the cell **missing** instead (same as
+   * {@link RangeOutput.clear}) — core's rule that a non-finite number in
+   * a number column means missing ([PND-NANREP]). Direct writes through
+   * {@link RangeOutput.bits} bypass this; {@link sealRange} catches them.
    */
   set(i: number, v: number): void;
   /**
@@ -455,8 +453,9 @@ export function prepareRange(
     values,
     bits,
     set(i, v) {
-      // NaN means missing: clear rather than store a defined NaN.
-      if (v !== v) {
+      // Non-finite means missing: clear rather than store a defined
+      // NaN / ±Infinity. (`v - v !== 0` is true exactly for those.)
+      if (v - v !== 0) {
         values[i] = 0;
         bits[i >> 3]! &= ~(1 << (i & 7));
         return;
@@ -474,32 +473,32 @@ export function prepareRange(
 /**
  * Seals a {@link RangeOutput} into a column, counting validity once.
  *
- * The same pass enforces NaN-means-missing ([PND-NANREP]) for cells an op
- * wrote straight into `values` / `bits`: a defined slot holding `NaN` has
- * its bit cleared and is not counted, so it reads back as a gap.
+ * The same pass enforces non-finite-means-missing ([PND-NANREP]) for cells
+ * an op wrote straight into `values` / `bits`: a defined slot holding `NaN`
+ * or `±Infinity` has its bit cleared and is not counted, so it reads back as
+ * a gap. Every surviving defined cell is finite, so the column is
+ * `allFinite`.
  */
 export function sealRange(out: RangeOutput, length: number): Float64Column {
   const bits = out.bits;
   const values = out.values;
   let defined = 0;
-  let allFinite = true;
   for (let i = 0; i < length; i += 1) {
     if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
     const v = values[i]!;
-    if (v !== v) {
+    if (v - v !== 0) {
       values[i] = 0;
       bits[i >> 3]! &= ~(1 << (i & 7));
       continue;
     }
     defined += 1;
-    if (v === Infinity || v === -Infinity) allFinite = false;
   }
   if (defined === length)
-    return new Float64Column(out.values, length, undefined, allFinite);
+    return new Float64Column(out.values, length, undefined, true);
   return new Float64Column(
     out.values,
     length,
     new PackedValidity(bits, length, defined),
-    allFinite,
+    true,
   );
 }

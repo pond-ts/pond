@@ -879,14 +879,24 @@ ingest; the library won't mutate your data for you.
 
 ### Non-finite numbers mean different things per door
 
-| Door                        | `NaN` / `Infinity` in a value column |
-| --------------------------- | ------------------------------------ |
-| `fromJSON` / constructor    | **Rejected** — throws                |
-| `fromColumns` / `fromArrow` | **Treated as a gap** (missing)       |
+| Door                                   | `NaN` / `Infinity` in a value column |
+| -------------------------------------- | ------------------------------------ |
+| `fromJSON` / constructor               | **Rejected** — throws                |
+| `withColumn` with a plain array        | **Rejected** — throws                |
+| `fromColumns` / `fromArrow`            | **Treated as a gap** (missing)       |
+| `withColumn` with a `Float64Array`     | **Treated as a gap** (missing)       |
+| An operator's own result (overflow, …) | **Treated as a gap** (missing)       |
 
 The columnar doors are the trusted fast path, where a decoder's `NaN` is
 overwhelmingly a sentinel for "no reading" rather than a bad value. If you need a
 non-finite to be an _error_ in columnar input, check it before ingest.
+
+Whatever the door, a number column never _holds_ a non-finite value: `NaN`,
+`Infinity` and `-Infinity` all mean missing. So an operator whose arithmetic
+overflows — a `cumulative` sum, a `rolling` / `aggregate` `sum`, a `diff` of
+`MAX - (-MAX)`, a `mapColumns` mapper returning `Infinity` — writes a gap there
+(`undefined` on read, counted by `nullCount()`), and `reduce()` answers
+`undefined` rather than `Infinity`.
 
 ### Mutating a buffer you handed to `fromColumns`
 

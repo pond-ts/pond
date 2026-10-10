@@ -182,9 +182,11 @@ export class Float64ColumnBuilder extends ColumnBuilderBase<number> {
   }
 
   #writeAt(rowIndex: number, value: number | undefined): void {
-    // NaN means missing ([PND-NANREP], see `Float64Column`): a NaN is
-    // written exactly as `undefined` would be, never as a defined cell.
-    if (value === undefined || value !== value) {
+    // A non-finite number means missing ([PND-NANREP], see
+    // `Float64Column`): `NaN` / `±Infinity` is written exactly as
+    // `undefined` would be, never as a defined cell. (`v - v !== 0` is
+    // true for `NaN` and `±Infinity`, false for every finite number.)
+    if (value === undefined || value - value !== 0) {
       // Lazily allocate validity bitmap on first invalid cell.
       this.#ensureValidityCapacity(rowIndex + 1);
       this.#values[rowIndex] = 0;

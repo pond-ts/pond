@@ -88,11 +88,47 @@ include new features and type-level changes; patch bumps are strictly additive.
   them. Same in live `diff` / `rate` / `pctChange` / `cumulative` views and in
   `@pond-ts/process` `RangeOutput.set` / `sealRange`. A `cumulative` that hits
   `NaN` keeps its accumulator, so built-in folds read missing from that row on.
-  **`±Infinity` is unchanged** — it is a real number and stays a defined
-  value. Storage is unchanged (still the validity bitmap); this locks the rule
-  so a later NaN-in-buffer storage switch is invisible. **Migration:** code
-  that tested `Number.isNaN(v)` on an operator's output should test
-  `v === undefined`.
+  `±Infinity` now follows the same rule — see the next entry. Storage is
+  unchanged (still the validity bitmap); this locks the rule so a later
+  NaN-in-buffer storage switch is invisible. **Migration:** code that tested
+  `Number.isNaN(v)` on an operator's output should test `v === undefined`.
+
+- **core** (**breaking**): **Any non-finite number — `NaN`, `Infinity` or
+  `-Infinity` — in a number column means missing.** `Infinity` used to get five
+  different answers; it now gets one. A non-finite result is stored as a
+  **missing** cell (`undefined` on read, counted by `nullCount()` /
+  `hasMissing()`, skipped by `scan()`), so `count() + nullCount() === length`
+  always holds. What changed:
+  - **No longer throws:** `mapColumns` (a mapper returning `NaN` /
+    `±Infinity` — was a `RangeError`), and `rolling` / `aggregate` / `smooth`
+    / `baseline` / `byColumn` / `pivotByGroup` / `arrayAggregate` whose result
+    overflows (was a `ValidationError`). Those cells are now missing.
+  - **No longer a defined value:** `diff` / `rate` / `pctChange` /
+    `cumulative` / `scan` / `collapse` results that overflow to `±Infinity`
+    (e.g. `diff` of `MAX - (-MAX)`, a `cumulative` sum past `Number.MAX_VALUE`
+    — missing from that row on, as its accumulator stays `Infinity`).
+  - **Reducers never answer non-finite:** a reducer result that overflows
+    (`sum`, `avg`, `stdev`, or a custom reducer returning `Infinity`) is
+    `undefined` — in `reduce()` too, which used to return `Infinity`. A running
+    window `sum` that has overflowed can stay missing after the large values
+    leave the window (its incremental sum stays `Infinity`).
+    (The column methods `col.sum()` / `col.mean()` are unchanged.)
+  - **Doors:** `withColumn` with a `Float64Array` reads `±Infinity` as a gap,
+    as it already read `NaN` (was a `ValidationError`). Row intake
+    (`new TimeSeries`, `fromJSON`, `LiveSeries.push`) and `withColumn` with a
+    plain array still reject `NaN` and `±Infinity` alike; `fromColumns` /
+    `fromArrow` already read both as a gap.
+  - **Live:** `diff` / `rate` / `pctChange` / `cumulative` views and every live
+    accumulator (`aggregate`, `rolling`, `reduce`) emit `undefined` for a
+    non-finite result, so a live view's `toTimeSeries()` no longer throws on an
+    overflow. `@pond-ts/process` `RangeOutput.set` / `sealRange` / `packColumn`
+    store `±Infinity` as missing too.
+
+  **Migration:** code that caught a `ValidationError` / `RangeError` from these
+  operators to detect overflow, or tested `v === Infinity` on their output,
+  should test `v === undefined`. Code relying on
+  `withColumn(name, float64Array)` to reject `Infinity` must check it before
+  the call.
 
 - **charts** (**breaking**): **An `<AreaChart>`'s `baseline` no longer changes
   the y-axis range.** Since v0.71.0 the default zero baseline (and any numeric baseline)

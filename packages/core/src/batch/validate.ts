@@ -309,10 +309,29 @@ export function validateAndNormalize<S extends SeriesSchema>(
  * mechanism — preserving the identity invariant `eventAt(i) ===
  * eventAt(i)` for the store's lifetime.
  */
+/**
+ * Options for {@link validateAndNormalizeColumnar}.
+ *
+ * `nonFiniteAsMissing` is the **computed-rows** reading of a number cell:
+ * a `NaN` / `±Infinity` in a `number` column is stored as missing instead
+ * of rejected. Library operators that assemble their output as rows
+ * (`smooth`, `baseline`, `align`, the row paths of `aggregate` / `rolling`)
+ * use it — a non-finite number in a number column means missing
+ * ([PND-NANREP]), and their arithmetic can overflow. User-facing row intake
+ * (`new TimeSeries`, `fromJSON`, `LiveSeries.push`) leaves it off and keeps
+ * rejecting `NaN` and `±Infinity` alike. The cell becomes missing *before*
+ * the required check, so a required column still refuses it.
+ */
+export type ColumnarIntakeOptions = {
+  readonly nonFiniteAsMissing?: boolean;
+};
+
 export function validateAndNormalizeColumnar<S extends SeriesSchema>(
   input: TimeSeriesInput<S>,
+  options: ColumnarIntakeOptions = {},
 ): { keys: KeyColumn; columns: Map<string, Column> } {
   const { schema, rows } = input;
+  const nonFiniteAsMissing = options.nonFiniteAsMissing === true;
   if (!schema.length) {
     throw new ValidationError('schema must have at least one column');
   }
@@ -416,7 +435,17 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
     // — for N=1M × 2 cols that's 2M short-lived closures.
     for (let c = 0; c < colCount; c += 1) {
       const def = schema[c + 1]!;
-      const value = row[c + 1];
+      let value = row[c + 1];
+      // Computed rows: a non-finite number cell is missing ([PND-NANREP]).
+      // `value - value !== 0` is true exactly for NaN and ±Infinity.
+      if (
+        nonFiniteAsMissing &&
+        typeof value === 'number' &&
+        value - value !== 0 &&
+        colKinds[c] === 'number'
+      ) {
+        value = undefined;
+      }
       const required = def.required !== false;
       if (value === undefined && required) {
         throw new ValidationError(

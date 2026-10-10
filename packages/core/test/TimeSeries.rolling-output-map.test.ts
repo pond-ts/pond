@@ -327,21 +327,23 @@ describe('mixed shorthand + spec mapping (F1 type/runtime parity)', () => {
   });
 });
 
-describe('TimeSeries.rolling — non-finite / wrong-kind output is rejected', () => {
+describe('TimeSeries.rolling — non-finite output is missing, wrong-kind is rejected', () => {
   // The columnar output path (3C) assembles result columns via trusted
   // construction, which skips the constructor's strict intake — AND the
   // `*FromArray` builders silently coerce a kind mismatch to a missing cell.
   // So a defined result that doesn't match the declared output kind (a
-  // non-finite number, or a wrong-typed value from a custom reducer / `kind`
-  // override) is rejected at write, preserving the throw the old event-based
-  // path enforced via intake (matching `mapColumns`). Missing cells (the
-  // minSamples warm-up) are unaffected. (Codex finding on #225.)
+  // wrong-typed value from a custom reducer / `kind` override) is rejected at
+  // write, preserving the throw the old event-based path enforced via intake.
+  // A non-finite *number* is different: it is stored as missing, because a
+  // non-finite number in a number column means missing ([PND-NANREP]).
+  // Missing cells (the minSamples warm-up) are unaffected. (Codex finding on
+  // #225.)
   const numSchema = [
     { name: 'time', kind: 'time' },
     { name: 'v', kind: 'number' },
   ] as const;
 
-  it('throws when a window sum overflows to Infinity', () => {
+  it('stores a window sum that overflows to Infinity as missing', () => {
     const s = new TimeSeries({
       name: 's',
       schema: numSchema,
@@ -351,13 +353,15 @@ describe('TimeSeries.rolling — non-finite / wrong-kind output is rejected', ()
         [2000, 1e308],
       ],
     });
-    // 3e308 overflows to Infinity inside the 10s window → rejected.
-    expect(() => s.rolling('10s', { v: 'sum' })).toThrow(
-      /not a valid 'number' value/,
-    );
+    // 2e308 already overflows to Infinity inside the 10s window → missing.
+    const r = s.rolling('10s', { v: 'sum' });
+    expect(r.at(0)!.get('v')).toBe(1e308);
+    expect(r.at(1)!.get('v')).toBeUndefined();
+    expect(r.at(2)!.get('v')).toBeUndefined();
+    expect(r.column('v').nullCount()).toBe(2);
   });
 
-  it('throws when a custom reducer returns a non-finite number', () => {
+  it('stores a non-finite number from a custom reducer as missing', () => {
     const s = new TimeSeries({
       name: 's',
       schema: numSchema,
@@ -366,9 +370,9 @@ describe('TimeSeries.rolling — non-finite / wrong-kind output is rejected', ()
         [1000, 2],
       ],
     });
-    expect(() =>
-      s.rolling('10s', { v: { from: 'v', using: () => Infinity } }),
-    ).toThrow(/not a valid 'number' value/);
+    const r = s.rolling('10s', { v: { from: 'v', using: () => Infinity } });
+    expect(r.length).toBe(2);
+    expect(r.column('v').nullCount()).toBe(2);
   });
 
   it('throws on a wrong-kind result (number reducer, string kind override)', () => {

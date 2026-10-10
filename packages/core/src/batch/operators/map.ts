@@ -54,16 +54,13 @@ function columnFromValuesByKind(kind: string, values: unknown[]): Column {
  * - **Missing cells carry.** The mapper is called only on defined
  *   values; a missing (`undefined`) cell stays missing (the mapper is
  *   not invoked).
- * - **Numeric results must be finite.** For a `number` column, a mapper
- *   result of `NaN` or `±Infinity` throws a `RangeError` at write —
- *   matching construction intake (`assertCellKind`), which rejects
- *   non-finite numbers. This keeps packed numeric columns NaN-free, so
- *   the columnar fast-path and the row-path reducers can never diverge
- *   on the same bucket (the bug audit v2 §1.3 reproduced). A stored
- *   `NaN` *is* a defined value, so the mapper is still invoked on it —
- *   use that to clean it (map `NaN` to a finite number, or to
- *   `undefined` for a missing cell). (Array columns are not
- *   element-checked here; they don't feed the numeric reducers.)
+ * - **A non-finite numeric result is missing.** For a `number` column,
+ *   a mapper result of `NaN` or `±Infinity` is stored as a **missing**
+ *   cell (reads back `undefined`) — the rule that a non-finite number in
+ *   a number column means missing ([PND-NANREP], see `Float64Column`).
+ *   `float64ColumnFromArray` enforces it. (This used to throw a
+ *   `RangeError`.) A source column never holds a non-finite value, so
+ *   the mapper only ever sees finite numbers.
  * - **Same kind, schema-stable.** The mapper returns the column's own
  *   kind (the method's type enforces `(value: T) => T`), so the output
  *   column keeps its kind and the schema is unchanged. The result is
@@ -79,9 +76,6 @@ function columnFromValuesByKind(kind: string, values: unknown[]): Column {
  * same-kind builder can't store: `columnFromValuesByKind` coerces it
  * to missing, so the cell reads back as a gap the declared schema may
  * not advertise. Both are type-illegal inputs, not handled specially.
- * (A non-finite *number* from a numeric mapper is the one same-kind
- * case that throws rather than coerces — it would corrupt the packed
- * column, not read back as a gap.)
  */
 export function mapOp<S extends SeriesSchema>(
   store: ColumnarStore<S>,
@@ -103,12 +97,6 @@ export function mapOp<S extends SeriesSchema>(
     const col = store.columns.get(name);
     if (col === undefined) continue;
     const kind = colKind.get(name)!;
-    // Numeric columns reject a non-finite (NaN / ±Infinity) mapper result at
-    // write, matching construction intake (assertCellKind). A packed NaN would
-    // otherwise be unreachable-by-assumption for the reduce kernels and diverge
-    // the fast path from the row path (audit v2 §1.3). Hoisted out of the loop
-    // so non-numeric columns pay nothing.
-    const rejectNonFinite = kind === 'number';
     const out = new Array<unknown>(n);
     for (let i = 0; i < n; i += 1) {
       const v = col.read(i);
@@ -116,20 +104,9 @@ export function mapOp<S extends SeriesSchema>(
         out[i] = undefined;
         continue;
       }
+      // A non-finite number result is stored as missing by the numeric
+      // builder (`float64ColumnFromArray`) — no check needed here.
       const mapped = fn(v);
-      if (
-        rejectNonFinite &&
-        typeof mapped === 'number' &&
-        !Number.isFinite(mapped)
-      ) {
-        throw new RangeError(
-          `mapColumns: the mapper for column '${name}' returned a non-finite ` +
-            `number (${mapped}) at row ${i}. Numeric columns reject NaN and ` +
-            `±Infinity at write, consistent with intake — a packed NaN would ` +
-            `diverge the fast-path and row-path reducers on the same data. ` +
-            `Map to a finite number, or to undefined for a missing cell.`,
-        );
-      }
       out[i] = mapped;
     }
     result = withColumnReplaced(
