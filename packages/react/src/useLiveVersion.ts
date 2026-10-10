@@ -20,7 +20,7 @@ export interface UseLiveVersionOptions {
 
 /**
  * The React change signal for reading columns off a live source without
- * manufacturing a `TimeSeries` snapshot (§A pull/read, experimental).
+ * manufacturing a `TimeSeries` snapshot (§A pull/read).
  *
  * `LiveSeries` / `LiveView` mutate in place, so a `useMemo([liveView])`
  * keyed on the view never re-runs. This hook gives React a
@@ -45,7 +45,7 @@ export interface UseLiveVersionOptions {
  * that emit it — e.g. `clear()` / retention prune), and advances the
  * revision on subscribe so a change between render and the subscribe
  * effect is still picked up (the `useSyncExternalStore` post-subscribe
- * re-read). Experimental (0.19.0) — surface may change in 0.19.x.
+ * re-read).
  */
 export function useLiveVersion<S extends SeriesSchema>(
   source: LiveSource<S>,
