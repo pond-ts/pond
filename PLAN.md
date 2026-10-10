@@ -644,17 +644,6 @@ consumer signal. Plan:
   `arrayColumnFromArray`, plus the sort permutation for both — but it widens
   `RawColumns` and `fromColumns`' contract, so it wants its own PR.
   Friction-gated: no consumer has asked yet.
-- **[PND-TSJSONT]** — narrow `TimeSeries.toJSON`'s return type on
-  `rowFormat`, as `LiveSeries.toJSON` already does. Long blocked by the
-  TS2394 cascade, which [PND-TSCOLS] isolated: the trigger is a
-  key-remapped mapped type in a **method return position on `TimeSeries`**,
-  and a method-level type parameter defers past it (the workaround
-  `toColumns` now uses, written up on its doc comment). Unblocked, but it
-  changes an existing public return type, so it needs its own decision.
-  While in there: `toJSON()`'s **tuple** rows measure consistently _slower_
-  than its object rows (25.9 ms vs 18.6 ms at 100k × 6) — the tuple path
-  allocates a `.map()` plus a spread per row where the object path writes
-  properties into one literal. Probably a free win.
 - **[PND-REORD]** — Columnar reorder corral (§B): unearned, RFC context
   until a signal arrives.
 - **[PND-LROLL]** — Live rolling columnar reducer state (Step 3C-live): the
@@ -748,8 +737,6 @@ consumer signal. Plan:
   append; design settled, build when the binary WS feed consumer arrives.
 - **[PND-INGEST]** — `fromColumns({ onOutOfOrder: 'throw'|'sort'|'clamp' })`;
   fold the day-old `sort` boolean into the enum.
-- **[PND-TSVAR]** — `TimeSeries<S>` variance refactor (`toJSON` narrowing,
-  `required: false` rows); try the extracted-serializer path first.
 - **[PND-GATHER]** — Dashboard snapshot-cost queue:
   `partitionBy().toMap()` gather-only, `column.dropMissing()`, two doc
   nudges.

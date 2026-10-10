@@ -1285,42 +1285,42 @@ export class TimeSeries<S extends SeriesSchema> {
    * emitted as `null`. By default rows are emitted as arrays; use `rowFormat: "object"` for rows
    * keyed by schema column names.
    *
-   * Return type is the broader `TimeSeriesJsonInput<SeriesSchema>`
-   * union — `result.rows` is typed as
-   * `ReadonlyArray<JsonRowForSchema<S> | JsonObjectRowForSchema<S>>`
-   * regardless of which `rowFormat` was passed. Consumers either
-   * cast or use the narrowed shape types
-   * `TimeSeriesJsonOutputArray<S>` / `TimeSeriesJsonOutputObject<S>`
-   * declared in `./types.js` for downstream typing.
+   * The return type **narrows on `rowFormat`**, as {@link LiveSeries.toJSON}
+   * does: omitted or `'array'` gives `TimeSeriesJsonOutputArray<S>` (tuple
+   * rows), `'object'` gives `TimeSeriesJsonOutputObject<S>` (schema-keyed
+   * rows), and a `rowFormat` only known as `JsonRowFormat` gives the union of
+   * the two. All three are assignable to `TimeSeriesJsonInput<S>`, so
+   * `TimeSeries.fromJSON(series.toJSON())` round-trips without a cast.
    *
-   * **Why no overload narrowing here?** A narrowed-overload pair
-   * (return-type-keyed on `rowFormat`) cascades TS2394 errors
-   * through several unrelated overload sets in this file
-   * (`pivotByGroup`, `rolling`, `arrayAggregate`, `arrayExplode`).
-   * The counterpart on {@link LiveSeries.toJSON} DOES narrow — for
-   * the networked snapshot path, the ergonomic win is already
-   * there.
-   *
-   * The cascade was long recorded here as un-isolated. It is now
-   * isolated, on {@link TimeSeries.toColumns}: the trigger is a
-   * **key-remapped mapped type** (`{ [C in S[number] as C['name']]:
-   * … }` — which is what `JsonObjectRowForSchema<S>` is) in a
-   * **method return position on this class**, and a method-level
-   * type parameter defers it past whatever resolution order trips
-   * it. `toColumns` carries the full write-up and the three
-   * workarounds that do *not* work. Narrowing this method is
-   * therefore unblocked, but it changes an existing public return
-   * type, so it wants its own decision rather than a drive-by —
-   * tracked as [PND-TSJSONT] in PLAN.md.
+   * **Why the `<T extends S = S>` parameter.** Same workaround, same reason,
+   * as {@link TimeSeries.toColumns}, which carries the full write-up:
+   * `JsonObjectRowForSchema<S>` is a key-remapped mapped type, and naming one
+   * directly in a method return position on this class cascades TS2394
+   * through unrelated overload sets (`pivotByGroup`, `rolling`,
+   * `arrayAggregate`, `arrayExplode`). A method-level type parameter defers
+   * the instantiation and the cascade disappears. `T` defaults to `S`, so
+   * `series.toJSON()` is exactly the precise type; an **explicit** `T` is
+   * unchecked (on a wide `TimeSeries<SeriesSchema>` the bound admits any
+   * schema), so don't write one.
    */
+  toJSON<T extends S = S>(options?: {
+    rowFormat?: 'array';
+  }): TimeSeriesJsonOutputArray<T>;
+  toJSON<T extends S = S>(options: {
+    rowFormat: 'object';
+  }): TimeSeriesJsonOutputObject<T>;
+  toJSON<T extends S = S>(options: {
+    rowFormat?: JsonRowFormat;
+  }): TimeSeriesJsonOutputArray<T> | TimeSeriesJsonOutputObject<T>;
   toJSON(
     options: { rowFormat?: JsonRowFormat } = {},
-  ): TimeSeriesJsonInput<SeriesSchema> {
+  ): TimeSeriesJsonOutputArray<any> | TimeSeriesJsonOutputObject<any> {
     const rowFormat = options.rowFormat ?? 'array';
+    const keyColumn = this.schema[0]!;
     const dataColumns = this.schema.slice(1);
+    const width = dataColumns.length;
 
     if (rowFormat === 'object') {
-      const keyColumn = this.schema[0]!;
       const rows = this.events.map((event) => {
         const row: Record<string, unknown> = {
           [keyColumn.name]: serializeJsonKey(
@@ -1347,21 +1347,31 @@ export class TimeSeries<S extends SeriesSchema> {
       };
     }
 
+    // One array per row, cells pushed in place. The earlier shape built a
+    // second throwaway array per row (`dataColumns.map(...)`) and spread it
+    // into the first, which made tuple rows measurably slower than object
+    // rows — see `scripts/perf-to-json.mjs`.
     const rows = this.events.map((event) => {
       const data = event.data();
-      return Object.freeze([
-        serializeJsonKey(this.schema[0]!.kind, event.key(), rowFormat),
-        ...dataColumns.map((column) =>
-          serializeJsonValue(data[column.name as keyof typeof data]),
-        ),
-      ]) as JsonRowForSchema<SeriesSchema>;
+      const row: unknown[] = [
+        serializeJsonKey(keyColumn.kind, event.key(), rowFormat),
+      ];
+      for (let c = 0; c < width; c += 1) {
+        row.push(
+          serializeJsonValue(data[dataColumns[c]!.name as keyof typeof data]),
+        );
+      }
+      return Object.freeze(row) as unknown as JsonRowForSchema<SeriesSchema>;
     });
 
-    return {
+    // Annotated local rather than a bare literal: the implementation
+    // signature's `<any>` instantiation doesn't accept the tuple rows directly.
+    const out: TimeSeriesJsonOutputArray<SeriesSchema> = {
       name: this.name,
       schema: this.schema as SeriesSchema,
       rows,
     };
+    return out;
   }
 
   /**

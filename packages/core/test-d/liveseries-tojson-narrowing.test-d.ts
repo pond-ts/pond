@@ -3,13 +3,14 @@
  * `rowFormat`. The companion friction note (#3 from the gRPC
  * experiment's M1) was that the broad `TimeSeriesJsonInput`-style
  * return forced consumers to cast `result.rows` before iterating.
- * The narrowing closes that for the live snapshot path —
- * `TimeSeries.toJSON` still returns broad (cascade issue
- * documented at the call site).
+ * The narrowing closes that for the live snapshot path;
+ * `TimeSeries.toJSON` narrows the same way since [PND-TSJSONT]
+ * (see `timeseries-tojson-narrowing.test-d.ts`).
  */
 import { LiveSeries } from '../src/index.js';
 import type {
   JsonObjectRowForSchema,
+  JsonRowFormat,
   JsonRowForSchema,
   TimeSeriesJsonOutputArray,
   TimeSeriesJsonOutputObject,
@@ -56,3 +57,11 @@ void _badAssign;
 // @ts-expect-error rows shapes diverge in the other direction too
 const _badAssignReverse: TimeSeriesJsonOutputObject<typeof schema> = arrayOut;
 void _badAssignReverse;
+
+// A `rowFormat` only known as `JsonRowFormat` resolves to the union (this
+// call had no matching overload before [PND-TSJSONT]).
+declare const fmt: JsonRowFormat;
+const dynamicOut:
+  | TimeSeriesJsonOutputArray<typeof schema>
+  | TimeSeriesJsonOutputObject<typeof schema> = live.toJSON({ rowFormat: fmt });
+void dynamicOut;

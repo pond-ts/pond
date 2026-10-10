@@ -147,7 +147,24 @@ a distinct, sometimes-more-correct op from sort. Fold the existing
 `sort?: boolean` into the enum (keep `sort: true` as a one-release alias);
 default stays `throw`.
 
-### [PND-TSVAR] — `TimeSeries<S>` variance refactor + `toJSON` narrowing
+### [PND-TSVAR] — `TimeSeries<S>` variance refactor + `toJSON` narrowing — CLOSED (no refactor needed)
+
+**Outcome.** Both halves are done, and neither needed the class-wide variance
+refactor this entry assumed:
+
+- **`required: false` rows** had already shipped — `RowForSchema` makes an
+  optional **value** cell `| undefined` (the key never), `NormalizedRowForSchema`
+  reports it on `.rows` (estela F-geo-row-optional; CHANGELOG "`RowForSchema`
+  honors `required: false`", pinned in `test-d/types.test-d.ts`). This entry
+  had gone stale; the archived "can't" note below predates it.
+- **`toJSON` narrowing** shipped as [PND-TSJSONT] (see
+  [PND_COLUMNAR_PLAN.md](PND_COLUMNAR_PLAN.md)): the "variance" cascade was
+  really the TS2394 trigger [PND-TSCOLS] isolated — a key-remapped mapped type
+  in a method return position on `TimeSeries` — and a method-level
+  `<T extends S = S>` defers past it. The extracted-serializer idea was not
+  needed.
+
+Original write-up, kept for the reasoning trail:
 
 `toJSON()` returns the loose schema and `RowForSchema` can't honor
 `required: false` because tightening either propagates variance through every

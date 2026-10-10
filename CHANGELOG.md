@@ -89,6 +89,24 @@ include new features and type-level changes; patch bumps are strictly additive.
   stack, a quantity like throughput — put zero on the axis with
   `<YAxis min={0}>` (`max={0}` for an all-negative series). Areas whose data
   already reaches their baseline, or whose axis is pinned, are unchanged.
+- `pond-ts` (**breaking**, types only): **`TimeSeries.toJSON()`'s return
+  type narrows on `rowFormat`**, matching `LiveSeries.toJSON()`. The default
+  / `'array'` form returns `TimeSeriesJsonOutputArray<S>` and
+  `{ rowFormat: 'object' }` returns `TimeSeriesJsonOutputObject<S>`, so
+  `result.rows` is typed against your schema with no cast; a `rowFormat`
+  typed as `JsonRowFormat` gets the union. It used to return the loose
+  `TimeSeriesJsonInput<SeriesSchema>`. **Migration:** drop any
+  `as TimeSeriesJsonInput<…>` / `as TimeSeriesJsonOutput…<…>` casts (they
+  still compile). Two patterns now fail to compile: annotating an
+  **object**-form result as `TimeSeriesJsonInput<SeriesSchema>` (use
+  `TimeSeriesJsonInput<typeof schema>`, or no annotation), and reading a
+  column by name off a default (tuple) row, which was always `undefined` at
+  runtime. `LiveSeries.toJSON()` also gains the `JsonRowFormat` overload, which
+  previously had no matching signature. [PND-TSJSONT]
+- `pond-ts`: **`TimeSeries.toJSON()` tuple rows are ~2.5–3.5× faster at 100k
+  rows** — one array per row, filled in place, instead of a mapped array spread
+  into a second one. Tuple rows were slower than object rows; they now match or
+  beat them. Output unchanged.
 
 ## [0.72.0] — 2026-10-08
 

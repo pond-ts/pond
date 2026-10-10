@@ -333,7 +333,9 @@ const keyed = series.toJSON({ rowFormat: 'object' });
 // rows: [{ time: 1735689600000, cpu: 0.31, host: "api-1" }, ...]
 ```
 
-Both formats round-trip through `fromJSON` with the same output.
+Both formats round-trip through `fromJSON` with the same output. The return
+type follows the option, so `compact.rows` is typed as tuples and `keyed.rows`
+as `{ time, cpu, host }` records against your schema — no cast either way.
 
 #### Round-trip fidelity
 
