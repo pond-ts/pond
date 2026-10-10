@@ -77,6 +77,18 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **core** (**breaking**): **`select(...keys)` throws on a key that isn't a
+  column, and on an array argument.** It used to drop unknown keys silently, so
+  a typo — or `select(['a', 'b'])` instead of `select('a', 'b')` — returned an
+  empty-payload series with no error. Now an unknown key throws a `RangeError`
+  naming it and listing the valid columns, and an array argument throws a
+  `TypeError` telling you to spread it (`select(...names)`). Applies to
+  `TimeSeries`, `LiveSeries`, `LiveView`, `LiveAggregation` and
+  `LiveRollingAggregation` (the live ones throw when the view is built, not on
+  the first event). `Event.select` rejects an array argument but still
+  tolerates absent keys, since an event payload may omit optional fields.
+  Duplicate keys are still accepted and select the column once. **Migration:**
+  fix the misspelled column, or spread the array.
 - **charts** (**breaking**): **An `<AreaChart>`'s `baseline` no longer changes
   the y-axis range.** Since v0.71.0 the default zero baseline (and any numeric baseline)
   was pulled into the auto-fit domain, so an area over data running $100–$200

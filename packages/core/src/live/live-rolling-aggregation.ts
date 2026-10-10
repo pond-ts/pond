@@ -2,6 +2,7 @@ import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
 } from '../batch/aggregate-columns.js';
+import { assertSelectKeys } from '../batch/time-series.js';
 import { Event } from '../core/event.js';
 import { Time } from '../core/time.js';
 import { LiveAggregation } from './live-aggregation.js';
@@ -351,6 +352,7 @@ export class LiveRollingAggregation<
   select<const Keys extends readonly (keyof EventDataForSchema<Out>)[]>(
     ...keys: Keys
   ): LiveView<SelectSchema<Out, Keys[number] & string>> {
+    assertSelectKeys('select', this.schema as SeriesSchema, keys);
     const newSchema = Object.freeze([
       this.schema[0]!,
       ...this.schema.slice(1).filter((c) => keys.includes(c.name as any)),

@@ -17,7 +17,7 @@ import {
   type LiveRollingOptions,
   type RollingWindow,
 } from './live-rolling-aggregation.js';
-import { TimeSeries } from '../batch/time-series.js';
+import { TimeSeries, assertSelectKeys } from '../batch/time-series.js';
 import {
   bucketStateFor,
   type AggregateBucketState,
@@ -205,6 +205,7 @@ export class LiveAggregation<
   select<const Keys extends readonly (keyof EventDataForSchema<Out>)[]>(
     ...keys: Keys
   ): LiveView<SelectSchema<Out, Keys[number] & string>> {
+    assertSelectKeys('select', this.schema as SeriesSchema, keys);
     const newSchema = Object.freeze([
       this.schema[0]!,
       ...this.schema.slice(1).filter((c) => keys.includes(c.name as any)),
