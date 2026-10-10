@@ -8,13 +8,16 @@
  * unconditionally, so pixel collisions are resolved where the pixels and the
  * font are known: the axis.
  *
- * The contract: of two colliding ticks the **later** is drawn, the survivors
- * are re-labelled so a period turn the dropped tick carried moves onto the
- * next drawn one, and a dropped tick only ever drops itself. Two earlier
- * designs (rank by bold / seam, then later-wins only on ties) each kept a
- * stale promotion somewhere — a Monday captioned with Sunday's date, a year
- * turn that vanished — which is why the survivors are re-labelled rather than
- * ranked.
+ * The contract: labels are kept greedily by priority — a period turn, then a
+ * session open, then a plain clock tick; under `'auto'` the edge ticks first;
+ * between turns the later, between plain ticks the earlier — so a tick is only
+ * dropped by a survivor. The survivors are then re-labelled, so a period turn
+ * a dropped tick carried moves onto the next drawn one, and the fit repeats
+ * until nothing collides. Three earlier designs failed review: ranking without
+ * re-labelling kept stale promotions (a Monday captioned with Sunday's date, a
+ * year turn that vanished); always keeping the later tick cascaded under
+ * `'auto'` (each dropped edge re-anchored the next into the same collision)
+ * and moved dates off their session opens.
  *
  * Runs on the no-canvas estimate path (happy-dom / node), so widths are
  * `length · fontSize · 0.62`.
@@ -72,29 +75,92 @@ describe('fitTimeLabels — which ticks keep their labels', () => {
     }
   });
 
-  it('of two colliding ticks the later is drawn — whatever either carries', () => {
-    // A promoted, bold earlier tick does not outrank a plain later one: the
-    // caller re-labels the survivor, so its period turn is not lost.
+  it('a period turn outlasts a clock label, on either side', () => {
+    // The Tidal shape — `Sep 29` (a stray bar's open) 4px left of `15:30`.
     const ticks = [
       { x: 360, label: '21:30' },
       { x: 480, label: 'Sep 29', bold: true },
-      { x: 484, label: '15:30' },
+      { x: 484, label: '15:30', seam: true },
       { x: 604, label: '16:00' },
     ];
     for (const align of ALIGNS) {
-      expect(kept(ticks, align)).toEqual(['21:30', '15:30', '16:00']);
+      expect(kept(ticks, align)).toEqual(['21:30', 'Sep 29', '16:00']);
     }
+    // The seam shape — the last clock tick, then the next day's open.
+    const seam = [
+      { x: 0, label: '18:00' },
+      { x: 90, label: '21:00' },
+      { x: 105, label: 'Sep 23', bold: true, seam: true },
+      { x: 300, label: '12:00' },
+    ];
+    for (const align of ALIGNS) {
+      expect(kept(seam, align)).toEqual(['18:00', 'Sep 23', '12:00']);
+    }
+  });
+
+  it('between two turns the later wins; between plain ticks the earlier', () => {
+    // CME in UTC: the Sunday 23:00 open, then Monday's midnight turn.
+    const turns = [
+      { x: 0, label: '12:00' },
+      { x: 200, label: 'Jan 4', bold: true, seam: true },
+      { x: 210, label: 'Jan 5', bold: true },
+      { x: 400, label: '06:00' },
+    ];
+    for (const align of ALIGNS) {
+      expect(kept(turns, align)).toEqual(['12:00', 'Jan 5', '06:00']);
+    }
+    const plain = [
+      { x: 0, label: '14:00' },
+      { x: 100, label: '15:30' },
+      { x: 110, label: '15:45' },
+      { x: 300, label: '18:00' },
+    ];
+    for (const align of ALIGNS) {
+      expect(kept(plain, align)).toEqual(['14:00', '15:30', '18:00']);
+    }
+  });
+
+  it('a session open outranks a plain clock label', () => {
+    // Elapsed / undated labels carry no turn: the tick on the seam (the
+    // instant really at that pixel) beats the late-session tick before it.
+    const elapsed = [
+      { x: 0, label: '00:00', seam: true },
+      { x: 280, label: '06:00' },
+      { x: 300, label: '1d 00:00', seam: true },
+      { x: 600, label: '1d 06:00' },
+    ];
+    for (const align of ALIGNS) {
+      expect(kept(elapsed, align)).toEqual(['00:00', '1d 00:00', '1d 06:00']);
+    }
+  });
+
+  it("under 'auto' an edge label keeps its place against an inner one", () => {
+    // `auto` anchors the edge labels inward, so the first overlaps its
+    // neighbour where a centred label wouldn't. Dropping the neighbour settles
+    // it; dropping the edge would re-anchor the next label into the same
+    // collision, pass after pass (the cascade an earlier design shipped).
+    const w = est('14:00:10');
+    const d = w * 1.25 + 4; // clears centred, not left-anchored
+    const ticks = Array.from({ length: 8 }, (_, i) => ({
+      x: 20 + i * d,
+      label: `14:00:${String(10 + i * 5)}`,
+    }));
+    expect(kept(ticks, 'center')).toHaveLength(8);
+    const auto = kept(ticks, 'auto');
+    expect(auto[0]).toBe('14:00:10');
+    expect(auto[auto.length - 1]).toBe('14:00:45');
+    expect(auto).toHaveLength(6); // one inner neighbour per edge
   });
 
   it('a dropped tick never takes a neighbour down with it', () => {
     // `16` fits beside `Sep 29`; `September` overlaps both and is dropped
     // alone (the shape a ranked greedy once dropped `16` for).
-    const right = [
+    const ticks = [
       { x: -41, label: 'September', bold: true },
       { x: -40, label: '16' },
       { x: 0, label: 'Sep 29', bold: true },
     ];
-    expect(kept(right, 'center')).toEqual(['16', 'Sep 29']);
+    expect(kept(ticks, 'center')).toEqual(['16', 'Sep 29']);
   });
 
   it('keeps one label when every tick sits on one pixel (pre-layout width)', () => {
@@ -103,10 +169,10 @@ describe('fitTimeLabels — which ticks keep their labels', () => {
       { x: 0, label: '15:00' },
       { x: 0, label: '16:00' },
     ];
-    for (const align of ALIGNS) expect(kept(ticks, align)).toEqual(['16:00']);
+    for (const align of ALIGNS) expect(kept(ticks, align)).toEqual(['14:00']);
   });
 
-  it('seeded sweep: kept labels never overlap, and every drop overlaps a kept label', () => {
+  it('seeded sweep: kept labels never overlap, and every drop overlaps a kept one', () => {
     const pool = ['15:30', '9', 'Sep 29', 'September', '2026', '1d 06:00'];
     let seed = 7;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
@@ -119,13 +185,12 @@ describe('fitTimeLabels — which ticks keep their labels', () => {
           x,
           label: pool[Math.floor(rnd() * pool.length)]!,
           bold: rnd() < 0.3,
+          seam: rnd() < 0.3,
         };
       });
       for (const align of ALIGNS) {
         const idx = fitTimeLabels(ticks, align, FONT_SIZE, FAMILY);
         expect(idx.length).toBeGreaterThan(0);
-        // The rightmost tick always survives (later wins).
-        expect(idx[idx.length - 1]).toBe(n - 1);
         // Extents as the fit saw them: indexed in the input it was given.
         const ext = ticks.map((t, i) => extent(t, i, n, align));
         for (let k = 1; k < idx.length; k++) {
@@ -148,30 +213,73 @@ describe('fitTimeLabels — which ticks keep their labels', () => {
 
 describe('fitTimeTicks — re-labels the survivors until nothing collides', () => {
   it('a survivor inherits the period turn of the tick dropped beside it', () => {
-    // A toy flat labeller: a tick reads its day when the previous *drawn*
-    // tick was on another day, its clock time otherwise.
+    // A toy flat labeller: the coarsest unit that changed since the previous
+    // *drawn* tick (year > day), else the hour; x is a collapsed axis. A
+    // stray New Year's open (`Y1`) sits a pixel left of the next real open
+    // (`d5`, a day turn after the stray). The later turn wins, and
+    // re-labelling makes it the year turn — `Y1` is not lost.
     const DAY = 24 * H;
+    const YEAR = 4 * DAY;
+    const xs = new Map([
+      [3 * DAY + 10 * H, 0],
+      [3 * DAY + 20 * H, 100],
+      [YEAR + 15 * H, 200], // the stray open
+      [YEAR + DAY + 15 * H, 201], // the real open
+      [YEAR + DAY + 18 * H, 300],
+    ]);
     const place = (vs: readonly number[]) =>
       vs.map((v, i) => {
-        const turn =
-          i === 0 || Math.floor(vs[i - 1]! / DAY) !== Math.floor(v / DAY);
-        return {
-          x: v / M, // 1 px per minute
-          label: turn ? `day${Math.floor(v / DAY)}` : `${(v % DAY) / H}h`,
-          bold: turn,
-        };
+        const p = vs[i - 1];
+        const label =
+          p === undefined || Math.floor(p / YEAR) !== Math.floor(v / YEAR)
+            ? `Y${Math.floor(v / YEAR)}`
+            : Math.floor(p / DAY) !== Math.floor(v / DAY)
+              ? `d${Math.floor(v / DAY)}`
+              : `${(v % DAY) / H}h`;
+        return { x: xs.get(v)!, label, bold: !label.endsWith('h') };
       });
-    // day0 21h, then a stray day1 open at 15h29, the real open 15h30, 17h.
-    const values = [
-      21 * H,
-      DAY + 15 * H + 29 * M,
-      DAY + 15.5 * H,
-      DAY + 17 * H,
-    ];
+    const values = [...xs.keys()];
+    expect(place(values).map((t) => t.label)).toEqual([
+      'Y0',
+      '20h',
+      'Y1',
+      'd5',
+      '18h',
+    ]);
     const out = fitTimeTicks(values, place, 'right', FONT_SIZE, FAMILY);
-    expect(out.map((t) => t.label)).toEqual(['day0', 'day1', '17h']);
-    // `day1` now sits on the real open, not the stray one.
-    expect(out[1]!.x).toBe((DAY + 15.5 * H) / M);
+    expect(out.map((t) => `${t.label}@${t.x}`)).toEqual([
+      'Y0@0',
+      '20h@100',
+      'Y1@201',
+      '18h@300',
+    ]);
+  });
+
+  it('repeats until a pass drops nothing (an edge re-anchor can collide again)', () => {
+    // `auto`: the plain first label loses to the turn beside it; the turn
+    // becomes the edge, anchors left, and now overlaps `10:00` — a third pass
+    // settles it. Re-placing once and returning would leave the overlap.
+    const ticks = [
+      { x: 0, label: '09:30' },
+      { x: 40, label: 'Sep 29', bold: true },
+      { x: 95, label: '10:00' },
+      { x: 300, label: '12:00' },
+    ];
+    const byX = new Map(ticks.map((t) => [t.x, t]));
+    let passes = 0;
+    const place = (vs: readonly number[]) => {
+      passes += 1;
+      return vs.map((v) => byX.get(v)!);
+    };
+    const out = fitTimeTicks(
+      ticks.map((t) => t.x),
+      place,
+      'auto',
+      FONT_SIZE,
+      FAMILY,
+    );
+    expect(out.map((t) => t.label)).toEqual(['Sep 29', '12:00']);
+    expect(passes).toBe(3);
   });
 
   it('places once when nothing collides', () => {
@@ -224,13 +332,15 @@ describe('time axis label fit — rendered', () => {
   /** The axis strip's labels in order, with their CSS `left`. */
   const drawn = (dom: HTMLElement) =>
     Array.from(dom.querySelectorAll('[data-axis="x"] > div'))
-      .filter((el) => (el.textContent ?? '') !== '')
+      .filter(
+        (el) => (el.textContent ?? '') !== '' && el.childElementCount === 0,
+      )
       .map((el) => ({
         text: el.textContent ?? '',
         left: parseFloat((el as HTMLElement).style.left),
       }));
 
-  it('Tidal: a stray pre-market bar no longer overprints the open — the open carries the date', () => {
+  it('Tidal: a stray pre-market bar no longer overprints the open', () => {
     const d29 = day(2026, 9, 29);
     const sessions = [
       session(day(2026, 9, 25), 13.5, 20),
@@ -253,11 +363,11 @@ describe('time axis label fit — rendered', () => {
     const text = labels.map((l) => l.text);
     expect(text).toContain('Sep 29');
     expect(text).not.toContain('13:30');
-    // `Sep 29` sits on the real 13:30 open (half a 30-minute step left of
-    // `14:00`), not on the stray 08:00 open one live minute earlier.
+    // The day turn keeps its own tick — the stray open, one live minute
+    // before the real 13:30 open — and the `13:30` beside it is dropped.
     const at = (t: string) => labels.find((l) => l.text === t)!.left;
-    const step = at('15:00') - at('14:00'); // two 30-minute steps
-    expect(at('14:00') - at('Sep 29')).toBeCloseTo(step / 2, 0);
+    const hour = at('15:00') - at('14:00');
+    expect(at('14:00') - at('Sep 29')).toBeCloseTo(hour / 2 + hour / 60, 0);
   });
 
   it('CME-style: a Sunday-evening open does not caption Monday with Sunday', () => {
@@ -321,39 +431,71 @@ describe('time axis label fit — rendered', () => {
     ];
     for (const width of [300, 480, 720, 1100]) {
       for (const align of ALIGNS) {
-        const { container: dom, unmount } = render(
-          <ChartContainer
-            range={[day(2026, 9, 25) + 15 * H, day(2026, 9, 30) + 18 * H]}
-            width={width}
-            timeZone="UTC"
-            discontinuities={sessionsProvider(sessions)}
-            showAxis={false}
-          >
-            <TimeAxis align={align} />
-          </ChartContainer>,
-        );
-        const els = Array.from(
-          dom.querySelectorAll<HTMLElement>('[data-axis="x"] > div'),
-        ).filter((el) => (el.textContent ?? '') !== '');
-        const ext = els.map((el, i) => {
-          const left = parseFloat(el.style.left);
-          const w = est(el.textContent ?? '');
-          const tf = el.style.transform;
-          // Undo the render's anchoring: `right` already offsets `left`.
-          const start =
-            tf === 'translateX(-50%)'
-              ? left - w / 2
-              : tf === 'translateX(-100%)'
-                ? left - w
-                : left;
-          void i;
-          return [start, start + w] as const;
-        });
-        for (let k = 1; k < ext.length; k++) {
-          expect(ext[k - 1]![1] + 4).toBeLessThanOrEqual(ext[k]![0] + 0.5);
+        for (const dateStyle of ['flat', 'stacked'] as const) {
+          const { container: dom, unmount } = render(
+            <ChartContainer
+              range={[day(2026, 9, 25) + 15 * H, day(2026, 9, 30) + 18 * H]}
+              width={width}
+              timeZone="UTC"
+              discontinuities={sessionsProvider(sessions)}
+              showAxis={false}
+            >
+              <TimeAxis align={align} dateStyle={dateStyle} />
+            </ChartContainer>,
+          );
+          const els = Array.from(
+            dom.querySelectorAll<HTMLElement>('[data-axis="x"] > div'),
+          ).filter(
+            // Tick labels are leaves; the stacked band row is a container.
+            (el) => (el.textContent ?? '') !== '' && el.childElementCount === 0,
+          );
+          const ext = els.map((el, i) => {
+            const left = parseFloat(el.style.left);
+            const w = est(el.textContent ?? '');
+            const tf = el.style.transform;
+            // Undo the render's anchoring: `right` already offsets `left`.
+            const start =
+              tf === 'translateX(-50%)'
+                ? left - w / 2
+                : tf === 'translateX(-100%)'
+                  ? left - w
+                  : left;
+            void i;
+            return [start, start + w] as const;
+          });
+          for (let k = 1; k < ext.length; k++) {
+            expect(ext[k - 1]![1] + 4).toBeLessThanOrEqual(ext[k]![0] + 0.5);
+          }
+          unmount();
         }
-        unmount();
       }
     }
+  });
+
+  it("'auto' loses at most an inner neighbour per edge — no cascade", () => {
+    // A one-minute continuous axis whose `HH:MM:SS` labels clear one another
+    // centred but not when edge-anchored. Always keeping the later tick once
+    // stripped this axis down to two labels, one per pass.
+    const count = (align: Align) => {
+      const { container: dom, unmount } = render(
+        <ChartContainer
+          range={[
+            Date.UTC(2026, 0, 5, 14, 0, 7),
+            Date.UTC(2026, 0, 5, 14, 1, 7),
+          ]}
+          width={1000}
+          timeZone="UTC"
+          showAxis={false}
+        >
+          <TimeAxis align={align} />
+        </ChartContainer>,
+      );
+      const n = drawn(dom).length;
+      unmount();
+      return n;
+    };
+    const center = count('center');
+    expect(center).toBeGreaterThanOrEqual(10);
+    expect(count('auto')).toBeGreaterThanOrEqual(center - 2);
   });
 });

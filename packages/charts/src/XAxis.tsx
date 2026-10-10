@@ -50,6 +50,9 @@ interface PlacedTick {
    *  renders emphasized (bold): a band turn in stacked, an inline promotion in
    *  flat — the same boundaries in both styles. */
   readonly bold?: boolean;
+  /** A session open on a trading axis — live time starts here after a
+   *  collapsed gap. Outranks a plain clock tick when labels collide. */
+  readonly seam?: boolean;
 }
 
 /**
@@ -200,12 +203,23 @@ export function thinCategoryLabels(
  * puts its open a pixel left of the real open, and a seam can sit just past
  * the last clock tick before it.
  *
- * Greedy **right→left**, keeping the first seen: of two colliding ticks the
- * **later** stays. That is the one that owns what follows it, and nothing is
- * lost by dropping the earlier — the caller re-labels the survivors (see
- * {@link fitTimeTicks}), so a period turn the dropped tick carried is promoted
- * onto the next drawn one. A dropped tick only ever drops itself, and each
- * dropped tick overlaps a kept one.
+ * Greedy in **priority** order — each tick is kept unless it would overlap one
+ * already kept, so a tick is only ever dropped by a survivor (never by a tick
+ * that is itself dropped later):
+ *
+ * 1. a **period turn** (`bold` — the label carrying the date / month / year,
+ *    or a stacked band turn) before a **session open** (`seam`), before a plain
+ *    clock tick — the date stays on the open it marks;
+ * 2. under `'auto'`, the edge ticks before inner ones of the same rank — the
+ *    edge label anchors inward, and dropping its inner neighbour settles that
+ *    for good, where dropping the edge would re-anchor the next tick into the
+ *    same collision, pass after pass;
+ * 3. between two turns the **later** (it owns the ticks that follow); between
+ *    two plain ticks the earlier.
+ *
+ * A dropped turn costs no context: the caller re-labels the survivors (see
+ * {@link fitTimeTicks}), so the period it opened is promoted onto the next
+ * drawn tick.
  *
  * Exported for tests only — not re-exported from the package index.
  */
@@ -216,29 +230,36 @@ export function fitTimeLabels(
   fontFamily: string,
 ): number[] {
   const n = ticks.length;
-  const kept: number[] = [];
-  // Kept extents start further left as the walk moves left, so a new tick
-  // need only clear the nearest kept one.
-  let clearOf = Infinity;
-  for (let i = n - 1; i >= 0; i--) {
-    const t = ticks[i]!;
+  const extents = ticks.map((t, i): readonly [number, number] => {
     const font = `${t.bold ? '700 ' : ''}${fontSize}px ${fontFamily}`;
     const w = labelWidth(t.label, font, fontSize);
     // Mirrors the render's placement (`labelLeft` + `labelTransform`).
-    const [left, right] =
-      align === 'right'
-        ? [t.x + 4, t.x + 4 + w]
-        : align === 'auto' && i === 0
-          ? [t.x, t.x + w]
-          : align === 'auto' && i === n - 1
-            ? [t.x - w, t.x]
-            : [t.x - w / 2, t.x + w / 2];
-    if (right + LABEL_GAP <= clearOf) {
-      kept.push(i);
-      clearOf = left;
-    }
+    if (align === 'right') return [t.x + 4, t.x + 4 + w];
+    if (align === 'auto' && i === 0) return [t.x, t.x + w];
+    if (align === 'auto' && i === n - 1) return [t.x - w, t.x];
+    return [t.x - w / 2, t.x + w / 2];
+  });
+  const rank = (t: PlacedTick) => (t.bold ? 2 : t.seam ? 1 : 0);
+  const edge = (i: number) => align === 'auto' && (i === 0 || i === n - 1);
+  const order = ticks
+    .map((_, i) => i)
+    .sort((i, j) => {
+      const ri = rank(ticks[i]!);
+      const rj = rank(ticks[j]!);
+      if (ri !== rj) return rj - ri;
+      if (edge(i) !== edge(j)) return edge(i) ? -1 : 1;
+      return ri === 2 ? j - i : i - j;
+    });
+  const kept: number[] = [];
+  for (const i of order) {
+    const [l, r] = extents[i]!;
+    const clear = kept.every((j) => {
+      const [kl, kr] = extents[j]!;
+      return r + LABEL_GAP <= kl || kr + LABEL_GAP <= l;
+    });
+    if (clear) kept.push(i);
   }
-  return kept.reverse();
+  return kept.sort((i, j) => i - j);
 }
 
 /**
@@ -246,8 +267,8 @@ export function fitTimeLabels(
  * `place` labels a set of tick instants (flat promotions walk only the
  * instants it is given), {@link fitTimeLabels} keeps the ones that clear,
  * and the survivors are placed again — re-labelling can promote a survivor
- * (`15:30` → `Sep 29`) and widen it, and under `'auto'` a new first / last
- * tick re-anchors — until a pass drops nothing. Each pass only removes, so it
+ * and change its width, and under `'auto'` a new first / last tick
+ * re-anchors — until a pass drops nothing. Each pass only removes, so it
  * terminates.
  *
  * Exported for tests only — not re-exported from the package index.
@@ -328,9 +349,10 @@ export interface XAxisProps {
    *   *style* choice (the TradingView look), **not** a remedy for colliding
    *   labels. Collisions are handled by measurement, in every mode, on a
    *   category axis (thin + middle-ellipsize) and on a time axis's automatic
-   *   ticks (of two colliding ticks the later is drawn, and a date / month /
-   *   year turn the dropped one carried moves onto it). Explicit `ticks`,
-   *   `transform` ticks and numeric axes are not fitted.
+   *   ticks (the label that would overprint is dropped — a date / month /
+   *   year turn outlasts a clock label — and the survivors are re-labelled so
+   *   no period turn is lost). Explicit `ticks`, `transform` ticks and numeric
+   *   axes are not fitted.
    */
   align?: 'auto' | 'center' | 'right';
   /**
@@ -703,6 +725,7 @@ export function XAxis({
   // Place a set of automatic ticks: x, label, emphasis. The flat style labels
   // only the ticks it is handed, so when the time-axis fit drops one, its
   // period turn is promoted onto the next drawn tick instead of vanishing.
+  const disc = xKind === 'time' ? container.discontinuities : undefined;
   const placeAuto = (values: readonly number[]): PlacedTick[] => {
     const flatDrawn =
       flatFmt !== undefined
@@ -722,6 +745,13 @@ export function XAxis({
         : flatDrawn !== undefined &&
           baseFmt !== undefined &&
           flatDrawn(v) !== baseFmt(v),
+      // Live from here, dead just before: a session open on a collapsed seam
+      // (the probe `Layers` uses for session dividers, plus the live side, so
+      // an instant inside the gap doesn't qualify).
+      seam:
+        disc !== undefined &&
+        disc.distance(v - 1, v) <= 0 &&
+        disc.distance(v, v + 1) > 0,
     }));
   };
   // A time axis's automatic ticks drop any that would overprint a neighbour

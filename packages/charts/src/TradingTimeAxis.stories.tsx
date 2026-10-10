@@ -142,9 +142,9 @@ export const IntradaySessions: Story = {
 /** A **stray-bar micro-session**: a calendar derived from the bars turns one
  *  04:00 print into a one-minute session just ahead of the Tuesday open, so its
  *  open (`Jan 6`, the day turn) lands a pixel left of the real `09:30` open.
- *  The axis measures the labels, draws the later of the two, and re-labels it —
- *  the real open reads `Jan 6`. `align="right"`, the TradingView look the
- *  collision was filed against (Tidal). */
+ *  The axis measures the labels and keeps the day turn — the `09:30` label
+ *  that used to overprint it is dropped. `align="right"`, the TradingView look
+ *  the collision was filed against (Tidal). */
 export const StraySessionLabels: Story = {
   render: () => {
     const s = weekdaySessions(3);
