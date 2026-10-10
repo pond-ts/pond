@@ -89,7 +89,7 @@ describe('fitTimeLabels', () => {
     ]);
   });
 
-  it('between equals the earlier label keeps its place', () => {
+  it('between plain labels the earlier stays; between turns the later wins', () => {
     const plain = [
       { x: 0, label: '15:30' },
       { x: 10, label: '15:45' },
@@ -97,13 +97,69 @@ describe('fitTimeLabels', () => {
     expect(labels(fitTimeLabels(plain, 'right', FONT_SIZE, FAMILY))).toEqual([
       '15:30',
     ]);
+    // A stray Saturday print (its own micro-session, promoted to `Sep 27`) one
+    // live minute before Monday's open: Monday's date must caption Monday's
+    // ticks, so the later turn wins.
     const turns = [
-      { x: 0, label: 'Sep 28', bold: true },
-      { x: 10, label: 'Sep 29', bold: true },
+      { x: 0, label: 'Sep 27', bold: true, seam: true },
+      { x: 1, label: 'Sep 29', bold: true, seam: true },
+      { x: 120, label: '16:00' },
     ];
     expect(labels(fitTimeLabels(turns, 'right', FONT_SIZE, FAMILY))).toEqual([
-      'Sep 28',
+      'Sep 29',
+      '16:00',
     ]);
+  });
+
+  it('a label that loses never takes a weaker neighbour down with it', () => {
+    // `September` (a turn, centred and wide) overlaps both the plain `16`
+    // before it and the stronger `Sep 29` (turn + open) before that. It loses
+    // to `Sep 29`, so `16` — which collides with no survivor — must stay.
+    const ticks = [
+      { x: 0, label: 'Sep 29', bold: true, seam: true },
+      { x: 40, label: '16' },
+      { x: 41, label: 'September', bold: true },
+    ];
+    expect(labels(fitTimeLabels(ticks, 'center', FONT_SIZE, FAMILY))).toEqual([
+      'Sep 29',
+      '16',
+    ]);
+  });
+
+  it('never leaves two drawn labels overlapping (seeded sweep)', () => {
+    const w = (s: string) => s.length * FONT_SIZE * 0.62;
+    const pool = ['15:30', '9', 'Sep 29', 'September', '2026', '1d 06:00'];
+    let seed = 7;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let run = 0; run < 300; run++) {
+      const n = 2 + Math.floor(rnd() * 12);
+      let x = 0;
+      const ticks = Array.from({ length: n }, () => {
+        x += rnd() * 60;
+        return {
+          x,
+          label: pool[Math.floor(rnd() * pool.length)]!,
+          bold: rnd() < 0.3,
+          seam: rnd() < 0.3,
+        };
+      });
+      for (const align of ['right', 'center', 'auto'] as const) {
+        const out = fitTimeLabels(ticks, align, FONT_SIZE, FAMILY);
+        expect(out.length).toBeGreaterThan(0);
+        const ext = out.map((t, i): [number, number] =>
+          align === 'right'
+            ? [t.x + 4, t.x + 4 + w(t.label)]
+            : align === 'auto' && i === 0
+              ? [t.x, t.x + w(t.label)]
+              : align === 'auto' && i === out.length - 1
+                ? [t.x - w(t.label), t.x]
+                : [t.x - w(t.label) / 2, t.x + w(t.label) / 2],
+        );
+        for (let i = 1; i < ext.length; i++) {
+          expect(ext[i - 1]![1] + 4).toBeLessThanOrEqual(ext[i]![0] + 1e-9);
+        }
+      }
+    }
   });
 
   it("'auto' re-fits once a dropped edge label hands the edge anchor on", () => {

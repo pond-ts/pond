@@ -207,9 +207,12 @@ export function thinCategoryLabels(
  * collision the higher-ranked label wins: a **period turn** (`bold` — the
  * label carrying the date / month / year, the axis's only context for that
  * period), then a **session open** (`seam` — the instant actually sitting on
- * the collapsed gap's pixel), then a plain clock label; between equals the
- * earlier keeps its place. The losing tick goes whole — its stub would cut
- * through the winner's text.
+ * the collapsed gap's pixel), then a plain clock label. Between two turns
+ * (or two opens) the **later** wins — it owns the ticks that follow, while
+ * the earlier period has less than a label-width on screen (a stray weekend
+ * print's `Sep 27` must not caption Monday); between two plain labels the
+ * earlier stays. The losing tick goes whole — its stub would cut through the
+ * winner's text.
  * Under `'auto'` the edge labels anchor inward, so a pass that drops an edge
  * label re-runs with the new edges.
  *
@@ -233,19 +236,27 @@ export function fitTimeLabels(
       return [t.x - w / 2, t.x + w / 2];
     });
     const rank = (t: PlacedTick) => (t.bold ? 2 : 0) + (t.seam ? 1 : 0);
+    // `i` displaces `j` (earlier) when it outranks it — or ties as a turn or
+    // open, since the later one owns the ticks that follow.
+    const beats = (i: number, j: number) => {
+      const ri = rank(cur[i]!);
+      const rj = rank(cur[j]!);
+      return ri > rj || (ri === rj && ri > 0);
+    };
     const kept: number[] = [];
     for (let i = 0; i < n; i++) {
-      let lose = false;
-      while (kept.length > 0) {
-        const j = kept[kept.length - 1]!;
-        if (extents[j]![1] + LABEL_GAP <= extents[i]![0]) break;
-        if (rank(cur[i]!) > rank(cur[j]!)) kept.pop();
-        else {
-          lose = true;
-          break;
-        }
+      // Kept labels never overlap one another, so their right edges ascend
+      // and the ones `i` collides with are a suffix. `i` must beat every one
+      // of them — popping a weaker neighbour before losing to a stronger one
+      // would drop a label that collided with no survivor.
+      let m = kept.length;
+      while (m > 0 && extents[kept[m - 1]!]![1] + LABEL_GAP > extents[i]![0]) {
+        m -= 1;
       }
-      if (!lose) kept.push(i);
+      if (kept.slice(m).every((j) => beats(i, j))) {
+        kept.length = m;
+        kept.push(i);
+      }
     }
     return kept.map((i) => cur[i]!);
   };
@@ -314,9 +325,11 @@ export interface XAxisProps {
    * - `'right'` — the label sits to the **right** of an extended tick that
    *   drops from the axis line (label beside the tick, not under it) — a
    *   *style* choice (the TradingView look), **not** a remedy for colliding
-   *   labels. Collisions are handled by measurement in every mode: a category
-   *   axis thins + middle-ellipsizes, a time axis drops the label that would
-   *   overprint (a date / month / year turn beats a plain clock label).
+   *   labels. Collisions are handled by measurement, in every mode, on a
+   *   category axis (thin + middle-ellipsize) and on a time axis's automatic
+   *   ticks (the label that would overprint is dropped; a date / month / year
+   *   turn beats a plain clock label). Explicit `ticks`, `transform` ticks and
+   *   numeric axes are not fitted.
    */
   align?: 'auto' | 'center' | 'right';
   /**

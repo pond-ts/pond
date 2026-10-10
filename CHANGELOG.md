@@ -85,8 +85,8 @@ include new features and type-level changes; patch bumps are strictly additive.
   tick before it (`21:00` against the next day's `Sep 23`). A time axis now
   measures its labels and drops the one that would collide: a date / month /
   year turn beats a session open, which beats a plain clock label; between
-  equals the earlier stays. Applies to every `align` mode; explicit `ticks`
-  are untouched.
+  two turns the later wins (it captions the ticks that follow). Applies to
+  every `align` mode; explicit `ticks` and `transform` ticks are untouched.
 
 ### Changed
 
