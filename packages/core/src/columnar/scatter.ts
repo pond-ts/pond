@@ -27,16 +27,10 @@
  * make rows vanish from `LivePartitionedSeries` routing with no
  * error or recovery hook.
  *
- * **NaN partition values are bucketed under `NaN`.** Numeric
- * columns can contain `NaN` cells via trusted-construction paths
- * (the row-API rejects `NaN` at intake; `Float64Column`'s direct
- * constructor accepts it). JS `Map` uses `SameValueZero`
- * equality, which treats `NaN === NaN`, so NaN is a stable Map
- * key. We **bucket** NaN rows under the `NaN` key rather than
- * dropping them — same reasoning as the undefined-throws default:
- * silently discarding defined cells is observability-poor for
- * routing. Callers who want stricter NaN semantics can check
- * `Number.isNaN(key)` on the result keys.
+ * **A `NaN` partition value is missing.** A number column marks a
+ * missing cell with a non-finite value ([PND-NANREP]), so a `NaN` (or
+ * `±Infinity`) partition cell reads as `undefined` and follows the
+ * `onUndefined` rule above, like any other missing cell.
  *
  * **Order preservation within a partition.** Each output sub-store
  * preserves the relative order of rows from the input — the
@@ -44,10 +38,9 @@
  * partition order is unspecified (the result is a `Map`).
  *
  * **Result type.** `Map<ScalarValue, ColumnarStore<S>>`. JS `Map`
- * uses `SameValueZero` equality, which treats `+0 === -0` and
- * `NaN === NaN`. `+0` / `-0` collapse to a single bucket
- * (acceptable for partition routing); `NaN` is its own stable
- * bucket per above.
+ * uses `SameValueZero` equality, which treats `+0 === -0`, so
+ * `+0` / `-0` collapse to a single bucket (acceptable for
+ * partition routing).
  *
  * Framework-internal; not exported from `packages/core/src/index.ts`.
  */

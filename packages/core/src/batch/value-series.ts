@@ -285,8 +285,8 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
     );
     // Straight to the shared ingest engine rather than through `fromColumns`,
     // which has no parameter for `adopted` — the null-bearing numeric columns
-    // built directly from Arrow's buffers, which `RawColumns` cannot express
-    // because it cannot carry a validity bitmap. Same engine either way; only
+    // already built from Arrow's buffers (copied, with `NaN` at each null —
+    // [PND-NANREP]), handed over as finished columns. Same engine either way; only
     // the `op` label differs, so a failure names the door the caller used.
     const store = ingestColumnsToStore({
       op: 'fromArrow',

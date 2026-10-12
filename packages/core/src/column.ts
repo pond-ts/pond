@@ -250,7 +250,8 @@ declare module './columnar/column.js' {
     percentile(q: number): number | undefined;
 
     /**
-     * Count of **defined cells** (validity-bitmap-aware). NOT the
+     * Count of **defined cells** (a missing cell is a non-finite
+     * value in the buffer — [PND-NANREP]). NOT the
      * event count — diverges from `series.length` when the column
      * has any undefined cells. For an all-defined column equals
      * `col.length`. Matches the data-frame `count` idiom (Polars /
@@ -308,12 +309,12 @@ declare module './columnar/column.js' {
      * const values = col.toFloat64Array();
      * ```
      *
-     * Validity is not encoded — `toFloat64Array` returns the
-     * raw value buffer including any undefined-marked slots.
-     * Callers that need gap-aware iteration check
-     * `col.hasMissing()` / `col.validity` separately, or use
-     * `col.scan(fn)` for the storage-agnostic skip-undefined
-     * walk.
+     * **A missing cell is `NaN`** in the returned buffer — that is
+     * how a number column stores a gap ([PND-NANREP]) — and
+     * `±Infinity` also means missing if a caller-supplied buffer
+     * carried one. So the finite test `v - v === 0` is the defined
+     * test, and canvas code can feed the buffer straight to
+     * `lineTo` (a `NaN` breaks the sub-path).
      *
      * Cross-kind note: this method is intentionally scoped to
      * the numeric column today. A symmetric method on other
@@ -598,47 +599,28 @@ Float64Column.prototype.count = function (): number {
  * result is bug-for-bug parity with `[col.min(), col.max()]`.
  */
 Float64Column.prototype.minMax = function (): [number, number] | undefined {
-  const v = this.validity;
   const values = this._values;
   const n = this.length;
   if (n === 0) return undefined;
   if (this.allFinite) {
     // Provably finite (the chart axis hot path) → no per-element finite
-    // guard; the seeded comparison is unambiguous without NaN.
-    let i = 0;
-    let lo: number;
-    let hi: number;
-    if (!v) {
-      lo = values[0]!;
-      hi = lo;
-      for (i = 1; i < n; i += 1) {
-        const x = values[i]!;
-        lo = lo <= x ? lo : x;
-        hi = hi >= x ? hi : x;
-      }
-      return [lo, hi];
-    }
-    while (i < n && !v.isDefined(i)) i += 1;
-    if (i >= n) return undefined;
-    lo = values[i]!;
-    hi = lo;
-    for (i += 1; i < n; i += 1) {
-      if (!v.isDefined(i)) continue;
+    // test; the seeded comparison is unambiguous without NaN.
+    let lo = values[0]!;
+    let hi = lo;
+    for (let i = 1; i < n; i += 1) {
       const x = values[i]!;
       lo = lo <= x ? lo : x;
       hi = hi >= x ? hi : x;
     }
     return [lo, hi];
   }
-  // Guarded: skip non-finite (and missing) cells, matching the reducer
-  // `min`/`max` (reducer non-finite policy — docs/notes/reducer-nan-policy.md).
-  // All-non-finite (or empty) → undefined.
+  // Guarded: skip missing (non-finite) cells, matching the reducer
+  // `min`/`max`. All-missing → undefined.
   let lo: number | undefined;
   let hi: number | undefined;
   for (let i = 0; i < n; i += 1) {
-    if (v && !v.isDefined(i)) continue;
     const x = values[i]!;
-    if (!Number.isFinite(x)) continue;
+    if (x - x !== 0) continue;
     if (lo === undefined) {
       lo = x;
       hi = x;
@@ -651,13 +633,11 @@ Float64Column.prototype.minMax = function (): [number, number] | undefined {
 };
 
 Float64Column.prototype.hasMissing = function (): boolean {
-  if (!this.validity) return false;
-  return this.validity.definedCount < this.length;
+  return this.missingCount > 0;
 };
 
 Float64Column.prototype.nullCount = function (): number {
-  if (!this.validity) return 0;
-  return this.length - this.validity.definedCount;
+  return this.missingCount;
 };
 
 Float64Column.prototype.first = function (): number | undefined {
@@ -669,21 +649,19 @@ Float64Column.prototype.last = function (): number | undefined {
 };
 
 Float64Column.prototype.firstDefined = function (): number | undefined {
-  const v = this.validity;
-  if (!v) return this.length > 0 ? this._values[0] : undefined;
-  if (v.definedCount === 0) return undefined;
+  const values = this._values;
   for (let i = 0; i < this.length; i += 1) {
-    if (v.isDefined(i)) return this._values[i];
+    const x = values[i]!;
+    if (x - x === 0) return x;
   }
   return undefined;
 };
 
 Float64Column.prototype.lastDefined = function (): number | undefined {
-  const v = this.validity;
-  if (!v) return this.length > 0 ? this._values[this.length - 1] : undefined;
-  if (v.definedCount === 0) return undefined;
+  const values = this._values;
   for (let i = this.length - 1; i >= 0; i -= 1) {
-    if (v.isDefined(i)) return this._values[i];
+    const x = values[i]!;
+    if (x - x === 0) return x;
   }
   return undefined;
 };
@@ -848,8 +826,8 @@ Float64Column.prototype.binBy = function <R extends BinReducerName>(
  * key-edge-derived boundaries — the reduction is identical either
  * way. `method` names the caller for error messages.
  *
- * The three fused-`minMax*` paths hoist the validity / finiteness
- * branch **outside** the bucket loop (it's the same for every
+ * The fused-`minMax*` paths hoist the finiteness branch (`allFinite`
+ * ⇒ no missing cell) **outside** the bucket loop (it's the same for every
  * bucket), which is why they're inlined here rather than dispatching
  * through `sliceByRange().minMax()` per bucket.
  */
@@ -861,7 +839,6 @@ function reduceFloat64ByBounds<R extends BinReducerName>(
 ): BinOutput<R> {
   const W = bounds.length - 1;
   const values = col._values;
-  const validity = col.validity;
 
   // ─── Fused minMax — two-channel output ─────────────────────────
   if (reducer === 'minMax') {
@@ -877,9 +854,8 @@ function reduceFloat64ByBounds<R extends BinReducerName>(
         let loVal: number | undefined;
         let hiVal: number | undefined;
         for (let i = start; i < end; i += 1) {
-          if (validity !== undefined && !validity.isDefined(i)) continue;
           const x = values[i]!;
-          if (!Number.isFinite(x)) continue;
+          if (x - x !== 0) continue; // missing ([PND-NANREP])
           if (loVal === undefined) {
             loVal = x;
             hiVal = x;
@@ -898,53 +874,23 @@ function reduceFloat64ByBounds<R extends BinReducerName>(
       }
       return { lo, hi } as BinOutput<R>;
     }
-    if (validity === undefined) {
-      for (let b = 0; b < W; b += 1) {
-        const start = bounds[b]!;
-        const end = bounds[b + 1]!;
-        if (end <= start) {
-          lo[b] = NaN;
-          hi[b] = NaN;
-          continue;
-        }
-        let loVal = values[start]!;
-        let hiVal = loVal;
-        for (let i = start + 1; i < end; i += 1) {
-          const x = values[i]!;
-          loVal = loVal <= x ? loVal : x;
-          hiVal = hiVal >= x ? hiVal : x;
-        }
-        lo[b] = loVal;
-        hi[b] = hiVal;
+    for (let b = 0; b < W; b += 1) {
+      const start = bounds[b]!;
+      const end = bounds[b + 1]!;
+      if (end <= start) {
+        lo[b] = NaN;
+        hi[b] = NaN;
+        continue;
       }
-    } else {
-      // Validity path — isDefined directly on the original bitmap.
-      for (let b = 0; b < W; b += 1) {
-        const start = bounds[b]!;
-        const end = bounds[b + 1]!;
-        if (end <= start) {
-          lo[b] = NaN;
-          hi[b] = NaN;
-          continue;
-        }
-        let i = start;
-        while (i < end && !validity.isDefined(i)) i += 1;
-        if (i >= end) {
-          lo[b] = NaN;
-          hi[b] = NaN;
-          continue;
-        }
-        let loVal = values[i]!;
-        let hiVal = loVal;
-        for (i += 1; i < end; i += 1) {
-          if (!validity.isDefined(i)) continue;
-          const x = values[i]!;
-          loVal = loVal <= x ? loVal : x;
-          hiVal = hiVal >= x ? hiVal : x;
-        }
-        lo[b] = loVal;
-        hi[b] = hiVal;
+      let loVal = values[start]!;
+      let hiVal = loVal;
+      for (let i = start + 1; i < end; i += 1) {
+        const x = values[i]!;
+        loVal = loVal <= x ? loVal : x;
+        hiVal = hiVal >= x ? hiVal : x;
       }
+      lo[b] = loVal;
+      hi[b] = hiVal;
     }
     return { lo, hi } as BinOutput<R>;
   }
@@ -971,9 +917,8 @@ function reduceFloat64ByBounds<R extends BinReducerName>(
         let firstVal = 0;
         let lastVal = 0;
         for (let i = start; i < end; i += 1) {
-          if (validity !== undefined && !validity.isDefined(i)) continue;
           const x = values[i]!;
-          if (!Number.isFinite(x)) continue;
+          if (x - x !== 0) continue; // missing ([PND-NANREP])
           if (loVal === undefined) {
             loVal = x;
             hiVal = x;
@@ -999,32 +944,6 @@ function reduceFloat64ByBounds<R extends BinReducerName>(
       return { lo, hi, first, last } as BinOutput<R>;
     }
 
-    if (validity === undefined) {
-      for (let b = 0; b < W; b += 1) {
-        const start = bounds[b]!;
-        const end = bounds[b + 1]!;
-        if (end <= start) {
-          lo[b] = NaN;
-          hi[b] = NaN;
-          first[b] = NaN;
-          last[b] = NaN;
-          continue;
-        }
-        let loVal = values[start]!;
-        let hiVal = loVal;
-        for (let i = start + 1; i < end; i += 1) {
-          const x = values[i]!;
-          loVal = loVal <= x ? loVal : x;
-          hiVal = hiVal >= x ? hiVal : x;
-        }
-        lo[b] = loVal;
-        hi[b] = hiVal;
-        first[b] = values[start]!;
-        last[b] = values[end - 1]!;
-      }
-      return { lo, hi, first, last } as BinOutput<R>;
-    }
-
     for (let b = 0; b < W; b += 1) {
       const start = bounds[b]!;
       const end = bounds[b + 1]!;
@@ -1035,30 +954,17 @@ function reduceFloat64ByBounds<R extends BinReducerName>(
         last[b] = NaN;
         continue;
       }
-      let i = start;
-      while (i < end && !validity.isDefined(i)) i += 1;
-      if (i >= end) {
-        lo[b] = NaN;
-        hi[b] = NaN;
-        first[b] = NaN;
-        last[b] = NaN;
-        continue;
-      }
-      const firstVal = values[i]!;
-      let loVal = firstVal;
-      let hiVal = firstVal;
-      let lastVal = firstVal;
-      for (i += 1; i < end; i += 1) {
-        if (!validity.isDefined(i)) continue;
+      let loVal = values[start]!;
+      let hiVal = loVal;
+      for (let i = start + 1; i < end; i += 1) {
         const x = values[i]!;
         loVal = loVal <= x ? loVal : x;
         hiVal = hiVal >= x ? hiVal : x;
-        lastVal = x;
       }
       lo[b] = loVal;
       hi[b] = hiVal;
-      first[b] = firstVal;
-      last[b] = lastVal;
+      first[b] = values[start]!;
+      last[b] = values[end - 1]!;
     }
     return { lo, hi, first, last } as BinOutput<R>;
   }
@@ -1370,15 +1276,7 @@ ChunkedFloat64Column.prototype.percentile = function (
   return materializeChunkedFloat64(this).percentile(q);
 };
 ChunkedFloat64Column.prototype.count = function (): number {
-  // The O(1) defined-count is correct only when the column is provably
-  // finite. Non-finite cells are skipped (reducer non-finite policy —
-  // docs/notes/reducer-nan-policy.md), so when finiteness isn't proven,
-  // delegate to the materialized packed `count()` (which routes through the
-  // count reducer and skips non-finite) — matching packed `Float64Column`.
-  if (this.allFinite) {
-    return this.validity ? this.validity.definedCount : this.length;
-  }
-  return materializeChunkedFloat64(this).count();
+  return this.length - this.missingCount;
 };
 ChunkedFloat64Column.prototype.minMax = function ():
   | [number, number]
@@ -1386,12 +1284,10 @@ ChunkedFloat64Column.prototype.minMax = function ():
   return materializeChunkedFloat64(this).minMax();
 };
 ChunkedFloat64Column.prototype.hasMissing = function (): boolean {
-  if (!this.validity) return false;
-  return this.validity.definedCount < this.length;
+  return this.missingCount > 0;
 };
 ChunkedFloat64Column.prototype.nullCount = function (): number {
-  if (!this.validity) return 0;
-  return this.length - this.validity.definedCount;
+  return this.missingCount;
 };
 ChunkedFloat64Column.prototype.first = function (): number | undefined {
   return this.read(0);

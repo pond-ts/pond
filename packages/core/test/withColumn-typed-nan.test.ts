@@ -65,10 +65,14 @@ describe('[PND-WCNAN] Float64Array intake treats NaN as missing', () => {
     expect(col.hasMissing()).toBe(false);
   });
 
-  it('claims allFinite, so downstream reductions keep the fast path', () => {
+  it('claims allFinite only when there is no gap', () => {
     const out = series(4).withColumn('d', Float64Array.from([1, NaN, 3, 4]));
     const col = out.column('d');
-    expect((col as unknown as { allFinite: boolean }).allFinite).toBe(true);
+    expect((col as unknown as { allFinite: boolean }).allFinite).toBe(false);
+    const dense = series(4).withColumn('d', Float64Array.from([1, 2, 3, 4]));
+    expect(
+      (dense.column('d') as unknown as { allFinite: boolean }).allFinite,
+    ).toBe(true);
     expect(col.sum()).toBe(8);
     expect(col.mean()).toBe(8 / 3);
   });
@@ -150,12 +154,12 @@ describe('[PND-WCNAN] the resulting column composes', () => {
   it('round-trips through a second withColumn', () => {
     const first = series(4).withColumn('a', Float64Array.from([1, NaN, 3, 4]));
     const values = first.column('a').toFloat64Array();
-    // `toFloat64Array` returns the raw buffer including gap slots, which
-    // read as 0 rather than NaN — so this is not a lossless round trip
-    // today. Pinned as the current contract, not as an endorsement.
-    expect(values[1]).toBe(0);
+    // `toFloat64Array` returns NaN at a gap ([PND-NANREP]: that is how
+    // the column stores it), and Float64Array intake reads NaN as a gap —
+    // so the round trip is lossless.
+    expect(values[1]).toBeNaN();
     const second = first.withColumn('b', values);
-    expect(second.column('b').at(1)).toBe(0);
-    expect(second.column('b').nullCount()).toBe(0);
+    expect(second.column('b').at(1)).toBeUndefined();
+    expect(second.column('b').nullCount()).toBe(1);
   });
 });

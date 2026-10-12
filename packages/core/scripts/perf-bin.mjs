@@ -24,7 +24,6 @@
 
 import { performance } from 'node:perf_hooks';
 import { Float64Column } from '../dist/columnar/column.js';
-import { createValidityBitmap } from '../dist/columnar/index.js';
 // Side-effect import — installs bin / minMax / etc.
 import '../dist/column.js';
 
@@ -36,18 +35,19 @@ function makeColumn(length) {
   return new Float64Column(buf, length);
 }
 
-// Gappy variant — ~30% of cells missing, forcing the validity-aware
-// bin path (the M4 decimator's realistic case: time data with holes).
+// Gappy variant — ~30% of cells missing, forcing the gap-aware bin path
+// (the M4 decimator's realistic case: time data with holes). A missing
+// cell is NaN in the buffer ([PND-NANREP]).
 function makeGappyColumn(length) {
   const buf = new Float64Array(length);
-  const v = createValidityBitmap(length);
   for (let i = 0; i < length; i += 1) {
-    buf[i] = 50 + 35 * Math.sin(i / 5_000) + 10 * Math.sin(i / 137);
     // Deterministic ~30% drop pattern (no Math.random — reproducible).
-    if (i % 10 >= 7) continue;
-    v.set(i);
+    buf[i] =
+      i % 10 >= 7
+        ? NaN
+        : 50 + 35 * Math.sin(i / 5_000) + 10 * Math.sin(i / 137);
   }
-  return new Float64Column(buf, length, v.freeze());
+  return new Float64Column(buf, length);
 }
 
 // A monotonic key axis parallel to a column of the given length —

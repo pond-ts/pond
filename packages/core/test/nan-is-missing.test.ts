@@ -18,8 +18,8 @@ import { NumericOutput } from '../src/batch/operators/numeric-io.js';
 /* [PND-NANREP] — the public rule: a non-finite number (NaN, ±Infinity) in a */
 /* number column means missing.                                               */
 /*                                                                             */
-/* Storage is still the validity bitmap; these tests pin the rule at each     */
-/* write chokepoint so a later switch to NaN-in-buffer storage is invisible.  */
+/* Storage is NaN in the column's own Float64Array (no bitmap); these tests   */
+/* pin the rule at each write chokepoint. `allFinite` means "no gaps".        */
 /* Doors that reject NaN (row intake, boxed withColumn) reject ±Infinity too. */
 /* -------------------------------------------------------------------------- */
 
@@ -45,15 +45,16 @@ describe('[PND-NANREP] write chokepoints store non-finite as missing', () => {
     expect(col.nullCount()).toBe(4);
     expect(col.count()).toBe(1);
     expect(col.hasMissing()).toBe(true);
-    expect(col.allFinite).toBe(true); // every defined cell is finite
+    expect(col.allFinite).toBe(false); // it has gaps
     const seen: number[] = [];
     col.scan((v) => seen.push(v));
     expect(seen).toEqual([1]);
   });
 
-  it('float64ColumnFromArray: a non-finite slot never clears allFinite', () => {
+  it('float64ColumnFromArray: a non-finite slot is a gap, so not allFinite', () => {
     const col = float64ColumnFromArray([1, NaN, 3, Infinity]);
-    expect(col.allFinite).toBe(true);
+    expect(col.allFinite).toBe(false);
+    expect(float64ColumnFromArray([1, 2, 3]).allFinite).toBe(true);
     expect(col.sum()).toBe(4);
     expect(col.max()).toBe(3);
   });
@@ -72,7 +73,7 @@ describe('[PND-NANREP] write chokepoints store non-finite as missing', () => {
       undefined,
     ]);
     expect(col.nullCount()).toBe(3);
-    expect(col.allFinite).toBe(true);
+    expect(col.allFinite).toBe(false);
   });
 
   it('NumericOutput: an all-NaN-but-one output is not mistaken for dense', () => {
@@ -82,7 +83,7 @@ describe('[PND-NANREP] write chokepoints store non-finite as missing', () => {
     const col = out.finish();
     expect(col.validity).toBeDefined();
     expect(col.read(0)).toBeUndefined();
-    expect(col.allFinite).toBe(true);
+    expect(col.allFinite).toBe(false);
   });
 
   it('Float64ColumnBuilder: NaN appends as missing, and overwrites to missing', () => {

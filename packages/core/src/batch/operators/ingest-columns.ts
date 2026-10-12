@@ -10,7 +10,6 @@ import {
   TimeKeyColumn,
   TimeRangeKeyColumn,
   ValueKeyColumn,
-  validityFromPredicate,
 } from '../../columnar/index.js';
 import { ValidationError } from '../../core/errors.js';
 import type { BatchOrderingMode } from '../../schema/events.js';
@@ -359,18 +358,19 @@ export function ingestColumnsToStore(input: {
         values[j] = v == null ? NaN : v;
       }
     }
-    const validity = validityFromPredicate(count, (j) =>
-      Number.isFinite(values[j]!),
-    );
-    // `allFinite: true` is **proven**, not assumed. The predicate above IS
-    // the finiteness test: a cell is defined iff its value is finite, and
-    // `values` is not touched afterwards. So "every defined cell is finite"
-    // — the exact contract of the flag — holds by construction, whether or
-    // not gaps exist. (This previously passed `validity === undefined`,
-    // which was conservative to the point of being wasteful: any column
-    // with a single gap lost the unguarded reduction path for the life of
-    // the series, even though its defined cells were provably finite.)
-    columnMap.set(def.name, new Float64Column(values, count, validity, true));
+    // A missing cell is a non-finite value in the buffer ([PND-NANREP]),
+    // so an adopted `Float64Array` is used as it stands — a `NaN` gap is
+    // already a gap, and `±Infinity` reads as one too. One scan proves
+    // `allFinite` (no gap, every cell finite) for the reducer fast path.
+    let allFinite = true;
+    for (let j = 0; j < count; j += 1) {
+      const v = values[j]!;
+      if (v - v !== 0) {
+        allFinite = false;
+        break;
+      }
+    }
+    columnMap.set(def.name, new Float64Column(values, count, allFinite));
   }
 
   return ColumnarStore.fromTrustedStore(schema, keys, columnMap);

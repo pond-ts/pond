@@ -3,8 +3,9 @@ import type { ReducerDef } from './types.js';
 import { rollingMonotoneDeque } from './rolling.js';
 
 /**
- * Largest defined (and, on the guarded path, finite) value in
- * `col[start, end)`, or `undefined` when the range has no contributor.
+ * Largest defined value in `col[start, end)`, or `undefined` when the
+ * range has no contributor. A missing cell is a non-finite value in the
+ * buffer ([PND-NANREP]).
  *
  * The single column kernel — `reduceColumn` is this at `(0, length)`. See
  * the note on `sumRange` for why it is a standalone function rather than
@@ -16,47 +17,27 @@ function maxRange(
   end: number,
 ): number | undefined {
   const values = col._values;
-  const validity = col.validity;
-  let hi: number | undefined;
-  // Fast path: every defined cell is finite (`Float64Column.allFinite`),
-  // so we seed `hi` from the first defined cell and run a plain `v > hi`
-  // compare with NO per-element `Number.isFinite` guard and NO in-loop
-  // `hi === undefined` check (the seed hoists it out). No NaN to mishandle,
-  // also sidesteps the position-dependent `a>=b?a:b` extremum bug the policy
-  // fixed (docs/notes/reducer-nan-policy.md). The pre-policy column loop,
-  // recovered.
+  // Fast path: every cell is finite (`Float64Column.allFinite`), so we
+  // seed `hi` from the first cell and run a plain `v > hi` compare
+  // with NO per-element finite test and NO in-loop `hi === undefined`
+  // check (the seed hoists it out). There is no NaN to mishandle, so this
+  // also sidesteps the position-dependent `a<=b?a:b` extremum bug the
+  // policy fixed (docs/notes/reducer-nan-policy.md).
   if (col.allFinite) {
     if (end <= start) return undefined;
-    if (validity === undefined) {
-      hi = values[start]!;
-      for (let i = start + 1; i < end; i += 1) {
-        const v = values[i]!;
-        if (v > hi) hi = v;
-      }
-      return hi;
-    }
-    const bits = validity.bits;
-    for (let i = start; i < end; i += 1) {
-      if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
+    let hi = values[start]!;
+    for (let i = start + 1; i < end; i += 1) {
       const v = values[i]!;
-      if (hi === undefined || v > hi) hi = v;
+      if (v > hi) hi = v;
     }
     return hi;
   }
-  // Guarded path: skip non-finite cells (reducer non-finite policy) —
-  // matches `bucketState`'s `v > hi`.
-  if (validity === undefined) {
-    for (let i = start; i < end; i += 1) {
-      const v = values[i]!;
-      if (Number.isFinite(v) && (hi === undefined || v > hi)) hi = v;
-    }
-    return hi;
-  }
-  const bits = validity.bits;
+  // Guarded path: skip missing (non-finite) cells — matches
+  // `bucketState`'s `v > hi`.
+  let hi: number | undefined;
   for (let i = start; i < end; i += 1) {
-    if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
     const v = values[i]!;
-    if (Number.isFinite(v) && (hi === undefined || v > hi)) hi = v;
+    if (v - v === 0 && (hi === undefined || v > hi)) hi = v;
   }
   return hi;
 }

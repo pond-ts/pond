@@ -88,9 +88,6 @@ export function toWire(result: RunResult): {
       columns[name] = wire;
       if (wire.kind === 'buffers') {
         transfer.push(wire.data.values.buffer as ArrayBuffer);
-        if (wire.data.bits !== undefined) {
-          transfer.push(wire.data.bits.buffer as ArrayBuffer);
-        }
       }
     }
   }

@@ -1,44 +1,18 @@
 import type { Float64Column } from '../columnar/index.js';
+import { countFinite } from './blocked.js';
 import type { ReducerDef } from './types.js';
 
 /**
- * Counts the defined (and, on the guarded path, finite) cells of
- * `col[start, end)`.
+ * Counts the defined cells of `col[start, end)`. A missing cell is a
+ * non-finite value in the buffer ([PND-NANREP]).
  *
  * **Deliberately not shared with `reduceColumn`.** The whole-column form
- * answers the bitmap case in O(1) from `validity.definedCount`, which is
- * cached at bitmap construction. A sub-range has no such cache and must
- * popcount via `countInRange` — still far cheaper than materialising a
- * slice (whose `PackedValidityBitmap` constructor popcounts *and* copies
- * the bits), but genuinely a different algorithm. Collapsing the two
- * would have turned `Float64Column.count()` from O(1) into O(n/8).
+ * answers from the column's cached `missingCount` (one scan on first ask,
+ * O(1) after); a sub-range has no such cache and must walk.
  */
 function countRange(col: Float64Column, start: number, end: number): number {
-  const values = col._values;
-  const validity = col.validity;
-  // Fast path: every defined cell is finite, so "defined" and "defined
-  // AND finite" coincide and the popcount is exact.
-  if (col.allFinite) {
-    return validity === undefined
-      ? end - start
-      : validity.countInRange(start, end);
-  }
-  // Guarded path: walk — the non-finite policy excludes non-finite cells,
-  // which a popcount would count as present.
-  let n = 0;
-  if (validity === undefined) {
-    for (let i = start; i < end; i += 1) {
-      if (Number.isFinite(values[i]!)) n += 1;
-    }
-    return n;
-  }
-  const bits = validity.bits;
-  for (let i = start; i < end; i += 1) {
-    if ((bits[i >> 3]! & (1 << (i & 7))) !== 0 && Number.isFinite(values[i]!)) {
-      n += 1;
-    }
-  }
-  return n;
+  if (col.allFinite) return end - start;
+  return countFinite(col._values, start, end);
 }
 
 /**
@@ -68,37 +42,9 @@ export const count: ReducerDef = {
   },
   reduceColumnRange: countRange,
   reduceColumn(col) {
-    const values = col._values;
-    const validity = col.validity;
-    // Fast path: every defined cell is finite (`Float64Column.allFinite`),
-    // so "defined" and "defined AND finite" coincide — the O(1) shortcut
-    // is exact again (`definedCount`, or `col.length` when no bitmap).
-    // This is the O(N)→O(1) recovery the non-finite policy cost count
-    // (docs/notes/reducer-nan-policy.md).
-    if (col.allFinite) {
-      return validity === undefined ? col.length : validity.definedCount;
-    }
-    // Guarded path: O(N) scan, NOT the `definedCount` shortcut — the
-    // non-finite policy excludes non-finite cells, and `definedCount`
-    // counts them as present, so a defined-but-NaN cell would over-count.
-    // Walk and count valid AND finite cells.
-    let n = 0;
-    if (validity === undefined) {
-      for (let i = 0; i < col.length; i += 1) {
-        if (Number.isFinite(values[i]!)) n += 1;
-      }
-      return n;
-    }
-    const bits = validity.bits;
-    for (let i = 0; i < col.length; i += 1) {
-      if (
-        (bits[i >> 3]! & (1 << (i & 7))) !== 0 &&
-        Number.isFinite(values[i]!)
-      ) {
-        n += 1;
-      }
-    }
-    return n;
+    // `missingCount` is cached on the column (and `0` without a scan when
+    // `allFinite`), so repeated counts of one column are O(1).
+    return col.length - col.missingCount;
   },
   bucketState() {
     let n = 0;

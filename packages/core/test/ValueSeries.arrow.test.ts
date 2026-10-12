@@ -329,7 +329,7 @@ describe('ValueSeries.toArrow', () => {
     expect(Array.from(strike.values as Float64Array)).toEqual([95, 100]);
   });
 
-  it('toArrow → real Table → fromArrow keeps the original storage', () => {
+  it('toArrow → real Table → fromArrow keeps the axis storage', () => {
     // The pair's reason to exist, end to end — the value-axis counterpart of
     // the TimeSeries round trip: export, assemble a REAL Arrow table from the
     // handed-over buffers, re-import, and the result is backed by the ORIGINAL
@@ -373,9 +373,11 @@ describe('ValueSeries.toArrow', () => {
     });
     const before = vs.column('iv') as unknown as Float64Column;
     const after = back.column('iv' as never) as unknown as Float64Column;
-    // The value column survives as the SAME buffer (the null-bearing adopt
-    // path), and the axis shares memory (arrow re-wraps the view per call).
-    expect(after._values).toBe(before._values);
+    // The axis shares memory (arrow re-wraps the view per call). The
+    // gappy `iv` column is copied on the way in — pond stores its gaps as
+    // NaN and will not write them into the caller's Arrow buffer
+    // ([PND-NANREP]) — so it is equal, not shared.
+    expect(after._values).not.toBe(before._values);
     expect(back.axisValues().buffer).toBe(vs.axisValues().buffer);
     expect(back.toRows()).toEqual(vs.toRows());
   });

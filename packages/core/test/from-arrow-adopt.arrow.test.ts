@@ -12,24 +12,26 @@ import { TimeSeries } from '../src/index.js';
 import type { Float64Column } from '../src/columnar/index.js';
 
 /**
- * [PND-ARROWNULL] — zero-copy adoption of a **null-bearing** numeric column.
+ * [PND-ARROWNULL] — bulk intake of a **null-bearing** numeric column.
  *
- * `fromArrow` has always adopted a `Float64Array` values buffer when
- * `nullCount === 0`. A column carrying nulls used to fall to a per-element
- * `vector.get(i)` walk — ~10× slower than the dense path it otherwise
- * matches — even though Arrow's validity bitmap is byte-identical to
- * pond's. It now adopts both buffers.
+ * `fromArrow` adopts a `Float64Array` values buffer when `nullCount === 0`.
+ * A column carrying nulls used to fall to a per-element `vector.get(i)`
+ * walk — ~10× slower than the dense path. [PND-ARROWNULL] adopted both of
+ * Arrow's buffers instead; since [PND-NANREP] a number column marks a
+ * missing cell with `NaN` in its own buffer and keeps no bitmap, so the
+ * null path now **copies** the values buffer once and writes `NaN` behind
+ * each null bit. Still a bulk copy, never the per-element walk.
  *
  * Two things need pinning:
  *
- * 1. **Adoption is actually happening.** Easy to claim, easy to silently
- *    lose to a fallback. The test that proves it writes through the Arrow
- *    buffer afterwards and reads the change out of the series — only true
- *    if there was no copy. (That aliasing is also the documented hazard, so
- *    the test doubles as the record of it.)
- * 2. **Every decline path still produces the same answer.** Adoption is
- *    refused for six distinct reasons; each has to land on the fallback and
- *    agree with it cell for cell. A wrong answer here is silent.
+ * 1. **It copies, and does not write into the caller's table.** Writing
+ *    `NaN` into Arrow's own buffer would corrupt the caller's data, so the
+ *    test mutates Arrow's buffer afterwards and checks the series did not
+ *    see it, and checks Arrow's null slots were left alone.
+ * 2. **Every decline path still produces the same answer.** The bulk copy
+ *    is refused for several distinct reasons; each has to land on the
+ *    fallback and agree with it cell for cell. A wrong answer here is
+ *    silent.
  */
 
 const MINUTE = 60_000;
@@ -60,12 +62,11 @@ function cells(s: ReturnType<typeof seriesOf>): Array<number | undefined> {
   return Array.from({ length: s.length }, (_, i) => col.read(i));
 }
 
-describe('[PND-ARROWNULL] adoption happens', () => {
-  it('adopts the values buffer — writes through it are visible', () => {
-    // The only honest proof of zero-copy: mutate Arrow's buffer after
-    // construction and watch it show up in the series. This is also the
-    // aliasing hazard the caller inherits, stated as a test rather than
-    // only as prose.
+describe('[PND-ARROWNULL] bulk copy of a null-bearing column', () => {
+  it('copies the values buffer — later writes to Arrow are not visible', () => {
+    // The copy is what keeps the NaN stamping below from reaching the
+    // caller's table. Prove it: mutate Arrow's buffer after construction
+    // and the series still reads the original value.
     const n = 64;
     const close = nulledFloats(n, 8);
     const s = seriesOf(n, close);
@@ -73,31 +74,33 @@ describe('[PND-ARROWNULL] adoption happens', () => {
 
     expect(col.read(1)).toBe(100.5);
     (close.data[0]!.values as Float64Array)[1] = -42;
-    expect(col.read(1)).toBe(-42);
+    expect(col.read(1)).toBe(100.5);
   });
 
-  it('adopts the validity bitmap — same buffer, not a copy', () => {
+  it("writes NaN at null slots in its own copy, not in Arrow's buffer", () => {
     const n = 64;
     const close = nulledFloats(n, 8);
+    const arrowValues = close.data[0]!.values as Float64Array;
+    const before = arrowValues[0];
     const s = seriesOf(n, close);
     const col = s.column('close' as never) as unknown as Float64Column;
-    expect(col.validity?.bits).toBe(close.data[0]!.nullBitmap);
+    expect(Number.isNaN(col._values[0])).toBe(true);
+    expect(Object.is(arrowValues[0], before)).toBe(true);
   });
 
-  it('proves allFinite, so reductions take the unguarded path', () => {
+  it('is not allFinite (it has gaps) and counts them', () => {
     const n = 1000;
     const s = seriesOf(n, nulledFloats(n, 25));
     const col = s.column('close' as never) as unknown as Float64Column;
-    expect(col.allFinite).toBe(true);
+    expect(col.allFinite).toBe(false);
     expect(col.nullCount()).toBe(40);
     expect(col.length).toBe(n);
   });
 
   it('reads the same cells the per-element path would', () => {
-    // The load-bearing correctness check: adoption keeps Arrow's own
-    // values at null slots (arbitrary, per Float64Column's contract)
-    // rather than writing NaN, so the *bitmap* is what has to carry the
-    // gaps. Every cell is checked, not a sample.
+    // The main correctness check: the null bitmap is walked a byte at a
+    // time, so every cell is checked (not a sample) on a length that is
+    // not a multiple of 8.
     const n = 501; // deliberately not a multiple of 8
     const s = seriesOf(n, nulledFloats(n, 7, 3));
     const got = cells(s);
@@ -124,7 +127,7 @@ describe('[PND-ARROWNULL] adoption happens', () => {
   });
 });
 
-describe('[PND-ARROWNULL] declines, and still gets the right answer', () => {
+describe('[PND-ARROWNULL] other shapes still get the right answer', () => {
   it('declines a sliced vector (non-zero chunk offset)', () => {
     const n = 128;
     const full = nulledFloats(n, 8);
@@ -154,10 +157,9 @@ describe('[PND-ARROWNULL] declines, and still gets the right answer', () => {
     }
   });
 
-  it('declines when a non-null cell holds NaN, keeping NaN-as-gap', () => {
-    // The semantics gate. Every other numeric intake maps a defined NaN to
-    // a gap; adopting would leave it *defined*, so the same table would
-    // ingest differently depending on whether adoption was possible.
+  it('a non-null cell holding NaN is a gap, like every other intake', () => {
+    // Every numeric intake maps a defined NaN to a gap; the bulk copy must
+    // agree, so the same table ingests the same way whichever path runs.
     const n = 40;
     const raw = Array.from<number | null>({ length: n }).map((_, i) =>
       i % 5 === 0 ? null : i * 1.5,
@@ -170,7 +172,6 @@ describe('[PND-ARROWNULL] declines, and still gets the right answer', () => {
     expect(col.read(7)).toBeUndefined(); // NaN became a gap, as always
     expect(col.read(5)).toBeUndefined(); // the real null
     expect(col.read(6)).toBe(9);
-    expect(col.validity?.bits).not.toBe(close.data[0]!.nullBitmap);
   });
 
   it('declines when sorting, and sorts correctly', () => {
@@ -255,13 +256,12 @@ describe('[PND-ARROWNULL] error messages name the door', () => {
 });
 
 describe('[PND-TOARROW] round trip through real apache-arrow', () => {
-  it('toArrow → Table → fromArrow shares the original buffers', () => {
-    // The pair's reason to exist, end to end: export, assemble a REAL
-    // Arrow Table from the handed-over buffers, re-import — and the
-    // resulting series is backed by the ORIGINAL series' storage. Not
-    // "equal": the same memory, a full trip through Arrow with zero
-    // copies in either direction (nulls included, which is what
-    // [PND-ARROWNULL] bought).
+  it('toArrow → Table → fromArrow shares the key, copies a gappy column', () => {
+    // End to end: export, assemble a REAL Arrow Table from the handed-over
+    // buffers, re-import. The dense key comes back on the ORIGINAL
+    // series' memory. A number column with nulls is copied on the way in
+    // (pond stores its gaps as NaN, so it cannot adopt Arrow's buffer
+    // without writing into it — [PND-NANREP]); its cells must still agree.
     const n = 96;
     const s = seriesOf(n, nulledFloats(n, 8));
     const out = s.toArrow();
@@ -291,23 +291,15 @@ describe('[PND-TOARROW] round trip through real apache-arrow', () => {
     const c1 = s.column('close' as never) as unknown as Float64Column;
     const c2 = s2.column('close' as never) as unknown as Float64Column;
 
-    // The value column survives as the SAME object: the null path adopts
-    // `chunk.values` directly, and `makeData` stored our exported array
-    // as-is.
-    expect(c2._values).toBe(c1._values);
-    // The key and the bitmap share MEMORY, not object identity. The dense
-    // key goes through `vector.toArray()`, which re-wraps a view per call;
-    // the bitmap is Arrow-allocated 64-byte-aligned, trimmed to ceil(n/8)
-    // by `toArrow`'s subarray, then wrapped again by `makeData`. Several
-    // typed-array objects — one `ArrayBuffer` each. Asserting the buffer
-    // is what "zero-copy" actually means.
+    // The gappy value column is a copy (see above).
+    expect(c2._values).not.toBe(c1._values);
+    // The key shares MEMORY, not object identity: the dense key goes
+    // through `vector.toArray()`, which re-wraps a view per call.
+    // Asserting the buffer is what "zero-copy" actually means.
     expect(s2.keyColumn().begin.buffer).toBe(s.keyColumn().begin.buffer);
     expect(s2.keyColumn().begin.byteOffset).toBe(0);
-    expect(c2.validity?.bits.buffer).toBe(c1.validity?.bits.buffer);
-    expect(c2.validity?.bits.byteOffset).toBe(0);
 
-    // And the cells agree — the identity assertions above are only
-    // meaningful if the round-tripped series also *reads* correctly.
+    // And the cells agree.
     for (let i = 0; i < n; i += 1) {
       expect(c2.read(i)).toBe(c1.read(i));
     }

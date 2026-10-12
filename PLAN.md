@@ -655,42 +655,21 @@ consumer signal. Plan:
   (`spikes/columnar-wasm/`). Quickselect percentiles (12.9×) and blocked
   `sum`/`mean` (2.5×) shipped; the write-up and the `minMax` ±0 correction
   are in the breakout plan. Remaining: a branchless finite guard for
-  `allFinite: false` reductions, and blocking the guarded sum path (1.84×
-  measured, deliberately not taken). Acceptance benchmarks:
+  `allFinite: false` reductions. (Blocking the guarded sum path was taken
+  with [PND-NANREP]: `blockedSumFinite`.) Acceptance benchmarks:
   `spikes/columnar-wasm/bench/controls.mjs`.
 
-- **[PND-NANREP]** — **Semantics half done; only the storage switch remains.**
-  The public rule "a non-finite number (`NaN`, `±Infinity`) in a number
-  column means missing" is now locked everywhere (batch, live,
-  `@pond-ts/process` range outputs) — operators' own arithmetic (an overflow,
-  `Infinity - Infinity`, a reducer result past `MAX_VALUE`) stores a gap,
-  never a defined non-finite cell, and operators that used to throw on one no
-  longer do. Decision and findings in the breakout plan. Two follow-ups:
-  (1) every library-built number column is now `allFinite`, so the flag and
-  the guarded `reduceColumn` loops can be removed as an internal cleanup;
-  (2) `@pond-ts/financial` comments and one oracle case description still say
-  "`withColumn` rejects `±Infinity`" — stale wording, guards still correct.
-  What remains is switching packed numeric
-  storage from the validity bitmap to NaN-in-buffer — now a pure internal
-  speed-up with no visible change, deferred post-1.0. The case for it:
-  whether the validity bitmap earns its keep on **numeric** columns. Measured
-  on a 1M column with 4% missing, same values and same answer, varying only
-  how "missing" is encoded: dense (no bitmap) 0.936 ms, **bitmap 1.398 ms (1.49×)**, **NaN-in-buffer 1.118 ms (1.19×)** —
-  so the bitmap representation costs ~25% more than NaN on a scan kernel.
-  Worse, the two encodings now coexist in the hottest path: after
-  [PND-STUDYBOX] one `sma(20)` converts bitmap→NaN (0.81 ms) and back
-  NaN→bitmap (1.32 ms), **2.12 ms of pure representation churn, ~21% of the
-  call**.
-
-  What the bitmap genuinely earns: it is **irreplaceable for string / boolean /
-  array columns** (no NaN to borrow), and it gives `count()` / `nullCount()` /
-  `hasMissing()` an O(1) answer from the cached `definedCount` — though a NaN
-  scheme could cache the same integer.
-
-  What the switch would give up is nothing observable: the bitmap's one extra
-  power on numeric columns — telling a _defined_ NaN from a gap — no longer
-  exists by rule. Keep `definedCount` cached so `count()` / `nullCount()` /
-  `hasMissing()` stay O(1).
+- **[PND-NANREP]** — **Done except two small follow-ups.** The rule (any
+  non-finite number in a number column means missing) and the storage switch
+  (number columns hold a gap as `NaN` in their own `Float64Array`, no bitmap)
+  have both landed; decision and numbers in the breakout plan. Left:
+  (1) `@pond-ts/financial` comments and one oracle case description still say
+  "`withColumn` rejects `±Infinity`" — stale wording, guards still correct;
+  (2) `spikes/columnar-wasm/` benches and parity test still build
+  `Float64Column` with the old `(values, length, validity, allFinite)`
+  signature (those calls now throw) — port them (stamp `NaN`
+  at gaps) before the spike is next used as an acceptance benchmark
+  ([PND-KERNEL]).
 
 - **[PND-AGENTQ]** — The measured shape of the current agent workload, kept as
   the standing acceptance benchmark:
@@ -737,8 +716,10 @@ consumer signal. Plan:
   needs its own validity write, since the boxed array is currently how
   validity gets derived; [PND-IVLCOL] is the worked example of that shape.
 - **[PND-COLAPI]** — Make the column-API augmentation bundle-safe (F-1,
-  HIGH — methods tree-shake out of browser bundles) + validity-aware
-  `toFloat64Array({ missing })` + `hasAnyDefined()`. Two consumers each.
+  HIGH — methods tree-shake out of browser bundles) + `hasAnyDefined()`.
+  Two consumers each. (`toFloat64Array` now returns `NaN` at a gap —
+  [PND-NANREP] — so a `{ missing }` fill option is only worth adding if a
+  consumer needs a value other than `NaN`.)
 - **[PND-WIRE]** — Protobuf columnar wire codec + `SeriesUpdate` streaming
   append; design settled, build when the binary WS feed consumer arrives.
 - **[PND-GATHER]** — Dashboard snapshot-cost queue:

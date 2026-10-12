@@ -105,6 +105,11 @@ This replaces the substrate-internal storage guard (`if (col.storage !==
 The buffer shares the column's storage and is read-only by convention — writing
 through it corrupts the series.
 
+A missing cell comes back as `NaN`: that is how a number column stores a gap,
+so a draw loop breaks the line there with no extra check. (A buffer you
+handed to `fromColumns` keeps any `±Infinity` you put in it; those cells read
+as missing too.)
+
 ## `bin(bins, reducer)` — index downsampling
 
 Splits `[0, length)` into `bins` equal-index ranges and reduces each. The

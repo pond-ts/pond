@@ -15,6 +15,9 @@
  * | dense, no validity            |   0.472 ms |   0.188 ms | 2.51× |
  * | validity bitmap, 4% missing   |   0.620 ms |   0.279 ms | 2.22× |
  *
+ * (Measured before [PND-NANREP] replaced the bitmap with `NaN` gaps; the
+ * gappy case is now {@link blockedSumFinite}.)
+ *
  * ## This changes the answer
  *
  * Floating-point addition is **not associative**, so a blocked sum can
@@ -64,18 +67,18 @@
  * bit-identical to pond-ts's historical result.
  *
  * "Run length" is `end - start` — **range positions, not defined
- * cells**. On the masked path a 32-cell range with gaps blocks even
- * though fewer than 32 values contribute. Deliberate: the gate must be
- * O(1), a defined-count popcount would cost a scan, and the threshold
- * is a perf crossover, not a semantic boundary — the masked kernel is
- * correct at any density.
+ * cells**. On the finite-guarded path a 32-cell range with gaps blocks
+ * even though fewer than 32 values contribute. Deliberate: the gate must be
+ * O(1), a defined count would cost a scan, and the threshold is a perf
+ * crossover, not a semantic boundary — the guarded kernel is correct at
+ * any density.
  */
 export const BLOCKED_MIN = 32;
 
 /**
  * Sum `values[start, end)` with eight accumulators. Every cell is a
- * contributor — the caller has established there is no validity bitmap
- * and the column is `allFinite`.
+ * contributor — the caller has established the column is `allFinite`
+ * (no missing cell).
  *
  * Callers must check {@link BLOCKED_MIN} first; this is correct at any
  * length but slower than sequential below it.
@@ -110,33 +113,23 @@ export function blockedSum(
 }
 
 /**
- * Sum the **defined** cells of `values[start, end)` with eight
- * accumulators, reading the validity bitmap one byte per eight cells.
- * The caller has established the column is `allFinite`, so every defined
- * cell is a contributor.
+ * Sum the **finite** cells of `values[start, end)` with eight
+ * accumulators, skipping missing ones — a missing number is a non-finite
+ * value in the buffer ([PND-NANREP]), so the finite test is also the
+ * defined test. For a column that is not `allFinite`.
  *
- * The byte-at-a-time read is why this stays close to the dense speedup
- * despite the gap check: a fully-defined byte (`0xff`) — the common case
- * even in a column with gaps — costs one load and one compare for eight
- * cells, and the eight adds still issue independently.
- *
- * `start` is aligned up to a byte boundary first so `bits[i >> 3]` is
- * a whole byte of the block; the head and tail run scalar.
+ * Each lane adds `v` when finite and `0` otherwise, so the eight adds
+ * still issue independently. Adding `+0` is exact (the accumulators start
+ * at `+0` and cannot become `-0`), so this is the same reassociated sum
+ * {@link blockedSum} would give over just the finite cells.
  *
  * Callers must check {@link BLOCKED_MIN} first.
  */
-export function blockedSumMasked(
+export function blockedSumFinite(
   values: Float64Array,
-  bits: Uint8Array,
   start: number,
   end: number,
 ): number {
-  let s = 0;
-  // Head: up to the first byte boundary, scalar.
-  const head = Math.min(end, (start + 7) & ~7);
-  for (let i = start; i < head; i += 1) {
-    if ((bits[i >> 3]! & (1 << (i & 7))) !== 0) s += values[i]!;
-  }
   let a0 = 0;
   let a1 = 0;
   let a2 = 0;
@@ -145,33 +138,43 @@ export function blockedSumMasked(
   let a5 = 0;
   let a6 = 0;
   let a7 = 0;
-  const lim = end & ~7;
-  for (let i = head; i < lim; i += 8) {
-    const m = bits[i >> 3]!;
-    if (m === 255) {
-      a0 += values[i]!;
-      a1 += values[i + 1]!;
-      a2 += values[i + 2]!;
-      a3 += values[i + 3]!;
-      a4 += values[i + 4]!;
-      a5 += values[i + 5]!;
-      a6 += values[i + 6]!;
-      a7 += values[i + 7]!;
-    } else if (m !== 0) {
-      if ((m & 1) !== 0) a0 += values[i]!;
-      if ((m & 2) !== 0) a1 += values[i + 1]!;
-      if ((m & 4) !== 0) a2 += values[i + 2]!;
-      if ((m & 8) !== 0) a3 += values[i + 3]!;
-      if ((m & 16) !== 0) a4 += values[i + 4]!;
-      if ((m & 32) !== 0) a5 += values[i + 5]!;
-      if ((m & 64) !== 0) a6 += values[i + 6]!;
-      if ((m & 128) !== 0) a7 += values[i + 7]!;
-    }
+  const lim = start + (((end - start) >> 3) << 3);
+  for (let i = start; i < lim; i += 8) {
+    const v0 = values[i]!;
+    const v1 = values[i + 1]!;
+    const v2 = values[i + 2]!;
+    const v3 = values[i + 3]!;
+    const v4 = values[i + 4]!;
+    const v5 = values[i + 5]!;
+    const v6 = values[i + 6]!;
+    const v7 = values[i + 7]!;
+    a0 += v0 - v0 === 0 ? v0 : 0;
+    a1 += v1 - v1 === 0 ? v1 : 0;
+    a2 += v2 - v2 === 0 ? v2 : 0;
+    a3 += v3 - v3 === 0 ? v3 : 0;
+    a4 += v4 - v4 === 0 ? v4 : 0;
+    a5 += v5 - v5 === 0 ? v5 : 0;
+    a6 += v6 - v6 === 0 ? v6 : 0;
+    a7 += v7 - v7 === 0 ? v7 : 0;
   }
-  s += a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7;
-  // Tail: past the last whole byte, scalar.
-  for (let i = Math.max(head, lim); i < end; i += 1) {
-    if ((bits[i >> 3]! & (1 << (i & 7))) !== 0) s += values[i]!;
+  let s = a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7;
+  for (let i = lim; i < end; i += 1) {
+    const v = values[i]!;
+    if (v - v === 0) s += v;
   }
   return s;
+}
+
+/** Count the finite (defined) cells of `values[start, end)`. */
+export function countFinite(
+  values: Float64Array,
+  start: number,
+  end: number,
+): number {
+  let n = 0;
+  for (let i = start; i < end; i += 1) {
+    const v = values[i]!;
+    if (v - v === 0) n += 1;
+  }
+  return n;
 }

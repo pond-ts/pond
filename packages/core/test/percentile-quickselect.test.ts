@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Float64Column, validityFromPredicate } from '../src/columnar/index.js';
+import { Float64Column } from '../src/columnar/index.js';
 import { reducePercentileColumn } from '../src/reducers/percentile.js';
 import { resolveReducer } from '../src/reducers/index.js';
 
@@ -36,13 +36,14 @@ function column(
   const n = source.length;
   const values = new Float64Array(n);
   for (let i = 0; i < n; i += 1) {
-    values[i] = typeof source[i] === 'number' ? (source[i] as number) : 0;
+    // A missing cell is stored as NaN ([PND-NANREP]).
+    values[i] = typeof source[i] === 'number' ? (source[i] as number) : NaN;
   }
-  const validity = validityFromPredicate(
-    n,
-    (i) => typeof source[i] === 'number',
-  );
-  return new Float64Column(values, n, validity, allFinite);
+  // `allFinite` now promises "no missing cells", so it can only be
+  // claimed when every cell really is finite — a gappy shape always takes
+  // the guarded path.
+  const proven = allFinite && values.every((v) => Number.isFinite(v));
+  return new Float64Column(values, n, proven);
 }
 
 /**
@@ -175,7 +176,7 @@ describe('percentile via quickselect matches percentile via sort', () => {
     const n = 200_000;
     const values = new Float64Array(n);
     for (let i = 0; i < n; i += 1) values[i] = i;
-    const col = new Float64Column(values, n, undefined, true);
+    const col = new Float64Column(values, n, true);
     const started = Date.now();
     expect(reducePercentileColumn(col, 50)).toBe((n - 1) / 2);
     expect(reducePercentileColumn(col, 95)).toBeCloseTo((n - 1) * 0.95, 6);

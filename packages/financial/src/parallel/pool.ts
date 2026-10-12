@@ -206,7 +206,7 @@ function readInto(
     | {
         kind?: string;
         storage?: string;
-        validity?: { bits: Uint8Array };
+        allFinite?: boolean;
         toFloat64Array?: () => Float64Array;
       }
     | undefined;
@@ -214,10 +214,11 @@ function readInto(
   if (col.storage !== 'packed' || col.toFloat64Array === undefined)
     return false;
   out.set(col.toFloat64Array().subarray(0, length));
-  const bits = col.validity?.bits;
-  if (bits !== undefined) {
+  // A gap is already `NaN`; fold `±Infinity` (also missing) to it.
+  if (col.allFinite !== true) {
     for (let i = 0; i < length; i += 1) {
-      if ((bits[i >> 3]! & (1 << (i & 7))) === 0) out[i] = NaN;
+      const v = out[i]!;
+      if (v - v !== 0) out[i] = NaN;
     }
   }
   return true;

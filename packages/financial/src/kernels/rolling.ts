@@ -265,7 +265,7 @@ function readNumericColumn(
     | {
         kind?: string;
         storage?: string;
-        validity?: { bits: Uint8Array };
+        allFinite?: boolean;
         toFloat64Array?: () => Float64Array;
         at(i: number): unknown;
       }
@@ -278,12 +278,14 @@ function readNumericColumn(
 
   if (col.storage === 'packed' && col.toFloat64Array !== undefined) {
     out.set(col.toFloat64Array());
-    const bits = col.validity?.bits;
-    if (bits !== undefined) {
-      // Gap slots hold an arbitrary buffer value (typically 0); punch the
-      // marker in so downstream arithmetic propagates it.
+    // A gap is already `NaN` in a number column's buffer; `±Infinity` also
+    // means missing there, so fold it to the `NaN` marker that downstream
+    // arithmetic propagates. Nothing to fold when the column proves every
+    // cell finite.
+    if (col.allFinite !== true) {
       for (let i = 0; i < length; i += 1) {
-        if ((bits[i >> 3]! & (1 << (i & 7))) === 0) out[i] = NaN;
+        const v = out[i]!;
+        if (v - v !== 0) out[i] = NaN;
       }
     }
     return out;

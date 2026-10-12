@@ -161,10 +161,8 @@ type ColumnarAggregatePlan =
       /**
        * The reducer's **range-scoped** kernel — [PND-AGGALLOC]. Reducing
        * a bucket used to mean `reduce(column.sliceByRange(start, scan))`,
-       * which allocated a `Float64Column` per bucket per column and, on a
-       * column with a validity bitmap, also copied the bucket's bits into
-       * a fresh `Uint8Array` and popcounted them. Two integers do the same
-       * job for nothing.
+       * which allocated a `Float64Column` per bucket per column. Two
+       * integers do the same job for nothing.
        */
       reduce: (
         col: Float64Column,
@@ -365,14 +363,12 @@ function intervalKeysForBuckets(
  *   copied). A reducer that overflows to `Infinity` never reaches it:
  *   `reduceBucket` maps a non-finite result to missing, exactly as the
  *   row path's `applyAggregateReducer` does ([PND-NANREP]).
- * - Numeric columns are stamped `allFinite: true` on the same
- *   justification the row path uses — every surviving cell is finite.
- *   Dropping that flag would be safe but would quietly deoptimise every
- *   downstream reduction of an aggregate result.
- * - Missing cells (an empty bucket, or an all-missing one) set no
- *   validity bit, so they read back as `undefined` — **not** `NaN`. That
- *   is the sentinel decision this change forces, resolved in favour of
- *   preserving current behaviour exactly.
+ * - Numeric columns are stamped `allFinite: true` when no bucket went
+ *   missing — every surviving cell is finite. Dropping that flag would be
+ *   safe but would quietly deoptimise every downstream reduction of an
+ *   aggregate result.
+ * - Missing cells (an empty bucket, or an all-missing one) are written as
+ *   `NaN`, which a number column reads back as `undefined` ([PND-NANREP]).
  *
  * The one row-intake check deliberately skipped is the non-decreasing
  * key scan: `BoundedSequence` already validates its intervals as sorted,
@@ -418,6 +414,7 @@ export function tryAggregateColumnarStore(
       kind === 'array' ? new Array<ArrayValue | undefined>(bucketCount) : null;
     validityBits[c] = null;
   }
+  const numberHasMissing = new Uint8Array(colCount);
 
   /** Marks row `b` of column `c` missing, allocating + back-filling the
    *  bitmap on the first such cell. */
@@ -451,16 +448,13 @@ export function tryAggregateColumnarStore(
       assertCellKind(kinds[c]!, value, b, c + 1);
       switch (kinds[c]) {
         case 'number': {
+          // A missing number is `NaN` in the buffer — number columns
+          // carry no bitmap ([PND-NANREP]).
           if (typeof value === 'number') {
             numberBufs[c]![b] = value;
-            const bits = validityBits[c];
-            // Bitmap exists ⇒ it covers every defined cell, so this
-            // row's bit needs setting. No bitmap yet ⇒ every prior row
-            // was defined and none is needed.
-            if (bits !== null && bits !== undefined)
-              bits[b >> 3]! |= 1 << (b & 7);
           } else {
-            markMissing(c, b);
+            numberBufs[c]![b] = NaN;
+            numberHasMissing[c] = 1;
           }
           break;
         }
@@ -499,11 +493,14 @@ export function tryAggregateColumnarStore(
     let column: Column;
     switch (kinds[c]) {
       case 'number':
-        // `allFinite: true` on the same grounds the row path claims it:
-        // a non-finite result was mapped to missing in `reduceBucket`,
-        // and `assertCellKind` rejects any other non-finite cell, so a
-        // surviving column is provably finite.
-        column = new Float64Column(numberBufs[c]!, bucketCount, validity, true);
+        // A non-finite result was mapped to missing in `reduceBucket`,
+        // and `assertCellKind` rejects any other non-finite cell, so the
+        // column is all-finite exactly when no cell went missing.
+        column = new Float64Column(
+          numberBufs[c]!,
+          bucketCount,
+          numberHasMissing[c] === 0,
+        );
         break;
       case 'boolean':
         column = new BooleanColumn(booleanBufs[c]!, bucketCount, validity);
@@ -628,16 +625,16 @@ function sweepRollingColumn(
   laned: boolean,
 ): Float64Column {
   const values = source._values;
-  const validity = source.validity;
-  const bits = validity?.bits ?? null;
   const allFinite = source.allFinite;
 
-  const outValues = new Float64Array(rowCount);
-  const outBits = new Uint8Array(bitmapByteCount(rowCount));
+  // A missing output cell is `NaN`; start all-missing and write the
+  // defined ones ([PND-NANREP] — no output bitmap).
+  const outValues = new Float64Array(rowCount).fill(NaN);
   let outDefined = 0;
 
-  // A cell contributes iff it is defined and — when the source cannot
-  // prove finiteness — finite. This reproduces both state variants the
+  // A cell contributes iff it is finite — a missing cell is `NaN` in the
+  // buffer, so the finite test is also the defined test, and it is
+  // skipped entirely when the source proves every cell finite. This reproduces both state variants the
   // shared sweep chose between: the bare built-in state (safe only when
   // the source is provably all-finite and fully defined) and the
   // `rollingStateFor` wrapper that applies the non-finite policy.
@@ -647,10 +644,9 @@ function sweepRollingColumn(
   // this kernel was restructured to remove, reintroduced by a tidier-looking
   // closure.
   //
-  // Both operands are loop-invariant: `bits === null` and `allFinite` are
-  // fixed for the whole sweep. On a dense, provably-finite column — an OHLCV
-  // bar series, the common case here — the whole predicate folds to `true`
-  // and the test disappears.
+  // `allFinite` is loop-invariant. On a dense, provably-finite column — an
+  // OHLCV bar series, the common case here — the whole predicate folds to
+  // `true` and the test disappears.
 
   // `avg` is a running sum; `stdev` is Welford. Both are inlined to remove
   // the per-row `add` / `remove` / `snapshot` calls; everything else keeps
@@ -678,7 +674,7 @@ function sweepRollingColumn(
       ? null
       : plainSum
         ? plainRollingSum()
-        : allFinite && validity === undefined
+        : allFinite
           ? resolveReducer(spec.reducer as string).rollingState()
           : rollingStateFor(spec.reducer);
 
@@ -719,22 +715,14 @@ function sweepRollingColumn(
 
     if (kind === 'avg') {
       while (windowEnd <= hi) {
-        if (
-          (bits === null ||
-            (bits[windowEnd >> 3]! & (1 << (windowEnd & 7))) !== 0) &&
-          (allFinite || Number.isFinite(values[windowEnd]!))
-        ) {
+        if (allFinite || values[windowEnd]! - values[windowEnd]! === 0) {
           runningSum += values[windowEnd]!;
           runningCount += 1;
         }
         windowEnd += 1;
       }
       while (windowStart < lo) {
-        if (
-          (bits === null ||
-            (bits[windowStart >> 3]! & (1 << (windowStart & 7))) !== 0) &&
-          (allFinite || Number.isFinite(values[windowStart]!))
-        ) {
+        if (allFinite || values[windowStart]! - values[windowStart]! === 0) {
           runningSum -= values[windowStart]!;
           runningCount -= 1;
         }
@@ -742,11 +730,7 @@ function sweepRollingColumn(
       }
     } else if (kind === 'stdev') {
       while (windowEnd <= hi) {
-        if (
-          (bits === null ||
-            (bits[windowEnd >> 3]! & (1 << (windowEnd & 7))) !== 0) &&
-          (allFinite || Number.isFinite(values[windowEnd]!))
-        ) {
+        if (allFinite || values[windowEnd]! - values[windowEnd]! === 0) {
           const v = values[windowEnd]!;
           wN += 1;
           const delta = v - wMean;
@@ -756,11 +740,7 @@ function sweepRollingColumn(
         windowEnd += 1;
       }
       while (windowStart < lo) {
-        if (
-          (bits === null ||
-            (bits[windowStart >> 3]! & (1 << (windowStart & 7))) !== 0) &&
-          (allFinite || Number.isFinite(values[windowStart]!))
-        ) {
+        if (allFinite || values[windowStart]! - values[windowStart]! === 0) {
           const v = values[windowStart]!;
           if (wN <= 1) {
             // Removing the final contributor — reset exactly (no 0/0, no drift).
@@ -788,9 +768,7 @@ function sweepRollingColumn(
       while (windowEnd <= hi) {
         state!.add(
           windowEnd,
-          (bits === null ||
-            (bits[windowEnd >> 3]! & (1 << (windowEnd & 7))) !== 0) &&
-            (allFinite || Number.isFinite(values[windowEnd]!))
+          allFinite || values[windowEnd]! - values[windowEnd]! === 0
             ? values[windowEnd]!
             : undefined,
         );
@@ -799,9 +777,7 @@ function sweepRollingColumn(
       while (windowStart < lo) {
         state!.remove(
           windowStart,
-          (bits === null ||
-            (bits[windowStart >> 3]! & (1 << (windowStart & 7))) !== 0) &&
-            (allFinite || Number.isFinite(values[windowStart]!))
+          allFinite || values[windowStart]! - values[windowStart]! === 0
             ? values[windowStart]!
             : undefined,
         );
@@ -846,12 +822,10 @@ function sweepRollingColumn(
       continue;
     }
     outValues[index] = v;
-    outBits[index >> 3]! |= 1 << (index & 7);
     outDefined += 1;
   }
 
-  const outValidity =
-    outDefined === rowCount ? undefined : validityFromBits(outBits, rowCount);
-  // Every written cell passed the finite test above → `allFinite`.
-  return new Float64Column(outValues, rowCount, outValidity, true);
+  // Every written cell passed the finite test above, so the column is
+  // all-finite exactly when every row was written.
+  return new Float64Column(outValues, rowCount, outDefined === rowCount);
 }

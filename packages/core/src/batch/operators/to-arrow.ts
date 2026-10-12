@@ -162,7 +162,7 @@ const LABEL_SUFFIX = KEY_LABEL_SUFFIX;
 
 function nullCountOf(col: {
   length: number;
-  validity?: { definedCount: number };
+  validity?: { definedCount: number } | undefined;
 }): number {
   return col.validity === undefined
     ? 0
@@ -172,7 +172,7 @@ function nullCountOf(col: {
 /** The validity bitmap trimmed to the bytes this column's length needs. */
 function bitmapOf(col: {
   length: number;
-  validity?: { bits: Uint8Array };
+  validity?: { bits: Uint8Array } | undefined;
 }): Uint8Array | undefined {
   const bits = col.validity?.bits;
   if (bits === undefined) return undefined;

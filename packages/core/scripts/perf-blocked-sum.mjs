@@ -2,7 +2,7 @@ import { performance } from 'node:perf_hooks';
 import {
   BLOCKED_MIN,
   blockedSum,
-  blockedSumMasked,
+  blockedSumFinite,
 } from '../dist/reducers/blocked.js';
 import { Float64Column } from '../dist/columnar/index.js';
 import '../dist/column.js';
@@ -17,7 +17,8 @@ import '../dist/column.js';
 // flagged that the BLOCKED_MIN=32 threshold was justified only by a table
 // in prose. Three sections:
 //
-//   1. whole-column: sequential reference vs blocked, dense and masked
+//   1. whole-column: sequential reference vs blocked, dense and gappy
+//      (a gap is NaN in the buffer since [PND-NANREP])
 //      (the 2.2–2.5× headline), plus the public `col.sum()` end to end;
 //   2. the threshold sweep: 4096 sums of n cells each at SLIDING start
 //      offsets, with a SEPARATE harness closure per kernel;
@@ -67,10 +68,11 @@ function seqSum(values, start, end) {
   return s;
 }
 
-function seqSumMasked(values, bits, start, end) {
+function seqSumFinite(values, start, end) {
   let s = 0;
   for (let i = start; i < end; i += 1) {
-    if ((bits[i >> 3] & (1 << (i & 7))) !== 0) s += values[i];
+    const v = values[i];
+    if (v - v === 0) s += v;
   }
   return s;
 }
@@ -79,16 +81,15 @@ const N = 500_000;
 const values = new Float64Array(N);
 for (let i = 0; i < N; i += 1) values[i] = 50 + 35 * Math.sin(i / 5000);
 
-// 4% missing, off byte boundaries — the masked shape a real feed produces.
-const bits = new Uint8Array(Math.ceil(N / 8)).fill(255);
-for (let i = 0; i < N; i += 1)
-  if (i % 25 === 7) bits[i >> 3] &= ~(1 << (i & 7));
+// 4% missing, off lane boundaries — the gappy shape a real feed produces.
+const gappy = values.slice();
+for (let i = 0; i < N; i += 1) if (i % 25 === 7) gappy[i] = NaN;
 
 const results = { blockedMin: BLOCKED_MIN, results: [] };
 
-// 1 ── whole column, dense and masked, plus the public door.
+// 1 ── whole column, dense and gappy, plus the public door.
 {
-  const dense = new Float64Column(values, N, undefined, true);
+  const dense = new Float64Column(values, N, true);
   const a = bench(() => seqSum(values, 0, N));
   const b = bench(() => blockedSum(values, 0, N));
   const pub = bench(() => dense.sum());
@@ -99,10 +100,10 @@ const results = { blockedMin: BLOCKED_MIN, results: [] };
     speedup: Number((a / b).toFixed(2)),
     publicSumMs: pub,
   });
-  const c = bench(() => seqSumMasked(values, bits, 0, N));
-  const d = bench(() => blockedSumMasked(values, bits, 0, N));
+  const c = bench(() => seqSumFinite(gappy, 0, N));
+  const d = bench(() => blockedSumFinite(gappy, 0, N));
   results.results.push({
-    scenario: `masked whole column, 4% missing (${N})`,
+    scenario: `gappy whole column, 4% missing as NaN (${N})`,
     sequentialMs: c,
     blockedMs: d,
     speedup: Number((c / d).toFixed(2)),
@@ -152,7 +153,7 @@ const results = { blockedMin: BLOCKED_MIN, results: [] };
   const small = new Float64Array(n);
   small[0] = 1e16;
   for (let i = 1; i < n; i += 1) small[i] = 1;
-  const col = new Float64Column(small, n, undefined, true);
+  const col = new Float64Column(small, n, true);
   const ok = col.sum() === seqSum(small, 0, n);
   if (!ok) throw new Error('sub-threshold sum is not bit-identical');
   results.results.push({

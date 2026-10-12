@@ -546,45 +546,39 @@ describe('[PND-PROCRANGE] ranged recompute', () => {
 
 describe('[PND-PROCRANGE] the prepared output contract', () => {
   it('carries a gapped prefix as gaps, not as defined zeros', () => {
-    // The bug this contract exists to make unwritable. Packed storage
-    // holds `0` at a missing cell, not `NaN`, so an op copying only
-    // `values` forward turns every warm-up gap into a defined zero —
-    // 1,875 wrong cells on a 5-study pass, and nothing in the type
-    // system objects. `prepareRange` moves validity with the values.
+    // The bug this contract exists to make unwritable: an op copying
+    // only defined values forward, or a buffer that holds `0` at a gap,
+    // turns every warm-up gap into a defined zero — 1,875 wrong cells on
+    // a 5-study pass under the old bitmap storage. A gap is now `NaN` in
+    // the values themselves ([PND-NANREP]), so copying the values copies
+    // the gaps with them.
     const prior = packColumn([undefined, undefined, 3, 4, undefined, 6]);
     const view = columnView(prior)!;
     const out = prepareRange(8, 5, view);
     // Rows the op will not touch keep their exact prior state.
     expect(out.values[2]).toBe(3);
-    expect((out.bits[0]! & (1 << 0)) !== 0, 'row 0 was a gap').toBe(false);
-    expect((out.bits[0]! & (1 << 1)) !== 0, 'row 1 was a gap').toBe(false);
-    expect((out.bits[0]! & (1 << 2)) !== 0, 'row 2 was defined').toBe(true);
-    expect((out.bits[0]! & (1 << 4)) !== 0, 'row 4 was a gap').toBe(false);
+    expect(Number.isNaN(out.values[0]), 'row 0 was a gap').toBe(true);
+    expect(Number.isNaN(out.values[1]), 'row 1 was a gap').toBe(true);
+    expect(Number.isNaN(out.values[2]), 'row 2 was defined').toBe(false);
+    expect(Number.isNaN(out.values[4]), 'row 4 was a gap').toBe(true);
   });
 
-  it('masks the byte straddling the boundary', () => {
-    // `keep` rarely lands on a byte edge. The bits past it in that byte
-    // describe rows the op is about to rewrite, and carrying them over
-    // would leave a cell marked defined before anything wrote to it.
-    // Gapped on purpose: a gapless prior carries no bitmap at all and
-    // takes the other branch, so this test passed with the mask deleted
-    // until the prior was given a gap.
+  it('leaves every row past the boundary missing', () => {
+    // `keep` rarely lands on a byte edge. Rows past it are about to be
+    // rewritten by the op, so carrying their prior values over would
+    // leave a cell defined before anything wrote to it.
     const prior = packColumn([1, 2, 3, 4, 5, undefined, 7, 8, 9, 10]);
     const out = prepareRange(10, 3, columnView(prior)!);
-    expect((out.bits[0]! & (1 << 2)) !== 0, 'row 2 is kept').toBe(true);
-    expect(
-      (out.bits[0]! & (1 << 3)) !== 0,
-      'row 3 is past the boundary and must not be marked',
-    ).toBe(false);
-    expect(out.bits[0]! & 0b11111000).toBe(0);
+    expect(out.values[2], 'row 2 is kept').toBe(3);
+    for (let i = 3; i < 10; i += 1) {
+      expect(Number.isNaN(out.values[i]), `row ${i} is unwritten`).toBe(true);
+    }
   });
 
-  it('treats a bitmap-free prior as wholly defined', () => {
+  it('carries a gap-free prior as wholly defined', () => {
     const out = prepareRange(6, 4, columnView(packColumn([1, 2, 3, 4]))!);
-    for (let i = 0; i < 4; i += 1) {
-      expect((out.bits[0]! & (1 << i)) !== 0, `row ${i}`).toBe(true);
-    }
-    expect((out.bits[0]! & (1 << 4)) !== 0, 'row 4 unwritten').toBe(false);
+    expect(Array.from(out.values.subarray(0, 4))).toEqual([1, 2, 3, 4]);
+    expect(Number.isNaN(out.values[4]), 'row 4 unwritten').toBe(true);
   });
 
   it('seals to a column that round-trips values and gaps', () => {
@@ -608,27 +602,28 @@ describe('[PND-PROCRANGE] the prepared output contract', () => {
     ]);
   });
 
-  it('omits the bitmap when nothing is missing', () => {
+  it('seals a gap-free output as allFinite', () => {
     // The gapless convention the rest of the package relies on — a
-    // column with no gaps carries no bitmap, which is also what lets
-    // `appendColumn` round-trip it without boxing.
+    // column with no gaps is `allFinite` and reports no validity, which is
+    // also what lets reducers take their fast path.
     const out = prepareRange(4, 0, undefined);
     for (let i = 0; i < 4; i += 1) out.set(i, i + 1);
-    const sealed = sealRange(out, 4) as unknown as { validity?: unknown };
+    const sealed = sealRange(out, 4);
+    expect(sealed.allFinite).toBe(true);
     expect(sealed.validity).toBeUndefined();
   });
 
   it('carries no prefix when there is no previous output', () => {
     const out = prepareRange(4, 3, undefined);
-    expect(out.bits.every((b) => b === 0)).toBe(true);
+    expect(Array.from(out.values).every((v) => Number.isNaN(v))).toBe(true);
   });
 
   it('stops at the prior length when the series grew', () => {
     // `keep` is derived from the CURRENT length; the previous output is
     // shorter after an append, and reading past it would copy garbage.
     const out = prepareRange(10, 8, columnView(packColumn([1, 2, 3]))!);
-    expect((out.bits[0]! & (1 << 2)) !== 0).toBe(true);
-    expect((out.bits[0]! & (1 << 3)) !== 0, 'past the prior end').toBe(false);
+    expect(out.values[2]).toBe(3);
+    expect(Number.isNaN(out.values[3]), 'past the prior end').toBe(true);
   });
 });
 
@@ -1066,16 +1061,15 @@ describe('[PND-NANREP] range outputs store non-finite as missing', () => {
       undefined,
     ]);
     expect(col.validity!.definedCount).toBe(1);
-    expect(col.allFinite).toBe(true);
+    expect(col.allFinite).toBe(false); // it has gaps
   });
 
-  it('sealRange clears a non-finite value written straight into values / bits', () => {
+  it('sealRange folds a non-finite value written straight into values to NaN', () => {
     const out = prepareRange(4, 0, undefined);
     out.values[0] = NaN;
     out.values[1] = 5;
     out.values[2] = Infinity;
     out.values[3] = -Infinity;
-    out.bits[0]! |= 0b1111;
     const col = sealRange(out, 4);
     expect([0, 1, 2, 3].map((i) => col.read(i))).toEqual([
       undefined,
@@ -1084,6 +1078,12 @@ describe('[PND-NANREP] range outputs store non-finite as missing', () => {
       undefined,
     ]);
     expect(col.validity!.definedCount).toBe(1);
-    expect(col.allFinite).toBe(true);
+    expect(col.allFinite).toBe(false); // it has gaps
+    // Every gap is the canonical NaN, not the Infinity that was written.
+    expect(
+      Array.from((col as unknown as { _values: Float64Array })._values).map(
+        (v) => Number.isNaN(v),
+      ),
+    ).toEqual([true, false, true, true]);
   });
 });

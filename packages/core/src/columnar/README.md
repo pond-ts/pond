@@ -130,6 +130,14 @@ row, `bits[i >> 3] & (1 << (i & 7))` is the bit for row `i`. The
 field is **absent** when every cell is defined; build code only
 allocates a bitmap when at least one slot is missing.
 
+**Number columns are the exception** ([PND-NANREP]): a missing cell is
+a non-finite value (`NaN` as written by the library) in `_values`
+itself, and no bitmap is stored. `Float64Column.validity` is a lazy
+getter that derives a bitmap from the buffer on first read and caches
+it, kept for kind-generic code; number hot paths test `v - v === 0` on
+`_values` instead. `allFinite` means "no missing cells", and a cached
+`missingCount` answers `count()` / `nullCount()` / `hasMissing()`.
+
 `MutableValidityBitmap` (used by builders during column construction)
 has a one-shot `freeze()` that copies bits into a fresh `Uint8Array`
 — the frozen snapshot can't alias the mutable buffer. Subsequent
@@ -179,7 +187,9 @@ locality).
 each chunk's per-chunk validity. This preserves the "no bitmap ⇒ all
 cells defined" convention so `col.validity === undefined` reliably
 means "all cells defined" — a chunked column can't silently mask
-invalid cells.
+invalid cells. `ChunkedFloat64Column` is the exception: its chunks
+store gaps as `NaN`, so its aggregate `validity` is derived on first
+read and cached.
 
 **Chunks are always plain.** `concatSorted` flattens chunked inputs
 into their constituent chunks so the chunked-column data structure
@@ -255,8 +265,11 @@ work.
 
 ### What each layer validates
 
-- **`Float64Column` constructor** — buffer underflow, validity length
-  match.
+- **`Float64Column` constructor** — buffer underflow, and that the
+  third argument is a boolean `allFinite` (rejects the old
+  `(values, length, validity, allFinite)` shape). It does not scan:
+  a caller claiming `allFinite: true` must have proven no cell is
+  non-finite.
 - **`StringColumn` constructor** — mutually exclusive dict / fallback
   modes; in-range dictionary indices for defined cells; fallback
   no-validity invariant; explicit validity consistency.
@@ -326,7 +339,8 @@ framework's invariants:
 Invalid rows receive a documented per-kind sentinel matching the
 column's value type:
 
-- `Float64Column`: arbitrary slot value (typically `0`).
+- `Float64Column`: the stored non-finite value (`NaN` as the library
+  writes it).
 - `BooleanColumn`: arbitrary slot value (typically `false`).
 - `StringColumn`: `''` (empty string) — uniform across dict-encoded
   and fallback modes.
