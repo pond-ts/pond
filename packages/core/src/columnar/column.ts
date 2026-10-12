@@ -149,14 +149,19 @@ export type Column =
  * must consult `validity` before treating a slot as meaningful.
  *
  * **The rule: `NaN` in a number column means missing** — [PND-NANREP].
- * There is no such thing as a *defined* `NaN` cell. Every producer that
- * writes a numeric column (row intake, `fromColumns`, `withColumn`, and
- * every operator's own arithmetic — `diff` of `Infinity - Infinity`, a
- * cumulative sum that reaches `NaN`, a `scan` step or `collapse`
- * reducer returning `NaN`) stores a `NaN` result as a **missing** cell:
- * validity bit cleared, `definedCount` excluding it. So `read(i)` returns
- * `undefined`, `scan()` skips it, and `count()` / `nullCount()` /
- * `hasMissing()` count it as missing. `±Infinity` is *not* covered by
+ * There is no such thing as a *defined* `NaN` cell. Each door either
+ * stores a `NaN` as a **missing** cell (validity bit cleared,
+ * `definedCount` excluding it) or rejects it — none keeps it as a value:
+ *
+ * - **Stored as missing:** `fromColumns` (plain array or typed array),
+ *   `withColumn` with a `Float64Array`, and every operator's own
+ *   arithmetic — `diff` of `Infinity - Infinity`, a cumulative sum that
+ *   reaches `NaN`, a `scan` step or `collapse` reducer returning `NaN`.
+ * - **Throws:** row intake (`new TimeSeries({ rows })`, `LiveSeries.push`
+ *   — "expected finite number") and `withColumn` with a plain array.
+ *
+ * So for a stored cell `read(i)` returns `undefined`, `scan()` skips it,
+ * and `count()` / `nullCount()` / `hasMissing()` count it as missing. `±Infinity` is *not* covered by
  * the rule: it is a real (if overflowed) number and stays a defined
  * cell wherever a path admits it (and `allFinite` goes `false`).
  *

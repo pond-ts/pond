@@ -141,6 +141,43 @@ describe('[PND-NANREP] live operators emit NaN results as missing', () => {
     expect(c.at(2)!.get('value')).toBeUndefined(); // NaN + 3 is still NaN
   });
 
+  it('a cumulative custom fold recovers after its accumulator becomes NaN (matches batch)', () => {
+    // The accumulator is kept as-is (NaN), so a fold that tests for it can
+    // restart — the emitted cells go [1, missing, 3, 7], as in batch.
+    const fold = (acc: number, v: number) =>
+      v === 2 ? NaN : Number.isNaN(acc) ? v : acc + v;
+    const live = new LiveSeries({ name: 'nan', schema });
+    live.push([1000, 1], [2000, 2], [3000, 3], [4000, 4]);
+    const c = live.cumulative({ value: fold });
+    const batch = new TimeSeries({
+      name: 'nan',
+      schema,
+      rows: [
+        [1000, 1],
+        [2000, 2],
+        [3000, 3],
+        [4000, 4],
+      ],
+    }).cumulative({ value: fold });
+    const expected = [1, undefined, 3, 7];
+    for (let i = 0; i < 4; i += 1) {
+      expect(c.at(i)!.get('value')).toBe(expected[i]);
+      expect(batch.at(i)!.get('value')).toBe(expected[i]);
+    }
+  });
+
+  it('a map fn that writes NaN into a number field reads as missing', () => {
+    const live = new LiveSeries({ name: 'nan', schema });
+    live.push([1000, 1]);
+    const m = live.map((e) => e.set('value', e.get('value') === 2 ? NaN : 7));
+    live.push([2000, 2]);
+    expect(m.at(0)!.get('value')).toBe(7);
+    expect(m.at(1)!.get('value')).toBeUndefined();
+    // Infinity is a value, not missing.
+    const inf = live.map((e) => e.set('value', Infinity));
+    expect(inf.at(0)!.get('value')).toBe(Infinity);
+  });
+
   it('batch and live diff agree on the overflow case', () => {
     const liveDiff = overflowing().cumulative({ value: 'sum' }).diff('value');
     const batch = new TimeSeries({

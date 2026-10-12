@@ -336,11 +336,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
    * transforms.
    */
   map(fn: (event: EventForSchema<S>) => EventForSchema<S>): LiveView<S> {
-    return new LiveView(
-      this,
-      fn,
-      this.#windowMs !== undefined ? { windowMs: this.#windowMs } : undefined,
-    );
+    return makeMapView(this, fn, this.#windowMs);
   }
 
   /**
@@ -1078,6 +1074,47 @@ export function makeFillView<S extends SeriesSchema>(
   };
 
   return new LiveView(source as any, process) as unknown as LiveView<S>;
+}
+
+/**
+ * The live `map` view. A user `fn` can write `NaN` into a number field;
+ * the view stores events (not columns), so nothing downstream would
+ * canonicalise it and `at(i).get()` would hand back a *defined* `NaN`.
+ * NaN means missing ([PND-NANREP]), so each mapped event's number fields
+ * are checked and a `NaN` is rewritten to `undefined`. The event is
+ * rebuilt only when one is found — the common path returns `fn`'s event
+ * untouched.
+ */
+export function makeMapView<S extends SeriesSchema>(
+  source: LiveSource<S>,
+  fn: (event: EventForSchema<S>) => EventForSchema<S>,
+  windowMs?: number,
+): LiveView<S> {
+  const numberCols = source.schema
+    .slice(1)
+    .filter((c) => c.kind === 'number')
+    .map((c) => c.name);
+  const process = (event: EventForSchema<S>): EventForSchema<S> => {
+    const out = fn(event);
+    if (numberCols.length === 0) return out;
+    const data = out.data() as Record<string, unknown>;
+    let fixed: Record<string, unknown> | undefined;
+    for (const name of numberCols) {
+      const v = data[name];
+      if (typeof v === 'number' && v !== v) {
+        fixed ??= { ...data };
+        fixed[name] = undefined;
+      }
+    }
+    return fixed === undefined
+      ? out
+      : (new Event(out.key(), fixed) as unknown as EventForSchema<S>);
+  };
+  return new LiveView(
+    source,
+    process,
+    windowMs !== undefined ? { windowMs } : undefined,
+  );
 }
 
 export function makeCumulativeView<

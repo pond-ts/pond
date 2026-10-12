@@ -10,6 +10,7 @@ import {
   makeDiffView,
   makeFillView,
   makeCumulativeView,
+  makeMapView,
   makeStrideSampleView,
   type LiveFillMapping,
   type LiveFillStrategy,
@@ -1096,7 +1097,7 @@ export class LiveSeries<S extends SeriesSchema> {
   }
 
   map(fn: (event: EventForSchema<S>) => EventForSchema<S>): LiveView<S> {
-    return new LiveView(this, fn);
+    return makeMapView(this, fn);
   }
 
   /**
