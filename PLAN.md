@@ -311,7 +311,10 @@ linearWindow>`, [PND-SYMLOG]. [PND-AXISMIRROR] (a mirrored second axis) is
   a documented cheap-handle idiom for live charts — closes it. Overlaps
   [PND-PARITY] / the live layer.
 - **[PND-XOFFSET]** — Per-layer bar offset and forward projection space
-  (the assessment's **C2**), plus a crossing-band fill (**C3**). `ichimoku`
+  (the assessment's **C2**), plus a crossing-band fill (**C3**). **The
+  fixed-time half shipped** (Tidal F-charts-20): `xOffset` (ms / duration) on
+  Line/Area/Band, plus core `offsetTime`; what remains is the **bar-count**
+  form below, which differs across a session break. `ichimoku`
   now ships its spans keyed to the bar they are computed from and
   `ichimokuOffsets` says how far to draw them (+26 forward, chikou −26
   back); Alligator / Gator would use the same lever. Charts needs (a)

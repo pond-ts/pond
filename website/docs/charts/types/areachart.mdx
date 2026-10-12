@@ -23,16 +23,18 @@ the same `ChartSeries` a `LineChart` uses.
 
 ## Props
 
-| Prop       | Type                        | Default     | Purpose                                                       |
-| ---------- | --------------------------- | ----------- | ------------------------------------------------------------- |
-| `series`   | `TimeSeries \| ValueSeries` | — (req)     | The source series.                                            |
-| `column`   | `string`                    | — (req)     | Numeric column to fill from.                                  |
-| `readout`  | `string`                    | —           | Second column reported at the cursor (mirrors `<LineChart>`). |
-| `as`       | `string`                    | `'default'` | Style role → `theme.area[as]` (outline + graded fill).        |
-| `axis`     | `string`                    | row default | Which `<YAxis id>` to scale against.                          |
-| `baseline` | `number \| 'floor'`         | `0`         | The level the fill rests on. Never changes the axis range.    |
-| `curve`    | `Curve`                     | `'linear'`  | Outline + fill-edge interpolation.                            |
-| `gaps`     | `GapMode`                   | `'empty'`   | Gap rendering (fill/outline coupled — see cautions).          |
+| Prop            | Type                        | Default     | Purpose                                                       |
+| --------------- | --------------------------- | ----------- | ------------------------------------------------------------- |
+| `series`        | `TimeSeries \| ValueSeries` | — (req)     | The source series.                                            |
+| `column`        | `string`                    | — (req)     | Numeric column to fill from.                                  |
+| `readout`       | `string`                    | —           | Second column reported at the cursor (mirrors `<LineChart>`). |
+| `as`            | `string`                    | `'default'` | Style role → `theme.area[as]` (outline + graded fill).        |
+| `axis`          | `string`                    | row default | Which `<YAxis id>` to scale against.                          |
+| `baseline`      | `number \| 'floor'`         | `0`         | The level the fill rests on. Never changes the axis range.    |
+| `curve`         | `Curve`                     | `'linear'`  | Outline + fill-edge interpolation.                            |
+| `gaps`          | `GapMode`                   | `'empty'`   | Gap rendering (fill/outline coupled — see cautions).          |
+| `sessionBreaks` | `boolean`                   | `false`     | End the fill at trading-axis session discontinuities.         |
+| `xOffset`       | `number \| duration`        | `0`         | Draw each row this long after its key (as `<LineChart>`).     |
 
 ## Variants
 
@@ -50,6 +52,14 @@ the same `ChartSeries` a `LineChart` uses.
   `'step'`.
 - **`gaps`** — `'empty'` (default) / `'none'` / `'dashed'` / `'step'` /
   `'fade'`.
+- **`sessionBreaks`** — on a [trading-time axis](../axes/trading-time-axis.mdx)
+  the fill and its outline end at each session's close and re-start at the next
+  open, instead of shading across the collapsed gap. Same prop as
+  `<LineChart>`'s, so the line and area styles of one intraday series break
+  alike. `gaps="none"` still interpolates across a dropout inside a session,
+  never across a break.
+- **`xOffset`** — draw each row a fixed time after its key; see
+  [`<LineChart>`](./linechart.mdx#variants).
 
 ## Interaction & theming
 

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { scaleLinear } from 'd3-scale';
-import { drawLine, sessionRuns, yExtent } from '../src/line.js';
+import {
+  decimatedSessionRuns,
+  drawLine,
+  sessionRuns,
+  yExtent,
+} from '../src/line.js';
 import { resolveCurve } from '../src/curve.js';
 import { recordingContext, type CtxCall } from './canvas-mock.js';
 import type { ChartSeries } from '../src/data.js';
@@ -436,6 +441,41 @@ describe('sessionRuns', () => {
  * ends at the close and re-starts at the open. A *scale* break, composable with
  * the NaN *data* gaps, and it suppresses any inferred bridge across it.
  */
+describe('decimatedSessionRuns', () => {
+  const f = (...v: number[]) => Float64Array.from(v);
+
+  it('no boundaries, or none inside a gap ⇒ one run', () => {
+    expect(decimatedSessionRuns(f(0, 1, 2), f(5, 6, 7), 3, [])).toEqual([
+      [0, 3],
+    ]);
+    // A boundary between two finite neighbours with no gap is not a baked
+    // break (the decimator always leaves a NaN at one).
+    expect(decimatedSessionRuns(f(0, 1, 2), f(5, 6, 7), 3, [1.5])).toEqual([
+      [0, 3],
+    ]);
+  });
+
+  it('cuts at a baked break where close and open share the break instant', () => {
+    // close's last point at 10, NaN at 10, open's first point at 10.
+    const x = f(0, 10, 10, 10, 20);
+    const y = f(1, 2, NaN, 3, 4);
+    // The close keeps its last point; the NaN leads the next session.
+    expect(decimatedSessionRuns(x, y, 5, [10])).toEqual([
+      [0, 2],
+      [2, 5],
+    ]);
+  });
+
+  it('cuts at a data gap that straddles a break; leaves other gaps alone', () => {
+    const x = f(0, 1, 2, 3, 4, 5, 6);
+    const y = f(1, NaN, 2, 3, NaN, NaN, 4);
+    expect(decimatedSessionRuns(x, y, 7, [4.5])).toEqual([
+      [0, 4],
+      [4, 7],
+    ]);
+  });
+});
+
 describe('drawLine sessionBreaks (boundaries)', () => {
   const pen = (calls: CtxCall[]) =>
     calls
@@ -821,4 +861,42 @@ describe('drawLine — M4 decimation (Phase 3)', () => {
     // pen-up at the break, not a connector across it).
     expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(2);
   });
+
+  // Decimated, the break is baked in as a NaN at the boundary instant — which,
+  // left in one run, reads as an ordinary data gap: `none` interpolated across
+  // it and `dashed` / `step` / `fade` drew a connector over it.
+  it.each(['none', 'dashed', 'step', 'fade'] as const)(
+    'decimated: gaps=%s neither bridges nor connects across a session break',
+    (gaps) => {
+      const { ctx, calls } = sizedCtx(10);
+      drawLine(
+        ctx,
+        dense(5000),
+        domainScale(0, 5000),
+        (v) => v,
+        style,
+        undefined,
+        gaps,
+        undefined,
+        [2500],
+      );
+      expect(penCount(calls)).toBeLessThan(100); // decimated
+      // Two sessions → two subpaths in the solid pass.
+      expect(
+        calls.filter((c) => c.name === 'moveTo').length,
+      ).toBeGreaterThanOrEqual(2);
+      // No inferred connector (the only gap is the break).
+      expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
+      // …nor a fade (its own stroke): one stroke, the solid/outline pass.
+      expect(calls.filter((c) => c.name === 'stroke')).toHaveLength(1);
+      // Nothing drawn strictly inside the break's NaN slot: a `none` bridge
+      // would lineTo the interpolated midpoint (2500, 2499.5).
+      expect(
+        calls.some(
+          (c) =>
+            c.name === 'lineTo' && c.args[0] === 2500 && c.args[1] === 2499.5,
+        ),
+      ).toBe(false);
+    },
+  );
 });

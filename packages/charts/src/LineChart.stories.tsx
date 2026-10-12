@@ -163,6 +163,37 @@ export const WithGap: Story = {
   },
 };
 
+/**
+ * **`xOffset`** — each row drawn a fixed time after its key, without touching
+ * the series. Both rows plot the same series on one shared time axis: the top
+ * at its keys, the bottom with `xOffset="5m"`, so the whole trace (gap
+ * included) sits five minutes to the right. Hover: the cursor reads the row
+ * drawn under it, so the two readouts differ by five minutes of data.
+ */
+export const XOffset: Story = {
+  render: () => {
+    const series = sineWithGap();
+    return (
+      <ChartContainer
+        range={[TIME_RANGE[0], TIME_RANGE[1] + 5 * STEP]}
+        width={480}
+      >
+        <LineCursor />
+        <ChartRow height={120}>
+          <Layers>
+            <LineChart series={series} column="v" />
+          </Layers>
+        </ChartRow>
+        <ChartRow height={120}>
+          <Layers>
+            <LineChart series={series} column="v" xOffset="5m" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
 /** Flat line — sits mid-row thanks to the auto-domain's ±1 headroom. */
 export const Flat: Story = {
   render: () => {
