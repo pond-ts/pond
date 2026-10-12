@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { Event, Sequence, Time, TimeSeries } from '../src/index.js';
-import { bucketStateFor, rollingStateFor } from '../src/reducers/index.js';
+import {
+  bucketStateFor,
+  resolveReducer,
+  rollingStateFor,
+} from '../src/reducers/index.js';
 import {
   ColumnarStore,
   Float64Column,
@@ -35,7 +39,8 @@ const schema = [
 // the answers are the policy's. The reducer factories are still fed raw
 // non-finite values directly (`bucketValue` / `rollingValue`), and the column
 // API's guarded loops are reached through the trusted `Float64Column`
-// constructor (the only way left to build a column holding one).
+// constructor. A non-finite cell in a column IS the missing marker (NaN is
+// the canonical spelling; ±Infinity reads the same way).
 function makeSeries(
   values: ReadonlyArray<number | undefined>,
 ): TimeSeries<typeof schema> {
@@ -214,11 +219,11 @@ describe('reducer non-finite policy — a computed non-finite result is stored a
     });
   }
 
-  it('the injected Infinity is stored as missing; the column is allFinite', () => {
+  it('the injected Infinity is stored as missing; the column is not allFinite', () => {
     const computed = cumulativeWithInfinity();
     const col = computed.column('value') as Float64Column;
     expect(computed.at(1)?.get('value' as never)).toBeUndefined();
-    expect(col.allFinite).toBe(true);
+    expect(col.allFinite).toBe(false); // it has a gap
     // count + nullCount === length: the gap is counted once, as missing.
     expect(col.count()).toBe(2);
     expect(col.nullCount()).toBe(1);
@@ -226,10 +231,12 @@ describe('reducer non-finite policy — a computed non-finite result is stored a
 });
 
 // Exercises the `allFinite: true` FAST reduceColumn loop directly and pins it
-// against the guarded loop. Row-API intake → `allFinite: true` (the guard is
-// skipped); `fromEvents` → builder → `allFinite: false` (guarded). On finite
-// data the two loops must agree exactly. The broad suite covers the fast path
-// implicitly; this is the explicit drift-defense between the two variants.
+// against the guarded loop. Since [PND-NANREP] `allFinite` means "no missing
+// cells", so every public door marks a gap-free column `allFinite: true` and
+// the guarded loop is only reached on a gappy column. To compare the two
+// loops on the SAME finite data, the guarded column is built with the
+// trusted constructor and `allFinite: false` (a conservative, legal claim).
+// On finite data the two loops must agree exactly.
 describe('reducer non-finite policy — allFinite fast path == guarded path', () => {
   const finite = [5, 1, 9, 3];
   const fastPath = new TimeSeries({
@@ -237,13 +244,17 @@ describe('reducer non-finite policy — allFinite fast path == guarded path', ()
     schema,
     rows: finite.map((v, i) => [i * 1000, v]),
   });
-  const guardedPath = makeSeries(finite);
+  const fastCol = new Float64Column(Float64Array.from(finite), 4, true);
+  const guardedCol = new Float64Column(Float64Array.from(finite), 4, false);
 
-  it('intake column is allFinite (fast); fromEvents column is not (guarded)', () => {
+  it('a gap-free column is allFinite from every door', () => {
     expect((fastPath.column('value') as Float64Column).allFinite).toBe(true);
-    expect((guardedPath.column('value') as Float64Column).allFinite).toBe(
-      false,
-    );
+    expect(
+      (makeSeries(finite).column('value') as Float64Column).allFinite,
+    ).toBe(true);
+    expect(
+      (makeSeries([5, undefined]).column('value') as Float64Column).allFinite,
+    ).toBe(false);
   });
 
   for (const name of [
@@ -258,11 +269,13 @@ describe('reducer non-finite policy — allFinite fast path == guarded path', ()
   ]) {
     it(`${name}: fast path === guarded path on finite data`, () => {
       // Same arithmetic, guard merely skipped → bit-identical result.
-      expect(fastPath.reduce('value', name)).toBe(
-        guardedPath.reduce('value', name),
+      const def = resolveReducer(name);
+      expect(def.reduceColumn!(fastCol)).toBe(def.reduceColumn!(guardedCol));
+      expect(def.reduceColumnRange!(fastCol, 1, 4)).toBe(
+        def.reduceColumnRange!(guardedCol, 1, 4),
       );
-      expect(aggregateAll(fastPath, name)).toBe(
-        aggregateAll(guardedPath, name) as never,
+      expect(fastPath.reduce('value', name)).toBe(
+        def.reduceColumn!(guardedCol),
       );
     });
   }
@@ -280,9 +293,9 @@ describe('reducer non-finite policy — allFinite fast path == guarded path', ()
 // and `bin('minMax')` inline a fused loop, and chunked `count()` had an O(1)
 // shortcut — all three bypassed the policy until this PR. Codex flagged them.
 describe('reducer non-finite policy — column-API minMax / bin / chunked count', () => {
-  // A column holding a defined Infinity, `allFinite: false`. Only the trusted
-  // constructor can build one now ([PND-NANREP]); the guarded loops stay, so
-  // keep pinning them. Cells: [10, Infinity, 30].
+  // A column holding an Infinity, `allFinite: false`. Infinity reads as a
+  // missing cell ([PND-NANREP]) — the guarded loops must skip it, so keep
+  // pinning them. Cells: [10, Infinity, 30].
   function computedCol(): Float64Column {
     return new Float64Column(Float64Array.from([10, Infinity, 30]), 3);
   }
@@ -309,8 +322,8 @@ describe('reducer non-finite policy — column-API minMax / bin / chunked count'
           { name: 'v', kind: 'number' },
         ] as const,
         timeKeyColumnFromArray(times),
-        // Trusted constructor: the only way to hold a defined non-finite
-        // cell ([PND-NANREP]); `float64ColumnFromArray` would store a gap.
+        // Trusted constructor, so the Infinity stays as written (it reads as
+        // a gap, [PND-NANREP]); `float64ColumnFromArray` would write NaN.
         new Map([
           [
             'v',
@@ -327,7 +340,7 @@ describe('reducer non-finite policy — column-API minMax / bin / chunked count'
     ]);
     const col = chunked.columns.get('v')!;
     expect(col.storage).toBe('chunked'); // guard
-    // Cells [10, Infinity, 30, NaN] → 2 finite defined cells.
+    // Cells [10, Infinity, 30, NaN] → 2 defined cells.
     expect((col as unknown as { count(): number }).count()).toBe(2);
   });
 });

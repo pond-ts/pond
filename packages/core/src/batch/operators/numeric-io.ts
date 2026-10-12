@@ -1,10 +1,4 @@
-import {
-  type Column,
-  type ValidityBitmap,
-  Float64Column,
-  bitmapByteCount,
-  validityFromBits,
-} from '../../columnar/index.js';
+import { type Column, Float64Column } from '../../columnar/index.js';
 
 /**
  * Unboxed read/write helpers for element-wise numeric operators —
@@ -15,9 +9,8 @@ import {
  * materialising `Event`s. Each still walked its source with the
  * polymorphic `col.read(i)`, wrote into a boxed
  * `Array<number | undefined>`, and handed that to
- * `float64ColumnFromArray` — which then walks the boxed array **twice
- * more**, once for the values and once inside `validityFromPredicate`
- * for the bitmap.
+ * `float64ColumnFromArray` — which then walked the boxed array **twice
+ * more**, once for the values and once for the validity bitmap.
  *
  * So a single column cost `n` megamorphic reads, `n` boxed slots, and
  * `3n` array traversals to produce something the source already had as a
@@ -35,8 +28,11 @@ import {
  */
 
 /**
- * A packed numeric column's raw buffers, for operators that want to walk
- * it without `read(i)`.
+ * A packed numeric column's raw buffer, for operators that want to walk
+ * it without `read(i)`. A missing cell is a non-finite value in `values`
+ * ([PND-NANREP]), so the finite test `v - v === 0` is also the defined
+ * test — and arithmetic on a missing cell yields `NaN`, which
+ * {@link NumericOutput.set} drops, so many loops need no test at all.
  *
  * Returns `null` when the column is not a packed `Float64Column` —
  * chunked storage, or a string / boolean / array column. Callers fall
@@ -45,48 +41,29 @@ import {
  */
 export type PackedNumericSource = {
   readonly values: Float64Array;
-  /** `null` ⇒ every cell defined (the framework's no-bitmap convention). */
-  readonly bits: Uint8Array | null;
+  /** `true` ⇒ no missing cell and every cell finite. */
   readonly allFinite: boolean;
 };
 
 export function packedNumericSource(col: Column): PackedNumericSource | null {
   if (col.kind !== 'number' || col.storage !== 'packed') return null;
   const f = col as Float64Column;
-  return {
-    values: f._values,
-    bits: f.validity?.bits ?? null,
-    allFinite: f.allFinite,
-  };
-}
-
-/** True when cell `i` of a packed source is defined. */
-export function isDefinedAt(bits: Uint8Array | null, i: number): boolean {
-  return bits === null || (bits[i >> 3]! & (1 << (i & 7))) !== 0;
+  return { values: f._values, allFinite: f.allFinite };
 }
 
 /**
- * Accumulates a numeric output column into a `Float64Array` plus a
- * validity bitmap, with no boxing.
- *
- * The bitmap is allocated up front rather than lazily on the first
- * missing cell. That is `ceil(n / 8)` bytes — 125 KB for a million rows,
- * against the ~8 MB of pointers the boxed array cost — and it removes
- * the back-fill branch from the hot loop, which is the whole point. If
- * every cell turns out to be defined, `finish` drops it and the column
- * carries no bitmap, preserving the "all defined ⇒ no bitmap"
- * convention that the rest of the substrate branches on.
+ * Accumulates a numeric output column into a `Float64Array`, with no
+ * boxing. The buffer starts all-`NaN` (all missing); written cells
+ * become defined, and a cell never written stays missing.
  */
 export class NumericOutput {
   readonly values: Float64Array;
-  readonly bits: Uint8Array;
   readonly length: number;
   #defined = 0;
 
   constructor(length: number) {
     this.length = length;
-    this.values = new Float64Array(length);
-    this.bits = new Uint8Array(bitmapByteCount(length));
+    this.values = new Float64Array(length).fill(NaN);
   }
 
   /**
@@ -95,17 +72,17 @@ export class NumericOutput {
    * A non-finite value (`NaN`, `±Infinity`) is **not** written: the
    * cell stays missing. That is the non-finite-means-missing rule
    * ([PND-NANREP], see `Float64Column`) — an operator's own arithmetic
-   * (`Infinity - Infinity`, a sum that overflows, a custom fold) can
-   * produce one, and it must read back as a gap, not as a defined cell.
-   * Each cell is written at most once per output, so skipping leaves the
-   * bit clear without an explicit reset. Every written cell is therefore
-   * finite, which is what lets {@link finish} claim `allFinite`.
+   * (`Infinity - Infinity`, a sum that overflows, a custom fold, or any
+   * arithmetic touching a missing `NaN` input) can produce one, and it
+   * must read back as a gap, not as a defined cell. Each cell is written
+   * at most once per output. Every written cell is therefore finite,
+   * which is what lets {@link finish} claim `allFinite` when every cell
+   * was written.
    */
   set(i: number, value: number): void {
     // `value - value !== 0` is true exactly for NaN and ±Infinity.
     if (value - value !== 0) return;
     this.values[i] = value;
-    this.bits[i >> 3]! |= 1 << (i & 7);
     this.#defined += 1;
   }
 
@@ -116,18 +93,16 @@ export class NumericOutput {
    */
   setFinite(i: number, value: number): void {
     this.values[i] = value;
-    this.bits[i >> 3]! |= 1 << (i & 7);
     this.#defined += 1;
   }
 
-  /** Cells never written stay undefined; no call is needed to skip one. */
+  /** Cells never written stay missing; no call is needed to skip one. */
   finish(): Float64Column {
-    let validity: ValidityBitmap | undefined;
-    if (this.#defined !== this.length) {
-      validity = validityFromBits(this.bits, this.length);
-    }
-    // Every written cell is finite (`set` drops non-finite values).
-    return new Float64Column(this.values, this.length, validity, true);
+    return new Float64Column(
+      this.values,
+      this.length,
+      this.#defined === this.length,
+    );
   }
 }
 
@@ -164,19 +139,17 @@ export function float64ColumnFromTypedArray(
   values: Float64Array,
 ): Float64Column {
   const length = values.length;
-  const owned = new Float64Array(length);
-  const bits = new Uint8Array(bitmapByteCount(length));
-  let defined = 0;
+  const owned = values.slice();
+  let allFinite = true;
   for (let i = 0; i < length; i += 1) {
-    const v = values[i]!;
-    // `v - v !== 0` is true exactly for NaN and ±Infinity — the gap marker.
-    if (v - v !== 0) continue;
-    owned[i] = v;
-    bits[i >> 3]! |= 1 << (i & 7);
-    defined += 1;
+    const v = owned[i]!;
+    // `v - v !== 0` is true exactly for NaN and ±Infinity — the gap
+    // marker. `±Infinity` is canonicalised to `NaN` so a missing cell has
+    // one spelling.
+    if (v - v !== 0) {
+      owned[i] = NaN;
+      allFinite = false;
+    }
   }
-  const validity =
-    defined === length ? undefined : validityFromBits(bits, length);
-  // Every defined cell passed the finite test above.
-  return new Float64Column(owned, length, validity, true);
+  return new Float64Column(owned, length, allFinite);
 }

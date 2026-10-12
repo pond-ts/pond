@@ -75,8 +75,9 @@ export type ReducerDef = {
    * `reduce(defined, numeric)` over the raw values.
    *
    * Implementations should:
-   * - Honor `col.validity` — skip rows where `validity.isDefined(i)` is
-   *   false (or use `col.validity === undefined` to know "all defined").
+   * - Skip missing cells. A missing number is a non-finite value in
+   *   `col._values` ([PND-NANREP]) — test `v - v === 0` — and
+   *   `col.allFinite === true` means there is none to skip.
    * - Iterate the underlying `col._values: Float64Array` directly. The
    *   whole point is to avoid the per-cell object access of the
    *   row-API path.
@@ -102,24 +103,18 @@ export type ReducerDef = {
    *
    * The bucketed callers (`aggregate`) reduce many small ranges of one
    * column. Reaching them via `sliceByRange` costs, per bucket per
-   * column, a `subarray` view, a `Float64Column` instance, and — when
-   * the source has a validity bitmap — a fresh `Uint8Array` plus an
-   * O(range) bit copy plus an O(range/8) popcount inside
-   * `PackedValidityBitmap`'s constructor. On a 1M-row series bucketed
-   * to 100k windows that is 400k throwaway objects and two extra passes
-   * over the data per column. Taking two integers instead costs nothing.
-   *
-   * `validity` is indexed from the **column origin**, so implementations
-   * walk absolute indices `[start, end)` — no bit-shifting, which is
-   * also why slicing was the expensive way round.
+   * column, a `subarray` view and a `Float64Column` instance. On a
+   * 1M-row series bucketed to 100k windows that is 200k throwaway
+   * objects per column. Taking two integers instead costs nothing.
+   * Implementations walk absolute indices `[start, end)`.
    *
    * **Not simply `reduceColumn` with bounds.** For `count` and `avg` the
-   * whole-column form has a shortcut the range form cannot use:
-   * `validity.definedCount` is cached at bitmap construction and answers
-   * "how many defined cells" in O(1), whereas a sub-range needs
-   * `countInRange`, an O(range/8) popcount. Those two reducers therefore
-   * keep genuinely different implementations; the rest share one body
-   * with `reduceColumn` delegating at `(0, col.length)`.
+   * whole-column form has a shortcut the range form cannot use: the
+   * column's cached `missingCount` answers "how many defined cells" in
+   * O(1) after the first ask, whereas a sub-range must count. Those two
+   * reducers therefore keep genuinely different implementations; the
+   * rest share one body with `reduceColumn` delegating at
+   * `(0, col.length)`.
    *
    * Implementations may assume `0 <= start <= end <= col.length` and a
    * packed `Float64Column`, exactly as `reduceColumn` may.

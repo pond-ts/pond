@@ -90,34 +90,16 @@ export interface TrackColumns {
   distance?: Float64Array;
 }
 
-/** Does any of the first `n` cells pass the validity bitmap? (Distinguishes a
- *  channel the source recorded with gaps from one it lacked entirely.) */
-function anyDefined(
-  validity: { isDefined(i: number): boolean },
-  n: number,
-): boolean {
-  for (let i = 0; i < n; i++) if (validity.isDefined(i)) return true;
-  return false;
-}
-
 /**
- * Read one number column as a `Float64Array`, honouring the validity bitmap:
- * `toFloat64Array()` flattens a missing cell to `0` by design, but pond exposes
- * validity separately (`column.hasMissing()` / `column.validity`), so we map
- * missing cells to `NaN` and the math skips them. (Verified against pond's
- * types: missing IS recoverable via the validity API.)
+ * Read one number column as a `Float64Array`. A missing cell is already `NaN`
+ * in a number column's buffer (pond-ts [PND-NANREP]), so the math skips it with
+ * no further mapping.
  */
 function numberColumn(
   track: TrackSeries,
   name: 'ele' | 'hr' | 'power' | 'cadence' | 'temp' | 'distance',
 ): Float64Array {
-  const col = track.column(name);
-  const arr = col.toFloat64Array();
-  if (!col.hasMissing() || !col.validity) return arr;
-  const v = col.validity;
-  const out = new Float64Array(arr.length);
-  for (let i = 0; i < arr.length; i++) out[i] = v.isDefined(i) ? arr[i]! : NaN;
-  return out;
+  return track.column(name).toFloat64Array();
 }
 
 /**
@@ -145,10 +127,7 @@ export function readColumns(track: TrackSeries): TrackColumns {
       | 'distance',
   ): boolean => {
     const col = track.column(name);
-    return (
-      !col.hasMissing() ||
-      (col.validity ? anyDefined(col.validity, nRows) : false)
-    );
+    return !col.hasMissing() || col.count() > 0;
   };
   // lat/lng: full for a GPS activity, EMPTY when the source had no positions —
   // preserving `cols.lat.length` as the hasTrack signal the compute layer uses.

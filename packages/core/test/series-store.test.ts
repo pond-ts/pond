@@ -442,23 +442,29 @@ describe('Kind-aware cache value equality', () => {
     expect(series.eventAt(0)).toBe(cachedEvent);
   });
 
-  it('numeric NaN values are compared via Object.is (NaN equals NaN)', () => {
-    // Cache validation needs to treat NaN === NaN as a match.
-    // Reference / strict equality would reject NaN identity.
+  it('a NaN cell is missing: the cached event must carry undefined', () => {
+    // A number column stores a missing cell as NaN ([PND-NANREP]), so the
+    // column reads `undefined` there. A cached event claiming the cell is
+    // NaN disagrees with the column and is rejected; one that leaves the
+    // field undefined matches.
     const schema = [
       { name: 'time', kind: 'time' },
       { name: 'v', kind: 'number' },
     ] as const;
     const keys = timeKeyColumnFromArray([1, 2]);
-    // Float64Column accepts NaN values (validity-marked-defined is
-    // the framework's value contract; row-API validates upstream).
     const v = new Float64Column(Float64Array.of(NaN, 5), 2);
     const store = ColumnarStore.fromTrustedStore(
       schema,
       keys,
       new Map([['v', v]]),
     );
-    const cachedEvent = new Event(new Time(1), { v: NaN }) as SeriesEvent;
+    const nanCache = new Map<number, SeriesEvent>();
+    nanCache.set(0, new Event(new Time(1), { v: NaN }) as SeriesEvent);
+    expect(() =>
+      SeriesStore.fromTrustedStore(store, { eventCache: nanCache }),
+    ).toThrow(/data\['v'\] = NaN but column read returns undefined/);
+
+    const cachedEvent = new Event(new Time(1), {}) as SeriesEvent;
     const goodCache = new Map<number, SeriesEvent>();
     goodCache.set(0, cachedEvent);
     const series = SeriesStore.fromTrustedStore(store, {

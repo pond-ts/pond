@@ -384,7 +384,8 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
   const booleanBufs = new Array<Uint8Array | null>(colCount);
   const stringBufs = new Array<Array<string | undefined> | null>(colCount);
   const arrayBufs = new Array<Array<ArrayValue | undefined> | null>(colCount);
-  // Lazy validity bitmaps per number/boolean column. Allocated on
+  // Lazy validity bitmaps per boolean column (a number column marks a
+  // missing cell with `NaN` instead). Allocated on
   // first missing cell; null until then (the "all defined ⇒ no
   // bitmap" framework convention).
   const validityBits = new Array<Uint8Array | null>(colCount);
@@ -402,6 +403,7 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
       kind === 'array' ? new Array<ArrayValue | undefined>(length) : null;
     validityBits[c] = null;
   }
+  const numberHasMissing = new Uint8Array(colCount);
 
   for (let i = 0; i < length; i += 1) {
     const row = rows[i] as ReadonlyArray<unknown>;
@@ -463,30 +465,13 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
       assertCellKind(def.kind, value, i, c + 1);
       switch (colKinds[c]) {
         case 'number': {
-          const buf = numberBufs[c]!;
+          // A missing number is `NaN` in the buffer — number columns
+          // carry no bitmap ([PND-NANREP]).
           if (typeof value === 'number') {
-            buf[i] = value;
-            const bits = validityBits[c];
-            // Validity bitmap exists ⇒ this row's bit needs setting
-            // (the bitmap covers every defined cell). No bitmap yet
-            // ⇒ every prior row has been defined, no back-fill needed.
-            if (bits !== null && bits !== undefined)
-              bits[i >> 3]! |= 1 << (i & 7);
+            numberBufs[c]![i] = value;
           } else {
-            // First missing cell at column `c` ⇒ allocate the
-            // validity bitmap (lazy) + back-fill bits for the
-            // previously-defined rows `[0, i)`. Subsequent missing
-            // cells skip the alloc + back-fill (bitmap already
-            // exists), leaving the bit cleared which is the
-            // missing-cell signal.
-            let bits = validityBits[c] ?? null;
-            if (bits === null) {
-              bits = new Uint8Array(bitmapByteCount(length));
-              for (let j = 0; j < i; j += 1) {
-                bits[j >> 3]! |= 1 << (j & 7);
-              }
-              validityBits[c] = bits;
-            }
+            numberBufs[c]![i] = NaN;
+            numberHasMissing[c] = 1;
           }
           break;
         }
@@ -590,11 +575,15 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
       case 'number':
         // Strict intake: `assertCellKind` (kind 'number') already
         // rejected every non-finite cell with a `ValidationError`
-        // before it reached `numberBufs`, so a surviving column is
-        // provably all-finite → `allFinite: true` (lets reducers skip
-        // the per-element finite guard). See the reducer non-finite
-        // policy + `Float64Column.allFinite`'s safety contract.
-        column = new Float64Column(numberBufs[c]!, length, validity, true);
+        // before it reached `numberBufs`, so the column is all-finite
+        // exactly when no cell went missing (lets reducers skip the
+        // per-element finite guard). See `Float64Column.allFinite`'s
+        // safety contract.
+        column = new Float64Column(
+          numberBufs[c]!,
+          length,
+          numberHasMissing[c] === 0,
+        );
         break;
       case 'boolean':
         column = new BooleanColumn(booleanBufs[c]!, length, validity);

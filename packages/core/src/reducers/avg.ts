@@ -1,79 +1,57 @@
 import type { Float64Column } from '../columnar/index.js';
-import { BLOCKED_MIN, blockedSum, blockedSumMasked } from './blocked.js';
+import {
+  BLOCKED_MIN,
+  blockedSum,
+  blockedSumFinite,
+  countFinite,
+} from './blocked.js';
 import { LanedSum } from './overflow-lanes.js';
 import type { ReducerDef } from './types.js';
 
 /**
- * Arithmetic mean of the defined (and, on the guarded path, finite)
- * cells of `col[start, end)`; `undefined` when the range has no
- * contributor.
+ * Arithmetic mean of the defined cells of `col[start, end)`; `undefined`
+ * when the range has no contributor. A missing cell is a non-finite value
+ * in the buffer ([PND-NANREP]), so it neither adds to the sum nor counts
+ * toward the divisor.
  *
  * **Deliberately not shared with `reduceColumn`,** for the same reason as
- * `count`: the whole-column form takes its divisor from the cached
- * `validity.definedCount` in O(1), while a sub-range has to popcount it
- * with `countInRange`. Sharing one body would have made
- * `Float64Column.mean()` do an O(n/8) pass it does not need.
+ * `count`: the whole-column form takes its divisor from the column's
+ * cached `missingCount`, while a sub-range has to count it.
  *
- * The numerator follows `sum`: runs of at least {@link BLOCKED_MIN} on
- * the `allFinite` paths accumulate into eight partial sums, which may
- * differ from the sequential result in the last ulp (see
- * `./blocked.ts`). Only the summation changes — the divisor is counted
- * exactly as before.
+ * The numerator follows `sum`: runs of at least {@link BLOCKED_MIN}
+ * accumulate into eight partial sums, which may differ from the
+ * sequential result in the last ulp (see `./blocked.ts`). Only the
+ * summation changes — the divisor is counted exactly.
  */
 function avgRange(
   col: Float64Column,
   start: number,
   end: number,
 ): number | undefined {
+  if (end <= start) return undefined;
   const values = col._values;
-  const validity = col.validity;
   let s = 0;
-  let n = 0;
-  // Fast path: every defined cell is finite (`Float64Column.allFinite`),
-  // so every defined cell is a valid contributor — plain accumulate, and
-  // the divisor is the range's defined count. Drops the per-element
-  // finite guard the non-finite policy otherwise requires.
+  // Fast path: every cell is finite (`Float64Column.allFinite`) — plain
+  // accumulate, and the divisor is the range length.
   if (col.allFinite) {
-    if (validity === undefined) {
-      if (end <= start) return undefined;
-      if (end - start >= BLOCKED_MIN) {
-        return blockedSum(values, start, end) / (end - start);
-      }
-      for (let i = start; i < end; i += 1) s += values[i]!;
-      return s / (end - start);
-    }
-    const bits = validity.bits;
     if (end - start >= BLOCKED_MIN) {
-      s = blockedSumMasked(values, bits, start, end);
-    } else {
-      for (let i = start; i < end; i += 1) {
-        if ((bits[i >> 3]! & (1 << (i & 7))) !== 0) s += values[i]!;
-      }
+      return blockedSum(values, start, end) / (end - start);
     }
-    const defined = validity.countInRange(start, end);
-    return defined === 0 ? undefined : s / defined;
+    for (let i = start; i < end; i += 1) s += values[i]!;
+    return s / (end - start);
   }
-  // Guarded path: divide by the count of *finite* contributors, not the
-  // defined count — a non-finite cell is skipped per policy, so it must
-  // not inflate the divisor.
-  if (validity === undefined) {
-    for (let i = start; i < end; i += 1) {
-      const v = values[i]!;
-      if (Number.isFinite(v)) {
-        s += v;
-        n += 1;
-      }
-    }
-    return n === 0 ? undefined : s / n;
+  // Guarded path: skip missing cells, and divide by the count of
+  // contributors.
+  if (end - start >= BLOCKED_MIN) {
+    const n = countFinite(values, start, end);
+    return n === 0 ? undefined : blockedSumFinite(values, start, end) / n;
   }
-  const bits = validity.bits;
+  let n = 0;
   for (let i = start; i < end; i += 1) {
-    if ((bits[i >> 3]! & (1 << (i & 7))) !== 0) {
-      const v = values[i]!;
-      if (Number.isFinite(v)) {
-        s += v;
-        n += 1;
-      }
+    const v = values[i]!;
+    if (v - v === 0) {
+      s += v;
+      n += 1;
     }
   }
   return n === 0 ? undefined : s / n;
@@ -88,59 +66,28 @@ export const avg: ReducerDef = {
   },
   reduceColumnRange: avgRange,
   reduceColumn(col) {
+    const length = col.length;
+    if (length === 0) return undefined;
     const values = col._values;
-    const validity = col.validity;
-    let s = 0;
-    let n = 0;
-    // Fast path: every defined cell is finite (`Float64Column.allFinite`),
-    // so every defined cell is a valid contributor — plain accumulate, and
-    // the divisor is `definedCount` (or `col.length`). Drops the
-    // per-element finite guard the reducer non-finite policy
-    // (docs/notes/reducer-nan-policy.md) otherwise requires.
+    // Fast path: every cell is finite (`Float64Column.allFinite`) — plain
+    // accumulate over the whole column, divided by its length.
     if (col.allFinite) {
-      if (validity === undefined) {
-        if (col.length === 0) return undefined;
-        if (col.length >= BLOCKED_MIN) {
-          return blockedSum(values, 0, col.length) / col.length;
-        }
-        for (let i = 0; i < col.length; i += 1) s += values[i]!;
-        return s / col.length;
-      }
-      const bits = validity.bits;
-      if (col.length >= BLOCKED_MIN) {
-        s = blockedSumMasked(values, bits, 0, col.length);
-      } else {
-        for (let i = 0; i < col.length; i += 1) {
-          if ((bits[i >> 3]! & (1 << (i & 7))) !== 0) s += values[i]!;
-        }
-      }
-      const count = validity.definedCount;
-      return count === 0 ? undefined : s / count;
+      if (length >= BLOCKED_MIN) return blockedSum(values, 0, length) / length;
+      let s = 0;
+      for (let i = 0; i < length; i += 1) s += values[i]!;
+      return s / length;
     }
-    // Guarded path: divide by the count of *finite* contributors, not
-    // `definedCount` — a non-finite cell is skipped per policy, so it must
-    // not inflate the divisor.
-    if (validity === undefined) {
-      for (let i = 0; i < col.length; i += 1) {
-        const v = values[i]!;
-        if (Number.isFinite(v)) {
-          s += v;
-          n += 1;
-        }
-      }
-      return n === 0 ? undefined : s / n;
+    // Guarded path: the divisor is the defined count, from the column's
+    // cached `missingCount`.
+    const n = length - col.missingCount;
+    if (n === 0) return undefined;
+    if (length >= BLOCKED_MIN) return blockedSumFinite(values, 0, length) / n;
+    let s = 0;
+    for (let i = 0; i < length; i += 1) {
+      const v = values[i]!;
+      if (v - v === 0) s += v;
     }
-    const bits = validity.bits;
-    for (let i = 0; i < col.length; i += 1) {
-      if ((bits[i >> 3]! & (1 << (i & 7))) !== 0) {
-        const v = values[i]!;
-        if (Number.isFinite(v)) {
-          s += v;
-          n += 1;
-        }
-      }
-    }
-    return n === 0 ? undefined : s / n;
+    return s / n;
   },
   bucketState() {
     let s = 0;

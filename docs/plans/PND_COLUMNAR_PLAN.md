@@ -1127,7 +1127,7 @@ consumer shows up.
 events and sorts them. It is the same shape of cost, but nobody has reported
 friction, so no task was filed.
 
-### [PND-NANREP] — NaN means missing: the rule locked, the storage deferred
+### [PND-NANREP] — NaN means missing: the rule, then the storage
 
 **Decision (pre-1.0 review, 2026-10).** The public rule is now **"a `NaN` in a
 number column means missing"**, everywhere — batch, live, and
@@ -1291,6 +1291,106 @@ non-finite columns with the trusted constructor, the one door left that can.
 **Perf.** `perf-operators-unboxed.mjs` (200k × 4 columns, median ms, two runs
 each), before → after: all ten scenarios within run-to-run noise (e.g.
 `diff / dense` 4.47 / 4.28 → see the commit message for the full table).
+
+#### The storage switch — `NaN` in the buffer, no bitmap (2026-10)
+
+**Decision ("take the faster option").** Number columns now store a missing
+cell as `NaN` in their own `Float64Array` and carry **no validity bitmap**.
+With the rule above in place there is no defined non-finite cell left to tell
+apart from a gap, so the bitmap on number columns was pure overhead: an extra
+buffer to allocate, fill, slice and check, plus 2.12 ms of bitmap↔`NaN` churn
+per `sma(20)` between the studies kernel and the column. String, boolean and
+array columns keep their bitmaps — they have no `NaN` to borrow.
+
+**Shape.**
+
+- **The marker is any non-finite value; `NaN` is the spelling every writer
+  uses.** The test is `v - v !== 0` (true for `NaN` and `±Infinity`). Readers
+  accept `±Infinity` as missing too, so a caller-supplied buffer that holds one
+  (trusted constructor, Arrow, `fromColumns`) needs no rewrite.
+- **`allFinite` changes meaning:** it now promises "no missing cells" (every
+  cell finite). Producers set it only when proven — the builder from its own
+  write tally, `NumericOutput.finish` / `sealRange` from their defined count,
+  typed intake from one scan. A wrong `true` would let reducers skip the gap
+  check and fold `NaN` into a sum, so the trusted constructor defaults to
+  `false`.
+- **`Float64Column(values, length, allFinite = false)`.** The `validity`
+  parameter is gone, and a non-boolean third argument throws a `TypeError` so
+  an old four-argument call fails loudly instead of being read as "no gaps".
+- **`missingCount`** (cached getter, one scan on first ask; chunked sums its
+  chunks) replaces the bitmap's `definedCount` for `count()` / `nullCount()` /
+  `hasMissing()` / `avg`. The bitmap answered in O(1) because it was built at
+  write time; the cached scan costs one pass once and is still faster end to end
+  because nothing builds a bitmap up front (`nullCount` on a fresh column: −50%
+  dense, −35% gappy).
+- **`validity` survives as a lazy, cached getter** derived from the `NaN` cells,
+  `undefined` when there are none — kept only for kind-generic code such as
+  `toArrow`'s `nullBitmap`. Hot paths never touch it.
+- **Gappy sums stay blocked.** The old `blockedSumMasked` (8 lanes through the
+  bitmap) became `blockedSumFinite`: 8 lanes, each adding `v - v === 0 ? v : 0`.
+  Without it the guarded sum would have fallen back to one sequential chain and
+  regressed. This also takes the "block the guarded sum path" item that
+  [PND-KERNEL] had left open.
+- **Live ring buffer** stores number cells as `NaN` (slots `fill(NaN)`), so the
+  snapshot column needs no bitmap either.
+- **`fromArrow` with nulls copies.** It used to adopt both Arrow buffers (same
+  bitmap layout as pond's). Writing `NaN` into Arrow's buffer would corrupt the
+  caller's table, so it now does one `slice` plus a byte-wise walk of the null
+  bitmap stamping `NaN`. Still a bulk path, never the per-element `get()`
+  fallback; it is the one honest cost of this change. Gap-free columns are still
+  adopted with no copy.
+- **`@pond-ts/process`:** `RangeOutput` / `ColumnView` / `ColumnBuffers` lose
+  `bits` (the worker wire no longer ships a bitmap); `ColumnBuffers` gains
+  `allFinite`. `prepareRange` carries the prefix forward as one `values` copy —
+  gaps travel with it, so the "warm-up gap became a defined zero" bug class the
+  old bitmap mask existed to prevent cannot happen.
+
+**Visible changes** (in CHANGELOG): `toFloat64Array()` returns `NaN` at a gap
+(was whatever the buffer held, usually `0`); a column built with the trusted
+constructor holding a `NaN` partition value or interval label now reads it as
+missing; `fromArrow` copies a null-bearing column; process types lose `bits`.
+
+**Perf** — `packages/core/scripts/perf-nan-missing.mjs`, 1M rows, dense vs 4%
+gappy, before (bitmap) and after (`NaN`) built side by side and run
+interleaved, median of three runs:
+
+| operation (1M rows)                 | before ms | after ms | change |
+| ----------------------------------- | --------: | -------: | -----: |
+| fromColumns / dense                 |      8.51 |     5.82 |   -32% |
+| reduce sum / dense                  |      0.71 |     0.70 |    -1% |
+| reduce avg / dense                  |      0.94 |     0.71 |   -25% |
+| reduce min / dense                  |      1.73 |     1.71 |    -1% |
+| reduce stdev / dense                |      7.00 |     6.94 |    -1% |
+| reduce p95 / dense                  |     15.08 |    14.00 |    -7% |
+| diff / dense                        |      8.02 |     7.15 |   -11% |
+| cumulative sum / dense              |      7.00 |     7.74 |   +11% |
+| fill linear / dense                 |     13.91 |    13.06 |    -6% |
+| shift 1 / dense                     |     65.84 |    57.81 |   -12% |
+| rolling 20 avg / dense              |     37.57 |    32.22 |   -14% |
+| nullCount (fresh column) / dense    |     12.04 |     6.07 |   -50% |
+| toColumns / dense                   |     15.24 |    13.11 |   -14% |
+| fromColumns / gappy 4%              |     16.13 |     4.89 |   -70% |
+| reduce sum / gappy 4%               |      3.19 |     1.97 |   -38% |
+| reduce avg / gappy 4%               |      2.67 |     1.66 |   -38% |
+| reduce min / gappy 4%               |      3.72 |     2.61 |   -30% |
+| reduce stdev / gappy 4%             |      6.61 |     6.64 |    +0% |
+| reduce p95 / gappy 4%               |     11.66 |    11.97 |    +3% |
+| diff / gappy 4%                     |      6.95 |     5.70 |   -18% |
+| cumulative sum / gappy 4%           |      7.20 |     5.99 |   -17% |
+| fill linear / gappy 4%              |     84.99 |    84.13 |    -1% |
+| shift 1 / gappy 4%                  |     66.64 |    57.09 |   -14% |
+| rolling 20 avg / gappy 4%           |     16.08 |    14.68 |    -9% |
+| nullCount (fresh column) / gappy 4% |     11.05 |     7.19 |   -35% |
+| toColumns / gappy 4%                |     63.98 |    59.77 |    -7% |
+
+The one regression above noise is dense `cumulative` (+11%): the old loop
+short-circuited on "no bitmap" while the new one does a subtract-and-compare
+per cell. It could take an `allFinite` fast path; not done here because 0.7 ms
+on 1M rows did not seem worth the extra branch. Run-to-run noise on this
+machine is ±20–30% on the sub-10 ms rows, which is why the table is interleaved
+medians. `packages/financial/scripts/perf-agent-queries.mjs` (500k bars): the
+5-study stack 81.0 → 70.0 ms, `percentile(95)` 6.8 → 4.6 ms, typed ingest of
+6 columns 9.8 → 7.2 ms; everything else within noise.
 
 ---
 

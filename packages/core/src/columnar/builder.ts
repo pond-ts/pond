@@ -127,12 +127,9 @@ const MIN_NUMERIC_CAPACITY = 8;
 
 export class Float64ColumnBuilder extends ColumnBuilderBase<number> {
   readonly kind = 'number' as const;
+  // A missing cell is written as `NaN` straight into the buffer — number
+  // columns carry no validity bitmap ([PND-NANREP], see `Float64Column`).
   #values: Float64Array;
-  // Bit-packed validity. Mirrors the column shape; same convention
-  // (1 = defined, 0 = missing). Lazily allocated — many builders
-  // will have every row defined and skip the allocation entirely.
-  #validityBits?: Uint8Array;
-  #definedCount = 0;
 
   constructor(initialCapacity = MIN_NUMERIC_CAPACITY) {
     super();
@@ -150,7 +147,7 @@ export class Float64ColumnBuilder extends ColumnBuilderBase<number> {
     this.assertNotConsumed('appendAt');
     this.assertValidRowIndex(rowIndex);
     this.#ensureCapacity(rowIndex + 1);
-    // Backfill any gap with explicit invalid cells.
+    // Backfill any gap with explicit missing cells.
     for (let gap = this._length; gap < rowIndex; gap += 1) {
       this.#writeAt(gap, undefined);
     }
@@ -167,65 +164,22 @@ export class Float64ColumnBuilder extends ColumnBuilderBase<number> {
       this._length === this.#values.length
         ? this.#values
         : this.#values.slice(0, this._length);
-    let validity: ValidityBitmap | undefined;
-    if (this.#hasInvalidCells()) {
-      // Trim the validity bitmap to the exact byte count for the
-      // logical length.
-      const byteCount = bitmapByteCount(this._length);
-      const bits =
-        this.#validityBits!.length === byteCount
-          ? this.#validityBits!
-          : this.#validityBits!.slice(0, byteCount);
-      validity = validityFromBits(bits, this._length);
-    }
-    return new Float64Column(values, this._length, validity);
+    // No missing cell was ever written ⇒ every cell is finite. (A missing
+    // cell later overwritten with a value leaves this pessimistically
+    // `false`, which is always safe.)
+    return new Float64Column(values, this._length, !this._hasInvalid);
   }
 
   #writeAt(rowIndex: number, value: number | undefined): void {
     // A non-finite number means missing ([PND-NANREP], see
     // `Float64Column`): `NaN` / `±Infinity` is written exactly as
-    // `undefined` would be, never as a defined cell. (`v - v !== 0` is
-    // true for `NaN` and `±Infinity`, false for every finite number.)
+    // `undefined` would be — as `NaN`. (`v - v !== 0` is true for `NaN`
+    // and `±Infinity`, false for every finite number.)
     if (value === undefined || value - value !== 0) {
-      // Lazily allocate validity bitmap on first invalid cell.
-      this.#ensureValidityCapacity(rowIndex + 1);
-      this.#values[rowIndex] = 0;
-      // If the cell was previously defined (overwrite path), clear
-      // its validity bit and decrement the count. Without this, a
-      // later `append(undefined)` over a previously-defined slot
-      // would leave `#definedCount` inflated and `validity.isDefined`
-      // returning true for what `read` is supposed to surface as
-      // missing.
-      const byte = rowIndex >> 3;
-      const mask = 1 << (rowIndex & 7);
-      if ((this.#validityBits![byte]! & mask) !== 0) {
-        this.#validityBits![byte]! &= ~mask;
-        this.#definedCount -= 1;
-      }
+      this.#values[rowIndex] = NaN;
       this._hasInvalid = true;
     } else {
       this.#values[rowIndex] = value;
-      // If we have a validity bitmap, mark this cell defined.
-      if (this.#validityBits !== undefined) {
-        const byte = rowIndex >> 3;
-        const mask = 1 << (rowIndex & 7);
-        if ((this.#validityBits[byte]! & mask) === 0) {
-          this.#validityBits[byte]! |= mask;
-          this.#definedCount += 1;
-        }
-      } else {
-        // No bitmap: every row in [0, _length) is implicitly
-        // defined. Only increment for genuinely new rows
-        // (rowIndex >= _length). Defined→defined `appendAt`
-        // overwrites must not inflate the count, or a later
-        // `appendAt(new, undefined)` would see #definedCount ===
-        // length and suppress the validity bitmap at finalize,
-        // silently returning the sentinel for what should be
-        // missing data.
-        if (rowIndex >= this._length) {
-          this.#definedCount += 1;
-        }
-      }
     }
   }
 
@@ -238,35 +192,6 @@ export class Float64ColumnBuilder extends ColumnBuilderBase<number> {
     const grown = new Float64Array(next);
     grown.set(this.#values);
     this.#values = grown;
-    if (this.#validityBits !== undefined) {
-      this.#ensureValidityCapacity(required);
-    }
-  }
-
-  #ensureValidityCapacity(requiredLength: number): void {
-    const requiredBytes = bitmapByteCount(requiredLength);
-    if (this.#validityBits === undefined) {
-      // First invalid cell encountered — backfill: every prior cell
-      // is defined (we'd have allocated otherwise).
-      const bits = new Uint8Array(
-        Math.max(requiredBytes, bitmapByteCount(this.#values.length)),
-      );
-      for (let i = 0; i < this._length; i += 1) {
-        bits[i >> 3]! |= 1 << (i & 7);
-      }
-      this.#validityBits = bits;
-      return;
-    }
-    if (this.#validityBits.length >= requiredBytes) return;
-    let next = this.#validityBits.length;
-    while (next < requiredBytes) next *= 2;
-    const grown = new Uint8Array(next);
-    grown.set(this.#validityBits);
-    this.#validityBits = grown;
-  }
-
-  #hasInvalidCells(): boolean {
-    return this._hasInvalid && this.#definedCount !== this._length;
   }
 }
 

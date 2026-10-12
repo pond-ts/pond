@@ -4,12 +4,13 @@
  * Three things need pinning, and only one of them is "is the number
  * right":
  *
- * 1. **The masked path's alignment is correct.** `blockedSumMasked`
- *    splits a range into a scalar head (up to the first byte boundary),
- *    a byte-at-a-time blocked body, and a scalar tail. Every off-by-one
- *    in that split is a silently wrong sum, so the bulk of this file is
- *    a randomized differential test against a dead-simple scalar
- *    reference over every alignment of start, end, and gap pattern.
+ * 1. **The gap-skipping path is correct.** `blockedSumFinite` sums a
+ *    range in eight lanes, skipping missing cells (stored as NaN, or any
+ *    non-finite value — [PND-NANREP]), with a scalar tail for the last
+ *    `< 8` cells. Every off-by-one in that split is a silently wrong
+ *    sum, so the bulk of this file is a randomized differential test
+ *    against a dead-simple scalar reference over every alignment of
+ *    start, end, and gap pattern.
  * 2. **The threshold holds.** Runs below `BLOCKED_MIN` must stay
  *    bit-identical to what pond-ts returned before blocking existed —
  *    that is what keeps the exact-equality row-path parity tests
@@ -23,9 +24,8 @@ import { describe, expect, it } from 'vitest';
 import {
   BLOCKED_MIN,
   blockedSum,
-  blockedSumMasked,
+  blockedSumFinite,
 } from '../src/reducers/blocked.js';
-import { validityFromPredicate } from '../src/columnar/validity.js';
 import { Float64Column } from '../src/columnar/index.js';
 import '../src/column.js';
 
@@ -36,15 +36,14 @@ function scalarSum(values: Float64Array, start: number, end: number): number {
   return s;
 }
 
-function scalarSumMasked(
+function scalarSumFinite(
   values: Float64Array,
-  bits: Uint8Array,
   start: number,
   end: number,
 ): number {
   let s = 0;
   for (let i = start; i < end; i += 1) {
-    if ((bits[i >> 3]! & (1 << (i & 7))) !== 0) s += values[i]!;
+    if (Number.isFinite(values[i]!)) s += values[i]!;
   }
   return s;
 }
@@ -86,26 +85,25 @@ describe('blockedSum — dense', () => {
   });
 });
 
-describe('blockedSumMasked — alignment', () => {
+describe('blockedSumFinite — alignment', () => {
   it('agrees with the scalar reference across random ranges and gaps', () => {
     // The real test. Randomized over start alignment, end alignment,
-    // range length, and gap density — including the all-defined (0xff)
-    // and all-missing (0x00) byte shortcuts the kernel special-cases.
+    // range length, and gap density — including no gaps and all gaps.
+    // Gaps are a mix of NaN and ±Infinity: all three read as missing.
     const n = 4096;
     const next = rng(0xc0ffee);
-    const values = new Float64Array(n);
-    for (let i = 0; i < n; i += 1) values[i] = (i % 211) - 105;
+    const GAPS = [NaN, Infinity, -Infinity];
 
     for (const density of [0, 0.02, 0.25, 0.5, 0.95, 1]) {
-      const bits = new Uint8Array(n >> 3);
+      const values = new Float64Array(n);
       for (let i = 0; i < n; i += 1) {
-        if (next() >= density) bits[i >> 3]! |= 1 << (i & 7);
+        values[i] = next() < density ? GAPS[i % 3]! : (i % 211) - 105;
       }
       for (let trial = 0; trial < 400; trial += 1) {
         const start = Math.floor(next() * n);
         const end = start + Math.floor(next() * (n - start));
-        expect(blockedSumMasked(values, bits, start, end)).toBe(
-          scalarSumMasked(values, bits, start, end),
+        expect(blockedSumFinite(values, start, end)).toBe(
+          scalarSumFinite(values, start, end),
         );
       }
     }
@@ -115,19 +113,18 @@ describe('blockedSumMasked — alignment', () => {
     // Exhaustive rather than random over a window wide enough to cover
     // head-only, head+tail-no-body, and head+body+tail splits.
     const n = 40;
+    // A deliberately awkward pattern: full runs, empty runs, ragged.
+    const pattern = [
+      0b11111111, 0b00000000, 0b10110101, 0b11111111, 0b00001111,
+    ];
     const values = new Float64Array(n);
-    for (let i = 0; i < n; i += 1) values[i] = i + 1;
-    const bits = new Uint8Array(5);
-    // A deliberately awkward pattern: full bytes, empty bytes, ragged.
-    bits[0] = 0b11111111;
-    bits[1] = 0b00000000;
-    bits[2] = 0b10110101;
-    bits[3] = 0b11111111;
-    bits[4] = 0b00001111;
+    for (let i = 0; i < n; i += 1) {
+      values[i] = (pattern[i >> 3]! & (1 << (i & 7))) !== 0 ? i + 1 : NaN;
+    }
     for (let start = 0; start <= n; start += 1) {
       for (let end = start; end <= n; end += 1) {
-        expect(blockedSumMasked(values, bits, start, end)).toBe(
-          scalarSumMasked(values, bits, start, end),
+        expect(blockedSumFinite(values, start, end)).toBe(
+          scalarSumFinite(values, start, end),
         );
       }
     }
@@ -144,7 +141,7 @@ describe('the BLOCKED_MIN threshold', () => {
     const values = new Float64Array(n);
     values[0] = 1e16;
     for (let i = 1; i < n; i += 1) values[i] = 1;
-    const col = new Float64Column(values, n, undefined, true);
+    const col = new Float64Column(values, n, true);
     expect(col.sum()).toBe(scalarSum(values, 0, n));
   });
 
@@ -152,7 +149,7 @@ describe('the BLOCKED_MIN threshold', () => {
     const n = BLOCKED_MIN;
     const values = new Float64Array(n);
     for (let i = 0; i < n; i += 1) values[i] = i + 1;
-    const col = new Float64Column(values, n, undefined, true);
+    const col = new Float64Column(values, n, true);
     // Exact for these magnitudes either way; this pins the wiring, not
     // the rounding.
     expect(col.sum()).toBe((n * (n + 1)) / 2);
@@ -162,7 +159,7 @@ describe('the BLOCKED_MIN threshold', () => {
     // The property the row-path parity tests depend on: buckets small
     // enough to check by hand are still summed in order.
     const values = new Float64Array([1e16, 1, 1, 1, -1e16]);
-    const col = new Float64Column(values, 5, undefined, true);
+    const col = new Float64Column(values, 5, true);
     expect(col.sum()).toBe(scalarSum(values, 0, 5));
   });
 });
@@ -196,20 +193,22 @@ describe('reducer wiring', () => {
   it('sum and mean agree with the scalar reference on a gapped column', () => {
     const n = 1000;
     const values = new Float64Array(n);
-    for (let i = 0; i < n; i += 1) values[i] = (i % 71) - 35;
-    // Every 13th cell missing — gaps that do not land on byte edges.
-    const validity = validityFromPredicate(n, (i) => i % 13 !== 0);
-    const col = new Float64Column(values, n, validity, true);
-    const expected = scalarSumMasked(values, validity.bits, 0, n);
+    // Every 13th cell missing — gaps that do not land on lane edges.
+    let defined = 0;
+    for (let i = 0; i < n; i += 1) {
+      values[i] = i % 13 === 0 ? NaN : (i % 71) - 35;
+      if (i % 13 !== 0) defined += 1;
+    }
+    const col = new Float64Column(values, n);
+    const expected = scalarSumFinite(values, 0, n);
     expect(col.sum()).toBe(expected);
-    expect(col.mean()).toBe(expected / validity.definedCount);
+    expect(col.mean()).toBe(expected / defined);
   });
 
   it('an all-missing column still means undefined', () => {
     const n = 100;
-    const values = new Float64Array(n).fill(5);
-    const validity = validityFromPredicate(n, () => false);
-    const col = new Float64Column(values, n, validity, true);
+    const values = new Float64Array(n).fill(NaN);
+    const col = new Float64Column(values, n);
     expect(col.sum()).toBe(0);
     expect(col.mean()).toBeUndefined();
   });

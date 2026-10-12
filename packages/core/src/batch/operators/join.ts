@@ -282,7 +282,7 @@ function gatherLabels(
     }
     // Numeric interval labels are validated finite at construction.
     return {
-      labels: new Float64Column(out, len, undefined, true),
+      labels: new Float64Column(out, len, true),
       labelKind: lk.labelKind,
     };
   }

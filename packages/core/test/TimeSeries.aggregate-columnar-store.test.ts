@@ -100,7 +100,7 @@ describe('[PND-IVLCOL] aggregate columnar output — intake checks preserved', (
   it('stores a non-finite reducer result as missing, like the row path', () => {
     // `sum` over two near-MAX_VALUE cells overflows to +Infinity. A
     // non-finite number in a number column means missing ([PND-NANREP]),
-    // so the bucket reads as a gap — and the column stays `allFinite`.
+    // so the bucket reads as a gap — and the column is not `allFinite`.
     const overflowing = series([
       [0, Number.MAX_VALUE, 'a', true],
       [10_000, Number.MAX_VALUE, 'a', true],
@@ -110,7 +110,7 @@ describe('[PND-IVLCOL] aggregate columnar output — intake checks preserved', (
     expect(out.at(0)!.get('value')).toBeUndefined();
     const col = out.column('value');
     expect(col.nullCount()).toBe(1);
-    expect((col as { allFinite: boolean }).allFinite).toBe(true);
+    expect((col as { allFinite: boolean }).allFinite).toBe(false);
     // The row path (a custom reducer disqualifies the columnar plan)
     // answers the same.
     const viaRows = overflowing.aggregate(minute, {

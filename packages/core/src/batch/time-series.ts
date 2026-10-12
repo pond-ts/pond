@@ -147,10 +147,8 @@ import {
   StringColumn,
   TimeKeyColumn,
   TimeRangeKeyColumn,
-  bitmapByteCount,
   float64ColumnFromArray,
   stringColumnFromArray,
-  validityFromBits,
   withColumnAppended,
   withColumnReplaced,
   withColumnsRenamed,
@@ -1192,8 +1190,9 @@ export class TimeSeries<S extends SeriesSchema> {
     const { name, schema, columns, adopted } = arrowToColumns(table, options);
     // Goes to the shared ingest engine directly rather than through
     // `fromColumns`, which has no parameter for `adopted` — the null-bearing
-    // numeric columns built straight from Arrow's buffers, which `RawColumns`
-    // cannot express because it cannot carry a validity bitmap. The engine is
+    // numeric columns already built from Arrow's buffers (copied, with `NaN`
+    // at each null — [PND-NANREP]), handed over as finished columns so ingest
+    // does not scan them again. The engine is
     // the same one `fromColumns` calls; only the `op` label differs, so a
     // failure now names the door the caller actually went through.
     const store = ingestColumnsToStore({
@@ -4361,18 +4360,17 @@ export class TimeSeries<S extends SeriesSchema> {
         const packed = emaSourceCol as Float64Column;
         const rowCount = store.length;
         const src = packed._values;
-        const srcValidity = packed.validity;
-        const out = new Float64Array(rowCount);
-        const outBits = new Uint8Array(bitmapByteCount(rowCount));
+        // A missing output cell is `NaN` ([PND-NANREP]).
+        const out = new Float64Array(rowCount).fill(NaN);
         let outDefined = 0;
         let hasPrevious = false;
         let previous = 0;
         let seen = 0;
         for (let i = 0; i < rowCount; i += 1) {
-          if (srcValidity !== undefined && !srcValidity.isDefined(i)) {
+          const raw = src[i]!;
+          if (raw - raw !== 0) {
             continue; // missing source cell — emitted value is missing too
           }
-          const raw = src[i]!;
           const smoothed = hasPrevious
             ? alpha * raw + (1 - alpha) * previous
             : raw;
@@ -4385,15 +4383,15 @@ export class TimeSeries<S extends SeriesSchema> {
           // Non-finite (an overflow) means missing ([PND-NANREP]).
           if (smoothed - smoothed !== 0) continue;
           out[i] = smoothed;
-          outBits[i >> 3]! |= 1 << (i & 7);
           outDefined += 1;
         }
-        const outValidity =
-          outDefined === rowCount
-            ? undefined
-            : validityFromBits(outBits, rowCount);
-        // Every defined cell passed the finite test above → `allFinite`.
-        const outColumn = new Float64Column(out, rowCount, outValidity, true);
+        // Every written cell passed the finite test above, so the column is
+        // all-finite exactly when every row was written.
+        const outColumn = new Float64Column(
+          out,
+          rowCount,
+          outDefined === rowCount,
+        );
         const reshaped =
           output === undefined || output === (column as string)
             ? withColumnReplaced(store, column as string, outColumn)

@@ -101,7 +101,7 @@ export function cumulativeOp<
     const apply = buildApply(reducer);
 
     // Unboxed path — [PND-BOXFREE]. Walks the source's `Float64Array`
-    // and validity bits directly and writes into typed output buffers,
+    // directly (a missing cell is `NaN` in it — [PND-NANREP]) and writes into typed output buffers,
     // instead of `read(i)` into a boxed `Array<number | undefined>` that
     // `float64ColumnFromArray` then traverses twice more. Same fold,
     // same carry-over-gaps semantics; see `numeric-io.ts`.
@@ -121,21 +121,23 @@ export function cumulativeOp<
       // stays undefined only until the first defined value —
       // `NumericOutput` leaves unwritten cells undefined, so that
       // prefix needs no explicit write.
-      const { values, bits } = packed;
+      const { values } = packed;
       const out = new NumericOutput(n);
       let acc = 0;
       let seen = false;
       if (reducer === 'sum') {
         for (let i = 0; i < n; i += 1) {
-          if (bits === null || (bits[i >> 3]! & (1 << (i & 7))) !== 0) {
-            acc += values[i]!;
+          const v = values[i]!;
+          if (v - v === 0) {
+            acc += v;
             seen = true;
           }
           if (seen) out.set(i, acc);
         }
       } else if (reducer === 'count') {
         for (let i = 0; i < n; i += 1) {
-          if (bits === null || (bits[i >> 3]! & (1 << (i & 7))) !== 0) {
+          const v = values[i]!;
+          if (v - v === 0) {
             acc += 1;
             seen = true;
           }
@@ -143,8 +145,8 @@ export function cumulativeOp<
         }
       } else if (reducer === 'max') {
         for (let i = 0; i < n; i += 1) {
-          if (bits === null || (bits[i >> 3]! & (1 << (i & 7))) !== 0) {
-            const v = values[i]!;
+          const v = values[i]!;
+          if (v - v === 0) {
             acc = !seen || v > acc ? v : acc;
             seen = true;
           }
@@ -152,8 +154,8 @@ export function cumulativeOp<
         }
       } else if (reducer === 'min') {
         for (let i = 0; i < n; i += 1) {
-          if (bits === null || (bits[i >> 3]! & (1 << (i & 7))) !== 0) {
-            const v = values[i]!;
+          const v = values[i]!;
+          if (v - v === 0) {
             acc = !seen || v < acc ? v : acc;
             seen = true;
           }
@@ -163,8 +165,8 @@ export function cumulativeOp<
         // Custom fold: the closure is the caller's own function.
         let a: number | undefined;
         for (let i = 0; i < n; i += 1) {
-          if (bits === null || (bits[i >> 3]! & (1 << (i & 7))) !== 0)
-            a = apply(a, values[i]!);
+          const v = values[i]!;
+          if (v - v === 0) a = apply(a, v);
           if (a !== undefined) out.set(i, a);
         }
       }

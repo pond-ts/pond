@@ -10,7 +10,6 @@ import {
   stringColumnFromArray,
   timeKeyColumnFromArray,
   timeRangeKeyColumnFromPairs,
-  validityFromBits,
 } from '../../src/columnar/index.js';
 
 /* -------------------------------------------------------------------------- */
@@ -238,30 +237,29 @@ describe('IntervalKeyColumn label discriminator', () => {
     ).toThrow(/labels must be a StringColumn.*or Float64Column/);
   });
 
-  it('rejects a Float64Column with NaN labels', () => {
+  it('rejects a Float64Column with NaN labels (NaN is missing)', () => {
     const begin = Float64Array.of(0, 1);
     const end = Float64Array.of(1, 2);
     const numericLabels = new Float64Column(Float64Array.of(NaN, 5), 2);
     expect(() => new IntervalKeyColumn(begin, end, numericLabels, 2)).toThrow(
-      /numeric label NaN is not a finite number/,
+      /row 0 has no label/,
     );
   });
 
-  it('rejects a Float64Column with Infinity labels', () => {
+  it('rejects a Float64Column with Infinity labels (Infinity is missing)', () => {
     const begin = Float64Array.of(0, 1);
     const end = Float64Array.of(1, 2);
     const numericLabels = new Float64Column(Float64Array.of(5, Infinity), 2);
     expect(() => new IntervalKeyColumn(begin, end, numericLabels, 2)).toThrow(
-      /numeric label Infinity is not a finite number/,
+      /row 1 has no label/,
     );
   });
 
-  it('rejects validity-marked-invalid label rows via labelAt undefined', () => {
-    // Float64Column with explicit validity marking row 0 invalid.
+  it('rejects missing label rows via labelAt undefined', () => {
+    // Row 0 is missing (stored as NaN, [PND-NANREP]).
     const begin = Float64Array.of(0, 1);
     const end = Float64Array.of(1, 2);
-    const validity = validityFromBits(new Uint8Array([0b10]), 2);
-    const labels = new Float64Column(Float64Array.of(0, 5), 2, validity);
+    const labels = new Float64Column(Float64Array.of(NaN, 5), 2);
     expect(() => new IntervalKeyColumn(begin, end, labels, 2)).toThrow(
       /row 0 has no label/,
     );

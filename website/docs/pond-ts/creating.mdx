@@ -674,7 +674,10 @@ rather than `Number(bigint)` per row, measured ~11× faster on the time column
 (0.6 ms vs 6.8 ms at 500k rows; `packages/core/scripts/perf-from-arrow.mjs`). A
 table decoded from a **multi-record-batch** IPC stream has multi-chunk columns,
 whose `toArray()` concatenates into a fresh buffer — still correct, but a copy
-rather than an adopt, and the aliasing warning above doesn't apply to it.
+rather than an adopt, and the aliasing warning above doesn't apply to it. A
+`Float64` column **with nulls** is also copied, once, in bulk: pond marks a
+missing number with `NaN` in the column's own buffer, so it copies Arrow's
+values and writes `NaN` at each null rather than writing into your table.
 
 #### `toArrow`
 
@@ -721,10 +724,13 @@ A `timeRange` or `interval` key becomes two flat fields, `<key>` and
 as `<key>Label`. A value column that would collide with one of those synthesized
 names throws rather than producing a duplicate field name.
 
-Two cases are **not** zero-copy, named here so the cost is visible: a chunked
-column is materialized into one buffer first, and a string column pond chose not
-to dictionary-encode is handed over as a plain JS array (Arrow `Utf8` wants
-offsets into a UTF-8 byte buffer — building those is the consumer's encode).
+Some cases are **not** fully zero-copy, named here so the cost is visible: a
+chunked column is materialized into one buffer first; a string column pond chose
+not to dictionary-encode is handed over as a plain JS array (Arrow `Utf8` wants
+offsets into a UTF-8 byte buffer — building those is the consumer's encode); and
+a number column with gaps hands over its values as-is (holding `NaN` at each
+gap) but its `nullBitmap` is built from them on first use — pond keeps no bitmap
+for number columns.
 
 :::warning[The buffers are live storage]
 `toArrow` hands over pond's actual storage, not copies. Writing to one corrupts

@@ -78,59 +78,31 @@ function stdevRange(
   end: number,
 ): number | undefined {
   const values = col._values;
-  const validity = col.validity;
   let n = 0;
   let mean = 0;
   let m2 = 0;
-  // Fast path: every defined cell is finite (`Float64Column.allFinite`),
-  // so the Welford recurrence runs over every defined cell with no
-  // per-element `Number.isFinite` guard (reducer non-finite policy,
-  // docs/notes/reducer-nan-policy.md). Same recurrence as the guarded
-  // path → identical result.
+  // Fast path: every cell is finite (`Float64Column.allFinite`), so the
+  // Welford recurrence runs over every cell with no per-element finite
+  // test. Same recurrence as the guarded path → identical result.
   if (col.allFinite) {
-    if (validity === undefined) {
-      for (let i = start; i < end; i += 1) {
-        const v = values[i]!;
-        n += 1;
-        const delta = v - mean;
-        mean += delta / n;
-        m2 += delta * (v - mean);
-      }
-    } else {
-      const bits = validity.bits;
-      for (let i = start; i < end; i += 1) {
-        if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
-        const v = values[i]!;
-        n += 1;
-        const delta = v - mean;
-        mean += delta / n;
-        m2 += delta * (v - mean);
-      }
+    for (let i = start; i < end; i += 1) {
+      const v = values[i]!;
+      n += 1;
+      const delta = v - mean;
+      mean += delta / n;
+      m2 += delta * (v - mean);
     }
     return n === 0 ? undefined : Math.sqrt(Math.max(0, m2 / n));
   }
-  // Guarded path: skip non-finite cells; `n` counts only finite
-  // contributors so `n === 0` (no finite cells) → `undefined`.
-  if (validity === undefined) {
-    for (let i = start; i < end; i += 1) {
-      const v = values[i]!;
-      if (!Number.isFinite(v)) continue;
-      n += 1;
-      const delta = v - mean;
-      mean += delta / n;
-      m2 += delta * (v - mean);
-    }
-  } else {
-    const bits = validity.bits;
-    for (let i = start; i < end; i += 1) {
-      if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
-      const v = values[i]!;
-      if (!Number.isFinite(v)) continue;
-      n += 1;
-      const delta = v - mean;
-      mean += delta / n;
-      m2 += delta * (v - mean);
-    }
+  // Guarded path: skip missing (non-finite) cells ([PND-NANREP]); `n`
+  // counts only contributors so `n === 0` → `undefined`.
+  for (let i = start; i < end; i += 1) {
+    const v = values[i]!;
+    if (v - v !== 0) continue;
+    n += 1;
+    const delta = v - mean;
+    mean += delta / n;
+    m2 += delta * (v - mean);
   }
   return n === 0 ? undefined : Math.sqrt(Math.max(0, m2 / n));
 }

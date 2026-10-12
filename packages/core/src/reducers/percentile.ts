@@ -131,8 +131,9 @@ function percentileOfUnsorted(dense: Float64Array, q: number): number {
 
 /**
  * Shared `reduceColumn` body for percentile-shaped reducers
- * (`median`, `p50`, `p95`, etc.). Walks the validity bitmap to
- * gather defined **and finite** cells into a dense `Float64Array`,
+ * (`median`, `p50`, `p95`, etc.). Gathers the defined cells (a
+ * missing cell is a non-finite value — [PND-NANREP]) into a dense
+ * `Float64Array`,
  * then selects the percentile's one or two order statistics with
  * {@link quickselect} — O(n) expected, no full sort (see the
  * "Why not just sort" note above).
@@ -160,16 +161,9 @@ export function reducePercentileColumn(
  * `col[start, end)`. The bucketed callers (`aggregate`) use this so they
  * do not have to materialise a `Float64Column` slice per bucket.
  *
- * The dense gather buffer is sized to the range's defined count, so a
- * bucket allocates in proportion to itself rather than to the column —
- * the same size the slice path would have gathered, minus the slice.
- *
- * Sizing the buffer costs a `countInRange` popcount on the bitmap path,
- * where the whole-column form could have read the cached `definedCount`.
- * That is deliberate: it is an O(range/8) pass in front of an O(k) gather
- * and an O(k log k) sort, so it is dominated (measured at 0.20% of a
- * 1M-row `median()`), and paying it keeps one implementation instead of
- * two that could disagree about which cells qualify.
+ * The dense gather buffer is sized to the range, so a bucket allocates in
+ * proportion to itself rather than to the column; on a gappy range the
+ * select runs over the filled prefix only.
  */
 export function reducePercentileColumnRange(
   col: Float64Column,
@@ -177,54 +171,22 @@ export function reducePercentileColumnRange(
   start: number,
   end: number,
 ): number | undefined {
-  const validity = col.validity;
   const values = col._values;
   const width = end - start;
-  let dense: Float64Array;
+  if (width <= 0) return undefined;
+  const dense = new Float64Array(width);
   let denseLength = 0;
-  // Fast path: every defined cell is finite (`Float64Column.allFinite`),
-  // so we gather defined cells with no per-element `Number.isFinite`
-  // filter (reducer non-finite policy, docs/notes/reducer-nan-policy.md).
-  // The subsequent `Float64Array.sort` is the same NaN-free intrinsic
-  // either way → identical order, identical percentile.
+  // Fast path: every cell is finite (`Float64Column.allFinite`), so we
+  // gather with no per-element finite filter.
   if (col.allFinite) {
-    if (validity === undefined) {
-      if (width <= 0) return undefined;
-      dense = new Float64Array(width);
-      for (let i = start; i < end; i += 1) {
-        dense[denseLength] = values[i]!;
-        denseLength += 1;
-      }
-    } else {
-      const definedCount = validity.countInRange(start, end);
-      if (definedCount === 0) return undefined;
-      dense = new Float64Array(definedCount);
-      const bits = validity.bits;
-      for (let i = start; i < end; i += 1) {
-        if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
-        dense[denseLength] = values[i]!;
-        denseLength += 1;
-      }
-    }
-  } else if (validity === undefined) {
-    // Guarded path: filter non-finite before the sort.
-    if (width <= 0) return undefined;
-    dense = new Float64Array(width);
-    for (let i = start; i < end; i += 1) {
-      const v = values[i]!;
-      if (!Number.isFinite(v)) continue;
-      dense[denseLength] = v;
-      denseLength += 1;
-    }
+    dense.set(values.subarray(start, end));
+    denseLength = width;
   } else {
-    const definedCount = validity.countInRange(start, end);
-    if (definedCount === 0) return undefined;
-    dense = new Float64Array(definedCount);
-    const bits = validity.bits;
+    // Guarded path: drop missing (non-finite) cells ([PND-NANREP]) before
+    // the select.
     for (let i = start; i < end; i += 1) {
-      if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
       const v = values[i]!;
-      if (!Number.isFinite(v)) continue;
+      if (v - v !== 0) continue;
       dense[denseLength] = v;
       denseLength += 1;
     }

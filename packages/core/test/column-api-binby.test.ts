@@ -17,7 +17,6 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { createValidityBitmap } from '../src/columnar/index.js';
 import { Float64Column } from '../src/columnar/column.js';
 import {
   ChunkedFloat64Column,
@@ -26,13 +25,11 @@ import {
 import '../src/column.js'; // installs the augmentations
 
 function f64(values: number[], validity?: boolean[]): Float64Column {
-  const buf = Float64Array.from(values);
-  if (!validity) return new Float64Column(buf, values.length);
-  const v = createValidityBitmap(values.length);
-  for (let i = 0; i < values.length; i += 1) {
-    if (validity[i]) v.set(i);
-  }
-  return new Float64Column(buf, values.length, v.freeze());
+  // A missing number is `NaN` in the buffer ([PND-NANREP]).
+  const buf = Float64Array.from(values, (x, i) =>
+    validity === undefined || validity[i] ? x : NaN,
+  );
+  return new Float64Column(buf, values.length);
 }
 
 // ─── Basic key-domain bucketing ─────────────────────────────────

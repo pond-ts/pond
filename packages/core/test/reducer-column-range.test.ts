@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Float64Column, validityFromPredicate } from '../src/columnar/index.js';
+import { Float64Column } from '../src/columnar/index.js';
 import { resolveReducer } from '../src/reducers/index.js';
 
 /* -------------------------------------------------------------------------- */
@@ -11,11 +11,12 @@ import { resolveReducer } from '../src/reducers/index.js';
 /*   reduceColumnRange(col, s, e)  ===  reduceColumn(col.sliceByRange(s, e))   */
 /*                                                                             */
 /* This asserts that directly, against the real slice, over every shape that   */
-/* could break it. The load-bearing case is a range that does NOT start at 0:  */
-/* slicing REBASES the validity bitmap so the slice's bit 0 is the source's    */
-/* bit `start`, while the range form indexes the ORIGINAL bitmap at absolute   */
+/* could break it. The important case is a range that does NOT start at 0:     */
+/* slicing REBASES the values view so the slice's cell 0 is the source's cell   */
+/* `start`, while the range form indexes the ORIGINAL buffer at absolute        */
 /* positions. Get that backwards and every offset bucket silently reads the    */
-/* wrong cells' validity — with no type error and no crash.                    */
+/* wrong cells — with no type error and no crash. (Missing cells are NaN in    */
+/* the buffer since [PND-NANREP]; before that they lived in a bitmap.)         */
 /* -------------------------------------------------------------------------- */
 
 const REDUCERS = [
@@ -47,13 +48,14 @@ function column(
   const n = source.length;
   const values = new Float64Array(n);
   for (let i = 0; i < n; i += 1) {
-    values[i] = typeof source[i] === 'number' ? (source[i] as number) : 0;
+    // A missing cell is stored as NaN ([PND-NANREP]).
+    values[i] = typeof source[i] === 'number' ? (source[i] as number) : NaN;
   }
-  const validity = validityFromPredicate(
-    n,
-    (i) => typeof source[i] === 'number',
-  );
-  return new Float64Column(values, n, validity, allFinite);
+  // `allFinite` now promises "no missing cells", so it can only be
+  // claimed when every cell really is finite — a gappy shape always takes
+  // the guarded path.
+  const proven = allFinite && values.every((v) => Number.isFinite(v));
+  return new Float64Column(values, n, proven);
 }
 
 const rnd = mulberry32(0x9e3779b9);
@@ -160,12 +162,12 @@ describe('[PND-AGGALLOC] reduceColumnRange === reduceColumn(sliceByRange)', () =
     }
   });
 
-  it('reads validity at absolute offsets, not rebased ones', () => {
-    // A targeted regression guard for the bit-indexing bug the range form
-    // could plausibly have. Cells 0-7 are defined and huge; cells 8-15 are
+  it('reads cells at absolute offsets, not rebased ones', () => {
+    // A targeted regression guard for the offset bug the range form could
+    // plausibly have. Cells 0-7 are defined and huge; cells 8-15 are
     // missing except one small value. Reducing [8, 16) must see ONE cell —
-    // if the bitmap were read rebased (bits 0-7 for range 8-15), it would
-    // see the first byte's all-defined bits and pick up the wrong answer.
+    // reading rebased (cells 0-7 for range 8-15) would pick up the huge
+    // defined cells and give the wrong answer.
     const source: Array<number | undefined> = [
       ...Array.from({ length: 8 }, () => 1000),
       ...Array.from({ length: 8 }, (_, i) => (i === 4 ? 7 : undefined)),

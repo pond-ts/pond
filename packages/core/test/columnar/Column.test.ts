@@ -30,19 +30,56 @@ describe('Float64Column construction', () => {
     expect(() => new Float64Column(new Float64Array(2), 3)).toThrow(RangeError);
   });
 
-  it('rejects mismatched validity length', () => {
+  it('rejects a validity bitmap in place of allFinite (pre-NANREP signature)', () => {
     const validity = validityFromBits(new Uint8Array([0b011]), 3);
     expect(
-      () => new Float64Column(Float64Array.of(1, 2, 3, 4), 4, validity),
-    ).toThrow(RangeError);
+      () =>
+        new Float64Column(
+          Float64Array.of(1, 2, 3),
+          3,
+          validity as unknown as boolean,
+        ),
+    ).toThrow(TypeError);
   });
 
-  it('reads return undefined for invalid cells', () => {
-    const validity = validityFromBits(new Uint8Array([0b101]), 3);
-    const col = new Float64Column(Float64Array.of(1, 0, 3), 3, validity);
+  it('rejects the old four-argument call shape (undefined, allFinite)', () => {
+    // `(values, length, undefined, true)` would otherwise pass the boolean
+    // check on its default and silently drop the `allFinite` claim.
+    const Ctor = Float64Column as unknown as new (
+      ...args: unknown[]
+    ) => Float64Column;
+    expect(
+      () => new Ctor(Float64Array.of(1, 2, 3), 3, undefined, true),
+    ).toThrow(TypeError);
+  });
+
+  it('reads return undefined for missing (non-finite) cells', () => {
+    const col = new Float64Column(Float64Array.of(1, NaN, 3, Infinity), 4);
     expect(col.read(0)).toBe(1);
     expect(col.read(1)).toBeUndefined();
     expect(col.read(2)).toBe(3);
+    expect(col.read(3)).toBeUndefined();
+  });
+
+  it('derives validity from the buffer on demand', () => {
+    const col = new Float64Column(Float64Array.of(1, NaN, 3, -Infinity), 4);
+    expect(col.missingCount).toBe(2);
+    const validity = col.validity!;
+    expect(validity.definedCount).toBe(2);
+    expect([0, 1, 2, 3].map((i) => validity.isDefined(i))).toEqual([
+      true,
+      false,
+      true,
+      false,
+    ]);
+    // Cached: the same bitmap object on every read.
+    expect(col.validity).toBe(validity);
+  });
+
+  it('allFinite columns report no missing cells without a scan', () => {
+    const col = new Float64Column(Float64Array.of(1, 2, 3), 3, true);
+    expect(col.missingCount).toBe(0);
+    expect(col.validity).toBeUndefined();
   });
 
   it('reads out-of-range indices return undefined', () => {
@@ -54,8 +91,7 @@ describe('Float64Column construction', () => {
 
 describe('Float64Column.scan', () => {
   it('skips invalid cells by default', () => {
-    const validity = validityFromBits(new Uint8Array([0b101]), 3);
-    const col = new Float64Column(Float64Array.of(1, 99, 3), 3, validity);
+    const col = new Float64Column(Float64Array.of(1, NaN, 3), 3);
     const visited: Array<[number, number]> = [];
     col.scan((v, i) => visited.push([v, i]));
     expect(visited).toEqual([
@@ -65,13 +101,12 @@ describe('Float64Column.scan', () => {
   });
 
   it('visits every slot when skipInvalid is false', () => {
-    const validity = validityFromBits(new Uint8Array([0b101]), 3);
-    const col = new Float64Column(Float64Array.of(1, 99, 3), 3, validity);
+    const col = new Float64Column(Float64Array.of(1, NaN, 3), 3);
     const visited: Array<[number, number]> = [];
     col.scan((v, i) => visited.push([v, i]), { skipInvalid: false });
     expect(visited).toEqual([
       [1, 0],
-      [99, 1],
+      [NaN, 1],
       [3, 2],
     ]);
   });
@@ -111,14 +146,9 @@ describe('Float64Column.sliceByRange', () => {
     expect(slice.read(2)).toBe(3);
   });
 
-  it('repacks validity to slice-relative bit 0', () => {
-    // Bits set: 1, 3, 4 in length-5 source.
-    const validity = validityFromBits(new Uint8Array([0b011010]), 5);
-    const col = new Float64Column(
-      Float64Array.of(10, 20, 30, 40, 50),
-      5,
-      validity,
-    );
+  it('a slice reads gaps at slice-relative indices', () => {
+    // Defined: 1, 3, 4 in length-5 source.
+    const col = new Float64Column(Float64Array.of(NaN, 20, NaN, 40, 50), 5);
     const slice = col.sliceByRange(2, 5);
     expect(slice.length).toBe(3);
     expect(slice.read(0)).toBeUndefined(); // source idx 2
@@ -126,12 +156,12 @@ describe('Float64Column.sliceByRange', () => {
     expect(slice.read(2)).toBe(50); // source idx 4
   });
 
-  it('omits validity bitmap when the slice is all-defined', () => {
-    // Bits set: 0, 1, 2, 3 (source idx 4 invalid).
-    const validity = validityFromBits(new Uint8Array([0b01111]), 5);
-    const col = new Float64Column(Float64Array.of(1, 2, 3, 4, 0), 5, validity);
+  it('reports no validity bitmap when the slice is all-defined', () => {
+    // Source idx 4 missing.
+    const col = new Float64Column(Float64Array.of(1, 2, 3, 4, NaN), 5);
     const slice = col.sliceByRange(0, 4);
     expect(slice.validity).toBeUndefined();
+    expect(slice.missingCount).toBe(0);
   });
 });
 
@@ -152,9 +182,8 @@ describe('Float64Column.sliceByIndices', () => {
     expect(slice.read(2)).toBe(30);
   });
 
-  it('propagates source validity', () => {
-    const validity = validityFromBits(new Uint8Array([0b101]), 3);
-    const col = new Float64Column(Float64Array.of(10, 0, 30), 3, validity);
+  it('propagates source gaps', () => {
+    const col = new Float64Column(Float64Array.of(10, NaN, 30), 3);
     const slice = col.sliceByIndices(Int32Array.of(2, 1, 0));
     expect(slice.read(0)).toBe(30);
     expect(slice.read(1)).toBeUndefined(); // src idx 1 was invalid
@@ -355,17 +384,10 @@ describe('Multi-byte slice / gather', () => {
   // Source: 20 rows, validity bits set at every multiple of 3 → indices
   // 0, 3, 6, 9, 12, 15, 18 (7 of 20 defined).
   function multiByteFloat64Source(): Float64Column {
+    // Defined at every multiple of 3; every other cell is a NaN gap.
     const values = new Float64Array(20);
-    for (let i = 0; i < 20; i += 1) values[i] = i + 1;
-    const validity = validityFromBits(
-      // 20 bits → 3 bytes; bits 0, 3, 6, 9, 12, 15, 18 set.
-      // byte 0: bits 0,3,6      → 0b01001001 = 0x49
-      // byte 1: bits 9,12,15 → bit 9 = byte1 bit 1, bit 12 = byte1 bit 4, bit 15 = byte1 bit 7 → 0b10010010 = 0x92
-      // byte 2: bit 18 = byte2 bit 2 → 0b00000100 = 0x04
-      new Uint8Array([0x49, 0x92, 0x04]),
-      20,
-    );
-    return new Float64Column(values, 20, validity);
+    for (let i = 0; i < 20; i += 1) values[i] = i % 3 === 0 ? i + 1 : NaN;
+    return new Float64Column(values, 20);
   }
 
   function multiByteBooleanSource(): BooleanColumn {

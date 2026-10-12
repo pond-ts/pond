@@ -23,7 +23,6 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { createValidityBitmap } from '../src/columnar/index.js';
 import { Float64Column } from '../src/columnar/column.js';
 import {
   ChunkedFloat64Column,
@@ -32,13 +31,11 @@ import {
 import '../src/column.js'; // installs the augmentations
 
 function f64(values: number[], validity?: boolean[]): Float64Column {
-  const buf = Float64Array.from(values);
-  if (!validity) return new Float64Column(buf, values.length);
-  const v = createValidityBitmap(values.length);
-  for (let i = 0; i < values.length; i += 1) {
-    if (validity[i]) v.set(i);
-  }
-  return new Float64Column(buf, values.length, v.freeze());
+  // A missing number is `NaN` in the buffer ([PND-NANREP]).
+  const buf = Float64Array.from(values, (x, i) =>
+    validity === undefined || validity[i] ? x : NaN,
+  );
+  return new Float64Column(buf, values.length);
 }
 
 // ─── Output shape ───────────────────────────────────────────────
@@ -486,12 +483,8 @@ describe('ChunkedFloat64Column.bin — same output as packed', () => {
       values: number[],
       validity: boolean[],
     ): Float64Column {
-      const buf = Float64Array.from(values);
-      const v = createValidityBitmap(values.length);
-      for (let i = 0; i < values.length; i += 1) {
-        if (validity[i]) v.set(i);
-      }
-      return new Float64Column(buf, values.length, v.freeze());
+      const buf = Float64Array.from(values, (x, i) => (validity[i] ? x : NaN));
+      return new Float64Column(buf, values.length);
     }
     // Three chunks; each chunk has at least one invalid cell.
     const chunked = new ChunkedFloat64Column([

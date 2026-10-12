@@ -138,8 +138,9 @@ describe('scatterByPartition (numeric partition column)', () => {
     expect(two.valueAt(1, 'host')).toBe('d');
   });
 
-  it('buckets defined NaN partition values under the NaN key (Map SameValueZero)', () => {
-    // Build via trusted construction with a NaN cell.
+  it('treats a NaN partition value as missing ([PND-NANREP])', () => {
+    // A NaN cell in a number column is the missing marker, so it obeys
+    // the `onUndefined` rule like any other gap.
     const valCol = new Float64Column(Float64Array.of(1, NaN, 1, NaN), 4);
     const source = ColumnarStore.fromTrustedStore(
       SCHEMA,
@@ -150,22 +151,15 @@ describe('scatterByPartition (numeric partition column)', () => {
         ['flag', booleanColumnFromArray([true, false, true, false])],
       ]),
     );
-    const buckets = scatterByPartition(source, 'value');
-    expect(buckets.size).toBe(2);
+    expect(() => scatterByPartition(source, 'value')).toThrow(RangeError);
+    const buckets = scatterByPartition(source, 'value', {
+      onUndefined: 'drop',
+    });
+    expect(buckets.size).toBe(1);
     const one = buckets.get(1)!;
     expect(one.length).toBe(2);
     expect(one.valueAt(0, 'host')).toBe('a');
     expect(one.valueAt(1, 'host')).toBe('c');
-    // NaN bucket — Map.get(NaN) works under SameValueZero.
-    const nanBucket = buckets.get(NaN)!;
-    expect(nanBucket.length).toBe(2);
-    expect(nanBucket.valueAt(0, 'host')).toBe('b');
-    expect(nanBucket.valueAt(1, 'host')).toBe('d');
-    // The Map's NaN key is the actual NaN value.
-    const keys = [...buckets.keys()];
-    expect(keys.some((k) => typeof k === 'number' && Number.isNaN(k))).toBe(
-      true,
-    );
   });
 
   it('drops rows with undefined numeric partition values when onUndefined is "drop"', () => {

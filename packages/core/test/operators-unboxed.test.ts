@@ -190,16 +190,16 @@ describe('[PND-BOXFREE] cumulative: unboxed path equals the boxed reference', ()
     expect(col.at(3)).toBe(5);
   });
 
-  it('stores an overflowed running sum as missing; the output stays allFinite', () => {
+  it('stores an overflowed running sum as missing; the output is not allFinite', () => {
     // Input is all-finite; the running sum overflows to +Infinity, which is a
-    // missing cell ([PND-NANREP]), so the output is still all-finite.
+    // missing cell ([PND-NANREP]), so the output has a gap.
     const out = series([Number.MAX_VALUE, Number.MAX_VALUE]).cumulative({
       a: 'sum',
     });
     const col = out.column('a');
     expect(col.at(1)).toBeUndefined();
     expect(col.nullCount()).toBe(1);
-    expect((col as unknown as { allFinite: boolean }).allFinite).toBe(true);
+    expect((col as unknown as { allFinite: boolean }).allFinite).toBe(false);
   });
 
   it('handles many columns independently', () => {
@@ -279,12 +279,12 @@ describe('[PND-BOXFREE] diff / rate / pctChange: unboxed path equals the boxed r
     ]);
   });
 
-  it('stores an overflowed delta as missing; the output stays allFinite', () => {
+  it('stores an overflowed delta as missing; the output is not allFinite', () => {
     const out = series([-Number.MAX_VALUE, Number.MAX_VALUE]).diff(['a']);
     const col = out.column('a');
     expect(col.at(1)).toBeUndefined();
     expect(col.nullCount()).toBe(2);
-    expect((col as unknown as { allFinite: boolean }).allFinite).toBe(true);
+    expect((col as unknown as { allFinite: boolean }).allFinite).toBe(false);
   });
 });
 
@@ -354,7 +354,7 @@ describe('[PND-BOXFREE] non-finite results, reached the only way they can be', (
     expect(col.count()).toBe(1);
     expect(col.nullCount()).toBe(3);
     expect(col.count() + col.nullCount()).toBe(col.length);
-    expect((col as unknown as { allFinite: boolean }).allFinite).toBe(true);
+    expect((col as unknown as { allFinite: boolean }).allFinite).toBe(false);
   });
 
   it('cumulative over the gapped result agrees with the boxed reference', () => {

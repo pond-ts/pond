@@ -88,11 +88,10 @@ describe('ChunkedFloat64Column', () => {
     expect(col.validity).toBeUndefined();
   });
 
-  it('aggregate validity is built when any chunk has validity', () => {
-    // Chunk 0: rows 0..2, row 1 undefined.
-    const c0Validity = validityFromBits(new Uint8Array([0b101]), 3);
-    const c0 = new Float64Column(Float64Array.of(1, 999, 3), 3, c0Validity);
-    // Chunk 1: rows 0..1, all defined (no per-chunk bitmap).
+  it('aggregate validity is derived when any chunk has a gap', () => {
+    // Chunk 0: rows 0..2, row 1 missing (NaN).
+    const c0 = new Float64Column(Float64Array.of(1, NaN, 3), 3);
+    // Chunk 1: rows 0..1, all defined.
     const c1 = new Float64Column(Float64Array.of(4, 5), 2);
     const col = new ChunkedFloat64Column([c0, c1]);
     expect(col.validity).toBeDefined();
@@ -101,18 +100,15 @@ describe('ChunkedFloat64Column', () => {
     // Aggregate at globalIndex 3 (= c1 local 0) is defined.
     expect(col.read(3)).toBe(4);
     expect(col.validity!.definedCount).toBe(4);
+    expect(col.missingCount).toBe(1);
   });
 
-  it('aggregate validity is undefined when every chunk has all-defined per-chunk validity', () => {
-    // Two chunks, each carrying a per-chunk validity but all bits set.
-    const c0Validity = validityFromBits(new Uint8Array([0b111]), 3);
-    const c0 = new Float64Column(Float64Array.of(1, 2, 3), 3, c0Validity);
-    const c1Validity = validityFromBits(new Uint8Array([0b11]), 2);
-    const c1 = new Float64Column(Float64Array.of(4, 5), 2, c1Validity);
+  it('aggregate validity is undefined when no chunk has a gap', () => {
+    const c0 = new Float64Column(Float64Array.of(1, 2, 3), 3);
+    const c1 = new Float64Column(Float64Array.of(4, 5), 2);
     const col = new ChunkedFloat64Column([c0, c1]);
-    // Constructor walked both validities and saw all 5 cells defined →
-    // aggregate dropped.
     expect(col.validity).toBeUndefined();
+    expect(col.missingCount).toBe(0);
   });
 
   it('sliceByRange within a single chunk returns plain', () => {
@@ -423,15 +419,14 @@ describe('ChunkedArrayColumn', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('materializeChunked* helpers', () => {
-  it('Float64: concatenates buffers and preserves aggregate validity', () => {
-    const c0Validity = validityFromBits(new Uint8Array([0b101]), 3);
-    const c0 = new Float64Column(Float64Array.of(1, 99, 3), 3, c0Validity);
+  it('Float64: concatenates buffers, gaps included', () => {
+    const c0 = new Float64Column(Float64Array.of(1, NaN, 3), 3);
     const c1 = new Float64Column(Float64Array.of(4, 5), 2);
     const chunked = new ChunkedFloat64Column([c0, c1]);
     const plain = materializeChunkedFloat64(chunked);
     expect(plain).toBeInstanceOf(Float64Column);
     expect(plain.length).toBe(5);
-    expect(Array.from(plain._values)).toEqual([1, 99, 3, 4, 5]);
+    expect(Array.from(plain._values)).toEqual([1, NaN, 3, 4, 5]);
     expect(plain.validity).toBeDefined();
     expect(plain.read(0)).toBe(1);
     expect(plain.read(1)).toBeUndefined();

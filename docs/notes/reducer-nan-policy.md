@@ -27,13 +27,12 @@ single overflowed cell can't poison a whole bucket's `min` or a window's
 
 Since [PND-NANREP] (2026-10, first for `NaN`, then extended to `±Infinity`)
 **no number column holds a non-finite value**: every writer stores `NaN` /
-`Infinity` / `-Infinity` as a missing cell (validity bit cleared), so it is
-missing to every reader, not only to reducers. The input half of the reducer
-policy is therefore belt-and-braces for a column built through the trusted
-`Float64Column` constructor — the one remaining way to hold such a cell — and
-the `allFinite` flag is always `true` on a library-built column. The flag and
-the guarded `reduceColumn` loops are kept for now; removing them is a later
-internal cleanup.
+`Infinity` / `-Infinity` as a missing cell, so it is missing to every reader,
+not only to reducers. Since the storage switch (also [PND-NANREP]) a missing
+number **is** a `NaN` in the column's own buffer — there is no separate bitmap
+— so "skip non-finite" and "skip missing" are the same test (`v - v !== 0`).
+`allFinite` now means "no missing cells": a column with any gap takes the
+guarded `reduceColumn` loop, a gap-free one skips the check.
 
 **Reducer results.** Every reducer result path — `bucketStateFor` /
 `rollingStateFor` snapshots (built-in and custom), the row `reduce` filter,

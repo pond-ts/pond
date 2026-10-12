@@ -285,12 +285,7 @@ describe('toArrow — store-level paths (storeToArrow)', () => {
         { name: 'v', kind: 'number' },
       ] as const,
       new IntervalKeyColumn(begin, end, labels, n),
-      new Map([
-        [
-          'v',
-          new Float64Column(new Float64Array([1, 2, 3]), n, undefined, true),
-        ],
-      ]),
+      new Map([['v', new Float64Column(new Float64Array([1, 2, 3]), n, true)]]),
     );
     const { fields } = storeToArrow(store);
     const label = fields.find((x) => x.name === 'intervalLabel')!;

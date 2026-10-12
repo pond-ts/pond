@@ -107,9 +107,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   live `map` whose function writes `NaN` into a number field, and in
   `@pond-ts/process` `RangeOutput.set` / `sealRange`. A `cumulative` that hits
   `NaN` keeps its accumulator, so built-in folds read missing from that row on.
-  `±Infinity` now follows the same rule — see the next entry. Storage is
-  unchanged (still the validity bitmap); this locks the rule so a later
-  NaN-in-buffer storage switch is invisible. **Migration:** code that tested
+  `±Infinity` now follows the same rule — see the next entry. The storage
+  switch this unlocked landed in the same release — see "number columns store
+  a missing cell as `NaN`" below. **Migration:** code that tested
   `Number.isNaN(v)` on an operator's output should test `v === undefined`.
 
 - **core** (**breaking**): **Any non-finite number — `NaN`, `Infinity` or
@@ -153,6 +153,45 @@ include new features and type-level changes; patch bumps are strictly additive.
   should test `v === undefined`. Code relying on
   `withColumn(name, float64Array)` to reject `Infinity` must check it before
   the call.
+
+- **core** (**breaking**, mostly internal): **Number columns store a missing
+  cell as `NaN` in their own `Float64Array`, and keep no separate validity
+  bitmap** ([PND-NANREP]). Now that any non-finite number in a number column
+  means missing (entries above), the `NaN` is the only marker the column needs.
+  Answers do not change, with one exception: a gappy `sum` / `avg` over a
+  sub-range (an `aggregate` bucket of 32+ cells) can differ from before in
+  the last digit, because the blocked sum now groups its eight lanes from the
+  range start rather than from a multiple of 8 — the same kind of rounding
+  difference blocked summation already allows. Speed improves — on 1M rows with 4% gaps, `fromColumns`
+  is 70% faster, `reduce` `sum` / `avg` / `min` 30–38%, `diff` / `cumulative` /
+  `shift` 14–18%, and `nullCount()` on a fresh column 35%. Dense columns are
+  mostly unchanged or faster (`fromColumns` 32%); dense `cumulative` measured
+  ~11% slower. String, boolean and array columns keep their bitmaps. What you
+  can see:
+  - **`toFloat64Array()` returns `NaN` at a missing cell** (it used to be
+    whatever the buffer held, often `0`). A draw loop now breaks the line at a
+    gap with no extra check, and `withColumn(name, col.toFloat64Array())` now
+    round-trips gaps.
+  - **`fromArrow` copies a `Float64` column that has nulls** (one bulk copy,
+    writing `NaN` at each null) instead of sharing Arrow's buffers. Gap-free
+    columns are still shared with no copy. `toArrow` builds a number column's
+    `nullBitmap` from its `NaN` cells (once, then cached).
+  - **`Float64Column` constructor** (trusted, internal) is now
+    `(values, length, allFinite = false)` — the `validity` argument is gone,
+    and the old four-argument call shape throws a `TypeError`. `allFinite` now means "no
+    missing cells". `col.validity` still exists for kind-generic code but is
+    built from the `NaN` cells on first read. A column built this way with a
+    `NaN` partition value or interval label now reads it as missing (it used
+    to be a `NaN` partition / a "not a finite number" error).
+  - **`@pond-ts/process`:** `RangeOutput`, `ColumnView` and `ColumnBuffers`
+    lose their `bits` field — a gap is `NaN` in `values`. `ColumnBuffers`
+    gains `allFinite`. `validityByteCount` is removed (nothing to size). `columnBytes` no longer counts a bitmap for number
+    columns.
+
+  **Migration:** code that read `validity.bits` of a number column, or passed
+  `bits` across a worker boundary, should test `Number.isNaN(values[i])`
+  instead. Code that relied on `fromArrow` sharing a null-bearing column's
+  buffer with the Arrow table should not.
 
 - **core**: Out-of-order ingest errors now suggest `{ ordering: 'reorder' }`
   (and `'clamp'` where it applies) instead of `{ sort: true }`. Code matching
@@ -441,8 +480,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 - `@pond-ts/financial`: **`StudyOutput.id` documents the `@pond-ts/process`
   bridge**, and a new `test/catalog-process.test.ts` pins it. The field is a
-  *financial column suffix*; process's `OutputDef.id` is a *process outlet
-  id*; they share a name and are different namespaces. Process names its own
+  _financial column suffix_; process's `OutputDef.id` is a _process outlet
+  id_; they share a name and are different namespaces. Process names its own
   columns (`specId + OutputDef.id`) and matches an op's return to its outputs
   positionally, so a study's own column names never reach it — which means a
   registry bridging the two chooses its own suffixes, and for the **twelve**
@@ -455,7 +494,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   worked around it by hand. No API change: the descriptors, the studies and
   the guard are all unchanged, and the round-trip test is what stops the two
   packages drifting — `catalog.test.ts` validates a descriptor against its
-  *study*, so it is structurally blind to a cross-package disagreement.
+  _study_, so it is structurally blind to a cross-package disagreement.
 - `@pond-ts/process`: **`Skipped.spec` echoes the request verbatim**, and its
   `params` / `inputs` are typed `unknown` accordingly. The plan pass normalized
   `params: null` to `{}`, so recomputing an id from the echo produced the
@@ -474,7 +513,6 @@ include new features and type-level changes; patch bumps are strictly additive.
   rather than crashing.
 
   (All three reported by Tidal against 0.62.0, after adopting it.)
-
 
 ## [0.69.0] — 2026-09-13
 

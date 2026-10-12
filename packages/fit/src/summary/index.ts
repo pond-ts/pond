@@ -172,9 +172,8 @@ function sustainedCoastMask(
     ];
   }
   // After fill, a cell still UNDEFINED was a gap longer than maxGap — a
-  // sustained run. (Read the validity bitmap, not toFloat64Array, which renders
-  // a gap as 0 — see geo.readColumns.) Of those, the ones that began as a real
-  // coast (not absent data) are the sustained coasts we flag.
+  // sustained run. Of those, the ones that began as a real coast (not absent
+  // data) are the sustained coasts we flag.
   // hold (forward) bridges interior + trailing gaps ≤ maxGap; it can't touch a
   // LEADING gap (no left neighbour), so a coast at sample 0 would always look
   // sustained — chain bfill to bridge a brief leading run from its right side.
@@ -186,10 +185,9 @@ function sustainedCoastMask(
     .fill('hold', { maxGap: COAST_MAX_GAP })
     .fill('bfill', { maxGap: COAST_MAX_GAP })
     .column('v');
-  const validity = filledCol.validity;
   const hasMissing = filledCol.hasMissing();
   for (let i = 0; i < n; i++) {
-    const stillGap = hasMissing && validity ? !validity.isDefined(i) : false;
+    const stillGap = hasMissing ? filledCol.at(i) === undefined : false;
     mask[i] = !!wasCoast[i] && stillGap;
   }
   return mask;

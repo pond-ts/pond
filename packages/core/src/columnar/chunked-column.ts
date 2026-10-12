@@ -33,6 +33,11 @@
  * column. For a 10M-row column with sparse missingness that's
  * ≈1.25 MB on top of the chunks' own validity bitmaps.
  *
+ * The exception is `ChunkedFloat64Column`: number chunks keep no
+ * bitmap (a missing cell is `NaN` in the chunk's buffer —
+ * [PND-NANREP]), so its aggregate `validity` is **derived on first
+ * read** and cached, and `missingCount` sums the chunks' cached counts.
+ *
  * **Chunks are plain.** Each chunk is a plain variant — nested
  * chunked columns are not permitted. `concatSorted` flattens chunked
  * inputs into their constituent chunks so the chunked-column data
@@ -81,7 +86,10 @@ import {
  * the chunked column constructor decides ownership.
  */
 function buildOffsetsAndAggregateValidity(
-  chunks: ReadonlyArray<{ length: number; validity?: ValidityBitmap }>,
+  chunks: ReadonlyArray<{
+    length: number;
+    validity?: ValidityBitmap | undefined;
+  }>,
   label: string,
 ): {
   length: number;
@@ -221,7 +229,8 @@ export class ChunkedFloat64Column {
   readonly length: number;
   readonly chunks: ReadonlyArray<Float64Column>;
   readonly chunkOffsets: Int32Array;
-  readonly validity?: ValidityBitmap;
+  /** Cached aggregate bitmap; `null` until first asked. */
+  #validity: ValidityBitmap | undefined | null = null;
   /**
    * `true` iff **every** chunk is itself `allFinite` — the merged
    * column is all-finite IFF each input is (an AND). Defaults to
@@ -235,8 +244,11 @@ export class ChunkedFloat64Column {
 
   constructor(chunks: ReadonlyArray<Float64Column>) {
     assertChunkKinds(chunks, 'number', 'ChunkedFloat64Column');
-    const { length, chunkOffsets, validity } = buildOffsetsAndAggregateValidity(
-      chunks,
+    // Number chunks carry no bitmap — a missing cell is NaN in the chunk's
+    // buffer ([PND-NANREP]) — so only the offsets are built here; the
+    // aggregate `validity` is derived on demand (see the getter).
+    const { length, chunkOffsets } = buildOffsetsAndAggregateValidity(
+      chunks.map((c) => ({ length: c.length })),
       'ChunkedFloat64Column',
     );
     this.length = length;
@@ -244,7 +256,6 @@ export class ChunkedFloat64Column {
     // construction (the `ReadonlyArray` is a TS marker only).
     this.chunks = Object.freeze(chunks.slice());
     this.chunkOffsets = chunkOffsets;
-    if (validity !== undefined) this.validity = validity;
     // AND across chunks: all-finite IFF every chunk is. An empty chunk
     // list is vacuously all-finite (no non-finite cell exists).
     let allFinite = true;
@@ -255,21 +266,48 @@ export class ChunkedFloat64Column {
       }
     }
     this.allFinite = allFinite;
+    if (allFinite) this.#validity = undefined;
+  }
+
+  /**
+   * Number of missing (non-finite) cells — the sum of the chunks' own
+   * cached counts.
+   */
+  get missingCount(): number {
+    let missing = 0;
+    for (let c = 0; c < this.chunks.length; c += 1) {
+      missing += this.chunks[c]!.missingCount;
+    }
+    return missing;
+  }
+
+  /**
+   * Aggregate validity bitmap **derived** from the chunks' buffers (bit
+   * set ⇔ cell finite), or `undefined` when no cell is missing. Built on
+   * first access and cached, for kind-generic code; number-specific code
+   * should read the chunks' `_values` instead.
+   */
+  get validity(): ValidityBitmap | undefined {
+    if (this.#validity === null) {
+      this.#validity = buildOffsetsAndAggregateValidity(
+        this.chunks,
+        'ChunkedFloat64Column',
+      ).validity;
+    }
+    return this.#validity;
   }
 
   /**
    * Reads cell `i` by binary-searching `chunkOffsets` to find the
-   * containing chunk, then dereferencing its underlying
-   * `Float64Array` directly. Aggregate validity short-circuits to
-   * `undefined` before the chunk lookup — see the module header
-   * for why we maintain that bitmap eagerly.
+   * containing chunk, then reading that chunk's buffer. A non-finite
+   * cell is missing.
    */
   read(i: number): number | undefined {
     if (i < 0 || i >= this.length) return undefined;
-    if (this.validity && !this.validity.isDefined(i)) return undefined;
     const c = findChunkForRow(this.chunkOffsets, i);
     const local = i - this.chunkOffsets[c]!;
-    return this.chunks[c]!._values[local]!;
+    const v = this.chunks[c]!._values[local]!;
+    return v - v === 0 ? v : undefined;
   }
 
   /**
@@ -303,7 +341,7 @@ export class ChunkedFloat64Column {
     const lo = Math.max(0, start);
     const hi = Math.min(this.length, end);
     if (hi <= lo) {
-      return new Float64Column(new Float64Array(0), 0);
+      return new Float64Column(new Float64Array(0), 0, true);
     }
     const cStart = findChunkForRow(this.chunkOffsets, lo);
     const cEnd = findChunkForRow(this.chunkOffsets, hi - 1);
@@ -331,35 +369,22 @@ export class ChunkedFloat64Column {
    */
   sliceByIndices(indices: Int32Array): Float64Column {
     const out = new Float64Array(indices.length);
-    let hasInvalid = false;
-    const validBits = new Uint8Array(bitmapByteCount(indices.length));
+    let inRange = true;
     for (let i = 0; i < indices.length; i += 1) {
       const globalIdx = indices[i]!;
       if (globalIdx < 0 || globalIdx >= this.length) {
-        hasInvalid = true;
-        continue;
-      }
-      if (this.validity && !this.validity.isDefined(globalIdx)) {
-        hasInvalid = true;
+        // An out-of-range index gathers a missing cell.
+        out[i] = NaN;
+        inRange = false;
         continue;
       }
       const c = findChunkForRow(this.chunkOffsets, globalIdx);
       const local = globalIdx - this.chunkOffsets[c]!;
       out[i] = this.chunks[c]!._values[local]!;
-      validBits[i >> 3]! |= 1 << (i & 7);
     }
-    // A gather only reads existing defined cells (out-of-range / invalid
-    // slots are skipped → marked invalid below), so the result is finite
-    // whenever this chunked column is. Propagate the AND-of-chunks flag.
-    if (!hasInvalid) {
-      return new Float64Column(out, indices.length, undefined, this.allFinite);
-    }
-    return new Float64Column(
-      out,
-      indices.length,
-      validityFromBits(validBits, indices.length),
-      this.allFinite,
-    );
+    // A gather of finite cells is finite unless an out-of-range index
+    // introduced a missing one.
+    return new Float64Column(out, indices.length, this.allFinite && inRange);
   }
 }
 
@@ -748,12 +773,7 @@ export function materializeChunkedFloat64(
   // Compacting doesn't touch values, so finiteness carries over from
   // the chunked column (which is the AND of its chunks). This is what
   // lets a `concatSorted(...).reduce(...)` take the reducer fast path.
-  return new Float64Column(
-    out,
-    chunked.length,
-    chunked.validity,
-    chunked.allFinite,
-  );
+  return new Float64Column(out, chunked.length, chunked.allFinite);
 }
 
 /**

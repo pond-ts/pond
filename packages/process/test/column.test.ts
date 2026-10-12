@@ -73,14 +73,14 @@ describe('packColumn', () => {
     ]);
   });
 
-  it('packs NaN and ±Infinity as missing, so the column is always allFinite', () => {
-    // A non-finite number in a number column means missing ([PND-NANREP]):
-    // every defined cell is finite, so the flag is always honest.
+  it('packs NaN and ±Infinity as missing; allFinite means no gaps', () => {
+    // A non-finite number in a number column means missing ([PND-NANREP]),
+    // stored as NaN. `allFinite` is true exactly when nothing is missing.
     expect(packColumn([1, 2, 3]).allFinite).toBe(true);
-    expect(packColumn([1, undefined, 3]).allFinite).toBe(true);
+    expect(packColumn([1, undefined, 3]).allFinite).toBe(false);
     for (const bad of [NaN, Infinity, -Infinity]) {
       const c = packColumn([1, bad, 3]);
-      expect(c.allFinite).toBe(true);
+      expect(c.allFinite).toBe(false);
       expect(c.at(1)).toBeUndefined();
       expect(c.validity!.definedCount).toBe(2);
     }
@@ -107,8 +107,8 @@ describe('columnBytes', () => {
     const gapped = packColumn(
       Array.from({ length: 1000 }, (_, i) => (i < 10 ? undefined : i)),
     );
-    // 1000 * 8 + ceil(1000/8) validity bytes.
-    expect(columnBytes(gapped)).toBe(8000 + 125);
+    // 1000 * 8: a gap is NaN in the buffer, no bitmap ([PND-NANREP]).
+    expect(columnBytes(gapped)).toBe(8000);
   });
 
   it('scales with length, which is the point for a byte budget', () => {
@@ -117,17 +117,17 @@ describe('columnBytes', () => {
     expect(columnBytes(large) / columnBytes(small)).toBe(1000);
   });
 
-  it('sums a chunked column: chunks, aggregate bitmap, offset index', () => {
+  it('sums a chunked column: chunks and offset index', () => {
     // Reading `_values` reported 0 for a chunked column — "free" to a
     // byte budget, which is the one thing an approximation must not be.
     const chunked = new ChunkedFloat64Column([
       packColumn([1, 2, 3]),
       packColumn([4, undefined, 6]),
     ]);
-    // Chunk 1: 3·8 gapless. Chunk 2: 3·8 + ceil(3/8) validity. The
-    // aggregate bitmap over 6 cells adds ceil(6/8), and the chunk-offset
-    // index is an Int32Array of chunks+1 entries: 3·4.
-    expect(columnBytes(chunked)).toBe(24 + 25 + 1 + 12);
+    // Chunk 1: 3·8. Chunk 2: 3·8 (its gap is NaN in the buffer, no
+    // bitmap — [PND-NANREP]). The chunk-offset index is an Int32Array of
+    // chunks+1 entries: 3·4.
+    expect(columnBytes(chunked)).toBe(24 + 24 + 12);
   });
 
   it('counts backing capacity, not logical length', () => {
@@ -214,9 +214,8 @@ describe('[PND-PROCCOL] columnView — the zero-copy read path', () => {
     ]);
   });
 
-  it('treats a bitmap-free column as wholly defined', () => {
+  it('treats a gap-free column as wholly defined', () => {
     const view = columnView(packColumn([1, 2, 3]))!;
-    expect(view.bits).toBeUndefined();
     expect(view.definedCount).toBe(3);
     expect(view.defined(0)).toBe(true);
     expect(view.defined(2)).toBe(true);

@@ -99,19 +99,16 @@ export function diffRateOp<
     const col: Column = store.columns.get(name)!;
 
     // Unboxed path — [PND-BOXFREE]. Reads the source's `Float64Array`
-    // and validity bits directly rather than two `read(i)` calls per
-    // row into a boxed array. Row 0 has no predecessor and is left
-    // undefined, which `NumericOutput` gives for free by not writing it.
+    // directly rather than two `read(i)` calls per row into a boxed
+    // array. Row 0 has no predecessor and is left missing, which
+    // `NumericOutput` gives for free by not writing it. A missing input
+    // is `NaN` in the buffer ([PND-NANREP]), so any delta touching one is
+    // `NaN` and `out.set` drops it — no per-row defined test is needed.
     const packed = packedNumericSource(col);
     if (packed !== null) {
-      const { values, bits } = packed;
+      const { values } = packed;
       const out = new NumericOutput(n);
       for (let i = 1; i < n; i += 1) {
-        if (
-          !(bits === null || (bits[i >> 3]! & (1 << (i & 7))) !== 0) ||
-          !(bits === null || (bits[(i - 1) >> 3]! & (1 << ((i - 1) & 7))) !== 0)
-        )
-          continue;
         const prev = values[i - 1]!;
         const delta = values[i]! - prev;
         if (mode === 'pctChange') {

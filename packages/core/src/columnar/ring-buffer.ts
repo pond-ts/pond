@@ -85,10 +85,10 @@ export interface ColumnarRingBufferOptions {
 
 /* -------------------------------------------------------------------------- */
 /* Internal mutable storage shapes — one per kind, sized to the ring's        */
-/* current `capacity`. `validity` is allocated for every value column         */
-/* regardless of whether any cell is missing — it's a bit per cell at the     */
-/* same scale as the data buffer, and tracking presence lazily would         */
-/* complicate the eviction/growth bookkeeping.                                */
+/* current `capacity`. A number ring marks a missing cell with `NaN` in its  */
+/* buffer; a boolean ring keeps a `validity` bitmap regardless of whether    */
+/* any cell is missing — tracking presence lazily would complicate the       */
+/* eviction/growth bookkeeping.                                              */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -104,8 +104,8 @@ export interface ColumnarRingBufferOptions {
  */
 interface MutableFloat64Ring {
   readonly kind: 'number';
+  /** A missing cell is `NaN` in the buffer — no bitmap ([PND-NANREP]). */
   values: Float64Array;
-  validity: Uint8Array;
 }
 interface MutableBooleanRing {
   readonly kind: 'boolean';
@@ -773,7 +773,11 @@ export class ColumnarRingBuffer<S extends ColumnSchema = ColumnSchema> {
    */
   #clearAllSlots(): void {
     for (const [, ring] of this.#values) {
-      if (ring.kind === 'number' || ring.kind === 'boolean') {
+      if (ring.kind === 'number') {
+        ring.values.fill(NaN);
+        continue;
+      }
+      if (ring.kind === 'boolean') {
         ring.validity.fill(0);
         continue;
       }
@@ -786,7 +790,9 @@ export class ColumnarRingBuffer<S extends ColumnSchema = ColumnSchema> {
 
   #clearValidityForRow(physical: number): void {
     for (const [, ring] of this.#values) {
-      if (ring.kind === 'number' || ring.kind === 'boolean') {
+      if (ring.kind === 'number') {
+        ring.values[physical] = NaN;
+      } else if (ring.kind === 'boolean') {
         ring.validity[physical >> 3]! &= ~(1 << (physical & 7));
       } else {
         // String / Array: the slot's truthiness lives in `values[physical]`.
@@ -847,8 +853,8 @@ function initKeyRing(
  * current capacity. Each kind gets the typed-array shape that
  * matches its plain-column counterpart:
  *
- * - `number` — `Float64Array` for values, `Uint8Array` of
- *   `ceil(capacity / 8)` bytes for validity bits.
+ * - `number` — `Float64Array` for values, initialised to `NaN`
+ *   (a missing cell); no validity bitmap.
  * - `boolean` — bit-packed `Uint8Array` for both values and
  *   validity (1 bit per cell each).
  * - `string` — plain `(string | undefined)[]`. Snapshot rebuilds
@@ -867,8 +873,7 @@ function initValueRing(kind: ColumnKind, capacity: number): MutableValueRing {
     case 'number':
       return {
         kind: 'number',
-        values: new Float64Array(capacity),
-        validity: new Uint8Array(bitmapByteCount(capacity)),
+        values: new Float64Array(capacity).fill(NaN),
       };
     case 'boolean':
       return {
@@ -906,8 +911,8 @@ function initValueRing(kind: ColumnKind, capacity: number): MutableValueRing {
  * pressure can't leave the original ring half-grown.
  *
  * Per kind:
- * - `number` — fresh `Float64Array` + new validity `Uint8Array`,
- *   bits copied physical-to-logical.
+ * - `number` — fresh `Float64Array` (NaN-filled spare capacity),
+ *   values copied physical-to-logical.
  * - `boolean` — same shape with bit-packed `values` too.
  * - `string` / `array` — fresh `Array` of the slot type, cells
  *   copied by reference (already defensively frozen at original
@@ -921,16 +926,11 @@ function buildRegrownValueRing(
   oldCapacity: number,
 ): MutableValueRing {
   if (ring.kind === 'number') {
-    const newValues = new Float64Array(newCapacity);
-    const newValidity = new Uint8Array(bitmapByteCount(newCapacity));
+    const newValues = new Float64Array(newCapacity).fill(NaN);
     for (let i = 0; i < length; i += 1) {
-      const p = (head + i) % oldCapacity;
-      newValues[i] = ring.values[p]!;
-      if ((ring.validity[p >> 3]! & (1 << (p & 7))) !== 0) {
-        newValidity[i >> 3]! |= 1 << (i & 7);
-      }
+      newValues[i] = ring.values[(head + i) % oldCapacity]!;
     }
-    return { kind: 'number', values: newValues, validity: newValidity };
+    return { kind: 'number', values: newValues };
   }
   if (ring.kind === 'boolean') {
     const newValues = new Uint8Array(bitmapByteCount(newCapacity));
@@ -970,8 +970,8 @@ function buildRegrownValueRing(
  *
  * `source.read(srcRow)` returns `undefined` for invalid cells; the
  * per-kind branch in `writeValueCell` translates that into the
- * ring's defined-state discriminator (validity-bit-clear for
- * number/boolean; `undefined` slot for string/array).
+ * ring's defined-state discriminator (`NaN` for number,
+ * validity-bit-clear for boolean, `undefined` slot for string/array).
  */
 function writeValueColumnRows(
   ring: MutableFloat64Ring | MutableBooleanRing | MutableStringRing,
@@ -993,8 +993,8 @@ function writeValueColumnRows(
 /**
  * Writes one cell at physical position `physical`. Per kind:
  *
- * - `number` — store the float (or 0 for invalid) and toggle the
- *   validity bit.
+ * - `number` — store the float, or `NaN` for a missing cell (number
+ *   rings carry no validity bitmap).
  * - `boolean` — store the boolean bit (or 0) and the validity
  *   bit (or 0).
  * - `string` — store the string or `undefined`. The slot's
@@ -1017,13 +1017,9 @@ function writeValueCell(
   value: unknown,
 ): void {
   if (ring.kind === 'number') {
-    if (typeof value === 'number') {
-      ring.values[physical] = value;
-      ring.validity[physical >> 3]! |= 1 << (physical & 7);
-    } else {
-      ring.values[physical] = 0;
-      ring.validity[physical >> 3]! &= ~(1 << (physical & 7));
-    }
+    // A non-finite number is missing, same as a non-number ([PND-NANREP]).
+    ring.values[physical] =
+      typeof value === 'number' && value - value === 0 ? value : NaN;
     return;
   }
   if (ring.kind === 'boolean') {
@@ -1095,24 +1091,13 @@ function snapshotValueColumn(
 ): Column {
   if (ring.kind === 'number') {
     const values = new Float64Array(length);
-    let definedCount = 0;
-    const validityBits = new Uint8Array(bitmapByteCount(length));
+    let allFinite = true;
     for (let i = 0; i < length; i += 1) {
-      const p = (head + i) % capacity;
-      values[i] = ring.values[p]!;
-      if ((ring.validity[p >> 3]! & (1 << (p & 7))) !== 0) {
-        validityBits[i >> 3]! |= 1 << (i & 7);
-        definedCount += 1;
-      }
+      const v = ring.values[(head + i) % capacity]!;
+      values[i] = v;
+      if (v - v !== 0) allFinite = false;
     }
-    if (definedCount === length) {
-      return new Float64Column(values, length);
-    }
-    return new Float64Column(
-      values,
-      length,
-      validityFromBits(validityBits, length),
-    );
+    return new Float64Column(values, length, allFinite);
   }
   if (ring.kind === 'boolean') {
     const values = new Uint8Array(bitmapByteCount(length));

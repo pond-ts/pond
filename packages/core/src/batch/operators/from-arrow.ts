@@ -2,7 +2,6 @@ import {
   bitmapByteCount,
   type Column as ColumnarColumn,
   Float64Column,
-  validityFromBits,
 } from '../../columnar/index.js';
 import { ValidationError } from '../../core/errors.js';
 import type {
@@ -48,9 +47,9 @@ export interface ArrowVectorLike {
   /**
    * The vector's backing chunks. Optional — a bare structural stand-in need
    * not provide it, and the reader falls back to {@link get} when it is
-   * absent or in a shape that cannot be adopted. Read only to take the
-   * zero-copy path for a **null-bearing** numeric column; see
-   * {@link adoptNumericWithNulls}.
+   * absent or in a shape it cannot read. Read only to take the bulk-copy
+   * path for a **null-bearing** numeric column; see
+   * {@link copyNumericWithNulls}.
    */
   readonly data?: ReadonlyArray<ArrowDataLike | null | undefined>;
 }
@@ -355,95 +354,41 @@ type ReadColumn =
   | { kind: 'number'; values: Float64Array }
   | { kind: 'string'; values: Array<string | null> }
   /**
-   * A fully-built column, adopted from Arrow's buffers with no copy. Handed
-   * to the ingest engine as-is rather than through `RawColumns`.
+   * A fully-built column, bulk-copied from Arrow's buffers (see
+   * {@link copyNumericWithNulls}). Handed to the ingest engine as-is rather
+   * than through `RawColumns`.
    */
   | { kind: 'number'; column: Float64Column };
 
 /**
- * True when every cell the bitmap marks **defined** holds a finite value.
+ * Build a number column from a **null-bearing** `Float64` Arrow column by
+ * bulk-copying its values buffer and writing `NaN` behind every null bit —
+ * a number column marks a missing cell with `NaN` in its own buffer
+ * ([PND-NANREP]), so Arrow's null bitmap is read once here and not kept.
  *
- * This is both the `Float64Column.allFinite` proof and the gate on adopting
- * Arrow's buffers at all — see {@link adoptNumericWithNulls} for why those
- * are the same question.
- *
- * Walks a byte at a time so a fully-defined byte (`0xff`) — the common case
- * even in a column with gaps — costs one load and one compare for eight
- * cells, and an all-null byte (`0x00`) is skipped outright.
- */
-function definedCellsAllFinite(
-  values: Float64Array,
-  bits: Uint8Array,
-  count: number,
-): boolean {
-  const fullBytes = count >> 3;
-  for (let byte = 0; byte < fullBytes; byte += 1) {
-    const m = bits[byte]!;
-    if (m === 0) continue;
-    const base = byte << 3;
-    if (m === 255) {
-      for (let k = 0; k < 8; k += 1) {
-        if (!Number.isFinite(values[base + k]!)) return false;
-      }
-    } else {
-      for (let k = 0; k < 8; k += 1) {
-        if ((m & (1 << k)) !== 0 && !Number.isFinite(values[base + k]!)) {
-          return false;
-        }
-      }
-    }
-  }
-  for (let i = fullBytes << 3; i < count; i += 1) {
-    if (
-      (bits[i >> 3]! & (1 << (i & 7))) !== 0 &&
-      !Number.isFinite(values[i]!)
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Adopt a **null-bearing** `Float64` Arrow column's buffers directly, with
- * no copy — the counterpart of the `nullCount === 0` fast path, which has
- * always adopted its values buffer.
- *
- * This works because **Arrow's validity bitmap and pond's are the same
- * layout**: LSB-first, one bit per slot, a set bit meaning valid. So both
- * buffers can become the `Float64Column`'s storage as they stand. Slots
- * behind a null bit keep whatever Arrow left there, which is exactly what
- * `Float64Column` documents ("buffer slots corresponding to invalid cells
- * hold an arbitrary value; callers must consult `validity`").
- *
- * Measured on 500k rows with 4% nulls: **15.47 ms → 0.55 ms (28×)** against
- * the `get()`-per-element path, which is ~10× slower than the dense path it
- * otherwise matches.
+ * This used to adopt both of Arrow's buffers with no copy, because Arrow's
+ * validity bitmap and pond's had the same layout. With no bitmap on number
+ * columns that is no longer possible without writing `NaN` into the
+ * caller's table, so it copies instead: one `slice` plus a byte-at-a-time
+ * walk of the null bitmap, still well clear of the `get()`-per-element
+ * fallback it replaces.
  *
  * Returns `null` — falling back to {@link numericWithNulls} — for anything
- * it cannot adopt faithfully:
+ * it cannot read faithfully:
  *
  * - **more than one chunk**, or a `data` array in an unrecognised shape;
- * - a **non-zero chunk offset** (a sliced vector — its bits start mid-buffer,
- *   and pond's bitmap has no offset);
+ * - a **non-zero chunk offset** (a sliced vector — its bits start
+ *   mid-buffer);
  * - a values buffer that is **not a `Float64Array`** (an int32/int64 column
- *   needs converting, so there is nothing to adopt);
+ *   needs converting);
  * - a **missing or too-short** null bitmap;
  * - a `nullCount` that **disagrees** with the bitmap's own popcount, which
- *   means we have misread the vector;
- * - a **defined cell holding a non-finite value**.
+ *   means we have misread the vector.
  *
- * That last one is a semantics gate, not a safety one, and it is the
- * subtle case. pond's every other numeric intake maps a defined `NaN` to a
- * **gap** (`validityFromPredicate(Number.isFinite)`), including the dense
- * Arrow path right next to this one. Adopting a buffer with a non-null
- * `NaN` in it would leave that cell *defined* instead — so the same table
- * would ingest differently depending on whether adoption happened to be
- * possible. Declining keeps one answer. It costs a scan we were doing
- * anyway: "every defined cell is finite" is simultaneously the adoption
- * gate and the `allFinite` proof.
+ * A defined cell holding a non-finite value needs no gate: it reads as
+ * missing, the same as on every other numeric intake.
  */
-function adoptNumericWithNulls(
+function copyNumericWithNulls(
   vector: ArrowVectorLike,
   count: number,
 ): Float64Column | null {
@@ -453,33 +398,36 @@ function adoptNumericWithNulls(
   if (chunk == null) return null;
   if ((chunk.offset ?? 0) !== 0) return null;
 
-  const values = chunk.values;
-  if (!(values instanceof Float64Array) || values.length < count) return null;
+  const source = chunk.values;
+  if (!(source instanceof Float64Array) || source.length < count) return null;
 
   const bits = chunk.nullBitmap;
   if (!(bits instanceof Uint8Array) || bits.length < bitmapByteCount(count)) {
     return null;
   }
 
-  // Padding bits beyond `count` in the final byte must be zero — pond's
-  // bitmap invariant (validity.ts: "reserved (must be zero)"). Arrow's spec
-  // leaves them unspecified, and we cannot zero them here: the buffer is
-  // shared with the caller's table, so writing would mutate their data.
-  // Dirty padding → decline; the `get()` fallback reads per-slot and never
-  // sees the padding.
-  const padBits = count & 7;
-  if (padBits !== 0) {
-    const mask = (0xff << padBits) & 0xff;
-    if ((bits[count >> 3]! & mask) !== 0) return null;
+  const values = source.slice(0, count);
+  let defined = 0;
+  const fullBytes = count >> 3;
+  for (let byte = 0; byte < fullBytes; byte += 1) {
+    const m = bits[byte]!;
+    if (m === 255) {
+      defined += 8;
+      continue;
+    }
+    const base = byte << 3;
+    for (let k = 0; k < 8; k += 1) {
+      if ((m & (1 << k)) !== 0) defined += 1;
+      else values[base + k] = NaN;
+    }
   }
-
-  // `validityFromBits` popcounts on construction, so this cross-check of the
-  // vector's own `nullCount` is free.
-  const validity = validityFromBits(bits, count);
-  if (validity.definedCount !== count - vector.nullCount) return null;
-
-  if (!definedCellsAllFinite(values, bits, count)) return null;
-  return new Float64Column(values, count, validity, true);
+  for (let i = fullBytes << 3; i < count; i += 1) {
+    if ((bits[i >> 3]! & (1 << (i & 7))) !== 0) defined += 1;
+    else values[i] = NaN;
+  }
+  if (defined !== count - vector.nullCount) return null;
+  // Not `allFinite`: the column has nulls (that is why we are here).
+  return new Float64Column(values, count, false);
 }
 
 /**
@@ -545,7 +493,8 @@ function classifyArray(
  * back. Numeric fast paths: `Float64Array` adopted as-is (zero copy), other
  * number typed arrays copy through the `Float64Array` constructor (no map fn —
  * stays off V8's slow iterable path), int64 recombines BigInt-free; a numeric
- * column carrying nulls takes the per-element `get()` path (null → `NaN`). A
+ * column carrying nulls is bulk-copied with `NaN` behind each null bit, or
+ * failing that takes the per-element `get()` path (null → `NaN`). A
  * plain `Array` is classified by content: `Array<string>` (Arrow `Utf8`) →
  * `StringColumn` downstream (dict-encoded when it pays), `Array<number>` (a
  * normalized `Date` column, epoch-ms) → `Float64Column`. Anything else (a
@@ -561,7 +510,7 @@ function readColumn(
     assertOneWordPerRow(raw, vector.length, name);
     if (vector.nullCount > 0) {
       const adopted = allowAdopt
-        ? adoptNumericWithNulls(vector, vector.length)
+        ? copyNumericWithNulls(vector, vector.length)
         : null;
       if (adopted !== null) return { kind: 'number', column: adopted };
       return { kind: 'number', values: numericWithNulls(vector) };
@@ -634,10 +583,9 @@ function readTimeColumn(
  *
  * Returns two channels. `columns` is the ordinary `RawColumns` payload, all
  * `Float64Array`, so ingest takes its zero-copy adoption path throughout.
- * `adopted` carries columns already built straight from Arrow's buffers —
- * the null-bearing numeric case (see {@link adoptNumericWithNulls}), which
- * has no `RawColumns` representation because `RawColumns` cannot carry a
- * validity bitmap. A column name appears in exactly one of the two.
+ * `adopted` carries columns already built by copying Arrow's buffers — the
+ * null-bearing numeric case (see {@link copyNumericWithNulls}). A column
+ * name appears in exactly one of the two.
  */
 export function arrowToColumns(
   table: ArrowTableLike,

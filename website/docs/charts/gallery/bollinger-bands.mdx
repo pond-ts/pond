@@ -72,11 +72,12 @@ through two regimes, and a lagging moving average against a trending price is
 exactly where that assumption breaks. Worth seeing, rather than tuning away.
 
 :::note[Counting breaches: don't let the warm-up in]
-`toFloat64Array()` materializes the `undefined` warm-up rows as `0`, so a naive
-`close > bbUpper` sweep scores all 19 of them as breaches and inflates the
-count by exactly the warm-up length. Read through the nullable accessor
-(`column('bbUpper').read(i)`, which returns `undefined`) and skip the rows the
-study hasn't warmed into. The numbers above are counted that way.
+`toFloat64Array()` returns the `undefined` warm-up rows as `NaN`, and any
+comparison with `NaN` is `false`, so a `close > bbUpper` sweep over the raw
+buffers already skips them. Skip them explicitly anyway if you count the other
+way round (`!(close <= bbUpper)` would score all 19 as breaches) — the nullable
+accessor (`column('bbUpper').read(i)`, which returns `undefined`) makes the
+intent obvious. The numbers above are counted that way.
 :::
 
 ## Build it

@@ -40,13 +40,11 @@ import '../src/column.js';
 // ─── Helpers ────────────────────────────────────────────────────
 
 function f64(values: number[], validity?: boolean[]): Float64Column {
-  const buf = Float64Array.from(values);
-  if (!validity) return new Float64Column(buf, values.length);
-  const v = createValidityBitmap(values.length);
-  for (let i = 0; i < values.length; i += 1) {
-    if (validity[i]) v.set(i);
-  }
-  return new Float64Column(buf, values.length, v.freeze());
+  // A missing number is `NaN` in the buffer ([PND-NANREP]).
+  const buf = Float64Array.from(values, (x, i) =>
+    validity === undefined || validity[i] ? x : NaN,
+  );
+  return new Float64Column(buf, values.length);
 }
 
 function bool(values: boolean[], validity?: boolean[]): BooleanColumn {
@@ -273,14 +271,13 @@ describe('Float64Column public methods', () => {
       expect(out).not.toBe(c._values);
     });
 
-    it('packed with validity: returns raw values including undefined-marked slots', () => {
-      // The undefined-marked positions still carry whatever value
-      // the source put there — toFloat64Array doesn't replace
-      // them with NaN. Validity-aware iteration is a separate
-      // concern via .validity / .scan.
+    it('packed with gaps: a missing cell reads back as NaN', () => {
+      // A number column stores a missing cell as NaN in its buffer
+      // ([PND-NANREP]), so the gathered array carries the gap marker
+      // with no separate validity lookup.
       const c = f64([10, 999, 20, 999, 30], [true, false, true, false, true]);
       const out = c.toFloat64Array();
-      expect(Array.from(out)).toEqual([10, 999, 20, 999, 30]);
+      expect(Array.from(out)).toEqual([10, NaN, 20, NaN, 30]);
     });
 
     it('packed slice: identity holds against slice._values (NOT the source)', () => {

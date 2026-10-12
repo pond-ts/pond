@@ -150,23 +150,12 @@ for the full column surface (`toFloat64Array`, `keyColumn().begin`,
 `bin('minMax')` for per-pixel downsampling).
 
 :::tip[Gaps as NaN]
-`toFloat64Array()` is zero-copy but ignores validity — undefined cells
-read as whatever sits in the backing buffer. For a single column where
-you want gaps to break the canvas line, either walk with the
-validity-aware `.at(i)` (as the bands do above) or gather once:
-
-```ts
-function values(col) {
-  if (!col.hasMissing()) return col.toFloat64Array(); // zero-copy fast path
-  const out = new Float64Array(col.length);
-  const src = col.toFloat64Array();
-  for (let i = 0; i < col.length; i += 1) {
-    out[i] = col.validity?.isDefined(i) ? src[i] : NaN;
-  }
-  return out;
-}
-```
-
+`toFloat64Array()` is zero-copy, and a number column already stores each gap
+as `NaN` in that buffer, so the array you get back breaks a canvas line at every
+gap with no extra pass. (If you built the series from your own
+`Float64Array` holding `±Infinity`, those cells are gaps too and come back
+as written.) (In earlier versions the gap slots held whatever was in
+the buffer and needed a gather into `NaN` first.)
 :::
 
 ## Why it's faster

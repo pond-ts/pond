@@ -123,20 +123,24 @@ and that is the property a caller may have been relying on.
   sum of the same values. pond-ts does **not** guarantee bit-identical
   results across those two paths; it guarantees each is a correctly
   rounded IEEE-754 double summation of the same contributors.
-- Nothing about **which cells contribute** changed. The validity bitmap
-  and the non-finite policy behave exactly as
+- Nothing about **which cells contribute** changed. Missing cells and
+  the non-finite policy behave exactly as
   [`reducer-nan-policy.md`](reducer-nan-policy.md) describes; only the
   order of the additions moved.
 
 ## What was deliberately left sequential
 
-- **The guarded path** (`allFinite: false`, where a per-element
-  `Number.isFinite` check is required). Blocking measures **1.84×** there
-  and the code is straightforward, but after [PND-WCNAN] chose
-  NaN-as-missing at typed intake, `allFinite` is true for essentially
-  every column the target workload builds — so this is a cold path
-  carrying a semantics change for no measured benefit. Revisit if a
-  workload lands on it.
+- ~~**The guarded path**~~ — **taken with [PND-NANREP]'s storage switch.**
+  Once a missing number became a `NaN` in the buffer, `allFinite: false`
+  means "this column has gaps", which is the common gappy case rather
+  than a cold path. `blockedSumFinite` sums it in the same 8 lanes, each
+  adding `v - v === 0 ? v : 0`, and replaced the bitmap-walking
+  `blockedSumMasked` (`scripts/perf-blocked-sum.mjs`: 2.49× over the
+  sequential guarded loop at 500k cells, 4% gaps). Its lanes start at
+  the range start, as `blockedSum`'s do; the old masked kernel started
+  them on a multiple of 8 (byte-aligned to the bitmap). So a gappy
+  sub-range sum (an `aggregate` bucket) can differ from the old kernel
+  in the last ulp — the same grouping latitude this note already takes.
 - **`stdev`**. It is a Welford recurrence, not an accumulation loop;
   reassociating it is a different (and much more delicate) problem.
 - **The rolling kernel.** `sweepRollingColumn` maintains an incremental

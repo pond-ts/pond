@@ -81,7 +81,7 @@ interface ColumnBase<T, K extends ColumnKind> {
    * convention so `col.validity === undefined` reliably means "all
    * cells defined."
    */
-  readonly validity?: ValidityBitmap;
+  readonly validity?: ValidityBitmap | undefined;
 
   /** Reads cell `i`. Out-of-range or invalid → `undefined`. */
   read(i: number): T | undefined;
@@ -142,39 +142,22 @@ export type Column =
 /* -------------------------------------------------------------------------- */
 
 /**
- * Numeric value column backed by a `Float64Array`. The underlying
- * `_values` buffer is dense — undefined / missing cells are tracked
- * solely by the `validity` bitmap. Buffer slots corresponding to
- * invalid cells hold an arbitrary value (typically `0`); callers
- * must consult `validity` before treating a slot as meaningful.
+ * Numeric value column backed by a `Float64Array`.
  *
- * **The rule: a non-finite number in a number column means missing** —
- * [PND-NANREP] (first for `NaN`, then extended to `±Infinity`). There is no
- * such thing as a *defined* `NaN`, `Infinity` or `-Infinity` cell. Every
- * producer that writes a numeric column (`fromColumns`, the Arrow doors,
- * `withColumn`'s typed door, and every operator's own arithmetic — `diff`
- * of `MAX - (-MAX)`, a cumulative sum that overflows, a `rolling` /
- * `aggregate` / `smooth` result that overflows, a `scan` step, `collapse`
- * reducer or `mapColumns` mapper returning a non-finite number) stores a
- * non-finite result as a **missing** cell: validity bit cleared,
- * `definedCount` excluding it. So `read(i)` returns `undefined`, `scan()`
- * skips it, and `count()` / `nullCount()` / `hasMissing()` count it as
- * missing (so `count() + nullCount() === length` always). Doors that
- * *reject* `NaN` (row intake, `withColumn`'s boxed door) reject
- * `±Infinity` alike.
+ * **A missing cell is a non-finite value in the buffer** — `NaN` is the
+ * one the library writes, and `±Infinity` reads as missing too (the
+ * non-finite-means-missing rule, docs/notes/reducer-nan-policy.md).
+ * There is no separate validity bitmap: the buffer alone says which
+ * cells are defined, so a hot loop over `_values` needs nothing but the
+ * finite test (`v - v === 0`) that the reducer non-finite policy already
+ * required. ([PND-NANREP] — the bitmap cost ~25% on scan kernels and
+ * forced representation churn between NaN-speaking operators and the
+ * bitmap.)
  *
- * A consequence: every defined cell is finite, so a column built by the
- * library always has `allFinite === true`. The flag and the reducers'
- * guarded paths are kept for now (removing them is a later internal
- * cleanup); only a caller of this trusted constructor can still set it
- * `false`.
- *
- * The storage is deliberately not part of the rule. Today missing is a
- * bitmap bit; a later internal switch to NaN-in-buffer would change no
- * observable answer. **This constructor is the trusted door and does not
- * scan**: a caller handing it a buffer must clear the validity bit of
- * any non-finite slot itself (`float64ColumnFromArray` and the operator
- * output helpers do it for you).
+ * `validity` is still answered, for generic code that walks every
+ * column kind the same way: it is **derived** from the buffer on first
+ * access and cached (one O(N) scan; free when `allFinite`). Hot paths
+ * should read `_values` directly instead.
  *
  * `_values` is **substrate-internal**: it's the raw buffer handle
  * that reducers, builders, and other substrate-level code reach
@@ -193,75 +176,111 @@ export class Float64Column implements ColumnBase<number, 'number'> {
   /**
    * @internal Substrate-level raw buffer handle. May be oversized
    * (`_values.length > length` for capacity-grown columns). Walk
-   * with `this.length` as the bound. For consumer code that wants
-   * a length-bounded `Float64Array`, use `toFloat64Array()`.
+   * with `this.length` as the bound. A non-finite slot is a missing
+   * cell. For consumer code that wants a length-bounded
+   * `Float64Array`, use `toFloat64Array()`.
    */
   readonly _values: Float64Array;
-  readonly validity?: ValidityBitmap;
   /**
-   * **Safety contract.** `true` MUST mean "every *defined* cell is
-   * finite — no `NaN`, no `±Infinity`" (missing cells, tracked by
-   * `validity`, are irrelevant). It is a promise the producer makes
-   * so reducers can skip the per-element `Number.isFinite` guard that
-   * the reducer non-finite policy (docs/notes/reducer-nan-policy.md)
-   * otherwise requires on every numeric `reduceColumn`.
+   * **Safety contract.** `true` MUST mean "every cell in `[0, length)`
+   * is finite" — no `NaN`, no `±Infinity`, and therefore **no missing
+   * cells**. It is a promise the producer makes so reducers can skip
+   * the per-element finite test.
    *
    * A wrongly-`true` flag makes `reduceColumn` take the unguarded fast
-   * path and silently include a non-finite cell → wrong result. So the
-   * **default is `false`** (conservative: guarded path, correct-but-
-   * slower) and a producer sets `true` ONLY where finiteness is proven
-   * — either data-derived by inspecting every cell, validated upstream
-   * (strict intake), or propagated from a source column that was
-   * itself `allFinite`. When unsure, leave it `false`: a missed `true`
-   * is slower, never wrong.
+   * path and silently include a missing (`NaN`) cell → wrong result. So
+   * the **default is `false`** (conservative: guarded path, correct but
+   * slower) and a producer sets `true` ONLY where it is proven — by
+   * inspecting every cell, or by propagation from a source column that
+   * was itself `allFinite`. When unsure, leave it `false`: a missed
+   * `true` is slower, never wrong.
    */
   readonly allFinite: boolean;
+  /** Cached count of missing (non-finite) cells; `-1` until first asked. */
+  #missing = -1;
+  /** Cached derived bitmap; `null` until first asked. */
+  #validity: ValidityBitmap | undefined | null = null;
 
-  constructor(
-    values: Float64Array,
-    length: number,
-    validity?: ValidityBitmap,
-    allFinite = false,
-  ) {
+  constructor(values: Float64Array, length: number, allFinite = false) {
     validateColumnLength(length, 'Float64Column');
     if (length > values.length) {
       throw new RangeError(
         `Float64Column buffer underflow: length ${length} exceeds values.length ${values.length}`,
       );
     }
-    if (validity !== undefined && validity.length !== length) {
-      throw new RangeError(
-        `Float64Column validity length mismatch: column ${length}, validity ${validity.length}`,
+    if (typeof allFinite !== 'boolean' || arguments.length > 3) {
+      // Guard the pre-[PND-NANREP] signature `(values, length, validity,
+      // allFinite)`: a bitmap here would otherwise read as truthy and
+      // promise "no missing cells".
+      throw new TypeError(
+        'Float64Column: the third argument is `allFinite: boolean`; number columns no longer take a validity bitmap — write NaN into the buffer for a missing cell',
       );
     }
     this._values = values;
     this.length = length;
-    if (validity !== undefined) this.validity = validity;
     this.allFinite = allFinite;
+    if (allFinite) {
+      this.#missing = 0;
+      this.#validity = undefined;
+    }
+  }
+
+  /**
+   * Number of missing (non-finite) cells. One O(N) scan on first call,
+   * cached after; `0` without a scan when `allFinite`.
+   */
+  get missingCount(): number {
+    if (this.#missing < 0) {
+      const values = this._values;
+      const n = this.length;
+      let missing = 0;
+      for (let i = 0; i < n; i += 1) {
+        const v = values[i]!;
+        if (v - v !== 0) missing += 1;
+      }
+      this.#missing = missing;
+    }
+    return this.#missing;
+  }
+
+  /**
+   * Validity bitmap **derived** from the buffer (bit set ⇔ cell finite),
+   * or `undefined` when no cell is missing. Computed on first access and
+   * cached. Kept so kind-generic code can treat every column the same;
+   * number-specific hot paths should test `_values` directly.
+   */
+  get validity(): ValidityBitmap | undefined {
+    if (this.#validity === null) {
+      if (this.missingCount === 0) {
+        this.#validity = undefined;
+      } else {
+        const values = this._values;
+        this.#validity = validityFromPredicate(this.length, (i) => {
+          const v = values[i]!;
+          return v - v === 0;
+        });
+      }
+    }
+    return this.#validity;
   }
 
   read(i: number): number | undefined {
     if (i < 0 || i >= this.length) return undefined;
-    if (this.validity && !this.validity.isDefined(i)) return undefined;
-    return this._values[i];
+    const v = this._values[i]!;
+    return v - v === 0 ? v : undefined;
   }
 
   scan(fn: (value: number, i: number) => void, options?: ScanOptions): void {
     const skipInvalid = options?.skipInvalid ?? true;
-    const v = this.validity;
     const values = this._values;
-    if (!v) {
-      for (let i = 0; i < this.length; i += 1) {
-        fn(values[i]!, i);
-      }
+    const n = this.length;
+    if (this.allFinite || !skipInvalid) {
+      for (let i = 0; i < n; i += 1) fn(values[i]!, i);
       return;
     }
-    for (let i = 0; i < this.length; i += 1) {
-      if (v.isDefined(i)) {
-        fn(values[i]!, i);
-      } else if (!skipInvalid) {
-        fn(values[i]!, i);
-      }
+    for (let i = 0; i < n; i += 1) {
+      const v = values[i]!;
+      if (v - v === 0) fn(v, i);
     }
   }
 
@@ -269,41 +288,32 @@ export class Float64Column implements ColumnBase<number, 'number'> {
     const lo = Math.max(0, start);
     const hi = Math.min(this.length, end);
     if (hi <= lo) {
-      return new Float64Column(new Float64Array(0), 0);
+      return new Float64Column(new Float64Array(0), 0, true);
     }
-    const valuesSlice = this._values.subarray(lo, hi);
-    const validitySlice = validitySliceByRange(
-      this.validity,
-      lo,
-      hi,
-      this.length,
-    );
     // A contiguous slice of an all-finite column is all-finite.
     return new Float64Column(
-      valuesSlice,
+      this._values.subarray(lo, hi),
       hi - lo,
-      validitySlice,
       this.allFinite,
     );
   }
 
   sliceByIndices(indices: Int32Array): Float64Column {
     const out = new Float64Array(indices.length);
+    let inRange = true;
     for (let i = 0; i < indices.length; i += 1) {
       const idx = indices[i]!;
-      // Out-of-range indices read 0 (the buffer default); validity
-      // gather marks those slots invalid below.
-      out[i] = idx >= 0 && idx < this.length ? this._values[idx]! : 0;
+      if (idx >= 0 && idx < this.length) {
+        out[i] = this._values[idx]!;
+      } else {
+        // An out-of-range index gathers a missing cell.
+        out[i] = NaN;
+        inRange = false;
+      }
     }
-    const validity = validityGatherByIndices(
-      this.validity,
-      indices,
-      this.length,
-    );
-    // A gathered subset of finite cells is finite. Out-of-range slots
-    // read 0 (finite) and are marked invalid by the validity gather, so
-    // they can't violate the contract either way.
-    return new Float64Column(out, indices.length, validity, this.allFinite);
+    // A gathered subset of finite cells is finite, unless an
+    // out-of-range index introduced a missing cell.
+    return new Float64Column(out, indices.length, this.allFinite && inRange);
   }
 }
 
@@ -322,7 +332,7 @@ export class BooleanColumn implements ColumnBase<boolean, 'boolean'> {
   readonly storage = 'packed' as const;
   readonly length: number;
   readonly values: Uint8Array;
-  readonly validity?: ValidityBitmap;
+  readonly validity?: ValidityBitmap | undefined;
 
   constructor(values: Uint8Array, length: number, validity?: ValidityBitmap) {
     validateColumnLength(length, 'BooleanColumn');
@@ -413,8 +423,7 @@ export class BooleanColumn implements ColumnBase<boolean, 'boolean'> {
 
 /**
  * Builds a `Float64Column` from an array of `number | null | undefined`
- * values. The output's `validity` bitmap is allocated only when at
- * least one input slot is missing.
+ * values. A missing slot is written as `NaN`.
  *
  * A non-finite slot (`NaN`, `±Infinity`) is stored as **missing**, the
  * same as `undefined` — the non-finite-means-missing rule (see
@@ -422,8 +431,8 @@ export class BooleanColumn implements ColumnBase<boolean, 'boolean'> {
  * operator paths (`collapse`, `fill`, `scan`, `shift`, `mapColumns`, the
  * generic `rolling` sweep, the chunked fallbacks of `diff` /
  * `cumulative`), so enforcing the rule here is what keeps their computed
- * non-finite results from surfacing as defined cells. Every defined cell
- * is therefore finite and the column is `allFinite`.
+ * non-finite results from surfacing as defined cells. `Infinity` is
+ * canonicalised to `NaN` so every missing cell has one spelling.
  */
 export function float64ColumnFromArray(
   source: ReadonlyArray<number | null | undefined>,
@@ -431,18 +440,19 @@ export function float64ColumnFromArray(
   const length = source.length;
   validateColumnLength(length, 'Float64Column');
   const values = new Float64Array(length);
+  let allFinite = true;
   for (let i = 0; i < length; i += 1) {
     const v = source[i];
     // `v - v === 0` is the finite test: `NaN - NaN` and
     // `Infinity - Infinity` are both `NaN`. A non-finite slot is missing.
-    values[i] = typeof v === 'number' && v - v === 0 ? v : 0;
+    if (typeof v === 'number' && v - v === 0) {
+      values[i] = v;
+    } else {
+      values[i] = NaN;
+      allFinite = false;
+    }
   }
-  const validity = validityFromPredicate(length, (i) => {
-    const v = source[i];
-    return typeof v === 'number' && v - v === 0;
-  });
-  // Every defined cell passed the finite test above.
-  return new Float64Column(values, length, validity, true);
+  return new Float64Column(values, length, allFinite);
 }
 
 /**

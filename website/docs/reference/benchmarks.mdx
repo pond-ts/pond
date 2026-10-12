@@ -370,7 +370,7 @@ Beyond performance, pond-ts adds functionality pondjs does not have:
 
 - **Live streaming**: `LiveSeries`, `LiveView`, `LiveAggregation`, `LiveRollingAggregation`
 - **Live composition**: chain `filter → diff → fill → aggregate` on streaming data
-- **Zero-copy Arrow interop** both directions: `fromArrow` (including null-bearing columns) and `toArrow`
+- **Zero-copy Arrow interop** both directions: `fromArrow` and `toArrow` (a null-bearing number column costs one bulk copy on the way in)
 - **`filter()`** as a first-class TimeSeries method (pondjs requires Pipeline)
 - **`diff()`**, **`pctChange()`**, **`cumulative()`**, **`shift()`** columnar primitives
 - **`groupBy()`** with optional transform callback
