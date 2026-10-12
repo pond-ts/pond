@@ -127,10 +127,29 @@ describe('ValueSeries.fromArrow', () => {
     });
     const vs = ValueSeries.fromArrow(table as never, {
       axis: 'strike',
-      onOutOfOrder: 'sort',
+      ordering: 'reorder',
     });
     expect(Array.from(vs.axisValues())).toEqual([90, 95, 100]);
     expect(readCol(vs as never, 'iv')).toEqual([0.31, 0.27, 0.25]);
+  });
+
+  it("clamps a backwards axis value in place with { ordering: 'clamp' }", () => {
+    const strike = Float64Array.from([90, 100, 95]);
+    const table = tableFromArrays({
+      strike,
+      iv: Float64Array.from([0.31, 0.25, 0.27]),
+    });
+    const vs = ValueSeries.fromArrow(table as never, {
+      axis: 'strike',
+      ordering: 'clamp',
+    });
+    expect(Array.from(vs.axisValues())).toEqual([90, 100, 100]);
+    // Rows stay in place — values are untouched.
+    expect(readCol(vs as never, 'iv')).toEqual([0.31, 0.25, 0.27]);
+    // The table's axis buffer is never rewritten.
+    expect(Array.from(table.getChild('strike')!.toArray())).toEqual([
+      90, 100, 95,
+    ]);
   });
 
   it('round-trips through IPC bytes', () => {

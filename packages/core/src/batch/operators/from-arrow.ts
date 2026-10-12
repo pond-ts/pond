@@ -6,11 +6,11 @@ import {
 } from '../../columnar/index.js';
 import { ValidationError } from '../../core/errors.js';
 import type {
-  OnOutOfOrder,
+  BatchOrderingMode,
   SeriesSchema,
   ValueSeriesSchema,
 } from '../../schema/index.js';
-import { resolveOnOutOfOrder } from './out-of-order.js';
+import { resolveOrdering } from './out-of-order.js';
 import { assertReadableArrowType, type ArrowTypeLike } from './arrow-types.js';
 import { flatKeyNames } from './flat-keys.js';
 import type { RawColumns } from './ingest-columns.js';
@@ -134,12 +134,12 @@ export interface FromArrowOptions {
   columns?: readonly string[];
   /**
    * How to handle a row whose time key is earlier than the previous row's
-   * (default `'throw'` — Arrow feeds are usually already time-ordered; see
-   * {@link OnOutOfOrder}). `'sort'` disables zero-copy adoption (rows are
+   * (default `'strict'` — Arrow feeds are usually already time-ordered; see
+   * {@link BatchOrderingMode}). `'reorder'` disables zero-copy adoption (rows are
    * permuted into fresh buffers); `'clamp'` keeps it.
    */
-  onOutOfOrder?: OnOutOfOrder;
-  /** @deprecated Use `onOutOfOrder: 'sort'` (one-release alias). */
+  ordering?: BatchOrderingMode;
+  /** @deprecated Use `ordering: 'reorder'` (one-release alias). */
   sort?: boolean;
 }
 
@@ -162,11 +162,11 @@ export interface FromArrowValueOptions {
   columns?: readonly string[];
   /**
    * How to handle a row whose axis value is below the previous row's (default
-   * `'throw'`; see {@link OnOutOfOrder}). `'sort'` disables zero-copy adoption
+   * `'strict'`; see {@link BatchOrderingMode}). `'reorder'` disables zero-copy adoption
    * (rows are permuted into fresh buffers); `'clamp'` keeps it.
    */
-  onOutOfOrder?: OnOutOfOrder;
-  /** @deprecated Use `onOutOfOrder: 'sort'` (one-release alias). */
+  ordering?: BatchOrderingMode;
+  /** @deprecated Use `ordering: 'reorder'` (one-release alias). */
   sort?: boolean;
 }
 
@@ -729,7 +729,7 @@ export function arrowToColumns(
     valueNames,
     keyNames: keyFieldNames,
     keyNoun: 'the time key',
-    allowAdopt: resolveOnOutOfOrder('fromArrow', options) !== 'sort',
+    allowAdopt: resolveOrdering('fromArrow', options) !== 'reorder',
     columns,
     adopted,
     schema,
@@ -963,7 +963,7 @@ export function arrowToValueColumns(
     valueNames,
     keyNames: new Set([axisName]),
     keyNoun: 'the axis',
-    allowAdopt: resolveOnOutOfOrder('fromArrow', options) !== 'sort',
+    allowAdopt: resolveOrdering('fromArrow', options) !== 'reorder',
     columns,
     adopted,
     schema,

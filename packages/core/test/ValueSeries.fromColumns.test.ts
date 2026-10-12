@@ -53,7 +53,7 @@ describe('ValueSeries.fromColumns', () => {
     expect(win.column('iv')?.read(0)).toBe(0.27);
   });
 
-  it("onOutOfOrder: 'sort' orders rows by axis value, remapping every column together", () => {
+  it("ordering: 'reorder' orders rows by axis value, remapping every column together", () => {
     // Update-order delivery (a keyed live snapshot), not axis order.
     const vs = ValueSeries.fromColumns({
       name: 'smile',
@@ -63,7 +63,7 @@ describe('ValueSeries.fromColumns', () => {
         iv: [0.26, 0.31, 0.29, 0.25, 0.27],
         oi: [4, 1, 5, 3, 2],
       },
-      onOutOfOrder: 'sort',
+      ordering: 'reorder',
     });
     expect(Array.from(vs.axisValues())).toEqual([90, 95, 100, 105, 110]);
     expect(vs.column('iv')?.read(0)).toBe(0.31);
@@ -79,7 +79,7 @@ describe('ValueSeries.fromColumns', () => {
         iv: [1, 2, 3, 4],
         oi: [0, 0, 0, 0],
       },
-      onOutOfOrder: 'sort',
+      ordering: 'reorder',
     });
     expect(Array.from(vs.axisValues())).toEqual([90, 90, 100, 100]);
     expect(vs.column('iv')?.read(0)).toBe(2);
@@ -110,7 +110,7 @@ describe('ValueSeries.fromColumns', () => {
         { name: 'iv', kind: 'number' },
       ] as const,
       columns: { time: strike, strike, iv },
-      onOutOfOrder: 'sort',
+      ordering: 'reorder',
     }).byValue('strike');
     const direct = ValueSeries.fromColumns({
       name: 'smile',
@@ -119,7 +119,7 @@ describe('ValueSeries.fromColumns', () => {
         { name: 'iv', kind: 'number' },
       ] as const,
       columns: { strike, iv },
-      onOutOfOrder: 'sort',
+      ordering: 'reorder',
     });
     expect(direct.axisName).toBe(laundered.axisName);
     expect(Array.from(direct.axisValues())).toEqual(
@@ -172,7 +172,7 @@ describe('ValueSeries.fromColumns', () => {
     expect(vs.column('iv')?.read(0)).toBe(0.99);
   });
 
-  it("onOutOfOrder: 'sort' copies instead of adopting", () => {
+  it("ordering: 'reorder' copies instead of adopting", () => {
     const iv = Float64Array.from([0.25, 0.3]);
     const vs = ValueSeries.fromColumns({
       name: 'copy',
@@ -182,7 +182,7 @@ describe('ValueSeries.fromColumns', () => {
         iv,
         oi: Float64Array.from([1, 2]),
       },
-      onOutOfOrder: 'sort',
+      ordering: 'reorder',
     });
     iv[0] = 0.99;
     expect(vs.column('iv')?.read(1)).toBe(0.25);
@@ -224,7 +224,7 @@ describe('ValueSeries.fromColumns', () => {
           name: 'bad',
           schema: SMILE,
           columns: { strike, iv: [1, 2, 3], oi: [1, 2, 3] },
-          onOutOfOrder: 'sort',
+          ordering: 'reorder',
         }),
       ).toThrow(RangeError);
     }

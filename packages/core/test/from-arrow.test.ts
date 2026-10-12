@@ -286,14 +286,14 @@ describe('TimeSeries.fromArrow', () => {
     expect(series.schema.map((c) => c.name)).toEqual(['time', 'c', 'a']);
   });
 
-  it("sorts an unordered table with { onOutOfOrder: 'sort' }", () => {
+  it("sorts an unordered table with { ordering: 'reorder' }", () => {
     const series = build(
       3,
       [
         { name: 'time', vector: f64([20, 0, 10]) },
         { name: 'value', vector: f64([2, 0, 1]) },
       ],
-      { onOutOfOrder: 'sort' },
+      { ordering: 'reorder' },
     );
     expect([
       series.at(0)!.key().begin(),
@@ -303,19 +303,37 @@ describe('TimeSeries.fromArrow', () => {
     expect(col(series, 'value')).toEqual([0, 1, 2]);
   });
 
-  it("clamps a backwards timestamp in place with { onOutOfOrder: 'clamp' }", () => {
+  it("clamps a backwards timestamp in place with { ordering: 'clamp' }", () => {
     const series = build(
       3,
       [
         { name: 'time', vector: f64([0, 20, 10]) },
         { name: 'value', vector: f64([0, 2, 1]) },
       ],
-      { onOutOfOrder: 'clamp' },
+      { ordering: 'clamp' },
     );
     expect([0, 1, 2].map((i) => series.at(i)!.key().begin())).toEqual([
       0, 20, 20,
     ]);
     expect(col(series, 'value')).toEqual([0, 2, 1]);
+  });
+
+  it("clamp never mutates the caller's Arrow key buffer", () => {
+    const keyBacking = Float64Array.from([0, 20, 10]);
+    const valueBacking = Float64Array.from([0, 2, 1]);
+    const series = build(
+      3,
+      [
+        { name: 'time', vector: vector([0, 20, 10], keyBacking) },
+        { name: 'value', vector: vector([0, 2, 1], valueBacking) },
+      ],
+      { ordering: 'clamp' },
+    );
+    expect([0, 1, 2].map((i) => series.at(i)!.key().begin())).toEqual([
+      0, 20, 20,
+    ]);
+    expect(Array.from(keyBacking)).toEqual([0, 20, 10]);
+    expect(Array.from(valueBacking)).toEqual([0, 2, 1]);
   });
 
   it('keeps `sort: true` as a deprecated alias, refusing a conflict', () => {
@@ -324,9 +342,9 @@ describe('TimeSeries.fromArrow', () => {
       { name: 'value', vector: f64([2, 0]) },
     ];
     expect(col(build(2, cols(), { sort: true }), 'value')).toEqual([0, 2]);
-    expect(() =>
-      build(2, cols(), { sort: true, onOutOfOrder: 'clamp' }),
-    ).toThrow(/conflicting options/);
+    expect(() => build(2, cols(), { sort: true, ordering: 'clamp' })).toThrow(
+      /conflicting options/,
+    );
   });
 
   it('converts Int32 / Float32 value columns to Float64', () => {
@@ -371,7 +389,7 @@ describe('TimeSeries.fromArrow', () => {
         { name: 'time', vector: f64([20, 0, 10]) },
         { name: 'symbol', vector: str(['c', 'a', 'b']) },
       ],
-      { onOutOfOrder: 'sort' },
+      { ordering: 'reorder' },
     );
     expect(col(series, 'symbol')).toEqual(['a', 'b', 'c']);
   });

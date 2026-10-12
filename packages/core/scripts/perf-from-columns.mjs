@@ -16,13 +16,13 @@ function makeColumns(
   { typed, sparse = false, shuffled = false, jitter = false } = {},
 ) {
   const time = new Float64Array(length);
-  // `shuffled` builds a descending key so `onOutOfOrder: 'sort'` does a full reorder
+  // `shuffled` builds a descending key so `ordering: 'reorder'` does a full reorder
   // (worst case for the permutation + copy); otherwise ascending (the fast path).
   for (let i = 0; i < length; i += 1) {
     time[i] = (shuffled ? length - 1 - i : i) * 1_000;
   }
   // `jitter` knocks every 100th timestamp 1.5s backwards — the noisy-feed
-  // shape `onOutOfOrder: 'clamp'` exists for (a lone backwards blip).
+  // shape `ordering: 'clamp'` exists for (a lone backwards blip).
   if (jitter) {
     for (let i = 1; i < length; i += 100) time[i] -= 1_500;
   }
@@ -74,7 +74,7 @@ function median(values) {
 function benchmarkValueSeries(
   name,
   columns,
-  { onOutOfOrder = 'throw', repeats = 7 } = {},
+  { ordering = 'strict', repeats = 7 } = {},
 ) {
   const vsColumns = asValueColumns(columns);
   // warmup
@@ -82,7 +82,7 @@ function benchmarkValueSeries(
     name: 'w',
     schema: vsSchema,
     columns: vsColumns,
-    onOutOfOrder,
+    ordering,
   });
 
   const samples = [];
@@ -92,7 +92,7 @@ function benchmarkValueSeries(
       name,
       schema: vsSchema,
       columns: vsColumns,
-      onOutOfOrder,
+      ordering,
     });
     const end = performance.now();
     if (series.length !== vsColumns.strike.length) {
@@ -110,13 +110,9 @@ function benchmarkValueSeries(
   };
 }
 
-function benchmark(
-  name,
-  columns,
-  { onOutOfOrder = 'throw', repeats = 7 } = {},
-) {
+function benchmark(name, columns, { ordering = 'strict', repeats = 7 } = {}) {
   // warmup
-  TimeSeries.fromColumns({ name: 'w', schema, columns, onOutOfOrder });
+  TimeSeries.fromColumns({ name: 'w', schema, columns, ordering });
 
   const samples = [];
   for (let run = 0; run < repeats; run += 1) {
@@ -125,7 +121,7 @@ function benchmark(
       name,
       schema,
       columns,
-      onOutOfOrder,
+      ordering,
     });
     const end = performance.now();
     if (series.length !== columns.time.length) {
@@ -184,10 +180,10 @@ function benchmarkKeyed(
   name,
   schema,
   columns,
-  { onOutOfOrder = 'throw', repeats = 7 } = {},
+  { ordering = 'strict', repeats = 7 } = {},
 ) {
   const keyName = schema[0].name;
-  TimeSeries.fromColumns({ name: 'w', schema, columns, onOutOfOrder });
+  TimeSeries.fromColumns({ name: 'w', schema, columns, ordering });
   const samples = [];
   for (let run = 0; run < repeats; run += 1) {
     const start = performance.now();
@@ -195,7 +191,7 @@ function benchmarkKeyed(
       name,
       schema,
       columns,
-      onOutOfOrder,
+      ordering,
     });
     const end = performance.now();
     if (series.length !== columns[keyName].length) {
@@ -235,36 +231,36 @@ const results = [
     'number[] columns, per-element floor (1k x 7 cols)',
     makeColumns(1_000, { typed: false }),
   ),
-  // onOutOfOrder: 'sort' — the opt-in reorder path. Descending input so the sort does a
+  // ordering: 'reorder' — the opt-in reorder path. Descending input so the sort does a
   // full O(n log n) permutation + a per-column copy (no zero-copy adoption).
   benchmark(
-    'number[] columns, onOutOfOrder: sort, descending (100k x 7 cols)',
+    'number[] columns, ordering: reorder, descending (100k x 7 cols)',
     makeColumns(LENGTH, { typed: false, shuffled: true }),
-    { onOutOfOrder: 'sort' },
+    { ordering: 'reorder' },
   ),
   benchmark(
-    'Float64Array columns, onOutOfOrder: sort, descending — copy path (100k x 7 cols)',
+    'Float64Array columns, ordering: reorder, descending — copy path (100k x 7 cols)',
     makeColumns(LENGTH, { typed: true, shuffled: true }),
-    { onOutOfOrder: 'sort' },
+    { ordering: 'reorder' },
   ),
-  // onOutOfOrder: 'clamp' — the in-place carry-forward. Jittered input (1% of
+  // ordering: 'clamp' — the in-place carry-forward. Jittered input (1% of
   // rows backwards) is the intended workload; descending input is the worst
   // case (every row rewritten). One O(N) scan + one key-buffer copy; value
   // columns stay adopted.
   benchmark(
-    "Float64Array columns, onOutOfOrder: 'clamp', 1% jitter (100k x 7 cols)",
+    "Float64Array columns, ordering: 'clamp', 1% jitter (100k x 7 cols)",
     makeColumns(LENGTH, { typed: true, jitter: true }),
-    { onOutOfOrder: 'clamp' },
+    { ordering: 'clamp' },
   ),
   benchmark(
-    "Float64Array columns, onOutOfOrder: 'clamp', already ordered (100k x 7 cols)",
+    "Float64Array columns, ordering: 'clamp', already ordered (100k x 7 cols)",
     makeColumns(LENGTH, { typed: true }),
-    { onOutOfOrder: 'clamp' },
+    { ordering: 'clamp' },
   ),
   benchmark(
-    "Float64Array columns, onOutOfOrder: 'clamp', descending — worst case (100k x 7 cols)",
+    "Float64Array columns, ordering: 'clamp', descending — worst case (100k x 7 cols)",
     makeColumns(LENGTH, { typed: true, shuffled: true }),
-    { onOutOfOrder: 'clamp' },
+    { ordering: 'clamp' },
   ),
   // ValueSeries.fromColumns — same ingest engine behind a value-kind key;
   // pins the direct value-land door (cross-sectional construction) so a
@@ -274,9 +270,9 @@ const results = [
     makeColumns(LENGTH, { typed: true }),
   ),
   benchmarkValueSeries(
-    'ValueSeries: number[] columns, onOutOfOrder: sort, descending (100k x 7 cols)',
+    'ValueSeries: number[] columns, ordering: reorder, descending (100k x 7 cols)',
     makeColumns(LENGTH, { typed: false, shuffled: true }),
-    { onOutOfOrder: 'sort' },
+    { ordering: 'reorder' },
   ),
   benchmarkValueSeries(
     'ValueSeries: per-element floor (1k x 7 cols, number[])',
@@ -306,12 +302,12 @@ const results = [
     }),
   ),
   benchmarkKeyed(
-    'timeRange key, onOutOfOrder: sort, descending — (begin, end) (100k x 7 cols)',
+    'timeRange key, ordering: reorder, descending — (begin, end) (100k x 7 cols)',
     rangeSchema,
     asTwoEdged(makeColumns(LENGTH, { typed: false, shuffled: true }), {
       kind: 'timeRange',
     }),
-    { onOutOfOrder: 'sort' },
+    { ordering: 'reorder' },
   ),
 ];
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TimeSeries, ValidationError, ValueSeries } from '../src/index.js';
 
 /* -------------------------------------------------------------------------- */
-/* [PND-INGEST] — `onOutOfOrder: 'throw' | 'sort' | 'clamp'` on every loader, */
+/* [PND-INGEST] — `ordering: 'strict' | 'reorder' | 'clamp'` on every loader, */
 /* with `sort: true` kept as a one-release deprecated alias.                  */
 /* -------------------------------------------------------------------------- */
 
@@ -55,10 +55,10 @@ const timeDoors = {
 };
 
 describe.each(Object.entries(timeDoors))(
-  "onOutOfOrder: 'clamp' — TimeSeries %s",
+  "ordering: 'clamp' — TimeSeries %s",
   (_door, make) => {
     it('carries a lone backwards blip forward to its predecessor', () => {
-      const s = make([0, 10, 5, 20], [1, 2, 3, 4], { onOutOfOrder: 'clamp' });
+      const s = make([0, 10, 5, 20], [1, 2, 3, 4], { ordering: 'clamp' });
       expect(keys(s)).toEqual([0, 10, 10, 20]);
       // rows stay in input order; values are untouched
       expect(s.events.map((e) => e.get('v'))).toEqual([1, 2, 3, 4]);
@@ -67,58 +67,56 @@ describe.each(Object.entries(timeDoors))(
     it('clamps to the running max, not the raw predecessor', () => {
       // 7 < 10 (already-clamped 5's key) — clamps to 10, not to 5.
       const s = make([0, 10, 5, 7, 12], [1, 2, 3, 4, 5], {
-        onOutOfOrder: 'clamp',
+        ordering: 'clamp',
       });
       expect(keys(s)).toEqual([0, 10, 10, 10, 12]);
     });
 
     it('passes ties through unchanged', () => {
       const s = make([0, 5, 5, 5, 6], [1, 2, 3, 4, 5], {
-        onOutOfOrder: 'clamp',
+        ordering: 'clamp',
       });
       expect(keys(s)).toEqual([0, 5, 5, 5, 6]);
     });
 
     it('plateaus after an early forward outlier (documented sharp edge)', () => {
-      const s = make([0, 1000, 2, 3], [1, 2, 3, 4], { onOutOfOrder: 'clamp' });
+      const s = make([0, 1000, 2, 3], [1, 2, 3, 4], { ordering: 'clamp' });
       expect(keys(s)).toEqual([0, 1000, 1000, 1000]);
     });
 
     it('is a no-op on already-ordered input, and handles empty / 1 row', () => {
-      expect(
-        keys(make([1, 2, 3], [1, 2, 3], { onOutOfOrder: 'clamp' })),
-      ).toEqual([1, 2, 3]);
-      expect(make([], [], { onOutOfOrder: 'clamp' }).length).toBe(0);
-      expect(keys(make([5], [1], { onOutOfOrder: 'clamp' }))).toEqual([5]);
+      expect(keys(make([1, 2, 3], [1, 2, 3], { ordering: 'clamp' }))).toEqual([
+        1, 2, 3,
+      ]);
+      expect(make([], [], { ordering: 'clamp' }).length).toBe(0);
+      expect(keys(make([5], [1], { ordering: 'clamp' }))).toEqual([5]);
     });
 
-    it("'throw' is the default and names the escape hatches", () => {
+    it("'strict' is the default and names the escape hatches", () => {
       expect(() => make([0, 10, 5], [1, 2, 3], {})).toThrow(/out of order/);
       expect(() => make([0, 10, 5], [1, 2, 3], {})).toThrow(
-        /onOutOfOrder: 'sort'.*'clamp'/,
+        /ordering: 'reorder'.*'clamp'/,
       );
-      expect(() =>
-        make([0, 10, 5], [1, 2, 3], { onOutOfOrder: 'throw' }),
-      ).toThrow(ValidationError);
+      expect(() => make([0, 10, 5], [1, 2, 3], { ordering: 'strict' })).toThrow(
+        ValidationError,
+      );
     });
 
-    it("'sort' reorders rather than rewriting keys", () => {
-      const s = make([0, 10, 5], [1, 2, 3], { onOutOfOrder: 'sort' });
+    it("'reorder' reorders rather than rewriting keys", () => {
+      const s = make([0, 10, 5], [1, 2, 3], { ordering: 'reorder' });
       expect(keys(s)).toEqual([0, 5, 10]);
       expect(s.events.map((e) => e.get('v'))).toEqual([1, 3, 2]);
     });
 
-    it('`sort: true` is a deprecated alias for onOutOfOrder: sort', () => {
+    it('`sort: true` is a deprecated alias for ordering: reorder', () => {
       const s = make([0, 10, 5], [1, 2, 3], { sort: true });
       expect(keys(s)).toEqual([0, 5, 10]);
       // agreeing pairs are accepted
       expect(
-        keys(make([0, 10, 5], [1, 2, 3], { sort: true, onOutOfOrder: 'sort' })),
+        keys(make([0, 10, 5], [1, 2, 3], { sort: true, ordering: 'reorder' })),
       ).toEqual([0, 5, 10]);
       expect(
-        keys(
-          make([0, 10, 5], [1, 2, 3], { sort: false, onOutOfOrder: 'clamp' }),
-        ),
+        keys(make([0, 10, 5], [1, 2, 3], { sort: false, ordering: 'clamp' })),
       ).toEqual([0, 10, 10]);
       // `sort: false` alone is today's default
       expect(() => make([0, 10, 5], [1, 2, 3], { sort: false })).toThrow(
@@ -126,34 +124,34 @@ describe.each(Object.entries(timeDoors))(
       );
     });
 
-    it('throws on conflicting sort / onOutOfOrder', () => {
+    it('throws on conflicting sort / ordering', () => {
       expect(() =>
-        make([0, 1], [1, 2], { sort: true, onOutOfOrder: 'clamp' }),
+        make([0, 1], [1, 2], { sort: true, ordering: 'clamp' }),
       ).toThrow(/conflicting options/);
       expect(() =>
-        make([0, 1], [1, 2], { sort: true, onOutOfOrder: 'throw' }),
+        make([0, 1], [1, 2], { sort: true, ordering: 'strict' }),
       ).toThrow(/conflicting options/);
       expect(() =>
-        make([0, 1], [1, 2], { sort: false, onOutOfOrder: 'sort' }),
+        make([0, 1], [1, 2], { sort: false, ordering: 'reorder' }),
       ).toThrow(/conflicting options/);
     });
 
     it('rejects an unknown policy string', () => {
-      expect(() => make([0, 1], [1, 2], { onOutOfOrder: 'drop' })).toThrow(
-        /onOutOfOrder must be/,
+      expect(() => make([0, 1], [1, 2], { ordering: 'drop' })).toThrow(
+        /ordering must be/,
       );
     });
   },
 );
 
-describe("onOutOfOrder: 'clamp' — columnar specifics", () => {
+describe("ordering: 'clamp' — columnar specifics", () => {
   it('never mutates an adopted Float64Array key buffer', () => {
     const time = new Float64Array([0, 10, 5]);
     const s = TimeSeries.fromColumns({
       name: 's',
       schema: timeSchema,
       columns: { time, v: new Float64Array([1, 2, 3]) },
-      onOutOfOrder: 'clamp',
+      ordering: 'clamp',
     });
     expect(keys(s)).toEqual([0, 10, 10]);
     expect(Array.from(time)).toEqual([0, 10, 5]);
@@ -165,7 +163,7 @@ describe("onOutOfOrder: 'clamp' — columnar specifics", () => {
       name: 's',
       schema: timeSchema,
       columns: { time: [0, 10, 5], v },
-      onOutOfOrder: 'clamp',
+      ordering: 'clamp',
     });
     v[2] = 99;
     expect(s.at(2)!.get('v')).toBe(99);
@@ -177,7 +175,7 @@ describe("onOutOfOrder: 'clamp' — columnar specifics", () => {
         name: 's',
         schema: timeSchema,
         columns: { time: [0, 10, -Infinity], v: [1, 2, 3] },
-        onOutOfOrder: 'clamp',
+        ordering: 'clamp',
       }),
     ).toThrow(RangeError);
     expect(() =>
@@ -185,20 +183,20 @@ describe("onOutOfOrder: 'clamp' — columnar specifics", () => {
         name: 's',
         schema: timeSchema,
         columns: { time: [0, 10, NaN, 5], v: [1, 2, 3, 4] },
-        onOutOfOrder: 'clamp',
+        ordering: 'clamp',
       }),
     ).toThrow(RangeError);
   });
 });
 
-describe("onOutOfOrder: 'clamp' — two-edged keys are refused", () => {
+describe("ordering: 'clamp' — two-edged keys are refused", () => {
   it('fromColumns throws for timeRange and interval keys, even when ordered', () => {
     expect(() =>
       TimeSeries.fromColumns({
         name: 's',
         schema: rangeSchema,
         columns: { timeRange: [0, 10], timeRangeEnd: [5, 15], v: [1, 2] },
-        onOutOfOrder: 'clamp',
+        ordering: 'clamp',
       }),
     ).toThrow(/'clamp' supports 'time' and 'value' keys only/);
     expect(() =>
@@ -211,7 +209,7 @@ describe("onOutOfOrder: 'clamp' — two-edged keys are refused", () => {
           intervalLabel: ['a', 'b'],
           v: [1, 2],
         },
-        onOutOfOrder: 'clamp',
+        ordering: 'clamp',
       }),
     ).toThrow(/'clamp' supports 'time' and 'value' keys only/);
   });
@@ -227,7 +225,7 @@ describe("onOutOfOrder: 'clamp' — two-edged keys are refused", () => {
           name: 's',
           schema: rangeSchema,
           rows,
-          onOutOfOrder: 'clamp',
+          ordering: 'clamp',
         }),
     ).toThrow(/'clamp' supports 'time' and 'value' keys only/);
     expect(() =>
@@ -235,7 +233,7 @@ describe("onOutOfOrder: 'clamp' — two-edged keys are refused", () => {
         name: 's',
         schema: rangeSchema,
         rows,
-        onOutOfOrder: 'clamp',
+        ordering: 'clamp',
       }),
     ).toThrow(/'clamp' supports 'time' and 'value' keys only/);
   });
@@ -251,7 +249,7 @@ describe("onOutOfOrder: 'clamp' — two-edged keys are refused", () => {
     } catch (e) {
       message = (e as Error).message;
     }
-    expect(message).toMatch(/onOutOfOrder: 'sort'/);
+    expect(message).toMatch(/ordering: 'reorder'/);
     expect(message).not.toMatch(/clamp/);
   });
 });
@@ -262,7 +260,7 @@ describe('ValueSeries loaders', () => {
       name: 's',
       schema: axisSchema,
       columns: { strike: [100, 110, 105], v: [1, 2, 3] },
-      onOutOfOrder: 'clamp',
+      ordering: 'clamp',
     });
     expect(Array.from(c.axisValues())).toEqual([100, 110, 110]);
     const j = ValueSeries.fromJSON({
@@ -273,7 +271,7 @@ describe('ValueSeries loaders', () => {
         [110, 2],
         [105, 3],
       ],
-      onOutOfOrder: 'clamp',
+      ordering: 'clamp',
     });
     expect(Array.from(j.axisValues())).toEqual([100, 110, 110]);
   });
@@ -292,7 +290,7 @@ describe('ValueSeries loaders', () => {
         schema: axisSchema,
         columns: { strike: [110, 100], v: [2, 1] },
         sort: true,
-        onOutOfOrder: 'clamp',
+        ordering: 'clamp',
       }),
     ).toThrow(/conflicting options/);
   });

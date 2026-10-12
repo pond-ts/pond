@@ -145,13 +145,13 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   static fromValidatedRows<S extends SeriesSchema>(
     schema: S,
     rows: ReadonlyArray<RowForSchema<S>>,
-    onOutOfOrder: 'throw' | 'clamp' = 'throw',
+    ordering: 'strict' | 'clamp' = 'strict',
   ): SeriesStore<S> {
     const { keys, columns } = validateAndNormalizeColumnar<S>({
       name: 'columnar-intake',
       schema,
       rows,
-      onOutOfOrder,
+      ordering,
     });
     const store = ColumnarStore.fromTrustedStore(schema, keys, columns);
     // Cache starts empty — events lazy-materialize on first

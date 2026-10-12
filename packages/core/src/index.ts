@@ -199,7 +199,7 @@ export type {
   TimeSeriesColumnarInput,
   TimeSeriesColumnarOutput,
   TimeSeriesInput,
-  OnOutOfOrder,
+  BatchOrderingMode,
   TimeSeriesJsonColumns,
   TimeSeriesJsonInput,
   TimeRangeKeyedSchema,

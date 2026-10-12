@@ -114,11 +114,11 @@ The exact `TimeSeries.fromColumns` contract, with the axis in place of time:
   `null`/`undefined` or non-finite — identical for every input type.
 - **`Float64Array` inputs are adopted, not copied** (zero-copy): the resulting
   columns alias your buffers — pass a fresh buffer if that matters. Passing
-  **`onOutOfOrder: 'sort'`** disables the adoption (a reorder needs its own
+  **`ordering: 'reorder'`** disables the adoption (a reorder needs its own
   buffers).
 - **Ordering.** The axis must be defined, finite, and non-decreasing — it becomes
   the index. An out-of-order axis **throws** by default; pass
-  **`onOutOfOrder: 'sort'`** to stably sort rows by axis value first (the right
+  **`ordering: 'reorder'`** to stably sort rows by axis value first (the right
   move for an unordered snapshot, e.g. a keyed live feed that arrives in update
   order, not axis order), or `'clamp'` to carry a backwards axis value forward in
   place (see [Out-of-order keys](creating#out-of-order-keys)).
@@ -126,7 +126,7 @@ The exact `TimeSeries.fromColumns` contract, with the axis in place of time:
 
 It throws `ValidationError` on a non-`'value'` axis kind, a missing column, a
 length mismatch, an unsupported value-column kind, or an out-of-order axis
-under the default `onOutOfOrder: 'throw'`; and `RangeError` on a non-finite axis cell (sorting can't rescue
+under the default `ordering: 'strict'`; and `RangeError` on a non-finite axis cell (sorting can't rescue
 it) or a duplicate column name. See
 [Creating series → Columnar ingest](creating#columnar).
 
@@ -156,7 +156,7 @@ bit-identical to pond's).
 - **Value columns:** every non-axis field by default, or the subset named by
   `columns` (in order). Numeric and `Utf8` string columns are supported; any
   other Arrow type (list/struct/…) throws, naming it.
-- **`onOutOfOrder: 'sort'`** for an unordered table, which disables the
+- **`ordering: 'reorder'`** for an unordered table, which disables the
   adoption.
 
 ## Reading a ValueSeries

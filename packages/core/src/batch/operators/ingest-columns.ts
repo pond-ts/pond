@@ -13,7 +13,7 @@ import {
   validityFromPredicate,
 } from '../../columnar/index.js';
 import { ValidationError } from '../../core/errors.js';
-import type { OnOutOfOrder } from '../../schema/events.js';
+import type { BatchOrderingMode } from '../../schema/events.js';
 import { assertNoFlatKeyCollision, flatKeyNames } from './flat-keys.js';
 import { assertClampableKey, outOfOrderHint } from './out-of-order.js';
 
@@ -34,9 +34,9 @@ export type RawColumns = Record<
  * The shared columnar-ingress engine behind `TimeSeries.fromColumns` and
  * `ValueSeries.fromColumns`. Both doors are the same machine — normalize the
  * key column (adopt a `Float64Array` zero-copy, convert a `number[]`),
- * handle out-of-order keys per `onOutOfOrder` (`'sort'`: stable permutation,
+ * handle out-of-order keys per `ordering` (`'reorder'`: stable permutation,
  * disables adoption; `'clamp'`: running-max carry-forward on a copied key
- * column; `'throw'`: the default rejection), enforce the
+ * column; `'strict'`: the default rejection), enforce the
  * non-decreasing-key invariant, pack each value column by its schema kind
  * (`'number'` → `Float64Column`, `null`/`undefined`/non-finite → `NaN` gap;
  * `'string'` → `StringColumn` via the shared dict-encode heuristic,
@@ -60,8 +60,8 @@ export function ingestColumnsToStore(input: {
   keyNoun: string;
   schema: ColumnSchema;
   columns: RawColumns;
-  /** Resolved policy — see `resolveOnOutOfOrder` and `OnOutOfOrder`. */
-  onOutOfOrder: OnOutOfOrder;
+  /** Resolved policy — see `resolveOrdering` and `BatchOrderingMode`. */
+  ordering: BatchOrderingMode;
   /**
    * Value columns that are **already built** and should be installed as they
    * stand, bypassing the packing loop. The escape hatch for a source whose
@@ -71,14 +71,14 @@ export function ingestColumnsToStore(input: {
    * to carry a bitmap alongside the values.
    *
    * A name here must **not** also appear in `columns`, and is incompatible
-   * with `onOutOfOrder: 'sort'` (sorting permutes rows into fresh buffers, so there is
+   * with `ordering: 'reorder'` (sorting permutes rows into fresh buffers, so there is
    * nothing to adopt). Callers decide not to adopt when sorting rather than
    * handing over a column that would have to be taken apart again.
    */
   adopted?: ReadonlyMap<string, ColumnarColumn>;
 }): ColumnarStore<ColumnSchema> {
-  const { op, keyNoun, schema, columns, onOutOfOrder, adopted } = input;
-  const sort = onOutOfOrder === 'sort';
+  const { op, keyNoun, schema, columns, ordering, adopted } = input;
+  const sort = ordering === 'reorder';
 
   const keyDef = schema[0];
   if (keyDef === undefined) {
@@ -88,7 +88,7 @@ export function ingestColumnsToStore(input: {
   // check that before reading anything, so a colliding schema fails on the
   // schema rather than on a confusing length mismatch downstream.
   assertNoFlatKeyCollision(op, schema);
-  if (onOutOfOrder === 'clamp') assertClampableKey(op, keyDef.kind);
+  if (ordering === 'clamp') assertClampableKey(op, keyDef.kind);
   const keyNames = flatKeyNames(keyDef);
 
   const keyRaw = columns[keyNames.begin];
@@ -144,7 +144,7 @@ export function ingestColumnsToStore(input: {
     }
   }
 
-  // `'sort'` — reorder every column by ascending key before construction.
+  // `'reorder'` — reorder every column by ascending key before construction.
   // Compute the row permutation once (a stable sort of the index array; V8's
   // Array.sort is stable, so equal keys keep input order, matching fromJSON's
   // stable intake), then remap the key + each value column through it below.
@@ -191,7 +191,7 @@ export function ingestColumnsToStore(input: {
   // still rejects them — clamping must not launder a `-Infinity` into a valid
   // timestamp. Single-edged keys only (`assertClampableKey` above), so there
   // is no `end` to keep in step.
-  if (onOutOfOrder === 'clamp' && count > 0) {
+  if (ordering === 'clamp' && count > 0) {
     let copied = false;
     let prev = begin[0]!;
     for (let j = 1; j < count; j += 1) {
@@ -217,7 +217,7 @@ export function ingestColumnsToStore(input: {
   // bisect-based operators (crop, `atTime`, range queries) rely on it, so an
   // unsorted columnar input must fail loudly here rather than build a silently
   // broken series. One O(N) scan over already-finite values — negligible next
-  // to decode. (Under `'sort'` / `'clamp'` the keys are now non-decreasing, so this is
+  // to decode. (Under `'reorder'` / `'clamp'` the keys are now non-decreasing, so this is
   // a cheap post-condition check rather than a rejection.)
   //
   // The `end` tiebreak mirrors the row path: equal begins are ordered by end,

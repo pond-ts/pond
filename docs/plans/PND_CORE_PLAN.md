@@ -197,25 +197,36 @@ events → `undefined`; a `rateOver({ every })` variant may earn its keep
 later); dashboard-guide fixes (lead with `useLiveQuery`; document derived
 views × retention); the audit-suggested `useSyncExternalStore` migration.
 
-## [PND-INGEST] — `onOutOfOrder: 'throw' | 'sort' | 'clamp'` on every loader (2026-10-10)
+## [PND-INGEST] — `ordering: 'strict' | 'reorder' | 'clamp'` on every loader (2026-10-10)
 
 **Shipped** (pre-1.0 review, branch `claude/1.0-on-out-of-order`). Reopened the
 #344 `clampNonDecreasing` reject on a second real signal (Tidal's noisy time
 samples — see the charts-wave archive, "clamp-on-ingest"). Every loader that
-took `sort?: boolean` now takes `onOutOfOrder?: OnOutOfOrder` (exported type):
+took `sort?: boolean` now takes `ordering?: BatchOrderingMode` (exported type):
 `new TimeSeries({ … })`, `TimeSeries.fromJSON` / `fromColumns` / `fromArrow`,
-`ValueSeries.fromJSON` / `fromColumns` / `fromArrow`. Default `'throw'`
-(unchanged behaviour); `'sort'` = the old `sort: true`.
+`ValueSeries.fromJSON` / `fromColumns` / `fromArrow`. Default `'strict'`
+(unchanged behaviour); `'reorder'` = the old `sort: true`.
 
 Decisions + reasoning:
 
+- **Name: `ordering: 'strict' | 'reorder' | 'clamp'`, aligned with live.**
+  First drafted as `onOutOfOrder: 'throw' | 'sort' | 'clamp'`; the owner
+  renamed it before merge because `LiveSeries` already spells the same concept
+  `ordering: 'strict' | 'drop' | 'reorder'` (`OrderingMode`). One concept, one
+  name across batch and live — a user moving between `new TimeSeries` and
+  `new LiveSeries` should not learn two words for "what happens to a
+  backwards key". The batch type is `BatchOrderingMode` (mirrors live's
+  `OrderingMode`); no shared base type — the overlap is two literals and a base
+  would be vocabulary with no caller. `'drop'` is deliberately **not** offered
+  on batch (silently discarding rows from a snapshot is a different contract
+  than a live stream shedding late events); `'clamp'` stays batch-only for now.
 - **Clamp semantics: running max.** `key[i] = max(key[i], key[i-1])` where
   `key[i-1]` is the already-clamped key — the `t = t >= prevT ? t : prevT`
   formula from the charts-wave adoption note. Ties pass through; a clamped row
   _ties_ its predecessor (no epsilon nudge — that would invent a timestamp).
   Values and row order are untouched. Documented sharp edge: an early _forward_
   outlier plateaus everything behind it — that is inherent in "carry forward",
-  and `'sort'` is the right tool for merely-unordered data.
+  and `'reorder'` is the right tool for merely-unordered data.
 - **Clamp is single-edged-key only.** `time` keys and the `ValueSeries` `value`
   axis. `timeRange` / `interval` throw up front (even on ordered data, so the
   error is deterministic): moving `begin` alone can pass `end`, and shifting the
@@ -228,12 +239,12 @@ Decisions + reasoning:
   `RangeError`.
 - **Zero-copy:** clamp keeps value columns adopted (rows don't move) and copies
   the key column on the first rewrite, so a caller's `Float64Array` is never
-  mutated. `'sort'` still disables adoption.
+  mutated. `'reorder'` still disables adoption.
 - **`sort` alias:** kept one release, `@deprecated`. Both given → must agree
-  (`sort: true` ⇔ `'sort'`, `sort: false` ⇔ not `'sort'`), else
+  (`sort: true` ⇔ `'reorder'`, `sort: false` ⇔ not `'reorder'`), else
   `ValidationError("conflicting options …")`. An unknown policy string throws.
   **Remove `sort` in the next minor.**
-- Out-of-order error messages now name `{ onOutOfOrder: 'sort' }` (and
+- Out-of-order error messages now name `{ ordering: 'reorder' }` (and
   `'clamp'` for single-edged keys) instead of `{ sort: true }`.
 - Perf: clamp is one O(N) scan + at most one key-buffer copy, paid only when
   opted in; `scripts/perf-from-columns.mjs` gained three clamp scenarios

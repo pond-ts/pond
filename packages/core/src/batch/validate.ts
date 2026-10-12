@@ -326,9 +326,9 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
       'first column must be one of: time, interval, timeRange',
     );
   }
-  // Callers resolve `sort` (deprecated alias) + `onOutOfOrder` before here
+  // Callers resolve `sort` (deprecated alias) + `ordering` before here
   // and sort the rows themselves; this intake only distinguishes clamp.
-  const clamp = input.onOutOfOrder === 'clamp';
+  const clamp = input.ordering === 'clamp';
   if (clamp) assertClampableKey('TimeSeries', keyKind);
   for (let col = 1; col < schema.length; col += 1) {
     const kind = schema[col]!.kind;
@@ -503,7 +503,7 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
   // Lexicographic compare on Float64Array, no key-object
   // allocations during the walk.
   //
-  // Under `onOutOfOrder: 'clamp'` (time keys only — `endBuf === beginBuf`) a
+  // Under `ordering: 'clamp'` (time keys only — `endBuf === beginBuf`) a
   // backwards key takes its predecessor's, which is already clamped, so the
   // walk yields the running max. `beginBuf` is this intake's own buffer.
   for (let i = 1; i < length; i += 1) {

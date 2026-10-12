@@ -77,11 +77,13 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
-- **core**: **`onOutOfOrder: 'throw' | 'sort' | 'clamp'` on every loader**
+- **core**: **`ordering: 'strict' | 'reorder' | 'clamp'` on every loader**
   (`new TimeSeries`, `TimeSeries.fromJSON` / `fromColumns` / `fromArrow`,
   `ValueSeries.fromJSON` / `fromColumns` / `fromArrow`), with the new
-  `OnOutOfOrder` type exported. `'throw'` is the default (unchanged); `'sort'`
-  is what `sort: true` did. **`'clamp'`** is new: rows stay in place and a key
+  `BatchOrderingMode` type exported. Same option name and vocabulary as
+  `LiveSeries`' `ordering` (`'strict'` / `'reorder'`), so one concept has one
+  name across batch and live. `'strict'` is the default (unchanged);
+  `'reorder'` is what `sort: true` did. **`'clamp'`** is new: rows stay in place and a key
   earlier than its predecessor's takes that key (the running max), so a noisy
   feed's lone backwards timestamp lands on its neighbour instead of failing the
   ingest or being moved. Values are untouched, ties pass through, non-finite
@@ -91,16 +93,16 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
-- **core**: Out-of-order ingest errors now suggest `{ onOutOfOrder: 'sort' }`
+- **core**: Out-of-order ingest errors now suggest `{ ordering: 'reorder' }`
   (and `'clamp'` where it applies) instead of `{ sort: true }`. Code matching
   on the old message text needs updating.
 
 ### Deprecated
 
 - **core**: **`sort?: boolean`** on the loaders above — use
-  `onOutOfOrder: 'sort'`. `sort: true` still works for this release and maps to
-  `'sort'`; it will be removed in the next minor. Passing `sort` together with
-  a conflicting `onOutOfOrder` (e.g. `sort: true, onOutOfOrder: 'clamp'`)
+  `ordering: 'reorder'`. `sort: true` still works for this release and maps to
+  `'reorder'`; it will be removed in the next minor. Passing `sort` together with
+  a conflicting `ordering` (e.g. `sort: true, ordering: 'clamp'`)
   throws a `ValidationError`.
 
 ### Changed
@@ -288,8 +290,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 - `@pond-ts/financial`: **`StudyOutput.id` documents the `@pond-ts/process`
   bridge**, and a new `test/catalog-process.test.ts` pins it. The field is a
-  *financial column suffix*; process's `OutputDef.id` is a *process outlet
-  id*; they share a name and are different namespaces. Process names its own
+  _financial column suffix_; process's `OutputDef.id` is a _process outlet
+  id_; they share a name and are different namespaces. Process names its own
   columns (`specId + OutputDef.id`) and matches an op's return to its outputs
   positionally, so a study's own column names never reach it — which means a
   registry bridging the two chooses its own suffixes, and for the **twelve**
@@ -302,7 +304,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   worked around it by hand. No API change: the descriptors, the studies and
   the guard are all unchanged, and the round-trip test is what stops the two
   packages drifting — `catalog.test.ts` validates a descriptor against its
-  *study*, so it is structurally blind to a cross-package disagreement.
+  _study_, so it is structurally blind to a cross-package disagreement.
 - `@pond-ts/process`: **`Skipped.spec` echoes the request verbatim**, and its
   `params` / `inputs` are typed `unknown` accordingly. The plan pass normalized
   `params: null` to `{}`, so recomputing an id from the echo produced the
@@ -321,7 +323,6 @@ include new features and type-level changes; patch bumps are strictly additive.
   rather than crashing.
 
   (All three reported by Tidal against 0.62.0, after adopting it.)
-
 
 ## [0.69.0] — 2026-09-13
 

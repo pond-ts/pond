@@ -60,15 +60,15 @@ type inference across every transform.
 
 Rows must be in **non-decreasing key order** — the constructor throws on
 out-of-order rows, and the error names the offending row. For unsorted input (a
-CSV read in arrival order, merged sources), pass `onOutOfOrder: 'sort'` to sort
+CSV read in arrival order, merged sources), pass `ordering: 'reorder'` to sort
 on construction instead of pre-sorting yourself:
 
 ```ts
-const cpu = new TimeSeries({ name: 'cpu', schema, rows, onOutOfOrder: 'sort' });
+const cpu = new TimeSeries({ name: 'cpu', schema, rows, ordering: 'reorder' });
 ```
 
 The sort is **stable**, so rows with equal keys keep their input order. Every
-other ingest door takes the same `onOutOfOrder` option and means the same thing
+other ingest door takes the same `ordering` option and means the same thing
 by it — see [Out-of-order keys](#out-of-order-keys) for the third choice,
 `'clamp'`. (`sort: true` still works for one release as a deprecated alias.)
 
@@ -203,7 +203,7 @@ const cpu = TimeSeries.fromJSON({ name: 'cpu', schema, rows });
 ```
 
 Rows must be in non-decreasing key order, same as the constructor; pass
-`onOutOfOrder: 'sort'` for a payload that isn't guaranteed ordered.
+`ordering: 'reorder'` for a payload that isn't guaranteed ordered.
 
 #### Timestamp inputs
 
@@ -400,7 +400,7 @@ JSON-shaped payload, [`toArrow`](#arrow) for the buffers themselves. Each
 ingress pairs with its inverse, so a columnar payload round-trips.
 
 All of them share the same rules for missing values, ordering, and
-`onOutOfOrder` —
+`ordering` —
 see [Missing values and ordering](#missing-values-and-ordering).
 
 **Supported kinds.** Any key kind — a `timeRange` or `interval` key flattens
@@ -475,9 +475,9 @@ non-finite _provided_ number outright.
 
 Columns must be in **non-decreasing key order**, same invariant as `fromJSON` — an
 out-of-order key throws, naming the offending index. Pass
-`onOutOfOrder: 'sort'` to sort rows by key before construction; the sort is
+`ordering: 'reorder'` to sort rows by key before construction; the sort is
 stable, like `fromJSON`'s. Sorting **disables zero-copy adoption** on every door
-below: a reorder needs fresh buffers. (`onOutOfOrder: 'clamp'` keeps rows in
+below: a reorder needs fresh buffers. (`ordering: 'clamp'` keeps rows in
 place, so value columns stay adopted.)
 
 ### Float64Array columnar
@@ -612,7 +612,7 @@ Two consequences worth knowing:
   `timeRangeEnd` alongside a `timeRange` key means one array with two
   claimants, so both `fromColumns` and `toColumns` throw, naming the collision.
 - **Ordering is by `(begin, end)`.** Equal begins must be non-decreasing in
-  `end` — matching the row door. `onOutOfOrder: 'sort'` sorts the same way. Interval
+  `end` — matching the row door. `ordering: 'reorder'` sorts the same way. Interval
   labels must be present in every row and all of one type, again matching the
   row door.
 
@@ -647,14 +647,14 @@ supply `S` as `fromArrow<MySchema>(…)` for downstream typing — pond takes th
 trust and does not verify the fields match, exactly as `fromEvents` trusts its
 schema.)
 
-| Option         | Default                                  | Meaning                                                                                                                                                    |
-| -------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`         | `'arrow'`                                | Series name.                                                                                                                                               |
-| `time`         | the field named for `keyKind` (`'time'`) | Which column is the time key. Throws if absent. With a two-edged `keyKind` the key is read from the conventionally named fields and passing `time` throws. |
-| `timeUnit`     | read from the Arrow `Timestamp` type     | `'second' \| 'millisecond' \| 'microsecond' \| 'nanosecond'`. An explicit value always wins.                                                               |
-| `columns`      | every non-time field                     | Value columns to include, in order.                                                                                                                        |
-| `keyKind`      | `'time'`                                 | `'timeRange'` / `'interval'` to read a [flattened two-edged key](#two-edged-keys) back.                                                                    |
-| `onOutOfOrder` | `'throw'`                                | `'sort'` sorts by time key first (disables adoption); `'clamp'` carries a backwards timestamp forward. See [Out-of-order keys](#out-of-order-keys).        |
+| Option     | Default                                  | Meaning                                                                                                                                                    |
+| ---------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`     | `'arrow'`                                | Series name.                                                                                                                                               |
+| `time`     | the field named for `keyKind` (`'time'`) | Which column is the time key. Throws if absent. With a two-edged `keyKind` the key is read from the conventionally named fields and passing `time` throws. |
+| `timeUnit` | read from the Arrow `Timestamp` type     | `'second' \| 'millisecond' \| 'microsecond' \| 'nanosecond'`. An explicit value always wins.                                                               |
+| `columns`  | every non-time field                     | Value columns to include, in order.                                                                                                                        |
+| `keyKind`  | `'time'`                                 | `'timeRange'` / `'interval'` to read a [flattened two-edged key](#two-edged-keys) back.                                                                    |
+| `ordering` | `'strict'`                               | `'reorder'` sorts by time key first (disables adoption); `'clamp'` carries a backwards timestamp forward. See [Out-of-order keys](#out-of-order-keys).     |
 
 **Column handling.** The time key accepts `Timestamp`, `Date32`/`Date64`, and
 plain int/float columns, all normalized to epoch ms: a `Timestamp`'s raw-unit
@@ -750,7 +750,7 @@ page has a twin:
 | `series.toColumns()`        | `chain.toColumns()`                      |
 | `series.toArrow()`          | `chain.toArrow()`                        |
 
-They share **one ingest engine**, so the monotonic-key contract, `onOutOfOrder`,
+They share **one ingest engine**, so the monotonic-key contract, `ordering`,
 the gap rules, and the zero-copy adoption behave identically — reread the
 sections above and substitute the axis for time. `schema[0]` is a `'value'`-kind
 axis column instead of a `'time'`-kind one; every direct door checks that first
@@ -786,7 +786,7 @@ interpret `'2026-01-01'` against — so a string axis is an error naming the row
 rather than a silent `NaN`.
 
 Everything else carries over: array or object rows, `null` as missing,
-`required: false` for sometimes-present columns, `onOutOfOrder: 'sort'` for an unordered
+`required: false` for sometimes-present columns, `ordering: 'reorder'` for an unordered
 payload, and strict per-cell kind checking (a `NaN` in a `number` column is
 **rejected**, not read as a gap).
 
@@ -877,15 +877,19 @@ offending row or index. This isn't fussiness: bisect-based operators (`crop`,
 trusted columnar door is a corruption signal rather than something to silently
 accept.
 
-`onOutOfOrder` picks what happens instead:
+`ordering` picks what happens instead:
 
-| `onOutOfOrder`      | Effect                                                                                                      |
-| ------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `'throw'` (default) | Reject the input, naming the first out-of-order row.                                                        |
-| `'sort'`            | Stable-sort rows by key. Every column moves with its key; columnar doors lose zero-copy adoption.           |
-| `'clamp'`           | Keep rows in place; a key earlier than the previous row's takes that key (the running max). Time keys only. |
+| `ordering`           | Effect                                                                                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `'strict'` (default) | Reject the input, naming the first out-of-order row.                                                                |
+| `'reorder'`          | Stable-sort rows by key. Every column moves with its key; columnar doors lose zero-copy adoption.                   |
+| `'clamp'`            | Keep rows in place; a key earlier than the previous row's takes that key (the running max). Single-edged keys only. |
 
-`'sort'` is for data that is merely _out of order_ — merged sources, a CSV in
+It is the same option, with the same words, as `LiveSeries`' `ordering`
+(`'strict'` / `'reorder'`); live additionally has `'drop'` for late events, and
+batch additionally has `'clamp'`.
+
+`'reorder'` is for data that is merely _out of order_ — merged sources, a CSV in
 arrival order. `'clamp'` is for a _noisy_ feed where a sample's timestamp
 occasionally jitters backwards: the row stays where it arrived, next to the
 samples it was taken among, and lands on its predecessor's timestamp.
@@ -895,7 +899,7 @@ const s = TimeSeries.fromColumns({
   name: 'feed',
   schema,
   columns: { time: [0, 10, 5, 20], v: [1, 2, 3, 4] },
-  onOutOfOrder: 'clamp',
+  ordering: 'clamp',
 });
 // keys: 0, 10, 10, 20 — values untouched: 1, 2, 3, 4
 ```
@@ -913,8 +917,8 @@ Know what `'clamp'` costs before reaching for it:
   key buffer is copied before the first rewrite, never mutated.
 
 `sort: true` — the option's previous spelling — is accepted for one release as
-a deprecated alias for `onOutOfOrder: 'sort'`; passing it alongside a
-conflicting `onOutOfOrder` throws.
+a deprecated alias for `ordering: 'reorder'`; passing it alongside a
+conflicting `ordering` throws.
 
 ### Non-finite numbers mean different things per door
 

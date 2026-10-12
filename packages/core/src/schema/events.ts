@@ -23,10 +23,10 @@ import type {
  * `TimeSeries.fromJSON` / `fromColumns` / `fromArrow`, and
  * `ValueSeries.fromJSON` / `fromColumns` / `fromArrow`.
  *
- * - **`'throw'`** (default) — reject the input with a `ValidationError` naming
+ * - **`'strict'`** (default) — reject the input with a `ValidationError` naming
  *   the first out-of-order row. A backwards key is usually a corruption
  *   signal; nothing is reordered or rewritten.
- * - **`'sort'`** — stable-sort the rows by key before construction (equal keys
+ * - **`'reorder'`** — stable-sort the rows by key before construction (equal keys
  *   keep their input order). Every column travels with its key. On the
  *   columnar doors this disables `Float64Array` zero-copy adoption (rows are
  *   permuted into fresh buffers). Two-edged keys sort by `(begin, end)`.
@@ -40,7 +40,7 @@ import type {
  *   series. **This rewrites keys** — the series no longer holds the timestamp
  *   the source sent for a clamped row — and an early *forward* outlier
  *   (`0, 1000, 2, 3`) plateaus every row after it at the outlier (`0, 1000,
- *   1000, 1000`); use `'sort'` when the rows are merely out of order rather
+ *   1000, 1000`); use `'reorder'` when the rows are merely out of order rather
  *   than noisy. Supported for single-edged keys only (`time`, and a
  *   `ValueSeries` `value` axis): a `timeRange` / `interval` key throws, since
  *   there is no one right way to clamp a two-edged key (move `begin` only and
@@ -49,7 +49,7 @@ import type {
  *   Value-column `Float64Array`s stay zero-copy adopted; the key column is
  *   copied before the first rewrite, so a caller's buffer is never mutated.
  */
-export type OnOutOfOrder = 'throw' | 'sort' | 'clamp';
+export type BatchOrderingMode = 'strict' | 'reorder' | 'clamp';
 
 export type TimeSeriesInput<S extends SeriesSchema> = {
   name: string;
@@ -57,14 +57,14 @@ export type TimeSeriesInput<S extends SeriesSchema> = {
   rows: ReadonlyArray<RowForSchema<S>>;
   /**
    * How to handle a row whose key is earlier than the previous row's — see
-   * {@link OnOutOfOrder}. Default `'throw'`. (This is what
-   * `TimeSeries.fromEvents` does with `'sort'` unconditionally.)
+   * {@link BatchOrderingMode}. Default `'strict'`. (This is what
+   * `TimeSeries.fromEvents` does with `'reorder'` unconditionally.)
    */
-  onOutOfOrder?: OnOutOfOrder;
+  ordering?: BatchOrderingMode;
   /**
-   * @deprecated Use `onOutOfOrder: 'sort'`. Kept for one release as an alias:
-   * `sort: true` means `onOutOfOrder: 'sort'`. Passing both with conflicting
-   * meanings (e.g. `sort: true, onOutOfOrder: 'clamp'`) throws.
+   * @deprecated Use `ordering: 'reorder'`. Kept for one release as an alias:
+   * `sort: true` means `ordering: 'reorder'`. Passing both with conflicting
+   * meanings (e.g. `sort: true, ordering: 'clamp'`) throws.
    */
   sort?: boolean;
 };
