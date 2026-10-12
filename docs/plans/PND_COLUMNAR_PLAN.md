@@ -869,7 +869,8 @@ write, and the bound cannot catch it — so it is documented on the method and
 pinned in `test-d/` rather than defended against.
 
 That unblocks narrowing `toJSON` on `rowFormat` — filed as [PND-TSJSONT]
-rather than done here, since it changes an existing public return type.
+rather than done here, since it changes an existing public return type
+(since shipped — see its section below).
 
 **Perf** (`scripts/perf-to-columns.mjs`, median of 7). The headline is the
 comparison, not the absolute: `toColumns` reads the columnar store directly
@@ -892,6 +893,60 @@ reads), ~10% gaps cost ~3× dense (per-cell validity), and — counter-intuitive
 enough to be worth a look — **`toJSON`'s tuple rows are consistently slower
 than its object rows**, which the tuple path's per-row `.map()` + spread
 plausibly explains. Filed under [PND-TSJSONT].
+
+### [PND-TSJSONT] — narrow `TimeSeries.toJSON` on `rowFormat` — SHIPPED
+
+**Decision.** `TimeSeries.toJSON` now narrows exactly as `LiveSeries.toJSON`
+does: omitted / `'array'` → `TimeSeriesJsonOutputArray<S>`, `'object'` →
+`TimeSeriesJsonOutputObject<S>`, plus a third overload for a `rowFormat` only
+known as `JsonRowFormat` → the union (added to `LiveSeries` too, for parity —
+it previously had no signature for that call). Each overload carries the
+[PND-TSCOLS] workaround, a method-level `<T extends S = S>`; with it, the
+three-overload set compiles with **no** TS2394 cascade, confirming the
+`toColumns` isolation also covers overload declarations once the precise
+return sits behind a method type parameter. The implementation signature
+returns `TimeSeriesJsonOutputArray<any> | TimeSeriesJsonOutputObject<any>`
+(it must be compatible with all three). `LiveSeries.toJSON`'s cast went away.
+Pinned in `test-d/timeseries-tojson-narrowing.test-d.ts`.
+
+**The one break, deliberately taken.** The old return was
+`TimeSeriesJsonInput<SeriesSchema>`. The tuple form is still assignable to
+that; the **object** form is not, because `JsonObjectRowForSchema<SeriesSchema>`
+demands a property for every possible key name (`time`, `timeRange`,
+`interval`). A caller annotating `const j: TimeSeriesJsonInput<SeriesSchema> =
+s.toJSON({ rowFormat: 'object' })` now fails to compile; the fix is
+`TimeSeriesJsonInput<typeof schema>` or no annotation. Code reading
+`.rows[i].someColumn` off the default (tuple) form also now fails — it was
+always wrong at runtime. Neither shows up in the repo's own packages, tests, or
+stories (`test/` type errors identical before/after: 175 pre-existing).
+
+**Considered, not done.** The old [PND-TSVAR] idea of extracting a
+module-level `serializeToJSON<S>` helper — unnecessary once the method type
+parameter worked.
+
+**Perf — tuple rows.** The tuple path built a throwaway `dataColumns.map(...)`
+array per row and spread it into a second; now one array per row, cells
+pushed in place. New durable bench `scripts/perf-to-json.mjs` (median of 9
+per process; each cell below is the median of 3 fresh-process runs). The
+machine was under heavy concurrent load (loadavg 9–20 on 4 cores), so
+absolutes are inflated ~4× against the 25.9 ms quoted above — read the
+ratios, not the milliseconds.
+
+| `toJSON`, ms          | tuple before | tuple after | object (ref) |
+| --------------------- | ------------ | ----------- | ------------ |
+| dense 100k × 6        | 136          | 52          | 71–96        |
+| + string col 100k × 7 | 191          | 51          | 60–152       |
+| ~10% gaps 100k × 6    | 176          | 48          | 37–39        |
+| wide 10k × 41         | 23.5         | 16.9        | 64–67        |
+| floor 1k × 6          | 0.73         | 0.26        | 0.20–0.71    |
+| interval key 1667 × 3 | 0.72         | 0.58        | 0.29–0.33    |
+
+Tuple rows went ~2.5–3.5× faster at 100k and now sit at or below object rows
+on the dense shapes, which is where the counter-intuitive gap was. Wide rows
+were already tuple-favoured (41-key object literals are the slow side there)
+and improved ~30%. The small interval-key case (~1.7k rows, 2 value columns) is
+still tuple-slower; at that size it is dominated by per-row key serialisation
+and timer noise rather than the cell loop the fix touched — not chased.
 
 ### [PND-VSIO] — `ValueSeries` ingest / export parity — SHIPPED
 

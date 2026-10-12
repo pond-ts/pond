@@ -113,8 +113,8 @@ view**, viewer-local by default, with instants untouched underneath.
    `Time` / `TimeRange` / `Interval` / events do not grow a zone field. The zone
    lives on the thing that _interprets_ instants: a `Sequence`, a formatter, a
    chart container. Consistent with RFC §3.3 and with how every prior-art
-   library above works; it also keeps `TimeSeries` variance ([PND-TSVAR])
-   untouched.
+   library above works; it also keeps `TimeSeries` variance (the old [PND-TSVAR]
+   concern) untouched.
 2. **One implementation of zone arithmetic, in core, consumed by charts.**
    Core already has correct Temporal zone math in `core/calendar.ts`; charts
    has a second, local-only calendar written in `Date` methods. Growing a

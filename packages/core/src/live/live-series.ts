@@ -1047,17 +1047,13 @@ export class LiveSeries<S extends SeriesSchema> {
    */
   toJSON(options?: { rowFormat?: 'array' }): TimeSeriesJsonOutputArray<S>;
   toJSON(options: { rowFormat: 'object' }): TimeSeriesJsonOutputObject<S>;
+  toJSON(options?: {
+    rowFormat?: JsonRowFormat;
+  }): TimeSeriesJsonOutputArray<S> | TimeSeriesJsonOutputObject<S>;
   toJSON(
     options: { rowFormat?: JsonRowFormat } = {},
   ): TimeSeriesJsonOutputArray<S> | TimeSeriesJsonOutputObject<S> {
-    // `TimeSeries.toJSON` returns the broader `TimeSeriesJsonInput<SeriesSchema>`;
-    // the values it produces are correct-shaped at runtime for the
-    // narrowed types. The cast is the price of keeping the
-    // `TimeSeries` signature broad — see the toJSON cascade
-    // discussion in PLAN.md.
-    return this.toTimeSeries().toJSON(options) as
-      | TimeSeriesJsonOutputArray<S>
-      | TimeSeriesJsonOutputObject<S>;
+    return this.toTimeSeries().toJSON(options);
   }
 
   /**
