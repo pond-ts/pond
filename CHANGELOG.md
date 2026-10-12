@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.72.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.73.0...HEAD
+[0.73.0]: https://github.com/pond-ts/pond/compare/v0.72.0...v0.73.0
 [0.72.0]: https://github.com/pond-ts/pond/compare/v0.71.0...v0.72.0
 [0.71.0]: https://github.com/pond-ts/pond/compare/v0.70.0...v0.71.0
 [0.70.0]: https://github.com/pond-ts/pond/compare/v0.69.0...v0.70.0
@@ -75,6 +76,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+## [0.73.0] — 2026-10-12
+
 ### Added
 
 - **core**: **`ordering: 'strict' | 'reorder' | 'clamp'` on every loader**
@@ -90,6 +93,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   keys are still rejected, value-column `Float64Array`s stay zero-copy, and a
   caller's key buffer is never mutated. `time` keys and `ValueSeries` axes
   only — a `timeRange` / `interval` key throws under `'clamp'`. [PND-INGEST]
+
 - `pond-ts`: **`series.offsetTime(by)` moves every key by a constant** —
   milliseconds or a duration string, negative for earlier
   (`yesterday.offsetTime('1d')` overlays yesterday on today; `'1d'` is a fixed
@@ -99,6 +103,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   0.26 ms on 97k rows × 118 columns, where rebuilding the series through its
   rows took ~990 ms (`packages/core/scripts/perf-offset-time.mjs`). `0` returns
   the series itself; a non-finite or unparseable offset throws.
+
 - **charts**: **`xOffset` on `<LineChart>`, `<AreaChart>` and `<BandChart>`
   draws each row a fixed time after its key**, without touching the series. A
   1-minute bar is keyed at its open but its `close` is the price at its end, so
@@ -109,23 +114,27 @@ include new features and type-level changes; patch bumps are strictly additive.
   reports is in drawn time: the tracker's nearest row and dot, its auto-fit
   x-extent, `sessionBreaks`, a sweep's span. Time series only; a non-zero
   offset on a `ValueSeries` throws.
+
 - **charts**: **`<AreaChart sessionBreaks>`** ends the fill and its outline at
   each trading-axis session close and re-starts them at the next open, as
   `<LineChart>` and `<BandChart>` already did — so the line and area styles of
   one intraday series break alike. `gaps="none"` still interpolates a dropout
   inside a session but never across a break, and no inferred gap connector
   spans one.
-- **charts** (fix): a **decimated** `<LineChart sessionBreaks>` with
-  `gaps="none"` interpolated straight across each session break, and
-  `dashed` / `step` / `fade` drew a gap connector over it — dense intraday data
-  decimates, so this was the common case. Decimation marks the break as a gap
-  at the break instant, and the draw now cuts there instead of reading it as a
-  dropout.
 
 - **charts:** `TradingTimeScale.flatFormat(count, drawn?)` — `drawn` is the
   subset of `ticks(count)` actually rendered; flat promotions walk only those,
   so a dropped tick's period turn carries to the next drawn one. Omitted, it
   labels every tick as before.
+
+- **docs**: **The versioning policy is now published** — a "Versioning"
+  section in the root README and each package README, and a
+  [Versioning](https://pond-ts.org/docs/reference/versioning) page on the
+  docs site. Pre-1.0 a minor may break (always marked **breaking** here with a
+  migration note), patches never break, all packages release in lock-step,
+  and from 1.0 the project follows semver. The page also defines the public
+  API: each package's entry-point exports as mapped in `API.md`, excluding
+  anything marked experimental or internal.
 
 ### Changed
 
@@ -233,25 +242,6 @@ include new features and type-level changes; patch bumps are strictly additive.
   (and `'clamp'` where it applies) instead of `{ sort: true }`. Code matching
   on the old message text needs updating.
 
-### Deprecated
-
-- **core**: **`sort?: boolean`** on the loaders above — use
-  `ordering: 'reorder'`. `sort: true` still works for this release and maps to
-  `'reorder'`; it will be removed in the next minor. Passing `sort` together with
-  a conflicting `ordering` (e.g. `sort: true, ordering: 'clamp'`)
-  throws a `ValidationError`.
-
-- **docs**: **The versioning policy is now published** — a "Versioning"
-  section in the root README and each package README, and a
-  [Versioning](https://pond-ts.org/docs/reference/versioning) page on the
-  docs site. Pre-1.0 a minor may break (always marked **breaking** here with a
-  migration note), patches never break, all packages release in lock-step,
-  and from 1.0 the project follows semver. The page also defines the public
-  API: each package's entry-point exports as mapped in `API.md`, excluding
-  anything marked experimental or internal.
-
-### Changed
-
 - **core** (**breaking**): **`select(...keys)` throws on a key that isn't a
   column, and on an array argument.** It used to drop unknown keys silently, so
   a typo — or `select(['a', 'b'])` instead of `select('a', 'b')` — returned an
@@ -283,6 +273,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   stack, a quantity like throughput — put zero on the axis with
   `<YAxis min={0}>` (`max={0}` for an all-negative series). Areas whose data
   already reaches their baseline, or whose axis is pinned, are unchanged.
+
 - `pond-ts` (**breaking**, types only): **`TimeSeries.toJSON()`'s return
   type narrows on `rowFormat`**, matching `LiveSeries.toJSON()`. The default
   / `'array'` form returns `TimeSeriesJsonOutputArray<S>` and
@@ -298,6 +289,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   column by name off a default (tuple) row, which was always `undefined` at
   runtime. `LiveSeries.toJSON()` also gains the `JsonRowFormat` overload, which
   previously had no matching signature. [PND-TSJSONT]
+
 - `pond-ts`: **`TimeSeries.toJSON()` tuple rows are ~2.5–3.5× faster at 100k
   rows** — one array per row, filled in place, instead of a mapped array spread
   into a second one. Tuple rows were slower than object rows; they now match or
@@ -310,6 +302,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   chained `live.aggregate(…).on('bucket', fn)` now yields the unsubscribe
   function, not the operator (same for `live.rolling(…).on('update', fn)`) —
   assign the operator first, then subscribe.
+
 - **core** (**breaking, type-level**): **`LiveAggregation` listeners
   (`'event'`, `'bucket'`) and `LiveRollingAggregation`'s `'event'` listener
   receive the schema-narrowed `EventForSchema<Out>`** — the same type `at()`
@@ -327,13 +320,19 @@ include new features and type-level changes; patch bumps are strictly additive.
   `TypeError` on an unknown event type instead of silently registering the
   listener.
 
+### Deprecated
+
+- **core**: **`sort?: boolean`** on the loaders above — use
+  `ordering: 'reorder'`. `sort: true` still works for this release and maps to
+  `'reorder'`; it will be removed in the next minor. Passing `sort` together with
+  a conflicting `ordering` (e.g. `sort: true, ordering: 'clamp'`)
+  throws a `ValidationError`.
+
 ### Removed
 
 - **core** (**breaking**): **`LiveAggregation.on('close', fn)` is removed —
   use `on('event', fn)`**, which it was an alias for. Untyped callers that
   still pass `'close'` get a `TypeError` naming the replacement.
-
-### Removed
 
 - `pond-ts` (**breaking**, types only): **the back-compat type alias
   `AggregateOutputMap` is gone — use `AggregateMap`.** It has been an exact
@@ -366,6 +365,13 @@ include new features and type-level changes; patch bumps are strictly additive.
   Under `align="auto"` the edge labels anchor by the full tick list, so a drop
   never re-anchors another label. Applies to every `align` mode and to custom
   `format`s; explicit `ticks` and `transform` ticks are untouched.
+
+- **charts**: a **decimated** `<LineChart sessionBreaks>` with
+  `gaps="none"` interpolated straight across each session break, and
+  `dashed` / `step` / `fade` drew a gap connector over it — dense intraday data
+  decimates, so this was the common case. Decimation marks the break as a gap
+  at the break instant, and the draw now cuts there instead of reading it as a
+  dropout.
 
 ## [0.72.0] — 2026-10-08
 
