@@ -22,7 +22,6 @@ import {
 } from './live-history.js';
 import type {
   AggregateMap,
-  AggregateOutputMap,
   ColumnValue,
   EventForSchema,
   LiveSource,
@@ -144,7 +143,7 @@ export class LivePartitionedSyncRolling<
     byColumnKind: string,
     reducerInputSchema: SeriesSchema,
     window: RollingWindow,
-    mapping: AggregateMap<SeriesSchema> | AggregateOutputMap<SeriesSchema>,
+    mapping: AggregateMap<SeriesSchema>,
     trigger: ClockTrigger,
     options: {
       minSamples?: number;
@@ -183,7 +182,7 @@ export class LivePartitionedSyncRolling<
     // Resolve the rolling output columns from `mapping` against the
     // reducer-input schema (source schema in the root case, chain
     // output schema in the chained case). Accepts either
-    // `AggregateMap` or `AggregateOutputMap` shapes via the shared
+    // shorthand or spec `AggregateMap` entries via the shared
     // helper.
     this.#columns = normalizeAggregateColumns(reducerInputSchema, mapping);
 
@@ -191,7 +190,7 @@ export class LivePartitionedSyncRolling<
     // any reducer-OUTPUT column. The emit loop's record would
     // overwrite the partition tag with the reducer output (or vice
     // versa) silently — both share a name in the output schema, but
-    // `record[name]` only holds one value. With AggregateOutputMap,
+    // `record[name]` only holds one value. With spec entries,
     // the alias is the user's choice — they can resolve a collision
     // by renaming.
     if (this.#columns.some((c) => c.output === byColumn)) {
@@ -221,7 +220,7 @@ export class LivePartitionedSyncRolling<
       { name: byColumn, kind: byColumnKind, required: false },
       ...this.#columns.map((c) => ({
         // Output column NAME is `c.output` — same as `c.source` for
-        // AggregateMap mappings, the user's alias for AggregateOutputMap.
+        // AggregateMap mappings, the user's alias for spec entries.
         name: c.output,
         kind: c.kind,
         required: false,

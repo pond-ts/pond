@@ -107,6 +107,19 @@ include new features and type-level changes; patch bumps are strictly additive.
   `<YAxis min={0}>` (`max={0}` for an all-negative series). Areas whose data
   already reaches their baseline, or whose axis is pinned, are unchanged.
 
+### Removed
+
+- `pond-ts` (**breaking**, types only): **the back-compat type alias
+  `AggregateOutputMap` is gone — use `AggregateMap`.** It has been an exact
+  alias of `AggregateMap` since v0.23.0, when the shorthand and
+  `{ from, using }` spec forms were unified into one map type. The internal
+  schema aliases `RollingOutputMapSchema` (identical to `RollingSchema`) and
+  `AggregateOutputMapResultSchema` (identical to `AggregateSchema`) are removed
+  with it; neither was reachable from a public entry point. **Migration:**
+  replace `AggregateOutputMap<S>` with `AggregateMap<S>` — no runtime change.
+  The fused-rolling duplicate-output error message now says "use a
+  `{ from, using }` spec entry" instead of naming the removed type.
+
 ## [0.72.0] — 2026-10-08
 
 ### Changed

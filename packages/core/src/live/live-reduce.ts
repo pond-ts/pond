@@ -17,7 +17,6 @@ import {
 import {
   EMITS_EVICT,
   type AggregateMap,
-  type AggregateOutputMap,
   type ColumnValue,
   type EventForSchema,
   type LiveSource,
@@ -210,7 +209,7 @@ export class LiveReduce<
 
   constructor(
     source: LiveSource<S>,
-    mapping: AggregateMap<S> | AggregateOutputMap<S>,
+    mapping: AggregateMap<S>,
     options: LiveRollingOptions = {},
   ) {
     this.name = source.name;

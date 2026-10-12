@@ -25,7 +25,6 @@ import {
 import type { Sequence } from '../sequence/sequence.js';
 import type {
   AggregateMap,
-  AggregateOutputMap,
   AggregateSchema,
   DiffSchema,
   EventDataForSchema,
@@ -39,7 +38,6 @@ import type {
   ValueColumnsForSchema,
   ValidatedAggregateMap,
 } from '../schema/index.js';
-import type { RollingOutputMapSchema } from '../schema/index.js';
 
 import { parseDuration } from '../core/duration.js';
 import type { DurationInput } from '../core/duration.js';
@@ -89,7 +87,7 @@ export class LiveAggregation<
   constructor(
     source: LiveSource<S>,
     sequence: Sequence,
-    mapping: AggregateMap<S> | AggregateOutputMap<S>,
+    mapping: AggregateMap<S>,
     options?: LiveAggregationOptions,
   ) {
     this.name = source.name;
@@ -107,12 +105,12 @@ export class LiveAggregation<
 
     // Normalise the mapping into the unified column-spec shape used
     // by both batch and live aggregation paths. Accepts either
-    // `AggregateMap<S>` (one reducer per existing source column) or
-    // `AggregateOutputMap<S>` (named alias outputs, multiple
-    // reducers per source column).
+    // shorthand `AggregateMap<S>` entries (one reducer per existing
+    // source column) or `{ from, using }` spec entries (named alias
+    // outputs, multiple reducers per source column).
     this.#columns = normalizeAggregateColumns(
       source.schema,
-      mapping as AggregateMap<S> | AggregateOutputMap<S>,
+      mapping as AggregateMap<S>,
     );
 
     this.schema = Object.freeze([
@@ -263,14 +261,14 @@ export class LiveAggregation<
     mapping: M,
     options?: LiveRollingOptions,
   ): LiveRollingAggregation<Out, RollingSchema<Out, M>>;
-  rolling<const M extends AggregateOutputMap<Out>>(
+  rolling<const M extends AggregateMap<Out>>(
     windowSize: RollingWindow,
     mapping: M,
     options?: LiveRollingOptions,
-  ): LiveRollingAggregation<Out, RollingOutputMapSchema<Out, M>>;
+  ): LiveRollingAggregation<Out, RollingSchema<Out, M>>;
   rolling(
     windowSize: RollingWindow,
-    mapping: AggregateMap<Out> | AggregateOutputMap<Out>,
+    mapping: AggregateMap<Out>,
     options?: LiveRollingOptions,
   ): LiveRollingAggregation<Out> {
     return new LiveRollingAggregation(

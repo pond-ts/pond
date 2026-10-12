@@ -18,7 +18,6 @@ import { parseDuration, type DurationLiteral } from '../core/duration.js';
 import { applyHistoryRetention, resolveHistoryConfig } from './live-history.js';
 import type {
   AggregateMap,
-  AggregateOutputMap,
   ColumnValue,
   EventForSchema,
   LiveSource,
@@ -210,7 +209,7 @@ export class LiveFusedRolling<
     this.#historyMaxAgeMs = histCfg.maxAgeMs;
 
     // Resolve each window: parse the duration key, normalize the
-    // mapping (handles bare AggregateMap, AggregateOutputMap, and the
+    // mapping (handles bare AggregateMap — shorthand or spec — and the
     // elaborated `{ mapping, minSamples }` wrapper), build per-column
     // reducer state.
     const windowKeys = Object.keys(fusedMapping);
@@ -259,8 +258,8 @@ export class LiveFusedRolling<
           throw new TypeError(
             `fused rolling: duplicate output column '${col.output}' across windows. ` +
               `Each output column name must be unique across the merged schema. ` +
-              `Either rename the alias (use AggregateOutputMap with a distinct \`from\` ` +
-              `→ alias mapping) or drop one of the duplicating windows.`,
+              `Either rename the alias (use a \`{ from, using }\` spec entry under a distinct ` +
+              `alias) or drop one of the duplicating windows.`,
           );
         }
         seenOutputs.add(col.output);
@@ -594,12 +593,12 @@ function resolveWindowKey(key: string): number {
 /**
  * True when `v` looks like an `AggregateOutputSpec` — i.e., a bare
  * `{ from: string, using: ... }` shape. Used to disambiguate the
- * elaborated-wrapper detection: a user with an `AggregateOutputMap`
- * entry literally named `'mapping'` (e.g. `{ '1m': { mapping: { from:
+ * elaborated-wrapper detection: a user with a spec-form
+ * `AggregateMap` entry literally named `'mapping'` (e.g. `{ '1m': { mapping: { from:
  * 'cpu', using: 'avg' } } }`) must NOT be unwrapped as the wrapper.
  *
  * The wrapper's `mapping` field carries a whole record of column
- * specs; the colliding-name AggregateOutputMap entry's `mapping` key
+ * specs; the colliding-name spec entry's `mapping` key
  * carries one spec. This check distinguishes the two by looking for
  * the `from` + `using` discriminators that only exist on a spec.
  */
@@ -615,7 +614,7 @@ function isAggregateOutputSpec(v: unknown): boolean {
 function unwrapFusedMappingValue<S extends SeriesSchema>(
   value: FusedMappingValue<S>,
 ): {
-  innerMapping: AggregateMap<S> | AggregateOutputMap<S>;
+  innerMapping: AggregateMap<S>;
   perWindowMinSamples: number | undefined;
 } {
   if (
@@ -624,13 +623,13 @@ function unwrapFusedMappingValue<S extends SeriesSchema>(
     'mapping' in value &&
     typeof (value as { mapping?: unknown }).mapping === 'object' &&
     // Disambiguation: if `.mapping` is itself an AggregateOutputSpec,
-    // the user named an alias `mapping` in an AggregateOutputMap —
+    // the user named an alias `mapping` in a spec-form AggregateMap —
     // this is NOT the elaborated wrapper. Fall through to the bare
     // mapping branch.
     !isAggregateOutputSpec((value as { mapping?: unknown }).mapping)
   ) {
     const elaborated = value as {
-      mapping: AggregateMap<S> | AggregateOutputMap<S>;
+      mapping: AggregateMap<S>;
       minSamples?: number;
     };
     if (elaborated.minSamples !== undefined) {
@@ -649,7 +648,7 @@ function unwrapFusedMappingValue<S extends SeriesSchema>(
     };
   }
   return {
-    innerMapping: value as AggregateMap<S> | AggregateOutputMap<S>,
+    innerMapping: value as AggregateMap<S>,
     perWindowMinSamples: undefined,
   };
 }
