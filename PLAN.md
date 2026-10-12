@@ -644,17 +644,6 @@ consumer signal. Plan:
   `arrayColumnFromArray`, plus the sort permutation for both — but it widens
   `RawColumns` and `fromColumns`' contract, so it wants its own PR.
   Friction-gated: no consumer has asked yet.
-- **[PND-TSJSONT]** — narrow `TimeSeries.toJSON`'s return type on
-  `rowFormat`, as `LiveSeries.toJSON` already does. Long blocked by the
-  TS2394 cascade, which [PND-TSCOLS] isolated: the trigger is a
-  key-remapped mapped type in a **method return position on `TimeSeries`**,
-  and a method-level type parameter defers past it (the workaround
-  `toColumns` now uses, written up on its doc comment). Unblocked, but it
-  changes an existing public return type, so it needs its own decision.
-  While in there: `toJSON()`'s **tuple** rows measure consistently _slower_
-  than its object rows (25.9 ms vs 18.6 ms at 100k × 6) — the tuple path
-  allocates a `.map()` plus a spread per row where the object path writes
-  properties into one literal. Probably a free win.
 - **[PND-REORD]** — Columnar reorder corral (§B): unearned, RFC context
   until a signal arrives.
 - **[PND-LROLL]** — Live rolling columnar reducer state (Step 3C-live): the
@@ -670,10 +659,23 @@ consumer signal. Plan:
   measured, deliberately not taken). Acceptance benchmarks:
   `spikes/columnar-wasm/bench/controls.mjs`.
 
-- **[PND-NANREP]** — Audit whether the validity bitmap earns its keep on
-  **numeric** columns. Measured on a 1M column with 4% missing, same values
-  and same answer, varying only how "missing" is encoded: dense (no bitmap)
-  0.936 ms, **bitmap 1.398 ms (1.49×)**, **NaN-in-buffer 1.118 ms (1.19×)** —
+- **[PND-NANREP]** — **Semantics half done; only the storage switch remains.**
+  The public rule "a non-finite number (`NaN`, `±Infinity`) in a number
+  column means missing" is now locked everywhere (batch, live,
+  `@pond-ts/process` range outputs) — operators' own arithmetic (an overflow,
+  `Infinity - Infinity`, a reducer result past `MAX_VALUE`) stores a gap,
+  never a defined non-finite cell, and operators that used to throw on one no
+  longer do. Decision and findings in the breakout plan. Two follow-ups:
+  (1) every library-built number column is now `allFinite`, so the flag and
+  the guarded `reduceColumn` loops can be removed as an internal cleanup;
+  (2) `@pond-ts/financial` comments and one oracle case description still say
+  "`withColumn` rejects `±Infinity`" — stale wording, guards still correct.
+  What remains is switching packed numeric
+  storage from the validity bitmap to NaN-in-buffer — now a pure internal
+  speed-up with no visible change, deferred post-1.0. The case for it:
+  whether the validity bitmap earns its keep on **numeric** columns. Measured
+  on a 1M column with 4% missing, same values and same answer, varying only
+  how "missing" is encoded: dense (no bitmap) 0.936 ms, **bitmap 1.398 ms (1.49×)**, **NaN-in-buffer 1.118 ms (1.19×)** —
   so the bitmap representation costs ~25% more than NaN on a scan kernel.
   Worse, the two encodings now coexist in the hottest path: after
   [PND-STUDYBOX] one `sma(20)` converts bitmap→NaN (0.81 ms) and back
@@ -685,17 +687,10 @@ consumer signal. Plan:
   `hasMissing()` an O(1) answer from the cached `definedCount` — though a NaN
   scheme could cache the same integer.
 
-  What it buys on numeric columns is thinner than it looks: the ability to
-  distinguish a _defined_ NaN from a gap. The reducer non-finite policy already
-  treats both as missing, row intake rejects non-finite outright, `fromColumns`
-  maps it to a gap, and `withColumn`'s typed door now does too — so a defined
-  NaN only arises from an operator's own arithmetic overflow, and only shows up
-  through `at(i)` / `scan()` on an `allFinite: false` column.
-
-  Not a small change: it moves an observable semantic. Scope it as a design
-  note first, with the `at(i)` behaviour on `allFinite: false` columns as the
-  decision point. Ties to [PND-WCNAN], which already chose NaN-as-missing for
-  typed intake.
+  What the switch would give up is nothing observable: the bitmap's one extra
+  power on numeric columns — telling a _defined_ NaN from a gap — no longer
+  exists by rule. Keep `definedCount` cached so `count()` / `nullCount()` /
+  `hasMissing()` stay O(1).
 
 - **[PND-AGENTQ]** — The measured shape of the current agent workload, kept as
   the standing acceptance benchmark:
@@ -746,10 +741,6 @@ consumer signal. Plan:
   `toFloat64Array({ missing })` + `hasAnyDefined()`. Two consumers each.
 - **[PND-WIRE]** — Protobuf columnar wire codec + `SeriesUpdate` streaming
   append; design settled, build when the binary WS feed consumer arrives.
-- **[PND-INGEST]** — `fromColumns({ onOutOfOrder: 'throw'|'sort'|'clamp' })`;
-  fold the day-old `sort` boolean into the enum.
-- **[PND-TSVAR]** — `TimeSeries<S>` variance refactor (`toJSON` narrowing,
-  `required: false` rows); try the extracted-serializer path first.
 - **[PND-GATHER]** — Dashboard snapshot-cost queue:
   `partitionBy().toMap()` gather-only, `column.dropMissing()`, two doc
   nudges.
@@ -840,10 +831,6 @@ experimental at v0.55.0** after the 2026-08 audit hardening, which resolved
   coalesces concurrent calls for one source identity. Remaining:
   cancellation/freshness policy, source schema projection for remote composers,
   and a measured revision contract.
-- **[PND-LIVESRC]** — Core-side: `LiveAggregation` does not satisfy
-  `LiveSource<S>`, because its `on('event')` overload widens the listener's
-  event type. Narrow the overload, or give the incremental operators their own
-  named contract. Touches a public type — needs sign-off.
 - **[PND-PROCPAR]** — Worker-thread parallelism. Shipped: `HostPool`
   (throughput, 3.1–4.0× on distinct requests) and `withWorkers` rolling
   partitions ([PND-SCANKERN]). **Remaining:** (1) the **latency half** —

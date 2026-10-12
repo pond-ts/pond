@@ -10,9 +10,14 @@ import {
 import { LiveFusedRolling } from './live-fused-rolling.js';
 import { LiveReduce } from './live-reduce.js';
 import type { SampleStrategy } from '../sequence/sample.js';
-import { TimeSeries, toKey, type KeyLike } from '../batch/time-series.js';
+import {
+  TimeSeries,
+  assertSelectKeys,
+  toKey,
+  type KeyLike,
+} from '../batch/time-series.js';
 import type { Sequence } from '../sequence/sequence.js';
-// Column reads off a LiveView's event buffer (experimental, §A pull/read).
+// Column reads off a LiveView's event buffer (§A pull/read).
 import { float64ColumnFromArray } from '../columnar/column.js';
 import type { Float64Column } from '../columnar/column.js';
 import { TimeKeyColumn } from '../columnar/key-column.js';
@@ -20,7 +25,6 @@ import type { PublicColumnForKind, KeyColumnForSchema } from '../column.js';
 import {
   EMITS_EVICT,
   type AggregateMap,
-  type AggregateOutputMap,
   type AggregateSchema,
   type DiffSchema,
   type EventDataForSchema,
@@ -336,11 +340,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
    * transforms.
    */
   map(fn: (event: EventForSchema<S>) => EventForSchema<S>): LiveView<S> {
-    return new LiveView(
-      this,
-      fn,
-      this.#windowMs !== undefined ? { windowMs: this.#windowMs } : undefined,
-    );
+    return makeMapView(this, fn, this.#windowMs);
   }
 
   /**
@@ -359,6 +359,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   select<const Keys extends readonly (keyof EventDataForSchema<S>)[]>(
     ...keys: Keys
   ): LiveView<SelectSchema<S, Keys[number] & string>> {
+    assertSelectKeys('select', this.schema as SeriesSchema, keys);
     const newSchema = Object.freeze([
       this.schema[0]!,
       ...this.schema.slice(1).filter((c) => keys.includes(c.name as any)),
@@ -463,10 +464,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   ): LiveFusedRolling<S, FusedRollingSchema<S, FM>>;
   rolling(
     arg1: RollingWindow | FusedMapping<S>,
-    mappingOrOptions?:
-      | AggregateMap<S>
-      | AggregateOutputMap<S>
-      | LiveRollingOptions,
+    mappingOrOptions?: AggregateMap<S> | LiveRollingOptions,
     options?: LiveRollingOptions,
   ): any {
     if (typeof arg1 === 'object' && arg1 !== null && !Array.isArray(arg1)) {
@@ -479,7 +477,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     return new LiveRollingAggregation(
       this,
       arg1 as RollingWindow,
-      mappingOrOptions as AggregateMap<S> | AggregateOutputMap<S>,
+      mappingOrOptions as AggregateMap<S>,
       options,
     );
   }
@@ -569,7 +567,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     return ts;
   }
 
-  // ── Column reads off the live view (experimental, §A pull/read) ──
+  // ── Column reads off the live view (§A pull/read) ──────────────
   //
   // The pull/read cut of docs/rfcs/columnar-live-protocol.md §A. These
   // mirror `TimeSeries.column` / `keyColumn` / `partitionBy().toMap()`
@@ -578,10 +576,11 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   // from the view's `Event[]` buffer (the allocation-skip cut — no
   // intermediate `TimeSeries`, only the columns actually read).
   //
-  // **Experimental (0.19.0).** Surface may change in 0.19.x — validated
-  // in-situ by the dashboard A/B (~1.5–2× per-tick memo where the
-  // snapshot is amortized; larger where snapshot-build is on the hot
-  // path). Structural / zero-copy retention is a separate increment.
+  // Shipped 0.19.0 as experimental; promoted to stable surface before
+  // 1.0 (unchanged shape). Validated in-situ by the dashboard A/B
+  // (~1.5–2× per-tick memo where the snapshot is amortized; larger where
+  // snapshot-build is on the hot path). Structural / zero-copy retention
+  // is a separate increment.
 
   /**
    * Example: `view.keyColumn().begin`. Gathers the time axis into a
@@ -771,13 +770,12 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   }
 }
 
-// ── Walk-now column read surface (experimental, §A pull/read) ─────
+// ── Walk-now column read surface (§A pull/read) ───────────────────
 //
 // Shared gather helpers + the per-partition group object. Read the
 // view's `Event[]` through indices (or the whole buffer when `indices`
 // is null), building only the columns requested — no `TimeSeries`, no
-// per-partition store. Experimental (0.19.0); surface may change in
-// 0.19.x.
+// per-partition store.
 
 function gatherColumnFromEvents<S extends SeriesSchema>(
   events: readonly EventForSchema<S>[],
@@ -837,7 +835,6 @@ function gatherTimeKeyColumn<S extends SeriesSchema>(
  * `LiveView.partitionBy(col).toMap(fn)`. Holds the parent view's event
  * buffer plus this partition's index list; gathers only the columns
  * `fn` reads, into packed columns. No `TimeSeries` constructed.
- * Experimental (0.19.0) — surface may change in 0.19.x.
  */
 export class LiveColumnGroup<S extends SeriesSchema> {
   readonly #events: readonly EventForSchema<S>[];
@@ -967,13 +964,18 @@ export function makeDiffView<
 
       if (typeof currVal === 'number' && typeof prevVal === 'number') {
         const delta = currVal - prevVal;
+        let v: number | undefined;
         if (mode === 'pctChange') {
-          outData[col] = prevVal !== 0 ? delta / prevVal : undefined;
+          v = prevVal !== 0 ? delta / prevVal : undefined;
         } else if (mode === 'rate') {
-          outData[col] = dt !== 0 ? delta / dt! : undefined;
+          v = dt !== 0 ? delta / dt! : undefined;
         } else {
-          outData[col] = delta;
+          v = delta;
         }
+        // A non-finite result means missing ([PND-NANREP]) — e.g.
+        // `Infinity - Infinity`, or a delta that overflows. Matches the
+        // batch `diff` / `rate` / `pctChange`.
+        outData[col] = v === undefined || v - v !== 0 ? undefined : v;
       } else {
         outData[col] = undefined;
       }
@@ -1076,6 +1078,48 @@ export function makeFillView<S extends SeriesSchema>(
   return new LiveView(source as any, process) as unknown as LiveView<S>;
 }
 
+/**
+ * The live `map` view. A user `fn` can write `NaN` into a number field;
+ * the view stores events (not columns), so nothing downstream would
+ * canonicalise it and `at(i).get()` would hand back a *defined* `NaN`.
+ * A non-finite number means missing ([PND-NANREP]), so each mapped
+ * event's number fields are checked and a `NaN` / `±Infinity` is
+ * rewritten to `undefined`. The event is
+ * rebuilt only when one is found — the common path returns `fn`'s event
+ * untouched.
+ */
+export function makeMapView<S extends SeriesSchema>(
+  source: LiveSource<S>,
+  fn: (event: EventForSchema<S>) => EventForSchema<S>,
+  windowMs?: number,
+): LiveView<S> {
+  const numberCols = source.schema
+    .slice(1)
+    .filter((c) => c.kind === 'number')
+    .map((c) => c.name);
+  const process = (event: EventForSchema<S>): EventForSchema<S> => {
+    const out = fn(event);
+    if (numberCols.length === 0) return out;
+    const data = out.data() as Record<string, unknown>;
+    let fixed: Record<string, unknown> | undefined;
+    for (const name of numberCols) {
+      const v = data[name];
+      if (typeof v === 'number' && !Number.isFinite(v)) {
+        fixed ??= { ...data };
+        fixed[name] = undefined;
+      }
+    }
+    return fixed === undefined
+      ? out
+      : (new Event(out.key(), fixed) as unknown as EventForSchema<S>);
+  };
+  return new LiveView(
+    source,
+    process,
+    windowMs !== undefined ? { windowMs } : undefined,
+  );
+}
+
 export function makeCumulativeView<
   S extends SeriesSchema,
   Targets extends NumericColumnNameForSchema<S>,
@@ -1161,12 +1205,12 @@ export function makeCumulativeView<
     const data = { ...(event.data() as Record<string, unknown>) };
     for (const [name, s] of accState) {
       const raw = data[name];
-      if (typeof raw === 'number') {
-        s.acc = s.apply(s.acc, raw);
-        data[name] = s.acc;
-      } else {
-        data[name] = s.acc;
-      }
+      if (typeof raw === 'number') s.acc = s.apply(s.acc, raw);
+      // A non-finite result means missing ([PND-NANREP]): a fold that
+      // overflows or reaches NaN emits a gap, matching batch `cumulative`.
+      // The accumulator is kept as-is.
+      data[name] =
+        s.acc === undefined || s.acc - s.acc !== 0 ? undefined : s.acc;
     }
     return new Event(event.key(), data);
   };

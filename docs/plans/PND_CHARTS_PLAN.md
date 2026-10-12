@@ -1566,12 +1566,12 @@ the strips, CHANGELOG `[Unreleased]`. Asked for as "the next step on the axes";
 the plot had a full pan/zoom system and the strips captured nothing. Decisions
 worth keeping:
 
-- **The x strip is the canvas gesture; a y gutter is not.** First cut had *both*
+- **The x strip is the canvas gesture; a y gutter is not.** First cut had _both_
   strips zooming on drag (the TradingView reading). Corrected on review: x should
   "just work the same way as canvas pan/zoom" — drag pans, wheel zooms, same
   maths and same sign — because a second vocabulary for the same view is a cost
   with no payoff, and the strip is better understood as another handle on the
-  canvas gesture. The y gutter keeps drag-to-zoom, because *that* gesture has no
+  canvas gesture. The y gutter keeps drag-to-zoom, because _that_ gesture has no
   canvas equivalent: the plot's vertical drag scales the whole row by one factor
   (deliberately — it's the aspect lock, and what a scatter / heat map wants), so
   per-axis scaling has to come from somewhere, and the gutter is where.
@@ -1582,10 +1582,10 @@ worth keeping:
   asserts the same landing as one jump.
 - **`axisPanZoom` is its own prop — inheriting `panZoom` was wrong.** Three cuts
   here, and the last is the one that shipped. (1) Inherit `panZoom` per dimension.
-  (2) Inherit, but let a y gutter follow "zooms at all" rather than zoom-*y*, so
+  (2) Inherit, but let a y gutter follow "zooms at all" rather than zoom-_y_, so
   the canonical auto-y-with-panned-x chart worked. (3) A separate
   `axisPanZoom?: boolean | 'none' | 'x' | 'y' | 'xy'`, default off.
-  What killed inheritance: "opt in to `panZoom`" is opt-in to *plot* gestures,
+  What killed inheritance: "opt in to `panZoom`" is opt-in to _plot_ gestures,
   and widening it means **every chart that already sets `panZoom` grows axis
   gestures on upgrade** — a y gutter that was inert chrome becomes a scale
   control nobody asked for. Ten story files in this repo alone set `panZoom`, so
@@ -1602,18 +1602,18 @@ worth keeping:
 - **`onBoundsChange` on `<YAxis>` is the auto/manual hand-off**, and it makes the
   axis controlled the way `onTimeRangeChange` does for x: the gesture reports the
   `[min, max]` it reached (or `null` for back-to-auto) and draws nothing itself,
-  because holding an internal transform *and* the min/max fed back would apply
+  because holding an internal transform _and_ the min/max fed back would apply
   the zoom twice. Uncontrolled axes keep the internal transform, so a chart with
   no scale UI needs no wiring. Pinned by a test that asserts no transform entry
   exists in the controlled case.
 - **A per-axis pixel transform** (`RowFrame.axisTransforms`) is the substance.
-  `ContainerFrame.yTransform` is uniform *on purpose* — it sidesteps "which axis
+  `ContainerFrame.yTransform` is uniform _on purpose_ — it sidesteps "which axis
   does a vertical gesture own?" for plot drags, and that shared factor is what
   fixes the aspect ratio. A gutter grab answers the question, so it needs its own
   transform. Applied **sequentially** after the uniform one (each `narrow()`
   inverts through the scale it is actually narrowing), which is what keeps it
   right on log / symlog, where two composed `k`s would not land where two
-  applications do. Identity is stored as the *absence* of an entry, so a reset
+  applications do. Identity is stored as the _absence_ of an entry, so a reset
   restores the un-grabbed fast path.
 - **`k ≥ 1` deliberately not carried over.** The uniform floor stops a plot
   gesture zooming every axis out into blank canvas; a grabbed axis may squash,
@@ -1622,17 +1622,17 @@ worth keeping:
 - **Two bugs the tests caught, both worth remembering.** (1) `axisMouseProps`
   and the gesture hook both supply `onDoubleClick`, and a JSX spread silently
   keeps the last one — the reset was dead until they were composed explicitly.
-  (2) happy-dom's `WheelEvent` constructor drops `deltaY` *and* the pointer
+  (2) happy-dom's `WheelEvent` constructor drops `deltaY` _and_ the pointer
   position, which produced `exp(NaN)` → a `[NaN, NaN]` view; the hook now guards
   its factor/pivot at the one choke point, which is a real-device hardening too.
 - **Known gap, documented not fixed:** the x reset is a no-op on a controlled
-  chart — there is no declared home when `range` *is* the panned view.
+  chart — there is no declared home when `range` _is_ the panned view.
 - **What the Layer 2 review caught**, all fixed in the same PR, and the first is
   the one worth remembering:
   - **`pad` made the controlled path ratchet.** `resolveYDomain` applies `pad`
-    last and to explicit bounds too, so a scale's live domain is the *padded*
+    last and to explicit bounds too, so a scale's live domain is the _padded_
     one; reporting it and feeding it back re-padded it, inflating by `1 + 2·pad`
-    per notch — a zoom-*in* gesture that walked the axis outward. Fixed with
+    per notch — a zoom-_in_ gesture that walked the axis outward. Fixed with
     `unpadDomain` (the inverse, beside the padding it undoes) so what a consumer
     hands back reproduces what was drawn. **General lesson: any value read off a
     resolved scale and returned as an input has to be run back through whatever
@@ -1656,12 +1656,12 @@ human's initiative — it reported **high** confidence and earned it). Three of
 these were High and none had a test:
 
 - **The controlled path double-applied the plot's uniform `yTransform`.** It read
-  the *visible* scale (`row.yScales`), reported values off it, and the consumer
+  the _visible_ scale (`row.yScales`), reported values off it, and the consumer
   fed them back as `min`/`max` — whereupon `ChartRow` applied the transform to
   them again. Base `[0,100]` with plot `k=2` (visible `[25,75]`), a 0.7 gutter
   zoom reported `[32.5,67.5]` and drew `[41.25,58.75]`; repeated notches diverge
   from every reported value. Fixed by publishing `RowFrame.baseYScales` — each
-  axis's scale *before* any gesture transform, which is the space a controlled
+  axis's scale _before_ any gesture transform, which is the space a controlled
   consumer's bounds live in. **The general rule is the `pad` lesson again, one
   level up:** a value handed back as an input has to be produced in the same
   space the input is interpreted in.
@@ -1678,7 +1678,7 @@ these were High and none had a test:
   and the ascending-only check passed it through to poison the consumer's scale.
 - **Inverted (flipped) axes went inert when controlled** — `resolveYDomain` keeps
   an explicit `[max,min]` deliberately, and the guard rejected every descending
-  result, so *adding* the callback silently disabled the gesture.
+  result, so _adding_ the callback silently disabled the gesture.
 - **symlog drifted its grabbed pixel.**
 
 The last three are all fixed by one change, which is the interesting part: the
@@ -1690,10 +1690,10 @@ for free. Plus a per-event factor clamp, since one event should never be able to
 scale the view hundreds of times over.
 
 **symlog controlled mode stays approximate, and that is the scale's own policy
-rather than a bug.** `linearWindow` is a fraction of the *domain*, so bounds fed
+rather than a bug.** `linearWindow` is a fraction of the _domain_, so bounds fed
 back re-derive the knee and reshape the curve — no choice of bounds can hold a
 pixel on a curve that moves with the bounds. It is the same fact that makes
-`linearWindow` deliberately not recompute under a 2-D gesture. The *uncontrolled*
+`linearWindow` deliberately not recompute under a 2-D gesture. The _uncontrolled_
 path is exact (the knee is anchored to the resolved domain and the pixel
 transform narrows that fixed curve), so that is what a symlog chart wanting
 pixel-exactness should use. Both are pinned by tests, and the caveat is on the
@@ -1703,7 +1703,7 @@ Also from that pass: a live drag survived the strip unmounting (`hide` toggled
 mid-gesture left the drag armed and the cursor on), the pivot was clamped to the
 gutter box rather than the scale's range (wrong under a `labelPlacement="top"`
 header), and `onDomainChange` was renamed **`onBoundsChange`** — with `pad` set
-it reports bounds, and the visible domain is those bounds *plus* the padding, so
+it reports bounds, and the visible domain is those bounds _plus_ the padding, so
 the old name was inaccurate in exactly the case `unpadDomain` exists for.
 
 **Follow-up — extract the x-view policy.** Codex agreed `Layers`' arbitration,
@@ -2022,7 +2022,6 @@ which is why the band was the right fix rather than a no-op mount.
 
 The original write-up:
 
-
 `<RangeCursor>` gates its band on a continuous x
 ([brush.tsx](../../packages/charts/src/brush.tsx)). On a category axis it
 therefore draws nothing — but it is still a _mounted cursor_, and a mounted
@@ -2092,7 +2091,7 @@ overlapping, and the rule that achieves it is expressed in drawn space.
 Tracked in [PND_CORE_PLAN.md](PND_CORE_PLAN.md): bundle-safe column-API
 augmentation + validity-aware `toFloat64Array({ missing })` (F-1, two
 consumers), `hasAnyDefined()`/`allMissing()`, the protobuf columnar wire
-([PND-WIRE]), and `fromColumns({ onOutOfOrder })` clamp-on-ingest
+([PND-WIRE]), and `fromColumns({ ordering })` clamp-on-ingest
 ([PND-INGEST] there).
 
 ## Open bug candidates (needs-repro)
@@ -2483,20 +2482,20 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-    **The fix is located, and it is a code fix rather than the documentation
-    sentence proposed below** (Codex, reviewing the `<Domain>` RFC,
-    2026-08-13). Suppression is global because **every row runs a query over
-    **all** annotations** — `Layers.tsx` (the `annotations.some(a => a.editing)` query). Row-scope that query to the
-    row's own marks (annotations already register their `rowKey`, which is
-    how the container draws a mark's guide on the *other* rows), or make
-    global editing say so explicitly. Available today; it was wrongly claimed
-    as something only a container decomposition could fix.
+        **The fix is located, and it is a code fix rather than the documentation
+        sentence proposed below** (Codex, reviewing the `<Domain>` RFC,
+        2026-08-13). Suppression is global because **every row runs a query over
+        **all** annotations** — `Layers.tsx` (the `annotations.some(a => a.editing)` query). Row-scope that query to the
+        row's own marks (annotations already register their `rowKey`, which is
+        how the container draws a mark's guide on the *other* rows), or make
+        global editing say so explicitly. Available today; it was wrongly claimed
+        as something only a container decomposition could fix.
 
-    _Still true; no longer felt here._ The draggable marker is gone — selection
-    is a click — so nothing on this page is in edit mode. But it cost a design
-    iteration to discover, and the docs still don't mention it. **The one-line
-    fix is a sentence on `editing`**: "while any mark in a row is editing, that
-    row's data cursor is suppressed."
+        _Still true; no longer felt here._ The draggable marker is gone — selection
+        is a click — so nothing on this page is in edit mode. But it cost a design
+        iteration to discover, and the docs still don't mention it. **The one-line
+        fix is a sentence on `editing`**: "while any mark in a row is editing, that
+        row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -4289,7 +4288,7 @@ measured it, which is worse than no indicator because it reads as authoritative.
 
 **Why it was wrong rather than merely incomplete.** The resolved cursor sample
 already carried the axis it scales against (`axisId` + `side`), and side alone
-was *sufficient* while every side held one axis — the innermost axis on a side
+was _sufficient_ while every side held one axis — the innermost axis on a side
 was the only axis. The multi-axis case doesn't degrade, it inverts: the pill
 lands on a specific wrong scale. Same shape as the recurring principle in this
 plan — the mechanism existed and only pointed one way.
@@ -4301,7 +4300,7 @@ the gutter layout) and carried on the finished measurement, per the interaction
 RFC's "container resolves, slots draw":
 
 - **`RowFrame.axisOffsets`** — id → px from the plot's edge to that axis's
-  *inner* edge, accumulated from the **reserved slot widths** (`axisSlots`), not
+  _inner_ edge, accumulated from the **reserved slot widths** (`axisSlots`), not
   the axis's own `width`. That distinction is load-bearing: the container
   reserves each column at its widest across rows and every row renders its axis
   boxes at that reservation, so a sibling row with a wider axis moves this row's
@@ -4329,11 +4328,11 @@ Decisions recorded:
   the pill on that trace's axis in that axis's ink.
 - **Ink falls back to the cursor's, not to the series colour.** An axis that
   sets no `color` keeps `theme.cursor ?? theme.axis.label` — the pill is an
-  *axis* indicator (the ChartIQ price-tag), so it should read as part of the axis
+  _axis_ indicator (the ChartIQ price-tag), so it should read as part of the axis
   it covers. Series colour was available on the sample and deliberately not used;
   it would make the pill read as a series chip that happens to sit in a gutter.
 - **A mirrored id (one scale registered on both sides) resolves to the
-  last-declared instance, in every map.** The first cut took the *smallest*
+  last-declared instance, in every map.** The first cut took the _smallest_
   offset on a collision — "keep the innermost placement, as before". The Layer-2
   review caught that `axisSides` collapses by last-declared-wins, so the two
   rules disagree: an id present on the right and also as the outer of two left
@@ -4356,8 +4355,8 @@ identically, as they now place identically.
 
 Two decisions the browser settled rather than the design:
 
-- **Half opacity, where the x connector is solid.** The difference is *what each
-  crosses*: the time connector runs over an empty axis strip, this one runs over
+- **Half opacity, where the x connector is solid.** The difference is _what each
+  crosses_: the time connector runs over an empty axis strip, this one runs over
   another axis's tick labels — measured, not assumed (the connector's box
   overlaps the neighbouring axis's label glyphs whenever that axis has a tick at
   the reticle's value). At full strength it slashed the digits; at 0.5 the labels
@@ -4379,13 +4378,13 @@ Not built, deliberately:
   review) and no consumer has hit it yet; it is the obvious follow-up if one
   does.
 - **Reconciling `<YAxisIndicator side>` with its `axis`** — that component takes
-  an explicit `side` (default `'right'`) *alongside* `axis`, so it can already be
+  an explicit `side` (default `'right'`) _alongside_ `axis`, so it can already be
   pointed at a gutter its axis isn't in, and it is a published prop pair. Adding
   the offset there without settling what happens when the two disagree would
   just relocate the ambiguity. Its own change.
 - **Clamping a pill to the gutter it sits in** — a pill is sized to content and
   deliberately unclipped, so a long formatted value can overflow past its
-  gutter; an *outer*-axis pill has only its own column left before the
+  gutter; an _outer_-axis pill has only its own column left before the
   container's edge, so it spills outside the chart box sooner than an innermost
   one did (Layer-2 review). Truncating a number is worse than overflowing it,
   and the fix that isn't a truncation (measure, then flip inward) is real work

@@ -39,7 +39,7 @@ A bucket closes when an event arrives past its boundary.
 const barChart = live.aggregate(Sequence.every('5m'), { latency: 'avg' });
 
 // Fires each time a 5m bucket closes — append to your chart
-barChart.on('close', (event) => {
+barChart.on('event', (event) => {
   const start = event.begin();
   const avg = event.get('latency');
   appendBar({ start, avg });
@@ -127,7 +127,7 @@ const live = new LiveSeries({
 // Bar chart: 5m average latency
 const barChart = live.aggregate(Sequence.every('5m'), { latency: 'avg' });
 
-barChart.on('close', (event) => {
+barChart.on('event', (event) => {
   appendBar({ start: event.begin(), avg: event.get('latency') });
 });
 

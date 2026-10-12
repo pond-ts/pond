@@ -148,6 +148,34 @@ export type Column =
  * invalid cells hold an arbitrary value (typically `0`); callers
  * must consult `validity` before treating a slot as meaningful.
  *
+ * **The rule: a non-finite number in a number column means missing** —
+ * [PND-NANREP] (first for `NaN`, then extended to `±Infinity`). There is no
+ * such thing as a *defined* `NaN`, `Infinity` or `-Infinity` cell. Every
+ * producer that writes a numeric column (`fromColumns`, the Arrow doors,
+ * `withColumn`'s typed door, and every operator's own arithmetic — `diff`
+ * of `MAX - (-MAX)`, a cumulative sum that overflows, a `rolling` /
+ * `aggregate` / `smooth` result that overflows, a `scan` step, `collapse`
+ * reducer or `mapColumns` mapper returning a non-finite number) stores a
+ * non-finite result as a **missing** cell: validity bit cleared,
+ * `definedCount` excluding it. So `read(i)` returns `undefined`, `scan()`
+ * skips it, and `count()` / `nullCount()` / `hasMissing()` count it as
+ * missing (so `count() + nullCount() === length` always). Doors that
+ * *reject* `NaN` (row intake, `withColumn`'s boxed door) reject
+ * `±Infinity` alike.
+ *
+ * A consequence: every defined cell is finite, so a column built by the
+ * library always has `allFinite === true`. The flag and the reducers'
+ * guarded paths are kept for now (removing them is a later internal
+ * cleanup); only a caller of this trusted constructor can still set it
+ * `false`.
+ *
+ * The storage is deliberately not part of the rule. Today missing is a
+ * bitmap bit; a later internal switch to NaN-in-buffer would change no
+ * observable answer. **This constructor is the trusted door and does not
+ * scan**: a caller handing it a buffer must clear the validity bit of
+ * any non-finite slot itself (`float64ColumnFromArray` and the operator
+ * output helpers do it for you).
+ *
  * `_values` is **substrate-internal**: it's the raw buffer handle
  * that reducers, builders, and other substrate-level code reach
  * for in their hot paths. The class permits `length <=
@@ -387,6 +415,15 @@ export class BooleanColumn implements ColumnBase<boolean, 'boolean'> {
  * Builds a `Float64Column` from an array of `number | null | undefined`
  * values. The output's `validity` bitmap is allocated only when at
  * least one input slot is missing.
+ *
+ * A non-finite slot (`NaN`, `±Infinity`) is stored as **missing**, the
+ * same as `undefined` — the non-finite-means-missing rule (see
+ * `Float64Column`). This builder is the shared sink for the boxed
+ * operator paths (`collapse`, `fill`, `scan`, `shift`, `mapColumns`, the
+ * generic `rolling` sweep, the chunked fallbacks of `diff` /
+ * `cumulative`), so enforcing the rule here is what keeps their computed
+ * non-finite results from surfacing as defined cells. Every defined cell
+ * is therefore finite and the column is `allFinite`.
  */
 export function float64ColumnFromArray(
   source: ReadonlyArray<number | null | undefined>,
@@ -394,25 +431,18 @@ export function float64ColumnFromArray(
   const length = source.length;
   validateColumnLength(length, 'Float64Column');
   const values = new Float64Array(length);
-  // Data-derive `allFinite` in the copy loop: only *defined* cells
-  // count (a missing slot doesn't make the column non-finite). Finite
-  // data → `true` (reducers take the fast path); an overflow / NaN cell
-  // → `false` (guarded path, correct). See the field's safety contract.
-  let allFinite = true;
   for (let i = 0; i < length; i += 1) {
     const v = source[i];
-    if (typeof v === 'number') {
-      values[i] = v;
-      if (!Number.isFinite(v)) allFinite = false;
-    } else {
-      values[i] = 0;
-    }
+    // `v - v === 0` is the finite test: `NaN - NaN` and
+    // `Infinity - Infinity` are both `NaN`. A non-finite slot is missing.
+    values[i] = typeof v === 'number' && v - v === 0 ? v : 0;
   }
   const validity = validityFromPredicate(length, (i) => {
     const v = source[i];
-    return typeof v === 'number';
+    return typeof v === 'number' && v - v === 0;
   });
-  return new Float64Column(values, length, validity, allFinite);
+  // Every defined cell passed the finite test above.
+  return new Float64Column(values, length, validity, true);
 }
 
 /**

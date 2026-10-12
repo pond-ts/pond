@@ -75,6 +75,207 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **core**: **`ordering: 'strict' | 'reorder' | 'clamp'` on every loader**
+  (`new TimeSeries`, `TimeSeries.fromJSON` / `fromColumns` / `fromArrow`,
+  `ValueSeries.fromJSON` / `fromColumns` / `fromArrow`), with the new
+  `BatchOrderingMode` type exported. Same option name and vocabulary as
+  `LiveSeries`' `ordering` (`'strict'` / `'reorder'`), so one concept has one
+  name across batch and live. `'strict'` is the default (unchanged);
+  `'reorder'` is what `sort: true` did. **`'clamp'`** is new: rows stay in place and a key
+  earlier than its predecessor's takes that key (the running max), so a noisy
+  feed's lone backwards timestamp lands on its neighbour instead of failing the
+  ingest or being moved. Values are untouched, ties pass through, non-finite
+  keys are still rejected, value-column `Float64Array`s stay zero-copy, and a
+  caller's key buffer is never mutated. `time` keys and `ValueSeries` axes
+  only — a `timeRange` / `interval` key throws under `'clamp'`. [PND-INGEST]
+
+- **charts:** `TradingTimeScale.flatFormat(count, drawn?)` — `drawn` is the
+  subset of `ticks(count)` actually rendered; flat promotions walk only those,
+  so a dropped tick's period turn carries to the next drawn one. Omitted, it
+  labels every tick as before.
+
+### Changed
+
+- **core** (**breaking**): **A `NaN` in a number column now always means
+  missing.** Typed-array intake (`fromColumns`, `withColumn` with a
+  `Float64Array`) already turned `NaN` into a gap and row intake already
+  rejected it, but an operator's own arithmetic could still write a
+  _defined_ `NaN` — `diff` / `rate` / `pctChange` of `Infinity - Infinity`,
+  a `cumulative` sum that reaches
+  `Infinity` and then meets `-Infinity`, or a `cumulative` custom fold,
+  `scan` step or numeric `collapse` reducer that returns `NaN`. Those
+  cells are now stored as **missing**: `at(i)` / `get` / `read` return
+  `undefined`, `scan()` skips them, and `nullCount()` / `hasMissing()` count
+  them. Same in live `diff` / `rate` / `pctChange` / `cumulative` views, in a
+  live `map` whose function writes `NaN` into a number field, and in
+  `@pond-ts/process` `RangeOutput.set` / `sealRange`. A `cumulative` that hits
+  `NaN` keeps its accumulator, so built-in folds read missing from that row on.
+  `±Infinity` now follows the same rule — see the next entry. Storage is
+  unchanged (still the validity bitmap); this locks the rule so a later
+  NaN-in-buffer storage switch is invisible. **Migration:** code that tested
+  `Number.isNaN(v)` on an operator's output should test `v === undefined`.
+
+- **core** (**breaking**): **Any non-finite number — `NaN`, `Infinity` or
+  `-Infinity` — in a number column means missing.** `Infinity` used to get five
+  different answers; it now gets one. A non-finite result is stored as a
+  **missing** cell (`undefined` on read, counted by `nullCount()` /
+  `hasMissing()`, skipped by `scan()`), so `count() + nullCount() === length`
+  always holds. What changed:
+  - **No longer throws:** `mapColumns` (a mapper returning `NaN` /
+    `±Infinity` — was a `RangeError`), and `rolling` / `aggregate` / `smooth`
+    / `baseline` / `byColumn` / `pivotByGroup` / `arrayAggregate` whose result
+    overflows (was a `ValidationError`). Those cells are now missing.
+  - **No longer a defined value:** `diff` / `rate` / `pctChange` /
+    `cumulative` / `scan` / `collapse` results that overflow to `±Infinity`
+    (e.g. `diff` of `MAX - (-MAX)`, a `cumulative` sum past `Number.MAX_VALUE`
+    — missing from that row on, as its accumulator stays `Infinity`).
+  - **Reducers never answer non-finite:** a reducer result that overflows
+    (`sum`, `avg`, `stdev`, or a custom reducer returning `Infinity`) is
+    `undefined` — in `reduce()` too, which used to return `Infinity`. A
+    rolling `sum` / `avg` / `stdev` (batch, live, and `smooth('movingAverage')`)
+    reads missing only while the current window overflows, and reads finite
+    again once the large values leave it. A mean is still sum-then-divide, so
+    `avg([MAX_VALUE, MAX_VALUE])` reads missing although the mean is finite.
+    (The column methods `col.sum()` / `col.mean()` are unchanged.)
+  - **Doors:** `withColumn` with a `Float64Array` reads `±Infinity` as a gap,
+    as it already read `NaN` (was a `ValidationError`). Row intake
+    (`new TimeSeries`, `fromJSON`, `LiveSeries.push`) and `withColumn` with a
+    plain array still reject `NaN` and `±Infinity` alike; `fromColumns` /
+    `fromArrow` already read both as a gap.
+  - **Live:** `diff` / `rate` / `pctChange` / `cumulative` / `map` views and
+    every live accumulator (`aggregate`, `rolling`, `reduce`) emit `undefined`
+    for a non-finite result, so a library view's `toTimeSeries()` no longer
+    throws on an overflow. A user `map` keeps the source schema, so a `map` fn
+    that writes a non-finite value reads missing too — and `toTimeSeries()`
+    then works if that column is optional, but throws the required-column
+    `ValidationError` if it is required. `@pond-ts/process` `RangeOutput.set` / `sealRange` / `packColumn`
+    store `±Infinity` as missing too.
+
+  **Migration:** code that caught a `ValidationError` / `RangeError` from these
+  operators to detect overflow, or tested `v === Infinity` on their output,
+  should test `v === undefined`. Code relying on
+  `withColumn(name, float64Array)` to reject `Infinity` must check it before
+  the call.
+
+- **core**: Out-of-order ingest errors now suggest `{ ordering: 'reorder' }`
+  (and `'clamp'` where it applies) instead of `{ sort: true }`. Code matching
+  on the old message text needs updating.
+
+### Deprecated
+
+- **core**: **`sort?: boolean`** on the loaders above — use
+  `ordering: 'reorder'`. `sort: true` still works for this release and maps to
+  `'reorder'`; it will be removed in the next minor. Passing `sort` together with
+  a conflicting `ordering` (e.g. `sort: true, ordering: 'clamp'`)
+  throws a `ValidationError`.
+
+- **docs**: **The versioning policy is now published** — a "Versioning"
+  section in the root README and each package README, and a
+  [Versioning](https://pond-ts.org/docs/reference/versioning) page on the
+  docs site. Pre-1.0 a minor may break (always marked **breaking** here with a
+  migration note), patches never break, all packages release in lock-step,
+  and from 1.0 the project follows semver. The page also defines the public
+  API: each package's entry-point exports as mapped in `API.md`, excluding
+  anything marked experimental or internal.
+
+### Changed
+
+- **core** (**breaking**): **`select(...keys)` throws on a key that isn't a
+  column, and on an array argument.** It used to drop unknown keys silently, so
+  a typo — or `select(['a', 'b'])` instead of `select('a', 'b')` — returned an
+  empty-payload series with no error. Now an unknown key throws a `RangeError`
+  naming it and listing the valid columns, and an array argument throws a
+  `TypeError` telling you to spread it (`select(...names)`). Applies to
+  `TimeSeries`, `LiveSeries`, `LiveView`, `LiveAggregation` and
+  `LiveRollingAggregation` (the live ones throw when the view is built, not on
+  the first event). `Event.select` rejects an array argument but still
+  tolerates absent keys, since an event payload may omit optional fields.
+  Duplicate keys are still accepted and select the column once. **Migration:**
+  fix the misspelled column, or spread the array.
+
+- **core / react**: **The live column reads are no longer experimental.**
+  `LiveView.column()`, `LiveView.keyColumn()`, `LiveView.partitionBy().toMap()`,
+  the `LiveColumnGroup` class and `@pond-ts/react`'s `useLiveVersion` shipped in
+  v0.19.0 labelled "experimental — may change in 0.19.x". They are now part of
+  the stable surface that 1.0 will commit to, with no change to their shape.
+
+- **charts** (**breaking**): **An `<AreaChart>`'s `baseline` no longer changes
+  the y-axis range.** Since v0.71.0 the default zero baseline (and any numeric baseline)
+  was pulled into the auto-fit domain, so an area over data running $100–$200
+  drew on a $0–$200 axis, and switching `baseline` rescaled the chart — and
+  every other layer sharing its axis. The axis now fits the data, exactly as it
+  does for a `<LineChart>` of the same column; `baseline` only moves where the
+  fill stops. A baseline outside the axis range rests the fill on the nearest
+  edge, so on data that never crosses zero the default now draws the same as
+  `baseline="floor"`. **Migration:** where the fill should read from zero — a
+  stack, a quantity like throughput — put zero on the axis with
+  `<YAxis min={0}>` (`max={0}` for an all-negative series). Areas whose data
+  already reaches their baseline, or whose axis is pinned, are unchanged.
+- `pond-ts` (**breaking**, types only): **`TimeSeries.toJSON()`'s return
+  type narrows on `rowFormat`**, matching `LiveSeries.toJSON()`. The default
+  / `'array'` form returns `TimeSeriesJsonOutputArray<S>` and
+  `{ rowFormat: 'object' }` returns `TimeSeriesJsonOutputObject<S>`, so
+  `result.rows` is typed against your schema with no cast; a `rowFormat`
+  typed as `JsonRowFormat` gets the union. It used to return the loose
+  `TimeSeriesJsonInput<SeriesSchema>`. **Migration:** drop any
+  `as TimeSeriesJsonInput<…>` / `as TimeSeriesJsonOutput…<…>` casts (they
+  still compile). Two patterns now fail to compile: annotating an
+  **object**-form result as `TimeSeriesJsonInput<SeriesSchema>` — including
+  a `JsonRowFormat`-typed (union) result, since it can be the object form —
+  (use `TimeSeriesJsonInput<typeof schema>`, or no annotation), and reading a
+  column by name off a default (tuple) row, which was always `undefined` at
+  runtime. `LiveSeries.toJSON()` also gains the `JsonRowFormat` overload, which
+  previously had no matching signature. [PND-TSJSONT]
+- `pond-ts`: **`TimeSeries.toJSON()` tuple rows are ~2.5–3.5× faster at 100k
+  rows** — one array per row, filled in place, instead of a mapped array spread
+  into a second one. Tuple rows were slower than object rows; they now match or
+  beat them. Output unchanged.
+
+- **core** (**breaking**): **Every `on()` overload on `LiveAggregation` and
+  `LiveRollingAggregation` now returns an unsubscribe function**, matching
+  `LiveSeries.on` / `LiveView.on`. `on('bucket')` and `on('update')` used to
+  return `this`, so those listeners could never be removed. **Migration:** a
+  chained `live.aggregate(…).on('bucket', fn)` now yields the unsubscribe
+  function, not the operator (same for `live.rolling(…).on('update', fn)`) —
+  assign the operator first, then subscribe.
+- **core** (**breaking, type-level**): **`LiveAggregation` listeners
+  (`'event'`, `'bucket'`) and `LiveRollingAggregation`'s `'event'` listener
+  receive the schema-narrowed `EventForSchema<Out>`** — the same type `at()`
+  and the `closed()` series hand out — instead of a widened
+  `Event<Interval, Record<string, …>>` / `any`. `e.get('col')` is now typed
+  per output column, and naming a column the aggregation doesn't produce is a
+  compile error. As a result a `LiveAggregation<S, Out>` is now assignable to
+  `LiveSource<Out>` ([PND-LIVESRC]). The same narrowing applies to the
+  `'event'` listener of the keyed-form fused `live.rolling({...})`
+  (`LiveFusedRolling`), `live.reduce(…)` (`LiveReduce`), and the
+  clock-triggered partitioned `rolling(…)` variants
+  (`LivePartitionedSyncRolling` / `LivePartitionedFusedRolling`), which
+  previously typed it `(event: any)`. Both `LiveAggregation` /
+  `LiveRollingAggregation` `on()` methods now throw a
+  `TypeError` on an unknown event type instead of silently registering the
+  listener.
+
+### Removed
+
+- **core** (**breaking**): **`LiveAggregation.on('close', fn)` is removed —
+  use `on('event', fn)`**, which it was an alias for. Untyped callers that
+  still pass `'close'` get a `TypeError` naming the replacement.
+
+### Removed
+
+- `pond-ts` (**breaking**, types only): **the back-compat type alias
+  `AggregateOutputMap` is gone — use `AggregateMap`.** It has been an exact
+  alias of `AggregateMap` since v0.23.0, when the shorthand and
+  `{ from, using }` spec forms were unified into one map type. The internal
+  schema aliases `RollingOutputMapSchema` (identical to `RollingSchema`) and
+  `AggregateOutputMapResultSchema` (identical to `AggregateSchema`) are removed
+  with it; neither was reachable from a public entry point. **Migration:**
+  replace `AggregateOutputMap<S>` with `AggregateMap<S>` — no runtime change.
+  The fused-rolling duplicate-output error message now says "use a
+  `{ from, using }` spec entry" instead of naming the removed type.
+
 ### Fixed
 
 - **charts: time-axis tick labels no longer overprint each other.** The tick
@@ -93,28 +294,6 @@ include new features and type-level changes; patch bumps are strictly additive.
   Under `align="auto"` the edge labels anchor by the full tick list, so a drop
   never re-anchors another label. Applies to every `align` mode and to custom
   `format`s; explicit `ticks` and `transform` ticks are untouched.
-
-### Added
-
-- **charts:** `TradingTimeScale.flatFormat(count, drawn?)` — `drawn` is the
-  subset of `ticks(count)` actually rendered; flat promotions walk only those,
-  so a dropped tick's period turn carries to the next drawn one. Omitted, it
-  labels every tick as before.
-
-### Changed
-
-- **charts** (**breaking**): **An `<AreaChart>`'s `baseline` no longer changes
-  the y-axis range.** Since v0.71.0 the default zero baseline (and any numeric baseline)
-  was pulled into the auto-fit domain, so an area over data running $100–$200
-  drew on a $0–$200 axis, and switching `baseline` rescaled the chart — and
-  every other layer sharing its axis. The axis now fits the data, exactly as it
-  does for a `<LineChart>` of the same column; `baseline` only moves where the
-  fill stops. A baseline outside the axis range rests the fill on the nearest
-  edge, so on data that never crosses zero the default now draws the same as
-  `baseline="floor"`. **Migration:** where the fill should read from zero — a
-  stack, a quantity like throughput — put zero on the axis with
-  `<YAxis min={0}>` (`max={0}` for an all-negative series). Areas whose data
-  already reaches their baseline, or whose axis is pinned, are unchanged.
 
 ## [0.72.0] — 2026-10-08
 

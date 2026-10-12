@@ -120,6 +120,28 @@ const SHAPES: Record<string, Cell[]> = {
     1e6,
     ...Array.from({ length: 40 }, () => 0.01 * rnd()),
   ],
+  // [PND-NANREP] 1e300 overflows plain Welford's m2. The sweep notices the
+  // first non-finite answer and re-runs the column through the state, whose
+  // overflow lanes (reducers/overflow-lanes.ts) recover once the huge values
+  // leave — so the answers stay bit-identical here too.
+  'huge values enter and leave': [
+    ...Array.from({ length: 30 }, () => rnd() * 10),
+    1e300,
+    -1e300,
+    3e299,
+    1e200,
+    ...Array.from({ length: 30 }, () => rnd() * 10),
+    -2e300,
+    ...Array.from({ length: 30 }, () => rnd() * 10),
+  ],
+  // −0.9·MAX → 0.9·MAX overflows Welford's *delta* from a one-element
+  // window: the plain recurrence is left with a non-finite mean and m2 at
+  // −Infinity, which clamps to a defined 0. Ending the series there means no
+  // later NaN would trigger the re-run — the mean check must.
+  'delta overflow at the end': [
+    -0.9 * Number.MAX_VALUE,
+    0.9 * Number.MAX_VALUE,
+  ],
   constant: Array.from({ length: 100 }, () => 7),
   'two values': Array.from({ length: 100 }, (_, i) => (i % 2 ? 1 : 1.0000001)),
   monotonic: Array.from({ length: 200 }, (_, i) => i * 1.5),

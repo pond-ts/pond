@@ -164,28 +164,51 @@ describe('TimeSeries.scan', () => {
     });
   });
 
-  describe('NaN — trusted-compute output, defined source cell', () => {
-    it('lands a computed non-finite output as a defined cell', () => {
+  describe('non-finite means missing — trusted-compute output [PND-NANREP]', () => {
+    it('stores a computed NaN output as a missing cell', () => {
       const s = makeSeries([1, 2, 3]).scan('value', (a) => [a, NaN], 0, {
         output: 'n',
       });
-      expect(s.at(0)?.get('n')).toBeNaN();
-      // defined NaN, not a missing cell
-      expect(s.column('n').read(0)).toBeNaN();
+      expect(s.at(0)?.get('n')).toBeUndefined();
+      expect(s.column('n').read(0)).toBeUndefined();
+      expect(s.column('n').count()).toBe(0);
+      expect(s.column('n').nullCount()).toBe(3);
+      expect(s.column('n').hasMissing()).toBe(true);
     });
 
-    it('treats a stored NaN as a defined value step is called with', () => {
-      // produce a column of all-NaN, then count how many cells the next scan
-      // sees as defined — if NaN were skipped the count would never advance.
+    it('resumes after a non-finite output; ±Infinity is missing too', () => {
+      const outs = [NaN, Infinity, 7, -Infinity];
+      const s = makeSeries([1, 2, 3, 4]).scan(
+        'value',
+        (a) => [a + 1, outs[a]!],
+        0,
+        { output: 'n' },
+      );
+      expect([0, 1, 2, 3].map((i) => s.at(i)?.get('n'))).toEqual([
+        undefined,
+        undefined,
+        7,
+        undefined,
+      ]);
+      expect(s.column('n').nullCount()).toBe(3);
+      expect(s.column('n').count()).toBe(1);
+    });
+
+    it('a downstream scan never sees the NaN cells', () => {
       const withNaN = makeSeries([1, 2, 3]).scan('value', (a) => [a, NaN], 0, {
         output: 'n',
       });
-      const counted = withNaN.scan('n', (a) => [a + 1, a + 1], 0, {
-        output: 'cnt',
-      });
-      expect([0, 1, 2].map((i) => counted.at(i)?.get('cnt'))).toEqual([
-        1, 2, 3,
-      ]);
+      let calls = 0;
+      withNaN.scan(
+        'n',
+        (a) => {
+          calls += 1;
+          return [a + 1, a + 1];
+        },
+        0,
+        { output: 'cnt' },
+      );
+      expect(calls).toBe(0);
     });
   });
 

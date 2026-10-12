@@ -12,7 +12,7 @@
  * shared columns row by row.
  */
 import { describe, expect, it } from 'vitest';
-import { TimeSeries, ValidationError } from '../src/index.js';
+import { TimeSeries } from '../src/index.js';
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -119,7 +119,7 @@ describe('rolling { count } columnar fast path — output shape', () => {
     expect(r.keyColumn()).toBe(s.keyColumn());
   });
 
-  it('rejects a non-finite reducer result like the generic sweep (sum overflow)', () => {
+  it('stores a non-finite reducer result as missing, like the generic sweep (sum overflow)', () => {
     const big = new TimeSeries({
       name: 'v',
       schema,
@@ -128,22 +128,22 @@ describe('rolling { count } columnar fast path — output shape', () => {
         [1_000, 1.2e308],
       ] as Array<[number, number]>,
     });
-    // Window [1.2e308, 1.2e308] → incremental sum overflows to Infinity.
-    // Fast path asserts at write time; must match the generic sweep's
-    // post-pass rejection (ValidationError, same message shape).
-    expect(() =>
-      big.rolling({ count: 2 }, { total: { from: 'v', using: 'sum' } }),
-    ).toThrow(ValidationError);
-    expect(() =>
-      big.rolling({ count: 2 }, { total: { from: 'v', using: 'sum' } }),
-    ).toThrow(/rolling column 'total'.*not a valid 'number' value/);
-    // The generic sweep (custom column appended) rejects identically.
-    expect(() =>
-      big.rolling(
-        { count: 2 },
-        { total: { from: 'v', using: 'sum' }, n: customCount },
-      ),
-    ).toThrow(ValidationError);
+    // Window [1.2e308, 1.2e308] → incremental sum overflows to Infinity,
+    // which is a missing cell ([PND-NANREP]) on both the fast path and
+    // the generic sweep (custom column appended).
+    const fast = big.rolling(
+      { count: 2 },
+      { total: { from: 'v', using: 'sum' } },
+    );
+    const generic = big.rolling(
+      { count: 2 },
+      { total: { from: 'v', using: 'sum' }, n: customCount },
+    );
+    for (const r of [fast, generic]) {
+      expect(r.at(0)!.get('total')).toBe(1.2e308);
+      expect(r.at(1)!.get('total')).toBeUndefined();
+      expect(r.column('total').nullCount()).toBe(1);
+    }
   });
 
   it('downstream ops read the fast-path columns (validity round-trips)', () => {

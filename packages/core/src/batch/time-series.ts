@@ -10,7 +10,6 @@ import type {
   BaselineSchema,
   AggregateFunction,
   AggregateReducer,
-  AggregateOutputMap,
   AggregateOutputSpec,
   AggregateMap,
   AggregateSchema,
@@ -73,6 +72,7 @@ import type {
   ValueColumnNameForSchema,
   ValueColumnsForSchema,
   ValueKeyedSchema,
+  BatchOrderingMode,
 } from '../schema/index.js';
 import { float64ColumnFromTypedArray } from './operators/numeric-io.js';
 import {
@@ -88,6 +88,7 @@ import {
 import { scanOp, type ScanStep } from './operators/scan.js';
 import { byValueOp } from './operators/by-value.js';
 import { ingestColumnsToStore } from './operators/ingest-columns.js';
+import { resolveOrdering } from './operators/out-of-order.js';
 import {
   arrowToColumns,
   type ArrowTableLike,
@@ -167,10 +168,12 @@ import { parseDuration } from '../core/duration.js';
 import {
   resolveReducer,
   bucketStateFor,
+  finiteOrMissing,
   rollingStateFor,
   type AggregateBucketState,
   type RollingReducerState,
 } from '../reducers/index.js';
+import { LanedSum } from '../reducers/overflow-lanes.js';
 
 type RangeLike = EventKey | TimeRangeInput | IntervalInput;
 type BoundaryLike = EventKey | TimestampInput;
@@ -275,6 +278,45 @@ function toBoundaryTimestamp(value: BoundaryLike): number {
     return value.begin();
   }
   return value instanceof Date ? value.getTime() : value;
+}
+
+/**
+ * Validates the arguments of a `select(...keys)` call against a schema.
+ * Shared by `TimeSeries.select` and the live `select`s so every surface
+ * reports the same errors:
+ *
+ * - an array argument (`select(['a', 'b'])` instead of
+ *   `select('a', 'b')`) throws a `TypeError` telling the caller to
+ *   spread the names;
+ * - a key that is not a payload column throws a `RangeError` naming the
+ *   key and listing the valid columns.
+ *
+ * Duplicate keys are allowed and collapse to one column. Internal — not
+ * re-exported from the package entry point.
+ */
+export function assertSelectKeys(
+  op: string,
+  schema: SeriesSchema,
+  keys: readonly unknown[],
+): void {
+  const valid = schema.slice(1).map((column) => column.name);
+  for (const key of keys) {
+    if (Array.isArray(key)) {
+      throw new TypeError(
+        `${op}: expected column names as separate arguments, got an array ` +
+          `[${key.map((k) => `'${String(k)}'`).join(', ')}]; spread it: ` +
+          `select(...names)`,
+      );
+    }
+    if (typeof key !== 'string' || !valid.includes(key)) {
+      throw new RangeError(
+        `${op}: unknown column '${String(key)}'; valid columns: ` +
+          (valid.length === 0
+            ? '(none)'
+            : valid.map((name) => `'${name}'`).join(', ')),
+      );
+    }
+  }
 }
 
 export function toKey(value: KeyLike): EventKey {
@@ -579,7 +621,9 @@ function aggregateValues(
   const numeric = defined.filter(
     (value): value is number => typeof value === 'number',
   );
-  return resolveReducer(operation).reduce(defined, numeric);
+  // A non-finite result (an overflow) is missing, like every reducer
+  // result path — see `finiteOrMissing`.
+  return finiteOrMissing(resolveReducer(operation).reduce(defined, numeric));
 }
 
 /**
@@ -603,7 +647,7 @@ function tryReduceColumnFastPath(
   }
   const def = resolveReducer(reducer);
   if (def.reduceColumn === undefined) return { ok: false };
-  return { ok: true, value: def.reduceColumn(column) };
+  return { ok: true, value: finiteOrMissing(def.reduceColumn(column)) };
 }
 
 function isBuiltInAggregateReducer(
@@ -618,7 +662,7 @@ function applyAggregateReducer(
 ): ColumnValue | undefined {
   return isBuiltInAggregateReducer(reducer)
     ? aggregateValues(reducer, values)
-    : (reducer as CustomAggregateReducer)(values);
+    : finiteOrMissing((reducer as CustomAggregateReducer)(values));
 }
 
 // `normalizeAggregateColumns`, `isAggregateOutputSpec`, and the
@@ -837,6 +881,36 @@ function timeSeriesFromTrustedStore<S extends SeriesSchema>(
 }
 
 /**
+ * Builds a series from **computed** rows — an operator's own output
+ * assembled row-shaped (`smooth`, `baseline`, `align`, the row paths of
+ * `aggregate` / `rolling` / `pivotByGroup` / `arrayAggregate`). Same
+ * validation as row intake with one difference: a non-finite number in a
+ * `number` column (`NaN`, `±Infinity` — an overflow, `Infinity - Infinity`)
+ * is stored as **missing** rather than rejected, because a non-finite number
+ * in a number column means missing ([PND-NANREP]). User-supplied rows keep
+ * the strict door (`new TimeSeries`), which rejects them.
+ */
+function timeSeriesFromComputedRows<S extends SeriesSchema>(
+  name: string,
+  schema: S,
+  rows: ReadonlyArray<unknown>,
+): TimeSeries<S> {
+  const frozenSchema = Object.freeze(schema.slice()) as S;
+  const store = SeriesStore.fromValidatedRows(
+    frozenSchema,
+    rows as TimeSeriesInput<S>['rows'],
+    'strict',
+    { nonFiniteAsMissing: true },
+  ) as SeriesStore<S>;
+  const trustedInput: TrustedStoreInput<S> = {
+    name,
+    schema: frozenSchema,
+    [TRUSTED_STORE_SENTINEL]: store,
+  };
+  return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
+}
+
+/**
  * An immutable, schema-typed, ordered collection of events — the batch
  * layer's core primitive. A series is constructed whole from complete data
  * and never mutated: every transform (`filter`, `align`, `rollup`, …)
@@ -913,10 +987,13 @@ export class TimeSeries<S extends SeriesSchema> {
     input: TimeSeriesJsonInput<S> & {
       parse?: TimeZoneOptions;
       /**
-       * Sort rows by key before construction (off by default; see
-       * `TimeSeriesInput.sort`). Useful when reviving a wire payload whose
-       * rows aren't guaranteed sorted — avoids a manual pre-sort.
+       * How to handle a row whose key is earlier than the previous row's
+       * (default `'strict'`; see {@link BatchOrderingMode}). `'reorder'` is useful when
+       * reviving a wire payload whose rows aren't guaranteed sorted — avoids a
+       * manual pre-sort.
        */
+      ordering?: BatchOrderingMode;
+      /** @deprecated Use `ordering: 'reorder'` (one-release alias). */
       sort?: boolean;
     },
   ): TimeSeries<S> {
@@ -924,7 +1001,7 @@ export class TimeSeries<S extends SeriesSchema> {
       name: input.name,
       schema: input.schema,
       rows: parseJsonRows(input.schema, input.rows, input.parse),
-      sort: input.sort ?? false,
+      ordering: resolveOrdering('fromJSON', input),
     });
   }
 
@@ -953,19 +1030,20 @@ export class TimeSeries<S extends SeriesSchema> {
    * the fast path): the resulting series' columns alias the caller's buffers.
    * Mutating an adopted buffer after construction mutates the series. Pass a
    * fresh buffer (e.g. straight off a decode) if this matters; `number[]`
-   * columns are always copied. (**`sort` disables the adoption** — a reorder
-   * needs its own buffers, so every column is copied when sorting.)
+   * columns are always copied. (**`ordering: 'reorder'` disables the
+   * adoption** — a reorder needs its own buffers, so every column is copied
+   * when sorting.)
    *
    * **Ordering.** Keys must be **non-decreasing** — bisect-based operators (crop,
    * `atTime`, range queries) rely on it — so an out-of-order columnar input
    * throws by default (a backwards key on the *trusted* fast door is a corruption
-   * signal, not something to silently accept). Pass **`sort: true`** to sort the
-   * rows by key before construction instead — the columnar analog of
-   * {@link TimeSeries.fromJSON}'s `sort`, paying `O(n log n)` + a copy only when
-   * asked. The sort is **stable**, so rows sharing a key keep their input order.
-   * (To flatten a genuine backwards blip to a plateau — a different, lossy choice
-   * — clamp the key column yourself before ingest; the library won't mutate data
-   * for you.)
+   * signal, not something to silently accept). Pass **`ordering: 'reorder'`**
+   * to sort the rows by key before construction instead, paying
+   * `O(n log n)` + a copy only when asked; the sort is **stable**, so rows
+   * sharing a key keep their input order. Pass **`ordering: 'clamp'`**
+   * (`time` keys only) to keep rows in place and carry a backwards timestamp
+   * forward to its predecessor's — the right call for a noisy feed's lone
+   * backwards blip, and a **key rewrite**, so read {@link BatchOrderingMode} first.
    *
    * **Value columns:** `number` (→ `Float64Column`; `Float64Array` adopted) and
    * `string` (→ `StringColumn`, dict-encoded when it pays; `null`/`undefined`
@@ -985,23 +1063,27 @@ export class TimeSeries<S extends SeriesSchema> {
    * every row and all of one type (string or number).
    *
    * @throws ValidationError on a missing column, a length mismatch, an
-   *   unsupported kind, or an out-of-order (decreasing) timestamp when `sort`
-   *   is not set — keys must be non-decreasing, same as `fromJSON`. Throws
+   *   unsupported kind, an out-of-order (decreasing) timestamp under the
+   *   default `ordering: 'strict'` — keys must be non-decreasing, same as
+   *   `fromJSON` — or `'clamp'` on a two-edged key. Throws
    *   RangeError on a non-finite timestamp key (from the key-column
    *   constructor) or a duplicate column name.
    */
   static fromColumns<S extends SeriesSchema>(
     input: TimeSeriesColumnarInput<S> & {
       /**
-       * Sort the rows by key before construction (off by default), for a columnar
-       * payload whose rows aren't guaranteed ordered — the counterpart of
-       * `fromJSON`'s `sort`. Stable; disables the `Float64Array` zero-copy adoption
-       * (columns are reordered into fresh buffers).
+       * How to handle a row whose key is earlier than the previous row's
+       * (default `'strict'`; see {@link BatchOrderingMode}). `'reorder'` is stable and
+       * disables the `Float64Array` zero-copy adoption (columns are reordered
+       * into fresh buffers); `'clamp'` keeps value columns adopted.
        */
+      ordering?: BatchOrderingMode;
+      /** @deprecated Use `ordering: 'reorder'` (one-release alias). */
       sort?: boolean;
     },
   ): TimeSeries<S> {
-    const { name, schema, columns, sort = false } = input;
+    const { name, schema, columns } = input;
+    const ordering = resolveOrdering('fromColumns', input);
 
     // Key column (schema[0]). Every temporal key kind is accepted; a two-edged
     // one (`timeRange` / `interval`) arrives flattened across extra columns
@@ -1040,7 +1122,7 @@ export class TimeSeries<S extends SeriesSchema> {
       keyNoun: 'timestamps',
       schema: schema as unknown as ColumnSchema,
       columns,
-      sort,
+      ordering,
     });
     return TimeSeries.#fromTrustedStore(name, schema, store);
   }
@@ -1094,7 +1176,9 @@ export class TimeSeries<S extends SeriesSchema> {
    * `string` value columns only.
    *
    * The rows must be time-ordered (as `fromColumns` requires); pass
-   * `{ sort: true }` for an unordered table (disables zero-copy adoption).
+   * `{ ordering: 'reorder' }` for an unordered table (disables zero-copy
+   * adoption) or `{ ordering: 'clamp' }` for a noisy one (see
+   * {@link BatchOrderingMode}).
    *
    * **Trust contract on the type parameter:** the runtime schema is derived
    * from the Arrow fields. Supplying `S` (`fromArrow<MySchema>(...)`) is a
@@ -1117,7 +1201,7 @@ export class TimeSeries<S extends SeriesSchema> {
       keyNoun: 'timestamps',
       schema: schema as unknown as ColumnSchema,
       columns,
-      sort: options.sort ?? false,
+      ordering: resolveOrdering('fromArrow', options),
       adopted,
     });
     return timeSeriesFromTrustedStore(name, schema as unknown as S, store);
@@ -1253,16 +1337,18 @@ export class TimeSeries<S extends SeriesSchema> {
       this.#store = trustedStore;
     } else {
       this.schema = Object.freeze(input.schema.slice()) as S;
-      // `{ sort: true }` sorts unsorted input by key before intake (otherwise
-      // the intake's non-decreasing-order check throws). Stable, so rows with
-      // equal keys keep their input order; same key comparator as
-      // `fromEvents` / `concat`. Copies the array — the caller's `rows` is not
-      // mutated.
-      const rows = input.sort
-        ? [...input.rows].sort((a, b) =>
-            compareEventKeys(toKey(a[0] as KeyLike), toKey(b[0] as KeyLike)),
-          )
-        : input.rows;
+      // `ordering: 'reorder'` sorts unsorted input by key before intake
+      // (otherwise the intake's non-decreasing-order check throws, or under
+      // `'clamp'` rewrites backwards keys). Stable, so rows with equal keys
+      // keep their input order; same key comparator as `fromEvents` /
+      // `concat`. Copies the array — the caller's `rows` is not mutated.
+      const ordering = resolveOrdering('TimeSeries', input);
+      const rows =
+        ordering === 'reorder'
+          ? [...input.rows].sort((a, b) =>
+              compareEventKeys(toKey(a[0] as KeyLike), toKey(b[0] as KeyLike)),
+            )
+          : input.rows;
       // `SeriesStore.fromValidatedRows` runs the column-native
       // intake (`validateAndNormalizeColumnar`) — same validation
       // rules as the pre-2a row-shape `validateAndNormalize` but
@@ -1272,6 +1358,7 @@ export class TimeSeries<S extends SeriesSchema> {
       this.#store = SeriesStore.fromValidatedRows(
         this.schema,
         rows,
+        ordering === 'clamp' ? 'clamp' : 'strict',
       ) as SeriesStore<S>;
     }
     Object.freeze(this);
@@ -1285,42 +1372,42 @@ export class TimeSeries<S extends SeriesSchema> {
    * emitted as `null`. By default rows are emitted as arrays; use `rowFormat: "object"` for rows
    * keyed by schema column names.
    *
-   * Return type is the broader `TimeSeriesJsonInput<SeriesSchema>`
-   * union — `result.rows` is typed as
-   * `ReadonlyArray<JsonRowForSchema<S> | JsonObjectRowForSchema<S>>`
-   * regardless of which `rowFormat` was passed. Consumers either
-   * cast or use the narrowed shape types
-   * `TimeSeriesJsonOutputArray<S>` / `TimeSeriesJsonOutputObject<S>`
-   * declared in `./types.js` for downstream typing.
+   * The return type **narrows on `rowFormat`**, as {@link LiveSeries.toJSON}
+   * does: omitted or `'array'` gives `TimeSeriesJsonOutputArray<S>` (tuple
+   * rows), `'object'` gives `TimeSeriesJsonOutputObject<S>` (schema-keyed
+   * rows), and a `rowFormat` only known as `JsonRowFormat` gives the union of
+   * the two. All three are assignable to `TimeSeriesJsonInput<S>`, so
+   * `TimeSeries.fromJSON(series.toJSON())` round-trips without a cast.
    *
-   * **Why no overload narrowing here?** A narrowed-overload pair
-   * (return-type-keyed on `rowFormat`) cascades TS2394 errors
-   * through several unrelated overload sets in this file
-   * (`pivotByGroup`, `rolling`, `arrayAggregate`, `arrayExplode`).
-   * The counterpart on {@link LiveSeries.toJSON} DOES narrow — for
-   * the networked snapshot path, the ergonomic win is already
-   * there.
-   *
-   * The cascade was long recorded here as un-isolated. It is now
-   * isolated, on {@link TimeSeries.toColumns}: the trigger is a
-   * **key-remapped mapped type** (`{ [C in S[number] as C['name']]:
-   * … }` — which is what `JsonObjectRowForSchema<S>` is) in a
-   * **method return position on this class**, and a method-level
-   * type parameter defers it past whatever resolution order trips
-   * it. `toColumns` carries the full write-up and the three
-   * workarounds that do *not* work. Narrowing this method is
-   * therefore unblocked, but it changes an existing public return
-   * type, so it wants its own decision rather than a drive-by —
-   * tracked as [PND-TSJSONT] in PLAN.md.
+   * **Why the `<T extends S = S>` parameter.** Same workaround, same reason,
+   * as {@link TimeSeries.toColumns}, which carries the full write-up:
+   * `JsonObjectRowForSchema<S>` is a key-remapped mapped type, and naming one
+   * directly in a method return position on this class cascades TS2394
+   * through unrelated overload sets (`pivotByGroup`, `rolling`,
+   * `arrayAggregate`, `arrayExplode`). A method-level type parameter defers
+   * the instantiation and the cascade disappears. `T` defaults to `S`, so
+   * `series.toJSON()` is exactly the precise type; an **explicit** `T` is
+   * unchecked (on a wide `TimeSeries<SeriesSchema>` the bound admits any
+   * schema), so don't write one.
    */
+  toJSON<T extends S = S>(options?: {
+    rowFormat?: 'array';
+  }): TimeSeriesJsonOutputArray<T>;
+  toJSON<T extends S = S>(options: {
+    rowFormat: 'object';
+  }): TimeSeriesJsonOutputObject<T>;
+  toJSON<T extends S = S>(options?: {
+    rowFormat?: JsonRowFormat;
+  }): TimeSeriesJsonOutputArray<T> | TimeSeriesJsonOutputObject<T>;
   toJSON(
     options: { rowFormat?: JsonRowFormat } = {},
-  ): TimeSeriesJsonInput<SeriesSchema> {
+  ): TimeSeriesJsonOutputArray<any> | TimeSeriesJsonOutputObject<any> {
     const rowFormat = options.rowFormat ?? 'array';
+    const keyColumn = this.schema[0]!;
     const dataColumns = this.schema.slice(1);
+    const width = dataColumns.length;
 
     if (rowFormat === 'object') {
-      const keyColumn = this.schema[0]!;
       const rows = this.events.map((event) => {
         const row: Record<string, unknown> = {
           [keyColumn.name]: serializeJsonKey(
@@ -1347,21 +1434,31 @@ export class TimeSeries<S extends SeriesSchema> {
       };
     }
 
+    // One array per row, cells pushed in place. The earlier shape built a
+    // second throwaway array per row (`dataColumns.map(...)`) and spread it
+    // into the first, which made tuple rows measurably slower than object
+    // rows — see `scripts/perf-to-json.mjs`.
     const rows = this.events.map((event) => {
       const data = event.data();
-      return Object.freeze([
-        serializeJsonKey(this.schema[0]!.kind, event.key(), rowFormat),
-        ...dataColumns.map((column) =>
-          serializeJsonValue(data[column.name as keyof typeof data]),
-        ),
-      ]) as JsonRowForSchema<SeriesSchema>;
+      const row: unknown[] = [
+        serializeJsonKey(keyColumn.kind, event.key(), rowFormat),
+      ];
+      for (let c = 0; c < width; c += 1) {
+        row.push(
+          serializeJsonValue(data[dataColumns[c]!.name as keyof typeof data]),
+        );
+      }
+      return Object.freeze(row) as unknown as JsonRowForSchema<SeriesSchema>;
     });
 
-    return {
+    // Annotated local rather than a bare literal: the implementation
+    // signature's `<any>` instantiation doesn't accept the tuple rows directly.
+    const out: TimeSeriesJsonOutputArray<SeriesSchema> = {
       name: this.name,
       schema: this.schema as SeriesSchema,
       rows,
     };
+    return out;
   }
 
   /**
@@ -1944,8 +2041,9 @@ export class TimeSeries<S extends SeriesSchema> {
    * (no per-row `Event`), so it stays on the fast columnar path.
    *
    * **Missing cells carry:** the mapper is called only on defined
-   * values; a missing (`undefined`) cell stays missing. A stored `NaN`
-   * is a defined number, so the mapper *is* called on it.
+   * values; a missing (`undefined`) cell stays missing. On a `number`
+   * column a mapper result of `NaN` / `±Infinity` is stored as missing
+   * (a non-finite number in a number column means missing).
    *
    * **Multi-entity series:** `mapColumns` is per-cell and stateless, so
    * it is unaffected by entity interleaving (unlike `cumulative` /
@@ -2287,11 +2385,11 @@ export class TimeSeries<S extends SeriesSchema> {
             ]);
           });
 
-    return new TimeSeries({
-      name: this.name,
-      schema: resultSchema as unknown as SeriesSchema,
-      rows: alignedRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-    }) as unknown as TimeSeries<AlignSchema<S>>;
+    return timeSeriesFromComputedRows(
+      this.name,
+      resultSchema as unknown as SeriesSchema,
+      alignedRows,
+    ) as unknown as TimeSeries<AlignSchema<S>>;
   }
 
   /**
@@ -3063,11 +3161,7 @@ export class TimeSeries<S extends SeriesSchema> {
       outputRows.push(row);
     }
 
-    return new TimeSeries({
-      name: this.name,
-      schema: outputSchema,
-      rows: outputRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-    });
+    return timeSeriesFromComputedRows(this.name, outputSchema, outputRows);
   }
 
   /**
@@ -3259,9 +3353,9 @@ export class TimeSeries<S extends SeriesSchema> {
    * **Missing cells carry:** a missing / undefined source cell does not call
    * `step` — the accumulator is held and the row re-emits the last output (so it
    * holds flat across a gap), `undefined` only until the first defined value. A
-   * stored `NaN` is a defined number and is passed to `step`; the step author
-   * owns output finiteness (this is the trusted-compute path, not the validated
-   * `withColumn` intake).
+   * step output of `NaN` / `±Infinity` is stored as missing (a non-finite
+   * number in a number column means missing) rather than rejected — this is
+   * the trusted-compute path, not the validated `withColumn` intake.
    *
    * **Multi-entity series:** the accumulator threads across all rows in storage
    * order, so it interleaves across entities — `host-A`'s next row folds on top
@@ -3716,7 +3810,7 @@ export class TimeSeries<S extends SeriesSchema> {
       minSamples?: number;
     } = {},
   ): TimeSeries<SeriesSchema> {
-    let mapping: AggregateMap<S> | AggregateOutputMap<S>;
+    let mapping: AggregateMap<S>;
     let options: {
       alignment?: RollingAlignment;
       sample?: AlignSample;
@@ -3732,25 +3826,25 @@ export class TimeSeries<S extends SeriesSchema> {
     ) {
       sequence = sequenceOrWindow;
       window = windowOrMapping as DurationInput;
-      mapping = mappingOrOptions as AggregateMap<S> | AggregateOutputMap<S>;
+      mapping = mappingOrOptions as AggregateMap<S>;
       options = maybeOptions;
     } else {
       window = sequenceOrWindow;
-      mapping = windowOrMapping as AggregateMap<S> | AggregateOutputMap<S>;
+      mapping = windowOrMapping as AggregateMap<S>;
       options =
         (mappingOrOptions as { alignment?: RollingAlignment } | undefined) ??
         {};
     }
 
-    // Normalize both mapping shapes (`AggregateMap` and `AggregateOutputMap`)
+    // Normalize both entry shapes (shorthand and `{ from, using }` spec)
     // into a uniform spec list of `{ output, source, reducer, kind }`. Source
-    // and output names can differ, which is how `AggregateOutputMap` expresses
+    // and output names can differ, which is how spec entries express
     // "multiple reducers keyed off the same source column."
     //
     // For `AggregateMap` inputs (where output === source === schema column),
     // reorder by schema-column order so the runtime row layout lines up with
     // the `RollingSchema<S, Mapping>` type's column inference. For
-    // `AggregateOutputMap` inputs the schema is erased to `SeriesSchema`, so
+    // spec-form inputs the schema is erased to `SeriesSchema`, so
     // insertion order is the natural ordering — consistent with `aggregate`.
     const isOutputMap = Object.values(mapping as Record<string, unknown>).some(
       (v) => isAggregateOutputSpec<S>(v),
@@ -3853,11 +3947,7 @@ export class TimeSeries<S extends SeriesSchema> {
         return Object.freeze([bucket, ...aggregated]);
       });
 
-      return new TimeSeries({
-        name: this.name,
-        schema: resultSchema,
-        rows: resultRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-      });
+      return timeSeriesFromComputedRows(this.name, resultSchema, resultRows);
     }
 
     const resultSchema = Object.freeze([
@@ -4082,12 +4172,14 @@ export class TimeSeries<S extends SeriesSchema> {
       const values = outValues[c]!;
       // The old event-based path re-packed via the constructor's strict intake,
       // which rejected any defined result that didn't match the declared output
-      // kind — a non-finite number (a `sum` overflow), or a wrong-typed value
-      // (a custom reducer / `kind` override producing a string for a number
-      // column, etc.). Trusted construction skips intake, and the `*FromArray`
-      // builders silently coerce a kind mismatch to a *missing* cell — so
-      // re-assert the same contract here (same value rules AND the same
-      // `ValidationError` class as intake), keeping packed columns clean.
+      // kind — a wrong-typed value (a custom reducer / `kind` override
+      // producing a string for a number column, etc.). (A non-finite number —
+      // a `sum` overflow — can't reach here: the rolling states' snapshots
+      // map it to missing, [PND-NANREP].) Trusted construction skips intake,
+      // and the `*FromArray` builders silently coerce a kind mismatch to a
+      // *missing* cell — so re-assert the same contract here (same value
+      // rules AND the same `ValidationError` class as intake), keeping
+      // packed columns clean.
       // Missing cells (`undefined`, e.g. the minSamples warm-up) are
       // unaffected. (#225 Codex finding.)
       assertColumnValuesMatchKind(
@@ -4256,9 +4348,9 @@ export class TimeSeries<S extends SeriesSchema> {
       // allocation, and no full-series intake re-pack (the key and every
       // untouched column pass through by reference). Emitted values are the
       // exact sequence the event path emits (same reads, same arithmetic),
-      // and each one is asserted finite so the intake rejection the event
-      // path gets from its row re-pack is preserved. Non-packed sources
-      // (chunked storage) fall back to the event path below.
+      // and a non-finite one (an overflow) is written as missing, matching
+      // the event path's computed-rows re-pack ([PND-NANREP]). Non-packed
+      // sources (chunked storage) fall back to the event path below.
       const emaSourceCol = this.#store.store.columns.get(column as string);
       if (
         emaSourceCol !== undefined &&
@@ -4290,11 +4382,8 @@ export class TimeSeries<S extends SeriesSchema> {
           // Mask the emitted value during the length-preserving warm-up;
           // `previous` / `seen` advanced on the real value above.
           if (seen < minSamples) continue;
-          if (!Number.isFinite(smoothed)) {
-            throw new ValidationError(
-              `smooth column '${output ?? (column as string)}': result ${smoothed} is not a valid 'number' value`,
-            );
-          }
+          // Non-finite (an overflow) means missing ([PND-NANREP]).
+          if (smoothed - smoothed !== 0) continue;
           out[i] = smoothed;
           outBits[i >> 3]! |= 1 << (i & 7);
           outDefined += 1;
@@ -4303,7 +4392,7 @@ export class TimeSeries<S extends SeriesSchema> {
           outDefined === rowCount
             ? undefined
             : validityFromBits(outBits, rowCount);
-        // Every defined cell was asserted finite above → `allFinite`.
+        // Every defined cell passed the finite test above → `allFinite`.
         const outColumn = new Float64Column(out, rowCount, outValidity, true);
         const reshaped =
           output === undefined || output === (column as string)
@@ -4360,11 +4449,11 @@ export class TimeSeries<S extends SeriesSchema> {
 
       const keptRows = warmup > 0 ? resultRows.slice(warmup) : resultRows;
 
-      return new TimeSeries({
-        name: this.name,
-        schema: resultSchema as unknown as SeriesSchema,
-        rows: keptRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-      }) as unknown as TimeSeries<
+      return timeSeriesFromComputedRows(
+        this.name,
+        resultSchema as unknown as SeriesSchema,
+        keptRows,
+      ) as unknown as TimeSeries<
         Output extends string
           ? SmoothAppendSchema<S, Output>
           : SmoothSchema<S, Target>
@@ -4434,11 +4523,11 @@ export class TimeSeries<S extends SeriesSchema> {
         ]);
       });
 
-      return new TimeSeries({
-        name: this.name,
-        schema: resultSchema as unknown as SeriesSchema,
-        rows: resultRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-      }) as unknown as TimeSeries<
+      return timeSeriesFromComputedRows(
+        this.name,
+        resultSchema as unknown as SeriesSchema,
+        resultRows,
+      ) as unknown as TimeSeries<
         Output extends string
           ? SmoothAppendSchema<S, Output>
           : SmoothSchema<S, Target>
@@ -4455,24 +4544,29 @@ export class TimeSeries<S extends SeriesSchema> {
     const resultValues = new Array<number | undefined>(this.events.length);
     let windowStart = 0;
     let windowEnd = 0;
-    let numericSum = 0;
+    // Two-lane running sum (see `reducers/overflow-lanes.ts`) so an
+    // overflow can't stick after the huge values leave the window. Packed
+    // columns already store non-finite as missing; the `v - v === 0` guard
+    // (false exactly for NaN / ±Infinity) is defensive, since the exact big
+    // lane can't take a non-finite value.
+    const numericSum = new LanedSum();
     let numericCount = 0;
     const addEvent = (index: number): void => {
       const value = sourceValues[index];
-      if (typeof value === 'number') {
-        numericSum += value;
+      if (typeof value === 'number' && value - value === 0) {
         numericCount += 1;
+        numericSum.add(value);
       }
     };
     const removeEvent = (index: number): void => {
       const value = sourceValues[index];
-      if (typeof value === 'number') {
-        numericSum -= value;
+      if (typeof value === 'number' && value - value === 0) {
         numericCount -= 1;
+        numericSum.remove(value);
       }
     };
     const snapshot = (): number | undefined =>
-      numericCount === 0 ? undefined : numericSum / numericCount;
+      numericCount === 0 ? undefined : numericSum.total() / numericCount;
 
     for (let groupStart = 0; groupStart < this.events.length; ) {
       const anchor = anchors[groupStart]!;
@@ -4561,11 +4655,11 @@ export class TimeSeries<S extends SeriesSchema> {
       ]);
     });
 
-    return new TimeSeries({
-      name: this.name,
-      schema: resultSchema as unknown as SeriesSchema,
-      rows: resultRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-    }) as unknown as TimeSeries<
+    return timeSeriesFromComputedRows(
+      this.name,
+      resultSchema as unknown as SeriesSchema,
+      resultRows,
+    ) as unknown as TimeSeries<
       Output extends string
         ? SmoothAppendSchema<S, Output>
         : SmoothSchema<S, Target>
@@ -4957,10 +5051,19 @@ export class TimeSeries<S extends SeriesSchema> {
     );
   }
 
-  /** Example: `series.select("cpu", "healthy")`. Returns a new series containing only the selected payload fields. */
+  /**
+   * Example: `series.select("cpu", "healthy")`. Returns a new series containing only the selected payload fields.
+   *
+   * Pass column names as separate arguments — an array argument throws a
+   * `TypeError` (spread it: `select(...names)`), and a name that is not a
+   * payload column throws a `RangeError` listing the valid columns.
+   * Duplicate names are allowed and select the column once; output
+   * columns keep schema order, not argument order.
+   */
   select<const Keys extends readonly (keyof EventDataForSchema<S>)[]>(
     ...keys: Keys
   ): TimeSeries<SelectSchema<S, Keys[number] & string>> {
+    assertSelectKeys('select', this.schema, keys);
     const firstColumn = this.schema[0]!;
     const selectedColumns = this.schema
       .slice(1)
@@ -5038,11 +5141,12 @@ export class TimeSeries<S extends SeriesSchema> {
    *
    * `values` is a `Float64Array` (dense) or a `(number | undefined)[]` (where
    * `undefined` marks a missing cell), and must have exactly `series.length`
-   * entries. Defined values are validated against the numeric intake contract —
+   * entries. A boxed array is validated against the numeric intake contract —
    * **non-finite (`NaN` / `±Infinity`) is rejected** (a `ValidationError`,
-   * matching construction), so packed numeric columns stay NaN-free; pass
-   * `undefined` for a missing cell, never `NaN`. `name` must not collide with an
-   * existing column.
+   * matching construction); pass `undefined` for a missing cell. A
+   * `Float64Array` has no `undefined` slot, so there a non-finite value
+   * (`NaN` / `±Infinity`) **is** the gap marker and is stored as missing.
+   * `name` must not collide with an existing column.
    *
    * This is the *validated* attach. A trusted bulk-construction path
    * (`fromTrustedColumns`, skipping the finite scan) is a deferred sibling for
@@ -5070,10 +5174,12 @@ export class TimeSeries<S extends SeriesSchema> {
     // spelled `undefined` forced every producer holding a typed buffer to
     // box a whole column just to say "no value here". A boxed array keeps
     // the strict reading: it already has `undefined`, so a `NaN` in one is
-    // a mistake, not a gap. `±Infinity` is rejected either way.
+    // a mistake, not a gap. `±Infinity` follows `NaN` at each door —
+    // missing in the typed one, rejected in the boxed one — since a
+    // non-finite number in a number column means missing ([PND-NANREP]).
     const column =
       values instanceof Float64Array
-        ? float64ColumnFromTypedArray(values, `withColumn '${String(name)}'`)
+        ? float64ColumnFromTypedArray(values)
         : (assertColumnValuesMatchKind(
             'number',
             values as ReadonlyArray<unknown>,
@@ -5312,11 +5418,7 @@ export class TimeSeries<S extends SeriesSchema> {
       );
     });
 
-    return new TimeSeries({
-      name: this.name,
-      schema: resultSchema,
-      rows: resultRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-    });
+    return timeSeriesFromComputedRows(this.name, resultSchema, resultRows);
   }
 
   /**
@@ -5587,7 +5689,7 @@ export class TimeSeries<S extends SeriesSchema> {
       {
         [avgName]: { from: col as string, using: 'avg' as const },
         [sdName]: { from: col as string, using: 'stdev' as const },
-      } as AggregateOutputMap<SeriesSchema>,
+      } as AggregateMap<SeriesSchema>,
       rollingOptions,
     ) as unknown as TimeSeries<SeriesSchema>;
 
@@ -5625,11 +5727,11 @@ export class TimeSeries<S extends SeriesSchema> {
       ]);
     });
 
-    return new TimeSeries({
-      name: this.name,
-      schema: resultSchema as unknown as SeriesSchema,
-      rows: resultRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-    }) as unknown as TimeSeries<
+    return timeSeriesFromComputedRows(
+      this.name,
+      resultSchema as unknown as SeriesSchema,
+      resultRows,
+    ) as unknown as TimeSeries<
       BaselineSchema<S, AvgName, SdName, UpperName, LowerName>
     >;
   }
@@ -5689,7 +5791,7 @@ export class TimeSeries<S extends SeriesSchema> {
     const rollingMapping = {
       [ROLL_AVG]: { from: col as string, using: 'avg' as const },
       [ROLL_SD]: { from: col as string, using: 'stdev' as const },
-    } as AggregateOutputMap<SeriesSchema>;
+    } as AggregateMap<SeriesSchema>;
     const rollingOptions: {
       alignment?: RollingAlignment;
       minSamples?: number;
@@ -5770,7 +5872,7 @@ export class TimeSeries<S extends SeriesSchema> {
 function aggregateInternal<S extends SeriesSchema>(
   series: TimeSeries<S>,
   sequence: SequenceLike,
-  mapping: AggregateMap<S> | AggregateOutputMap<S>,
+  mapping: AggregateMap<S>,
   options: { range?: TemporalLike } = {},
 ): TimeSeries<SeriesSchema> {
   const range = options.range ?? series.timeRange();
@@ -5893,11 +5995,11 @@ function aggregateInternal<S extends SeriesSchema>(
       return Object.freeze([bucket, ...aggregated]);
     });
 
-    return new TimeSeries({
-      name: series.name,
-      schema: resultSchema as unknown as SeriesSchema,
-      rows: resultRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-    });
+    return timeSeriesFromComputedRows(
+      series.name,
+      resultSchema as unknown as SeriesSchema,
+      resultRows,
+    );
   }
 
   const resultRows = buckets.map((bucket) => {
@@ -5914,11 +6016,7 @@ function aggregateInternal<S extends SeriesSchema>(
     return Object.freeze([bucket, ...aggregated]);
   });
 
-  return new TimeSeries({
-    name: series.name,
-    schema: resultSchema,
-    rows: resultRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-  });
+  return timeSeriesFromComputedRows(series.name, resultSchema, resultRows);
 }
 
 function alignHoldAt<S extends SeriesSchema>(

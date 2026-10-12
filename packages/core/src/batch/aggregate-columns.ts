@@ -1,4 +1,9 @@
-import { resolveReducer, rollingStateFor } from '../reducers/index.js';
+import {
+  finiteOrMissing,
+  resolveReducer,
+  rollingStateFor,
+} from '../reducers/index.js';
+import { plainRollingSum } from '../reducers/sum.js';
 import type { ArrayValue, Column, ColumnSchema } from '../columnar/index.js';
 import {
   BooleanColumn,
@@ -10,12 +15,10 @@ import {
   stringColumnFromArray,
   validityFromBits,
 } from '../columnar/index.js';
-import { ValidationError } from '../core/errors.js';
 import type { Interval } from '../core/interval.js';
 import { assertCellKind } from './validate.js';
 import type {
   AggregateMap,
-  AggregateOutputMap,
   AggregateOutputSpec,
   AggregateReducer,
   ColumnValue,
@@ -28,8 +31,8 @@ import type {
  * Normalised column spec used by both batch and live aggregation paths.
  *
  * `output` is the name the column appears under in the produced schema.
- * For `AggregateMap` mappings (`{ existingCol: reducer }`) the output
- * name equals the source column name. For `AggregateOutputMap` mappings
+ * For shorthand entries (`{ existingCol: reducer }`) the output
+ * name equals the source column name. For spec entries
  * (`{ alias: { from, using } }`) the two can differ — multiple specs
  * can read from the same source column with different aliases.
  *
@@ -60,8 +63,8 @@ export function isAggregateOutputSpec<S extends SeriesSchema>(
 }
 
 /**
- * Resolve a user-supplied `mapping` (either `AggregateMap<S>` or
- * `AggregateOutputMap<S>`) against the source `schema` into a flat
+ * Resolve a user-supplied `mapping` (an `AggregateMap<S>`,
+ * shorthand and/or spec entries) against the source `schema` into a flat
  * list of `AggregateColumnSpec`. Walks the mapping once; throws on
  * unknown source columns, non-value source columns, or invalid
  * reducers. The resulting specs drive both the output schema
@@ -76,7 +79,7 @@ export function isAggregateOutputSpec<S extends SeriesSchema>(
  */
 export function normalizeAggregateColumns<S extends SeriesSchema>(
   schema: S,
-  mapping: AggregateMap<S> | AggregateOutputMap<S>,
+  mapping: AggregateMap<S>,
 ): AggregateColumnSpec[] {
   const columnsByName = new Map(
     schema.slice(1).map((column) => [column.name, column] as const),
@@ -253,7 +256,9 @@ function reduceBucket(
   for (let p = 0; p < plans.length; p += 1) {
     const plan = plans[p]!;
     if (plan.kind === 'reduce') {
-      out[p] = plan.reduce(plan.column, start, scan);
+      // A non-finite result (an overflow) is missing — same as every
+      // reducer result path (`finiteOrMissing`, [PND-NANREP]).
+      out[p] = finiteOrMissing(plan.reduce(plan.column, start, scan));
     } else if (plan.which === 'first') {
       // First defined cell in [start, scan); scans past missing cells and
       // past non-finite numeric cells (reducer non-finite policy,
@@ -357,14 +362,13 @@ function intervalKeysForBuckets(
  * row intake, so every check row intake performed is performed here:
  *
  * - Cell kinds go through the *same* `assertCellKind` (shared, not
- *   copied), so a reducer that overflows to `Infinity` still raises the
- *   same `ValidationError` with the same message rather than silently
- *   landing a non-finite cell in a column flagged `allFinite`.
+ *   copied). A reducer that overflows to `Infinity` never reaches it:
+ *   `reduceBucket` maps a non-finite result to missing, exactly as the
+ *   row path's `applyAggregateReducer` does ([PND-NANREP]).
  * - Numeric columns are stamped `allFinite: true` on the same
- *   justification the row path uses — every surviving cell was
- *   finite-checked above. Dropping that flag would be safe but would
- *   quietly deoptimise every downstream reduction of an aggregate
- *   result.
+ *   justification the row path uses — every surviving cell is finite.
+ *   Dropping that flag would be safe but would quietly deoptimise every
+ *   downstream reduction of an aggregate result.
  * - Missing cells (an empty bucket, or an all-missing one) set no
  *   validity bit, so they read back as `undefined` — **not** `NaN`. That
  *   is the sentinel decision this change forces, resolved in favour of
@@ -496,7 +500,8 @@ export function tryAggregateColumnarStore(
     switch (kinds[c]) {
       case 'number':
         // `allFinite: true` on the same grounds the row path claims it:
-        // `assertCellKind` rejected every non-finite cell above, so a
+        // a non-finite result was mapped to missing in `reduceBucket`,
+        // and `assertCellKind` rejects any other non-finite cell, so a
         // surviving column is provably finite.
         column = new Float64Column(numberBufs[c]!, bucketCount, validity, true);
         break;
@@ -533,8 +538,8 @@ export function tryAggregateColumnarStore(
  * result column. That removes the generic sweep's per-row costs: the
  * `snapshotWindow` result-array allocation, the boxed accumulator rows, the
  * polymorphic `col.read(i)` per add/remove, and the post-pass
- * `assertColumnValuesMatchKind` + re-pack over boxed values (each written
- * value is finite-asserted inline instead, same rejection class + message).
+ * `assertColumnValuesMatchKind` + re-pack over boxed values (a non-finite
+ * result is written as a missing cell inline instead).
  *
  * Returns `null` — caller takes the generic sweep — when any column doesn't
  * qualify: a custom-function reducer, a non-`'number'` output kind
@@ -595,6 +600,7 @@ export function tryRollingCountColumnarNumeric(
         count,
         alignment,
         minSamples,
+        false,
       ),
     );
   }
@@ -605,7 +611,8 @@ export function tryRollingCountColumnarNumeric(
  * One column's trailing / leading / centred count-window sweep.
  *
  * `avg` is specialised inline; everything else drives its reducer state,
- * which is now monomorphic at this call site. `avg` earns the special
+ * which is now monomorphic at this call site. `laned` is the overflow
+ * re-run — every reducer through its (laned) state; see the note below. `avg` earns the special
  * case because it is what `sma` and the centre line of `bollinger` /
  * `zScore` reduce to, and its recurrence is a running sum — no accuracy
  * argument to preserve, unlike `stdev`, whose order-independent Welford
@@ -618,6 +625,7 @@ function sweepRollingColumn(
   count: number,
   alignment: RollingAlignment,
   minSamples: number,
+  laned: boolean,
 ): Float64Column {
   const values = source._values;
   const validity = source.validity;
@@ -647,18 +655,32 @@ function sweepRollingColumn(
   // `avg` is a running sum; `stdev` is Welford. Both are inlined to remove
   // the per-row `add` / `remove` / `snapshot` calls; everything else keeps
   // its reducer state, which is monomorphic here now.
-  const kind: 'avg' | 'stdev' | 'state' =
-    spec.reducer === 'avg' || spec.reducer === 'mean'
+  //
+  // **Overflow** ([PND-NANREP]). The reducer states split their running
+  // sum / Welford accumulator by magnitude (`reducers/overflow-lanes.ts`) so
+  // an overflow can't stick after the huge values leave the window — at the
+  // price of a compare per cell. This sweep doesn't pay it: it runs the plain
+  // single-accumulator recurrences (inline `avg` / `stdev`, `plainRollingSum`
+  // for `sum`), and on the first non-finite answer from one of them — which
+  // ordinary data never produces — abandons the pass and re-runs the column
+  // with `laned` set, driving the laned reducer states instead. The re-run's
+  // answers are then the state path's, bit for bit.
+  const kind: 'avg' | 'stdev' | 'state' = laned
+    ? 'state'
+    : spec.reducer === 'avg' || spec.reducer === 'mean'
       ? 'avg'
       : spec.reducer === 'stdev'
         ? 'stdev'
         : 'state';
+  const plainSum = !laned && spec.reducer === 'sum';
   const state =
     kind !== 'state'
       ? null
-      : allFinite && validity === undefined
-        ? resolveReducer(spec.reducer as string).rollingState()
-        : rollingStateFor(spec.reducer);
+      : plainSum
+        ? plainRollingSum()
+        : allFinite && validity === undefined
+          ? resolveReducer(spec.reducer as string).rollingState()
+          : rollingStateFor(spec.reducer);
 
   // `avg`
   let runningSum = 0;
@@ -797,16 +819,31 @@ function sweepRollingColumn(
         : kind === 'stdev'
           ? wN === 0
             ? undefined
-            : Math.sqrt(Math.max(0, wM2 / wN))
+            : // `+ (wMean − wMean)` is `+ 0` — unless a delta overflow left
+              // the mean non-finite with `m2` clamped back to a finite value,
+              // which must not read as a defined stdev (it re-runs laned).
+              Math.sqrt(Math.max(0, wM2 / wN) + (wMean - wMean))
           : state!.snapshot();
     if (v === undefined) continue; // missing cell (e.g. all-missing window)
-    if (typeof v !== 'number' || !Number.isFinite(v)) {
-      // Same rejection class + message as the generic path's post-pass
-      // `assertColumnValuesMatchKind` (e.g. a `sum` overflow to Infinity)
-      // — checked at write time since there is no post-pass here.
-      throw new ValidationError(
-        `rolling column '${spec.output}': result ${String(v)} is not a valid 'number' value`,
-      );
+    // A non-finite result (e.g. a `sum` overflow to Infinity) is a missing
+    // cell — a non-finite number in a number column means missing
+    // ([PND-NANREP]), matching the generic sweep, whose states'
+    // snapshots map it via `finiteOrMissing`. (`v - v !== 0` is true
+    // exactly for NaN and ±Infinity.)
+    if (typeof v !== 'number' || v - v !== 0) {
+      // A plain running accumulator overflowed: re-run laned (see above).
+      if (kind !== 'state' || plainSum) {
+        return sweepRollingColumn(
+          spec,
+          source,
+          rowCount,
+          count,
+          alignment,
+          minSamples,
+          true,
+        );
+      }
+      continue;
     }
     outValues[index] = v;
     outBits[index >> 3]! |= 1 << (index & 7);
@@ -815,6 +852,6 @@ function sweepRollingColumn(
 
   const outValidity =
     outDefined === rowCount ? undefined : validityFromBits(outBits, rowCount);
-  // Every written cell was finite-asserted above → `allFinite`.
+  // Every written cell passed the finite test above → `allFinite`.
   return new Float64Column(outValues, rowCount, outValidity, true);
 }

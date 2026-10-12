@@ -287,7 +287,7 @@ describe('error-rate dashboard (live)', () => {
       paths: ArrayValue;
       tags: ArrayValue;
     }[] = [];
-    errorStream.on('close', (event) => {
+    errorStream.on('event', (event) => {
       closedBuckets.push({
         start: event.begin(),
         hosts: event.get('host') as ArrayValue,

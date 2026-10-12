@@ -3,13 +3,14 @@
  * `rowFormat`. The companion friction note (#3 from the gRPC
  * experiment's M1) was that the broad `TimeSeriesJsonInput`-style
  * return forced consumers to cast `result.rows` before iterating.
- * The narrowing closes that for the live snapshot path —
- * `TimeSeries.toJSON` still returns broad (cascade issue
- * documented at the call site).
+ * The narrowing closes that for the live snapshot path;
+ * `TimeSeries.toJSON` narrows the same way since [PND-TSJSONT]
+ * (see `timeseries-tojson-narrowing.test-d.ts`).
  */
 import { LiveSeries } from '../src/index.js';
 import type {
   JsonObjectRowForSchema,
+  JsonRowFormat,
   JsonRowForSchema,
   TimeSeriesJsonOutputArray,
   TimeSeriesJsonOutputObject,
@@ -56,3 +57,34 @@ void _badAssign;
 // @ts-expect-error rows shapes diverge in the other direction too
 const _badAssignReverse: TimeSeriesJsonOutputObject<typeof schema> = arrayOut;
 void _badAssignReverse;
+
+// A `rowFormat` only known as `JsonRowFormat` resolves to the union (this
+// call had no matching overload before [PND-TSJSONT]).
+declare const fmt: JsonRowFormat;
+const dynamicOut:
+  | TimeSeriesJsonOutputArray<typeof schema>
+  | TimeSeriesJsonOutputObject<typeof schema> = live.toJSON({ rowFormat: fmt });
+void dynamicOut;
+
+// Call shapes a caller forwarding options must be able to use: the union
+// overload takes an optional `options`, so a possibly-undefined options
+// variable, a spread, and a non-fresh object with extra keys resolve.
+declare const maybeOpts: { rowFormat?: JsonRowFormat } | undefined;
+const maybeOut:
+  | TimeSeriesJsonOutputArray<typeof schema>
+  | TimeSeriesJsonOutputObject<typeof schema> = live.toJSON(maybeOpts);
+void maybeOut;
+const undefOut: TimeSeriesJsonOutputArray<typeof schema> =
+  live.toJSON(undefined);
+void undefOut;
+const emptyOut: TimeSeriesJsonOutputArray<typeof schema> = live.toJSON({});
+void emptyOut;
+declare const reqOpts: { rowFormat: 'array' | 'object' };
+live.toJSON(reqOpts);
+live.toJSON({ ...maybeOpts });
+declare const extraOpts: { rowFormat: 'object'; label: string };
+const extraOut: TimeSeriesJsonOutputObject<typeof schema> =
+  live.toJSON(extraOpts);
+void extraOut;
+declare const spreadArgs: Parameters<typeof live.toJSON>;
+live.toJSON(...spreadArgs);

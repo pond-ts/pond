@@ -223,7 +223,7 @@ it) still emit correctly.
 - **Partition column name must not collide** with a reducer-output
   column. `partitionBy('cpu').rolling('1m', { cpu: 'avg' }, { trigger })`
   is rejected at construction; rename the reducer output via an
-  `AggregateOutputMap` alias (e.g.
+  `{ from, using }` alias (e.g.
   `{ cpu_avg: { from: 'cpu', using: 'avg' } }`) or partition by a
   different column.
 - **Late-spawn partitions** only appear in ticks **after** their

@@ -1048,3 +1048,42 @@ describe('[PND-PROCRANGE] multi-output ranged recompute', () => {
     expect(columnsOf(out)).toEqual(columnsOf(scratch));
   });
 });
+
+describe('[PND-NANREP] range outputs store non-finite as missing', () => {
+  it('set(i, NaN / ±Infinity) marks the cell missing, even over an earlier set', () => {
+    const out = prepareRange(4, 0, undefined);
+    out.set(0, 1);
+    out.set(1, 2);
+    out.set(1, NaN); // overwrite a defined cell
+    out.set(2, 3);
+    out.set(2, Infinity); // overwrite a defined cell
+    out.set(3, -Infinity);
+    const col = sealRange(out, 4);
+    expect([0, 1, 2, 3].map((i) => col.read(i))).toEqual([
+      1,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(col.validity!.definedCount).toBe(1);
+    expect(col.allFinite).toBe(true);
+  });
+
+  it('sealRange clears a non-finite value written straight into values / bits', () => {
+    const out = prepareRange(4, 0, undefined);
+    out.values[0] = NaN;
+    out.values[1] = 5;
+    out.values[2] = Infinity;
+    out.values[3] = -Infinity;
+    out.bits[0]! |= 0b1111;
+    const col = sealRange(out, 4);
+    expect([0, 1, 2, 3].map((i) => col.read(i))).toEqual([
+      undefined,
+      5,
+      undefined,
+      undefined,
+    ]);
+    expect(col.validity!.definedCount).toBe(1);
+    expect(col.allFinite).toBe(true);
+  });
+});

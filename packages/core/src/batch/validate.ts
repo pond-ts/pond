@@ -21,6 +21,10 @@ import {
   validityFromBits,
 } from '../columnar/index.js';
 import { ValidationError } from '../core/errors.js';
+import {
+  assertClampableKey,
+  outOfOrderHint,
+} from './operators/out-of-order.js';
 import type {
   ArrayValue,
   EventForSchema,
@@ -274,6 +278,23 @@ export function validateAndNormalize<S extends SeriesSchema>(
 }
 
 /**
+ * Options for {@link validateAndNormalizeColumnar}.
+ *
+ * `nonFiniteAsMissing` is the **computed-rows** reading of a number cell:
+ * a `NaN` / `±Infinity` in a `number` column is stored as missing instead
+ * of rejected. Library operators that assemble their output as rows
+ * (`smooth`, `baseline`, `align`, the row paths of `aggregate` / `rolling`)
+ * use it — a non-finite number in a number column means missing
+ * ([PND-NANREP]), and their arithmetic can overflow. User-facing row intake
+ * (`new TimeSeries`, `fromJSON`, `LiveSeries.push`) leaves it off and keeps
+ * rejecting `NaN` and `±Infinity` alike. The cell becomes missing *before*
+ * the required check, so a required column still refuses it.
+ */
+export type ColumnarIntakeOptions = {
+  readonly nonFiniteAsMissing?: boolean;
+};
+
+/**
  * Column-native intake — walks rows once, writes directly into
  * per-column typed-array buffers + per-row key buffers, returns
  * the inputs to `ColumnarStore.fromTrustedStore` (key column +
@@ -311,8 +332,10 @@ export function validateAndNormalize<S extends SeriesSchema>(
  */
 export function validateAndNormalizeColumnar<S extends SeriesSchema>(
   input: TimeSeriesInput<S>,
+  options: ColumnarIntakeOptions = {},
 ): { keys: KeyColumn; columns: Map<string, Column> } {
   const { schema, rows } = input;
+  const nonFiniteAsMissing = options.nonFiniteAsMissing === true;
   if (!schema.length) {
     throw new ValidationError('schema must have at least one column');
   }
@@ -322,6 +345,10 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
       'first column must be one of: time, interval, timeRange',
     );
   }
+  // Callers resolve `sort` (deprecated alias) + `ordering` before here
+  // and sort the rows themselves; this intake only distinguishes clamp.
+  const clamp = input.ordering === 'clamp';
+  if (clamp) assertClampableKey('TimeSeries', keyKind);
   for (let col = 1; col < schema.length; col += 1) {
     const kind = schema[col]!.kind;
     if (
@@ -416,7 +443,17 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
     // — for N=1M × 2 cols that's 2M short-lived closures.
     for (let c = 0; c < colCount; c += 1) {
       const def = schema[c + 1]!;
-      const value = row[c + 1];
+      let value = row[c + 1];
+      // Computed rows: a non-finite number cell is missing ([PND-NANREP]).
+      // `value - value !== 0` is true exactly for NaN and ±Infinity.
+      if (
+        nonFiniteAsMissing &&
+        typeof value === 'number' &&
+        value - value !== 0 &&
+        colKinds[c] === 'number'
+      ) {
+        value = undefined;
+      }
       const required = def.required !== false;
       if (value === undefined && required) {
         throw new ValidationError(
@@ -494,18 +531,26 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
   // Sort order check: rows must be non-decreasing by (begin, end).
   // Lexicographic compare on Float64Array, no key-object
   // allocations during the walk.
+  //
+  // Under `ordering: 'clamp'` (time keys only — `endBuf === beginBuf`) a
+  // backwards key takes its predecessor's, which is already clamped, so the
+  // walk yields the running max. `beginBuf` is this intake's own buffer.
   for (let i = 1; i < length; i += 1) {
     const prevBegin = beginBuf[i - 1]!;
     const curBegin = beginBuf[i]!;
     if (prevBegin > curBegin) {
+      if (clamp) {
+        beginBuf[i] = prevBegin;
+        continue;
+      }
       throw new ValidationError(
-        `row ${i} is out of order — keys must be non-decreasing; pass { sort: true } to sort rows on construction, or pre-sort them`,
+        `row ${i} is out of order — keys must be non-decreasing; ${outOfOrderHint(keyKind)}`,
       );
     }
     if (prevBegin === curBegin && endBuf !== beginBuf) {
       if (endBuf[i - 1]! > endBuf[i]!) {
         throw new ValidationError(
-          `row ${i} is out of order — keys must be non-decreasing; pass { sort: true } to sort rows on construction, or pre-sort them`,
+          `row ${i} is out of order — keys must be non-decreasing; ${outOfOrderHint(keyKind)}`,
         );
       }
     }
