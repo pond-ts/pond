@@ -53,6 +53,10 @@ interface PlacedTick {
   /** A session open on a trading axis — live time starts here after a
    *  collapsed gap. Outranks a plain clock tick when labels collide. */
   readonly seam?: boolean;
+  /** An instant inside a collapsed gap (closed-market time an elapsed axis's
+   *  wall-clock steps can land on): it sits on the seam pixel but names a
+   *  moment the axis doesn't draw, so any live tick outranks it. */
+  readonly dead?: boolean;
   /** Under `align="auto"`, an automatic time tick that is the first
    *  (`'start'`) or last (`'end'`) of the axis's **full** tick list: its label
    *  anchors inward. Fixed per tick rather than per drawn set, so dropping a
@@ -213,7 +217,8 @@ export function thinCategoryLabels(
  *
  * 1. a **period turn** (`bold` — the label carrying the date / month / year,
  *    or a stacked band turn) before a **session open** (`seam`), before a plain
- *    clock tick — a date stays on the turn it marks;
+ *    clock tick, before a tick in **closed time** (`dead`) — a date stays on
+ *    the turn it marks, and the seam is labelled with live time;
  * 2. between two turns, or two session opens, the **later** (it owns the
  *    ticks that follow); between two plain ticks the earlier.
  *
@@ -225,7 +230,8 @@ export function thinCategoryLabels(
  * another label. The caller re-labels the survivors (see {@link fitTimeTicks}):
  * a turn dropped beside a tick of a later, different period hands its period
  * on (a stray New Year's open's `2027` moves onto the next real open). Two
- * turns of the same level a pixel apart can't both be drawn; the later one is.
+ * turns of the same level too close to both draw can't both be drawn; the
+ * later one is.
  *
  * Exported for tests only — not re-exported from the package index.
  */
@@ -245,7 +251,7 @@ export function fitTimeLabels(
     return [t.x - w / 2, t.x + w / 2];
   });
   const blank = (i: number) => ticks[i]!.label.trim() === '';
-  const rank = (t: PlacedTick) => (t.bold ? 2 : t.seam ? 1 : 0);
+  const rank = (t: PlacedTick) => (t.dead ? -1 : t.bold ? 2 : t.seam ? 1 : 0);
   const order = ticks
     .map((_, i) => i)
     .sort((i, j) => {
@@ -374,10 +380,12 @@ export interface XAxisProps {
    *   category axis (thin + middle-ellipsize) and on a time axis's automatic
    *   ticks (the label that would overprint is dropped — a date / month /
    *   year turn outlasts a clock label — and the survivors are re-labelled so
-   *   the dates they show stay correct; a blank label never blocks one). Under
-   *   `'auto'` a crowded edge costs one label: the inner neighbour at the left
-   *   edge, the edge label itself at the right. Explicit `ticks`, `transform`
-   *   ticks and numeric axes are not fitted.
+   *   the dates they show stay correct; a blank label never blocks one).
+   *   Under `'auto'` the edge labels anchor inward, so a crowded edge costs a
+   *   label — which one follows the same priority (between two plain clock
+   *   labels, the inner neighbour at the left edge and the edge label itself
+   *   at the right). Explicit `ticks`, `transform` ticks and numeric axes are
+   *   not fitted.
    */
   align?: 'auto' | 'center' | 'right';
   /**
@@ -759,7 +767,9 @@ export function XAxis({
     const label = flatDrawn ?? tickFmt;
     return values.map((v) => ({
       x: xScale(v),
-      label: label(v),
+      // A JS `format` may return null / a number (`AxisFormat` says string);
+      // the fit measures the text, so normalise it as the JSX always did.
+      label: String(label(v) ?? ''),
       // A **period turn** renders emphasized (bold), consistently across
       // styles: in stacked, a tick on a band divider (matched by pixel);
       // in flat, a tick whose label was *promoted* to a coarser period
@@ -777,6 +787,7 @@ export function XAxis({
         disc !== undefined &&
         disc.distance(v - 1, v) <= 0 &&
         disc.distance(v, v + 1) > 0,
+      dead: disc !== undefined && disc.distance(v, v + 1) <= 0,
       // `auto` anchors the edge ticks of the FULL list, whichever survive.
       anchor:
         align !== 'auto'

@@ -27,12 +27,17 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
+import { TimeSeries } from 'pond-ts';
 import { ChartContainer } from '../src/ChartContainer.js';
+import { ChartRow } from '../src/ChartRow.js';
+import { Layers } from '../src/Layers.js';
+import { LineChart } from '../src/LineChart.js';
 import { TimeAxis } from '../src/TimeAxis.js';
 import { fitTimeLabels, fitTimeTicks } from '../src/XAxis.js';
 import { scaleTradingTime } from '../src/tradingTimeScale.js';
 import {
   provider as sessionsProvider,
+  weekdaySessions,
   type Session,
 } from '../src/tradingAxis.fixture.js';
 
@@ -151,17 +156,33 @@ describe('fitTimeLabels — which ticks keep their labels', () => {
     }
   });
 
+  it('a tick in closed time loses to any live tick', () => {
+    // An elapsed axis's wall-clock step can land inside the overnight gap: it
+    // sits on the seam pixel but names a moment the market was shut.
+    const ticks = [
+      { x: 0, label: '00:00', seam: true },
+      { x: 178, label: '12:00', dead: true },
+      { x: 180, label: '1d 00:00' },
+      { x: 360, label: '2d 00:00' },
+    ];
+    for (const align of ALIGNS) {
+      expect(kept(ticks, align)).toEqual(['00:00', '1d 00:00', '2d 00:00']);
+    }
+  });
+
   it('a blank label never blocks another', () => {
     // A custom format thinning its own labels: '' on two of every three
     // ticks. The visible labels clear one another; the blanks draw nothing.
     const long = 'Mon, 02 Mar 2026 00:00:00 GMT';
     const pitch = est(long) / 2 + 20;
-    const ticks = Array.from({ length: 7 }, (_, i) => ({
-      x: i * pitch,
-      label: i % 3 === 0 ? long : '',
-    }));
-    for (const align of ['center', 'right'] as const) {
-      expect(kept(ticks, align)).toEqual(ticks.map((t) => t.label));
+    for (const blank of ['', ' ', '  ']) {
+      const ticks = Array.from({ length: 7 }, (_, i) => ({
+        x: i * pitch,
+        label: i % 3 === 0 ? long : blank,
+      }));
+      for (const align of ['center', 'right'] as const) {
+        expect(kept(ticks, align)).toEqual(ticks.map((t) => t.label));
+      }
     }
   });
 
@@ -395,6 +416,106 @@ describe('fitTimeTicks — re-labels the survivors until nothing collides', () =
       'Y1@101',
       '20h@300',
     ]);
+  });
+
+  describe('re-admission', () => {
+    // The re-admit test's toy labeller over a collapsed x: `Y…` on a year
+    // change since the previous drawn tick, `DayLabel…` (wide) on a day
+    // change, else the hour.
+    const DAY = 24 * H;
+    const YEAR = 4 * DAY;
+    const placeOver =
+      (xs: ReadonlyMap<number, number>) => (vs: readonly number[]) =>
+        vs.map((v, i) => {
+          const p = vs[i - 1];
+          const label =
+            p === undefined || Math.floor(p / YEAR) !== Math.floor(v / YEAR)
+              ? `Y${Math.floor(v / YEAR)}`
+              : Math.floor(p / DAY) !== Math.floor(v / DAY)
+                ? `DayLabel${Math.floor(v / DAY)}`
+                : `${(v % DAY) / H}h`;
+          return { x: xs.get(v)!, label, bold: !label.endsWith('h') };
+        });
+    const run = (pairs: [number, number][]) => {
+      const xs = new Map(pairs);
+      return fitTimeTicks(
+        [...xs.keys()],
+        placeOver(xs),
+        'center',
+        FONT_SIZE,
+        FAMILY,
+      ).map((t) => `${t.label}@${t.x}`);
+    };
+    const stray = YEAR + 15 * H;
+    const open = YEAR + DAY + 15 * H;
+
+    it('re-admits only when the whole set still fits (not just the tick itself)', () => {
+      expect(
+        run([
+          [3 * DAY + 2 * H, 0],
+          [stray, 100],
+          [open, 101],
+          [open + H, 130],
+          [open + 2 * H, 150],
+          [open + 5 * H, 300],
+        ]),
+      ).toEqual(['Y0@0', 'Y1@101', '17h@150', '20h@300']);
+    });
+
+    it('re-admits every tick that fits, not just the first', () => {
+      expect(
+        run([
+          [3 * DAY + 2 * H, 0],
+          [3 * DAY + 12 * H, 60],
+          [stray, 100],
+          [open, 101],
+          [open + H, 142],
+          [open + 5 * H, 300],
+        ]),
+      ).toEqual(['Y0@0', '12h@60', 'Y1@101', '16h@142', '20h@300']);
+    });
+
+    it('offers dropped ticks back in time order (earlier first, as plain ties)', () => {
+      expect(
+        run([
+          [3 * DAY + 2 * H, 0],
+          [stray, 100],
+          [open, 101],
+          [open + H, 125],
+          [open + 2 * H, 140],
+          [open + 5 * H, 300],
+        ]),
+      ).toEqual(['Y0@0', 'Y1@101', '16h@125', '20h@300']);
+    });
+
+    it('seeded sweep: the final placement never overlaps', () => {
+      let seed = 11;
+      const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+      for (let run = 0; run < 300; run++) {
+        const n = 2 + Math.floor(rnd() * 10);
+        let x = 0;
+        let v = 3 * DAY;
+        const xs = new Map<number, number>();
+        for (let i = 0; i < n; i++) {
+          x += rnd() * 50;
+          v += rnd() < 0.3 ? DAY : rnd() < 0.15 ? YEAR : H;
+          xs.set(v, x);
+        }
+        for (const align of ALIGNS) {
+          const out = fitTimeTicks(
+            [...xs.keys()],
+            placeOver(xs),
+            align,
+            FONT_SIZE,
+            FAMILY,
+          );
+          const ext = out.map((t) => extent(t, align));
+          for (let k = 1; k < ext.length; k++) {
+            expect(ext[k - 1]![1] + 4).toBeLessThanOrEqual(ext[k]![0] + 1e-9);
+          }
+        }
+      }
+    });
   });
 
   it('places once when nothing collides', () => {
@@ -651,7 +772,7 @@ describe('time axis label fit — rendered', () => {
     expect(count('right')).toBeGreaterThanOrEqual(center - 2);
     expect(count('auto')).toBeGreaterThanOrEqual(center - 2);
   });
-  it('a custom format that blanks ticks keeps every visible label', () => {
+  it('a custom format that blanks ticks loses no visible label to a blank', () => {
     // The usual thinning idiom: '' on two of every three 6h ticks. The
     // visible labels clear one another centred, so every one draws.
     const t0 = Date.UTC(2026, 2, 2);
@@ -720,6 +841,99 @@ describe('time axis label fit — rendered', () => {
     const text = drawn(dom).map((l) => l.text);
     expect(text).toContain('13:30');
     expect(text).not.toContain('08:00');
+    expectNoOverlap(dom);
+  });
+  it('an elapsed axis labels each seam with live time, not the closed night', () => {
+    // Elapsed from 5 minutes after Monday's open: the 12h wall-clock steps
+    // land in each overnight gap (`12:00` = 21:35, market shut) two pixels
+    // left of the live `Nd 00:00` (next morning 09:35). The live one wins.
+    const sessions = weekdaySessions(5);
+    const span = new TimeSeries({
+      name: 'week',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      rows: sessions.map(
+        (s, i) => [s.open + (i === 0 ? 5 * M : 0), 10 + i] as [number, number],
+      ),
+    });
+    for (const width of [600, 900]) {
+      const { container: dom, unmount } = render(
+        <ChartContainer
+          width={width}
+          origin="data"
+          range={[sessions[0]!.open + 5 * M, sessions[4]!.close]}
+          discontinuities={sessionsProvider(sessions)}
+          showAxis={false}
+        >
+          <ChartRow height={80}>
+            <Layers>
+              <LineChart series={span} column="v" />
+            </Layers>
+          </ChartRow>
+          <TimeAxis />
+        </ChartContainer>,
+      );
+      const text = drawn(dom).map((l) => l.text);
+      expect(text).toContain('1d 00:00');
+      expect(text).toContain('2d 00:00');
+      expect(text.some((t) => /12:00$/.test(t))).toBe(false);
+      expectNoOverlap(dom);
+      unmount();
+    }
+  });
+
+  it('a lunch-break re-open keeps its label over the clock tick beside it', () => {
+    // Sessions 00:00–02:30 and 03:37–06:00 UTC: the afternoon re-open
+    // (`03:37`, dead just before) collides with `04:00` and outranks it.
+    const d = Date.UTC(2026, 0, 5);
+    const sessions: Session[] = [];
+    for (let k = 0; k < 3; k++) {
+      const t = d + k * 24 * H;
+      sessions.push({ date: `a${k}`, open: t, close: t + 2.5 * H });
+      sessions.push({
+        date: `b${k}`,
+        open: t + 3 * H + 37 * M,
+        close: t + 6 * H,
+      });
+    }
+    for (const align of ALIGNS) {
+      const { container: dom, unmount } = render(
+        <ChartContainer
+          range={[d + 0.5 * H, d + 5.5 * H]}
+          width={340}
+          timeZone="UTC"
+          discontinuities={sessionsProvider(sessions)}
+          showAxis={false}
+        >
+          <TimeAxis align={align} />
+        </ChartContainer>,
+      );
+      const text = drawn(dom).map((l) => l.text);
+      expect(text).toContain('03:37');
+      expect(text).not.toContain('04:00');
+      unmount();
+    }
+  });
+
+  it('a JS format returning null or a number renders instead of throwing', () => {
+    // `AxisFormat` says string, but a JS caller can hide a tick with null.
+    const format = ((v: number) =>
+      new Date(v).getUTCHours() % 12 === 0
+        ? null
+        : new Date(v).getUTCHours()) as unknown as (v: number) => string;
+    const { container: dom } = render(
+      <ChartContainer
+        range={[Date.UTC(2026, 2, 2), Date.UTC(2026, 2, 4)]}
+        width={800}
+        timeZone="UTC"
+        showAxis={false}
+      >
+        <TimeAxis format={format} />
+      </ChartContainer>,
+    );
+    expect(drawn(dom).length).toBeGreaterThan(0);
     expectNoOverlap(dom);
   });
 });
