@@ -77,8 +77,6 @@ type FusedEntry = {
   readonly data: Record<string, ColumnValue | undefined>;
 };
 
-type EventListener = (event: any) => void;
-
 // Compaction policy: see {@link LiveFusedRolling}'s analogous
 // comment. Proportional guard only — `frontIdx > entries.length / 2`.
 
@@ -142,7 +140,7 @@ export class LivePartitionedFusedRolling<
   #lastBucketIdx: number | undefined;
 
   readonly #outputEvents: EventForSchema<Out>[];
-  readonly #onEvent: Set<EventListener>;
+  readonly #onEvent: Set<(event: EventForSchema<Out>) => void>;
   readonly #unsubscribes: Set<() => void>;
   #disposed: boolean;
 
@@ -289,7 +287,7 @@ export class LivePartitionedFusedRolling<
     return this.#outputEvents[index];
   }
 
-  on(type: 'event', fn: EventListener): () => void {
+  on(type: 'event', fn: (event: EventForSchema<Out>) => void): () => void {
     if (type !== 'event') {
       throw new TypeError(
         `LivePartitionedFusedRolling.on: unsupported event type '${String(type)}'`,

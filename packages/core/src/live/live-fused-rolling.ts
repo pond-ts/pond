@@ -64,8 +64,6 @@ type FusedEntry = {
   readonly data: Record<string, ColumnValue | undefined>;
 };
 
-type EventListener = (event: any) => void;
-
 /**
  * Compaction policy: splice off the dead prefix only when it grows
  * to at least half the array (the proportional guard). This keeps
@@ -163,7 +161,7 @@ export class LiveFusedRolling<
   #nextIndex: number;
 
   readonly #outputEvents: EventForSchema<Out>[];
-  readonly #onEvent: Set<EventListener>;
+  readonly #onEvent: Set<(event: EventForSchema<Out>) => void>;
   readonly #unsubscribe: () => void;
 
   // Pipeline counters for {@link LiveFusedRolling.stats}.
@@ -319,7 +317,7 @@ export class LiveFusedRolling<
     return result;
   }
 
-  on(type: 'event', fn: EventListener): () => void {
+  on(type: 'event', fn: (event: EventForSchema<Out>) => void): () => void {
     if (type !== 'event') {
       throw new TypeError(
         `LiveFusedRolling.on: unsupported event type '${String(type)}'`,

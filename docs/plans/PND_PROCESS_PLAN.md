@@ -1315,6 +1315,21 @@ bucket count rather than event count. That path exposes **closed buckets
 only** — the in-progress bucket is invisible until an event crosses its
 end — so it must remain a documented consumer choice, never a default.
 
+**Outcome (branch `claude/1.0-live-agg-listeners`, 1.0 review):** took the
+first option — narrowed the overload. `LiveAggregation`'s `'event'` and
+`'bucket'` listeners and `LiveRollingAggregation`'s `'event'` listener now
+receive `EventForSchema<Out>`, the type `at()` / `closed()` already used, so
+both operators are assignable to `LiveSource<Out>` (pinned in
+`packages/core/test-d/live-aggregation-source.test-d.ts`). A separate named
+contract was rejected: the operators already had every `LiveSource` member,
+only the listener's parameter was wrong, and a second contract would be new
+vocabulary for one cast. Shipped alongside the same 1.0 item's listener
+cleanup: every `on()` overload on both classes returns an unsubscribe
+function (`'bucket'` / `'update'` returned `this`), and the `'close'` alias
+for `'event'` was removed. `GraphSource` in `@pond-ts/process` keeps its
+`any` listener parameter (it never reads the event); collapsing it onto
+`LiveSource` is now possible but was left out of scope.
+
 ---
 
 ### [PND-PROCHELD] — A caller cannot ask what is already resident

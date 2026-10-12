@@ -50,7 +50,6 @@ type WindowEntry = {
 };
 
 type UpdateListener = (value: Record<string, ColumnValue | undefined>) => void;
-type EventListener = (event: any) => void;
 
 // Compaction policy: see {@link LiveFusedRolling}'s analogous
 // comment for the full rationale. Proportional guard only —
@@ -59,6 +58,13 @@ type EventListener = (event: any) => void;
 // large live-window sizes (Codex flagged this on PR #119).
 
 export type RollingWindow = DurationInput | number;
+
+function unknownListenerType(type: never): never {
+  throw new TypeError(
+    `LiveRollingAggregation.on: unknown event type '${String(type)}' ` +
+      `(expected 'event' or 'update')`,
+  );
+}
 
 export type LiveRollingOptions = {
   /**
@@ -186,7 +192,7 @@ export class LiveRollingAggregation<
 
   readonly #outputEvents: any[];
   readonly #onUpdate: Set<UpdateListener>;
-  readonly #onEvent: Set<EventListener>;
+  readonly #onEvent: Set<(event: EventForSchema<Out>) => void>;
   readonly #unsubscribe: () => void;
 
   // Pipeline counters for {@link LiveRollingAggregation.stats}.
@@ -318,20 +324,31 @@ export class LiveRollingAggregation<
     return this.#liveLength();
   }
 
-  on(type: 'event', fn: EventListener): () => void;
-  on(type: 'update', fn: UpdateListener): this;
+  /**
+   * Subscribe to the rolling aggregation. Every overload returns an
+   * unsubscribe function, matching `LiveSeries.on` / `LiveView.on`.
+   *
+   * - `'event'` — fires with each output event (schema-narrowed, the
+   *   same type {@link LiveRollingAggregation.at} returns).
+   * - `'update'` — fires after every source event with the current
+   *   {@link LiveRollingAggregation.value}.
+   */
+  on(type: 'event', fn: (event: EventForSchema<Out>) => void): () => void;
+  on(type: 'update', fn: UpdateListener): () => void;
   on(
     type: 'event' | 'update',
-    fn: EventListener | UpdateListener,
-  ): this | (() => void) {
-    if (type === 'event') {
-      this.#onEvent.add(fn as EventListener);
-      return () => {
-        this.#onEvent.delete(fn as EventListener);
-      };
-    }
-    this.#onUpdate.add(fn as UpdateListener);
-    return this;
+    fn: ((event: EventForSchema<Out>) => void) | UpdateListener,
+  ): () => void {
+    const set: Set<(arg: any) => void> =
+      type === 'event'
+        ? this.#onEvent
+        : type === 'update'
+          ? this.#onUpdate
+          : unknownListenerType(type);
+    set.add(fn);
+    return () => {
+      set.delete(fn);
+    };
   }
 
   // ── View transforms ─────────────────────────────────────────
@@ -512,7 +529,10 @@ export class LiveRollingAggregation<
         ? undefined
         : this.#states[i]!.snapshot();
     }
-    const outputEvent = new Event(key, record);
+    const outputEvent = new Event(
+      key,
+      record,
+    ) as unknown as EventForSchema<Out>;
     this.#statsEmissions++;
     if (this.#historyEnabled) {
       this.#outputEvents.push(outputEvent);
