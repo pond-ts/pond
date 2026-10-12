@@ -276,6 +276,45 @@ function toBoundaryTimestamp(value: BoundaryLike): number {
   return value instanceof Date ? value.getTime() : value;
 }
 
+/**
+ * Validates the arguments of a `select(...keys)` call against a schema.
+ * Shared by `TimeSeries.select` and the live `select`s so every surface
+ * reports the same errors:
+ *
+ * - an array argument (`select(['a', 'b'])` instead of
+ *   `select('a', 'b')`) throws a `TypeError` telling the caller to
+ *   spread the names;
+ * - a key that is not a payload column throws a `RangeError` naming the
+ *   key and listing the valid columns.
+ *
+ * Duplicate keys are allowed and collapse to one column. Internal — not
+ * re-exported from the package entry point.
+ */
+export function assertSelectKeys(
+  op: string,
+  schema: SeriesSchema,
+  keys: readonly unknown[],
+): void {
+  const valid = schema.slice(1).map((column) => column.name);
+  for (const key of keys) {
+    if (Array.isArray(key)) {
+      throw new TypeError(
+        `${op}: expected column names as separate arguments, got an array ` +
+          `[${key.map((k) => `'${String(k)}'`).join(', ')}]; spread it: ` +
+          `select(...names)`,
+      );
+    }
+    if (typeof key !== 'string' || !valid.includes(key)) {
+      throw new RangeError(
+        `${op}: unknown column '${String(key)}'; valid columns: ` +
+          (valid.length === 0
+            ? '(none)'
+            : valid.map((name) => `'${name}'`).join(', ')),
+      );
+    }
+  }
+}
+
 export function toKey(value: KeyLike): EventKey {
   if (isEventKey(value)) {
     return value;
@@ -4956,10 +4995,19 @@ export class TimeSeries<S extends SeriesSchema> {
     );
   }
 
-  /** Example: `series.select("cpu", "healthy")`. Returns a new series containing only the selected payload fields. */
+  /**
+   * Example: `series.select("cpu", "healthy")`. Returns a new series containing only the selected payload fields.
+   *
+   * Pass column names as separate arguments — an array argument throws a
+   * `TypeError` (spread it: `select(...names)`), and a name that is not a
+   * payload column throws a `RangeError` listing the valid columns.
+   * Duplicate names are allowed and select the column once; output
+   * columns keep schema order, not argument order.
+   */
   select<const Keys extends readonly (keyof EventDataForSchema<S>)[]>(
     ...keys: Keys
   ): TimeSeries<SelectSchema<S, Keys[number] & string>> {
+    assertSelectKeys('select', this.schema, keys);
     const firstColumn = this.schema[0]!;
     const selectedColumns = this.schema
       .slice(1)

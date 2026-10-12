@@ -10,7 +10,12 @@ import {
 import { LiveFusedRolling } from './live-fused-rolling.js';
 import { LiveReduce } from './live-reduce.js';
 import type { SampleStrategy } from '../sequence/sample.js';
-import { TimeSeries, toKey, type KeyLike } from '../batch/time-series.js';
+import {
+  TimeSeries,
+  assertSelectKeys,
+  toKey,
+  type KeyLike,
+} from '../batch/time-series.js';
 import type { Sequence } from '../sequence/sequence.js';
 // Column reads off a LiveView's event buffer (§A pull/read).
 import { float64ColumnFromArray } from '../columnar/column.js';
@@ -358,6 +363,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   select<const Keys extends readonly (keyof EventDataForSchema<S>)[]>(
     ...keys: Keys
   ): LiveView<SelectSchema<S, Keys[number] & string>> {
+    assertSelectKeys('select', this.schema as SeriesSchema, keys);
     const newSchema = Object.freeze([
       this.schema[0]!,
       ...this.schema.slice(1).filter((c) => keys.includes(c.name as any)),

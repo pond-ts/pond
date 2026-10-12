@@ -106,6 +106,16 @@ export class Event<K extends EventKey, D> {
   ): Event<K, SelectData<D, Keys[number]>> {
     const selected = {} as Pick<D, Keys[number]>;
     for (const key of keys) {
+      // Event payloads may omit optional fields, so an unknown key can't
+      // be told apart from an absent one here — only the array misuse
+      // (`select(['a', 'b'])`) is rejected. Schema-aware validation lives
+      // on `TimeSeries.select` / the live `select`s.
+      if (Array.isArray(key)) {
+        throw new TypeError(
+          'select: expected field names as separate arguments, got an ' +
+            'array; spread it: select(...names)',
+        );
+      }
       selected[key] = this.#data[key];
     }
     return new Event(this.#key, selected);

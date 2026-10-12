@@ -21,7 +21,12 @@ import {
   type LiveRollingOptions,
   type RollingWindow,
 } from './live-rolling-aggregation.js';
-import { TimeSeries, toKey, type KeyLike } from '../batch/time-series.js';
+import {
+  TimeSeries,
+  assertSelectKeys,
+  toKey,
+  type KeyLike,
+} from '../batch/time-series.js';
 import { ValidationError } from '../core/errors.js';
 import { parseJsonRows } from '../batch/json.js';
 import type { TimeZoneOptions } from '../core/calendar.js';
@@ -1145,6 +1150,7 @@ export class LiveSeries<S extends SeriesSchema> {
   select<const Keys extends readonly (keyof EventDataForSchema<S>)[]>(
     ...keys: Keys
   ): LiveView<SelectSchema<S, Keys[number] & string>> {
+    assertSelectKeys('select', this.schema as SeriesSchema, keys);
     const newSchema = Object.freeze([
       this.schema[0]!,
       ...this.schema.slice(1).filter((c) => keys.includes(c.name as any)),
