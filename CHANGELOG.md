@@ -77,6 +77,12 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **core / react**: **The live column reads are no longer experimental.**
+  `LiveView.column()`, `LiveView.keyColumn()`, `LiveView.partitionBy().toMap()`,
+  the `LiveColumnGroup` class and `@pond-ts/react`'s `useLiveVersion` shipped in
+  v0.19.0 labelled "experimental — may change in 0.19.x". They are now part of
+  the stable surface that 1.0 will commit to, with no change to their shape.
+
 - **charts** (**breaking**): **An `<AreaChart>`'s `baseline` no longer changes
   the y-axis range.** Since v0.71.0 the default zero baseline (and any numeric baseline)
   was pulled into the auto-fit domain, so an area over data running $100–$200
