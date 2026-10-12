@@ -1,9 +1,5 @@
 import type { DurationLiteral } from '../core/duration.js';
-import type {
-  AggregateColumns,
-  AggregateMap,
-  AggregateOutputMap,
-} from './aggregate.js';
+import type { AggregateColumns, AggregateMap } from './aggregate.js';
 import type {
   ColumnDef,
   ScalarKind,
@@ -53,22 +49,22 @@ export type DurationString = DurationLiteral | 'buffer';
  * and per-window elaborated `minSamples` overrides for that window.
  */
 export type FusedMappingElaborated<S extends SeriesSchema> = Readonly<{
-  mapping: AggregateMap<S> | AggregateOutputMap<S>;
+  mapping: AggregateMap<S>;
   minSamples?: number;
 }>;
 
 /**
  * Value form for one window in a {@link FusedMapping}. Either:
- * - A bare {@link AggregateMap} (key = source column, value = reducer)
- * - A bare {@link AggregateOutputMap} (key = output alias, value = `{ from, using }`)
+ * - A bare {@link AggregateMap}, whose entries are either shorthand
+ *   (key = source column, value = reducer) or spec form
+ *   (key = output alias, value = `{ from, using }`)
  * - An {@link FusedMappingElaborated} wrapper for per-window options
  *
- * The two bare forms match the existing `live.rolling(window, mapping, ...)`
+ * The bare form matches the existing `live.rolling(window, mapping, ...)`
  * value shapes — fused rolling accepts either uniformly.
  */
 export type FusedMappingValue<S extends SeriesSchema> =
   | AggregateMap<S>
-  | AggregateOutputMap<S>
   | FusedMappingElaborated<S>;
 
 /**
@@ -101,8 +97,8 @@ type InnerMapping<V> =
 
 /**
  * Compute the output column kind for one mapping entry. Handles
- * both `AggregateOutputMap` form (`{ from, using, kind? }`) and
- * `AggregateMap` form (key is a source column name, value is a
+ * both the spec form (`{ from, using, kind? }`) and the
+ * shorthand form (key is a source column name, value is a
  * reducer string or `CustomAggregateReducer`).
  *
  * Aligned with `OutputSpecKind` in `./aggregate.ts` —
@@ -121,7 +117,7 @@ type FusedColumnKind<
 
 /**
  * Reducer-string-to-output-kind dispatch, shared by both AggregateMap
- * and AggregateOutputMap entry shapes.
+ * entry shapes (shorthand and `{ from, using }` spec).
  */
 type FusedReducerKind<
   S extends SeriesSchema,

@@ -21,7 +21,6 @@ import {
 } from './live-history.js';
 import type {
   AggregateMap,
-  AggregateOutputMap,
   ColumnValue,
   EventForSchema,
   LiveSource,
@@ -77,8 +76,6 @@ type FusedEntry = {
   readonly timestamp: number;
   readonly data: Record<string, ColumnValue | undefined>;
 };
-
-type EventListener = (event: any) => void;
 
 // Compaction policy: see {@link LiveFusedRolling}'s analogous
 // comment. Proportional guard only — `frontIdx > entries.length / 2`.
@@ -143,7 +140,7 @@ export class LivePartitionedFusedRolling<
   #lastBucketIdx: number | undefined;
 
   readonly #outputEvents: EventForSchema<Out>[];
-  readonly #onEvent: Set<EventListener>;
+  readonly #onEvent: Set<(event: EventForSchema<Out>) => void>;
   readonly #unsubscribes: Set<() => void>;
   #disposed: boolean;
 
@@ -211,9 +208,7 @@ export class LivePartitionedFusedRolling<
       const windowMs = resolveWindowKey(key);
       const columns = normalizeAggregateColumns(
         reducerInputSchema,
-        innerMapping as
-          | AggregateMap<SeriesSchema>
-          | AggregateOutputMap<SeriesSchema>,
+        innerMapping as AggregateMap<SeriesSchema>,
       );
       specs.push({
         id: key,
@@ -292,7 +287,7 @@ export class LivePartitionedFusedRolling<
     return this.#outputEvents[index];
   }
 
-  on(type: 'event', fn: EventListener): () => void {
+  on(type: 'event', fn: (event: EventForSchema<Out>) => void): () => void {
     if (type !== 'event') {
       throw new TypeError(
         `LivePartitionedFusedRolling.on: unsupported event type '${String(type)}'`,
@@ -597,7 +592,7 @@ function resolveWindowKey(key: string): number {
 
 /**
  * Mirror of {@link LiveFusedRolling}'s helper. Disambiguates the
- * elaborated wrapper from a bare AggregateOutputMap entry named
+ * elaborated wrapper from a bare spec-form AggregateMap entry named
  * `mapping`. See the non-partitioned class's docstring for the
  * full explanation.
  */
@@ -613,7 +608,7 @@ function isAggregateOutputSpec(v: unknown): boolean {
 function unwrapFusedMappingValue<S extends SeriesSchema>(
   value: FusedMappingValue<S>,
 ): {
-  innerMapping: AggregateMap<S> | AggregateOutputMap<S>;
+  innerMapping: AggregateMap<S>;
   perWindowMinSamples: number | undefined;
 } {
   if (
@@ -624,7 +619,7 @@ function unwrapFusedMappingValue<S extends SeriesSchema>(
     !isAggregateOutputSpec((value as { mapping?: unknown }).mapping)
   ) {
     const elaborated = value as {
-      mapping: AggregateMap<S> | AggregateOutputMap<S>;
+      mapping: AggregateMap<S>;
       minSamples?: number;
     };
     if (elaborated.minSamples !== undefined) {
@@ -643,7 +638,7 @@ function unwrapFusedMappingValue<S extends SeriesSchema>(
     };
   }
   return {
-    innerMapping: value as AggregateMap<S> | AggregateOutputMap<S>,
+    innerMapping: value as AggregateMap<S>,
     perWindowMinSamples: undefined,
   };
 }

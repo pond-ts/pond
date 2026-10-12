@@ -15,7 +15,6 @@ import type { Interval } from '../core/interval.js';
 import { assertCellKind } from './validate.js';
 import type {
   AggregateMap,
-  AggregateOutputMap,
   AggregateOutputSpec,
   AggregateReducer,
   ColumnValue,
@@ -28,8 +27,8 @@ import type {
  * Normalised column spec used by both batch and live aggregation paths.
  *
  * `output` is the name the column appears under in the produced schema.
- * For `AggregateMap` mappings (`{ existingCol: reducer }`) the output
- * name equals the source column name. For `AggregateOutputMap` mappings
+ * For shorthand entries (`{ existingCol: reducer }`) the output
+ * name equals the source column name. For spec entries
  * (`{ alias: { from, using } }`) the two can differ — multiple specs
  * can read from the same source column with different aliases.
  *
@@ -60,8 +59,8 @@ export function isAggregateOutputSpec<S extends SeriesSchema>(
 }
 
 /**
- * Resolve a user-supplied `mapping` (either `AggregateMap<S>` or
- * `AggregateOutputMap<S>`) against the source `schema` into a flat
+ * Resolve a user-supplied `mapping` (an `AggregateMap<S>`,
+ * shorthand and/or spec entries) against the source `schema` into a flat
  * list of `AggregateColumnSpec`. Walks the mapping once; throws on
  * unknown source columns, non-value source columns, or invalid
  * reducers. The resulting specs drive both the output schema
@@ -76,7 +75,7 @@ export function isAggregateOutputSpec<S extends SeriesSchema>(
  */
 export function normalizeAggregateColumns<S extends SeriesSchema>(
   schema: S,
-  mapping: AggregateMap<S> | AggregateOutputMap<S>,
+  mapping: AggregateMap<S>,
 ): AggregateColumnSpec[] {
   const columnsByName = new Map(
     schema.slice(1).map((column) => [column.name, column] as const),

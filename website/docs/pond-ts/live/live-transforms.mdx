@@ -154,7 +154,7 @@ const currentCpu = batch.last()?.get('cpu');
 
 | Need                                                         | Use                                                |
 | ------------------------------------------------------------ | -------------------------------------------------- |
-| Alert / export / store **finalized** minute totals           | `agg.on('close', ...)` or `agg.closed()`           |
+| Alert / export / store **finalized** minute totals           | `agg.on('event', ...)` or `agg.closed()`           |
 | Live UI that tracks the **current** bucket as it grows       | `agg.on('bucket', ...)` or `agg.snapshot()`        |
 | Dashboard render with a **uniform grid** incl. empty buckets | `live.toTimeSeries().aggregate(seq, m, { range })` |
 | Cheap one-shot read of the current partial value             | `agg.snapshot().last()`                            |
@@ -263,7 +263,7 @@ should be) while `current.host` stays stable.
 
 ```ts
 // Fires when a bucket finalizes
-agg.on('close', (event) => {
+agg.on('event', (event) => {
   console.log(
     `[${event.begin()} – ${event.end()}] avg cpu: ${event.get('cpu')}`,
   );
@@ -390,7 +390,8 @@ alerts.on('event', (bucket) => {
 - `agg.at(i)` — access the i-th **closed** bucket event; the in-progress
   bucket is not reachable this way. Reach for `agg.snapshot().last()`
   or the `'bucket'` event if you want the partial current value.
-- `agg.on('event', fn)` — fires on bucket close (same as `on('close')`)
+- `agg.on('event', fn)` — fires on bucket close; returns an unsubscribe
+  function, like every `on()` overload
 
 ## LiveRollingAggregation: sliding-window reduction
 
@@ -749,7 +750,7 @@ const pipeline = live
   .window('10m')
   .aggregate(Sequence.every('1m'), { cpu: 'avg' });
 
-pipeline.on('close', (bucket) => {
+pipeline.on('event', (bucket) => {
   storeMetric('api-1-cpu-1m', bucket.get('cpu'), bucket.begin());
 });
 ```

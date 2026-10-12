@@ -35,7 +35,6 @@ import type { Sequence } from '../sequence/sequence.js';
 import {
   EMITS_EVICT,
   type AggregateMap,
-  type AggregateOutputMap,
   type AggregateSchema,
   type DiffSchema,
   type EventDataForSchema,
@@ -1225,10 +1224,7 @@ export class LiveSeries<S extends SeriesSchema> {
   ): LiveFusedRolling<S, FusedRollingSchema<S, FM>>;
   rolling(
     arg1: RollingWindow | FusedMapping<S>,
-    mappingOrOptions?:
-      | AggregateMap<S>
-      | AggregateOutputMap<S>
-      | LiveRollingOptions,
+    mappingOrOptions?: AggregateMap<S> | LiveRollingOptions,
     options?: LiveRollingOptions,
   ): any {
     // Dispatch on first-arg shape: a RollingWindow is a string
@@ -1245,7 +1241,7 @@ export class LiveSeries<S extends SeriesSchema> {
     return new LiveRollingAggregation(
       this,
       arg1 as RollingWindow,
-      mappingOrOptions as AggregateMap<S> | AggregateOutputMap<S>,
+      mappingOrOptions as AggregateMap<S>,
       options,
     );
   }

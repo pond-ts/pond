@@ -65,7 +65,7 @@ listener at the trigger cadence) and the in-app display (via
 
 ### Want multiple percentiles?
 
-Use the `AggregateOutputMap` form to compute multiple stats from one
+Use the `{ from, using }` spec form to compute multiple stats from one
 source column in a single rolling pass — same deque, same trigger,
 all percentiles populated together:
 
