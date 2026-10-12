@@ -48,7 +48,8 @@ const pct = live.map((e) => {
   return cpu === undefined ? e : e.set('cpu', cpu * 100);
 });
 
-// Select: narrow the schema to specific columns
+// Select: narrow the schema to specific columns. An unknown column name
+// (or an array instead of spread names) throws when select() is called.
 const cpuOnly = live.select('cpu');
 
 // Window: bounded view over recent data
