@@ -10,7 +10,6 @@ import type {
   BaselineSchema,
   AggregateFunction,
   AggregateReducer,
-  AggregateOutputMap,
   AggregateOutputSpec,
   AggregateMap,
   AggregateSchema,
@@ -277,6 +276,45 @@ function toBoundaryTimestamp(value: BoundaryLike): number {
     return value.begin();
   }
   return value instanceof Date ? value.getTime() : value;
+}
+
+/**
+ * Validates the arguments of a `select(...keys)` call against a schema.
+ * Shared by `TimeSeries.select` and the live `select`s so every surface
+ * reports the same errors:
+ *
+ * - an array argument (`select(['a', 'b'])` instead of
+ *   `select('a', 'b')`) throws a `TypeError` telling the caller to
+ *   spread the names;
+ * - a key that is not a payload column throws a `RangeError` naming the
+ *   key and listing the valid columns.
+ *
+ * Duplicate keys are allowed and collapse to one column. Internal — not
+ * re-exported from the package entry point.
+ */
+export function assertSelectKeys(
+  op: string,
+  schema: SeriesSchema,
+  keys: readonly unknown[],
+): void {
+  const valid = schema.slice(1).map((column) => column.name);
+  for (const key of keys) {
+    if (Array.isArray(key)) {
+      throw new TypeError(
+        `${op}: expected column names as separate arguments, got an array ` +
+          `[${key.map((k) => `'${String(k)}'`).join(', ')}]; spread it: ` +
+          `select(...names)`,
+      );
+    }
+    if (typeof key !== 'string' || !valid.includes(key)) {
+      throw new RangeError(
+        `${op}: unknown column '${String(key)}'; valid columns: ` +
+          (valid.length === 0
+            ? '(none)'
+            : valid.map((name) => `'${name}'`).join(', ')),
+      );
+    }
+  }
 }
 
 export function toKey(value: KeyLike): EventKey {
@@ -3731,7 +3769,7 @@ export class TimeSeries<S extends SeriesSchema> {
       minSamples?: number;
     } = {},
   ): TimeSeries<SeriesSchema> {
-    let mapping: AggregateMap<S> | AggregateOutputMap<S>;
+    let mapping: AggregateMap<S>;
     let options: {
       alignment?: RollingAlignment;
       sample?: AlignSample;
@@ -3747,25 +3785,25 @@ export class TimeSeries<S extends SeriesSchema> {
     ) {
       sequence = sequenceOrWindow;
       window = windowOrMapping as DurationInput;
-      mapping = mappingOrOptions as AggregateMap<S> | AggregateOutputMap<S>;
+      mapping = mappingOrOptions as AggregateMap<S>;
       options = maybeOptions;
     } else {
       window = sequenceOrWindow;
-      mapping = windowOrMapping as AggregateMap<S> | AggregateOutputMap<S>;
+      mapping = windowOrMapping as AggregateMap<S>;
       options =
         (mappingOrOptions as { alignment?: RollingAlignment } | undefined) ??
         {};
     }
 
-    // Normalize both mapping shapes (`AggregateMap` and `AggregateOutputMap`)
+    // Normalize both entry shapes (shorthand and `{ from, using }` spec)
     // into a uniform spec list of `{ output, source, reducer, kind }`. Source
-    // and output names can differ, which is how `AggregateOutputMap` expresses
+    // and output names can differ, which is how spec entries express
     // "multiple reducers keyed off the same source column."
     //
     // For `AggregateMap` inputs (where output === source === schema column),
     // reorder by schema-column order so the runtime row layout lines up with
     // the `RollingSchema<S, Mapping>` type's column inference. For
-    // `AggregateOutputMap` inputs the schema is erased to `SeriesSchema`, so
+    // spec-form inputs the schema is erased to `SeriesSchema`, so
     // insertion order is the natural ordering — consistent with `aggregate`.
     const isOutputMap = Object.values(mapping as Record<string, unknown>).some(
       (v) => isAggregateOutputSpec<S>(v),
@@ -4972,10 +5010,19 @@ export class TimeSeries<S extends SeriesSchema> {
     );
   }
 
-  /** Example: `series.select("cpu", "healthy")`. Returns a new series containing only the selected payload fields. */
+  /**
+   * Example: `series.select("cpu", "healthy")`. Returns a new series containing only the selected payload fields.
+   *
+   * Pass column names as separate arguments — an array argument throws a
+   * `TypeError` (spread it: `select(...names)`), and a name that is not a
+   * payload column throws a `RangeError` listing the valid columns.
+   * Duplicate names are allowed and select the column once; output
+   * columns keep schema order, not argument order.
+   */
   select<const Keys extends readonly (keyof EventDataForSchema<S>)[]>(
     ...keys: Keys
   ): TimeSeries<SelectSchema<S, Keys[number] & string>> {
+    assertSelectKeys('select', this.schema, keys);
     const firstColumn = this.schema[0]!;
     const selectedColumns = this.schema
       .slice(1)
@@ -5602,7 +5649,7 @@ export class TimeSeries<S extends SeriesSchema> {
       {
         [avgName]: { from: col as string, using: 'avg' as const },
         [sdName]: { from: col as string, using: 'stdev' as const },
-      } as AggregateOutputMap<SeriesSchema>,
+      } as AggregateMap<SeriesSchema>,
       rollingOptions,
     ) as unknown as TimeSeries<SeriesSchema>;
 
@@ -5704,7 +5751,7 @@ export class TimeSeries<S extends SeriesSchema> {
     const rollingMapping = {
       [ROLL_AVG]: { from: col as string, using: 'avg' as const },
       [ROLL_SD]: { from: col as string, using: 'stdev' as const },
-    } as AggregateOutputMap<SeriesSchema>;
+    } as AggregateMap<SeriesSchema>;
     const rollingOptions: {
       alignment?: RollingAlignment;
       minSamples?: number;
@@ -5785,7 +5832,7 @@ export class TimeSeries<S extends SeriesSchema> {
 function aggregateInternal<S extends SeriesSchema>(
   series: TimeSeries<S>,
   sequence: SequenceLike,
-  mapping: AggregateMap<S> | AggregateOutputMap<S>,
+  mapping: AggregateMap<S>,
   options: { range?: TemporalLike } = {},
 ): TimeSeries<SeriesSchema> {
   const range = options.range ?? series.timeRange();

@@ -105,7 +105,35 @@ include new features and type-level changes; patch bumps are strictly additive.
   a conflicting `ordering` (e.g. `sort: true, ordering: 'clamp'`)
   throws a `ValidationError`.
 
+- **docs**: **The versioning policy is now published** — a "Versioning"
+  section in the root README and each package README, and a
+  [Versioning](https://pond-ts.org/docs/reference/versioning) page on the
+  docs site. Pre-1.0 a minor may break (always marked **breaking** here with a
+  migration note), patches never break, all packages release in lock-step,
+  and from 1.0 the project follows semver. The page also defines the public
+  API: each package's entry-point exports as mapped in `API.md`, excluding
+  anything marked experimental or internal.
+
 ### Changed
+
+- **core** (**breaking**): **`select(...keys)` throws on a key that isn't a
+  column, and on an array argument.** It used to drop unknown keys silently, so
+  a typo — or `select(['a', 'b'])` instead of `select('a', 'b')` — returned an
+  empty-payload series with no error. Now an unknown key throws a `RangeError`
+  naming it and listing the valid columns, and an array argument throws a
+  `TypeError` telling you to spread it (`select(...names)`). Applies to
+  `TimeSeries`, `LiveSeries`, `LiveView`, `LiveAggregation` and
+  `LiveRollingAggregation` (the live ones throw when the view is built, not on
+  the first event). `Event.select` rejects an array argument but still
+  tolerates absent keys, since an event payload may omit optional fields.
+  Duplicate keys are still accepted and select the column once. **Migration:**
+  fix the misspelled column, or spread the array.
+
+- **core / react**: **The live column reads are no longer experimental.**
+  `LiveView.column()`, `LiveView.keyColumn()`, `LiveView.partitionBy().toMap()`,
+  the `LiveColumnGroup` class and `@pond-ts/react`'s `useLiveVersion` shipped in
+  v0.19.0 labelled "experimental — may change in 0.19.x". They are now part of
+  the stable surface that 1.0 will commit to, with no change to their shape.
 
 - **charts** (**breaking**): **An `<AreaChart>`'s `baseline` no longer changes
   the y-axis range.** Since v0.71.0 the default zero baseline (and any numeric baseline)
@@ -119,6 +147,48 @@ include new features and type-level changes; patch bumps are strictly additive.
   stack, a quantity like throughput — put zero on the axis with
   `<YAxis min={0}>` (`max={0}` for an all-negative series). Areas whose data
   already reaches their baseline, or whose axis is pinned, are unchanged.
+- **core** (**breaking**): **Every `on()` overload on `LiveAggregation` and
+  `LiveRollingAggregation` now returns an unsubscribe function**, matching
+  `LiveSeries.on` / `LiveView.on`. `on('bucket')` and `on('update')` used to
+  return `this`, so those listeners could never be removed. **Migration:** a
+  chained `live.aggregate(…).on('bucket', fn)` now yields the unsubscribe
+  function, not the operator (same for `live.rolling(…).on('update', fn)`) —
+  assign the operator first, then subscribe.
+- **core** (**breaking, type-level**): **`LiveAggregation` listeners
+  (`'event'`, `'bucket'`) and `LiveRollingAggregation`'s `'event'` listener
+  receive the schema-narrowed `EventForSchema<Out>`** — the same type `at()`
+  and the `closed()` series hand out — instead of a widened
+  `Event<Interval, Record<string, …>>` / `any`. `e.get('col')` is now typed
+  per output column, and naming a column the aggregation doesn't produce is a
+  compile error. As a result a `LiveAggregation<S, Out>` is now assignable to
+  `LiveSource<Out>` ([PND-LIVESRC]). The same narrowing applies to the
+  `'event'` listener of the keyed-form fused `live.rolling({...})`
+  (`LiveFusedRolling`), `live.reduce(…)` (`LiveReduce`), and the
+  clock-triggered partitioned `rolling(…)` variants
+  (`LivePartitionedSyncRolling` / `LivePartitionedFusedRolling`), which
+  previously typed it `(event: any)`. Both `LiveAggregation` /
+  `LiveRollingAggregation` `on()` methods now throw a
+  `TypeError` on an unknown event type instead of silently registering the
+  listener.
+
+### Removed
+
+- **core** (**breaking**): **`LiveAggregation.on('close', fn)` is removed —
+  use `on('event', fn)`**, which it was an alias for. Untyped callers that
+  still pass `'close'` get a `TypeError` naming the replacement.
+
+### Removed
+
+- `pond-ts` (**breaking**, types only): **the back-compat type alias
+  `AggregateOutputMap` is gone — use `AggregateMap`.** It has been an exact
+  alias of `AggregateMap` since v0.23.0, when the shorthand and
+  `{ from, using }` spec forms were unified into one map type. The internal
+  schema aliases `RollingOutputMapSchema` (identical to `RollingSchema`) and
+  `AggregateOutputMapResultSchema` (identical to `AggregateSchema`) are removed
+  with it; neither was reachable from a public entry point. **Migration:**
+  replace `AggregateOutputMap<S>` with `AggregateMap<S>` — no runtime change.
+  The fused-rolling duplicate-output error message now says "use a
+  `{ from, using }` spec entry" instead of naming the removed type.
 
 ## [0.72.0] — 2026-10-08
 
@@ -290,8 +360,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 - `@pond-ts/financial`: **`StudyOutput.id` documents the `@pond-ts/process`
   bridge**, and a new `test/catalog-process.test.ts` pins it. The field is a
-  _financial column suffix_; process's `OutputDef.id` is a _process outlet
-  id_; they share a name and are different namespaces. Process names its own
+  *financial column suffix*; process's `OutputDef.id` is a *process outlet
+  id*; they share a name and are different namespaces. Process names its own
   columns (`specId + OutputDef.id`) and matches an op's return to its outputs
   positionally, so a study's own column names never reach it — which means a
   registry bridging the two chooses its own suffixes, and for the **twelve**
@@ -304,7 +374,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   worked around it by hand. No API change: the descriptors, the studies and
   the guard are all unchanged, and the round-trip test is what stops the two
   packages drifting — `catalog.test.ts` validates a descriptor against its
-  _study_, so it is structurally blind to a cross-package disagreement.
+  *study*, so it is structurally blind to a cross-package disagreement.
 - `@pond-ts/process`: **`Skipped.spec` echoes the request verbatim**, and its
   `params` / `inputs` are typed `unknown` accordingly. The plan pass normalized
   `params: null` to `{}`, so recomputing an id from the echo produced the
@@ -323,6 +393,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   rather than crashing.
 
   (All three reported by Tidal against 0.62.0, after adopting it.)
+
 
 ## [0.69.0] — 2026-09-13
 

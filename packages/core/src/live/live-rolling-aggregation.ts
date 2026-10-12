@@ -2,6 +2,7 @@ import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
 } from '../batch/aggregate-columns.js';
+import { assertSelectKeys } from '../batch/time-series.js';
 import { Event } from '../core/event.js';
 import { Time } from '../core/time.js';
 import { LiveAggregation } from './live-aggregation.js';
@@ -26,7 +27,6 @@ import {
 } from './triggers.js';
 import type {
   AggregateMap,
-  AggregateOutputMap,
   AggregateSchema,
   DiffSchema,
   EventDataForSchema,
@@ -38,7 +38,6 @@ import type {
   ColumnValue,
   ValidatedAggregateMap,
 } from '../schema/index.js';
-import type { AggregateOutputMapResultSchema } from '../schema/index.js';
 
 import type { DurationInput } from '../core/duration.js';
 import { parseDuration } from '../core/duration.js';
@@ -52,7 +51,6 @@ type WindowEntry = {
 };
 
 type UpdateListener = (value: Record<string, ColumnValue | undefined>) => void;
-type EventListener = (event: any) => void;
 
 // Compaction policy: see {@link LiveFusedRolling}'s analogous
 // comment for the full rationale. Proportional guard only —
@@ -61,6 +59,13 @@ type EventListener = (event: any) => void;
 // large live-window sizes (Codex flagged this on PR #119).
 
 export type RollingWindow = DurationInput | number;
+
+function unknownListenerType(type: never): never {
+  throw new TypeError(
+    `LiveRollingAggregation.on: unknown event type '${String(type)}' ` +
+      `(expected 'event' or 'update')`,
+  );
+}
 
 export type LiveRollingOptions = {
   /**
@@ -188,7 +193,7 @@ export class LiveRollingAggregation<
 
   readonly #outputEvents: any[];
   readonly #onUpdate: Set<UpdateListener>;
-  readonly #onEvent: Set<EventListener>;
+  readonly #onEvent: Set<(event: EventForSchema<Out>) => void>;
   readonly #unsubscribe: () => void;
 
   // Pipeline counters for {@link LiveRollingAggregation.stats}.
@@ -210,7 +215,7 @@ export class LiveRollingAggregation<
   constructor(
     source: LiveSource<S>,
     window: RollingWindow,
-    mapping: AggregateMap<S> | AggregateOutputMap<S>,
+    mapping: AggregateMap<S>,
     options: LiveRollingOptions = {},
   ) {
     this.name = source.name;
@@ -251,19 +256,19 @@ export class LiveRollingAggregation<
     // by both batch (`TimeSeries.rolling/aggregate`) and live
     // (`LiveRollingAggregation`, `LiveAggregation`,
     // `LivePartitionedSyncRolling`) paths. Accepts either
-    // `AggregateMap<S>` (one reducer per existing source column) or
-    // `AggregateOutputMap<S>` (named alias outputs, multiple
-    // reducers per source column).
+    // shorthand `AggregateMap<S>` entries (one reducer per existing
+    // source column) or `{ from, using }` spec entries (named alias
+    // outputs, multiple reducers per source column).
     this.#columns = normalizeAggregateColumns(
       source.schema,
-      mapping as AggregateMap<S> | AggregateOutputMap<S>,
+      mapping as AggregateMap<S>,
     );
 
     this.schema = Object.freeze([
       source.schema[0],
       ...this.#columns.map((c) => ({
         // Output column NAME is `c.output` — same as `c.source` for
-        // AggregateMap mappings, can differ for AggregateOutputMap.
+        // AggregateMap mappings, can differ for spec entries.
         name: c.output,
         kind: c.kind,
         required: false,
@@ -308,7 +313,7 @@ export class LiveRollingAggregation<
     const warmup = this.#liveLength() < this.#minSamples;
     for (let i = 0; i < this.#columns.length; i++) {
       // Output keyed by `output` name (= source name for AggregateMap;
-      // user-chosen alias for AggregateOutputMap).
+      // user-chosen alias for spec entries).
       result[this.#columns[i]!.output] = warmup
         ? undefined
         : this.#states[i]!.snapshot();
@@ -320,20 +325,31 @@ export class LiveRollingAggregation<
     return this.#liveLength();
   }
 
-  on(type: 'event', fn: EventListener): () => void;
-  on(type: 'update', fn: UpdateListener): this;
+  /**
+   * Subscribe to the rolling aggregation. Every overload returns an
+   * unsubscribe function, matching `LiveSeries.on` / `LiveView.on`.
+   *
+   * - `'event'` — fires with each output event (schema-narrowed, the
+   *   same type {@link LiveRollingAggregation.at} returns).
+   * - `'update'` — fires after every source event with the current
+   *   {@link LiveRollingAggregation.value}.
+   */
+  on(type: 'event', fn: (event: EventForSchema<Out>) => void): () => void;
+  on(type: 'update', fn: UpdateListener): () => void;
   on(
     type: 'event' | 'update',
-    fn: EventListener | UpdateListener,
-  ): this | (() => void) {
-    if (type === 'event') {
-      this.#onEvent.add(fn as EventListener);
-      return () => {
-        this.#onEvent.delete(fn as EventListener);
-      };
-    }
-    this.#onUpdate.add(fn as UpdateListener);
-    return this;
+    fn: ((event: EventForSchema<Out>) => void) | UpdateListener,
+  ): () => void {
+    const set: Set<(arg: any) => void> =
+      type === 'event'
+        ? this.#onEvent
+        : type === 'update'
+          ? this.#onUpdate
+          : unknownListenerType(type);
+    set.add(fn);
+    return () => {
+      set.delete(fn);
+    };
   }
 
   // ── View transforms ─────────────────────────────────────────
@@ -351,6 +367,7 @@ export class LiveRollingAggregation<
   select<const Keys extends readonly (keyof EventDataForSchema<Out>)[]>(
     ...keys: Keys
   ): LiveView<SelectSchema<Out, Keys[number] & string>> {
+    assertSelectKeys('select', this.schema as SeriesSchema, keys);
     const newSchema = Object.freeze([
       this.schema[0]!,
       ...this.schema.slice(1).filter((c) => keys.includes(c.name as any)),
@@ -408,13 +425,13 @@ export class LiveRollingAggregation<
     sequence: Sequence,
     mapping: M,
   ): LiveAggregation<Out, AggregateSchema<Out, M>>;
-  aggregate<const M extends AggregateOutputMap<Out>>(
+  aggregate<const M extends AggregateMap<Out>>(
     sequence: Sequence,
     mapping: M,
-  ): LiveAggregation<Out, AggregateOutputMapResultSchema<Out, M>>;
+  ): LiveAggregation<Out, AggregateSchema<Out, M>>;
   aggregate(
     sequence: Sequence,
-    mapping: AggregateMap<Out> | AggregateOutputMap<Out>,
+    mapping: AggregateMap<Out>,
   ): LiveAggregation<Out> {
     return new LiveAggregation(this as any, sequence, mapping as any);
   }
@@ -514,7 +531,10 @@ export class LiveRollingAggregation<
         ? undefined
         : this.#states[i]!.snapshot();
     }
-    const outputEvent = new Event(key, record);
+    const outputEvent = new Event(
+      key,
+      record,
+    ) as unknown as EventForSchema<Out>;
     this.#statsEmissions++;
     if (this.#historyEnabled) {
       this.#outputEvents.push(outputEvent);

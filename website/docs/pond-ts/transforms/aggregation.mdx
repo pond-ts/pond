@@ -453,7 +453,7 @@ const agg = live.aggregate(Sequence.every('1m'), {
 });
 
 // Closed buckets stream out.
-agg.on('close', (event) => storeMetric(event));
+agg.on('event', (event) => storeMetric(event));
 
 // Provisional in-progress bucket on every contributing push.
 agg.on('bucket', (event) => updateLiveTile(event));

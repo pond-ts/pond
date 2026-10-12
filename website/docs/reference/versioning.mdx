@@ -1,0 +1,41 @@
+---
+title: Versioning
+description: How pond versions its packages — what a 0.x minor may break, lock-step releases, semver from 1.0, and what counts as the public API.
+---
+
+# Versioning
+
+All six packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
+`@pond-ts/fit`, `@pond-ts/financial` and `@pond-ts/process` — release
+together under one version number. Install matching versions of every
+pond package you use.
+
+## Today: 0.x
+
+- **A minor release (`0.x.0`) may contain breaking changes.** Each one is
+  marked **breaking** in the
+  [CHANGELOG](https://github.com/pond-ts/pond/blob/main/CHANGELOG.md) with a
+  migration note. Read it before bumping a minor.
+- **A patch release (`0.x.y`) never breaks.** Patches carry fixes and
+  additive changes only.
+- npm carets do not span minors before 1.0: `^0.72.0` means
+  `>=0.72.0 <0.73.0`, so upgrading to a new minor is always a deliberate
+  step.
+
+## From 1.0
+
+From 1.0 the project follows [semantic versioning](https://semver.org/):
+breaking changes only in a major release, new features in a minor, fixes
+in a patch.
+
+## What counts as the public API
+
+The public API is what each package exports from its declared entry points
+(`pond-ts`, `pond-ts/types`, `@pond-ts/financial/fluent`, …), as mapped in
+[API.md](https://github.com/pond-ts/pond/blob/main/API.md). Excluded:
+
+- anything marked **experimental** — currently the whole of
+  `@pond-ts/process`, plus individual exports flagged experimental in
+  their docs or the CHANGELOG. These may change in any release;
+- anything marked **internal** (`@internal` in the source), and anything
+  reached by importing past the entry points (deep `dist/` paths).

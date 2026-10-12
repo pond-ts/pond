@@ -129,7 +129,6 @@ export type {
   BaselineSchema,
   AggregateFunction,
   AggregateReducer,
-  AggregateOutputMap,
   AggregateOutputSpec,
   AggregateMap,
   AggregateSchema,

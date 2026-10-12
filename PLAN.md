@@ -838,10 +838,6 @@ experimental at v0.55.0** after the 2026-08 audit hardening, which resolved
   coalesces concurrent calls for one source identity. Remaining:
   cancellation/freshness policy, source schema projection for remote composers,
   and a measured revision contract.
-- **[PND-LIVESRC]** — Core-side: `LiveAggregation` does not satisfy
-  `LiveSource<S>`, because its `on('event')` overload widens the listener's
-  event type. Narrow the overload, or give the incremental operators their own
-  named contract. Touches a public type — needs sign-off.
 - **[PND-PROCPAR]** — Worker-thread parallelism. Shipped: `HostPool`
   (throughput, 3.1–4.0× on distinct requests) and `withWorkers` rolling
   partitions ([PND-SCANKERN]). **Remaining:** (1) the **latency half** —

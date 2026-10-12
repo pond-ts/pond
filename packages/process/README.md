@@ -347,3 +347,15 @@ A node caches the error its `compute` threw and rethrows it without
 re-running until an input changes, so a broken node stays cheap to poll.
 `node.error` exposes it. Cycles are rejected by `connect()`, so the graph
 is acyclic by construction and evaluation never guards against recursion.
+
+## Versioning
+
+Released in lock-step with `pond-ts` and the other `@pond-ts/*` packages
+under one version — keep them in step. Pre-1.0, a minor release may contain
+breaking changes (each marked **breaking** in the
+[CHANGELOG](https://github.com/pond-ts/pond/blob/main/CHANGELOG.md) with a
+migration note); patch releases never break. From 1.0 the project follows
+semver. This package is **experimental** and outside that
+policy: any release may change it. See
+[Versioning](https://pond-ts.org/docs/reference/versioning) for what
+counts as the public API.

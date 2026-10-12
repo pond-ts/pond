@@ -68,6 +68,17 @@ Speed.mps(5.5).format('imperial'); // "12.3 mph"
 Guides and the full API live at **<https://pond-ts.org/docs/fit/>**.
 Source and issues: [github.com/pond-ts/pond](https://github.com/pond-ts/pond).
 
+## Versioning
+
+Released in lock-step with `pond-ts` and the other `@pond-ts/*` packages
+under one version — keep them in step. Pre-1.0, a minor release may contain
+breaking changes (each marked **breaking** in the
+[CHANGELOG](https://github.com/pond-ts/pond/blob/main/CHANGELOG.md) with a
+migration note); patch releases never break. From 1.0 the project follows
+semver. See
+[Versioning](https://pond-ts.org/docs/reference/versioning) for what
+counts as the public API.
+
 ## License
 
 MIT
