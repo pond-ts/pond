@@ -3,6 +3,7 @@ import {
   resolveReducer,
   rollingStateFor,
 } from '../reducers/index.js';
+import { plainRollingSum } from '../reducers/sum.js';
 import type { ArrayValue, Column, ColumnSchema } from '../columnar/index.js';
 import {
   BooleanColumn,
@@ -600,6 +601,7 @@ export function tryRollingCountColumnarNumeric(
         count,
         alignment,
         minSamples,
+        false,
       ),
     );
   }
@@ -610,7 +612,8 @@ export function tryRollingCountColumnarNumeric(
  * One column's trailing / leading / centred count-window sweep.
  *
  * `avg` is specialised inline; everything else drives its reducer state,
- * which is now monomorphic at this call site. `avg` earns the special
+ * which is now monomorphic at this call site. `laned` is the overflow
+ * re-run — every reducer through its (laned) state; see the note below. `avg` earns the special
  * case because it is what `sma` and the centre line of `bollinger` /
  * `zScore` reduce to, and its recurrence is a running sum — no accuracy
  * argument to preserve, unlike `stdev`, whose order-independent Welford
@@ -623,6 +626,7 @@ function sweepRollingColumn(
   count: number,
   alignment: RollingAlignment,
   minSamples: number,
+  laned: boolean,
 ): Float64Column {
   const values = source._values;
   const validity = source.validity;
@@ -652,18 +656,32 @@ function sweepRollingColumn(
   // `avg` is a running sum; `stdev` is Welford. Both are inlined to remove
   // the per-row `add` / `remove` / `snapshot` calls; everything else keeps
   // its reducer state, which is monomorphic here now.
-  const kind: 'avg' | 'stdev' | 'state' =
-    spec.reducer === 'avg' || spec.reducer === 'mean'
+  //
+  // **Overflow** ([PND-NANREP]). The reducer states split their running
+  // sum / Welford accumulator by magnitude (`reducers/overflow-lanes.ts`) so
+  // an overflow can't stick after the huge values leave the window — at the
+  // price of a compare per cell. This sweep doesn't pay it: it runs the plain
+  // single-accumulator recurrences (inline `avg` / `stdev`, `plainRollingSum`
+  // for `sum`), and on the first non-finite answer from one of them — which
+  // ordinary data never produces — abandons the pass and re-runs the column
+  // with `laned` set, driving the laned reducer states instead. The re-run's
+  // answers are then the state path's, bit for bit.
+  const kind: 'avg' | 'stdev' | 'state' = laned
+    ? 'state'
+    : spec.reducer === 'avg' || spec.reducer === 'mean'
       ? 'avg'
       : spec.reducer === 'stdev'
         ? 'stdev'
         : 'state';
+  const plainSum = !laned && spec.reducer === 'sum';
   const state =
     kind !== 'state'
       ? null
-      : allFinite && validity === undefined
-        ? resolveReducer(spec.reducer as string).rollingState()
-        : rollingStateFor(spec.reducer);
+      : plainSum
+        ? plainRollingSum()
+        : allFinite && validity === undefined
+          ? resolveReducer(spec.reducer as string).rollingState()
+          : rollingStateFor(spec.reducer);
 
   // `avg`
   let runningSum = 0;
@@ -802,7 +820,10 @@ function sweepRollingColumn(
         : kind === 'stdev'
           ? wN === 0
             ? undefined
-            : Math.sqrt(Math.max(0, wM2 / wN))
+            : // `+ (wMean − wMean)` is `+ 0` — unless a delta overflow left
+              // the mean non-finite with `m2` clamped back to a finite value,
+              // which must not read as a defined stdev (it re-runs laned).
+              Math.sqrt(Math.max(0, wM2 / wN) + (wMean - wMean))
           : state!.snapshot();
     if (v === undefined) continue; // missing cell (e.g. all-missing window)
     // A non-finite result (e.g. a `sum` overflow to Infinity) is a missing
@@ -810,7 +831,21 @@ function sweepRollingColumn(
     // ([PND-NANREP]), matching the generic sweep, whose states'
     // snapshots map it via `finiteOrMissing`. (`v - v !== 0` is true
     // exactly for NaN and ±Infinity.)
-    if (typeof v !== 'number' || v - v !== 0) continue;
+    if (typeof v !== 'number' || v - v !== 0) {
+      // A plain running accumulator overflowed: re-run laned (see above).
+      if (kind !== 'state' || plainSum) {
+        return sweepRollingColumn(
+          spec,
+          source,
+          rowCount,
+          count,
+          alignment,
+          minSamples,
+          true,
+        );
+      }
+      continue;
+    }
     outValues[index] = v;
     outBits[index >> 3]! |= 1 << (index & 7);
     outDefined += 1;

@@ -274,6 +274,23 @@ export function validateAndNormalize<S extends SeriesSchema>(
 }
 
 /**
+ * Options for {@link validateAndNormalizeColumnar}.
+ *
+ * `nonFiniteAsMissing` is the **computed-rows** reading of a number cell:
+ * a `NaN` / `±Infinity` in a `number` column is stored as missing instead
+ * of rejected. Library operators that assemble their output as rows
+ * (`smooth`, `baseline`, `align`, the row paths of `aggregate` / `rolling`)
+ * use it — a non-finite number in a number column means missing
+ * ([PND-NANREP]), and their arithmetic can overflow. User-facing row intake
+ * (`new TimeSeries`, `fromJSON`, `LiveSeries.push`) leaves it off and keeps
+ * rejecting `NaN` and `±Infinity` alike. The cell becomes missing *before*
+ * the required check, so a required column still refuses it.
+ */
+export type ColumnarIntakeOptions = {
+  readonly nonFiniteAsMissing?: boolean;
+};
+
+/**
  * Column-native intake — walks rows once, writes directly into
  * per-column typed-array buffers + per-row key buffers, returns
  * the inputs to `ColumnarStore.fromTrustedStore` (key column +
@@ -309,23 +326,6 @@ export function validateAndNormalize<S extends SeriesSchema>(
  * mechanism — preserving the identity invariant `eventAt(i) ===
  * eventAt(i)` for the store's lifetime.
  */
-/**
- * Options for {@link validateAndNormalizeColumnar}.
- *
- * `nonFiniteAsMissing` is the **computed-rows** reading of a number cell:
- * a `NaN` / `±Infinity` in a `number` column is stored as missing instead
- * of rejected. Library operators that assemble their output as rows
- * (`smooth`, `baseline`, `align`, the row paths of `aggregate` / `rolling`)
- * use it — a non-finite number in a number column means missing
- * ([PND-NANREP]), and their arithmetic can overflow. User-facing row intake
- * (`new TimeSeries`, `fromJSON`, `LiveSeries.push`) leaves it off and keeps
- * rejecting `NaN` and `±Infinity` alike. The cell becomes missing *before*
- * the required check, so a required column still refuses it.
- */
-export type ColumnarIntakeOptions = {
-  readonly nonFiniteAsMissing?: boolean;
-};
-
 export function validateAndNormalizeColumnar<S extends SeriesSchema>(
   input: TimeSeriesInput<S>,
   options: ColumnarIntakeOptions = {},

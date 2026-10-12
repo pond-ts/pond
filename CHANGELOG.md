@@ -112,9 +112,11 @@ include new features and type-level changes; patch bumps are strictly additive.
     — missing from that row on, as its accumulator stays `Infinity`).
   - **Reducers never answer non-finite:** a reducer result that overflows
     (`sum`, `avg`, `stdev`, or a custom reducer returning `Infinity`) is
-    `undefined` — in `reduce()` too, which used to return `Infinity`. A running
-    window `sum` that has overflowed can stay missing after the large values
-    leave the window (its incremental sum stays `Infinity`).
+    `undefined` — in `reduce()` too, which used to return `Infinity`. A
+    rolling `sum` / `avg` / `stdev` (batch, live, and `smooth('movingAverage')`)
+    reads missing only while the current window overflows, and reads finite
+    again once the large values leave it. A mean is still sum-then-divide, so
+    `avg([MAX_VALUE, MAX_VALUE])` reads missing although the mean is finite.
     (The column methods `col.sum()` / `col.mean()` are unchanged.)
   - **Doors:** `withColumn` with a `Float64Array` reads `±Infinity` as a gap,
     as it already read `NaN` (was a `ValidationError`). Row intake
@@ -123,8 +125,11 @@ include new features and type-level changes; patch bumps are strictly additive.
     `fromArrow` already read both as a gap.
   - **Live:** `diff` / `rate` / `pctChange` / `cumulative` / `map` views and
     every live accumulator (`aggregate`, `rolling`, `reduce`) emit `undefined`
-    for a non-finite result, so a live view's `toTimeSeries()` no longer throws on an
-    overflow. `@pond-ts/process` `RangeOutput.set` / `sealRange` / `packColumn`
+    for a non-finite result, so a library view's `toTimeSeries()` no longer
+    throws on an overflow. A user `map` keeps the source schema, so a `map` fn
+    that writes a non-finite value reads missing too — and `toTimeSeries()`
+    then works if that column is optional, but throws the required-column
+    `ValidationError` if it is required. `@pond-ts/process` `RangeOutput.set` / `sealRange` / `packColumn`
     store `±Infinity` as missing too.
 
   **Migration:** code that caught a `ValidationError` / `RangeError` from these

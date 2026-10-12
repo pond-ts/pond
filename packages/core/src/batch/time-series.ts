@@ -172,6 +172,11 @@ import {
   type AggregateBucketState,
   type RollingReducerState,
 } from '../reducers/index.js';
+import {
+  SUM_SCALE,
+  SUM_SPLIT,
+  SUM_UNSCALE,
+} from '../reducers/overflow-lanes.js';
 
 type RangeLike = EventKey | TimeRangeInput | IntervalInput;
 type BoundaryLike = EventKey | TimestampInput;
@@ -4113,8 +4118,8 @@ export class TimeSeries<S extends SeriesSchema> {
       // map it to missing, [PND-NANREP].) Trusted construction skips intake,
       // and the `*FromArray` builders silently coerce a kind mismatch to a
       // *missing* cell — so re-assert the same contract here (same value
-      // rules AND the same
-      // `ValidationError` class as intake), keeping packed columns clean.
+      // rules AND the same `ValidationError` class as intake), keeping
+      // packed columns clean.
       // Missing cells (`undefined`, e.g. the minSamples warm-up) are
       // unaffected. (#225 Codex finding.)
       assertColumnValuesMatchKind(
@@ -4479,24 +4484,37 @@ export class TimeSeries<S extends SeriesSchema> {
     const resultValues = new Array<number | undefined>(this.events.length);
     let windowStart = 0;
     let windowEnd = 0;
+    // Two-lane running sum (see `reducers/overflow-lanes.ts`) so an
+    // overflow can't stick after the huge values leave the window.
     let numericSum = 0;
     let numericCount = 0;
+    let bigSum = 0;
+    let bigCount = 0;
     const addEvent = (index: number): void => {
       const value = sourceValues[index];
       if (typeof value === 'number') {
-        numericSum += value;
         numericCount += 1;
+        if (value < SUM_SPLIT && value > -SUM_SPLIT) numericSum += value;
+        else {
+          bigSum += value * SUM_SCALE;
+          bigCount += 1;
+        }
       }
     };
     const removeEvent = (index: number): void => {
       const value = sourceValues[index];
       if (typeof value === 'number') {
-        numericSum -= value;
         numericCount -= 1;
+        if (value < SUM_SPLIT && value > -SUM_SPLIT) numericSum -= value;
+        else if (--bigCount === 0) bigSum = 0;
+        else bigSum -= value * SUM_SCALE;
       }
     };
     const snapshot = (): number | undefined =>
-      numericCount === 0 ? undefined : numericSum / numericCount;
+      numericCount === 0
+        ? undefined
+        : (bigCount === 0 ? numericSum : numericSum + bigSum * SUM_UNSCALE) /
+          numericCount;
 
     for (let groupStart = 0; groupStart < this.events.length; ) {
       const anchor = anchors[groupStart]!;

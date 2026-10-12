@@ -381,3 +381,244 @@ describe('[PND-NANREP] live operators emit non-finite results as missing', () =>
     }
   });
 });
+
+describe('[PND-NANREP] a rolling overflow recovers once the huge values leave', () => {
+  // Before the overflow lanes (`reducers/overflow-lanes.ts`) a subtractive
+  // running sum that reached ±Infinity stayed there (`Infinity − x` is
+  // `Infinity`), so every later row read missing — for the rest of a batch
+  // series and the rest of a live stream.
+  const schema = [
+    { name: 'time', kind: 'time' },
+    { name: 'value', kind: 'number' },
+  ] as const;
+  const SUM_CELLS = [1, 2, MAX, MAX, 3, 4, 5];
+  // Width-2 windows: [1] [1,2] [2,MAX] [MAX,MAX] [MAX,3] [3,4] [4,5]
+  const SUM = [1, 3, MAX, undefined, MAX, 7, 9];
+  const AVG = [1, 1.5, (2 + MAX) / 2, undefined, (MAX + 3) / 2, 3.5, 4.5];
+  // Large enough to overflow Welford's m2 (1e300² = Infinity).
+  const SD_CELLS = [1, 2, 1e300, -1e300, 3, 4, 5];
+  const SD_TAIL = [0.5, 0.5]; // rows 5, 6: [3,4] and [4,5]
+
+  const series = (cells: number[]) =>
+    new TimeSeries({
+      name: 'o',
+      schema,
+      rows: cells.map((v, i) => [i * 1000, v] as [number, number]),
+    });
+  const read = (s: TimeSeries<typeof schema>) =>
+    Array.from({ length: s.length }, (_, i) => s.at(i)!.get('value'));
+
+  it('batch rolling sum / avg: count window (packed sweep) and duration window', () => {
+    for (const window of [{ count: 2 }, '2s'] as const) {
+      const s = series(SUM_CELLS);
+      expect(read(s.rolling(window as never, { value: 'sum' }))).toEqual(SUM);
+      expect(read(s.rolling(window as never, { value: 'avg' }))).toEqual(AVG);
+    }
+  });
+
+  it('batch rolling stdev recovers after an m2 overflow', () => {
+    for (const window of [{ count: 2 }, '2s'] as const) {
+      const out = read(
+        series(SD_CELLS).rolling(window as never, { value: 'stdev' }),
+      );
+      expect(out.slice(5)).toEqual(SD_TAIL);
+      expect(out[3]).toBe(1e300); // representable, so not missing
+    }
+  });
+
+  it('rolling stdev: a delta overflow never reads as a defined 0', () => {
+    // −0.9·MAX → 0.9·MAX overflows Welford's delta; plain Welford then holds
+    // mean = Infinity with m2 clamped to 0 and would answer 0. Count window
+    // (packed sweep) and duration window (state) both answer the true stdev.
+    const cells = [-0.9 * MAX, 0.9 * MAX, 1, 2];
+    for (const window of [{ count: 2 }, '2s'] as const) {
+      const out = read(
+        series(cells).rolling(window as never, { value: 'stdev' }),
+      );
+      expect(out[1]! / (0.9 * MAX)).toBeCloseTo(1, 12);
+      expect(out[3]).toBe(0.5);
+      // …including when the series ends on that row, so no later NaN
+      // exposes the bad state.
+      const end = read(
+        series(cells.slice(0, 2)).rolling(window as never, { value: 'stdev' }),
+      );
+      expect(end[1]! / (0.9 * MAX)).toBeCloseTo(1, 12);
+    }
+  });
+
+  it('smooth movingAverage recovers too', () => {
+    const sm = series(SUM_CELLS).smooth('value', 'movingAverage', {
+      window: '2s',
+    });
+    expect(read(sm)).toEqual(AVG);
+  });
+
+  it('live rolling sum / avg / stdev recover in a long-running stream', () => {
+    for (const [using, cells, tail] of [
+      ['sum', SUM_CELLS, SUM.slice(5)],
+      ['avg', SUM_CELLS, AVG.slice(5)],
+      ['stdev', SD_CELLS, SD_TAIL],
+    ] as const) {
+      const live = new LiveSeries({ name: 'o', schema });
+      const r = live.rolling('1500ms', { value: using });
+      const seen: Array<number | undefined> = [];
+      cells.forEach((v, i) => {
+        live.push([i * 1000, v]);
+        seen.push(r.value().value as number | undefined);
+      });
+      expect(seen.slice(5)).toEqual(tail);
+      if (using === 'sum') expect(seen[3]).toBeUndefined();
+    }
+  });
+
+  it('reducer states: the overflowing lane resets when the window drains', () => {
+    for (const reducer of ['sum', 'avg', 'stdev'] as const) {
+      const st = rollingStateFor(reducer);
+      st.add(0, MAX);
+      st.add(1, MAX);
+      if (reducer !== 'stdev') expect(st.snapshot()).toBeUndefined();
+      st.remove(0, MAX);
+      st.remove(1, MAX);
+      // Empty window: sum of nothing is 0, mean / stdev of nothing missing.
+      expect(st.snapshot()).toBe(reducer === 'sum' ? 0 : undefined);
+      st.add(2, 4);
+      st.add(3, 6);
+      expect(st.snapshot()).toBe(
+        reducer === 'sum' ? 10 : reducer === 'avg' ? 5 : 1,
+      );
+    }
+  });
+
+  it('the mean still overflows with its sum: avg([MAX, MAX]) is missing', () => {
+    // Documented in docs/notes/reducer-nan-policy.md — sum-then-divide, on
+    // every path, so batch reduce and rolling agree.
+    const s = series([MAX, MAX]);
+    expect(s.reduce('value', 'avg')).toBeUndefined();
+    expect(
+      s
+        .rolling({ count: 2 } as never, { value: 'avg' })
+        .at(1)!
+        .get('value'),
+    ).toBeUndefined();
+  });
+});
+
+describe('[PND-NANREP] computed-rows operators store a non-finite result as missing', () => {
+  const schema = [
+    { name: 'time', kind: 'time' },
+    { name: 'value', kind: 'number' },
+  ] as const;
+  const swing = new TimeSeries({
+    name: 's',
+    schema,
+    rows: [
+      [0, -MAX],
+      [2000, MAX],
+    ],
+  });
+
+  it("smooth('ema') cannot overflow on finite input — huge values stay defined", () => {
+    // alpha·v + (1 − alpha)·prev is a convex combination of finite values,
+    // so it never leaves [−MAX, MAX]; the fast path's non-finite guard (and
+    // the row path, reachable only for non-number sources) has nothing to
+    // catch. Pin that the extremes come through defined rather than missing.
+    const e = new TimeSeries({
+      name: 'e',
+      schema,
+      rows: [
+        [0, MAX],
+        [1000, MAX],
+        [2000, -MAX],
+        [3000, MAX],
+      ],
+    }).smooth('value', 'ema', { alpha: 0.3 });
+    expect(e.column('value').nullCount()).toBe(0);
+    for (let i = 0; i < 4; i += 1) {
+      expect(Number.isFinite(e.at(i)!.get('value'))).toBe(true);
+    }
+  });
+
+  it('align linear: an interpolation that overflows is missing', () => {
+    const a = swing.align(Sequence.every('1s'), {
+      method: 'linear',
+      range: swing.timeRange()!,
+    });
+    // t=1000 sits between −MAX and MAX: −MAX + (MAX − −MAX)·0.5 overflows.
+    expect(a.at(1)!.get('value')).toBeUndefined();
+    expect(a.at(0)!.get('value')).toBe(-MAX);
+  });
+
+  it('baseline: an upper/lower band that overflows is missing', () => {
+    const b = new TimeSeries({
+      name: 'b',
+      schema,
+      rows: [
+        [0, -MAX / 2],
+        [1000, MAX / 2],
+      ],
+    }).baseline('value', { window: '1h', sigma: 4 });
+    const row = b.at(1)!;
+    expect(row.get('avg')).toBe(0);
+    expect(row.get('sd')).toBe(MAX / 2);
+    expect(row.get('upper')).toBeUndefined(); // 0 + 4·(MAX/2)
+    expect(row.get('lower')).toBeUndefined();
+  });
+
+  it('pivotByGroup: an aggregate that overflows is missing', () => {
+    const p = new TimeSeries({
+      name: 'p',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'host', kind: 'string' },
+        { name: 'cpu', kind: 'number' },
+      ] as const,
+      rows: [
+        [0, 'a', MAX],
+        [0, 'a', MAX],
+        [0, 'b', 1],
+      ],
+    }).pivotByGroup('host', 'cpu', { aggregate: 'sum' });
+    expect(p.at(0)!.get('a_cpu' as never)).toBeUndefined();
+    expect(p.at(0)!.get('b_cpu' as never)).toBe(1);
+  });
+
+  it('arrayAggregate: a per-row reduction that overflows is missing', () => {
+    const s = new TimeSeries({
+      name: 'arr',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'xs', kind: 'array' },
+      ] as const,
+      rows: [
+        [0, [MAX, MAX]],
+        [1000, [1, 2]],
+      ],
+    }).arrayAggregate('xs', 'sum', { as: 'total' });
+    expect(s.at(0)!.get('total')).toBeUndefined();
+    expect(s.at(1)!.get('total')).toBe(3);
+  });
+
+  it('live map returning ±Infinity: toTimeSeries() works on an optional column', () => {
+    // The map view keeps the source schema, so the missing cell it stores
+    // for a non-finite fn result is only snapshot-safe when the column is
+    // optional; a required column still throws (the `required` check).
+    const optional = [
+      { name: 'time', kind: 'time' },
+      { name: 'value', kind: 'number', required: false },
+    ] as const;
+    const live = new LiveSeries({ name: 'm', schema: optional });
+    live.push([1000, 1], [2000, 2]);
+    const m = live.map((e) =>
+      e.set('value', e.get('value') === 2 ? Infinity : 5),
+    );
+    const ts = m.toTimeSeries();
+    expect(ts.at(0)!.get('value')).toBe(5);
+    expect(ts.at(1)!.get('value')).toBeUndefined();
+
+    const req = new LiveSeries({ name: 'r', schema });
+    req.push([1000, 2]);
+    const rm = req.map((e) => e.set('value', Infinity));
+    expect(rm.at(0)!.get('value')).toBeUndefined();
+    expect(() => rm.toTimeSeries()).toThrow(/is required/);
+  });
+});

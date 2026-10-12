@@ -1,6 +1,7 @@
 import type { Float64Column } from '../columnar/index.js';
 import { BLOCKED_MIN, blockedSum, blockedSumMasked } from './blocked.js';
-import type { ReducerDef } from './types.js';
+import { SUM_SCALE, SUM_SPLIT, SUM_UNSCALE } from './overflow-lanes.js';
+import type { ReducerDef, RollingReducerState } from './types.js';
 
 /**
  * Sums the defined (and, on the guarded path, finite) cells of
@@ -63,6 +64,29 @@ function sumRange(col: Float64Column, start: number, end: number): number {
   return s;
 }
 
+/**
+ * The single-accumulator running sum — `sum`'s `rollingState` without the
+ * overflow lanes. **Not overflow-safe**: once `s` reaches ±Infinity it stays
+ * there. Only the packed count-window sweep (`batch/aggregate-columns.ts`)
+ * uses it, because that sweep notices the first non-finite answer and
+ * re-runs the column with the laned state — so ordinary columns skip the
+ * per-cell lane compare. Callers pass only finite numbers (or `undefined`).
+ */
+export function plainRollingSum(): RollingReducerState {
+  let s = 0;
+  return {
+    add(_i, v) {
+      if (typeof v === 'number') s += v;
+    },
+    remove(_i, v) {
+      if (typeof v === 'number') s -= v;
+    },
+    snapshot() {
+      return s;
+    },
+  };
+}
+
 export const sum: ReducerDef = {
   outputKind: 'number',
   reduce(_d, numeric) {
@@ -84,16 +108,29 @@ export const sum: ReducerDef = {
     };
   },
   rollingState() {
+    // Two lanes so an overflow can't stick in the running sum after the
+    // huge values leave the window — see `./overflow-lanes.ts`. `s` is the
+    // old accumulator, bit for bit, for every value below `SUM_SPLIT`.
     let s = 0;
+    let big = 0; // Σ v·2^-960 over the |v| ≥ SUM_SPLIT values
+    let bigN = 0;
     return {
       add(_i, v) {
-        if (typeof v === 'number') s += v;
+        if (typeof v !== 'number') return;
+        if (v < SUM_SPLIT && v > -SUM_SPLIT) s += v;
+        else {
+          big += v * SUM_SCALE;
+          bigN += 1;
+        }
       },
       remove(_i, v) {
-        if (typeof v === 'number') s -= v;
+        if (typeof v !== 'number') return;
+        if (v < SUM_SPLIT && v > -SUM_SPLIT) s -= v;
+        else if (--bigN === 0) big = 0;
+        else big -= v * SUM_SCALE;
       },
       snapshot() {
-        return s;
+        return bigN === 0 ? s : s + big * SUM_UNSCALE;
       },
     };
   },
