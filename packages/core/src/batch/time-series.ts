@@ -72,6 +72,7 @@ import type {
   ValueColumnNameForSchema,
   ValueColumnsForSchema,
   ValueKeyedSchema,
+  BatchOrderingMode,
 } from '../schema/index.js';
 import { float64ColumnFromTypedArray } from './operators/numeric-io.js';
 import {
@@ -87,6 +88,7 @@ import {
 import { scanOp, type ScanStep } from './operators/scan.js';
 import { byValueOp } from './operators/by-value.js';
 import { ingestColumnsToStore } from './operators/ingest-columns.js';
+import { resolveOrdering } from './operators/out-of-order.js';
 import {
   arrowToColumns,
   type ArrowTableLike,
@@ -951,10 +953,13 @@ export class TimeSeries<S extends SeriesSchema> {
     input: TimeSeriesJsonInput<S> & {
       parse?: TimeZoneOptions;
       /**
-       * Sort rows by key before construction (off by default; see
-       * `TimeSeriesInput.sort`). Useful when reviving a wire payload whose
-       * rows aren't guaranteed sorted — avoids a manual pre-sort.
+       * How to handle a row whose key is earlier than the previous row's
+       * (default `'strict'`; see {@link BatchOrderingMode}). `'reorder'` is useful when
+       * reviving a wire payload whose rows aren't guaranteed sorted — avoids a
+       * manual pre-sort.
        */
+      ordering?: BatchOrderingMode;
+      /** @deprecated Use `ordering: 'reorder'` (one-release alias). */
       sort?: boolean;
     },
   ): TimeSeries<S> {
@@ -962,7 +967,7 @@ export class TimeSeries<S extends SeriesSchema> {
       name: input.name,
       schema: input.schema,
       rows: parseJsonRows(input.schema, input.rows, input.parse),
-      sort: input.sort ?? false,
+      ordering: resolveOrdering('fromJSON', input),
     });
   }
 
@@ -991,19 +996,20 @@ export class TimeSeries<S extends SeriesSchema> {
    * the fast path): the resulting series' columns alias the caller's buffers.
    * Mutating an adopted buffer after construction mutates the series. Pass a
    * fresh buffer (e.g. straight off a decode) if this matters; `number[]`
-   * columns are always copied. (**`sort` disables the adoption** — a reorder
-   * needs its own buffers, so every column is copied when sorting.)
+   * columns are always copied. (**`ordering: 'reorder'` disables the
+   * adoption** — a reorder needs its own buffers, so every column is copied
+   * when sorting.)
    *
    * **Ordering.** Keys must be **non-decreasing** — bisect-based operators (crop,
    * `atTime`, range queries) rely on it — so an out-of-order columnar input
    * throws by default (a backwards key on the *trusted* fast door is a corruption
-   * signal, not something to silently accept). Pass **`sort: true`** to sort the
-   * rows by key before construction instead — the columnar analog of
-   * {@link TimeSeries.fromJSON}'s `sort`, paying `O(n log n)` + a copy only when
-   * asked. The sort is **stable**, so rows sharing a key keep their input order.
-   * (To flatten a genuine backwards blip to a plateau — a different, lossy choice
-   * — clamp the key column yourself before ingest; the library won't mutate data
-   * for you.)
+   * signal, not something to silently accept). Pass **`ordering: 'reorder'`**
+   * to sort the rows by key before construction instead, paying
+   * `O(n log n)` + a copy only when asked; the sort is **stable**, so rows
+   * sharing a key keep their input order. Pass **`ordering: 'clamp'`**
+   * (`time` keys only) to keep rows in place and carry a backwards timestamp
+   * forward to its predecessor's — the right call for a noisy feed's lone
+   * backwards blip, and a **key rewrite**, so read {@link BatchOrderingMode} first.
    *
    * **Value columns:** `number` (→ `Float64Column`; `Float64Array` adopted) and
    * `string` (→ `StringColumn`, dict-encoded when it pays; `null`/`undefined`
@@ -1023,23 +1029,27 @@ export class TimeSeries<S extends SeriesSchema> {
    * every row and all of one type (string or number).
    *
    * @throws ValidationError on a missing column, a length mismatch, an
-   *   unsupported kind, or an out-of-order (decreasing) timestamp when `sort`
-   *   is not set — keys must be non-decreasing, same as `fromJSON`. Throws
+   *   unsupported kind, an out-of-order (decreasing) timestamp under the
+   *   default `ordering: 'strict'` — keys must be non-decreasing, same as
+   *   `fromJSON` — or `'clamp'` on a two-edged key. Throws
    *   RangeError on a non-finite timestamp key (from the key-column
    *   constructor) or a duplicate column name.
    */
   static fromColumns<S extends SeriesSchema>(
     input: TimeSeriesColumnarInput<S> & {
       /**
-       * Sort the rows by key before construction (off by default), for a columnar
-       * payload whose rows aren't guaranteed ordered — the counterpart of
-       * `fromJSON`'s `sort`. Stable; disables the `Float64Array` zero-copy adoption
-       * (columns are reordered into fresh buffers).
+       * How to handle a row whose key is earlier than the previous row's
+       * (default `'strict'`; see {@link BatchOrderingMode}). `'reorder'` is stable and
+       * disables the `Float64Array` zero-copy adoption (columns are reordered
+       * into fresh buffers); `'clamp'` keeps value columns adopted.
        */
+      ordering?: BatchOrderingMode;
+      /** @deprecated Use `ordering: 'reorder'` (one-release alias). */
       sort?: boolean;
     },
   ): TimeSeries<S> {
-    const { name, schema, columns, sort = false } = input;
+    const { name, schema, columns } = input;
+    const ordering = resolveOrdering('fromColumns', input);
 
     // Key column (schema[0]). Every temporal key kind is accepted; a two-edged
     // one (`timeRange` / `interval`) arrives flattened across extra columns
@@ -1078,7 +1088,7 @@ export class TimeSeries<S extends SeriesSchema> {
       keyNoun: 'timestamps',
       schema: schema as unknown as ColumnSchema,
       columns,
-      sort,
+      ordering,
     });
     return TimeSeries.#fromTrustedStore(name, schema, store);
   }
@@ -1132,7 +1142,9 @@ export class TimeSeries<S extends SeriesSchema> {
    * `string` value columns only.
    *
    * The rows must be time-ordered (as `fromColumns` requires); pass
-   * `{ sort: true }` for an unordered table (disables zero-copy adoption).
+   * `{ ordering: 'reorder' }` for an unordered table (disables zero-copy
+   * adoption) or `{ ordering: 'clamp' }` for a noisy one (see
+   * {@link BatchOrderingMode}).
    *
    * **Trust contract on the type parameter:** the runtime schema is derived
    * from the Arrow fields. Supplying `S` (`fromArrow<MySchema>(...)`) is a
@@ -1155,7 +1167,7 @@ export class TimeSeries<S extends SeriesSchema> {
       keyNoun: 'timestamps',
       schema: schema as unknown as ColumnSchema,
       columns,
-      sort: options.sort ?? false,
+      ordering: resolveOrdering('fromArrow', options),
       adopted,
     });
     return timeSeriesFromTrustedStore(name, schema as unknown as S, store);
@@ -1291,16 +1303,18 @@ export class TimeSeries<S extends SeriesSchema> {
       this.#store = trustedStore;
     } else {
       this.schema = Object.freeze(input.schema.slice()) as S;
-      // `{ sort: true }` sorts unsorted input by key before intake (otherwise
-      // the intake's non-decreasing-order check throws). Stable, so rows with
-      // equal keys keep their input order; same key comparator as
-      // `fromEvents` / `concat`. Copies the array — the caller's `rows` is not
-      // mutated.
-      const rows = input.sort
-        ? [...input.rows].sort((a, b) =>
-            compareEventKeys(toKey(a[0] as KeyLike), toKey(b[0] as KeyLike)),
-          )
-        : input.rows;
+      // `ordering: 'reorder'` sorts unsorted input by key before intake
+      // (otherwise the intake's non-decreasing-order check throws, or under
+      // `'clamp'` rewrites backwards keys). Stable, so rows with equal keys
+      // keep their input order; same key comparator as `fromEvents` /
+      // `concat`. Copies the array — the caller's `rows` is not mutated.
+      const ordering = resolveOrdering('TimeSeries', input);
+      const rows =
+        ordering === 'reorder'
+          ? [...input.rows].sort((a, b) =>
+              compareEventKeys(toKey(a[0] as KeyLike), toKey(b[0] as KeyLike)),
+            )
+          : input.rows;
       // `SeriesStore.fromValidatedRows` runs the column-native
       // intake (`validateAndNormalizeColumnar`) — same validation
       // rules as the pre-2a row-shape `validateAndNormalize` but
@@ -1310,6 +1324,7 @@ export class TimeSeries<S extends SeriesSchema> {
       this.#store = SeriesStore.fromValidatedRows(
         this.schema,
         rows,
+        ordering === 'clamp' ? 'clamp' : 'strict',
       ) as SeriesStore<S>;
     }
     Object.freeze(this);

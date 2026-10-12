@@ -77,6 +77,34 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **core**: **`ordering: 'strict' | 'reorder' | 'clamp'` on every loader**
+  (`new TimeSeries`, `TimeSeries.fromJSON` / `fromColumns` / `fromArrow`,
+  `ValueSeries.fromJSON` / `fromColumns` / `fromArrow`), with the new
+  `BatchOrderingMode` type exported. Same option name and vocabulary as
+  `LiveSeries`' `ordering` (`'strict'` / `'reorder'`), so one concept has one
+  name across batch and live. `'strict'` is the default (unchanged);
+  `'reorder'` is what `sort: true` did. **`'clamp'`** is new: rows stay in place and a key
+  earlier than its predecessor's takes that key (the running max), so a noisy
+  feed's lone backwards timestamp lands on its neighbour instead of failing the
+  ingest or being moved. Values are untouched, ties pass through, non-finite
+  keys are still rejected, value-column `Float64Array`s stay zero-copy, and a
+  caller's key buffer is never mutated. `time` keys and `ValueSeries` axes
+  only — a `timeRange` / `interval` key throws under `'clamp'`. [PND-INGEST]
+
+### Changed
+
+- **core**: Out-of-order ingest errors now suggest `{ ordering: 'reorder' }`
+  (and `'clamp'` where it applies) instead of `{ sort: true }`. Code matching
+  on the old message text needs updating.
+
+### Deprecated
+
+- **core**: **`sort?: boolean`** on the loaders above — use
+  `ordering: 'reorder'`. `sort: true` still works for this release and maps to
+  `'reorder'`; it will be removed in the next minor. Passing `sort` together with
+  a conflicting `ordering` (e.g. `sort: true, ordering: 'clamp'`)
+  throws a `ValidationError`.
+
 - **docs**: **The versioning policy is now published** — a "Versioning"
   section in the root README and each package README, and a
   [Versioning](https://pond-ts.org/docs/reference/versioning) page on the

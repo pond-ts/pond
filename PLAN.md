@@ -746,8 +746,6 @@ consumer signal. Plan:
   `toFloat64Array({ missing })` + `hasAnyDefined()`. Two consumers each.
 - **[PND-WIRE]** — Protobuf columnar wire codec + `SeriesUpdate` streaming
   append; design settled, build when the binary WS feed consumer arrives.
-- **[PND-INGEST]** — `fromColumns({ onOutOfOrder: 'throw'|'sort'|'clamp' })`;
-  fold the day-old `sort` boolean into the enum.
 - **[PND-TSVAR]** — `TimeSeries<S>` variance refactor (`toJSON` narrowing,
   `required: false` rows); try the extracted-serializer path first.
 - **[PND-GATHER]** — Dashboard snapshot-cost queue:

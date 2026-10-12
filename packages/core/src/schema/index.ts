@@ -51,6 +51,7 @@ export type {
   NormalizedObjectRow,
   NormalizedObjectRowForSchema,
   NormalizedRowForSchema,
+  BatchOrderingMode,
   PointRowForSchema,
   TimeSeriesInput,
 } from './events.js';

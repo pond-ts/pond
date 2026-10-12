@@ -198,6 +198,7 @@ export type {
   TimeSeriesColumnarInput,
   TimeSeriesColumnarOutput,
   TimeSeriesInput,
+  BatchOrderingMode,
   TimeSeriesJsonColumns,
   TimeSeriesJsonInput,
   TimeRangeKeyedSchema,

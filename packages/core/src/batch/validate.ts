@@ -21,6 +21,10 @@ import {
   validityFromBits,
 } from '../columnar/index.js';
 import { ValidationError } from '../core/errors.js';
+import {
+  assertClampableKey,
+  outOfOrderHint,
+} from './operators/out-of-order.js';
 import type {
   ArrayValue,
   EventForSchema,
@@ -322,6 +326,10 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
       'first column must be one of: time, interval, timeRange',
     );
   }
+  // Callers resolve `sort` (deprecated alias) + `ordering` before here
+  // and sort the rows themselves; this intake only distinguishes clamp.
+  const clamp = input.ordering === 'clamp';
+  if (clamp) assertClampableKey('TimeSeries', keyKind);
   for (let col = 1; col < schema.length; col += 1) {
     const kind = schema[col]!.kind;
     if (
@@ -494,18 +502,26 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
   // Sort order check: rows must be non-decreasing by (begin, end).
   // Lexicographic compare on Float64Array, no key-object
   // allocations during the walk.
+  //
+  // Under `ordering: 'clamp'` (time keys only — `endBuf === beginBuf`) a
+  // backwards key takes its predecessor's, which is already clamped, so the
+  // walk yields the running max. `beginBuf` is this intake's own buffer.
   for (let i = 1; i < length; i += 1) {
     const prevBegin = beginBuf[i - 1]!;
     const curBegin = beginBuf[i]!;
     if (prevBegin > curBegin) {
+      if (clamp) {
+        beginBuf[i] = prevBegin;
+        continue;
+      }
       throw new ValidationError(
-        `row ${i} is out of order — keys must be non-decreasing; pass { sort: true } to sort rows on construction, or pre-sort them`,
+        `row ${i} is out of order — keys must be non-decreasing; ${outOfOrderHint(keyKind)}`,
       );
     }
     if (prevBegin === curBegin && endBuf !== beginBuf) {
       if (endBuf[i - 1]! > endBuf[i]!) {
         throw new ValidationError(
-          `row ${i} is out of order — keys must be non-decreasing; pass { sort: true } to sort rows on construction, or pre-sort them`,
+          `row ${i} is out of order — keys must be non-decreasing; ${outOfOrderHint(keyKind)}`,
         );
       }
     }
