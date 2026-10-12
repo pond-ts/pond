@@ -17,7 +17,6 @@ import {
 import {
   EMITS_EVICT,
   type AggregateMap,
-  type AggregateOutputMap,
   type ColumnValue,
   type EventForSchema,
   type LiveSource,
@@ -36,8 +35,6 @@ import type { LiveRollingOptions } from './live-rolling-aggregation.js';
 // Pinned by docs.yml — broke the v0.15.2 docs deploy and stayed
 // broken through v0.16.0 until this fix landed.
 declare function queueMicrotask(callback: () => void): void;
-
-type EventListener = (event: any) => void;
 
 /**
  * "Reduce over the whole current buffer." `LiveReduce` is the
@@ -197,7 +194,7 @@ export class LiveReduce<
   #microtaskScheduled: boolean;
 
   readonly #outputEvents: EventForSchema<Out>[];
-  readonly #onEvent: Set<EventListener>;
+  readonly #onEvent: Set<(event: EventForSchema<Out>) => void>;
   readonly #unsubscribeEvent: () => void;
   readonly #unsubscribeEvict: (() => void) | undefined;
   #disposed: boolean;
@@ -210,7 +207,7 @@ export class LiveReduce<
 
   constructor(
     source: LiveSource<S>,
-    mapping: AggregateMap<S> | AggregateOutputMap<S>,
+    mapping: AggregateMap<S>,
     options: LiveRollingOptions = {},
   ) {
     this.name = source.name;
@@ -309,7 +306,7 @@ export class LiveReduce<
     return result;
   }
 
-  on(type: 'event', fn: EventListener): () => void {
+  on(type: 'event', fn: (event: EventForSchema<Out>) => void): () => void {
     if (type !== 'event') {
       throw new TypeError(
         `LiveReduce.on: unsupported event type '${String(type)}'`,

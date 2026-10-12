@@ -143,7 +143,7 @@ describe('ValueSeries.fromJSON', () => {
     expect(vs.column('toString')?.read(1)).toBe('cme');
   });
 
-  it('sort: true orders rows by axis value', () => {
+  it("ordering: 'reorder' orders rows by axis value", () => {
     const vs = ValueSeries.fromJSON({
       name: 'smile',
       schema: SMILE,
@@ -152,7 +152,7 @@ describe('ValueSeries.fromJSON', () => {
         [90, 0.31, 'cme'],
         [95, 0.27, 'cme'],
       ],
-      sort: true,
+      ordering: 'reorder',
     });
     expect(Array.from(vs.axisValues())).toEqual([90, 95, 100]);
     // every column travels with its row

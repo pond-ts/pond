@@ -284,6 +284,21 @@ The full guide is at **<https://pond-ts.org/>**.
   — TypeDoc output, every public class and method.
 - **[CHANGELOG](./CHANGELOG.md)** — what shipped in each release.
 
+## Versioning
+
+All six packages release together under one version — keep them in step.
+
+- **Today (0.x):** a minor release may contain breaking changes; each is
+  marked **breaking** in the [CHANGELOG](./CHANGELOG.md) with a migration
+  note. Patch releases never break.
+- **From 1.0:** [semver](https://semver.org/) — breaking changes only in a
+  major release.
+- **Public API:** the exports of each package's entry points, mapped in
+  [API.md](API.md). Anything marked experimental (including all of
+  `@pond-ts/process`) or internal is excluded.
+
+Details: [pond-ts.org/docs/reference/versioning](https://pond-ts.org/docs/reference/versioning).
+
 ## For coding agents
 
 pond is built by agents and expects to be used by them. Three things exist so

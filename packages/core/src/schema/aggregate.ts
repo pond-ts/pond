@@ -182,16 +182,6 @@ export type ValidatedAggregateMap<S extends SeriesSchema, M> = [
       };
 
 /**
- * Back-compat alias for {@link AggregateMap}. Before v0.23.0 the
- * `{ from, using }` (renamed-output / multi-reducer) form lived on a
- * separate `AggregateOutputMap` type and a separate overload. The two
- * are now unified into {@link AggregateMap}, which accepts both the
- * shorthand and spec forms (and mixtures). Retained as an exported alias
- * so existing imports keep resolving.
- */
-export type AggregateOutputMap<S extends SeriesSchema> = AggregateMap<S>;
-
-/**
  * Look up a value column's kind by name within a value-column array.
  * Resolves to `never` when `Name` is not a column in `Columns`.
  */
@@ -321,37 +311,6 @@ export type MaterializeSchema<S extends SeriesSchema> = readonly [
   ColumnDef<'time', 'time'>,
   ...OptionalizeColumns<ValueColumnsForSchema<S>>,
 ];
-
-// ---------------------------------------------------------------------------
-// Back-compat aliases — the all-spec ("output-map") result schemas now
-// resolve through the same unified path as the shorthand ones. Before
-// v0.23.0 these were distinct types fed by separate overloads; the F1 fix
-// (audit v2 §5) collapsed the overload pairs, so both shapes share
-// `AggregateColumns` / `AggregateSchema`. Retained as exported aliases so
-// existing imports (live mirrors, partitioned series) keep resolving.
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `rolling(window, mapping)`. Preserves the source's
- * first-column kind (`S[0]`) and narrows each output column per the
- * unified per-key dispatch in {@link AggregateColumns}. Now identical to
- * `RollingSchema` — kept as an alias for back-compat.
- */
-export type RollingOutputMapSchema<S extends SeriesSchema, Mapping> = readonly [
-  S[0],
-  ...Array<AggregateColumns<ValueColumnsForSchema<S>, Mapping>>,
-];
-
-/**
- * Schema for sequence-driven `rolling(seq, window, mapping)` and for
- * `aggregate(seq, mapping)`. The first column is the `'interval'` key
- * produced by the sequence. Now identical to {@link AggregateSchema} —
- * kept as an alias for back-compat.
- */
-export type AggregateOutputMapResultSchema<
-  S extends SeriesSchema,
-  Mapping,
-> = AggregateSchema<S, Mapping>;
 
 // ---------------------------------------------------------------------------
 // Array-aggregate and array-explode output schemas

@@ -204,7 +204,7 @@ rolling.value(); // Record<string, ColumnValue | undefined>, e.g. { cpu: 0.42 }
 ```
 
 Both [mapping shapes](#mapping-shapes) work on live the same way
-they work on batch — the `AggregateOutputMap` form is how you get
+they work on batch — the `{ from, using }` spec form is how you get
 multiple stats from one source column in a single rolling pass:
 
 ```ts
@@ -225,7 +225,7 @@ aggregation (since v0.14.1) but pay an O(window-size) cost at each
 `snapshot()` — the function re-runs over every value in the current
 window each time the accumulator emits. For high-throughput streams
 prefer a built-in (`'avg'`, `'p95'`, `'samples'`, …) or compose
-multiple built-ins via `AggregateOutputMap` aliases. See the
+multiple built-ins via `{ from, using }` aliases. See the
 [Custom reducers](./reducer-reference#custom-reducers) entry on the
 reducer reference for the full trade-off.
 :::
