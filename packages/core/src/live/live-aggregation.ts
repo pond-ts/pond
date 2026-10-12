@@ -9,6 +9,7 @@ import {
   makeDiffView,
   makeFillView,
   makeCumulativeView,
+  makeMapView,
   type LiveFillMapping,
   type LiveFillStrategy,
 } from './live-view.js';
@@ -223,7 +224,7 @@ export class LiveAggregation<
   }
 
   map(fn: (event: EventForSchema<Out>) => EventForSchema<Out>): LiveView<Out> {
-    return new LiveView(this as any, fn as any);
+    return makeMapView(this as any, fn as any) as LiveView<Out>;
   }
 
   select<const Keys extends readonly (keyof EventDataForSchema<Out>)[]>(

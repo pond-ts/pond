@@ -120,7 +120,7 @@ describe('column-native cumulative()', () => {
     expect(c.events).toBe(events); // identity-stable
   });
 
-  it('treats a stored NaN as a defined value a downstream op applies', () => {
+  it('stores a fold-produced NaN as missing; a downstream op carries it as a gap [PND-NANREP]', () => {
     const s = new TimeSeries({
       name: 'nan-chain',
       schema: [
@@ -133,19 +133,19 @@ describe('column-native cumulative()', () => {
         [2000, 30],
       ],
     });
-    // A custom fold injects NaN after the first value: [10, NaN, NaN].
+    // A custom fold injects NaN after the first value. NaN means missing,
+    // so the column is [10, missing, missing] — never a defined NaN.
     const withNaN = s.cumulative({ value: () => NaN });
     expect(withNaN.at(0)!.get('value')).toBe(10);
-    expect(withNaN.at(1)!.get('value')).toBeNaN();
-    // The NaN cell is DEFINED, not missing — reads NaN, not undefined.
-    expect(withNaN.column('value').read(1)).toBeNaN();
+    expect(withNaN.at(1)!.get('value')).toBeUndefined();
+    expect(withNaN.column('value').read(1)).toBeUndefined();
+    expect(withNaN.column('value').read(2)).toBeUndefined();
 
-    // A downstream cumulative reads that NaN; typeof NaN === 'number', so it
-    // is APPLIED (not carried as a gap): sum from row 1 onward stays NaN.
+    // A downstream cumulative sees gaps and carries the accumulator.
     const chained = withNaN.cumulative({ value: 'sum' });
     expect(chained.at(0)!.get('value')).toBe(10);
-    expect(chained.at(1)!.get('value')).toBeNaN();
-    expect(chained.at(2)!.get('value')).toBeNaN();
+    expect(chained.at(1)!.get('value')).toBe(10);
+    expect(chained.at(2)!.get('value')).toBe(10);
   });
 
   it('throws (not silently corrupts) on a type-defeated non-numeric target', () => {

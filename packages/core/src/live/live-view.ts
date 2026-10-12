@@ -340,11 +340,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
    * transforms.
    */
   map(fn: (event: EventForSchema<S>) => EventForSchema<S>): LiveView<S> {
-    return new LiveView(
-      this,
-      fn,
-      this.#windowMs !== undefined ? { windowMs: this.#windowMs } : undefined,
-    );
+    return makeMapView(this, fn, this.#windowMs);
   }
 
   /**
@@ -968,13 +964,17 @@ export function makeDiffView<
 
       if (typeof currVal === 'number' && typeof prevVal === 'number') {
         const delta = currVal - prevVal;
+        let v: number | undefined;
         if (mode === 'pctChange') {
-          outData[col] = prevVal !== 0 ? delta / prevVal : undefined;
+          v = prevVal !== 0 ? delta / prevVal : undefined;
         } else if (mode === 'rate') {
-          outData[col] = dt !== 0 ? delta / dt! : undefined;
+          v = dt !== 0 ? delta / dt! : undefined;
         } else {
-          outData[col] = delta;
+          v = delta;
         }
+        // NaN means missing ([PND-NANREP]) — e.g. `Infinity - Infinity`.
+        // Matches the batch `diff` / `rate` / `pctChange`.
+        outData[col] = v !== v ? undefined : v;
       } else {
         outData[col] = undefined;
       }
@@ -1077,6 +1077,47 @@ export function makeFillView<S extends SeriesSchema>(
   return new LiveView(source as any, process) as unknown as LiveView<S>;
 }
 
+/**
+ * The live `map` view. A user `fn` can write `NaN` into a number field;
+ * the view stores events (not columns), so nothing downstream would
+ * canonicalise it and `at(i).get()` would hand back a *defined* `NaN`.
+ * NaN means missing ([PND-NANREP]), so each mapped event's number fields
+ * are checked and a `NaN` is rewritten to `undefined`. The event is
+ * rebuilt only when one is found — the common path returns `fn`'s event
+ * untouched.
+ */
+export function makeMapView<S extends SeriesSchema>(
+  source: LiveSource<S>,
+  fn: (event: EventForSchema<S>) => EventForSchema<S>,
+  windowMs?: number,
+): LiveView<S> {
+  const numberCols = source.schema
+    .slice(1)
+    .filter((c) => c.kind === 'number')
+    .map((c) => c.name);
+  const process = (event: EventForSchema<S>): EventForSchema<S> => {
+    const out = fn(event);
+    if (numberCols.length === 0) return out;
+    const data = out.data() as Record<string, unknown>;
+    let fixed: Record<string, unknown> | undefined;
+    for (const name of numberCols) {
+      const v = data[name];
+      if (typeof v === 'number' && v !== v) {
+        fixed ??= { ...data };
+        fixed[name] = undefined;
+      }
+    }
+    return fixed === undefined
+      ? out
+      : (new Event(out.key(), fixed) as unknown as EventForSchema<S>);
+  };
+  return new LiveView(
+    source,
+    process,
+    windowMs !== undefined ? { windowMs } : undefined,
+  );
+}
+
 export function makeCumulativeView<
   S extends SeriesSchema,
   Targets extends NumericColumnNameForSchema<S>,
@@ -1162,12 +1203,10 @@ export function makeCumulativeView<
     const data = { ...(event.data() as Record<string, unknown>) };
     for (const [name, s] of accState) {
       const raw = data[name];
-      if (typeof raw === 'number') {
-        s.acc = s.apply(s.acc, raw);
-        data[name] = s.acc;
-      } else {
-        data[name] = s.acc;
-      }
+      if (typeof raw === 'number') s.acc = s.apply(s.acc, raw);
+      // NaN means missing ([PND-NANREP]): a fold that reaches NaN emits a
+      // gap, matching batch `cumulative`. The accumulator is kept as-is.
+      data[name] = s.acc !== s.acc ? undefined : s.acc;
     }
     return new Event(event.key(), data);
   };

@@ -148,6 +148,30 @@ export type Column =
  * invalid cells hold an arbitrary value (typically `0`); callers
  * must consult `validity` before treating a slot as meaningful.
  *
+ * **The rule: `NaN` in a number column means missing** — [PND-NANREP].
+ * There is no such thing as a *defined* `NaN` cell. Each door either
+ * stores a `NaN` as a **missing** cell (validity bit cleared,
+ * `definedCount` excluding it) or rejects it — none keeps it as a value:
+ *
+ * - **Stored as missing:** `fromColumns` (plain array or typed array),
+ *   `withColumn` with a `Float64Array`, and every operator's own
+ *   arithmetic — `diff` of `Infinity - Infinity`, a cumulative sum that
+ *   reaches `NaN`, a `scan` step or `collapse` reducer returning `NaN`.
+ * - **Throws:** row intake (`new TimeSeries({ rows })`, `LiveSeries.push`
+ *   — "expected finite number") and `withColumn` with a plain array.
+ *
+ * So for a stored cell `read(i)` returns `undefined`, `scan()` skips it,
+ * and `count()` / `nullCount()` / `hasMissing()` count it as missing. `±Infinity` is *not* covered by
+ * the rule: it is a real (if overflowed) number and stays a defined
+ * cell wherever a path admits it (and `allFinite` goes `false`).
+ *
+ * The storage is deliberately not part of the rule. Today missing is a
+ * bitmap bit; a later internal switch to NaN-in-buffer would change no
+ * observable answer. **This constructor is the trusted door and does not
+ * scan**: a caller handing it a buffer must clear the validity bit of
+ * any `NaN` slot itself (`float64ColumnFromArray` and the operator
+ * output helpers do it for you).
+ *
  * `_values` is **substrate-internal**: it's the raw buffer handle
  * that reducers, builders, and other substrate-level code reach
  * for in their hot paths. The class permits `length <=
@@ -387,6 +411,14 @@ export class BooleanColumn implements ColumnBase<boolean, 'boolean'> {
  * Builds a `Float64Column` from an array of `number | null | undefined`
  * values. The output's `validity` bitmap is allocated only when at
  * least one input slot is missing.
+ *
+ * A `NaN` slot is stored as **missing**, the same as `undefined` — the
+ * NaN-means-missing rule (see `Float64Column`). This builder is the
+ * shared sink for the boxed operator paths (`collapse`, `fill`,
+ * `scan`, `shift`, the chunked fallbacks of `diff` / `cumulative`), so
+ * enforcing the rule here is what keeps their computed `NaN`s from
+ * surfacing as defined cells. `±Infinity` stays defined and clears
+ * `allFinite`.
  */
 export function float64ColumnFromArray(
   source: ReadonlyArray<number | null | undefined>,
@@ -396,21 +428,22 @@ export function float64ColumnFromArray(
   const values = new Float64Array(length);
   // Data-derive `allFinite` in the copy loop: only *defined* cells
   // count (a missing slot doesn't make the column non-finite). Finite
-  // data → `true` (reducers take the fast path); an overflow / NaN cell
+  // data → `true` (reducers take the fast path); an overflow (±Infinity) cell
   // → `false` (guarded path, correct). See the field's safety contract.
   let allFinite = true;
   for (let i = 0; i < length; i += 1) {
     const v = source[i];
-    if (typeof v === 'number') {
+    // `v === v` excludes NaN: it is missing, not a defined cell.
+    if (typeof v === 'number' && v === v) {
       values[i] = v;
-      if (!Number.isFinite(v)) allFinite = false;
+      if (v === Infinity || v === -Infinity) allFinite = false;
     } else {
       values[i] = 0;
     }
   }
   const validity = validityFromPredicate(length, (i) => {
     const v = source[i];
-    return typeof v === 'number';
+    return typeof v === 'number' && v === v;
   });
   return new Float64Column(values, length, validity, allFinite);
 }

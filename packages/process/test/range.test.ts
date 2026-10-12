@@ -1048,3 +1048,29 @@ describe('[PND-PROCRANGE] multi-output ranged recompute', () => {
     expect(columnsOf(out)).toEqual(columnsOf(scratch));
   });
 });
+
+describe('[PND-NANREP] range outputs store NaN as missing', () => {
+  it('set(i, NaN) marks the cell missing, even over an earlier set', () => {
+    const out = prepareRange(3, 0, undefined);
+    out.set(0, 1);
+    out.set(1, 2);
+    out.set(1, NaN); // overwrite a defined cell
+    out.set(2, Infinity);
+    const col = sealRange(out, 3);
+    expect([0, 1, 2].map((i) => col.read(i))).toEqual([1, undefined, Infinity]);
+    expect(col.validity!.definedCount).toBe(2);
+    expect(col.allFinite).toBe(false);
+  });
+
+  it('sealRange clears a NaN written straight into values / bits', () => {
+    const out = prepareRange(2, 0, undefined);
+    out.values[0] = NaN;
+    out.bits[0]! |= 0b11;
+    out.values[1] = 5;
+    const col = sealRange(out, 2);
+    expect(col.read(0)).toBeUndefined();
+    expect(col.read(1)).toBe(5);
+    expect(col.validity!.definedCount).toBe(1);
+    expect(col.allFinite).toBe(true);
+  });
+});

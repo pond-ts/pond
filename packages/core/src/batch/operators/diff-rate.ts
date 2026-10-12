@@ -33,8 +33,12 @@ export type DiffRateMode = 'diff' | 'rate' | 'pctChange';
  *   `delta / dt` (`dt` = `(begin[i] − begin[i−1]) / 1000` seconds,
  *   `undefined` when `dt === 0`), `pctChange` emits `delta / prev`
  *   (`undefined` when `prev === 0`). If either side is missing /
- *   non-numeric, the output is `undefined`. A stored `NaN` is a
- *   defined number (`typeof raw === 'number'`), so it participates.
+ *   non-numeric, the output is `undefined`.
+ * - **NaN means missing** ([PND-NANREP]). A delta whose arithmetic
+ *   yields `NaN` — `Infinity - Infinity`, or `rate` / `pctChange` of
+ *   such a delta — is written as **missing**, not a defined `NaN`
+ *   (`NumericOutput.set` / `float64ColumnFromArray` drop it). A delta
+ *   that overflows to `±Infinity` stays a defined cell.
  *
  * **`drop`.** `drop: false` (default) keeps the predecessor-less
  * first row (its targets `undefined`, its other columns + key

@@ -156,16 +156,30 @@ describe('diffRateOp on inputs the method cannot produce', () => {
     expect(store.valueAt(2, 'v')).toBe(40);
   });
 
-  it('treats a stored NaN as a defined value that participates', () => {
-    // A defined NaN can't arrive through batch intake (validate.ts rejects it),
-    // only mid-pipeline. Built directly here: typeof NaN === 'number', so the
-    // diff applies it rather than treating it as a gap.
+  it('a NaN handed to the column builder is missing, so diff treats it as a gap [PND-NANREP]', () => {
+    // NaN means missing: `float64ColumnFromArray` stores it as a gap, so there
+    // is no defined NaN for the diff to apply.
     const withNaN = numStore([1000, 2000, 3000], [10, NaN, 30]);
-    expect(withNaN.columns.get('v')!.read(1)).toBeNaN(); // defined NaN
+    expect(withNaN.columns.get('v')!.read(1)).toBeUndefined();
 
     const { store } = diffRateOp(withNaN, withNaN.schema, 'diff', ['v'], false);
     expect(store.valueAt(0, 'v')).toBeUndefined(); // no predecessor
-    expect(store.valueAt(1, 'v')).toBeNaN(); // NaN - 10 = NaN (applied)
-    expect(store.valueAt(2, 'v')).toBeNaN(); // 30 - NaN = NaN (applied)
+    expect(store.valueAt(1, 'v')).toBeUndefined(); // curr missing
+    expect(store.valueAt(2, 'v')).toBeUndefined(); // prev missing
+  });
+
+  it('Infinity - Infinity on the chunked (boxed) path reads as missing [PND-NANREP]', () => {
+    const chunked = concatSorted([
+      numStore([1000, 2000], [Infinity, Infinity]),
+      numStore([3000, 4000], [5, 7]),
+    ]);
+    expect(chunked.columns.get('v')!.storage).toBe('chunked');
+    const { store } = diffRateOp(chunked, chunked.schema, 'diff', ['v'], false);
+    const col = store.columns.get('v')!;
+    expect(store.valueAt(1, 'v')).toBeUndefined(); // Inf - Inf = NaN → missing
+    expect(col.read(1)).toBeUndefined();
+    expect(store.valueAt(2, 'v')).toBe(-Infinity); // 5 - Inf: defined
+    expect(store.valueAt(3, 'v')).toBe(2);
+    expect(col.validity!.definedCount).toBe(2);
   });
 });

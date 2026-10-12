@@ -93,6 +93,30 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **core** (**breaking**): **A `NaN` in a number column now always means
+  missing.** Typed-array intake (`fromColumns`, `withColumn` with a
+  `Float64Array`) already turned `NaN` into a gap and row intake already
+  rejected it, but an operator's own arithmetic could still write a
+  _defined_ `NaN` — `diff` / `rate` / `pctChange` of `Infinity - Infinity`,
+  a `cumulative` sum that reaches
+  `Infinity` and then meets `-Infinity`, or a `cumulative` custom fold,
+  `scan` step or numeric `collapse` reducer that returns `NaN`. Those
+  cells are now stored as **missing**: `at(i)` / `get` / `read` return
+  `undefined`, `scan()` skips them, and `nullCount()` / `hasMissing()` count
+  them. Same in live `diff` / `rate` / `pctChange` / `cumulative` views, in a
+  live `map` whose function writes `NaN` into a number field, and in
+  `@pond-ts/process` `RangeOutput.set` / `sealRange`. A `cumulative` that hits
+  `NaN` keeps its accumulator, so built-in folds read missing from that row on.
+  **`±Infinity` is unchanged** — it is a real number and stays a defined
+  value. Storage is unchanged (still the validity bitmap); this locks the rule
+  so a later NaN-in-buffer storage switch is invisible. The rule as it
+  stands: a `NaN` is never a _defined_ cell in a number column — operator
+  write paths store it as missing, while row intake, `withColumn` with a plain
+  array, and some operators (an `aggregate` custom reducer, packed `rolling`,
+  `smooth`) still **throw** on it, which a follow-up unifies. **Migration:** code
+  that tested `Number.isNaN(v)` on an operator's output should test
+  `v === undefined`.
+
 - **core**: Out-of-order ingest errors now suggest `{ ordering: 'reorder' }`
   (and `'clamp'` where it applies) instead of `{ sort: true }`. Code matching
   on the old message text needs updating.
