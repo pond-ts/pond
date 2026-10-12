@@ -1,10 +1,10 @@
 import type { Float64Column } from '../columnar/index.js';
 import {
   STDEV_SPLIT,
+  stdevBigLane,
+  stdevBigLaneAdd,
+  stdevBigLaneRemove,
   stdevWithBigLane,
-  welfordLane,
-  welfordLaneAdd,
-  welfordLaneRemove,
 } from './overflow-lanes.js';
 import type { ReducerDef } from './types.js';
 
@@ -188,19 +188,19 @@ export const stdev: ReducerDef = {
     // applies the non-finite policy); `add`/`remove` both skip them symmetrically
     // so they never enter `n`.
     //
-    // Values at or above `STDEV_SPLIT` (2^480) go to a separate, scaled
-    // Welford lane that is reset when its last value leaves, so an overflow
-    // can't stick in `m2` after the huge values leave the window — see
+    // Values at or above `STDEV_SPLIT` (2^480) go to a separate, exact
+    // lane, so an overflow can't stick in `m2` after the huge values leave
+    // the window, and removing one never cancels — see
     // `./overflow-lanes.ts`. Below the split this is the old state, bit for bit.
     let n = 0;
     let mean = 0;
     let m2 = 0;
-    const big = welfordLane();
+    const big = stdevBigLane();
     return {
       add(_i, v) {
         if (typeof v !== 'number') return;
         if (!(v < STDEV_SPLIT && v > -STDEV_SPLIT)) {
-          welfordLaneAdd(big, v);
+          stdevBigLaneAdd(big, v);
           return;
         }
         n += 1;
@@ -211,7 +211,7 @@ export const stdev: ReducerDef = {
       remove(_i, v) {
         if (typeof v !== 'number') return;
         if (!(v < STDEV_SPLIT && v > -STDEV_SPLIT)) {
-          welfordLaneRemove(big, v);
+          stdevBigLaneRemove(big, v);
           return;
         }
         if (n <= 1) {

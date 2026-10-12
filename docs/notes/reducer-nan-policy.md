@@ -56,11 +56,16 @@ after the huge values had left and even if the window drained.
   (`reducers/overflow-lanes.ts`): values below a split (`2^960` for sums,
   `2^480` for Welford) go to the old accumulator, which provably cannot
   overflow for a window under `2^53` values and is bit-identical to before;
-  the rest go to a power-of-two-scaled lane that cannot overflow either and
-  is reset to exactly zero when its last value leaves. The snapshot
-  recombines the lanes at full scale, so a row reads missing **only while its
-  own window's result is unrepresentable**. Cost: one magnitude compare per
-  add / remove — within noise on these paths.
+  the rest go to an **exact** big lane — a double that large is an integer
+  multiple of a fixed power of two, so the lane keeps `BigInt` sums (`Σu`
+  for sums; `Σu`, `Σu²` for stdev). Adding and removing there is exact in
+  any order, so removing a huge value never cancels the big values that
+  stay (`stdev` over `[4e304, 6e148, 1]`, width 2, row 2 is `3e148`; a
+  reconstructed-mean lane answered `0`). The snapshot recombines the lanes
+  at full scale, so a row reads missing **only while its own window's
+  result is unrepresentable**. Cost: one magnitude compare per add /
+  remove — within noise on these paths; `BigInt` work only for values
+  ≥ ~3e144.
 - **The packed count-window sweep** (`aggregate-columns.ts`, the
   `@pond-ts/financial` hot path) keeps its plain single-accumulator loops (the
   lane compare measured +10–25% there). On the first non-finite answer from a
@@ -73,24 +78,38 @@ Considered and rejected: recomputing from the window's values whenever the
 state goes non-finite — the reducer states don't hold their window's values
 (buffering them would cost every normal window), and a recompute seeded from
 a plain sum still absorbs small values next to huge ones, so it disagreed
-with the laned states. Residual divergence, by design: a column whose huge
-values never overflow the plain sweep keeps the plain answer, so a small
-value absorbed next to a ≥ `2^960` neighbour can differ between a count
-window and a duration window — the subtractive-window cancellation `stdev.ts`
-already documents, not an overflow. Side effect: rolling `stdev` of values
-with spreads past ~1e154 is now finite where plain Welford (`reduce`,
-`aggregate`) overflows `m2` and reads missing — the rolling answer is the
-better one. `cumulative` is not a window: once its running total overflows it
-stays missing, which is the true answer.
+with the laned states.
 
-**A finite mean can still read missing.** `avg` is sum-then-divide on every
-path, so a mean whose true value is representable reads missing when its
-intermediate sum overflows: `avg([MAX_VALUE, MAX_VALUE])` is `MAX_VALUE`, but
-`reduce`, `aggregate`, `rolling` and `smooth('movingAverage')` all answer
-`undefined`. The overflow-lane fix above does **not** change this — the
-snapshot recombines to the full-scale sum before dividing, deliberately, so
-rolling and batch `reduce` keep agreeing. Accepted: it needs values within a
-factor of the window size of `Number.MAX_VALUE`.
+**What the lanes do not fix — the small lane's own cancellation.** Below the
+split the accumulator is the old one, bit for bit, so it keeps the
+subtractive-window cancellation `stdev.ts` already documents: removing a value
+far larger than the survivors (e.g. `1e20` beside `1`) leaves rounding
+residue, and a Welford `m2` that cancels below 0 clamps to a **defined** 0.
+That is precision loss on a finite answer, not an overflow, and it predates
+this fix. The same absorption is why a column whose huge values never
+overflow the plain count-window sweep keeps the plain answer, which can
+differ from the duration-window (laned) answer for a small value next to a
+≥ `2^960` neighbour.
+
+**The one rule across paths: missing means _this path's arithmetic
+overflowed_.** Paths are not promised to agree at overflow scale — where they
+differ, one reads missing and the other is the defined, better answer; they
+never give two different defined answers because of overflow. Concretely:
+
+- **`stdev`:** rolling is finer than `reduce` / `aggregate`. Plain Welford
+  there overflows `m2` for spreads past ~1e154 and reads missing; rolling's
+  lanes keep it finite.
+- **`avg`:** every path (`reduce`, `aggregate`, `rolling`,
+  `smooth('movingAverage')`) is sum-then-divide, so a mean whose true value is
+  representable still reads missing when its intermediate sum overflows:
+  `avg([MAX_VALUE, MAX_VALUE])` is `MAX_VALUE`, but all of them answer
+  `undefined`. The lanes don't change that — the snapshot recombines to the
+  full-scale sum before dividing. That is kept because sum-then-divide is the
+  cheap recurrence every `avg` path runs, not to make paths agree; a
+  mean-domain `avg` could fix it but would cost the hot path. Accepted: it
+  needs values within a factor of the window size of `Number.MAX_VALUE`.
+- **`cumulative`** is not a window: once its running total overflows it stays
+  missing, which is the true answer.
 
 ## What this fixes (survey findings)
 

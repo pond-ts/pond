@@ -172,11 +172,7 @@ import {
   type AggregateBucketState,
   type RollingReducerState,
 } from '../reducers/index.js';
-import {
-  SUM_SCALE,
-  SUM_SPLIT,
-  SUM_UNSCALE,
-} from '../reducers/overflow-lanes.js';
+import { LanedSum } from '../reducers/overflow-lanes.js';
 
 type RangeLike = EventKey | TimeRangeInput | IntervalInput;
 type BoundaryLike = EventKey | TimestampInput;
@@ -4485,36 +4481,28 @@ export class TimeSeries<S extends SeriesSchema> {
     let windowStart = 0;
     let windowEnd = 0;
     // Two-lane running sum (see `reducers/overflow-lanes.ts`) so an
-    // overflow can't stick after the huge values leave the window.
-    let numericSum = 0;
+    // overflow can't stick after the huge values leave the window. Packed
+    // columns already store non-finite as missing; the `v - v === 0` guard
+    // (false exactly for NaN / ±Infinity) is defensive, since the exact big
+    // lane can't take a non-finite value.
+    const numericSum = new LanedSum();
     let numericCount = 0;
-    let bigSum = 0;
-    let bigCount = 0;
     const addEvent = (index: number): void => {
       const value = sourceValues[index];
-      if (typeof value === 'number') {
+      if (typeof value === 'number' && value - value === 0) {
         numericCount += 1;
-        if (value < SUM_SPLIT && value > -SUM_SPLIT) numericSum += value;
-        else {
-          bigSum += value * SUM_SCALE;
-          bigCount += 1;
-        }
+        numericSum.add(value);
       }
     };
     const removeEvent = (index: number): void => {
       const value = sourceValues[index];
-      if (typeof value === 'number') {
+      if (typeof value === 'number' && value - value === 0) {
         numericCount -= 1;
-        if (value < SUM_SPLIT && value > -SUM_SPLIT) numericSum -= value;
-        else if (--bigCount === 0) bigSum = 0;
-        else bigSum -= value * SUM_SCALE;
+        numericSum.remove(value);
       }
     };
     const snapshot = (): number | undefined =>
-      numericCount === 0
-        ? undefined
-        : (bigCount === 0 ? numericSum : numericSum + bigSum * SUM_UNSCALE) /
-          numericCount;
+      numericCount === 0 ? undefined : numericSum.total() / numericCount;
 
     for (let groupStart = 0; groupStart < this.events.length; ) {
       const anchor = anchors[groupStart]!;

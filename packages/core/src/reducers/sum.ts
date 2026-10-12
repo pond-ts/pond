@@ -1,6 +1,6 @@
 import type { Float64Column } from '../columnar/index.js';
 import { BLOCKED_MIN, blockedSum, blockedSumMasked } from './blocked.js';
-import { SUM_SCALE, SUM_SPLIT, SUM_UNSCALE } from './overflow-lanes.js';
+import { LanedSum } from './overflow-lanes.js';
 import type { ReducerDef, RollingReducerState } from './types.js';
 
 /**
@@ -111,26 +111,16 @@ export const sum: ReducerDef = {
     // Two lanes so an overflow can't stick in the running sum after the
     // huge values leave the window — see `./overflow-lanes.ts`. `s` is the
     // old accumulator, bit for bit, for every value below `SUM_SPLIT`.
-    let s = 0;
-    let big = 0; // Σ v·2^-960 over the |v| ≥ SUM_SPLIT values
-    let bigN = 0;
+    const s = new LanedSum();
     return {
       add(_i, v) {
-        if (typeof v !== 'number') return;
-        if (v < SUM_SPLIT && v > -SUM_SPLIT) s += v;
-        else {
-          big += v * SUM_SCALE;
-          bigN += 1;
-        }
+        if (typeof v === 'number') s.add(v);
       },
       remove(_i, v) {
-        if (typeof v !== 'number') return;
-        if (v < SUM_SPLIT && v > -SUM_SPLIT) s -= v;
-        else if (--bigN === 0) big = 0;
-        else big -= v * SUM_SCALE;
+        if (typeof v === 'number') s.remove(v);
       },
       snapshot() {
-        return bigN === 0 ? s : s + big * SUM_UNSCALE;
+        return s.total();
       },
     };
   },

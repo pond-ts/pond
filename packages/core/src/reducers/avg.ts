@@ -1,6 +1,6 @@
 import type { Float64Column } from '../columnar/index.js';
 import { BLOCKED_MIN, blockedSum, blockedSumMasked } from './blocked.js';
-import { SUM_SCALE, SUM_SPLIT, SUM_UNSCALE } from './overflow-lanes.js';
+import { LanedSum } from './overflow-lanes.js';
 import type { ReducerDef } from './types.js';
 
 /**
@@ -163,30 +163,21 @@ export const avg: ReducerDef = {
     // The mean is still sum-then-divide, so a window whose *sum* overflows
     // reads missing even if its mean is representable (`[MAX, MAX]`) —
     // the same answer `reduce` gives.
-    let s = 0;
+    const s = new LanedSum();
     let n = 0;
-    let big = 0; // Σ v·2^-960 over the |v| ≥ SUM_SPLIT values
-    let bigN = 0;
     return {
       add(_i, v) {
         if (typeof v !== 'number') return;
         n++;
-        if (v < SUM_SPLIT && v > -SUM_SPLIT) s += v;
-        else {
-          big += v * SUM_SCALE;
-          bigN += 1;
-        }
+        s.add(v);
       },
       remove(_i, v) {
         if (typeof v !== 'number') return;
         n--;
-        if (v < SUM_SPLIT && v > -SUM_SPLIT) s -= v;
-        else if (--bigN === 0) big = 0;
-        else big -= v * SUM_SCALE;
+        s.remove(v);
       },
       snapshot() {
-        if (n === 0) return undefined;
-        return (bigN === 0 ? s : s + big * SUM_UNSCALE) / n;
+        return n === 0 ? undefined : s.total() / n;
       },
     };
   },

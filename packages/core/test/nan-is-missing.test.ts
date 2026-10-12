@@ -489,6 +489,58 @@ describe('[PND-NANREP] a rolling overflow recovers once the huge values leave', 
     }
   });
 
+  it('the big lane partially empties with mixed-sign big values (exact)', () => {
+    // The big lane is exact, so removing one big value leaves exactly the
+    // others' sum — no residue from the one that left.
+    const A = 1.5e308;
+    const B = -1.2e308;
+    const C = 1e300;
+    const st = rollingStateFor('sum');
+    for (const [i, v] of [A, B, C, 7].entries()) st.add(i, v);
+    expect(st.snapshot()).toBe(A + B + C); // 7 absorbed by the rounding
+    st.remove(0, A);
+    expect(st.snapshot()).toBe(B + C);
+    st.remove(1, B);
+    expect(st.snapshot()).toBe(1e300); // C + 7, exactly rounded
+    st.remove(2, C);
+    expect(st.snapshot()).toBe(7);
+
+    const sd = rollingStateFor('stdev');
+    for (const [i, v] of [1e300, -1e300, 6e148, 1].entries()) sd.add(i, v);
+    sd.remove(0, 1e300);
+    // [−1e300, 6e148, 1]: population stdev 1e300·√2 / 3.
+    expect((sd.snapshot() as number) / ((1e300 * Math.SQRT2) / 3)).toBeCloseTo(
+      1,
+      12,
+    );
+    sd.remove(1, -1e300);
+    expect(sd.snapshot()).toBe(3e148); // [6e148, 1]
+    sd.remove(2, 6e148);
+    expect(sd.snapshot()).toBe(0); // [1]
+
+    // Same through batch rolling sum (duration window → laned state).
+    const out = read(series([A, B, C, 7]).rolling('2s', { value: 'sum' }));
+    expect(out).toEqual([A, A + B, B + C, 1e300]);
+  });
+
+  it('removing a huge value never cancels a big survivor to 0', () => {
+    // [4e304, 6e148, 1], width 2: row 2 is stdev([6e148, 1]) = 3e148. A
+    // reconstructed survivor (2·mean − 4e304) loses 6e148 entirely and
+    // answered a defined 0.
+    for (const window of [{ count: 2 }, '2s'] as const) {
+      const out = read(
+        series([4e304, 6e148, 1]).rolling(window as never, {
+          value: 'stdev',
+        }),
+      );
+      expect(out).toEqual([0, 2e304, 3e148]);
+    }
+    const live = new LiveSeries({ name: 'o', schema });
+    const r = live.rolling('1500ms', { value: 'stdev' });
+    [4e304, 6e148, 1].forEach((v, i) => live.push([i * 1000, v]));
+    expect(r.value().value).toBe(3e148);
+  });
+
   it('the mean still overflows with its sum: avg([MAX, MAX]) is missing', () => {
     // Documented in docs/notes/reducer-nan-policy.md — sum-then-divide, on
     // every path, so batch reduce and rolling agree.
