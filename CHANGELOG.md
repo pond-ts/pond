@@ -103,7 +103,13 @@ include new features and type-level changes; patch bumps are strictly additive.
   `Event<Interval, Record<string, …>>` / `any`. `e.get('col')` is now typed
   per output column, and naming a column the aggregation doesn't produce is a
   compile error. As a result a `LiveAggregation<S, Out>` is now assignable to
-  `LiveSource<Out>` ([PND-LIVESRC]). Both `on()` methods now throw a
+  `LiveSource<Out>` ([PND-LIVESRC]). The same narrowing applies to the
+  `'event'` listener of the keyed-form fused `live.rolling({...})`
+  (`LiveFusedRolling`), `live.reduce(…)` (`LiveReduce`), and the
+  clock-triggered partitioned `rolling(…)` variants
+  (`LivePartitionedSyncRolling` / `LivePartitionedFusedRolling`), which
+  previously typed it `(event: any)`. Both `LiveAggregation` /
+  `LiveRollingAggregation` `on()` methods now throw a
   `TypeError` on an unknown event type instead of silently registering the
   listener.
 
