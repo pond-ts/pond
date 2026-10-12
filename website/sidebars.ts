@@ -280,6 +280,7 @@ const sidebars: SidebarsConfig = {
       label: 'Reference',
       link: { type: 'doc', id: 'reference/reference-index' },
       items: [
+        'reference/versioning',
         'reference/benchmarks',
         'reference/charts-benchmarks',
         'reference/charts-scale-benchmarks',

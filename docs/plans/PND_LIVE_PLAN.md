@@ -137,6 +137,20 @@ slim observation (per-host gauges, debug instrumentation) without reducer
 state. Re-triage now that fused rolling shipped — may be a small bolt-on on
 the shared dispatch path; may earn its own RFC. Don't pre-decide.
 
+## Decisions
+
+### Live column reads promoted out of experimental — 2026-10-10 (1.0 readiness)
+
+`LiveView.column()` / `keyColumn()` / `partitionBy().toMap()`, `LiveColumnGroup`
+and `@pond-ts/react`'s `useLiveVersion` shipped in v0.19.0 marked "experimental —
+may change in 0.19.x". The 1.0-readiness review (2026-10-10) required each to be
+promoted, reshaped or removed before 1.0. **Promoted as-is.** Reasons: no change
+request in 53 minors; the dashboard A/B measured a ~1.5–2× per-tick win over the
+snapshot path; the 2026-06 live-columnar assessment found `useLiveVersion`'s
+subscription model already correct; and every queued follow-up (non-numeric
+`column()` kinds, the `TimeSeries.partitionBy().toMap()` gather-only dual in
+[PND-GATHER]) only adds surface, so none needs the current shape to move.
+
 ## Parking lot
 
 - Reducer batching (`addMany`) — deferred per the V4 bench; revisit only if a

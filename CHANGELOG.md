@@ -75,6 +75,22 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **core**: **`ordering: 'strict' | 'reorder' | 'clamp'` on every loader**
+  (`new TimeSeries`, `TimeSeries.fromJSON` / `fromColumns` / `fromArrow`,
+  `ValueSeries.fromJSON` / `fromColumns` / `fromArrow`), with the new
+  `BatchOrderingMode` type exported. Same option name and vocabulary as
+  `LiveSeries`' `ordering` (`'strict'` / `'reorder'`), so one concept has one
+  name across batch and live. `'strict'` is the default (unchanged);
+  `'reorder'` is what `sort: true` did. **`'clamp'`** is new: rows stay in place and a key
+  earlier than its predecessor's takes that key (the running max), so a noisy
+  feed's lone backwards timestamp lands on its neighbour instead of failing the
+  ingest or being moved. Values are untouched, ties pass through, non-finite
+  keys are still rejected, value-column `Float64Array`s stay zero-copy, and a
+  caller's key buffer is never mutated. `time` keys and `ValueSeries` axes
+  only — a `timeRange` / `interval` key throws under `'clamp'`. [PND-INGEST]
+
 ### Changed
 
 - **core** (**breaking**): **A `NaN` in a number column now always means
@@ -101,6 +117,48 @@ include new features and type-level changes; patch bumps are strictly additive.
   that tested `Number.isNaN(v)` on an operator's output should test
   `v === undefined`.
 
+- **core**: Out-of-order ingest errors now suggest `{ ordering: 'reorder' }`
+  (and `'clamp'` where it applies) instead of `{ sort: true }`. Code matching
+  on the old message text needs updating.
+
+### Deprecated
+
+- **core**: **`sort?: boolean`** on the loaders above — use
+  `ordering: 'reorder'`. `sort: true` still works for this release and maps to
+  `'reorder'`; it will be removed in the next minor. Passing `sort` together with
+  a conflicting `ordering` (e.g. `sort: true, ordering: 'clamp'`)
+  throws a `ValidationError`.
+
+- **docs**: **The versioning policy is now published** — a "Versioning"
+  section in the root README and each package README, and a
+  [Versioning](https://pond-ts.org/docs/reference/versioning) page on the
+  docs site. Pre-1.0 a minor may break (always marked **breaking** here with a
+  migration note), patches never break, all packages release in lock-step,
+  and from 1.0 the project follows semver. The page also defines the public
+  API: each package's entry-point exports as mapped in `API.md`, excluding
+  anything marked experimental or internal.
+
+### Changed
+
+- **core** (**breaking**): **`select(...keys)` throws on a key that isn't a
+  column, and on an array argument.** It used to drop unknown keys silently, so
+  a typo — or `select(['a', 'b'])` instead of `select('a', 'b')` — returned an
+  empty-payload series with no error. Now an unknown key throws a `RangeError`
+  naming it and listing the valid columns, and an array argument throws a
+  `TypeError` telling you to spread it (`select(...names)`). Applies to
+  `TimeSeries`, `LiveSeries`, `LiveView`, `LiveAggregation` and
+  `LiveRollingAggregation` (the live ones throw when the view is built, not on
+  the first event). `Event.select` rejects an array argument but still
+  tolerates absent keys, since an event payload may omit optional fields.
+  Duplicate keys are still accepted and select the column once. **Migration:**
+  fix the misspelled column, or spread the array.
+
+- **core / react**: **The live column reads are no longer experimental.**
+  `LiveView.column()`, `LiveView.keyColumn()`, `LiveView.partitionBy().toMap()`,
+  the `LiveColumnGroup` class and `@pond-ts/react`'s `useLiveVersion` shipped in
+  v0.19.0 labelled "experimental — may change in 0.19.x". They are now part of
+  the stable surface that 1.0 will commit to, with no change to their shape.
+
 - **charts** (**breaking**): **An `<AreaChart>`'s `baseline` no longer changes
   the y-axis range.** Since v0.71.0 the default zero baseline (and any numeric baseline)
   was pulled into the auto-fit domain, so an area over data running $100–$200
@@ -113,6 +171,68 @@ include new features and type-level changes; patch bumps are strictly additive.
   stack, a quantity like throughput — put zero on the axis with
   `<YAxis min={0}>` (`max={0}` for an all-negative series). Areas whose data
   already reaches their baseline, or whose axis is pinned, are unchanged.
+- `pond-ts` (**breaking**, types only): **`TimeSeries.toJSON()`'s return
+  type narrows on `rowFormat`**, matching `LiveSeries.toJSON()`. The default
+  / `'array'` form returns `TimeSeriesJsonOutputArray<S>` and
+  `{ rowFormat: 'object' }` returns `TimeSeriesJsonOutputObject<S>`, so
+  `result.rows` is typed against your schema with no cast; a `rowFormat`
+  typed as `JsonRowFormat` gets the union. It used to return the loose
+  `TimeSeriesJsonInput<SeriesSchema>`. **Migration:** drop any
+  `as TimeSeriesJsonInput<…>` / `as TimeSeriesJsonOutput…<…>` casts (they
+  still compile). Two patterns now fail to compile: annotating an
+  **object**-form result as `TimeSeriesJsonInput<SeriesSchema>` — including
+  a `JsonRowFormat`-typed (union) result, since it can be the object form —
+  (use `TimeSeriesJsonInput<typeof schema>`, or no annotation), and reading a
+  column by name off a default (tuple) row, which was always `undefined` at
+  runtime. `LiveSeries.toJSON()` also gains the `JsonRowFormat` overload, which
+  previously had no matching signature. [PND-TSJSONT]
+- `pond-ts`: **`TimeSeries.toJSON()` tuple rows are ~2.5–3.5× faster at 100k
+  rows** — one array per row, filled in place, instead of a mapped array spread
+  into a second one. Tuple rows were slower than object rows; they now match or
+  beat them. Output unchanged.
+
+- **core** (**breaking**): **Every `on()` overload on `LiveAggregation` and
+  `LiveRollingAggregation` now returns an unsubscribe function**, matching
+  `LiveSeries.on` / `LiveView.on`. `on('bucket')` and `on('update')` used to
+  return `this`, so those listeners could never be removed. **Migration:** a
+  chained `live.aggregate(…).on('bucket', fn)` now yields the unsubscribe
+  function, not the operator (same for `live.rolling(…).on('update', fn)`) —
+  assign the operator first, then subscribe.
+- **core** (**breaking, type-level**): **`LiveAggregation` listeners
+  (`'event'`, `'bucket'`) and `LiveRollingAggregation`'s `'event'` listener
+  receive the schema-narrowed `EventForSchema<Out>`** — the same type `at()`
+  and the `closed()` series hand out — instead of a widened
+  `Event<Interval, Record<string, …>>` / `any`. `e.get('col')` is now typed
+  per output column, and naming a column the aggregation doesn't produce is a
+  compile error. As a result a `LiveAggregation<S, Out>` is now assignable to
+  `LiveSource<Out>` ([PND-LIVESRC]). The same narrowing applies to the
+  `'event'` listener of the keyed-form fused `live.rolling({...})`
+  (`LiveFusedRolling`), `live.reduce(…)` (`LiveReduce`), and the
+  clock-triggered partitioned `rolling(…)` variants
+  (`LivePartitionedSyncRolling` / `LivePartitionedFusedRolling`), which
+  previously typed it `(event: any)`. Both `LiveAggregation` /
+  `LiveRollingAggregation` `on()` methods now throw a
+  `TypeError` on an unknown event type instead of silently registering the
+  listener.
+
+### Removed
+
+- **core** (**breaking**): **`LiveAggregation.on('close', fn)` is removed —
+  use `on('event', fn)`**, which it was an alias for. Untyped callers that
+  still pass `'close'` get a `TypeError` naming the replacement.
+
+### Removed
+
+- `pond-ts` (**breaking**, types only): **the back-compat type alias
+  `AggregateOutputMap` is gone — use `AggregateMap`.** It has been an exact
+  alias of `AggregateMap` since v0.23.0, when the shorthand and
+  `{ from, using }` spec forms were unified into one map type. The internal
+  schema aliases `RollingOutputMapSchema` (identical to `RollingSchema`) and
+  `AggregateOutputMapResultSchema` (identical to `AggregateSchema`) are removed
+  with it; neither was reachable from a public entry point. **Migration:**
+  replace `AggregateOutputMap<S>` with `AggregateMap<S>` — no runtime change.
+  The fused-rolling duplicate-output error message now says "use a
+  `{ from, using }` spec entry" instead of naming the removed type.
 
 ## [0.72.0] — 2026-10-08
 

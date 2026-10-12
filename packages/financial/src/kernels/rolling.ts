@@ -1,6 +1,6 @@
 import { rollingMeanSdInto } from './ranged.js';
 import type {
-  AggregateOutputMap,
+  AggregateMap,
   NumericColumnNameForSchema,
   SeriesSchema,
   TimeSeries,
@@ -149,7 +149,7 @@ export function rollingColumns(
 
   const rolled = series.rolling(
     { count: period },
-    specs as AggregateOutputMap<SeriesSchema>,
+    specs as AggregateMap<SeriesSchema>,
     { minSamples: period },
   );
   const out: Record<string, Float64Array> = {};
