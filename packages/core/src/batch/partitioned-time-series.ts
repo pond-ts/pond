@@ -248,9 +248,9 @@ export class PartitionedTimeSeries<
     if (missing.length === 0) return mapping;
     const augmented = { ...(mapping as object) } as Record<string, unknown>;
     for (const col of missing) {
-      // `{ from, using }` (AggregateOutputMap form) is accepted in
+      // `{ from, using }` (spec form) is accepted in
       // any mapping shape — `normalizeAggregateColumns` handles
-      // entries per-key, so mixing AggregateMap and AggregateOutputMap
+      // entries per-key, so mixing shorthand and spec
       // entries within one mapping object works at runtime.
       augmented[col] = { from: col, using: 'first' };
     }

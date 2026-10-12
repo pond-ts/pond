@@ -40,7 +40,7 @@ describe('streaming bar chart: 5m avg latency', () => {
     const barChart = live.aggregate(Sequence.every('5m'), { latency: 'avg' });
 
     const closedBuckets: { start: number; avg: number }[] = [];
-    barChart.on('close', (event) => {
+    barChart.on('event', (event) => {
       closedBuckets.push({
         start: event.begin(),
         avg: event.get('latency') as number,
@@ -182,7 +182,7 @@ describe('combined streaming dashboard', () => {
     const bars: number[] = [];
     const p95Values: number[] = [];
 
-    barChart.on('close', (event) => bars.push(event.get('latency') as number));
+    barChart.on('event', (event) => bars.push(event.get('latency') as number));
     p95.on('update', (val) => {
       if (val.latency !== undefined) p95Values.push(val.latency as number);
     });

@@ -692,17 +692,16 @@ it should.
 
 ### Type-level limitations (known, deferred)
 
-- **`TimeSeries<S>` variance issue.** `toJSON()` returns
-  `TimeSeriesJsonInput<SeriesSchema>` (loose) rather than
-  `TimeSeriesJsonInput<S>`. Tightening the return type breaks
-  overload-impl compatibility on `pivotByGroup` / `rolling` /
-  `arrayAggregate`. A class-wide variance refactor is required;
-  workaround: cast at the call site.
-
-- **`RowForSchema` doesn't honor `required: false`.** Rows passed to
-  `new TimeSeries({ rows })` reject `undefined` cells even when the
-  schema marks the column optional. Workaround: use `fromJSON` with
-  `null` cells. Documented in the cleaning page.
+- **Key-remapped mapped types in a `TimeSeries` method return
+  position cascade TS2394.** Naming e.g. `JsonObjectRowForSchema<S>`
+  directly as a return type makes TypeScript report overload/impl
+  incompatibility on unrelated overload sets (`pivotByGroup`,
+  `rolling`, `arrayAggregate`, `arrayExplode`). Workaround in use on
+  `toColumns` and `toJSON`: a method-level `<T extends S = S>` type
+  parameter defers the instantiation. (This was long recorded here as
+  a class-wide "variance issue" needing a refactor; [PND-TSCOLS] /
+  [PND-TSJSONT] showed it isn't. `RowForSchema` has since honoured
+  `required: false` as well.)
 
 ### Patterns we deliberately don't generalize
 

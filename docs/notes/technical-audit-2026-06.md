@@ -180,6 +180,10 @@ in CLAUDE.md is strong at PR-authoring time and then evaporates.
 - **The pre-1.0 breaking-change policy is stated nowhere a user would
   see it** (only CHANGELOG.md:8), despite breaking minors in
   v0.16–v0.18.
+  _Addressed (2026-10): a "Versioning" section in the root README and
+  each package README, and a docs page at `reference/versioning`, now
+  state the 0.x policy, lock-step releases, semver from 1.0, and what
+  counts as the public API._
 - With six-plus live accumulator classes, there is no "which
   aggregation style do I use" decision page.
 

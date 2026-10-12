@@ -15,7 +15,6 @@ import type { ColumnarStore } from '../columnar/store.js';
 import type { Trigger } from './triggers.js';
 import {
   type AggregateMap,
-  type AggregateOutputMap,
   type DiffSchema,
   type EventDataForSchema,
   type EventForSchema,
@@ -769,10 +768,7 @@ export class LivePartitionedSeries<
   >;
   rolling(
     arg1: RollingWindow | FusedMapping<S>,
-    mappingOrOptions?:
-      | AggregateMap<S>
-      | AggregateOutputMap<S>
-      | LiveRollingOptions,
+    mappingOrOptions?: AggregateMap<S> | LiveRollingOptions,
     options?: LiveRollingOptions,
   ): any {
     // Detect the keyed-form fused-rolling shape: arg1 is a record
@@ -829,7 +825,7 @@ export class LivePartitionedSeries<
 
     // Single-window legacy form: (window, mapping, options).
     const window = arg1 as RollingWindow;
-    const mapping = mappingOrOptions as AggregateMap<S> | AggregateOutputMap<S>;
+    const mapping = mappingOrOptions as AggregateMap<S>;
 
     // Clock trigger → synchronised partitioned emission. Returns a
     // LiveSource<RowSchema> directly (no LivePartitionedView wrap)
@@ -1489,10 +1485,7 @@ export class LivePartitionedView<
   >;
   rolling(
     arg1: RollingWindow | FusedMapping<R>,
-    mappingOrOptions?:
-      | AggregateMap<R>
-      | AggregateOutputMap<R>
-      | LiveRollingOptions,
+    mappingOrOptions?: AggregateMap<R> | LiveRollingOptions,
     options?: LiveRollingOptions,
   ): any {
     // Detect the keyed-form fused-rolling shape: arg1 is a record,
@@ -1544,7 +1537,7 @@ export class LivePartitionedView<
 
     // Single-window legacy form: (window, mapping, options).
     const window = arg1 as RollingWindow;
-    const mapping = mappingOrOptions as AggregateMap<R> | AggregateOutputMap<R>;
+    const mapping = mappingOrOptions as AggregateMap<R>;
 
     // Clock trigger → synchronised partitioned emission on the chain
     // output. The chain factory runs once per partition; the sync

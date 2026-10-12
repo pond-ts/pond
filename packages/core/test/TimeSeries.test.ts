@@ -234,6 +234,12 @@ describe('TimeSeries', () => {
         [[10, 20], 2, null],
       ],
     });
+    // Each tuple row is frozen, exactly schema-width, and has no holes.
+    for (const row of json.rows) {
+      expect(Object.isFrozen(row)).toBe(true);
+      expect(row).toHaveLength(schema.length);
+      expect(Object.keys(row)).toHaveLength(schema.length);
+    }
 
     const roundTripped = TimeSeries.fromJSON(json);
     expect(roundTripped.rows).toEqual(ts.rows);

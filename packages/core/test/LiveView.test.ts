@@ -391,7 +391,7 @@ describe('chaining', () => {
       .filter((e) => e.get('host') === 'a')
       .aggregate(Sequence.every('5s'), { value: 'sum' });
     const closed: number[] = [];
-    agg.on('close', (e) => closed.push(e.get('value') as number));
+    agg.on('event', (e) => closed.push(e.get('value') as number));
 
     live.push([0, 10, 'a'], [1000, 20, 'b'], [2000, 30, 'a']);
     expect(closed).toEqual([]);

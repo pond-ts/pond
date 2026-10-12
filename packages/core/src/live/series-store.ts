@@ -146,6 +146,7 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   static fromValidatedRows<S extends SeriesSchema>(
     schema: S,
     rows: ReadonlyArray<RowForSchema<S>>,
+    ordering: 'strict' | 'clamp' = 'strict',
     options?: ColumnarIntakeOptions,
   ): SeriesStore<S> {
     const { keys, columns } = validateAndNormalizeColumnar<S>(
@@ -153,6 +154,7 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
         name: 'columnar-intake',
         schema,
         rows,
+        ordering,
       },
       options,
     );
