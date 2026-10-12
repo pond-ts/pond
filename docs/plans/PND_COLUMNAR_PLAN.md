@@ -1166,7 +1166,8 @@ only source left was an operator's **own arithmetic** writing a defined `NaN`.
   `LiveRollingAggregation`) — the view stores the user `fn`'s `Event`s, not
   columns, so nothing canonicalised a `NaN` the fn wrote and `at(i).get()`
   returned it (found in #748 review). `makeMapView` checks the schema's number
-  fields per mapped event and rebuilds the event only when one is `NaN`.
+  fields per mapped event and rebuilds the event only when one is non-finite
+  (`NaN` on #748; `±Infinity` too once #756 extended the rule).
 - `@pond-ts/process` `RangeOutput.set` clears on `NaN`; `sealRange` clears a
   `NaN` an op wrote straight into `values` / `bits` (it already walked every
   defined cell to derive `allFinite`, so this is free).
@@ -1203,6 +1204,93 @@ run-to-run noise (e.g. `diff / dense` 4.01 → 4.22 / 4.14 ms, `diff / 4% missin
 
 **Remaining:** the storage switch itself (NaN-in-buffer for packed numeric
 columns, `definedCount` cached as today), now unblocked and invisible.
+
+#### Extended to `±Infinity` — any non-finite number means missing (2026-10)
+
+**Decision.** The rule is now **"a non-finite number in a number column means
+missing"**: `NaN`, `Infinity` and `-Infinity` alike. The `±Infinity` half was
+left open above as "a separate decision"; this takes it, because the status quo
+was five answers to one question — row intake rejected `Infinity`;
+`mapColumns` / `rolling` / `aggregate` / `smooth` threw on an overflowed
+result; `diff` / `cumulative` stored it as a defined value; reducers skipped
+it; `count()` skipped it while `nullCount()` did not (so `count() + nullCount()
+< length`); and a live view holding one threw on `toTimeSeries()`. Treating
+`Infinity` as a gap is also what makes the later NaN-in-buffer storage switch
+clean: with no defined non-finite cell left, the buffer's `NaN` is the only
+sentinel the storage needs.
+
+**Write points — the same chokepoints, widened from `v !== v` to
+`v - v !== 0`** (one subtract-and-compare, true exactly for `NaN` and
+`±Infinity`): `float64ColumnFromArray`, `NumericOutput.set`,
+`Float64ColumnBuilder`, the live `diff` / `rate` / `pctChange` / `cumulative`
+views, `@pond-ts/process` `RangeOutput.set` / `sealRange` / `packColumn`.
+
+**Operators that threw now store missing:**
+
+- `mapColumns` — the `RangeError` is gone; `float64ColumnFromArray` drops the
+  value. (This reverses the call above that a mapper result is intake: it is a
+  computed write like any other.)
+- `rolling` columnar fast path (`tryRollingCountColumnarNumeric`) and the
+  `smooth` EMA fast path — the inline `ValidationError` became a skipped
+  write.
+- **Reducer results** — `finiteOrMissing` now wraps every reducer _result_,
+  not just its inputs: `bucketStateFor` / `rollingStateFor` snapshots
+  (built-in and custom adapters), `aggregateValues` / `applyAggregateReducer`,
+  the `reduce()` `reduceColumn` fast path, and `aggregate`'s columnar
+  `reduceBucket`. That one change covers the generic `rolling` sweep,
+  `aggregate` (both paths), `byColumn`, `rollingByColumn`, `pivotByGroup`,
+  `arrayAggregate`, `baseline`, and every live accumulator
+  (`LiveAggregation`, `LiveRollingAggregation`, the fused / partitioned
+  rollings, `LiveReduce`). Putting it on the reducer rather than on each
+  output column is deliberate: the live accumulators emit row-shaped events,
+  not columns, and `LiveReduce` is documented to agree with
+  `toTimeSeries().reduce(...)` — so batch `reduce()` changes too and answers
+  `undefined` for an overflowing `sum`.
+- **Row-assembled operators** (`smooth` event paths, `baseline`, `align`, the
+  row paths of `rolling` / `aggregate` / `pivotByGroup` / `arrayAggregate`)
+  now build through `timeSeriesFromComputedRows`, which runs the same intake
+  as the constructor with one switch (`nonFiniteAsMissing`) that turns a
+  non-finite number cell into missing before the required / kind checks.
+  User-facing row intake keeps it off.
+
+**Doors — `Infinity` follows `NaN` at each one.** Row intake
+(`new TimeSeries`, `fromJSON`, `LiveSeries.push`) and boxed `withColumn`
+reject `NaN`, so they keep rejecting `±Infinity`. `fromColumns` / `fromArrow`
+already read both as a gap. Typed `withColumn` (a `Float64Array`) read `NaN`
+as a gap but **rejected** `±Infinity`; it now reads it as a gap too, and the
+`label` parameter of `float64ColumnFromTypedArray` went with the throw.
+`fromEvents` (the trust door) packs the column through the builder, so its
+column reads are normalised — but `at(i)` returns the caller's own `Event`
+objects verbatim, so an event-level read of a `NaN` / `±Infinity` cell is not.
+That gap predates this change (it was already true of `NaN`) and was left
+alone: closing it means cloning every event on the trust door.
+
+**`allFinite` is now always `true`** on any column the library builds — every
+writer above passes `true` (the per-cell non-finite branches in the writers
+were removed as unreachable). The flag itself, `Float64Column`'s default of
+`false` for the trusted constructor, the builder's conservative `false`, and
+every guarded `reduceColumn` loop are **kept**; removing them is a separate
+internal cleanup. Tests that pinned the guarded paths now build their
+non-finite columns with the trusted constructor, the one door left that can.
+
+**Sharp edges, recorded.**
+
+- A running-window `sum` / `avg` keeps an incremental sum. Once it overflows,
+  removing the large values does not bring it back (`Infinity - MAX` is still
+  `Infinity`), so later windows read missing even when their true sum is
+  representable. Before this change the same input threw.
+- The column-level methods (`col.sum()`, `col.mean()`, …) are not wrapped and
+  still return `Infinity` on an overflowing sum, while `reduce('sum')` now
+  returns `undefined`.
+- `@pond-ts/financial` studies carry explicit guards and comments written
+  because "`withColumn` rejects `±Infinity`". The guards are now
+  belt-and-braces and the comments (and one oracle case description in
+  `scripts/oracle/generate.py`) are stale wording, not wrong output — left
+  for a follow-up so the oracle fixture is not regenerated in this change.
+
+**Perf.** `perf-operators-unboxed.mjs` (200k × 4 columns, median ms, two runs
+each), before → after: all ten scenarios within run-to-run noise (e.g.
+`diff / dense` 4.47 / 4.28 → see the commit message for the full table).
 
 ---
 

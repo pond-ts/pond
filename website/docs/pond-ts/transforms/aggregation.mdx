@@ -370,8 +370,9 @@ and that row is dropped.
   `avg` / `min` / … → `undefined`) — exactly like an empty `aggregate`
   bucket.
 - `start` and `end` are reserved output names (they carry the bin
-  range), and a non-finite or wrong-kind reducer result throws —
-  the same write-time guard `aggregate` enforces.
+  range). A non-finite reducer result (a `sum` that overflows) is a
+  missing cell and a wrong-kind one throws — the same write-time rules
+  `aggregate` enforces.
 
 ## `byValue` → `ValueSeries` \{#byvalue\}
 

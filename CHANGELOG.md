@@ -107,15 +107,52 @@ include new features and type-level changes; patch bumps are strictly additive.
   live `map` whose function writes `NaN` into a number field, and in
   `@pond-ts/process` `RangeOutput.set` / `sealRange`. A `cumulative` that hits
   `NaN` keeps its accumulator, so built-in folds read missing from that row on.
-  **`±Infinity` is unchanged** — it is a real number and stays a defined
-  value. Storage is unchanged (still the validity bitmap); this locks the rule
-  so a later NaN-in-buffer storage switch is invisible. The rule as it
-  stands: a `NaN` is never a _defined_ cell in a number column — operator
-  write paths store it as missing, while row intake, `withColumn` with a plain
-  array, and some operators (an `aggregate` custom reducer, packed `rolling`,
-  `smooth`) still **throw** on it, which a follow-up unifies. **Migration:** code
-  that tested `Number.isNaN(v)` on an operator's output should test
-  `v === undefined`.
+  `±Infinity` now follows the same rule — see the next entry. Storage is
+  unchanged (still the validity bitmap); this locks the rule so a later
+  NaN-in-buffer storage switch is invisible. **Migration:** code that tested
+  `Number.isNaN(v)` on an operator's output should test `v === undefined`.
+
+- **core** (**breaking**): **Any non-finite number — `NaN`, `Infinity` or
+  `-Infinity` — in a number column means missing.** `Infinity` used to get five
+  different answers; it now gets one. A non-finite result is stored as a
+  **missing** cell (`undefined` on read, counted by `nullCount()` /
+  `hasMissing()`, skipped by `scan()`), so `count() + nullCount() === length`
+  always holds. What changed:
+  - **No longer throws:** `mapColumns` (a mapper returning `NaN` /
+    `±Infinity` — was a `RangeError`), and `rolling` / `aggregate` / `smooth`
+    / `baseline` / `byColumn` / `pivotByGroup` / `arrayAggregate` whose result
+    overflows (was a `ValidationError`). Those cells are now missing.
+  - **No longer a defined value:** `diff` / `rate` / `pctChange` /
+    `cumulative` / `scan` / `collapse` results that overflow to `±Infinity`
+    (e.g. `diff` of `MAX - (-MAX)`, a `cumulative` sum past `Number.MAX_VALUE`
+    — missing from that row on, as its accumulator stays `Infinity`).
+  - **Reducers never answer non-finite:** a reducer result that overflows
+    (`sum`, `avg`, `stdev`, or a custom reducer returning `Infinity`) is
+    `undefined` — in `reduce()` too, which used to return `Infinity`. A
+    rolling `sum` / `avg` / `stdev` (batch, live, and `smooth('movingAverage')`)
+    reads missing only while the current window overflows, and reads finite
+    again once the large values leave it. A mean is still sum-then-divide, so
+    `avg([MAX_VALUE, MAX_VALUE])` reads missing although the mean is finite.
+    (The column methods `col.sum()` / `col.mean()` are unchanged.)
+  - **Doors:** `withColumn` with a `Float64Array` reads `±Infinity` as a gap,
+    as it already read `NaN` (was a `ValidationError`). Row intake
+    (`new TimeSeries`, `fromJSON`, `LiveSeries.push`) and `withColumn` with a
+    plain array still reject `NaN` and `±Infinity` alike; `fromColumns` /
+    `fromArrow` already read both as a gap.
+  - **Live:** `diff` / `rate` / `pctChange` / `cumulative` / `map` views and
+    every live accumulator (`aggregate`, `rolling`, `reduce`) emit `undefined`
+    for a non-finite result, so a library view's `toTimeSeries()` no longer
+    throws on an overflow. A user `map` keeps the source schema, so a `map` fn
+    that writes a non-finite value reads missing too — and `toTimeSeries()`
+    then works if that column is optional, but throws the required-column
+    `ValidationError` if it is required. `@pond-ts/process` `RangeOutput.set` / `sealRange` / `packColumn`
+    store `±Infinity` as missing too.
+
+  **Migration:** code that caught a `ValidationError` / `RangeError` from these
+  operators to detect overflow, or tested `v === Infinity` on their output,
+  should test `v === undefined`. Code relying on
+  `withColumn(name, float64Array)` to reject `Infinity` must check it before
+  the call.
 
 - **core**: Out-of-order ingest errors now suggest `{ ordering: 'reorder' }`
   (and `'clamp'` where it applies) instead of `{ sort: true }`. Code matching

@@ -19,17 +19,97 @@ single overflowed cell can't poison a whole bucket's `min` or a window's
 
 ### Three-layer contract
 
-| Layer                                                                                                 | Policy                                                           | Why                                                                                                                                                                                                                  |
-| ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Intake** (row API, `mapColumns`)                                                                    | **Strict** — reject non-finite                                   | User data should be finite; a NaN at the boundary is a bug, caught loud. (Already true.)                                                                                                                             |
-| **Computed writers** (`cumulative`/`diff`/`rate`/`pctChange`/`collapse`, `Float64Column` direct ctor) | **Permissive** — pack honest `±Infinity`; store `NaN` as missing | An overflow on a legitimately huge series is an honest computed result, not a bug. Don't throw. (Resolves #113 — **no builder throw**.) `Inf−Inf` is `NaN`, and NaN in a number column means missing ([PND-NANREP]). |
-| **Reducers**                                                                                          | **Robust** — skip non-finite as missing                          | Degenerate values are exceptional; ignore them and reduce the valid data.                                                                                                                                            |
+| Layer                                                                                                                       | Policy                                                          | Why                                                                                                                                                                                                                                                    |
+| --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Intake** (row API, boxed `withColumn`)                                                                                    | **Strict** — reject non-finite                                  | User data should be finite; a NaN at the boundary is a bug, caught loud. (Already true.) The columnar doors (`fromColumns`, `fromArrow`, typed `withColumn`) read a non-finite value as a gap instead.                                                 |
+| **Computed writers** (`cumulative`/`diff`/`rate`/`pctChange`/`collapse`/`mapColumns`/`rolling`/`aggregate`/`smooth`/`scan`) | **Permissive** — store a non-finite result as **missing**       | An overflow on a legitimately huge series is an honest computed result, not a bug. Don't throw. (Resolves #113 — **no builder throw**.) A non-finite number in a number column means missing ([PND-NANREP]), so it lands as a gap, not a defined cell. |
+| **Reducers**                                                                                                                | **Robust** — skip non-finite input; non-finite result → missing | Degenerate values are exceptional; ignore them and reduce the valid data. A result that overflows answers `undefined`.                                                                                                                                 |
 
-So `±Infinity` can exist inside a packed column (via the permissive middle
-layer) but is invisible to reduction — symmetric with how `undefined`
-(validity-clear) already works. A `NaN` cannot: since [PND-NANREP] every
-writer stores it as a missing cell (validity bit cleared), so it is missing
-to every reader, not only to reducers.
+Since [PND-NANREP] (2026-10, first for `NaN`, then extended to `±Infinity`)
+**no number column holds a non-finite value**: every writer stores `NaN` /
+`Infinity` / `-Infinity` as a missing cell (validity bit cleared), so it is
+missing to every reader, not only to reducers. The input half of the reducer
+policy is therefore belt-and-braces for a column built through the trusted
+`Float64Column` constructor — the one remaining way to hold such a cell — and
+the `allFinite` flag is always `true` on a library-built column. The flag and
+the guarded `reduceColumn` loops are kept for now; removing them is a later
+internal cleanup.
+
+**Reducer results.** Every reducer result path — `bucketStateFor` /
+`rollingStateFor` snapshots (built-in and custom), the row `reduce` filter,
+`reduceColumn` on the `reduce()` fast path, and `aggregate`'s columnar
+`reduceBucket` — maps a non-finite result to `undefined` (`finiteOrMissing`).
+That covers `aggregate`, `rolling`, `byColumn`, `rollingByColumn`, `baseline`
+and the live accumulators in one place, and keeps batch `reduce()` and live
+`reduce` in agreement. The column-level methods (`col.sum()`, `col.mean()`, …)
+are not routed through it: they still return `Infinity` on an overflowing sum.
+
+**Overflow in a sliding window recovers (2026-10, #756 review).** A rolling
+`sum` / `avg` / `stdev` keeps a running accumulator and subtracts what leaves
+the window, and `Infinity − x` is `Infinity` — so before this fix, one overflow
+made every later row of a batch series (or a live stream) read missing, even
+after the huge values had left and even if the window drained.
+
+- **Reducer states** (`sum` / `avg` / `stdev` `rollingState` — live
+  `rolling`, the batch duration-window sweep, `rollingByColumn`) and
+  `smooth('movingAverage')` split the accumulator by magnitude
+  (`reducers/overflow-lanes.ts`): values below a split (`2^960` for sums,
+  `2^480` for Welford) go to the old accumulator, which provably cannot
+  overflow for a window under `2^53` values and is bit-identical to before;
+  the rest go to an **exact** big lane — a double that large is an integer
+  multiple of a fixed power of two, so the lane keeps `BigInt` sums (`Σu`
+  for sums; `Σu`, `Σu²` for stdev). Adding and removing there is exact in
+  any order, so removing a huge value never cancels the big values that
+  stay (`stdev` over `[4e304, 6e148, 1]`, width 2, row 2 is `3e148`; a
+  reconstructed-mean lane answered `0`). The snapshot recombines the lanes
+  at full scale, so a row reads missing **only while its own window's
+  result is unrepresentable**. Cost: one magnitude compare per add /
+  remove — within noise on these paths; `BigInt` work only for values
+  ≥ ~3e144.
+- **The packed count-window sweep** (`aggregate-columns.ts`, the
+  `@pond-ts/financial` hot path) keeps its plain single-accumulator loops (the
+  lane compare measured +10–25% there). On the first non-finite answer from a
+  plain accumulator it abandons the pass and re-runs the column through the
+  laned reducer states, so its answers are then the state path's, bit for
+  bit. The inlined Welford also checks its mean: a delta overflow from a
+  one-element window leaves `m2` at `−Infinity`, which clamps to a defined 0.
+
+Considered and rejected: recomputing from the window's values whenever the
+state goes non-finite — the reducer states don't hold their window's values
+(buffering them would cost every normal window), and a recompute seeded from
+a plain sum still absorbs small values next to huge ones, so it disagreed
+with the laned states.
+
+**What the lanes do not fix — the small lane's own cancellation.** Below the
+split the accumulator is the old one, bit for bit, so it keeps the
+subtractive-window cancellation `stdev.ts` already documents: removing a value
+far larger than the survivors (e.g. `1e20` beside `1`) leaves rounding
+residue, and a Welford `m2` that cancels below 0 clamps to a **defined** 0.
+That is precision loss on a finite answer, not an overflow, and it predates
+this fix. The same absorption is why a column whose huge values never
+overflow the plain count-window sweep keeps the plain answer, which can
+differ from the duration-window (laned) answer for a small value next to a
+≥ `2^960` neighbour.
+
+**The one rule across paths: missing means _this path's arithmetic
+overflowed_.** Paths are not promised to agree at overflow scale — where they
+differ, one reads missing and the other is the defined, better answer; they
+never give two different defined answers because of overflow. Concretely:
+
+- **`stdev`:** rolling is finer than `reduce` / `aggregate`. Plain Welford
+  there overflows `m2` for spreads past ~1e154 and reads missing; rolling's
+  lanes keep it finite.
+- **`avg`:** every path (`reduce`, `aggregate`, `rolling`,
+  `smooth('movingAverage')`) is sum-then-divide, so a mean whose true value is
+  representable still reads missing when its intermediate sum overflows:
+  `avg([MAX_VALUE, MAX_VALUE])` is `MAX_VALUE`, but all of them answer
+  `undefined`. The lanes don't change that — the snapshot recombines to the
+  full-scale sum before dividing. That is kept because sum-then-divide is the
+  cheap recurrence every `avg` path runs, not to make paths agree; a
+  mean-domain `avg` could fix it but would cost the hot path. Accepted: it
+  needs values within a factor of the window size of `Number.MAX_VALUE`.
+- **`cumulative`** is not a window: once its running total overflows it stays
+  missing, which is the true answer.
 
 ## What this fixes (survey findings)
 

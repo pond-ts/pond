@@ -1,5 +1,6 @@
 import type { Float64Column } from '../columnar/index.js';
 import { BLOCKED_MIN, blockedSum, blockedSumMasked } from './blocked.js';
+import { LanedSum } from './overflow-lanes.js';
 import type { ReducerDef } from './types.js';
 
 /**
@@ -157,23 +158,26 @@ export const avg: ReducerDef = {
     };
   },
   rollingState() {
-    let s = 0;
+    // Same two-lane running sum as `sum`'s rollingState, so an overflow
+    // can't stick after the huge values leave — see `./overflow-lanes.ts`.
+    // The mean is still sum-then-divide, so a window whose *sum* overflows
+    // reads missing even if its mean is representable (`[MAX, MAX]`) —
+    // the same answer `reduce` gives.
+    const s = new LanedSum();
     let n = 0;
     return {
       add(_i, v) {
-        if (typeof v === 'number') {
-          s += v;
-          n++;
-        }
+        if (typeof v !== 'number') return;
+        n++;
+        s.add(v);
       },
       remove(_i, v) {
-        if (typeof v === 'number') {
-          s -= v;
-          n--;
-        }
+        if (typeof v !== 'number') return;
+        n--;
+        s.remove(v);
       },
       snapshot() {
-        return n === 0 ? undefined : s / n;
+        return n === 0 ? undefined : s.total() / n;
       },
     };
   },

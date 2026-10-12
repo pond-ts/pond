@@ -56,6 +56,7 @@ import type { RowForSchema, SeriesSchema } from '../schema/index.js';
 import {
   validateAndNormalize,
   validateAndNormalizeColumnar,
+  type ColumnarIntakeOptions,
 } from '../batch/validate.js';
 
 /**
@@ -146,13 +147,17 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
     schema: S,
     rows: ReadonlyArray<RowForSchema<S>>,
     ordering: 'strict' | 'clamp' = 'strict',
+    options?: ColumnarIntakeOptions,
   ): SeriesStore<S> {
-    const { keys, columns } = validateAndNormalizeColumnar<S>({
-      name: 'columnar-intake',
-      schema,
-      rows,
-      ordering,
-    });
+    const { keys, columns } = validateAndNormalizeColumnar<S>(
+      {
+        name: 'columnar-intake',
+        schema,
+        rows,
+        ordering,
+      },
+      options,
+    );
     const store = ColumnarStore.fromTrustedStore(schema, keys, columns);
     // Cache starts empty — events lazy-materialize on first
     // `eventAt(i)` call. The per-row event cache invariant

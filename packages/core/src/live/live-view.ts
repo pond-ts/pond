@@ -972,9 +972,10 @@ export function makeDiffView<
         } else {
           v = delta;
         }
-        // NaN means missing ([PND-NANREP]) — e.g. `Infinity - Infinity`.
-        // Matches the batch `diff` / `rate` / `pctChange`.
-        outData[col] = v !== v ? undefined : v;
+        // A non-finite result means missing ([PND-NANREP]) — e.g.
+        // `Infinity - Infinity`, or a delta that overflows. Matches the
+        // batch `diff` / `rate` / `pctChange`.
+        outData[col] = v === undefined || v - v !== 0 ? undefined : v;
       } else {
         outData[col] = undefined;
       }
@@ -1081,8 +1082,9 @@ export function makeFillView<S extends SeriesSchema>(
  * The live `map` view. A user `fn` can write `NaN` into a number field;
  * the view stores events (not columns), so nothing downstream would
  * canonicalise it and `at(i).get()` would hand back a *defined* `NaN`.
- * NaN means missing ([PND-NANREP]), so each mapped event's number fields
- * are checked and a `NaN` is rewritten to `undefined`. The event is
+ * A non-finite number means missing ([PND-NANREP]), so each mapped
+ * event's number fields are checked and a `NaN` / `±Infinity` is
+ * rewritten to `undefined`. The event is
  * rebuilt only when one is found — the common path returns `fn`'s event
  * untouched.
  */
@@ -1102,7 +1104,7 @@ export function makeMapView<S extends SeriesSchema>(
     let fixed: Record<string, unknown> | undefined;
     for (const name of numberCols) {
       const v = data[name];
-      if (typeof v === 'number' && v !== v) {
+      if (typeof v === 'number' && !Number.isFinite(v)) {
         fixed ??= { ...data };
         fixed[name] = undefined;
       }
@@ -1204,9 +1206,11 @@ export function makeCumulativeView<
     for (const [name, s] of accState) {
       const raw = data[name];
       if (typeof raw === 'number') s.acc = s.apply(s.acc, raw);
-      // NaN means missing ([PND-NANREP]): a fold that reaches NaN emits a
-      // gap, matching batch `cumulative`. The accumulator is kept as-is.
-      data[name] = s.acc !== s.acc ? undefined : s.acc;
+      // A non-finite result means missing ([PND-NANREP]): a fold that
+      // overflows or reaches NaN emits a gap, matching batch `cumulative`.
+      // The accumulator is kept as-is.
+      data[name] =
+        s.acc === undefined || s.acc - s.acc !== 0 ? undefined : s.acc;
     }
     return new Event(event.key(), data);
   };

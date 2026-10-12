@@ -164,7 +164,7 @@ describe('TimeSeries.scan', () => {
     });
   });
 
-  describe('NaN means missing — trusted-compute output [PND-NANREP]', () => {
+  describe('non-finite means missing — trusted-compute output [PND-NANREP]', () => {
     it('stores a computed NaN output as a missing cell', () => {
       const s = makeSeries([1, 2, 3]).scan('value', (a) => [a, NaN], 0, {
         output: 'n',
@@ -176,20 +176,22 @@ describe('TimeSeries.scan', () => {
       expect(s.column('n').hasMissing()).toBe(true);
     });
 
-    it('resumes after a NaN output; ±Infinity stays a defined cell', () => {
-      const outs = [NaN, Infinity, 7];
-      const s = makeSeries([1, 2, 3]).scan(
+    it('resumes after a non-finite output; ±Infinity is missing too', () => {
+      const outs = [NaN, Infinity, 7, -Infinity];
+      const s = makeSeries([1, 2, 3, 4]).scan(
         'value',
         (a) => [a + 1, outs[a]!],
         0,
         { output: 'n' },
       );
-      expect([0, 1, 2].map((i) => s.at(i)?.get('n'))).toEqual([
+      expect([0, 1, 2, 3].map((i) => s.at(i)?.get('n'))).toEqual([
         undefined,
-        Infinity,
+        undefined,
         7,
+        undefined,
       ]);
-      expect(s.column('n').nullCount()).toBe(1);
+      expect(s.column('n').nullCount()).toBe(3);
+      expect(s.column('n').count()).toBe(1);
     });
 
     it('a downstream scan never sees the NaN cells', () => {

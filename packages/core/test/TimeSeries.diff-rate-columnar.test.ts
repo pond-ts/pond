@@ -168,18 +168,31 @@ describe('diffRateOp on inputs the method cannot produce', () => {
     expect(store.valueAt(2, 'v')).toBeUndefined(); // prev missing
   });
 
-  it('Infinity - Infinity on the chunked (boxed) path reads as missing [PND-NANREP]', () => {
+  it('a non-finite delta on the chunked (boxed) path reads as missing [PND-NANREP]', () => {
+    // Only the trusted constructor can hold a defined Infinity now, so build
+    // the source columns with it (`float64ColumnFromArray` would store gaps).
+    const rawStore = (times: number[], values: number[]) =>
+      ColumnarStore.fromTrustedStore(
+        [
+          { name: 'time', kind: 'time' },
+          { name: 'v', kind: 'number' },
+        ] as const,
+        timeKeyColumnFromArray(times),
+        new Map([
+          ['v', new Float64Column(Float64Array.from(values), values.length)],
+        ]),
+      );
     const chunked = concatSorted([
-      numStore([1000, 2000], [Infinity, Infinity]),
-      numStore([3000, 4000], [5, 7]),
+      rawStore([1000, 2000], [Infinity, Infinity]),
+      rawStore([3000, 4000], [5, 7]),
     ]);
     expect(chunked.columns.get('v')!.storage).toBe('chunked');
     const { store } = diffRateOp(chunked, chunked.schema, 'diff', ['v'], false);
     const col = store.columns.get('v')!;
     expect(store.valueAt(1, 'v')).toBeUndefined(); // Inf - Inf = NaN → missing
     expect(col.read(1)).toBeUndefined();
-    expect(store.valueAt(2, 'v')).toBe(-Infinity); // 5 - Inf: defined
+    expect(store.valueAt(2, 'v')).toBeUndefined(); // 5 - Inf = -Inf → missing
     expect(store.valueAt(3, 'v')).toBe(2);
-    expect(col.validity!.definedCount).toBe(2);
+    expect(col.validity!.definedCount).toBe(1);
   });
 });

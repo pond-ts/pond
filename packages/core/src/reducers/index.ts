@@ -63,16 +63,24 @@ export function resolveReducer(operation: string): ReducerDef {
 /**
  * Non-finite numerics (`NaN` / `±Infinity`) are treated as **missing** by
  * every built-in reducer — the reducer non-finite policy
- * (docs/notes/reducer-nan-policy.md). Row intake keeps user data finite; these
- * values only arise inside computed columns (e.g. `cumulative` overflow) or
- * trusted construction, and skipping them keeps every reducer consistent
- * across all four execution paths. Mapping to `undefined` here lets the
+ * (docs/notes/reducer-nan-policy.md). A number column cannot hold one
+ * ([PND-NANREP]), so on input this is now belt-and-braces for a column built
+ * through the trusted constructor. Mapping to `undefined` here lets the
  * existing skip-missing logic in each incremental state do the work — so the
  * policy holds for both the batch and live incremental paths without touching
- * any reducer body. Custom-function reducers are intentionally NOT wrapped:
- * they receive values as-is (the escape hatch decides its own semantics).
+ * any reducer body. Custom-function reducers' *inputs* are intentionally NOT
+ * wrapped: they receive values as-is (the escape hatch decides its own
+ * semantics).
+ *
+ * **Results** go through the same mapping, for every reducer — built-in or
+ * custom, on every path: a reducer whose answer is non-finite (a `sum` /
+ * `avg` that overflows, a `stdev` over values whose squares overflow, a
+ * custom function returning `NaN` / `Infinity`) answers **missing**. A
+ * reducer result is written into a number column (`aggregate`, `rolling`,
+ * the live accumulators), and a non-finite number in a number column means
+ * missing.
  */
-function finiteOrMissing(
+export function finiteOrMissing(
   value: ColumnValue | undefined,
 ): ColumnValue | undefined {
   return typeof value === 'number' && !Number.isFinite(value)
@@ -80,22 +88,22 @@ function finiteOrMissing(
     : value;
 }
 
-/** Wrap a bucket state so non-finite numerics are skipped. {@link finiteOrMissing} */
+/** Wrap a bucket state so non-finite numerics are skipped, in and out. {@link finiteOrMissing} */
 function skipNonFiniteBucket(
   state: AggregateBucketState,
 ): AggregateBucketState {
   return {
     add: (value) => state.add(finiteOrMissing(value)),
-    snapshot: () => state.snapshot(),
+    snapshot: () => finiteOrMissing(state.snapshot()),
   };
 }
 
-/** Wrap a rolling state so non-finite numerics are skipped. {@link finiteOrMissing} */
+/** Wrap a rolling state so non-finite numerics are skipped, in and out. {@link finiteOrMissing} */
 function skipNonFiniteRolling(state: RollingReducerState): RollingReducerState {
   return {
     add: (index, value) => state.add(index, finiteOrMissing(value)),
     remove: (index, value) => state.remove(index, finiteOrMissing(value)),
-    snapshot: () => state.snapshot(),
+    snapshot: () => finiteOrMissing(state.snapshot()),
   };
 }
 
@@ -121,7 +129,7 @@ export function bucketStateFor(
       items.push(v);
     },
     snapshot() {
-      return reducer(items);
+      return finiteOrMissing(reducer(items));
     },
   };
 }
@@ -192,7 +200,7 @@ export function rollingStateFor(
       items.delete(index);
     },
     snapshot() {
-      return reducer(Array.from(items.values()));
+      return finiteOrMissing(reducer(Array.from(items.values())));
     },
   };
 }

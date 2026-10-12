@@ -11,8 +11,9 @@ import { TimeSeries, ValidationError } from '../src/index.js';
 /*                                                 the only way to say it)     */
 /*   Array<number | undefined>    NaN  → rejected  (it already has `undefined`,*/
 /*                                                 so a NaN is a mistake)      */
-/*   either                  ±Infinity → rejected  (not a gap; the numeric     */
-/*                                                 intake contract excludes it)*/
+/*   ±Infinity follows NaN at each door: a gap in the typed one, rejected in  */
+/*   the boxed one (a non-finite number in a number column means missing,    */
+/*   [PND-NANREP]).                                                            */
 /*                                                                             */
 /* A boxed array that accepted NaN would silently reinterpret a caller's       */
 /* arithmetic error as "no data", which is why only the typed door changed.    */
@@ -91,24 +92,27 @@ describe('[PND-WCNAN] Float64Array intake treats NaN as missing', () => {
   });
 });
 
+describe('[PND-NANREP] ±Infinity in a Float64Array is a gap, like NaN', () => {
+  it('stores +Infinity and -Infinity as missing', () => {
+    const s = series(4);
+    const out = s.withColumn(
+      'd',
+      Float64Array.from([1, Infinity, -Infinity, 4]),
+    );
+    expect([0, 1, 2, 3].map((i) => out.at(i)!.get('d'))).toEqual([
+      1,
+      undefined,
+      undefined,
+      4,
+    ]);
+    const col = out.column('d');
+    expect(col.count()).toBe(2);
+    expect(col.nullCount()).toBe(2);
+    expect(col.sum()).toBe(5);
+  });
+});
+
 describe('[PND-WCNAN] what stays rejected', () => {
-  it('rejects +Infinity in a Float64Array', () => {
-    const s = series(3);
-    expect(() =>
-      s.withColumn('d', Float64Array.from([1, Infinity, 3])),
-    ).toThrow(ValidationError);
-    expect(() =>
-      s.withColumn('d', Float64Array.from([1, Infinity, 3])),
-    ).toThrow(/index 1 is Infinity/);
-  });
-
-  it('rejects -Infinity in a Float64Array', () => {
-    const s = series(3);
-    expect(() =>
-      s.withColumn('d', Float64Array.from([1, -Infinity, 3])),
-    ).toThrow(/index 1 is -Infinity/);
-  });
-
   it('still rejects NaN in a BOXED array — it has undefined for that', () => {
     // The asymmetry, pinned. Accepting NaN here too would silently
     // reinterpret a caller's arithmetic slip as "no data".

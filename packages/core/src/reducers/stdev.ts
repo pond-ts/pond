@@ -1,4 +1,11 @@
 import type { Float64Column } from '../columnar/index.js';
+import {
+  STDEV_SPLIT,
+  stdevBigLane,
+  stdevBigLaneAdd,
+  stdevBigLaneRemove,
+  stdevWithBigLane,
+} from './overflow-lanes.js';
 import type { ReducerDef } from './types.js';
 
 /**
@@ -180,12 +187,22 @@ export const stdev: ReducerDef = {
     // Non-finite / missing cells arrive as `undefined` (the factory wrapper
     // applies the non-finite policy); `add`/`remove` both skip them symmetrically
     // so they never enter `n`.
+    //
+    // Values at or above `STDEV_SPLIT` (2^480) go to a separate, exact
+    // lane, so an overflow can't stick in `m2` after the huge values leave
+    // the window, and removing one never cancels — see
+    // `./overflow-lanes.ts`. Below the split this is the old state, bit for bit.
     let n = 0;
     let mean = 0;
     let m2 = 0;
+    const big = stdevBigLane();
     return {
       add(_i, v) {
         if (typeof v !== 'number') return;
+        if (!(v < STDEV_SPLIT && v > -STDEV_SPLIT)) {
+          stdevBigLaneAdd(big, v);
+          return;
+        }
         n += 1;
         const delta = v - mean;
         mean += delta / n;
@@ -193,6 +210,10 @@ export const stdev: ReducerDef = {
       },
       remove(_i, v) {
         if (typeof v !== 'number') return;
+        if (!(v < STDEV_SPLIT && v > -STDEV_SPLIT)) {
+          stdevBigLaneRemove(big, v);
+          return;
+        }
         if (n <= 1) {
           // Removing the final contributor — reset exactly (no 0/0, no drift).
           n = 0;
@@ -221,6 +242,7 @@ export const stdev: ReducerDef = {
         if (m2 < 0) m2 = 0;
       },
       snapshot() {
+        if (big.n !== 0) return stdevWithBigLane(n, mean, m2, big);
         return n === 0 ? undefined : Math.sqrt(Math.max(0, m2 / n));
       },
     };

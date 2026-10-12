@@ -483,6 +483,20 @@ per-snapshot cost — debug aggregations, prototype pipelines, dashboards under
 | `top3`...    | `[]`         |
 | `samples`    | `[]`         |
 
+### Non-finite results
+
+A reducer never answers `NaN`, `Infinity` or `-Infinity`. A result that would be
+non-finite — a `sum` or `avg` whose arithmetic overflows past
+`Number.MAX_VALUE`, or a custom reducer returning `Infinity` — is `undefined`
+(missing), the same as an empty bucket of `avg`. That holds for `reduce()`,
+`aggregate()`, `rolling()` and the live accumulators alike: a non-finite number
+in a number column means missing. (Non-finite _inputs_ cannot occur — no number
+column holds one.)
+
+A running window keeps its sum incrementally, so once a window's `sum` has
+overflowed it stays `Infinity` internally even after the large values leave
+the window, and those rows read missing too.
+
 ## Rolling window behavior
 
 All built-in reducers work with `rolling()`. Most use O(1) incremental add/remove:

@@ -168,10 +168,12 @@ import { parseDuration } from '../core/duration.js';
 import {
   resolveReducer,
   bucketStateFor,
+  finiteOrMissing,
   rollingStateFor,
   type AggregateBucketState,
   type RollingReducerState,
 } from '../reducers/index.js';
+import { LanedSum } from '../reducers/overflow-lanes.js';
 
 type RangeLike = EventKey | TimeRangeInput | IntervalInput;
 type BoundaryLike = EventKey | TimestampInput;
@@ -619,7 +621,9 @@ function aggregateValues(
   const numeric = defined.filter(
     (value): value is number => typeof value === 'number',
   );
-  return resolveReducer(operation).reduce(defined, numeric);
+  // A non-finite result (an overflow) is missing, like every reducer
+  // result path — see `finiteOrMissing`.
+  return finiteOrMissing(resolveReducer(operation).reduce(defined, numeric));
 }
 
 /**
@@ -643,7 +647,7 @@ function tryReduceColumnFastPath(
   }
   const def = resolveReducer(reducer);
   if (def.reduceColumn === undefined) return { ok: false };
-  return { ok: true, value: def.reduceColumn(column) };
+  return { ok: true, value: finiteOrMissing(def.reduceColumn(column)) };
 }
 
 function isBuiltInAggregateReducer(
@@ -658,7 +662,7 @@ function applyAggregateReducer(
 ): ColumnValue | undefined {
   return isBuiltInAggregateReducer(reducer)
     ? aggregateValues(reducer, values)
-    : (reducer as CustomAggregateReducer)(values);
+    : finiteOrMissing((reducer as CustomAggregateReducer)(values));
 }
 
 // `normalizeAggregateColumns`, `isAggregateOutputSpec`, and the
@@ -867,6 +871,36 @@ function timeSeriesFromTrustedStore<S extends SeriesSchema>(
   const frozenSchema = Object.freeze(schema.slice()) as S;
   const store = SeriesStore.fromTrustedStore(
     columnarStore as unknown as ColumnarStore<S>,
+  ) as SeriesStore<S>;
+  const trustedInput: TrustedStoreInput<S> = {
+    name,
+    schema: frozenSchema,
+    [TRUSTED_STORE_SENTINEL]: store,
+  };
+  return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
+}
+
+/**
+ * Builds a series from **computed** rows — an operator's own output
+ * assembled row-shaped (`smooth`, `baseline`, `align`, the row paths of
+ * `aggregate` / `rolling` / `pivotByGroup` / `arrayAggregate`). Same
+ * validation as row intake with one difference: a non-finite number in a
+ * `number` column (`NaN`, `±Infinity` — an overflow, `Infinity - Infinity`)
+ * is stored as **missing** rather than rejected, because a non-finite number
+ * in a number column means missing ([PND-NANREP]). User-supplied rows keep
+ * the strict door (`new TimeSeries`), which rejects them.
+ */
+function timeSeriesFromComputedRows<S extends SeriesSchema>(
+  name: string,
+  schema: S,
+  rows: ReadonlyArray<unknown>,
+): TimeSeries<S> {
+  const frozenSchema = Object.freeze(schema.slice()) as S;
+  const store = SeriesStore.fromValidatedRows(
+    frozenSchema,
+    rows as TimeSeriesInput<S>['rows'],
+    'strict',
+    { nonFiniteAsMissing: true },
   ) as SeriesStore<S>;
   const trustedInput: TrustedStoreInput<S> = {
     name,
@@ -2007,8 +2041,9 @@ export class TimeSeries<S extends SeriesSchema> {
    * (no per-row `Event`), so it stays on the fast columnar path.
    *
    * **Missing cells carry:** the mapper is called only on defined
-   * values; a missing (`undefined`) cell stays missing. A stored `NaN`
-   * is a defined number, so the mapper *is* called on it.
+   * values; a missing (`undefined`) cell stays missing. On a `number`
+   * column a mapper result of `NaN` / `±Infinity` is stored as missing
+   * (a non-finite number in a number column means missing).
    *
    * **Multi-entity series:** `mapColumns` is per-cell and stateless, so
    * it is unaffected by entity interleaving (unlike `cumulative` /
@@ -2350,11 +2385,11 @@ export class TimeSeries<S extends SeriesSchema> {
             ]);
           });
 
-    return new TimeSeries({
-      name: this.name,
-      schema: resultSchema as unknown as SeriesSchema,
-      rows: alignedRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-    }) as unknown as TimeSeries<AlignSchema<S>>;
+    return timeSeriesFromComputedRows(
+      this.name,
+      resultSchema as unknown as SeriesSchema,
+      alignedRows,
+    ) as unknown as TimeSeries<AlignSchema<S>>;
   }
 
   /**
@@ -3126,11 +3161,7 @@ export class TimeSeries<S extends SeriesSchema> {
       outputRows.push(row);
     }
 
-    return new TimeSeries({
-      name: this.name,
-      schema: outputSchema,
-      rows: outputRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-    });
+    return timeSeriesFromComputedRows(this.name, outputSchema, outputRows);
   }
 
   /**
@@ -3322,9 +3353,9 @@ export class TimeSeries<S extends SeriesSchema> {
    * **Missing cells carry:** a missing / undefined source cell does not call
    * `step` — the accumulator is held and the row re-emits the last output (so it
    * holds flat across a gap), `undefined` only until the first defined value. A
-   * stored `NaN` is a defined number and is passed to `step`; the step author
-   * owns output finiteness (this is the trusted-compute path, not the validated
-   * `withColumn` intake).
+   * step output of `NaN` / `±Infinity` is stored as missing (a non-finite
+   * number in a number column means missing) rather than rejected — this is
+   * the trusted-compute path, not the validated `withColumn` intake.
    *
    * **Multi-entity series:** the accumulator threads across all rows in storage
    * order, so it interleaves across entities — `host-A`'s next row folds on top
@@ -3916,11 +3947,7 @@ export class TimeSeries<S extends SeriesSchema> {
         return Object.freeze([bucket, ...aggregated]);
       });
 
-      return new TimeSeries({
-        name: this.name,
-        schema: resultSchema,
-        rows: resultRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-      });
+      return timeSeriesFromComputedRows(this.name, resultSchema, resultRows);
     }
 
     const resultSchema = Object.freeze([
@@ -4145,12 +4172,14 @@ export class TimeSeries<S extends SeriesSchema> {
       const values = outValues[c]!;
       // The old event-based path re-packed via the constructor's strict intake,
       // which rejected any defined result that didn't match the declared output
-      // kind — a non-finite number (a `sum` overflow), or a wrong-typed value
-      // (a custom reducer / `kind` override producing a string for a number
-      // column, etc.). Trusted construction skips intake, and the `*FromArray`
-      // builders silently coerce a kind mismatch to a *missing* cell — so
-      // re-assert the same contract here (same value rules AND the same
-      // `ValidationError` class as intake), keeping packed columns clean.
+      // kind — a wrong-typed value (a custom reducer / `kind` override
+      // producing a string for a number column, etc.). (A non-finite number —
+      // a `sum` overflow — can't reach here: the rolling states' snapshots
+      // map it to missing, [PND-NANREP].) Trusted construction skips intake,
+      // and the `*FromArray` builders silently coerce a kind mismatch to a
+      // *missing* cell — so re-assert the same contract here (same value
+      // rules AND the same `ValidationError` class as intake), keeping
+      // packed columns clean.
       // Missing cells (`undefined`, e.g. the minSamples warm-up) are
       // unaffected. (#225 Codex finding.)
       assertColumnValuesMatchKind(
@@ -4319,9 +4348,9 @@ export class TimeSeries<S extends SeriesSchema> {
       // allocation, and no full-series intake re-pack (the key and every
       // untouched column pass through by reference). Emitted values are the
       // exact sequence the event path emits (same reads, same arithmetic),
-      // and each one is asserted finite so the intake rejection the event
-      // path gets from its row re-pack is preserved. Non-packed sources
-      // (chunked storage) fall back to the event path below.
+      // and a non-finite one (an overflow) is written as missing, matching
+      // the event path's computed-rows re-pack ([PND-NANREP]). Non-packed
+      // sources (chunked storage) fall back to the event path below.
       const emaSourceCol = this.#store.store.columns.get(column as string);
       if (
         emaSourceCol !== undefined &&
@@ -4353,11 +4382,8 @@ export class TimeSeries<S extends SeriesSchema> {
           // Mask the emitted value during the length-preserving warm-up;
           // `previous` / `seen` advanced on the real value above.
           if (seen < minSamples) continue;
-          if (!Number.isFinite(smoothed)) {
-            throw new ValidationError(
-              `smooth column '${output ?? (column as string)}': result ${smoothed} is not a valid 'number' value`,
-            );
-          }
+          // Non-finite (an overflow) means missing ([PND-NANREP]).
+          if (smoothed - smoothed !== 0) continue;
           out[i] = smoothed;
           outBits[i >> 3]! |= 1 << (i & 7);
           outDefined += 1;
@@ -4366,7 +4392,7 @@ export class TimeSeries<S extends SeriesSchema> {
           outDefined === rowCount
             ? undefined
             : validityFromBits(outBits, rowCount);
-        // Every defined cell was asserted finite above → `allFinite`.
+        // Every defined cell passed the finite test above → `allFinite`.
         const outColumn = new Float64Column(out, rowCount, outValidity, true);
         const reshaped =
           output === undefined || output === (column as string)
@@ -4423,11 +4449,11 @@ export class TimeSeries<S extends SeriesSchema> {
 
       const keptRows = warmup > 0 ? resultRows.slice(warmup) : resultRows;
 
-      return new TimeSeries({
-        name: this.name,
-        schema: resultSchema as unknown as SeriesSchema,
-        rows: keptRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-      }) as unknown as TimeSeries<
+      return timeSeriesFromComputedRows(
+        this.name,
+        resultSchema as unknown as SeriesSchema,
+        keptRows,
+      ) as unknown as TimeSeries<
         Output extends string
           ? SmoothAppendSchema<S, Output>
           : SmoothSchema<S, Target>
@@ -4497,11 +4523,11 @@ export class TimeSeries<S extends SeriesSchema> {
         ]);
       });
 
-      return new TimeSeries({
-        name: this.name,
-        schema: resultSchema as unknown as SeriesSchema,
-        rows: resultRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-      }) as unknown as TimeSeries<
+      return timeSeriesFromComputedRows(
+        this.name,
+        resultSchema as unknown as SeriesSchema,
+        resultRows,
+      ) as unknown as TimeSeries<
         Output extends string
           ? SmoothAppendSchema<S, Output>
           : SmoothSchema<S, Target>
@@ -4518,24 +4544,29 @@ export class TimeSeries<S extends SeriesSchema> {
     const resultValues = new Array<number | undefined>(this.events.length);
     let windowStart = 0;
     let windowEnd = 0;
-    let numericSum = 0;
+    // Two-lane running sum (see `reducers/overflow-lanes.ts`) so an
+    // overflow can't stick after the huge values leave the window. Packed
+    // columns already store non-finite as missing; the `v - v === 0` guard
+    // (false exactly for NaN / ±Infinity) is defensive, since the exact big
+    // lane can't take a non-finite value.
+    const numericSum = new LanedSum();
     let numericCount = 0;
     const addEvent = (index: number): void => {
       const value = sourceValues[index];
-      if (typeof value === 'number') {
-        numericSum += value;
+      if (typeof value === 'number' && value - value === 0) {
         numericCount += 1;
+        numericSum.add(value);
       }
     };
     const removeEvent = (index: number): void => {
       const value = sourceValues[index];
-      if (typeof value === 'number') {
-        numericSum -= value;
+      if (typeof value === 'number' && value - value === 0) {
         numericCount -= 1;
+        numericSum.remove(value);
       }
     };
     const snapshot = (): number | undefined =>
-      numericCount === 0 ? undefined : numericSum / numericCount;
+      numericCount === 0 ? undefined : numericSum.total() / numericCount;
 
     for (let groupStart = 0; groupStart < this.events.length; ) {
       const anchor = anchors[groupStart]!;
@@ -4624,11 +4655,11 @@ export class TimeSeries<S extends SeriesSchema> {
       ]);
     });
 
-    return new TimeSeries({
-      name: this.name,
-      schema: resultSchema as unknown as SeriesSchema,
-      rows: resultRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-    }) as unknown as TimeSeries<
+    return timeSeriesFromComputedRows(
+      this.name,
+      resultSchema as unknown as SeriesSchema,
+      resultRows,
+    ) as unknown as TimeSeries<
       Output extends string
         ? SmoothAppendSchema<S, Output>
         : SmoothSchema<S, Target>
@@ -5110,11 +5141,12 @@ export class TimeSeries<S extends SeriesSchema> {
    *
    * `values` is a `Float64Array` (dense) or a `(number | undefined)[]` (where
    * `undefined` marks a missing cell), and must have exactly `series.length`
-   * entries. Defined values are validated against the numeric intake contract —
+   * entries. A boxed array is validated against the numeric intake contract —
    * **non-finite (`NaN` / `±Infinity`) is rejected** (a `ValidationError`,
-   * matching construction), so packed numeric columns stay NaN-free; pass
-   * `undefined` for a missing cell, never `NaN`. `name` must not collide with an
-   * existing column.
+   * matching construction); pass `undefined` for a missing cell. A
+   * `Float64Array` has no `undefined` slot, so there a non-finite value
+   * (`NaN` / `±Infinity`) **is** the gap marker and is stored as missing.
+   * `name` must not collide with an existing column.
    *
    * This is the *validated* attach. A trusted bulk-construction path
    * (`fromTrustedColumns`, skipping the finite scan) is a deferred sibling for
@@ -5142,10 +5174,12 @@ export class TimeSeries<S extends SeriesSchema> {
     // spelled `undefined` forced every producer holding a typed buffer to
     // box a whole column just to say "no value here". A boxed array keeps
     // the strict reading: it already has `undefined`, so a `NaN` in one is
-    // a mistake, not a gap. `±Infinity` is rejected either way.
+    // a mistake, not a gap. `±Infinity` follows `NaN` at each door —
+    // missing in the typed one, rejected in the boxed one — since a
+    // non-finite number in a number column means missing ([PND-NANREP]).
     const column =
       values instanceof Float64Array
-        ? float64ColumnFromTypedArray(values, `withColumn '${String(name)}'`)
+        ? float64ColumnFromTypedArray(values)
         : (assertColumnValuesMatchKind(
             'number',
             values as ReadonlyArray<unknown>,
@@ -5384,11 +5418,7 @@ export class TimeSeries<S extends SeriesSchema> {
       );
     });
 
-    return new TimeSeries({
-      name: this.name,
-      schema: resultSchema,
-      rows: resultRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-    });
+    return timeSeriesFromComputedRows(this.name, resultSchema, resultRows);
   }
 
   /**
@@ -5697,11 +5727,11 @@ export class TimeSeries<S extends SeriesSchema> {
       ]);
     });
 
-    return new TimeSeries({
-      name: this.name,
-      schema: resultSchema as unknown as SeriesSchema,
-      rows: resultRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-    }) as unknown as TimeSeries<
+    return timeSeriesFromComputedRows(
+      this.name,
+      resultSchema as unknown as SeriesSchema,
+      resultRows,
+    ) as unknown as TimeSeries<
       BaselineSchema<S, AvgName, SdName, UpperName, LowerName>
     >;
   }
@@ -5965,11 +5995,11 @@ function aggregateInternal<S extends SeriesSchema>(
       return Object.freeze([bucket, ...aggregated]);
     });
 
-    return new TimeSeries({
-      name: series.name,
-      schema: resultSchema as unknown as SeriesSchema,
-      rows: resultRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-    });
+    return timeSeriesFromComputedRows(
+      series.name,
+      resultSchema as unknown as SeriesSchema,
+      resultRows,
+    );
   }
 
   const resultRows = buckets.map((bucket) => {
@@ -5986,11 +6016,7 @@ function aggregateInternal<S extends SeriesSchema>(
     return Object.freeze([bucket, ...aggregated]);
   });
 
-  return new TimeSeries({
-    name: series.name,
-    schema: resultSchema,
-    rows: resultRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-  });
+  return timeSeriesFromComputedRows(series.name, resultSchema, resultRows);
 }
 
 function alignHoldAt<S extends SeriesSchema>(

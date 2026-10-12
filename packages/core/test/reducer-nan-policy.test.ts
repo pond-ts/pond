@@ -5,7 +5,6 @@ import {
   ColumnarStore,
   Float64Column,
   concatSorted,
-  float64ColumnFromArray,
   timeKeyColumnFromArray,
 } from '../src/columnar/index.js';
 import type { ColumnValue } from '../src/schema/index.js';
@@ -29,9 +28,14 @@ const schema = [
   { name: 'value', kind: 'number' },
 ] as const;
 
-// `fromEvents` is the only entry that lets non-finite reach a numeric column
-// — the public constructor's intake rejects it. (Computed writers like
-// `cumulative` overflow are the real-world source; this is the test injection.)
+// Since [PND-NANREP] no public door can put a non-finite value into a number
+// column: `fromEvents` (this helper) stores `NaN` / `±Infinity` as **missing**,
+// and so does every computed writer. So a series built here carries gaps where
+// the input had non-finite values, and the series-level legs below pin that
+// the answers are the policy's. The reducer factories are still fed raw
+// non-finite values directly (`bucketValue` / `rollingValue`), and the column
+// API's guarded loops are reached through the trusted `Float64Column`
+// constructor (the only way left to build a column holding one).
 function makeSeries(
   values: ReadonlyArray<number | undefined>,
 ): TimeSeries<typeof schema> {
@@ -168,20 +172,12 @@ describe('reducer non-finite policy — finite data is unchanged', () => {
   });
 });
 
-// `Float64Column.allFinite` lets `reduceColumn` skip the per-element finite
-// guard. The flag MUST be DATA-DERIVED — a computed writer that packs a
-// non-finite cell must leave it `false`, or the fast path would (wrongly)
-// include the non-finite cell and diverge from the documented policy.
-//
-// `cumulative` with a custom fold is the permissive computed-writer path
-// (docs/notes/reducer-nan-policy.md, middle layer): it packs honest non-finite
-// via `float64ColumnFromArray`, which derives `allFinite` from the values. A
-// fold injecting `Infinity` yields a packed `Float64Column` with a non-finite
-// cell whose `allFinite` is `false` → reducers take the guarded path → the
-// non-finite is skipped, matching the `fromEvents` equivalent. Were the flag
-// wrongly `true`, the fast path would include `Infinity` and these assertions
-// would fail (sum / max → Infinity, count → 3).
-describe('reducer non-finite policy — allFinite is data-derived on computed columns', () => {
+// A computed writer can no longer pack a non-finite cell: a non-finite
+// number in a number column means missing ([PND-NANREP]). `cumulative` with
+// a custom fold injecting `Infinity` stores that row as **missing**, so the
+// column is `allFinite` (fast path) and the reducers see a gap. The answers
+// are the same ones the policy gave when the cell was a skipped `Infinity`.
+describe('reducer non-finite policy — a computed non-finite result is stored as missing', () => {
   // Fold yields [10, Infinity, 30] (the first value is used as-is; the fold
   // injects Infinity only at value 20). Finite cells are 10 and 30.
   const injectInf = (_acc: number, v: number): number =>
@@ -193,8 +189,8 @@ describe('reducer non-finite policy — allFinite is data-derived on computed co
     }) as unknown as TimeSeries<typeof schema>;
   }
 
-  // The reference: a column carrying the SAME post-fold values via the
-  // (builder) intake path — also `allFinite: false`, guarded, policy-correct.
+  // The reference: the same post-fold values through `fromEvents`, which
+  // also stores the `Infinity` as missing.
   const reference = [10, Infinity, 30];
 
   const cases: Array<{ name: string; expected: number | undefined }> = [
@@ -207,7 +203,7 @@ describe('reducer non-finite policy — allFinite is data-derived on computed co
   ];
 
   for (const c of cases) {
-    it(`${c.name}: computed non-finite column skips Infinity (matches fromEvents)`, () => {
+    it(`${c.name}: computed non-finite result is a gap (matches fromEvents)`, () => {
       const computed = cumulativeWithInfinity();
       // The computed column's reduce must equal the documented policy value...
       expect(computed.reduce('value', c.name)).toBe(c.expected);
@@ -218,11 +214,14 @@ describe('reducer non-finite policy — allFinite is data-derived on computed co
     });
   }
 
-  it('the injected column genuinely carries a non-finite cell', () => {
-    // Guards the test itself: if the fold ever stopped producing Infinity the
-    // cases above would still pass vacuously. Confirm the packed value is Inf.
+  it('the injected Infinity is stored as missing; the column is allFinite', () => {
     const computed = cumulativeWithInfinity();
-    expect(computed.at(1)?.get('value' as never)).toBe(Infinity);
+    const col = computed.column('value') as Float64Column;
+    expect(computed.at(1)?.get('value' as never)).toBeUndefined();
+    expect(col.allFinite).toBe(true);
+    // count + nullCount === length: the gap is counted once, as missing.
+    expect(col.count()).toBe(2);
+    expect(col.nullCount()).toBe(1);
   });
 });
 
@@ -281,13 +280,11 @@ describe('reducer non-finite policy — allFinite fast path == guarded path', ()
 // and `bin('minMax')` inline a fused loop, and chunked `count()` had an O(1)
 // shortcut — all three bypassed the policy until this PR. Codex flagged them.
 describe('reducer non-finite policy — column-API minMax / bin / chunked count', () => {
-  // Computed non-finite column: cumulative fold injects Infinity → packed via
-  // float64ColumnFromArray → allFinite false. Cells: [10, Infinity, 30].
+  // A column holding a defined Infinity, `allFinite: false`. Only the trusted
+  // constructor can build one now ([PND-NANREP]); the guarded loops stay, so
+  // keep pinning them. Cells: [10, Infinity, 30].
   function computedCol(): Float64Column {
-    const ts = makeSeries([10, 20, 30]).cumulative({
-      value: (_a: number, v: number) => (v === 20 ? Infinity : v),
-    }) as unknown as TimeSeries<typeof schema>;
-    return ts.column('value') as Float64Column;
+    return new Float64Column(Float64Array.from([10, Infinity, 30]), 3);
   }
 
   it('minMax() skips non-finite and agrees with [min(), max()]', () => {
@@ -312,7 +309,17 @@ describe('reducer non-finite policy — column-API minMax / bin / chunked count'
           { name: 'v', kind: 'number' },
         ] as const,
         timeKeyColumnFromArray(times),
-        new Map([['v', float64ColumnFromArray(values)]]),
+        // Trusted constructor: the only way to hold a defined non-finite
+        // cell ([PND-NANREP]); `float64ColumnFromArray` would store a gap.
+        new Map([
+          [
+            'v',
+            new Float64Column(
+              Float64Array.from(values as number[]),
+              values.length,
+            ),
+          ],
+        ]),
       );
     const chunked = concatSorted([
       numStore([1000, 2000], [10, Infinity]),
