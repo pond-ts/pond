@@ -65,3 +65,26 @@ const dynamicOut:
   | TimeSeriesJsonOutputArray<typeof schema>
   | TimeSeriesJsonOutputObject<typeof schema> = live.toJSON({ rowFormat: fmt });
 void dynamicOut;
+
+// Call shapes a caller forwarding options must be able to use: the union
+// overload takes an optional `options`, so a possibly-undefined options
+// variable, a spread, and a non-fresh object with extra keys resolve.
+declare const maybeOpts: { rowFormat?: JsonRowFormat } | undefined;
+const maybeOut:
+  | TimeSeriesJsonOutputArray<typeof schema>
+  | TimeSeriesJsonOutputObject<typeof schema> = live.toJSON(maybeOpts);
+void maybeOut;
+const undefOut: TimeSeriesJsonOutputArray<typeof schema> =
+  live.toJSON(undefined);
+void undefOut;
+const emptyOut: TimeSeriesJsonOutputArray<typeof schema> = live.toJSON({});
+void emptyOut;
+declare const reqOpts: { rowFormat: 'array' | 'object' };
+live.toJSON(reqOpts);
+live.toJSON({ ...maybeOpts });
+declare const extraOpts: { rowFormat: 'object'; label: string };
+const extraOut: TimeSeriesJsonOutputObject<typeof schema> =
+  live.toJSON(extraOpts);
+void extraOut;
+declare const spreadArgs: Parameters<typeof live.toJSON>;
+live.toJSON(...spreadArgs);

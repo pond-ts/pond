@@ -1043,7 +1043,7 @@ export class LiveSeries<S extends SeriesSchema> {
    */
   toJSON(options?: { rowFormat?: 'array' }): TimeSeriesJsonOutputArray<S>;
   toJSON(options: { rowFormat: 'object' }): TimeSeriesJsonOutputObject<S>;
-  toJSON(options: {
+  toJSON(options?: {
     rowFormat?: JsonRowFormat;
   }): TimeSeriesJsonOutputArray<S> | TimeSeriesJsonOutputObject<S>;
   toJSON(

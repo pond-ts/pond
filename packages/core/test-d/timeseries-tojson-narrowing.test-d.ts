@@ -86,7 +86,8 @@ const _looseArray: TimeSeriesJsonInput<SeriesSchema> = defaultOut;
 void _looseArray;
 // ...but the object form is not: `JsonObjectRowForSchema<SeriesSchema>`
 // requires a property for every possible key name (`time`, `timeRange`,
-// `interval`). This is the one documented break of the narrowing — annotate
+// `interval`). This is the one documented break of the narrowing (it covers
+// the `JsonRowFormat` union result too, which includes the object form) — annotate
 // with `TimeSeriesJsonInput<typeof schema>` (or drop the annotation) instead.
 // @ts-expect-error object rows don't fit the wide-schema object row
 const _looseObject: TimeSeriesJsonInput<SeriesSchema> = objectOut;
@@ -109,3 +110,28 @@ const wideObject = wide.toJSON({ rowFormat: 'object' });
 assertType<
   Equal<typeof wideObject, TimeSeriesJsonOutputObject<SeriesSchema>>
 >();
+
+// Call shapes that compiled against the pre-narrowing single signature
+// (`options: { rowFormat?: JsonRowFormat } = {}`) must still compile: the
+// union overload takes an optional `options`, so a possibly-undefined
+// options variable, a spread, and a non-fresh object with extra keys resolve.
+declare const maybeOpts: { rowFormat?: JsonRowFormat } | undefined;
+const maybeOut = series.toJSON(maybeOpts);
+assertType<
+  Equal<
+    typeof maybeOut,
+    TimeSeriesJsonOutputArray<S> | TimeSeriesJsonOutputObject<S>
+  >
+>();
+const undefOut = series.toJSON(undefined);
+assertType<Equal<typeof undefOut, TimeSeriesJsonOutputArray<S>>>();
+const emptyOut = series.toJSON({});
+assertType<Equal<typeof emptyOut, TimeSeriesJsonOutputArray<S>>>();
+declare const reqOpts: { rowFormat: 'array' | 'object' };
+series.toJSON(reqOpts);
+series.toJSON({ ...maybeOpts });
+declare const extraOpts: { rowFormat: 'object'; label: string };
+const extraOut = series.toJSON(extraOpts);
+assertType<Equal<typeof extraOut, TimeSeriesJsonOutputObject<S>>>();
+declare const spreadArgs: Parameters<typeof series.toJSON>;
+series.toJSON(...spreadArgs);

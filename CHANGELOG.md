@@ -98,8 +98,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   `TimeSeriesJsonInput<SeriesSchema>`. **Migration:** drop any
   `as TimeSeriesJsonInput<…>` / `as TimeSeriesJsonOutput…<…>` casts (they
   still compile). Two patterns now fail to compile: annotating an
-  **object**-form result as `TimeSeriesJsonInput<SeriesSchema>` (use
-  `TimeSeriesJsonInput<typeof schema>`, or no annotation), and reading a
+  **object**-form result as `TimeSeriesJsonInput<SeriesSchema>` — including
+  a `JsonRowFormat`-typed (union) result, since it can be the object form —
+  (use `TimeSeriesJsonInput<typeof schema>`, or no annotation), and reading a
   column by name off a default (tuple) row, which was always `undefined` at
   runtime. `LiveSeries.toJSON()` also gains the `JsonRowFormat` overload, which
   previously had no matching signature. [PND-TSJSONT]

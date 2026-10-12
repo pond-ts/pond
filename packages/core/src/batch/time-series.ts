@@ -1309,7 +1309,7 @@ export class TimeSeries<S extends SeriesSchema> {
   toJSON<T extends S = S>(options: {
     rowFormat: 'object';
   }): TimeSeriesJsonOutputObject<T>;
-  toJSON<T extends S = S>(options: {
+  toJSON<T extends S = S>(options?: {
     rowFormat?: JsonRowFormat;
   }): TimeSeriesJsonOutputArray<T> | TimeSeriesJsonOutputObject<T>;
   toJSON(

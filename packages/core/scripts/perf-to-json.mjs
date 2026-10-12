@@ -4,9 +4,9 @@
  * Analytical cost (N rows, C columns): **O(N·C)** with one row allocation per
  * event (array or object) plus the event/data materialisation the row walk
  * already pays. The tuple path used to allocate a second, throwaway array per
- * row (`dataColumns.map(...)`) and spread it into the first; it now writes
- * cells by index into one pre-sized array, so tuple rows should cost no more
- * than object rows. If tuple rows drift back above object rows, a per-row
+ * row (`dataColumns.map(...)`) and spread it into the first; it now pushes
+ * each cell onto the one row array (key cell first), so tuple rows should cost
+ * no more than object rows. If tuple rows drift back above object rows, a per-row
  * intermediate has crept back in.
  *
  * Run: `node scripts/perf-to-json.mjs` (after `npm run build`).
