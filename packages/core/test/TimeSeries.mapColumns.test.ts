@@ -117,7 +117,7 @@ describe('TimeSeries.mapColumns', () => {
   // Audit v2 §1.3: a mapper that writes NaN into a packed numeric column made
   // aggregate(min) return 3 via the fast path but 1 via the row path on the
   // same bucket. Rejecting NaN at write closes the divergence at the source.
-  it('rejects a mapper that produces NaN (no packed-NaN reducer divergence)', () => {
+  it('stores a non-finite mapper result as missing [PND-NANREP]', () => {
     const s = new TimeSeries({
       name: 'd',
       schema: [
@@ -130,9 +130,17 @@ describe('TimeSeries.mapColumns', () => {
         [2000, 3],
       ] as any,
     });
-    expect(() => s.mapColumns({ v: (x) => (x === 2 ? NaN : x) })).toThrow(
-      /non-finite/,
-    );
+    const out = s.mapColumns({
+      v: (x) => (x === 1 ? NaN : x === 2 ? Infinity : -Infinity),
+    });
+    expect(out.length).toBe(3);
+    expect([0, 1, 2].map((i) => out.at(i)!.get('v'))).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(out.column('v').nullCount()).toBe(3);
+    expect(out.column('v').count()).toBe(0);
   });
 });
 
@@ -168,7 +176,7 @@ describe('mapOp on inputs the method cannot produce', () => {
     expect(store.valueAt(3, 'v')).toBe(400);
   });
 
-  it('invokes the mapper on a stored NaN (defined value) — and can clean it to a finite value', () => {
+  it('never shows the mapper a NaN: NaN in a number column is missing [PND-NANREP]', () => {
     const withNaN = numStore([0, 1000, 2000], [10, NaN, 30]);
     let sawNaN = false;
     const { store } = mapOp(
@@ -187,29 +195,24 @@ describe('mapOp on inputs the method cannot produce', () => {
         ],
       ]),
     );
-    expect(sawNaN).toBe(true); // NaN is a defined value → mapper invoked
+    expect(sawNaN).toBe(false); // the NaN cell is a gap → mapper not invoked
     expect(store.valueAt(0, 'v')).toBe(11);
-    expect(store.valueAt(1, 'v')).toBe(0); // cleaned
+    expect(store.valueAt(1, 'v')).toBeUndefined(); // gap preserved
     expect(store.valueAt(2, 'v')).toBe(31);
   });
 
-  it('rejects a non-finite numeric mapper result (NaN / ±Infinity) at write', () => {
-    // Passing a stored NaN straight through would poison the packed column.
-    const withNaN = numStore([0, 1000, 2000], [10, NaN, 30]);
-    expect(() =>
-      mapOp(
-        withNaN,
-        withNaN.schema,
-        new Map([['v', (x: unknown) => x as number]]),
-      ),
-    ).toThrow(/non-finite/);
-
-    // A finite source whose mapper produces non-finite output also throws.
+  it('stores a non-finite numeric mapper result (NaN / ±Infinity) as missing', () => {
+    // A non-finite number in a number column means missing ([PND-NANREP]);
+    // a mapper result is held to the same rule as any computed write.
     const finite = numStore([0, 1000], [1, 2]);
     for (const bad of [NaN, Infinity, -Infinity]) {
-      expect(() =>
-        mapOp(finite, finite.schema, new Map([['v', () => bad]])),
-      ).toThrow(/non-finite/);
+      const { store: out } = mapOp(
+        finite,
+        finite.schema,
+        new Map([['v', () => bad]]),
+      );
+      expect(out.valueAt(0, 'v')).toBeUndefined();
+      expect(out.valueAt(1, 'v')).toBeUndefined();
     }
 
     // A finite mapper on the same source is unaffected (no false positive).

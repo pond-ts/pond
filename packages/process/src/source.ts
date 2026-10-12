@@ -110,13 +110,12 @@ export function source<T>(
  * materialize a snapshot, and a way to hear that one is due.
  *
  * Looser than core's `LiveSource<S>` in exactly one place — the
- * `'event'` listener's parameter is `any`. That is not laziness: this
- * package never reads the event, it only needs the notification, and
- * core's incremental operators type that listener differently.
- * `LiveAggregation.on('event', …)` hands back a widened `ClosedEvent`
- * rather than a schema-narrowed `EventForSchema<Out>`, so it does not
- * satisfy `LiveSource<Out>` structurally. Requiring the exact interface
- * would reject precisely the sources worth binding (see {@link fromLive}).
+ * `'event'` listener's parameter is `any`, because this package never
+ * reads the event, it only needs the notification. It was introduced
+ * when `LiveAggregation.on('event', …)` handed back a widened event and
+ * so did not satisfy `LiveSource<Out>`; core has since narrowed that
+ * listener ([PND-LIVESRC]), so the aggregation operators now satisfy
+ * `LiveSource<Out>` too.
  *
  * `LiveSeries`, `LiveView`, `LiveAggregation`, `LiveRollingAggregation`,
  * and `LiveFusedRolling` all match this.

@@ -155,11 +155,26 @@ describe('multiple columns', () => {
 // ── Subscriptions ───────────────────────────────────────────────
 
 describe('subscriptions', () => {
-  it('on() returns this for chaining', () => {
+  it('every on() overload returns an unsubscribe function', () => {
     const live = makeLive();
     const tail = new LiveRollingAggregation(live, '5s', { value: 'sum' });
-    const result = tail.on('update', () => {});
-    expect(result).toBe(tail);
+    let events = 0;
+    let updates = 0;
+    const offEvent = tail.on('event', () => events++);
+    const offUpdate = tail.on('update', () => updates++);
+    live.push([0, 10, 'a']);
+    expect({ events, updates }).toEqual({ events: 1, updates: 1 });
+    offEvent();
+    offUpdate();
+    live.push([1000, 20, 'a']);
+    expect({ events, updates }).toEqual({ events: 1, updates: 1 });
+    tail.dispose();
+  });
+
+  it('throws on an unknown listener type', () => {
+    const live = makeLive();
+    const tail = new LiveRollingAggregation(live, '5s', { value: 'sum' });
+    expect(() => (tail as any).on('close', () => {})).toThrow(TypeError);
     tail.dispose();
   });
 

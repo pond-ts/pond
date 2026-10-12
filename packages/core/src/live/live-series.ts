@@ -10,6 +10,7 @@ import {
   makeDiffView,
   makeFillView,
   makeCumulativeView,
+  makeMapView,
   makeStrideSampleView,
   type LiveFillMapping,
   type LiveFillStrategy,
@@ -21,7 +22,12 @@ import {
   type LiveRollingOptions,
   type RollingWindow,
 } from './live-rolling-aggregation.js';
-import { TimeSeries, toKey, type KeyLike } from '../batch/time-series.js';
+import {
+  TimeSeries,
+  assertSelectKeys,
+  toKey,
+  type KeyLike,
+} from '../batch/time-series.js';
 import { ValidationError } from '../core/errors.js';
 import { parseJsonRows } from '../batch/json.js';
 import type { TimeZoneOptions } from '../core/calendar.js';
@@ -30,7 +36,6 @@ import type { Sequence } from '../sequence/sequence.js';
 import {
   EMITS_EVICT,
   type AggregateMap,
-  type AggregateOutputMap,
   type AggregateSchema,
   type DiffSchema,
   type EventDataForSchema,
@@ -1043,17 +1048,13 @@ export class LiveSeries<S extends SeriesSchema> {
    */
   toJSON(options?: { rowFormat?: 'array' }): TimeSeriesJsonOutputArray<S>;
   toJSON(options: { rowFormat: 'object' }): TimeSeriesJsonOutputObject<S>;
+  toJSON(options?: {
+    rowFormat?: JsonRowFormat;
+  }): TimeSeriesJsonOutputArray<S> | TimeSeriesJsonOutputObject<S>;
   toJSON(
     options: { rowFormat?: JsonRowFormat } = {},
   ): TimeSeriesJsonOutputArray<S> | TimeSeriesJsonOutputObject<S> {
-    // `TimeSeries.toJSON` returns the broader `TimeSeriesJsonInput<SeriesSchema>`;
-    // the values it produces are correct-shaped at runtime for the
-    // narrowed types. The cast is the price of keeping the
-    // `TimeSeries` signature broad — see the toJSON cascade
-    // discussion in PLAN.md.
-    return this.toTimeSeries().toJSON(options) as
-      | TimeSeriesJsonOutputArray<S>
-      | TimeSeriesJsonOutputObject<S>;
+    return this.toTimeSeries().toJSON(options);
   }
 
   /**
@@ -1096,7 +1097,7 @@ export class LiveSeries<S extends SeriesSchema> {
   }
 
   map(fn: (event: EventForSchema<S>) => EventForSchema<S>): LiveView<S> {
-    return new LiveView(this, fn);
+    return makeMapView(this, fn);
   }
 
   /**
@@ -1146,6 +1147,7 @@ export class LiveSeries<S extends SeriesSchema> {
   select<const Keys extends readonly (keyof EventDataForSchema<S>)[]>(
     ...keys: Keys
   ): LiveView<SelectSchema<S, Keys[number] & string>> {
+    assertSelectKeys('select', this.schema as SeriesSchema, keys);
     const newSchema = Object.freeze([
       this.schema[0]!,
       ...this.schema.slice(1).filter((c) => keys.includes(c.name as any)),
@@ -1219,10 +1221,7 @@ export class LiveSeries<S extends SeriesSchema> {
   ): LiveFusedRolling<S, FusedRollingSchema<S, FM>>;
   rolling(
     arg1: RollingWindow | FusedMapping<S>,
-    mappingOrOptions?:
-      | AggregateMap<S>
-      | AggregateOutputMap<S>
-      | LiveRollingOptions,
+    mappingOrOptions?: AggregateMap<S> | LiveRollingOptions,
     options?: LiveRollingOptions,
   ): any {
     // Dispatch on first-arg shape: a RollingWindow is a string
@@ -1239,7 +1238,7 @@ export class LiveSeries<S extends SeriesSchema> {
     return new LiveRollingAggregation(
       this,
       arg1 as RollingWindow,
-      mappingOrOptions as AggregateMap<S> | AggregateOutputMap<S>,
+      mappingOrOptions as AggregateMap<S>,
       options,
     );
   }

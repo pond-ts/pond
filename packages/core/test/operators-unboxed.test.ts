@@ -18,7 +18,7 @@ import { TimeSeries } from '../src/index.js';
 /* The seams that could plausibly differ, each with a case:                    */
 /*   - a leading run of missing cells (output undefined until first defined)   */
 /*   - a missing cell CARRIES the accumulator rather than resetting it         */
-/*   - a stored NaN is a *defined* number and must be folded in                */
+/*   - a computed NaN is *missing* (NaN means missing, [PND-NANREP])           */
 /*   - `allFinite` on the output must be derived, not inherited                */
 /*   - "all defined ⇒ no validity bitmap" must survive                         */
 /* -------------------------------------------------------------------------- */
@@ -42,7 +42,13 @@ function series(a: Cell[], b: Cell[] = a) {
 const readColumn = (s: TimeSeries<never>, name: string): Cell[] =>
   Array.from({ length: s.length }, (_, i) => s.column(name).at(i) as Cell);
 
-/* ── reference implementations, mirroring the pre-change boxed code ──────── */
+/* ── reference implementations, mirroring the boxed code ─────────────────── */
+/* A non-finite number means missing ([PND-NANREP]): a NaN / ±Infinity result */
+/* is a gap, so the references map it to `undefined` exactly as               */
+/* `float64ColumnFromArray` does.                                              */
+
+const nonFiniteToGap = (v: Cell): Cell =>
+  v === undefined || v - v !== 0 ? undefined : v;
 
 function referenceCumulative(
   src: Cell[],
@@ -65,7 +71,7 @@ function referenceCumulative(
   for (let i = 0; i < src.length; i += 1) {
     const raw = src[i];
     if (typeof raw === 'number') acc = apply(acc, raw);
-    out[i] = acc;
+    out[i] = nonFiniteToGap(acc);
   }
   return out;
 }
@@ -82,10 +88,12 @@ function referenceDiff(
     const curr = src[i];
     if (typeof curr === 'number' && typeof prev === 'number') {
       const delta = curr - prev;
-      if (mode === 'pctChange') out[i] = prev !== 0 ? delta / prev : undefined;
+      if (mode === 'pctChange')
+        out[i] = prev !== 0 ? nonFiniteToGap(delta / prev) : undefined;
       else if (mode === 'rate')
-        out[i] = stepSeconds !== 0 ? delta / stepSeconds : undefined;
-      else out[i] = delta;
+        out[i] =
+          stepSeconds !== 0 ? nonFiniteToGap(delta / stepSeconds) : undefined;
+      else out[i] = nonFiniteToGap(delta);
     } else {
       out[i] = undefined;
     }
@@ -182,17 +190,16 @@ describe('[PND-BOXFREE] cumulative: unboxed path equals the boxed reference', ()
     expect(col.at(3)).toBe(5);
   });
 
-  it('derives allFinite from the output, not the input', () => {
-    // Input is all-finite; the running sum overflows to +Infinity, so the
-    // OUTPUT is not. Inheriting the source's flag would mark a non-finite
-    // column `allFinite: true` and send every downstream reducer down the
-    // unguarded path.
+  it('stores an overflowed running sum as missing; the output stays allFinite', () => {
+    // Input is all-finite; the running sum overflows to +Infinity, which is a
+    // missing cell ([PND-NANREP]), so the output is still all-finite.
     const out = series([Number.MAX_VALUE, Number.MAX_VALUE]).cumulative({
       a: 'sum',
     });
     const col = out.column('a');
-    expect(col.at(1)).toBe(Infinity);
-    expect((col as unknown as { allFinite: boolean }).allFinite).toBe(false);
+    expect(col.at(1)).toBeUndefined();
+    expect(col.nullCount()).toBe(1);
+    expect((col as unknown as { allFinite: boolean }).allFinite).toBe(true);
   });
 
   it('handles many columns independently', () => {
@@ -272,11 +279,12 @@ describe('[PND-BOXFREE] diff / rate / pctChange: unboxed path equals the boxed r
     ]);
   });
 
-  it('derives allFinite from the output, not the input', () => {
+  it('stores an overflowed delta as missing; the output stays allFinite', () => {
     const out = series([-Number.MAX_VALUE, Number.MAX_VALUE]).diff(['a']);
     const col = out.column('a');
-    expect(col.at(1)).toBe(Infinity);
-    expect((col as unknown as { allFinite: boolean }).allFinite).toBe(false);
+    expect(col.at(1)).toBeUndefined();
+    expect(col.nullCount()).toBe(2);
+    expect((col as unknown as { allFinite: boolean }).allFinite).toBe(true);
   });
 });
 
@@ -315,14 +323,12 @@ describe('[PND-BOXFREE] randomised agreement', () => {
   });
 });
 
-describe('[PND-BOXFREE] defined non-finite cells, reached the only way they can be', () => {
+describe('[PND-BOXFREE] non-finite results, reached the only way they can be', () => {
   // Row intake rejects NaN / ±Infinity ("expected finite number"), so a
-  // *defined* non-finite cell cannot be constructed directly. It can still
-  // occur: an operator whose own arithmetic overflows produces one, and
-  // that column is then a legitimate input to the next operator. This is
-  // where the unboxed path's finiteness handling has to hold up, because
-  // the old boxed path treated a stored NaN as a defined number
-  // (`typeof raw === 'number'` is true for NaN) and so must the new one.
+  // non-finite value can only arise from an operator's own arithmetic. Since
+  // [PND-NANREP] it is never stored: a non-finite number in a number column
+  // means missing, on the boxed and unboxed paths alike. These pin that the
+  // overflow becomes a gap, and that the next operator treats the gap as one.
   const overflowed = () =>
     new TimeSeries({
       name: 's',
@@ -335,14 +341,23 @@ describe('[PND-BOXFREE] defined non-finite cells, reached the only way they can 
       ] as never,
     }).cumulative({ a: 'sum' });
 
-  it('produces a defined +Infinity that the column reports as present', () => {
+  it('stores the overflow as missing: count + nullCount === length', () => {
+    // a = [MAX, Inf, Inf, Inf] → [MAX, -, -, -]: the accumulator stays
+    // Infinity, so every later row is missing too.
     const col = overflowed().column('a');
-    expect(col.at(1)).toBe(Infinity);
-    expect(col.nullCount()).toBe(0);
-    expect((col as unknown as { allFinite: boolean }).allFinite).toBe(false);
+    expect([0, 1, 2, 3].map((i) => col.at(i))).toEqual([
+      Number.MAX_VALUE,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(col.count()).toBe(1);
+    expect(col.nullCount()).toBe(3);
+    expect(col.count() + col.nullCount()).toBe(col.length);
+    expect((col as unknown as { allFinite: boolean }).allFinite).toBe(true);
   });
 
-  it('cumulative folds a defined non-finite cell in, as the boxed path did', () => {
+  it('cumulative over the gapped result agrees with the boxed reference', () => {
     const src = readColumn(overflowed() as never, 'a');
     const again = overflowed().cumulative({ a: 'sum' });
     expect(readColumn(again as never, 'a')).toStrictEqual(
@@ -350,19 +365,50 @@ describe('[PND-BOXFREE] defined non-finite cells, reached the only way they can 
     );
   });
 
-  it('diff over a defined non-finite cell agrees with the boxed reference', () => {
+  it('diff over the gapped result agrees with the boxed reference', () => {
     const src = readColumn(overflowed() as never, 'a');
     expect(readColumn(overflowed().diff(['a']) as never, 'a')).toStrictEqual(
       referenceDiff(src, 'diff'),
     );
   });
 
-  it('Infinity - Infinity is NaN, defined, and keeps allFinite false', () => {
-    // The boxed path wrote NaN into the array and `float64ColumnFromArray`
-    // saw a number, so the cell stayed defined with allFinite false. The
-    // unboxed path must not quietly turn it into a gap.
-    const col = overflowed().diff(['a']).column('a');
-    expect(Number.isNaN(col.at(2) as number)).toBe(true);
-    expect((col as unknown as { allFinite: boolean }).allFinite).toBe(false);
+  it('an overflowed diff / rate / pctChange reads as missing everywhere', () => {
+    const s = series([-Number.MAX_VALUE, Number.MAX_VALUE, 1]);
+    for (const mode of ['diff', 'rate', 'pctChange'] as const) {
+      const out = s[mode](['a']);
+      const col = out.column('a');
+      // Row 1 overflows (MAX - -MAX, or that over 1s / over -MAX).
+      expect(col.at(1), mode).toBeUndefined();
+      expect(out.at(1)!.get('a'), mode).toBeUndefined();
+      const seen: number[] = [];
+      (col as unknown as { scan(fn: (v: number) => void): void }).scan((v) =>
+        seen.push(v),
+      );
+      expect(seen, mode).not.toContain(Infinity);
+      expect(seen, mode).not.toContain(-Infinity);
+      expect(col.count() + col.nullCount(), mode).toBe(col.length);
+    }
+  });
+
+  it('a custom fold that returns a non-finite value emits a gap, then can recover', () => {
+    const s = series([1, 2, 3, 4]);
+    // acc + v, except Infinity at v === 2; recovers when acc is non-finite.
+    const custom = s
+      .cumulative({
+        a: (acc, v) =>
+          v === 2 ? Infinity : Number.isFinite(acc) ? acc + v : v,
+      })
+      .column('a');
+    expect([0, 1, 2, 3].map((i) => custom.at(i))).toEqual([1, undefined, 3, 7]);
+    // A fold whose accumulator stays NaN reads missing from there on.
+    const NaNFold = s
+      .cumulative({ a: (acc, v) => (v === 2 ? NaN : acc + v) })
+      .column('a');
+    expect([0, 1, 2, 3].map((i) => NaNFold.at(i))).toEqual([
+      1,
+      undefined,
+      undefined,
+      undefined,
+    ]);
   });
 });

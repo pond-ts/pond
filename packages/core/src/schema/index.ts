@@ -51,6 +51,7 @@ export type {
   NormalizedObjectRow,
   NormalizedObjectRowForSchema,
   NormalizedRowForSchema,
+  BatchOrderingMode,
   PointRowForSchema,
   TimeSeriesInput,
 } from './events.js';
@@ -87,8 +88,6 @@ export type {
   AggregateColumns,
   AggregateFunction,
   AggregateMap,
-  AggregateOutputMap,
-  AggregateOutputMapResultSchema,
   AggregateOutputSpec,
   AggregateReducer,
   AggregateSchema,
@@ -101,7 +100,6 @@ export type {
   ArrayExplodeReplaceSchema,
   CustomAggregateReducer,
   MaterializeSchema,
-  RollingOutputMapSchema,
 } from './aggregate.js';
 export type { ReduceResult } from './reduce.js';
 export type {

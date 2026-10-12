@@ -41,10 +41,11 @@ export type ScanStep<A> = (
  *   flat across a gap (exactly as `cumulative`'s accumulator holds). The output
  *   is `undefined` only until the first defined value produces one
  *   (`float64ColumnFromArray` derives validity from the `undefined`s).
- * - A **stored `NaN`** is a defined number — `step` is called with it, and a
- *   computed non-finite output lands as a defined cell. This is the
+ * - A **non-finite step output** (`NaN`, `±Infinity`) **is missing**
+ *   ([PND-NANREP]): that row reads as a gap (`float64ColumnFromArray` drops
+ *   it), and the next defined output resumes normally. This is the
  *   *trusted-compute* path (matching `cumulative`), not the validated
- *   `withColumn` intake; the step author owns output finiteness.
+ *   `withColumn` intake, so it is not rejected here.
  *
  * Returns the reshaped store + the output schema. The result-schema cast is the
  * single trust boundary; `TimeSeries.scan` wraps the store via

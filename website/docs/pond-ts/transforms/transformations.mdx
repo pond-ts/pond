@@ -82,6 +82,12 @@ const just = full.select('cpu', 'host');
 just.at(0)?.get('cpu'); // still narrows to number | undefined
 ```
 
+Pass the names as separate arguments. A name that isn't a payload
+column throws a `RangeError` listing the valid columns, and an array
+argument (`select(['cpu', 'host'])`) throws a `TypeError` — spread it:
+`select(...names)`. Output columns keep schema order; a repeated name
+selects its column once.
+
 ### `rename(mapping)` — rename payload columns \{#rename\}
 
 ```ts

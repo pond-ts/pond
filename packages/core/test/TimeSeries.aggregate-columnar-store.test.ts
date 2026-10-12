@@ -4,7 +4,6 @@ import {
   Interval,
   Sequence,
   TimeSeries,
-  ValidationError,
 } from '../src/index.js';
 
 /* -------------------------------------------------------------------------- */
@@ -98,21 +97,26 @@ describe('[PND-IVLCOL] aggregate columnar output — empty buckets', () => {
 });
 
 describe('[PND-IVLCOL] aggregate columnar output — intake checks preserved', () => {
-  it('still rejects a non-finite reducer result, with the row path’s message', () => {
-    // `sum` over two near-MAX_VALUE cells overflows to +Infinity. Row
-    // intake rejected that via assertCellKind; trusted construction has
-    // to reject it too, or a non-finite cell lands in a column stamped
-    // `allFinite: true` and every downstream reducer reads garbage.
+  it('stores a non-finite reducer result as missing, like the row path', () => {
+    // `sum` over two near-MAX_VALUE cells overflows to +Infinity. A
+    // non-finite number in a number column means missing ([PND-NANREP]),
+    // so the bucket reads as a gap — and the column stays `allFinite`.
     const overflowing = series([
       [0, Number.MAX_VALUE, 'a', true],
       [10_000, Number.MAX_VALUE, 'a', true],
     ]);
-    expect(() => overflowing.aggregate(minute, { value: 'sum' })).toThrow(
-      ValidationError,
-    );
-    expect(() => overflowing.aggregate(minute, { value: 'sum' })).toThrow(
-      /row 0 col 1: expected finite number/,
-    );
+    const out = overflowing.aggregate(minute, { value: 'sum' });
+    expect(out.length).toBe(1);
+    expect(out.at(0)!.get('value')).toBeUndefined();
+    const col = out.column('value');
+    expect(col.nullCount()).toBe(1);
+    expect((col as { allFinite: boolean }).allFinite).toBe(true);
+    // The row path (a custom reducer disqualifies the columnar plan)
+    // answers the same.
+    const viaRows = overflowing.aggregate(minute, {
+      value: (vs) => (vs as number[]).reduce((a, b) => a + b, 0),
+    });
+    expect(viaRows.at(0)!.get('value')).toBeUndefined();
   });
 
   it('stamps numeric output columns allFinite so downstream reductions stay fast', () => {

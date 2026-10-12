@@ -869,7 +869,8 @@ write, and the bound cannot catch it — so it is documented on the method and
 pinned in `test-d/` rather than defended against.
 
 That unblocks narrowing `toJSON` on `rowFormat` — filed as [PND-TSJSONT]
-rather than done here, since it changes an existing public return type.
+rather than done here, since it changes an existing public return type
+(since shipped — see its section below).
 
 **Perf** (`scripts/perf-to-columns.mjs`, median of 7). The headline is the
 comparison, not the absolute: `toColumns` reads the columnar store directly
@@ -892,6 +893,60 @@ reads), ~10% gaps cost ~3× dense (per-cell validity), and — counter-intuitive
 enough to be worth a look — **`toJSON`'s tuple rows are consistently slower
 than its object rows**, which the tuple path's per-row `.map()` + spread
 plausibly explains. Filed under [PND-TSJSONT].
+
+### [PND-TSJSONT] — narrow `TimeSeries.toJSON` on `rowFormat` — SHIPPED
+
+**Decision.** `TimeSeries.toJSON` now narrows exactly as `LiveSeries.toJSON`
+does: omitted / `'array'` → `TimeSeriesJsonOutputArray<S>`, `'object'` →
+`TimeSeriesJsonOutputObject<S>`, plus a third overload for a `rowFormat` only
+known as `JsonRowFormat` → the union (added to `LiveSeries` too, for parity —
+it previously had no signature for that call). Each overload carries the
+[PND-TSCOLS] workaround, a method-level `<T extends S = S>`; with it, the
+three-overload set compiles with **no** TS2394 cascade, confirming the
+`toColumns` isolation also covers overload declarations once the precise
+return sits behind a method type parameter. The implementation signature
+returns `TimeSeriesJsonOutputArray<any> | TimeSeriesJsonOutputObject<any>`
+(it must be compatible with all three). `LiveSeries.toJSON`'s cast went away.
+Pinned in `test-d/timeseries-tojson-narrowing.test-d.ts`.
+
+**The one break, deliberately taken.** The old return was
+`TimeSeriesJsonInput<SeriesSchema>`. The tuple form is still assignable to
+that; the **object** form is not, because `JsonObjectRowForSchema<SeriesSchema>`
+demands a property for every possible key name (`time`, `timeRange`,
+`interval`). A caller annotating `const j: TimeSeriesJsonInput<SeriesSchema> =
+s.toJSON({ rowFormat: 'object' })` now fails to compile; the fix is
+`TimeSeriesJsonInput<typeof schema>` or no annotation. Code reading
+`.rows[i].someColumn` off the default (tuple) form also now fails — it was
+always wrong at runtime. Neither shows up in the repo's own packages, tests, or
+stories (`test/` type errors identical before/after: 175 pre-existing).
+
+**Considered, not done.** The old [PND-TSVAR] idea of extracting a
+module-level `serializeToJSON<S>` helper — unnecessary once the method type
+parameter worked.
+
+**Perf — tuple rows.** The tuple path built a throwaway `dataColumns.map(...)`
+array per row and spread it into a second; now one array per row, cells
+pushed in place. New durable bench `scripts/perf-to-json.mjs` (median of 9
+per process; each cell below is the median of 3 fresh-process runs). The
+machine was under heavy concurrent load (loadavg 9–20 on 4 cores), so
+absolutes are inflated ~4× against the 25.9 ms quoted above — read the
+ratios, not the milliseconds.
+
+| `toJSON`, ms          | tuple before | tuple after | object (ref) |
+| --------------------- | ------------ | ----------- | ------------ |
+| dense 100k × 6        | 136          | 52          | 71–96        |
+| + string col 100k × 7 | 191          | 51          | 60–152       |
+| ~10% gaps 100k × 6    | 176          | 48          | 37–39        |
+| wide 10k × 41         | 23.5         | 16.9        | 64–67        |
+| floor 1k × 6          | 0.73         | 0.26        | 0.20–0.71    |
+| interval key 1667 × 3 | 0.72         | 0.58        | 0.29–0.33    |
+
+Tuple rows went ~2.5–3.5× faster at 100k and now sit at or below object rows
+on the dense shapes, which is where the counter-intuitive gap was. Wide rows
+were already tuple-favoured (41-key object literals are the slow side there)
+and improved ~30%. The small interval-key case (~1.7k rows, 2 value columns) is
+still tuple-slower; at that size it is dominated by per-row key serialisation
+and timer noise rather than the cell loop the fix touched — not chased.
 
 ### [PND-VSIO] — `ValueSeries` ingest / export parity — SHIPPED
 
@@ -1071,6 +1126,171 @@ consumer shows up.
 **Noticed in passing.** `TimeSeries.concat` still collects every input's
 events and sorts them. It is the same shape of cost, but nobody has reported
 friction, so no task was filed.
+
+### [PND-NANREP] — NaN means missing: the rule locked, the storage deferred
+
+**Decision (pre-1.0 review, 2026-10).** The public rule is now **"a `NaN` in a
+number column means missing"**, everywhere — batch, live, and
+`@pond-ts/process` range outputs. There is no such thing as a _defined_ `NaN`
+cell. The storage is deliberately **not** changed: missing is still a cleared
+validity bit, and `definedCount` still answers `count()` / `nullCount()` /
+`hasMissing()` in O(1). Locking the rule first means the storage switch the
+measurements argue for (bitmap 1.398 ms vs NaN-in-buffer 1.118 ms on a 1M scan
+at 4% missing; 2.12 ms of bitmap↔NaN churn per `sma(20)` — numbers in PLAN.md's
+[PND-NANREP] entry) becomes a **pure internal speed-up with no visible
+change**, and can be taken post-1.0 as a patch. Taking the rule and the storage
+together would have hidden a behaviour change inside a speed-up — the same
+reason the sentinel decision above kept them apart.
+
+**What was already true.** Intake could not produce a defined `NaN`: row intake
+rejects non-finite, `fromColumns` / the Arrow doors / `withColumn`'s typed door
+map `NaN` to a gap, `pctChange` maps `0/0` to missing, and `aggregate` /
+`rolling` / `smooth` reject a non-finite result with a `ValidationError`. The
+only source left was an operator's **own arithmetic** writing a defined `NaN`.
+
+**What changed — the write chokepoints, not each operator:**
+
+- `float64ColumnFromArray` — the shared sink for every boxed operator path
+  (`collapse`, `fill`, `scan`, `shift`, the chunked fallbacks of
+  `diff` / `cumulative`, `LiveView.column()`). `NaN` → missing. (`mapColumns`
+  and `rolling` validate their results first and still **throw** on a
+  non-finite value — user-callback output is treated as intake there; this
+  PR does not change that.)
+- `NumericOutput.set` — the unboxed `diff` / `rate` / `pctChange` /
+  `cumulative` paths ([PND-BOXFREE]). `NaN` is not written.
+- `Float64ColumnBuilder` — the live series-store column build. `NaN` is written
+  as `undefined` would be, including an overwrite of a defined cell.
+- Live `diff` / `rate` / `pctChange` and `cumulative` views — row-shaped, so
+  they emit `undefined` for a `NaN` result directly.
+- Live `map` (on `LiveSeries`, `LiveView`, `LiveAggregation`,
+  `LiveRollingAggregation`) — the view stores the user `fn`'s `Event`s, not
+  columns, so nothing canonicalised a `NaN` the fn wrote and `at(i).get()`
+  returned it (found in #748 review). `makeMapView` checks the schema's number
+  fields per mapped event and rebuilds the event only when one is non-finite
+  (`NaN` on #748; `±Infinity` too once #756 extended the rule).
+- `@pond-ts/process` `RangeOutput.set` clears on `NaN`; `sealRange` clears a
+  `NaN` an op wrote straight into `values` / `bits` (it already walked every
+  defined cell to derive `allFinite`, so this is free).
+
+`Float64Column`'s constructor is the trusted door and does **not** scan; its doc
+now states the obligation on a caller handing it a buffer. `ChunkedFloat64Column`
+composes chunks and inherits the rule.
+
+**Accumulators are not reset.** A `cumulative` sum that reaches `Infinity` and
+then meets `-Infinity` is `NaN` from there on, so every later row reads missing.
+A custom fold still receives `NaN` as `acc` and may recover; `scan` resumes as
+soon as its step returns a non-`NaN` value. This is the arithmetic's honest
+answer, written as a gap.
+
+**`±Infinity` stays a defined value.** It is a real (overflowed) number, distinct
+from `NaN`, and no path that previously admitted it was treated as missing, so
+the rule does not cover it: `diff` of `MAX - (-MAX)` is a defined `Infinity` and
+clears `allFinite`. Two pre-existing asymmetries were found and **left alone**
+(out of scope; recorded so they are not rediscovered):
+
+- `count()` routes through the `count` reducer, whose non-finite policy skips
+  `±Infinity`, while `nullCount()` reads the bitmap — so on a column holding a
+  defined `Infinity`, `count() + nullCount() < length`.
+- A live view can carry a defined `Infinity` (e.g. `cumulative` overflow) that
+  `toTimeSeries()` then rejects at row intake ("expected finite number"), and
+  batch `aggregate` / `rolling` / `smooth` throw on an overflowed result where
+  `diff` / `cumulative` keep it. Whether `±Infinity` should be rejected,
+  stored, or mapped to missing uniformly is a separate decision.
+
+**Perf.** One `v !== v` compare per written cell. `perf-operators-unboxed.mjs`
+(200k × 4 columns) before → after, two after-runs: all ten scenarios within
+run-to-run noise (e.g. `diff / dense` 4.01 → 4.22 / 4.14 ms, `diff / 4% missing`
+6.95 → 6.49 / 6.29 ms, `cumulative(sum) / dense` 4.22 → 4.41 / 3.96 ms).
+
+**Remaining:** the storage switch itself (NaN-in-buffer for packed numeric
+columns, `definedCount` cached as today), now unblocked and invisible.
+
+#### Extended to `±Infinity` — any non-finite number means missing (2026-10)
+
+**Decision.** The rule is now **"a non-finite number in a number column means
+missing"**: `NaN`, `Infinity` and `-Infinity` alike. The `±Infinity` half was
+left open above as "a separate decision"; this takes it, because the status quo
+was five answers to one question — row intake rejected `Infinity`;
+`mapColumns` / `rolling` / `aggregate` / `smooth` threw on an overflowed
+result; `diff` / `cumulative` stored it as a defined value; reducers skipped
+it; `count()` skipped it while `nullCount()` did not (so `count() + nullCount()
+< length`); and a live view holding one threw on `toTimeSeries()`. Treating
+`Infinity` as a gap is also what makes the later NaN-in-buffer storage switch
+clean: with no defined non-finite cell left, the buffer's `NaN` is the only
+sentinel the storage needs.
+
+**Write points — the same chokepoints, widened from `v !== v` to
+`v - v !== 0`** (one subtract-and-compare, true exactly for `NaN` and
+`±Infinity`): `float64ColumnFromArray`, `NumericOutput.set`,
+`Float64ColumnBuilder`, the live `diff` / `rate` / `pctChange` / `cumulative`
+views, `@pond-ts/process` `RangeOutput.set` / `sealRange` / `packColumn`.
+
+**Operators that threw now store missing:**
+
+- `mapColumns` — the `RangeError` is gone; `float64ColumnFromArray` drops the
+  value. (This reverses the call above that a mapper result is intake: it is a
+  computed write like any other.)
+- `rolling` columnar fast path (`tryRollingCountColumnarNumeric`) and the
+  `smooth` EMA fast path — the inline `ValidationError` became a skipped
+  write.
+- **Reducer results** — `finiteOrMissing` now wraps every reducer _result_,
+  not just its inputs: `bucketStateFor` / `rollingStateFor` snapshots
+  (built-in and custom adapters), `aggregateValues` / `applyAggregateReducer`,
+  the `reduce()` `reduceColumn` fast path, and `aggregate`'s columnar
+  `reduceBucket`. That one change covers the generic `rolling` sweep,
+  `aggregate` (both paths), `byColumn`, `rollingByColumn`, `pivotByGroup`,
+  `arrayAggregate`, `baseline`, and every live accumulator
+  (`LiveAggregation`, `LiveRollingAggregation`, the fused / partitioned
+  rollings, `LiveReduce`). Putting it on the reducer rather than on each
+  output column is deliberate: the live accumulators emit row-shaped events,
+  not columns, and `LiveReduce` is documented to agree with
+  `toTimeSeries().reduce(...)` — so batch `reduce()` changes too and answers
+  `undefined` for an overflowing `sum`.
+- **Row-assembled operators** (`smooth` event paths, `baseline`, `align`, the
+  row paths of `rolling` / `aggregate` / `pivotByGroup` / `arrayAggregate`)
+  now build through `timeSeriesFromComputedRows`, which runs the same intake
+  as the constructor with one switch (`nonFiniteAsMissing`) that turns a
+  non-finite number cell into missing before the required / kind checks.
+  User-facing row intake keeps it off.
+
+**Doors — `Infinity` follows `NaN` at each one.** Row intake
+(`new TimeSeries`, `fromJSON`, `LiveSeries.push`) and boxed `withColumn`
+reject `NaN`, so they keep rejecting `±Infinity`. `fromColumns` / `fromArrow`
+already read both as a gap. Typed `withColumn` (a `Float64Array`) read `NaN`
+as a gap but **rejected** `±Infinity`; it now reads it as a gap too, and the
+`label` parameter of `float64ColumnFromTypedArray` went with the throw.
+`fromEvents` (the trust door) packs the column through the builder, so its
+column reads are normalised — but `at(i)` returns the caller's own `Event`
+objects verbatim, so an event-level read of a `NaN` / `±Infinity` cell is not.
+That gap predates this change (it was already true of `NaN`) and was left
+alone: closing it means cloning every event on the trust door.
+
+**`allFinite` is now always `true`** on any column the library builds — every
+writer above passes `true` (the per-cell non-finite branches in the writers
+were removed as unreachable). The flag itself, `Float64Column`'s default of
+`false` for the trusted constructor, the builder's conservative `false`, and
+every guarded `reduceColumn` loop are **kept**; removing them is a separate
+internal cleanup. Tests that pinned the guarded paths now build their
+non-finite columns with the trusted constructor, the one door left that can.
+
+**Sharp edges, recorded.**
+
+- A running-window `sum` / `avg` keeps an incremental sum. Once it overflows,
+  removing the large values does not bring it back (`Infinity - MAX` is still
+  `Infinity`), so later windows read missing even when their true sum is
+  representable. Before this change the same input threw.
+- The column-level methods (`col.sum()`, `col.mean()`, …) are not wrapped and
+  still return `Infinity` on an overflowing sum, while `reduce('sum')` now
+  returns `undefined`.
+- `@pond-ts/financial` studies carry explicit guards and comments written
+  because "`withColumn` rejects `±Infinity`". The guards are now
+  belt-and-braces and the comments (and one oracle case description in
+  `scripts/oracle/generate.py`) are stale wording, not wrong output — left
+  for a follow-up so the oracle fixture is not regenerated in this change.
+
+**Perf.** `perf-operators-unboxed.mjs` (200k × 4 columns, median ms, two runs
+each), before → after: all ten scenarios within run-to-run noise (e.g.
+`diff / dense` 4.47 / 4.28 → see the commit message for the full table).
 
 ---
 
