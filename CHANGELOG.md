@@ -78,14 +78,17 @@ include new features and type-level changes; patch bumps are strictly additive.
 ### Changed
 
 - **core** (**breaking**): **A `NaN` in a number column now always means
-  missing.** Intake already turned `NaN` into a gap; an operator's own
-  arithmetic could still write a _defined_ `NaN` — `diff` / `rate` /
-  `pctChange` of `Infinity - Infinity`, a `cumulative` sum that reaches
+  missing.** Typed-array intake (`fromColumns`, `withColumn` with a
+  `Float64Array`) already turned `NaN` into a gap and row intake already
+  rejected it, but an operator's own arithmetic could still write a
+  _defined_ `NaN` — `diff` / `rate` / `pctChange` of `Infinity - Infinity`,
+  a `cumulative` sum that reaches
   `Infinity` and then meets `-Infinity`, or a `cumulative` custom fold,
   `scan` step or numeric `collapse` reducer that returns `NaN`. Those
   cells are now stored as **missing**: `at(i)` / `get` / `read` return
   `undefined`, `scan()` skips them, and `nullCount()` / `hasMissing()` count
-  them. Same in live `diff` / `rate` / `pctChange` / `cumulative` views and in
+  them. Same in live `diff` / `rate` / `pctChange` / `cumulative` views, in a
+  live `map` whose function writes `NaN` into a number field, and in
   `@pond-ts/process` `RangeOutput.set` / `sealRange`. A `cumulative` that hits
   `NaN` keeps its accumulator, so built-in folds read missing from that row on.
   `±Infinity` now follows the same rule — see the next entry. Storage is
@@ -118,9 +121,9 @@ include new features and type-level changes; patch bumps are strictly additive.
     (`new TimeSeries`, `fromJSON`, `LiveSeries.push`) and `withColumn` with a
     plain array still reject `NaN` and `±Infinity` alike; `fromColumns` /
     `fromArrow` already read both as a gap.
-  - **Live:** `diff` / `rate` / `pctChange` / `cumulative` views and every live
-    accumulator (`aggregate`, `rolling`, `reduce`) emit `undefined` for a
-    non-finite result, so a live view's `toTimeSeries()` no longer throws on an
+  - **Live:** `diff` / `rate` / `pctChange` / `cumulative` / `map` views and
+    every live accumulator (`aggregate`, `rolling`, `reduce`) emit `undefined`
+    for a non-finite result, so a live view's `toTimeSeries()` no longer throws on an
     overflow. `@pond-ts/process` `RangeOutput.set` / `sealRange` / `packColumn`
     store `±Infinity` as missing too.
 
@@ -313,8 +316,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 - `@pond-ts/financial`: **`StudyOutput.id` documents the `@pond-ts/process`
   bridge**, and a new `test/catalog-process.test.ts` pins it. The field is a
-  *financial column suffix*; process's `OutputDef.id` is a *process outlet
-  id*; they share a name and are different namespaces. Process names its own
+  _financial column suffix_; process's `OutputDef.id` is a _process outlet
+  id_; they share a name and are different namespaces. Process names its own
   columns (`specId + OutputDef.id`) and matches an op's return to its outputs
   positionally, so a study's own column names never reach it — which means a
   registry bridging the two chooses its own suffixes, and for the **twelve**
@@ -327,7 +330,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   worked around it by hand. No API change: the descriptors, the studies and
   the guard are all unchanged, and the round-trip test is what stops the two
   packages drifting — `catalog.test.ts` validates a descriptor against its
-  *study*, so it is structurally blind to a cross-package disagreement.
+  _study_, so it is structurally blind to a cross-package disagreement.
 - `@pond-ts/process`: **`Skipped.spec` echoes the request verbatim**, and its
   `params` / `inputs` are typed `unknown` accordingly. The plan pass normalized
   `params: null` to `{}`, so recomputing an id from the echo produced the
@@ -346,7 +349,6 @@ include new features and type-level changes; patch bumps are strictly additive.
   rather than crashing.
 
   (All three reported by Tidal against 0.62.0, after adopting it.)
-
 
 ## [0.69.0] — 2026-09-13
 

@@ -1107,6 +1107,12 @@ only source left was an operator's **own arithmetic** writing a defined `NaN`.
   as `undefined` would be, including an overwrite of a defined cell.
 - Live `diff` / `rate` / `pctChange` and `cumulative` views — row-shaped, so
   they emit `undefined` for a `NaN` result directly.
+- Live `map` (on `LiveSeries`, `LiveView`, `LiveAggregation`,
+  `LiveRollingAggregation`) — the view stores the user `fn`'s `Event`s, not
+  columns, so nothing canonicalised a `NaN` the fn wrote and `at(i).get()`
+  returned it (found in #748 review). `makeMapView` checks the schema's number
+  fields per mapped event and rebuilds the event only when one is non-finite
+  (`NaN` on #748; `±Infinity` too once #756 extended the rule).
 - `@pond-ts/process` `RangeOutput.set` clears on `NaN`; `sealRange` clears a
   `NaN` an op wrote straight into `values` / `bits` (it already walked every
   defined cell to derive `allFinite`, so this is free).
