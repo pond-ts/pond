@@ -91,6 +91,11 @@ include new features and type-level changes; patch bumps are strictly additive.
   caller's key buffer is never mutated. `time` keys and `ValueSeries` axes
   only — a `timeRange` / `interval` key throws under `'clamp'`. [PND-INGEST]
 
+- **charts:** `TradingTimeScale.flatFormat(count, drawn?)` — `drawn` is the
+  subset of `ticks(count)` actually rendered; flat promotions walk only those,
+  so a dropped tick's period turn carries to the next drawn one. Omitted, it
+  labels every tick as before.
+
 ### Changed
 
 - **core** (**breaking**): **A `NaN` in a number column now always means
@@ -309,6 +314,27 @@ include new features and type-level changes; patch bumps are strictly additive.
   replace `AggregateOutputMap<S>` with `AggregateMap<S>` — no runtime change.
   The fused-rolling duplicate-output error message now says "use a
   `{ from, using }` spec entry" instead of naming the removed type.
+
+### Fixed
+
+- **charts: time-axis tick labels no longer overprint each other.** The tick
+  ladder places every session open unconditionally, so two anchors could land
+  closer than a label is wide — a session calendar derived from the bars turns
+  one stray pre-market print into a one-minute session whose `Sep 29` open sat
+  a pixel left of the real `15:30` open, and a seam could crowd the last clock
+  tick before it (`21:00` against the next day's `Sep 23`). A time axis now
+  measures its labels and drops the one that would collide — a date / month /
+  year turn outlasts a session-open clock label, which outlasts a plain one,
+  which outlasts a tick in closed-market time (an elapsed axis no longer labels
+  a seam with the shut night); of two colliding turns (or opens) the later is
+  drawn — then re-labels the
+  ticks it kept, so the dates they show stay correct (a stray New Year's print
+  can't take `2027` with it; a Sunday-evening futures open can't caption
+  Monday), and puts back any dropped tick that fits once a neighbour's label
+  narrowed. A blank label (a custom `format` returning `''`) never blocks one.
+  Under `align="auto"` the edge labels anchor by the full tick list, so a drop
+  never re-anchors another label. Applies to every `align` mode and to custom
+  `format`s; explicit `ticks` and `transform` ticks are untouched.
 
 ## [0.72.0] — 2026-10-08
 
