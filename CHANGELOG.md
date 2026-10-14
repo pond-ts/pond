@@ -86,7 +86,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   comes from the watch's own `distanceMeters` when it recorded one, and the
   line is cleaned for the map: fixes that would mean moving faster than 2 m/s
   are dropped and the rest smoothed over time (Gaussian, 20 s), one position
-  per sample so the map, its hover dot and the bounds agree. Moving time is
+  per sample so the map, its hover dot and the bounds agree. Without a usable
+  device distance (most samples carry it, ending above zero), distance is
+  measured along the cleaned line, which reads somewhat short. Moving time is
   unchanged (still the speed threshold), so a swim's own timer is the better
   source for it.
 

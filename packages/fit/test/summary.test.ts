@@ -219,6 +219,15 @@ describe('open water swims', () => {
     expect(worst).toBeLessThan(10);
   });
 
+  it('measures the cleaned line when the device distance is unusable', () => {
+    const a = swim(true);
+    a.streams.distanceMeters = a.streams.distanceMeters!.map(() => 0);
+    const s = computeActivitySummary(a);
+    // the bad fixes are gone, so the cleaned line reads near the real 1,260 m
+    expect(s.distanceMeters).toBeGreaterThan(1000);
+    expect(s.distanceMeters).toBeLessThan(1400);
+  });
+
   it('keeps speed to swimming speed', () => {
     const p = prepareActivity(swim(true));
     const v = Array.from(p.speed).filter(Number.isFinite);

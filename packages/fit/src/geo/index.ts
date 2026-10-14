@@ -492,19 +492,45 @@ export function cleanSwimTrack(
   const { maxSpeedMps = 2, smoothSeconds = 20 } = options;
   const n = latlng.length;
   if (n === 0) return [];
-  // 1. speed gate against the last kept fix
-  const kept: number[] = [0];
-  for (let i = 1; i < n; i++) {
-    const j = kept[kept.length - 1]!;
-    const dt = timeSeconds[i]! - timeSeconds[j]!;
+  const finite = (i: number) =>
+    Number.isFinite(timeSeconds[i]) &&
+    Number.isFinite(latlng[i]![0]) &&
+    Number.isFinite(latlng[i]![1]);
+  const fast = (i: number, j: number) => {
+    const dt = Math.abs(timeSeconds[i]! - timeSeconds[j]!);
     const d = haversineMeters(
       latlng[j]![0],
       latlng[j]![1],
       latlng[i]![0],
       latlng[i]![1],
     );
-    if (dt > 0 && d / dt <= maxSpeedMps) kept.push(i);
-  }
+    return !(dt > 0 && d / dt <= maxSpeedMps);
+  };
+  // 1. speed gate. The gate runs from a seed, so the seed must be a good
+  // fix: of the first few finite fixes, the one nearest their median (a
+  // watch's first fix is often stale). Fixes before the seed are gated
+  // backwards from it, the rest forwards.
+  const head: number[] = [];
+  for (let i = 0; i < n && head.length < 5; i++) if (finite(i)) head.push(i);
+  if (head.length === 0) return latlng.map((p) => [p[0], p[1]]);
+  const median = (vs: number[]) => {
+    const s = [...vs].sort((a, b) => a - b);
+    return s[s.length >> 1]!;
+  };
+  const mLat = median(head.map((i) => latlng[i]![0]));
+  const mLng = median(head.map((i) => latlng[i]![1]));
+  const seed = head.reduce((b, i) =>
+    haversineMeters(latlng[i]![0], latlng[i]![1], mLat, mLng) <
+    haversineMeters(latlng[b]![0], latlng[b]![1], mLat, mLng)
+      ? i
+      : b,
+  );
+  const before: number[] = [];
+  for (let i = seed - 1, j = seed; i >= 0; i--)
+    if (finite(i) && !fast(i, j)) before.push((j = i));
+  const kept: number[] = [...before.reverse(), seed];
+  for (let i = seed + 1; i < n; i++)
+    if (finite(i) && !fast(i, kept[kept.length - 1]!)) kept.push(i);
   // 2. smooth the kept fixes, evaluated at each sample's time
   const out: Array<[number, number]> = new Array(n);
   if (!(smoothSeconds > 0)) {

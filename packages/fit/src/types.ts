@@ -32,9 +32,10 @@ export interface ActivityStreams {
   temperatureC?: number[];
   /** An open water swim. The watch only gets a GPS fix while the arm is out of
    *  the water, so the fixes are sparse and noisy: the line is cleaned for the
-   *  map ({@link cleanSwimTrack}), and distance comes from `distanceMeters`
+   *  map (`cleanSwimTrack` in the geo module), and distance comes from `distanceMeters`
    *  (the watch's own filtered distance) rather than from the line, when the
-   *  watch recorded it. */
+   *  watch recorded it. Without it, distance is measured along the cleaned
+   *  line, which cuts corners and so reads somewhat short. */
   openWater?: boolean;
 }
 
