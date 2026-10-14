@@ -76,6 +76,20 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`@pond-ts/fit`: open water swims.** `ActivityStreams.openWater` marks an
+  open water swim. A swim watch only gets a GPS fix while the arm is out of the
+  water, so the fixes are sparse and many land well off the path; joined up
+  they measured about twice the real distance (a real 3,068 m river swim
+  measured 6,944 m). With the flag, distance (and so speed, splits and pace)
+  comes from the watch's own `distanceMeters` when it recorded one, and the
+  line is cleaned for the map: fixes that would mean moving faster than 2 m/s
+  are dropped and the rest smoothed over time (Gaussian, 20 s), one position
+  per sample so the map, its hover dot and the bounds agree. Moving time is
+  unchanged (still the speed threshold), so a swim's own timer is the better
+  source for it.
+
 ## [0.73.0] — 2026-10-12
 
 ### Added

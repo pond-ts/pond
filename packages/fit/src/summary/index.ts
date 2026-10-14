@@ -352,7 +352,6 @@ export function buildTrackFromStreams(
   startMs: number,
 ): geo.TrackSeries {
   const {
-    latlng,
     altitudeMeters,
     timeSeconds,
     heartrate,
@@ -361,6 +360,12 @@ export function buildTrackFromStreams(
     temperatureC,
   } = streams;
   const distanceMeters = streams.distanceMeters;
+  // An open water swim's fixes are sparse and noisy: the series carries the
+  // cleaned line, so the map, its hover dot and the bounds all agree.
+  const latlng =
+    streams.openWater && timeSeconds && streams.latlng.length > 1
+      ? geo.cleanSwimTrack(streams.latlng, timeSeconds)
+      : streams.latlng;
   // Sample count: positions when present, else the longest recorded channel. The
   // parsers (gpx/tcx/fit) build every channel by mapping one sample list, so all
   // present channels are equal-length — the tie-break order here is moot.
@@ -453,7 +458,8 @@ function cumFromCols(
 
 /** Decode an activity's streams into the shared per-sample arrays. ONE path now:
  *  build the canonical series, read its columns; distance comes from haversine
- *  when there are positions, else the device `distance` column (GPS-less). */
+ *  when there are positions, else the device `distance` column (GPS-less, or
+ *  an open water swim that recorded it). */
 export function prepareActivity(imported: ImportedActivity): PreparedActivity {
   const { activity, streams } = imported;
   const startMs = Date.parse(activity.startTimeUtc);
@@ -464,7 +470,11 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
 
   let step: Float64Array;
   let cum: Float64Array;
-  if (hasTrack) {
+  // An open water swim measures by the watch's own distance when it has one:
+  // its line, even cleaned, is no measure (see geo.cleanSwimTrack).
+  const deviceDistance =
+    streams.openWater && cols.distance?.some((v) => Number.isFinite(v));
+  if (hasTrack && !deviceDistance) {
     step = geo.stepDistances(cols.lat, cols.lng);
     cum = geo.cumulative(step);
   } else {
