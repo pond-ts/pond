@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  cleanSwimTrack,
   haversineMeters,
   stepDistances,
   cumulative,
@@ -803,5 +804,63 @@ describe('profileByDistanceWindow (zoom resolution)', () => {
     expect(out[1]!.value).toBe(5); // NaN bucket carries previous forward
     expect(out[2]!.value).toBe(5);
     expect(out[3]!.value).toBe(9); // end-edge sample lands in the last bucket
+  });
+});
+
+describe('cleanSwimTrack', () => {
+  // 0.7 m/s due north, a fix every 10 s
+  const M = 1 / 111195; // ~1 m of latitude
+  const path = (n: number) => ({
+    latlng: Array.from({ length: n }, (_, i): [number, number] => [
+      38.5 + 7 * i * M,
+      -123,
+    ]),
+    time: Array.from({ length: n }, (_, i) => 10 * i),
+  });
+  const offPath = (pts: Array<[number, number]>) =>
+    Math.max(...pts.map((p) => Math.abs(p[1] + 123) * 87000));
+
+  it('keeps one position per sample', () => {
+    const { latlng, time } = path(50);
+    expect(cleanSwimTrack(latlng, time)).toHaveLength(50);
+  });
+
+  it('does not let a bad first fix anchor the gate', () => {
+    const { latlng, time } = path(60);
+    latlng[0] = [38.5, -123 + 1000 / 87000]; // 1 km off
+    const out = cleanSwimTrack(latlng, time, { smoothSeconds: 0 });
+    // every later fix survives, and the first sample takes a good one
+    expect(offPath(out)).toBeLessThan(1);
+  });
+
+  it('skips fixes that are not numbers', () => {
+    const { latlng, time } = path(30);
+    latlng[0] = [NaN, NaN];
+    latlng[10] = [NaN, NaN];
+    const out = cleanSwimTrack(latlng, time);
+    expect(
+      out.every((p) => Number.isFinite(p[0]) && Number.isFinite(p[1])),
+    ).toBe(true);
+  });
+
+  it('without smoothing, a dropped fix takes the last kept position', () => {
+    const { latlng, time } = path(10);
+    latlng[5] = [latlng[5]![0], -123 + 300 / 87000];
+    const out = cleanSwimTrack(latlng, time, { smoothSeconds: 0 });
+    expect(out[5]).toEqual(latlng[4]);
+  });
+
+  it('across a long gap, a sample takes the nearest kept fix', () => {
+    const latlng: Array<[number, number]> = [
+      [38.5, -123],
+      [38.5 + 7 * M, -123],
+      [38.5 + 400 * M, -123 + 900 / 87000], // 900 m east: too fast, dropped
+      [38.5 + 420 * M, -123],
+    ];
+    const time = [0, 10, 300, 600];
+    const out = cleanSwimTrack(latlng, time, { smoothSeconds: 20 });
+    // the fix at t=300 is dropped, and no kept fix lies within 3σ (60 s) of
+    // it: the nearest kept one is t=10 (290 s away; t=600 is 300 s)
+    expect(out[2]).toEqual(latlng[1]);
   });
 });

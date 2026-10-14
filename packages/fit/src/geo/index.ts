@@ -461,6 +461,119 @@ export function simplify(
   return out;
 }
 
+/** Options for {@link cleanSwimTrack}. */
+export interface CleanSwimTrackOptions {
+  /** A fix that would mean moving faster than this from the last kept fix is
+   *  dropped as a bad reading (m/s, default 2 — well above any swimmer). */
+  maxSpeedMps?: number;
+  /** Gaussian smoothing over time: the spread (sigma) in seconds, default 20.
+   *  0 keeps the surviving fixes as they are. */
+  smoothSeconds?: number;
+}
+
+/**
+ * Clean an open water swim's GPS line for the map. A swim watch only gets a fix
+ * while the arm is out of the water, so the fixes come seconds to minutes apart
+ * and many land well off the swimmer's path; joined up they zigzag and measure
+ * about twice the real distance. Two passes: drop each fix that would mean
+ * moving faster than `maxSpeedMps` from the last kept one, then smooth the
+ * kept fixes over time (Gaussian, `smoothSeconds`), evaluated at every
+ * sample's time so the result lines up with the other channels (same length,
+ * same order). For display: the cleaned line is still not a measure of
+ * distance (smoothing cuts corners), so take distance from the watch.
+ *
+ * Cost O(n·w), w the kept fixes within ±3σ of a sample.
+ */
+export function cleanSwimTrack(
+  latlng: ReadonlyArray<[number, number]>,
+  timeSeconds: ReadonlyArray<number>,
+  options: CleanSwimTrackOptions = {},
+): Array<[number, number]> {
+  const { maxSpeedMps = 2, smoothSeconds = 20 } = options;
+  const n = latlng.length;
+  if (n === 0) return [];
+  const finite = (i: number) =>
+    Number.isFinite(timeSeconds[i]) &&
+    Number.isFinite(latlng[i]![0]) &&
+    Number.isFinite(latlng[i]![1]);
+  const fast = (i: number, j: number) => {
+    const dt = Math.abs(timeSeconds[i]! - timeSeconds[j]!);
+    const d = haversineMeters(
+      latlng[j]![0],
+      latlng[j]![1],
+      latlng[i]![0],
+      latlng[i]![1],
+    );
+    return !(dt > 0 && d / dt <= maxSpeedMps);
+  };
+  // 1. speed gate. The gate runs from a seed, so the seed must be a good
+  // fix: of the first few finite fixes, the one nearest their median (a
+  // watch's first fix is often stale). Fixes before the seed are gated
+  // backwards from it, the rest forwards.
+  const head: number[] = [];
+  for (let i = 0; i < n && head.length < 5; i++) if (finite(i)) head.push(i);
+  if (head.length === 0) return latlng.map((p) => [p[0], p[1]]);
+  const median = (vs: number[]) => {
+    const s = [...vs].sort((a, b) => a - b);
+    return s[s.length >> 1]!;
+  };
+  const mLat = median(head.map((i) => latlng[i]![0]));
+  const mLng = median(head.map((i) => latlng[i]![1]));
+  const seed = head.reduce((b, i) =>
+    haversineMeters(latlng[i]![0], latlng[i]![1], mLat, mLng) <
+    haversineMeters(latlng[b]![0], latlng[b]![1], mLat, mLng)
+      ? i
+      : b,
+  );
+  const before: number[] = [];
+  for (let i = seed - 1, j = seed; i >= 0; i--)
+    if (finite(i) && !fast(i, j)) before.push((j = i));
+  const kept: number[] = [...before.reverse(), seed];
+  for (let i = seed + 1; i < n; i++)
+    if (finite(i) && !fast(i, kept[kept.length - 1]!)) kept.push(i);
+  // 2. smooth the kept fixes, evaluated at each sample's time
+  const out: Array<[number, number]> = new Array(n);
+  if (!(smoothSeconds > 0)) {
+    // no smoothing: a dropped fix takes the last kept one's position
+    let k = 0;
+    for (let i = 0; i < n; i++) {
+      while (k + 1 < kept.length && kept[k + 1]! <= i) k++;
+      const p = latlng[kept[k]!]!;
+      out[i] = [p[0], p[1]];
+    }
+    return out;
+  }
+  const reach = 3 * smoothSeconds;
+  const twoS2 = 2 * smoothSeconds * smoothSeconds;
+  let lo = 0;
+  for (let i = 0; i < n; i++) {
+    const t = timeSeconds[i]!;
+    while (lo < kept.length && timeSeconds[kept[lo]!]! < t - reach) lo++;
+    let w = 0;
+    let lat = 0;
+    let lng = 0;
+    for (let k = lo; k < kept.length; k++) {
+      const j = kept[k]!;
+      const dt = timeSeconds[j]! - t;
+      if (dt > reach) break;
+      const g = Math.exp(-(dt * dt) / twoS2);
+      w += g;
+      lat += g * latlng[j]![0];
+      lng += g * latlng[j]![1];
+    }
+    if (w > 0) {
+      out[i] = [lat / w, lng / w];
+    } else {
+      // no kept fix within reach (a long gap): the nearest kept one in time
+      const near = kept.reduce((b, j) =>
+        Math.abs(timeSeconds[j]! - t) < Math.abs(timeSeconds[b]! - t) ? j : b,
+      );
+      out[i] = [latlng[near]![0], latlng[near]![1]];
+    }
+  }
+  return out;
+}
+
 /** A per-interval split (the per-km/per-mile row). */
 export interface Split {
   /** 1-based split index. */

@@ -160,3 +160,77 @@ describe('windowChannels (chart resolution on zoom)', () => {
     expect(fine.map((c) => c.key)).toEqual(summary.channels.map((c) => c.key));
   });
 });
+
+describe('open water swims', () => {
+  // 0.7 m/s due north for 30 min, a fix every 10 s; every third fix lands
+  // 150 m east of the path (the arm came up into a bad fix). The watch's own
+  // distance follows the real path.
+  const dLat = 1 / 111195; // ~1 m of latitude
+  function swim(openWater: boolean): ImportedActivity {
+    const latlng: [number, number][] = [];
+    const timeSeconds: number[] = [];
+    const distanceMeters: number[] = [];
+    for (let t = 0; t <= 1800; t += 10) {
+      const along = 0.7 * t;
+      const off = (t / 10) % 3 === 2 ? 150 / 111195 : 0;
+      latlng.push([38.5 + along * dLat, -123 + off]);
+      timeSeconds.push(t);
+      distanceMeters.push(along);
+    }
+    return {
+      activity: {
+        id: 'test:ow',
+        source: 'manual',
+        externalId: 'ow',
+        name: 'River swim',
+        startTimeUtc: '2016-07-16T15:18:05Z',
+        distanceMeters: 0,
+        movingTimeSeconds: 0,
+        elapsedTimeSeconds: 0,
+        elevationGainMeters: 0,
+        sportType: 'Swim',
+      },
+      streams: {
+        latlng,
+        timeSeconds,
+        distanceMeters,
+        ...(openWater ? { openWater } : {}),
+      },
+    };
+  }
+
+  it('measures by the line without the flag (as before)', () => {
+    const s = computeActivitySummary(swim(false));
+    expect(s.distanceMeters).toBeGreaterThan(2 * 1260);
+  });
+
+  it("measures by the watch's own distance", () => {
+    const s = computeActivitySummary(swim(true));
+    expect(s.distanceMeters).toBeCloseTo(1260, 6);
+  });
+
+  it('cleans the line: no point strays far from the path', () => {
+    const p = prepareActivity(swim(true));
+    expect(p.cols.lat.length).toBe(181);
+    let worst = 0;
+    for (let i = 0; i < p.cols.lng.length; i++)
+      worst = Math.max(worst, Math.abs(p.cols.lng[i]! + 123) * 87000);
+    // the bad fixes sat 150 m off; the cleaned line stays within a few metres
+    expect(worst).toBeLessThan(10);
+  });
+
+  it('measures the cleaned line when the device distance is unusable', () => {
+    const a = swim(true);
+    a.streams.distanceMeters = a.streams.distanceMeters!.map(() => 0);
+    const s = computeActivitySummary(a);
+    // the bad fixes are gone, so the cleaned line reads near the real 1,260 m
+    expect(s.distanceMeters).toBeGreaterThan(1000);
+    expect(s.distanceMeters).toBeLessThan(1400);
+  });
+
+  it('keeps speed to swimming speed', () => {
+    const p = prepareActivity(swim(true));
+    const v = Array.from(p.speed).filter(Number.isFinite);
+    expect(Math.max(...v)).toBeCloseTo(0.7, 6);
+  });
+});
