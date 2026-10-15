@@ -803,10 +803,10 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   #compact(): void {
     const head = this.#head;
     if (head === 0) return;
-    // `splice` measured fastest here: a push that compacts a 100k-event
-    // window took 2.2–2.6 ms, vs 2.8–6.7 with a copy loop and 7.6–15 with
-    // `copyWithin` (Node 22). The array of cleared slots it returns is
-    // dropped at once.
+    // `splice` measured fastest here: on a push that compacts a 100k-event
+    // window it won every paired run, median 2.1 ms vs 4.1 for a copy loop
+    // and 8.3 for `copyWithin` (Node 22). The array of cleared slots it
+    // returns is dropped at once.
     this.#events.splice(0, head);
     this.#head = 0;
   }

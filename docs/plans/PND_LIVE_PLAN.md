@@ -214,26 +214,34 @@ on a compacted array (same cost as before), and a fractional return is
 truncated, as `splice` did.
 
 Node 22, ms per push once the window is full
-(`packages/core/scripts/perf-live-window.mjs`: same unretained source for
-every row, a warm-up pass, at least 2.2 compaction cycles). "Before" is
-one run of 30 pushes (the old code has no cycle); "after" is three runs:
+(`packages/core/scripts/perf-live-window.mjs`, as of 5ecbd26: a warm-up
+pass, at least 2.2 compaction cycles, GC tracked per push). "Before" is
+two runs of the same script against the pre-fix build, 30 pushes a row
+(the old code has no cycle); "after" is three runs. Ranges are min–max
+across runs, both window kinds (time and count):
 
-| Window, push size  | Before (median) | After (median) | Compacting pushes | After (max) |
-| ------------------ | --------------- | -------------- | ----------------- | ----------- |
-| 50k events, 160    | 49–51           | 0.08–0.16      | 0.6–1.6 (one 7.5) | 9–24        |
-| 100k events, 160   | 35–68           | 0.08–0.13      | 1.2–2.2           | 8–35        |
-| 50k events, 1,600  | 505–521         | 0.8–1.8        | 1.4–2.1 (one 13)  | 8–26        |
-| 100k events, 1,600 | 516–552         | 0.8–1.5        | 2.1–3.4           | 10–33       |
-| 1M events, 1,600   | —               | 0.9            | 12.5–17.8         | —           |
+| Window, push size  | Before (median) | After (median) | Compacting pushes | After (max) | After (max without GC) |
+| ------------------ | --------------- | -------------- | ----------------- | ----------- | ---------------------- |
+| 50k events, 160    | 45–53           | 0.07–0.12      | 0.7–1.1           | 8–11        | 1.0–1.7                |
+| 100k events, 160   | 53–75           | 0.08–0.09      | 1.2–5.0           | 8–48        | 1.8–7.1                |
+| 50k events, 1,600  | 478–507         | 0.8–1.9        | 1.4–3.0 (\*)      | 8–14        | 1.6–3.0                |
+| 100k events, 1,600 | 503–680         | 0.8–1.7        | 1.9–3.6           | 9–63        | 2.6–4.9                |
+| 1M events, 1,600   | —               | 0.8–1.3        | 11–19 (†)         | —           | —                      |
 
-The 1M row is a scratch probe, not in the script. The max column is
-garbage collection, not the window: a probe that matched Node's GC
-entries to pushes (four of the rows above) found 18 pushes over 5 ms,
-none of them compacting, each with a GC pause covering all but 0.15–2.1
-ms of it. A view creates an `Event` per arriving row and keeps a window of
-them, which is what the collector walks; the old code allocated the same
-Events. A source with no view creates none; its max in the same three
-runs was 0.06–4.5 ms. Small windows and reads are unchanged within noise.
+(\*) Plus two compacting pushes a GC pause overlapped, 7.6 and 7.8 ms.
+(†) A scratch probe, not the script: 16 of 18 compacting pushes over nine
+runs took 11–19 ms, the other two 27 and 30 ms. At 1M events GC pauses
+are far bigger than that (one run's max was 394 ms, 393 of it GC).
+
+"Max without GC" is the slowest push that no GC pause overlapped
+(`PerformanceObserver` on `'gc'`); every slower push in those rows
+overlapped a GC pause. A view creates an `Event` per arriving row and keeps a
+window of them, which is what the collector walks; the old code allocated
+the same Events. Smaller windows got faster too: at 10k events, 4.4–5.3 →
+0.8–0.9 ms a 1,600-row push into a time window; 1k-event windows are
+within noise. The 50k column read measured 4.6–5.5 ms before and 2.5–3.3
+after; the read walks the same events either way, and I have not looked
+into why it measured faster, so read it only as "not slower".
 
 **Why this shape.** It is the `#frontIdx` pattern already used by
 `LiveRollingAggregation` and the fused rolling paths, so no new vocabulary.
@@ -245,17 +253,21 @@ Alternatives set aside:
 - Trim before every read instead of indexing from the marker. Fewer lines
   touched, but a frame's `column()` read would then pay an O(window)
   `splice` on top of its O(window) gather.
-- Compact with `copyWithin` or a copy loop instead of `splice`. Measured on
-  a compacting push at 100k events: `splice` 2.2–2.6 ms, a loop 2.8–6.7,
-  `copyWithin` 7.6–15 (V8 has no fast path for it on ordinary arrays).
+- Compact with `copyWithin` or a copy loop instead of `splice`. On a
+  compacting push at 100k events `splice` won every paired run; medians
+  2.1 ms vs 4.1 for a copy loop and 8.3 for `copyWithin` (20, 20 and 18
+  pushes over two probes).
 
 **Trade-offs kept.** The array holds up to 2× the window's slots between
 compactions, but only the window's Events stay alive: a 100k-event view
 holds 20.5 MB vs 19.3 MB before (`node --expose-gc` probe). The first
 version (239977b) left evicted Events in their slots until the next
 compaction, 21–39 MB for the same view; the Layer 2 review caught it.
-`dispose()` compacts. The compacting push is O(window), about one 16 ms
-frame at a 1M-event window, once per million events. Reads (`keyColumn()`
+`dispose()` leaves the buffer as it is: compacting there would shift the
+array under a `find` predicate that disposes mid-scan (it did, briefly, in
+5e78882), and the slots it would free are already empty. The compacting
+push is O(window), about one 16 ms frame at a 1M-event window, once per
+million events. Reads (`keyColumn()`
 / `column()` / `toTimeSeries()`) still walk every event: 64 ms at 600k rows
 in Node, 4 ms a frame at 60k points in the browser. That cost is
 [PND-COLOUT]'s and [PND-LSNAP]'s to cut, not this task's. A view on a
@@ -308,14 +320,22 @@ skips building Events only when no `'evict'` listener is attached
 (`#onEvict.size === 0` → `dropPrefix`); with one, it calls `evictPrefix`,
 which builds an `Event` per dropped row from the chunked columns.
 
-Measured in Node (median ms per push, scratch probe, two runs each):
+Measured in Node (median ms per push; scratch probe on the 5ecbd26 build,
+filled to 2.2× the window so retention is dropping rows; three runs of two
+reps):
 
 | Setup                                      | 50k window, 1,600 a push | 100k window, 160 a push |
 | ------------------------------------------ | ------------------------ | ----------------------- |
-| no view, retention 2× the window           | 0.29–0.56                | 0.033–0.060             |
-| same + a bare `live.on('evict', () => {})` | 1.25–1.73                | 0.17–0.21               |
-| time window view, no retention             | 1.05–1.32                | 0.14–0.19               |
-| time window view, retention 2× the window  | 3.08–3.35                | 0.17–0.21               |
+| no view, retention 2× the window           | 0.28–0.51                | 0.033–0.063             |
+| same + a bare `live.on('evict', () => {})` | 0.88–1.83                | 0.094–0.12              |
+| time window view, no retention             | 0.81–1.26                | 0.083–0.18              |
+| time window view, retention 2× the window  | 1.62–1.94                | 0.16–0.19               |
+
+Paired within a rep, retention adds 0.7–1.0 ms a push to a window view at
+1,600 a push (0.01–0.1 at 160), and a bare listener on a source with no
+view adds 0.4–1.6 (0.03–0.07): the same order, as expected if the cost is
+the listener rather than the window. An earlier probe on an interim build
+(`copyWithin` compaction) put the view's share at 1.8–2.3 ms; superseded.
 
 So a windowed chart over a retention-capped source pays about as much for
 the mirror as for the window itself at 100k ticks/s. Fix to consider: let a

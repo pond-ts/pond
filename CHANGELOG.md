@@ -85,14 +85,16 @@ include new features and type-level changes; patch bumps are strictly additive.
   once for every event that arrived, so keeping it up to date cost time in
   proportion to the window size on every tick. It now moves a start marker and
   tidies the list only once the dropped part is as big as the window. In
-  Node, a 160-event push into a full 50,000-event window went from 49–51 ms
-  to 0.08–0.16 ms (median), and a 1,600-event push from 505–521 ms to
-  0.8–1.8 ms. The push that tidies the list costs more, 0.6–3.4 ms at
-  50,000–100,000 events and 13–18 ms at 1,000,000, once per window's worth
-  of events (`packages/core/scripts/perf-live-window.mjs`). Memory is about
-  what it was: a 100,000-event window holds 20.5 MB, against 19.3 MB before.
-  Reading the view (`keyColumn()`, `column()`, `toTimeSeries()`) is
-  unchanged: it still visits every event in the window. [PND-LVWIN]
+  Node, a 160-event push into a full 50,000-event window went from 45–53 ms
+  to 0.07–0.12 ms (median), and a 1,600-event push from 478–507 ms to
+  0.8–1.9 ms (`packages/core/scripts/perf-live-window.mjs`). The push that
+  tidies the list costs more, 0.7–5 ms at 50,000–100,000 events (7.6–7.8
+  ms when a garbage-collection pause landed on it), once per window's worth
+  of events; in a separate test at 1,000,000 events it took 11–19 ms (two
+  of 18 took 27 and 30 ms). Memory is about what it was: a 100,000-event
+  window holds 20.5 MB, against 19.3 MB before. Reading the view
+  (`keyColumn()`, `column()`, `toTimeSeries()`) still visits every event in
+  the window. [PND-LVWIN]
 
 ## [0.74.0] — 2026-10-14
 

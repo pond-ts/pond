@@ -642,8 +642,8 @@ Robustness debt plus the queued composition workstreams. Plan:
   filter-of-window 10,000). The pattern is tested, but only before events
   age out. Found while fixing [PND-LVWIN] (#761).
 - **[PND-LVMIRROR]** — A view on a retention-capped `LiveSeries` makes the
-  source build an `Event` for every row retention drops: ~1 ms more per
-  1,600-row push in Node. The view only reads the last dropped timestamp,
+  source build an `Event` for every row retention drops: 0.7–1.0 ms more
+  per 1,600-row push in Node. The view only reads the last dropped timestamp,
   but any `'evict'` listener switches the source off its skip-the-Events
   path. Found while benchmarking [PND-LVWIN] (#761).
 
