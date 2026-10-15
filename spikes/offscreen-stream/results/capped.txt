@@ -1,0 +1,5 @@
+space   worker raw      m4         1000/s  10s busy  0 every 16ms | pts      9997 fps   59 p95 17.7ms work 1.04ms (view 0.01 ext 0.03 draw 0.99) ingest 1ms/s 1005t/s lat 8/18ms page 60fps max 17ms
+space   worker raw      m4         1000/s  60s busy  0 every 16ms | pts     59992 fps   57 p95 27.3ms work 1.76ms (view 0.01 ext 0.14 draw 1.55) ingest 2ms/s 1003t/s lat 12/19ms page 60fps max 17ms
+space   worker raw      m4         1000/s 300s busy  0 every 16ms | pts    299954 fps   50 p95 31.8ms work 4.91ms (view 0.00 ext 0.61 draw 4.33) ingest 1ms/s 1015t/s lat 16/22ms page 60fps max 17ms
+space   worker raw      m4        10000/s  10s busy  0 every 16ms | pts     99711 fps   60 p95 17.1ms work 2.18ms (view 0.01 ext 0.23 draw 1.95) ingest 2ms/s 10057t/s lat 12/20ms page 60fps max 33ms
+space   worker raw      m4        10000/s  60s busy  0 every 16ms | pts    599031 fps   51 p95 31.5ms work 6.56ms (view 0.01 ext 0.81 draw 5.79) ingest 1ms/s 9963t/s lat 21/40ms page 60fps max 17ms
