@@ -1,0 +1,328 @@
+{
+  "uncapped": false,
+  "headed": false,
+  "channel": null,
+  "dpr": 1,
+  "settleMs": 3000,
+  "sampleS": 4,
+  "maxPrefill": 10000000,
+  "results": [
+    {
+      "group": "receive",
+      "mode": "worker",
+      "busy": 0,
+      "interval": 16,
+      "pipeline": "chunk",
+      "draw": "buckets",
+      "rate": 250000,
+      "window": 10,
+      "spin": 0,
+      "dpr": 1,
+      "prefill": 1,
+      "reports": 4,
+      "points": 2236250,
+      "columns": 1011,
+      "usingRaf": true,
+      "fps": 53.22604827826488,
+      "frameP50": 17.2,
+      "frameP95": 29.4,
+      "frameMax": 43,
+      "over120": 1,
+      "workAvg": 0.7873239436619719,
+      "workP95": 1.3,
+      "viewAvg": 0.005633802816901408,
+      "viewDirtyAvg": null,
+      "extentAvg": 0.012676056338028175,
+      "drawAvg": 0.7605633802816901,
+      "ingestMsPerSec": 85.93632865497636,
+      "ticksPerSec": 250074.96626513414,
+      "droppedPerSec": 0,
+      "mbPerSec": 6.003250537257117,
+      "latencyP50": 16,
+      "latencyP95": 24,
+      "pageFps": 60.00099586715689,
+      "pageFrameP95": 18.7,
+      "pageFrameMax": 24,
+      "perSecond": [
+        {
+          "fps": 58,
+          "latencyP50": 18,
+          "ticksPerSec": 247591
+        },
+        {
+          "fps": 56,
+          "latencyP50": 15,
+          "ticksPerSec": 250898
+        },
+        {
+          "fps": 51,
+          "latencyP50": 14,
+          "ticksPerSec": 251856
+        },
+        {
+          "fps": 48,
+          "latencyP50": 14,
+          "ticksPerSec": 249975
+        }
+      ],
+      "prefillMs": 1428,
+      "caughtUp": true,
+      "catchUpMs": 14,
+      "errors": []
+    },
+    {
+      "group": "receive",
+      "mode": "worker",
+      "busy": 0,
+      "interval": 16,
+      "pipeline": "chunk",
+      "draw": "buckets",
+      "rate": 500000,
+      "window": 10,
+      "spin": 0,
+      "dpr": 1,
+      "prefill": 1,
+      "reports": 4,
+      "points": 4237500,
+      "columns": 958,
+      "usingRaf": true,
+      "fps": 47.03247480403136,
+      "frameP50": 18.4,
+      "frameP95": 31.7,
+      "frameMax": 126.9,
+      "over120": 1,
+      "workAvg": 0.7216931216931222,
+      "workP95": 1.1,
+      "viewAvg": 0.0037037037037037034,
+      "viewDirtyAvg": null,
+      "extentAvg": 0.012169312169312173,
+      "drawAvg": 0.6989417989417991,
+      "ingestMsPerSec": 159.88552942501235,
+      "ticksPerSec": 441209.4064949609,
+      "droppedPerSec": 0,
+      "mbPerSec": 10.590315789473687,
+      "latencyP50": 50,
+      "latencyP95": 309,
+      "pageFps": 60.00740832201506,
+      "pageFrameP95": 19,
+      "pageFrameMax": 34.8,
+      "perSecond": [
+        {
+          "fps": 56,
+          "latencyP50": 20,
+          "ticksPerSec": 491745
+        },
+        {
+          "fps": 53,
+          "latencyP50": 23,
+          "ticksPerSec": 460424
+        },
+        {
+          "fps": 42,
+          "latencyP50": 164,
+          "ticksPerSec": 468687
+        },
+        {
+          "fps": 38,
+          "latencyP50": 219,
+          "ticksPerSec": 345965
+        }
+      ],
+      "prefillMs": 1429,
+      "caughtUp": true,
+      "catchUpMs": 5,
+      "errors": []
+    },
+    {
+      "group": "receive",
+      "mode": "worker",
+      "busy": 0,
+      "interval": 16,
+      "pipeline": "chunk",
+      "draw": "buckets",
+      "rate": 1000000,
+      "window": 10,
+      "spin": 0,
+      "dpr": 1,
+      "prefill": 1,
+      "reports": 4,
+      "points": 7299000,
+      "columns": 829,
+      "usingRaf": true,
+      "fps": 56.44659952753948,
+      "frameP50": 17.2,
+      "frameP95": 28.1,
+      "frameMax": 39.2,
+      "over120": 0.933920704845815,
+      "workAvg": 0.5744493392070491,
+      "workP95": 0.9,
+      "viewAvg": 0.005726872246696035,
+      "viewDirtyAvg": null,
+      "extentAvg": 0.010132158590308374,
+      "drawAvg": 0.5466960352422909,
+      "ingestMsPerSec": 176.70023623109606,
+      "ticksPerSec": 702971.5280368023,
+      "droppedPerSec": 195200.79572298896,
+      "mbPerSec": 16.872349123461394,
+      "latencyP50": 1399,
+      "latencyP95": 1673,
+      "pageFps": 59.999008280849324,
+      "pageFrameP95": 18.3,
+      "pageFrameMax": 24.2,
+      "perSecond": [
+        {
+          "fps": 60,
+          "latencyP50": 1351,
+          "ticksPerSec": 782808
+        },
+        {
+          "fps": 57,
+          "latencyP50": 1232,
+          "ticksPerSec": 770310
+        },
+        {
+          "fps": 57,
+          "latencyP50": 1362,
+          "ticksPerSec": 651957
+        },
+        {
+          "fps": 52,
+          "latencyP50": 1586,
+          "ticksPerSec": 608559
+        }
+      ],
+      "prefillMs": 1406,
+      "caughtUp": true,
+      "catchUpMs": 1006,
+      "errors": []
+    },
+    {
+      "group": "receive",
+      "mode": "worker",
+      "busy": 0,
+      "interval": 16,
+      "pipeline": "chunk",
+      "draw": "buckets",
+      "rate": 500000,
+      "window": 10,
+      "spin": 0,
+      "receiver": "worker",
+      "dpr": 1,
+      "prefill": 1,
+      "reports": 4,
+      "points": 4495000,
+      "columns": 1015,
+      "usingRaf": true,
+      "fps": 57.43825387709817,
+      "frameP50": 16.7,
+      "frameP95": 19.2,
+      "frameMax": 105.7,
+      "over120": 1,
+      "workAvg": 0.6069565217391303,
+      "workP95": 0.9,
+      "viewAvg": 0.0017391304347826088,
+      "viewDirtyAvg": null,
+      "extentAvg": 0.010869565217391308,
+      "drawAvg": 0.5860869565217391,
+      "ingestMsPerSec": 146.44257423190342,
+      "ticksPerSec": 499463.077192158,
+      "droppedPerSec": 0,
+      "mbPerSec": 11.988588267615663,
+      "latencyP50": 14,
+      "latencyP95": 24,
+      "pageFps": 60.00049587185563,
+      "pageFrameP95": 17.4,
+      "pageFrameMax": 40.6,
+      "perSecond": [
+        {
+          "fps": 60,
+          "latencyP50": 14,
+          "ticksPerSec": 501796
+        },
+        {
+          "fps": 60,
+          "latencyP50": 14,
+          "ticksPerSec": 497900
+        },
+        {
+          "fps": 59,
+          "latencyP50": 15,
+          "ticksPerSec": 502395
+        },
+        {
+          "fps": 51,
+          "latencyP50": 10,
+          "ticksPerSec": 495748
+        }
+      ],
+      "prefillMs": 1400,
+      "caughtUp": true,
+      "catchUpMs": 6,
+      "errors": []
+    },
+    {
+      "group": "receive",
+      "mode": "worker",
+      "busy": 0,
+      "interval": 16,
+      "pipeline": "chunk",
+      "draw": "buckets",
+      "rate": 1000000,
+      "window": 10,
+      "spin": 0,
+      "receiver": "worker",
+      "dpr": 1,
+      "prefill": 1,
+      "reports": 4,
+      "points": 8804000,
+      "columns": 995,
+      "usingRaf": true,
+      "fps": 50.926157072235775,
+      "frameP50": 17.5,
+      "frameP95": 30.3,
+      "frameMax": 50.1,
+      "over120": 1,
+      "workAvg": 0.6377450980392155,
+      "workP95": 0.9,
+      "viewAvg": 0.004411764705882353,
+      "viewDirtyAvg": null,
+      "extentAvg": 0.009803921568627453,
+      "drawAvg": 0.6176470588235295,
+      "ingestMsPerSec": 238.87862599561464,
+      "ticksPerSec": 993559.3389583253,
+      "droppedPerSec": 0,
+      "mbPerSec": 23.846892006586007,
+      "latencyP50": 18,
+      "latencyP95": 32,
+      "pageFps": 59.9960333201166,
+      "pageFrameP95": 18.2,
+      "pageFrameMax": 29,
+      "perSecond": [
+        {
+          "fps": 58,
+          "latencyP50": 16,
+          "ticksPerSec": 1013438
+        },
+        {
+          "fps": 58,
+          "latencyP50": 15,
+          "ticksPerSec": 1001691
+        },
+        {
+          "fps": 45,
+          "latencyP50": 22,
+          "ticksPerSec": 993713
+        },
+        {
+          "fps": 44,
+          "latencyP50": 22,
+          "ticksPerSec": 966231
+        }
+      ],
+      "prefillMs": 1368,
+      "caughtUp": true,
+      "catchUpMs": 7,
+      "errors": []
+    }
+  ]
+}

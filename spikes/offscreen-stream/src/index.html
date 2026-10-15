@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Offscreen stream</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        background: #05080b;
+        color: #cbd2d9;
+        font:
+          13px ui-monospace,
+          monospace;
+      }
+      #chart {
+        width: 100%;
+        max-width: 1200px;
+        height: 420px;
+        display: block;
+        border: 1px solid #1f2933;
+      }
+      #controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      label {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      select {
+        background: #111821;
+        color: inherit;
+        border: 1px solid #323f4b;
+        font: inherit;
+      }
+      #health {
+        position: relative;
+        height: 18px;
+        max-width: 300px;
+        margin: 12px 0 4px;
+        border-bottom: 1px solid #1f2933;
+      }
+      #marker {
+        position: absolute;
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        background: #3ebd93;
+        top: 2px;
+      }
+      pre {
+        margin: 8px 0 0;
+        line-height: 1.5;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="controls">
+      <label
+        >thread
+        <select id="mode">
+          <option>worker</option>
+          <option>main</option>
+        </select></label
+      >
+      <label
+        >pipeline
+        <select id="pipeline">
+          <option>raw</option>
+          <option>chunk</option>
+          <option>snapshot</option>
+          <option>view</option>
+        </select></label
+      >
+      <label
+        >draw
+        <select id="draw">
+          <option value="m4">m4 (charts kernel)</option>
+          <option value="buckets">pixel buckets</option>
+        </select></label
+      >
+      <label
+        >ticks/s
+        <select id="rate">
+          <option>1000</option>
+          <option>10000</option>
+          <option>100000</option>
+          <option>1000000</option>
+        </select></label
+      >
+      <label
+        >push every
+        <select id="interval">
+          <option value="4">4ms</option>
+          <option value="8">8ms</option>
+          <option value="16">16ms</option>
+          <option value="50">50ms</option>
+        </select></label
+      >
+      <label
+        >window
+        <select id="window">
+          <option value="10">10s</option>
+          <option value="60">1m</option>
+          <option value="300">5m</option>
+        </select></label
+      >
+      <label
+        >busy page
+        <select id="busy">
+          <option value="0">off</option>
+          <option value="20">20ms / 50ms</option>
+          <option value="40">40ms / 50ms</option>
+        </select></label
+      >
+    </div>
+    <canvas id="chart"></canvas>
+    <div id="health"><div id="marker"></div></div>
+    <div id="mainfps">page fps …</div>
+    <pre id="stats">connecting…</pre>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

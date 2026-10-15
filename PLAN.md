@@ -310,6 +310,22 @@ linearWindow>`, [PND-SYMLOG]. [PND-AXISMIRROR] (a mirrored second axis) is
   (`snapshot.partitionBy().toMap()`) per host. A `LiveView`-aware input — or
   a documented cheap-handle idiom for live charts — closes it. Overlaps
   [PND-PARITY] / the live layer.
+- **[PND-STREAMDRAW]** — Streaming draw for scrolling live charts
+  (offscreen-stream spike). A scrolling window misses the M4 cache every
+  frame, so `drawLine` re-thins every visible point: on an M1 Pro at Retina
+  resolution, 120 fps at 1M points (4.3 ms a frame), 74 fps at 3M. Folding
+  ticks into one bucket per pixel column as they arrive held 120 fps at
+  0.6 ms a frame or less, up to 29M points in a full window. Design call:
+  a line/area mode vs a live layer ([PND-LIVELYR]), and what zoom/hover
+  read.
+- **[PND-OFFSCREEN]** — Worker (OffscreenCanvas) render mode. The spike's
+  worker-drawn chart held 120 fps on a page busy 40 ms of every 50; the
+  page-thread chart fell to 33. Blocked today by layer draw closures,
+  unexported draw functions, page-thread hit-testing and DOM theming.
+  Its guide should show the socket on its own worker (in the spike that
+  kept every tick flowing where the drawing worker's own socket fell
+  behind). Also fix `drawLine`'s fresh `boundaries = []` default
+  (defeats the M4 cache for direct callers) before exporting draw functions.
 - **[PND-XOFFSET]** — Per-layer bar offset and forward projection space
   (the assessment's **C2**), plus a crossing-band fill (**C3**). **The
   fixed-time half shipped** (Tidal F-charts-20): `xOffset` (ms / duration) on
@@ -607,6 +623,29 @@ Robustness debt plus the queued composition workstreams. Plan:
   exact-removal eviction channel.
 - **[PND-TAPOBS]** — Evaluate `tap()` per-partition observer now that fused
   rolling shipped.
+- **[PND-LSNAP]** — Columnar `LiveSeries.toTimeSeries()` (offscreen-stream
+  spike). The snapshot rebuilds row by row: 542 ms at 600k rows, with the
+  column read out, vs 16 ms to copy the stored chunks' columns. Still a
+  whole-window copy, so it suits throttled snapshots; per-frame reads go
+  through [PND-COLOUT]'s appended-columns event (the spike used internal
+  `_onChunk`). Data side of [PND-LIVELYR].
+- **[PND-LPUSHCOL]** — Columnar push into `LiveSeries`. `pushMany` (rows
+  only) costs ~17–23 ms per 100k ticks in Node; a CPU profile puts 89% in
+  the per-row check, including 27% making a `Time` object per tick.
+  `TimeSeries.fromColumns` takes the same ticks in ~0.9 ms. The in-process
+  half of [PND-WIRE]'s streaming append.
+- **[PND-LVWIN]** — A `live.window()` view gets slower per tick as its
+  window grows: each arriving event `splice`s the oldest off an `Event[]`,
+  shifting the whole array (98% of a profile). One 16 ms push into a
+  50k-event window: 24–34 ms at 10k ticks/s, 271–326 ms at 100k. Use a head
+  index. Reads (`keyColumn()` / `column()`) stay a walk over every event.
+- **[PND-LVCHAIN]** — A view chained after a window view
+  (`live.window('1m').filter(p)`, `.map`, `.select`) never drops anything:
+  window eviction doesn't emit `'evict'`, so the child's mirror never fires,
+  even under source retention. It grows with every event, and its
+  `eventRate()` counts all of them (10k events 10 ms apart: window 101,
+  filter-of-window 10,000). The pattern is tested, but only before events
+  age out. Found while fixing [PND-LVWIN].
 
 ### Streaming semantics (Phase 4.5)
 
@@ -635,7 +674,9 @@ consumer signal. Plan:
 [PND_COLUMNAR_PLAN.md](docs/plans/PND_COLUMNAR_PLAN.md).
 
 - **[PND-COLOUT]** — Column-native output (§A): removes the dominant
-  emit-side allocation slice; spike plan exists.
+  emit-side allocation slice; spike plan exists. Second consumer: the
+  offscreen-stream spike's live chart, which needed each appended batch as
+  columns and used the internal `_onChunk` in its place.
 - **[PND-COLBOOL]** — `boolean` / array value columns through the columnar
   ingest engine. `ingestColumnsToStore` takes `number` and `string` only, so
   a series carrying either kind exports through `toColumns` / `toArrow` but
