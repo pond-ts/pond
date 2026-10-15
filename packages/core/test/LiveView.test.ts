@@ -771,8 +771,7 @@ describe('window() eviction by head index ([PND-LVWIN])', () => {
     const view = live.window(37);
     for (let i = 0; i < rows.length; i++) {
       live.push(rows[i]!);
-      if (i % 7 === 0 || i === rows.length - 1)
-        expectMatches(view, rows.slice(Math.max(0, i + 1 - 37), i + 1));
+      expectMatches(view, rows.slice(Math.max(0, i + 1 - 37), i + 1));
     }
     view.dispose();
   });
@@ -782,13 +781,11 @@ describe('window() eviction by head index ([PND-LVWIN])', () => {
     const view = live.window('50ms');
     for (let i = 0; i < rows.length; i++) {
       live.push(rows[i]!);
-      if (i % 7 === 0 || i === rows.length - 1) {
-        const cutoff = rows[i]![0] - 50;
-        expectMatches(
-          view,
-          rows.slice(0, i + 1).filter((r) => r[0] >= cutoff),
-        );
-      }
+      const cutoff = rows[i]![0] - 50;
+      expectMatches(
+        view,
+        rows.slice(0, i + 1).filter((r) => r[0] >= cutoff),
+      );
     }
     view.dispose();
   });
@@ -845,6 +842,72 @@ describe('window() eviction by head index ([PND-LVWIN])', () => {
     expectMatches(view, rows.slice(90, 100));
     expect(Math.max(...lengths)).toBe(11);
     view.dispose();
+  });
+
+  it('a custom evict callback returning a fraction drops whole events', () => {
+    // As `splice(0, 1.5)` did before: 1.5 drops one event.
+    const live = makeLive();
+    const view = new LiveView<typeof schema>(live, (e: any) => e, {
+      evict: (events) => (events.length >= 3 ? 1.5 : 0),
+    } as any);
+    for (const row of rows.slice(0, 6)) live.push(row);
+    expectMatches(view, rows.slice(4, 6));
+    view.dispose();
+  });
+
+  it('window and source retention evicting in turn', () => {
+    // Bursts of 40 rows 1 ms apart, then 10 rows 9 ms apart: in a burst
+    // the window (30 events) is the tighter limit, in the sparse stretch
+    // the source's retention (40 ms) is. The view must hold the
+    // intersection.
+    const live = new LiveSeries({
+      name: 'test',
+      schema,
+      retention: { maxAge: '40ms' },
+    });
+    const view = live.window(30);
+    let windowBound = 0;
+    let retentionBound = 0;
+    const seen: Row[] = [];
+    for (let i = 0, t = 0; i < 600; i++, t += i % 50 < 40 ? 1 : 9) {
+      const row: Row = [t, i, i % 2 === 0 ? 'a' : 'b'];
+      seen.push(row);
+      live.push(row);
+      const expected = seen.slice(-30).filter((r) => r[0] >= t - 40);
+      expectMatches(view, expected);
+      if (expected.length === 30) windowBound++;
+      else retentionBound++;
+    }
+    expect(windowBound).toBeGreaterThan(50);
+    expect(retentionBound).toBeGreaterThan(50);
+    view.dispose();
+  });
+
+  it('keeps its buffer within about twice the view', () => {
+    // Evicted slots are reclaimed by compaction; without it the buffer
+    // would grow with every event pushed.
+    const time = makeLive();
+    const timeView = time.window('50ms');
+    const count = makeLive();
+    const countView = count.window(37);
+    const capped = new LiveSeries({
+      name: 'test',
+      schema,
+      retention: { maxEvents: 25 },
+    });
+    const mirrored = capped.filter(() => true);
+    for (const row of rows) {
+      time.push(row);
+      count.push(row);
+      capped.push(row);
+      for (const v of [timeView, countView, mirrored])
+        expect(v._bufferLength).toBeLessThanOrEqual(2 * v.length + 1);
+    }
+    // Disposing compacts, so a kept reference holds only the live events.
+    timeView.dispose();
+    expect(timeView._bufferLength).toBe(timeView.length);
+    countView.dispose();
+    mirrored.dispose();
   });
 });
 

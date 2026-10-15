@@ -202,21 +202,42 @@ to `LiveSeries`, so it needs human approval before merge.
 ### [PND-LVWIN] — `live.window()` evicts by head index — SHIPPED (#761)
 
 **Outcome.** A window view keeps a start marker (`#head`) into its
-`Event[]`. Eviction advances the marker, and the array is spliced only when
-the evicted prefix outgrows the live window (`#head > length / 2`), so each
-evicted event costs O(1) amortized instead of an O(window) `splice` on every
-arriving event. Every reader indexes from the marker. Built-in windows pass
-an internal `keep: { count } | { ms }` option; the older `evict` callback
-option still works and is called on a trimmed array (same cost as before).
-Node, median ms per push once the window is full
-(`packages/core/scripts/perf-live-window.mjs`): 50k-event window, 160 a
-push 39–69 → 0.17–0.18; 1,600 a push 504–540 → 0.9–1.5; 100k-event
-window, 1,600 a push 496–566 → 0.95–1.4. Small windows and reads unchanged
-within noise.
+`Event[]`. Eviction advances the marker and clears the evicted slots, so
+their Events can be collected at once. The array is spliced only when the
+evicted prefix outgrows the live window (`#head > length / 2`), so each
+evicted event costs O(1) amortized instead of an O(window) `splice` on
+every arriving event; the push that triggers the splice costs O(batch +
+window). Every reader indexes from the marker. Built-in windows pass an
+internal `keep: { count } | { ms }` option (`@internal`, so stripped from
+the `.d.ts`). The older `evict` callback option still works: it is called
+on a compacted array (same cost as before), and a fractional return is
+truncated, as `splice` did.
+
+Node 22, ms per push once the window is full
+(`packages/core/scripts/perf-live-window.mjs`: same unretained source for
+every row, a warm-up pass, at least 2.2 compaction cycles). "Before" is
+one run of 30 pushes (the old code has no cycle); "after" is three runs:
+
+| Window, push size  | Before (median) | After (median) | Compacting pushes | After (max) |
+| ------------------ | --------------- | -------------- | ----------------- | ----------- |
+| 50k events, 160    | 49–51           | 0.08–0.16      | 0.6–1.6 (one 7.5) | 9–24        |
+| 100k events, 160   | 35–68           | 0.08–0.13      | 1.2–2.2           | 8–35        |
+| 50k events, 1,600  | 505–521         | 0.8–1.8        | 1.4–2.1 (one 13)  | 8–26        |
+| 100k events, 1,600 | 516–552         | 0.8–1.5        | 2.1–3.4           | 10–33       |
+| 1M events, 1,600   | —               | 0.9            | 12.5–17.8         | —           |
+
+The 1M row is a scratch probe, not in the script. The max column is
+garbage collection, not the window: a probe that matched Node's GC
+entries to pushes (four of the rows above) found 18 pushes over 5 ms,
+none of them compacting, each with a GC pause covering all but 0.15–2.1
+ms of it. A view creates an `Event` per arriving row and keeps a window of
+them, which is what the collector walks; the old code allocated the same
+Events. A source with no view creates none; its max in the same three
+runs was 0.06–4.5 ms. Small windows and reads are unchanged within noise.
 
 **Why this shape.** It is the `#frontIdx` pattern already used by
 `LiveRollingAggregation` and the fused rolling paths, so no new vocabulary.
-Two alternatives were set aside:
+Alternatives set aside:
 
 - Evict once per push (listen to `'batch'`) instead of per event. Cheaper
   still, but a view's `'event'` listeners would then see it over-full in
@@ -224,12 +245,22 @@ Two alternatives were set aside:
 - Trim before every read instead of indexing from the marker. Fewer lines
   touched, but a frame's `column()` read would then pay an O(window)
   `splice` on top of its O(window) gather.
+- Compact with `copyWithin` or a copy loop instead of `splice`. Measured on
+  a compacting push at 100k events: `splice` 2.2–2.6 ms, a loop 2.8–6.7,
+  `copyWithin` 7.6–15 (V8 has no fast path for it on ordinary arrays).
 
-**Trade-offs kept.** Between trims the array also holds up to one window
-of evicted events (up to 2× the window's references kept alive). Reads
-(`keyColumn()` / `column()` / `toTimeSeries()`) still walk every event:
-64 ms at 600k rows in Node, 4 ms a frame at 60k points in the browser.
-That cost is [PND-COLOUT]'s and [PND-LSNAP]'s to cut, not this task's.
+**Trade-offs kept.** The array holds up to 2× the window's slots between
+compactions, but only the window's Events stay alive: a 100k-event view
+holds 20.5 MB vs 19.3 MB before (`node --expose-gc` probe). The first
+version (239977b) left evicted Events in their slots until the next
+compaction, 21–39 MB for the same view; the Layer 2 review caught it.
+`dispose()` compacts. The compacting push is O(window), about one 16 ms
+frame at a 1M-event window, once per million events. Reads (`keyColumn()`
+/ `column()` / `toTimeSeries()`) still walk every event: 64 ms at 600k rows
+in Node, 4 ms a frame at 60k points in the browser. That cost is
+[PND-COLOUT]'s and [PND-LSNAP]'s to cut, not this task's. A view on a
+retention-capped source also pays [PND-LVMIRROR], found while
+benchmarking this.
 
 **Source:** offscreen-stream spike §4 (#760). Before the fix, evicting with
 `this.#events.splice(0, count)` on every arriving event took 98% of a
@@ -266,6 +297,32 @@ window view's `'evict'` listeners see (today they fire only for mirrored
 source evictions), so it needs a CHANGELOG `Changed` line. The other
 option, documenting `filter().window()` as the only safe order, leaves the
 existing test's pattern broken.
+
+### [PND-LVMIRROR] — A view makes its source build Events for every retention eviction
+
+**Source:** found while benchmarking [PND-LVWIN] (#761, 2026-10-15). Every
+`LiveView` subscribes to its source's `'evict'` so it can mirror retention
+(`live-view.ts`, the `EMITS_EVICT` block in the constructor). It reads only
+`evicted[evicted.length - 1].begin()`. But `LiveSeries.#applyRetention`
+skips building Events only when no `'evict'` listener is attached
+(`#onEvict.size === 0` → `dropPrefix`); with one, it calls `evictPrefix`,
+which builds an `Event` per dropped row from the chunked columns.
+
+Measured in Node (median ms per push, scratch probe, two runs each):
+
+| Setup                                      | 50k window, 1,600 a push | 100k window, 160 a push |
+| ------------------------------------------ | ------------------------ | ----------------------- |
+| no view, retention 2× the window           | 0.29–0.56                | 0.033–0.060             |
+| same + a bare `live.on('evict', () => {})` | 1.25–1.73                | 0.17–0.21               |
+| time window view, no retention             | 1.05–1.32                | 0.14–0.19               |
+| time window view, retention 2× the window  | 3.08–3.35                | 0.17–0.21               |
+
+So a windowed chart over a retention-capped source pays about as much for
+the mirror as for the window itself at 100k ticks/s. Fix to consider: let a
+view hear just the cutoff timestamp (an internal channel next to
+`'evict'`), so the source builds Events only for listeners that want them.
+Relates to [PND-CHANGE]'s eviction channel and [PND-LVCHAIN] (same
+listener).
 
 ## Decisions
 

@@ -72,9 +72,10 @@ type ViewOptions<S extends SeriesSchema> = {
    */
   evict?: (events: readonly EventForSchema<S>[]) => number;
   /**
-   * Built-in window eviction ([PND-LVWIN]): keep the last `count` events,
-   * or the events within `ms` of the newest. Evicts by advancing a head
-   * index, so it costs O(1) amortized per event however large the window.
+   * @internal Built-in window eviction ([PND-LVWIN]): keep the last
+   * `count` events, or the events within `ms` of the newest. Evicts by
+   * advancing a head index, so it costs O(1) amortized per event however
+   * large the window. Set by the `window()` methods.
    */
   keep?: { count: number } | { ms: number };
   /**
@@ -149,17 +150,20 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
    * The view's buffer. Entries before `#head` are evicted and no longer
    * part of the view: the live events are `#events[#head ..]` and the
    * view's length is `#events.length - #head`. Eviction advances `#head`
-   * (O(1) per event) and a periodic `splice(0, #head)` keeps the array
-   * bounded — before [PND-LVWIN] each eviction spliced the front off
-   * directly, shifting the whole window on every arriving event. Same
-   * pattern as `LiveRollingAggregation`'s `#frontIdx`. Never index
-   * `#events` without adding `#head`.
+   * and clears the evicted slots (O(1) per event, and the evicted `Event`s
+   * can be collected at once); a periodic shift down keeps the array
+   * bounded at about twice the view's length. Before [PND-LVWIN] each
+   * eviction spliced the front off directly, shifting the whole window on
+   * every arriving event. Same idea as `LiveRollingAggregation`'s
+   * `#frontIdx`. Never index `#events` without adding `#head`: slots
+   * before it are `undefined`.
    */
   readonly #events: EventForSchema<S>[];
   #head = 0;
   /**
-   * Monotonic mutation counter — bumped on every `#events` change
-   * (append, time-window eviction, source-eviction mirror). Keys the
+   * Monotonic mutation counter — bumped whenever the view's contents
+   * change (append, window eviction, source-eviction mirror; not when the
+   * buffer is compacted, which leaves the contents alone). Keys the
    * {@link toTimeSeries} snapshot cache so back-to-back identical-state
    * builds (multiple subscribers, React commit batching, StrictMode
    * double-invoke) are free instead of rebuilding the whole `TimeSeries`.
@@ -738,10 +742,19 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     this.#unsubscribe();
     this.#onEvent.clear();
     this.#onEvict.clear();
+    this.#compact();
     const source = this.#source;
     if (source instanceof LiveView && source._listenerCount === 0) {
       source.dispose();
     }
+  }
+
+  /**
+   * @internal — slots in the view's buffer, live and evicted-but-not-yet-
+   * compacted. For tests that pin the buffer's bound ([PND-LVWIN]).
+   */
+  get _bufferLength(): number {
+    return this.#events.length;
   }
 
   /** @internal — subscribers on this view (`'event'` + `'evict'`). */
@@ -767,21 +780,34 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     // A custom `evict` sees only the view's events, so compact first.
     this.#compact();
     const count = this.#evict(this.#events);
-    if (count > 0) this.#dropFront(Math.min(count, this.length));
+    // Whole events only, as `splice(0, count)` did before [PND-LVWIN].
+    const whole = Math.trunc(count);
+    if (whole > 0) this.#dropFront(Math.min(whole, this.length));
   }
 
   /** Evict `count` events from the front of the view. */
   #dropFront(count: number): void {
-    this.#head += count;
+    // Clear the evicted slots so their `Event`s can be collected now
+    // rather than at the next compaction.
+    const events = this.#events as (EventForSchema<S> | undefined)[];
+    const end = this.#head + count;
+    for (let i = this.#head; i < end; i++) events[i] = undefined;
+    this.#head = end;
     this.#version += 1;
-    // Compact once the dead prefix outgrows the live window, so each
+    // Compact once the evicted prefix outgrows the live window, so each
     // evicted event pays O(1) amortized for the shift.
     if (this.#head > this.#events.length / 2) this.#compact();
   }
 
+  /** Shift the live events down to index 0 (the contents don't change). */
   #compact(): void {
-    if (this.#head === 0) return;
-    this.#events.splice(0, this.#head);
+    const head = this.#head;
+    if (head === 0) return;
+    // `splice` measured fastest here: a push that compacts a 100k-event
+    // window took 2.2–2.6 ms, vs 2.8–6.7 with a copy loop and 7.6–15 with
+    // `copyWithin` (Node 22). The array of cleared slots it returns is
+    // dropped at once.
+    this.#events.splice(0, head);
     this.#head = 0;
   }
 
@@ -822,9 +848,9 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
 // ── Walk-now column read surface (§A pull/read) ───────────────────
 //
 // Shared gather helpers + the per-partition group object. Read the
-// view's `Event[]` through indices (or the whole buffer when `indices`
-// is null), building only the columns requested — no `TimeSeries`, no
-// per-partition store.
+// view's `Event[]` through an index list, or from an offset to the end
+// (the view's head), building only the columns requested — no
+// `TimeSeries`, no per-partition store.
 
 function gatherColumnFromEvents<S extends SeriesSchema>(
   events: readonly EventForSchema<S>[],
