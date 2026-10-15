@@ -77,6 +77,20 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`live.window()` no longer slows down as the window grows.** A window view
+  (`LiveSeries.window()`, `LiveView.window()`, and `window()` on the
+  aggregations) dropped its oldest event by shifting its whole list of events,
+  once for every event that arrived, so keeping it up to date cost time in
+  proportion to the window size on every tick. It now moves a start marker and
+  tidies the list only now and then. In Node, taking in one 160-event push
+  into a full 50,000-event window went from 39–69 ms to about 0.2 ms, and a
+  1,600-event push from 500–540 ms to 0.9–1.5 ms
+  (`packages/core/scripts/perf-live-window.mjs`). Reading the view
+  (`keyColumn()`, `column()`, `toTimeSeries()`) is unchanged: it still visits
+  every event in the window. [PND-LVWIN]
+
 ## [0.74.0] — 2026-10-14
 
 ### Added

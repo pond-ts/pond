@@ -692,6 +692,162 @@ describe('window() chaining', () => {
 
 // ── Edge cases ─────────────────────────────────────────────────
 
+describe('window() eviction by head index ([PND-LVWIN])', () => {
+  // The window evicts by advancing a head index and compacts the array
+  // only now and then, so most of the time the buffer holds evicted
+  // events in front of the view's own. Check every reader against a
+  // plainly computed window after each push, across many compactions.
+  type Row = readonly [number, number, string];
+
+  function expectMatches(
+    view: LiveView<typeof schema>,
+    expected: readonly Row[],
+  ) {
+    const n = expected.length;
+    expect(view.length).toBe(n);
+    expect(view.count()).toBe(n);
+    expect(view.first()?.begin()).toBe(expected[0]?.[0]);
+    expect(view.last()?.begin()).toBe(expected[n - 1]?.[0]);
+    for (let i = 0; i < n; i++) {
+      expect(view.at(i)?.begin()).toBe(expected[i]![0]);
+      expect(view.at(i - n)?.begin()).toBe(expected[i]![0]);
+    }
+    expect(view.at(n)).toBeUndefined();
+    expect(view.at(-n - 1)).toBeUndefined();
+
+    expect(Array.from(view.keyColumn().begin)).toEqual(
+      expected.map((r) => r[0]),
+    );
+    expect(Array.from(view.column('value').toFloat64Array())).toEqual(
+      expected.map((r) => r[1]),
+    );
+    const ts = view.toTimeSeries();
+    expect(ts.length).toBe(n);
+    expect(ts.at(0)?.get('value')).toBe(expected[0]?.[1]);
+
+    const seen: number[] = [];
+    view.every((e, i) => {
+      seen.push(i);
+      expect(e.begin()).toBe(expected[i]![0]);
+      return true;
+    });
+    expect(seen).toEqual(expected.map((_, i) => i));
+    if (n > 0) {
+      const mid = expected[n >> 1]!;
+      expect(view.find((e) => e.begin() === mid[0])?.get('value')).toBe(mid[1]);
+      expect(view.find((_, i) => i === n - 1)?.begin()).toBe(
+        expected[n - 1]![0],
+      );
+      expect(view.some((e) => e.begin() === expected[0]![0] - 1)).toBe(false);
+      expect(view.bisect(mid[0])).toBe(n >> 1);
+      expect(view.includesKey(mid[0])).toBe(true);
+      expect(view.includesKey(expected[0]![0] - 1)).toBe(false);
+      const before = expected.filter((r) => r[0] <= mid[0] + 1).pop()!;
+      expect(view.atOrBefore(mid[0] + 1)?.begin()).toBe(before[0]);
+      expect(view.atOrBefore(expected[0]![0] - 1)).toBeUndefined();
+      expect(view.atOrAfter(expected[0]![0] - 1)?.begin()).toBe(
+        expected[0]![0],
+      );
+      expect(view.atOrAfter(expected[n - 1]![0] + 1)).toBeUndefined();
+    }
+
+    const groups = view
+      .partitionBy('host')
+      .toMap((g) => Array.from(g.keyColumn().begin));
+    for (const host of ['a', 'b']) {
+      expect(groups.get(host) ?? []).toEqual(
+        expected.filter((r) => r[2] === host).map((r) => r[0]),
+      );
+    }
+  }
+
+  // 1,000 rows, 1 to 3 ms apart, alternating hosts.
+  const rows: Row[] = [];
+  for (let i = 0, t = 0; i < 1000; i++, t += 1 + (i % 3))
+    rows.push([t, i, i % 2 === 0 ? 'a' : 'b']);
+
+  it('count window matches the last N events after every push', () => {
+    const live = makeLive();
+    const view = live.window(37);
+    for (let i = 0; i < rows.length; i++) {
+      live.push(rows[i]!);
+      if (i % 7 === 0 || i === rows.length - 1)
+        expectMatches(view, rows.slice(Math.max(0, i + 1 - 37), i + 1));
+    }
+    view.dispose();
+  });
+
+  it('time window matches the events within ms of the newest', () => {
+    const live = makeLive();
+    const view = live.window('50ms');
+    for (let i = 0; i < rows.length; i++) {
+      live.push(rows[i]!);
+      if (i % 7 === 0 || i === rows.length - 1) {
+        const cutoff = rows[i]![0] - 50;
+        expectMatches(
+          view,
+          rows.slice(0, i + 1).filter((r) => r[0] >= cutoff),
+        );
+      }
+    }
+    view.dispose();
+  });
+
+  it('batched pushes give the same window as single pushes', () => {
+    const live = makeLive();
+    const view = live.window(100);
+    for (let i = 0; i < rows.length; i += 64)
+      live.push(...rows.slice(i, i + 64));
+    expectMatches(view, rows.slice(-100));
+    view.dispose();
+  });
+
+  it('LiveView.window() over a view evicts the same way', () => {
+    const live = makeLive();
+    const view = live.filter(() => true).window('50ms');
+    for (const row of rows) live.push(row);
+    const cutoff = rows[rows.length - 1]![0] - 50;
+    expectMatches(
+      view,
+      rows.filter((r) => r[0] >= cutoff),
+    );
+    view.dispose();
+  });
+
+  it('mirrors source eviction on top of the window', () => {
+    const live = new LiveSeries({
+      name: 'test',
+      schema,
+      retention: { maxEvents: 20 },
+    });
+    const view = live.window(50);
+    const evicted: number[] = [];
+    view.on('evict', (es) => evicted.push(...es.map((e) => e.begin())));
+    for (const row of rows) live.push(row);
+    // Retention (20) is tighter than the window (50): the view follows it.
+    expectMatches(view, rows.slice(-20));
+    // Every event the source dropped while still in the view was reported
+    // once, in order.
+    expect(evicted).toEqual(rows.slice(0, -20).map((r) => r[0]));
+    view.dispose();
+  });
+
+  it('a custom evict callback sees only the view’s events', () => {
+    const live = makeLive();
+    const lengths: number[] = [];
+    const view = new LiveView<typeof schema>(live, (e: any) => e, {
+      evict: (events) => {
+        lengths.push(events.length);
+        return events.length > 10 ? events.length - 10 : 0;
+      },
+    } as any);
+    for (const row of rows.slice(0, 100)) live.push(row);
+    expectMatches(view, rows.slice(90, 100));
+    expect(Math.max(...lengths)).toBe(11);
+    view.dispose();
+  });
+});
+
 describe('edge cases', () => {
   it('at out of bounds returns undefined', () => {
     const live = makeLive();
