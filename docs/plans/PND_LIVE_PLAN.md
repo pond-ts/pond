@@ -199,39 +199,45 @@ already there). This is the in-process half of
 wire is only worth having if the `LiveSeries` takes columns. Adds a method
 to `LiveSeries`, so it needs human approval before merge.
 
-### [PND-LVWIN] — `live.window()` gets slower per tick as the window grows
+### [PND-LVWIN] — `live.window()` evicts by head index — SHIPPED (#761)
 
-**Source:** offscreen-stream spike §4. A `LiveView` from `live.window(…)`
-keeps its window as an `Event[]` and, on every arriving event, evicts with
-`this.#events.splice(0, count)` (`live-view.ts:181-187` →
-`#applyEviction`, `live-view.ts:730-736`). Once the window is full, every
-tick evicts about one event, and each `splice` shifts the whole array. A
-CPU profile of a 50k-event window puts 98% of the time in
-`#applyEviction` (spike `results/profile.txt` section 2).
+**Outcome.** A window view keeps a start marker (`#head`) into its
+`Event[]`. Eviction advances the marker, and the array is spliced only when
+the evicted prefix outgrows the live window (`#head > length / 2`), so each
+evicted event costs O(1) amortized instead of an O(window) `splice` on every
+arriving event. Every reader indexes from the marker. Built-in windows pass
+an internal `keep: { count } | { ms }` option; the older `evict` callback
+option still works and is called on a trimmed array (same cost as before).
+Node, median ms per push once the window is full
+(`packages/core/scripts/perf-live-window.mjs`): 50k-event window, 160 a
+push 39–69 → 0.17–0.18; 1,600 a push 504–540 → 0.9–1.5; 100k-event
+window, 1,600 a push 496–566 → 0.95–1.4. Small windows and reads unchanged
+within noise.
 
-Node, cost of one 16 ms push once the window is full, ranges across three
-runs (spike `results/node.txt` section 3, `results/node-window-reruns.txt`):
+**Why this shape.** It is the `#frontIdx` pattern already used by
+`LiveRollingAggregation` and the fused rolling paths, so no new vocabulary.
+Two alternatives were set aside:
 
-| window (events) | 10k ticks/s (160 a push), no view / view | 100k ticks/s (1,600 a push), no view / view |
-| --------------- | ---------------------------------------- | ------------------------------------------- |
-| 1k              | 0.11–0.18 / 0.48–0.71 ms                 | 0.43–1.05 / 4.6–13 ms                       |
-| 10k             | 0.04–0.06 / 2.3–6.9 ms                   | 0.51–0.79 / 6.3–68 ms                       |
-| 50k             | 0.03–0.07 / **24–34 ms**                 | 0.27–0.62 / **271–326 ms**                  |
-| 100k            | 0.03–0.06 / **56–77 ms**                 | 0.29–0.58 / **368–398 ms**                  |
+- Evict once per push (listen to `'batch'`) instead of per event. Cheaper
+  still, but a view's `'event'` listeners would then see it over-full in
+  the middle of a batch, which changes what they observe.
+- Trim before every read instead of indexing from the marker. Fewer lines
+  touched, but a frame's `column()` read would then pay an O(window)
+  `splice` on top of its O(window) gather.
 
-A push every 16 ms has to be taken in within 16 ms. In the browser
-(cloud) the `view` pipeline at 10k ticks/s with a 10 s window (100k
-points) spent the whole second ingesting, took in 1,846 of 10,000 ticks a
-second and drew no frame.
+**Trade-offs kept.** Between trims the array also holds up to one window
+of evicted events (up to 2× the window's references kept alive). Reads
+(`keyColumn()` / `column()` / `toTimeSeries()`) still walk every event:
+64 ms at 600k rows in Node, 4 ms a frame at 60k points in the browser.
+That cost is [PND-COLOUT]'s and [PND-LSNAP]'s to cut, not this task's.
 
-Fix: a head index into the array, compacted occasionally (the spike's
-`Ring` in `engine.ts` is the pattern), instead of `splice` per event. This
-fixes keeping the view up to date, not reading it: `keyColumn()` /
-`column()` gather from the `Event[]` on every call (64 ms at 600k rows in
-Node, 4 ms a frame at 60k points in the browser). The
-count form (`window(n)`) and the source-evict mirror (`live-view.ts:200-211`)
-go through the same array. Attaching the view also turns on per-tick
-`Event` creation in the source, since the view listens to `'event'`.
+**Source:** offscreen-stream spike §4 (#760). Before the fix, evicting with
+`this.#events.splice(0, count)` on every arriving event took 98% of a
+50k-event window's profile, and one 16 ms push cost 24–34 ms at 10k
+ticks/s and 271–326 ms at 100k (spike `results/node.txt` section 3,
+`results/node-window-reruns.txt`). In the browser (cloud) the `view`
+pipeline at 10k ticks/s with a 100k-point window took in 1,846 of 10,000
+ticks a second and drew no frame.
 
 ### [PND-LVCHAIN] — Views chained after a window view never evict
 
