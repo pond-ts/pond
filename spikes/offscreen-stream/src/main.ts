@@ -17,6 +17,7 @@ const windowSec = Number(q.get('window') ?? 60);
 const pipeline = (q.get('pipeline') ?? 'chunk') as Pipeline;
 const draw = (q.get('draw') ?? 'm4') as DrawMode;
 const busy = Number(q.get('busy') ?? 0); // ms of main-thread work per 50 ms
+const spin = Number(q.get('spin') ?? 0); // extra ms of work per chart frame
 const prefill = q.has('prefill') ? Number(q.get('prefill')) : windowSec;
 
 for (const [id, v] of Object.entries({
@@ -49,6 +50,7 @@ const opts: EngineOptions = {
   height,
   dpr: window.devicePixelRatio || 1,
   targetFps: 120,
+  spin,
 };
 
 const w = window as any;

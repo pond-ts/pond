@@ -47,6 +47,9 @@ export interface EngineOptions {
   dpr: number;
   /** Fallback frame pacing when the thread has no requestAnimationFrame. */
   targetFps: number;
+  /** Extra ms of busy work added to every frame on the drawing thread, to
+   *  measure how receiving holds up as drawing takes more of the thread. */
+  spin?: number;
 }
 
 export interface Stats {
@@ -472,6 +475,10 @@ export function startEngine(
       painted = latestT;
     }
     draws.push(now() - v0);
+    if (opts.spin) {
+      const end = now() + opts.spin;
+      while (now() < end);
+    }
     work.push(now() - f0);
     // Delay: wall clock at the end of this frame's JS, minus the newest tick
     // drawn. The server stamps the newest tick of each frame with its send

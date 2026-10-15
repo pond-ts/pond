@@ -137,6 +137,74 @@ slim observation (per-host gauges, debug instrumentation) without reducer
 state. Re-triage now that fused rolling shipped — may be a small bolt-on on
 the shared dispatch path; may earn its own RFC. Don't pre-decide.
 
+### [PND-LSNAP] — Columnar `toTimeSeries()` + a public appended-columns event
+
+**Source:** the offscreen-stream spike (2026-10-15,
+[`spikes/offscreen-stream/REPORT.md`](../../spikes/offscreen-stream/REPORT.md)
+§3), which streamed ticks into a `LiveSeries` in a worker and drew them at
+120 fps.
+
+Two gaps between a `LiveSeries` and a chart that wants every tick:
+
+1. **`toTimeSeries()` rebuilds row by row.** The chunked store already holds
+   columns, but `snapshot()` (`live-chunked-storage.ts:366-390`) makes one
+   array per row, then a `TimeSeries` that validates every row again. Its
+   own comment calls the columnar version "a deferred follow-up; snapshot
+   isn't the hot path." For a live chart it is: Node, 600k rows, 470 ms to
+   snapshot and read one column out vs 14 ms to copy the same stored
+   chunks' columns; at 3M rows, 4.5 s vs 80 ms. In the browser the
+   `snapshot` pipeline fell under 60 fps by 60k points. This is the data
+   side of the 31.6 fps SciChart-suite finding under
+   [PND-LIVELYR](PND_CHARTS_PLAN.md).
+2. **No public "just appended, as columns" event.** The spike's fast path
+   used `_onChunk` (internal). The public `'batch'` / `'event'` listeners
+   materialize an `Event` per tick (`#commitChunk`,
+   `live-series.ts:758-761`), which is what the chunk hook exists to avoid.
+
+Shape to consider: (1) concat the stored chunks into a trusted
+`TimeSeries` (the comment already names `concatSorted(chunks)`); (2)
+promote `_onChunk` to a public, read-only "appended columns" listener (a
+column view per append, no `Event`s). Check (1) against the dashboard A/B
+that promoted `LiveView.column()` (Decisions, 2026-10-10): a fast snapshot
+may change which path live charts should use.
+
+### [PND-LPUSHCOL] — Columnar push into `LiveSeries`
+
+**Source:** offscreen-stream spike §5. `pushMany` accepts rows only. At
+100k ticks/s it costs ~20 ms per second of ticks (Node), where copying the
+same ticks into typed arrays takes ~1 ms. Building the row arrays is only
+~2 ms of that. A CPU profile of `pushMany` puts **45% of self time in
+`validateAndNormalizeColumnar`'s per-row loop and 26% in the `Time`
+constructor** (`normalizeKey` allocates a `Time` per row and discards it,
+`batch/validate.ts:415-422`). `TimeSeries.fromColumns`, pond's existing
+column ingest, takes the same ticks in the same 1,600-tick batches in
+~1.2 ms.
+
+Shape: `live.pushColumns({ time: Float64Array, price: Float64Array, … })`
+through `ingestColumnsToStore` then `#commitChunk` (cross-batch order check
+already there). This is the in-process half of
+[PND-WIRE](PND_CORE_PLAN.md)'s `SeriesUpdate` streaming append: a columnar
+wire is only worth having if the `LiveSeries` takes columns.
+
+### [PND-LVWIN] — `live.window()` costs O(window) per tick
+
+**Source:** offscreen-stream spike §4. A `LiveView` from `live.window(…)`
+keeps its window as an `Event[]` and, on every arriving event, evicts with
+`this.#events.splice(0, count)` (`live-view.ts:181-187` →
+`#applyEviction`, `live-view.ts:730-736`). Once the window is full, every
+tick evicts about one event, and each `splice` shifts the whole array. Node,
+cost of one 160-tick push (100k ticks/s every 16 ms): 0.95 ms at a
+1k-event window, 2.2 ms at 10k, **34 ms at 50k** (no view: 0.07–0.22 ms).
+In the browser the `view` pipeline at 10k ticks/s with a 10 s window
+(100k points) spent the whole second ingesting and fell behind; a profile
+put 94.6% of self time in that `splice`.
+
+Fix: a head index into the array, compacted occasionally (the spike's
+`Ring` in `engine.ts` is the pattern), instead of `splice` per event. The
+count form (`window(n)`) and the source-evict mirror (`live-view.ts:200-211`)
+go through the same array. Attaching the view also turns on per-tick
+`Event` materialization in the source ([PND-LSNAP] item 2).
+
 ## Decisions
 
 ### Live column reads promoted out of experimental — 2026-10-10 (1.0 readiness)

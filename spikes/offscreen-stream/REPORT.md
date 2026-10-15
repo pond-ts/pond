@@ -6,261 +6,283 @@ WebSocket pushes ticks every 16 ms, the ticks are appended to a
 `OffscreenCanvas`? And how far does very-high-rate streaming into a
 browser go?
 
-**Answer.** Yes, and the worker does what it promises: on a busy page the
-chart keeps 120 fps while the page itself drops to 69. But the thread is
-not what decides the frame rate. **How the chart turns points into pixels
-decides it**, and so does **how the chart gets its data out of the
-`LiveSeries`**. With the right drawing method, 1 million ticks a second
-with 16 million points in view draws in under half a millisecond a frame.
-With the method pond uses today, 120 fps ends at about a million points in
-view, and the public way to read a `LiveSeries` into a chart cannot keep
-up at even 60k points.
+**Short answer.**
 
-Numbers below are from two places, and they answer different questions:
+- **The worker does its job.** On a MacBook Pro with a 120 Hz screen, with
+  the page busy 40 ms of every 50, the chart drawn in a worker held
+  120 fps while the same chart drawn on the page thread fell to 35 (§1).
+- **But the thread doesn't set the ceiling. Three parts of pond do**, and
+  moving to a worker changes none of them:
+  - **Drawing** (§2). pond's line drawing re-reads every visible point on
+    every frame of a scrolling chart. On the M1 Pro it held 120 fps with
+    1M points in view (4.4 ms a frame) and not with 3M (79 fps). The
+    spike's alternative, "buckets", took 0.1–0.45 ms a frame at every size
+    tried, up to 16M points in view.
+  - **Reading data out of a `LiveSeries`** (§3, §4). Both public ways stop
+    far short of that. `toTimeSeries()` rebuilds the series row by row:
+    470 ms at 600k points. A `live.window()` view shifts its whole event
+    list for every tick it drops: 34 ms per 16 ms batch at a 50k-tick
+    window. The spike got past both only through an internal hook.
+  - **Pushing ticks in** (§5). `pushMany` costs about 20 ms per 100k
+    ticks, against about 1 ms to copy them into a plain array. Most of
+    that is checking each row and making a `Time` object per tick. pond's
+    existing column ingest takes the same ticks in about 1.2 ms.
+- **The 1M ticks/s rows had no `LiveSeries` in them.** Every run at
+  1M ticks/s is the `raw` pipeline (straight into a typed array). With a
+  `LiveSeries` in the loop, see §5 for how far ingest goes.
 
-- **Peter's MacBook Pro** (M1 Pro, 32 GB, built-in 120 Hz ProMotion
-  display, Chrome 155, headed): the only place frame rates mean anything.
-  [`results/mac-m1pro-120hz.txt`](results/mac-m1pro-120hz.txt).
-- **A cloud container** (4 shared cores, headless Chromium capped at
-  60 Hz): good for comparing **milliseconds of work per frame** between
-  setups, not for frame rates. Its worker frame rate wobbles around 50
-  even at 0.7 ms of work a frame. Why wasn't investigated; the test
-  server, the harness and the browser share the 4 cores.
-  [`results/capped.txt`](results/capped.txt) (+ `.json`).
+Five library tasks come out of this, listed at the end and added to
+[PLAN.md](../../PLAN.md).
+
+## Where the numbers come from
+
+- **A MacBook Pro** (M1 Pro, 32 GB, built-in 120 Hz ProMotion screen,
+  Chrome 155, visible window): the only place frame rates mean anything.
+  [`results/mac-m1pro-120hz.txt`](results/mac-m1pro-120hz.txt). These runs
+  rendered at **1 device pixel per CSS pixel** (Playwright's default),
+  not the screen's native 2. The plot was about 1,130 pixels wide.
+- **A cloud container** (4 shared cores, headless Chromium, frames capped
+  at 60 Hz): good for **milliseconds of work per frame** and data rates,
+  not for frame rates. The test server, the bench and the browser share
+  the 4 cores. Runs at 1× and 2× pixel density:
+  [`results/cloud-dpr1.txt`](results/cloud-dpr1.txt),
+  [`results/cloud-dpr2.txt`](results/cloud-dpr2.txt) (+ `.json`).
+- **Node** for the pond-only costs, one script per figure:
+  [`node-bench.mjs`](node-bench.mjs) →
+  [`results/node.txt`](results/node.txt).
+
+Each browser row: open the page, wait for the history to arrive, wait
+until the chart is less than 1 s behind the feed (flagged
+`NOT-CAUGHT-UP` if it never gets there within 60 s), settle 3 s, then
+average every frame over 4 s. All figures in a row come from the same
+frames.
+
+**Delay** ("lat" in the result files) is the wall clock at the end of a
+frame's drawing code minus the time of the newest tick drawn. The server
+stamps the newest tick in each message with the time it sends it, so the
+delay covers the network, waiting in the queue, ingest, the wait for the
+next frame and the frame's own drawing. It does not include the browser
+putting the frame on screen. Server and browser run on the same machine,
+so there's one clock.
 
 ## What was built
 
 ```
-server.mjs ── WebSocket, binary frames every 16 ms ──▶ worker.ts
-  synthetic tape: price random walk,                     engine.ts:
-  ticks spread evenly across each frame,                   ingest  → LiveSeries (or a plain buffer)
-  rate exact over time, history first                      draw    → OffscreenCanvas, every animation frame
-                                                         page (main.ts) gets one stats object a second
+server.mjs ── WebSocket, one binary message every 16 ms ──▶ worker.ts
+  synthetic tape: price random walk,                        engine.ts:
+  ticks spread evenly across each message,                    ingest → LiveSeries (or a plain buffer)
+  rate exact over time, history first                         draw   → OffscreenCanvas, every animation frame
+                                                            page (main.ts) gets one stats object a second
 ```
 
-The same `engine.ts` runs in the worker or on the page, so "worker vs main
-thread" compares identical code. Three choices are switchable:
+Each message is one `Float64Array` with the ticks interleaved:
+`[sendTime, n, dropped, t0, price0, size0, t1, price1, …]`.
+
+The same `engine.ts` runs in the worker or on the page, so "worker vs page
+thread" compares identical code. The switches:
 
 - **Pipeline** (how ticks get to the chart):
-  - `raw`: straight into a typed buffer, no pond. This is the floor.
-  - `chunk`: `LiveSeries.pushMany`, with every appended batch copied
-    column by column into a typed buffer through `LiveSeries._onChunk`
-    (an internal hook).
-  - `snapshot`: `LiveSeries.pushMany`, then on each frame with new data
-    the path a pond chart uses today, `live.toTimeSeries()` then
-    `fromTimeSeries(ts, 'price')`.
+  - `raw`: straight into a typed buffer, no pond. The floor.
+  - `chunk`: `LiveSeries.pushMany`, and every appended batch copied column
+    by column into a typed buffer through `LiveSeries._onChunk`, an
+    internal hook.
+  - `snapshot`: `LiveSeries.pushMany`, then on each frame with new data,
+    `live.toTimeSeries()` then `fromTimeSeries(ts, 'price')`: what a pond
+    chart fed from a `LiveSeries` does today.
+  - `view`: `LiveSeries.pushMany` with a `live.window('10s')`-style
+    `LiveView` attached, read each frame through its public
+    `keyColumn()` / `column('price')`.
 - **Draw**:
-  - `m4`: the real `@pond-ts/charts` line kernel (`drawLine` in
-    `packages/charts/src/line.ts`). It trims the series to what's visible,
-    then thins it to 4 points per pixel column before stroking.
+  - `m4`: the real `@pond-ts/charts` line kernel (`drawLine`,
+    `packages/charts/src/line.ts`). It trims to what's visible, thins to
+    4 points per pixel column, then strokes.
   - `buckets`: new in the spike. Each tick is folded, as it arrives, into
-    one bucket per pixel column of the window, keeping the bucket's
-    first, lowest, highest and last price. A frame draws one line through
-    the buckets. Same picture as `m4`; the work moves from every frame to
-    each arrival.
+    one bucket per pixel column of the window, which keeps the first,
+    lowest, highest and last price. A frame draws one line through the
+    buckets. Same picture as `m4`; the work moves from every frame to each
+    tick's arrival.
 - **Busy page**: the page thread spins for 20 or 40 ms of every 50 ms,
   standing in for a heavy app.
 
-The chart scrolls smoothly: its right edge is the newest tick's time plus
-the time since it arrived, so the tape moves every frame even though data
-lands every 16 ms.
+The chart's right edge is the newest tick's time plus the time since it
+arrived, so the tape moves every frame even though data lands every 16 ms.
 
 ## 1. On a busy page, the worker keeps the chart at 120 fps
 
-Mac, 100k ticks/s, 10 s window (~1M points in view), `chunk` pipeline.
+Mac, 100k ticks/s, 10 s window (~990k points in view), `chunk` pipeline.
+"Busy" is ms of page work in every 50 ms.
 
-| draw    | page busy | chart fps (worker) | chart fps (main thread) | page fps | data → screen delay, worker / main |
-| ------- | --------- | ------------------ | ----------------------- | -------- | ---------------------------------- |
-| m4      | 0         | 120                | 120                     | 120      | 14 / 14 ms                         |
-| m4      | 20/50 ms  | 120                | 100                     | 100      | 14 / 15 ms                         |
-| m4      | 40/50 ms  | **120**            | **35**                  | 69 / 35  | 14 / **60** ms                     |
-| buckets | 40/50 ms  | **120**            | **60**                  | 60       | 10 / 32 ms                         |
+| draw    | busy | chart fps, worker / page thread | page fps, worker run / page-thread run | delay, worker / page thread |
+| ------- | ---- | ------------------------------- | -------------------------------------- | --------------------------- |
+| m4      | 0    | 120 / 120                       | 120 / 120                              | 14 / 14 ms                  |
+| m4      | 20   | 120 / 100                       | 100 / 100                              | 14 / 15 ms                  |
+| m4      | 40   | **120 / 35**                    | 69 / 35                                | 14 / **60** ms              |
+| buckets | 40   | **120 / 60**                    | 60 / 60                                | 10 / 32 ms                  |
 
-On the main thread the chart can only draw when the page lets it, so it
-falls to the page's own rate. In the worker it doesn't notice. The delay
-from tick to screen also stays put in the worker (14 ms, which includes up
-to 16 ms of the server batching ticks) while on the main thread it grows:
-the WebSocket messages arrive on the same thread as the busy work and wait
-for it.
+On the page thread the chart can only draw when the page lets it, so it
+drops to the page's own rate. In the worker it doesn't notice. The delay
+from tick to screen also stays put in the worker, while on the page thread
+it grows: the WebSocket messages arrive on the busy thread and wait their
+turn.
 
-The cloud run shows what happens when the main thread is overloaded
-rather than just busy: with 40 of every 50 ms taken plus ~13 ms of drawing
-a frame, there isn't enough thread left to take the ticks in as fast as
-they come, and the screen falls seconds behind: 3 s at 20/50 and 10 s at
-40/50 (`m4`), 8.6 s at 40/50 (`buckets`). In the worker the same setups
-stayed at 10–26 ms.
+<!-- CLOUD-BUSY -->
 
-One Mac row doesn't fit: main thread, `buckets`, busy 20/50 reports the
-page at 120 fps with no frame over 9 ms, yet the chart's slowest 5% of
-frames took 22 ms. Either the busy load didn't run in that sample or the
-page meter missed it. Not investigated; the busy 40/50 row next to it
-behaves as expected.
+One Mac row doesn't fit: page thread, `buckets`, busy 20 shows the page at
+120 fps with no frame over 9 ms, yet the chart's slowest 5% of frames took
+22 ms. Both meters run on the same thread there, so they should agree.
+Not explained. The bench that produced it sampled the two meters over
+different seconds and timed them with different clocks; both are fixed,
+but the Mac wasn't re-run.
 
 ## 2. The drawing method decides the ceiling, not the thread
 
-Mac, worker, `raw` pipeline (no pond ingest cost), quiet page.
+Mac, worker, `raw` pipeline (no `LiveSeries`), quiet page, 1 device pixel
+per CSS pixel (about 1,130 pixel columns).
 
 | ticks/s | window | points in view | m4 fps | m4 work/frame | buckets fps | buckets work/frame |
 | ------- | ------ | -------------- | ------ | ------------- | ----------- | ------------------ |
 | 1k      | 5 min  | 300k           | 120    | 2.3 ms        | 120         | 0.43 ms            |
 | 10k     | 1 min  | 600k           | 120    | 3.2 ms        | 120         | 0.45 ms            |
-| 100k    | 10 s   | 1M             | 120    | 4.4 ms        | 120         | 0.42 ms            |
-| 10k     | 5 min  | 3M             | **79** | 12 ms         | 120         | 0.39 ms            |
-| 100k    | 1 min  | 5.2M / 5.9M    | **44** | 22 ms         | 120         | 0.40 ms            |
-| 1M      | 10 s   | 4.3M / 8M      | **70** | 16 ms         | 120         | 0.20 ms            |
-| 1M      | 1 min  | 16M            | —      | —             | 120         | 0.12 ms            |
+| 100k    | 10 s   | 990k           | 120    | 4.4 ms        | 120         | 0.42 ms            |
+| 10k     | 5 min  | 3.0M           | **79** | 12.1 ms       | 120         | 0.39 ms            |
+| 100k    | 1 min  | 5.2M / 5.9M    | **44** | 22.3 ms       | 120         | 0.40 ms            |
+| 1M      | 10 s   | 4.3M / 8.0M    | **70** | 15.5 ms       | 120         | 0.20 ms            |
+| 100k    | 5 min  | 10.6M (35%)    | —      | —             | 120         | 0.26 ms            |
+| 1M      | 1 min  | 16.0M (27%)    | —      | —             | 120         | 0.12 ms            |
+| 1M      | 5 min  | 16.0M (5%)     | —      | —             | 120         | 0.09 ms            |
 
-(Point counts differ slightly between columns because runs ended at
-different moments while the window was filling; see "Caveats".)
+Where two point counts are given, the m4 and buckets runs had different
+amounts of history in view when sampled. A percentage means the window
+was only that full, because the history sent up front was capped at 10M
+ticks; buckets then only had that share of the columns to draw, so those
+three rows understate a full window. **Full-window bucket rows took
+0.39–0.45 ms.** m4 wasn't run above 10M points.
 
-**Why m4 grows with the data.** `drawLine` thins the visible points into a
-few per pixel, which is what keeps big static charts fast. The thinned
-result is cached, keyed on the series and the x scale
-(`packages/charts/src/decimate.ts:372-401`). A scrolling chart changes the
-x scale every frame, so the cache never hits and every frame walks every
-visible point again. That is fine up to about a million points at 120 fps
-on an M1 Pro and not beyond. Each 120 fps frame has 8.3 ms.
+**m4: 120 fps up to about 1M points, not at 3M.** Each 120 fps frame has
+8.3 ms. m4's cost grows with the points in view at a steady ~3.5–4.5 ns a
+point (4.4 ms at 990k, 12.1 ms at 3.0M, 22.3 ms at 5.2M), which puts the
+limit around 2M points on this machine. That is arithmetic from these
+rows, not a measured run.
+
+**Why m4 grows with the data.** `drawLine` trims the series to what's
+visible and thins it to a few points per pixel column, then caches the
+result keyed on the series object and the x scale
+(`packages/charts/src/decimate.ts:372-401`). On a scrolling chart both
+change every frame (new ticks, a new time range), so the cache can't help
+and every frame walks every visible point again. (The spike also scans
+them once a frame for the y range; that's the "ext" figure in the result
+files, about a tenth of the total.) That's fine for a still chart and
+costly for one that moves every frame.
 
 **Why buckets don't.** A bucket is updated once per tick when the tick
 arrives (a compare and a store), and a frame draws one point per pixel
-column, ~2,300 on a Retina screen. So a frame costs the same at 10k points
-or 16M, and memory doesn't grow with the window either: in `raw` +
-`buckets` the spike keeps no tick buffer at all. The price is that the
-buckets are fixed to one zoom level: zooming in, hovering a single tick or
-changing the window needs the raw data, which the `chunk` pipeline still
-keeps in the `LiveSeries`.
+column. So a frame costs about the same at 10k points or 16M, and
+`raw` + `buckets` keeps no tick buffer at all: memory doesn't grow with
+the window either. The price is that the buckets are fixed to one zoom
+level and one window. Zooming, panning or hovering a single tick needs the
+raw data, which the `chunk` pipeline still keeps in the `LiveSeries`.
 
-Every bucket row on the Mac held 120 fps, from 10k points to 16M.
+Bucket frame times also varied with the setup in ways not explained by
+the drawing: in the §1 runs the same bucket chart took 0.36–0.38 ms on a
+quiet page and 0.19–0.21 ms with the page busy. Not investigated; every
+bucket row stayed under 0.5 ms, about 6% of a 120 fps frame.
 
-## 3. Reading a LiveSeries into a chart: today's path can't stream
+<!-- CLOUD-DPR -->
 
-Cloud, worker, `snapshot` pipeline. "view" is the time spent turning the
-`LiveSeries` into arrays the chart can draw, on each frame that had new
-data.
+## 3. Reading a `LiveSeries` into a chart: `toTimeSeries()` can't keep up
 
-| ticks/s | window | points | view per frame | chart fps |
-| ------- | ------ | ------ | -------------- | --------- |
-| 1k      | 10 s   | 10k    | 3.8 ms         | 50        |
-| 1k      | 1 min  | 60k    | 27 ms          | 21        |
-| 10k     | 10 s   | 100k   | 43 ms          | 19        |
-| 1k      | 5 min  | 300k   | 159 ms         | 5         |
-| 10k     | 1 min  | 600k   | 497 ms         | 2         |
+<!-- CLOUD-SNAPSHOT -->
 
-The same data through `chunk` (kept as plain number arrays as it
-arrives) costs **0.01 ms** for the view at every size.
+Node, one `LiveSeries` filled with N rows, time to get its time and price
+columns out as two `Float64Array`s ([`results/node.txt`](results/node.txt)
+section 1):
 
-**Why.** `LiveSeries` stores its data as columns (the chunked store), but
-`toTimeSeries()` doesn't hand those columns over. It rebuilds the whole
-series row by row: one array per tick, then a fresh `TimeSeries` that
-checks every row again (`packages/core/src/live/live-chunked-storage.ts:366-391`).
-The code says why: _"A columnar fast-path snapshot … is a deferred
-follow-up; snapshot isn't the hot path."_ For a live chart it is the hot
-path. Then `fromTimeSeries` copies the column out again one value at a
-time (`packages/charts/src/data.ts:254-265`, which explains it avoids the
-bulk reader because of a bundler problem).
+<!-- NODE-1 -->
 
-React live charts haven't hit this because `useSnapshot` refreshes at most
-every 100 ms by default (`packages/react/src/useSnapshot.ts:30,43`). That
-caps them at 10 updates a second, well short of 120.
+**Why.** The `LiveSeries` already stores its data as columns, but
+`toTimeSeries()` doesn't hand them over. It builds one array per row, then
+a new `TimeSeries` that checks every row again
+(`packages/core/src/live/live-chunked-storage.ts:366-390`). Its comment
+says why: _"A columnar fast-path snapshot … is a deferred follow-up;
+snapshot isn't the hot path."_ For a live chart it is the hot path. Then
+`fromTimeSeries` copies the column out one value at a time
+(`packages/charts/src/data.ts:236-263`), because the bulk reader gets
+dropped by browser bundlers ([PND-COLAPI]).
 
-Node, same data, for scale: `toTimeSeries()` takes 553 ms at 600k rows;
-copying the same chunks' columns straight into two `Float64Array`s, still
-reading one value at a time, takes 14 ms. A real column hand-over would
-be cheaper again.
+React live charts already hit this. `useSnapshot` refreshes at most every
+100 ms by default (`packages/react/src/useSnapshot.ts:30,43`), so at most
+10 updates a second. An earlier benchmark against other chart libraries
+measured pond's per-frame `toTimeSeries()` path at 31.6 fps with a
+100k-point streaming window, where uPlot held 119
+([PND-LIVELYR](../../docs/plans/PND_CHARTS_PLAN.md)).
 
-## 4. Getting ticks into a LiveSeries costs about 10× the floor
+## 4. A `live.window()` view costs more per tick the bigger the window
 
-Cloud, worker, 100k ticks/s: ingest takes **3 ms per second** in `raw`
-and **34–42 ms per second** in `chunk`. On the Mac `chunk` costs 11–21 ms
-per second. That's 1–4% of one core at 100k/s, affordable, but it's the
-part of pond that scales with the tick rate.
+The other public route, a `LiveView` from `live.window(…)` read through
+`keyColumn()` / `column()`, is cheap to read (third column above) but
+expensive to keep up to date. It holds its window as a list of event
+objects, and every arriving tick drops the oldest with
+`events.splice(0, count)` (`packages/core/src/live/live-view.ts:181-187`,
+`730-736`), which moves every remaining item down one place. So each tick
+costs time in proportion to the window.
 
-Most of the gap is shape, not storage. The wire delivers columns (one
-`Float64Array` per frame) but `pushMany` only takes rows, so the worker
-builds one small array per tick (`src/engine.ts`, the `onmessage`
-handler) and pond then takes them apart again into columns. Push
-frequency matters too: at 100k/s, pushing every 4 ms costs 82 ms/s of
-ingest against 32 ms/s every 50 ms (cloud `cadence` rows), so there's a
-fixed cost per `pushMany` call as well as per tick. Pushing more often
-buys lower delay (5 ms vs 31 ms from tick to screen).
+Node, one 160-tick push (100k ticks/s every 16 ms), steady state
+([`results/node.txt`](results/node.txt) section 3):
 
-## 5. Receiving: a thread busy drawing also receives slower
+<!-- NODE-3 -->
 
-Observed, not explained: when the thread that owns the WebSocket spends
-most of each frame drawing, ticks arrive more slowly than the server sends
-them, and the chart falls behind. When frames are cheap, the same thread
-takes the full rate.
+<!-- CLOUD-VIEW -->
 
-- Mac, worker, `m4`, 1M ticks/s (24 MB/s): frames took 16 ms, the worker
-  received 887k ticks/s instead of 1M, and the screen ran 0.4–0.6 s
-  behind.
-- Cloud, same setup, 73 ms frames: 123k ticks/s received, over a minute
-  behind.
-- With `buckets` (0.1–0.7 ms frames) both machines took the full 1M
-  ticks/s, 11–15 ms behind (the cloud's 1-minute and 5-minute rows; its
-  10 s row was still recovering from the history load when sampled).
-- The server isn't the limit: a Node client received 6M ticks (144 MB)
-  of history in 1.6 s.
+## 5. Pushing ticks into a `LiveSeries` costs about 20× a plain copy
 
-So moving drawing into a worker doesn't help with receiving if the worker
-itself is busy. Cheap frames help both. (Or a second worker that only
-receives and passes data on; not tried here.)
+<!-- CLOUD-INGEST -->
 
-The server stops sending to a client that falls more than 32 MB behind and
-counts the ticks it skips. The first version held those ticks back and
-sent them all at once later, which filled the queue again and stalled the
-live feed for good after a large history load. That was a bug in the
-spike's server, not in pond.
+Node, cost per 100k ticks, by step ([`results/node.txt`](results/node.txt)
+section 2):
 
-## What this means for pond
+<!-- NODE-2 -->
 
-Library-actionable findings, roughly in order of payoff for live charts:
+Building the row arrays is only about a tenth of it. A CPU profile of
+`pushMany` (1,600-row batches) puts **45% of the time in the per-row
+check loop** (`validateAndNormalizeColumnar`, `packages/core/src/batch/validate.ts`)
+and **26% in making a `Time` object for each tick**, which the loop then
+throws away after reading its number (`validate.ts:415-422`). pond already
+has a column ingest without either cost: `TimeSeries.fromColumns` takes
+the same ticks in the same batches in about 1.2 ms. `LiveSeries` has no
+way in for columns.
 
-1. **A column hand-over from `LiveSeries` to charts.** Either a fast
-   `toTimeSeries()` that passes the stored columns through instead of
-   rebuilding rows, or a live column view a chart can read directly. This
-   is the data side of the existing [PND-LIVELYR] task, and this spike
-   gives it numbers: 497 ms vs 0.01 ms at 600k points.
-2. **A streaming line/area draw mode** that folds ticks into per-pixel
-   buckets as they arrive (`buckets` here), for scrolling live charts.
-   It keeps 120 fps flat in rate and window. The existing M4 path stays
-   for static, zoomed and hovered views.
-3. **Columnar `pushMany`.** Accept a batch of columns (one typed array per
-   column) so wire → `LiveSeries` doesn't allocate an array per tick.
-4. **A worker render mode for charts** (the earlier discussion in this
-   thread): draw kernels like `drawLine` aren't exported from
-   `@pond-ts/charts`, and each chart type hands the canvas a function with
-   its data baked in, which can't cross into a worker. The spike reached
-   into `packages/charts/src` to get round both.
-5. **`LiveSeries._onChunk` is internal.** The `chunk` pipeline needs a
-   supported "here's what was just appended, as columns" event; today the
-   public `'batch'` event creates an object per tick.
-6. **A sharp edge in the M4 cache:** it's keyed on the identity of the
-   series and the x scale (`decimate.ts:380-386`). Change a d3 scale's
-   domain in place and keep the same series object, and the chart reuses
-   a polyline thinned for the old domain. Charts always build new scales,
-   so it doesn't bite there; the spike did change a scale in place at
-   first (fixed, and the affected `snapshot` rows re-run). Worth a comment
-   or a domain check before the kernels are exported.
+<!-- CLOUD-CADENCE -->
 
-## Caveats and what wasn't covered
+## 6. Receiving: a worker busy drawing receives less
 
-- **One real machine, one browser.** 120 Hz was measured on one M1 Pro in
-  Chrome. Safari and Firefox weren't run; the engine falls back to timers
-  if a worker has no `requestAnimationFrame`, and that fallback wasn't
-  exercised.
-- **Cloud frame rates aren't trustworthy**, as above. Use the cloud for
-  milliseconds of work and data rates only.
-- **Windows weren't always full.** History sent up front is capped at 10M
-  ticks (a 5-minute window at 1M/s would be 7 GB), so long windows at high
-  rates show fewer points than rate × window. `buckets` cost doesn't
-  depend on it; `m4` rows were capped at 10M points for the same reason.
-- **Synthetic data, one line, no interaction.** No hover, tooltips,
-  axes from `@pond-ts/charts`, or multiple series. A real worker mode has
-  to answer hover against data that lives in the worker.
-- **Delay is measured with one clock** (server and browser on the same
-  machine) and includes up to 16 ms of batching on the server.
-- **The `snapshot` rows stop at 600k points**: beyond that a frame takes
-  seconds.
-- **The `chunk` pipeline stops at 6M points** in the sweep, to keep the
-  `LiveSeries` row memory in bounds on the cloud box.
+<!-- RECEIVE -->
+
+## Appendix: what a worker render mode needs in `@pond-ts/charts`
+
+The spike drew with `drawLine` imported from `packages/charts/src`
+directly. The charts package as shipped can't be moved into a worker,
+for these reasons:
+
+1. **Layers hand the canvas a function with the data baked in.** Each
+   chart type registers a `draw(ctx, xScale, yScale)` closure over its
+   series and styles (`LineChart.tsx:422`, called from `Layers.tsx:450`).
+   A function can't be sent to a worker; the data and style would have to
+   be sent as plain values and drawn by code that already lives there.
+2. **The drawing functions aren't exported.** `drawLine` and the other
+   kernels are internal; only types like `DecimateOption` are public
+   (`index.ts:191`).
+3. **Drawing is tied to React's commit.** `<Canvas>` draws synchronously in
+   `useLayoutEffect` on the page thread (`Canvas.tsx:38-66`).
+4. **Hover and selection read the data on the page thread.** Hit-testing
+   runs in pointer handlers against the chart's series (`LineChart.tsx:345`);
+   with the data in a worker, each hover becomes a message round trip.
+5. **Overlays are DOM.** Annotations, guides and the crosshair are SVG
+   over the canvas (`Layers.tsx:2094`), so they stay on the page thread.
+6. **Theme from CSS variables reads the DOM.** `cssVarTheme` uses
+   `getComputedStyle`; in a worker it returns the fallbacks
+   (`css-theme.ts:48`).
+7. **Some options are callbacks.** For example scatter's per-point
+   `labelAt(i)` (`scatter.ts:469`).
+
+The charts RFC already lists "OffscreenCanvas + Worker rendering for the
+multi-chart-per-page case" as a v2 idea (`docs/rfcs/charts.md:810`).

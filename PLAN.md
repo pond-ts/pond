@@ -310,6 +310,18 @@ linearWindow>`, [PND-SYMLOG]. [PND-AXISMIRROR] (a mirrored second axis) is
   (`snapshot.partitionBy().toMap()`) per host. A `LiveView`-aware input — or
   a documented cheap-handle idiom for live charts — closes it. Overlaps
   [PND-PARITY] / the live layer.
+- **[PND-STREAMDRAW]** — Streaming draw for scrolling live charts
+  (offscreen-stream spike). A scrolling window misses the M4 cache every
+  frame, so `drawLine` re-thins every visible point: 120 fps held at 1M
+  points on an M1 Pro, 79 fps at 3M. Folding ticks into per-pixel buckets
+  as they arrive held 0.1–0.45 ms a frame up to 16M points. Design call:
+  a line/area mode vs a live layer, and what zoom/hover read.
+- **[PND-OFFSCREEN]** — Worker (OffscreenCanvas) render mode. The spike's
+  worker-drawn chart held 120 fps on a page busy 40 ms of every 50; the
+  page-thread chart fell to 35. Blocked today by layer draw closures,
+  unexported kernels, page-thread hit-testing and DOM theming. Also fix
+  `drawLine`'s fresh `boundaries = []` default (defeats the M4 cache for
+  direct callers) before exporting kernels.
 - **[PND-XOFFSET]** — Per-layer bar offset and forward projection space
   (the assessment's **C2**), plus a crossing-band fill (**C3**). **The
   fixed-time half shipped** (Tidal F-charts-20): `xOffset` (ms / duration) on
@@ -607,6 +619,18 @@ Robustness debt plus the queued composition workstreams. Plan:
   exact-removal eviction channel.
 - **[PND-TAPOBS]** — Evaluate `tap()` per-partition observer now that fused
   rolling shipped.
+- **[PND-LSNAP]** — Columnar `LiveSeries.toTimeSeries()` + a public
+  appended-columns event (offscreen-stream spike). The snapshot rebuilds
+  row by row: 470 ms at 600k rows vs 14 ms to copy the stored chunks. The
+  only per-append column access is internal `_onChunk`. Data side of
+  [PND-LIVELYR].
+- **[PND-LPUSHCOL]** — Columnar push into `LiveSeries`. `pushMany` (rows
+  only) costs ~20 ms per 100k ticks, ~70% of it per-row checks and a `Time`
+  object per tick; `TimeSeries.fromColumns` takes the same ticks in
+  ~1.2 ms. The in-process half of [PND-WIRE]'s streaming append.
+- **[PND-LVWIN]** — `live.window()` costs O(window) per tick: each arriving
+  event `splice`s the oldest off an `Event[]`, shifting the whole array
+  (34 ms per 160-tick push at a 50k-event window). Use a head index.
 
 ### Streaming semantics (Phase 4.5)
 

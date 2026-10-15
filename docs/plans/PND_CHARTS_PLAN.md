@@ -1821,6 +1821,66 @@ No new task: the levers are this task's live-aware input / cheap-handle
 idiom plus the data-side items [PND-GATHER] (core), [PND-COLOUT] and
 [PND-LROLL] (columnar).
 
+**Spike evidence (offscreen-stream, 2026-10-15,
+[`spikes/offscreen-stream/REPORT.md`](../../spikes/offscreen-stream/REPORT.md)
+§3–4):** both public ways to read a `LiveSeries` into a chart are too slow
+for a scrolling chart at 120 fps beyond tens of thousands of points.
+`toTimeSeries()` + `fromTimeSeries` costs 470 ms at 600k rows in Node;
+a `live.window()` `LiveView` costs O(window) per arriving tick. Data-side
+tasks filed: [PND-LSNAP] (columnar snapshot + public appended-columns
+event) and [PND-LVWIN] (window eviction), both in
+[PND_LIVE_PLAN.md](PND_LIVE_PLAN.md). React live charts also refresh at
+most every 100 ms by default (`useSnapshot` throttle,
+`packages/react/src/useSnapshot.ts:30,43`).
+
+### [PND-STREAMDRAW] — Streaming draw for scrolling live charts
+
+**Source:** offscreen-stream spike §2. On a chart whose window scrolls
+every frame, the M4 cache (keyed on the x scale's identity,
+`decimate.ts:372-401`) never hits, so `drawLine` culls and thins every
+visible point on every frame. On an M1 Pro at 120 Hz (1 device pixel per
+CSS pixel), it held 120 fps with 1M points in view (4.4 ms a frame), 79 fps
+at 3M (12 ms) and 44 fps at 5.2M (22 ms).
+
+The spike's `buckets` mode folds each tick as it arrives into one bucket
+per pixel column (first / min / max / last) and draws one line through the
+buckets. It held 120 fps on every Mac row, 0.1–0.45 ms a frame, from 10k to
+16M points in view, and keeps no tick buffer of its own. What it gives up:
+the buckets are fixed to one zoom level and one window, so zoom, pan and
+hovering a single tick still need the raw data.
+
+Design questions: a `decimate: 'stream'` mode on line/area/band vs a
+separate live layer; how it gets ticks (needs [PND-LSNAP]'s appended-columns
+event); what hover reads; rebuilding buckets from the raw data on
+zoom/resize. The RFC's v2 "bitmap-shift streaming" idea
+(`docs/rfcs/charts.md:807`) is the other known approach; buckets also
+handle the y range changing, which a shifted bitmap can't.
+
+### [PND-OFFSCREEN] — Worker (OffscreenCanvas) render mode
+
+**Source:** this thread's question ("can the canvas be updated in its own
+thread?") and offscreen-stream spike §1. On a page busy 40 ms of every 50,
+a worker-drawn chart held 120 fps where the same chart on the page thread
+fell to 35, and the tick-to-screen delay stayed at 14 ms instead of
+growing to 60.
+
+What blocks it in `@pond-ts/charts` today (full list in the report's
+appendix): layers hand the canvas closures over their data
+(`LineChart.tsx:422`, `Layers.tsx:450`), so nothing can be posted to a
+worker; the draw kernels aren't exported; `<Canvas>` draws synchronously in
+`useLayoutEffect`; hit-testing for hover/selection reads the data on the
+page thread; overlays are SVG; `cssVarTheme` reads the DOM; some options
+are callbacks (`labelAt`). Listed as a v2 idea in `docs/rfcs/charts.md:810`.
+
+The worker also needs its data in the worker (the spike's WebSocket and
+`LiveSeries` ran there), or the page thread stays in the path.
+
+Fix before exporting kernels: `drawLine`'s `boundaries: readonly number[] =
+[]` default (`line.ts:130`) makes a new array on every call, and the M4
+cache compares `boundaries` by identity, so a direct caller that omits it
+never hits the cache. `LineChart` passes a stable `NO_BREAKS`, so the
+shipped charts are unaffected.
+
 ### [PND-ANNRFC] — Annotations RFC write-up
 
 The annotations system shipped (#306/#308/#309) and the staffed cursor-flag
@@ -2482,20 +2542,20 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-        **The fix is located, and it is a code fix rather than the documentation
-        sentence proposed below** (Codex, reviewing the `<Domain>` RFC,
-        2026-08-13). Suppression is global because **every row runs a query over
-        **all** annotations** — `Layers.tsx` (the `annotations.some(a => a.editing)` query). Row-scope that query to the
-        row's own marks (annotations already register their `rowKey`, which is
-        how the container draws a mark's guide on the *other* rows), or make
-        global editing say so explicitly. Available today; it was wrongly claimed
-        as something only a container decomposition could fix.
+            **The fix is located, and it is a code fix rather than the documentation
+            sentence proposed below** (Codex, reviewing the `<Domain>` RFC,
+            2026-08-13). Suppression is global because **every row runs a query over
+            **all** annotations** — `Layers.tsx` (the `annotations.some(a => a.editing)` query). Row-scope that query to the
+            row's own marks (annotations already register their `rowKey`, which is
+            how the container draws a mark's guide on the *other* rows), or make
+            global editing say so explicitly. Available today; it was wrongly claimed
+            as something only a container decomposition could fix.
 
-        _Still true; no longer felt here._ The draggable marker is gone — selection
-        is a click — so nothing on this page is in edit mode. But it cost a design
-        iteration to discover, and the docs still don't mention it. **The one-line
-        fix is a sentence on `editing`**: "while any mark in a row is editing, that
-        row's data cursor is suppressed."
+            _Still true; no longer felt here._ The draggable marker is gone — selection
+            is a click — so nothing on this page is in edit mode. But it cost a design
+            iteration to discover, and the docs still don't mention it. **The one-line
+            fix is a sentence on `editing`**: "while any mark in a row is editing, that
+            row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires

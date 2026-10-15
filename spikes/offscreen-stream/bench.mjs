@@ -54,7 +54,7 @@ function formatRow(r) {
   const f = (n, d = 1) => (n == null ? '—' : n.toFixed(d));
   return (
     `${r.group.padEnd(7)} ${r.mode.padEnd(6)} ${r.pipeline.padEnd(8)} ${r.draw.padEnd(7)} ${String(r.rate).padStart(7)}/s ${String(r.window).padStart(3)}s ` +
-    `busy ${String(r.busy).padStart(2)} every ${String(r.interval).padStart(2)}ms dpr ${r.dpr ?? 1} | pts ${String(r.points).padStart(9)} ` +
+    `busy ${String(r.busy).padStart(2)}${r.spin ? ` spin ${r.spin}` : ''} every ${String(r.interval).padStart(2)}ms dpr ${r.dpr ?? 1} | pts ${String(r.points).padStart(9)} ` +
     `fps ${f(r.fps, 0).padStart(4)} p95 ${f(r.frameP95)}ms work ${f(r.workAvg, 2)}ms (view ${f(r.viewAvg, 2)}${r.viewDirtyAvg != null ? `/${f(r.viewDirtyAvg, 2)}` : ''} ext ${f(r.extentAvg, 2)} draw ${f(r.drawAvg, 2)}) ` +
     `ingest ${f(r.ingestMsPerSec, 0)}ms/s ${f(r.ticksPerSec, 0)}t/s${r.droppedPerSec ? ` DROP ${f(r.droppedPerSec, 0)}/s` : ''} lat ${f(r.latencyP50, 0)}/${f(r.latencyP95, 0)}ms page ${f(r.pageFps, 0)}fps max ${f(r.pageFrameMax, 0)}ms` +
     (r.caughtUp === false ? '  NOT-CAUGHT-UP' : '') +
@@ -124,6 +124,20 @@ for (const interval of [4, 8, 16, 50])
     interval,
   });
 
+// 4. Receiving vs a busy drawing thread: the cheapest draw at 1M ticks/s,
+// with `spin` ms of extra work added to every frame. Only 1 s of history,
+// so no history backlog is mixed in.
+for (const spin of [0, 4, 8, 12, 16, 24])
+  scenarios.push({
+    group: 'receive',
+    ...base,
+    pipeline: 'raw',
+    draw: 'buckets',
+    rate: 1_000_000,
+    window: 10,
+    spin,
+  });
+
 const { server, port } = await startServer({ port: 0 });
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH ?? undefined,
@@ -147,7 +161,10 @@ for (const s of selected) {
   // History to prefill: the whole window, capped at 10M ticks (a 5-minute
   // window at 1M/s would be 7 GB on the wire; bucket draw cost does not
   // depend on it).
-  const prefill = Math.min(s.window, Math.floor(10_000_000 / s.rate));
+  const prefill =
+    s.group === 'receive'
+      ? 1
+      : Math.min(s.window, Math.floor(10_000_000 / s.rate));
   const { group, ...params } = s;
   const qs = new URLSearchParams({
     ...params,

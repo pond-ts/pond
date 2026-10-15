@@ -6,10 +6,12 @@
 // 1. Reading a LiveSeries out as arrays: toTimeSeries() vs a LiveView's
 //    column readers vs copying the stored chunks (what a column hand-over
 //    would start from).
-// 2. Ingest: where the time goes between the wire buffer and LiveSeries.
+// 2. Ingest: where the time goes between the wire buffer and LiveSeries,
+//    plus the batch columnar ingest (`TimeSeries.fromColumns`) on the same
+//    batches as a stand-in for what a columnar LiveSeries push would cost.
 // 3. A `live.window()` LiveView's per-push cost as the window grows.
 // 4. History download speed into a plain Node WebSocket client.
-import { LiveSeries } from '../../packages/core/dist/index.js';
+import { LiveSeries, TimeSeries } from '../../packages/core/dist/index.js';
 import { WebSocket } from 'ws';
 import { startServer } from './server.mjs';
 
@@ -112,7 +114,7 @@ console.log(
   '\n## 2. Ingest at 100k ticks/s: cost per second of ticks, by step (median of 5, ms)',
 );
 console.log(
-  'batch  build-rows  pushMany  pushMany+mirror(_onChunk)  raw typed copy',
+  'batch  build-rows  pushMany  pushMany+mirror(_onChunk)  raw typed copy  TimeSeries.fromColumns',
 );
 for (const batch of [400, 800, 1600, 5000]) {
   const frames = Array.from({ length: Math.ceil(100_000 / batch) }, (_, k) =>
@@ -158,8 +160,28 @@ for (const batch of [400, 800, 1600, 5000]) {
         y[o] = f[4 + i * 3];
       }
   });
+  // The same batches already split into one typed array per column (what a
+  // columnar wire would deliver), through pond's columnar ingest engine.
+  const colBatches = frames.map((f) => {
+    const n = f[1];
+    const c = {
+      time: new Float64Array(n),
+      price: new Float64Array(n),
+      size: new Float64Array(n),
+    };
+    for (let i = 0; i < n; i++) {
+      c.time[i] = f[3 + i * 3];
+      c.price[i] = f[4 + i * 3];
+      c.size[i] = f[5 + i * 3];
+    }
+    return c;
+  });
+  const cols = time(() => {
+    for (const columns of colBatches)
+      TimeSeries.fromColumns({ name: 't', schema, columns });
+  });
   console.log(
-    `${String(batch).padEnd(6)} ${build.toFixed(1).padStart(10)}  ${push.toFixed(1).padStart(8)}  ${mirror.toFixed(1).padStart(25)}  ${raw.toFixed(2).padStart(14)}`,
+    `${String(batch).padEnd(6)} ${build.toFixed(1).padStart(10)}  ${push.toFixed(1).padStart(8)}  ${mirror.toFixed(1).padStart(25)}  ${raw.toFixed(2).padStart(14)}  ${cols.toFixed(2).padStart(22)}`,
   );
 }
 
