@@ -1873,7 +1873,12 @@ page thread; overlays are SVG; `cssVarTheme` reads the DOM; some options
 are callbacks (`labelAt`). Listed as a v2 idea in `docs/rfcs/charts.md:810`.
 
 The worker also needs its data in the worker (the spike's WebSocket and
-`LiveSeries` ran there), or the page thread stays in the path.
+`LiveSeries` ran there), or the page thread stays in the path. And the
+WebSocket belongs on its **own** worker, not the drawing one: in the spike
+(§6) a socket owned by a drawing worker took in 29–37% fewer ticks at
+1M ticks/s once drawing kept that thread a quarter busy, while a separate
+receiving worker passing messages on got every tick through to the same
+busy drawing worker.
 
 Fix before exporting kernels: `drawLine`'s `boundaries: readonly number[] =
 []` default (`line.ts:130`) makes a new array on every call, and the M4
@@ -2542,20 +2547,20 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-            **The fix is located, and it is a code fix rather than the documentation
-            sentence proposed below** (Codex, reviewing the `<Domain>` RFC,
-            2026-08-13). Suppression is global because **every row runs a query over
-            **all** annotations** — `Layers.tsx` (the `annotations.some(a => a.editing)` query). Row-scope that query to the
-            row's own marks (annotations already register their `rowKey`, which is
-            how the container draws a mark's guide on the *other* rows), or make
-            global editing say so explicitly. Available today; it was wrongly claimed
-            as something only a container decomposition could fix.
+                **The fix is located, and it is a code fix rather than the documentation
+                sentence proposed below** (Codex, reviewing the `<Domain>` RFC,
+                2026-08-13). Suppression is global because **every row runs a query over
+                **all** annotations** — `Layers.tsx` (the `annotations.some(a => a.editing)` query). Row-scope that query to the
+                row's own marks (annotations already register their `rowKey`, which is
+                how the container draws a mark's guide on the *other* rows), or make
+                global editing say so explicitly. Available today; it was wrongly claimed
+                as something only a container decomposition could fix.
 
-            _Still true; no longer felt here._ The draggable marker is gone — selection
-            is a click — so nothing on this page is in edit mode. But it cost a design
-            iteration to discover, and the docs still don't mention it. **The one-line
-            fix is a sentence on `editing`**: "while any mark in a row is editing, that
-            row's data cursor is suppressed."
+                _Still true; no longer felt here._ The draggable marker is gone — selection
+                is a click — so nothing on this page is in edit mode. But it cost a design
+                iteration to discover, and the docs still don't mention it. **The one-line
+                fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires

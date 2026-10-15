@@ -28,12 +28,13 @@ browser go?
     against about 1 ms to copy them into a plain array. Most of that is
     checking each row and making a `Time` object per tick. pond's existing
     column ingest takes the same ticks in about 1 ms.
-- **1M ticks/s was only reached without a `LiveSeries`.** The worker
-  took in and drew 1M ticks/s only in the `raw` pipeline (straight into a
-  typed array). With a `LiveSeries` in the loop, the cloud box kept up at
-  250k ticks/s, nearly at 500k, and not at 1M (§5, §6). Receiving also
-  falls off when the receiving thread is busy drawing, well before it runs
-  out of time (§6).
+- **Receiving at 1M ticks/s needs the WebSocket in its own worker** (§6).
+  A WebSocket on the drawing worker took in fewer ticks as soon as
+  drawing kept that thread busy, long before the thread ran out of time.
+  With a separate worker owning the socket and passing messages on, the
+  same busy drawing worker took in every tick. That way a `LiveSeries` in
+  a worker took in 1M ticks/s with 18 ms delay (cloud); without it,
+  607k–703k. All earlier 1M ticks/s results were without a `LiveSeries`.
 
 Five library tasks come out of this, listed at the end and added to
 [PLAN.md](../../PLAN.md).
@@ -50,7 +51,8 @@ Five library tasks come out of this, listed at the end and added to
   not for frame rates. The test server, the bench and the browser share
   the 4 cores. Runs at 1× and 2× pixel density:
   [`results/cloud-dpr1.txt`](results/cloud-dpr1.txt),
-  [`results/cloud-dpr2.txt`](results/cloud-dpr2.txt) (+ `.json`).
+  [`results/cloud-dpr2.txt`](results/cloud-dpr2.txt), and the receiving
+  runs in `results/cloud-receive*.txt` (each with a `.json`).
 - **Node** for the pond-only costs, one script per figure:
   [`node-bench.mjs`](node-bench.mjs) →
   [`results/node.txt`](results/node.txt).
@@ -107,6 +109,9 @@ thread" compares identical code. The switches:
     tick's arrival.
 - **Busy page**: the page thread spins for 20 or 40 ms of every 50 ms,
   standing in for a heavy app.
+- **Receiving** (§6 only): `spin` adds a fixed number of ms of busy work
+  to every chart frame; `receiver=worker` moves the WebSocket into a
+  separate worker that passes each message on to the chart's thread.
 
 The chart's right edge is the newest tick's time plus the time since it
 arrived, so the tape moves every frame even though data lands every 16 ms.
@@ -234,9 +239,10 @@ rows where both runs had the same number of points in view:
 
 Twice the resolution means twice the pixel columns and four times the
 pixels. Buckets cost about 1.5–2× as much (still under 1.5 ms), and m4
-gained 0.6–3 ms a frame on top of its per-point cost. So on a Retina
-screen, expect the Mac's m4 limit to sit a little below the ~1M points
-measured at 1×.
+gained 0.6–3 ms a frame on top of its per-point cost. From that, the
+Mac's m4 limit on its Retina screen would sit somewhat below the ~1M
+points measured at 1×. That's inferred from the cloud, not measured on
+the Mac.
 
 The cloud's _frame rate_ at 2× fell to 21–37 fps even where the chart's
 code took about 1.2 ms a frame, while the page's own meter still ran at 60. So something outside the chart's code held the worker's frames back
@@ -398,7 +404,64 @@ the browser costs more per call wasn't established.
 
 ## 6. Receiving: a worker busy drawing receives less
 
-<!-- RECEIVE -->
+At 1M ticks/s the WebSocket carries 24 MB a second. The server and
+socket aren't the limit: a plain Node client took in 6M ticks (144 MB) of
+history in 1.5–2.0 s ([`results/node.txt`](results/node.txt) section 4).
+The browser side is.
+
+On the Mac, `m4` at 1M ticks/s took 15.5 ms a frame at 70 fps, which is
+all of the worker's time (70 × 15.5 ms ≈ 1.09 s per second). It took in
+887k of the 1M ticks a second and drew 0.36–0.58 s behind.
+
+To see how receiving holds up as drawing takes more of the thread, the
+cloud runs added a fixed amount of busy work to every frame (`spin`), on
+the cheapest setup (`raw` + `buckets`, 1M ticks/s, 1 s of history so no
+backlog). Two runs ([`results/cloud-receive.txt`](results/cloud-receive.txt),
+[`results/cloud-receive-rx.txt`](results/cloud-receive-rx.txt)):
+
+| extra work per frame | share of each second the thread spent drawing | ticks/s taken in, socket on the drawing worker | ticks/s taken in, socket on its own worker |
+| -------------------- | --------------------------------------------- | ---------------------------------------------- | ------------------------------------------ |
+| 0 ms                 | 4%                                            | 841k–885k (0.04–0.24 s behind)                 | **998k** (19 ms behind)                    |
+| 4 ms                 | 23–25%                                        | 635k–715k (1.0–1.3 s behind)                   |                                            |
+| 8 ms                 | 37%                                           | 714k–749k (1.4–1.6 s behind)                   | **997k** (26 ms behind)                    |
+| 12 ms                | 48–49%                                        | 458k–558k (2.2–2.7 s behind)                   |                                            |
+| 16 ms                | 59–63%                                        | 308k–361k (3.2–3.9 s behind)                   | **1,004k** (36 ms behind)                  |
+| 24 ms                | 71–76%                                        | 246k–257k (4.7–4.9 s behind)                   |                                            |
+
+**Receiving fell off long before the thread ran out of time.** With 4 ms
+of extra work a frame, the thread was drawing for only a quarter of each
+second and still lost 29–37% of the ticks. And when a
+separate worker owned the WebSocket and passed each message on
+(`receiver=worker`, [`src/receiver.ts`](src/receiver.ts)), **the same busy
+drawing worker took in every tick**, even while drawing nearly 60% of
+the time.
+The messages, their size and the work done on each were the same in both
+columns; only the thread that owned the socket changed. So a WebSocket
+slows down when the thread that owns it is busy, whether or not that
+thread has time to spare. Why, inside Chrome, wasn't investigated.
+
+**The same holds with a `LiveSeries` in the loop** (`chunk` + `buckets`,
+[`results/cloud-receive-chunk.txt`](results/cloud-receive-chunk.txt) and
+`cloud-receive.txt`):
+
+| ticks/s sent | socket on the drawing worker          | socket on its own worker | ingest (own worker) |
+| ------------ | ------------------------------------- | ------------------------ | ------------------- |
+| 250k         | 250k (13–16 ms behind)                | not run                  |                     |
+| 500k         | 441k–481k (36–50 ms behind)           | **499k** (14 ms behind)  | 146 ms/s            |
+| 1M           | 607k–703k (1.4–1.5 s, falling behind) | **994k** (18 ms behind)  | 239 ms/s            |
+
+With its own receiving worker, **a `LiveSeries` in a worker took in 1M
+ticks/s and drew it with 18 ms delay** on the 4-core cloud box, using a
+quarter of the drawing worker's time for ingest. That's with the internal
+`_onChunk` hook for the read side and `pushMany` (rows) for the write
+side; [PND-LPUSHCOL] would cut most of that ingest cost.
+
+Caveat: these are cloud runs (shared cores, the server generating ticks on
+the same machine). The receiver-worker effect wasn't measured on the Mac.
+
+The server stops sending to a client that falls more than 32 MB behind and
+counts the ticks it skips ("DROP" in the result files), so a slow client
+shows up as fewer ticks taken in rather than an ever-growing queue.
 
 ## What this means for pond
 
@@ -426,7 +489,8 @@ breakout plans:
    fixing: it makes a new array on every call, and the M4 cache compares
    `boundaries` by identity, so a caller that leaves it out never hits the
    cache. `LineChart` passes a stable empty array, so shipped charts are
-   unaffected. §1.
+   unaffected. A worker mode should also take its data on a separate
+   receiving worker (§6). §1.
 
 Evidence was also added to two existing tasks: [PND-LIVELYR] (live chart
 inputs) and [PND-WIRE] (columnar wire format).
