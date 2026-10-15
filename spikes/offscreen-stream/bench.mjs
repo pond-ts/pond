@@ -2,7 +2,8 @@
 // process, opens the page per scenario, lets it settle, then samples the
 // engine's once-a-second stats and the page's own frame rate.
 //
-//   node spikes/offscreen-stream/bench.mjs [--uncapped] [--only group] [--where k=v,…] [--out file]
+//   node spikes/offscreen-stream/bench.mjs [--uncapped] [--headed] [--channel chrome]
+//     [--only group] [--where k=v,…] [--out file]
 //
 // --uncapped launches Chromium without the vsync frame cap, so rAF runs as
 // fast as the work allows: that is the honest "could this hold 120 fps"
@@ -14,6 +15,12 @@ import { startServer } from './server.mjs';
 
 const args = process.argv.slice(2);
 const uncapped = args.includes('--uncapped');
+// --headed runs a visible browser: on a machine with a real 120 Hz display
+// this is the only way to measure frame pacing against actual vsync.
+// --channel chrome uses the installed Google Chrome instead of Playwright's.
+const headed = args.includes('--headed');
+const channelIdx = args.indexOf('--channel');
+const channel = channelIdx >= 0 ? args[channelIdx + 1] : undefined;
 const outIdx = args.indexOf('--out');
 const out = outIdx >= 0 ? args[outIdx + 1] : null;
 const onlyIdx = args.indexOf('--only');
@@ -79,6 +86,8 @@ for (const interval of [4, 8, 16, 50])
 const { server, port } = await startServer({ port: 0 });
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH ?? undefined,
+  headless: !headed,
+  channel,
   args: uncapped ? ['--disable-frame-rate-limit', '--disable-gpu-vsync'] : [],
 });
 const results = [];
