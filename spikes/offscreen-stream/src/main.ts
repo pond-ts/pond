@@ -60,7 +60,7 @@ const show = (s: Stats) => {
     `chart fps        ${f(s.fps, 0)}   (frame p50 ${f(s.frameP50)}ms  p95 ${f(s.frameP95)}ms  max ${f(s.frameMax)}ms)`,
     `missed frames    ${f(s.over120 * 100, 0)}% over 8.3ms   ${f(s.over60 * 100, 0)}% over 16.7ms`,
     `work / frame     ${f(s.workAvg, 2)}ms avg  ${f(s.workP95, 2)}ms p95  (view ${f(s.viewAvg, 2)}  extent ${f(s.extentAvg, 2)}  draw ${f(s.drawAvg, 2)})`,
-    `ingest           ${f(s.ingestMsPerSec, 1)}ms per second  ${f(s.ticksPerSec, 0)} ticks/s  ${f(s.msgsPerSec, 0)} msgs/s  ${f(s.mbPerSec, 2)} MB/s`,
+    `ingest           ${f(s.ingestMsPerSec, 1)}ms per second  ${f(s.ticksPerSec, 0)} ticks/s  ${f(s.msgsPerSec, 0)} msgs/s  ${f(s.mbPerSec, 2)} MB/s${s.droppedPerSec > 0 ? `  DROPPED ${f(s.droppedPerSec, 0)}/s (client behind)` : ''}`,
     `points in view   ${s.points.toLocaleString()}${s.columns ? `  (${s.columns} pixel buckets)` : ''}`,
     `tick → pixel     ${f(s.latencyP50, 0)}ms p50  ${f(s.latencyP95, 0)}ms p95`,
     `thread           ${mode}${s.usingRaf ? '' : ' (no rAF in this thread: setTimeout pacing)'}`,

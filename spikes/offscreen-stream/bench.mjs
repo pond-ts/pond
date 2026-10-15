@@ -2,7 +2,7 @@
 // process, opens the page per scenario, lets it settle, then samples the
 // engine's once-a-second stats and the page's own frame rate.
 //
-//   node spikes/offscreen-stream/bench.mjs [--uncapped] [--quick] [--out file]
+//   node spikes/offscreen-stream/bench.mjs [--uncapped] [--only group] [--where k=v,…] [--out file]
 //
 // --uncapped launches Chromium without the vsync frame cap, so rAF runs as
 // fast as the work allows: that is the honest "could this hold 120 fps"
@@ -18,6 +18,14 @@ const outIdx = args.indexOf('--out');
 const out = outIdx >= 0 ? args[outIdx + 1] : null;
 const onlyIdx = args.indexOf('--only');
 const only = onlyIdx >= 0 ? args[onlyIdx + 1] : null;
+// --where pipeline=raw,draw=buckets,rate=1000000 — run only matching scenarios.
+const whereIdx = args.indexOf('--where');
+const where =
+  whereIdx >= 0
+    ? Object.fromEntries(
+        args[whereIdx + 1].split(',').map((kv) => kv.split('=')),
+      )
+    : {};
 
 const SETTLE_MS = 3000;
 const SAMPLE_S = 4;
@@ -74,7 +82,12 @@ const browser = await chromium.launch({
   args: uncapped ? ['--disable-frame-rate-limit', '--disable-gpu-vsync'] : [],
 });
 const results = [];
-for (const s of scenarios.filter((s) => !only || s.group === only)) {
+const selected = scenarios.filter(
+  (s) =>
+    (!only || s.group === only) &&
+    Object.entries(where).every(([k, v]) => String(s[k]) === v),
+);
+for (const s of selected) {
   const page = await browser.newPage({
     viewport: { width: 1232, height: 700 },
   });
@@ -138,6 +151,7 @@ for (const s of scenarios.filter((s) => !only || s.group === only)) {
     drawAvg: med('drawAvg'),
     ingestMsPerSec: med('ingestMsPerSec'),
     ticksPerSec: med('ticksPerSec'),
+    droppedPerSec: med('droppedPerSec'),
     mbPerSec: med('mbPerSec'),
     latencyP50: med('latencyP50'),
     latencyP95: med('latencyP95'),
@@ -152,7 +166,7 @@ for (const s of scenarios.filter((s) => !only || s.group === only)) {
     `${s.group.padEnd(7)} ${s.mode.padEnd(6)} ${s.pipeline.padEnd(8)} ${s.draw.padEnd(7)} ${String(s.rate).padStart(7)}/s ${String(s.window).padStart(3)}s ` +
       `busy ${String(s.busy).padStart(2)} every ${String(s.interval).padStart(2)}ms | pts ${String(r.points).padStart(9)} ` +
       `fps ${f(r.fps, 0).padStart(4)} p95 ${f(r.frameP95)}ms work ${f(r.workAvg, 2)}ms (view ${f(r.viewAvg, 2)} ext ${f(r.extentAvg, 2)} draw ${f(r.drawAvg, 2)}) ` +
-      `ingest ${f(r.ingestMsPerSec, 0)}ms/s ${f(r.ticksPerSec, 0)}t/s lat ${f(r.latencyP50, 0)}/${f(r.latencyP95, 0)}ms page ${f(r.pageFps, 0)}fps max ${f(r.pageFrameMax, 0)}ms` +
+      `ingest ${f(r.ingestMsPerSec, 0)}ms/s ${f(r.ticksPerSec, 0)}t/s${r.droppedPerSec ? ` DROP ${f(r.droppedPerSec, 0)}/s` : ''} lat ${f(r.latencyP50, 0)}/${f(r.latencyP95, 0)}ms page ${f(r.pageFps, 0)}fps max ${f(r.pageFrameMax, 0)}ms` +
       (errors.length ? `  ERR ${errors.join('; ')}` : ''),
   );
 }

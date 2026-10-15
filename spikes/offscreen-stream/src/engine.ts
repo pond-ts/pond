@@ -63,6 +63,8 @@ export interface Stats {
   /** Ingest cost: ms spent ingesting per second of wall time. */
   ingestMsPerSec: number;
   ticksPerSec: number;
+  /** Ticks the server dropped because this client fell behind (backpressure). */
+  droppedPerSec: number;
   msgsPerSec: number;
   mbPerSec: number;
   points: number;
@@ -239,6 +241,8 @@ export function startEngine(
   }
 
   let latestT = -Infinity;
+  let droppedTotal = 0;
+  let droppedReported = 0;
   let latestArrival = 0;
   let dirty = false;
   let snapshotView: ChartSeries = {
@@ -266,23 +270,24 @@ export function startEngine(
     const t0 = now();
     const buf = new Float64Array(ev.data as ArrayBuffer);
     const n = buf[1]!;
+    droppedTotal = Math.max(droppedTotal, buf[2]!);
     if (pipeline === 'raw') {
       for (let i = 0; i < n; i++) {
-        const t = buf[2 + i * 3]!;
-        const v = buf[3 + i * 3]!;
+        const t = buf[3 + i * 3]!;
+        const v = buf[4 + i * 3]!;
         if (keepPoints) ring.append(t, v);
         buckets?.add(t, v);
       }
     } else {
       const rows = new Array(n);
       for (let i = 0; i < n; i++) {
-        const o = 2 + i * 3;
+        const o = 3 + i * 3;
         rows[i] = [buf[o]!, buf[o + 1]!, buf[o + 2]!];
       }
       live!.pushMany(rows as any);
     }
     if (n > 0) {
-      latestT = buf[2 + (n - 1) * 3]!;
+      latestT = buf[3 + (n - 1) * 3]!;
       if (pipeline !== 'snapshot') ring.evictBefore(latestT - windowMs);
       buckets?.evictBefore(latestT - windowMs - buckets.ms);
     }
@@ -459,6 +464,7 @@ export function startEngine(
       extentAvg: avg(extents),
       ingestMsPerSec: ingestMs / secs,
       ticksPerSec: ticks / secs,
+      droppedPerSec: (droppedTotal - droppedReported) / secs,
       msgsPerSec: msgs / secs,
       mbPerSec: bytes / secs / 1e6,
       points:
@@ -476,6 +482,7 @@ export function startEngine(
     frameIntervals.length = work.length = draws.length = views.length = 0;
     extents.length = latencies.length = 0;
     ingestMs = ticks = msgs = bytes = 0;
+    droppedReported = droppedTotal;
   }, 1000);
 
   return () => {

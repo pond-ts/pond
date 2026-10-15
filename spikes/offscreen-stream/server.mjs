@@ -4,12 +4,19 @@
 //   ws://host/stream?rate=<ticks/s>&interval=<ms>&prefill=<seconds>
 //
 // Every `interval` ms (default 16) it sends one binary frame:
-//   Float64Array [sendTimeMs, n, t0, price0, size0, t1, price1, size1, …]
+//   Float64Array [sendTimeMs, n, droppedSoFar, t0, price0, size0, t1, …]
 // Tick times are spread evenly across the interval (fractional ms), so the
 // stream is strictly time-ordered. The tick count per frame is drift-corrected
 // against wall time so the delivered rate is exact even when Node's timer
 // jitters. `prefill` first sends that many seconds of history (the
 // "snapshot, then stream" shape a real feed has), in 50k-tick frames.
+//
+// Backpressure: while more than 32 MB is queued on the socket (the client is
+// not keeping up), the server DROPS the ticks that frame would have carried —
+// the tape gets a gap — and counts them in `droppedSoFar`. A real feed would
+// conflate or disconnect; what it must not do is what the first version did:
+// hold the ticks back and then send them all at once in one giant frame,
+// which kept the socket permanently backed up.
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, dirname } from 'node:path';
@@ -82,16 +89,17 @@ export function startServer({ port = 8787 } = {}) {
     while (owed > 0) {
       const n = Math.min(CHUNK, owed);
       const t1 = lastT + (n / rate) * 1000;
-      const buf = new Float64Array(2 + n * 3);
+      const buf = new Float64Array(3 + n * 3);
       buf[0] = Date.now();
       buf[1] = n;
-      tape(n, lastT, t1, buf, 2);
+      tape(n, lastT, t1, buf, 3);
       ws.send(buf);
       lastT = t1;
       owed -= n;
     }
 
     let sent = 0;
+    let dropped = 0;
     const live0 = Date.now();
     lastT = Math.max(lastT, live0);
     const timer = setInterval(() => {
@@ -99,13 +107,17 @@ export function startServer({ port = 8787 } = {}) {
       const due = Math.floor(((now - live0) / 1000) * rate);
       const n = due - sent;
       if (n <= 0 || now <= lastT) return;
-      // Don't let a slow client balloon server memory: skip a frame while the
-      // socket has > 32MB queued (reported as a backpressure count).
-      if (ws.bufferedAmount > 32 * 1024 * 1024) return;
-      const buf = new Float64Array(2 + n * 3);
+      if (ws.bufferedAmount > 32 * 1024 * 1024) {
+        dropped += n;
+        sent = due;
+        lastT = now;
+        return;
+      }
+      const buf = new Float64Array(3 + n * 3);
       buf[0] = now;
       buf[1] = n;
-      tape(n, lastT, now, buf, 2);
+      buf[2] = dropped;
+      tape(n, lastT, now, buf, 3);
       lastT = now;
       sent = due;
       ws.send(buf);
