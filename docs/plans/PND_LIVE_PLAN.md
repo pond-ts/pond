@@ -162,6 +162,13 @@ Shape to consider: concat the stored chunks into a trusted `TimeSeries`
 dashboard A/B that promoted `LiveView.column()` (Decisions, 2026-10-10): a
 fast snapshot may change which path live charts should use.
 
+Scope: cheaper, not free. A snapshot still copies the whole window (the
+spike's plain column copy took 16 ms at 600k rows, twice a 120 fps
+frame), and the chart side's `fromTimeSeries` reads one value at a time
+until [PND-COLAPI] lands. So this serves throttled snapshots (React's
+`useSnapshot` refreshes every 100 ms) and modest windows; a chart reading
+a large window every frame needs the appended-columns route below.
+
 The spike's other need, a public "just appended, as columns" event, is the
 existing [PND-COLOUT](PND_COLUMNAR_PLAN.md). The spike used the internal
 `_onChunk` in its place, because the public `'batch'` / `'event'`
@@ -218,7 +225,10 @@ points) spent the whole second ingesting, took in 1,846 of 10,000 ticks a
 second and drew no frame.
 
 Fix: a head index into the array, compacted occasionally (the spike's
-`Ring` in `engine.ts` is the pattern), instead of `splice` per event. The
+`Ring` in `engine.ts` is the pattern), instead of `splice` per event. This
+fixes keeping the view up to date, not reading it: `keyColumn()` /
+`column()` gather from the `Event[]` on every call (64 ms at 600k rows in
+Node, 4 ms a frame at 60k points in the browser). The
 count form (`window(n)`) and the source-evict mirror (`live-view.ts:200-211`)
 go through the same array. Attaching the view also turns on per-tick
 `Event` creation in the source, since the view listens to `'event'`.

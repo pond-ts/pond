@@ -313,16 +313,18 @@ linearWindow>`, [PND-SYMLOG]. [PND-AXISMIRROR] (a mirrored second axis) is
 - **[PND-STREAMDRAW]** — Streaming draw for scrolling live charts
   (offscreen-stream spike). A scrolling window misses the M4 cache every
   frame, so `drawLine` re-thins every visible point: on an M1 Pro at Retina
-  resolution, 120 fps at 1M points (4.7 ms a frame), 74 fps at 3M. Folding
+  resolution, 120 fps at 1M points (4.3 ms a frame), 74 fps at 3M. Folding
   ticks into one bucket per pixel column as they arrive held 120 fps at
   0.6 ms a frame or less, up to 29M points in a full window. Design call:
-  a line/area mode vs a live layer, and what zoom/hover read.
+  a line/area mode vs a live layer ([PND-LIVELYR]), and what zoom/hover
+  read.
 - **[PND-OFFSCREEN]** — Worker (OffscreenCanvas) render mode. The spike's
   worker-drawn chart held 120 fps on a page busy 40 ms of every 50; the
   page-thread chart fell to 33. Blocked today by layer draw closures,
   unexported draw functions, page-thread hit-testing and DOM theming.
-  Should offer a separate worker to receive the data (it never lost ticks
-  in the spike). Also fix `drawLine`'s fresh `boundaries = []` default
+  Its guide should show the socket on its own worker (in the spike that
+  kept every tick flowing where the drawing worker's own socket fell
+  behind). Also fix `drawLine`'s fresh `boundaries = []` default
   (defeats the M4 cache for direct callers) before exporting draw functions.
 - **[PND-XOFFSET]** — Per-layer bar offset and forward projection space
   (the assessment's **C2**), plus a crossing-band fill (**C3**). **The
@@ -623,9 +625,10 @@ Robustness debt plus the queued composition workstreams. Plan:
   rolling shipped.
 - **[PND-LSNAP]** — Columnar `LiveSeries.toTimeSeries()` (offscreen-stream
   spike). The snapshot rebuilds row by row: 542 ms at 600k rows, with the
-  column read out, vs 16 ms to copy the stored chunks' columns. Data side
-  of [PND-LIVELYR]. The spike's other need, a public appended-columns
-  event in place of internal `_onChunk`, is [PND-COLOUT].
+  column read out, vs 16 ms to copy the stored chunks' columns. Still a
+  whole-window copy, so it suits throttled snapshots; per-frame reads go
+  through [PND-COLOUT]'s appended-columns event (the spike used internal
+  `_onChunk`). Data side of [PND-LIVELYR].
 - **[PND-LPUSHCOL]** — Columnar push into `LiveSeries`. `pushMany` (rows
   only) costs ~17–23 ms per 100k ticks in Node; a CPU profile puts 89% in
   the per-row check, including 27% making a `Time` object per tick.
@@ -635,7 +638,7 @@ Robustness debt plus the queued composition workstreams. Plan:
   window grows: each arriving event `splice`s the oldest off an `Event[]`,
   shifting the whole array (98% of a profile). One 16 ms push into a
   50k-event window: 24–34 ms at 10k ticks/s, 271–326 ms at 100k. Use a head
-  index.
+  index. Reads (`keyColumn()` / `column()`) stay a walk over every event.
 
 ### Streaming semantics (Phase 4.5)
 

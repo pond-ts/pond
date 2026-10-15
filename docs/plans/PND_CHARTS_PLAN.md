@@ -1842,19 +1842,24 @@ every frame, the M4 cache (keyed on the x scale's identity,
 `decimate.ts:372-401`) never hits, so `drawLine` culls and thins every
 visible point on every frame. On an M1 Pro at 120 Hz and Retina resolution
 (about 2,260 pixel columns), it held 120 fps with 1M points in view
-(4.7 ms a frame), 74 fps at 3M (12.8 ms) and 43 fps at 5.2M (22.6 ms):
-about 4 ns a point, so its 120 fps limit there is between 1M and 2M
-points. Retina cost m4 little over the 1× run (−0.1 to +0.7 ms a frame).
+(`drawLine` 4.3 ms a frame), 74 fps at 3M (11.5 ms) and 43 fps at 5.2M
+(18.7 ms): about 4 ns a point, so its 120 fps limit there is between 1M
+and 2M points. Retina cost m4 little over the 1× run (−0.1 to +0.7 ms a
+frame).
 
 The spike's `buckets` mode folds each tick as it arrives into one bucket
 per pixel column (first / min / max / last) and draws one line through the
 buckets. It held 120 fps in every Mac run at 0.6 ms a frame or less, from
 10k to 29M points in a full window, and keeps no tick buffer of its own.
 What it gives up: the buckets are fixed to one zoom level and one window,
-so zoom, pan and hovering a single tick still need the raw data.
+so zoom, pan and hovering a single tick still need the raw data. The
+spike didn't compare the two images; buckets sit on a fixed time grid and
+draw all four values at the slice's middle, so they won't match m4
+exactly.
 
 Design questions: a `decimate: 'stream'` mode on line/area/band vs a
-separate live layer; how it gets ticks (needs [PND-COLOUT]'s appended-columns
+separate live layer (the same open question as [PND-LIVELYR]); how it
+gets ticks (needs [PND-COLOUT]'s appended-columns
 event); what hover reads; rebuilding buckets from the raw data on
 zoom/resize. The RFC's v2 "bitmap-shift streaming" idea
 (`docs/rfcs/charts.md:807`) is the other known approach; buckets also
@@ -1877,17 +1882,24 @@ page thread; overlays are SVG; `cssVarTheme` reads the DOM; some options
 are callbacks (`labelAt`). Listed as a v2 idea in `docs/rfcs/charts.md:810`.
 
 The worker also needs its data in the worker (the spike's WebSocket and
-`LiveSeries` ran there), or the page thread stays in the path. A worker
-mode should offer a **separate** receiving worker that passes messages on
-to the drawing worker (spike §6, raw ticks at 1M/s with fixed extra work
-per frame):
+`LiveSeries` ran there), or the page thread stays in the path. Receiving
+the data is the app's job, not the chart's, but the worker mode's guide
+should show the socket on its **own** worker, passing messages to the
+drawing worker (spike §6, raw ticks at 1M/s with fixed extra work per
+frame):
 
 - M1 Pro: the drawing worker's own socket took in every tick until the
   chart's code filled about 70% of the thread, then 894k a second at 89%
   and 499k at 94%. A separate receiving worker got 998k through at 98%.
-- Cloud box (4 shared cores): the drawing worker's own socket lost ticks
-  even at 3–4% busy (841k–885k) and fell to 308k–361k at 56–63%. A
-  separate receiving worker got 997k–1,004k through in every run.
+- Cloud box (4 shared cores): the drawing worker's own socket fell behind
+  even at 3–4% busy (841k–885k a second, delay growing), and the server
+  dropped ticks for it from 4–8 ms of extra work a frame. A separate
+  receiving worker got 997k–1,004k through in every run.
+
+Why it helps wasn't established, and it rests on three runs a machine.
+The spike's receiving worker forwards every message with no cap, so a
+drawing worker that couldn't keep up would build a backlog in the browser
+instead of letting the server drop ticks; a real guide needs a cap.
 
 Fix before exporting draw functions: `drawLine`'s `boundaries: readonly
 number[] = []` default (`line.ts:131`) makes a new array on every call, and

@@ -8,25 +8,27 @@ browser go?
 
 **Short answer.** Yes. On a MacBook Pro at its real (Retina) resolution, a
 `LiveSeries` in a worker took in 1M ticks a second and drew them at
-120 fps with an 11 ms delay. Getting there meant working around three
-parts of pond that can't keep up.
+120 fps with an 11 ms delay. Getting there meant working around two
+parts of pond that can't keep up; a third is slower than it needs to be.
 
 - **The worker does its job.** With the page busy 40 ms of every 50, the
   chart drawn in a worker held 120 fps while the same chart drawn on the
   page thread fell to 33 (§1).
-- **But the thread doesn't set the ceiling. Three parts of pond do**, and
-  moving to a worker changes none of them:
+- **But the thread doesn't set the ceiling. pond does, in three places**,
+  and moving to a worker changes none of them:
   - **Drawing** (§2). pond's line drawing goes over every point in view
     on every frame of a scrolling chart. On the M1 Pro it held 120 fps
-    with 1M points in view (4.7 ms a frame) and not with 3M (74 fps). The
+    with 1M points in view (4.3 ms a frame in `drawLine`) and not with 3M
+    (74 fps). The
     spike's alternative, "buckets", held 120 fps in every run, at 0.6 ms
     a frame or less, up to 29M points in a full window.
   - **Reading data out of a `LiveSeries`** (§3, §4). Both public ways fall
     far short of that. `toTimeSeries()` rebuilds the series row by row:
     about half a second at 600k points. A `live.window()` view shifts its
     whole list of events for every tick it drops: 24–34 ms to take in one
-    16 ms batch at a 50k-tick window. The spike got past both only
-    through an internal callback (`LiveSeries._onChunk`).
+    16 ms batch at a 50k-tick window. Reading its columns also walks every
+    event, each frame (4 ms at 60k points in the cloud). The spike got past
+    all of this only through an internal callback (`LiveSeries._onChunk`).
   - **Pushing ticks in** (§5). With 160 or more ticks a push, `pushMany`
     costs 17–23 ms per 100k ticks in Node, against about 1 ms to copy
     them into a plain array. In a CPU profile, 89% of that is the check
@@ -37,10 +39,11 @@ parts of pond that can't keep up.
 - **Receiving 1M ticks a second worked on the Mac, and needed help on a
   slow machine** (§6). On the Mac, a WebSocket on the drawing worker took
   in every tick until the chart's own code filled about 70% of that
-  thread, and lost ticks from 89% up. On a 4-core cloud box it lost ticks
-  even with the thread nearly idle. In both places, moving the socket to
-  a separate worker that passes messages on got every tick through in
-  every run.
+  thread, and lost ticks from 89% up. On a 4-core cloud box it fell
+  behind even with the thread nearly idle, and lost ticks once the chart
+  did a few ms of work a frame. In both places, moving the socket to a
+  separate worker that passes messages on got every tick drawn within
+  11–36 ms in every run.
 
 Five library tasks come out of this, listed at the end and added to
 [PLAN.md](../../PLAN.md).
@@ -54,7 +57,11 @@ Five library tasks come out of this, listed at the end and added to
     about 2,260 pixel columns in the plot):
     [`results/mac-m1pro-120hz-dpr2.txt`](results/mac-m1pro-120hz-dpr2.txt).
     The Mac was on battery, with Spotlight indexing in the background
-    (about 60% of one core). Most tables below use this run.
+    (about 60% of one core). Most tables below use this run. It ran from
+    the `pond-ts/pond-ts-live-demo` repo at `cef42f5`, which is this
+    directory's code copied over (only import paths differ) with
+    `pond-ts` 0.74.0 from npm and the charts drawing files copied from
+    `packages/charts/src`.
   - **An earlier run at 1 device pixel per CSS pixel** (Playwright's
     default; about 1,130 columns):
     [`results/mac-m1pro-120hz.txt`](results/mac-m1pro-120hz.txt). It used
@@ -257,17 +264,20 @@ loads history, not about drawing:
   Mac's 1M ticks/s, 10 s rows held 8.0M points in both runs, which fits
   8 s of refill; that wasn't checked on the Mac itself.
 
-Buckets cost less on emptier windows because there are fewer columns to
-draw. With the window 98–100% full, every bucket frame took
-0.46–0.60 ms.
+With the window 98–100% full, every bucket frame took 0.48–0.60 ms. On
+part-full windows they took less (0.12–0.31 ms), more than the missing
+columns explain: an 80%-full window took about half the time of a full
+one. Not investigated; bucket times also moved with the page's load (end
+of this section).
 
 **m4: 120 fps up to about 1M points, not at 3M.** Each 120 fps frame has
 8.3 ms, and the code has to finish well inside that: with 8.3 ms of
 work a frame (the 8 ms extra-work runs in §6) the Mac ran at 85 fps.
-m4's cost grows with the points in view at about 4 ns a point (4.7 ms
-at 990k, 12.8 ms at 3.0M, 22.6 ms at 5.2M), so on this Mac its 120 fps
-limit is somewhere between 1M and 2M points. That's arithmetic from
-these rows, not a measured run.
+`drawLine`'s cost grows with the points in view at about 4 ns a point
+(4.3 ms at 990k, 11.5 ms at 3.0M, 18.7 ms at 5.2M; the table's work
+column adds the spike's own y-range scan, below), so on this Mac m4's
+120 fps limit is somewhere between 1M and 2M points. That's arithmetic
+from these rows, not a measured run.
 
 **Why m4 grows with the data.** `drawLine` trims the series to what's
 visible and thins it to a few points per pixel column, then caches the
@@ -276,7 +286,7 @@ result keyed on the series object and the x scale
 change every frame (new ticks, a new time range), so the cache can't help
 and every frame walks every visible point again. (The spike also scans
 the points for the y range on each frame that has new data; averaged over
-all frames that's the "ext" figure in the result files, 7–17% of m4's
+all frames that's the "ext" figure in the result files, 6–17% of m4's
 frame time from 300k points up.) That's fine for a still chart and costly
 for one that moves every frame.
 
@@ -294,11 +304,12 @@ run at the same number of points, m4 took between 0.1 ms less and
 (3.0M points: 79 → 74 fps; 5.2M: 44 → 43). Buckets took 0.1–0.2 ms more
 (twice the columns). Most of m4's cost is per point, not per pixel.
 
-The cloud box paid more for the extra pixels: m4 gained 0.6–2.9 ms a
-frame and buckets 1.4–2× at 2×
-([`results/cloud-dpr2.txt`](results/cloud-dpr2.txt)), and its frame rate
-at 2× fell to 21–30 fps where the chart's code took only 1.1–1.5 ms a
-frame. So something outside the chart's code held its frames back. Not
+On the cloud box the change was larger and mixed. At about the same
+number of points, m4 took between 1.7 ms less and 2.9 ms more a frame at
+2×, and buckets took 1.4–2× as long
+([`results/cloud-dpr2.txt`](results/cloud-dpr2.txt)). Its frame rate at
+2× fell to 21–30 fps in rows where the chart's code took only 1.1–1.5 ms
+a frame. So something outside the chart's code held its frames back. Not
 investigated; that box draws without a GPU.
 
 Bucket frame times also moved with the page's load in ways the drawing
@@ -361,8 +372,10 @@ measured pond's per-frame `toTimeSeries()` path at 31.6 fps with a
 ## 4. A `live.window()` view costs more per tick the bigger the window
 
 The other public route, a `LiveView` from `live.window(…)` read through
-`keyColumn()` / `column()`, is cheap to read (middle column above) but
-expensive to keep up to date. It holds its window as a list of event
+`keyColumn()` / `column()`, is cheaper to read than `toTimeSeries()`
+(middle column above), though each read still walks every event: 64 ms
+at 600k rows in Node, 4 ms a frame at 60k points in the browser (table
+below). It is also expensive to keep up to date. It holds its window as a list of event
 objects, and every arriving tick drops the oldest with
 `events.splice(0, count)` (`packages/core/src/live/live-view.ts:181-187`,
 `730-736`), which moves every remaining item down one place. In a CPU
@@ -518,13 +531,24 @@ columns; only the thread that owned the socket changed.
   the chart's code filled about 70% of the thread, and lost ticks from
   89% up. With the socket on its own worker, every tick got through even
   at 98%.
-- **On the cloud box**, a socket on the drawing worker lost ticks in
-  every run, even with the thread 3–4% busy, and lost more as the work
-  grew. With the socket on its own worker, every tick got through again.
+- **On the cloud box**, a socket on the drawing worker fell behind in
+  every run, even with the thread 3–4% busy: it took in fewer ticks than
+  were sent and its delay kept growing. From 4–8 ms of extra work a frame
+  (about a quarter to a third of the thread) the server also started
+  dropping ticks for it ("DROP" in the result files). With the socket on
+  its own worker, every tick got through again.
 
-Why the cloud box loses ticks so early wasn't investigated (its 4 cores
+Why the cloud box falls behind so early wasn't investigated (its 4 cores
 are shared with the server and the bench). What both machines agree on:
-a socket on its own worker never lost ticks here.
+with the socket on its own worker, every tick was drawn within 11–36 ms
+here.
+
+One limit on that result: the receiving worker passes each message on
+the moment it arrives, with no cap. So the server never sees it fall
+behind and never drops ticks for it. A drawing worker that couldn't keep
+up would build a growing backlog in the browser rather than lose ticks.
+That didn't happen in these runs: the drawing worker took in about 1M
+ticks a second throughout, 11–36 ms behind.
 
 m4 drawing at 1M ticks/s fills the thread on its own: on the Mac at
 Retina resolution it took 19.7 ms a frame at 48 fps (94% of the thread)
@@ -558,13 +582,19 @@ Five tasks, added to [PLAN.md](../../PLAN.md) with write-ups in the
 breakout plans:
 
 1. **[PND-LSNAP] — A columnar `toTimeSeries()`** (live layer). Pass the
-   stored columns through instead of rebuilding rows. §3. The other half
-   of what the spike needed, a public "just appended, as columns" event to
-   replace the internal `_onChunk` callback, is the existing
-   **[PND-COLOUT]**; the spike is a second user for it.
+   stored columns through instead of rebuilding rows. That makes a
+   snapshot cheaper, not free: it still copies the whole window (16 ms at
+   600k rows even as a plain column copy), and `fromTimeSeries` reads one
+   value at a time until [PND-COLAPI] lands. So it suits throttled
+   snapshots (React's 100 ms refresh) and modest windows, not a read of a
+   large window every frame. §3. The per-frame route the spike used, a
+   public "just appended, as columns" event in place of the internal
+   `_onChunk` callback, is the existing **[PND-COLOUT]**; the spike is a
+   second user for it.
 2. **[PND-LVWIN] — `live.window()` at a flat cost per tick** (live
    layer). Keep a marker for where the window starts instead of `splice`
-   on every tick. Internal only. §4.
+   on every tick. Internal only. This fixes keeping the view up to date,
+   not reading it: `keyColumn()` / `column()` still walk every event. §4.
 3. **[PND-LPUSHCOL] — Columns into `LiveSeries`** (live layer). A push
    that takes one typed array per column through the existing column
    ingest, skipping the per-row checks and the `Time` object per tick.
@@ -572,17 +602,21 @@ breakout plans:
 4. **[PND-STREAMDRAW] — A streaming draw for scrolling live charts**
    (charts). Buckets filled as ticks arrive, for line/area charts whose
    window scrolls. The m4 path stays for still, zoomed and hovered views.
-   §2.
+   Whether this is a draw mode or a separate live layer is
+   [PND-LIVELYR]'s open question. Buckets and m4 weren't compared image to
+   image. §2.
 5. **[PND-OFFSCREEN] — A worker render mode for charts** (charts). What
    blocks it is listed in the appendix. Before the draw functions are
    exported, `drawLine`'s `boundaries = []` default (`line.ts:131`) needs
    fixing: it makes a new array on every call, and the m4 cache compares
    `boundaries` by identity, so a caller that leaves it out never hits the
    cache. `LineChart` passes a stable empty array, so shipped charts are
-   unaffected. A worker mode should also offer to take its data on a
-   separate receiving worker: it never lost ticks in these runs, and the
-   drawing worker's own socket did once that thread was nearly full (Mac)
-   or even when it wasn't (cloud). §1, §6.
+   unaffected. Receiving the data is the app's job, not the chart's, but
+   the worker mode's guide should show the socket on its own worker,
+   passing messages to the drawing worker: in these runs that kept every
+   tick flowing, where the drawing worker's own socket fell behind once
+   its thread was nearly full (Mac) or even when it wasn't (cloud). Why
+   wasn't established, and it rests on three runs a machine. §1, §6.
 
 Evidence was also added to existing tasks: [PND-LIVELYR] (live chart
 inputs), [PND-COLOUT] (column-native output) and [PND-WIRE] (columnar wire
