@@ -31,6 +31,18 @@ Events are all emit-side. Spike plan:
 (payload fork, additive listener name, before-number locked by the V6
 re-bench, API gate).
 
+**Second consumer (offscreen-stream spike, 2026-10-15,
+[`spikes/offscreen-stream/REPORT.md`](../../spikes/offscreen-stream/REPORT.md)
+§3):** a live chart fed from a `LiveSeries` in a worker needs each appended
+batch as columns, every 16 ms, to copy into its own drawing buffer. With no
+public way to get that, the spike used the internal `_onChunk` hook; the
+public `'batch'` / `'event'` listeners make an `Event` per tick. Through
+`_onChunk` a `LiveSeries` took in 1M ticks/s on an M1 Pro, and reading the
+data for a frame cost 0.00–0.01 ms (cloud) against 4–362 ms through
+`toTimeSeries()` ([PND-LSNAP](PND_LIVE_PLAN.md)). This adds the per-frame
+chart case alongside the gRPC fan-out case above;
+[PND-STREAMDRAW](PND_CHARTS_PLAN.md) would consume it.
+
 ### [PND-REORD] — Columnar reorder (§B)
 
 Append-only main store + sorted "late corral" overlay + grace-flush

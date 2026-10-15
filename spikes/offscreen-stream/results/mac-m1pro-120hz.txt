@@ -5,6 +5,9 @@
 #   node spikes/offscreen-stream/bench.mjs --headed --channel chrome --only busy
 #   node spikes/offscreen-stream/bench.mjs --headed --channel chrome --where group=space,pipeline=raw
 # Transcribed from the run's console output; columns abbreviated.
+# Older bench: each figure is the median of four once-a-second readings, taken
+# separately per figure, and there was no wait for the chart to catch up
+# (see REPORT "Where the numbers come from"). Superseded by mac-m1pro-120hz-dpr2.txt.
 
 ## --only busy   (chunk pipeline, 100k ticks/s, 10 s window, push every 16 ms; busy = ms of page work per 50 ms)
 worker chunk m4      busy  0 | pts 990501 fps 120 p95  9.3ms work 4.36ms (ext 0.37 draw 3.98) ingest 11ms/s lat 14/21ms page 120fps max  9ms
@@ -16,7 +19,7 @@ main   chunk m4      busy 40 | pts 992001 fps  35 p95 46.3ms work 4.82ms (ext 0.
 worker chunk buckets busy  0 | pts 992101 fps 120 p95  9.8ms work 0.38ms (draw 0.37) ingest 21ms/s lat 10/19ms page 120fps max  9ms
 main   chunk buckets busy  0 | pts 992001 fps 120 p95 10.0ms work 0.36ms (draw 0.35) ingest 21ms/s lat 10/18ms page 120fps max  9ms
 worker chunk buckets busy 20 | pts 992001 fps 120 p95  9.0ms work 0.21ms (draw 0.20) ingest 13ms/s lat 10/17ms page 100fps max 17ms
-main   chunk buckets busy 20 | pts 991801 fps 120 p95 22.3ms work 0.19ms (draw 0.18) ingest 13ms/s lat 10/29ms page 120fps max  9ms   <- unexplained: page shows no busy effect, chart p95 does
+main   chunk buckets busy 20 | pts 991801 fps 120 p95 22.3ms work 0.19ms (draw 0.18) ingest 13ms/s lat 10/29ms page 120fps max  9ms   <- page meter used the rAF timestamp, which hides this stall; fixed since, see REPORT §1
 worker chunk buckets busy 40 | pts 992201 fps 120 p95  9.3ms work 0.19ms (draw 0.19) ingest 13ms/s lat 10/17ms page  60fps max 34ms
 main   chunk buckets busy 40 | pts 991301 fps  60 p95 42.7ms work 0.19ms (draw 0.18) ingest 11ms/s lat 32/49ms page  60fps max 34ms
 

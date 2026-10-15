@@ -101,7 +101,7 @@ for (const [pipeline, draw] of [
       // A full rebuild per frame: ~0.5 s at 600k in the cloud already.
       if (pipeline === 'snapshot' && points > 600_000) continue;
       // A `live.window()` LiveView costs O(window) per tick to evict (see
-      // REPORT §3); at 100k points the worker already can't keep up.
+      // REPORT §4); at 100k points the worker already can't keep up.
       if (pipeline === 'view' && points > 100_000) continue;
       scenarios.push({ group: 'space', ...base, pipeline, draw, rate, window });
     }

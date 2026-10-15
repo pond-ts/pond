@@ -312,16 +312,18 @@ linearWindow>`, [PND-SYMLOG]. [PND-AXISMIRROR] (a mirrored second axis) is
   [PND-PARITY] / the live layer.
 - **[PND-STREAMDRAW]** — Streaming draw for scrolling live charts
   (offscreen-stream spike). A scrolling window misses the M4 cache every
-  frame, so `drawLine` re-thins every visible point: 120 fps held at 1M
-  points on an M1 Pro, 79 fps at 3M. Folding ticks into per-pixel buckets
-  as they arrive held 0.1–0.45 ms a frame up to 16M points. Design call:
+  frame, so `drawLine` re-thins every visible point: on an M1 Pro at Retina
+  resolution, 120 fps at 1M points (4.7 ms a frame), 74 fps at 3M. Folding
+  ticks into one bucket per pixel column as they arrive held 120 fps at
+  0.6 ms a frame or less, up to 29M points in a full window. Design call:
   a line/area mode vs a live layer, and what zoom/hover read.
 - **[PND-OFFSCREEN]** — Worker (OffscreenCanvas) render mode. The spike's
   worker-drawn chart held 120 fps on a page busy 40 ms of every 50; the
-  page-thread chart fell to 35. Blocked today by layer draw closures,
-  unexported kernels, page-thread hit-testing and DOM theming. Also fix
-  `drawLine`'s fresh `boundaries = []` default (defeats the M4 cache for
-  direct callers) before exporting kernels.
+  page-thread chart fell to 33. Blocked today by layer draw closures,
+  unexported draw functions, page-thread hit-testing and DOM theming.
+  Should offer a separate worker to receive the data (it never lost ticks
+  in the spike). Also fix `drawLine`'s fresh `boundaries = []` default
+  (defeats the M4 cache for direct callers) before exporting draw functions.
 - **[PND-XOFFSET]** — Per-layer bar offset and forward projection space
   (the assessment's **C2**), plus a crossing-band fill (**C3**). **The
   fixed-time half shipped** (Tidal F-charts-20): `xOffset` (ms / duration) on
@@ -619,18 +621,21 @@ Robustness debt plus the queued composition workstreams. Plan:
   exact-removal eviction channel.
 - **[PND-TAPOBS]** — Evaluate `tap()` per-partition observer now that fused
   rolling shipped.
-- **[PND-LSNAP]** — Columnar `LiveSeries.toTimeSeries()` + a public
-  appended-columns event (offscreen-stream spike). The snapshot rebuilds
-  row by row: 470 ms at 600k rows vs 14 ms to copy the stored chunks. The
-  only per-append column access is internal `_onChunk`. Data side of
-  [PND-LIVELYR].
+- **[PND-LSNAP]** — Columnar `LiveSeries.toTimeSeries()` (offscreen-stream
+  spike). The snapshot rebuilds row by row: 542 ms at 600k rows, with the
+  column read out, vs 16 ms to copy the stored chunks' columns. Data side
+  of [PND-LIVELYR]. The spike's other need, a public appended-columns
+  event in place of internal `_onChunk`, is [PND-COLOUT].
 - **[PND-LPUSHCOL]** — Columnar push into `LiveSeries`. `pushMany` (rows
-  only) costs ~20 ms per 100k ticks, ~70% of it per-row checks and a `Time`
-  object per tick; `TimeSeries.fromColumns` takes the same ticks in
-  ~1.2 ms. The in-process half of [PND-WIRE]'s streaming append.
-- **[PND-LVWIN]** — `live.window()` costs O(window) per tick: each arriving
-  event `splice`s the oldest off an `Event[]`, shifting the whole array
-  (34 ms per 160-tick push at a 50k-event window). Use a head index.
+  only) costs ~17–23 ms per 100k ticks in Node; a CPU profile puts 89% in
+  the per-row check, including 27% making a `Time` object per tick.
+  `TimeSeries.fromColumns` takes the same ticks in ~0.9 ms. The in-process
+  half of [PND-WIRE]'s streaming append.
+- **[PND-LVWIN]** — A `live.window()` view gets slower per tick as its
+  window grows: each arriving event `splice`s the oldest off an `Event[]`,
+  shifting the whole array (98% of a profile). One 16 ms push into a
+  50k-event window: 24–34 ms at 10k ticks/s, 271–326 ms at 100k. Use a head
+  index.
 
 ### Streaming semantics (Phase 4.5)
 
@@ -659,7 +664,9 @@ consumer signal. Plan:
 [PND_COLUMNAR_PLAN.md](docs/plans/PND_COLUMNAR_PLAN.md).
 
 - **[PND-COLOUT]** — Column-native output (§A): removes the dominant
-  emit-side allocation slice; spike plan exists.
+  emit-side allocation slice; spike plan exists. Second consumer: the
+  offscreen-stream spike's live chart, which needed each appended batch as
+  columns and used the internal `_onChunk` in its place.
 - **[PND-COLBOOL]** — `boolean` / array value columns through the columnar
   ingest engine. `ingestColumnsToStore` takes `number` and `string` only, so
   a series carrying either kind exports through `toColumns` / `toArrow` but

@@ -137,73 +137,91 @@ slim observation (per-host gauges, debug instrumentation) without reducer
 state. Re-triage now that fused rolling shipped — may be a small bolt-on on
 the shared dispatch path; may earn its own RFC. Don't pre-decide.
 
-### [PND-LSNAP] — Columnar `toTimeSeries()` + a public appended-columns event
+### [PND-LSNAP] — Columnar `toTimeSeries()`
 
 **Source:** the offscreen-stream spike (2026-10-15,
 [`spikes/offscreen-stream/REPORT.md`](../../spikes/offscreen-stream/REPORT.md)
 §3), which streamed ticks into a `LiveSeries` in a worker and drew them at
 120 fps.
 
-Two gaps between a `LiveSeries` and a chart that wants every tick:
+`toTimeSeries()` rebuilds row by row. The chunked store already holds
+columns, but `snapshot()` (`live-chunked-storage.ts:366-390`) makes one
+array per row, then a `TimeSeries` that validates every row again. Its own
+comment calls the columnar version "a deferred follow-up; snapshot isn't
+the hot path." For a live chart it is. Node, snapshot plus reading the
+price column out: 60 ms at 60k rows, 542 ms at 600k, 3.9 s at 3M, against
+1.7 / 16 / 91 ms to copy the same stored chunks' columns (spike
+`results/node.txt` section 1). In the browser (cloud) the `snapshot`
+pipeline spent 4 ms a frame reading at 10k points and 27 ms at 60k, so it
+runs out of a 120 fps frame's 8.3 ms somewhere between. This is the data
+side of the 31.6 fps SciChart-suite finding under
+[PND-LIVELYR](PND_CHARTS_PLAN.md).
 
-1. **`toTimeSeries()` rebuilds row by row.** The chunked store already holds
-   columns, but `snapshot()` (`live-chunked-storage.ts:366-390`) makes one
-   array per row, then a `TimeSeries` that validates every row again. Its
-   own comment calls the columnar version "a deferred follow-up; snapshot
-   isn't the hot path." For a live chart it is: Node, 600k rows, 470 ms to
-   snapshot and read one column out vs 14 ms to copy the same stored
-   chunks' columns; at 3M rows, 4.5 s vs 80 ms. In the browser the
-   `snapshot` pipeline fell under 60 fps by 60k points. This is the data
-   side of the 31.6 fps SciChart-suite finding under
-   [PND-LIVELYR](PND_CHARTS_PLAN.md).
-2. **No public "just appended, as columns" event.** The spike's fast path
-   used `_onChunk` (internal). The public `'batch'` / `'event'` listeners
-   materialize an `Event` per tick (`#commitChunk`,
-   `live-series.ts:758-761`), which is what the chunk hook exists to avoid.
+Shape to consider: concat the stored chunks into a trusted `TimeSeries`
+(the comment already names `concatSorted(chunks)`). Check it against the
+dashboard A/B that promoted `LiveView.column()` (Decisions, 2026-10-10): a
+fast snapshot may change which path live charts should use.
 
-Shape to consider: (1) concat the stored chunks into a trusted
-`TimeSeries` (the comment already names `concatSorted(chunks)`); (2)
-promote `_onChunk` to a public, read-only "appended columns" listener (a
-column view per append, no `Event`s). Check (1) against the dashboard A/B
-that promoted `LiveView.column()` (Decisions, 2026-10-10): a fast snapshot
-may change which path live charts should use.
+The spike's other need, a public "just appended, as columns" event, is the
+existing [PND-COLOUT](PND_COLUMNAR_PLAN.md). The spike used the internal
+`_onChunk` in its place, because the public `'batch'` / `'event'`
+listeners make an `Event` per tick (`#commitChunk`,
+`live-series.ts:759-762`).
 
 ### [PND-LPUSHCOL] — Columnar push into `LiveSeries`
 
-**Source:** offscreen-stream spike §5. `pushMany` accepts rows only. At
-100k ticks/s it costs ~20 ms per second of ticks (Node), where copying the
-same ticks into typed arrays takes ~1 ms. Building the row arrays is only
-~2 ms of that. A CPU profile of `pushMany` puts **45% of self time in
-`validateAndNormalizeColumnar`'s per-row loop and 26% in the `Time`
-constructor** (`normalizeKey` allocates a `Time` per row and discards it,
+**Source:** offscreen-stream spike §5. `pushMany` accepts rows only. From
+160 ticks a push up it costs 17–23 ms per 100k ticks in Node, where copying
+the same ticks into typed arrays takes about 1 ms; building the row arrays
+is only 2–3 ms of that. A CPU profile of `pushMany` with 1,600-row batches
+(spike `results/profile.txt` section 1) puts **89% of the time in
+`validateAndNormalizeColumnar` and what it calls: 55 points in its own
+per-row loop and 27 in the `Time` constructor** (`normalizeKey` makes a
+`Time` per row and throws it away after reading its number,
 `batch/validate.ts:415-422`). `TimeSeries.fromColumns`, pond's existing
-column ingest, takes the same ticks in the same 1,600-tick batches in
-~1.2 ms.
+column ingest, takes the same ticks in the same batches in 0.8–2.0 ms
+(0.9 ms at 1,600). Each `pushMany` call also has a fixed cost of about
+0.05 ms in Node. In the browser at 1M ticks/s the drawing worker spent
+75–78 ms a second on ingest on an M1 Pro (under 8% of the thread) and
+239 ms on the cloud box: affordable today, not free.
 
 Shape: `live.pushColumns({ time: Float64Array, price: Float64Array, … })`
 through `ingestColumnsToStore` then `#commitChunk` (cross-batch order check
 already there). This is the in-process half of
 [PND-WIRE](PND_CORE_PLAN.md)'s `SeriesUpdate` streaming append: a columnar
-wire is only worth having if the `LiveSeries` takes columns.
+wire is only worth having if the `LiveSeries` takes columns. Adds a method
+to `LiveSeries`, so it needs human approval before merge.
 
-### [PND-LVWIN] — `live.window()` costs O(window) per tick
+### [PND-LVWIN] — `live.window()` gets slower per tick as the window grows
 
 **Source:** offscreen-stream spike §4. A `LiveView` from `live.window(…)`
 keeps its window as an `Event[]` and, on every arriving event, evicts with
 `this.#events.splice(0, count)` (`live-view.ts:181-187` →
 `#applyEviction`, `live-view.ts:730-736`). Once the window is full, every
-tick evicts about one event, and each `splice` shifts the whole array. Node,
-cost of one 160-tick push (100k ticks/s every 16 ms): 0.95 ms at a
-1k-event window, 2.2 ms at 10k, **34 ms at 50k** (no view: 0.07–0.22 ms).
-In the browser the `view` pipeline at 10k ticks/s with a 10 s window
-(100k points) spent the whole second ingesting and fell behind; a profile
-put 94.6% of self time in that `splice`.
+tick evicts about one event, and each `splice` shifts the whole array. A
+CPU profile of a 50k-event window puts 98% of the time in
+`#applyEviction` (spike `results/profile.txt` section 2).
+
+Node, cost of one 16 ms push once the window is full, ranges across three
+runs (spike `results/node.txt` section 3, `results/node-window-reruns.txt`):
+
+| window (events) | 10k ticks/s (160 a push), no view / view | 100k ticks/s (1,600 a push), no view / view |
+| --------------- | ---------------------------------------- | ------------------------------------------- |
+| 1k              | 0.11–0.18 / 0.48–0.71 ms                 | 0.43–1.05 / 4.6–13 ms                       |
+| 10k             | 0.04–0.06 / 2.3–6.9 ms                   | 0.51–0.79 / 6.3–68 ms                       |
+| 50k             | 0.03–0.07 / **24–34 ms**                 | 0.27–0.62 / **271–326 ms**                  |
+| 100k            | 0.03–0.06 / **56–77 ms**                 | 0.29–0.58 / **368–398 ms**                  |
+
+A push every 16 ms has to be taken in within 16 ms. In the browser
+(cloud) the `view` pipeline at 10k ticks/s with a 10 s window (100k
+points) spent the whole second ingesting, took in 1,846 of 10,000 ticks a
+second and drew no frame.
 
 Fix: a head index into the array, compacted occasionally (the spike's
 `Ring` in `engine.ts` is the pattern), instead of `splice` per event. The
 count form (`window(n)`) and the source-evict mirror (`live-view.ts:200-211`)
 go through the same array. Attaching the view also turns on per-tick
-`Event` materialization in the source ([PND-LSNAP] item 2).
+`Event` creation in the source, since the view listens to `'event'`.
 
 ## Decisions
 
