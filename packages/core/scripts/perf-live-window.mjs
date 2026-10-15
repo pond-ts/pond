@@ -6,29 +6,33 @@
 // advances a head index and compacts the array once the evicted prefix
 // outgrows the window: O(1) amortized per event, O(B) per push. The push
 // that triggers a compaction copies the window once, O(B + W), about
-// every W/B pushes — so each scenario runs at least 2.2 compaction cycles
-// and reports the mean and max alongside the median, which never sees
-// those pushes. Reads (`keyColumn()` / `column()`) stay O(W).
+// every W/B pushes — so each push scenario runs at least 2.2 compaction
+// cycles and reports the mean, the max and each compacting push alongside
+// the median, which never sees those pushes. Reads (`keyColumn()` /
+// `column()`) stay O(W).
 //
-// Every scenario pushes into the same source, with no retention, so the
-// "no view" rows differ from the window rows only by the view. One
-// untimed pass of each kind runs first to warm up the JIT.
+// Garbage collection lands on whichever push is running, so it is tracked
+// per push (a `PerformanceObserver` on 'gc'): `maxNoGcMs` is the slowest
+// push that no GC pause overlapped, `gcPushes` how many were overlapped,
+// and a compacting push that one overlapped is marked `(gc)`.
 //
 // Scenarios: time and count windows from 1k to 100k events, 160 and 1,600
-// ticks a push (10k and 100k ticks/s every 16 ms); a window of 1 (the
-// per-event floor); two windows on a retention-capped source; and a
-// per-frame column read at 50k.
+// ticks a push (10k and 100k ticks/s every 16 ms), each beside a "no
+// view" row on the same unretained source, so the two differ only by the
+// view; a window of 1 (the per-event floor); two windows on a
+// retention-capped source, filled until retention is dropping rows; and
+// 30 per-frame column reads at 50k. One untimed pass of each push kind
+// runs first to warm up the JIT.
 //
-// The retention rows cost more for a reason outside the window: a view
+// The retention rows also pay for something outside the window: a view
 // listens for the source's `'evict'` (to mirror its eviction), and a
 // columnar source with an `'evict'` listener builds an Event for every
-// row it drops, about 1 ms a push at 1,600 rows. The same listener on a
-// source with no view costs the same.
+// row it drops ([PND-LVMIRROR]).
 //
 //   npm run build --workspace=pond-ts
 //   node scripts/perf-live-window.mjs
 
-import { performance } from 'node:perf_hooks';
+import { performance, PerformanceObserver } from 'node:perf_hooks';
 import { LiveSeries } from '../dist/index.js';
 
 const schema = Object.freeze([
@@ -70,6 +74,16 @@ function makeFeed(batch) {
   };
 }
 
+const gcPauses = [];
+new PerformanceObserver((list) => {
+  for (const entry of list.getEntries())
+    gcPauses.push([entry.startTime, entry.startTime + entry.duration]);
+}).observe({ entryTypes: ['gc'] });
+
+/** Whether a GC pause overlapped [start, end]; call after GC entries flush. */
+const hadGc = ([start, end]) =>
+  gcPauses.some(([gcStart, gcEnd]) => gcStart < end && gcEnd > start);
+
 /** The window's time span when `windowEvents` events arrive `batch` per 16 ms. */
 const spanMs = (windowEvents, batch) => (windowEvents * 16) / batch;
 
@@ -77,33 +91,48 @@ const spanMs = (windowEvents, batch) => (windowEvents * 16) / batch;
  * Per-push timings once the window is full. `window` is what to pass to
  * `live.window()` (or null for no view); `windowEvents` how many events
  * the window holds, so it can be filled first and timed for at least 2.2
- * compaction cycles. `trimMs` lists the pushes that compacted the view's
- * buffer (seen through the internal `_bufferLength`). The max can be
- * larger than any of them: it also catches garbage-collection pauses,
- * which land on whichever push is running.
+ * compaction cycles; `fill` how many window-lengths to push first.
+ * `trimMs` lists the pushes that compacted the view's buffer (seen
+ * through the internal `_buffer`; absent on builds without it).
  */
-function benchmark({ window, windowEvents, batch, retention }) {
+async function benchmark({
+  window,
+  windowEvents,
+  batch,
+  retention,
+  fill = 1.2,
+}) {
   const next = makeFeed(batch);
   const live = new LiveSeries({ name: 'w', schema, retention });
   const view = window === null ? null : live.window(window);
-  const fill = Math.ceil((windowEvents * 1.2) / batch) + 3;
-  for (let k = 0; k < fill; k++) live.pushMany(next());
+  const fillPushes = Math.ceil((windowEvents * fill) / batch) + 3;
+  for (let k = 0; k < fillPushes; k++) live.pushMany(next());
   const pushes = Math.max(30, Math.ceil((windowEvents * 2.2) / batch));
-  const samples = [];
-  const trims = [];
+  const spans = [];
+  const trimmed = [];
   for (let k = 0; k < pushes; k++) {
     const rows = next();
-    const slots = view?._bufferLength;
+    const slots = view?._buffer?.length;
     const start = performance.now();
     live.pushMany(rows);
-    const ms = performance.now() - start;
-    samples.push(ms);
-    if (view && view._bufferLength < slots) trims.push(ms);
+    spans.push([start, performance.now()]);
+    if (slots !== undefined && view._buffer.length < slots) trimmed.push(k);
   }
   const length = view ? view.length : live.length;
   view?.dispose();
-  const trimMs = trims.map((ms) => Number(ms.toFixed(3)));
-  return { ...stats(samples), trimMs, length };
+  await new Promise((resolve) => setTimeout(resolve, 20)); // flush GC entries
+  const ms = (k) => spans[k][1] - spans[k][0];
+  const clean = spans.filter((span) => !hadGc(span));
+  const round = (value) => Number(value.toFixed(3));
+  return {
+    ...stats(spans.map((span) => span[1] - span[0])),
+    maxNoGcMs: clean.length
+      ? round(Math.max(...clean.map((span) => span[1] - span[0])))
+      : null,
+    gcPushes: spans.length - clean.length,
+    trims: trimmed.map((k) => ({ ms: round(ms(k)), gc: hadGc(spans[k]) })),
+    length,
+  };
 }
 
 function readBenchmark(windowEvents, repeats = 30) {
@@ -127,49 +156,50 @@ function readBenchmark(windowEvents, repeats = 30) {
 }
 
 for (const window of [null, '160ms', 1_000])
-  benchmark({ window, windowEvents: 1_000, batch: 160 }); // warm-up, untimed
+  await benchmark({ window, windowEvents: 1_000, batch: 160 }); // warm-up
 
 const results = [];
 const print = (name, r, unit) =>
   console.log(
-    `${name.padEnd(48)} median ${String(r.medianMs).padStart(8)}  mean ${String(r.meanMs).padStart(8)}  max ${String(r.maxMs).padStart(8)} ms/${unit}  (${r.samples} ${unit === 'push' ? 'pushes' : 'reads'}${r.length === undefined ? '' : `, ${r.length} events`})${r.trimMs?.length ? `  trims ${r.trimMs.join(', ')} ms` : ''}`,
+    `${name.padEnd(48)} median ${String(r.medianMs).padStart(8)}  mean ${String(r.meanMs).padStart(8)}  max ${String(r.maxMs).padStart(8)}${r.gcPushes === undefined ? '' : `  max without GC ${String(r.maxNoGcMs).padStart(8)}`} ms/${unit}  (${r.samples} ${unit === 'push' ? 'pushes' : 'reads'}${r.gcPushes === undefined ? '' : `, ${r.gcPushes} with GC`}${r.length === undefined ? '' : `, ${r.length} events`})${r.trims?.length ? `  trims ${r.trims.map((t) => `${t.ms}${t.gc ? '(gc)' : ''}`).join(', ')} ms` : ''}`,
   );
-const run = (name, args) => {
-  const r = benchmark(args);
+const run = async (name, args) => {
+  const r = await benchmark(args);
   results.push({ name, ...r });
   print(name, r, 'push');
 };
 
 for (const batch of [160, 1600])
   for (const W of [1_000, 10_000, 50_000, 100_000]) {
-    run(`no view        W=${W} batch=${batch}`, {
+    await run(`no view        W=${W} batch=${batch}`, {
       window: null,
       windowEvents: W,
       batch,
     });
-    run(`time window    W=${W} batch=${batch}`, {
+    await run(`time window    W=${W} batch=${batch}`, {
       window: `${spanMs(W, batch)}ms`,
       windowEvents: W,
       batch,
     });
-    run(`count window   W=${W} batch=${batch}`, {
+    await run(`count window   W=${W} batch=${batch}`, {
       window: W,
       windowEvents: W,
       batch,
     });
   }
-run('count window   W=1 batch=1600 (per-event floor)', {
+await run('count window   W=1 batch=1600 (per-event floor)', {
   window: 1,
   windowEvents: 1,
   batch: 1600,
 });
-run('time window 50k, source retention 2x, batch=1600', {
+await run('time window 50k, source retention 2x, batch=1600', {
   window: `${spanMs(50_000, 1600)}ms`,
   windowEvents: 50_000,
   batch: 1600,
   retention: { maxAge: `${2 * spanMs(50_000, 1600)}ms` },
+  fill: 2.2, // past the retention span, so every timed push drops rows
 });
-run('retention 50k + count window 100k, batch=1600', {
+await run('retention 50k + count window 100k, batch=1600', {
   window: 100_000,
   windowEvents: 50_000,
   batch: 1600,

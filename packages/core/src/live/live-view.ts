@@ -67,8 +67,8 @@ type ViewOptions<S extends SeriesSchema> = {
   /**
    * Custom eviction: given the view's current events, how many to drop
    * from the front. Called after every append, on a compacted buffer, so
-   * it costs O(window) per event — the built-in windows use
-   * {@link ViewOptions.keep} instead.
+   * it costs O(window) per event. The built-in `window()` methods don't
+   * use it: they evict by moving a start marker, O(1) amortized per event.
    */
   evict?: (events: readonly EventForSchema<S>[]) => number;
   /**
@@ -742,7 +742,6 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     this.#unsubscribe();
     this.#onEvent.clear();
     this.#onEvict.clear();
-    this.#compact();
     const source = this.#source;
     if (source instanceof LiveView && source._listenerCount === 0) {
       source.dispose();
@@ -750,11 +749,12 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   }
 
   /**
-   * @internal — slots in the view's buffer, live and evicted-but-not-yet-
-   * compacted. For tests that pin the buffer's bound ([PND-LVWIN]).
+   * @internal — the view's raw buffer: cleared (`undefined`) slots for
+   * evicted events, then the live events. For tests and the benchmark
+   * that pin how eviction uses it ([PND-LVWIN]). Read only.
    */
-  get _bufferLength(): number {
-    return this.#events.length;
+  get _buffer(): readonly (EventForSchema<S> | undefined)[] {
+    return this.#events;
   }
 
   /** @internal — subscribers on this view (`'event'` + `'evict'`). */

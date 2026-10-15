@@ -833,7 +833,7 @@ describe('window() eviction by head index ([PND-LVWIN])', () => {
     const live = makeLive();
     const lengths: number[] = [];
     const view = new LiveView<typeof schema>(live, (e: any) => e, {
-      evict: (events) => {
+      evict: (events: readonly unknown[]) => {
         lengths.push(events.length);
         return events.length > 10 ? events.length - 10 : 0;
       },
@@ -848,7 +848,7 @@ describe('window() eviction by head index ([PND-LVWIN])', () => {
     // As `splice(0, 1.5)` did before: 1.5 drops one event.
     const live = makeLive();
     const view = new LiveView<typeof schema>(live, (e: any) => e, {
-      evict: (events) => (events.length >= 3 ? 1.5 : 0),
+      evict: (events: readonly unknown[]) => (events.length >= 3 ? 1.5 : 0),
     } as any);
     for (const row of rows.slice(0, 6)) live.push(row);
     expectMatches(view, rows.slice(4, 6));
@@ -883,9 +883,27 @@ describe('window() eviction by head index ([PND-LVWIN])', () => {
     view.dispose();
   });
 
-  it('keeps its buffer within about twice the view', () => {
-    // Evicted slots are reclaimed by compaction; without it the buffer
-    // would grow with every event pushed.
+  it('dispose() leaves the buffer as it was, even mid-scan', () => {
+    // A predicate that disposes the view must not shift the events the
+    // scan is still walking.
+    const live = makeLive();
+    const view = live.window(4);
+    for (const row of rows.slice(0, 7)) live.push(row);
+    expect(view._buffer.length).toBeGreaterThan(view.length);
+    const found = view.find((e, i) => {
+      if (i === 0) view.dispose();
+      return e.begin() === rows[5]![0];
+    });
+    expect(found?.begin()).toBe(rows[5]![0]);
+    expectMatches(view, rows.slice(3, 7));
+  });
+
+  it('compacts its buffer lazily, within about twice the view', () => {
+    // Eviction moves a start marker and clears the slot; the buffer is
+    // shifted down only once the evicted part outgrows the live part. So
+    // the buffer must run ahead of the view (compacting on every eviction
+    // would bring back the O(window)-per-event cost) yet stay within about
+    // twice it (never compacting would grow it with every event).
     const time = makeLive();
     const timeView = time.window('50ms');
     const count = makeLive();
@@ -896,18 +914,25 @@ describe('window() eviction by head index ([PND-LVWIN])', () => {
       retention: { maxEvents: 25 },
     });
     const mirrored = capped.filter(() => true);
+    const views = [timeView, countView, mirrored];
+    const maxEvicted = views.map(() => 0);
     for (const row of rows) {
       time.push(row);
       count.push(row);
       capped.push(row);
-      for (const v of [timeView, countView, mirrored])
-        expect(v._bufferLength).toBeLessThanOrEqual(2 * v.length + 1);
+      views.forEach((v, k) => {
+        const buffer = v._buffer;
+        expect(buffer.length).toBeLessThanOrEqual(2 * v.length + 1);
+        const evicted = buffer.length - v.length;
+        // Evicted slots are cleared, so their events can be collected.
+        expect(buffer.slice(0, evicted).every((e) => e === undefined)).toBe(
+          true,
+        );
+        maxEvicted[k] = Math.max(maxEvicted[k]!, evicted);
+      });
     }
-    // Disposing compacts, so a kept reference holds only the live events.
-    timeView.dispose();
-    expect(timeView._bufferLength).toBe(timeView.length);
-    countView.dispose();
-    mirrored.dispose();
+    for (const n of maxEvicted) expect(n).toBeGreaterThan(0);
+    for (const v of views) v.dispose();
   });
 });
 
