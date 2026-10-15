@@ -231,7 +231,11 @@ across runs, both window kinds (time and count):
 (\*) Plus two compacting pushes a GC pause overlapped, 7.6 and 7.8 ms.
 (†) A scratch probe, not the script: 16 of 18 compacting pushes over nine
 runs took 11–19 ms, the other two 27 and 30 ms. At 1M events GC pauses
-are far bigger than that (one run's max was 394 ms, 393 of it GC).
+are far bigger than that (one run's max was 394 ms, 393 of it GC). Seven
+of the nine runs, and the `splice`/loop/`copyWithin` comparison below,
+used builds from around 5e78882 whose push and compaction code matches
+5ecbd26's (checked by diffing the built `live-view.js`: only `dispose()`,
+the internal buffer getter, comments and one unused local differ).
 
 "Max without GC" is the slowest push that no GC pause overlapped
 (`PerformanceObserver` on `'gc'`); every slower push in those rows
