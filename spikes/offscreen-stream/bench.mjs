@@ -10,7 +10,7 @@
 // number on a machine with no 120 Hz display. Capped runs pace at the
 // headless default (60 Hz).
 import { chromium } from '@playwright/test';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { startServer } from './server.mjs';
 
 const args = process.argv.slice(2);
@@ -33,6 +33,26 @@ const where =
         args[whereIdx + 1].split(',').map((kv) => kv.split('=')),
       )
     : {};
+
+function formatRow(r) {
+  const f = (n, d = 1) => (n == null ? '—' : n.toFixed(d));
+  return (
+    `${r.group.padEnd(7)} ${r.mode.padEnd(6)} ${r.pipeline.padEnd(8)} ${r.draw.padEnd(7)} ${String(r.rate).padStart(7)}/s ${String(r.window).padStart(3)}s ` +
+    `busy ${String(r.busy).padStart(2)} every ${String(r.interval).padStart(2)}ms | pts ${String(r.points).padStart(9)} ` +
+    `fps ${f(r.fps, 0).padStart(4)} p95 ${f(r.frameP95)}ms work ${f(r.workAvg, 2)}ms (view ${f(r.viewAvg, 2)} ext ${f(r.extentAvg, 2)} draw ${f(r.drawAvg, 2)}) ` +
+    `ingest ${f(r.ingestMsPerSec, 0)}ms/s ${f(r.ticksPerSec, 0)}t/s${r.droppedPerSec ? ` DROP ${f(r.droppedPerSec, 0)}/s` : ''} lat ${f(r.latencyP50, 0)}/${f(r.latencyP95, 0)}ms page ${f(r.pageFps, 0)}fps max ${f(r.pageFrameMax, 0)}ms` +
+    (r.errors?.length ? `  ERR ${r.errors.join('; ')}` : '') +
+    (r.note ? `  [${r.note}]` : '')
+  );
+}
+
+// --print results/x.json re-prints a saved run as the console table.
+const printIdx = args.indexOf('--print');
+if (printIdx >= 0) {
+  const { results } = JSON.parse(await readFile(args[printIdx + 1], 'utf8'));
+  for (const r of results) console.log(formatRow(r));
+  process.exit(0);
+}
 
 const SETTLE_MS = 3000;
 const SAMPLE_S = 4;
@@ -170,14 +190,7 @@ for (const s of selected) {
     errors,
   };
   results.push(r);
-  const f = (n, d = 1) => (n == null ? '—' : n.toFixed(d));
-  console.log(
-    `${s.group.padEnd(7)} ${s.mode.padEnd(6)} ${s.pipeline.padEnd(8)} ${s.draw.padEnd(7)} ${String(s.rate).padStart(7)}/s ${String(s.window).padStart(3)}s ` +
-      `busy ${String(s.busy).padStart(2)} every ${String(s.interval).padStart(2)}ms | pts ${String(r.points).padStart(9)} ` +
-      `fps ${f(r.fps, 0).padStart(4)} p95 ${f(r.frameP95)}ms work ${f(r.workAvg, 2)}ms (view ${f(r.viewAvg, 2)} ext ${f(r.extentAvg, 2)} draw ${f(r.drawAvg, 2)}) ` +
-      `ingest ${f(r.ingestMsPerSec, 0)}ms/s ${f(r.ticksPerSec, 0)}t/s${r.droppedPerSec ? ` DROP ${f(r.droppedPerSec, 0)}/s` : ''} lat ${f(r.latencyP50, 0)}/${f(r.latencyP95, 0)}ms page ${f(r.pageFps, 0)}fps max ${f(r.pageFrameMax, 0)}ms` +
-      (errors.length ? `  ERR ${errors.join('; ')}` : ''),
-  );
+  console.log(formatRow(r));
 }
 await browser.close();
 server.close();
