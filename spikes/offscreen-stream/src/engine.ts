@@ -305,8 +305,6 @@ export function startEngine(
   const padB = 22;
   const plotW = width - padL - padR;
   const plotH = height - padT - padB;
-  const xScale = scaleLinear().range([0, plotW]);
-  const yScale = scaleLinear().range([plotH, 0]);
   let yLo = 0;
   let yHi = 1;
   let lastFrame = 0;
@@ -359,8 +357,14 @@ export function startEngine(
     v0 = now();
     const edge =
       latestT === -Infinity ? Date.now() : latestT + (now() - latestArrival);
-    xScale.domain([edge - windowMs, edge]);
-    yScale.domain([yLo, yHi]);
+    // Fresh scale objects per frame, as ChartContainer does: the charts M4
+    // cache is keyed on (series identity, xScale identity), so mutating one
+    // scale in place would let an unchanged series reuse a polyline binned
+    // for an older domain.
+    const xScale = scaleLinear()
+      .domain([edge - windowMs, edge])
+      .range([0, plotW]);
+    const yScale = scaleLinear().domain([yLo, yHi]).range([plotH, 0]);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#0b0f14';
     ctx.fillRect(0, 0, width, height);
