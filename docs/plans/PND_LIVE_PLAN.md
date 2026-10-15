@@ -233,6 +233,34 @@ count form (`window(n)`) and the source-evict mirror (`live-view.ts:200-211`)
 go through the same array. Attaching the view also turns on per-tick
 `Event` creation in the source, since the view listens to `'event'`.
 
+### [PND-LVCHAIN] — Views chained after a window view never evict
+
+**Source:** found while building the [PND-LVWIN] fix (2026-10-15). A
+`LiveView` mirrors its source's evictions by listening to the source's
+`'evict'` event (`live-view.ts:200-214`). A window view drops events in
+`#applyEviction` (`live-view.ts:730-736`), which never emits `'evict'`; it
+emits only when mirroring its own source. So a child of a window view
+(`live.window('1m').filter(p)`, `.map(f)`, `.select(…)`) hears nothing
+when events leave the window, and keeps every event it was ever given. A
+retention-capped source doesn't help: by the time the source evicts an
+event, the window has already dropped it, so the window view finds
+nothing to mirror and emits nothing either.
+
+Checked against `dist` built from `main`: a `LiveSeries` with
+`retention: { maxAge: '1m' }`, `w = live.window('1s')`,
+`f = w.filter(() => true)`, 10,000 events 10 ms apart: `w.length` 101,
+`f.length` 10,000; `w.eventRate()` 101, `f.eventRate()` 10,000. The
+pattern is meant to work (`LiveView.window-count-rate.test.ts:164-188`
+tests `window('1m').filter(…).eventRate()`), but that test pushes three
+events, none old enough to leave the window.
+
+Fix to consider: have window eviction emit `'evict'` with the dropped
+events (a slice only when a listener is attached). That changes what a
+window view's `'evict'` listeners see (today they fire only for mirrored
+source evictions), so it needs a CHANGELOG `Changed` line. The other
+option, documenting `filter().window()` as the only safe order, leaves the
+existing test's pattern broken.
+
 ## Decisions
 
 ### Live column reads promoted out of experimental — 2026-10-10 (1.0 readiness)
