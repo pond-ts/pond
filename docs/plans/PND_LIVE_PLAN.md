@@ -199,39 +199,92 @@ already there). This is the in-process half of
 wire is only worth having if the `LiveSeries` takes columns. Adds a method
 to `LiveSeries`, so it needs human approval before merge.
 
-### [PND-LVWIN] — `live.window()` gets slower per tick as the window grows
+### [PND-LVWIN] — `live.window()` evicts by head index — SHIPPED (#761)
 
-**Source:** offscreen-stream spike §4. A `LiveView` from `live.window(…)`
-keeps its window as an `Event[]` and, on every arriving event, evicts with
-`this.#events.splice(0, count)` (`live-view.ts:181-187` →
-`#applyEviction`, `live-view.ts:730-736`). Once the window is full, every
-tick evicts about one event, and each `splice` shifts the whole array. A
-CPU profile of a 50k-event window puts 98% of the time in
-`#applyEviction` (spike `results/profile.txt` section 2).
+**Outcome.** A window view keeps a start marker (`#head`) into its
+`Event[]`. Eviction advances the marker and clears the evicted slots, so
+their Events can be collected at once. The array is spliced only when the
+evicted prefix outgrows the live window (`#head > length / 2`), so each
+evicted event costs O(1) amortized instead of an O(window) `splice` on
+every arriving event; the push that triggers the splice costs O(batch +
+window). Every reader indexes from the marker. Built-in windows pass an
+internal `keep: { count } | { ms }` option (`@internal`, so stripped from
+the `.d.ts`). The older `evict` callback option still works: it is called
+on a compacted array (same cost as before), and a fractional return is
+truncated, as `splice` did.
 
-Node, cost of one 16 ms push once the window is full, ranges across three
-runs (spike `results/node.txt` section 3, `results/node-window-reruns.txt`):
+Node 22, ms per push once the window is full
+(`packages/core/scripts/perf-live-window.mjs`, as of 5ecbd26: a warm-up
+pass, at least 2.2 compaction cycles, GC tracked per push). "Before" is
+two runs of the same script against the pre-fix build, 30 pushes a row
+(the old code has no cycle); "after" is three runs. Ranges are min–max
+across runs, both window kinds (time and count):
 
-| window (events) | 10k ticks/s (160 a push), no view / view | 100k ticks/s (1,600 a push), no view / view |
-| --------------- | ---------------------------------------- | ------------------------------------------- |
-| 1k              | 0.11–0.18 / 0.48–0.71 ms                 | 0.43–1.05 / 4.6–13 ms                       |
-| 10k             | 0.04–0.06 / 2.3–6.9 ms                   | 0.51–0.79 / 6.3–68 ms                       |
-| 50k             | 0.03–0.07 / **24–34 ms**                 | 0.27–0.62 / **271–326 ms**                  |
-| 100k            | 0.03–0.06 / **56–77 ms**                 | 0.29–0.58 / **368–398 ms**                  |
+| Window, push size  | Before (median) | After (median) | Compacting pushes | After (max) | After (max without GC) |
+| ------------------ | --------------- | -------------- | ----------------- | ----------- | ---------------------- |
+| 50k events, 160    | 45–53           | 0.07–0.12      | 0.7–1.1           | 8–11        | 1.0–1.7                |
+| 100k events, 160   | 53–75           | 0.08–0.09      | 1.2–5.0           | 8–48        | 1.8–7.1                |
+| 50k events, 1,600  | 478–507         | 0.8–1.9        | 1.4–3.0 (\*)      | 8–14        | 1.6–3.0                |
+| 100k events, 1,600 | 503–680         | 0.8–1.7        | 1.9–3.6           | 9–63        | 2.6–4.9                |
+| 1M events, 1,600   | —               | 0.8–1.3        | 11–19 (†)         | —           | —                      |
 
-A push every 16 ms has to be taken in within 16 ms. In the browser
-(cloud) the `view` pipeline at 10k ticks/s with a 10 s window (100k
-points) spent the whole second ingesting, took in 1,846 of 10,000 ticks a
-second and drew no frame.
+(\*) Plus two compacting pushes a GC pause overlapped, 7.6 and 7.8 ms.
+(†) A scratch probe, not the script: 16 of 18 compacting pushes over nine
+runs took 11–19 ms, the other two 27 and 30 ms. At 1M events GC pauses
+are far bigger than that (one run's max was 394 ms, 393 of it GC). Seven
+of the nine runs, and the `splice`/loop/`copyWithin` comparison below,
+used builds from around 5e78882 whose push and compaction code matches
+5ecbd26's (checked by diffing the built `live-view.js`: only `dispose()`,
+the internal buffer getter, comments and one unused local differ).
 
-Fix: a head index into the array, compacted occasionally (the spike's
-`Ring` in `engine.ts` is the pattern), instead of `splice` per event. This
-fixes keeping the view up to date, not reading it: `keyColumn()` /
-`column()` gather from the `Event[]` on every call (64 ms at 600k rows in
-Node, 4 ms a frame at 60k points in the browser). The
-count form (`window(n)`) and the source-evict mirror (`live-view.ts:200-211`)
-go through the same array. Attaching the view also turns on per-tick
-`Event` creation in the source, since the view listens to `'event'`.
+"Max without GC" is the slowest push that no GC pause overlapped
+(`PerformanceObserver` on `'gc'`); every slower push in those rows
+overlapped a GC pause. A view creates an `Event` per arriving row and keeps a
+window of them, which is what the collector walks; the old code allocated
+the same Events. Smaller windows got faster too: at 10k events, 4.4–5.3 →
+0.8–0.9 ms a 1,600-row push into a time window; 1k-event windows are
+within noise. The 50k column read measured 4.6–5.5 ms before and 2.5–3.3
+after; the read walks the same events either way, and I have not looked
+into why it measured faster, so read it only as "not slower".
+
+**Why this shape.** It is the `#frontIdx` pattern already used by
+`LiveRollingAggregation` and the fused rolling paths, so no new vocabulary.
+Alternatives set aside:
+
+- Evict once per push (listen to `'batch'`) instead of per event. Cheaper
+  still, but a view's `'event'` listeners would then see it over-full in
+  the middle of a batch, which changes what they observe.
+- Trim before every read instead of indexing from the marker. Fewer lines
+  touched, but a frame's `column()` read would then pay an O(window)
+  `splice` on top of its O(window) gather.
+- Compact with `copyWithin` or a copy loop instead of `splice`. On a
+  compacting push at 100k events `splice` won every paired run; medians
+  2.1 ms vs 4.1 for a copy loop and 8.3 for `copyWithin` (20, 20 and 18
+  pushes over two probes).
+
+**Trade-offs kept.** The array holds up to 2× the window's slots between
+compactions, but only the window's Events stay alive: a 100k-event view
+holds 20.5 MB vs 19.3 MB before (`node --expose-gc` probe). The first
+version (239977b) left evicted Events in their slots until the next
+compaction, 21–39 MB for the same view; the Layer 2 review caught it.
+`dispose()` leaves the buffer as it is: compacting there would shift the
+array under a `find` predicate that disposes mid-scan (it did, briefly, in
+5e78882), and the slots it would free are already empty. The compacting
+push is O(window), about one 16 ms frame at a 1M-event window, once per
+million events. Reads (`keyColumn()`
+/ `column()` / `toTimeSeries()`) still walk every event: 64 ms at 600k rows
+in Node, 4 ms a frame at 60k points in the browser. That cost is
+[PND-COLOUT]'s and [PND-LSNAP]'s to cut, not this task's. A view on a
+retention-capped source also pays [PND-LVMIRROR], found while
+benchmarking this.
+
+**Source:** offscreen-stream spike §4 (#760). Before the fix, evicting with
+`this.#events.splice(0, count)` on every arriving event took 98% of a
+50k-event window's profile, and one 16 ms push cost 24–34 ms at 10k
+ticks/s and 271–326 ms at 100k (spike `results/node.txt` section 3,
+`results/node-window-reruns.txt`). In the browser (cloud) the `view`
+pipeline at 10k ticks/s with a 100k-point window took in 1,846 of 10,000
+ticks a second and drew no frame.
 
 ### [PND-LVCHAIN] — Views chained after a window view never evict
 
@@ -260,6 +313,40 @@ window view's `'evict'` listeners see (today they fire only for mirrored
 source evictions), so it needs a CHANGELOG `Changed` line. The other
 option, documenting `filter().window()` as the only safe order, leaves the
 existing test's pattern broken.
+
+### [PND-LVMIRROR] — A view makes its source build Events for every retention eviction
+
+**Source:** found while benchmarking [PND-LVWIN] (#761, 2026-10-15). Every
+`LiveView` subscribes to its source's `'evict'` so it can mirror retention
+(`live-view.ts`, the `EMITS_EVICT` block in the constructor). It reads only
+`evicted[evicted.length - 1].begin()`. But `LiveSeries.#applyRetention`
+skips building Events only when no `'evict'` listener is attached
+(`#onEvict.size === 0` → `dropPrefix`); with one, it calls `evictPrefix`,
+which builds an `Event` per dropped row from the chunked columns.
+
+Measured in Node (median ms per push; scratch probe on the 5ecbd26 build,
+filled to 2.2× the window so retention is dropping rows; three runs of two
+reps):
+
+| Setup                                      | 50k window, 1,600 a push | 100k window, 160 a push |
+| ------------------------------------------ | ------------------------ | ----------------------- |
+| no view, retention 2× the window           | 0.28–0.51                | 0.033–0.063             |
+| same + a bare `live.on('evict', () => {})` | 0.88–1.83                | 0.094–0.12              |
+| time window view, no retention             | 0.81–1.26                | 0.083–0.18              |
+| time window view, retention 2× the window  | 1.62–1.94                | 0.16–0.19               |
+
+Paired within a rep, retention adds 0.7–1.0 ms a push to a window view at
+1,600 a push (0.01–0.1 at 160), and a bare listener on a source with no
+view adds 0.4–1.6 (0.03–0.07): the same order, as expected if the cost is
+the listener rather than the window. An earlier probe on an interim build
+(`copyWithin` compaction) put the view's share at 1.8–2.3 ms; superseded.
+
+So a windowed chart over a retention-capped source pays about as much for
+the mirror as for the window itself at 100k ticks/s. Fix to consider: let a
+view hear just the cutoff timestamp (an internal channel next to
+`'evict'`), so the source builds Events only for listeners that want them.
+Relates to [PND-CHANGE]'s eviction channel and [PND-LVCHAIN] (same
+listener).
 
 ## Decisions
 

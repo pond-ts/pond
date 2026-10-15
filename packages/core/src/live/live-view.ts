@@ -64,7 +64,20 @@ type EvictListener<S extends SeriesSchema> = (
 
 type ViewOptions<S extends SeriesSchema> = {
   schema?: S;
+  /**
+   * Custom eviction: given the view's current events, how many to drop
+   * from the front. Called after every append, on a compacted buffer, so
+   * it costs O(window) per event. The built-in `window()` methods don't
+   * use it: they evict by moving a start marker, O(1) amortized per event.
+   */
   evict?: (events: readonly EventForSchema<S>[]) => number;
+  /**
+   * @internal Built-in window eviction ([PND-LVWIN]): keep the last
+   * `count` events, or the events within `ms` of the newest. Evicts by
+   * advancing a head index, so it costs O(1) amortized per event however
+   * large the window. Set by the `window()` methods.
+   */
+  keep?: { count: number } | { ms: number };
   /**
    * Duration of the time-based window this view represents, in
    * milliseconds. Set by `LiveSeries.window(duration)` and
@@ -133,10 +146,24 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   readonly name: string;
   readonly schema: S;
 
-  readonly #events: EventForSchema<S>[];
   /**
-   * Monotonic mutation counter — bumped on every `#events` change
-   * (append, time-window eviction, source-eviction mirror). Keys the
+   * The view's buffer. Entries before `#head` are evicted and no longer
+   * part of the view: the live events are `#events[#head ..]` and the
+   * view's length is `#events.length - #head`. Eviction advances `#head`
+   * and clears the evicted slots (O(1) per event, and the evicted `Event`s
+   * can be collected at once); a periodic shift down keeps the array
+   * bounded at about twice the view's length. Before [PND-LVWIN] each
+   * eviction spliced the front off directly, shifting the whole window on
+   * every arriving event. Same idea as `LiveRollingAggregation`'s
+   * `#frontIdx`. Never index `#events` without adding `#head`: slots
+   * before it are `undefined`.
+   */
+  readonly #events: EventForSchema<S>[];
+  #head = 0;
+  /**
+   * Monotonic mutation counter — bumped whenever the view's contents
+   * change (append, window eviction, source-eviction mirror; not when the
+   * buffer is compacted, which leaves the contents alone). Keys the
    * {@link toTimeSeries} snapshot cache so back-to-back identical-state
    * builds (multiple subscribers, React commit batching, StrictMode
    * double-invoke) are free instead of rebuilding the whole `TimeSeries`.
@@ -150,6 +177,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   readonly #evict:
     | ((events: readonly EventForSchema<S>[]) => number)
     | undefined;
+  readonly #keep: { count: number } | { ms: number } | undefined;
   readonly #windowMs: number | undefined;
   readonly #onEvent: ListenerSet<EventListener<S>>;
   readonly #onEvict: ListenerSet<EvictListener<S>>;
@@ -169,6 +197,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     this.#events = [];
     this.#process = process;
     this.#evict = options?.evict;
+    this.#keep = options?.keep;
     this.#windowMs = options?.windowMs;
     this.#onEvent = new ListenerSet();
     this.#onEvict = new ListenerSet();
@@ -200,14 +229,14 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     let evictUnsub: (() => void) | undefined;
     if (EMITS_EVICT in source) {
       evictUnsub = (source as any).on('evict', (evicted: readonly any[]) => {
-        if (evicted.length === 0 || this.#events.length === 0) return;
+        if (evicted.length === 0 || this.length === 0) return;
         const cutoff = evicted[evicted.length - 1]!.begin();
-        let i = 0;
-        while (i < this.#events.length && this.#events[i]!.begin() <= cutoff)
-          i++;
-        if (i > 0) {
-          const removed = this.#events.splice(0, i);
-          this.#version += 1;
+        const events = this.#events;
+        let i = this.#head;
+        while (i < events.length && events[i]!.begin() <= cutoff) i++;
+        if (i > this.#head) {
+          const removed = events.slice(this.#head, i);
+          this.#dropFront(i - this.#head);
           dispatchIsolated(this.#onEvict, removed as any);
         }
       });
@@ -220,20 +249,22 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   }
 
   get length(): number {
-    return this.#events.length;
+    return this.#events.length - this.#head;
   }
 
   at(index: number): EventForSchema<S> | undefined {
-    if (index < 0) index = this.#events.length + index;
-    return this.#events[index];
+    const length = this.length;
+    if (index < 0) index = length + index;
+    if (index < 0 || index >= length) return undefined;
+    return this.#events[this.#head + index];
   }
 
   first(): EventForSchema<S> | undefined {
-    return this.#events[0];
+    return this.length > 0 ? this.#events[this.#head] : undefined;
   }
 
   last(): EventForSchema<S> | undefined {
-    return this.#events[this.#events.length - 1];
+    return this.length > 0 ? this.#events[this.#events.length - 1] : undefined;
   }
 
   // ── Query primitives ─────────────────────────────────────────
@@ -254,41 +285,44 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   find(
     predicate: (event: EventForSchema<S>, index: number) => boolean,
   ): EventForSchema<S> | undefined {
-    return this.#events.find((event, index) => predicate(event, index));
+    const events = this.#events;
+    const head = this.#head;
+    for (let i = head; i < events.length; i++) {
+      if (predicate(events[i]!, i - head)) return events[i];
+    }
+    return undefined;
   }
 
   /** Example: `view.some(e => e.get('healthy'))`. */
   some(
     predicate: (event: EventForSchema<S>, index: number) => boolean,
   ): boolean {
-    return this.#events.some((event, index) => predicate(event, index));
+    return this.find(predicate) !== undefined;
   }
 
   /** Example: `view.every(e => e.get('healthy'))`. */
   every(
     predicate: (event: EventForSchema<S>, index: number) => boolean,
   ): boolean {
-    return this.#events.every((event, index) => predicate(event, index));
+    return this.find((event, index) => !predicate(event, index)) === undefined;
   }
 
   /** Example: `view.includesKey(new Time(t))`. */
   includesKey(key: KeyLike): boolean {
     const normalizedKey = toKey(key);
-    const index = this.bisect(normalizedKey);
-    return (
-      index < this.#events.length &&
-      this.#events[index]!.key().equals(normalizedKey)
-    );
+    const event = this.at(this.bisect(normalizedKey));
+    return event !== undefined && event.key().equals(normalizedKey);
   }
 
   /** Example: `view.bisect(new Time(t))`. Insertion index for `key` in the sorted view buffer (binary search). */
   bisect(key: KeyLike): number {
     const normalizedKey = toKey(key);
+    const head = this.#head;
     let low = 0;
-    let high = this.#events.length;
+    let high = this.length;
     while (low < high) {
       const mid = (low + high) >>> 1;
-      if (this.#events[mid]!.key().compare(normalizedKey) < 0) {
+      if (this.#events[head + mid]!.key().compare(normalizedKey) < 0) {
         low = mid + 1;
       } else {
         high = mid;
@@ -301,18 +335,16 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   atOrBefore(key: KeyLike): EventForSchema<S> | undefined {
     const normalizedKey = toKey(key);
     const index = this.bisect(normalizedKey);
-    if (
-      index < this.#events.length &&
-      this.#events[index]!.key().equals(normalizedKey)
-    ) {
-      return this.#events[index];
+    const event = this.at(index);
+    if (event !== undefined && event.key().equals(normalizedKey)) {
+      return event;
     }
-    return index === 0 ? undefined : this.#events[index - 1];
+    return index === 0 ? undefined : this.at(index - 1);
   }
 
   /** Example: `view.atOrAfter(new Time(t))`. */
   atOrAfter(key: KeyLike): EventForSchema<S> | undefined {
-    return this.#events[this.bisect(key)];
+    return this.at(this.bisect(key));
   }
 
   filter(predicate: (event: EventForSchema<S>) => boolean): LiveView<S> {
@@ -373,21 +405,14 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
 
   window(size: RollingWindow): LiveView<S> {
     if (typeof size === 'number' && Number.isInteger(size) && size > 0) {
-      const count = size;
       return new LiveView(this, (event: EventForSchema<S>) => event, {
-        evict: (events) => Math.max(0, events.length - count),
+        keep: { count: size },
       });
     }
     if (typeof size === 'string') {
       const ms = parseDuration(size as DurationInput);
       return new LiveView(this, (event: EventForSchema<S>) => event, {
-        evict: (events) => {
-          if (events.length === 0) return 0;
-          const cutoff = events[events.length - 1]!.begin() - ms;
-          let i = 0;
-          while (i < events.length && events[i]!.begin() < cutoff) i++;
-          return i;
-        },
+        keep: { ms },
         windowMs: ms,
       });
     }
@@ -407,7 +432,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
    * naturally with {@link LiveView.rate}.
    */
   count(): number {
-    return this.#events.length;
+    return this.length;
   }
 
   /**
@@ -436,7 +461,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
           'denominator).',
       );
     }
-    return this.#events.length / (this.#windowMs / 1000);
+    return this.length / (this.#windowMs / 1000);
   }
 
   aggregate<const M extends ValidatedAggregateMap<S, M>>(
@@ -551,13 +576,15 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     ) {
       return cache.ts;
     }
-    const rows = this.#events.map((event) => {
+    const rows: unknown[][] = new Array(this.length);
+    for (let i = 0; i < rows.length; i++) {
+      const event = this.#events[this.#head + i]!;
       const row: unknown[] = [event.key()];
       for (let col = 1; col < this.schema.length; col++) {
         row.push(event.get((this.schema[col] as any).name));
       }
-      return row;
-    });
+      rows[i] = row;
+    }
     const ts = new TimeSeries({
       name: resolvedName,
       schema: this.schema,
@@ -590,7 +617,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   keyColumn(): TimeKeyOnly<S> {
     return gatherTimeKeyColumn(
       this.#events,
-      null,
+      this.#head,
       this.schema,
     ) as unknown as TimeKeyOnly<S>;
   }
@@ -607,7 +634,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   ): PublicColumnForKind<'number'> {
     return gatherColumnFromEvents(
       this.#events,
-      null,
+      this.#head,
       this.schema,
       name,
     ) as unknown as PublicColumnForKind<'number'>;
@@ -644,7 +671,6 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
           `silently collapse every row into one bucket.`,
       );
     }
-    const live = this.#events;
     const schema = this.schema;
     return {
       toMap: <R>(fn: (group: LiveColumnGroup<S>) => R): Map<string, R> => {
@@ -654,7 +680,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
         // shifted / out-of-range rows after a later push. The shallow copy
         // is event refs only (events are immutable) — cheap, and preserves
         // the "snapshot-style read of the current window" contract.
-        const events = live.slice();
+        const events = this.#events.slice(this.#head);
         const buckets = new Map<string, number[]>();
         for (let i = 0; i < events.length; i += 1) {
           // Mirror TimeSeries `partitionKeyOf` (single-column): a missing
@@ -722,18 +748,67 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     }
   }
 
+  /**
+   * @internal — the view's raw buffer: cleared (`undefined`) slots for
+   * evicted events, then the live events. For tests and the benchmark
+   * that pin how eviction uses it ([PND-LVWIN]). Read only.
+   */
+  get _buffer(): readonly (EventForSchema<S> | undefined)[] {
+    return this.#events;
+  }
+
   /** @internal — subscribers on this view (`'event'` + `'evict'`). */
   get _listenerCount(): number {
     return this.#onEvent.size + this.#onEvict.size;
   }
 
   #applyEviction(): void {
-    if (!this.#evict) return;
-    const count = this.#evict(this.#events);
-    if (count > 0) {
-      this.#events.splice(0, count);
-      this.#version += 1;
+    const keep = this.#keep;
+    if (keep !== undefined) {
+      const events = this.#events;
+      let head = this.#head;
+      if ('count' in keep) {
+        head = Math.max(head, events.length - keep.count);
+      } else if (events.length > head) {
+        const cutoff = events[events.length - 1]!.begin() - keep.ms;
+        while (head < events.length && events[head]!.begin() < cutoff) head++;
+      }
+      if (head > this.#head) this.#dropFront(head - this.#head);
+      return;
     }
+    if (!this.#evict) return;
+    // A custom `evict` sees only the view's events, so compact first.
+    this.#compact();
+    const count = this.#evict(this.#events);
+    // Whole events only, as `splice(0, count)` did before [PND-LVWIN].
+    const whole = Math.trunc(count);
+    if (whole > 0) this.#dropFront(Math.min(whole, this.length));
+  }
+
+  /** Evict `count` events from the front of the view. */
+  #dropFront(count: number): void {
+    // Clear the evicted slots so their `Event`s can be collected now
+    // rather than at the next compaction.
+    const events = this.#events as (EventForSchema<S> | undefined)[];
+    const end = this.#head + count;
+    for (let i = this.#head; i < end; i++) events[i] = undefined;
+    this.#head = end;
+    this.#version += 1;
+    // Compact once the evicted prefix outgrows the live window, so each
+    // evicted event pays O(1) amortized for the shift.
+    if (this.#head > this.#events.length / 2) this.#compact();
+  }
+
+  /** Shift the live events down to index 0 (the contents don't change). */
+  #compact(): void {
+    const head = this.#head;
+    if (head === 0) return;
+    // `splice` measured fastest here: on a push that compacts a 100k-event
+    // window it won every paired run, median 2.1 ms vs 4.1 for a copy loop
+    // and 8.3 for `copyWithin` (Node 22). The array of cleared slots it
+    // returns is dropped at once.
+    this.#events.splice(0, head);
+    this.#head = 0;
   }
 
   /**
@@ -754,7 +829,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
    * out-of-order events.
    */
   #appendChecked(event: EventForSchema<S>): void {
-    const last = this.#events[this.#events.length - 1];
+    const last = this.last();
     if (last && event.key().compare(last.key()) < 0) {
       throw new ValidationError(
         `LiveView: processed event has key ${describeKey(event)} ` +
@@ -773,13 +848,14 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
 // ── Walk-now column read surface (§A pull/read) ───────────────────
 //
 // Shared gather helpers + the per-partition group object. Read the
-// view's `Event[]` through indices (or the whole buffer when `indices`
-// is null), building only the columns requested — no `TimeSeries`, no
-// per-partition store.
+// view's `Event[]` through an index list, or from an offset to the end
+// (the view's head), building only the columns requested — no
+// `TimeSeries`, no per-partition store.
 
 function gatherColumnFromEvents<S extends SeriesSchema>(
   events: readonly EventForSchema<S>[],
-  indices: readonly number[] | null,
+  /** Index list, or the offset of the first event to read to the end. */
+  indices: readonly number[] | number,
   schema: S,
   name: string,
 ): Float64Column {
@@ -802,10 +878,12 @@ function gatherColumnFromEvents<S extends SeriesSchema>(
         `kind coverage.`,
     );
   }
-  const len = indices ? indices.length : events.length;
+  const list = typeof indices === 'number' ? null : indices;
+  const start = typeof indices === 'number' ? indices : 0;
+  const len = list ? list.length : events.length - start;
   const src: (number | undefined)[] = new Array(len);
   for (let i = 0; i < len; i += 1) {
-    const e = events[indices ? indices[i]! : i]!;
+    const e = events[list ? list[i]! : start + i]!;
     src[i] = e.get(name as never) as number | undefined;
   }
   return float64ColumnFromArray(src);
@@ -813,7 +891,8 @@ function gatherColumnFromEvents<S extends SeriesSchema>(
 
 function gatherTimeKeyColumn<S extends SeriesSchema>(
   events: readonly EventForSchema<S>[],
-  indices: readonly number[] | null,
+  /** Index list, or the offset of the first event to read to the end. */
+  indices: readonly number[] | number,
   schema: S,
 ): TimeKeyColumn {
   if ((schema[0] as { kind: string }).kind !== 'time') {
@@ -822,10 +901,12 @@ function gatherTimeKeyColumn<S extends SeriesSchema>(
         `'${(schema[0] as { kind: string }).kind}').`,
     );
   }
-  const len = indices ? indices.length : events.length;
+  const list = typeof indices === 'number' ? null : indices;
+  const start = typeof indices === 'number' ? indices : 0;
+  const len = list ? list.length : events.length - start;
   const begin = new Float64Array(len);
   for (let i = 0; i < len; i += 1) {
-    begin[i] = events[indices ? indices[i]! : i]!.begin();
+    begin[i] = events[list ? list[i]! : start + i]!.begin();
   }
   return new TimeKeyColumn(begin, len);
 }

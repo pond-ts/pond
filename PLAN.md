@@ -634,18 +634,18 @@ Robustness debt plus the queued composition workstreams. Plan:
   the per-row check, including 27% making a `Time` object per tick.
   `TimeSeries.fromColumns` takes the same ticks in ~0.9 ms. The in-process
   half of [PND-WIRE]'s streaming append.
-- **[PND-LVWIN]** — A `live.window()` view gets slower per tick as its
-  window grows: each arriving event `splice`s the oldest off an `Event[]`,
-  shifting the whole array (98% of a profile). One 16 ms push into a
-  50k-event window: 24–34 ms at 10k ticks/s, 271–326 ms at 100k. Use a head
-  index. Reads (`keyColumn()` / `column()`) stay a walk over every event.
 - **[PND-LVCHAIN]** — A view chained after a window view
   (`live.window('1m').filter(p)`, `.map`, `.select`) never drops anything:
   window eviction doesn't emit `'evict'`, so the child's mirror never fires,
   even under source retention. It grows with every event, and its
   `eventRate()` counts all of them (10k events 10 ms apart: window 101,
   filter-of-window 10,000). The pattern is tested, but only before events
-  age out. Found while fixing [PND-LVWIN].
+  age out. Found while fixing [PND-LVWIN] (#761).
+- **[PND-LVMIRROR]** — A view on a retention-capped `LiveSeries` makes the
+  source build an `Event` for every row retention drops: 0.7–1.0 ms more
+  per 1,600-row push in Node. The view only reads the last dropped timestamp,
+  but any `'evict'` listener switches the source off its skip-the-Events
+  path. Found while benchmarking [PND-LVWIN] (#761).
 
 ### Streaming semantics (Phase 4.5)
 
