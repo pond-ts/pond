@@ -1,0 +1,24 @@
+# node v22.22.0, 2026-10-15
+
+## 1. Reading N rows out of a LiveSeries as x/y arrays (median of 5, ms)
+N         toTimeSeries+read   LiveView keyColumn+column   copy stored chunks
+60000               49.5                    8.2                  2.0
+600000             473.7                   45.7                 13.8
+3000000           4513.5                      —                 79.7
+
+## 2. Ingest at 100k ticks/s: cost per second of ticks, by step (median of 5, ms)
+batch  build-rows  pushMany  pushMany+mirror(_onChunk)  raw typed copy
+400           2.1      24.3                       25.6            1.13
+800           2.0      17.5                       20.4            1.04
+1600          2.4      20.9                       19.9            1.28
+5000          1.9      29.8                       39.1            1.84
+
+## 3. pushMany cost with a live.window() LiveView attached (ms per 160-row push, steady state)
+window(events)  no view   with view
+1000              0.219       0.951
+10000             0.157       2.197
+50000             0.070      34.372
+
+## 4. History download into a Node WebSocket client
+1,000,000 ticks (24 MB): 274 ms
+6,000,000 ticks (144 MB): 1982 ms

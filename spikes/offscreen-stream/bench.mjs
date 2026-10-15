@@ -3,7 +3,14 @@
 // engine's once-a-second stats and the page's own frame rate.
 //
 //   node spikes/offscreen-stream/bench.mjs [--uncapped] [--headed] [--channel chrome]
-//     [--only group] [--where k=v,…] [--out file]
+//     [--dpr 2] [--settle ms] [--sample s] [--only group] [--where k=v,…] [--out file]
+//   node spikes/offscreen-stream/bench.mjs --print results/x.json
+//
+// Per scenario: open the page, wait for the history to land, wait until the
+// chart is less than 1 s behind the feed ("caught up"; recorded, and the row
+// is flagged if it never gets there), settle, then aggregate every frame from
+// a run of consecutive once-a-second engine reports. All figures in a row
+// come from the same frames.
 //
 // --uncapped launches Chromium without the vsync frame cap, so rAF runs as
 // fast as the work allows: that is the honest "could this hold 120 fps"
@@ -21,6 +28,15 @@ const uncapped = args.includes('--uncapped');
 const headed = args.includes('--headed');
 const channelIdx = args.indexOf('--channel');
 const channel = channelIdx >= 0 ? args[channelIdx + 1] : undefined;
+const num = (flag, dflt) => {
+  const i = args.indexOf(flag);
+  return i >= 0 ? Number(args[i + 1]) : dflt;
+};
+// Playwright pins a page's devicePixelRatio to 1 unless told otherwise, even
+// on a Retina screen; --dpr 2 renders the canvas at Retina resolution.
+const dpr = num('--dpr', 1);
+const SETTLE_MS = num('--settle', 3000);
+const SAMPLE_S = num('--sample', 4);
 const outIdx = args.indexOf('--out');
 const out = outIdx >= 0 ? args[outIdx + 1] : null;
 const onlyIdx = args.indexOf('--only');
@@ -38,9 +54,10 @@ function formatRow(r) {
   const f = (n, d = 1) => (n == null ? '—' : n.toFixed(d));
   return (
     `${r.group.padEnd(7)} ${r.mode.padEnd(6)} ${r.pipeline.padEnd(8)} ${r.draw.padEnd(7)} ${String(r.rate).padStart(7)}/s ${String(r.window).padStart(3)}s ` +
-    `busy ${String(r.busy).padStart(2)} every ${String(r.interval).padStart(2)}ms | pts ${String(r.points).padStart(9)} ` +
-    `fps ${f(r.fps, 0).padStart(4)} p95 ${f(r.frameP95)}ms work ${f(r.workAvg, 2)}ms (view ${f(r.viewAvg, 2)} ext ${f(r.extentAvg, 2)} draw ${f(r.drawAvg, 2)}) ` +
+    `busy ${String(r.busy).padStart(2)} every ${String(r.interval).padStart(2)}ms dpr ${r.dpr ?? 1} | pts ${String(r.points).padStart(9)} ` +
+    `fps ${f(r.fps, 0).padStart(4)} p95 ${f(r.frameP95)}ms work ${f(r.workAvg, 2)}ms (view ${f(r.viewAvg, 2)}${r.viewDirtyAvg != null ? `/${f(r.viewDirtyAvg, 2)}` : ''} ext ${f(r.extentAvg, 2)} draw ${f(r.drawAvg, 2)}) ` +
     `ingest ${f(r.ingestMsPerSec, 0)}ms/s ${f(r.ticksPerSec, 0)}t/s${r.droppedPerSec ? ` DROP ${f(r.droppedPerSec, 0)}/s` : ''} lat ${f(r.latencyP50, 0)}/${f(r.latencyP95, 0)}ms page ${f(r.pageFps, 0)}fps max ${f(r.pageFrameMax, 0)}ms` +
+    (r.caughtUp === false ? '  NOT-CAUGHT-UP' : '') +
     (r.errors?.length ? `  ERR ${r.errors.join('; ')}` : '') +
     (r.note ? `  [${r.note}]` : '')
   );
@@ -54,9 +71,6 @@ if (printIdx >= 0) {
   process.exit(0);
 }
 
-const SETTLE_MS = 3000;
-const SAMPLE_S = 4;
-
 const scenarios = [];
 const base = { mode: 'worker', busy: 0, interval: 16 };
 // 1. The space: pipeline × draw × rate × window, worker thread, quiet page.
@@ -64,6 +78,7 @@ for (const [pipeline, draw] of [
   ['raw', 'm4'],
   ['chunk', 'm4'],
   ['snapshot', 'm4'],
+  ['view', 'm4'],
   ['raw', 'buckets'],
   ['chunk', 'buckets'],
 ])
@@ -73,8 +88,14 @@ for (const [pipeline, draw] of [
       // Raw points held in memory (everything except raw+buckets).
       if (!(pipeline === 'raw' && draw === 'buckets') && points > 10_000_000)
         continue;
-      if (pipeline === 'chunk' && points > 6_000_000) continue; // LiveSeries row memory
-      if (pipeline === 'snapshot' && points > 600_000) continue; // seconds per frame; see REPORT
+      // Memory precaution: `chunk` holds every tick twice (LiveSeries chunks
+      // + the mirror ring).
+      if (pipeline === 'chunk' && points > 10_000_000) continue;
+      // A full rebuild per frame: ~0.5 s at 600k in the cloud already.
+      if (pipeline === 'snapshot' && points > 600_000) continue;
+      // A `live.window()` LiveView costs O(window) per tick to evict (see
+      // REPORT §3); at 100k points the worker already can't keep up.
+      if (pipeline === 'view' && points > 100_000) continue;
       scenarios.push({ group: 'space', ...base, pipeline, draw, rate, window });
     }
 // 2. The busy page: worker vs main thread, quiet vs heavy app.
@@ -119,6 +140,7 @@ const selected = scenarios.filter(
 for (const s of selected) {
   const page = await browser.newPage({
     viewport: { width: 1232, height: 700 },
+    deviceScaleFactor: dpr,
   });
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -143,50 +165,91 @@ for (const s of selected) {
     })
     .catch(() => errors.push('prefill timeout'));
   const prefillMs = Date.now() - t0;
+  // Caught up: the newest drawn tick is under 1 s old. A row that never gets
+  // there is still showing the history backlog (or can't keep up) and is
+  // flagged rather than silently mixed in.
+  const c0 = Date.now();
+  const caughtUp = await page
+    .waitForFunction(
+      () => {
+        const s = window.__stats;
+        return s != null && s.latencyP50 > 0 && s.latencyP50 < 1000;
+      },
+      null,
+      { timeout: 60_000, polling: 250 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  const catchUpMs = Date.now() - c0;
   await page.waitForTimeout(SETTLE_MS);
-  const samples = [];
-  for (let i = 0; i < SAMPLE_S; i++) {
-    await page.waitForTimeout(1000);
-    samples.push(
-      await page.evaluate(() => ({
-        chart: window.__stats,
-        page: window.__main,
-      })),
-    );
-  }
+  const i0 = await page.evaluate(() => [
+    window.__reports.length,
+    window.__mainReports.length,
+  ]);
+  await page.waitForTimeout(SAMPLE_S * 1000 + 300);
+  const { reps, mains } = await page.evaluate(([a, b]) => {
+    return {
+      reps: window.__reports.slice(a),
+      mains: window.__mainReports.slice(b),
+    };
+  }, i0);
   await page.close();
-  const med = (k, src = 'chart') => {
-    const v = samples
-      .map((x) => x[src]?.[k])
-      .filter((n) => typeof n === 'number')
-      .sort((a, b) => a - b);
-    return v.length ? v[Math.floor(v.length / 2)] : null;
-  };
-  const max = (k, src = 'chart') =>
-    Math.max(...samples.map((x) => x[src]?.[k] ?? 0));
+  const cat = (k) => reps.flatMap((x) => x.raw[k]);
+  const sum = (k) => reps.reduce((a, x) => a + x.raw[k], 0);
+  const secs = reps.reduce((a, x) => a + x.secs, 0) || 1;
+  const sorted = (a) => [...a].sort((p, q) => p - q);
+  const pct = (a, p) =>
+    a.length
+      ? sorted(a)[Math.min(a.length - 1, Math.floor(p * a.length))]
+      : null;
+  const mean = (a) =>
+    a.length ? a.reduce((p, q) => p + q, 0) / a.length : null;
+  const intervals = cat('intervals');
+  const pageIntervals = mains.flatMap((m) => m.intervals);
+  const pageSecs = mains.reduce((a, m) => a + m.secs, 0);
+  const last = reps[reps.length - 1];
   const r = {
     ...s,
+    dpr,
     prefill,
-    points: med('points'),
-    columns: med('columns'),
-    fps: med('fps'),
-    frameP95: med('frameP95'),
-    frameMax: max('frameMax'),
-    over120: med('over120'),
-    workAvg: med('workAvg'),
-    workP95: med('workP95'),
-    viewAvg: med('viewAvg'),
-    extentAvg: med('extentAvg'),
-    drawAvg: med('drawAvg'),
-    ingestMsPerSec: med('ingestMsPerSec'),
-    ticksPerSec: med('ticksPerSec'),
-    droppedPerSec: med('droppedPerSec'),
-    mbPerSec: med('mbPerSec'),
-    latencyP50: med('latencyP50'),
-    latencyP95: med('latencyP95'),
-    pageFps: med('fps', 'page'),
-    pageFrameMax: max('frameMax', 'page'),
+    reports: reps.length,
+    points: last?.points ?? null,
+    columns: last?.columns ?? null,
+    usingRaf: last?.usingRaf ?? null,
+    fps: intervals.length / secs,
+    frameP50: pct(intervals, 0.5),
+    frameP95: pct(intervals, 0.95),
+    frameMax: intervals.length ? Math.max(...intervals) : null,
+    over120: intervals.length
+      ? intervals.filter((d) => d > 1000 / 120 + 1).length / intervals.length
+      : null,
+    workAvg: mean(cat('work')),
+    workP95: pct(cat('work'), 0.95),
+    viewAvg: mean(cat('view')),
+    viewDirtyAvg:
+      s.pipeline === 'snapshot' || s.pipeline === 'view'
+        ? mean(cat('viewDirty'))
+        : null,
+    extentAvg: mean(cat('extent')),
+    drawAvg: mean(cat('draw')),
+    ingestMsPerSec: sum('ingestMs') / secs,
+    ticksPerSec: sum('ticks') / secs,
+    droppedPerSec: sum('dropped') / secs,
+    mbPerSec: sum('bytes') / secs / 1e6,
+    latencyP50: pct(cat('latency'), 0.5),
+    latencyP95: pct(cat('latency'), 0.95),
+    pageFps: pageSecs ? pageIntervals.length / pageSecs : null,
+    pageFrameP95: pct(pageIntervals, 0.95),
+    pageFrameMax: pageIntervals.length ? Math.max(...pageIntervals) : null,
+    // Per-second trend, to see a backlog shrinking or growing.
+    perSecond: reps.map((x) => ({
+      fps: Math.round(x.fps),
+      latencyP50: Math.round(x.latencyP50),
+      ticksPerSec: Math.round(x.ticksPerSec),
+    })),
     prefillMs,
+    caughtUp,
+    catchUpMs,
     errors,
   };
   results.push(r);
@@ -194,5 +257,21 @@ for (const s of selected) {
 }
 await browser.close();
 server.close();
-if (out) await writeFile(out, JSON.stringify({ uncapped, results }, null, 2));
+if (out)
+  await writeFile(
+    out,
+    JSON.stringify(
+      {
+        uncapped,
+        headed,
+        channel: channel ?? null,
+        dpr,
+        settleMs: SETTLE_MS,
+        sampleS: SAMPLE_S,
+        results,
+      },
+      null,
+      2,
+    ),
+  );
 process.exit(0);

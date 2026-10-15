@@ -6,12 +6,17 @@
  * Data path, per WebSocket frame:   decode → ingest (pipeline) → mark dirty
  * Draw path, per animation frame:   [refresh view if dirty] → extent → draw
  *
- * Three ingest pipelines, to separate pond's cost from the floor:
- *  - `raw`      — decode straight into a typed ring buffer. No pond. The ceiling.
- *  - `chunk`    — `LiveSeries.pushMany`, mirrored into the ring buffer through
- *                 the column-native `_onChunk` hook (internal API today).
+ * Four ingest pipelines, to separate pond's cost from the floor:
+ *  - `raw`      — decode straight into a typed ring buffer (or, with `buckets`,
+ *                 into the buckets only). No pond. The floor.
+ *  - `chunk`    — `LiveSeries.pushMany`; each appended chunk is read back value
+ *                 by value (time, price) into the ring through the internal
+ *                 `_onChunk` hook. Stands in for a column hand-over pond lacks.
  *  - `snapshot` — `LiveSeries.pushMany`, then on each dirty frame the public
  *                 path a chart uses today: `toTimeSeries()` → `fromTimeSeries`.
+ *  - `view`     — `LiveSeries.pushMany` plus a `live.window()` `LiveView`, read
+ *                 on each dirty frame through the public column readers
+ *                 `keyColumn()` / `column()` (no `TimeSeries` built).
  */
 import { LiveSeries } from 'pond-ts';
 import { scaleLinear } from 'd3-scale';
@@ -21,7 +26,7 @@ import {
   type ChartSeries,
 } from '../../../packages/charts/src/data.js';
 
-export type Pipeline = 'raw' | 'chunk' | 'snapshot';
+export type Pipeline = 'raw' | 'chunk' | 'snapshot' | 'view';
 /**
  * How the visible window is reduced to pixels.
  *  - `m4`      — the @pond-ts/charts line kernel: cull + M4-decimate the raw
@@ -45,6 +50,26 @@ export interface EngineOptions {
 }
 
 export interface Stats {
+  /** Wall seconds this report covers. */
+  secs: number;
+  /** Raw per-frame series for this report, so a harness can aggregate
+   *  several reports exactly (not a median of per-second summaries). */
+  raw: {
+    intervals: number[];
+    work: number[];
+    draw: number[];
+    view: number[];
+    extent: number[];
+    /** View time on frames that had new data only. */
+    viewDirty: number[];
+    latency: number[];
+    ingestMs: number;
+    ticks: number;
+    msgs: number;
+    bytes: number;
+    dropped: number;
+  };
+  dpr: number;
   /** Frames painted per second. */
   fps: number;
   frameP50: number;
@@ -187,6 +212,7 @@ class Buckets {
 }
 
 const now = () => performance.now();
+const r2 = (v: number) => Math.round(v * 100) / 100;
 
 function pct(sorted: number[], p: number) {
   if (sorted.length === 0) return 0;
@@ -211,7 +237,7 @@ export function startEngine(
   const ring = new Ring();
   const plotWEarly = width - 8 - 64;
   const buckets =
-    opts.draw === 'buckets' && pipeline !== 'snapshot'
+    opts.draw === 'buckets' && pipeline !== 'snapshot' && pipeline !== 'view'
       ? new Buckets(
           windowMs / Math.round(plotWEarly * dpr),
           Math.round(plotWEarly * dpr),
@@ -227,6 +253,11 @@ export function startEngine(
           schema,
           retention: { maxAge: `${windowSec}s` },
         });
+  // `view`: a LiveView over the same window, read through its public column
+  // readers. It holds the window as per-tick events, so attaching it also
+  // switches the LiveSeries onto its per-tick event fan-out.
+  const liveView =
+    pipeline === 'view' && live ? live.window(`${windowSec}s`) : null;
   if (pipeline === 'chunk' && live) {
     // Mirror every appended chunk into the ring, column-native.
     (live as any)._onChunk((store: any) => {
@@ -240,6 +271,7 @@ export function startEngine(
     });
   }
 
+  const fromLiveSeries = pipeline === 'snapshot' || pipeline === 'view';
   let latestT = -Infinity;
   let droppedTotal = 0;
   let droppedReported = 0;
@@ -260,6 +292,7 @@ export function startEngine(
   const work: number[] = [];
   const draws: number[] = [];
   const views: number[] = [];
+  const viewsDirty: number[] = [];
   const extents: number[] = [];
   const latencies: number[] = [];
   let frames = 0;
@@ -288,7 +321,7 @@ export function startEngine(
     }
     if (n > 0) {
       latestT = buf[3 + (n - 1) * 3]!;
-      if (pipeline !== 'snapshot') ring.evictBefore(latestT - windowMs);
+      if (!fromLiveSeries) ring.evictBefore(latestT - windowMs);
       buckets?.evictBefore(latestT - windowMs - buckets.ms);
     }
     latestArrival = t0;
@@ -319,9 +352,22 @@ export function startEngine(
     let v0 = now();
     if (pipeline === 'snapshot' && dirty) {
       snapshotView = fromTimeSeries(live!.toTimeSeries(), 'price');
+    } else if (pipeline === 'view' && dirty) {
+      const x = liveView!.keyColumn().begin;
+      const col = liveView!.column('price') as any;
+      let y: Float64Array;
+      if (typeof col.toFloat64Array === 'function') y = col.toFloat64Array();
+      else {
+        y = new Float64Array(x.length);
+        for (let i = 0; i < x.length; i++) y[i] = col.read(i) ?? NaN;
+      }
+      snapshotView = { x, y, length: x.length };
     }
-    const view = pipeline === 'snapshot' ? snapshotView : ring.view();
-    views.push(now() - v0);
+    const fromLive = pipeline === 'snapshot' || pipeline === 'view';
+    const view = fromLive ? snapshotView : ring.view();
+    const vt = now() - v0;
+    views.push(vt);
+    if (dirty) viewsDirty.push(vt);
 
     // 2. Extent — only when data changed (the window is a moving max/min).
     v0 = now();
@@ -427,6 +473,11 @@ export function startEngine(
     }
     draws.push(now() - v0);
     work.push(now() - f0);
+    // Delay: wall clock at the end of this frame's JS, minus the newest tick
+    // drawn. The server stamps the newest tick of each frame with its send
+    // time, so this covers network + queueing + ingest + time since the last
+    // batch arrived + this frame's work. It stops before the browser
+    // composites and the display shows the frame.
     if (painted > -Infinity) latencies.push(Date.now() - painted);
     frames++;
   }
@@ -451,6 +502,22 @@ export function startEngine(
     const wk = [...work].sort((a, b) => a - b);
     const lat = [...latencies].sort((a, b) => a - b);
     report({
+      secs,
+      raw: {
+        intervals: frameIntervals.map(r2),
+        work: work.map(r2),
+        draw: draws.map(r2),
+        view: views.map(r2),
+        extent: extents.map(r2),
+        viewDirty: viewsDirty.map(r2),
+        latency: latencies.map(r2),
+        ingestMs,
+        ticks,
+        msgs,
+        bytes,
+        dropped: droppedTotal - droppedReported,
+      },
+      dpr,
       fps: frameIntervals.length / secs,
       frameP50: pct(fi, 0.5),
       frameP95: pct(fi, 0.95),
@@ -474,9 +541,11 @@ export function startEngine(
       points:
         pipeline === 'snapshot'
           ? live!.length
-          : keepPoints
-            ? ring.len
-            : buckets!.ticks,
+          : pipeline === 'view'
+            ? snapshotView.length
+            : keepPoints
+              ? ring.len
+              : buckets!.ticks,
       columns: buckets ? buckets.len : 0,
       latencyP50: pct(lat, 0.5),
       latencyP95: pct(lat, 0.95),
@@ -484,7 +553,7 @@ export function startEngine(
       usingRaf: hasRaf,
     });
     frameIntervals.length = work.length = draws.length = views.length = 0;
-    extents.length = latencies.length = 0;
+    extents.length = latencies.length = viewsDirty.length = 0;
     ingestMs = ticks = msgs = bytes = 0;
     droppedReported = droppedTotal;
   }, 1000);

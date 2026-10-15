@@ -53,8 +53,12 @@ const opts: EngineOptions = {
 
 const w = window as any;
 w.__stats = null as Stats | null;
+// Every report kept, so a harness can take an exact run of consecutive ones.
+w.__reports = [] as Stats[];
+w.__mainReports = [] as unknown[];
 const show = (s: Stats) => {
   w.__stats = s;
+  w.__reports.push(s);
   const f = (n: number, d = 1) => n.toFixed(d);
   document.getElementById('stats')!.textContent = [
     `chart fps        ${f(s.fps, 0)}   (frame p50 ${f(s.frameP50)}ms  p95 ${f(s.frameP95)}ms  max ${f(s.frameMax)}ms)`,
@@ -83,12 +87,19 @@ let mFrames = 0;
 let mLast = performance.now();
 const mIntervals: number[] = [];
 let prev = 0;
-const tick = (t: number) => {
+// Timed with performance.now() at callback time, the same clock the chart
+// uses, so on the main thread the two meters see the same frames the same way.
+const tick = () => {
+  const t = performance.now();
   if (prev) mIntervals.push(t - prev);
   prev = t;
   mFrames++;
   marker.style.transform = `translateX(${((t / 4) % 300).toFixed(1)}px)`;
   if (t - mLast >= 1000) {
+    w.__mainReports.push({
+      secs: (t - mLast) / 1000,
+      intervals: mIntervals.map((v) => Math.round(v * 100) / 100),
+    });
     const sorted = mIntervals.sort((a, b) => a - b);
     w.__main = {
       fps: (mFrames * 1000) / (t - mLast),
