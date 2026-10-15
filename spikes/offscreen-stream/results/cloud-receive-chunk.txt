@@ -1,0 +1,5 @@
+receive worker chunk    buckets  250000/s  10s busy  0 every 16ms dpr 1 | pts   2236250 fps   53 p95 29.4ms work 0.79ms (view 0.01 ext 0.01 draw 0.76) ingest 86ms/s 250075t/s lat 16/24ms page 60fps max 24ms
+receive worker chunk    buckets  500000/s  10s busy  0 every 16ms dpr 1 | pts   4237500 fps   47 p95 31.7ms work 0.72ms (view 0.00 ext 0.01 draw 0.70) ingest 160ms/s 441209t/s lat 50/309ms page 60fps max 35ms
+receive worker chunk    buckets 1000000/s  10s busy  0 every 16ms dpr 1 | pts   7299000 fps   56 p95 28.1ms work 0.57ms (view 0.01 ext 0.01 draw 0.55) ingest 177ms/s 702972t/s DROP 195201/s lat 1399/1673ms page 60fps max 24ms
+receive worker chunk    buckets  500000/s  10s busy  0 rx worker every 16ms dpr 1 | pts   4495000 fps   57 p95 19.2ms work 0.61ms (view 0.00 ext 0.01 draw 0.59) ingest 146ms/s 499463t/s lat 14/24ms page 60fps max 41ms
+receive worker chunk    buckets 1000000/s  10s busy  0 rx worker every 16ms dpr 1 | pts   8804000 fps   51 p95 30.3ms work 0.64ms (view 0.00 ext 0.01 draw 0.62) ingest 239ms/s 993559t/s lat 18/32ms page 60fps max 29ms

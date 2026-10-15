@@ -2,23 +2,26 @@
 
 ## 1. Reading N rows out of a LiveSeries as x/y arrays (median of 5, ms)
 N         toTimeSeries+read   LiveView keyColumn+column   copy stored chunks
-60000               49.5                    8.2                  2.0
-600000             473.7                   45.7                 13.8
-3000000           4513.5                      —                 79.7
+60000               74.0                    8.0                  2.1
+600000             528.7                   51.3                 13.4
+3000000           4275.7                      —                 75.6
 
 ## 2. Ingest at 100k ticks/s: cost per second of ticks, by step (median of 5, ms)
-batch  build-rows  pushMany  pushMany+mirror(_onChunk)  raw typed copy
-400           2.1      24.3                       25.6            1.13
-800           2.0      17.5                       20.4            1.04
-1600          2.4      20.9                       19.9            1.28
-5000          1.9      29.8                       39.1            1.84
+batch  build-rows  pushMany  pushMany+mirror(_onChunk)  raw typed copy  TimeSeries.fromColumns
+16            4.0     237.2                      273.3            2.37                   15.64
+160           2.8      24.8                       45.0            0.91                    1.79
+400           2.0      21.2                       20.2            0.89                    1.22
+800           1.9      19.4                       20.1            1.00                    0.92
+1600          2.5      16.5                       20.4            1.35                    0.83
+5000          1.9      16.0                       18.4            1.09                    0.78
 
 ## 3. pushMany cost with a live.window() LiveView attached (ms per 160-row push, steady state)
 window(events)  no view   with view
-1000              0.219       0.951
-10000             0.157       2.197
-50000             0.070      34.372
+1000              0.138       0.655
+10000             0.070       9.040
+50000             0.075      34.836
+100000            0.069      49.922
 
 ## 4. History download into a Node WebSocket client
-1,000,000 ticks (24 MB): 274 ms
-6,000,000 ticks (144 MB): 1982 ms
+1,000,000 ticks (24 MB): 260 ms
+6,000,000 ticks (144 MB): 1504 ms

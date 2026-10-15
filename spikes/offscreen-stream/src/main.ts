@@ -18,6 +18,9 @@ const pipeline = (q.get('pipeline') ?? 'chunk') as Pipeline;
 const draw = (q.get('draw') ?? 'm4') as DrawMode;
 const busy = Number(q.get('busy') ?? 0); // ms of main-thread work per 50 ms
 const spin = Number(q.get('spin') ?? 0); // extra ms of work per chart frame
+// `receiver=worker`: a separate worker owns the WebSocket and passes each
+// message to the chart's thread; default: the chart's thread owns it.
+const receiver = q.get('receiver') ?? 'same';
 const prefill = q.has('prefill') ? Number(q.get('prefill')) : windowSec;
 
 for (const [id, v] of Object.entries({
@@ -73,13 +76,23 @@ const show = (s: Stats) => {
   ].join('\n');
 };
 
+let port: MessagePort | undefined;
+if (receiver === 'worker') {
+  const channel = new MessageChannel();
+  const rx = new Worker('receiver.js', { type: 'module' });
+  rx.postMessage({ url: opts.url, port: channel.port1 }, [channel.port1]);
+  port = channel.port2;
+}
 if (mode === 'worker') {
   const off = canvas.transferControlToOffscreen();
   const worker = new Worker('worker.js', { type: 'module' });
   worker.onmessage = (e) => show(e.data as Stats);
-  worker.postMessage({ canvas: off, opts }, [off]);
+  worker.postMessage(
+    { canvas: off, opts: { ...opts, port } },
+    port ? [off, port] : [off],
+  );
 } else {
-  startEngine(canvas, opts, show);
+  startEngine(canvas, { ...opts, port }, show);
 }
 
 // Main-thread health: a JS-driven marker and an fps meter. If the main thread

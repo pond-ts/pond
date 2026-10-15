@@ -6,7 +6,11 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 await build({
-  entryPoints: [join(here, 'src/main.ts'), join(here, 'src/worker.ts')],
+  entryPoints: [
+    join(here, 'src/main.ts'),
+    join(here, 'src/worker.ts'),
+    join(here, 'src/receiver.ts'),
+  ],
   outdir: join(here, 'dist'),
   bundle: true,
   format: 'esm',

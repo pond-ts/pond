@@ -58,7 +58,7 @@ function formatRow(r) {
   const f = (n, d = 1) => (n == null ? '—' : n.toFixed(d));
   return (
     `${r.group.padEnd(7)} ${r.mode.padEnd(6)} ${r.pipeline.padEnd(8)} ${r.draw.padEnd(7)} ${String(r.rate).padStart(7)}/s ${String(r.window).padStart(3)}s ` +
-    `busy ${String(r.busy).padStart(2)}${r.spin ? ` spin ${r.spin}` : ''} every ${String(r.interval).padStart(2)}ms dpr ${r.dpr ?? 1} | pts ${String(r.points).padStart(9)} ` +
+    `busy ${String(r.busy).padStart(2)}${r.spin ? ` spin ${r.spin}` : ''}${r.receiver ? ` rx ${r.receiver}` : ''} every ${String(r.interval).padStart(2)}ms dpr ${r.dpr ?? 1} | pts ${String(r.points).padStart(9)} ` +
     `fps ${f(r.fps, 0).padStart(4)} p95 ${f(r.frameP95)}ms work ${f(r.workAvg, 2)}ms (view ${f(r.viewAvg, 2)}${r.viewDirtyAvg != null ? `/${f(r.viewDirtyAvg, 2)}` : ''} ext ${f(r.extentAvg, 2)} draw ${f(r.drawAvg, 2)}) ` +
     `ingest ${f(r.ingestMsPerSec, 0)}ms/s ${f(r.ticksPerSec, 0)}t/s${r.droppedPerSec ? ` DROP ${f(r.droppedPerSec, 0)}/s` : ''} lat ${f(r.latencyP50, 0)}/${f(r.latencyP95, 0)}ms page ${f(r.pageFps, 0)}fps max ${f(r.pageFrameMax, 0)}ms` +
     (r.caughtUp === false ? '  NOT-CAUGHT-UP' : '') +
@@ -144,6 +144,19 @@ for (const spin of [0, 4, 8, 12, 16, 24])
     window: 10,
     spin,
   });
+// The same with a separate receiver worker owning the WebSocket and passing
+// each message to the drawing worker.
+for (const spin of [0, 8, 16])
+  scenarios.push({
+    group: 'receive',
+    ...base,
+    pipeline: 'raw',
+    draw: 'buckets',
+    rate: 1_000_000,
+    window: 10,
+    spin,
+    receiver: 'worker',
+  });
 // …and with a LiveSeries in the loop: how high a rate the `chunk` pipeline
 // sustains when there's no history backlog to work off.
 for (const rate of [250_000, 500_000, 1_000_000])
@@ -155,6 +168,17 @@ for (const rate of [250_000, 500_000, 1_000_000])
     rate,
     window: 10,
     spin: 0,
+  });
+for (const rate of [500_000, 1_000_000])
+  scenarios.push({
+    group: 'receive',
+    ...base,
+    pipeline: 'chunk',
+    draw: 'buckets',
+    rate,
+    window: 10,
+    spin: 0,
+    receiver: 'worker',
   });
 
 const { server, port } = await startServer({ port: 0 });

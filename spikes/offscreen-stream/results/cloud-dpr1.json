@@ -1601,9 +1601,7 @@
       "prefillMs": 120128,
       "caughtUp": false,
       "catchUpMs": 60003,
-      "errors": [
-        "prefill timeout"
-      ]
+      "errors": ["prefill timeout"]
     },
     {
       "group": "space",

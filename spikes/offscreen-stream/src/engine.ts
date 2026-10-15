@@ -50,6 +50,9 @@ export interface EngineOptions {
   /** Extra ms of busy work added to every frame on the drawing thread, to
    *  measure how receiving holds up as drawing takes more of the thread. */
   spin?: number;
+  /** Take the feed from this port (fed by a separate receiver worker, see
+   *  receiver.ts) instead of opening the WebSocket on this thread. */
+  port?: MessagePort;
 }
 
 export interface Stats {
@@ -300,9 +303,9 @@ export function startEngine(
   const latencies: number[] = [];
   let frames = 0;
 
-  const ws = new WebSocket(opts.url);
-  ws.binaryType = 'arraybuffer';
-  ws.onmessage = (ev) => {
+  const ws = opts.port ? null : new WebSocket(opts.url);
+  if (ws) ws.binaryType = 'arraybuffer';
+  const onFeed = (ev: MessageEvent) => {
     const t0 = now();
     const buf = new Float64Array(ev.data as ArrayBuffer);
     const n = buf[1]!;
@@ -334,6 +337,8 @@ export function startEngine(
     msgs += 1;
     bytes += buf.byteLength;
   };
+  if (ws) ws.onmessage = onFeed;
+  else opts.port!.onmessage = onFeed;
 
   const padL = 8;
   const padR = 64;
@@ -568,7 +573,8 @@ export function startEngine(
   return () => {
     running = false;
     clearInterval(reporter);
-    ws.close();
+    ws?.close();
+    opts.port?.close();
   };
 }
 

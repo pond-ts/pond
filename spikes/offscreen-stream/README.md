@@ -22,15 +22,19 @@ node spikes/offscreen-stream/server.mjs    # http://localhost:8787/
 
 Open the page and use the dropdowns (they reload with new URL params):
 
-| control    | what it changes                                                                 |
-| ---------- | ------------------------------------------------------------------------------- |
-| thread     | `worker` (OffscreenCanvas in a Web Worker) or `main` (same code, page thread)   |
-| pipeline   | `raw` (no pond, the floor) · `chunk` (`LiveSeries`) · `snapshot` (today's path) |
-| draw       | `m4` (the `@pond-ts/charts` line kernel) · `buckets` (one bucket per pixel)     |
-| ticks/s    | 1k – 1M                                                                         |
-| push every | 4 / 8 / 16 / 50 ms                                                              |
-| window     | 10 s / 1 min / 5 min                                                            |
-| busy page  | burns 20 or 40 ms of every 50 ms on the page thread, like a heavy app           |
+| control    | what it changes                                                                                                         |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------- |
+| thread     | `worker` (OffscreenCanvas in a Web Worker) or `main` (same code, page thread)                                           |
+| pipeline   | `raw` (no pond, the floor) · `chunk` (`LiveSeries`) · `snapshot` (today's path) · `view` (a `live.window()` `LiveView`) |
+| draw       | `m4` (the `@pond-ts/charts` line kernel) · `buckets` (one bucket per pixel)                                             |
+| ticks/s    | 1k – 1M                                                                                                                 |
+| push every | 4 / 8 / 16 / 50 ms                                                                                                      |
+| window     | 10 s / 1 min / 5 min                                                                                                    |
+| busy page  | burns 20 or 40 ms of every 50 ms on the page thread, like a heavy app                                                   |
+
+Two more URL params have no dropdown: `spin=<ms>` adds that much busy
+work to every chart frame, and `receiver=worker` moves the WebSocket into
+a separate worker that hands each message to the chart's thread.
 
 The green dot under the chart is moved by the page thread. When the page
 is busy it stutters; whether the chart stutters too is the point.
@@ -38,15 +42,24 @@ is busy it stutters; whether the chart stutters too is the point.
 ## Files
 
 - `server.mjs` — static host + WebSocket tick generator. Binary frames,
-  `Float64Array [sendTime, n, t, price, size, …]`, drift-corrected so the
-  delivered rate is exact. `prefill=<s>` sends that much history first.
+  `Float64Array [sendTime, n, dropped, t, price, size, …]`, drift-corrected
+  so the delivered rate is exact. `prefill=<s>` sends that much history
+  first. A client more than 32 MB behind has ticks dropped (counted in
+  `dropped`).
 - `src/engine.ts` — ingest + draw loop. Runs unchanged in the worker or on
   the page, so the two modes compare like for like.
 - `src/worker.ts`, `src/main.ts`, `src/index.html` — the two sides.
-- `bench.mjs` — headless-Chromium sweep. `--uncapped` drops the 60 Hz
-  frame cap; `--only <group>` runs one group (`space`, `busy`, `cadence`).
-  Set `CHROMIUM_PATH` if Playwright's bundled browser isn't installed.
-- `results/` — the sweep output the report quotes.
+  `src/receiver.ts` — the optional receive-only worker.
+- `bench.mjs` — Chromium sweep. `--only <group>` runs one group (`space`,
+  `busy`, `cadence`, `receive`); `--where k=v,…` filters further;
+  `--dpr 2` renders at Retina resolution; `--headed --channel chrome`
+  uses a visible Chrome window (for a real 120 Hz display);
+  `--max-prefill N` raises the 10M-tick history cap; `--print x.json`
+  re-prints a saved run. Set `CHROMIUM_PATH` if Playwright's bundled
+  browser isn't installed.
+- `node-bench.mjs` — the pond-only costs (reading out of a `LiveSeries`,
+  ingest by step, `live.window()` per-push cost, history download).
+- `results/` — the output the report quotes.
 
 ## What it reaches into
 
@@ -55,7 +68,8 @@ cannot run the React components:
 
 - `packages/charts/src/line.ts` `drawLine` and `data.ts` `fromTimeSeries`
   (not exported from `@pond-ts/charts`).
-- `LiveSeries._onChunk` (marked `@internal`) for the `chunk` pipeline.
+- `LiveSeries._onChunk` (marked `@internal`) for the `chunk` pipeline
+  (and in `node-bench.mjs`).
 
 Both are friction findings in REPORT.md.
 
