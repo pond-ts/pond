@@ -116,7 +116,7 @@ console.log(
 console.log(
   'batch  build-rows  pushMany  pushMany+mirror(_onChunk)  raw typed copy  TimeSeries.fromColumns',
 );
-for (const batch of [400, 800, 1600, 5000]) {
+for (const batch of [16, 160, 400, 800, 1600, 5000]) {
   const frames = Array.from({ length: Math.ceil(100_000 / batch) }, (_, k) =>
     frame(batch, 1e12 + k * batch * 0.01, 0.01),
   );
@@ -189,7 +189,7 @@ console.log(
   '\n## 3. pushMany cost with a live.window() LiveView attached (ms per 160-row push, steady state)',
 );
 console.log('window(events)  no view   with view');
-for (const W of [1_000, 10_000, 50_000]) {
+for (const W of [1_000, 10_000, 50_000, 100_000]) {
   const res = [];
   for (const withView of [false, true]) {
     const live = new LiveSeries({

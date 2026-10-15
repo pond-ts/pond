@@ -125,7 +125,23 @@ from tick to screen also stays put in the worker, while on the page thread
 it grows: the WebSocket messages arrive on the busy thread and wait their
 turn.
 
-<!-- CLOUD-BUSY -->
+The cloud run shows what happens when the page thread is overloaded
+rather than just busy. There, an m4 frame at ~1M points takes 14–15 ms,
+and with the page busy 40 of every 50 ms the page thread can't keep up
+with both drawing and taking in ticks:
+
+| draw    | busy | chart fps, worker / page thread | delay, worker / page thread     |
+| ------- | ---- | ------------------------------- | ------------------------------- |
+| m4      | 0    | 33 / 33                         | 29 / 54 ms                      |
+| m4      | 20   | 35 / 20                         | 28 / 330 ms                     |
+| m4      | 40   | 35 / **16**                     | 29 ms / **12 s, still growing** |
+| buckets | 0    | 50 / 53                         | 11 / 27 ms                      |
+| buckets | 20   | 49 / 32                         | 11 / 50 ms                      |
+| buckets | 40   | 51 / **17**                     | 10 ms / **11 s, still growing** |
+
+(Cloud, frame rate capped at 60 and noisy, see "Where the numbers come
+from". The worker's frame rate here is the same busy or quiet; the
+page-thread chart's drops with the page.)
 
 One Mac row doesn't fit: page thread, `buckets`, busy 20 shows the page at
 120 fps with no frame over 9 ms, yet the chart's slowest 5% of frames took
@@ -191,7 +207,23 @@ bucket row stayed under 0.5 ms, about 6% of a 120 fps frame.
 
 ## 3. Reading a `LiveSeries` into a chart: `toTimeSeries()` can't keep up
 
-<!-- CLOUD-SNAPSHOT -->
+The path a pond chart uses today: on each frame with new data,
+`live.toTimeSeries()` then `fromTimeSeries(ts, 'price')`. Cloud, worker,
+`snapshot` pipeline. "Read" is the time to turn the `LiveSeries` into
+arrays the chart can draw, on frames that had new data.
+
+| ticks/s | window | points | read per frame | chart fps (cap 60) |
+| ------- | ------ | ------ | -------------- | ------------------ |
+| 1k      | 10 s   | 10k    | 4.0 ms         | 49                 |
+| 1k      | 1 min  | 60k    | 27 ms          | 20                 |
+| 10k     | 10 s   | 100k   | 52 ms          | 17                 |
+| 1k      | 5 min  | 300k   | 182 ms         | 5                  |
+| 10k     | 1 min  | 600k   | 362 ms         | 2                  |
+
+The same data through `chunk` (copied into plain arrays as it arrives,
+through the internal hook) costs **0.00–0.01 ms** to read at every size.
+At 120 fps a frame has 8.3 ms in total, so this path is out of budget
+somewhere between 10k and 60k points.
 
 Node, one `LiveSeries` filled with N rows, time to get its time and price
 columns out as two `Float64Array`s ([`results/node.txt`](results/node.txt)
@@ -231,11 +263,40 @@ Node, one 160-tick push (100k ticks/s every 16 ms), steady state
 
 <!-- NODE-3 -->
 
-<!-- CLOUD-VIEW -->
+In the browser (cloud, worker, `view` pipeline) the cost lands in ingest,
+and it climbs with the window, not the tick rate:
+
+| ticks/s | window | points | ingest, ms per second | `chunk` ingest, same setup | read per frame | chart fps (cap 60) |
+| ------- | ------ | ------ | --------------------- | -------------------------- | -------------- | ------------------ |
+| 1k      | 10 s   | 10k    | 34                    | 9                          | 0.6 ms         | 56                 |
+| 1k      | 1 min  | 60k    | 208                   | 12                         | 4.0 ms         | 39                 |
+| 10k     | 10 s   | 100k   | **995**               | 10                         | —              | **0**              |
+
+In the last row the worker spent the whole of every second taking in
+ticks, got 1,846 of the 10,000 a second through, never filled its window,
+and drew no frame during the sample. The sweep skips `view` above 100k
+points for that reason.
 
 ## 5. Pushing ticks into a `LiveSeries` costs about 20× a plain copy
 
-<!-- CLOUD-INGEST -->
+Ingest is the time the receiving thread spends on each WebSocket message:
+reading the ticks out and getting them into the chart's data. Cloud,
+worker, ms per second:
+
+| ticks/s | `raw` (typed array, no pond) | `chunk` (`pushMany` + copy-out through the hook) |
+| ------- | ---------------------------- | ------------------------------------------------ |
+| 1k      | 1–2                          | 9–12                                             |
+| 10k     | 1–2                          | 10–12                                            |
+| 100k    | 3–4                          | 39–45                                            |
+| 1M      | 17–22                        | 165 (at 500k received, see §6)                   |
+
+On the Mac, `chunk` at 100k ticks/s cost 10–21 ms per second. That's 1–4%
+of one core, affordable on its own, but it's the part of pond that grows
+with the tick rate.
+
+At 1k and 10k ticks/s the `chunk` cost hardly changes with the rate, so
+most of it there is a fixed cost per message (62 messages a second, about
+0.15 ms each), not per tick.
 
 Node, cost per 100k ticks, by step ([`results/node.txt`](results/node.txt)
 section 2):
@@ -251,7 +312,19 @@ has a column ingest without either cost: `TimeSeries.fromColumns` takes
 the same ticks in the same batches in about 1.2 ms. `LiveSeries` has no
 way in for columns.
 
-<!-- CLOUD-CADENCE -->
+How often the server pushes changes both delay and cost. Cloud, worker,
+`chunk` + `buckets`, 100k ticks/s, 1 min window:
+
+| push every | ingest, ms per second | delay (median) |
+| ---------- | --------------------- | -------------- |
+| 4 ms       | 80                    | 5 ms           |
+| 8 ms       | 48                    | 7 ms           |
+| 16 ms      | 40                    | 10 ms          |
+| 50 ms      | 35                    | 31 ms          |
+
+Going from every 50 ms to every 4 ms adds 230 messages a second and
+45 ms/s of ingest, about 0.2 ms per message, which matches the fixed cost
+seen at low rates above. <!-- NODE-PERCALL -->
 
 ## 6. Receiving: a worker busy drawing receives less
 

@@ -2,7 +2,7 @@
 // process, opens the page per scenario, lets it settle, then samples the
 // engine's once-a-second stats and the page's own frame rate.
 //
-//   node spikes/offscreen-stream/bench.mjs [--uncapped] [--headed] [--channel chrome]
+//   node spikes/offscreen-stream/bench.mjs [--uncapped] [--headed] [--channel chrome] [--max-prefill N]
 //     [--dpr 2] [--settle ms] [--sample s] [--only group] [--where k=v,…] [--out file]
 //   node spikes/offscreen-stream/bench.mjs --print results/x.json
 //
@@ -37,6 +37,10 @@ const num = (flag, dflt) => {
 const dpr = num('--dpr', 1);
 const SETTLE_MS = num('--settle', 3000);
 const SAMPLE_S = num('--sample', 4);
+// History sent before measuring is capped at this many ticks (a 5-minute
+// window at 1M/s would be 7 GB on the wire). Rows whose window couldn't be
+// filled are marked "fill <s>/<window>s".
+const MAX_PREFILL = num('--max-prefill', 10_000_000);
 const outIdx = args.indexOf('--out');
 const out = outIdx >= 0 ? args[outIdx + 1] : null;
 const onlyIdx = args.indexOf('--only');
@@ -59,6 +63,9 @@ function formatRow(r) {
     `ingest ${f(r.ingestMsPerSec, 0)}ms/s ${f(r.ticksPerSec, 0)}t/s${r.droppedPerSec ? ` DROP ${f(r.droppedPerSec, 0)}/s` : ''} lat ${f(r.latencyP50, 0)}/${f(r.latencyP95, 0)}ms page ${f(r.pageFps, 0)}fps max ${f(r.pageFrameMax, 0)}ms` +
     (r.caughtUp === false ? '  NOT-CAUGHT-UP' : '') +
     (r.errors?.length ? `  ERR ${r.errors.join('; ')}` : '') +
+    (r.group !== 'receive' && r.prefill != null && r.prefill < r.window
+      ? `  fill ${r.prefill}/${r.window}s`
+      : '') +
     (r.note ? `  [${r.note}]` : '')
   );
 }
@@ -137,6 +144,18 @@ for (const spin of [0, 4, 8, 12, 16, 24])
     window: 10,
     spin,
   });
+// …and with a LiveSeries in the loop: how high a rate the `chunk` pipeline
+// sustains when there's no history backlog to work off.
+for (const rate of [250_000, 500_000, 1_000_000])
+  scenarios.push({
+    group: 'receive',
+    ...base,
+    pipeline: 'chunk',
+    draw: 'buckets',
+    rate,
+    window: 10,
+    spin: 0,
+  });
 
 const { server, port } = await startServer({ port: 0 });
 const browser = await chromium.launch({
@@ -164,7 +183,7 @@ for (const s of selected) {
   const prefill =
     s.group === 'receive'
       ? 1
-      : Math.min(s.window, Math.floor(10_000_000 / s.rate));
+      : Math.min(s.window, Math.floor(MAX_PREFILL / s.rate));
   const { group, ...params } = s;
   const qs = new URLSearchParams({
     ...params,
@@ -285,6 +304,7 @@ if (out)
         dpr,
         settleMs: SETTLE_MS,
         sampleS: SAMPLE_S,
+        maxPrefill: MAX_PREFILL,
         results,
       },
       null,
