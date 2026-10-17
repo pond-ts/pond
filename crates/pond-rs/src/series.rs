@@ -143,9 +143,15 @@ pub struct TimeSeries {
     columns: Vec<Column>,
 }
 
+/// Largest key time, in epoch milliseconds, either side of 1970: the range
+/// of a JavaScript `Date` (so of pond-ts), 100 million days. Keeping keys in
+/// it leaves room for any window or step arithmetic in `i64`.
+pub const MAX_TIME_MS: i64 = 8_640_000_000_000_000;
+
 impl TimeSeries {
     /// Build a time-keyed series. The key column is named `"time"`; times are
-    /// epoch milliseconds and must be non-decreasing (repeats are allowed).
+    /// epoch milliseconds within ±[`MAX_TIME_MS`] and must be non-decreasing
+    /// (repeats are allowed).
     pub fn new(name: impl Into<String>, time: Vec<i64>, columns: Vec<Column>) -> Result<Self> {
         Self::with_key(
             "TimeSeries::new",
@@ -173,6 +179,19 @@ impl TimeSeries {
             if let Some(i) = (0..rows).find(|&i| k.end[i] < k.begin[i]) {
                 return Err(invalid(format!(
                     "interval at row {i} ends before it begins"
+                )));
+            }
+        }
+        let out_of_range = |t: &i64| !(-MAX_TIME_MS..=MAX_TIME_MS).contains(t);
+        let edges: [&[i64]; 3] = match &key {
+            Key::Time(t) => [t, &[], &[]],
+            Key::Interval(k) => [&k.begin, &k.end, &k.label],
+        };
+        for edge in edges {
+            if let Some(i) = edge.iter().position(out_of_range) {
+                return Err(invalid(format!(
+                    "time {} ms at row {i} is outside the supported range ±{MAX_TIME_MS} ms (years -271821 to 275760, as JavaScript dates)",
+                    edge[i]
                 )));
             }
         }

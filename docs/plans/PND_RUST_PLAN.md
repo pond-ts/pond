@@ -378,6 +378,54 @@ a unit-start date and failed there; pond-ts does the same thing as pond-rs
 (new fixture case `aggregate-calendar-week-apia-skipped-start`), so the test
 was wrong, not the code. No pond-ts or pond-rs bugs found.
 
+## Codex review of R0–2b, and fixes (DONE)
+
+pjm17971 ran a Codex review of everything merged through #767 (at
+c603339) and relayed it in the project thread. Codex also ran 4,225
+differential probes against pond-ts (all reducers, gaps, ±Infinity, signed
+zeros, repeated times, empty series, DST gaps/overlaps, skipped days, week
+starts, fixed offsets) and found the numerical port sound. Nine findings,
+all checked against the code and all real; all fixed in one PR:
+
+1. **`Sequence` could hold invalid states** (public enum variants bypassed
+   the constructors: step 0 panicked, step -1 made `[0, -1)` buckets) and
+   bucket edges overflowed near `i64::MAX`. Now an opaque struct, built only
+   through `every` / `every_ms` / `calendar`; edges computed in `i128` and
+   checked; a range over 2^28 buckets or ending before it begins is an
+   error, not an abort.
+2. **pond-ts's own documented Arrow export was rejected**: `toArrow` hands
+   the key over as Float64 epoch ms, and pond-rs only took
+   Timestamp/Date64/Int64. Float64 keys are now read when whole
+   milliseconds in range. New fixture `parity-export.arrow`, written by
+   pond-ts with the documented recipe (`scripts/parity/export.mjs`,
+   drift-checked by vitest), which pond-rs must read back exactly. Before,
+   no test fed Rust a file pond-ts wrote.
+3. **A non-ASCII offset name panicked** (`"+a€"` sliced inside the euro
+   sign). Rejected before slicing.
+4. **A row at `i64::MIN` was evicted from its own window** (saturating
+   subtraction). Keys are now limited to ±8.64e15 ms (`MAX_TIME_MS`, the
+   range of a JavaScript `Date`, so of pond-ts), which leaves room for any
+   window or step in `i64`.
+5. **Arrow intake guessed required/optional from the values**, so an
+   optional column without gaps came back required. Now the field's
+   nullability decides (NaN in a non-nullable float field still makes it
+   optional). pond-ts has the opposite problem: [PND-ARROWREQ].
+6. **The fixture did not regenerate the same on Node 26 / ARM64**: the
+   `noisy` input used `Math.sin` / `Math.cos`, which JavaScript does not
+   require to round identically everywhere. Replaced with integer
+   arithmetic and single IEEE operations, which do.
+7. **The comparator let `-0` match `0` under a tolerance.** Fixed, with
+   the self-test now using a tolerance. The last tolerance in the fixture
+   (dense rolling stdev, 1e-12) is removed: since #766 it matches exactly.
+8. **Benchmark warm-ups were unequal**: pond-ts and polars kept the
+   warm-up's outputs (~71 MB of IPC on A) through the timed runs, pond-rs
+   freed them. All three now free them (and collect garbage) first.
+9. **The memory number was overstated**: a difference of two lifetime
+   peaks, wrong units for Python on macOS, silently 0 for Rust off Linux.
+   All three now reset the peak just before the warm-up
+   (`/proc/self/clear_refs`) and report peak minus size-before; `null`
+   off Linux. Re-run: same picture (bench README).
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:

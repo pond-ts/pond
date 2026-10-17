@@ -257,6 +257,10 @@ fn comparator_catches_mismatches() {
     let mut wrong = expected.clone();
     wrong.rows[1][1] = serde_json::json!(0);
     assert!(compare_series(expected, &wrong, None).is_err());
+    assert!(compare_series(expected, &wrong, Some(1e-12)).is_err());
+    assert!(common::compare_number(-0.0, 0.0, Some(1.0)).is_err());
+    assert!(common::compare_number(0.0, -0.0, Some(1.0)).is_err());
+    assert!(common::compare_number(-0.0, -0.0, Some(1.0)).is_ok());
 
     // An infinity never matches a finite value, tolerance or not.
     let mut wrong = expected.clone();
@@ -275,4 +279,20 @@ fn find<'a>(fixture: &'a CoreFixture, id: &str) -> &'a CoreCase {
         .iter()
         .find(|c| c.id == id)
         .unwrap_or_else(|| panic!("fixture case '{id}' missing"))
+}
+
+/// pond-ts's documented `toArrow` recipe (every field Float64, the key
+/// included) written to IPC by pond-ts itself
+/// (`packages/core/scripts/parity/export.mjs`): pond-rs must read back the
+/// `noisy` input exactly.
+#[test]
+fn reads_the_pond_ts_arrow_export() {
+    let fixture = load_core_fixture();
+    let bytes = std::fs::read(common::repo_path(
+        "packages/core/test/fixtures/parity-export.arrow",
+    ))
+    .unwrap();
+    let series = TimeSeries::from_ipc_bytes("noisy", bytes, "time").unwrap();
+    let expected = &fixture.inputs["noisy"];
+    compare_series(expected, &to_json(&series), None).unwrap();
 }

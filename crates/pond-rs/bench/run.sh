@@ -20,7 +20,7 @@ cargo build -q --release -p pond-rs --example r1a_bench
 RS="$(cargo metadata --format-version 1 --no-deps | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')/release/examples/r1a_bench"
 
 for W in A B; do
-  node "$here/pond_ts.mjs" "$W" "$DATA" "$RUNS" "$DIR/pond_$W"
+  node --expose-gc "$here/pond_ts.mjs" "$W" "$DATA" "$RUNS" "$DIR/pond_$W"
   "$RS" "$W" "$DATA" "$RUNS" "$DIR/rs_$W"
   POLARS_MAX_THREADS=1 "$PY" "$here/polars_bench.py" "$W" "$DATA" "$RUNS" "$DIR/polars_$W"
   "$PY" "$here/polars_bench.py" "$W" "$DATA" "$RUNS"

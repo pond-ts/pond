@@ -198,12 +198,16 @@ fn compare_cell(expected: &Value, actual: &Value, tolerance: Option<f64>) -> Res
 }
 
 /// Exact means the same bits: `-0.0` and `0.0` differ, and any NaN matches
-/// any NaN. A tolerance applies only when both values are finite; signs of
-/// infinity and NaN-ness must still match exactly.
+/// any NaN. A tolerance applies only when both values are finite and neither
+/// is a zero of the other sign: signed zeros, signs of infinity and
+/// NaN-ness must still match exactly.
 pub fn compare_number(expected: f64, actual: f64, tolerance: Option<f64>) -> Result<(), String> {
     let same_bits =
         expected.to_bits() == actual.to_bits() || (expected.is_nan() && actual.is_nan());
+    let zero_sign_differs = (expected == 0.0 || actual == 0.0)
+        && expected.is_sign_negative() != actual.is_sign_negative();
     let ok = match tolerance {
+        _ if zero_sign_differs => false,
         Some(tol) if expected.is_finite() && actual.is_finite() => (expected - actual).abs() <= tol,
         _ => same_bits,
     };

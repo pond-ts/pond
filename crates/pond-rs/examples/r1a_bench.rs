@@ -4,8 +4,9 @@
 //!
 //! Same workloads and output line as `bench/pond_ts.mjs` and
 //! `bench/polars_bench.py`: median read / compute / write ms over `runs`
-//! timed runs (after one warm-up), and memory for one run (the process's peak
-//! resident size after the warm-up minus its size before it). With a dump
+//! timed runs (after one warm-up), and memory for one run: on Linux, the
+//! peak resident size during the warm-up minus the size just before it (the
+//! peak is reset first through `/proc/self/clear_refs`); `null` elsewhere. With a dump
 //! prefix the warm-up's outputs are written to `<prefix>.<name>.arrow`.
 //! Single-threaded.
 
@@ -88,16 +89,26 @@ fn once(workload: &str, path: &str) -> pond_rs::Result<Run> {
     })
 }
 
-/// Peak resident size so far, MB (Linux `VmHWM`; 0 elsewhere).
-fn peak_mb() -> f64 {
-    std::fs::read_to_string("/proc/self/status")
-        .ok()
-        .and_then(|s| {
-            s.lines()
-                .find_map(|l| l.strip_prefix("VmHWM:"))
-                .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<f64>().ok())
-        })
-        .map_or(0.0, |kb| kb / 1024.0)
+/// A `/proc/self/status` field, MB (Linux only).
+fn status_mb(field: &str) -> Option<f64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let kb = status
+        .lines()
+        .find_map(|l| l.strip_prefix(field))?
+        .trim()
+        .trim_end_matches("kB")
+        .trim()
+        .parse::<f64>()
+        .ok()?;
+    Some(kb / 1024.0)
+}
+
+/// Reset the peak resident size to the current one and return the current
+/// one, MB (Linux; `None` elsewhere). After this, `VmHWM` is the peak since
+/// now, not since the process started.
+fn reset_peak_mb() -> Option<f64> {
+    std::fs::write("/proc/self/clear_refs", "5").ok()?;
+    status_mb("VmRSS:")
 }
 
 fn median(mut xs: Vec<f64>) -> f64 {
@@ -111,9 +122,9 @@ fn main() -> pond_rs::Result<()> {
     let path = args.get(1).expect("data.arrow").as_str();
     let runs: usize = args.get(2).map_or(7, |r| r.parse().expect("runs"));
 
-    let base = peak_mb();
+    let base = reset_peak_mb();
     let warm = once(workload, path)?;
-    let peak = peak_mb();
+    let run_mem = base.zip(status_mb("VmHWM:")).map(|(b, p)| p - b);
     if let Some(prefix) = args.get(3) {
         for (name, bytes) in &warm.ipc {
             std::fs::write(format!("{prefix}.{name}.arrow"), bytes).expect("write dump");
@@ -125,6 +136,8 @@ fn main() -> pond_rs::Result<()> {
         .iter()
         .map(|(n, s)| format!("\"{n}\": {}", s.len()))
         .collect();
+    // Every runner keeps only these numbers from the warm-up and frees the
+    // rest before the timed runs, so each starts from the same state.
     drop(warm);
 
     let mut timings = Vec::new();
@@ -137,13 +150,13 @@ fn main() -> pond_rs::Result<()> {
     println!(
         "{{\"engine\": \"pond-rs\", \"threads\": 1, \"workload\": \"{workload}\", \"runs\": {runs}, \
          \"read_ms\": {:.1}, \"compute_ms\": {:.1}, \"write_ms\": {:.1}, \"total_ms\": {:.1}, \
-         \"run_mem_mb\": {:.0}, \"input_mb\": {input_mb:.1}, \"output_mb\": {output_mb:.1}, \
+         \"run_mem_mb\": {}, \"input_mb\": {input_mb:.1}, \"output_mb\": {output_mb:.1}, \
          \"output_rows\": {{{}}}}}",
         pick(|t| t.0),
         pick(|t| t.1),
         pick(|t| t.2),
         pick(|t| t.0 + t.1 + t.2),
-        peak - base,
+        run_mem.map_or("null".into(), |m| format!("{m:.0}")),
         rows.join(", ")
     );
     Ok(())

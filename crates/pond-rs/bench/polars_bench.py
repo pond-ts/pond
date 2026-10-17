@@ -7,9 +7,9 @@ POLARS_MAX_THREADS (set it to 1 for the single-thread run); it is read back
 from polars and reported, not assumed.
 """
 
+import gc
 import io
 import json
-import resource
 import statistics
 import sys
 import time
@@ -97,15 +97,36 @@ def once():
     }
 
 
-rss_mb = lambda: resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024  # noqa: E731
-base_mb = rss_mb()
+def status_mb(field):
+    with open("/proc/self/status") as f:
+        line = next(l for l in f if l.startswith(field))
+    return float(line[len(field):].split()[0]) / 1024
+
+
+def reset_peak_mb():
+    """Linux only: reset the peak resident size to the current one and return
+    the current one, MB. None elsewhere. Same method in all three runners."""
+    try:
+        with open("/proc/self/clear_refs", "w") as f:
+            f.write("5")
+        return status_mb("VmRSS:")
+    except OSError:
+        return None
+
+
+base_mb = reset_peak_mb()
 warm = once()
-peak_mb = rss_mb()
+run_mem_mb = None if base_mb is None else status_mb("VmHWM:") - base_mb
 if DUMP:
     for k, b in warm["ipc"].items():
         with open(f"{DUMP}.{k}.arrow", "wb") as f:
             f.write(b)
-# Keep only the numbers, so earlier runs' outputs can be freed.
+rows = {k: v.height for k, v in warm["out"].items()}
+output_mb = sum(len(b) for b in warm["ipc"].values()) / 2**20
+# Keep only these numbers from the warm-up and free the rest before the
+# timed runs, as every runner does, so each starts from the same state.
+del warm
+gc.collect()
 timings = [
     {k: v for k, v in once().items() if k in ("read", "compute", "write")}
     for _ in range(RUNS)
@@ -123,10 +144,10 @@ print(
             "compute_ms": round(med("compute"), 1),
             "write_ms": round(med("write"), 1),
             "total_ms": round(total, 1),
-            "run_mem_mb": round(peak_mb - base_mb),
+            "run_mem_mb": None if run_mem_mb is None else round(run_mem_mb),
             "input_mb": round(len(open(path, "rb").read()) / 2**20, 1),
-            "output_mb": round(sum(len(b) for b in warm["ipc"].values()) / 2**20, 1),
-            "output_rows": {k: v.height for k, v in warm["out"].items()},
+            "output_mb": round(output_mb, 1),
+            "output_rows": rows,
         }
     )
 )

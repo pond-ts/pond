@@ -80,13 +80,24 @@ const NOISY_SCHEMA = [
   { name: 'x', kind: 'number', required: false },
   { name: 'y', kind: 'number', required: false },
 ];
+// Built only from integer arithmetic and single +, -, *, / steps, which
+// IEEE 754 rounds the same on every machine. (Math.sin / Math.cos are not
+// specified that tightly: an earlier version regenerated differently on
+// Node 26 / ARM64.) Values still carry long, order-sensitive mantissas.
+const unit = (i, mult) => ((i * mult) % 4294967291) / 4294967291; // [0, 1)
 const NOISY_ROWS = Array.from({ length: 300 }, (_, i) => {
   const time = i < 150 ? i * 700 : 150 * 700 + 60_000 + (i - 150) * 700;
   const repeated = i % 13 === 12 ? time - 700 : time; // repeats the previous time
   const x =
-    i % 10 === 3 ? null : i % 41 === 0 ? -0 : (Math.sin(i * 1.7) * 100) / 3;
+    i % 10 === 3
+      ? null
+      : i % 41 === 0
+        ? -0
+        : ((unit(i + 1, 2654435761) * 2 - 1) * 100) / 3;
   const y =
-    i % 7 === 2 || (i >= 60 && i < 75) ? null : Math.cos(i) * 1e6 + i / 3;
+    i % 7 === 2 || (i >= 60 && i < 75)
+      ? null
+      : (unit(i + 7, 40503) * 2 - 1) * 1e6 + i / 3;
   return [repeated, x, y];
 });
 
@@ -151,13 +162,7 @@ const CASES = [
   ['rolling-1s-avg-sum', 'gappy', 'rolling', ['1s', { a: 'avg', b: 'sum' }]],
   ['rolling-1s-sum-avg', 'gappy', 'rolling', ['1s', { a: 'sum', b: 'avg' }]],
   ['rolling-dense-10s-avg', 'dense', 'rolling', ['10s', { value: 'avg' }]],
-  [
-    'rolling-dense-10s-stdev',
-    'dense',
-    'rolling',
-    ['10s', { value: 'stdev' }],
-    1e-12,
-  ],
+  ['rolling-dense-10s-stdev', 'dense', 'rolling', ['10s', { value: 'stdev' }]],
   // aggregate: fixed buckets, interval-keyed output
   [
     'aggregate-5s-sum-count',
@@ -392,6 +397,15 @@ function encodeSeries(series) {
   return { ...json, rows: json.rows.map((row) => row.map(encodeCell)) };
 }
 
+/** The `noisy` input series, also exported to Arrow by export.mjs. */
+export function noisySeries(pond) {
+  return pond.TimeSeries.fromJSON({
+    name: 'noisy',
+    schema: NOISY_SCHEMA,
+    rows: NOISY_ROWS,
+  });
+}
+
 export function buildFixture(pond) {
   const { TimeSeries, Sequence } = pond;
   const series = (name, rows) =>
@@ -414,11 +428,7 @@ export function buildFixture(pond) {
       schema: DENSE_SCHEMA,
       rows: DENSE_ROWS,
     }),
-    noisy: TimeSeries.fromJSON({
-      name: 'noisy',
-      schema: NOISY_SCHEMA,
-      rows: NOISY_ROWS,
-    }),
+    noisy: noisySeries(pond),
     signed: TimeSeries.fromJSON({
       name: 'signed',
       schema: [
