@@ -426,6 +426,60 @@ all checked against the code and all real; all fixed in one PR:
    (`/proc/self/clear_refs`) and report peak minus size-before; `null`
    off Linux. Re-run: same picture (bench README).
 
+## R1a step 4 — Arrow-memory columns and threading (DONE)
+
+**Columns use Arrow's memory** (pjm17971's choice, 2026-10-17).
+`Float64Column` now holds an Arrow `ScalarBuffer<f64>` (shared, immutable,
+reference counted) instead of a `Vec<f64>`; still NaN-for-gap, and
+`values()` still gives a `&[f64]`, so no caller changed.
+
+- Reading: a Float64 field with no nulls, in a one-batch file, is used in
+  place, no copy. A field with nulls is still copied (nulls must become NaN,
+  and the buffer is shared with the file, so it cannot be written in place);
+  so are several batches (they must be joined) and other number types
+  (widened to f64). The time key is still copied: `Key::Time` is a public
+  `Vec<i64>`; changing it is an API change left for R1b.
+- Writing: every value column's buffer is handed to Arrow as it is; gaps get
+  a validity bitmap over it.
+- Cloning a column or series no longer copies values.
+- Considered and not done: keeping Arrow's validity bitmap as the gap marker
+  (no copy for columns with nulls). Every reducer's inner loop would have to
+  read the bitmap, which is slower and is a bigger change than R1a needs.
+
+**Threading** behind a `parallel` Cargo feature, **on by default**, using
+rayon (`RAYON_NUM_THREADS` sets the pool). rayon is not built for wasm32,
+where the feature does nothing. Only whole output columns run on different
+threads; each column is computed start to finish by one thread, in order, so
+its bits cannot depend on the thread count. Splitting one column's rows
+across threads was rejected: the running sums' last bits depend on the order
+values are added in. Test `par::tests::same_bits_on_one_and_many_threads`
+compares 72 output columns, to the bit, on 1, 4 and 7 threads; the
+benchmark checks the 4-thread output against pond-ts with `same.py`.
+Limit: a call with one output column uses one core.
+
+**Results** (same 4-core machine, 3 full `run.sh` repeats; compute ms):
+
+| workload | pond-ts   | pond-rs 1 thread | pond-rs 4 | polars 1 | polars 4 |
+| -------- | --------- | ---------------- | --------- | -------- | -------- |
+| A        | 2901–3412 | 438–504          | 141–159   | 519–590  | 209–231  |
+| B        | 77–115    | 31–47            | 11–14     | 22–28    | 11–14    |
+
+Memory growth for one run, MB: A pond-rs 192 (was 254), polars 256 / 281;
+B pond-rs 78, polars 110 / 111. Write on A dropped from ~142–161 ms to
+~79–115 (no copy into Arrow). Read on A did not change much in full runs
+(46–55 ms; 19 ms when run alone): every value column in the benchmark file
+has nulls, so all are still copied.
+
+Against the R1a targets (RFC Amendment 1):
+
+- **≥2× pond-ts on one core**: met, ~6.5× on A, ~2.4× on B.
+- **Within 1.25× of polars on all cores**: met; pond-rs on 4 threads is
+  faster than polars on 4 on A (141–159 vs 209–231 ms) and even on B.
+- **Same results on 1 and many cores**: met (bits identical).
+- **Memory**: under the proposed target (growth no more than polars on one
+  thread), met on A and B. The proposal still awaits pjm17971.
+- **Agent trial**: step 5.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:
@@ -435,12 +489,8 @@ all checked against the code and all real; all fixed in one PR:
      benchmark~~ — done, see "R1a step 2a" and "R1a step 2b" above.
   3. ~~Property tests independent of pond-ts~~ — done, see "R1a step 3"
      above.
-  4. Threading behind a `parallel` feature (columns and buckets are
-     independent, so work splits across cores; results must stay identical
-     to one thread), together with Arrow-backed (non-owning) columns:
-     pjm17971 chose those on 2026-10-17 (columns may use Arrow's memory
-     rather than their own copy; still NaN-for-gap). See "Found on the way"
-     under step 2b.
+  4. ~~Arrow-memory columns and threading~~ — done, see "R1a step 4"
+     above.
   5. Benchmarks A (generic, 1M rows) and B (DST calendar buckets) against
      pond-ts, pond-rs 1-thread / all-core, polars 1-thread / all-core, plus
      an agent trial on B — targets in RFC Amendment 1. A miss means redesign
@@ -460,5 +510,6 @@ all checked against the code and all real; all fixed in one PR:
   compares.
 - **[PND-RUST-R1B]** — Rest of batch core (`align`, `partitionBy`, `join`,
   remaining element-wise ops). Not adopted until R1a reports.
-- Threading: behind a `parallel` feature, off for wasm32; parallel reductions
-  must give the same bits as one thread (fixed chunks, ordered combine).
+- Threading: done in R1a step 4 (per output column). If R1b needs one
+  column split across threads, reductions must still give the same bits as
+  one thread (fixed chunks, ordered combine).

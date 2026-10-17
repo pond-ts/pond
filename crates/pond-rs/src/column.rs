@@ -1,11 +1,18 @@
 //! Number columns. A gap is stored as `NaN`, as in pond-ts ([PND-NANREP]):
 //! any non-finite value in the buffer means "missing".
+//!
+//! The values live in an Arrow buffer (shared, immutable, reference
+//! counted). So a column read from Arrow can point at Arrow's memory instead
+//! of copying it, a column written to Arrow is handed over without a copy,
+//! and cloning a column or a series does not copy values.
+
+use arrow_buffer::ScalarBuffer;
 
 /// A column of `f64` values where any non-finite value (`NaN`, `±inf`) is a
 /// gap. Reading a gap gives `None`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Float64Column {
-    values: Vec<f64>,
+    values: ScalarBuffer<f64>,
     /// True when every value is finite (no gaps). Only a speed hint: the
     /// results are the same either way.
     all_finite: bool,
@@ -14,8 +21,19 @@ pub struct Float64Column {
 impl Float64Column {
     /// Build from raw values; non-finite values become gaps.
     pub fn from_values(values: Vec<f64>) -> Self {
+        Self::from_buffer(values.into())
+    }
+
+    /// Wrap an Arrow buffer as it is, without copying: non-finite values are
+    /// gaps.
+    pub(crate) fn from_buffer(values: ScalarBuffer<f64>) -> Self {
         let all_finite = values.iter().all(|v| v.is_finite());
         Self { values, all_finite }
+    }
+
+    /// The Arrow buffer holding the values (cheap to clone: shared).
+    pub(crate) fn buffer(&self) -> &ScalarBuffer<f64> {
+        &self.values
     }
 
     /// Build from optional values; `None` is a gap.

@@ -8,7 +8,8 @@
 //! peak resident size during the warm-up minus the size just before it (the
 //! peak is reset first through `/proc/self/clear_refs`); `null` elsewhere. With a dump
 //! prefix the warm-up's outputs are written to `<prefix>.<name>.arrow`.
-//! Single-threaded.
+//! Threads: rayon's pool (set `RAYON_NUM_THREADS=1` for one thread); the
+//! count used is reported.
 
 use std::time::Instant;
 
@@ -111,6 +112,13 @@ fn reset_peak_mb() -> Option<f64> {
     status_mb("VmRSS:")
 }
 
+fn threads() -> usize {
+    #[cfg(feature = "parallel")]
+    return rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    return 1;
+}
+
 fn median(mut xs: Vec<f64>) -> f64 {
     xs.sort_by(f64::total_cmp);
     xs[xs.len() / 2]
@@ -148,10 +156,11 @@ fn main() -> pond_rs::Result<()> {
     let pick = |f: fn(&(f64, f64, f64)) -> f64| median(timings.iter().map(f).collect());
     let input_mb = std::fs::metadata(path).map_or(0.0, |m| m.len() as f64 / 1048576.0);
     println!(
-        "{{\"engine\": \"pond-rs\", \"threads\": 1, \"workload\": \"{workload}\", \"runs\": {runs}, \
+        "{{\"engine\": \"pond-rs\", \"threads\": {}, \"workload\": \"{workload}\", \"runs\": {runs}, \
          \"read_ms\": {:.1}, \"compute_ms\": {:.1}, \"write_ms\": {:.1}, \"total_ms\": {:.1}, \
          \"run_mem_mb\": {}, \"input_mb\": {input_mb:.1}, \"output_mb\": {output_mb:.1}, \
          \"output_rows\": {{{}}}}}",
+        threads(),
         pick(|t| t.0),
         pick(|t| t.1),
         pick(|t| t.2),

@@ -86,6 +86,9 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      - name: Test without threads
+        run: cargo test -p pond-rs --no-default-features
+
       # The RFC's later phases ship this same core to JS as WASM. Building for
       # wasm32 on every PR stops native-only code (threads, OS APIs) creeping
       # in un-gated long before that phase starts.

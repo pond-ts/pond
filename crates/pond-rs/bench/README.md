@@ -58,6 +58,32 @@ pond-ts drift fix, [PND-ROLLSTD], PR #766; it now agrees with polars within
 ~1.3e-12.) `same.py` requires pond-rs to equal pond-ts to the bit: same field
 names, same rows, every cell identical, gaps in the same places.
 
+## Results after R1a step 4 (Arrow-memory columns, threads)
+
+Same machine and versions as below; three full `run.sh` repeats, each cell
+the range of the three medians. pond-rs runs twice: `RAYON_NUM_THREADS=1`
+and the default pool (4 threads here).
+
+| workload | engine             | read ms | compute ms | write ms | total ms  | run memory MB |
+| -------- | ------------------ | ------- | ---------- | -------- | --------- | ------------- |
+| A        | pond-ts            | 54–109  | 2901–3412  | 185–198  | 3201–3671 | 362           |
+| A        | pond-rs, 1 thread  | 46–55   | 438–504    | 93–106   | 571–638   | 192           |
+| A        | pond-rs, 4 threads | 40–51   | 141–159    | 79–115   | 260–325   | 192           |
+| A        | polars, 1 thread   | 23–25   | 519–590    | 84–97    | 625–701   | 256           |
+| A        | polars, 4 threads  | 39–40   | 209–231    | 97–104   | 333–362   | 280–281       |
+| B        | pond-ts            | 72–88   | 77–115     | 2.0–2.3  | 150–184   | 82–86         |
+| B        | pond-rs, 1 thread  | 20–23   | 31–47      | 0.1      | 56–70     | 78            |
+| B        | pond-rs, 4 threads | 19–20   | 11–14      | 0.1      | 32–34     | 78            |
+| B        | polars, 1 thread   | 21–27   | 22–28      | 1.2–1.6  | 46–55     | 110           |
+| B        | polars, 4 threads  | 35–38   | 11–14      | 1.3–1.5  | 47–53     | 111–112       |
+
+Both pond-rs runs equal pond-ts to the bit (`same.py`). On four threads
+pond-rs computes A faster than polars and B about the same. Writing no
+longer copies values into Arrow (A write ~142–161 → ~79–115 ms) and memory
+growth on A fell from 254 to 192 MB. Reading A barely changed in full runs:
+every value column in this file has nulls, and a column with nulls is still
+copied (nulls become NaN). A gap-free Float64 column is used in place.
+
 ## Results, 2026-10-17 (after PR #766)
 
 4-core cloud machine, Node 22.22, polars 2.0.0, Rust 1.97 (release build).

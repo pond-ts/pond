@@ -14,6 +14,16 @@
 //! harness under `tests/` checks that against pond-ts's own output
 //! (`packages/core/test/fixtures/parity.json`).
 //!
+//! **Threads.** With the `parallel` feature (on by default; not on wasm32),
+//! the output columns of one `rolling` or `aggregate` call are computed on
+//! several cores (rayon's pool; `RAYON_NUM_THREADS` sets its size). Each
+//! column is still computed by one thread, in order, so results are the same
+//! bits on any number of threads.
+//!
+//! **Memory.** Columns hold their values in Arrow buffers. Reading a
+//! gap-free `Float64` field from a one-batch Arrow file uses the file's
+//! memory without copying, and writing hands each column's buffer to Arrow.
+//!
 //! ```
 //! use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
 //!
@@ -44,6 +54,7 @@ mod arrow;
 mod column;
 mod duration;
 mod error;
+mod par;
 mod reducer;
 mod rolling;
 mod sequence;

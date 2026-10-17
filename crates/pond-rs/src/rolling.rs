@@ -470,16 +470,13 @@ impl TimeSeries {
             // Stable, so equal positions keep their given order.
             plan.sort_by_key(|&(source, _)| source);
         }
-        let columns = plan
-            .iter()
-            .map(|&(source, agg)| {
-                let values = self.columns()[source].data().values();
-                Column::optional_raw(
-                    agg.output.clone(),
-                    roll_column(times, values, window_ms, agg.reducer),
-                )
-            })
-            .collect();
+        let columns = crate::par::map(&plan, |&(source, agg)| {
+            let values = self.columns()[source].data().values();
+            Column::optional_raw(
+                agg.output.clone(),
+                roll_column(times, values, window_ms, agg.reducer),
+            )
+        });
         Ok(TimeSeries::from_parts(
             self.name().to_string(),
             self.key_name().to_string(),

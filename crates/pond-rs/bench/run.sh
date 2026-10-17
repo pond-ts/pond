@@ -21,7 +21,8 @@ RS="$(cargo metadata --format-version 1 --no-deps | "$PY" -c 'import json,sys; p
 
 for W in A B; do
   node --expose-gc "$here/pond_ts.mjs" "$W" "$DATA" "$RUNS" "$DIR/pond_$W"
-  "$RS" "$W" "$DATA" "$RUNS" "$DIR/rs_$W"
+  RAYON_NUM_THREADS=1 "$RS" "$W" "$DATA" "$RUNS" "$DIR/rs_$W"
+  "$RS" "$W" "$DATA" "$RUNS" "$DIR/rs_all_$W"
   POLARS_MAX_THREADS=1 "$PY" "$here/polars_bench.py" "$W" "$DATA" "$RUNS" "$DIR/polars_$W"
   "$PY" "$here/polars_bench.py" "$W" "$DATA" "$RUNS"
 done
@@ -30,3 +31,5 @@ done
 "$PY" "$here/compare.py" "$DIR/pond_B" "$DIR/polars_B" agg >&2
 "$PY" "$here/same.py" "$DIR/pond_A" "$DIR/rs_A" agg roll >&2
 "$PY" "$here/same.py" "$DIR/pond_B" "$DIR/rs_B" agg >&2
+"$PY" "$here/same.py" "$DIR/pond_A" "$DIR/rs_all_A" agg roll >&2
+"$PY" "$here/same.py" "$DIR/pond_B" "$DIR/rs_all_B" agg >&2

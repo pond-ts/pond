@@ -30,6 +30,7 @@ use arrow_ipc::reader::{FileDecoder, read_footer_length};
 use arrow_ipc::writer::FileWriter;
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 
+use crate::column::Float64Column;
 use crate::error::{PondError, Result};
 use crate::series::{Column, IntervalKeys, Key, MAX_TIME_MS, TimeSeries};
 
@@ -160,6 +161,20 @@ impl TimeSeries {
             if c == time_index {
                 continue;
             }
+            // One batch of Float64 with no nulls: point at Arrow's buffer,
+            // no copy. (Nulls must become NaN, and several batches must be
+            // joined, so those cases copy.)
+            if let [batch] = batches {
+                let array = batch.column(c);
+                if array.data_type() == &DataType::Float64 && array.logical_null_count() == 0 {
+                    let data = Float64Column::from_buffer(
+                        array.as_primitive::<Float64Type>().values().clone(),
+                    );
+                    let required = !field.is_nullable() && data.all_finite();
+                    columns.push(Column::from_data(field.name().clone(), data, required));
+                    continue;
+                }
+            }
             let mut values = Vec::with_capacity(rows);
             for batch in batches {
                 read_number(batch.column(c), field.name(), &mut values)?;
@@ -254,10 +269,8 @@ impl TimeSeries {
                 DataType::Float64,
                 !column.is_required(),
             ));
-            arrays.push(Arc::new(Float64Array::new(
-                data.values().to_vec().into(),
-                nulls,
-            )));
+            // The values buffer is shared with the series, not copied.
+            arrays.push(Arc::new(Float64Array::new(data.buffer().clone(), nulls)));
         }
 
         if let Some(label) = label {
@@ -557,6 +570,40 @@ mod tests {
         .unwrap();
         let s = TimeSeries::from_arrow("s", &[b], "time").unwrap();
         assert!(!s.schema()[1].required);
+    }
+
+    #[test]
+    fn gap_free_float64_is_shared_not_copied() {
+        let s =
+            TimeSeries::new("s", vec![0, 1], vec![Column::required("v", vec![1.0, 2.0])]).unwrap();
+        let batch = s.to_arrow().unwrap();
+        let written = batch.column(1).as_primitive::<Float64Type>().values();
+        // Writing hands the series' own buffer to Arrow ...
+        assert_eq!(written.as_ptr(), s.column("v").unwrap().values().as_ptr());
+        // ... and reading it back points at Arrow's buffer.
+        let back = TimeSeries::from_arrow("s", std::slice::from_ref(&batch), "time").unwrap();
+        assert_eq!(
+            back.column("v").unwrap().values().as_ptr(),
+            written.as_ptr()
+        );
+        // With a gap the values are copied (the null must become NaN).
+        let g = TimeSeries::new(
+            "g",
+            vec![0, 1],
+            vec![Column::optional("v", [Some(1.0), None])],
+        )
+        .unwrap();
+        let batch = g.to_arrow().unwrap();
+        let back = TimeSeries::from_arrow("g", std::slice::from_ref(&batch), "time").unwrap();
+        assert_ne!(
+            back.column("v").unwrap().values().as_ptr(),
+            batch
+                .column(1)
+                .as_primitive::<Float64Type>()
+                .values()
+                .as_ptr()
+        );
+        assert_eq!(back.column("v").unwrap().get(1), None);
     }
 
     #[test]

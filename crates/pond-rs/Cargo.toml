@@ -17,6 +17,18 @@ arrow-schema = { version = "59.3.1", default-features = false }
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 jiff-tzdb = "0.1.9" # same crate jiff bundles; read only for its VERSION
 
+# Threads are not available on wasm32, so rayon is never built there; the
+# `parallel` feature then does nothing.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = { version = "1.10", optional = true }
+
+[features]
+default = ["parallel"]
+# Work on independent output columns runs on several cores (rayon's pool;
+# RAYON_NUM_THREADS sets its size). Results are the same bits either way:
+# each column is still computed start to finish by one thread.
+parallel = ["dep:rayon"]
+
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: fixture numbers must parse to the exact f64 pond-ts wrote.

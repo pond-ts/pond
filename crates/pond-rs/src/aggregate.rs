@@ -69,18 +69,15 @@ impl TimeSeries {
             ranges.push(start..cursor);
         }
 
-        let columns = aggs
-            .iter()
-            .zip(&sources)
-            .map(|(agg, &source)| {
-                let values = self.columns()[source].data().values();
-                let out: Vec<f64> = ranges
-                    .iter()
-                    .map(|r| reduce_range(agg.reducer, &values[r.clone()]).unwrap_or(f64::NAN))
-                    .collect();
-                Column::optional_raw(agg.output.clone(), out)
-            })
-            .collect();
+        let plan: Vec<(&Agg, usize)> = aggs.iter().zip(sources).collect();
+        let columns = crate::par::map(&plan, |&(agg, source)| {
+            let values = self.columns()[source].data().values();
+            let out: Vec<f64> = ranges
+                .iter()
+                .map(|r| reduce_range(agg.reducer, &values[r.clone()]).unwrap_or(f64::NAN))
+                .collect();
+            Column::optional_raw(agg.output.clone(), out)
+        });
         Ok(TimeSeries::from_parts(
             self.name().to_string(),
             "interval".to_string(),
