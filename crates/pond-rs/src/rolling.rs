@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 
 use crate::duration::parse_duration;
 use crate::error::{PondError, Result};
-use crate::reducer::{Agg, Reducer, percentile_of_sorted};
+use crate::reducer::{Agg, Reducer, clamp_at_zero, percentile_of_sorted};
 use crate::series::{Column, TimeSeries};
 
 const CALL: &str = "rolling";
@@ -186,7 +186,7 @@ impl WindowState for StdevState {
         }
     }
     fn snapshot(&self) -> Option<f64> {
-        (self.n != 0.0).then(|| (self.m2 / self.n).max(0.0).sqrt())
+        (self.n != 0.0).then(|| clamp_at_zero(self.m2 / self.n).sqrt())
     }
 }
 
@@ -216,7 +216,7 @@ fn roll<S: WindowState>(mut state: S, times: &[i64], values: &[f64], window_ms: 
             }
             window_end += 1;
         }
-        let lower = anchor - window_ms;
+        let lower = anchor.saturating_sub(window_ms);
         while window_start < window_end && times[window_start] <= lower {
             let v = values[window_start];
             if v.is_finite() {
@@ -322,6 +322,7 @@ impl TimeSeries {
         let mut plan = Vec::with_capacity(aggs.len());
         for (i, agg) in aggs.iter().enumerate() {
             let source = self.column_index(CALL, &agg.source)?;
+            agg.reducer.check(CALL)?;
             if agg.output == self.key_name() || aggs[..i].iter().any(|a| a.output == agg.output) {
                 return Err(PondError::DuplicateOutput {
                     call: CALL,

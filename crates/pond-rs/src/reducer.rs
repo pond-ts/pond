@@ -34,6 +34,18 @@ pub enum Reducer {
 }
 
 impl Reducer {
+    /// Refuse a reducer no result can come from: a percentile outside
+    /// `[0, 100]` (or NaN). [`Reducer::parse`] never builds one, but the
+    /// variant is public.
+    pub(crate) fn check(self, call: &'static str) -> crate::error::Result<()> {
+        match self {
+            Reducer::Percentile(q) if !(0.0..=100.0).contains(&q) => Err(PondError::InvalidData {
+                call,
+                message: format!("percentile must be in [0, 100], got {q}"),
+            }),
+            _ => Ok(()),
+        }
+    }
     /// Parse a pond-ts reducer name: `count`, `sum`, `avg`, `mean`, `min`,
     /// `max`, `first`, `last`, `median`, `stdev`, `p<q>`.
     pub fn parse(name: &str) -> Result<Self, PondError> {
@@ -77,6 +89,13 @@ impl FromStr for Reducer {
     }
 }
 
+/// JS `Math.max(0, x)`: a NaN stays NaN (Rust's `f64::max` would drop it and
+/// give 0), and `-0` becomes `+0`. A NaN variance then becomes a gap, as in
+/// pond-ts.
+pub(crate) fn clamp_at_zero(x: f64) -> f64 {
+    if x.is_nan() || x > 0.0 { x } else { 0.0 }
+}
+
 /// pond-ts `parsePercentile`: `p` then a number in `[0, 100]`. pond-ts reads
 /// the number with JS `Number`, which also takes surrounding spaces and hex;
 /// those spellings are rejected here.
@@ -109,6 +128,10 @@ pub struct Agg {
 impl Agg {
     /// Reduce `source` into a column of the same name: pond-ts's shorthand
     /// mapping `{ cpu: 'avg' }`.
+    ///
+    /// In `rolling`, a list made only of `Agg::of` entries is put into schema
+    /// order, as pond-ts does; a single [`Agg::new`] entry in the list keeps
+    /// the whole list in the order given.
     pub fn of(source: impl Into<String>, reducer: Reducer) -> Self {
         let source = source.into();
         Self {
@@ -251,7 +274,7 @@ pub(crate) fn stdev_range(values: &[f64]) -> Option<f64> {
         mean += delta / n;
         m2 += delta * (v - mean);
     }
-    (n != 0.0).then(|| (m2 / n).max(0.0).sqrt())
+    (n != 0.0).then(|| clamp_at_zero(m2 / n).sqrt())
 }
 
 /// pond-ts `percentileOfSorted`.
@@ -375,6 +398,29 @@ pub(crate) fn reduce_range(reducer: Reducer, values: &[f64]) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn clamp_at_zero_is_js_math_max() {
+        assert!(clamp_at_zero(f64::NAN).is_nan());
+        assert_eq!(clamp_at_zero(-0.0).to_bits(), 0.0f64.to_bits());
+        assert_eq!(clamp_at_zero(-1.0), 0.0);
+        assert_eq!(clamp_at_zero(2.0), 2.0);
+    }
+
+    #[test]
+    fn percentile_out_of_range_is_an_error_not_a_panic() {
+        use crate::{Agg, Column, Sequence, TimeSeries};
+        let s =
+            TimeSeries::new("s", vec![0, 1], vec![Column::required("a", vec![1.0, 2.0])]).unwrap();
+        for q in [150.0, -10.0, f64::NAN] {
+            let aggs = [Agg::of("a", Reducer::Percentile(q))];
+            assert!(s.rolling("1s", &aggs).is_err(), "rolling p{q}");
+            assert!(
+                s.aggregate(&Sequence::every("1s").unwrap(), &aggs).is_err(),
+                "aggregate p{q}"
+            );
+        }
+    }
+
     use super::*;
 
     #[test]

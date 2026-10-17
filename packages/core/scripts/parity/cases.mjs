@@ -88,6 +88,14 @@ const NOISY_ROWS = Array.from({ length: 300 }, (_, i) => {
   return [repeated, x, y];
 });
 
+// Values whose running sums overflow: the variance comes out NaN, which
+// pond-ts turns into a gap (Math.max(0, NaN) is NaN).
+const EXTREME_ROWS = [
+  [0, Number.MAX_VALUE],
+  [1, -Number.MAX_VALUE],
+  [2, 1],
+];
+
 const every = (duration) => ({ sequence: { every: duration } });
 
 /** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
@@ -213,6 +221,20 @@ const CASES = [
       },
     ],
   ],
+  // shorthand out of schema order: aggregate keeps the order given
+  [
+    'aggregate-shorthand-order',
+    'gappy',
+    'aggregate',
+    [every('5s'), { b: 'sum', a: 'max' }],
+  ],
+  // overflowing sums: stdev is a gap, not 0
+  [
+    'aggregate-extreme-stdev',
+    'extreme',
+    'aggregate',
+    [every('1s'), { v: 'stdev' }],
+  ],
   // signed zero through min / max / sum
   [
     'rolling-signed-3s',
@@ -304,6 +326,14 @@ export function buildFixture(pond) {
         { name: 'v', kind: 'number', required: false },
       ],
       rows: SIGNED_ROWS,
+    }),
+    extreme: TimeSeries.fromJSON({
+      name: 'extreme',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number', required: false },
+      ],
+      rows: EXTREME_ROWS,
     }),
   };
   const decode = (arg) =>

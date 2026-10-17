@@ -153,8 +153,8 @@ Shipped in `crates/pond-rs/src/`: `TimeSeries` (time keys, number columns,
 gaps as `NaN`), `Column`, `Sequence::every`, `Agg` / `Reducer`,
 `TimeSeries::rolling` (trailing time window) and `TimeSeries::aggregate`.
 Reducers: count, sum, avg (`mean`), min, max, first, last, median, stdev,
-`pNN`. All 23 rolling / aggregate cases in the core fixture pass with exact
-bits (34 cases total; the other ops are not ported yet).
+`pNN`. All 25 rolling / aggregate cases in the core fixture pass with exact
+bits (36 cases total; the other ops are not ported yet).
 
 How parity is kept: each kernel is a step-for-step port of the pond-ts one it
 names (eight-lane block sums from 32 values, Welford stdev, quickselect for
@@ -184,6 +184,12 @@ Decisions:
   order either way, as pond-ts does.
 - **Error text names the call and column** (lesson from [PND-ERRMSG]). The
   harness still only checks that pond-rs errors where pond-ts throws.
+- JS `Math.max(0, NaN)` is NaN but Rust `f64::max(NaN, 0.0)` is 0, so a
+  stdev whose sums overflow came out 0 instead of a gap. Fixed with a
+  JS-equivalent clamp; fixture case `aggregate-extreme-stdev` pins it (found
+  by the PR #765 review's fuzzer, ~2,800 random cases, all others matching).
+- `Reducer::Percentile(q)` is public, so `rolling` / `aggregate` check `q` is
+  in `[0, 100]` and return an error rather than panic.
 - `p<q>` reducer names: pond-ts reads `q` with JS `Number`, which also accepts
   spaces and hex (`"p 5"`, `"p0x10"`); pond-rs rejects those spellings.
 
@@ -191,11 +197,17 @@ Speed, compute only (no Arrow yet), workload A's shape in memory
 (`cargo run --release -p pond-rs --example perf_slice`), one thread, same
 machine as step 1:
 
-| step                                 | pond-rs | pond-ts (step 1, compute only) |
-| ------------------------------------ | ------- | ------------------------------ |
-| aggregate 1m, 16 outputs             | ~45 ms  | ~85–90 ms                      |
-| rolling 5m, avg + stdev on 4 columns | ~170 ms | ~1,090 ms without outages      |
-| total                                | ~220 ms | ~1,150 ms                      |
+| step                                 | pond-rs | pond-ts, step 1 baseline |
+| ------------------------------------ | ------- | ------------------------ |
+| aggregate 1m, 16 outputs             | ~45 ms  | ~85–90 ms                |
+| rolling 5m, avg + stdev on 4 columns | ~170 ms | ~1,090 ms                |
+| total                                | ~220 ms | ~1,150 ms                |
+
+The pond-ts column is from step 1's data **without** outages, so it is not
+the same input; the review of PR #765 ran pond-ts on the same shape as
+`perf_slice` (5% gaps) and got ~122 ms aggregate / ~1,912 ms rolling. The
+speedup above is therefore understated, not inflated. Like-for-like numbers
+on the benchmark file come with the step 2b runner.
 
 Complexity: `aggregate` is O(N + B) per output (one walk; median /
 percentile copy each bucket and quickselect it). `rolling` is O(N) per output

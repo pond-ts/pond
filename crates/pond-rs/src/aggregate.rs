@@ -38,6 +38,7 @@ impl TimeSeries {
         let mut sources = Vec::with_capacity(aggs.len());
         for (i, agg) in aggs.iter().enumerate() {
             sources.push(self.column_index(CALL, &agg.source)?);
+            agg.reducer.check(CALL)?;
             if agg.output == "interval" || aggs[..i].iter().any(|a| a.output == agg.output) {
                 return Err(PondError::DuplicateOutput {
                     call: CALL,
