@@ -8,9 +8,11 @@
 mod common;
 
 use common::{
-    CoreCase, CoreFixture, SeriesJson, check_case, check_coverage, compare_series,
-    load_core_fixture, report,
+    ColumnDef, CoreCase, CoreFixture, SeriesJson, cell_number, check_case, check_coverage,
+    compare_series, load_core_fixture, report,
 };
+use pond_rs::{Agg, Column, ColumnKind, Key, Reducer, Sequence, TimeSeries};
+use serde_json::{Value, json};
 
 /// Every op the fixture may contain. A new op in the fixture fails
 /// `fixture_ops_are_known` until it is listed here, so additions are noticed.
@@ -27,14 +29,119 @@ const KNOWN_OPS: &[&str] = &[
 
 /// Ops with an arm in [`run`]. Every fixture case for a listed op must run
 /// and match; an op that runs without being listed is also an error.
-const IMPLEMENTED_OPS: &[&str] = &[];
+const IMPLEMENTED_OPS: &[&str] = &["rolling", "aggregate"];
 
 /// Run one case through pond-rs. `None` means the op is not implemented yet.
-fn run(_fixture: &CoreFixture, case: &CoreCase) -> Option<Result<SeriesJson, String>> {
-    #[allow(clippy::match_single_binding)]
-    match case.op.as_str() {
-        // R1 adds arms here, e.g. "rolling" => Some(...)
-        _ => None,
+fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<SeriesJson, String>> {
+    let input = to_series(&fixture.inputs[&case.input]);
+    let result = match case.op.as_str() {
+        "rolling" => {
+            let window = case.args[0].as_str().expect("rolling window is a string");
+            mapping(&case.args[1]).and_then(|aggs| input.rolling(window, &aggs))
+        }
+        "aggregate" => {
+            let every = case.args[0]["sequence"]["every"]
+                .as_str()
+                .expect("aggregate sequence is {sequence:{every}}");
+            Sequence::every(every).and_then(|seq| {
+                mapping(&case.args[1]).and_then(|aggs| input.aggregate(&seq, &aggs))
+            })
+        }
+        _ => return None,
+    };
+    Some(result.map(|s| to_json(&s)).map_err(|e| e.to_string()))
+}
+
+/// A fixture input series as a pond-rs `TimeSeries`.
+fn to_series(json: &SeriesJson) -> TimeSeries {
+    assert_eq!(
+        json.schema[0].kind, "time",
+        "{}: inputs are time-keyed",
+        json.name
+    );
+    let time = json
+        .rows
+        .iter()
+        .map(|row| row[0].as_i64().expect("time key is an integer"))
+        .collect();
+    let columns = json.schema[1..]
+        .iter()
+        .enumerate()
+        .map(|(c, def)| {
+            assert_eq!(
+                def.kind, "number",
+                "{}.{}: number columns only",
+                json.name, def.name
+            );
+            let cells = json.rows.iter().map(|row| cell_number(&row[c + 1]));
+            if def.required.unwrap_or(true) {
+                Column::required(
+                    &def.name,
+                    cells.map(|v| v.expect("required cell")).collect(),
+                )
+            } else {
+                Column::optional(&def.name, cells)
+            }
+        })
+        .collect();
+    TimeSeries::new(&json.name, time, columns).expect("fixture input is a valid series")
+}
+
+/// pond-ts mapping object: `{ out: 'avg' }` (shorthand) or
+/// `{ out: { from, using } }`, in key order.
+fn mapping(json: &Value) -> pond_rs::Result<Vec<Agg>> {
+    json.as_object()
+        .expect("mapping is an object")
+        .iter()
+        .map(|(output, spec)| match spec {
+            Value::String(reducer) => Ok(Agg::of(output, Reducer::parse(reducer)?)),
+            _ => Ok(Agg::new(
+                output,
+                spec["from"].as_str().expect("spec.from"),
+                Reducer::parse(spec["using"].as_str().expect("spec.using"))?,
+            )),
+        })
+        .collect()
+}
+
+/// A pond-rs series in `TimeSeries.toJSON()` form, tagging what plain JSON
+/// would lose.
+fn to_json(series: &TimeSeries) -> SeriesJson {
+    let schema = series
+        .schema()
+        .into_iter()
+        .map(|def| ColumnDef {
+            name: def.name,
+            kind: def.kind.as_str().to_string(),
+            required: match def.kind {
+                ColumnKind::Number if !def.required => Some(false),
+                _ => None,
+            },
+        })
+        .collect();
+    let rows = (0..series.len())
+        .map(|i| {
+            let key = match series.key() {
+                Key::Time(t) => json!(t[i]),
+                Key::Interval(k) => json!([k.label[i], k.begin[i], k.end[i]]),
+            };
+            std::iter::once(key)
+                .chain(series.columns().iter().map(|c| encode(c.data().get(i))))
+                .collect()
+        })
+        .collect();
+    SeriesJson {
+        name: series.name().to_string(),
+        schema,
+        rows,
+    }
+}
+
+fn encode(cell: Option<f64>) -> Value {
+    match cell {
+        None => Value::Null,
+        Some(v) if v == 0.0 && v.is_sign_negative() => json!({ "f64": "-0" }),
+        Some(v) => json!(v),
     }
 }
 

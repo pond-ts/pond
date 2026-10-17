@@ -69,6 +69,33 @@ const SIGNED_ROWS = [
   [5000, -4],
 ];
 
+// 300 rows of values whose sums depend on the order they are added in (so
+// the eight-lane block sums pond-ts uses from 32 values are pinned), with
+// gaps, a run of repeated times (rows sharing a window), a long silence, and
+// a few signed zeros.
+const NOISY_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'x', kind: 'number', required: false },
+  { name: 'y', kind: 'number', required: false },
+];
+const NOISY_ROWS = Array.from({ length: 300 }, (_, i) => {
+  const time = i < 150 ? i * 700 : 150 * 700 + 60_000 + (i - 150) * 700;
+  const repeated = i % 13 === 12 ? time - 700 : time; // repeats the previous time
+  const x =
+    i % 10 === 3 ? null : i % 41 === 0 ? -0 : (Math.sin(i * 1.7) * 100) / 3;
+  const y =
+    i % 7 === 2 || (i >= 60 && i < 75) ? null : Math.cos(i) * 1e6 + i / 3;
+  return [repeated, x, y];
+});
+
+// Values whose running sums overflow: the variance comes out NaN, which
+// pond-ts turns into a gap (Math.max(0, NaN) is NaN).
+const EXTREME_ROWS = [
+  [0, Number.MAX_VALUE],
+  [1, -Number.MAX_VALUE],
+  [2, 1],
+];
+
 const every = (duration) => ({ sequence: { every: duration } });
 
 /** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
@@ -124,6 +151,115 @@ const CASES = [
     'aggregate',
     [every('15s'), { value: 'sum' }],
   ],
+  // order-sensitive sums, quickselect medians, repeated times
+  [
+    'aggregate-noisy-30s-sum-avg',
+    'noisy',
+    'aggregate',
+    [every('30s'), { x: 'sum', y: 'avg' }],
+  ],
+  [
+    'aggregate-noisy-30s-spread',
+    'noisy',
+    'aggregate',
+    [
+      every('30s'),
+      {
+        x_min: { from: 'x', using: 'min' },
+        x_max: { from: 'x', using: 'max' },
+        x_sd: { from: 'x', using: 'stdev' },
+        x_med: { from: 'x', using: 'median' },
+        x_p95: { from: 'x', using: 'p95' },
+        y_n: { from: 'y', using: 'count' },
+        y_first: { from: 'y', using: 'first' },
+        y_last: { from: 'y', using: 'last' },
+      },
+    ],
+  ],
+  [
+    'rolling-noisy-20s-all',
+    'noisy',
+    'rolling',
+    [
+      '20s',
+      {
+        x_sum: { from: 'x', using: 'sum' },
+        x_avg: { from: 'x', using: 'avg' },
+        x_min: { from: 'x', using: 'min' },
+        x_max: { from: 'x', using: 'max' },
+        x_med: { from: 'x', using: 'median' },
+        x_p10: { from: 'x', using: 'p10' },
+        y_n: { from: 'y', using: 'count' },
+        y_first: { from: 'y', using: 'first' },
+        y_last: { from: 'y', using: 'last' },
+      },
+    ],
+  ],
+  [
+    'rolling-noisy-20s-stdev',
+    'noisy',
+    'rolling',
+    ['20s', { x: 'stdev', y: 'stdev' }],
+  ],
+  // shorthand out of schema order: pond-ts sorts it into schema order
+  [
+    'rolling-shorthand-order',
+    'gappy',
+    'rolling',
+    ['2s', { b: 'sum', a: 'max' }],
+  ],
+  // spec form keeps the order given
+  [
+    'aggregate-spec-order',
+    'gappy',
+    'aggregate',
+    [
+      every('10s'),
+      {
+        b_n: { from: 'b', using: 'count' },
+        a_mean: { from: 'a', using: 'mean' },
+      },
+    ],
+  ],
+  // shorthand out of schema order: aggregate keeps the order given
+  [
+    'aggregate-shorthand-order',
+    'gappy',
+    'aggregate',
+    [every('5s'), { b: 'sum', a: 'max' }],
+  ],
+  // overflowing sums: stdev is a gap, not 0
+  [
+    'aggregate-extreme-stdev',
+    'extreme',
+    'aggregate',
+    [every('1s'), { v: 'stdev' }],
+  ],
+  // signed zero through min / max / sum
+  [
+    'rolling-signed-3s',
+    'signed',
+    'rolling',
+    [
+      '3s',
+      {
+        v_min: { from: 'v', using: 'min' },
+        v_sum: { from: 'v', using: 'sum' },
+      },
+    ],
+  ],
+  [
+    'aggregate-signed-2s',
+    'signed',
+    'aggregate',
+    [
+      every('2s'),
+      {
+        v_max: { from: 'v', using: 'max' },
+        v_sum: { from: 'v', using: 'sum' },
+      },
+    ],
+  ],
   // element-wise
   ['diff-a', 'gappy', 'diff', ['a']],
   ['diff-a-b', 'gappy', 'diff', [['a', 'b']]],
@@ -178,6 +314,11 @@ export function buildFixture(pond) {
       schema: DENSE_SCHEMA,
       rows: DENSE_ROWS,
     }),
+    noisy: TimeSeries.fromJSON({
+      name: 'noisy',
+      schema: NOISY_SCHEMA,
+      rows: NOISY_ROWS,
+    }),
     signed: TimeSeries.fromJSON({
       name: 'signed',
       schema: [
@@ -185,6 +326,14 @@ export function buildFixture(pond) {
         { name: 'v', kind: 'number', required: false },
       ],
       rows: SIGNED_ROWS,
+    }),
+    extreme: TimeSeries.fromJSON({
+      name: 'extreme',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number', required: false },
+      ],
+      rows: EXTREME_ROWS,
     }),
   };
   const decode = (arg) =>
