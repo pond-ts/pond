@@ -92,10 +92,13 @@ impl Sequence {
     /// If the two disagree about a zone's history, so do the buckets.
     pub fn calendar(unit: &str, time_zone: &str) -> Result<Self> {
         let unit = unit.parse()?;
-        let zone = TimeZone::get(time_zone).map_err(|e| PondError::InvalidData {
-            call: "Sequence::calendar",
-            message: format!("unknown time zone '{time_zone}': {e}"),
-        })?;
+        let zone = match fixed_offset(time_zone) {
+            Some(zone) => zone,
+            None => TimeZone::get(time_zone).map_err(|e| PondError::InvalidData {
+                call: "Sequence::calendar",
+                message: format!("unknown time zone '{time_zone}': {e}"),
+            })?,
+        };
         Ok(Sequence::Calendar {
             unit,
             zone,
@@ -169,11 +172,15 @@ impl Sequence {
                     begin: vec![],
                     end: vec![],
                 };
-                let mut day = unit_start(*unit, local_date(zone, begin)?, *week_starts_on)?;
-                let mut start = midnight_ms(zone, day)?;
+                // Each bucket's end is pond-ts `zone.next(unit, start)`: the
+                // unit after the one holding the local date of `start`. So a
+                // local day that never happens (Samoa skipped 2011-12-30)
+                // yields no bucket, rather than an empty one.
+                let first = unit_start(*unit, local_date(zone, begin)?, *week_starts_on)?;
+                let mut start = midnight_ms(zone, first)?;
                 while start <= end {
-                    day = advance(*unit, day)?;
-                    let next = midnight_ms(zone, day)?;
+                    let day = unit_start(*unit, local_date(zone, start)?, *week_starts_on)?;
+                    let next = midnight_ms(zone, advance(*unit, day)?)?;
                     keys.label.push(start);
                     keys.begin.push(start);
                     keys.end.push(next);
@@ -185,9 +192,36 @@ impl Sequence {
     }
 }
 
-/// The version of the tz database bundled into pond-rs, e.g. `"2025b"`.
+/// The version of the tz database bundled into pond-rs, e.g. `"2026e"`.
 pub fn tzdb_version() -> Option<&'static str> {
     jiff_tzdb::VERSION
+}
+
+/// A fixed-offset zone name as Temporal (and so pond-ts) accepts it:
+/// `±HH`, `±HHMM` or `±HH:MM`, e.g. `"+05:30"`.
+fn fixed_offset(name: &str) -> Option<TimeZone> {
+    let (sign, rest) = match name.as_bytes().first()? {
+        b'+' => (1, &name[1..]),
+        b'-' => (-1, &name[1..]),
+        _ => return None,
+    };
+    let (hh, mm) = match rest.len() {
+        2 => (rest, "00"),
+        4 => rest.split_at(2),
+        5 if rest.as_bytes()[2] == b':' => (&rest[..2], &rest[3..]),
+        _ => return None,
+    };
+    let number = |s: &str| -> Option<i32> {
+        s.bytes()
+            .all(|b| b.is_ascii_digit())
+            .then(|| s.parse().ok())?
+    };
+    let (hours, minutes) = (number(hh)?, number(mm)?);
+    if hours > 23 || minutes > 59 {
+        return None;
+    }
+    let offset = jiff::tz::Offset::from_seconds(sign * (hours * 3600 + minutes * 60)).ok()?;
+    Some(TimeZone::fixed(offset))
 }
 
 fn calendar_error(message: String) -> PondError {
@@ -324,6 +358,33 @@ mod tests {
             .buckets_overlapping(t, t)
             .unwrap();
         assert_eq!(sunday.begin[0], t - 3 * 86_400_000);
+    }
+
+    #[test]
+    fn calendar_skips_a_day_that_never_happened() {
+        // Samoa jumped from 2011-12-29 to 2011-12-31.
+        let keys = Sequence::calendar("day", "Pacific/Apia")
+            .unwrap()
+            .buckets_overlapping(1_325_030_400_000, 1_325_462_400_000)
+            .unwrap();
+        assert_eq!(keys.begin.len(), 6);
+        assert!(keys.begin.iter().zip(&keys.end).all(|(b, e)| e > b));
+    }
+
+    #[test]
+    fn calendar_accepts_fixed_offsets() {
+        let start = |zone: &str| {
+            Sequence::calendar("day", zone)
+                .unwrap()
+                .buckets_overlapping(0, 0)
+                .unwrap()
+                .begin[0]
+        };
+        assert_eq!(start("+05:30"), -19_800_000);
+        assert_eq!(start("+0530"), -19_800_000);
+        assert_eq!(start("-08"), -57_600_000);
+        assert!(Sequence::calendar("day", "+5:30").is_err());
+        assert!(Sequence::calendar("day", "+24:00").is_err());
     }
 
     #[test]

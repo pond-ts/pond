@@ -80,8 +80,9 @@ ranges, not single numbers.
 - **pond-rs equals pond-ts exactly** on both workloads: all 1,016,667 output
   rows of A and the 12 of B, every cell to the bit.
 - **pond-rs compute is ~6–8× faster than pond-ts on A and ~2.3–2.6× on B, single-threaded.**
-  On A it is a little ahead of polars on one thread (393–403 vs 468–485 ms) and
-  about 2× behind polars on four. pond-rs has no threading yet.
+  On A it is about even with polars on one thread: 393–403 vs 468–485 ms in
+  these repeats, but 367–567 vs 459–537 in the PR #767 reviewer's runs, so the
+  ranges overlap. It is about 2× behind polars on four. pond-rs has no threading yet.
 - **The drift fix doubled pond-rs's rolling stdev cost.** Measured on this
   machine with `examples/perf_slice.rs`: rolling went from ~200 ms (before
   #766) to ~345–390 ms; stdev on one column from ~34 to ~61–69 ms, avg from

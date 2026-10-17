@@ -259,10 +259,24 @@ Shipped: `Sequence::calendar(unit, zone)` (day / week / month / quarter /
 year, `with_week_start`), `TimeSeries::from_arrow` / `from_ipc_bytes` /
 `read_ipc` / `to_arrow` / `write_ipc`, the pond-rs benchmark runner
 (`examples/r1a_bench.rs`, wired into `bench/run.sh`) and `bench/same.py`
-(pond-rs vs pond-ts, bit for bit). Six calendar cases joined the core
+(pond-rs vs pond-ts, bit for bit). Eight calendar cases joined the core
 fixture (New York day across spring-forward, a Sunday-start week, Santiago
-where local midnight is skipped, London months, Tokyo quarters, UTC years);
-31 of 42 fixture cases now run in pond-rs and all match exactly.
+where local midnight is skipped, Samoa's skipped day 2011-12-30, a `+05:30`
+fixed offset, London months, Tokyo quarters, UTC years); 33 of 44 fixture
+cases now run in pond-rs and all match exactly.
+
+The PR #767 review compared calendar buckets with pond-ts across every Node
+zone, all units and week starts, 1900–2040 (~9.2M buckets). It found one
+logic bug: a local day that never happens (Samoa, Kwajalein 1993, Kiritimati
+1995, Fakaofo 2011) gave an empty extra bucket, because pond-rs stepped the
+civil date instead of recomputing from the bucket's start instant as
+pond-ts's `zone.next` does. Fixed and pinned by the Apia case. The other 17
+mismatches were tz-data differences (Node 2025b vs pond-rs 2026e, e.g.
+Bogota 1992, Tehran 1979). The review also found fixed-offset names
+(`+05:30`) rejected (now accepted in pond-ts's spellings `±HH`, `±HHMM`,
+`±HH:MM`) and that arrow's IPC decoder panics on some corrupt files (now
+caught and returned as an error on native targets; on wasm32 a panic still
+aborts).
 
 Decisions:
 
@@ -287,7 +301,9 @@ Decisions:
   part is an error rather than silently rounded (pond-ts keeps fractional ms
   in its `f64` keys; pond-rs keys are whole `i64` ms). Any integer or float
   value column is read as `f64`; other types are an error naming the column.
-  A column with any gap becomes optional, one without is required.
+  A column with any gap becomes optional, one without is required. pond-rs
+  reads time-keyed files only, so its own interval-keyed `aggregate` output
+  is written but cannot be read back yet (pond-ts can, with `keyKind`).
 - **Reading uses arrow's `FileDecoder`, not `FileReader`.** `FileReader`
   copies every buffer (~38 ms on the 38.6 MB file); the decoder slices the
   batches out of the file's bytes (0.13 ms). The remaining read time is the

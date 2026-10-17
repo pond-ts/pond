@@ -1,11 +1,15 @@
 //! Arrow in and out: record batches and IPC files.
 //!
-//! Field naming follows pond-ts `toArrow` / `fromArrow`, so a file written by
-//! one reads in the other:
+//! Field naming follows pond-ts `toArrow` / `fromArrow`:
 //!
 //! - a time key is one field, by default `time`;
 //! - an interval key (an `aggregate` result) is `interval` (begin),
 //!   `intervalEnd`, the value columns, then `intervalLabel` last.
+//!
+//! A time-keyed file written by either reads in the other. pond-rs reads
+//! time-keyed files only, so an interval-keyed file (pond-rs's own
+//! `aggregate` output included) is written but not read back yet; pond-ts
+//! reads it with `fromArrow(table, { keyKind: 'interval' })`.
 //!
 //! pond-rs keys are whole epoch milliseconds. Written keys are
 //! `Timestamp(Millisecond, "UTC")`; a gap in a value column is an Arrow null.
@@ -37,7 +41,21 @@ const READ: &str = "TimeSeries::read_ipc";
 /// `FileDecoder`, which slices the batches out of `bytes` without copying
 /// (arrow's `FileReader` copies each buffer: ~38 ms against ~0.1 ms on the
 /// 38 MB benchmark file).
+///
+/// arrow's decoder panics on some corrupt files (buffer offsets past the end
+/// of a block, malformed schemas) instead of returning an error. On native
+/// targets the panic is caught and returned as an error; on wasm32, where
+/// panics abort, a corrupt file still aborts.
 fn decode_ipc_file(bytes: Vec<u8>) -> Result<Vec<RecordBatch>> {
+    std::panic::catch_unwind(move || decode_ipc_file_unchecked(bytes)).unwrap_or_else(|_| {
+        Err(invalid(
+            READ,
+            "corrupt Arrow IPC file (arrow's decoder panicked)".into(),
+        ))
+    })
+}
+
+fn decode_ipc_file_unchecked(bytes: Vec<u8>) -> Result<Vec<RecordBatch>> {
     let ipc = |e: arrow_schema::ArrowError| invalid(READ, e.to_string());
     let not_ipc = || {
         invalid(
@@ -176,7 +194,8 @@ impl TimeSeries {
     }
 
     /// Read a series from the bytes of an Arrow IPC file already in memory
-    /// (e.g. from `std::fs::read`). The record batches are views into
+    /// (e.g. from `std::fs::read`). A corrupt file is an error, not a panic,
+    /// except on wasm32 (see the module notes in `arrow.rs`). The record batches are views into
     /// `bytes`, not copies; only the conversion into pond columns copies.
     pub fn from_ipc_bytes(
         name: impl Into<String>,
@@ -503,6 +522,28 @@ mod tests {
         let b = batch(vec![("t", ts(vec![1000]))]);
         assert!(TimeSeries::from_arrow("x", &[b], "time").is_err());
         assert!(TimeSeries::from_arrow("x", &[], "time").is_err());
+    }
+
+    #[test]
+    fn corrupt_ipc_is_an_error_not_a_panic() {
+        let mut good = Vec::new();
+        sample().write_ipc(&mut good).unwrap();
+        // Every single-byte change and every truncation must return Ok or
+        // Err; a panic fails the test.
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {})); // keep caught panics quiet
+        let mut errors = 0;
+        for i in 0..good.len() {
+            for flip in [0x01u8, 0x80, 0xff] {
+                let mut bad = good.clone();
+                bad[i] ^= flip;
+                errors += usize::from(TimeSeries::from_ipc_bytes("x", bad, "time").is_err());
+            }
+            errors +=
+                usize::from(TimeSeries::from_ipc_bytes("x", good[..i].to_vec(), "time").is_err());
+        }
+        std::panic::set_hook(prev);
+        assert!(errors > 0);
     }
 
     #[test]

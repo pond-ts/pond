@@ -111,6 +111,11 @@ const SANTIAGO_ROWS = Array.from({ length: 60 }, (_, i) => [
   Date.UTC(2026, 8, 3, 12) + i * 2 * HOUR,
   (i % 11) / 4,
 ]);
+// Samoa skipped 2011-12-30 entirely (UTC-10 → UTC+14): no bucket for it.
+const APIA_ROWS = Array.from({ length: 40 }, (_, i) => [
+  Date.UTC(2011, 11, 28, 12) + i * 3 * HOUR,
+  i % 5,
+]);
 const SEASON_ROWS = Array.from({ length: 110 }, (_, i) => [
   Date.UTC(2025, 10, 2, 13) + i * 7 * 24 * HOUR,
   i % 6 === 5 ? null : (i % 13) - 6,
@@ -285,6 +290,18 @@ const CASES = [
     [calendar('day', 'America/Santiago'), { v: 'sum' }],
   ],
   [
+    'aggregate-calendar-day-apia-skipped',
+    'apia',
+    'aggregate',
+    [calendar('day', 'Pacific/Apia'), { v: 'sum' }],
+  ],
+  [
+    'aggregate-calendar-day-fixed-offset',
+    'dst',
+    'aggregate',
+    [calendar('day', '+05:30'), { v: 'count' }],
+  ],
+  [
     'aggregate-calendar-month-london',
     'seasons',
     'aggregate',
@@ -405,6 +422,7 @@ export function buildFixture(pond) {
     }),
     dst: series('dst', DST_ROWS),
     santiago: series('santiago', SANTIAGO_ROWS),
+    apia: series('apia', APIA_ROWS),
     seasons: series('seasons', SEASON_ROWS),
     extreme: TimeSeries.fromJSON({
       name: 'extreme',
