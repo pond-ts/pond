@@ -573,8 +573,9 @@ the study oracle) is done.
   in Arrow's memory, threading per output column) are done: pond-rs output
   equals pond-ts's to the bit on the 1M-row benchmark, is ~6.5× faster than
   pond-ts single-threaded, and on four cores beats polars on A and matches it
-  on B. Step 5 (final benchmarks and the agent trial) is next. A revised
-  memory target awaits pjm17971. Acceptance is predeclared targets for
+  on B, using less memory than polars. Step 5 (final benchmarks and the
+  agent trial) is next. The memory target was revised on 2026-10-17 to
+  "no more growth than polars on one thread". Acceptance is predeclared targets for
   correctness, speed against pond-ts and polars, memory, determinism and an
   agent trial (RFC Amendment 1, after the Codex review). A miss means redesign,
   not stop: the direction is committed.

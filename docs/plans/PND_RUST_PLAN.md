@@ -143,7 +143,8 @@ Decisions and findings:
   ~650 ms. Profile: the extra time is in writing results to the output
   (`writeGroup`) and in garbage collection; the cause is not established yet.
   Logged as [PND-ROLLGAP].
-- **The memory target needs revising**; proposal above in Next.
+- **The memory target needed revising**; the revision was accepted 2026-10-17
+  (see Next).
 - The RFC said pond-ts runs on Node 24; this machine has Node 22.22, recorded
   with the numbers.
 
@@ -499,11 +500,11 @@ Against the R1a targets (RFC Amendment 1):
      pond-ts, pond-rs 1-thread / all-core, polars 1-thread / all-core, plus
      an agent trial on B — targets in RFC Amendment 1. A miss means redesign
      before R1b.
-- **R1a memory target — proposed revision (awaiting pjm17971).** The target
+- **R1a memory target — revised, accepted by pjm17971 on 2026-10-17.** The target
   as written, "peak memory ≤ 2× the input Arrow size", cannot be met by any
   engine on workload A: input plus output is already ~110 MB (38.6 + 71)
   against a 2× limit of ~77 MB, and polars on one thread grows by ~256 MB
-  (6.6× the input) doing it. Proposed:
+  (6.6× the input) doing it. Accepted replacement:
   **one-run memory growth no more than polars on one thread, on A and on B**,
   measured as `run_mem_mb` in `crates/pond-rs/bench/`. That keeps the target
   relative to the same competitor as the speed targets. The "one pass per
@@ -511,7 +512,7 @@ Against the R1a targets (RFC Amendment 1):
   the growth during the first (warm-up) run, so it includes JIT work and
   garbage not yet collected; it is indicative only. For pond-rs and polars
   (no garbage collector) it is a clean measure, which is what the target
-  compares.
+  compares. Met after step 4: A 192 MB vs polars 256 MB; B 78 vs 110 MB.
 - **[PND-RUST-R1B]** — Rest of batch core (`align`, `partitionBy`, `join`,
   remaining element-wise ops). Not adopted until R1a reports.
 - Threading: done in R1a step 4 (per output column). If R1b needs one
