@@ -566,14 +566,27 @@ the study oracle) is done.
 
 - **[PND-RUST-R1A]** — Adopted. A measured vertical slice, not all of core:
   key types, `Sequence.every` / `Sequence.calendar` (DST-aware), NaN-as-missing
-  columns, Arrow in/out, `rolling`, `aggregate`. It starts by repairing the
-  spike benches and re-measuring pond-ts. Acceptance is predeclared targets for
+  columns, Arrow in/out, `rolling`, `aggregate`. Step 1 (pond-ts and polars
+  baseline, `crates/pond-rs/bench/`) is done; a revised memory target awaits
+  pjm17971. Acceptance is predeclared targets for
   correctness, speed against pond-ts and polars, memory, determinism and an
   agent trial (RFC Amendment 1, after the Codex review). A miss means redesign,
   not stop: the direction is committed.
 - **[PND-RUST-R1B]** — Rest of batch core; adopted only after R1a reports.
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
   independent).
+- **[PND-ROLLSTD]** — pond-ts rolling `avg` / `stdev` build up rounding error
+  that is only cleared when a window empties. On 1M rows it is small on dense
+  data (~5e-9) but large when a window drains to a few values: one row gave
+  stdev 0.000442 where the true value is 0.000354 (25% off; polars exact).
+  Found by the R1a baseline; details in PND_RUST_PLAN.md. Fix in pond-ts
+  (periodic re-sum, or re-sum when the window gets small) before pond-rs
+  copies it.
+- **[PND-ROLLGAP]** — pond-ts time-window `rolling` gets ~60% slower when a
+  few windows are empty: 1M rows with three 10-minute outages (0.18% of rows)
+  take `rolling('5m', avg)` from ~400 to ~650 ms. A profile puts the extra
+  time in writing results out and in garbage collection; the cause is not yet
+  found. Repro: `crates/pond-rs/bench/` with and without the outages.
 - **[PND-ERRMSG]** — pond-ts error-message bugs found while recording parity
   error cases: `diff('nope')` throws a raw `Cannot read properties of
 undefined`; `rolling` with an unknown column says "aggregate mapping".

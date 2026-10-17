@@ -349,7 +349,7 @@ split:
     in → `aggregate(every 1m: avg/min/max/count)` and
     `rolling('5m', avg/stdev)` → Arrow out.
   - **B, pond-specific:** the same shape spanning a US DST change, bucketed by
-    `Sequence.calendar('day' and 'hour', { timeZone: 'America/New_York' })`,
+    `Sequence.calendar('day', { timeZone: 'America/New_York' })`,
     with gaps. Here the question is whether the answer is right and easy to
     write, as much as how fast it runs.
 - **Predeclared targets** (proposed; pjm17971 may revise before measurement):
@@ -362,6 +362,13 @@ split:
   | memory, copies | peak memory ≤ 2× the input Arrow size; at most one pass over each column for Arrow in and for Arrow out (gaps become `NaN`, so a zero-copy read is not possible) |
   | deterministic  | identical bits on 1 thread and N threads                                                                                                                         |
   | agent          | on B, an agent given pond-rs reaches the right answer at least as often as one given polars, with fewer retries (10 runs each side)                              |
+
+  Correction after measuring (R1a step 1): the memory row cannot be met by
+  any engine on A. Input plus output is already ~110 MB against a 2× limit
+  of ~77 MB, and polars grows by ~256 MB on one thread. A
+  revision is proposed in `docs/plans/PND_RUST_PLAN.md`. Workload B originally
+  also named an `'hour'` calendar unit; pond-ts has none (`day` through
+  `year`), so B is `'day'` only.
 
 - **R1b — the rest of batch core** (`align`, `partitionBy`, `join`, the
   remaining element-wise operators), adopted only after R1a's numbers are in.
