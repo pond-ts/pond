@@ -10,7 +10,9 @@
 //!   pandas / TA-Lib reference values for the financial studies, written by
 //!   `packages/financial/scripts/oracle/generate.py`.
 //!
-//! A missing cell is JSON `null` in both, and `None` here.
+//! A missing cell is JSON `null` in both, and `None` here. In the core
+//! fixture, `-0`, `NaN` and `±Infinity` are tagged as
+//! `{"f64": "-0" | "NaN" | "inf" | "-inf"}` because plain JSON loses them.
 
 #![allow(dead_code)] // each test binary uses a different subset
 
@@ -65,10 +67,38 @@ pub struct CoreCase {
     pub input: String,
     pub op: String,
     pub args: Vec<Value>,
-    /// Absolute tolerance for value cells; `None` means exact.
+    /// Absolute tolerance for finite value cells; `None` means exact.
     #[serde(default)]
     pub tolerance: Option<f64>,
-    pub expected: SeriesJson,
+    /// The result when pond-ts succeeds. Exactly one of `expected` / `error`.
+    #[serde(default)]
+    pub expected: Option<SeriesJson>,
+    /// Set when pond-ts throws. Only "pond-rs also returns an error" is
+    /// checked; the message is pond-ts's, kept for reference.
+    #[serde(default)]
+    pub error: Option<ErrorJson>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ErrorJson {
+    pub name: String,
+    pub message: String,
+}
+
+/// Check one case's outcome: success must match `expected`, and a pond-ts
+/// error must be an error in pond-rs too.
+pub fn check_case(case: &CoreCase, actual: &Result<SeriesJson, String>) -> Result<(), String> {
+    match (&case.expected, &case.error, actual) {
+        (Some(expected), None, Ok(actual)) => compare_series(expected, actual, case.tolerance),
+        (Some(_), None, Err(why)) => Err(format!("pond-ts succeeds, pond-rs errored: {why}")),
+        (None, Some(e), Ok(_)) => Err(format!(
+            "pond-ts throws ({}: {}), pond-rs succeeded",
+            e.name, e.message
+        )),
+        (None, Some(_), Err(_)) => Ok(()),
+        _ => Err("fixture case must have exactly one of expected / error".to_string()),
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -143,20 +173,39 @@ fn same_key(expected: &Value, actual: &Value) -> bool {
     }
 }
 
+/// A cell as a number: a plain JSON number, or a tagged
+/// `{"f64": "-0" | "NaN" | "inf" | "-inf"}`. `None` for anything else
+/// (`null`, strings, …).
+pub fn cell_number(cell: &Value) -> Option<f64> {
+    if let Some(tag) = cell.get("f64").and_then(Value::as_str) {
+        return match tag {
+            "-0" => Some(-0.0),
+            "NaN" => Some(f64::NAN),
+            "inf" => Some(f64::INFINITY),
+            "-inf" => Some(f64::NEG_INFINITY),
+            other => panic!("unknown f64 tag '{other}'"),
+        };
+    }
+    cell.as_f64()
+}
+
 fn compare_cell(expected: &Value, actual: &Value, tolerance: Option<f64>) -> Result<(), String> {
-    match (expected.as_f64(), actual.as_f64()) {
+    match (cell_number(expected), cell_number(actual)) {
         (Some(e), Some(a)) => compare_number(e, a, tolerance),
         _ if expected == actual => Ok(()),
         _ => Err(format!("expected {expected}, got {actual}")),
     }
 }
 
-/// Exact comparison is bitwise except that `0.0 == -0.0`, matching how
-/// `TimeSeries.toJSON()` writes both as `0`.
+/// Exact means the same bits: `-0.0` and `0.0` differ, and any NaN matches
+/// any NaN. A tolerance applies only when both values are finite; signs of
+/// infinity and NaN-ness must still match exactly.
 pub fn compare_number(expected: f64, actual: f64, tolerance: Option<f64>) -> Result<(), String> {
+    let same_bits =
+        expected.to_bits() == actual.to_bits() || (expected.is_nan() && actual.is_nan());
     let ok = match tolerance {
-        None => expected == actual,
-        Some(tol) => (expected - actual).abs() <= tol,
+        Some(tol) if expected.is_finite() && actual.is_finite() => (expected - actual).abs() <= tol,
+        _ => same_bits,
     };
     if ok {
         Ok(())

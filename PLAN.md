@@ -561,16 +561,23 @@ of pond's core and financial studies, for agents writing Rust, with a WASM
 bridge back into pond-ts later where it measurably pays. Building started
 2026-10-17; decisions, defaults (crate `pond-rs`, `jiff` for time zones) and
 shipped outcomes in [PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md). R0
-(workspace, CI, parity harness over the core fixture and the study oracle) is
-done.
+(workspace, CI incl. a wasm32 build, parity harness over the core fixture and
+the study oracle) is done.
 
-- **[PND-RUST-R1]** — Batch core in Rust: key types, `Sequence.every`, the
-  columnar store, and the ops in `packages/core/test/fixtures/parity.json`
-  (rolling, aggregate, diff, rate, pctChange, cumulative, shift, fill), growing
-  the fixture as ops are added. Acceptance: every core fixture case passes.
-- **[PND-RUSTRFC]** — Still open from the RFC: threads by default, versioning
-  (lock-step with `v*` or independent), and the first agent acceptance
-  workload. Red-team before R2 commits to an API shape.
+- **[PND-RUST-R1A]** — Adopted. A measured vertical slice, not all of core:
+  key types, `Sequence.every` / `Sequence.calendar` (DST-aware), NaN-as-missing
+  columns, Arrow in/out, `rolling`, `aggregate`. It starts by repairing the
+  spike benches and re-measuring pond-ts. Acceptance is predeclared targets for
+  correctness, speed against pond-ts and polars, memory, determinism and an
+  agent trial (RFC Amendment 1, after the Codex review). A miss means redesign,
+  not stop: the direction is committed.
+- **[PND-RUST-R1B]** — Rest of batch core; adopted only after R1a reports.
+- **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
+  independent).
+- **[PND-ERRMSG]** — pond-ts error-message bugs found while recording parity
+  error cases: `diff('nope')` throws a raw `Cannot read properties of
+undefined`; `rolling` with an unknown column says "aggregate mapping".
+  Agents act on error text, so both should name the column and the call.
 
 ### `@pond-ts/financial`
 

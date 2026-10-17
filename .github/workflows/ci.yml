@@ -75,6 +75,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
 
       - name: Check formatting
         run: cargo fmt --all --check
@@ -84,6 +85,12 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+      # The RFC's later phases ship this same core to JS as WASM. Building for
+      # wasm32 on every PR stops native-only code (threads, OS APIs) creeping
+      # in un-gated long before that phase starts.
+      - name: Build for WASM
+        run: cargo check -p pond-rs --target wasm32-unknown-unknown
 
   # The docs site builds from package **source** (TypeDoc's entry points), not
   # from `dist`, so it can break on a change that `npm run verify` is perfectly

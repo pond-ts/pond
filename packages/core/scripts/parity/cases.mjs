@@ -9,10 +9,17 @@
  * longer matches what pond-ts produces).
  *
  * Every series is stored as `TimeSeries.toJSON()` output. A missing cell is
- * JSON `null`. Each case records the call as `op` + `args`, where `args` is the
- * positional argument list with two encodings for non-JSON values:
- *   - `{ "sequence": { "every": "5s" } }` means `Sequence.every('5s')`.
- * Numbers must agree exactly unless the case carries `tolerance` (absolute).
+ * JSON `null`. Plain JSON cannot carry `-0`, `NaN` or `±Infinity`, so those
+ * cells are tagged: `{ "f64": "-0" | "NaN" | "inf" | "-inf" }`.
+ *
+ * Each case records the call as `op` + `args` (the positional argument list;
+ * `{ "sequence": { "every": "5s" } }` means `Sequence.every('5s')`), and then
+ * either `expected` (a series) or `error` (`{ name, message }`) when pond-ts
+ * throws. Values, signed zero and non-finites must agree exactly unless the
+ * case carries `tolerance` (absolute, finite values only).
+ *
+ * Which pond-ts this describes: the commit the file is committed in. The drift
+ * test keeps the two in step, so there is no separate version field.
  */
 
 const GAPPY_SCHEMA = [
@@ -50,6 +57,17 @@ const DENSE_ROWS = Array.from({ length: 60 }, (_, i) => [
   i * 1000,
   ((i * 37) % 23) / 8 - 1,
 ]);
+
+// Negative values that repeat, plus an explicit -0, so `pctChange` produces
+// -0 ((-2 - -2) / -2) and `shift` must carry -0 through untouched.
+const SIGNED_ROWS = [
+  [0, -2],
+  [1000, -2],
+  [2000, -0],
+  [3000, 4],
+  [4000, null],
+  [5000, -4],
+];
 
 const every = (duration) => ({ sequence: { every: duration } });
 
@@ -115,7 +133,37 @@ const CASES = [
   ['shift-a-1', 'gappy', 'shift', ['a', 1]],
   ['shift-a-b-minus2', 'gappy', 'shift', [['a', 'b'], -2]],
   ['fill-linear-hold', 'gappy', 'fill', [{ a: 'linear', b: 'hold' }]],
+  // signed zero
+  ['pctChange-signed', 'signed', 'pctChange', ['v']],
+  ['shift-signed', 'signed', 'shift', ['v', 1]],
+  ['cumulative-signed', 'signed', 'cumulative', [{ v: 'sum' }]],
+  // errors: pond-ts throws. Only "an error is raised" is the contract for
+  // now; the message is recorded for reference, not for matching.
+  ['error-unknown-column', 'gappy', 'rolling', ['1s', { nope: 'avg' }]],
+  [
+    'error-unknown-reducer',
+    'gappy',
+    'aggregate',
+    [every('1s'), { a: 'bogus' }],
+  ],
+  ['error-negative-window', 'gappy', 'rolling', ['-1s', { a: 'avg' }]],
 ];
+
+/** Tag the numbers plain JSON would lose or change. */
+function encodeCell(cell) {
+  if (Array.isArray(cell)) return cell.map(encodeCell);
+  if (typeof cell !== 'number') return cell;
+  if (Object.is(cell, -0)) return { f64: '-0' };
+  if (Number.isNaN(cell)) return { f64: 'NaN' };
+  if (cell === Infinity) return { f64: 'inf' };
+  if (cell === -Infinity) return { f64: '-inf' };
+  return cell;
+}
+
+function encodeSeries(series) {
+  const json = series.toJSON();
+  return { ...json, rows: json.rows.map((row) => row.map(encodeCell)) };
+}
 
 export function buildFixture(pond) {
   const { TimeSeries, Sequence } = pond;
@@ -130,6 +178,14 @@ export function buildFixture(pond) {
       schema: DENSE_SCHEMA,
       rows: DENSE_ROWS,
     }),
+    signed: TimeSeries.fromJSON({
+      name: 'signed',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number', required: false },
+      ],
+      rows: SIGNED_ROWS,
+    }),
   };
   const decode = (arg) =>
     arg && typeof arg === 'object' && 'sequence' in arg
@@ -141,32 +197,29 @@ export function buildFixture(pond) {
       generator: 'packages/core/scripts/parity/generate.mjs',
       reference: 'pond-ts',
       encoding:
-        'series are TimeSeries.toJSON(); null = missing; args encode Sequence.every(d) as {"sequence":{"every":d}}; exact unless tolerance is set',
+        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Sequence.every(d) as {"sequence":{"every":d}}; a case has expected (series) or error ({name,message}); exact unless tolerance is set',
     },
     inputs: Object.fromEntries(
-      Object.entries(inputs).map(([name, series]) => [name, series.toJSON()]),
+      Object.entries(inputs).map(([name, series]) => [
+        name,
+        encodeSeries(series),
+      ]),
     ),
     cases: CASES.map(([id, input, op, args, tolerance]) => {
-      const expected = inputs[input][op](...args.map(decode)).toJSON();
-      // JSON.stringify writes ±Infinity and NaN as null, which reads back as
-      // "missing" — refuse rather than record a different answer.
-      for (const row of expected.rows) {
-        for (const cell of row.flat()) {
-          if (typeof cell === 'number' && !Number.isFinite(cell)) {
-            throw new Error(
-              `case ${id}: non-finite value ${cell} cannot be encoded`,
-            );
-          }
-        }
-      }
-      return {
+      const head = {
         id,
         input,
         op,
         args,
         ...(tolerance === undefined ? {} : { tolerance }),
-        expected,
       };
+      let result;
+      try {
+        result = inputs[input][op](...args.map(decode));
+      } catch (e) {
+        return { ...head, error: { name: e.name, message: e.message } };
+      }
+      return { ...head, expected: encodeSeries(result) };
     }),
   };
 }

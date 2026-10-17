@@ -8,6 +8,11 @@ _Opened 2026-10-17._
 
 ## Decisions
 
+**Building pond-rs is a committed decision** (pjm17971, 2026-10-17; reasoning
+outside this record). The Codex review's R−1 "stop if it doesn't pay" phase is
+therefore not adopted, but its measurements are, as R1a's acceptance targets
+(RFC Amendment 1).
+
 Owner-confirmed 2026-10-17 (RFC §3): native Rust first, WASM bridge into
 pond-ts last; lives in this monorepo as a Cargo workspace; schema checked at
 runtime with precise errors; pond's own columns with Arrow import/export; order
@@ -70,9 +75,36 @@ missing); `diff`/`rate` against a missing neighbour give missing rather than
 skipping back; rolling `stdev` is population (`ddof=0`), so a one-sample
 window is `0`.
 
+### R0 follow-up from the Codex review (same PR)
+
+- Fixture cells tag `-0` / `NaN` / `±Infinity` as `{"f64": …}`; exact
+  comparison is bitwise (`-0` ≠ `0`); a tolerance applies to finite values only.
+  New `signed` input pins `-0` through `pctChange`, `shift` and `cumulative`.
+- Error cases: `{ "error": { name, message } }` where pond-ts throws; pond-rs
+  must also error (messages are not matched). 26 cases now.
+- CI also runs `cargo check --target wasm32-unknown-unknown`.
+- Found while recording errors (pond-ts bugs, not fixed here):
+  `diff('nope')` throws a raw `Cannot read properties of undefined (reading
+'kind')`; `rolling` with an unknown column reports "aggregate mapping
+  references unknown source column". Tracked as [PND-ERRMSG] in PLAN.md.
+
 ## Next
 
-- **[PND-RUST-R1]** — Batch core: `Time` / `TimeRange` / `Interval`,
-  `Sequence.every`, the columnar store (NaN-as-missing number columns), and the
-  ops in the core fixture. Grow the fixture as ops are added (calendar
-  sequences, `align`, `partitionBy`, `join`).
+- **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:
+  1. Repair the WASM spike's benches for the NaN-as-missing `Float64Column`
+     ([PND-NANREP] follow-up 2) and re-measure the pond-ts baseline.
+  2. `Time` / `Interval` keys, `Sequence.every` and
+     `Sequence.calendar(unit, { timeZone })` (with `jiff`), NaN-as-missing
+     number columns, Arrow IPC in/out, `rolling`, `aggregate`; grow the
+     fixture with calendar cases that record the tzdb version.
+  3. Property tests independent of pond-ts (rolling `sum` = naive window
+     re-sum; aggregate `count`s total the non-missing cells; …). A
+     disagreement with the fixture is a pond-ts bug report first.
+  4. Benchmarks A (generic, 1M rows) and B (DST calendar buckets) against
+     pond-ts, pond-rs 1-thread / all-core, polars 1-thread / all-core, plus
+     an agent trial on B — targets in RFC Amendment 1. A miss means redesign
+     before R1b.
+- **[PND-RUST-R1B]** — Rest of batch core (`align`, `partitionBy`, `join`,
+  remaining element-wise ops). Not adopted until R1a reports.
+- Threading: behind a `parallel` feature, off for wasm32; parallel reductions
+  must give the same bits as one thread (fixed chunks, ordered combine).
