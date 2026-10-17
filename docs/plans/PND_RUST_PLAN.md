@@ -340,8 +340,8 @@ obvious answer on random inputs neither pond-ts nor pond-rs was written
 against (300 seeded cases per test, ~3 s in a debug build):
 
 - **rolling**: for every row, filter the rows in `(t - window, t]` and
-  reduce them naively; all eleven reducer shapes (count, sum, avg, min, max,
-  first, last, median, stdev, p0, p37.5). Exact reducers must agree exactly;
+  reduce them naively; thirteen reducer shapes (count, sum, avg, min, max,
+  first, last, median, stdev, p0, p37.5, p99.9, p100). Exact reducers must agree exactly;
   sum / avg / stdev within `128 · 1e-12 · max|v|` (they add in a different
   order). Inputs have repeated times, 0–95% gaps, flat windows.
 - **aggregate, fixed steps**: the buckets are the anchor's grid, back to
@@ -358,8 +358,16 @@ against (300 seeded cases per test, ~3 s in a debug build):
   in 300 runs, so it missed the old Apia bug).
 - **aggregate, calendar**: the same naive row check over DST-straddling
   series.
+- **rolling drift** (added after review): 50k rows alternating runs of
+  values ~1e13 and ~1e3, 10-row windows. A plain running sum is off by
+  ~5e-4 once the huge values leave the window; this test catches it (the
+  random tests above are too short and clean to drift).
 
-Each test was shown to fail on a deliberately broken copy: the old Apia
+Not covered here: `-0` (the generator never makes it and the comparison
+treats `-0 == 0`); its handling is pinned by the parity fixture only.
+
+Each test was shown to fail on a deliberately broken copy: a plain running
+sum (drift test only), the old Apia
 zero-length bucket, fixed 24-hour days, a rolling window closed at its low
 end, an aggregate bucket closed at its high end, a wrong percentile rank.
 

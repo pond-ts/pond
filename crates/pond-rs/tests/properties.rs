@@ -76,7 +76,7 @@ fn series(times: &[i64], values: &[Option<f64>]) -> TimeSeries {
     .unwrap()
 }
 
-const REDUCERS: [Reducer; 11] = [
+const REDUCERS: [Reducer; 13] = [
     Reducer::Count,
     Reducer::Sum,
     Reducer::Avg,
@@ -88,6 +88,8 @@ const REDUCERS: [Reducer; 11] = [
     Reducer::Stdev,
     Reducer::Percentile(0.0),
     Reducer::Percentile(37.5),
+    Reducer::Percentile(99.9),
+    Reducer::Percentile(100.0),
 ];
 
 fn aggs() -> Vec<Agg> {
@@ -425,5 +427,49 @@ fn aggregate_calendar_matches_brute_force() {
             assert_eq!(keys, want, "seed {seed}");
         }
         check_buckets(seed, &times, &values, &keys.begin, &keys.end, &out);
+    }
+}
+
+/// A running sum adds each value as it enters the window and subtracts it as
+/// it leaves, so rounding errors can pile up over a long series ([PND-ROLLSTD]).
+/// Long runs of huge values followed by runs of small ones make that visible:
+/// once the huge values have left, a drifted sum is off by far more than
+/// the small window's own rounding. The brute force re-adds each short
+/// window from scratch, so it cannot drift.
+#[test]
+fn rolling_sum_does_not_drift() {
+    for seed in 0..4 {
+        let mut rng = Rng(seed);
+        let n: usize = 50_000;
+        let times: Vec<i64> = (0..n as i64).map(|i| i * 1_000).collect();
+        let values: Vec<Option<f64>> = (0..n)
+            .map(|i| {
+                let big = (i / 500) % 2 == 0;
+                let v = rng.below(1_000_000) as f64 / 997.0;
+                Some(if big { v * 1e8 } else { v })
+            })
+            .collect();
+        let aggs = [
+            Agg::new("sum", "v", Reducer::Sum),
+            Agg::new("avg", "v", Reducer::Avg),
+            Agg::new("stdev", "v", Reducer::Stdev),
+        ];
+        let out = series(&times, &values).rolling("10s", &aggs).unwrap();
+        for row in 0..n {
+            let present: Vec<f64> = values[row.saturating_sub(9)..=row]
+                .iter()
+                .filter_map(|v| *v)
+                .collect();
+            let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+            for (name, reducer) in [
+                ("sum", Reducer::Sum),
+                ("avg", Reducer::Avg),
+                ("stdev", Reducer::Stdev),
+            ] {
+                let got = out.column(name).unwrap().get(row);
+                let what = format!("seed {seed} row {row}");
+                check(&what, reducer, got, naive(reducer, &present), scale);
+            }
+        }
     }
 }
