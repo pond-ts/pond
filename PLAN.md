@@ -554,19 +554,30 @@ unstable on `main` today from blocked summation alone, with no workers involved.
 
 Not a commitment. Red-team it before anything commits to it.
 
-### pond-rs — native Rust core (RFC — not adopted)
+### pond-rs — native Rust core
 
-[`docs/rfcs/pond-rs.md`](docs/rfcs/pond-rs.md) proposes a native Rust
-implementation of pond's core and financial studies, for agents writing Rust,
-with a WASM bridge back into pond-ts later where it measurably pays.
+[`docs/rfcs/pond-rs.md`](docs/rfcs/pond-rs.md) — a native Rust implementation
+of pond's core and financial studies, for agents writing Rust, with a WASM
+bridge back into pond-ts later where it measurably pays. Building started
+2026-10-17; decisions, defaults (crate `pond-rs`, `jiff` for time zones) and
+shipped outcomes in [PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md). R0
+(workspace, CI incl. a wasm32 build, parity harness over the core fixture and
+the study oracle) is done.
 
-- **[PND-RUSTRFC]** — Red-team the RFC. Owner-confirmed so far (2026-10-17):
-  native first then WASM; lives in this monorepo as a Cargo workspace; schema
-  checked at runtime with precise errors; pond's own columns with Arrow
-  import/export; order batch → studies → live → WASM; charts out of scope.
-  Open: crate name (`pond` is taken), time-zone library, threads by default,
-  versioning, and the first acceptance workload. No build tasks until a phase
-  is adopted.
+- **[PND-RUST-R1A]** — Adopted. A measured vertical slice, not all of core:
+  key types, `Sequence.every` / `Sequence.calendar` (DST-aware), NaN-as-missing
+  columns, Arrow in/out, `rolling`, `aggregate`. It starts by repairing the
+  spike benches and re-measuring pond-ts. Acceptance is predeclared targets for
+  correctness, speed against pond-ts and polars, memory, determinism and an
+  agent trial (RFC Amendment 1, after the Codex review). A miss means redesign,
+  not stop: the direction is committed.
+- **[PND-RUST-R1B]** — Rest of batch core; adopted only after R1a reports.
+- **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
+  independent).
+- **[PND-ERRMSG]** — pond-ts error-message bugs found while recording parity
+  error cases: `diff('nope')` throws a raw `Cannot read properties of
+undefined`; `rolling` with an unknown column says "aggregate mapping".
+  Agents act on error text, so both should name the column and the call.
 
 ### `@pond-ts/financial`
 
