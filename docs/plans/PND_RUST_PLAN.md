@@ -167,7 +167,7 @@ buffer, and stay O(1).
 
 **Measured on the R1a bench data (1M rows × 4 columns, exact `BigInt`
 reference):** stdev worst relative error 0.25 → 3.4e-16 (polars 3.1e-12); avg
-worst absolute error 9.4e-10 → 0 (every row correctly rounded; polars
+worst absolute error 9.4e-10 → 0 (measured: every row equals the exact mean rounded once — not a guarantee, since the sum and the division each round; polars
 1.3e-12). Workload A compute time unchanged within noise (~2.4–2.5 s both).
 Microbench (`scripts/perf-rolling-accumulators.mjs`, 100k rows): `sum` +11–14%,
 `avg` −2…+7%, `stdev` −12…+6% — stdev got cheaper in places because the state

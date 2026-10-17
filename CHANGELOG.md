@@ -87,7 +87,7 @@ include new features and type-level changes; patch bumps are strictly additive.
   0.000442 for a true 0.000354 (25% off), and a one-value window's average was
   9.4e-10 off the value. The running totals are now kept to about twice double
   precision, so every row of that series matches an exact answer (stdev within
-  3.4e-16 relative, averages correctly rounded). Applies to `rolling` (time and
+  3.4e-16 relative, and every average equal to the exact value rounded once). Applies to `rolling` (time and
   count windows), `rollingByColumn`, `smooth('movingAverage')` and the live
   rolling / reduce operators. Removing a value far larger than the rest of the
   window (e.g. a spike leaving a quiet window) no longer cancels the stdev to 0

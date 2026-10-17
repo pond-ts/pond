@@ -54,7 +54,9 @@ const SUM_PER_UNIT = 2 ** -908;
  * is the inherited drift-free double-double {@link WindowSum} ([PND-ROLLSTD])
  * — inherited rather than held, to save an indirection per add / remove — so
  * a window with no value ≥ `SUM_SPLIT` sums exactly as a plain
- * {@link WindowSum} does. Callers pass finite numbers.
+ * {@link WindowSum} does. The inherited `n` counts small-lane values only,
+ * so the small lane resets to exactly 0 when its last value leaves even while
+ * big values remain. Callers pass finite numbers.
  * Used by `sum` / `avg` `rollingState` and `smooth('movingAverage')`.
  */
 export class LanedSum extends WindowSum {

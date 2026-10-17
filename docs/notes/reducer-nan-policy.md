@@ -90,8 +90,8 @@ bench). Since 2026-10 the small lane keeps double-double sums
 (`reducers/window-accumulators.ts`): each step's rounding error is kept, so
 what remains after a removal is exact to ~2^-104 of the totals involved.
 Precision still runs out eventually when a removed value dwarfs the spread of
-the survivors: the stdev error grows with the square of that ratio, times
-~2^-104. Measured: a `1e9` leaving a window whose spread is `3e-4` (ratio
+the survivors: an upper bound on the stdev error grows with the square of
+that ratio, times ~2^-104 (the measured error below is ~1000× under it). Measured: a `1e9` leaving a window whose spread is `3e-4` (ratio
 ~3e12) leaves a 3e-10 relative error, where the old Welford delete read 0. A
 `sum` mixing values on both sides of `2^960` still rounds the small lane
 before adding the big one.

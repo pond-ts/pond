@@ -43,7 +43,11 @@ export function exactSum(xs: readonly number[]): number {
   return scaledToNumber(s, SCALE);
 }
 
-/** The exact population stdev of `xs`, rounded (twice: variance, sqrt). */
+/**
+ * The exact population stdev of `xs`, rounded (twice: variance, sqrt).
+ * The final conversion underflows to 0 for very tiny inputs (|x| ≲ 1e-150);
+ * don't use it there.
+ */
 export function exactStdev(xs: readonly number[]): number {
   const n = BigInt(xs.length);
   let s1 = 0n;

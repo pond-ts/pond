@@ -151,6 +151,13 @@ export class WindowStdev {
    * plain doubles from the double-double sums, which is accurate to a few
    * ulps of the answer while `(Σd)²/n ≤ ½·Σd²` (the shift is within about
    * one stdev of the mean); otherwise the shift is moved to the mean first.
+   *
+   * Because that move is stored, a read changes the state, and two states
+   * fed the same values but read at different rows can differ in the last
+   * digit or so afterwards. The batch sweeps read at the same rows, so the
+   * count-window sweep and the state path stay bit-identical; a live
+   * operator read at its own cadence agrees with batch to rounding, not bit
+   * for bit.
    */
   m2(): number {
     const n = this.n;

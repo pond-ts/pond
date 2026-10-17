@@ -182,7 +182,12 @@ describe('reducer parity — fuzzed cross-path agreement', () => {
           const exact = exactStdev(vals);
           const maxAbs = Math.max(...vals.map(Math.abs));
           const ctx = `trial=${trial} n=${vals.length}`;
-          agree(name, c, exact, `${ctx} rolling-vs-exact`, 1e-14);
+          // True relative error (agree()'s tolerance floors at 1, which
+          // would make this an absolute check for stdevs below 1).
+          expect(
+            Math.abs((c as number) - exact),
+            `stdev ${ctx} rolling-vs-exact`,
+          ).toBeLessThanOrEqual(exact * 1e-14);
           agree(
             name,
             b,
