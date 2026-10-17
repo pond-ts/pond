@@ -359,7 +359,7 @@ against (300 seeded cases per test, ~3 s in a debug build):
 - **aggregate, calendar**: the same naive row check over DST-straddling
   series.
 - **rolling drift** (added after review): 50k rows alternating runs of
-  values ~1e13 and ~1e3, 10-row windows. A plain running sum is off by
+  values up to ~1e11 and up to ~1e3, 10-row windows. A plain running sum is off by
   ~5e-4 once the huge values leave the window; this test catches it (the
   random tests above are too short and clean to drift).
 
