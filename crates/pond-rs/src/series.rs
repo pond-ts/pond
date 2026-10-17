@@ -111,6 +111,15 @@ impl Column {
         }
     }
 
+    /// A column around existing storage, without copying.
+    pub(crate) fn from_data(name: String, data: Float64Column, required: bool) -> Self {
+        Self {
+            name,
+            required,
+            data,
+        }
+    }
+
     /// A column that may have gaps, given as raw `f64` where any non-finite
     /// value (`NaN`, `±inf`) is a gap.
     pub fn optional_raw(name: impl Into<String>, values: Vec<f64>) -> Self {

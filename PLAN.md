@@ -564,19 +564,15 @@ shipped outcomes in [PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md). R0
 (workspace, CI incl. a wasm32 build, parity harness over the core fixture and
 the study oracle) is done.
 
-- **[PND-RUST-R1A]** — Adopted. A measured vertical slice, not all of core:
-  key types, `Sequence.every` / `Sequence.calendar` (DST-aware), NaN-as-missing
-  columns, Arrow in/out, `rolling`, `aggregate`. Steps 1 (pond-ts and polars
-  baseline, `crates/pond-rs/bench/`), 2a (series, `rolling`, `aggregate`) and
-  2b (calendar sequences, Arrow in/out, pond-rs in
-  the benchmark) and 3 (property tests against brute force) are done: pond-rs output equals pond-ts's to the bit on the
-  1M-row benchmark and is ~6–8× faster single-threaded; it is not yet within
-  1.25× of polars on four cores, which needs threading (next, with
-  columns that use Arrow's memory, as pjm17971 chose). A revised memory target awaits pjm17971. Acceptance is predeclared targets for
-  correctness, speed against pond-ts and polars, memory, determinism and an
-  agent trial (RFC Amendment 1, after the Codex review). A miss means redesign,
-  not stop: the direction is committed.
-- **[PND-RUST-R1B]** — Rest of batch core; adopted only after R1a reports.
+- **[PND-RUST-R1B]** — Rest of batch core (`align`, `partitionBy`, `join`,
+  remaining element-wise ops). R1a is complete and met every predeclared
+  target (report: "R1a step 5" in `docs/plans/PND_RUST_PLAN.md`): bit-identical
+  to pond-ts, ~6.5× pond-ts on one core, faster than polars on four cores,
+  less memory than polars, and an agent trial at 10/10 right with fewer
+  retries than polars. Adopting R1b awaits pjm17971.
+- **[PND-RUSTOUT]** — Let pond-rs callers choose the output layout (rename /
+  select key and value fields, re-export `arrow_ipc`). Every pond-rs agent in
+  the R1a trial had to build the Arrow batch by hand. Fold into R1b.
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
   independent).
 - **[PND-ROLLGAP]** — pond-ts time-window `rolling` gets ~60% slower when a

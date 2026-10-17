@@ -143,7 +143,8 @@ Decisions and findings:
   ~650 ms. Profile: the extra time is in writing results to the output
   (`writeGroup`) and in garbage collection; the cause is not established yet.
   Logged as [PND-ROLLGAP].
-- **The memory target needs revising**; proposal above in Next.
+- **The memory target needed revising**; the revision was accepted 2026-10-17
+  (see Next).
 - The RFC said pond-ts runs on Node 24; this machine has Node 22.22, recorded
   with the numbers.
 
@@ -426,6 +427,116 @@ all checked against the code and all real; all fixed in one PR:
    (`/proc/self/clear_refs`) and report peak minus size-before; `null`
    off Linux. Re-run: same picture (bench README).
 
+## R1a step 4 — Arrow-memory columns and threading (DONE)
+
+**Columns use Arrow's memory** (pjm17971's choice, 2026-10-17).
+`Float64Column` now holds an Arrow `ScalarBuffer<f64>` (shared, immutable,
+reference counted) instead of a `Vec<f64>`; still NaN-for-gap, and
+`values()` still gives a `&[f64]`, so no caller changed.
+
+- Reading: a Float64 field with no nulls, in a one-batch file, is used in
+  place, no copy. A field with nulls is still copied (nulls must become NaN,
+  and the buffer is shared with the file, so it cannot be written in place);
+  so are several batches (they must be joined) and other number types
+  (widened to f64). The time key is still copied: `Key::Time` is a public
+  `Vec<i64>`; changing it is an API change left for R1b.
+- Writing: every value column's buffer is handed to Arrow as it is; gaps get
+  a validity bitmap over it.
+- Cloning a column or series no longer copies values.
+- Cost (raised in review): an in-place column keeps the whole IPC file's
+  bytes in memory for as long as it (or anything derived from it) lives,
+  including the parts that were copied. Documented on `from_ipc_bytes` /
+  `from_arrow`; not limited, since the caller controls the series' lifetime.
+- Considered and not done: keeping Arrow's validity bitmap as the gap marker
+  (no copy for columns with nulls). Every reducer's inner loop would have to
+  read the bitmap, which is slower and is a bigger change than R1a needs.
+
+**Threading** behind a `parallel` Cargo feature, **on by default**, using
+rayon (`RAYON_NUM_THREADS` sets the pool). rayon is not built for wasm32,
+where the feature does nothing. Only whole output columns run on different
+threads; each column is computed start to finish by one thread, in order, so
+its bits cannot depend on the thread count. Splitting one column's rows
+across threads was rejected: the running sums' last bits depend on the order
+values are added in. Test `par::tests::same_bits_on_one_and_many_threads`
+compares 72 output columns, to the bit, on 1, 4 and 7 threads; the
+benchmark checks the 4-thread output against pond-ts with `same.py`.
+Limit: a call with one output column uses one core.
+
+**Results** (same 4-core machine, 3 full `run.sh` repeats; compute ms):
+
+| workload | pond-ts   | pond-rs 1 thread | pond-rs 4 | polars 1 | polars 4 |
+| -------- | --------- | ---------------- | --------- | -------- | -------- |
+| A        | 2901–3412 | 438–504          | 141–159   | 519–590  | 209–231  |
+| B        | 77–115    | 31–47            | 11–14     | 22–28    | 11–14    |
+
+Memory growth for one run, MB: A pond-rs 192 (was 254), polars 256 / 281;
+B pond-rs 78, polars 110 / 111. Write on A dropped from ~142–161 ms to
+~79–115 (no copy into Arrow). Read on A did not change much in full runs
+(46–55 ms; 19 ms when run alone): every value column in the benchmark file
+has nulls, so all are still copied.
+
+Against the R1a targets (RFC Amendment 1):
+
+- **≥2× pond-ts on one core**: met, ~6.5× on A, ~2.4× on B.
+- **Within 1.25× of polars on all cores**: met; pond-rs on 4 threads is
+  faster than polars on 4 on A (141–159 vs 209–231 ms) and even on B.
+- **Same results on 1 and many cores**: met (bits identical).
+- **Memory**: under the revised target (growth no more than polars on one
+  thread, accepted 2026-10-17), met on A and B.
+- **Agent trial**: step 5.
+
+## R1a step 5 — agent trial, and the R1a report (DONE)
+
+Twenty fresh Claude subagents (same model) were given the same task: daily
+avg/min/max/count by New York calendar day over the benchmark file. Ten were
+given pond-rs, ten polars 0.55.2. None had web access. Each could read only
+the library source and its own folder, and built and ran only through a
+logging script. Their outputs were graded afterwards against pond-ts's
+answer. Setup, prompt, grader and full results are in
+`crates/pond-rs/bench/agent-trial/`.
+
+|                                       | pond-rs | polars  |
+| ------------------------------------- | ------- | ------- |
+| right answer                          | 10 / 10 | 10 / 10 |
+| right on the first run                | 9 / 10  | 6 / 10  |
+| failed runs before the first good one | 2       | 4       |
+| failed runs in total                  | 2       | 10      |
+
+- **Target met**: right answers were equal, and pond-rs needed fewer
+  retries on every measure.
+- **Not shown**: neither side got the clock change wrong. So this trial
+  does not show pond-rs makes agents more correct, only that they needed
+  fewer tries.
+- **Some of the gap is checking**: six of polars' failed runs came after a
+  good answer, while agents added their own checks.
+- **The setup favoured polars in one respect**: its build needed a
+  workaround preset for it. polars 0.55.2 does not compile with `ipc` alone,
+  without `parquet`.
+
+Friction the pond-rs agents hit:
+
+- 10 of 10 could not write the requested layout. There is no way to rename
+  or drop key fields, so every agent built the Arrow batch by hand.
+- 10 of 10 had to add `arrow-ipc` themselves.
+- All converted `Count`'s f64 to integers.
+- Three read source to learn what an empty bucket gives.
+
+The first two are logged as [PND-RUSTOUT] below.
+
+**R1a report — every predeclared target met:**
+
+| target                                               | result                                                                                        |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| correctness: fixtures pass, B equals pond-ts exactly | met: parity fixtures, property tests, and A and B bit-identical to pond-ts on 1 and 4 threads |
+| ≥2× pond-ts on one core                              | met: ~6.5× on A, ~2.4× on B                                                                   |
+| all-core within 1.25× of all-core polars on A        | met: faster (141–159 vs 209–231 ms)                                                           |
+| memory: growth ≤ one-thread polars (revised)         | met: A 192 vs 256 MB, B 78 vs 110 MB                                                          |
+| identical bits on 1 and N threads                    | met                                                                                           |
+| agent trial                                          | met: 10/10 vs 10/10 right, fewer retries                                                      |
+
+The one result short of a clean win is one-core B: polars is faster
+(22–28 vs 31–47 ms of compute). Adopting R1b is pjm17971's call.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:
@@ -435,21 +546,18 @@ all checked against the code and all real; all fixed in one PR:
      benchmark~~ — done, see "R1a step 2a" and "R1a step 2b" above.
   3. ~~Property tests independent of pond-ts~~ — done, see "R1a step 3"
      above.
-  4. Threading behind a `parallel` feature (columns and buckets are
-     independent, so work splits across cores; results must stay identical
-     to one thread), together with Arrow-backed (non-owning) columns:
-     pjm17971 chose those on 2026-10-17 (columns may use Arrow's memory
-     rather than their own copy; still NaN-for-gap). See "Found on the way"
-     under step 2b.
-  5. Benchmarks A (generic, 1M rows) and B (DST calendar buckets) against
+  4. ~~Arrow-memory columns and threading~~ — done, see "R1a step 4"
+     above.
+  5. ~~Benchmarks A (generic, 1M rows) and B (DST calendar buckets) against
      pond-ts, pond-rs 1-thread / all-core, polars 1-thread / all-core, plus
      an agent trial on B — targets in RFC Amendment 1. A miss means redesign
-     before R1b.
-- **R1a memory target — proposed revision (awaiting pjm17971).** The target
+     before R1b.~~ — done, see "R1a step 5" above. **R1a is complete**;
+     every target met.
+- **R1a memory target — revised, accepted by pjm17971 on 2026-10-17.** The target
   as written, "peak memory ≤ 2× the input Arrow size", cannot be met by any
   engine on workload A: input plus output is already ~110 MB (38.6 + 71)
   against a 2× limit of ~77 MB, and polars on one thread grows by ~256 MB
-  (6.6× the input) doing it. Proposed:
+  (6.6× the input) doing it. Accepted replacement:
   **one-run memory growth no more than polars on one thread, on A and on B**,
   measured as `run_mem_mb` in `crates/pond-rs/bench/`. That keeps the target
   relative to the same competitor as the speed targets. The "one pass per
@@ -457,8 +565,18 @@ all checked against the code and all real; all fixed in one PR:
   the growth during the first (warm-up) run, so it includes JIT work and
   garbage not yet collected; it is indicative only. For pond-rs and polars
   (no garbage collector) it is a clean measure, which is what the target
-  compares.
+  compares. Met after step 4: A 192 MB vs polars 256 MB; B 78 vs 110 MB.
+- **[PND-RUSTOUT]** — Let a caller choose the output layout. Found by the
+  agent trial, where 10 of 10 pond-rs agents hit it. Today `to_arrow` /
+  `write_ipc` on an aggregate always write `interval`, `intervalEnd`, the
+  values, then `intervalLabel`. Nothing renames or drops a key field, so a
+  caller wanting `day_start` + values builds the Arrow batch by hand. That
+  also needs `arrow-ipc`, which pond-rs does not re-export (it re-exports
+  `arrow_array` and `arrow_schema`). Likely shape: re-export `arrow_ipc`,
+  plus a rename / select on `TimeSeries` (pond-ts has `rename` and `select`,
+  so this is parity, not new vocabulary). Fold into R1b.
 - **[PND-RUST-R1B]** — Rest of batch core (`align`, `partitionBy`, `join`,
   remaining element-wise ops). Not adopted until R1a reports.
-- Threading: behind a `parallel` feature, off for wasm32; parallel reductions
-  must give the same bits as one thread (fixed chunks, ordered combine).
+- Threading: done in R1a step 4 (per output column). If R1b needs one
+  column split across threads, reductions must still give the same bits as
+  one thread (fixed chunks, ordered combine).

@@ -1,0 +1,34 @@
+You are writing a small Rust program. Work only inside {DIR}.
+
+The task: `data.arrow` (in that folder) is an Arrow IPC file of sensor readings:
+a `time` column (UTC timestamps, one per second) and four number columns
+`c0`, `c1`, `c2`, `c3`, each with some missing values. Produce a daily
+summary where a "day" is a calendar day in New York local time
+(America/New_York).
+
+Write `out.arrow` (Arrow IPC file format) with one row per day, earliest
+first, covering every day the data touches, and these columns in this order:
+
+- `day_start`: the moment that New York day begins, as a UTC timestamp
+  (milliseconds).
+- then for each of c0, c1, c2, c3: `<col>_avg`, `<col>_min`, `<col>_max`,
+  `<col>_count` (e.g. `c0_avg`, `c0_min`, `c0_max`, `c0_count`), where
+  missing values are ignored and count is the number of values present.
+
+Use the {LIB}. A Cargo project is already set up in {DIR} with that
+dependency in `Cargo.toml` (you may add other dependencies if you need
+them). Write your program in `src/main.rs`. It takes the input and output
+paths as its two arguments.
+
+Rules for this exercise:
+- Build and run ONLY with `{DIR}/attempt.sh` (it runs
+  `cargo run --release -- data.arrow out.arrow`). Do not run `cargo` any
+  other way (no `cargo build`, `cargo check`, `cargo test`, `cargo doc`).
+- You may read the library's source code ({SRC}) and any files in {DIR}.
+  Do not read anything else on this machine, and do not use the web.
+- When you believe out.arrow is correct, stop. You can inspect your output
+  only by having your own program print things.
+
+When finished, reply with: whether you think the output is right, any
+problems you hit with the library (be specific), and anything you were
+unsure about.
