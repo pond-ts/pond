@@ -100,13 +100,15 @@ repeats):
 
 | workload | pond-ts total | polars 1 thread | polars 4 threads |
 | -------- | ------------- | --------------- | ---------------- |
-| A        | 1308–1472 ms  | 397–434 ms      | 217–274 ms       |
-| B        | 92–105 ms     | 24–28 ms        | 21–25 ms         |
+| A        | 1885–1930 ms  | 421–429 ms      | 208–222 ms       |
+| B        | 92–102 ms     | 28–31 ms        | 20–23 ms         |
 
 What that makes the R1a speed targets on this machine: pond-rs one thread
-≤ ~650–740 ms on A and ≤ ~46–52 ms on B (2× pond-ts); pond-rs all cores ≤ ~270–340
-ms on A (1.25× polars, four cores here). Polars on one thread already beats
-the 2× bar by 3.3× on A, so the polars target is the hard one.
+≤ ~940–965 ms on A and ≤ ~46–51 ms on B (2× pond-ts); pond-rs all cores
+≤ ~260–280 ms on A (1.25× polars, four cores here). Polars on one thread is
+already ~4.5× faster than pond-ts on A, well past the 2× bar, so the polars
+target is the hard one. (pond-ts A is slower than it would be on gap-free
+windows; see [PND-ROLLGAP] below. Without the outages it is ~1250–1300 ms.)
 
 Decisions and findings:
 
@@ -117,14 +119,30 @@ Decisions and findings:
   pond-ts and polars on workloads A and B, so that is what step 1 built. The
   spike repair moves to R4, whose RFC row already says it re-asks the spike's
   question with fresh numbers.
-- **pond-ts and polars agree** on every key, count and gap; averages within
-  5e-13 (bucket) and 4e-12 (rolling).
-- **pond-ts rolling stdev drifts** by up to 4.4e-9 against an exact stdev on
-  this data (polars: 1e-13), growing along the series. Cause: Welford
-  add/remove with no periodic re-sum. Logged as [PND-ROLLSTD]. This matters
-  for pond-rs: copying pond-ts's order of operations exactly also copies the
-  drift. Workload B (the exact-match target) uses no rolling stdev, so R1a is
-  not blocked.
+- **pond-ts and polars agree on bucketing**: every key, count and gap match,
+  and bucket averages are within 5e-13. The data has three 10-minute outages
+  (all columns missing) so empty buckets and empty rolling windows are
+  actually exercised; the first draft had none, which an adversarial review
+  caught.
+- **pond-ts rolling results drift, and near outages the error is large.**
+  pond-ts keeps a running sum and a running stdev (Welford add/remove), updated
+  as each value enters and leaves the window, and clears the built-up rounding
+  error only when the window empties completely. On dense stretches that is
+  small: up to ~5e-9 off an exact stdev and ~1e-9 off an exact average
+  (polars: ~1e-12), growing along the series. As a window drains towards an
+  outage, the stdev gets small but the error does not: the worst row has two
+  values, 126.31951 and 126.32022, true stdev 0.000354, pond-ts 0.000442 (25%
+  wrong), polars exact. A single-value window gives an average 9.4e-10 off the
+  value itself. Logged as [PND-ROLLSTD]; it is a pond-ts bug in its own right,
+  not only a pond-rs concern. For pond-rs: copying pond-ts's order of
+  operations exactly would copy this, so rolling `sum`/`avg`/`stdev` parity
+  should be "within tolerance of an exact answer", not "same bits as pond-ts".
+  Workload B (the exact-match target) has no rolling, so R1a is not blocked.
+- **pond-ts rolling slows down ~60% when some windows are empty**: three
+  10-minute outages (0.18% of rows) take `rolling('5m', avg)` from ~400 to
+  ~650 ms. Profile: the extra time is in writing results to the output
+  (`writeGroup`) and in garbage collection; the cause is not established yet.
+  Logged as [PND-ROLLGAP].
 - **The memory target needs revising**; proposal above in Next.
 - The RFC said pond-ts runs on Node 24; this machine has Node 22.22, recorded
   with the numbers.
@@ -132,7 +150,7 @@ Decisions and findings:
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:
-  1. ~~Baseline~~ — done, see "R1a step 1 — baseline (DONE)" below.
+  1. ~~Baseline~~ — done, see "R1a step 1 — baseline (DONE)" above.
   2. `Time` / `Interval` keys, `Sequence.every` and
      `Sequence.calendar(unit, { timeZone })` (with `jiff`), NaN-as-missing
      number columns, Arrow IPC in/out, `rolling`, `aggregate`; grow the
@@ -146,12 +164,17 @@ Decisions and findings:
      before R1b.
 - **R1a memory target — proposed revision (awaiting pjm17971).** The target
   as written, "peak memory ≤ 2× the input Arrow size", cannot be met by any
-  engine on workload A: the output alone is 71 MB against a 38.6 MB input, and
-  polars on one thread grows by 256 MB (6.6× the input) doing it. Proposed:
+  engine on workload A: input plus output is already ~110 MB (38.6 + 71)
+  against a 2× limit of ~77 MB, and polars on one thread grows by ~256 MB
+  (6.6× the input) doing it. Proposed:
   **one-run memory growth no more than polars on one thread, on A and on B**,
   measured as `run_mem_mb` in `crates/pond-rs/bench/`. That keeps the target
   relative to the same competitor as the speed targets. The "one pass per
-  column for Arrow in and out" half stands.
+  column for Arrow in and out" half stands. Caveat: for pond-ts the number is
+  the growth during the first (warm-up) run, so it includes JIT work and
+  garbage not yet collected; it is indicative only. For pond-rs and polars
+  (no garbage collector) it is a clean measure, which is what the target
+  compares.
 - **[PND-RUST-R1B]** — Rest of batch core (`align`, `partitionBy`, `join`,
   remaining element-wise ops). Not adopted until R1a reports.
 - Threading: behind a `parallel` feature, off for wasm32; parallel reductions

@@ -364,7 +364,8 @@ split:
   | agent          | on B, an agent given pond-rs reaches the right answer at least as often as one given polars, with fewer retries (10 runs each side)                              |
 
   Correction after measuring (R1a step 1): the memory row cannot be met by
-  any engine on A, since A's output alone is larger than 2× its input. A
+  any engine on A. Input plus output is already ~110 MB against a 2× limit
+  of ~77 MB, and polars grows by ~256 MB on one thread. A
   revision is proposed in `docs/plans/PND_RUST_PLAN.md`. Workload B originally
   also named an `'hour'` calendar unit; pond-ts has none (`day` through
   `year`), so B is `'day'` only.
