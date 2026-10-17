@@ -554,6 +554,20 @@ unstable on `main` today from blocked summation alone, with no workers involved.
 
 Not a commitment. Red-team it before anything commits to it.
 
+### pond-rs — native Rust core (RFC — not adopted)
+
+[`docs/rfcs/pond-rs.md`](docs/rfcs/pond-rs.md) proposes a native Rust
+implementation of pond's core and financial studies, for agents writing Rust,
+with a WASM bridge back into pond-ts later where it measurably pays.
+
+- **[PND-RUSTRFC]** — Red-team the RFC. Owner-confirmed so far (2026-10-17):
+  native first then WASM; lives in this monorepo as a Cargo workspace; schema
+  checked at runtime with precise errors; pond's own columns with Arrow
+  import/export; order batch → studies → live → WASM; charts out of scope.
+  Open: crate name (`pond` is taken), time-zone library, threads by default,
+  versioning, and the first acceptance workload. No build tasks until a phase
+  is adopted.
+
 ### `@pond-ts/financial`
 
 Calendar engine + trading-time axis + the first studies batch (10 studies,
