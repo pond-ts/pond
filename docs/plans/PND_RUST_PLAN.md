@@ -442,6 +442,10 @@ reference counted) instead of a `Vec<f64>`; still NaN-for-gap, and
 - Writing: every value column's buffer is handed to Arrow as it is; gaps get
   a validity bitmap over it.
 - Cloning a column or series no longer copies values.
+- Cost (raised in review): an in-place column keeps the whole IPC file's
+  bytes in memory for as long as it (or anything derived from it) lives,
+  including the parts that were copied. Documented on `from_ipc_bytes` /
+  `from_arrow`; not limited, since the caller controls the series' lifetime.
 - Considered and not done: keeping Arrow's validity bitmap as the gap marker
   (no copy for columns with nulls). Every reducer's inner loop would have to
   read the bitmap, which is slower and is a bigger change than R1a needs.

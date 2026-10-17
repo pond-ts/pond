@@ -118,6 +118,9 @@ impl TimeSeries {
     ///   order, and convert to whole milliseconds; a micro- or nanosecond
     ///   timestamp with a sub-millisecond part is an error rather than being
     ///   silently rounded.
+    /// - With a single batch, a `Float64` field with no nulls is used in
+    ///   place, sharing Arrow's buffer (and keeping the memory behind it
+    ///   alive); every other field is copied.
     /// - Every other field becomes a value column, in field order. Any
     ///   integer or float type is read as `f64`; nulls, `NaN` and infinities
     ///   are gaps. A field Arrow marks nullable becomes an optional column
@@ -219,8 +222,14 @@ impl TimeSeries {
 
     /// Read a series from the bytes of an Arrow IPC file already in memory
     /// (e.g. from `std::fs::read`). A corrupt file is an error, not a panic,
-    /// except on wasm32 (see the module notes in `arrow.rs`). The record batches are views into
-    /// `bytes`, not copies; only the conversion into pond columns copies.
+    /// except on wasm32 (see the module notes in `arrow.rs`).
+    ///
+    /// Gap-free `Float64` columns in a one-batch file point into `bytes`
+    /// instead of copying (see [`TimeSeries::from_arrow`]). The cost: while
+    /// any such column is alive (in this series or one derived from it),
+    /// the whole of `bytes` stays in memory, including the parts that were
+    /// copied. If that matters, read with [`TimeSeries::read_ipc`] from a
+    /// smaller file, or drop the series once its results are computed.
     pub fn from_ipc_bytes(
         name: impl Into<String>,
         bytes: Vec<u8>,
@@ -229,7 +238,9 @@ impl TimeSeries {
         Self::from_arrow(name, &decode_ipc_file(bytes)?, time_column)
     }
 
-    /// The series as one Arrow record batch. Values are copied.
+    /// The series as one Arrow record batch. Value columns are not copied:
+    /// each column's buffer is shared with the batch (gaps get a validity
+    /// bitmap over it). Key columns are copied.
     ///
     /// Fields: the key (`Timestamp(Millisecond, "UTC")`; an interval key adds
     /// `<key>End` after it and `<key>Label` at the end), then each value
@@ -604,6 +615,19 @@ mod tests {
                 .as_ptr()
         );
         assert_eq!(back.column("v").unwrap().get(1), None);
+    }
+
+    #[test]
+    fn ipc_file_columns_point_into_the_file() {
+        let s =
+            TimeSeries::new("s", vec![0, 1], vec![Column::required("v", vec![1.0, 2.0])]).unwrap();
+        let mut bytes = Vec::new();
+        s.write_ipc(&mut bytes).unwrap();
+        let file = bytes.as_ptr_range();
+        let (start, end) = (file.start as usize, file.end as usize);
+        let back = TimeSeries::from_ipc_bytes("s", bytes, "time").unwrap();
+        let v = back.column("v").unwrap().values().as_ptr() as usize;
+        assert!(start <= v && v < end, "column was copied out of the file");
     }
 
     #[test]

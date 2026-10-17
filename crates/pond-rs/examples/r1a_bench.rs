@@ -113,9 +113,9 @@ fn reset_peak_mb() -> Option<f64> {
 }
 
 fn threads() -> usize {
-    #[cfg(feature = "parallel")]
+    #[cfg(all(feature = "parallel", not(target_arch = "wasm32")))]
     return rayon::current_num_threads();
-    #[cfg(not(feature = "parallel"))]
+    #[cfg(not(all(feature = "parallel", not(target_arch = "wasm32"))))]
     return 1;
 }
 

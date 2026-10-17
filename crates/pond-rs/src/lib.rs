@@ -22,7 +22,8 @@
 //!
 //! **Memory.** Columns hold their values in Arrow buffers. Reading a
 //! gap-free `Float64` field from a one-batch Arrow file uses the file's
-//! memory without copying, and writing hands each column's buffer to Arrow.
+//! memory without copying (which keeps the file's bytes in memory while the
+//! column lives), and writing hands each column's buffer to Arrow.
 //!
 //! ```
 //! use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};

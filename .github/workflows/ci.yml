@@ -93,7 +93,7 @@ jobs:
       # wasm32 on every PR stops native-only code (threads, OS APIs) creeping
       # in un-gated long before that phase starts.
       - name: Build for WASM
-        run: cargo check -p pond-rs --target wasm32-unknown-unknown
+        run: cargo check -p pond-rs --target wasm32-unknown-unknown --lib --examples
 
   # The docs site builds from package **source** (TypeDoc's entry points), not
   # from `dist`, so it can break on a change that `npm run verify` is perfectly
