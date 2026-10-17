@@ -8,17 +8,9 @@ sides (pond writes a gap as NaN or null, polars as null); counts must match
 exactly; every other value must agree within TOL, absolute. Prints the
 largest difference per column and exits non-zero on any disagreement.
 
-Rolling results are looser, because pond-ts's are off in a known way
-([PND-ROLLSTD]): it keeps a running sum and stdev, updated as each value
-enters and leaves the window, and the rounding error they build up is never
-cleared. Two rules: rolling values must agree within ROLL_TOL (on dense
-stretches of the 1M-row file pond-ts is up to ~5e-9 off an exact stdev and
-~1e-9 off an exact average; polars ~1e-12), and up to ROLL_EXCEPTIONS of the
-rows may miss that (they are counted in the output). Those are windows
-draining to a few values before an outage, where the built-up error is large
-next to a small stdev (worst seen: 0.000442 instead of 0.000354). A real
-difference in what is computed, such as sample instead of population stdev,
-moves every row by ~1e-3 and fails both rules.
+Rolling results used to get a looser rule because pond-ts's running sums
+drifted ([PND-ROLLSTD]); since PR #766 pond-ts rolling is within ~1e-12 of
+polars, so the same TOL applies to everything.
 """
 
 import math
@@ -27,8 +19,6 @@ import sys
 import pyarrow as pa
 
 TOL = 1e-9
-ROLL_TOL = 1e-7
-ROLL_EXCEPTIONS = 1e-4  # fraction of rows
 
 
 def read(path):
@@ -73,24 +63,12 @@ def compare(pond, polars, name):
                 continue
             d = abs(x - y)
             worst = max(worst, d)
-            limit = (
-                0.0
-                if col.endswith("_count")
-                else ROLL_TOL
-                if name == "roll"
-                else TOL
-            )
+            limit = 0.0 if col.endswith("_count") else TOL
             if d > limit:
                 mismatched += 1
-        allowed = int(len(a) * ROLL_EXCEPTIONS) if name == "roll" else 0
-        if mismatched == 0:
-            status = "ok"
-        elif mismatched <= allowed:
-            status = f"ok, {mismatched} rows past {ROLL_TOL} (pond-ts drift, [PND-ROLLSTD])"
-        else:
-            status = f"{mismatched} MISMATCHED"
+        status = "ok" if mismatched == 0 else f"{mismatched} MISMATCHED"
         print(f"{name}.{col}: max |diff| {worst:.3e}, gaps {gaps}, {status}")
-        ok = ok and mismatched <= allowed
+        ok = ok and mismatched == 0
     return ok
 
 

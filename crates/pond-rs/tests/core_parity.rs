@@ -39,17 +39,27 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<SeriesJson, Stri
             let window = case.args[0].as_str().expect("rolling window is a string");
             mapping(&case.args[1]).and_then(|aggs| input.rolling(window, &aggs))
         }
-        "aggregate" => {
-            let every = case.args[0]["sequence"]["every"]
-                .as_str()
-                .expect("aggregate sequence is {sequence:{every}}");
-            Sequence::every(every).and_then(|seq| {
-                mapping(&case.args[1]).and_then(|aggs| input.aggregate(&seq, &aggs))
-            })
-        }
+        "aggregate" => sequence(&case.args[0]["sequence"])
+            .and_then(|seq| mapping(&case.args[1]).and_then(|aggs| input.aggregate(&seq, &aggs))),
         _ => return None,
     };
     Some(result.map(|s| to_json(&s)).map_err(|e| e.to_string()))
+}
+
+/// `{every}` or `{calendar, timeZone, weekStartsOn?}`.
+fn sequence(json: &Value) -> pond_rs::Result<Sequence> {
+    if let Some(every) = json["every"].as_str() {
+        return Sequence::every(every);
+    }
+    let unit = json["calendar"]
+        .as_str()
+        .expect("sequence is every or calendar");
+    let zone = json["timeZone"].as_str().expect("calendar timeZone");
+    let seq = Sequence::calendar(unit, zone)?;
+    match json["weekStartsOn"].as_i64() {
+        Some(day) => seq.with_week_start(day as i8),
+        None => Ok(seq),
+    }
 }
 
 /// A fixture input series as a pond-rs `TimeSeries`.

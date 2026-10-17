@@ -566,11 +566,13 @@ the study oracle) is done.
 
 - **[PND-RUST-R1A]** — Adopted. A measured vertical slice, not all of core:
   key types, `Sequence.every` / `Sequence.calendar` (DST-aware), NaN-as-missing
-  columns, Arrow in/out, `rolling`, `aggregate`. Step 1 (pond-ts and polars
-  baseline, `crates/pond-rs/bench/`) is done; step 2a (series, `Sequence.every`,
-  `rolling`, `aggregate`, exact parity on 23 fixture cases) is done; next is
-  2b, calendar sequences and Arrow in/out. A revised memory target awaits
-  pjm17971. Acceptance is predeclared targets for
+  columns, Arrow in/out, `rolling`, `aggregate`. Steps 1 (pond-ts and polars
+  baseline, `crates/pond-rs/bench/`), 2a (series, `rolling`, `aggregate`) and
+  2b (calendar sequences, Arrow in/out, pond-rs in
+  the benchmark) are done: pond-rs output equals pond-ts's to the bit on the
+  1M-row benchmark and is ~6–8× faster single-threaded; it is not yet within
+  1.25× of polars on four cores, which needs threading (next, with
+  property tests). A revised memory target awaits pjm17971. Acceptance is predeclared targets for
   correctness, speed against pond-ts and polars, memory, determinism and an
   agent trial (RFC Amendment 1, after the Codex review). A miss means redesign,
   not stop: the direction is committed.

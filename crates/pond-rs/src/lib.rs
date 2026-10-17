@@ -6,8 +6,11 @@
 //!
 //! **Status: R1a, in progress.** What exists: time-keyed series of number
 //! columns (gaps allowed), [`TimeSeries::rolling`] over a trailing time
-//! window, and [`TimeSeries::aggregate`] into fixed-length buckets
-//! ([`Sequence::every`]). Results match pond-ts bit for bit; the parity
+//! window, [`TimeSeries::aggregate`] into fixed-length buckets
+//! ([`Sequence::every`]) or calendar buckets in a time zone
+//! ([`Sequence::calendar`]), and Arrow in and out
+//! ([`TimeSeries::read_ipc`], [`TimeSeries::write_ipc`]). Results match
+//! pond-ts bit for bit; the parity
 //! harness under `tests/` checks that against pond-ts's own output
 //! (`packages/core/test/fixtures/parity.json`).
 //!
@@ -28,10 +31,16 @@
 //! )?;
 //! assert_eq!(per_minute.len(), 2);
 //! assert_eq!(per_minute.column("load_n").unwrap().get(0), Some(2.0)); // the gap is not counted
+//!
+//! // Calendar days in New York: the day clocks spring forward is 23 hours.
+//! let days = Sequence::calendar("day", "America/New_York")?;
+//! let keys = days.buckets_overlapping(1_772_946_000_000, 1_772_946_000_000)?; // 2026-03-08
+//! assert_eq!(keys.end[0] - keys.begin[0], 23 * 3_600_000);
 //! # Ok::<(), pond_rs::PondError>(())
 //! ```
 
 mod aggregate;
+mod arrow;
 mod column;
 mod duration;
 mod error;
@@ -44,8 +53,12 @@ pub use column::Float64Column;
 pub use duration::parse_duration;
 pub use error::{PondError, Result};
 pub use reducer::{Agg, Reducer};
-pub use sequence::Sequence;
+pub use sequence::{CalendarUnit, Sequence, tzdb_version};
 pub use series::{Column, ColumnDef, ColumnKind, IntervalKeys, Key, TimeSeries};
 
 /// The version of this crate.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The Arrow crates pond-rs reads and writes, re-exported so callers use the
+/// same versions.
+pub use {arrow_array, arrow_schema};
