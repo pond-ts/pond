@@ -566,14 +566,20 @@ the study oracle) is done.
 
 - **[PND-RUST-R1A]** — Adopted. A measured vertical slice, not all of core:
   key types, `Sequence.every` / `Sequence.calendar` (DST-aware), NaN-as-missing
-  columns, Arrow in/out, `rolling`, `aggregate`. It starts by repairing the
-  spike benches and re-measuring pond-ts. Acceptance is predeclared targets for
+  columns, Arrow in/out, `rolling`, `aggregate`. Step 1 (pond-ts and polars
+  baseline, `crates/pond-rs/bench/`) is done; a revised memory target awaits
+  pjm17971. Acceptance is predeclared targets for
   correctness, speed against pond-ts and polars, memory, determinism and an
   agent trial (RFC Amendment 1, after the Codex review). A miss means redesign,
   not stop: the direction is committed.
 - **[PND-RUST-R1B]** — Rest of batch core; adopted only after R1a reports.
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
   independent).
+- **[PND-ROLLSTD]** — pond-ts rolling `stdev` drifts on long dense series: up
+  to 4.4e-9 off an exact stdev on a 1M-row series (polars: 1e-13), because the
+  running Welford add/remove is never re-summed. Found by the R1a baseline;
+  details in PND_RUST_PLAN.md. Fix in pond-ts (periodic re-sum or a
+  compensated update) before pond-rs copies the behaviour.
 - **[PND-ERRMSG]** — pond-ts error-message bugs found while recording parity
   error cases: `diff('nope')` throws a raw `Cannot read properties of
 undefined`; `rolling` with an unknown column says "aggregate mapping".

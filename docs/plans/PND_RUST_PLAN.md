@@ -88,11 +88,51 @@ window is `0`.
 'kind')`; `rolling` with an unknown column reports "aggregate mapping
   references unknown source column". Tracked as [PND-ERRMSG] in PLAN.md.
 
+## R1a step 1 — baseline (DONE)
+
+Shipped `crates/pond-rs/bench/`: a fixed-seed 1M-row Arrow file, pond-ts and
+polars runners for workloads A and B (Arrow in → compute → Arrow out, median
+of 7 runs, memory growth for one run), and a script that checks both give the
+same answers. Full table and method in `crates/pond-rs/bench/README.md`.
+
+Numbers (4-core cloud machine, Node 22.22, polars 2.0.0; ranges over three
+repeats):
+
+| workload | pond-ts total | polars 1 thread | polars 4 threads |
+| -------- | ------------- | --------------- | ---------------- |
+| A        | 1308–1472 ms  | 397–434 ms      | 217–274 ms       |
+| B        | 92–105 ms     | 24–28 ms        | 21–25 ms         |
+
+What that makes the R1a speed targets on this machine: pond-rs one thread
+≤ ~650–740 ms on A and ≤ ~46–52 ms on B (2× pond-ts); pond-rs all cores ≤ ~270–340
+ms on A (1.25× polars, four cores here). Polars on one thread already beats
+the 2× bar by 3.3× on A, so the polars target is the hard one.
+
+Decisions and findings:
+
+- **Step 1 changed from what was planned.** The plan said "repair the WASM
+  spike's benches and re-measure pond-ts". Those benches time the spike's own
+  kernels run as WASM behind JS, not the R1a workloads, so their numbers could
+  not be compared with any R1a target. The baseline the targets need is
+  pond-ts and polars on workloads A and B, so that is what step 1 built. The
+  spike repair moves to R4, whose RFC row already says it re-asks the spike's
+  question with fresh numbers.
+- **pond-ts and polars agree** on every key, count and gap; averages within
+  5e-13 (bucket) and 4e-12 (rolling).
+- **pond-ts rolling stdev drifts** by up to 4.4e-9 against an exact stdev on
+  this data (polars: 1e-13), growing along the series. Cause: Welford
+  add/remove with no periodic re-sum. Logged as [PND-ROLLSTD]. This matters
+  for pond-rs: copying pond-ts's order of operations exactly also copies the
+  drift. Workload B (the exact-match target) uses no rolling stdev, so R1a is
+  not blocked.
+- **The memory target needs revising**; proposal above in Next.
+- The RFC said pond-ts runs on Node 24; this machine has Node 22.22, recorded
+  with the numbers.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:
-  1. Repair the WASM spike's benches for the NaN-as-missing `Float64Column`
-     ([PND-NANREP] follow-up 2) and re-measure the pond-ts baseline.
+  1. ~~Baseline~~ — done, see "R1a step 1 — baseline (DONE)" below.
   2. `Time` / `Interval` keys, `Sequence.every` and
      `Sequence.calendar(unit, { timeZone })` (with `jiff`), NaN-as-missing
      number columns, Arrow IPC in/out, `rolling`, `aggregate`; grow the
@@ -104,6 +144,14 @@ window is `0`.
      pond-ts, pond-rs 1-thread / all-core, polars 1-thread / all-core, plus
      an agent trial on B — targets in RFC Amendment 1. A miss means redesign
      before R1b.
+- **R1a memory target — proposed revision (awaiting pjm17971).** The target
+  as written, "peak memory ≤ 2× the input Arrow size", cannot be met by any
+  engine on workload A: the output alone is 71 MB against a 38.6 MB input, and
+  polars on one thread grows by 256 MB (6.6× the input) doing it. Proposed:
+  **one-run memory growth no more than polars on one thread, on A and on B**,
+  measured as `run_mem_mb` in `crates/pond-rs/bench/`. That keeps the target
+  relative to the same competitor as the speed targets. The "one pass per
+  column for Arrow in and out" half stands.
 - **[PND-RUST-R1B]** — Rest of batch core (`align`, `partitionBy`, `join`,
   remaining element-wise ops). Not adopted until R1a reports.
 - Threading: behind a `parallel` feature, off for wasm32; parallel reductions
