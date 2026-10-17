@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Sequence, TimeSeries } from '../src/index.js';
 import { bucketStateFor, rollingStateFor } from '../src/reducers/index.js';
+import { exactStdev } from './exact-stats.js';
 
 /**
  * Standing differential-fuzz parity suite — the drift-defense capstone.
@@ -172,7 +173,32 @@ describe('reducer parity — fuzzed cross-path agreement', () => {
       for (const name of ALL) {
         const b = viaBucket(vals, name);
         const c = viaRollingFull(vals, name);
-        agree(name, b, c, `trial=${trial} bucket-vs-rolling n=${vals.length}`);
+        if (name === 'stdev' && vals.length > 0) {
+          // The paths no longer share an algorithm, so check each against
+          // the exact answer at its own accuracy. The rolling state keeps
+          // double-double sums ([PND-ROLLSTD]) and is exact to a few ulps.
+          // The add-only paths use Welford, whose error floor is about
+          // ε·max|v| absolute — ~2e-8 relative at the 1e10 regime here.
+          const exact = exactStdev(vals);
+          const maxAbs = Math.max(...vals.map(Math.abs));
+          const ctx = `trial=${trial} n=${vals.length}`;
+          agree(name, c, exact, `${ctx} rolling-vs-exact`, 1e-14);
+          agree(
+            name,
+            b,
+            exact,
+            `${ctx} bucket-vs-exact`,
+            1e-9,
+            maxAbs * 2 ** -52,
+          );
+        } else {
+          agree(
+            name,
+            b,
+            c,
+            `trial=${trial} bucket-vs-rolling n=${vals.length}`,
+          );
+        }
         if (agg)
           agree(
             name,
@@ -233,9 +259,8 @@ describe('rolling parity — FIFO sliding window matches recompute', () => {
     for (const name of SLIDING) {
       for (let trial = 0; trial < 60; trial += 1) {
         // Large offset (up to 1e10) + moderate in-window spread — the trending
-        // regime. (Deliberately no extreme outliers: evicting a value far
-        // outside the residual spread is the documented subtractive-variance
-        // limitation, not a drift bug; see stdev.ts.)
+        // regime. (Outlier eviction and long-run drift are pinned against an
+        // exact oracle in rolling-drift.test.ts — [PND-ROLLSTD].)
         const base = [0, 1e3, 1e6, 1e10][randInt(rand, 0, 3)]!;
         const state = rollingStateFor(name);
         const window: Array<{ i: number; v: number }> = [];
@@ -256,19 +281,18 @@ describe('rolling parity — FIFO sliding window matches recompute', () => {
             name,
             window.map((w) => w.v),
           );
-          // At a large offset B, two effects compound: the deviation-precision
-          // floor (~B·ε) and drift accumulated over the sliding add/remove
-          // (running-sum rounding, Welford-delete residue). Both are *absolute*
-          // and scale with B, so the floor is `B·1e-12` (≈1e-2 at B=1e10 —
-          // covers worst-case drift with margin, yet still 2 orders below the
-          // order-1 errors the gross cancellation this test defends against
-          // would produce). Tight (1e-9 relative) at small magnitudes.
+          // At a large offset B the *references* here (a naive sum, an
+          // add-only Welford) carry an absolute error that scales with B·ε,
+          // so the floor is `B·1e-12` (≈1e-2 at B=1e10 — still 2 orders below
+          // the order-1 errors the gross cancellation this test defends
+          // against would produce). Tight (1e-9 relative) at small
+          // magnitudes. The states themselves are now held to a few ulps of
+          // an exact oracle in rolling-drift.test.ts ([PND-ROLLSTD]).
           //
-          // CALIBRATION (do not widen blindly): this floor sits ~100× above the
-          // fixed impl's own drift (~3e-4 at B=1e10) yet well below the bug
-          // class — reverting #222 (rolling-stdev → one-pass) fails this test
-          // with maxErr ≈ 496. Widening it risks blinding the suite; if you
-          // must, re-confirm a reverted #222 still fails here.
+          // CALIBRATION (do not widen blindly): reverting #222 (rolling-stdev
+          // → one-pass) fails this test with maxErr ≈ 496. Widening it risks
+          // blinding the suite; if you must, re-confirm a reverted #222 still
+          // fails here.
           agree(
             name,
             got,

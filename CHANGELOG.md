@@ -77,6 +77,24 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Rolling `sum` / `avg` / `stdev` no longer drift.** A sliding window adds
+  each value as it enters and subtracts it as it leaves, and with plain
+  doubles every step's rounding error stayed in the running total for as long
+  as the window was non-empty. It showed worst when a window drained to a few
+  close values: on a 1M-row price series a two-value window read stdev
+  0.000442 for a true 0.000354 (25% off), and a one-value window's average was
+  9.4e-10 off the value. The running totals are now kept to about twice double
+  precision, so every row of that series matches an exact answer (stdev within
+  3.4e-16 relative, averages correctly rounded). Applies to `rolling` (time and
+  count windows), `rollingByColumn`, `smooth('movingAverage')` and the live
+  rolling / reduce operators. Removing a value far larger than the rest of the
+  window (e.g. a spike leaving a quiet window) no longer cancels the stdev to 0
+  either. Results can differ from before in the last digits; speed is within
+  about ±10% (rolling `sum` ~12% slower in a microbenchmark, end-to-end runs
+  unchanged).
+
 ## [0.74.0] — 2026-10-14
 
 ### Added

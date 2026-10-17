@@ -53,8 +53,9 @@ after the huge values had left and even if the window drained.
   `rolling`, the batch duration-window sweep, `rollingByColumn`) and
   `smooth('movingAverage')` split the accumulator by magnitude
   (`reducers/overflow-lanes.ts`): values below a split (`2^960` for sums,
-  `2^480` for Welford) go to the old accumulator, which provably cannot
-  overflow for a window under `2^53` values and is bit-identical to before;
+  `2^480` for stdev) go to the plain accumulator, which provably cannot
+  overflow for a window under `2^53` values (since [PND-ROLLSTD] that is the
+  double-double `WindowSum` / `WindowStdev` of `reducers/window-accumulators.ts`);
   the rest go to an **exact** big lane — a double that large is an integer
   multiple of a fixed power of two, so the lane keeps `BigInt` sums (`Σu`
   for sums; `Σu`, `Σu²` for stdev). Adding and removing there is exact in
@@ -66,12 +67,13 @@ after the huge values had left and even if the window drained.
   remove — within noise on these paths; `BigInt` work only for values
   ≥ ~3e144.
 - **The packed count-window sweep** (`aggregate-columns.ts`, the
-  `@pond-ts/financial` hot path) keeps its plain single-accumulator loops (the
+  `@pond-ts/financial` hot path) keeps its plain single-lane accumulators (the
   lane compare measured +10–25% there). On the first non-finite answer from a
   plain accumulator it abandons the pass and re-runs the column through the
   laned reducer states, so its answers are then the state path's, bit for
-  bit. The inlined Welford also checks its mean: a delta overflow from a
-  one-element window leaves `m2` at `−Infinity`, which clamps to a defined 0.
+  bit. An overflow inside `WindowStdev` (e.g. a shifted value `v − k` past
+  `MAX_VALUE`) leaves its sums `NaN` / `Infinity`, so every later read with
+  two or more values is non-finite and triggers the re-run.
 
 Considered and rejected: recomputing from the window's values whenever the
 state goes non-finite — the reducer states don't hold their window's values
@@ -79,16 +81,20 @@ state goes non-finite — the reducer states don't hold their window's values
 a plain sum still absorbs small values next to huge ones, so it disagreed
 with the laned states.
 
-**What the lanes do not fix — the small lane's own cancellation.** Below the
-split the accumulator is the old one, bit for bit, so it keeps the
-subtractive-window cancellation `stdev.ts` already documents: removing a value
-far larger than the survivors (e.g. `1e20` beside `1`) leaves rounding
-residue, and a Welford `m2` that cancels below 0 clamps to a **defined** 0.
-That is precision loss on a finite answer, not an overflow, and it predates
-this fix. The same absorption is why a column whose huge values never
-overflow the plain count-window sweep keeps the plain answer, which can
-differ from the duration-window (laned) answer for a small value next to a
-≥ `2^960` neighbour.
+**The small lane's own cancellation — mostly fixed by [PND-ROLLSTD].** The
+small lane used to be a plain running sum / Welford add-delete, so removing a
+value far larger than the survivors (e.g. `1e20` beside `1`) left rounding
+residue, and rounding from every add / remove piled up for as long as the
+window stayed non-empty (a two-value window read 25% off on the pond-rs R1a
+bench). Since 2026-10 the small lane keeps double-double sums
+(`reducers/window-accumulators.ts`): each step's rounding error is kept, so
+what remains after a removal is exact to ~2^-104 of the totals involved.
+Precision still runs out eventually when a removed value dwarfs the spread of
+the survivors: the stdev error grows with the square of that ratio, times
+~2^-104. Measured: a `1e9` leaving a window whose spread is `3e-4` (ratio
+~3e12) leaves a 3e-10 relative error, where the old Welford delete read 0. A
+`sum` mixing values on both sides of `2^960` still rounds the small lane
+before adding the big one.
 
 **The one rule across paths: missing means _this path's arithmetic
 overflowed_.** Paths are not promised to agree at overflow scale — where they
