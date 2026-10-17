@@ -23,6 +23,7 @@ the times include getting data in and out.
 | `compare.py`               | checks pond-ts and polars give the same answers                       |
 | `same.py`                  | checks pond-rs gives exactly pond-ts's answers, bit for bit           |
 | `run.sh`                   | all of the above                                                      |
+| `agent-trial/`             | the R1a agent trial: 10 agents with pond-rs vs 10 with polars on B    |
 
 ```
 npm run build --workspace=pond-ts

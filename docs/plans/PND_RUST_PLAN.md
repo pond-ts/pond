@@ -481,9 +481,61 @@ Against the R1a targets (RFC Amendment 1):
 - **Within 1.25× of polars on all cores**: met; pond-rs on 4 threads is
   faster than polars on 4 on A (141–159 vs 209–231 ms) and even on B.
 - **Same results on 1 and many cores**: met (bits identical).
-- **Memory**: under the proposed target (growth no more than polars on one
-  thread), met on A and B. The proposal still awaits pjm17971.
+- **Memory**: under the revised target (growth no more than polars on one
+  thread, accepted 2026-10-17), met on A and B.
 - **Agent trial**: step 5.
+
+## R1a step 5 — agent trial, and the R1a report (DONE)
+
+Twenty fresh Claude subagents (same model) were given the same task: daily
+avg/min/max/count by New York calendar day over the benchmark file. Ten were
+given pond-rs, ten polars 0.55.2. None had web access. Each could read only
+the library source and its own folder, and built and ran only through a
+logging script. Their outputs were graded afterwards against pond-ts's
+answer. Setup, prompt, grader and full results are in
+`crates/pond-rs/bench/agent-trial/`.
+
+|                                       | pond-rs | polars  |
+| ------------------------------------- | ------- | ------- |
+| right answer                          | 10 / 10 | 10 / 10 |
+| right on the first run                | 9 / 10  | 6 / 10  |
+| failed runs before the first good one | 2       | 4       |
+| failed runs in total                  | 2       | 10      |
+
+- **Target met**: right answers were equal, and pond-rs needed fewer
+  retries on every measure.
+- **Not shown**: neither side got the clock change wrong. So this trial
+  does not show pond-rs makes agents more correct, only that they needed
+  fewer tries.
+- **Some of the gap is checking**: six of polars' failed runs came after a
+  good answer, while agents added their own checks.
+- **The setup favoured polars in one respect**: its build needed a
+  workaround preset for it. polars 0.55.2 does not compile with `ipc` alone,
+  without `parquet`.
+
+Friction the pond-rs agents hit:
+
+- 10 of 10 could not write the requested layout. There is no way to rename
+  or drop key fields, so every agent built the Arrow batch by hand.
+- 10 of 10 had to add `arrow-ipc` themselves.
+- All converted `Count`'s f64 to integers.
+- Three read source to learn what an empty bucket gives.
+
+The first two are logged as [PND-RUSTOUT] below.
+
+**R1a report — every predeclared target met:**
+
+| target                                               | result                                                                                        |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| correctness: fixtures pass, B equals pond-ts exactly | met: parity fixtures, property tests, and A and B bit-identical to pond-ts on 1 and 4 threads |
+| ≥2× pond-ts on one core                              | met: ~6.5× on A, ~2.4× on B                                                                   |
+| all-core within 1.25× of all-core polars on A        | met: faster (141–159 vs 209–231 ms)                                                           |
+| memory: growth ≤ one-thread polars (revised)         | met: A 192 vs 256 MB, B 78 vs 110 MB                                                          |
+| identical bits on 1 and N threads                    | met                                                                                           |
+| agent trial                                          | met: 10/10 vs 10/10 right, fewer retries                                                      |
+
+The one result short of a clean win is one-core B: polars is faster
+(22–28 vs 31–47 ms of compute). Adopting R1b is pjm17971's call.
 
 ## Next
 
@@ -496,10 +548,11 @@ Against the R1a targets (RFC Amendment 1):
      above.
   4. ~~Arrow-memory columns and threading~~ — done, see "R1a step 4"
      above.
-  5. Benchmarks A (generic, 1M rows) and B (DST calendar buckets) against
+  5. ~~Benchmarks A (generic, 1M rows) and B (DST calendar buckets) against
      pond-ts, pond-rs 1-thread / all-core, polars 1-thread / all-core, plus
      an agent trial on B — targets in RFC Amendment 1. A miss means redesign
-     before R1b.
+     before R1b.~~ — done, see "R1a step 5" above. **R1a is complete**;
+     every target met.
 - **R1a memory target — revised, accepted by pjm17971 on 2026-10-17.** The target
   as written, "peak memory ≤ 2× the input Arrow size", cannot be met by any
   engine on workload A: input plus output is already ~110 MB (38.6 + 71)
@@ -513,6 +566,15 @@ Against the R1a targets (RFC Amendment 1):
   garbage not yet collected; it is indicative only. For pond-rs and polars
   (no garbage collector) it is a clean measure, which is what the target
   compares. Met after step 4: A 192 MB vs polars 256 MB; B 78 vs 110 MB.
+- **[PND-RUSTOUT]** — Let a caller choose the output layout. Found by the
+  agent trial, where 10 of 10 pond-rs agents hit it. Today `to_arrow` /
+  `write_ipc` on an aggregate always write `interval`, `intervalEnd`, the
+  values, then `intervalLabel`. Nothing renames or drops a key field, so a
+  caller wanting `day_start` + values builds the Arrow batch by hand. That
+  also needs `arrow-ipc`, which pond-rs does not re-export (it re-exports
+  `arrow_array` and `arrow_schema`). Likely shape: re-export `arrow_ipc`,
+  plus a rename / select on `TimeSeries` (pond-ts has `rename` and `select`,
+  so this is parity, not new vocabulary). Fold into R1b.
 - **[PND-RUST-R1B]** — Rest of batch core (`align`, `partitionBy`, `join`,
   remaining element-wise ops). Not adopted until R1a reports.
 - Threading: done in R1a step 4 (per output column). If R1b needs one
