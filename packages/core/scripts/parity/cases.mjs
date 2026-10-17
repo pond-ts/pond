@@ -13,7 +13,9 @@
  * cells are tagged: `{ "f64": "-0" | "NaN" | "inf" | "-inf" }`.
  *
  * Each case records the call as `op` + `args` (the positional argument list;
- * `{ "sequence": { "every": "5s" } }` means `Sequence.every('5s')`), and then
+ * `{ "sequence": { "every": "5s" } }` means `Sequence.every('5s')`, and
+ * `{ "sequence": { "calendar": "day", "timeZone": "UTC" } }` means
+ * `Sequence.calendar('day', { timeZone: 'UTC' })`), and then
  * either `expected` (a series) or `error` (`{ name, message }`) when pond-ts
  * throws. Values, signed zero and non-finites must agree exactly unless the
  * case carries `tolerance` (absolute, finite values only).
@@ -96,7 +98,32 @@ const EXTREME_ROWS = [
   [2, 1],
 ];
 
+// Calendar buckets. `dst` crosses New York's spring-forward night (a 23-hour
+// day, 2026-03-08); `santiago` crosses Chile's, where local midnight itself
+// is skipped (2026-09-06 starts at 01:00); `seasons` spans two years of
+// weekly rows for month / quarter / year buckets.
+const HOUR = 3_600_000;
+const DST_ROWS = Array.from({ length: 100 }, (_, i) => [
+  Date.UTC(2026, 2, 5) + i * 1.5 * HOUR,
+  i % 9 === 4 ? null : ((i * 7) % 31) - 15,
+]);
+const SANTIAGO_ROWS = Array.from({ length: 60 }, (_, i) => [
+  Date.UTC(2026, 8, 3, 12) + i * 2 * HOUR,
+  (i % 11) / 4,
+]);
+const SEASON_ROWS = Array.from({ length: 110 }, (_, i) => [
+  Date.UTC(2025, 10, 2, 13) + i * 7 * 24 * HOUR,
+  i % 6 === 5 ? null : (i % 13) - 6,
+]);
+
 const every = (duration) => ({ sequence: { every: duration } });
+const calendar = (unit, timeZone, weekStartsOn) => ({
+  sequence: {
+    calendar: unit,
+    timeZone,
+    ...(weekStartsOn === undefined ? {} : { weekStartsOn }),
+  },
+});
 
 /** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
 const CASES = [
@@ -235,6 +262,46 @@ const CASES = [
     'aggregate',
     [every('1s'), { v: 'stdev' }],
   ],
+  // calendar buckets: local midnights, DST-length days, week starts
+  [
+    'aggregate-calendar-day-new-york',
+    'dst',
+    'aggregate',
+    [
+      calendar('day', 'America/New_York'),
+      { v: 'sum', n: { from: 'v', using: 'count' } },
+    ],
+  ],
+  [
+    'aggregate-calendar-week-sunday',
+    'dst',
+    'aggregate',
+    [calendar('week', 'America/New_York', 7), { v: 'avg' }],
+  ],
+  [
+    'aggregate-calendar-day-santiago',
+    'santiago',
+    'aggregate',
+    [calendar('day', 'America/Santiago'), { v: 'sum' }],
+  ],
+  [
+    'aggregate-calendar-month-london',
+    'seasons',
+    'aggregate',
+    [calendar('month', 'Europe/London'), { v: 'sum' }],
+  ],
+  [
+    'aggregate-calendar-quarter-tokyo',
+    'seasons',
+    'aggregate',
+    [calendar('quarter', 'Asia/Tokyo'), { v: 'max' }],
+  ],
+  [
+    'aggregate-calendar-year-utc',
+    'seasons',
+    'aggregate',
+    [calendar('year', 'UTC'), { v: 'count' }],
+  ],
   // signed zero through min / max / sum
   [
     'rolling-signed-3s',
@@ -303,6 +370,15 @@ function encodeSeries(series) {
 
 export function buildFixture(pond) {
   const { TimeSeries, Sequence } = pond;
+  const series = (name, rows) =>
+    TimeSeries.fromJSON({
+      name,
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number', required: false },
+      ],
+      rows,
+    });
   const inputs = {
     gappy: TimeSeries.fromJSON({
       name: 'gappy',
@@ -327,6 +403,9 @@ export function buildFixture(pond) {
       ],
       rows: SIGNED_ROWS,
     }),
+    dst: series('dst', DST_ROWS),
+    santiago: series('santiago', SANTIAGO_ROWS),
+    seasons: series('seasons', SEASON_ROWS),
     extreme: TimeSeries.fromJSON({
       name: 'extreme',
       schema: [
@@ -336,17 +415,20 @@ export function buildFixture(pond) {
       rows: EXTREME_ROWS,
     }),
   };
-  const decode = (arg) =>
-    arg && typeof arg === 'object' && 'sequence' in arg
-      ? Sequence.every(arg.sequence.every)
-      : arg;
+  const decode = (arg) => {
+    if (!(arg && typeof arg === 'object' && 'sequence' in arg)) return arg;
+    const { every, calendar, timeZone, weekStartsOn } = arg.sequence;
+    return every !== undefined
+      ? Sequence.every(every)
+      : Sequence.calendar(calendar, { timeZone, weekStartsOn });
+  };
 
   return {
     meta: {
       generator: 'packages/core/scripts/parity/generate.mjs',
       reference: 'pond-ts',
       encoding:
-        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Sequence.every(d) as {"sequence":{"every":d}}; a case has expected (series) or error ({name,message}); exact unless tolerance is set',
+        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Sequence.every(d) as {"sequence":{"every":d}} and Sequence.calendar(u, {timeZone, weekStartsOn}) as {"sequence":{"calendar":u,"timeZone":z,"weekStartsOn"?:w}}; a case has expected (series) or error ({name,message}); exact unless tolerance is set',
     },
     inputs: Object.fromEntries(
       Object.entries(inputs).map(([name, series]) => [

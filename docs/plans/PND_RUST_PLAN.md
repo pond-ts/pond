@@ -253,20 +253,85 @@ against an exact oracle instead. **pond-rs:** the same PR ports `WindowSum`
 / `WindowStdev` to `crates/pond-rs/src/rolling.rs`; all 36 fixture cases,
 including the order-sensitive `noisy` rolling ones, still match bit for bit.
 
+## R1a step 2b — calendar buckets, Arrow, pond-rs in the benchmark (DONE)
+
+Shipped: `Sequence::calendar(unit, zone)` (day / week / month / quarter /
+year, `with_week_start`), `TimeSeries::from_arrow` / `from_ipc_bytes` /
+`read_ipc` / `to_arrow` / `write_ipc`, the pond-rs benchmark runner
+(`examples/r1a_bench.rs`, wired into `bench/run.sh`) and `bench/same.py`
+(pond-rs vs pond-ts, bit for bit). Six calendar cases joined the core
+fixture (New York day across spring-forward, a Sunday-start week, Santiago
+where local midnight is skipped, London months, Tokyo quarters, UTC years);
+31 of 42 fixture cases now run in pond-rs and all match exactly.
+
+Decisions:
+
+- **Calendar buckets follow pond-ts `TimeZone.startOf` / `next`:** take the
+  local date of the first event, step back to the unit's first day, then each
+  bucket starts at that day's local midnight ('compatible' rule: a skipped
+  midnight becomes the first instant that exists, e.g. 01:00 in Santiago).
+  `jiff` computes the instants. There is no `hour` unit, as in pond-ts.
+- **The tz database is bundled** (`jiff` with `tzdb-bundle-always`, so the
+  WASM build has it too); `tzdb_version()` reports it (`2026e` today).
+  pond-ts uses whatever its JavaScript runtime ships. The fixture does
+  **not** record a tzdb version: the drift test regenerates the fixture and
+  requires it to equal the committed one, so a version field would fail on
+  any machine whose Node has different tz data. If the two databases ever
+  disagree on a fixture zone, the calendar cases fail and show it; today they
+  pass with Node 22.22 (tz data 2025b) against pond-rs's 2026e.
+- **Arrow field names match pond-ts `toArrow` / `fromArrow`:** time key as
+  one field (default `time`); an interval key as `interval`, `intervalEnd`,
+  the value columns, then `intervalLabel` last. pond-rs writes keys as
+  `Timestamp(Millisecond, "UTC")` (pond-ts hands back `f64` ms). Reading
+  accepts a `Timestamp` in any unit, `Date64` or `Int64` ms; a sub-millisecond
+  part is an error rather than silently rounded (pond-ts keeps fractional ms
+  in its `f64` keys; pond-rs keys are whole `i64` ms). Any integer or float
+  value column is read as `f64`; other types are an error naming the column.
+  A column with any gap becomes optional, one without is required.
+- **Reading uses arrow's `FileDecoder`, not `FileReader`.** `FileReader`
+  copies every buffer (~38 ms on the 38.6 MB file); the decoder slices the
+  batches out of the file's bytes (0.13 ms). The remaining read time is the
+  copy into pond-rs's own columns.
+
+Result on the 1M-row benchmark (details and the full table in
+`crates/pond-rs/bench/README.md`): outputs identical to pond-ts, to the bit,
+on A and B. Single-threaded compute on A: pond-rs 393–403 ms, pond-ts
+2468–3040, polars 468–485 (1 thread) / 171–213 (4 threads). On B: pond-rs
+28–31, pond-ts 70–74, polars 20–23 / 10–11. So against the R1a targets:
+**≥2× pond-ts single-core is met** (~6–8× on A, ~2.3–2.6× on B); **within
+1.25× of polars multi-core is not** yet (A ~2× behind, B ~3× behind) and needs
+threading, which pond-rs does not have.
+
+Found on the way:
+
+- **The [PND-ROLLSTD] fix doubled pond-rs's rolling stdev cost** (34 → 61–69
+  ms per 1M-row column; rolling in workload A ~200 → ~345–390 ms, same
+  machine). It is the price of the double-double sums, ported step for step;
+  pond-ts did not slow measurably. A faster exact method would have to
+  change in pond-ts first, or parity would break.
+- **Copying dominates pond-rs's read and write.** On this machine allocating
+  and copying 40 MB costs ~30 ms; A's read (~39 ms) and write (~150 ms) are
+  near that floor. Columns that point at Arrow's memory instead of owning a
+  copy would remove most of it. Not done: it is a design change to the column
+  type (still pond's NaN-for-gap columns, just not owning their memory), and
+  it should be weighed when threading is designed, since both change how
+  columns are shared.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:
   1. ~~Baseline~~ — done, see "R1a step 1 — baseline (DONE)" above.
   2. ~~2a: keys, NaN-as-missing columns, `Sequence.every`, `rolling`,
-     `aggregate`~~ — done, see "R1a step 2a" above. **2b:**
-     `Sequence.calendar(unit, { timeZone })` (with `jiff`) and Arrow IPC
-     in/out; grow the fixture with calendar cases that record the tzdb
-     version; run pond-rs in `crates/pond-rs/bench/` and compare its 1M-row
-     outputs to pond-ts's exactly.
+     `aggregate`; 2b: calendar sequences, Arrow in/out, pond-rs in the
+     benchmark~~ — done, see "R1a step 2a" and "R1a step 2b" above.
   3. Property tests independent of pond-ts (rolling `sum` = naive window
      re-sum; aggregate `count`s total the non-missing cells; …). A
      disagreement with the fixture is a pond-ts bug report first.
-  4. Benchmarks A (generic, 1M rows) and B (DST calendar buckets) against
+  4. Threading behind a `parallel` feature (columns and buckets are
+     independent, so work splits across cores; results must stay identical
+     to one thread). Weigh Arrow-backed (non-owning) columns at the same time;
+     see "Found on the way" under step 2b.
+  5. Benchmarks A (generic, 1M rows) and B (DST calendar buckets) against
      pond-ts, pond-rs 1-thread / all-core, polars 1-thread / all-core, plus
      an agent trial on B — targets in RFC Amendment 1. A miss means redesign
      before R1b.

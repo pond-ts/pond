@@ -47,7 +47,7 @@ impl TimeSeries {
             }
         }
         let buckets = match (times.first(), times.last()) {
-            (Some(&first), Some(&last)) => sequence.buckets_overlapping(first, last),
+            (Some(&first), Some(&last)) => sequence.buckets_overlapping(first, last)?,
             _ => IntervalKeys {
                 label: vec![],
                 begin: vec![],

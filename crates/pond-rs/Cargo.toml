@@ -10,6 +10,12 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+arrow-array = { version = "59.3.1", default-features = false }
+arrow-buffer = { version = "59.3.1", default-features = false }
+arrow-ipc = { version = "59.3.1", default-features = false }
+arrow-schema = { version = "59.3.1", default-features = false }
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
+jiff-tzdb = "0.1.9" # same crate jiff bundles; read only for its VERSION
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
