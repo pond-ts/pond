@@ -2,8 +2,9 @@
 //!
 //! The window states are ports of pond-ts's `rollingState`s (add a value as
 //! it enters the window, remove it as it leaves), so results match pond-ts
-//! bit for bit, including where pond-ts's running sums have built up rounding
-//! error ([PND-ROLLSTD]).
+//! bit for bit. `sum` / `avg` / `stdev` use pond-ts's double-double running
+//! sums (`reducers/window-accumulators.ts`), which do not drift
+//! ([PND-ROLLSTD]).
 
 use std::collections::VecDeque;
 
@@ -32,7 +33,8 @@ const fn pow2(e: u64) -> f64 {
 trait WindowState {
     fn add(&mut self, row: usize, v: f64);
     fn remove(&mut self, row: usize, v: f64);
-    fn snapshot(&self) -> Option<f64>;
+    /// `&mut`: the stdev state may move its reference point when read.
+    fn snapshot(&mut self) -> Option<f64>;
 }
 
 #[derive(Default)]
@@ -45,45 +47,78 @@ impl WindowState for CountState {
     fn remove(&mut self, _: usize, _: f64) {
         self.0 -= 1;
     }
-    fn snapshot(&self) -> Option<f64> {
+    fn snapshot(&mut self) -> Option<f64> {
         Some(self.0 as f64)
+    }
+}
+
+/// Dekker's split constant, 2^27 + 1.
+const SPLIT: f64 = 134_217_729.0;
+
+/// pond-ts `WindowSum`: a running sum held as `hi + lo` (double-double), so
+/// rounding errors are kept rather than piling up. `hi` is the sum rounded
+/// once; `n` resets the empty window to exactly 0.
+#[derive(Default)]
+struct WindowSum {
+    hi: f64,
+    lo: f64,
+    n: i64,
+}
+
+impl WindowSum {
+    fn add(&mut self, v: f64) {
+        self.n += 1;
+        self.acc(v);
+    }
+    fn remove(&mut self, v: f64) {
+        self.n -= 1;
+        if self.n == 0 {
+            self.hi = 0.0;
+            self.lo = 0.0;
+            return;
+        }
+        self.acc(-v);
+    }
+    fn acc(&mut self, v: f64) {
+        let h = self.hi;
+        let s = h + v;
+        let z = s - h;
+        let e = h - (s - z) + (v - z) + self.lo;
+        let t = s + e;
+        self.lo = e - (t - s);
+        self.hi = t;
     }
 }
 
 /// pond-ts `LanedSum` (small lane only; see [`SUM_SPLIT`]).
 #[derive(Default)]
-struct SumState(f64);
+struct SumState(WindowSum);
 
 impl WindowState for SumState {
     fn add(&mut self, _: usize, v: f64) {
-        self.0 += v;
+        self.0.add(v);
     }
     fn remove(&mut self, _: usize, v: f64) {
-        self.0 -= v;
+        self.0.remove(v);
     }
-    fn snapshot(&self) -> Option<f64> {
-        Some(self.0)
+    fn snapshot(&mut self) -> Option<f64> {
+        Some(self.0.hi)
     }
 }
 
 /// pond-ts avg `rollingState`: running sum, then divide.
 #[derive(Default)]
-struct AvgState {
-    sum: f64,
-    n: i64,
-}
+struct AvgState(WindowSum);
 
 impl WindowState for AvgState {
     fn add(&mut self, _: usize, v: f64) {
-        self.n += 1;
-        self.sum += v;
+        self.0.add(v);
     }
     fn remove(&mut self, _: usize, v: f64) {
-        self.n -= 1;
-        self.sum -= v;
+        self.0.remove(v);
     }
-    fn snapshot(&self) -> Option<f64> {
-        (self.n != 0).then(|| self.sum / self.n as f64)
+    fn snapshot(&mut self) -> Option<f64> {
+        (self.0.n != 0).then(|| self.0.hi / self.0.n as f64)
     }
 }
 
@@ -107,7 +142,7 @@ impl<const MAX: bool> WindowState for ExtremeState<MAX> {
             self.0.pop_front();
         }
     }
-    fn snapshot(&self) -> Option<f64> {
+    fn snapshot(&mut self) -> Option<f64> {
         self.0.front().map(|&(_, v)| v)
     }
 }
@@ -124,7 +159,7 @@ impl<const LAST: bool> WindowState for OrderedState<LAST> {
             self.0.pop_front();
         }
     }
-    fn snapshot(&self) -> Option<f64> {
+    fn snapshot(&mut self) -> Option<f64> {
         if LAST { self.0.back() } else { self.0.front() }.map(|&(_, v)| v)
     }
 }
@@ -146,47 +181,144 @@ impl WindowState for SortedState {
             self.sorted.remove(at);
         }
     }
-    fn snapshot(&self) -> Option<f64> {
+    fn snapshot(&mut self) -> Option<f64> {
         (!self.sorted.is_empty()).then(|| percentile_of_sorted(&self.sorted, self.q))
     }
 }
 
-/// pond-ts stdev `rollingState`: Welford add/remove (small lane only; see
-/// [`STDEV_SPLIT`]).
+/// pond-ts `WindowStdev` (small lane only; see [`STDEV_SPLIT`]):
+/// double-double `Σd` and `Σd²` of shifted values `d = v − k`, with `d` and
+/// `d²` split exactly. The shift moves to the mean (an exact rewrite of the
+/// sums) when the mean drifts about one stdev away. Same operations in the
+/// same order as pond-ts, so the bits match.
 #[derive(Default)]
 struct StdevState {
     n: f64,
-    mean: f64,
-    m2: f64,
+    k: f64,
+    s1h: f64,
+    s1l: f64,
+    s2h: f64,
+    s2l: f64,
+}
+
+impl StdevState {
+    fn acc(&mut self, v: f64, sign: f64) {
+        let k = self.k;
+        let dh = v - k;
+        let bb = dh - v;
+        let dl = v - (dh - bb) + (-k - bb);
+        let c = SPLIT * dh;
+        let ah = c - (c - dh);
+        let al = dh - ah;
+        let p = dh * dh;
+        let e = ah * ah - p + 2.0 * ah * al + al * al + 2.0 * dh * dl;
+        let mut h = self.s1h;
+        let mut x = sign * dh;
+        let mut s = h + x;
+        let mut z = s - h;
+        let mut er = h - (s - z) + (x - z) + self.s1l + sign * dl;
+        h = s + er;
+        self.s1l = er - (h - s);
+        self.s1h = h;
+        h = self.s2h;
+        x = sign * p;
+        s = h + x;
+        z = s - h;
+        er = h - (s - z) + (x - z) + self.s2l + sign * e;
+        h = s + er;
+        self.s2l = er - (h - s);
+        self.s2h = h;
+    }
+
+    fn m2(&mut self) -> f64 {
+        let n = self.n;
+        if n <= 1.0 {
+            return 0.0;
+        }
+        let mut mh = self.s1h / n;
+        let mut q = self.s1h * mh;
+        if q > 0.5 * self.s2h {
+            self.reshift(mh);
+            mh = self.s1h / n;
+            q = self.s1h * mh;
+        }
+        self.s2h - q + self.s2l - 2.0 * mh * self.s1l
+    }
+
+    fn reshift(&mut self, delta: f64) {
+        let k = self.k;
+        let n = self.n;
+        let k_new = k + delta;
+        let gh = k_new - k;
+        let mut bb = gh - k_new;
+        let gl = k_new - (gh - bb) + (-k - bb);
+        let mut c = SPLIT * gh;
+        let ah = c - (c - gh);
+        let al = gh - ah;
+        c = SPLIT * n;
+        let bh = c - (c - n);
+        let bl = n - bh;
+        let nh = n * gh;
+        let nl = ah * bh - nh + ah * bl + al * bh + al * bl + n * gl;
+        let (s1h, s1l) = (self.s1h, self.s1l);
+        let mut s = s1h - nh;
+        bb = s - s1h;
+        let mut e = s1h - (s - bb) + (-nh - bb) + s1l - nl;
+        let u1h = s + e;
+        let u1l = e - (u1h - s);
+        s = s1h + u1h;
+        bb = s - s1h;
+        e = s1h - (s - bb) + (u1h - bb) + s1l + u1l;
+        let th = s + e;
+        let tl = e - (th - s);
+        c = SPLIT * th;
+        let ch = c - (c - th);
+        let cl = th - ch;
+        let ph = gh * th;
+        let pl = ah * ch - ph + ah * cl + al * ch + al * cl + gh * tl + gl * th;
+        let s2h = self.s2h;
+        s = s2h - ph;
+        bb = s - s2h;
+        e = s2h - (s - bb) + (-ph - bb) + self.s2l - pl;
+        let u2h = s + e;
+        self.s2l = e - (u2h - s);
+        self.s2h = u2h;
+        self.s1h = u1h;
+        self.s1l = u1l;
+        self.k = k_new;
+    }
 }
 
 impl WindowState for StdevState {
     fn add(&mut self, _: usize, v: f64) {
+        if self.n == 0.0 {
+            *self = Self {
+                n: 1.0,
+                k: v,
+                ..Self::default()
+            };
+            return;
+        }
         self.n += 1.0;
-        let delta = v - self.mean;
-        self.mean += delta / self.n;
-        self.m2 += delta * (v - self.mean);
+        self.acc(v, 1.0);
     }
     fn remove(&mut self, _: usize, v: f64) {
         if self.n <= 1.0 {
             *self = Self::default();
             return;
         }
-        let mean_with = self.mean;
         self.n -= 1.0;
-        if self.n == 1.0 {
-            self.mean = mean_with * 2.0 - v; // the one survivor
-            self.m2 = 0.0;
-            return;
-        }
-        self.mean = mean_with - (v - mean_with) / self.n;
-        self.m2 -= (v - self.mean) * (v - mean_with);
-        if self.m2 < 0.0 {
-            self.m2 = 0.0;
-        }
+        self.acc(v, -1.0);
     }
-    fn snapshot(&self) -> Option<f64> {
-        (self.n != 0.0).then(|| clamp_at_zero(self.m2 / self.n).sqrt())
+    fn snapshot(&mut self) -> Option<f64> {
+        if self.n == 0.0 {
+            return None;
+        }
+        if self.n == 1.0 {
+            return Some(0.0);
+        }
+        let m2 = self.m2();
+        Some(clamp_at_zero(m2 / self.n).sqrt())
     }
 }
 

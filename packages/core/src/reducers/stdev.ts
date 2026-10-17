@@ -7,10 +7,12 @@ import {
   stdevWithBigLane,
 } from './overflow-lanes.js';
 import type { ReducerDef } from './types.js';
+import { WindowStdev } from './window-accumulators.js';
 
 /**
  * Population standard deviation, computed by **Welford's online variance** in
- * every batch path so the result is independent of which path runs.
+ * every add-only path (`reduce`, `reduceColumn`, `bucketState`) so the result is
+ * independent of which path runs.
  *
  * `aggregate('stdev')` takes the columnar fast path (`reduceColumn`) or falls
  * back to the row path (`bucketState`) depending on whether *every* mapped
@@ -30,12 +32,14 @@ import type { ReducerDef } from './types.js';
  * agree to floating-point noise — bit-for-bit when they see the values in the
  * same order, which the bucketed paths do.
  *
- * `rollingState` adds `remove` for its sliding window via Welford's
- * **order-independent delete** (the reverse recurrence). It works in the same
- * deviation space — no `sq/n − mean²` cancellation, no shift drift — and
- * removes *by value*, so it stays correct under the live layer's reorder-mode
- * eviction (which removes the sorted-prefix, not the oldest-arrived event).
- * See its inline note for the mechanics.
+ * `rollingState` (the sliding window, which must also *remove* values) does
+ * not use Welford: Welford's reverse step rounds on every remove and the
+ * error piles up for as long as the window stays non-empty ([PND-ROLLSTD]).
+ * It keeps double-double sums of shifted values instead (`WindowStdev`,
+ * `./window-accumulators.ts`), which agree with the add-only Welford paths to
+ * floating-point noise, and removes *by value*, so it stays correct under the
+ * live layer's reorder-mode eviction (which removes the sorted-prefix, not the
+ * oldest-arrived event).
  */
 
 // Welford accumulator: `add` each value, then read `result()` for the
@@ -130,43 +134,32 @@ export const stdev: ReducerDef = {
     };
   },
   rollingState() {
-    // Sliding-window population stdev: Welford's online variance with an
-    // **order-independent delete**. `add(v)` is the standard recurrence;
-    // `remove(v)` reverses it. Working in deviation space, it fixes the old
-    // one-pass `sq/n − mean²` failure modes — catastrophic cancellation on
-    // near-equal large values (`[1e10, 1e10+1, …]` → 0 or a negative variance →
-    // NaN; the audit-§1.1 case, previously still live on this path) and shift
-    // drift on trending data (cumulative distance, elevation).
+    // Sliding-window population stdev from double-double running sums of
+    // shifted values (`WindowStdev`, `./window-accumulators.ts`) —
+    // [PND-ROLLSTD]. The previous Welford add/delete state rounded on every
+    // add and every remove and never took the error back, so it drifted
+    // for as long as the window stayed non-empty; a window that drained to
+    // two close values could read 25% off. The double-double sums keep each
+    // step's rounding error, so add-then-remove leaves the remaining
+    // values' sums to ~2^-104, at any magnitude. That also retires the old
+    // "outlier eviction" limitation: removing a value far outside the
+    // remaining spread no longer cancels away the small remainder.
     //
-    // Limitation — **outlier eviction** (shared with the old one-pass, so not a
-    // regression): like any *subtractive* sliding variance, evicting a value far
-    // outside the residual spread cancels — `m2 −= huge` loses the small
-    // remainder, and the error persists in the running accumulator (the clamp
-    // floors it to 0 at the extreme). Negligible until the evicted point is
-    // ~1e7–1e8× the residual stdev (e.g. a ~1e6 spike over a ~0.01-σ baseline) —
-    // far beyond realistic monitoring / activity data, and exactly why the
-    // add-only paths use plain Welford. A FIFO-only two-stack merge avoids it
-    // entirely but can't serve the by-value eviction the live layer needs.
-    //
-    // Removal is **by value, not by position**. That is load-bearing for the
-    // live layer: `LiveReduce` shares this state, and a `reorder`-mode source
+    // Removal is **by value, not by position**. That matters for the live
+    // layer: `LiveReduce` shares this state, and a `reorder`-mode source
     // with retention evicts the sorted-prefix — which may be a later arrival,
     // not the oldest — so a positional (FIFO) remove would corrupt the window.
-    // A value-based delete is correct regardless of eviction order (the
-    // documented contract; see live-reduce.ts and live-buffer-as-window.test).
     // The batch rolling driver removes strictly oldest-first — a special case.
     //
     // Non-finite / missing cells arrive as `undefined` (the factory wrapper
-    // applies the non-finite policy); `add`/`remove` both skip them symmetrically
-    // so they never enter `n`.
+    // applies the non-finite policy); `add`/`remove` both skip them
+    // symmetrically so they never enter `n`.
     //
     // Values at or above `STDEV_SPLIT` (2^480) go to a separate, exact
-    // lane, so an overflow can't stick in `m2` after the huge values leave
-    // the window, and removing one never cancels — see
-    // `./overflow-lanes.ts`. Below the split this is the old state, bit for bit.
-    let n = 0;
-    let mean = 0;
-    let m2 = 0;
+    // lane, so an overflow can't stick in the sums after the huge values
+    // leave the window, and removing one never cancels — see
+    // `./overflow-lanes.ts`.
+    const w = new WindowStdev();
     const big = stdevBigLane();
     return {
       add(_i, v) {
@@ -175,10 +168,7 @@ export const stdev: ReducerDef = {
           stdevBigLaneAdd(big, v);
           return;
         }
-        n += 1;
-        const delta = v - mean;
-        mean += delta / n;
-        m2 += delta * (v - mean);
+        w.add(v);
       },
       remove(_i, v) {
         if (typeof v !== 'number') return;
@@ -186,36 +176,13 @@ export const stdev: ReducerDef = {
           stdevBigLaneRemove(big, v);
           return;
         }
-        if (n <= 1) {
-          // Removing the final contributor — reset exactly (no 0/0, no drift).
-          n = 0;
-          mean = 0;
-          m2 = 0;
-          return;
-        }
-        const meanWith = mean;
-        n -= 1;
-        if (n === 1) {
-          // A single remaining element has population variance *exactly* 0.
-          // Setting it directly (rather than via the subtraction below) keeps
-          // the n→1 result exact at any magnitude — the reverse step alone
-          // leaves rounding residue at large offsets (e.g. ~0.016 on 1e10).
-          mean = meanWith * 2 - v; // the one survivor: 2·mean₂ − removed
-          m2 = 0;
-          return;
-        }
-        // Deviation-space mean update (mean − (v − mean)/n): avoids the large
-        // `n·mean − v` product, staying precise at large magnitudes.
-        mean = meanWith - (v - meanWith) / n;
-        // Reverse Welford: M2 −= (v − meanNew)·(v − meanOld).
-        m2 -= (v - mean) * (v - meanWith);
-        // Normally absorbs FP round-off; on a gross outlier eviction (see the
-        // limitation note above) the subtraction can cancel below 0 — clamp.
-        if (m2 < 0) m2 = 0;
+        w.remove(v);
       },
       snapshot() {
-        if (big.n !== 0) return stdevWithBigLane(n, mean, m2, big);
-        return n === 0 ? undefined : Math.sqrt(Math.max(0, m2 / n));
+        if (big.n !== 0) {
+          return stdevWithBigLane(w.n, w.mean() ?? 0, w.m2(), big);
+        }
+        return w.stdev();
       },
     };
   },

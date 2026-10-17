@@ -577,13 +577,6 @@ the study oracle) is done.
 - **[PND-RUST-R1B]** — Rest of batch core; adopted only after R1a reports.
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
   independent).
-- **[PND-ROLLSTD]** — pond-ts rolling `avg` / `stdev` build up rounding error
-  that is only cleared when a window empties. On 1M rows it is small on dense
-  data (~5e-9) but large when a window drains to a few values: one row gave
-  stdev 0.000442 where the true value is 0.000354 (25% off; polars exact).
-  Found by the R1a baseline; details in PND_RUST_PLAN.md. Fix in pond-ts
-  (periodic re-sum, or re-sum when the window gets small) before pond-rs
-  copies it.
 - **[PND-ROLLGAP]** — pond-ts time-window `rolling` gets ~60% slower when a
   few windows are empty: 1M rows with three 10-minute outages (0.18% of rows)
   take `rolling('5m', avg)` from ~400 to ~650 ms. A profile puts the extra

@@ -4,6 +4,7 @@ import {
   rollingStateFor,
 } from '../reducers/index.js';
 import { plainRollingSum } from '../reducers/sum.js';
+import { WindowStdev, WindowSum } from '../reducers/window-accumulators.js';
 import type { ArrayValue, Column, ColumnSchema } from '../columnar/index.js';
 import {
   BooleanColumn,
@@ -607,13 +608,12 @@ export function tryRollingCountColumnarNumeric(
 /**
  * One column's trailing / leading / centred count-window sweep.
  *
- * `avg` is specialised inline; everything else drives its reducer state,
- * which is now monomorphic at this call site. `laned` is the overflow
- * re-run — every reducer through its (laned) state; see the note below. `avg` earns the special
- * case because it is what `sma` and the centre line of `bollinger` /
- * `zScore` reduce to, and its recurrence is a running sum — no accuracy
- * argument to preserve, unlike `stdev`, whose order-independent Welford
- * delete has exact `n <= 1` cases that are not worth duplicating.
+ * `avg` and `stdev` drive their accumulators directly; everything else
+ * drives its reducer state, which is now monomorphic at this call site.
+ * `laned` is the overflow re-run — every reducer through its (laned) state;
+ * see the note below. `avg` and `stdev` earn the special case because they
+ * are what `sma` and the centre line / band width of `bollinger` / `zScore`
+ * reduce to.
  */
 function sweepRollingColumn(
   spec: AggregateColumnSpec,
@@ -648,15 +648,15 @@ function sweepRollingColumn(
   // OHLCV bar series, the common case here — the whole predicate folds to
   // `true` and the test disappears.
 
-  // `avg` is a running sum; `stdev` is Welford. Both are inlined to remove
-  // the per-row `add` / `remove` / `snapshot` calls; everything else keeps
-  // its reducer state, which is monomorphic here now.
+  // `avg` and `stdev` skip the reducer state's closure and its per-cell
+  // `typeof` / lane checks by calling the plain accumulators directly;
+  // everything else keeps its reducer state, which is monomorphic here now.
   //
   // **Overflow** ([PND-NANREP]). The reducer states split their running
-  // sum / Welford accumulator by magnitude (`reducers/overflow-lanes.ts`) so
+  // sums by magnitude (`reducers/overflow-lanes.ts`) so
   // an overflow can't stick after the huge values leave the window — at the
   // price of a compare per cell. This sweep doesn't pay it: it runs the plain
-  // single-accumulator recurrences (inline `avg` / `stdev`, `plainRollingSum`
+  // single-lane accumulators (`WindowSum` / `WindowStdev`, `plainRollingSum`
   // for `sum`), and on the first non-finite answer from one of them — which
   // ordinary data never produces — abandons the pass and re-runs the column
   // with `laned` set, driving the laned reducer states instead. The re-run's
@@ -678,21 +678,13 @@ function sweepRollingColumn(
           ? resolveReducer(spec.reducer as string).rollingState()
           : rollingStateFor(spec.reducer);
 
-  // `avg`
-  let runningSum = 0;
-  let runningCount = 0;
-  // `stdev` — Welford with an order-independent delete. Transcribed from
-  // `reducers/stdev.ts`'s `rollingState` **verbatim**, including the two
-  // exact-reset cases, because the value of that recurrence is entirely in
-  // its numerical behaviour: the deviation-space mean update avoids the
-  // `n·mean − v` product that loses precision at large magnitudes, and the
-  // `n → 1` case is set directly because the reverse step alone leaves
-  // rounding residue (~0.016 on 1e10 offsets). A "simplification" here would
-  // be a silent accuracy regression, so the test asserts bit-equality against
-  // the state object rather than closeness.
-  let wN = 0;
-  let wMean = 0;
-  let wM2 = 0;
+  // `avg` / `stdev` — the same drift-free accumulators the reducer states
+  // use below their overflow split (`reducers/window-accumulators.ts`,
+  // [PND-ROLLSTD]). Calling their methods from here is a monomorphic call
+  // V8 inlines, so the arithmetic is shared rather than transcribed, and the
+  // answers match the state path bit for bit (the tests assert `Object.is`).
+  const wSum = new WindowSum();
+  const wStdev = new WindowStdev();
 
   const leftSpan = Math.floor((count - 1) / 2);
   const rightSpan = count - 1 - leftSpan;
@@ -716,51 +708,26 @@ function sweepRollingColumn(
     if (kind === 'avg') {
       while (windowEnd <= hi) {
         if (allFinite || values[windowEnd]! - values[windowEnd]! === 0) {
-          runningSum += values[windowEnd]!;
-          runningCount += 1;
+          wSum.add(values[windowEnd]!);
         }
         windowEnd += 1;
       }
       while (windowStart < lo) {
         if (allFinite || values[windowStart]! - values[windowStart]! === 0) {
-          runningSum -= values[windowStart]!;
-          runningCount -= 1;
+          wSum.remove(values[windowStart]!);
         }
         windowStart += 1;
       }
     } else if (kind === 'stdev') {
       while (windowEnd <= hi) {
         if (allFinite || values[windowEnd]! - values[windowEnd]! === 0) {
-          const v = values[windowEnd]!;
-          wN += 1;
-          const delta = v - wMean;
-          wMean += delta / wN;
-          wM2 += delta * (v - wMean);
+          wStdev.add(values[windowEnd]!);
         }
         windowEnd += 1;
       }
       while (windowStart < lo) {
         if (allFinite || values[windowStart]! - values[windowStart]! === 0) {
-          const v = values[windowStart]!;
-          if (wN <= 1) {
-            // Removing the final contributor — reset exactly (no 0/0, no drift).
-            wN = 0;
-            wMean = 0;
-            wM2 = 0;
-          } else {
-            const meanWith = wMean;
-            wN -= 1;
-            if (wN === 1) {
-              // A single remaining element has population variance exactly 0.
-              wMean = meanWith * 2 - v; // the survivor: 2·mean₂ − removed
-              wM2 = 0;
-            } else {
-              // Deviation-space mean update, then reverse Welford.
-              wMean = meanWith - (v - meanWith) / wN;
-              wM2 -= (v - wMean) * (v - meanWith);
-              if (wM2 < 0) wM2 = 0;
-            }
-          }
+          wStdev.remove(values[windowStart]!);
         }
         windowStart += 1;
       }
@@ -789,16 +756,11 @@ function sweepRollingColumn(
 
     const v =
       kind === 'avg'
-        ? runningCount === 0
+        ? wSum.n === 0
           ? undefined
-          : runningSum / runningCount
+          : wSum.total() / wSum.n
         : kind === 'stdev'
-          ? wN === 0
-            ? undefined
-            : // `+ (wMean − wMean)` is `+ 0` — unless a delta overflow left
-              // the mean non-finite with `m2` clamped back to a finite value,
-              // which must not read as a defined stdev (it re-runs laned).
-              Math.sqrt(Math.max(0, wM2 / wN) + (wMean - wMean))
+          ? wStdev.stdev()
           : state!.snapshot();
     if (v === undefined) continue; // missing cell (e.g. all-missing window)
     // A non-finite result (e.g. a `sum` overflow to Infinity) is a missing

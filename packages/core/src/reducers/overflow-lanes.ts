@@ -12,9 +12,10 @@
  *
  * - The **small lane** takes every value below a split threshold. The
  *   threshold is chosen so the lane *cannot* overflow for any window under
- *   2^53 values, so it is the old accumulator, bit for bit — data that never
- *   reaches the threshold (all realistic data) computes exactly as before,
- *   for the cost of one magnitude compare per add / remove.
+ *   2^53 values, so it is the plain accumulator (`./window-accumulators.ts`)
+ *   — data that never reaches the threshold (all realistic data) computes
+ *   exactly as the unlaned accumulator does, for the cost of one magnitude
+ *   compare per add / remove.
  * - The **big lane** takes the rest and is **exact**: every double at or
  *   above the split is an integer multiple of a fixed power of two, so the
  *   lane holds `BigInt` sums of those integers. Adding and removing is then
@@ -39,6 +40,8 @@
  * docs/notes/reducer-nan-policy.md.
  */
 
+import { WindowSum } from './window-accumulators.js';
+
 /** Values with `|v| >= SUM_SPLIT` go to the big lane of a running sum.
  * Below it, a window of < 2^53 values sums to < 2^1013 — no overflow. */
 export const SUM_SPLIT = 2 ** 960;
@@ -47,27 +50,30 @@ const SUM_UNIT = 2 ** 908;
 const SUM_PER_UNIT = 2 ** -908;
 
 /**
- * A running sum split into a plain `small` accumulator and an exact big lane.
- * `small` is the old single accumulator, bit for bit, so a window with no
- * value ≥ `SUM_SPLIT` sums exactly as before. Callers pass finite numbers.
+ * A running sum split into a small lane and an exact big lane. The small lane
+ * is the inherited drift-free double-double {@link WindowSum} ([PND-ROLLSTD])
+ * — inherited rather than held, to save an indirection per add / remove — so
+ * a window with no value ≥ `SUM_SPLIT` sums exactly as a plain
+ * {@link WindowSum} does. The inherited `n` counts small-lane values only,
+ * so the small lane resets to exactly 0 when its last value leaves even while
+ * big values remain. Callers pass finite numbers.
  * Used by `sum` / `avg` `rollingState` and `smooth('movingAverage')`.
  */
-export class LanedSum {
-  small = 0;
+export class LanedSum extends WindowSum {
   /** Σ v / 2^908 over the big values — exact. */
   big = 0n;
   bigN = 0;
 
-  add(v: number): void {
-    if (v < SUM_SPLIT && v > -SUM_SPLIT) this.small += v;
+  override add(v: number): void {
+    if (v < SUM_SPLIT && v > -SUM_SPLIT) super.add(v);
     else {
       this.big += BigInt(v * SUM_PER_UNIT);
       this.bigN += 1;
     }
   }
 
-  remove(v: number): void {
-    if (v < SUM_SPLIT && v > -SUM_SPLIT) this.small -= v;
+  override remove(v: number): void {
+    if (v < SUM_SPLIT && v > -SUM_SPLIT) super.remove(v);
     else {
       this.big -= BigInt(v * SUM_PER_UNIT);
       this.bigN -= 1;
@@ -75,10 +81,9 @@ export class LanedSum {
   }
 
   /** The window's sum; `±Infinity` only while it genuinely overflows. */
-  total(): number {
-    return this.bigN === 0
-      ? this.small
-      : this.small + Number(this.big) * SUM_UNIT;
+  override total(): number {
+    const small = super.total();
+    return this.bigN === 0 ? small : small + Number(this.big) * SUM_UNIT;
   }
 }
 

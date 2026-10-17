@@ -1,6 +1,7 @@
 import type { Float64Column } from '../columnar/index.js';
 import { BLOCKED_MIN, blockedSum, blockedSumFinite } from './blocked.js';
 import { LanedSum } from './overflow-lanes.js';
+import { WindowSum } from './window-accumulators.js';
 import type { ReducerDef, RollingReducerState } from './types.js';
 
 /**
@@ -43,23 +44,24 @@ function sumRange(col: Float64Column, start: number, end: number): number {
 
 /**
  * The single-accumulator running sum — `sum`'s `rollingState` without the
- * overflow lanes. **Not overflow-safe**: once `s` reaches ±Infinity it stays
- * there. Only the packed count-window sweep (`batch/aggregate-columns.ts`)
+ * overflow lanes. **Not overflow-safe**: once the sum reaches ±Infinity it
+ * stays there. Only the packed count-window sweep (`batch/aggregate-columns.ts`)
  * uses it, because that sweep notices the first non-finite answer and
  * re-runs the column with the laned state — so ordinary columns skip the
  * per-cell lane compare. Callers pass only finite numbers (or `undefined`).
+ * Same drift-free {@link WindowSum} as the laned state's small lane.
  */
 export function plainRollingSum(): RollingReducerState {
-  let s = 0;
+  const s = new WindowSum();
   return {
     add(_i, v) {
-      if (typeof v === 'number') s += v;
+      if (typeof v === 'number') s.add(v);
     },
     remove(_i, v) {
-      if (typeof v === 'number') s -= v;
+      if (typeof v === 'number') s.remove(v);
     },
     snapshot() {
-      return s;
+      return s.total();
     },
   };
 }
@@ -86,8 +88,8 @@ export const sum: ReducerDef = {
   },
   rollingState() {
     // Two lanes so an overflow can't stick in the running sum after the
-    // huge values leave the window — see `./overflow-lanes.ts`. `s` is the
-    // old accumulator, bit for bit, for every value below `SUM_SPLIT`.
+    // huge values leave the window — see `./overflow-lanes.ts`. Below
+    // `SUM_SPLIT` it is the drift-free `WindowSum` ([PND-ROLLSTD]).
     const s = new LanedSum();
     return {
       add(_i, v) {

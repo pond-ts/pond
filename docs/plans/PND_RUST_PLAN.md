@@ -170,9 +170,10 @@ Decisions:
 - **Keys are `i64` milliseconds**, not `f64` as in pond-ts: Arrow timestamps
   are integers, and bucket arithmetic is then exact. Fractional-millisecond
   times are not representable; none have come up.
-- **Rolling `sum` / `avg` / `stdev` copy pond-ts as it is today, drift
-  included**, so parity can be exact. When [PND-ROLLSTD] lands they switch to
-  the fixed algorithm; the fixture will change with it.
+- **Rolling `sum` / `avg` / `stdev` copy pond-ts step for step**, so parity
+  can be exact. They first copied the drifting running sums; since
+  [PND-ROLLSTD] (PR #766) they are ports of pond-ts's double-double
+  `WindowSum` / `WindowStdev`, and the fixture still matches bit for bit.
 - **pond-ts's big-integer overflow lanes are not ported.** A rolling sum/avg
   over a value of magnitude ≥ 2^960, or a rolling stdev over one ≥ 2^480,
   returns `PondError::Unsupported` rather than a different answer.
@@ -215,6 +216,42 @@ for count, sum, avg, stdev, first, last and amortised O(N) for min/max; median
 and percentiles insert into a sorted array, O(N·W) for a window of W values,
 as in pond-ts. Per-reducer cost, one column of 1M rows: count 13 ms, avg 18,
 stdev 24, min 36, median 136.
+
+## [PND-ROLLSTD] — rolling sum / avg / stdev drift — DONE (2026-10-17)
+
+**Decision:** keep the running sums, but hold them as double-double (two
+doubles, `hi + lo`, with error-free twoSum / Dekker twoProd so every step's
+rounding error is kept rather than dropped), in a new internal module
+`packages/core/src/reducers/window-accumulators.ts` (`WindowSum`,
+`WindowStdev`). Stdev keeps `Σd` and `Σd²` of shifted values `d = v − k`; the
+shift `k` starts at the first value and is moved to the mean (an exact rewrite
+of the two sums, no stored values needed) when the mean drifts more than about
+one stdev away, so the final `Σd² − (Σd)²/n` never cancels.
+
+**Why this and not the PLAN entry's "periodic re-sum":** a re-sum needs the
+window's values, and the reducer states don't have them; eight drivers (batch
+time/count sweeps, `rollingByColumn`, five live operators) would each need to
+pass them in, and the live `reorder` mode removes by value, not oldest-first.
+Double-double sums fix it inside the state, keep removal by value, need no
+buffer, and stay O(1).
+
+**Measured on the R1a bench data (1M rows × 4 columns, exact `BigInt`
+reference):** stdev worst relative error 0.25 → 3.4e-16 (polars 3.1e-12); avg
+worst absolute error 9.4e-10 → 0 (measured: every row equals the exact mean rounded once — not a guarantee, since the sum and the division each round; polars
+1.3e-12). Workload A compute time unchanged within noise (~2.4–2.5 s both).
+Microbench (`scripts/perf-rolling-accumulators.mjs`, 100k rows): `sum` +11–14%,
+`avg` −2…+7%, `stdev` −12…+6% — stdev got cheaper in places because the state
+moved from closure variables to class fields.
+
+**Side effects:** the old "outlier eviction" limit (removing a value ~1e7×
+the remaining spread cancelled to 0) is gone: precision now runs out only
+near a ratio of ~1e12+ (a 1e9 leaving a 3e-4-spread window: 3e-10 relative).
+The add-only `aggregate('stdev')` paths still use Welford, whose error floor
+is ~ε·max|v| (~2e-8 relative at a 1e10 offset), so rolling and aggregate no
+longer agree bit-for-bit at large offsets; the fuzz test now checks each
+against an exact oracle instead. **pond-rs:** the same PR ports `WindowSum`
+/ `WindowStdev` to `crates/pond-rs/src/rolling.rs`; all 36 fixture cases,
+including the order-sensitive `noisy` rolling ones, still match bit for bit.
 
 ## Next
 
