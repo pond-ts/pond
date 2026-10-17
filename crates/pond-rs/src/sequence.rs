@@ -44,9 +44,14 @@ impl FromStr for CalendarUnit {
 }
 
 /// An unbounded grid of buckets. Realised over a concrete range by
-/// [`Sequence::buckets_overlapping`].
+/// [`Sequence::buckets_overlapping`]. Build one with [`Sequence::every`] or
+/// [`Sequence::calendar`]; the constructors are the only way in, so every
+/// `Sequence` is valid (a positive step, a known zone, a week start 1–7).
 #[derive(Debug, Clone, PartialEq)]
-pub enum Sequence {
+pub struct Sequence(Grid);
+
+#[derive(Debug, Clone, PartialEq)]
+enum Grid {
     /// Fixed-length steps: buckets `[anchor + k·step, anchor + (k+1)·step)`.
     Every { step_ms: i64, anchor_ms: i64 },
     /// Calendar buckets in a time zone: each starts at local midnight of the
@@ -76,10 +81,10 @@ impl Sequence {
                 message: format!("step must be positive, got {step_ms} ms"),
             });
         }
-        Ok(Sequence::Every {
+        Ok(Sequence(Grid::Every {
             step_ms,
             anchor_ms: 0,
-        })
+        }))
     }
 
     /// Calendar buckets in an IANA time zone, e.g.
@@ -99,19 +104,19 @@ impl Sequence {
                 message: format!("unknown time zone '{time_zone}': {e}"),
             })?,
         };
-        Ok(Sequence::Calendar {
+        Ok(Sequence(Grid::Calendar {
             unit,
             zone,
             week_starts_on: 1,
-        })
+        }))
     }
 
     /// The same grid shifted so a bucket starts at `anchor_ms`. Calendar
     /// sequences have no anchor and are returned unchanged.
     pub fn with_anchor(self, anchor_ms: i64) -> Self {
-        match self {
-            Sequence::Every { step_ms, .. } => Sequence::Every { step_ms, anchor_ms },
-            calendar => calendar,
+        match self.0 {
+            Grid::Every { step_ms, .. } => Sequence(Grid::Every { step_ms, anchor_ms }),
+            calendar => Sequence(calendar),
         }
     }
 
@@ -124,13 +129,13 @@ impl Sequence {
                 message: format!("week start must be 1 (Monday) to 7 (Sunday), got {iso_weekday}"),
             });
         }
-        Ok(match self {
-            Sequence::Calendar { unit, zone, .. } => Sequence::Calendar {
+        Ok(match self.0 {
+            Grid::Calendar { unit, zone, .. } => Sequence(Grid::Calendar {
                 unit,
                 zone,
                 week_starts_on: iso_weekday,
-            },
-            every => every,
+            }),
+            every => Sequence(every),
         })
     }
 
@@ -142,25 +147,51 @@ impl Sequence {
     /// They agree whenever the quotient is below 2^53 / step, i.e. for any
     /// real timestamp.
     pub fn buckets_overlapping(&self, begin: i64, end: i64) -> Result<IntervalKeys> {
-        match self {
-            &Sequence::Every { step_ms, anchor_ms } => {
-                let first = (begin - anchor_ms).div_euclid(step_ms);
-                let last = (end - anchor_ms).div_euclid(step_ms);
-                let count = usize::try_from(last - first + 1).unwrap_or(0);
+        if end < begin {
+            return Err(grid_error(format!(
+                "range ends ({end}) before it begins ({begin})"
+            )));
+        }
+        match &self.0 {
+            &Grid::Every { step_ms, anchor_ms } => {
+                // In i128 so no step, anchor or time can overflow; a bucket
+                // edge outside i64 is an error.
+                let (step, anchor) = (i128::from(step_ms), i128::from(anchor_ms));
+                let first = (i128::from(begin) - anchor).div_euclid(step);
+                let last = (i128::from(end) - anchor).div_euclid(step);
+                let edge = |k: i128| {
+                    i64::try_from(anchor + k * step).map_err(|_| {
+                        grid_error(format!(
+                            "bucket edge out of range for [{begin}, {end}] with step {step_ms} ms"
+                        ))
+                    })
+                };
+                // Checked before allocating: a vast range is an error, not
+                // an out-of-memory abort.
+                let count = usize::try_from(last - first + 1)
+                    .ok()
+                    .filter(|&n| n <= MAX_BUCKETS)
+                    .ok_or_else(|| {
+                        grid_error(format!(
+                            "[{begin}, {end}] with step {step_ms} ms is more than {MAX_BUCKETS} buckets"
+                        ))
+                    })?;
                 let mut keys = IntervalKeys {
                     label: Vec::with_capacity(count),
                     begin: Vec::with_capacity(count),
                     end: Vec::with_capacity(count),
                 };
+                let mut start = edge(first)?;
                 for k in first..=last {
-                    let start = anchor_ms + k * step_ms;
+                    let next = edge(k + 1)?;
                     keys.label.push(start);
                     keys.begin.push(start);
-                    keys.end.push(start + step_ms);
+                    keys.end.push(next);
+                    start = next;
                 }
                 Ok(keys)
             }
-            Sequence::Calendar {
+            Grid::Calendar {
                 unit,
                 zone,
                 week_starts_on,
@@ -205,6 +236,11 @@ fn fixed_offset(name: &str) -> Option<TimeZone> {
         b'-' => (-1, &name[1..]),
         _ => return None,
     };
+    // Byte lengths and slices below assume ASCII ("+a€" must not be cut
+    // inside the euro sign).
+    if !rest.is_ascii() {
+        return None;
+    }
     let (hh, mm) = match rest.len() {
         2 => (rest, "00"),
         4 => rest.split_at(2),
@@ -222,6 +258,17 @@ fn fixed_offset(name: &str) -> Option<TimeZone> {
     }
     let offset = jiff::tz::Offset::from_seconds(sign * (hours * 3600 + minutes * 60)).ok()?;
     Some(TimeZone::fixed(offset))
+}
+
+/// Most buckets one call will build (2^28, a few GB of keys): a guard
+/// against a range or step mistake turning into an out-of-memory abort.
+const MAX_BUCKETS: usize = 1 << 28;
+
+fn grid_error(message: String) -> PondError {
+    PondError::InvalidData {
+        call: "Sequence::buckets_overlapping",
+        message,
+    }
 }
 
 fn calendar_error(message: String) -> PondError {
@@ -396,5 +443,26 @@ mod tests {
     #[test]
     fn zero_step_is_rejected() {
         assert!(Sequence::every("0s").is_err());
+        assert!(Sequence::every_ms(-1).is_err());
+    }
+
+    #[test]
+    fn extreme_ranges_are_errors_not_panics() {
+        let ms = Sequence::every_ms(1).unwrap();
+        assert!(ms.buckets_overlapping(i64::MAX, i64::MAX).is_err());
+        assert!(ms.buckets_overlapping(i64::MIN, i64::MAX).is_err());
+        assert!(ms.buckets_overlapping(5, 4).is_err());
+        let huge = Sequence::every_ms(i64::MAX).unwrap().with_anchor(i64::MIN);
+        assert!(huge.buckets_overlapping(0, 0).is_ok());
+        assert!(huge.buckets_overlapping(i64::MAX, i64::MAX).is_err());
+        let days = Sequence::calendar("day", "UTC").unwrap();
+        assert!(days.buckets_overlapping(i64::MAX - 1, i64::MAX).is_err());
+    }
+
+    #[test]
+    fn non_ascii_offsets_are_rejected_not_panics() {
+        for zone in ["+a€", "+€", "-0€", "+05:€", "+0€30"] {
+            assert!(Sequence::calendar("day", zone).is_err(), "{zone}");
+        }
     }
 }

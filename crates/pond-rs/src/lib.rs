@@ -54,7 +54,7 @@ pub use duration::parse_duration;
 pub use error::{PondError, Result};
 pub use reducer::{Agg, Reducer};
 pub use sequence::{CalendarUnit, Sequence, tzdb_version};
-pub use series::{Column, ColumnDef, ColumnKind, IntervalKeys, Key, TimeSeries};
+pub use series::{Column, ColumnDef, ColumnKind, IntervalKeys, Key, MAX_TIME_MS, TimeSeries};
 
 /// The version of this crate.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

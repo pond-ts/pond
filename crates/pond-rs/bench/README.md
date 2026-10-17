@@ -30,9 +30,18 @@ PYTHON=/path/to/python crates/pond-rs/bench/run.sh      # needs polars, pyarrow,
 ```
 
 Each runner prints one JSON line: the median of 7 runs (after one warm-up)
-for reading, computing and writing, and `run_mem_mb`, how much the process
-grew during one run (its peak size after the run minus its size before, so
-the runtime itself is not counted).
+for reading, computing and writing, and `run_mem_mb`. Read starts from the
+file's bytes already in memory and write ends with the IPC bytes in memory,
+so disk time is not counted. Every runner keeps only a few numbers from the
+warm-up and frees its outputs before the timed runs (pond-ts and polars then
+collect garbage), so all timed runs start from the same state.
+
+`run_mem_mb` is measured the same way by all three runners, on Linux only
+(`null` elsewhere): the peak resident size is reset to the current size just
+before the warm-up (`/proc/self/clear_refs`), and the number is the peak
+during the warm-up minus the size just before it. So the runtime and imports
+are not counted, and an earlier, higher peak cannot hide the run's own. For
+pond-ts it still includes garbage not yet collected.
 
 ## How the two sides are matched
 
@@ -75,6 +84,26 @@ Output size: A writes ~71 MB (the rolling result has a row per input row); B
 writes 12 rows. Single runs on this machine can be off by a third, so compare
 ranges, not single numbers.
 
+### Re-run after the Codex review fixes (same machine, one run of 3 repeats)
+
+The fixes changed how memory is measured and freed the warm-up's outputs
+before timing (above). Single run, so noisier than the table:
+
+| workload | engine            | read ms | compute ms | write ms | run memory MB |
+| -------- | ----------------- | ------- | ---------- | -------- | ------------- |
+| A        | pond-ts           | 64      | 3235       | 234      | 362           |
+| A        | pond-rs, 1 thread | 42      | 461        | 158      | 254           |
+| A        | polars, 1 thread  | 23      | 568        | 103      | 256           |
+| A        | polars, 4 threads | 35      | 211        | 100      | 281           |
+| B        | pond-ts           | 90      | 104        | 3.3      | 86            |
+| B        | pond-rs, 1 thread | 19      | 27         | 0.1      | 78            |
+| B        | polars, 1 thread  | 22      | 19         | 1.1      | 110           |
+| B        | polars, 4 threads | 34      | 13         | 1.4      | 111           |
+
+Same picture: pond-rs still equals pond-ts to the bit, is ~7× faster than
+pond-ts on A compute, about even with polars on one thread, and grows by
+about as much memory as polars on one thread.
+
 ## Findings
 
 - **pond-rs equals pond-ts exactly** on both workloads: all 1,016,667 output
@@ -111,6 +140,6 @@ ranges, not single numbers.
   garbage collection (5% → 14%). Why is not established yet. Logged as
   [PND-ROLLGAP].
 - **`run_mem_mb` for pond-ts is rough**: it is growth during the warm-up run,
-  so it includes JIT work and garbage not yet collected. It is a clean number
-  for pond-rs and polars, which have no garbage collector. pond-rs grows by
-  254 MB on A against polars' 239 (one thread) and 264 (four).
+  so it includes JIT work and garbage not yet collected. It is a cleaner
+  number for pond-rs and polars, which have no garbage collector. pond-rs
+  grows by 254 MB on A against polars' 239 (one thread) and 264 (four).

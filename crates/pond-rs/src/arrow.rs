@@ -31,7 +31,7 @@ use arrow_ipc::writer::FileWriter;
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 
 use crate::error::{PondError, Result};
-use crate::series::{Column, IntervalKeys, Key, TimeSeries};
+use crate::series::{Column, IntervalKeys, Key, MAX_TIME_MS, TimeSeries};
 
 const FROM: &str = "TimeSeries::from_arrow";
 const TO: &str = "TimeSeries::to_arrow";
@@ -112,13 +112,16 @@ impl TimeSeries {
     /// into chunks; all batches must share a schema).
     ///
     /// - `time_column` names the key field: a `Timestamp` in any unit,
-    ///   `Date64`, or `Int64` epoch milliseconds. It must have no nulls, be in
+    ///   `Date64`, or `Int64` or `Float64` epoch milliseconds (`Float64` is
+    ///   what pond-ts `toArrow` hands over). It must have no nulls, be in
     ///   order, and convert to whole milliseconds; a micro- or nanosecond
     ///   timestamp with a sub-millisecond part is an error rather than being
     ///   silently rounded.
     /// - Every other field becomes a value column, in field order. Any
     ///   integer or float type is read as `f64`; nulls, `NaN` and infinities
-    ///   are gaps. A column with a gap is optional, one without is required.
+    ///   are gaps. A field Arrow marks nullable becomes an optional column
+    ///   (even if it holds no nulls); a non-nullable one becomes required,
+    ///   unless it holds `NaN` or infinities, which make it optional.
     /// - Any other field type (strings, lists, …) is an error naming it.
     ///   Drop such fields first with [`RecordBatch::project`].
     ///
@@ -161,11 +164,17 @@ impl TimeSeries {
             for batch in batches {
                 read_number(batch.column(c), field.name(), &mut values)?;
             }
-            columns.push(if values.iter().all(|v| v.is_finite()) {
-                Column::required(field.name().clone(), values)
-            } else {
-                Column::optional_raw(field.name().clone(), values)
-            });
+            // Arrow's own flag decides: a nullable field is optional even
+            // when this file has no nulls, so `to_arrow` → `from_arrow`
+            // keeps the schema. A non-nullable float field holding NaN is
+            // still optional, since NaN is a gap.
+            columns.push(
+                if !field.is_nullable() && values.iter().all(|v| v.is_finite()) {
+                    Column::required(field.name().clone(), values)
+                } else {
+                    Column::optional_raw(field.name().clone(), values)
+                },
+            );
         }
 
         TimeSeries::with_key(
@@ -304,6 +313,29 @@ fn read_time(array: &ArrayRef, name: &str, offset: usize, out: &mut Vec<i64>) ->
             format!("time column '{name}' is null at row {}", offset + i),
         ));
     }
+    // pond-ts `toArrow` hands its key over as Float64 epoch milliseconds
+    // (that is what pond-ts holds), and its documented recipe writes it so.
+    if let DataType::Float64 = array.data_type() {
+        for (i, &v) in array
+            .as_primitive::<Float64Type>()
+            .values()
+            .iter()
+            .enumerate()
+        {
+            // Range-checked here so the cast is exact; NaN fails `contains`.
+            if v.fract() != 0.0 || !(-MAX_TIME_MS as f64..=MAX_TIME_MS as f64).contains(&v) {
+                return Err(invalid(
+                    FROM,
+                    format!(
+                        "time column '{name}' at row {} is {v}; Float64 times must be whole epoch milliseconds within ±{MAX_TIME_MS}",
+                        offset + i
+                    ),
+                ));
+            }
+            out.push(v as i64);
+        }
+        return Ok(());
+    }
     // (raw values, how many raw units make one millisecond, or how many
     // milliseconds one raw unit is)
     let (raw, per_ms, ms_per): (&[i64], i64, i64) = match array.data_type() {
@@ -333,7 +365,7 @@ fn read_time(array: &ArrayRef, name: &str, offset: usize, out: &mut Vec<i64>) ->
             return Err(invalid(
                 FROM,
                 format!(
-                    "time column '{name}' is {other}; expected a Timestamp, Date64 or Int64 (epoch ms)"
+                    "time column '{name}' is {other}; expected a Timestamp, Date64, Int64 or Float64 (epoch ms)"
                 ),
             ));
         }
@@ -494,6 +526,54 @@ mod tests {
         let v = series.column("v").unwrap();
         assert_eq!(v.iter().collect::<Vec<_>>(), [Some(7.0), None, None]);
         assert!(!series.schema()[1].required);
+    }
+
+    #[test]
+    fn nullable_fields_stay_optional_without_nulls() {
+        // An optional column with no gaps is still optional after a round
+        // trip: the Arrow field's nullability carries it.
+        let s = TimeSeries::new(
+            "s",
+            vec![0, 1],
+            vec![
+                Column::optional("o", [Some(1.0), Some(2.0)]),
+                Column::required("r", vec![1.0, 2.0]),
+            ],
+        )
+        .unwrap();
+        let back = TimeSeries::from_arrow("s", &[s.to_arrow().unwrap()], "time").unwrap();
+        assert_eq!(back.schema(), s.schema());
+        // A non-nullable float field holding NaN is optional (NaN is a gap).
+        let b = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("time", DataType::Int64, false),
+                Field::new("v", DataType::Float64, false),
+            ])),
+            vec![
+                Arc::new(arrow_array::Int64Array::from(vec![0, 1])),
+                Arc::new(arrow_array::Float64Array::from(vec![1.0, f64::NAN])),
+            ],
+        )
+        .unwrap();
+        let s = TimeSeries::from_arrow("s", &[b], "time").unwrap();
+        assert!(!s.schema()[1].required);
+    }
+
+    #[test]
+    fn reads_float64_times_when_whole_milliseconds() {
+        let read = |times: Vec<f64>| {
+            let b = RecordBatch::try_from_iter(vec![(
+                "time",
+                Arc::new(arrow_array::Float64Array::from(times)) as ArrayRef,
+            )])
+            .unwrap();
+            TimeSeries::from_arrow("x", &[b], "time")
+        };
+        let s = read(vec![-1000.0, 0.0, 1000.0]).unwrap();
+        assert_eq!(s.key(), &Key::Time(vec![-1000, 0, 1000]));
+        for bad in [0.5, f64::NAN, f64::INFINITY, 9e15, -9e15] {
+            assert!(read(vec![bad]).is_err(), "{bad}");
+        }
     }
 
     #[test]

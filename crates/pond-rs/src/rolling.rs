@@ -348,6 +348,8 @@ fn roll<S: WindowState>(mut state: S, times: &[i64], values: &[f64], window_ms: 
             }
             window_end += 1;
         }
+        // Keys are within ±MAX_TIME_MS, so when this saturates the true lower
+        // edge is below every key and nothing is evicted, which is right.
         let lower = anchor.saturating_sub(window_ms);
         while window_start < window_end && times[window_start] <= lower {
             let v = values[window_start];
@@ -516,6 +518,23 @@ fn check_magnitude(column: &Column, reducer: Reducer) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extreme_times_keep_their_own_row() {
+        use crate::MAX_TIME_MS;
+        for t in [-MAX_TIME_MS, MAX_TIME_MS] {
+            let s = TimeSeries::new("s", vec![t], vec![Column::required("v", vec![7.0])]).unwrap();
+            for window in ["1ms", "100000000d"] {
+                let r = s
+                    .rolling(window, &[Agg::new("n", "v", Reducer::Count)])
+                    .unwrap();
+                assert_eq!(r.column("n").unwrap().get(0), Some(1.0), "{t} {window}");
+            }
+        }
+        let too_early =
+            TimeSeries::new("s", vec![i64::MIN], vec![Column::required("v", vec![7.0])]);
+        assert!(too_early.is_err());
+    }
 
     #[test]
     fn splits_are_the_pond_ts_powers_of_two() {

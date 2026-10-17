@@ -3,9 +3,10 @@
 //   node pond_ts.mjs <workload A|B> <data.arrow> [runs] [dump.arrow]
 //
 // Prints one JSON line: median read / compute / write ms over `runs` timed
-// runs (after one warm-up), and memory for one run: the process's peak
-// resident size after the first run, minus its size before it (so the Node
-// runtime and imports are not counted). With a 4th argument the
+// runs (after one warm-up), and memory for one run: on Linux, the peak
+// resident size during the warm-up minus the size just before it (the peak
+// is reset first, so the Node runtime and imports are not counted); null
+// elsewhere. With a 4th argument the
 // workload's outputs are written there for compare.py.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
@@ -95,10 +96,25 @@ const median = (xs) => {
   return s[Math.floor(s.length / 2)];
 };
 
-const rssMb = () => process.resourceUsage().maxRSS / 1024;
-const baseMb = rssMb();
-const warm = once();
-const peakMb = rssMb();
+// Linux only: reset the peak resident size to the current one, read both
+// from /proc/self/status. null elsewhere. Same method in all three runners.
+const statusMb = (field) => {
+  const line = readFileSync('/proc/self/status', 'utf8')
+    .split('\n')
+    .find((l) => l.startsWith(field));
+  return parseFloat(line.slice(field.length)) / 1024;
+};
+const resetPeakMb = () => {
+  try {
+    writeFileSync('/proc/self/clear_refs', '5');
+    return statusMb('VmRSS:');
+  } catch {
+    return null;
+  }
+};
+const baseMb = resetPeakMb();
+let warm = once();
+const runMemMb = baseMb === null ? null : statusMb('VmHWM:') - baseMb;
 if (dumpPath) {
   for (const [k, bytes] of Object.entries(warm.ipc)) {
     writeFileSync(`${dumpPath}.${k}.arrow`, bytes);
@@ -107,6 +123,12 @@ if (dumpPath) {
 const rows = Object.fromEntries(
   Object.entries(warm.out).map(([k, s]) => [k, s.length]),
 );
+const outputMb =
+  Object.values(warm.ipc).reduce((n, b) => n + b.length, 0) / 2 ** 20;
+// Keep only these numbers from the warm-up and free the rest before the
+// timed runs, as every runner does, so each starts from the same state.
+warm = null;
+globalThis.gc?.(); // run.sh passes --expose-gc
 const timings = [];
 for (let i = 0; i < RUNS; i++) {
   // Keep only the numbers, so earlier runs' outputs can be collected.
@@ -125,12 +147,9 @@ console.log(
     compute_ms: +pick('compute').toFixed(1),
     write_ms: +pick('write').toFixed(1),
     total_ms: +total.toFixed(1),
-    run_mem_mb: Math.round(peakMb - baseMb),
+    run_mem_mb: runMemMb === null ? null : Math.round(runMemMb),
     input_mb: +(readFileSync(path).length / 2 ** 20).toFixed(1),
-    output_mb: +(
-      Object.values(warm.ipc).reduce((n, b) => n + b.length, 0) /
-      2 ** 20
-    ).toFixed(1),
+    output_mb: +outputMb.toFixed(1),
     output_rows: rows,
   }),
 );

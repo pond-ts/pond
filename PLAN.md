@@ -569,10 +569,10 @@ the study oracle) is done.
   columns, Arrow in/out, `rolling`, `aggregate`. Steps 1 (pond-ts and polars
   baseline, `crates/pond-rs/bench/`), 2a (series, `rolling`, `aggregate`) and
   2b (calendar sequences, Arrow in/out, pond-rs in
-  the benchmark) are done: pond-rs output equals pond-ts's to the bit on the
+  the benchmark) and 3 (property tests against brute force) are done: pond-rs output equals pond-ts's to the bit on the
   1M-row benchmark and is ~6–8× faster single-threaded; it is not yet within
   1.25× of polars on four cores, which needs threading (next, with
-  property tests). A revised memory target awaits pjm17971. Acceptance is predeclared targets for
+  columns that use Arrow's memory, as pjm17971 chose). A revised memory target awaits pjm17971. Acceptance is predeclared targets for
   correctness, speed against pond-ts and polars, memory, determinism and an
   agent trial (RFC Amendment 1, after the Codex review). A miss means redesign,
   not stop: the direction is committed.
@@ -588,6 +588,14 @@ the study oracle) is done.
   error cases: `diff('nope')` throws a raw `Cannot read properties of
 undefined`; `rolling` with an unknown column says "aggregate mapping".
   Agents act on error text, so both should name the column and the call.
+- **[PND-ARROWREQ]** — pond-ts `fromArrow` declares every value column
+  required, even one with nulls, so its own `toJSON` → `fromJSON` round trip
+  then throws ("row 1 col 1 (v) is required"). Reproduced 2026-10-17 with a
+  nullable Float64 column `[1, null]`. Proposed fix: take `required` from the
+  Arrow field's nullability, as pond-rs now does (Codex review of pond-rs,
+  finding 5), so both read the same file to the same schema. Until then they
+  differ on every pyarrow / polars file (both mark fields nullable by
+  default): pond-rs reads such columns as optional, pond-ts as required.
 
 ### `@pond-ts/financial`
 
