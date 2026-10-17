@@ -55,6 +55,14 @@ What landed:
 - **CI**: `rust` job in `ci.yml` — `cargo fmt --check`, `clippy -D warnings`,
   `cargo test`. No Node needed.
 
+**"Exact" means same operation order, not just same maths.** Most core cases
+demand bit-identical output, so R1 must reproduce pond-ts's arithmetic step for
+step: e.g. `fill-linear-hold` at 9000 is `0.666666666666667`, not the nearest
+double to 2/3, and `rate` / `pctChange` depend on the exact formula. A one-ulp
+mismatch there is a port that computes differently, not a harness bug; give the
+case a `tolerance` only when pond-ts's own order is incidental (as with rolling
+`stdev`).
+
 Behaviours the fixture already pins that a port could easily get wrong (worth
 reading before R1): a time window over only-missing cells `sum`s to `0` but
 `avg`s to missing; `aggregate` emits empty buckets (`count` 0, `sum` 0, others

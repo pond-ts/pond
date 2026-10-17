@@ -148,6 +148,17 @@ export function buildFixture(pond) {
     ),
     cases: CASES.map(([id, input, op, args, tolerance]) => {
       const expected = inputs[input][op](...args.map(decode)).toJSON();
+      // JSON.stringify writes ±Infinity and NaN as null, which reads back as
+      // "missing" — refuse rather than record a different answer.
+      for (const row of expected.rows) {
+        for (const cell of row.flat()) {
+          if (typeof cell === 'number' && !Number.isFinite(cell)) {
+            throw new Error(
+              `case ${id}: non-finite value ${cell} cannot be encoded`,
+            );
+          }
+        }
+      }
       return {
         id,
         input,

@@ -7,9 +7,14 @@
 mod common;
 
 use common::{
-    STUDY_TOLERANCE, StudyCase, StudyFixture, compare_column, load_study_fixture, report,
+    STUDY_TOLERANCE, StudyCase, StudyFixture, check_coverage, compare_column, load_study_fixture,
+    report,
 };
 use std::collections::BTreeMap;
+
+/// Studies with an arm in [`run`]. Every oracle case for a listed study must
+/// run and match; a study that runs without being listed is also an error.
+const IMPLEMENTED_STUDIES: &[&str] = &[];
 
 /// Run one case through pond-rs. `None` means the study is not implemented yet.
 fn run(_fixture: &StudyFixture, case: &StudyCase) -> Option<BTreeMap<String, Vec<Option<f64>>>> {
@@ -53,15 +58,23 @@ fn implemented_studies_match_oracle() {
     let mut implemented = 0;
     let mut failures = Vec::new();
     for case in &fixture.cases {
-        let Some(actual) = run(&fixture, case) else {
-            continue;
-        };
-        implemented += 1;
         let label = format!(
             "{}({})",
             case.study,
             serde_json::Value::Object(case.params.clone())
         );
+        let actual = run(&fixture, case);
+        check_coverage(
+            &label,
+            &case.study,
+            IMPLEMENTED_STUDIES,
+            actual.is_some(),
+            &mut failures,
+        );
+        let Some(actual) = actual else {
+            continue;
+        };
+        implemented += 1;
         for (column, expected) in &case.expected {
             match actual.get(column) {
                 None => failures.push(format!("{label}: missing output column '{column}'")),

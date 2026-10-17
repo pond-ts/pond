@@ -91,17 +91,16 @@ pub fn compare_series(
     actual: &SeriesJson,
     tolerance: Option<f64>,
 ) -> Result<(), String> {
-    let names = |s: &SeriesJson| -> Vec<(String, String)> {
-        s.schema
-            .iter()
-            .map(|c| (c.name.clone(), c.kind.clone()))
-            .collect()
-    };
-    if names(expected) != names(actual) {
+    if expected.name != actual.name {
+        return Err(format!(
+            "series name differs: expected '{}', got '{}'",
+            expected.name, actual.name
+        ));
+    }
+    if expected.schema != actual.schema {
         return Err(format!(
             "schema differs: expected {:?}, got {:?}",
-            names(expected),
-            names(actual)
+            expected.schema, actual.schema
         ));
     }
     if expected.rows.len() != actual.rows.len() {
@@ -115,7 +114,7 @@ pub fn compare_series(
         if exp_row.len() != act_row.len() {
             return Err(format!("row {r}: width differs"));
         }
-        if exp_row[0] != act_row[0] {
+        if !same_key(&exp_row[0], &act_row[0]) {
             return Err(format!(
                 "row {r}: key differs: expected {}, got {}",
                 exp_row[0], act_row[0]
@@ -128,6 +127,20 @@ pub fn compare_series(
         }
     }
     Ok(())
+}
+
+/// Keys compare by numeric value, so `1000` and `1000.0` are the same key.
+/// A `time` key is a number; `timeRange` / `interval` keys are arrays.
+fn same_key(expected: &Value, actual: &Value) -> bool {
+    match (expected, actual) {
+        (Value::Array(e), Value::Array(a)) => {
+            e.len() == a.len() && e.iter().zip(a).all(|(e, a)| same_key(e, a))
+        }
+        _ => match (expected.as_f64(), actual.as_f64()) {
+            (Some(e), Some(a)) => e == a,
+            _ => expected == actual,
+        },
+    }
 }
 
 fn compare_cell(expected: &Value, actual: &Value, tolerance: Option<f64>) -> Result<(), String> {
@@ -229,6 +242,28 @@ pub fn compare_column(
 // ---------------------------------------------------------------------------
 // Reporting
 // ---------------------------------------------------------------------------
+
+/// Every case of an implemented op must actually run: an arm that returns
+/// `None` for some arguments would otherwise skip those cases silently.
+pub fn check_coverage(
+    label: &str,
+    op: &str,
+    implemented: &[&str],
+    ran: bool,
+    failures: &mut Vec<String>,
+) {
+    let listed = implemented.contains(&op);
+    if listed && !ran {
+        failures.push(format!(
+            "{label}: '{op}' is implemented but this case did not run"
+        ));
+    }
+    if ran && !listed {
+        failures.push(format!(
+            "{label}: '{op}' ran but is not listed as implemented"
+        ));
+    }
+}
 
 /// Print a one-line coverage summary (visible with `cargo test -- --nocapture`)
 /// and fail with every mismatch listed.

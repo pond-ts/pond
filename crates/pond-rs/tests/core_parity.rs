@@ -6,7 +6,9 @@
 
 mod common;
 
-use common::{CoreCase, CoreFixture, SeriesJson, compare_series, load_core_fixture, report};
+use common::{
+    CoreCase, CoreFixture, SeriesJson, check_coverage, compare_series, load_core_fixture, report,
+};
 
 /// Every op the fixture may contain. A new op in the fixture fails
 /// `fixture_ops_are_known` until it is listed here, so additions are noticed.
@@ -20,6 +22,10 @@ const KNOWN_OPS: &[&str] = &[
     "shift",
     "fill",
 ];
+
+/// Ops with an arm in [`run`]. Every fixture case for a listed op must run
+/// and match; an op that runs without being listed is also an error.
+const IMPLEMENTED_OPS: &[&str] = &[];
 
 /// Run one case through pond-rs. `None` means the op is not implemented yet.
 fn run(_fixture: &CoreFixture, case: &CoreCase) -> Option<SeriesJson> {
@@ -56,7 +62,15 @@ fn implemented_ops_match_pond_ts() {
     let mut implemented = 0;
     let mut failures = Vec::new();
     for case in &fixture.cases {
-        let Some(actual) = run(&fixture, case) else {
+        let actual = run(&fixture, case);
+        check_coverage(
+            &case.id,
+            &case.op,
+            IMPLEMENTED_OPS,
+            actual.is_some(),
+            &mut failures,
+        );
+        let Some(actual) = actual else {
             continue;
         };
         implemented += 1;
@@ -96,6 +110,16 @@ fn comparator_catches_mismatches() {
     let mut wrong = case.expected.clone();
     wrong.rows[1][1] = serde_json::Value::Null;
     assert!(compare_series(&case.expected, &wrong, Some(1.0)).is_err());
+
+    // A key written as 1000.0 instead of 1000 is the same key.
+    let mut same = case.expected.clone();
+    same.rows[1][0] = serde_json::json!(1000.0);
+    assert!(compare_series(&case.expected, &same, None).is_ok());
+
+    // A schema difference, including `required`, is caught.
+    let mut wrong = case.expected.clone();
+    wrong.schema[1].required = Some(true);
+    assert!(compare_series(&case.expected, &wrong, None).is_err());
 
     // A shifted key is caught.
     let mut wrong = case.expected.clone();
