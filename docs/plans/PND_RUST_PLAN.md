@@ -147,14 +147,73 @@ Decisions and findings:
 - The RFC said pond-ts runs on Node 24; this machine has Node 22.22, recorded
   with the numbers.
 
+## R1a step 2a — first slice (DONE)
+
+Shipped in `crates/pond-rs/src/`: `TimeSeries` (time keys, number columns,
+gaps as `NaN`), `Column`, `Sequence::every`, `Agg` / `Reducer`,
+`TimeSeries::rolling` (trailing time window) and `TimeSeries::aggregate`.
+Reducers: count, sum, avg (`mean`), min, max, first, last, median, stdev,
+`pNN`. All 23 rolling / aggregate cases in the core fixture pass with exact
+bits (34 cases total; the other ops are not ported yet).
+
+How parity is kept: each kernel is a step-for-step port of the pond-ts one it
+names (eight-lane block sums from 32 values, Welford stdev, quickselect for
+percentiles, the monotone deque for rolling min/max, the sorted array for
+rolling median). The fixture gained 8 cases that pin what the first 26 could
+not: a 300-row `noisy` input whose sums depend on addition order, with
+repeated times and signed zeros, plus column-order cases. Check that they
+pin it: making pond-rs sum sequentially fails `aggregate-noisy-30s-sum-avg` by
+one ulp.
+
+Decisions:
+
+- **Keys are `i64` milliseconds**, not `f64` as in pond-ts: Arrow timestamps
+  are integers, and bucket arithmetic is then exact. Fractional-millisecond
+  times are not representable; none have come up.
+- **Rolling `sum` / `avg` / `stdev` copy pond-ts as it is today, drift
+  included**, so parity can be exact. When [PND-ROLLSTD] lands they switch to
+  the fixed algorithm; the fixture will change with it.
+- **pond-ts's big-integer overflow lanes are not ported.** A rolling sum/avg
+  over a value of magnitude ≥ 2^960, or a rolling stdev over one ≥ 2^480,
+  returns `PondError::Unsupported` rather than a different answer.
+- **`Sequence::every("0s")` is an error.** pond-ts accepts it and then cannot
+  build the grid.
+- **Column order follows pond-ts**: `Agg::new` entries keep their order;
+  when every entry is an `Agg::of` shorthand, `rolling` puts them in schema
+  order (pond-ts sorts a shorthand map that way). `aggregate` keeps the given
+  order either way, as pond-ts does.
+- **Error text names the call and column** (lesson from [PND-ERRMSG]). The
+  harness still only checks that pond-rs errors where pond-ts throws.
+- `p<q>` reducer names: pond-ts reads `q` with JS `Number`, which also accepts
+  spaces and hex (`"p 5"`, `"p0x10"`); pond-rs rejects those spellings.
+
+Speed, compute only (no Arrow yet), workload A's shape in memory
+(`cargo run --release -p pond-rs --example perf_slice`), one thread, same
+machine as step 1:
+
+| step                                 | pond-rs | pond-ts (step 1, compute only) |
+| ------------------------------------ | ------- | ------------------------------ |
+| aggregate 1m, 16 outputs             | ~45 ms  | ~85–90 ms                      |
+| rolling 5m, avg + stdev on 4 columns | ~170 ms | ~1,090 ms without outages      |
+| total                                | ~220 ms | ~1,150 ms                      |
+
+Complexity: `aggregate` is O(N + B) per output (one walk; median /
+percentile copy each bucket and quickselect it). `rolling` is O(N) per output
+for count, sum, avg, stdev, first, last and amortised O(N) for min/max; median
+and percentiles insert into a sorted array, O(N·W) for a window of W values,
+as in pond-ts. Per-reducer cost, one column of 1M rows: count 13 ms, avg 18,
+stdev 24, min 36, median 136.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:
   1. ~~Baseline~~ — done, see "R1a step 1 — baseline (DONE)" above.
-  2. `Time` / `Interval` keys, `Sequence.every` and
-     `Sequence.calendar(unit, { timeZone })` (with `jiff`), NaN-as-missing
-     number columns, Arrow IPC in/out, `rolling`, `aggregate`; grow the
-     fixture with calendar cases that record the tzdb version.
+  2. ~~2a: keys, NaN-as-missing columns, `Sequence.every`, `rolling`,
+     `aggregate`~~ — done, see "R1a step 2a" above. **2b:**
+     `Sequence.calendar(unit, { timeZone })` (with `jiff`) and Arrow IPC
+     in/out; grow the fixture with calendar cases that record the tzdb
+     version; run pond-rs in `crates/pond-rs/bench/` and compare its 1M-row
+     outputs to pond-ts's exactly.
   3. Property tests independent of pond-ts (rolling `sum` = naive window
      re-sum; aggregate `count`s total the non-missing cells; …). A
      disagreement with the fixture is a pond-ts bug report first.

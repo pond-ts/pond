@@ -751,6 +751,27 @@ deleted builds green and breaks only downstream. If you mark something
 
 ---
 
+## pond-rs (Rust crate, unpublished)
+
+A native Rust implementation of pond's core, in progress (RFC
+[pond-rs.md](docs/rfcs/pond-rs.md), plan
+[PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md)). Not on crates.io yet.
+Results are checked bit for bit against pond-ts by `crates/pond-rs/tests/`.
+The authority is `crates/pond-rs/src/lib.rs`.
+
+| Export                                                    | Purpose                                                                                                                                 | Source                                                       |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `TimeSeries` (`new`, `rolling`, `aggregate`, `column`, …) | Time-keyed series of number columns; trailing time-window `rolling`; `aggregate` into a sequence's buckets                              | `crates/pond-rs/src/series.rs`, `rolling.rs`, `aggregate.rs` |
+| `Column` (`required`, `optional`, `optional_raw`)         | A value column handed to `TimeSeries::new`; `optional` columns may have gaps                                                            | `crates/pond-rs/src/series.rs`                               |
+| `Float64Column`                                           | Number column storage: gaps are `NaN` (any non-finite value), read as `None`                                                            | `crates/pond-rs/src/column.rs`                               |
+| `Key`, `IntervalKeys`, `ColumnDef`, `ColumnKind`          | Key column (time points or labelled intervals) and schema entries                                                                       | `crates/pond-rs/src/series.rs`                               |
+| `Sequence` (`every`, `every_ms`, `with_anchor`)           | Fixed-length bucket grid, anchored at epoch 0 by default                                                                                | `crates/pond-rs/src/sequence.rs`                             |
+| `Agg` (`of`, `new`), `Reducer` (`parse`)                  | Mapping entries (`Agg::of("cpu", Reducer::Avg)` = pond-ts `{ cpu: 'avg' }`); reducers count/sum/avg/min/max/first/last/median/stdev/pNN | `crates/pond-rs/src/reducer.rs`                              |
+| `parse_duration`                                          | `"5m"` → 300000 ms, pond-ts grammar                                                                                                     | `crates/pond-rs/src/duration.rs`                             |
+| `PondError`, `Result`                                     | The one error type; messages name the call and column                                                                                   | `crates/pond-rs/src/error.rs`                                |
+
+---
+
 ## Cross-package seams (where agents most often need the joint)
 
 - **Batch → charts**: a draw layer takes a pond `series` + `column` directly;

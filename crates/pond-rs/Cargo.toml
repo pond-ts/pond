@@ -14,4 +14,5 @@ publish = false
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: fixture numbers must parse to the exact f64 pond-ts wrote.
-serde_json = { version = "1", features = ["float_roundtrip"] }
+# preserve_order: mapping objects keep their key order (it sets column order).
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
