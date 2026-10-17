@@ -554,19 +554,23 @@ unstable on `main` today from blocked summation alone, with no workers involved.
 
 Not a commitment. Red-team it before anything commits to it.
 
-### pond-rs — native Rust core (RFC — not adopted)
+### pond-rs — native Rust core
 
-[`docs/rfcs/pond-rs.md`](docs/rfcs/pond-rs.md) proposes a native Rust
-implementation of pond's core and financial studies, for agents writing Rust,
-with a WASM bridge back into pond-ts later where it measurably pays.
+[`docs/rfcs/pond-rs.md`](docs/rfcs/pond-rs.md) — a native Rust implementation
+of pond's core and financial studies, for agents writing Rust, with a WASM
+bridge back into pond-ts later where it measurably pays. Building started
+2026-10-17; decisions, defaults (crate `pond-rs`, `jiff` for time zones) and
+shipped outcomes in [PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md). R0
+(workspace, CI, parity harness over the core fixture and the study oracle) is
+done.
 
-- **[PND-RUSTRFC]** — Red-team the RFC. Owner-confirmed so far (2026-10-17):
-  native first then WASM; lives in this monorepo as a Cargo workspace; schema
-  checked at runtime with precise errors; pond's own columns with Arrow
-  import/export; order batch → studies → live → WASM; charts out of scope.
-  Open: crate name (`pond` is taken), time-zone library, threads by default,
-  versioning, and the first acceptance workload. No build tasks until a phase
-  is adopted.
+- **[PND-RUST-R1]** — Batch core in Rust: key types, `Sequence.every`, the
+  columnar store, and the ops in `packages/core/test/fixtures/parity.json`
+  (rolling, aggregate, diff, rate, pctChange, cumulative, shift, fill), growing
+  the fixture as ops are added. Acceptance: every core fixture case passes.
+- **[PND-RUSTRFC]** — Still open from the RFC: threads by default, versioning
+  (lock-step with `v*` or independent), and the first agent acceptance
+  workload. Red-team before R2 commits to an API shape.
 
 ### `@pond-ts/financial`
 

@@ -1,10 +1,10 @@
 # RFC: pond-rs — a native Rust core
 
-**Status:** draft, **not adopted.** Nothing here is a commitment until a
-section is adopted into [`PLAN.md`](../../PLAN.md). Red-team it first.
+**Status:** **R0 and R1 adopted** into [`PLAN.md`](../../PLAN.md)
+(2026-10-17); R0 done. Later phases are not commitments until adopted.
 
-**Relationship to PLAN.md:** tracked as an RFC entry ([PND-RUSTRFC]). No
-build tasks yet.
+**Relationship to PLAN.md:** pond-rs section; breakout plan
+[`PND_RUST_PLAN.md`](../plans/PND_RUST_PLAN.md).
 
 **Evidence base:**
 

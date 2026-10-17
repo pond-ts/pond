@@ -32,3 +32,6 @@ packages/*/AGENTS.md
 # Python bytecode (oracle generator)
 __pycache__/
 *.pyc
+
+# Rust build output (pond-rs workspace)
+/target/

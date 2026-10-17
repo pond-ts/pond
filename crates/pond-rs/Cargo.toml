@@ -1,0 +1,17 @@
+[package]
+name = "pond-rs"
+version = "0.0.0"
+description = "Time series analytics: a native Rust implementation of pond"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+# Not published until R1 lands something worth using.
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+# float_roundtrip: fixture numbers must parse to the exact f64 pond-ts wrote.
+serde_json = { version = "1", features = ["float_roundtrip"] }

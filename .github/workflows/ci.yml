@@ -61,6 +61,30 @@ jobs:
         if: matrix.node-version == '24.x'
         run: npm pack --dry-run --workspace=pond-ts --workspace=@pond-ts/process
 
+  # pond-rs (docs/rfcs/pond-rs.md): format, lint and test the Rust workspace.
+  # Needs no Node: the parity tests read the committed pond-ts fixtures
+  # directly. `packages/core/test/parity-fixture.test.ts` (in `verify`) is what
+  # keeps the core fixture in step with pond-ts.
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
   # The docs site builds from package **source** (TypeDoc's entry points), not
   # from `dist`, so it can break on a change that `npm run verify` is perfectly
   # happy with. Because `Docs` only ever runs on a `v*` tag, such a break used
