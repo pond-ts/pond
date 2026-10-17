@@ -569,10 +569,10 @@ the study oracle) is done.
   columns, Arrow in/out, `rolling`, `aggregate`. Steps 1 (pond-ts and polars
   baseline, `crates/pond-rs/bench/`), 2a (series, `rolling`, `aggregate`) and
   2b (calendar sequences, Arrow in/out, pond-rs in
-  the benchmark) are done: pond-rs output equals pond-ts's to the bit on the
+  the benchmark) and 3 (property tests against brute force) are done: pond-rs output equals pond-ts's to the bit on the
   1M-row benchmark and is ~6–8× faster single-threaded; it is not yet within
   1.25× of polars on four cores, which needs threading (next, with
-  property tests). A revised memory target awaits pjm17971. Acceptance is predeclared targets for
+  columns that use Arrow's memory, as pjm17971 chose). A revised memory target awaits pjm17971. Acceptance is predeclared targets for
   correctness, speed against pond-ts and polars, memory, determinism and an
   agent trial (RFC Amendment 1, after the Codex review). A miss means redesign,
   not stop: the direction is committed.

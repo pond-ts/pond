@@ -296,6 +296,13 @@ const CASES = [
     [calendar('day', 'Pacific/Apia'), { v: 'sum' }],
   ],
   [
+    // The week from Friday 2011-12-30 (a date Apia skipped) starts on the 31st.
+    'aggregate-calendar-week-apia-skipped-start',
+    'apia',
+    'aggregate',
+    [calendar('week', 'Pacific/Apia', 5), { v: 'sum' }],
+  ],
+  [
     'aggregate-calendar-day-fixed-offset',
     'dst',
     'aggregate',

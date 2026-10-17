@@ -333,6 +333,43 @@ Found on the way:
   it should be weighed when threading is designed, since both change how
   columns are shared.
 
+## R1a step 3 — property tests (DONE)
+
+`crates/pond-rs/tests/properties.rs` checks pond-rs against the slow,
+obvious answer on random inputs neither pond-ts nor pond-rs was written
+against (300 seeded cases per test, ~3 s in a debug build):
+
+- **rolling**: for every row, filter the rows in `(t - window, t]` and
+  reduce them naively; all eleven reducer shapes (count, sum, avg, min, max,
+  first, last, median, stdev, p0, p37.5). Exact reducers must agree exactly;
+  sum / avg / stdev within `128 · 1e-12 · max|v|` (they add in a different
+  order). Inputs have repeated times, 0–95% gaps, flat windows.
+- **aggregate, fixed steps**: the buckets are the anchor's grid, back to
+  back, from the bucket holding the first row to the one holding the last,
+  with nothing extra; each bucket's row equals a naive filter of
+  `begin <= t < end`.
+- **calendar buckets**: checked from first principles with jiff, in 8 zones
+  (DST at 02:00, at midnight, a half-hour shift, Apia's skipped day, no DST,
+  a fixed offset) and all five units with random week starts. Each bucket
+  starts at the first instant of its local date; that date starts a unit;
+  buckets are back to back; no unit start falls inside a bucket. Half the
+  cases start just before a known awkward day _in its own zone_ (a first
+  draft picked zone and day separately and hit Apia's skipped day about once
+  in 300 runs, so it missed the old Apia bug).
+- **aggregate, calendar**: the same naive row check over DST-straddling
+  series.
+
+Each test was shown to fail on a deliberately broken copy: the old Apia
+zero-length bucket, fixed 24-hour days, a rolling window closed at its low
+end, an aggregate bucket closed at its high end, a wrong percentile rank.
+
+**Found:** where a week's first date was skipped (Apia, weeks from Friday,
+2011-12-30), the bucket starts at the first instant after the gap
+(Saturday 00:00). The first draft of the test assumed every bucket starts on
+a unit-start date and failed there; pond-ts does the same thing as pond-rs
+(new fixture case `aggregate-calendar-week-apia-skipped-start`), so the test
+was wrong, not the code. No pond-ts or pond-rs bugs found.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:
@@ -340,13 +377,14 @@ Found on the way:
   2. ~~2a: keys, NaN-as-missing columns, `Sequence.every`, `rolling`,
      `aggregate`; 2b: calendar sequences, Arrow in/out, pond-rs in the
      benchmark~~ — done, see "R1a step 2a" and "R1a step 2b" above.
-  3. Property tests independent of pond-ts (rolling `sum` = naive window
-     re-sum; aggregate `count`s total the non-missing cells; …). A
-     disagreement with the fixture is a pond-ts bug report first.
+  3. ~~Property tests independent of pond-ts~~ — done, see "R1a step 3"
+     above.
   4. Threading behind a `parallel` feature (columns and buckets are
      independent, so work splits across cores; results must stay identical
-     to one thread). Weigh Arrow-backed (non-owning) columns at the same time;
-     see "Found on the way" under step 2b.
+     to one thread), together with Arrow-backed (non-owning) columns:
+     pjm17971 chose those on 2026-10-17 (columns may use Arrow's memory
+     rather than their own copy; still NaN-for-gap). See "Found on the way"
+     under step 2b.
   5. Benchmarks A (generic, 1M rows) and B (DST calendar buckets) against
      pond-ts, pond-rs 1-thread / all-core, polars 1-thread / all-core, plus
      an agent trial on B — targets in RFC Amendment 1. A miss means redesign
