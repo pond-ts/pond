@@ -145,7 +145,10 @@ pub struct TimeSeries {
 
 /// Largest key time, in epoch milliseconds, either side of 1970: the range
 /// of a JavaScript `Date` (so of pond-ts), 100 million days. Keeping keys in
-/// it leaves room for any window or step arithmetic in `i64`.
+/// it leaves room for any window or step arithmetic in `i64`. Checked on
+/// every series built from outside data; a derived series can go one bucket
+/// past it (`aggregate` of a row near the limit gives a bucket whose end is
+/// beyond it), as pond-ts's does.
 pub const MAX_TIME_MS: i64 = 8_640_000_000_000_000;
 
 impl TimeSeries {

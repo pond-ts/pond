@@ -261,6 +261,7 @@ fn comparator_catches_mismatches() {
     assert!(common::compare_number(-0.0, 0.0, Some(1.0)).is_err());
     assert!(common::compare_number(0.0, -0.0, Some(1.0)).is_err());
     assert!(common::compare_number(-0.0, -0.0, Some(1.0)).is_ok());
+    assert!(common::compare_number(0.0, -1e-20, Some(1e-12)).is_ok());
 
     // An infinity never matches a finite value, tolerance or not.
     let mut wrong = expected.clone();

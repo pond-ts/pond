@@ -204,7 +204,8 @@ fn compare_cell(expected: &Value, actual: &Value, tolerance: Option<f64>) -> Res
 pub fn compare_number(expected: f64, actual: f64, tolerance: Option<f64>) -> Result<(), String> {
     let same_bits =
         expected.to_bits() == actual.to_bits() || (expected.is_nan() && actual.is_nan());
-    let zero_sign_differs = (expected == 0.0 || actual == 0.0)
+    let zero_sign_differs = expected == 0.0
+        && actual == 0.0
         && expected.is_sign_negative() != actual.is_sign_negative();
     let ok = match tolerance {
         _ if zero_sign_differs => false,

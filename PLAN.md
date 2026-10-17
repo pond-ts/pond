@@ -593,7 +593,9 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   then throws ("row 1 col 1 (v) is required"). Reproduced 2026-10-17 with a
   nullable Float64 column `[1, null]`. Proposed fix: take `required` from the
   Arrow field's nullability, as pond-rs now does (Codex review of pond-rs,
-  finding 5), so both read the same file to the same schema.
+  finding 5), so both read the same file to the same schema. Until then they
+  differ on every pyarrow / polars file (both mark fields nullable by
+  default): pond-rs reads such columns as optional, pond-ts as required.
 
 ### `@pond-ts/financial`
 
