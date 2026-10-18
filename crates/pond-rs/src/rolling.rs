@@ -552,7 +552,8 @@ fn check_magnitude(column: &Column, reducer: Reducer) -> Result<()> {
         Reducer::Stdev => STDEV_SPLIT,
         _ => return Ok(()),
     };
-    // Decimals reach the f64 kernels below 1.7e38, far under either split.
+    // Decimals reach the f64 kernels below 1e76 (38 digits, scale down to
+    // -38), far under either split (2^480 is about 3e144).
     let Ok(values) = column.numbers().map(|c| c.values()) else {
         return Ok(());
     };

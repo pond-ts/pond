@@ -246,4 +246,29 @@ mod tests {
             "{err}"
         );
     }
+
+    #[test]
+    fn negative_scales_work_and_round_trip() {
+        // 12 at scale -3 is 12000.
+        let c = DecimalColumn::from_options([Some(12), None, Some(-5)], -3).unwrap();
+        assert_eq!(c.get(0).unwrap().to_string(), "12000");
+        assert_eq!(c.get(0).unwrap().to_f64(), 12000.0);
+        let s = TimeSeries::new("s", vec![0, 1000, 2000], vec![Column::optional("d", c)]).unwrap();
+        let mut bytes = Vec::new();
+        s.write_ipc(&mut bytes).unwrap();
+        let back = TimeSeries::from_ipc_bytes("s", bytes, "time").unwrap();
+        let d = back.column("d").unwrap().decimals().unwrap();
+        assert_eq!(d.scale(), -3);
+        assert_eq!(d, s.column("d").unwrap().decimals().unwrap());
+        let m = s
+            .aggregate(
+                &Sequence::every("1m").unwrap(),
+                &[Agg::new("t", "d", Reducer::Sum)],
+            )
+            .unwrap();
+        let total = m.column("t").unwrap().decimals().unwrap().get(0).unwrap();
+        assert_eq!(total.to_string(), "7000");
+        // Precision still counts digits stored: 10^38 is one too many.
+        assert!(DecimalColumn::from_values(vec![10i128.pow(38)], -5).is_err());
+    }
 }

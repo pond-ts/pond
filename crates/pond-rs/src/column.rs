@@ -275,7 +275,9 @@ impl BooleanColumn {
 }
 
 /// One exact decimal: `value × 10^-scale`, so `Decimal { value: 125, scale:
-/// 2 }` is `1.25`. Prints as a decimal (`1.25`).
+/// 2 }` is `1.25`. Prints as a decimal (`1.25`). Equality compares `value`
+/// and `scale` as stored, so `1.25` at scale 2 is not equal to `1.250` at
+/// scale 3 (a column has one scale, so within a column this never arises).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Decimal {
     /// The whole number stored (Arrow's raw `i128`).
@@ -290,8 +292,13 @@ impl Decimal {
     pub fn to_f64(self) -> f64 {
         // Both parts are exact and one division rounds once.
         const EXACT: u128 = 1 << 53;
-        if (0..=22).contains(&self.scale) && self.value.unsigned_abs() <= EXACT {
-            return self.value as f64 / 10f64.powi(i32::from(self.scale));
+        if (-22..=22).contains(&self.scale) && self.value.unsigned_abs() <= EXACT {
+            let power = 10f64.powi(i32::from(self.scale.abs()));
+            return if self.scale >= 0 {
+                self.value as f64 / power
+            } else {
+                self.value as f64 * power
+            };
         }
         // Rust's float parsing rounds correctly.
         self.to_string().parse().expect("a decimal parses as f64")
@@ -359,9 +366,23 @@ impl DecimalColumn {
         let array = array
             .with_precision_and_scale(precision, scale)
             .map_err(invalid)?;
-        array
-            .validate_decimal_precision(precision)
-            .map_err(invalid)?;
+        // Not arrow's validate_decimal_precision: it casts the scale to u8,
+        // so it refuses every negative scale.
+        let max = 10u128.pow(u32::from(precision)) - 1;
+        if let Some(i) =
+            (0..array.len()).find(|&i| array.is_valid(i) && array.value(i).unsigned_abs() > max)
+        {
+            return Err(crate::error::PondError::InvalidData {
+                call: "DecimalColumn",
+                message: format!(
+                    "row {i}: {} has more than {precision} digits (the precision)",
+                    Decimal {
+                        value: array.value(i),
+                        scale
+                    }
+                ),
+            });
+        }
         Ok(Self { values: array })
     }
 

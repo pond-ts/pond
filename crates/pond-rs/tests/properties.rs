@@ -522,7 +522,8 @@ fn decimal_reducers_are_exact() {
                 })
             })
             .collect();
-        let scale = rng.below(6) as i8;
+        // Negative scales and scales past 22 (where to_f64 parses text).
+        let scale = rng.below(30) as i8 - 4;
         let s = TimeSeries::new(
             "s",
             times.clone(),
