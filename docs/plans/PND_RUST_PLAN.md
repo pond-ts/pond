@@ -566,17 +566,79 @@ The one result short of a clean win is one-core B: polars is faster
   garbage not yet collected; it is indicative only. For pond-rs and polars
   (no garbage collector) it is a clean measure, which is what the target
   compares. Met after step 4: A 192 MB vs polars 256 MB; B 78 vs 110 MB.
-- **[PND-RUSTOUT]** — Let a caller choose the output layout. Found by the
-  agent trial, where 10 of 10 pond-rs agents hit it. Today `to_arrow` /
-  `write_ipc` on an aggregate always write `interval`, `intervalEnd`, the
-  values, then `intervalLabel`. Nothing renames or drops a key field, so a
-  caller wanting `day_start` + values builds the Arrow batch by hand. That
-  also needs `arrow-ipc`, which pond-rs does not re-export (it re-exports
-  `arrow_array` and `arrow_schema`). Likely shape: re-export `arrow_ipc`,
-  plus a rename / select on `TimeSeries` (pond-ts has `rename` and `select`,
-  so this is parity, not new vocabulary). Fold into R1b.
-- **[PND-RUST-R1B]** — Rest of batch core (`align`, `partitionBy`, `join`,
-  remaining element-wise ops). Not adopted until R1a reports.
+- **[PND-RUST-R1B]** — Rest of batch core. Adopted 2026-10-18 by pjm17971
+  ("start it"). R1b has no predeclared speed targets. Instead every step
+  has to meet four rules:
+  - Each new operation gets cases in the core parity fixture
+    (`packages/core/scripts/parity/cases.mjs`), checked bit for bit,
+    including the cases where pond-ts throws.
+  - Property tests (`tests/properties.rs`) cover any operation whose answer
+    can be computed independently in a few lines.
+  - Operations that walk rows get the CLAUDE.md performance check.
+  - The work is done in the order below; a step can move earlier when a
+    consumer needs it.
+
+  The order follows dependencies. Groups need non-number columns, and most
+  of the later steps need groups.
+  1. **Reshape and output layout** ([PND-RUSTOUT]):
+     - `select`, `rename`, `as_time(At)` and `TimeSeries::from_intervals`.
+     - Re-export `arrow_ipc`.
+
+     Doing this first fixes what every agent in the R1a trial hit.
+
+  2. **Column kinds.** Columns become text and true/false as well as
+     numbers, with Arrow in and out for each. Also `TimeRange` keys and
+     text interval labels. This is the big API change: `Column` stops being
+     number-only. The plan is a typed column enum, still checked at runtime,
+     per the RFC.
+  3. **Row-wise operations:**
+     - `filter`, `slice`, `with_column`, `map` (Rust closures).
+     - `diff`, `rate`, `pct_change`, `cumulative`, `shift`, `fill`.
+
+     The fixture already has `diff` / `rate` / `pctChange` / `cumulative` /
+     `shift` / `fill` cases waiting.
+
+  4. **Groups:**
+     - `partition_by` (one or more columns), with per-partition `rolling` /
+       `aggregate` / `fill` / step-3 operations, and `collect`.
+     - `group_by`.
+
+     Partitions run on several cores with the same bits as one. This is the
+     agent-workload pitch ([PND-AGENTBENCH] Q11: 500 symbols × 1000 bars).
+
+  5. **Grid operations:** `align`, `materialize`, `dedupe`.
+  6. **`join`.**
+  7. **The rest, as friction asks for it:**
+     - Queries (`at`, `bisect`, `nearest`, …) and range selection (`within`,
+       `trim`, …).
+     - `reduce`, `by_column`, `smooth`, `baseline` / `outliers`,
+       `pivot_by_group`, `collapse`, `sample`, `scan`.
+     - Array columns.
+
+     Some of these may never be needed. They are not built until there is a
+     reason to.
+
+  An agent trial at the end of step 4 repeats the R1a setup on a
+  partitioned workload.
+
+  **Step 1 (in progress, 2026-10-18):** done in code.
+  - Choices, all matching pond-ts:
+    - `select` keeps schema order, so a repeated name selects the column
+      once.
+    - `rename` is applied all at once, so `a↔b` swaps work, and it refuses
+      to rename the key.
+    - `as_time` on a time-keyed series renames the key to `time`.
+    - `as_time` with End or Center refuses overlapping intervals rather than
+      reorder rows.
+  - Differences from pond-ts:
+    - The key still cannot be renamed, so a caller wanting `day_start`
+      renames that one Arrow field.
+    - An interval with an odd length in milliseconds has no whole-ms
+      centre. pond-rs refuses it (error) where pond-ts gives `x.5`. pond-rs
+      keys are whole milliseconds; fractional keys are a step-2 question.
+    - Interval labels are numbers only until step 2.
+  - Fixture: 18 new cases, 52 of 63 now run in pond-rs.
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).

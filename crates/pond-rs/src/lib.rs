@@ -57,6 +57,7 @@ mod duration;
 mod error;
 mod par;
 mod reducer;
+mod reshape;
 mod rolling;
 mod sequence;
 mod series;
@@ -65,6 +66,7 @@ pub use column::Float64Column;
 pub use duration::parse_duration;
 pub use error::{PondError, Result};
 pub use reducer::{Agg, Reducer};
+pub use reshape::At;
 pub use sequence::{CalendarUnit, Sequence, tzdb_version};
 pub use series::{Column, ColumnDef, ColumnKind, IntervalKeys, Key, MAX_TIME_MS, TimeSeries};
 
@@ -73,4 +75,4 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The Arrow crates pond-rs reads and writes, re-exported so callers use the
 /// same versions.
-pub use {arrow_array, arrow_schema};
+pub use {arrow_array, arrow_ipc, arrow_schema};

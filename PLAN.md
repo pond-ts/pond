@@ -564,15 +564,19 @@ shipped outcomes in [PND_RUST_PLAN.md](docs/plans/PND_RUST_PLAN.md). R0
 (workspace, CI incl. a wasm32 build, parity harness over the core fixture and
 the study oracle) is done.
 
-- **[PND-RUST-R1B]** — Rest of batch core (`align`, `partitionBy`, `join`,
-  remaining element-wise ops). R1a is complete and met every predeclared
-  target (report: "R1a step 5" in `docs/plans/PND_RUST_PLAN.md`): bit-identical
-  to pond-ts, ~6.5× pond-ts on one core, faster than polars on four cores,
-  less memory than polars, and an agent trial at 10/10 right with fewer
-  retries than polars. Adopting R1b awaits pjm17971.
-- **[PND-RUSTOUT]** — Let pond-rs callers choose the output layout (rename /
-  select key and value fields, re-export `arrow_ipc`). Every pond-rs agent in
-  the R1a trial had to build the Arrow batch by hand. Fold into R1b.
+- **[PND-RUST-R1B]** — Rest of batch core, adopted 2026-10-18 after R1a met
+  every target (report: "R1a step 5" in `docs/plans/PND_RUST_PLAN.md`).
+  Steps, each bit-for-bit against pond-ts:
+  1. Reshape and output layout ([PND-RUSTOUT] folded in): in progress.
+  2. Text and true/false columns.
+  3. Row-wise operations.
+  4. `partition_by` / `group_by`, threaded across partitions.
+  5. `align` / `materialize` / `dedupe`.
+  6. `join`.
+  7. The rest, as friction asks.
+
+  Detail in the breakout plan.
+
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
   independent).
 - **[PND-ROLLGAP]** — pond-ts time-window `rolling` gets ~60% slower when a
