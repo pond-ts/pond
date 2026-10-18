@@ -174,6 +174,36 @@ impl TimeSeries {
         )
     }
 
+    /// Build an interval-keyed series, the shape `aggregate` returns. The key
+    /// column is always named `"interval"` (pond-ts takes the name from the
+    /// schema; pond-rs has no way to choose it yet). Row `i` covers `[begin[i], end[i])` and
+    /// is labelled `label[i]`; rows must be ordered by `begin`, and the same
+    /// time limits as [`TimeSeries::new`] apply.
+    ///
+    /// ```
+    /// # use pond_rs::{Column, IntervalKeys, TimeSeries};
+    /// let days = TimeSeries::from_intervals(
+    ///     "days",
+    ///     IntervalKeys { label: vec![0, 86_400_000], begin: vec![0, 86_400_000], end: vec![86_400_000, 172_800_000] },
+    ///     vec![Column::required("total", vec![12.0, 7.5])],
+    /// )?;
+    /// assert_eq!(days.key_name(), "interval");
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    pub fn from_intervals(
+        name: impl Into<String>,
+        keys: IntervalKeys,
+        columns: Vec<Column>,
+    ) -> Result<Self> {
+        Self::with_key(
+            "TimeSeries::from_intervals",
+            name.into(),
+            "interval".into(),
+            Key::Interval(keys),
+            columns,
+        )
+    }
+
     /// Build a series with any key, checking every rule.
     pub(crate) fn with_key(
         call: &'static str,

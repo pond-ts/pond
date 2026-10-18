@@ -379,6 +379,47 @@ const CASES = [
     [every('1s'), { a: 'bogus' }],
   ],
   ['error-negative-window', 'gappy', 'rolling', ['-1s', { a: 'avg' }]],
+  // reshape: select / rename / asTime (no new values, so every cell is exact)
+  ['select-b', 'gappy', 'select', ['b']],
+  ['select-none', 'gappy', 'select', []],
+  ['select-repeat-keeps-schema-order', 'gappy', 'select', ['b', 'a', 'b']],
+  ['select-error-unknown', 'gappy', 'select', ['zz']],
+  ['rename-a', 'gappy', 'rename', [{ a: 'x' }]],
+  ['rename-swap', 'gappy', 'rename', [{ a: 'b', b: 'a' }]],
+  ['rename-to-self', 'gappy', 'rename', [{ a: 'a' }]],
+  ['rename-error-key', 'gappy', 'rename', [{ time: 't' }]],
+  ['rename-error-collision', 'gappy', 'rename', [{ a: 'b' }]],
+  ['rename-error-to-key', 'gappy', 'rename', [{ a: 'time' }]],
+  ['rename-error-unknown', 'gappy', 'rename', [{ zz: 'q' }]],
+  ['asTime-begin', 'buckets', 'asTime', [{ at: 'begin' }]],
+  ['asTime-default', 'buckets', 'asTime', []],
+  ['asTime-center', 'buckets', 'asTime', [{ at: 'center' }]],
+  ['asTime-end', 'buckets', 'asTime', [{ at: 'end' }]],
+  ['asTime-time-key', 'gappy', 'asTime', [{ at: 'end' }]],
+  ['asTime-error-end-overlap', 'overlap', 'asTime', [{ at: 'end' }]],
+  ['asTime-error-center-overlap', 'overlap', 'asTime', [{ at: 'center' }]],
+  ['asTime-error-time-column', 'timeColumn', 'asTime', []],
+];
+
+// Interval-keyed inputs (label, begin, end), the shape `aggregate` returns.
+// Even lengths only: pond-rs keeps whole milliseconds, so it refuses a centre
+// on a half millisecond (see `as_time`), which pond-ts would give as x.5.
+const INTERVAL_SCHEMA = [
+  { name: 'interval', kind: 'interval' },
+  { name: 'a', kind: 'number', required: false },
+  { name: 'b', kind: 'number', required: false },
+];
+const BUCKET_ROWS = [
+  [[0, 0, 5000], 1, 10],
+  [[5000, 5000, 10000], null, 12],
+  [[10000, 10000, 20000], 4, null],
+  [[20000, 20000, 21000], null, null],
+];
+// The first interval contains the second, so anchoring at end or centre
+// would put the rows out of order.
+const OVERLAP_ROWS = [
+  [[0, 0, 5000], 1, 2],
+  [[1000, 1000, 2000], 3, 4],
 ];
 
 /** Tag the numbers plain JSON would lose or change. */
@@ -441,6 +482,25 @@ export function buildFixture(pond) {
     santiago: series('santiago', SANTIAGO_ROWS),
     apia: series('apia', APIA_ROWS),
     seasons: series('seasons', SEASON_ROWS),
+    buckets: TimeSeries.fromJSON({
+      name: 'buckets',
+      schema: INTERVAL_SCHEMA,
+      rows: BUCKET_ROWS,
+    }),
+    overlap: TimeSeries.fromJSON({
+      name: 'overlap',
+      schema: INTERVAL_SCHEMA,
+      rows: OVERLAP_ROWS,
+    }),
+    // A value column named `time` clashes with the key `asTime` makes.
+    timeColumn: TimeSeries.fromJSON({
+      name: 'timeColumn',
+      schema: [
+        { name: 'interval', kind: 'interval' },
+        { name: 'time', kind: 'number' },
+      ],
+      rows: [[[0, 0, 1000], 1]],
+    }),
     extreme: TimeSeries.fromJSON({
       name: 'extreme',
       schema: [

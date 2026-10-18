@@ -11,7 +11,7 @@ use common::{
     ColumnDef, CoreCase, CoreFixture, SeriesJson, cell_number, check_case, check_coverage,
     compare_series, load_core_fixture, report,
 };
-use pond_rs::{Agg, Column, ColumnKind, Key, Reducer, Sequence, TimeSeries};
+use pond_rs::{Agg, At, Column, ColumnKind, IntervalKeys, Key, Reducer, Sequence, TimeSeries};
 use serde_json::{Value, json};
 
 /// Every op the fixture may contain. A new op in the fixture fails
@@ -25,11 +25,14 @@ const KNOWN_OPS: &[&str] = &[
     "cumulative",
     "shift",
     "fill",
+    "select",
+    "rename",
+    "asTime",
 ];
 
 /// Ops with an arm in [`run`]. Every fixture case for a listed op must run
 /// and match; an op that runs without being listed is also an error.
-const IMPLEMENTED_OPS: &[&str] = &["rolling", "aggregate"];
+const IMPLEMENTED_OPS: &[&str] = &["rolling", "aggregate", "select", "rename", "asTime"];
 
 /// Run one case through pond-rs. `None` means the op is not implemented yet.
 fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<SeriesJson, String>> {
@@ -41,6 +44,32 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<SeriesJson, Stri
         }
         "aggregate" => sequence(&case.args[0]["sequence"])
             .and_then(|seq| mapping(&case.args[1]).and_then(|aggs| input.aggregate(&seq, &aggs))),
+        "select" => {
+            let names: Vec<&str> = case
+                .args
+                .iter()
+                .map(|a| a.as_str().expect("select takes column names"))
+                .collect();
+            input.select(&names)
+        }
+        "rename" => {
+            let renames: Vec<(&str, &str)> = case.args[0]
+                .as_object()
+                .expect("rename takes a mapping")
+                .iter()
+                .map(|(from, to)| (from.as_str(), to.as_str().expect("new name")))
+                .collect();
+            input.rename(&renames)
+        }
+        "asTime" => {
+            let at = match case.args.first().and_then(|o| o["at"].as_str()) {
+                None | Some("begin") => At::Begin,
+                Some("center") => At::Center,
+                Some("end") => At::End,
+                Some(other) => panic!("unknown asTime anchor {other}"),
+            };
+            input.as_time(at)
+        }
         _ => return None,
     };
     Some(result.map(|s| to_json(&s)).map_err(|e| e.to_string()))
@@ -64,16 +93,12 @@ fn sequence(json: &Value) -> pond_rs::Result<Sequence> {
 
 /// A fixture input series as a pond-rs `TimeSeries`.
 fn to_series(json: &SeriesJson) -> TimeSeries {
-    assert_eq!(
-        json.schema[0].kind, "time",
-        "{}: inputs are time-keyed",
+    let key_kind = json.schema[0].kind.as_str();
+    assert!(
+        key_kind == "time" || key_kind == "interval",
+        "{}: inputs are time- or interval-keyed",
         json.name
     );
-    let time = json
-        .rows
-        .iter()
-        .map(|row| row[0].as_i64().expect("time key is an integer"))
-        .collect();
     let columns = json.schema[1..]
         .iter()
         .enumerate()
@@ -94,7 +119,20 @@ fn to_series(json: &SeriesJson) -> TimeSeries {
             }
         })
         .collect();
-    TimeSeries::new(&json.name, time, columns).expect("fixture input is a valid series")
+    let ms = |v: &Value| v.as_i64().expect("key times are integers");
+    if key_kind == "time" {
+        let time = json.rows.iter().map(|row| ms(&row[0])).collect();
+        TimeSeries::new(&json.name, time, columns).expect("fixture input is a valid series")
+    } else {
+        let part = |p: usize| json.rows.iter().map(|row| ms(&row[0][p])).collect();
+        let keys = IntervalKeys {
+            label: part(0),
+            begin: part(1),
+            end: part(2),
+        };
+        TimeSeries::from_intervals(&json.name, keys, columns)
+            .expect("fixture input is a valid series")
+    }
 }
 
 /// pond-ts mapping object: `{ out: 'avg' }` (shorthand) or
