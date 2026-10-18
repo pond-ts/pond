@@ -569,8 +569,8 @@ the study oracle) is done.
   Steps, each bit-for-bit against pond-ts:
   1. ~~Reshape and output layout~~ — done (#770).
   2. Column kinds: ~~(a) text and true/false columns (#771); (b)
-     `TimeRange` keys and text interval labels~~ — done; (c) more Arrow
-     input ([PND-RUSTARROWIN]); (d) exact decimals ([PND-RUSTDEC]).
+     `TimeRange` keys and text interval labels (#772); (c) more Arrow
+     input~~ — done; (d) exact decimals ([PND-RUSTDEC]).
   3. Row-wise operations.
   4. `partition_by` / `group_by`, threaded across partitions.
   5. `align` / `materialize` / `dedupe`.
@@ -590,18 +590,12 @@ the study oracle) is done.
   error cases: `diff('nope')` throws a raw `Cannot read properties of
 undefined`; `rolling` with an unknown column says "aggregate mapping".
   Agents act on error text, so both should name the column and the call.
-- **[PND-RUSTARROWIN]** — pond-rs reads more of the Arrow files people
-  actually have (R1b step 2c, adopted 2026-10-18). From a probe of 17
-  pyarrow / polars files: compressed IPC (pandas `to_feather()` is LZ4 by
-  default; polars can write ZSTD), the IPC stream format, timestamp and date
-  value columns (as epoch-ms numbers, as pond-ts reads them), and the cheap
-  extras (all-null `Null` columns, `Float16`, dictionaries of numbers).
-  Detail in `PND_RUST_PLAN.md`.
 - **[PND-RUSTDEC]** — Exact decimals (Arrow `Decimal128`: whole numbers with
   a fixed count of decimal places) in pond-rs, R1b step 2d. Peter
-  (2026-10-18): "pretty important". pond-ts has no decimal kind, so the
-  design question is whether pond-rs reads them as `f64` like every other
-  number or keeps them exact as a new column kind. Options in
+  (2026-10-18): "pretty important", and chose a new exact decimal column
+  kind (i128 plus scale; exact `sum` / `min` / `max` / `first` / `last` /
+  `count`, `f64` for `avg` and the rest) over reading them as `f64`. pond-ts
+  has no decimal kind, so this is pond-rs-only. Detail in
   `PND_RUST_PLAN.md`.
 - **[PND-ARROWTSVAL]** — pond-ts `fromArrow` reads a `Timestamp` value
   column (not the key) as raw counts in its own unit: a microsecond column

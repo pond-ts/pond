@@ -12,7 +12,9 @@ publish = false
 [dependencies]
 arrow-array = { version = "59.3.1", default-features = false }
 arrow-buffer = { version = "59.3.1", default-features = false }
-arrow-ipc = { version = "59.3.1", default-features = false }
+# lz4 and zstd: read compressed IPC (pandas `to_feather` writes LZ4 by default).
+# zstd is C code; it builds for wasm32 with clang and needs no imports there.
+arrow-ipc = { version = "59.3.1", default-features = false, features = ["lz4", "zstd"] }
 arrow-schema = { version = "59.3.1", default-features = false }
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 jiff-tzdb = "0.1.9" # same crate jiff bundles; read only for its VERSION

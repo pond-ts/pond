@@ -1,0 +1,77 @@
+{
+ "date32": [
+  86400000,
+  null,
+  -86400000
+ ],
+ "date64": [
+  86400000,
+  null,
+  0
+ ],
+ "duration_us": [
+  2,
+  -0.5,
+  null
+ ],
+ "feather_lz4": [
+  1.5,
+  null,
+  -2.0
+ ],
+ "float16": [
+  0.5,
+  null,
+  -2.0
+ ],
+ "int_dictionary": [
+  9,
+  null,
+  7
+ ],
+ "null": [
+  null,
+  null,
+  null
+ ],
+ "polars_zstd": [
+  1.5,
+  null,
+  -2.0
+ ],
+ "stream": [
+  1.5,
+  null,
+  -2.0
+ ],
+ "time32_ms": [
+  1,
+  60000,
+  null
+ ],
+ "time64_ns": [
+  1,
+  1e-06,
+  null
+ ],
+ "timestamp_ns": [
+  1700000000000.0,
+  0.25,
+  null
+ ],
+ "timestamp_s": [
+  1000,
+  2000,
+  null
+ ],
+ "timestamp_us": [
+  1.5,
+  null,
+  -1.5
+ ],
+ "zstd": [
+  1.5,
+  null,
+  -2.0
+ ]
+}
