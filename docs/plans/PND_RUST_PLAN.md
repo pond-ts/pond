@@ -817,8 +817,8 @@ The one result short of a clean win is one-core B: polars is faster
        error. Keys must be whole milliseconds because every operation
        buckets on them; a value is just a number, and refusing it would
        make every pandas nanosecond column with real sub-ms times
-       unreadable. Whole milliseconds are exact; the fraction is rounded
-       once. A value whose whole milliseconds exceed 2^53 (not exactly
+       unreadable. Whole milliseconds are exact; the fraction can be one unit in the
+       last place off. A value whose whole milliseconds exceed 2^53 (not exactly
        representable) is an error. This does not copy pond-ts's unscaled
        `Timestamp(us)` read ([PND-ARROWTSVAL]).
     4. **Extras.** A `Null` column is an all-gap number column; `Float16`

@@ -55,6 +55,12 @@ const READ: &str = "TimeSeries::read_ipc";
 /// panics abort, a corrupt file still aborts.
 fn decode_ipc(bytes: Vec<u8>) -> Result<Vec<RecordBatch>> {
     // The file format starts (and ends) with this magic; a stream does not.
+    if bytes.is_empty() {
+        return Err(invalid(
+            READ,
+            "no bytes: an empty Arrow IPC file or stream".into(),
+        ));
+    }
     let is_file = bytes.starts_with(b"ARROW1");
     std::panic::catch_unwind(move || {
         if is_file {
@@ -628,16 +634,17 @@ fn time_unit(data_type: &DataType) -> Option<(i64, i64)> {
 /// `i64`: borrowed when they already are, widened into a copy when not.
 fn with_raw_i64<R>(array: &ArrayRef, f: impl FnOnce(&[i64]) -> R) -> R {
     let data = array.to_data();
+    let len = array.len();
     match data.data_type().primitive_width() {
-        Some(8) => f(data.buffer::<i64>(0)),
-        _ => {
-            let wide: Vec<i64> = data
-                .buffer::<i32>(0)
+        Some(8) => f(&data.buffer::<i64>(0)[..len]),
+        Some(4) => {
+            let wide: Vec<i64> = data.buffer::<i32>(0)[..len]
                 .iter()
                 .map(|&v| i64::from(v))
                 .collect();
             f(&wide)
         }
+        other => unreachable!("time types are 32 or 64 bits wide, not {other:?}"),
     }
 }
 
@@ -648,7 +655,8 @@ const MAX_EXACT_F64: i64 = 1 << 53;
 /// timestamps and dates, a length for times of day and durations). Nulls
 /// become NaN. Unlike a key, a value may have a fractional millisecond
 /// (`Timestamp(us)` 1.5 ms reads as `1.5`): the whole milliseconds are
-/// exact, and the fraction is rounded to the nearest `f64` once added.
+/// exact; the fraction is computed as an `f64` and then added, so the
+/// result can be one unit in the last place from the nearest `f64`.
 fn read_time_values(
     array: &ArrayRef,
     name: &str,
@@ -1211,6 +1219,43 @@ mod tests {
         .unwrap();
         let e = TimeSeries::from_arrow("x", &[b], "time").unwrap_err();
         assert!(e.to_string().contains("too large"), "{e}");
+    }
+
+    #[test]
+    fn time_values_read_from_slices_and_several_batches() {
+        use arrow_array::{Date32Array, DurationMicrosecondArray};
+        let time = |v: Vec<i64>| Arc::new(TimestampMillisecondArray::from(v)) as ArrayRef;
+        // The null slot holds i64::MAX, which must be a gap, not a range error.
+        let nulls = NullBuffer::from(vec![true, false, true, true]);
+        let durations: ArrayRef = Arc::new(DurationMicrosecondArray::new(
+            vec![-1_500, i64::MAX, 2_000, 7].into(),
+            Some(nulls),
+        ));
+        let days: ArrayRef = Arc::new(Date32Array::from(vec![Some(1), Some(-1), None, Some(2)]));
+        let whole = RecordBatch::try_from_iter([
+            ("time", time(vec![0, 1, 2, 3])),
+            ("d", durations),
+            ("day", days),
+        ])
+        .unwrap();
+        // Two batches that each start mid-buffer.
+        let batches = [whole.slice(1, 2), whole.slice(3, 1)];
+        let s = TimeSeries::from_arrow("x", &batches, "time").unwrap();
+        let col = |s: &TimeSeries, n: &str| -> Vec<Option<f64>> {
+            s.column(n).unwrap().numbers().unwrap().iter().collect()
+        };
+        assert_eq!(col(&s, "d"), [None, Some(2.0), Some(0.007)]);
+        assert_eq!(
+            col(&s, "day"),
+            [Some(-86_400_000.0), None, Some(172_800_000.0)]
+        );
+        // One batch, cut short.
+        let s = TimeSeries::from_arrow("x", &[whole.slice(0, 2)], "time").unwrap();
+        assert_eq!(col(&s, "d"), [Some(-1.5), None]);
+        assert_eq!(col(&s, "day"), [Some(86_400_000.0), Some(-86_400_000.0)]);
+        // Empty bytes say so.
+        let e = TimeSeries::from_ipc_bytes("x", vec![], "time").unwrap_err();
+        assert!(e.to_string().contains("no bytes"), "{e}");
     }
 
     #[test]
