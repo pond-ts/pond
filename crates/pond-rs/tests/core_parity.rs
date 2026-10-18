@@ -12,7 +12,8 @@ use common::{
     compare_series, load_core_fixture, report,
 };
 use pond_rs::{
-    Agg, At, Column, ColumnData, ColumnKind, IntervalKeys, Key, Reducer, Sequence, TimeSeries,
+    Agg, ArrowKey, At, Column, ColumnData, ColumnKind, IntervalKeys, Key, Labels, Reducer,
+    Sequence, TimeRangeKeys, TimeSeries,
 };
 use serde_json::{Value, json};
 
@@ -97,8 +98,8 @@ fn sequence(json: &Value) -> pond_rs::Result<Sequence> {
 fn to_series(json: &SeriesJson) -> TimeSeries {
     let key_kind = json.schema[0].kind.as_str();
     assert!(
-        key_kind == "time" || key_kind == "interval",
-        "{}: inputs are time- or interval-keyed",
+        ["time", "timeRange", "interval"].contains(&key_kind),
+        "{}: inputs are time-, timeRange- or interval-keyed",
         json.name
     );
     let columns = json.schema[1..]
@@ -126,10 +127,32 @@ fn to_series(json: &SeriesJson) -> TimeSeries {
     if key_kind == "time" {
         let time = json.rows.iter().map(|row| ms(&row[0])).collect();
         TimeSeries::new(&json.name, time, columns).expect("fixture input is a valid series")
+    } else if key_kind == "timeRange" {
+        let part = |p: usize| json.rows.iter().map(|row| ms(&row[0][p])).collect();
+        let keys = TimeRangeKeys {
+            begin: part(0),
+            end: part(1),
+        };
+        TimeSeries::from_time_ranges(&json.name, keys, columns)
+            .expect("fixture input is a valid series")
     } else {
         let part = |p: usize| json.rows.iter().map(|row| ms(&row[0][p])).collect();
+        let labels: Vec<&Value> = json.rows.iter().map(|row| &row[0][0]).collect();
+        let label: Labels = if labels.iter().all(|l| l.is_string()) {
+            labels
+                .iter()
+                .map(|l| l.as_str().unwrap())
+                .collect::<Vec<_>>()
+                .into()
+        } else {
+            labels
+                .iter()
+                .map(|l| l.as_f64().expect("interval labels are numbers or text"))
+                .collect::<Vec<_>>()
+                .into()
+        };
         let keys = IntervalKeys {
-            label: part(0),
+            label,
             begin: part(1),
             end: part(2),
         };
@@ -165,7 +188,7 @@ fn to_json(series: &TimeSeries) -> SeriesJson {
             name: def.name,
             kind: def.kind.as_str().to_string(),
             required: match def.kind {
-                ColumnKind::Time | ColumnKind::Interval => None,
+                ColumnKind::Time | ColumnKind::TimeRange | ColumnKind::Interval => None,
                 _ => (!def.required).then_some(false),
             },
         })
@@ -174,7 +197,14 @@ fn to_json(series: &TimeSeries) -> SeriesJson {
         .map(|i| {
             let key = match series.key() {
                 Key::Time(t) => json!(t[i]),
-                Key::Interval(k) => json!([k.label[i], k.begin[i], k.end[i]]),
+                Key::TimeRange(k) => json!([k.begin[i], k.end[i]]),
+                Key::Interval(k) => {
+                    let label = match &k.label {
+                        Labels::Number(v) => json!(v[i]),
+                        Labels::String(c) => json!(c.get(i)),
+                    };
+                    json!([label, k.begin[i], k.end[i]])
+                }
             };
             std::iter::once(key)
                 .chain(series.columns().iter().map(|c| encode(c.data(), i)))
@@ -337,17 +367,33 @@ fn find<'a>(fixture: &'a CoreFixture, id: &str) -> &'a CoreCase {
 #[test]
 fn reads_the_pond_ts_arrow_exports() {
     let fixture = load_core_fixture();
-    for (input, file) in [
-        ("noisy", "parity-export.arrow"),
-        ("mixed", "parity-export-mixed.arrow"),
+    for (input, file, key) in [
+        ("noisy", "parity-export.arrow", ArrowKey::from("time")),
+        ("mixed", "parity-export-mixed.arrow", "time".into()),
+        (
+            "ranges",
+            "parity-export-ranges.arrow",
+            ArrowKey::TimeRange("timeRange".into()),
+        ),
+        (
+            "labelled",
+            "parity-export-labelled.arrow",
+            ArrowKey::Interval("interval".into()),
+        ),
     ] {
         let bytes = std::fs::read(common::repo_path(&format!(
             "packages/core/test/fixtures/{file}"
         )))
         .unwrap();
-        let series = TimeSeries::from_ipc_bytes(input, bytes, "time").unwrap();
+        let series = TimeSeries::from_ipc_bytes(input, bytes, key.clone()).unwrap();
         compare_series(&fixture.inputs[input], &to_json(&series), None)
             .unwrap_or_else(|why| panic!("{file}: {why}"));
+        // pond-rs's own file reads back the same.
+        let mut written = Vec::new();
+        series.write_ipc(&mut written).unwrap();
+        let again = TimeSeries::from_ipc_bytes(input, written, key).unwrap();
+        compare_series(&fixture.inputs[input], &to_json(&again), None)
+            .unwrap_or_else(|why| panic!("{file} rewritten by pond-rs: {why}"));
         if input == "mixed" {
             // pond-ts wrote `site` as a dictionary and `host` as plain text;
             // pond-rs keeps each as it came.

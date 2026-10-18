@@ -18,10 +18,21 @@ import {
   tableToIPC,
   vectorFromArray,
 } from 'apache-arrow';
-import { mixedSeries, noisySeries } from './cases.mjs';
+import {
+  labelledSeries,
+  mixedSeries,
+  noisySeries,
+  rangesSeries,
+} from './cases.mjs';
 
 export const EXPORT_FILE = 'parity-export.arrow';
-export const MIXED_EXPORT_FILE = 'parity-export-mixed.arrow';
+
+/** [file, input] pairs written by {@link buildTypedArrowExport}. */
+export const TYPED_EXPORTS = [
+  ['parity-export-mixed.arrow', mixedSeries],
+  ['parity-export-ranges.arrow', rangesSeries],
+  ['parity-export-labelled.arrow', labelledSeries],
+];
 
 /** The IPC bytes; `pond` is the pond-ts module (built or source). */
 export function buildArrowExport(pond) {
@@ -42,14 +53,14 @@ export function buildArrowExport(pond) {
   return tableToIPC(new Table(columns), 'file');
 }
 
-// The `mixed` input written the same way, with each field in the Arrow type
-// pond-ts's `toArrow` names: the time key and numbers as Float64, text as
-// Utf8 or Dictionary<Int32, Utf8> (pond-ts's choice per column), true/false
-// as Bool. pond-rs must read back the `mixed` input exactly.
-// Arrow fields are nullable by default; a required pond column is written
-// as a non-nullable field so the reader can keep it required.
-export function buildMixedArrowExport(pond) {
-  const series = mixedSeries(pond);
+// An input written the same way, with each field in the Arrow type pond-ts's
+// `toArrow` names: key edges and numbers as Float64, text as Utf8 or
+// Dictionary<Int32, Utf8> (pond-ts's choice per column), true/false as Bool.
+// A time-range or interval key is `<key>` + `<key>End` (+ `<key>Label`).
+// pond-rs must read back the input exactly. Arrow fields are nullable by
+// default; key fields and required pond columns are written non-nullable so
+// the reader can keep them required.
+export function buildTypedArrowExport(series) {
   const { fields } = series.toArrow();
   const optional = new Set(
     series.schema.filter((c) => c.required === false).map((c) => c.name),

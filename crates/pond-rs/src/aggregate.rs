@@ -33,10 +33,10 @@ impl TimeSeries {
     pub fn aggregate(&self, sequence: &Sequence, aggs: &[Agg]) -> Result<TimeSeries> {
         let times = match self.key() {
             Key::Time(t) => t,
-            Key::Interval(_) => {
+            Key::TimeRange(_) | Key::Interval(_) => {
                 return Err(PondError::Unsupported {
                     call: CALL,
-                    message: "aggregate over an interval-keyed series".into(),
+                    message: "aggregate over a series keyed by time ranges or intervals (pond-ts counts a row in every bucket it overlaps)".into(),
                 });
             }
         };
@@ -56,7 +56,7 @@ impl TimeSeries {
         let buckets = match (times.first(), times.last()) {
             (Some(&first), Some(&last)) => sequence.buckets_overlapping(first, last)?,
             _ => IntervalKeys {
-                label: vec![],
+                label: Vec::<f64>::new().into(),
                 begin: vec![],
                 end: vec![],
             },

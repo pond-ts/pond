@@ -8,9 +8,9 @@ import * as pond from '../../dist/index.js';
 import { buildFixture } from './cases.mjs';
 import {
   EXPORT_FILE,
-  MIXED_EXPORT_FILE,
+  TYPED_EXPORTS,
   buildArrowExport,
-  buildMixedArrowExport,
+  buildTypedArrowExport,
 } from './export.mjs';
 
 const out = fileURLToPath(
@@ -26,8 +26,10 @@ const arrowOut = fileURLToPath(
 writeFileSync(arrowOut, buildArrowExport(pond));
 console.log(`wrote ${arrowOut}`);
 
-const mixedOut = fileURLToPath(
-  new URL(`../../test/fixtures/${MIXED_EXPORT_FILE}`, import.meta.url),
-);
-writeFileSync(mixedOut, buildMixedArrowExport(pond));
-console.log(`wrote ${mixedOut}`);
+for (const [file, input] of TYPED_EXPORTS) {
+  const typedOut = fileURLToPath(
+    new URL(`../../test/fixtures/${file}`, import.meta.url),
+  );
+  writeFileSync(typedOut, buildTypedArrowExport(input(pond)));
+  console.log(`wrote ${typedOut}`);
+}

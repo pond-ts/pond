@@ -3,13 +3,14 @@
 //! Field naming follows pond-ts `toArrow` / `fromArrow`:
 //!
 //! - a time key is one field, by default `time`;
-//! - an interval key (an `aggregate` result) is `interval` (begin),
+//! - a time-range key is `timeRange` (start) and `timeRangeEnd`;
+//! - an interval key (an `aggregate` result) is `interval` (start),
 //!   `intervalEnd`, the value columns, then `intervalLabel` last.
 //!
-//! A time-keyed file written by either reads in the other. pond-rs reads
-//! time-keyed files only, so an interval-keyed file (pond-rs's own
-//! `aggregate` output included) is written but not read back yet; pond-ts
-//! reads it with `fromArrow(table, { keyKind: 'interval' })`.
+//! A file written by either reads in the other: pond-rs with
+//! [`ArrowKey`], pond-ts with `fromArrow(table, { keyKind })`. pond-ts reads
+//! range and interval keys only under those default names; pond-rs reads any
+//! name `<name>`, `<name>End` (and `<name>Label`).
 //!
 //! pond-rs keys are whole epoch milliseconds. Written keys are
 //! `Timestamp(Millisecond, "UTC")`; a gap in a value column is an Arrow null.
@@ -34,7 +35,7 @@ use arrow_schema::{DataType, Field, Schema, TimeUnit};
 
 use crate::column::{BooleanColumn, ColumnData, Float64Column, StringColumn};
 use crate::error::{PondError, Result};
-use crate::series::{Column, IntervalKeys, Key, MAX_TIME_MS, TimeSeries};
+use crate::series::{Column, IntervalKeys, Key, Labels, MAX_TIME_MS, TimeRangeKeys, TimeSeries};
 
 const FROM: &str = "TimeSeries::from_arrow";
 const TO: &str = "TimeSeries::to_arrow";
@@ -106,15 +107,79 @@ fn decode_ipc_file_unchecked(bytes: Vec<u8>) -> Result<Vec<RecordBatch>> {
     Ok(batches)
 }
 
+/// Which fields of an Arrow table hold the key, for
+/// [`TimeSeries::from_arrow`]. A plain `&str` or `String` means a time key of
+/// that name, so `from_arrow(name, batches, "time")` reads a time-keyed table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArrowKey {
+    /// One field of points in time.
+    Time(String),
+    /// Spans of time: the named field holds each start, `<name>End` each
+    /// end. pond-ts writes this with the name `timeRange`.
+    TimeRange(String),
+    /// Labelled spans, as `aggregate` makes: `<name>` and `<name>End` as for
+    /// [`ArrowKey::TimeRange`], plus `<name>Label`, numbers or text with no
+    /// nulls. pond-ts writes this with the name `interval`.
+    Interval(String),
+}
+
+impl ArrowKey {
+    /// The name of the field holding the key's start (or its time).
+    pub fn name(&self) -> &str {
+        match self {
+            ArrowKey::Time(n) | ArrowKey::TimeRange(n) | ArrowKey::Interval(n) => n,
+        }
+    }
+}
+
+impl From<&str> for ArrowKey {
+    fn from(name: &str) -> Self {
+        ArrowKey::Time(name.to_string())
+    }
+}
+
+impl From<String> for ArrowKey {
+    fn from(name: String) -> Self {
+        ArrowKey::Time(name)
+    }
+}
+
+/// An interval key's labels: text fields as text, any number type as `f64`.
+/// A null label is an error (from `with_key`: a text gap, or a number read
+/// as NaN).
+fn read_labels(batches: &[RecordBatch], c: usize, field: &Field) -> Result<Labels> {
+    if is_text(field.data_type()) {
+        return Ok(Labels::String(read_strings(batches, c, field.name())?));
+    }
+    let mut values = Vec::new();
+    for batch in batches {
+        read_number(batch.column(c), field.name(), &mut values)?;
+    }
+    Ok(Labels::Number(values))
+}
+
+/// Arrow types read as text: `Utf8`, `LargeUtf8`, `Utf8View`, or a dictionary
+/// of `Utf8` / `LargeUtf8`.
+fn is_text(data_type: &DataType) -> bool {
+    match data_type {
+        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => true,
+        DataType::Dictionary(_, values) => matches!(**values, DataType::Utf8 | DataType::LargeUtf8),
+        _ => false,
+    }
+}
+
 fn invalid(call: &'static str, message: String) -> PondError {
     PondError::InvalidData { call, message }
 }
 
 impl TimeSeries {
-    /// Build a time-keyed series from Arrow record batches (one table split
-    /// into chunks; all batches must share a schema).
+    /// Build a series from Arrow record batches (one table split into
+    /// chunks; all batches must share a schema).
     ///
-    /// - `time_column` names the key field: a `Timestamp` in any unit,
+    /// - `key` names the key field. A plain name (`"time"`) is a time key;
+    ///   [`ArrowKey::TimeRange`] and [`ArrowKey::Interval`] also read
+    ///   `<name>End` and, for an interval, `<name>Label` (numbers of any type,
+    ///   read as `f64`, or text; no nulls). Each key field is a `Timestamp` in any unit,
     ///   `Date64`, or `Int64` or `Float64` epoch milliseconds (`Float64` is
     ///   what pond-ts `toArrow` hands over). It must have no nulls, be in
     ///   order, and convert to whole milliseconds; a micro- or nanosecond
@@ -141,8 +206,10 @@ impl TimeSeries {
     pub fn from_arrow(
         name: impl Into<String>,
         batches: &[RecordBatch],
-        time_column: &str,
+        key: impl Into<ArrowKey>,
     ) -> Result<Self> {
+        let key = key.into();
+        let time_column = key.name();
         let Some(first) = batches.first() else {
             return Err(invalid(FROM, "no record batches given".into()));
         };
@@ -162,25 +229,50 @@ impl TimeSeries {
         };
 
         let rows: usize = batches.iter().map(RecordBatch::num_rows).sum();
-        let mut time = Vec::with_capacity(rows);
-        for batch in batches {
-            read_time(batch.column(time_index), time_column, time.len(), &mut time)?;
-        }
+        let read_edge = |index: usize, name: &str| -> Result<Vec<i64>> {
+            let mut out = Vec::with_capacity(rows);
+            for batch in batches {
+                read_time(batch.column(index), name, out.len(), &mut out)?;
+            }
+            Ok(out)
+        };
+        let field_index = |field: String| -> Result<usize> {
+            schema
+                .index_of(&field)
+                .map_err(|_| PondError::UnknownColumn {
+                    call: FROM,
+                    column: field,
+                    available: schema.fields().iter().map(|f| f.name().clone()).collect(),
+                })
+        };
+        let begin = read_edge(time_index, time_column)?;
+        // Field positions that belong to the key, not to value columns.
+        let mut key_fields = vec![time_index];
+        let key_data = match &key {
+            ArrowKey::Time(_) => Key::Time(begin),
+            ArrowKey::TimeRange(_) | ArrowKey::Interval(_) => {
+                let end_name = format!("{time_column}End");
+                let end_index = field_index(end_name.clone())?;
+                key_fields.push(end_index);
+                let end = read_edge(end_index, &end_name)?;
+                if let ArrowKey::Interval(_) = key {
+                    let label_index = field_index(format!("{time_column}Label"))?;
+                    key_fields.push(label_index);
+                    let label = read_labels(batches, label_index, schema.field(label_index))?;
+                    Key::Interval(IntervalKeys { label, begin, end })
+                } else {
+                    Key::TimeRange(TimeRangeKeys { begin, end })
+                }
+            }
+        };
 
         let mut columns = Vec::with_capacity(schema.fields().len().saturating_sub(1));
         for (c, field) in schema.fields().iter().enumerate() {
-            if c == time_index {
+            if key_fields.contains(&c) {
                 continue;
             }
             let required = |missing: usize| !field.is_nullable() && missing == 0;
-            let is_text = match field.data_type() {
-                DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => true,
-                DataType::Dictionary(_, values) => {
-                    matches!(**values, DataType::Utf8 | DataType::LargeUtf8)
-                }
-                _ => false,
-            };
-            if is_text {
+            if is_text(field.data_type()) {
                 let data = read_strings(batches, c, field.name())?;
                 let missing = data.missing_count();
                 columns.push(Column::from_data(
@@ -240,7 +332,7 @@ impl TimeSeries {
             FROM,
             name.into(),
             time_column.to_string(),
-            Key::Time(time),
+            key_data,
             columns,
         )
     }
@@ -252,13 +344,13 @@ impl TimeSeries {
     pub fn read_ipc(
         name: impl Into<String>,
         mut reader: impl Read,
-        time_column: &str,
+        key: impl Into<ArrowKey>,
     ) -> Result<Self> {
         let mut bytes = Vec::new();
         reader
             .read_to_end(&mut bytes)
             .map_err(|e| invalid(READ, e.to_string()))?;
-        Self::from_ipc_bytes(name, bytes, time_column)
+        Self::from_ipc_bytes(name, bytes, key)
     }
 
     /// Read a series from the bytes of an Arrow IPC file already in memory
@@ -274,17 +366,19 @@ impl TimeSeries {
     pub fn from_ipc_bytes(
         name: impl Into<String>,
         bytes: Vec<u8>,
-        time_column: &str,
+        key: impl Into<ArrowKey>,
     ) -> Result<Self> {
-        Self::from_arrow(name, &decode_ipc_file(bytes)?, time_column)
+        Self::from_arrow(name, &decode_ipc_file(bytes)?, key)
     }
 
     /// The series as one Arrow record batch. Value columns are not copied:
     /// each column's buffer is shared with the batch (gaps get a validity
     /// bitmap over it). Key columns are copied.
     ///
-    /// Fields: the key (`Timestamp(Millisecond, "UTC")`; an interval key adds
-    /// `<key>End` after it and `<key>Label` at the end), then each value
+    /// Fields: the key (`Timestamp(Millisecond, "UTC")`; a time-range or
+    /// interval key adds `<key>End` after it, and an interval key adds
+    /// `<key>Label` at the end: `Float64` for number labels, text as for a
+    /// text column), then each value
     /// column, nullable unless the column is required, with gaps as nulls:
     /// numbers as `Float64`, text as `Utf8` (or `Dictionary<Int32, Utf8>` if
     /// it was read as one), true/false as `Boolean`. These are the types
@@ -303,6 +397,11 @@ impl TimeSeries {
         let label = match self.key() {
             Key::Time(t) => {
                 push_time(key_name.clone(), t);
+                None
+            }
+            Key::TimeRange(TimeRangeKeys { begin, end }) => {
+                push_time(key_name.clone(), begin);
+                push_time(format!("{key_name}End"), end);
                 None
             }
             Key::Interval(IntervalKeys { label, begin, end }) => {
@@ -368,11 +467,15 @@ fn timestamp_ms() -> DataType {
     DataType::Timestamp(TimeUnit::Millisecond, Some("UTC".into()))
 }
 
-fn push_label(fields: &mut Vec<Field>, arrays: &mut Vec<ArrayRef>, name: String, label: &[i64]) {
-    fields.push(Field::new(name, timestamp_ms(), false));
-    arrays.push(Arc::new(
-        TimestampMillisecondArray::from(label.to_vec()).with_timezone("UTC"),
-    ));
+/// Interval labels as pond-ts writes them: numbers as `Float64`, text as
+/// the column's own Arrow array (`Utf8`, or a dictionary if read as one).
+fn push_label(fields: &mut Vec<Field>, arrays: &mut Vec<ArrayRef>, name: String, label: &Labels) {
+    let array: ArrayRef = match label {
+        Labels::Number(v) => Arc::new(Float64Array::from(v.clone())),
+        Labels::String(s) => s.arrow(),
+    };
+    fields.push(Field::new(name, array.data_type().clone(), false));
+    arrays.push(array);
 }
 
 /// Append one chunk of the key column to `out` as epoch milliseconds.
@@ -835,6 +938,146 @@ mod tests {
             )
             .unwrap();
         assert!(series.to_arrow().is_err());
+    }
+
+    #[test]
+    fn reads_range_and_interval_keys() {
+        let ts = |v: Vec<i64>| -> ArrayRef {
+            Arc::new(TimestampMillisecondArray::from(v).with_timezone("UTC"))
+        };
+        let batch = |cols: Vec<(&str, ArrayRef)>| RecordBatch::try_from_iter(cols).unwrap();
+        let ranges = batch(vec![
+            ("span", ts(vec![0, 0])),
+            ("spanEnd", ts(vec![1000, 3000])),
+            ("v", Arc::new(Float64Array::from(vec![1.0, 2.0]))),
+        ]);
+        let s = TimeSeries::from_arrow("r", &[ranges], ArrowKey::TimeRange("span".into())).unwrap();
+        assert_eq!(
+            s.key(),
+            &Key::TimeRange(TimeRangeKeys {
+                begin: vec![0, 0],
+                end: vec![1000, 3000]
+            })
+        );
+        assert_eq!(s.columns().len(), 1, "the end edge is not a value column");
+        // Integer labels read as numbers; text labels as text.
+        let interval = |label: ArrayRef| {
+            batch(vec![
+                ("interval", ts(vec![0, 1000])),
+                ("intervalEnd", ts(vec![1000, 2000])),
+                ("intervalLabel", label),
+            ])
+        };
+        let key = || ArrowKey::Interval("interval".into());
+        let s = TimeSeries::from_arrow(
+            "i",
+            &[interval(Arc::new(Int32Array::from(vec![7, 9])))],
+            key(),
+        )
+        .unwrap();
+        let Key::Interval(k) = s.key() else { panic!() };
+        assert_eq!(k.label, Labels::Number(vec![7.0, 9.0]));
+        let text: ArrayRef = Arc::new(StringArray::from(vec!["mon", "mon"]));
+        let s = TimeSeries::from_arrow("i", &[interval(text)], key()).unwrap();
+        let Key::Interval(k) = s.key() else { panic!() };
+        assert_eq!(k.label, vec!["mon", "mon"].into());
+
+        // A null label (text or number) is an error, and so is no label field.
+        for label in [
+            Arc::new(StringArray::from(vec![Some("mon"), None])) as ArrayRef,
+            Arc::new(Int32Array::from(vec![Some(1), None])) as ArrayRef,
+        ] {
+            let e = TimeSeries::from_arrow("i", &[interval(label)], key()).unwrap_err();
+            assert!(e.to_string().contains("label at row 1"), "{e}");
+        }
+        let no_label = batch(vec![
+            ("interval", ts(vec![0])),
+            ("intervalEnd", ts(vec![5])),
+        ]);
+        let e = TimeSeries::from_arrow("i", &[no_label], key()).unwrap_err();
+        assert!(e.to_string().contains("intervalLabel"), "{e}");
+
+        // A missing end, a null end, and an end before its begin.
+        let no_end = batch(vec![("timeRange", ts(vec![0]))]);
+        let range_key = || ArrowKey::TimeRange("timeRange".into());
+        assert!(TimeSeries::from_arrow("r", &[no_end], range_key()).is_err());
+        let null_end: ArrayRef =
+            Arc::new(TimestampMillisecondArray::from(vec![Some(5), None]).with_timezone("UTC"));
+        let b = batch(vec![
+            ("timeRange", ts(vec![0, 1])),
+            ("timeRangeEnd", null_end),
+        ]);
+        let e = TimeSeries::from_arrow("r", &[b], range_key()).unwrap_err();
+        assert!(e.to_string().contains("timeRangeEnd"), "{e}");
+        let b = batch(vec![
+            ("timeRange", ts(vec![10])),
+            ("timeRangeEnd", ts(vec![5])),
+        ]);
+        let e = TimeSeries::from_arrow("r", &[b], range_key()).unwrap_err();
+        assert!(e.to_string().contains("before it begins"), "{e}");
+    }
+
+    #[test]
+    fn aggregate_results_round_trip_through_ipc() {
+        // Number labels written as Float64 must read back as the same labels.
+        let out = sample()
+            .aggregate(
+                &crate::Sequence::every("2s").unwrap(),
+                &[crate::Agg::new("a_sum", "a", crate::Reducer::Sum)],
+            )
+            .unwrap();
+        let mut bytes = Vec::new();
+        out.write_ipc(&mut bytes).unwrap();
+        let back =
+            TimeSeries::from_ipc_bytes("s", bytes, ArrowKey::Interval("interval".into())).unwrap();
+        assert_eq!(back.key(), out.key());
+        assert_eq!(back.schema(), out.schema());
+        assert_eq!(
+            bits(back.column("a_sum").unwrap().numbers().unwrap()),
+            bits(out.column("a_sum").unwrap().numbers().unwrap())
+        );
+    }
+
+    #[test]
+    fn writes_range_and_interval_keys_as_pond_ts_does() {
+        let a = || vec![Column::required("a", vec![1.0, 2.0])];
+        let types = |s: &TimeSeries| -> Vec<(String, DataType)> {
+            let b = s.to_arrow().unwrap();
+            b.schema()
+                .fields()
+                .iter()
+                .map(|f| (f.name().clone(), f.data_type().clone()))
+                .collect()
+        };
+        let ranges = TimeSeries::from_time_ranges(
+            "r",
+            TimeRangeKeys {
+                begin: vec![0, 0],
+                end: vec![5, 9],
+            },
+            a(),
+        )
+        .unwrap();
+        assert_eq!(
+            types(&ranges),
+            vec![
+                ("timeRange".into(), timestamp_ms()),
+                ("timeRangeEnd".into(), timestamp_ms()),
+                ("a".into(), DataType::Float64),
+            ]
+        );
+        let keys = |label: Labels| IntervalKeys {
+            label,
+            begin: vec![0, 5],
+            end: vec![5, 9],
+        };
+        let numbered = TimeSeries::from_intervals("i", keys(vec![1.5, 2.0].into()), a()).unwrap();
+        assert_eq!(
+            types(&numbered)[3],
+            ("intervalLabel".into(), DataType::Float64)
+        );
+        let named = TimeSeries::from_intervals("i", keys(vec!["x", "y"].into()), a()).unwrap();
+        assert_eq!(types(&named)[3], ("intervalLabel".into(), DataType::Utf8));
     }
 
     fn mixed() -> TimeSeries {

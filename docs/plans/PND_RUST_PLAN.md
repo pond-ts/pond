@@ -594,7 +594,8 @@ The one result short of a clean win is one-core B: polars is faster
      text interval labels. This is the big API change: `Column` stops being
      number-only. The plan is a typed column enum, still checked at runtime,
      per the RFC. Split up: **2a** text and true/false columns (done,
-     below), **2b** `TimeRange` keys and text interval labels, **2c** more
+     below), **2b** `TimeRange` keys and text interval labels (done,
+     below), **2c** more
      Arrow input ([PND-RUSTARROWIN]), **2d** exact decimals ([PND-RUSTDEC]).
      2c and 2d are below.
   3. **Row-wise operations:**
@@ -642,7 +643,7 @@ The one result short of a clean win is one-core B: polars is faster
     - An interval with an odd length in milliseconds has no whole-ms
       centre. pond-rs refuses it (error) where pond-ts gives `x.5`. pond-rs
       keys are whole milliseconds; fractional keys are a step-2 question.
-    - Interval labels are numbers only until step 2.
+    - Interval labels are numbers only until step 2 (text added in 2b).
   - Fixture: 19 new cases, 53 of 64 now run in pond-rs.
 
   **Step 2a (2026-10-18): text and true/false columns.**
@@ -725,6 +726,57 @@ The one result short of a clean win is one-core B: polars is faster
       memory (`MALLOC_MMAP_THRESHOLD_` / `MALLOC_TRIM_THRESHOLD_` = 4 GiB)
       both read A in 12–14 ms with no consistent order between them. Timed
       alone, 41 reads of the file take 14.6–15.3 ms on both.
+
+  **Step 2b (2026-10-18): time-range keys and text interval labels.**
+  - Shape:
+    - `Key` gains `TimeRange(TimeRangeKeys { begin, end })`, built with
+      `TimeSeries::from_time_ranges` (key named `timeRange`, as pond-ts).
+    - Interval labels are a `Labels` enum: `Number(Vec<f64>)` or
+      `String(StringColumn)`. `vec![...].into()` builds either from
+      `f64`, `i64`, `&str` or `String` values. `Key` is no longer `Eq`
+      (labels are `f64`).
+    - `Key::begin()`, `Key::end()` (`None` for a time key) and `Key::kind()`
+      so code can handle all three kinds without a match.
+  - Checks, all as pond-ts: keys are ordered by start, then end (so
+    `[0, 3000]` then `[0, 1000]` is an error); an end before its start is an
+    error; zero-length spans are fine; number labels must be finite, text
+    labels have no gaps; repeated labels and fractional number labels are
+    fine.
+  - Operations: `select`, `rename` and `as_time` work on ranges as on
+    intervals. `rolling` anchors each row at its start, and rows sharing a
+    start share a window, as pond-ts does. `aggregate` over range or
+    interval keys stays an error (pond-ts counts a row in every bucket it
+    overlaps; not built yet).
+  - Arrow:
+    - Out: a range key writes `<key>` and `<key>End`; an interval adds
+      `<key>Label` last. Number labels are now written as `Float64`, as
+      pond-ts does (they were timestamps before, which pond-ts would not
+      read as numbers). Text labels are written like a text column.
+    - In: `from_arrow` / `read_ipc` / `from_ipc_bytes` take an `ArrowKey`:
+      `Time(name)`, `TimeRange(name)` or `Interval(name)`. A plain `&str`
+      still means a time key, so existing calls compile unchanged. Labels
+      of any number type read as `f64`; text types as text.
+    - Checked both ways: pond-rs reads two new pond-ts Arrow exports
+      (`parity-export-ranges.arrow`, `parity-export-labelled.arrow`) and
+      rewrites them losslessly; a one-off run had pond-ts `fromArrow` read
+      pond-rs's range, text-label and number-label files back exactly.
+  - Differences from pond-ts:
+    - pond-ts reads range and interval keys only from fields named
+      `timeRange` / `interval`; pond-rs takes any name, so its own
+      `ArrowKey::Interval("bucket")` file needs renaming for pond-ts.
+    - pond-rs reads `<key>End` in its own Arrow time unit; pond-ts applies
+      the start field's unit to both. They differ only for a table whose
+      two edges have different units, where pond-rs's reading is the
+      correct one. (Found in review.)
+    - The pond-ts-reads-pond-rs direction was checked once by hand, not by
+      a committed test.
+  - Fixture: 11 new cases on a `ranges` input (shared starts, a
+    zero-length span, an overlap) and a `labelled` input (repeated text
+    labels): `as_time` begin / center / end-out-of-order error, `select`,
+    `rename` and its key error, `rolling`. 70 of 81 cases now run in
+    pond-rs, all bit for bit.
+  - Perf: no new row loops beyond one pass of key checks at construction,
+    so no benchmark.
 
   **Step 2c (planned): more Arrow input [PND-RUSTARROWIN].**
   - Why: a probe on 2026-10-18 wrote 17 Arrow files with pyarrow 26 and

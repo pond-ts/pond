@@ -176,20 +176,16 @@ impl Sequence {
                             "[{begin}, {end}] with step {step_ms} ms is more than {MAX_BUCKETS} buckets"
                         ))
                     })?;
-                let mut keys = IntervalKeys {
-                    label: Vec::with_capacity(count),
-                    begin: Vec::with_capacity(count),
-                    end: Vec::with_capacity(count),
-                };
+                let mut starts = Vec::with_capacity(count);
+                let mut ends = Vec::with_capacity(count);
                 let mut start = edge(first)?;
                 for k in first..=last {
                     let next = edge(k + 1)?;
-                    keys.label.push(start);
-                    keys.begin.push(start);
-                    keys.end.push(next);
+                    starts.push(start);
+                    ends.push(next);
                     start = next;
                 }
-                Ok(keys)
+                Ok(labelled_by_start(starts, ends))
             }
             Grid::Calendar {
                 unit,
@@ -198,11 +194,7 @@ impl Sequence {
             } => {
                 // pond-ts walks from the bucket holding `begin`, one bucket at
                 // a time, while the bucket starts at or before `end`.
-                let mut keys = IntervalKeys {
-                    label: vec![],
-                    begin: vec![],
-                    end: vec![],
-                };
+                let (mut starts, mut ends) = (vec![], vec![]);
                 // Each bucket's end is pond-ts `zone.next(unit, start)`: the
                 // unit after the one holding the local date of `start`. So a
                 // local day that never happens (Samoa skipped 2011-12-30)
@@ -212,12 +204,11 @@ impl Sequence {
                 while start <= end {
                     let day = unit_start(*unit, local_date(zone, start)?, *week_starts_on)?;
                     let next = midnight_ms(zone, advance(*unit, day)?)?;
-                    keys.label.push(start);
-                    keys.begin.push(start);
-                    keys.end.push(next);
+                    starts.push(start);
+                    ends.push(next);
                     start = next;
                 }
-                Ok(keys)
+                Ok(labelled_by_start(starts, ends))
             }
         }
     }
@@ -331,6 +322,15 @@ fn midnight_ms(zone: &TimeZone, date: Date) -> Result<i64> {
     Ok(zoned.timestamp().as_millisecond())
 }
 
+/// Buckets labelled by their start, as pond-ts labels them.
+fn labelled_by_start(begin: Vec<i64>, end: Vec<i64>) -> IntervalKeys {
+    IntervalKeys {
+        label: begin.clone().into(),
+        begin,
+        end,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,7 +343,7 @@ mod tests {
             .unwrap();
         assert_eq!(keys.begin, vec![0, 5_000, 10_000]);
         assert_eq!(keys.end, vec![5_000, 10_000, 15_000]);
-        assert_eq!(keys.label, keys.begin);
+        assert_eq!(keys.label, keys.begin.clone().into());
     }
 
     #[test]
