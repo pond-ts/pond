@@ -10,7 +10,10 @@ use std::collections::VecDeque;
 
 use crate::duration::parse_duration;
 use crate::error::{PondError, Result};
-use crate::reducer::{Agg, Reducer, clamp_at_zero, percentile_of_sorted};
+use crate::reducer::{
+    Agg, Reducer, check_source_kind, clamp_at_zero, kernel_inputs, output_column,
+    percentile_of_sorted,
+};
 use crate::series::{Column, TimeSeries};
 
 const CALL: &str = "rolling";
@@ -431,7 +434,7 @@ impl TimeSeries {
     /// let s = TimeSeries::new("cpu", vec![0, 1_000, 2_000],
     ///     vec![Column::optional("v", [Some(1.0), None, Some(3.0)])])?;
     /// let r = s.rolling("2s", &[Agg::new("v_avg", "v", Reducer::Avg)])?;
-    /// assert_eq!(r.column("v_avg").unwrap().get(2), Some(3.0)); // (0s, 2s] holds only 3.0
+    /// assert_eq!(r.column("v_avg")?.numbers()?.get(2), Some(3.0)); // (0s, 2s] holds only 3.0
     /// # Ok::<(), pond_rs::PondError>(())
     /// ```
     ///
@@ -442,6 +445,10 @@ impl TimeSeries {
     /// Gaps: a gap is not a value. `count` counts present values, `sum` of
     /// none is 0, and the other reducers give a gap when the window has no
     /// present values.
+    ///
+    /// Text and true/false columns take `count` (a number column), `first`
+    /// and `last` (a column of the same kind); any other reducer on them is
+    /// an error.
     pub fn rolling(&self, window: &str, aggs: &[Agg]) -> Result<TimeSeries> {
         let window_ms = parse_duration(window)?;
         let times = match self.key() {
@@ -463,6 +470,7 @@ impl TimeSeries {
                     column: agg.output.clone(),
                 });
             }
+            check_source_kind(CALL, &self.columns()[source], agg.reducer)?;
             check_magnitude(&self.columns()[source], agg.reducer)?;
             plan.push((source, agg));
         }
@@ -470,12 +478,13 @@ impl TimeSeries {
             // Stable, so equal positions keep their given order.
             plan.sort_by_key(|&(source, _)| source);
         }
+        let used: Vec<usize> = plan.iter().map(|&(source, _)| source).collect();
+        let inputs = kernel_inputs(self.columns(), &used);
         let columns = crate::par::map(&plan, |&(source, agg)| {
-            let values = self.columns()[source].data().values();
-            Column::optional_raw(
-                agg.output.clone(),
-                roll_column(times, values, window_ms, agg.reducer),
-            )
+            let data = self.columns()[source].data();
+            let values = inputs[source].as_deref().expect("built for every source");
+            let out = roll_column(times, values, window_ms, agg.reducer);
+            output_column(agg.output.clone(), data, agg.reducer, out)
         });
         Ok(TimeSeries::from_parts(
             self.name().to_string(),
@@ -493,9 +502,8 @@ fn check_magnitude(column: &Column, reducer: Reducer) -> Result<()> {
         Reducer::Stdev => STDEV_SPLIT,
         _ => return Ok(()),
     };
-    match column
-        .data()
-        .values()
+    let values = column.numbers()?.values();
+    match values
         .iter()
         .position(|v| v.is_finite() && v.abs() >= split)
     {
@@ -505,7 +513,7 @@ fn check_magnitude(column: &Column, reducer: Reducer) -> Result<()> {
             message: format!(
                 "column '{}' row {row} holds {:e}, too large for a rolling {:?} (limit {split:e})",
                 column.name(),
-                column.data().values()[row],
+                values[row],
                 reducer
             ),
         }),
@@ -525,7 +533,11 @@ mod tests {
                 let r = s
                     .rolling(window, &[Agg::new("n", "v", Reducer::Count)])
                     .unwrap();
-                assert_eq!(r.column("n").unwrap().get(0), Some(1.0), "{t} {window}");
+                assert_eq!(
+                    r.column("n").unwrap().numbers().unwrap().get(0),
+                    Some(1.0),
+                    "{t} {window}"
+                );
             }
         }
         let too_early =

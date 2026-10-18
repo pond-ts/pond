@@ -1,4 +1,4 @@
-// Writes test/fixtures/parity.json and parity-export.arrow from the
+// Writes test/fixtures/parity.json and the parity-export*.arrow files from the
 // compiled package.
 // Run after `npm run build --workspace=pond-ts`:
 //   node packages/core/scripts/parity/generate.mjs
@@ -6,7 +6,12 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import * as pond from '../../dist/index.js';
 import { buildFixture } from './cases.mjs';
-import { EXPORT_FILE, buildArrowExport } from './export.mjs';
+import {
+  EXPORT_FILE,
+  MIXED_EXPORT_FILE,
+  buildArrowExport,
+  buildMixedArrowExport,
+} from './export.mjs';
 
 const out = fileURLToPath(
   new URL('../../test/fixtures/parity.json', import.meta.url),
@@ -20,3 +25,9 @@ const arrowOut = fileURLToPath(
 );
 writeFileSync(arrowOut, buildArrowExport(pond));
 console.log(`wrote ${arrowOut}`);
+
+const mixedOut = fileURLToPath(
+  new URL(`../../test/fixtures/${MIXED_EXPORT_FILE}`, import.meta.url),
+);
+writeFileSync(mixedOut, buildMixedArrowExport(pond));
+console.log(`wrote ${mixedOut}`);

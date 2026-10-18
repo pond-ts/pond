@@ -71,7 +71,7 @@ fn series(times: &[i64], values: &[Option<f64>]) -> TimeSeries {
     TimeSeries::new(
         "s",
         times.to_vec(),
-        vec![Column::optional("v", values.iter().copied())],
+        vec![Column::optional("v", values.to_vec())],
     )
     .unwrap()
 }
@@ -171,7 +171,12 @@ fn rolling_matches_brute_force() {
                 .collect();
             let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
             for (i, &reducer) in REDUCERS.iter().enumerate() {
-                let got = out.column(&format!("r{i}")).unwrap().get(row);
+                let got = out
+                    .column(&format!("r{i}"))
+                    .unwrap()
+                    .numbers()
+                    .unwrap()
+                    .get(row);
                 let what = format!("seed {seed} window {window_ms}ms row {row}");
                 check(&what, reducer, got, naive(reducer, &present), scale);
             }
@@ -248,7 +253,12 @@ fn check_buckets(
             .collect();
         let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
         for (i, &reducer) in REDUCERS.iter().enumerate() {
-            let got = out.column(&format!("r{i}")).unwrap().get(b);
+            let got = out
+                .column(&format!("r{i}"))
+                .unwrap()
+                .numbers()
+                .unwrap()
+                .get(b);
             let what = format!("seed {seed} bucket {b} [{lo}, {hi})");
             check(&what, reducer, got, naive(reducer, &present), scale);
         }
@@ -466,7 +476,7 @@ fn rolling_sum_does_not_drift() {
                 ("avg", Reducer::Avg),
                 ("stdev", Reducer::Stdev),
             ] {
-                let got = out.column(name).unwrap().get(row);
+                let got = out.column(name).unwrap().numbers().unwrap().get(row);
                 let what = format!("seed {seed} row {row}");
                 check(&what, reducer, got, naive(reducer, &present), scale);
             }

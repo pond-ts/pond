@@ -593,7 +593,10 @@ The one result short of a clean win is one-core B: polars is faster
      numbers, with Arrow in and out for each. Also `TimeRange` keys and
      text interval labels. This is the big API change: `Column` stops being
      number-only. The plan is a typed column enum, still checked at runtime,
-     per the RFC.
+     per the RFC. Split up: **2a** text and true/false columns (done,
+     below), **2b** `TimeRange` keys and text interval labels, **2c** more
+     Arrow input ([PND-RUSTARROWIN]), **2d** exact decimals ([PND-RUSTDEC]).
+     2c and 2d are below.
   3. **Row-wise operations:**
      - `filter`, `slice`, `with_column`, `map` (Rust closures).
      - `diff`, `rate`, `pct_change`, `cumulative`, `shift`, `fill`.
@@ -624,7 +627,7 @@ The one result short of a clean win is one-core B: polars is faster
   An agent trial at the end of step 4 repeats the R1a setup on a
   partitioned workload.
 
-  **Step 1 (PR #770, 2026-10-18):** in review.
+  **Step 1 (PR #770, merged 2026-10-18):** done.
   - Choices, all matching pond-ts:
     - `select` keeps schema order, so a repeated name selects the column
       once.
@@ -641,6 +644,149 @@ The one result short of a clean win is one-core B: polars is faster
       keys are whole milliseconds; fractional keys are a step-2 question.
     - Interval labels are numbers only until step 2.
   - Fixture: 19 new cases, 53 of 64 now run in pond-rs.
+
+  **Step 2a (2026-10-18): text and true/false columns.**
+  - Shape:
+    - A value column is a `ColumnData`: `Number(Float64Column)`,
+      `String(StringColumn)` or `Boolean(BooleanColumn)`. The names are
+      pond-ts's own (`kind: 'string' | 'boolean'`), so agents moving between
+      the two do not translate.
+    - Text and true/false columns hold Arrow arrays (`Utf8`, or
+      `Dictionary<Int32, Utf8>` when read that way; `Boolean`). A gap is an
+      Arrow null. An empty string is a value.
+    - `Column::required` / `optional` take any of `Vec<f64>`, `Vec<&str>`,
+      `Vec<String>`, `Vec<bool>`, their `Option` forms, or arrays of them.
+      They no longer take a bare iterator, so callers `collect()` first.
+    - `TimeSeries::column(name)` now returns `Result<&Column>` (an error
+      listing the columns, rather than `None`). Then `numbers()` /
+      `strings()` / `booleans()` give the values, or a `WrongKind` error.
+      This follows polars (`df.column("x")?.f64()?`), and was chosen over
+      keeping a number-only `column()` that would return `None` for a text
+      column that exists.
+  - Reducers: `count`, `first` and `last` work on text and true/false
+    columns in `rolling` and `aggregate`. `count` gives a number column;
+    `first` / `last` give the same kind. They reuse the number kernels: they
+    run over each row's number where it has a value (NaN where not), then
+    pick out the chosen rows. Any other reducer on them is a `WrongKind`
+    error.
+  - Arrow:
+    - Reads `Utf8`, `LargeUtf8`, `Utf8View` and dictionaries of `Utf8` /
+      `LargeUtf8` with any key type, and `Boolean`.
+    - With one batch, `Utf8`, `Dictionary<Int32, Utf8>` and `Boolean` are
+      used in place. Anything else is copied into `Utf8`.
+    - Writes the types pond-ts `toArrow` names: `Utf8`,
+      `Dictionary<Int32, Utf8>` (when the column is one) and `Boolean`
+      (pond-ts `toArrow` calls these `utf8`, `dictionary` and `bool`).
+  - Differences from pond-ts:
+    - pond-ts runs number reducers on text at run time (`sum` gives 0,
+      `avg` gives gaps). pond-rs refuses them. Logged as [PND-KINDREDUCE].
+    - pond-ts chooses dictionary or plain text itself, by how repetitive
+      the column is. pond-rs keeps whatever it was given; built from Rust
+      values, it is plain.
+  - Sharp edges:
+    - `first` / `last` of a dictionary column keep the source's whole list
+      of strings, so a short `aggregate` result still writes every distinct
+      string of the source to Arrow.
+    - Text is held with 32-bit offsets (Utf8). Reading a `LargeUtf8` /
+      `Utf8View` column of more than 2 GiB of text is an error, found in
+      review.
+  - Fixture:
+    - 6 new cases on a `mixed` input (20 rows; a repetitive text column
+      that pond-ts holds as a dictionary, a mostly distinct one, a
+      true/false column, an empty string, gaps): `aggregate` fixed and
+      calendar, `rolling` spec and shorthand order, `select`, `rename`.
+      59 of 70 cases now run in pond-rs, all bit for bit.
+    - A second Arrow file, `parity-export-mixed.arrow`, must read back as
+      the `mixed` input exactly. It is built by apache-arrow in
+      `export.mjs` from pond-ts's `toArrow` output (its buffers, null bits
+      and dictionary), with Float64, Utf8, Dictionary<Int32, Utf8> and
+      Boolean fields. The script, not pond-ts, picks those Arrow types and
+      which fields are nullable.
+  - Perf (`examples/perf_text.rs`, 1M rows 1 s apart, ~5% gaps, one
+    thread, median of 7):
+
+    | column            | aggregate 1m count/first/last | rolling 5m last | IPC write + read |
+    | ----------------- | ----------------------------- | --------------- | ---------------- |
+    | number            | 2.8 ms                        | 16 ms           | 11 ms            |
+    | text              | 7.6 ms                        | 58 ms           | 12 ms            |
+    | text (dictionary) | 6.5 ms                        | 25 ms           | 7.6 ms           |
+    | true/false        | 5.8 ms                        | 29 ms           | 4.1 ms           |
+    - pond-ts on the same shape: `aggregate` 133 ms (text) / 120 ms
+      (true/false); `rolling` 267 ms / 199 ms.
+    - Rolling plain text is mostly copying 1M strings into the output.
+    - Two fixes came out of the check:
+      - Each source column's row numbers are built once per call, not
+        once per reducer: aggregate on text went from 13–17 ms to ~7 ms.
+      - Gaps are read from Arrow's validity bits rather than row by row.
+    - Number paths are unchanged. On the R1a benchmark (one thread),
+      compute and write for A and B are within run-to-run noise of main.
+      Read A came out 1.5–7 ms slower across runs (main ~27–29.5 ms). That
+      read is mostly the memory allocator: with glibc told to keep freed
+      memory (`MALLOC_MMAP_THRESHOLD_` / `MALLOC_TRIM_THRESHOLD_` = 4 GiB)
+      both read A in 12–14 ms with no consistent order between them. Timed
+      alone, 41 reads of the file take 14.6–15.3 ms on both.
+
+  **Step 2c (planned): more Arrow input [PND-RUSTARROWIN].**
+  - Why: a probe on 2026-10-18 wrote 17 Arrow files with pyarrow 26 and
+    polars and read each with pond-rs (as of #771) and pond-ts:
+
+    | file                                          | pond-rs        | pond-ts (via apache-arrow JS)   |
+    | --------------------------------------------- | -------------- | ------------------------------- |
+    | pyarrow `feather.write_feather` (LZ4 default) | error          | error (no codec in arrow JS)    |
+    | ZSTD-compressed (pyarrow, polars)             | error          | error                           |
+    | IPC stream format                             | error          | reads                           |
+    | `Timestamp(us)` value column                  | error          | reads raw µs ([PND-ARROWTSVAL]) |
+    | `Date32` value column                         | error          | reads as epoch ms               |
+    | `Time64` value column                         | error          | reads raw units                 |
+    | `Null` (all-empty) column                     | error          | reads as all gaps               |
+    | `Float16`                                     | error          | error                           |
+    | `Dictionary<Int32, Int64>`                    | error          | error                           |
+    | `Decimal128`                                  | error          | error                           |
+    | `Duration`, `Binary`, `List`, `Struct`        | error          | error                           |
+    | `Utf8View`, `Dictionary<UInt32, LargeUtf8>`   | reads (copies) | reads                           |
+    | polars `write_ipc` default (uncompressed)     | reads          | reads                           |
+
+  - Plan, most important first:
+    1. Compressed IPC: turn on arrow-ipc's `lz4` and `zstd` features.
+       `zstd` wraps C code, so check that the wasm32 build still works. If
+       it does not, ZSTD is native-only and the error says so.
+    2. The IPC stream format: `TimeSeries::read_ipc_stream` (or let
+       `read_ipc` detect it from the file's first bytes).
+    3. `Timestamp` / `Date32` / `Date64` value columns become epoch-ms
+       number columns, with the key's rule that a sub-millisecond part is
+       an error, not rounded. `Time32` / `Time64` / `Duration` become
+       milliseconds the same way. (pond-ts reads `Timestamp(us)` unscaled;
+       pond-rs should not copy that bug. Logged as [PND-ARROWTSVAL].)
+    4. Cheap extras: a `Null` column becomes an all-gap number column (as
+       pond-ts); `Float16` widens to `f64`; a dictionary of numbers decodes
+       to a number column.
+  - Not planned: `Binary`. `List` / `Struct` wait for array columns (step 7).
+
+  **Step 2d (planned): exact decimals [PND-RUSTDEC].**
+  - Arrow `Decimal128(precision, scale)` stores each value as a 128-bit
+    whole number and a fixed count of decimal places for the column: `1.25`
+    at scale 2 is stored as `125`. Databases, finance feeds, and pandas
+    columns of Python `Decimal` write it. Peter (2026-10-18) rated it
+    important.
+  - pond-ts has no decimal kind (its numbers are JavaScript `f64`), so
+    pond-rs cannot match pond-ts bit for bit on exact decimals; it can only
+    match pond-ts after a conversion to `f64`.
+  - Options:
+    - **A. Read as `f64`.** Smallest change; every operation works as for
+      numbers, matching pond-ts. Loses exactness: values past ~15–17
+      significant digits round, and sums pick up binary rounding
+      (0.1 + 0.2 ≠ 0.3).
+    - **B. A decimal column kind** (`ColumnData::Decimal { values: i128,
+scale }`, written back as `Decimal128`). Exact for `count` / `first`
+      / `last` / `min` / `max` / `sum` (128-bit integer sums, an error on
+      overflow). `avg` / `stdev` / percentiles give `f64`, since they leave
+      the decimal grid. Costs a new kind in every operation, and is
+      pond-rs-only until pond-ts gains one.
+    - **C. A, plus `Column::to_decimal` / `from_decimal`** helpers so a
+      caller can keep exact values outside pond-rs.
+  - To decide with Peter before building. Lean: B, since exactness is the
+    reason people store decimals, and `sum` of prices or volumes is where
+    `f64` drift shows.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

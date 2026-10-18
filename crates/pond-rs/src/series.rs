@@ -1,7 +1,7 @@
 //! `TimeSeries`: a key column (points in time, or intervals) plus named
-//! number columns, all the same length.
+//! value columns (numbers, text, true/false), all the same length.
 
-use crate::column::Float64Column;
+use crate::column::{BooleanColumn, ColumnData, Float64Column, StringColumn};
 use crate::error::{PondError, Result};
 
 /// What a schema column holds.
@@ -13,15 +13,22 @@ pub enum ColumnKind {
     Interval,
     /// A value column of `f64`.
     Number,
+    /// A value column of text.
+    String,
+    /// A value column of true/false values.
+    Boolean,
 }
 
 impl ColumnKind {
-    /// The name pond-ts uses in a schema (`"time"`, `"interval"`, `"number"`).
+    /// The name pond-ts uses in a schema (`"time"`, `"interval"`,
+    /// `"number"`, `"string"`, `"boolean"`).
     pub fn as_str(self) -> &'static str {
         match self {
             ColumnKind::Time => "time",
             ColumnKind::Interval => "interval",
             ColumnKind::Number => "number",
+            ColumnKind::String => "string",
+            ColumnKind::Boolean => "boolean",
         }
     }
 }
@@ -80,53 +87,64 @@ impl Key {
     }
 }
 
-/// A value column handed to [`TimeSeries::new`].
+/// A named value column: numbers, text or true/false values. Handed to
+/// [`TimeSeries::new`], and read back with [`TimeSeries::column`].
+///
+/// ```
+/// # use pond_rs::{Column, ColumnKind, TimeSeries};
+/// let s = TimeSeries::new("hosts", vec![0, 1000], vec![
+///     Column::required("cpu", vec![0.5, 0.7]),
+///     Column::optional("host", vec![Some("a"), None]),
+///     Column::required("up", vec![true, false]),
+/// ])?;
+/// assert_eq!(s.column("host")?.kind(), ColumnKind::String);
+/// assert_eq!(s.column("host")?.strings()?.get(0), Some("a"));
+/// assert!(s.column("host")?.numbers().is_err()); // not a number column
+/// # Ok::<(), pond_rs::PondError>(())
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Column {
     pub(crate) name: String,
     pub(crate) required: bool,
-    pub(crate) data: Float64Column,
+    pub(crate) data: ColumnData,
 }
 
 impl Column {
-    /// A column with no gaps. A non-finite value is rejected when the series
-    /// is built.
-    pub fn required(name: impl Into<String>, values: Vec<f64>) -> Self {
+    /// A column with no gaps: `Vec<f64>`, `Vec<&str>`, `Vec<String>`,
+    /// `Vec<bool>` (or an array of them, or a built column). A gap (a
+    /// non-finite number, or a `None`) is rejected when the series is built.
+    pub fn required(name: impl Into<String>, values: impl Into<ColumnData>) -> Self {
         Self {
             name: name.into(),
             required: true,
-            data: Float64Column::from_values(values),
+            data: values.into(),
         }
     }
 
-    /// A column that may have gaps (`None`).
-    pub fn optional(
-        name: impl Into<String>,
-        values: impl IntoIterator<Item = Option<f64>>,
-    ) -> Self {
+    /// A column that may have gaps: as [`Column::required`], or with
+    /// `Option` values (`vec![Some(1.0), None]`, `[Some("a"), None]`) where
+    /// `None` is a gap. A non-finite number is a gap too.
+    pub fn optional(name: impl Into<String>, values: impl Into<ColumnData>) -> Self {
         Self {
             name: name.into(),
             required: false,
-            data: Float64Column::from_options(values),
+            data: values.into(),
         }
+    }
+
+    /// A number column that may have gaps, given as raw `f64` where any
+    /// non-finite value (`NaN`, `±inf`) is a gap. The same as
+    /// [`Column::optional`] with a `Vec<f64>`.
+    pub fn optional_raw(name: impl Into<String>, values: Vec<f64>) -> Self {
+        Self::optional(name, values)
     }
 
     /// A column around existing storage, without copying.
-    pub(crate) fn from_data(name: String, data: Float64Column, required: bool) -> Self {
+    pub(crate) fn from_data(name: String, data: impl Into<ColumnData>, required: bool) -> Self {
         Self {
             name,
             required,
-            data,
-        }
-    }
-
-    /// A column that may have gaps, given as raw `f64` where any non-finite
-    /// value (`NaN`, `±inf`) is a gap.
-    pub fn optional_raw(name: impl Into<String>, values: Vec<f64>) -> Self {
-        Self {
-            name: name.into(),
-            required: false,
-            data: Float64Column::from_values(values),
+            data: data.into(),
         }
     }
 
@@ -138,8 +156,47 @@ impl Column {
         self.required
     }
 
-    pub fn data(&self) -> &Float64Column {
+    /// What the column holds: [`ColumnKind::Number`], `String` or `Boolean`.
+    pub fn kind(&self) -> ColumnKind {
+        self.data.kind()
+    }
+
+    /// The values, whichever kind they are.
+    pub fn data(&self) -> &ColumnData {
         &self.data
+    }
+
+    /// The values of a number column; an error for any other kind.
+    pub fn numbers(&self) -> Result<&Float64Column> {
+        match &self.data {
+            ColumnData::Number(c) => Ok(c),
+            _ => Err(self.wrong_kind("Column::numbers", "number")),
+        }
+    }
+
+    /// The values of a text column; an error for any other kind.
+    pub fn strings(&self) -> Result<&StringColumn> {
+        match &self.data {
+            ColumnData::String(c) => Ok(c),
+            _ => Err(self.wrong_kind("Column::strings", "string")),
+        }
+    }
+
+    /// The values of a true/false column; an error for any other kind.
+    pub fn booleans(&self) -> Result<&BooleanColumn> {
+        match &self.data {
+            ColumnData::Boolean(c) => Ok(c),
+            _ => Err(self.wrong_kind("Column::booleans", "boolean")),
+        }
+    }
+
+    fn wrong_kind(&self, call: &'static str, wanted: &str) -> PondError {
+        PondError::WrongKind {
+            call,
+            column: self.name.clone(),
+            kind: self.kind().as_str(),
+            reason: format!("this call needs a {wanted} column"),
+        }
     }
 }
 
@@ -263,13 +320,14 @@ impl TimeSeries {
                     column.data.len()
                 )));
             }
-            if column.required {
-                if let Some(i) = column.data.values().iter().position(|v| !v.is_finite()) {
-                    return Err(invalid(format!(
-                        "required column '{}' has a gap at row {i}; use Column::optional if gaps are allowed",
-                        column.name
-                    )));
-                }
+            if column.required && column.data.missing_count() > 0 {
+                let i = (0..rows)
+                    .find(|&i| !column.data.is_present(i))
+                    .expect("a gap exists");
+                return Err(invalid(format!(
+                    "required column '{}' has a gap at row {i}; use Column::optional if gaps are allowed",
+                    column.name
+                )));
             }
         }
         Ok(Self {
@@ -311,7 +369,7 @@ impl TimeSeries {
         })
         .chain(self.columns.iter().map(|c| ColumnDef {
             name: c.name.clone(),
-            kind: ColumnKind::Number,
+            kind: c.kind(),
             required: c.required,
         }))
         .collect()
@@ -322,12 +380,11 @@ impl TimeSeries {
         &self.columns
     }
 
-    /// A value column by name.
-    pub fn column(&self, name: &str) -> Option<&Float64Column> {
-        self.columns
-            .iter()
-            .find(|c| c.name == name)
-            .map(|c| &c.data)
+    /// A value column by name; an error naming the columns there are when
+    /// there is none. Then [`Column::numbers`], [`Column::strings`] or
+    /// [`Column::booleans`] for its values.
+    pub fn column(&self, name: &str) -> Result<&Column> {
+        Ok(&self.columns[self.column_index("TimeSeries::column", name)?])
     }
 
     pub(crate) fn column_index(&self, call: &'static str, name: &str) -> Result<usize> {

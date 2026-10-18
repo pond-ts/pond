@@ -11,7 +11,9 @@ use common::{
     ColumnDef, CoreCase, CoreFixture, SeriesJson, cell_number, check_case, check_coverage,
     compare_series, load_core_fixture, report,
 };
-use pond_rs::{Agg, At, Column, ColumnKind, IntervalKeys, Key, Reducer, Sequence, TimeSeries};
+use pond_rs::{
+    Agg, At, Column, ColumnData, ColumnKind, IntervalKeys, Key, Reducer, Sequence, TimeSeries,
+};
 use serde_json::{Value, json};
 
 /// Every op the fixture may contain. A new op in the fixture fails
@@ -103,19 +105,20 @@ fn to_series(json: &SeriesJson) -> TimeSeries {
         .iter()
         .enumerate()
         .map(|(c, def)| {
-            assert_eq!(
-                def.kind, "number",
-                "{}.{}: number columns only",
-                json.name, def.name
-            );
-            let cells = json.rows.iter().map(|row| cell_number(&row[c + 1]));
+            let cells = json.rows.iter().map(|row| &row[c + 1]);
+            let data: ColumnData = match def.kind.as_str() {
+                "number" => cells.map(cell_number).collect::<Vec<_>>().into(),
+                "string" => cells
+                    .map(|v| v.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+                    .into(),
+                "boolean" => cells.map(Value::as_bool).collect::<Vec<_>>().into(),
+                other => panic!("{}.{}: unknown column kind {other}", json.name, def.name),
+            };
             if def.required.unwrap_or(true) {
-                Column::required(
-                    &def.name,
-                    cells.map(|v| v.expect("required cell")).collect(),
-                )
+                Column::required(&def.name, data)
             } else {
-                Column::optional(&def.name, cells)
+                Column::optional(&def.name, data)
             }
         })
         .collect();
@@ -162,8 +165,8 @@ fn to_json(series: &TimeSeries) -> SeriesJson {
             name: def.name,
             kind: def.kind.as_str().to_string(),
             required: match def.kind {
-                ColumnKind::Number if !def.required => Some(false),
-                _ => None,
+                ColumnKind::Time | ColumnKind::Interval => None,
+                _ => (!def.required).then_some(false),
             },
         })
         .collect();
@@ -174,7 +177,7 @@ fn to_json(series: &TimeSeries) -> SeriesJson {
                 Key::Interval(k) => json!([k.label[i], k.begin[i], k.end[i]]),
             };
             std::iter::once(key)
-                .chain(series.columns().iter().map(|c| encode(c.data().get(i))))
+                .chain(series.columns().iter().map(|c| encode(c.data(), i)))
                 .collect()
         })
         .collect();
@@ -185,11 +188,15 @@ fn to_json(series: &TimeSeries) -> SeriesJson {
     }
 }
 
-fn encode(cell: Option<f64>) -> Value {
-    match cell {
-        None => Value::Null,
-        Some(v) if v == 0.0 && v.is_sign_negative() => json!({ "f64": "-0" }),
-        Some(v) => json!(v),
+fn encode(data: &ColumnData, i: usize) -> Value {
+    match data {
+        ColumnData::Number(c) => match c.get(i) {
+            None => Value::Null,
+            Some(v) if v == 0.0 && v.is_sign_negative() => json!({ "f64": "-0" }),
+            Some(v) => json!(v),
+        },
+        ColumnData::String(c) => c.get(i).map_or(Value::Null, |v| json!(v)),
+        ColumnData::Boolean(c) => c.get(i).map_or(Value::Null, |v| json!(v)),
     }
 }
 
@@ -320,18 +327,46 @@ fn find<'a>(fixture: &'a CoreFixture, id: &str) -> &'a CoreCase {
         .unwrap_or_else(|| panic!("fixture case '{id}' missing"))
 }
 
-/// pond-ts's documented `toArrow` recipe (every field Float64, the key
-/// included) written to IPC by pond-ts itself
-/// (`packages/core/scripts/parity/export.mjs`): pond-rs must read back the
-/// `noisy` input exactly.
+/// Arrow IPC files built from pond-ts's own `toArrow` output (its buffers,
+/// null bits and dictionaries) by apache-arrow in
+/// `packages/core/scripts/parity/export.mjs`: pond-rs must read back the
+/// input series exactly. `noisy` is every field Float64, the key included
+/// (pond-ts's documented recipe); `mixed` adds Utf8, Dictionary<Int32, Utf8>
+/// and Boolean fields (`toArrow`'s `utf8`, `dictionary` and `bool`). The
+/// script, not pond-ts, picks the Arrow types and which fields are nullable.
 #[test]
-fn reads_the_pond_ts_arrow_export() {
+fn reads_the_pond_ts_arrow_exports() {
     let fixture = load_core_fixture();
-    let bytes = std::fs::read(common::repo_path(
-        "packages/core/test/fixtures/parity-export.arrow",
-    ))
-    .unwrap();
-    let series = TimeSeries::from_ipc_bytes("noisy", bytes, "time").unwrap();
-    let expected = &fixture.inputs["noisy"];
-    compare_series(expected, &to_json(&series), None).unwrap();
+    for (input, file) in [
+        ("noisy", "parity-export.arrow"),
+        ("mixed", "parity-export-mixed.arrow"),
+    ] {
+        let bytes = std::fs::read(common::repo_path(&format!(
+            "packages/core/test/fixtures/{file}"
+        )))
+        .unwrap();
+        let series = TimeSeries::from_ipc_bytes(input, bytes, "time").unwrap();
+        compare_series(&fixture.inputs[input], &to_json(&series), None)
+            .unwrap_or_else(|why| panic!("{file}: {why}"));
+        if input == "mixed" {
+            // pond-ts wrote `site` as a dictionary and `host` as plain text;
+            // pond-rs keeps each as it came.
+            assert!(
+                series
+                    .column("site")
+                    .unwrap()
+                    .strings()
+                    .unwrap()
+                    .is_dictionary()
+            );
+            assert!(
+                !series
+                    .column("host")
+                    .unwrap()
+                    .strings()
+                    .unwrap()
+                    .is_dictionary()
+            );
+        }
+    }
 }

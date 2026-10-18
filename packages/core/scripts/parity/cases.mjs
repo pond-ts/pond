@@ -399,6 +399,55 @@ const CASES = [
   ['asTime-error-end-overlap', 'overlap', 'asTime', [{ at: 'end' }]],
   ['asTime-error-center-overlap', 'overlap', 'asTime', [{ at: 'center' }]],
   ['asTime-error-time-column', 'timeColumn', 'asTime', []],
+  // text and true/false columns: count, first, last (the reducers pond-ts's
+  // types allow on them that pond-rs has)
+  [
+    'aggregate-mixed-5s',
+    'mixed',
+    'aggregate',
+    [
+      every('5s'),
+      {
+        site_n: { from: 'site', using: 'count' },
+        site_first: { from: 'site', using: 'first' },
+        host_n: { from: 'host', using: 'count' },
+        host_first: { from: 'host', using: 'first' },
+        host_last: { from: 'host', using: 'last' },
+        up_n: { from: 'up', using: 'count' },
+        up_first: { from: 'up', using: 'first' },
+        up_last: { from: 'up', using: 'last' },
+        v: { from: 'v', using: 'sum' },
+      },
+    ],
+  ],
+  [
+    'aggregate-mixed-calendar-day',
+    'mixed',
+    'aggregate',
+    [calendar('day', 'UTC'), { site: 'last', up: 'first' }],
+  ],
+  [
+    'rolling-mixed-3s',
+    'mixed',
+    'rolling',
+    [
+      '3s',
+      {
+        site_last: { from: 'site', using: 'last' },
+        host_first: { from: 'host', using: 'first' },
+        host_n: { from: 'host', using: 'count' },
+        up_last: { from: 'up', using: 'last' },
+      },
+    ],
+  ],
+  [
+    'rolling-mixed-shorthand-order',
+    'mixed',
+    'rolling',
+    ['4s', { up: 'first', host: 'last' }],
+  ],
+  ['select-mixed', 'mixed', 'select', ['up', 'site']],
+  ['rename-mixed', 'mixed', 'rename', [{ host: 'name', up: 'alive' }]],
 ];
 
 // Interval-keyed inputs (label, begin, end), the shape `aggregate` returns.
@@ -421,6 +470,25 @@ const OVERLAP_ROWS = [
   [[0, 0, 5000], 1, 2],
   [[1000, 1000, 2000], 3, 4],
 ];
+
+// Text and true/false columns. `site` repeats few values over 20 rows, so
+// pond-ts holds it as a dictionary (and `toArrow` writes it as one); `host`
+// is mostly distinct, so it stays plain text. Gaps in `host` and `up`, and an
+// empty string, which is a value, not a gap.
+const MIXED_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'site', kind: 'string' },
+  { name: 'host', kind: 'string', required: false },
+  { name: 'up', kind: 'boolean', required: false },
+  { name: 'v', kind: 'number', required: false },
+];
+const MIXED_ROWS = Array.from({ length: 20 }, (_, i) => [
+  i < 12 ? i * 1000 : 12_000 + (i - 11) * 2500,
+  ['east', 'west', 'north'][(i * 7) % 3],
+  i % 4 === 1 ? null : i === 6 ? '' : `h${(i * 5) % 17}`,
+  i % 5 === 2 ? null : (i * 3) % 4 < 2,
+  i % 6 === 4 ? null : i / 4,
+]);
 
 /** Tag the numbers plain JSON would lose or change. */
 function encodeCell(cell) {
@@ -447,6 +515,15 @@ export function noisySeries(pond) {
   });
 }
 
+/** The `mixed` input series, also exported to Arrow by export.mjs. */
+export function mixedSeries(pond) {
+  return pond.TimeSeries.fromJSON({
+    name: 'mixed',
+    schema: MIXED_SCHEMA,
+    rows: MIXED_ROWS,
+  });
+}
+
 export function buildFixture(pond) {
   const { TimeSeries, Sequence } = pond;
   const series = (name, rows) =>
@@ -470,6 +547,7 @@ export function buildFixture(pond) {
       rows: DENSE_ROWS,
     }),
     noisy: noisySeries(pond),
+    mixed: mixedSeries(pond),
     signed: TimeSeries.fromJSON({
       name: 'signed',
       schema: [

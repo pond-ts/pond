@@ -23,6 +23,15 @@ pub enum PondError {
     /// Input data that breaks a series rule (unsorted keys, a gap in a
     /// required column, mismatched lengths, …).
     InvalidData { call: &'static str, message: String },
+    /// A column of the wrong kind for the call: text where numbers are
+    /// needed, say.
+    WrongKind {
+        call: &'static str,
+        column: String,
+        /// The column's kind: `"number"`, `"string"` or `"boolean"`.
+        kind: &'static str,
+        reason: String,
+    },
     /// A value pond-rs cannot handle yet, rather than answer wrongly.
     Unsupported { call: &'static str, message: String },
 }
@@ -55,6 +64,12 @@ impl fmt::Display for PondError {
                 write!(f, "{call}: output column '{column}' is written twice")
             }
             PondError::InvalidData { call, message } => write!(f, "{call}: {message}"),
+            PondError::WrongKind {
+                call,
+                column,
+                kind,
+                reason,
+            } => write!(f, "{call}: column '{column}' is a {kind} column; {reason}"),
             PondError::Unsupported { call, message } => {
                 write!(f, "{call}: not supported in pond-rs yet: {message}")
             }

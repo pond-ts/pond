@@ -91,7 +91,12 @@ mod tests {
                                 .map(|c| {
                                     (
                                         c.name().to_string(),
-                                        c.data().values().iter().map(|v| v.to_bits()).collect(),
+                                        c.numbers()
+                                            .unwrap()
+                                            .values()
+                                            .iter()
+                                            .map(|v| v.to_bits())
+                                            .collect(),
                                     )
                                 })
                                 .collect::<Vec<(String, Vec<u64>)>>()

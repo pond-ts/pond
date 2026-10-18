@@ -4,12 +4,14 @@
 //! the time series analytics library. See `docs/rfcs/pond-rs.md` in the
 //! repository for the plan.
 //!
-//! **Status: R1a, in progress.** What exists: time-keyed series of number
-//! columns (gaps allowed), [`TimeSeries::rolling`] over a trailing time
-//! window, [`TimeSeries::aggregate`] into fixed-length buckets
+//! **Status: R1b, in progress** (the rest of the batch core). What exists:
+//! series keyed by time or by labelled intervals, with number, text and
+//! true/false columns (gaps allowed; see [`Column`]),
+//! [`TimeSeries::rolling`] over a trailing time window, [`TimeSeries::aggregate`] into fixed-length buckets
 //! ([`Sequence::every`]) or calendar buckets in a time zone
-//! ([`Sequence::calendar`]), and Arrow in and out
-//! ([`TimeSeries::read_ipc`], [`TimeSeries::write_ipc`]). Results match
+//! ([`Sequence::calendar`]), [`TimeSeries::select`] / `rename` / `as_time`,
+//! and Arrow in and out ([`TimeSeries::read_ipc`],
+//! [`TimeSeries::write_ipc`]). Results match
 //! pond-ts bit for bit; the parity
 //! harness under `tests/` checks that against pond-ts's own output
 //! (`packages/core/test/fixtures/parity.json`).
@@ -21,8 +23,9 @@
 //! bits on any number of threads.
 //!
 //! **Memory.** Columns hold their values in Arrow buffers. Reading a
-//! gap-free `Float64` field from a one-batch Arrow file uses the file's
-//! memory without copying (which keeps the file's bytes in memory while the
+//! gap-free `Float64` field, a `Utf8` / `Dictionary<Int32, Utf8>` field or a
+//! `Boolean` field from a one-batch Arrow file uses the file's memory
+//! without copying (which keeps the file's bytes in memory while the
 //! column lives), and writing hands each column's buffer to Arrow.
 //!
 //! ```
@@ -41,7 +44,7 @@
 //!     ],
 //! )?;
 //! assert_eq!(per_minute.len(), 2);
-//! assert_eq!(per_minute.column("load_n").unwrap().get(0), Some(2.0)); // the gap is not counted
+//! assert_eq!(per_minute.column("load_n")?.numbers()?.get(0), Some(2.0)); // the gap is not counted
 //!
 //! // Calendar days in New York: the day clocks spring forward is 23 hours.
 //! let days = Sequence::calendar("day", "America/New_York")?;
@@ -62,7 +65,7 @@ mod rolling;
 mod sequence;
 mod series;
 
-pub use column::Float64Column;
+pub use column::{BooleanColumn, ColumnData, Float64Column, StringColumn};
 pub use duration::parse_duration;
 pub use error::{PondError, Result};
 pub use reducer::{Agg, Reducer};
