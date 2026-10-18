@@ -398,6 +398,7 @@ const CASES = [
   ['asTime-time-key', 'gappy', 'asTime', [{ at: 'end' }]],
   ['asTime-error-end-overlap', 'overlap', 'asTime', [{ at: 'end' }]],
   ['asTime-error-center-overlap', 'overlap', 'asTime', [{ at: 'center' }]],
+  ['asTime-error-time-column', 'timeColumn', 'asTime', []],
 ];
 
 // Interval-keyed inputs (label, begin, end), the shape `aggregate` returns.
@@ -490,6 +491,15 @@ export function buildFixture(pond) {
       name: 'overlap',
       schema: INTERVAL_SCHEMA,
       rows: OVERLAP_ROWS,
+    }),
+    // A value column named `time` clashes with the key `asTime` makes.
+    timeColumn: TimeSeries.fromJSON({
+      name: 'timeColumn',
+      schema: [
+        { name: 'interval', kind: 'interval' },
+        { name: 'time', kind: 'number' },
+      ],
+      rows: [[[0, 0, 1000], 1]],
     }),
     extreme: TimeSeries.fromJSON({
       name: 'extreme',

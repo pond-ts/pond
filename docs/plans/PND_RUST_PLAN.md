@@ -637,7 +637,7 @@ The one result short of a clean win is one-core B: polars is faster
       centre. pond-rs refuses it (error) where pond-ts gives `x.5`. pond-rs
       keys are whole milliseconds; fractional keys are a step-2 question.
     - Interval labels are numbers only until step 2.
-  - Fixture: 18 new cases, 52 of 63 now run in pond-rs.
+  - Fixture: 19 new cases, 53 of 64 now run in pond-rs.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

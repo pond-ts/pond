@@ -121,7 +121,8 @@ impl TimeSeries {
 
     /// Turn each row's key into a single time, named `"time"` (pond-ts
     /// `asTime({ at })`). A time-keyed series is returned with its key
-    /// renamed to `"time"` and otherwise unchanged. For interval keys,
+    /// renamed to `"time"` and otherwise unchanged. A value column already
+    /// named `"time"` is an error, as in pond-ts. For interval keys,
     /// [`At::Begin`] keeps rows in order. [`At::End`] or [`At::Center`] can
     /// reorder rows when intervals overlap; that is an error, as in pond-ts.
     ///
@@ -143,6 +144,12 @@ impl TimeSeries {
     /// ```
     pub fn as_time(&self, at: At) -> Result<TimeSeries> {
         const CALL: &str = "as_time";
+        if self.columns().iter().any(|c| c.name() == "time") {
+            return Err(PondError::InvalidData {
+                call: CALL,
+                message: "a value column is already named 'time', the name the new key takes; rename it first".into(),
+            });
+        }
         let time = match self.key() {
             Key::Time(t) => t.clone(),
             Key::Interval(k) => match at {
