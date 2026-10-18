@@ -175,7 +175,8 @@ impl TimeSeries {
     }
 
     /// Build an interval-keyed series, the shape `aggregate` returns. The key
-    /// column is named `"interval"`. Row `i` covers `[begin[i], end[i])` and
+    /// column is always named `"interval"` (pond-ts takes the name from the
+    /// schema; pond-rs has no way to choose it yet). Row `i` covers `[begin[i], end[i])` and
     /// is labelled `label[i]`; rows must be ordered by `begin`, and the same
     /// time limits as [`TimeSeries::new`] apply.
     ///

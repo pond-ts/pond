@@ -584,7 +584,10 @@ The one result short of a clean win is one-core B: polars is faster
      - `select`, `rename`, `as_time(At)` and `TimeSeries::from_intervals`.
      - Re-export `arrow_ipc`.
 
-     Doing this first fixes what every agent in the R1a trial hit.
+     Doing this first removes most of what every agent in the R1a trial
+     hit: no more hand-built batch or extra dependency. A key named e.g.
+     `day_start` still needs one Arrow field renamed by hand, since pond-ts
+     does not rename keys either.
 
   2. **Column kinds.** Columns become text and true/false as well as
      numbers, with Arrow in and out for each. Also `TimeRange` keys and
@@ -621,7 +624,7 @@ The one result short of a clean win is one-core B: polars is faster
   An agent trial at the end of step 4 repeats the R1a setup on a
   partitioned workload.
 
-  **Step 1 (in progress, 2026-10-18):** done in code.
+  **Step 1 (PR #770, 2026-10-18):** in review.
   - Choices, all matching pond-ts:
     - `select` keeps schema order, so a repeated name selects the column
       once.

@@ -567,7 +567,7 @@ the study oracle) is done.
 - **[PND-RUST-R1B]** — Rest of batch core, adopted 2026-10-18 after R1a met
   every target (report: "R1a step 5" in `docs/plans/PND_RUST_PLAN.md`).
   Steps, each bit-for-bit against pond-ts:
-  1. Reshape and output layout ([PND-RUSTOUT] folded in): in progress.
+  1. Reshape and output layout ([PND-RUSTOUT] folded in): PR #770, in review.
   2. Text and true/false columns.
   3. Row-wise operations.
   4. `partition_by` / `group_by`, threaded across partitions.

@@ -247,6 +247,67 @@ mod tests {
     }
 
     #[test]
+    fn as_time_names_a_time_key_time() {
+        // A key read from Arrow keeps its field name; pond-ts renames it to
+        // `time` here too.
+        let s = TimeSeries::with_key(
+            "test",
+            "s".into(),
+            "ts".into(),
+            Key::Time(vec![0, 1000]),
+            vec![Column::required("v", vec![1.0, 2.0])],
+        )
+        .unwrap();
+        let t = s.as_time(At::End).unwrap();
+        assert_eq!(t.key_name(), "time");
+        assert_eq!(t.key().begin(), &[0, 1000]);
+    }
+
+    /// The parity fixture only checks that pond-ts and pond-rs both fail on
+    /// its error cases (the messages differ), so pin each error's reason here.
+    #[test]
+    fn each_error_says_why() {
+        let s = TimeSeries::new(
+            "s",
+            vec![0],
+            vec![
+                Column::required("a", vec![1.0]),
+                Column::required("b", vec![2.0]),
+            ],
+        )
+        .unwrap();
+        let err = |r: Result<TimeSeries>| r.unwrap_err().to_string();
+        assert!(err(s.select(&["zz"])).contains("no column named 'zz'"));
+        assert!(err(s.rename(&[("time", "t")])).contains("cannot rename the key"));
+        assert!(err(s.rename(&[("a", "b")])).contains("'b' is already taken"));
+        assert!(err(s.rename(&[("a", "time")])).contains("'time' is already taken"));
+        assert!(err(s.rename(&[("zz", "q")])).contains("no column named 'zz'"));
+        let overlap = TimeSeries::from_intervals(
+            "o",
+            IntervalKeys {
+                label: vec![0, 1000],
+                begin: vec![0, 1000],
+                end: vec![5000, 2000],
+            },
+            vec![Column::required("v", vec![1.0, 2.0])],
+        )
+        .unwrap();
+        assert!(err(overlap.as_time(At::End)).contains("intervals overlap"));
+        assert!(err(overlap.as_time(At::Center)).contains("intervals overlap"));
+        let clash = TimeSeries::from_intervals(
+            "c",
+            IntervalKeys {
+                label: vec![0],
+                begin: vec![0],
+                end: vec![1000],
+            },
+            vec![Column::required("time", vec![1.0])],
+        )
+        .unwrap();
+        assert!(err(clash.as_time(At::Begin)).contains("already named 'time'"));
+    }
+
+    #[test]
     fn rename_rejects_a_source_given_twice() {
         let s = TimeSeries::new("s", vec![0], vec![Column::required("a", vec![1.0])]).unwrap();
         let err = s.rename(&[("a", "x"), ("a", "y")]).unwrap_err().to_string();
