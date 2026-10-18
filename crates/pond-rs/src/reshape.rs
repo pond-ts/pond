@@ -165,7 +165,7 @@ impl TimeSeries {
                         return Err(PondError::Unsupported {
                             call: CALL,
                             message: format!(
-                                "the centre of row {i} ([{b}, {e}) ms) is half a millisecond; pond-rs keeps whole milliseconds. Use At::Begin or At::End"
+                                "the centre of row {i} ({b} to {e} ms) is half a millisecond; pond-rs keeps whole milliseconds. Use At::Begin or At::End"
                             ),
                         });
                     }

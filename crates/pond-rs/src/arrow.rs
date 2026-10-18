@@ -1018,6 +1018,27 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_results_round_trip_through_ipc() {
+        // Number labels written as Float64 must read back as the same labels.
+        let out = sample()
+            .aggregate(
+                &crate::Sequence::every("2s").unwrap(),
+                &[crate::Agg::new("a_sum", "a", crate::Reducer::Sum)],
+            )
+            .unwrap();
+        let mut bytes = Vec::new();
+        out.write_ipc(&mut bytes).unwrap();
+        let back =
+            TimeSeries::from_ipc_bytes("s", bytes, ArrowKey::Interval("interval".into())).unwrap();
+        assert_eq!(back.key(), out.key());
+        assert_eq!(back.schema(), out.schema());
+        assert_eq!(
+            bits(back.column("a_sum").unwrap().numbers().unwrap()),
+            bits(out.column("a_sum").unwrap().numbers().unwrap())
+        );
+    }
+
+    #[test]
     fn writes_range_and_interval_keys_as_pond_ts_does() {
         let a = || vec![Column::required("a", vec![1.0, 2.0])];
         let types = |s: &TimeSeries| -> Vec<(String, DataType)> {

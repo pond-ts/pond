@@ -764,6 +764,12 @@ The one result short of a clean win is one-core B: polars is faster
     - pond-ts reads range and interval keys only from fields named
       `timeRange` / `interval`; pond-rs takes any name, so its own
       `ArrowKey::Interval("bucket")` file needs renaming for pond-ts.
+    - pond-rs reads `<key>End` in its own Arrow time unit; pond-ts applies
+      the start field's unit to both. They differ only for a table whose
+      two edges have different units, where pond-rs's reading is the
+      correct one. (Found in review.)
+    - The pond-ts-reads-pond-rs direction was checked once by hand, not by
+      a committed test.
   - Fixture: 11 new cases on a `ranges` input (shared starts, a
     zero-length span, an overlap) and a `labelled` input (repeated text
     labels): `as_time` begin / center / end-out-of-order error, `select`,
@@ -817,16 +823,19 @@ The one result short of a clean win is one-core B: polars is faster
   - pond-ts has no decimal kind (its numbers are JavaScript `f64`), so
     pond-rs cannot match pond-ts bit for bit on exact decimals; it can only
     match pond-ts after a conversion to `f64`.
-  - Options: - **A. Read as `f64`.** Smallest change; every operation works as for
-    numbers, matching pond-ts. Loses exactness: values past ~15–17
-    significant digits round, and sums pick up binary rounding
-    (0.1 + 0.2 ≠ 0.3). - **B. A decimal column kind** (`ColumnData::Decimal { values: i128,
+  - Options:
+    - **A. Read as `f64`.** Smallest change; every operation works as for
+      numbers, matching pond-ts. Loses exactness: values past ~15–17
+      significant digits round, and sums pick up binary rounding
+      (0.1 + 0.2 ≠ 0.3).
+    - **B. A decimal column kind** (`ColumnData::Decimal { values: i128,
 scale }`, written back as `Decimal128`). Exact for `count` / `first`
-    / `last` / `min` / `max` / `sum` (128-bit integer sums, an error on
-    overflow). `avg` / `stdev` / percentiles give `f64`, since they leave
-    the decimal grid. Costs a new kind in every operation, and is
-    pond-rs-only until pond-ts gains one. - **C. A, plus `Column::to_decimal` / `from_decimal`** helpers so a
-    caller can keep exact values outside pond-rs.
+      / `last` / `min` / `max` / `sum` (128-bit integer sums, an error on
+      overflow). `avg` / `stdev` / percentiles give `f64`, since they leave
+      the decimal grid. Costs a new kind in every operation, and is
+      pond-rs-only until pond-ts gains one.
+    - **C. A, plus `Column::to_decimal` / `from_decimal`** helpers so a
+      caller can keep exact values outside pond-rs.
   - To decide with Peter before building. Lean: B, since exactness is the
     reason people store decimals, and `sum` of prices or volumes is where
     `f64` drift shows.
