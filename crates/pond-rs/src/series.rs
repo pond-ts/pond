@@ -158,11 +158,7 @@ impl Column {
 
     /// What the column holds: [`ColumnKind::Number`], `String` or `Boolean`.
     pub fn kind(&self) -> ColumnKind {
-        match self.data {
-            ColumnData::Number(_) => ColumnKind::Number,
-            ColumnData::String(_) => ColumnKind::String,
-            ColumnData::Boolean(_) => ColumnKind::Boolean,
-        }
+        self.data.kind()
     }
 
     /// The values, whichever kind they are.

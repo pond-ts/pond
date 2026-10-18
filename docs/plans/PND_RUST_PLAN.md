@@ -673,22 +673,33 @@ The one result short of a clean win is one-core B: polars is faster
     - With one batch, `Utf8`, `Dictionary<Int32, Utf8>` and `Boolean` are
       used in place. Anything else is copied into `Utf8`.
     - Writes the types pond-ts `toArrow` names: `Utf8`,
-      `Dictionary<Int32, Utf8>` (when the column is one) and `Bool`.
+      `Dictionary<Int32, Utf8>` (when the column is one) and `Boolean`
+      (pond-ts `toArrow` calls these `utf8`, `dictionary` and `bool`).
   - Differences from pond-ts:
     - pond-ts runs number reducers on text at run time (`sum` gives 0,
       `avg` gives gaps). pond-rs refuses them. Logged as [PND-KINDREDUCE].
     - pond-ts chooses dictionary or plain text itself, by how repetitive
       the column is. pond-rs keeps whatever it was given; built from Rust
       values, it is plain.
+  - Sharp edges:
+    - `first` / `last` of a dictionary column keep the source's whole list
+      of strings, so a short `aggregate` result still writes every distinct
+      string of the source to Arrow.
+    - Text is held with 32-bit offsets (Utf8). Reading a `LargeUtf8` /
+      `Utf8View` column of more than 2 GiB of text is an error, found in
+      review.
   - Fixture:
     - 6 new cases on a `mixed` input (20 rows; a repetitive text column
       that pond-ts holds as a dictionary, a mostly distinct one, a
       true/false column, an empty string, gaps): `aggregate` fixed and
       calendar, `rolling` spec and shorthand order, `select`, `rename`.
       59 of 70 cases now run in pond-rs, all bit for bit.
-    - A second Arrow file written by pond-ts (`parity-export-mixed.arrow`:
-      Float64, Utf8, Dictionary<Int32, Utf8>, Bool) must read back as the
-      `mixed` input exactly.
+    - A second Arrow file, `parity-export-mixed.arrow`, must read back as
+      the `mixed` input exactly. It is built by apache-arrow in
+      `export.mjs` from pond-ts's `toArrow` output (its buffers, null bits
+      and dictionary), with Float64, Utf8, Dictionary<Int32, Utf8> and
+      Boolean fields. The script, not pond-ts, picks those Arrow types and
+      which fields are nullable.
   - Perf (`examples/perf_text.rs`, 1M rows 1 s apart, ~5% gaps, one
     thread, median of 7):
 

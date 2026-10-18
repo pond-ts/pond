@@ -327,11 +327,13 @@ fn find<'a>(fixture: &'a CoreFixture, id: &str) -> &'a CoreCase {
         .unwrap_or_else(|| panic!("fixture case '{id}' missing"))
 }
 
-/// Arrow IPC files written by pond-ts itself from its `toArrow` output
-/// (`packages/core/scripts/parity/export.mjs`): pond-rs must read back the
+/// Arrow IPC files built from pond-ts's own `toArrow` output (its buffers,
+/// null bits and dictionaries) by apache-arrow in
+/// `packages/core/scripts/parity/export.mjs`: pond-rs must read back the
 /// input series exactly. `noisy` is every field Float64, the key included
 /// (pond-ts's documented recipe); `mixed` adds Utf8, Dictionary<Int32, Utf8>
-/// and Bool fields, the types `toArrow` names.
+/// and Boolean fields (`toArrow`'s `utf8`, `dictionary` and `bool`). The
+/// script, not pond-ts, picks the Arrow types and which fields are nullable.
 #[test]
 fn reads_the_pond_ts_arrow_exports() {
     let fixture = load_core_fixture();

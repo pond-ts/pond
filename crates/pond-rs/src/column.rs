@@ -18,6 +18,8 @@ use arrow_array::{Array, ArrayRef, BooleanArray, DictionaryArray, Int32Array, St
 use arrow_buffer::{NullBuffer, ScalarBuffer};
 use arrow_schema::DataType;
 
+use crate::series::ColumnKind;
+
 /// A column of `f64` values where any non-finite value (`NaN`, `±inf`) is a
 /// gap. Reading a gap gives `None`.
 #[derive(Debug, Clone, PartialEq)]
@@ -179,7 +181,9 @@ impl StringColumn {
     }
 
     /// The rows named by `rows`, in that order; `None` gives a gap. A
-    /// dictionary column stays one, sharing its list of strings.
+    /// dictionary column stays one, sharing its whole list of strings, so a
+    /// short result (an `aggregate` of a long column) still carries, and
+    /// writes to Arrow, every distinct string of the source.
     pub(crate) fn take(&self, rows: &[Option<usize>]) -> Self {
         match &self.repr {
             StringRepr::Plain(a) => {
@@ -318,12 +322,12 @@ impl ColumnData {
         }
     }
 
-    /// pond-ts's name for the kind: `"number"`, `"string"` or `"boolean"`.
-    pub fn kind_name(&self) -> &'static str {
+    /// What the column holds: [`ColumnKind::Number`], `String` or `Boolean`.
+    pub fn kind(&self) -> ColumnKind {
         match self {
-            ColumnData::Number(_) => "number",
-            ColumnData::String(_) => "string",
-            ColumnData::Boolean(_) => "boolean",
+            ColumnData::Number(_) => ColumnKind::Number,
+            ColumnData::String(_) => ColumnKind::String,
+            ColumnData::Boolean(_) => ColumnKind::Boolean,
         }
     }
 }

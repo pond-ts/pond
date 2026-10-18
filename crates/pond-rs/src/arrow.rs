@@ -507,6 +507,17 @@ fn read_strings(batches: &[RecordBatch], c: usize, name: &str) -> Result<StringC
             other => unreachable!("read_strings called on {other} for '{name}'"),
         }
     }
+    // Utf8 offsets are 32-bit: more text than that would overflow them.
+    let bytes: usize = values.iter().flatten().map(|s| s.len()).sum();
+    if bytes > i32::MAX as usize {
+        return Err(PondError::Unsupported {
+            call: FROM,
+            message: format!(
+                "text column '{name}' holds {bytes} bytes; pond-rs keeps text as Utf8, which holds at most {} bytes per column",
+                i32::MAX
+            ),
+        });
+    }
     Ok(StringColumn::from_options(values))
 }
 
@@ -948,6 +959,54 @@ mod tests {
         assert_eq!(
             col.iter().collect::<Vec<_>>(),
             [Some("a"), Some("b"), Some("a")]
+        );
+    }
+
+    /// Text and true/false read from several batches, or a slice of one, go
+    /// through `rolling` the same as when built directly.
+    #[test]
+    fn sliced_and_split_text_rolls_like_direct_text() {
+        let host = [Some("a"), None, Some("b"), Some("c"), None, Some("d")];
+        let up = [Some(true), Some(false), None, Some(true), None, Some(false)];
+        let direct = TimeSeries::new(
+            "s",
+            (0..6).map(|i| i * 1000).collect(),
+            vec![Column::optional("host", host), Column::optional("up", up)],
+        )
+        .unwrap();
+        let aggs = [
+            crate::Agg::new("f", "host", crate::Reducer::First),
+            crate::Agg::new("l", "up", crate::Reducer::Last),
+            crate::Agg::new("n", "host", crate::Reducer::Count),
+        ];
+        let want = direct.rolling("2s", &aggs).unwrap();
+        let batch = direct.to_arrow().unwrap();
+        for batches in [
+            vec![batch.slice(0, 2), batch.slice(2, 4)],
+            vec![batch.slice(0, 1), batch.slice(1, 3), batch.slice(4, 2)],
+        ] {
+            let back = TimeSeries::from_arrow("s", &batches, "time").unwrap();
+            assert_eq!(back.rolling("2s", &aggs).unwrap(), want);
+        }
+        // One batch that is itself a slice: used in place, offsets kept.
+        let tail = TimeSeries::from_arrow("s", &[batch.slice(2, 4)], "time").unwrap();
+        assert_eq!(
+            tail.column("host")
+                .unwrap()
+                .strings()
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>(),
+            host[2..]
+        );
+        assert_eq!(
+            tail.column("up")
+                .unwrap()
+                .booleans()
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>(),
+            up[2..]
         );
     }
 }

@@ -420,7 +420,7 @@ pub(crate) fn check_source_kind(
         (data, _) => Err(PondError::WrongKind {
             call,
             column: column.name().to_string(),
-            kind: data.kind_name(),
+            kind: data.kind().as_str(),
             reason: format!(
                 "{} needs a number column; string and boolean columns take count, first or last",
                 reducer_name(reducer)
