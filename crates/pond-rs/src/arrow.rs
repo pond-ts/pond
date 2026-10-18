@@ -12,6 +12,10 @@
 //! range and interval keys only under those default names; pond-rs reads any
 //! name `<name>`, `<name>End` (and `<name>Label`).
 //!
+//! Reading takes the IPC file or stream format, uncompressed or with LZ4 /
+//! ZSTD buffers; writing is always an uncompressed file, which every
+//! reader (apache-arrow JS included) can open.
+//!
 //! pond-rs keys are whole epoch milliseconds. Written keys are
 //! `Timestamp(Millisecond, "UTC")`; a gap in a value column is an Arrow null.
 //! Value columns are `Float64`, `Utf8` (or a dictionary of it) and `Boolean`,
@@ -22,14 +26,13 @@ use std::sync::Arc;
 
 use arrow_array::cast::AsArray;
 use arrow_array::types::{
-    Date64Type, Float32Type, Float64Type, Int8Type, Int16Type, Int32Type, Int64Type,
-    TimestampMicrosecondType, TimestampMillisecondType, TimestampNanosecondType,
-    TimestampSecondType, UInt8Type, UInt16Type, UInt32Type, UInt64Type,
+    Float16Type, Float32Type, Float64Type, Int8Type, Int16Type, Int32Type, Int64Type, UInt8Type,
+    UInt16Type, UInt32Type, UInt64Type,
 };
 use arrow_array::{Array, ArrayRef, Float64Array, RecordBatch, TimestampMillisecondArray};
 use arrow_buffer::{BooleanBuffer, Buffer, NullBuffer};
 use arrow_ipc::convert::fb_to_schema;
-use arrow_ipc::reader::{FileDecoder, read_footer_length};
+use arrow_ipc::reader::{FileDecoder, StreamDecoder, read_footer_length};
 use arrow_ipc::writer::FileWriter;
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 
@@ -50,13 +53,49 @@ const READ: &str = "TimeSeries::read_ipc";
 /// of a block, malformed schemas) instead of returning an error. On native
 /// targets the panic is caught and returned as an error; on wasm32, where
 /// panics abort, a corrupt file still aborts.
-fn decode_ipc_file(bytes: Vec<u8>) -> Result<Vec<RecordBatch>> {
-    std::panic::catch_unwind(move || decode_ipc_file_unchecked(bytes)).unwrap_or_else(|_| {
+fn decode_ipc(bytes: Vec<u8>) -> Result<Vec<RecordBatch>> {
+    // The file format starts (and ends) with this magic; a stream does not.
+    if bytes.is_empty() {
+        return Err(invalid(
+            READ,
+            "no bytes: an empty Arrow IPC file or stream".into(),
+        ));
+    }
+    let is_file = bytes.starts_with(b"ARROW1");
+    std::panic::catch_unwind(move || {
+        if is_file {
+            decode_ipc_file_unchecked(bytes)
+        } else {
+            decode_ipc_stream_unchecked(bytes)
+        }
+    })
+    .unwrap_or_else(|_| {
         Err(invalid(
             READ,
-            "corrupt Arrow IPC file (arrow's decoder panicked)".into(),
+            "corrupt Arrow IPC data (arrow's decoder panicked)".into(),
         ))
     })
+}
+
+/// Every record batch in Arrow IPC stream-format bytes, sliced out of
+/// `bytes` without copying (unless compressed).
+fn decode_ipc_stream_unchecked(bytes: Vec<u8>) -> Result<Vec<RecordBatch>> {
+    let ipc = |e: arrow_schema::ArrowError| {
+        invalid(
+            READ,
+            format!("not an Arrow IPC file or stream, or a corrupt one: {e}"),
+        )
+    };
+    let mut buffer = Buffer::from_vec(bytes);
+    let mut decoder = StreamDecoder::new();
+    let mut batches = Vec::new();
+    while !buffer.is_empty() {
+        if let Some(batch) = decoder.decode(&mut buffer).map_err(ipc)? {
+            batches.push(batch);
+        }
+    }
+    decoder.finish().map_err(ipc)?;
+    Ok(batches)
 }
 
 fn decode_ipc_file_unchecked(bytes: Vec<u8>) -> Result<Vec<RecordBatch>> {
@@ -180,7 +219,8 @@ impl TimeSeries {
     ///   [`ArrowKey::TimeRange`] and [`ArrowKey::Interval`] also read
     ///   `<name>End` and, for an interval, `<name>Label` (numbers of any type,
     ///   read as `f64`, or text; no nulls). Each key field is a `Timestamp` in any unit,
-    ///   `Date64`, or `Int64` or `Float64` epoch milliseconds (`Float64` is
+    ///   `Date32` (midnight UTC), `Date64`, or `Int64` or `Float64` epoch
+    ///   milliseconds (`Float64` is
     ///   what pond-ts `toArrow` hands over). It must have no nulls, be in
     ///   order, and convert to whole milliseconds; a micro- or nanosecond
     ///   timestamp with a sub-millisecond part is an error rather than being
@@ -193,13 +233,21 @@ impl TimeSeries {
     ///   are gaps. A field Arrow marks nullable becomes an optional column
     ///   (even if it holds no nulls); a non-nullable one becomes required,
     ///   unless it holds `NaN` or infinities, which make it optional.
+    /// - Time fields (`Timestamp`, `Date32`, `Date64`, `Time32`, `Time64`,
+    ///   `Duration`) become number columns in milliseconds: epoch ms for
+    ///   timestamps and dates, a length for the others. A fractional
+    ///   millisecond is kept (`Timestamp(us)` 1500 is `1.5`); a value whose
+    ///   whole milliseconds pass 2^53 is an error. Also read as numbers: a
+    ///   `Float16` field, a `Null` field (all gaps), and a dictionary of
+    ///   numbers or times (decoded; a null key or entry is a gap).
     /// - Text fields (`Utf8`, `LargeUtf8`, `Utf8View`, or a dictionary of
     ///   `Utf8` / `LargeUtf8`) become string columns and `Boolean` fields
     ///   true/false columns; nulls are gaps, and a field Arrow marks nullable
     ///   is optional. With a single batch, a `Utf8` field, a
     ///   `Dictionary<Int32, Utf8>` field and a `Boolean` field are used in
     ///   place, without copying; other text types are copied into `Utf8`.
-    /// - Any other field type (lists, structs, …) is an error naming it.
+    /// - Any other field type (decimals, binary, lists, structs, …) is an
+    ///   error naming it.
     ///   Drop such fields first with [`RecordBatch::project`].
     ///
     /// The key column keeps its Arrow name.
@@ -337,8 +385,9 @@ impl TimeSeries {
         )
     }
 
-    /// Read a series from an Arrow IPC file (the `.arrow` / Feather v2
-    /// format). See [`TimeSeries::from_arrow`] for how fields are read.
+    /// Read a series from an Arrow IPC file or stream (the `.arrow` /
+    /// Feather v2 format, or the stream format; compressed or not). See
+    /// [`TimeSeries::from_arrow`] for how fields are read.
     /// Reads the whole file into memory, then as
     /// [`TimeSeries::from_ipc_bytes`].
     pub fn read_ipc(
@@ -357,6 +406,12 @@ impl TimeSeries {
     /// (e.g. from `std::fs::read`). A corrupt file is an error, not a panic,
     /// except on wasm32 (see the module notes in `arrow.rs`).
     ///
+    /// Reads both IPC layouts: the file format (`.arrow` / Feather v2, which
+    /// starts with `ARROW1`) and the stream format (what pyarrow's
+    /// `ipc.new_stream` and Arrow-over-HTTP send). Buffers compressed with
+    /// LZ4 or ZSTD (pandas `to_feather` uses LZ4 by default) are
+    /// decompressed, which copies them.
+    ///
     /// Gap-free `Float64` columns in a one-batch file point into `bytes`
     /// instead of copying (see [`TimeSeries::from_arrow`]). The cost: while
     /// any such column is alive (in this series or one derived from it),
@@ -368,7 +423,7 @@ impl TimeSeries {
         bytes: Vec<u8>,
         key: impl Into<ArrowKey>,
     ) -> Result<Self> {
-        Self::from_arrow(name, &decode_ipc_file(bytes)?, key)
+        Self::from_arrow(name, &decode_ipc(bytes)?, key)
     }
 
     /// The series as one Arrow record batch. Value columns are not copied:
@@ -512,63 +567,130 @@ fn read_time(array: &ArrayRef, name: &str, offset: usize, out: &mut Vec<i64>) ->
         }
         return Ok(());
     }
-    // (raw values, how many raw units make one millisecond, or how many
-    // milliseconds one raw unit is)
-    let (raw, per_ms, ms_per): (&[i64], i64, i64) = match array.data_type() {
-        DataType::Timestamp(TimeUnit::Second, _) => (
-            array.as_primitive::<TimestampSecondType>().values(),
-            1,
-            1000,
-        ),
-        DataType::Timestamp(TimeUnit::Millisecond, _) => (
-            array.as_primitive::<TimestampMillisecondType>().values(),
-            1,
-            1,
-        ),
-        DataType::Timestamp(TimeUnit::Microsecond, _) => (
-            array.as_primitive::<TimestampMicrosecondType>().values(),
-            1000,
-            1,
-        ),
-        DataType::Timestamp(TimeUnit::Nanosecond, _) => (
-            array.as_primitive::<TimestampNanosecondType>().values(),
-            1_000_000,
-            1,
-        ),
-        DataType::Date64 => (array.as_primitive::<Date64Type>().values(), 1, 1),
-        DataType::Int64 => (array.as_primitive::<Int64Type>().values(), 1, 1),
-        other => {
-            return Err(invalid(
-                FROM,
-                format!(
-                    "time column '{name}' is {other}; expected a Timestamp, Date64, Int64 or Float64 (epoch ms)"
-                ),
-            ));
+    let unit = match array.data_type() {
+        DataType::Timestamp(..) | DataType::Date32 | DataType::Date64 => {
+            time_unit(array.data_type())
         }
+        DataType::Int64 => Some((1, 1)),
+        _ => None,
     };
-    if (per_ms, ms_per) == (1, 1) {
-        out.extend_from_slice(raw);
-        return Ok(());
-    }
-    for (i, &v) in raw.iter().enumerate() {
-        if v % per_ms != 0 {
-            return Err(invalid(
-                FROM,
-                format!(
-                    "time column '{name}' at row {} has a sub-millisecond part; pond keys are whole milliseconds",
-                    offset + i
-                ),
-            ));
+    let Some((per_ms, ms_per)) = unit else {
+        return Err(invalid(
+            FROM,
+            format!(
+                "time column '{name}' is {}; expected a Timestamp, Date32, Date64, Int64 or Float64 (epoch ms)",
+                array.data_type()
+            ),
+        ));
+    };
+    with_raw_i64(array, |raw| {
+        if (per_ms, ms_per) == (1, 1) {
+            out.extend_from_slice(raw);
+            return Ok(());
         }
-        let ms = (v / per_ms).checked_mul(ms_per).ok_or_else(|| {
-            invalid(
-                FROM,
-                format!("time column '{name}' at row {} is out of range", offset + i),
-            )
-        })?;
-        out.push(ms);
+        for (i, &v) in raw.iter().enumerate() {
+            if v % per_ms != 0 {
+                return Err(invalid(
+                    FROM,
+                    format!(
+                        "time column '{name}' at row {} has a sub-millisecond part; pond keys are whole milliseconds",
+                        offset + i
+                    ),
+                ));
+            }
+            let ms = (v / per_ms).checked_mul(ms_per).ok_or_else(|| {
+                invalid(
+                    FROM,
+                    format!("time column '{name}' at row {} is out of range", offset + i),
+                )
+            })?;
+            out.push(ms);
+        }
+        Ok(())
+    })
+}
+
+/// How an Arrow time type maps to milliseconds: (raw units per millisecond,
+/// milliseconds per raw unit). `None` for anything that is not a time.
+fn time_unit(data_type: &DataType) -> Option<(i64, i64)> {
+    let of = |unit: &TimeUnit| match unit {
+        TimeUnit::Second => (1, 1000),
+        TimeUnit::Millisecond => (1, 1),
+        TimeUnit::Microsecond => (1000, 1),
+        TimeUnit::Nanosecond => (1_000_000, 1),
+    };
+    match data_type {
+        DataType::Timestamp(unit, _)
+        | DataType::Time32(unit)
+        | DataType::Time64(unit)
+        | DataType::Duration(unit) => Some(of(unit)),
+        DataType::Date32 => Some((1, 86_400_000)),
+        DataType::Date64 => Some((1, 1)),
+        _ => None,
     }
-    Ok(())
+}
+
+/// Calls `f` with a 32- or 64-bit integer-backed array's raw values as
+/// `i64`: borrowed when they already are, widened into a copy when not.
+fn with_raw_i64<R>(array: &ArrayRef, f: impl FnOnce(&[i64]) -> R) -> R {
+    let data = array.to_data();
+    let len = array.len();
+    match data.data_type().primitive_width() {
+        Some(8) => f(&data.buffer::<i64>(0)[..len]),
+        Some(4) => {
+            let wide: Vec<i64> = data.buffer::<i32>(0)[..len]
+                .iter()
+                .map(|&v| i64::from(v))
+                .collect();
+            f(&wide)
+        }
+        other => unreachable!("time types are 32 or 64 bits wide, not {other:?}"),
+    }
+}
+
+/// The largest whole number an `f64` holds exactly, 2^53.
+const MAX_EXACT_F64: i64 = 1 << 53;
+
+/// Append a time-typed value column as milliseconds (an epoch time for
+/// timestamps and dates, a length for times of day and durations). Nulls
+/// become NaN. Unlike a key, a value may have a fractional millisecond
+/// (`Timestamp(us)` 1.5 ms reads as `1.5`): the whole milliseconds are
+/// exact; the fraction is computed as an `f64` and then added, so the
+/// result can be one unit in the last place from the nearest `f64`.
+fn read_time_values(
+    array: &ArrayRef,
+    name: &str,
+    (per_ms, ms_per): (i64, i64),
+    out: &mut Vec<f64>,
+) -> Result<()> {
+    let start = out.len();
+    let nulls = array.logical_nulls();
+    with_raw_i64(array, |raw| {
+        for (i, &v) in raw.iter().enumerate() {
+            if nulls.as_ref().is_some_and(|n| n.is_null(i)) {
+                out.push(f64::NAN);
+                continue;
+            }
+            // per_ms > 1 only when ms_per == 1, so the fraction is
+            // rem / per_ms of one millisecond.
+            let whole = v
+                .div_euclid(per_ms)
+                .checked_mul(ms_per)
+                .filter(|ms| ms.abs() <= MAX_EXACT_F64)
+                .ok_or_else(|| {
+                    invalid(
+                        FROM,
+                        format!(
+                            "column '{name}' at row {} is too large to hold exactly in milliseconds",
+                            start + i
+                        ),
+                    )
+                })?;
+            let rem = v.rem_euclid(per_ms);
+            out.push(whole as f64 + rem as f64 / per_ms as f64);
+        }
+        Ok(())
+    })
 }
 
 /// A text field across all batches. One `Utf8` or `Dictionary<Int32, Utf8>`
@@ -632,10 +754,34 @@ fn read_number(array: &ArrayRef, name: &str, out: &mut Vec<f64>) -> Result<()> {
             out.extend(a.values().iter().map(|&v| v as f64));
         }};
     }
+    if let Some(unit) = time_unit(array.data_type()) {
+        return read_time_values(array, name, unit, out);
+    }
     let start = out.len();
     match array.data_type() {
         DataType::Float64 => out.extend_from_slice(array.as_primitive::<Float64Type>().values()),
         DataType::Float32 => widen!(Float32Type),
+        DataType::Float16 => out.extend(
+            array
+                .as_primitive::<Float16Type>()
+                .values()
+                .iter()
+                .map(|v| v.to_f64()),
+        ),
+        // An all-empty column (pyarrow writes one for a column of Nones).
+        DataType::Null => out.extend(std::iter::repeat_n(f64::NAN, array.len())),
+        // A dictionary of numbers (or times): decode each row's entry.
+        // Null keys are marked below; text dictionaries never reach here.
+        DataType::Dictionary(..) => {
+            let dict = array.as_any_dictionary();
+            let mut entries = Vec::new();
+            read_number(dict.values(), name, &mut entries)?;
+            out.extend(
+                dict.normalized_keys()
+                    .iter()
+                    .map(|&k| entries.get(k).copied().unwrap_or(f64::NAN)),
+            );
+        }
         DataType::Int8 => widen!(Int8Type),
         DataType::Int16 => widen!(Int16Type),
         DataType::Int32 => widen!(Int32Type),
@@ -648,7 +794,7 @@ fn read_number(array: &ArrayRef, name: &str, out: &mut Vec<f64>) -> Result<()> {
             return Err(PondError::Unsupported {
                 call: FROM,
                 message: format!(
-                    "column '{name}' is {other}; pond-rs reads number, text and true/false columns only (drop it first with RecordBatch::project)"
+                    "column '{name}' is {other}; pond-rs reads number, time, text and true/false columns only (drop it first with RecordBatch::project)"
                 ),
             });
         }
@@ -1015,6 +1161,120 @@ mod tests {
         ]);
         let e = TimeSeries::from_arrow("r", &[b], range_key()).unwrap_err();
         assert!(e.to_string().contains("before it begins"), "{e}");
+    }
+
+    #[test]
+    fn reads_compressed_streams_and_date_keys() {
+        use arrow_array::{Date32Array, DurationSecondArray};
+        use arrow_ipc::writer::{IpcWriteOptions, StreamWriter};
+        // A zstd-compressed stream written by arrow-rs reads back exactly.
+        let batch = sample().to_arrow().unwrap();
+        for compression in [
+            arrow_ipc::CompressionType::LZ4_FRAME,
+            arrow_ipc::CompressionType::ZSTD,
+        ] {
+            let options = IpcWriteOptions::default()
+                .try_with_compression(Some(compression))
+                .unwrap();
+            let mut bytes = Vec::new();
+            let mut w =
+                StreamWriter::try_new_with_options(&mut bytes, &batch.schema(), options).unwrap();
+            w.write(&batch).unwrap();
+            w.finish().unwrap();
+            drop(w);
+            let back = TimeSeries::from_ipc_bytes("s", bytes, "time").unwrap();
+            assert_eq!(back.key(), sample().key(), "{compression:?}");
+            assert_eq!(
+                bits(back.column("a").unwrap().numbers().unwrap()),
+                bits(sample().column("a").unwrap().numbers().unwrap())
+            );
+        }
+        // Neither layout: an error, not a panic.
+        let e = TimeSeries::from_ipc_bytes("x", b"hello".to_vec(), "time").unwrap_err();
+        assert!(
+            e.to_string().contains("not an Arrow IPC file or stream"),
+            "{e}"
+        );
+
+        // A Date32 key is midnight UTC of each day.
+        let b = RecordBatch::try_from_iter([(
+            "day",
+            Arc::new(Date32Array::from(vec![0, 1, 2])) as ArrayRef,
+        )])
+        .unwrap();
+        let s = TimeSeries::from_arrow("d", &[b], "day").unwrap();
+        assert_eq!(s.key().begin(), [0, 86_400_000, 172_800_000]);
+
+        // A time value too large to hold exactly in f64 milliseconds.
+        let b = RecordBatch::try_from_iter([
+            (
+                "time",
+                Arc::new(TimestampMillisecondArray::from(vec![0])) as ArrayRef,
+            ),
+            (
+                "v",
+                Arc::new(DurationSecondArray::from(vec![i64::MAX / 1000])) as ArrayRef,
+            ),
+        ])
+        .unwrap();
+        let e = TimeSeries::from_arrow("x", &[b], "time").unwrap_err();
+        assert!(e.to_string().contains("too large"), "{e}");
+    }
+
+    #[test]
+    fn time_values_read_from_slices_and_several_batches() {
+        use arrow_array::{Date32Array, DurationMicrosecondArray};
+        let time = |v: Vec<i64>| Arc::new(TimestampMillisecondArray::from(v)) as ArrayRef;
+        // The null slot holds i64::MAX, which must be a gap, not a range error.
+        let nulls = NullBuffer::from(vec![true, false, true, true]);
+        let durations: ArrayRef = Arc::new(DurationMicrosecondArray::new(
+            vec![-1_500, i64::MAX, 2_000, 7].into(),
+            Some(nulls),
+        ));
+        let days: ArrayRef = Arc::new(Date32Array::from(vec![Some(1), Some(-1), None, Some(2)]));
+        let whole = RecordBatch::try_from_iter([
+            ("time", time(vec![0, 1, 2, 3])),
+            ("d", durations),
+            ("day", days),
+        ])
+        .unwrap();
+        // Two batches that each start mid-buffer.
+        let batches = [whole.slice(1, 2), whole.slice(3, 1)];
+        let s = TimeSeries::from_arrow("x", &batches, "time").unwrap();
+        let col = |s: &TimeSeries, n: &str| -> Vec<Option<f64>> {
+            s.column(n).unwrap().numbers().unwrap().iter().collect()
+        };
+        assert_eq!(col(&s, "d"), [None, Some(2.0), Some(0.007)]);
+        assert_eq!(
+            col(&s, "day"),
+            [Some(-86_400_000.0), None, Some(172_800_000.0)]
+        );
+        // One batch, cut short.
+        let s = TimeSeries::from_arrow("x", &[whole.slice(0, 2)], "time").unwrap();
+        assert_eq!(col(&s, "d"), [Some(-1.5), None]);
+        assert_eq!(col(&s, "day"), [Some(86_400_000.0), Some(-86_400_000.0)]);
+        // Empty bytes say so.
+        let e = TimeSeries::from_ipc_bytes("x", vec![], "time").unwrap_err();
+        assert!(e.to_string().contains("no bytes"), "{e}");
+    }
+
+    #[test]
+    fn number_dictionaries_decode_with_gaps_from_keys_and_values() {
+        use arrow_array::{DictionaryArray, Int8Array};
+        let values = Arc::new(Float64Array::from(vec![Some(2.5), None]));
+        let keys = Int8Array::from(vec![Some(0), Some(1), None, Some(0)]);
+        let dict: ArrayRef = Arc::new(DictionaryArray::try_new(keys, values).unwrap());
+        let b = RecordBatch::try_from_iter([
+            (
+                "time",
+                Arc::new(TimestampMillisecondArray::from(vec![0, 1, 2, 3])) as ArrayRef,
+            ),
+            ("v", dict),
+        ])
+        .unwrap();
+        let s = TimeSeries::from_arrow("x", &[b], "time").unwrap();
+        let v: Vec<_> = s.column("v").unwrap().numbers().unwrap().iter().collect();
+        assert_eq!(v, [Some(2.5), None, None, Some(2.5)]);
     }
 
     #[test]

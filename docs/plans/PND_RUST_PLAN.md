@@ -596,8 +596,8 @@ The one result short of a clean win is one-core B: polars is faster
      per the RFC. Split up: **2a** text and true/false columns (done,
      below), **2b** `TimeRange` keys and text interval labels (done,
      below), **2c** more
-     Arrow input ([PND-RUSTARROWIN]), **2d** exact decimals ([PND-RUSTDEC]).
-     2c and 2d are below.
+     Arrow input ([PND-RUSTARROWIN]) (done, below), **2d** exact decimals
+     ([PND-RUSTDEC]). 2c and 2d are below.
   3. **Row-wise operations:**
      - `filter`, `slice`, `with_column`, `map` (Rust closures).
      - `diff`, `rate`, `pct_change`, `cumulative`, `shift`, `fill`.
@@ -778,7 +778,7 @@ The one result short of a clean win is one-core B: polars is faster
   - Perf: no new row loops beyond one pass of key checks at construction,
     so no benchmark.
 
-  **Step 2c (planned): more Arrow input [PND-RUSTARROWIN].**
+  **Step 2c (2026-10-18): more Arrow input [PND-RUSTARROWIN].**
   - Why: a probe on 2026-10-18 wrote 17 Arrow files with pyarrow 26 and
     polars and read each with pond-rs (as of #771) and pond-ts:
 
@@ -798,23 +798,46 @@ The one result short of a clean win is one-core B: polars is faster
     | `Utf8View`, `Dictionary<UInt32, LargeUtf8>`   | reads (copies) | reads                           |
     | polars `write_ipc` default (uncompressed)     | reads          | reads                           |
 
-  - Plan, most important first:
-    1. Compressed IPC: turn on arrow-ipc's `lz4` and `zstd` features.
-       `zstd` wraps C code, so check that the wasm32 build still works. If
-       it does not, ZSTD is native-only and the error says so.
-    2. The IPC stream format: `TimeSeries::read_ipc_stream` (or let
-       `read_ipc` detect it from the file's first bytes).
-    3. `Timestamp` / `Date32` / `Date64` value columns become epoch-ms
-       number columns, with the key's rule that a sub-millisecond part is
-       an error, not rounded. `Time32` / `Time64` / `Duration` become
-       milliseconds the same way. (pond-ts reads `Timestamp(us)` unscaled;
-       pond-rs should not copy that bug. Logged as [PND-ARROWTSVAL].)
-    4. Cheap extras: a `Null` column becomes an all-gap number column (as
-       pond-ts); `Float16` widens to `f64`; a dictionary of numbers decodes
-       to a number column.
+  - Outcome (everything planned, plus a `Date32` key):
+    1. **Compressed IPC.** arrow-ipc's `lz4` and `zstd` features are on.
+       `zstd` is C code: it builds for wasm32 with clang, and a test
+       module built for wasm32-unknown-unknown read the ZSTD, polars-ZSTD,
+       LZ4 and stream files in Node with no imports. Size of that module:
+       2.72 MB without either codec, +28 KB for LZ4, +125 KB for ZSTD.
+       pond-rs still writes uncompressed files, since apache-arrow JS (so
+       pond-ts) cannot read compressed ones.
+    2. **The stream format.** `read_ipc` / `from_ipc_bytes` tell the two
+       layouts apart by the file format's `ARROW1` magic, so there is no
+       new call. Stream batches are sliced out of the bytes without copying,
+       as the file path does.
+    3. **Time types as value columns.** `Timestamp`, `Date32`, `Date64`,
+       `Time32`, `Time64` and `Duration` become number columns in
+       milliseconds. Changed from the plan: a fractional millisecond is
+       kept (`Timestamp(us)` 1500 reads as `1.5`) rather than being an
+       error. Keys must be whole milliseconds because every operation
+       buckets on them; a value is just a number, and refusing it would
+       make every pandas nanosecond column with real sub-ms times
+       unreadable. Whole milliseconds are exact; the fraction can be one unit in the
+       last place off. A value whose whole milliseconds exceed 2^53 (not exactly
+       representable) is an error. This does not copy pond-ts's unscaled
+       `Timestamp(us)` read ([PND-ARROWTSVAL]).
+    4. **Extras.** A `Null` column is an all-gap number column; `Float16`
+       widens to `f64`; a dictionary of numbers (or of times) decodes to a
+       number column, with a gap where the key or the entry is null.
+    5. **`Date32` keys** read as midnight UTC of each day (pond-ts reads
+       them too, via apache-arrow's own conversion).
+  - Tests: `tests/data/arrow-types/` holds 15 small files written by
+    pyarrow 26 and polars 2.0 (`generate.py`), one per case, and
+    `expected.json` with each value worked out in Python from the raw
+    input. `tests/arrow_types.rs` reads every file and checks the bits.
+    Unit tests add LZ4 and ZSTD streams written by arrow-rs, a `Date32`
+    key, a too-large duration, and a dictionary with null keys and null
+    entries.
+  - Perf: no change to the `Float64` / text / boolean paths; the new types
+    take one pass over the column each.
   - Not planned: `Binary`. `List` / `Struct` wait for array columns (step 7).
 
-  **Step 2d (planned): exact decimals [PND-RUSTDEC].**
+  **Step 2d (next): exact decimals [PND-RUSTDEC].**
   - Arrow `Decimal128(precision, scale)` stores each value as a 128-bit
     whole number and a fixed count of decimal places for the column: `1.25`
     at scale 2 is stored as `125`. Databases, finance feeds, and pandas
@@ -836,9 +859,9 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
       pond-rs-only until pond-ts gains one.
     - **C. A, plus `Column::to_decimal` / `from_decimal`** helpers so a
       caller can keep exact values outside pond-rs.
-  - To decide with Peter before building. Lean: B, since exactness is the
-    reason people store decimals, and `sum` of prices or volumes is where
-    `f64` drift shows.
+  - Decided 2026-10-18: **B** (Peter). Exactness is the reason people
+    store decimals, and `sum` of prices or volumes is where `f64` drift
+    shows.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
