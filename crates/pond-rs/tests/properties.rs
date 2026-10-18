@@ -201,7 +201,7 @@ fn aggregate_every_matches_brute_force() {
         let out = series(&times, &values).aggregate(&sequence, &aggs).unwrap();
         let keys = match out.key() {
             Key::Interval(k) => k.clone(),
-            Key::Time(_) => panic!("seed {seed}: aggregate gave time keys"),
+            _ => panic!("seed {seed}: aggregate gave non-interval keys"),
         };
         if times.is_empty() {
             assert!(keys.begin.is_empty(), "seed {seed}");
@@ -212,7 +212,11 @@ fn aggregate_every_matches_brute_force() {
         for i in 0..keys.begin.len() {
             assert_eq!((keys.begin[i] - anchor).rem_euclid(step), 0, "seed {seed}");
             assert_eq!(keys.end[i], keys.begin[i] + step, "seed {seed}");
-            assert_eq!(keys.label[i], keys.begin[i], "seed {seed}");
+            assert_eq!(
+                keys.label.numbers().unwrap()[i],
+                keys.begin[i] as f64,
+                "seed {seed}"
+            );
         }
         assert!(keys.begin[0] <= times[0], "seed {seed}");
         assert!(
@@ -365,7 +369,7 @@ fn calendar_buckets_are_whole_local_units() {
         for i in 0..n {
             let (b, e) = (keys.begin[i], keys.end[i]);
             assert!(b < e, "{what}: bucket {i} empty");
-            assert_eq!(keys.label[i], b, "{what}");
+            assert_eq!(keys.label.numbers().unwrap()[i], b as f64, "{what}");
             if i + 1 < n {
                 assert_eq!(e, keys.begin[i + 1], "{what}: bucket {i} not back to back");
             }
@@ -430,7 +434,7 @@ fn aggregate_calendar_matches_brute_force() {
         let out = series(&times, &values).aggregate(&sequence, &aggs).unwrap();
         let keys = match out.key() {
             Key::Interval(k) => k.clone(),
-            Key::Time(_) => panic!("seed {seed}: aggregate gave time keys"),
+            _ => panic!("seed {seed}: aggregate gave non-interval keys"),
         };
         if let (Some(&first), Some(&last)) = (times.first(), times.last()) {
             let want = sequence.buckets_overlapping(first, last).unwrap();

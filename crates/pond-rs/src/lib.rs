@@ -5,13 +5,14 @@
 //! repository for the plan.
 //!
 //! **Status: R1b, in progress** (the rest of the batch core). What exists:
-//! series keyed by time or by labelled intervals, with number, text and
+//! series keyed by time, by time ranges or by intervals labelled with
+//! numbers or text, with number, text and
 //! true/false columns (gaps allowed; see [`Column`]),
 //! [`TimeSeries::rolling`] over a trailing time window, [`TimeSeries::aggregate`] into fixed-length buckets
 //! ([`Sequence::every`]) or calendar buckets in a time zone
 //! ([`Sequence::calendar`]), [`TimeSeries::select`] / `rename` / `as_time`,
-//! and Arrow in and out ([`TimeSeries::read_ipc`],
-//! [`TimeSeries::write_ipc`]). Results match
+//! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
+//! [`ArrowKey`], [`TimeSeries::write_ipc`]). Results match
 //! pond-ts bit for bit; the parity
 //! harness under `tests/` checks that against pond-ts's own output
 //! (`packages/core/test/fixtures/parity.json`).
@@ -65,13 +66,17 @@ mod rolling;
 mod sequence;
 mod series;
 
+pub use arrow::ArrowKey;
 pub use column::{BooleanColumn, ColumnData, Float64Column, StringColumn};
 pub use duration::parse_duration;
 pub use error::{PondError, Result};
 pub use reducer::{Agg, Reducer};
 pub use reshape::At;
 pub use sequence::{CalendarUnit, Sequence, tzdb_version};
-pub use series::{Column, ColumnDef, ColumnKind, IntervalKeys, Key, MAX_TIME_MS, TimeSeries};
+pub use series::{
+    Column, ColumnDef, ColumnKind, IntervalKeys, Key, Labels, MAX_TIME_MS, TimeRangeKeys,
+    TimeSeries,
+};
 
 /// The version of this crate.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -426,7 +426,8 @@ fn roll_column(times: &[i64], values: &[f64], window_ms: i64, reducer: Reducer) 
 impl TimeSeries {
     /// For each row at time `t`, reduce the rows with time in
     /// `(t - window, t]`: a trailing window. Rows sharing a time share a
-    /// window. The result keeps this series' keys; each mapping entry becomes
+    /// window. A row keyed by a time range or an interval counts as its
+    /// begin, as in pond-ts. The result keeps this series' keys; each mapping entry becomes
     /// a column that may have gaps.
     ///
     /// ```
@@ -451,15 +452,9 @@ impl TimeSeries {
     /// an error.
     pub fn rolling(&self, window: &str, aggs: &[Agg]) -> Result<TimeSeries> {
         let window_ms = parse_duration(window)?;
-        let times = match self.key() {
-            crate::series::Key::Time(t) => t,
-            crate::series::Key::Interval(_) => {
-                return Err(PondError::Unsupported {
-                    call: CALL,
-                    message: "rolling over an interval-keyed series".into(),
-                });
-            }
-        };
+        // Range- and interval-keyed rows are anchored at their begin, as in
+        // pond-ts.
+        let times = self.key().begin();
         let mut plan = Vec::with_capacity(aggs.len());
         for (i, agg) in aggs.iter().enumerate() {
             let source = self.column_index(CALL, &agg.source)?;

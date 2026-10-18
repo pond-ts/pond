@@ -150,30 +150,29 @@ impl TimeSeries {
                 message: "a value column is already named 'time', the name the new key takes; rename it first".into(),
             });
         }
-        let time = match self.key() {
-            Key::Time(t) => t.clone(),
-            Key::Interval(k) => match at {
-                At::Begin => k.begin.clone(),
-                At::End => k.end.clone(),
-                At::Center => {
-                    let mut out = Vec::with_capacity(k.begin.len());
-                    for (i, (b, e)) in k.begin.iter().zip(&k.end).enumerate() {
-                        // Both are within ±MAX_TIME_MS (well inside i64), so
-                        // the sum cannot overflow.
-                        let sum = b + e;
-                        if sum % 2 != 0 {
-                            return Err(PondError::Unsupported {
-                                call: CALL,
-                                message: format!(
-                                    "the centre of row {i} ([{b}, {e}) ms) is half a millisecond; pond-rs keeps whole milliseconds. Use At::Begin or At::End"
-                                ),
-                            });
-                        }
-                        out.push(sum / 2);
+        let begin = self.key().begin();
+        let time = match (self.key().end(), at) {
+            // A time key is its own begin; `at` does not move it.
+            (None, _) | (Some(_), At::Begin) => begin.to_vec(),
+            (Some(end), At::End) => end.to_vec(),
+            (Some(end), At::Center) => {
+                let mut out = Vec::with_capacity(begin.len());
+                for (i, (b, e)) in begin.iter().zip(end).enumerate() {
+                    // Both are within ±MAX_TIME_MS (well inside i64), so
+                    // the sum cannot overflow.
+                    let sum = b + e;
+                    if sum % 2 != 0 {
+                        return Err(PondError::Unsupported {
+                            call: CALL,
+                            message: format!(
+                                "the centre of row {i} ([{b}, {e}) ms) is half a millisecond; pond-rs keeps whole milliseconds. Use At::Begin or At::End"
+                            ),
+                        });
                     }
-                    out
+                    out.push(sum / 2);
                 }
-            },
+                out
+            }
         };
         if at != At::Begin {
             if let Some(i) = time.windows(2).position(|w| w[1] < w[0]) {
@@ -208,7 +207,7 @@ mod tests {
         TimeSeries::from_intervals(
             "b",
             IntervalKeys {
-                label: begin.clone(),
+                label: begin.clone().into(),
                 begin,
                 end,
             },
@@ -285,7 +284,7 @@ mod tests {
         let overlap = TimeSeries::from_intervals(
             "o",
             IntervalKeys {
-                label: vec![0, 1000],
+                label: vec![0i64, 1000].into(),
                 begin: vec![0, 1000],
                 end: vec![5000, 2000],
             },
@@ -297,7 +296,7 @@ mod tests {
         let clash = TimeSeries::from_intervals(
             "c",
             IntervalKeys {
-                label: vec![0],
+                label: vec![0i64].into(),
                 begin: vec![0],
                 end: vec![1000],
             },

@@ -1,5 +1,6 @@
-//! `TimeSeries`: a key column (points in time, or intervals) plus named
-//! value columns (numbers, text, true/false), all the same length.
+//! `TimeSeries`: a key column (points in time, time ranges, or labelled
+//! intervals) plus named value columns (numbers, text, true/false), all the
+//! same length.
 
 use crate::column::{BooleanColumn, ColumnData, Float64Column, StringColumn};
 use crate::error::{PondError, Result};
@@ -9,6 +10,8 @@ use crate::error::{PondError, Result};
 pub enum ColumnKind {
     /// Key: a point in time, epoch milliseconds.
     Time,
+    /// Key: a `[begin, end]` span, epoch milliseconds.
+    TimeRange,
     /// Key: a labelled `[begin, end)` span, epoch milliseconds.
     Interval,
     /// A value column of `f64`.
@@ -20,11 +23,12 @@ pub enum ColumnKind {
 }
 
 impl ColumnKind {
-    /// The name pond-ts uses in a schema (`"time"`, `"interval"`,
-    /// `"number"`, `"string"`, `"boolean"`).
+    /// The name pond-ts uses in a schema (`"time"`, `"timeRange"`,
+    /// `"interval"`, `"number"`, `"string"`, `"boolean"`).
     pub fn as_str(self) -> &'static str {
         match self {
             ColumnKind::Time => "time",
+            ColumnKind::TimeRange => "timeRange",
             ColumnKind::Interval => "interval",
             ColumnKind::Number => "number",
             ColumnKind::String => "string",
@@ -41,30 +45,110 @@ pub struct ColumnDef {
     pub required: bool,
 }
 
-/// Interval keys: row `i` covers `[begin[i], end[i])` and is labelled
-/// `label[i]` (for buckets made by a sequence, the label is the start).
+/// Time-range keys (pond-ts `timeRange`): row `i` spans `begin[i]` to
+/// `end[i]`, epoch milliseconds.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IntervalKeys {
-    pub label: Vec<i64>,
+pub struct TimeRangeKeys {
     pub begin: Vec<i64>,
     pub end: Vec<i64>,
 }
 
+/// Interval keys: row `i` covers `[begin[i], end[i])` and is labelled
+/// `label[i]` (for buckets made by a sequence, the label is the start).
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntervalKeys {
+    pub label: Labels,
+    pub begin: Vec<i64>,
+    pub end: Vec<i64>,
+}
+
+/// Interval labels: numbers or text, one kind for the whole key, as in
+/// pond-ts. Every row has a label (no gaps). Build them with `.into()` from
+/// `Vec<f64>`, `Vec<i64>`, `Vec<&str>` or `Vec<String>`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Labels {
+    /// Number labels. `aggregate` labels each bucket with its start, in
+    /// epoch milliseconds. Must be finite.
+    Number(Vec<f64>),
+    /// Text labels.
+    String(StringColumn),
+}
+
+impl Labels {
+    pub fn len(&self) -> usize {
+        match self {
+            Labels::Number(v) => v.len(),
+            Labels::String(c) => c.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Number labels, or `None` for text labels.
+    pub fn numbers(&self) -> Option<&[f64]> {
+        match self {
+            Labels::Number(v) => Some(v),
+            Labels::String(_) => None,
+        }
+    }
+
+    /// Text labels, or `None` for number labels.
+    pub fn strings(&self) -> Option<&StringColumn> {
+        match self {
+            Labels::Number(_) => None,
+            Labels::String(c) => Some(c),
+        }
+    }
+}
+
+impl From<Vec<f64>> for Labels {
+    fn from(v: Vec<f64>) -> Self {
+        Labels::Number(v)
+    }
+}
+
+/// Exact for whole numbers up to 2^53 (every key time is): larger values
+/// round to the nearest `f64`.
+impl From<Vec<i64>> for Labels {
+    fn from(v: Vec<i64>) -> Self {
+        Labels::Number(v.into_iter().map(|x| x as f64).collect())
+    }
+}
+
+impl From<Vec<&str>> for Labels {
+    fn from(v: Vec<&str>) -> Self {
+        Labels::String(StringColumn::from_options(v.into_iter().map(Some)))
+    }
+}
+
+impl From<Vec<String>> for Labels {
+    fn from(v: Vec<String>) -> Self {
+        Labels::String(StringColumn::from_options(v.into_iter().map(Some)))
+    }
+}
+
+impl From<StringColumn> for Labels {
+    fn from(c: StringColumn) -> Self {
+        Labels::String(c)
+    }
+}
+
 /// The key column.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Key {
     /// Points in time, epoch milliseconds, non-decreasing.
     Time(Vec<i64>),
-    /// Intervals, ordered by begin.
+    /// Time ranges, ordered by begin, then end.
+    TimeRange(TimeRangeKeys),
+    /// Labelled intervals, ordered by begin, then end.
     Interval(IntervalKeys),
 }
 
 impl Key {
     pub fn len(&self) -> usize {
-        match self {
-            Key::Time(t) => t.len(),
-            Key::Interval(k) => k.begin.len(),
-        }
+        self.begin().len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -75,13 +159,24 @@ impl Key {
     pub fn begin(&self) -> &[i64] {
         match self {
             Key::Time(t) => t,
+            Key::TimeRange(k) => &k.begin,
             Key::Interval(k) => &k.begin,
+        }
+    }
+
+    /// End of each row, or `None` for point keys.
+    pub fn end(&self) -> Option<&[i64]> {
+        match self {
+            Key::Time(_) => None,
+            Key::TimeRange(k) => Some(&k.end),
+            Key::Interval(k) => Some(&k.end),
         }
     }
 
     fn kind(&self) -> ColumnKind {
         match self {
             Key::Time(_) => ColumnKind::Time,
+            Key::TimeRange(_) => ColumnKind::TimeRange,
             Key::Interval(_) => ColumnKind::Interval,
         }
     }
@@ -241,7 +336,11 @@ impl TimeSeries {
     /// # use pond_rs::{Column, IntervalKeys, TimeSeries};
     /// let days = TimeSeries::from_intervals(
     ///     "days",
-    ///     IntervalKeys { label: vec![0, 86_400_000], begin: vec![0, 86_400_000], end: vec![86_400_000, 172_800_000] },
+    ///     IntervalKeys {
+    ///         label: vec!["mon", "tue"].into(),
+    ///         begin: vec![0, 86_400_000],
+    ///         end: vec![86_400_000, 172_800_000],
+    ///     },
     ///     vec![Column::required("total", vec![12.0, 7.5])],
     /// )?;
     /// assert_eq!(days.key_name(), "interval");
@@ -261,6 +360,35 @@ impl TimeSeries {
         )
     }
 
+    /// Build a series keyed by time ranges (pond-ts `timeRange`). The key
+    /// column is named `"timeRange"`, pond-ts's default. Rows must be
+    /// ordered by `begin`, then `end`; each `end` must not be before its
+    /// `begin`, and the same time limits as [`TimeSeries::new`] apply.
+    ///
+    /// ```
+    /// # use pond_rs::{Column, TimeRangeKeys, TimeSeries};
+    /// let outages = TimeSeries::from_time_ranges(
+    ///     "outages",
+    ///     TimeRangeKeys { begin: vec![0, 5_000], end: vec![2_000, 5_500] },
+    ///     vec![Column::required("hosts", vec![3.0, 1.0])],
+    /// )?;
+    /// assert_eq!(outages.key_name(), "timeRange");
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    pub fn from_time_ranges(
+        name: impl Into<String>,
+        keys: TimeRangeKeys,
+        columns: Vec<Column>,
+    ) -> Result<Self> {
+        Self::with_key(
+            "TimeSeries::from_time_ranges",
+            name.into(),
+            "timeRange".into(),
+            Key::TimeRange(keys),
+            columns,
+        )
+    }
+
     /// Build a series with any key, checking every rule.
     pub(crate) fn with_key(
         call: &'static str,
@@ -272,21 +400,43 @@ impl TimeSeries {
         let invalid = |message: String| PondError::InvalidData { call, message };
         let rows = key.len();
         if let Key::Interval(k) = &key {
-            if k.label.len() != rows || k.end.len() != rows {
-                return Err(invalid("interval key parts have different lengths".into()));
+            if k.label.len() != rows {
+                return Err(invalid(
+                    "interval labels and begins have different lengths".into(),
+                ));
             }
-            if let Some(i) = (0..rows).find(|&i| k.end[i] < k.begin[i]) {
+            match &k.label {
+                Labels::Number(v) => {
+                    if let Some(i) = v.iter().position(|l| !l.is_finite()) {
+                        return Err(invalid(format!(
+                            "interval label at row {i} is {}; number labels must be finite",
+                            v[i]
+                        )));
+                    }
+                }
+                Labels::String(c) => {
+                    if let Some(i) = c.iter().position(|l| l.is_none()) {
+                        return Err(invalid(format!(
+                            "interval label at row {i} is missing; every row needs a label"
+                        )));
+                    }
+                }
+            }
+        }
+        if let Some(end) = key.end() {
+            if end.len() != rows {
+                return Err(invalid("key begins and ends have different lengths".into()));
+            }
+            if let Some(i) = (0..rows).find(|&i| end[i] < key.begin()[i]) {
                 return Err(invalid(format!(
-                    "interval at row {i} ends before it begins"
+                    "key at row {i} ends ({}) before it begins ({})",
+                    end[i],
+                    key.begin()[i]
                 )));
             }
         }
         let out_of_range = |t: &i64| !(-MAX_TIME_MS..=MAX_TIME_MS).contains(t);
-        let edges: [&[i64]; 3] = match &key {
-            Key::Time(t) => [t, &[], &[]],
-            Key::Interval(k) => [&k.begin, &k.end, &k.label],
-        };
-        for edge in edges {
+        for edge in [key.begin(), key.end().unwrap_or(&[])] {
             if let Some(i) = edge.iter().position(out_of_range) {
                 return Err(invalid(format!(
                     "time {} ms at row {i} is outside the supported range ±{MAX_TIME_MS} ms (years -271821 to 275760, as JavaScript dates)",
@@ -294,13 +444,19 @@ impl TimeSeries {
                 )));
             }
         }
-        if let Some(i) = key.begin().windows(2).position(|w| w[1] < w[0]) {
+        // Ordered by begin, then (for ranges and intervals) by end, as in
+        // pond-ts.
+        let order = |i: usize| (key.begin()[i], key.end().map_or(0, |e| e[i]));
+        if let Some(i) = (1..rows).find(|&i| order(i) < order(i - 1)) {
+            let show = |i: usize| match key.end() {
+                None => format!("{}", key.begin()[i]),
+                Some(e) => format!("[{}, {}]", key.begin()[i], e[i]),
+            };
             return Err(invalid(format!(
-                "key is not in order: row {} ({}) comes before row {} ({})",
-                i + 1,
-                key.begin()[i + 1],
-                i,
-                key.begin()[i]
+                "key is not in order: row {i} ({}) sorts before row {} ({}); keys are ordered by begin, then end",
+                show(i),
+                i - 1,
+                show(i - 1)
             )));
         }
         for (c, column) in columns.iter().enumerate() {
@@ -411,5 +567,53 @@ impl TimeSeries {
             key,
             columns,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ranges(begin: Vec<i64>, end: Vec<i64>) -> Result<TimeSeries> {
+        TimeSeries::from_time_ranges("r", TimeRangeKeys { begin, end }, vec![])
+    }
+
+    fn intervals(label: Labels) -> Result<TimeSeries> {
+        let keys = IntervalKeys {
+            label,
+            begin: vec![0, 10],
+            end: vec![10, 20],
+        };
+        TimeSeries::from_intervals("i", keys, vec![])
+    }
+
+    #[test]
+    fn range_keys_are_checked_as_pond_ts_checks_them() {
+        // Same start: ordered by end. Zero length is allowed.
+        assert!(ranges(vec![0, 0, 5], vec![2, 9, 5]).is_ok());
+        let e = ranges(vec![0, 0], vec![9, 2]).unwrap_err().to_string();
+        assert!(
+            e.contains("row 1 ([0, 2]) sorts before row 0 ([0, 9])"),
+            "{e}"
+        );
+        let e = ranges(vec![5], vec![4]).unwrap_err().to_string();
+        assert!(e.contains("ends (4) before it begins (5)"), "{e}");
+        assert!(ranges(vec![0, 1], vec![1]).is_err());
+        assert!(ranges(vec![0], vec![MAX_TIME_MS + 1]).is_err());
+    }
+
+    #[test]
+    fn interval_labels_are_checked() {
+        // Repeats and fractions are fine.
+        assert!(intervals(vec![1.5, 1.5].into()).is_ok());
+        assert!(intervals(vec!["a", "a"].into()).is_ok());
+        let e = intervals(vec![1.0, f64::NAN].into())
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("label at row 1"), "{e}");
+        let gap = Labels::String(StringColumn::from_options([Some("a"), None]));
+        let e = intervals(gap).unwrap_err().to_string();
+        assert!(e.contains("label at row 1 is missing"), "{e}");
+        assert!(intervals(vec![1.0].into()).is_err());
     }
 }

@@ -448,6 +448,20 @@ const CASES = [
   ],
   ['select-mixed', 'mixed', 'select', ['up', 'site']],
   ['rename-mixed', 'mixed', 'rename', [{ host: 'name', up: 'alive' }]],
+  // time-range keys: ordered by start, then end; rolling anchors at the start
+  ['asTime-ranges-begin', 'ranges', 'asTime', []],
+  ['asTime-ranges-center', 'ranges', 'asTime', [{ at: 'center' }]],
+  // Ends 1000, 3000, 2000: out of order, so an error.
+  ['asTime-error-ranges-end', 'ranges', 'asTime', [{ at: 'end' }]],
+  ['select-ranges', 'ranges', 'select', ['b']],
+  ['rename-ranges', 'ranges', 'rename', [{ a: 'x' }]],
+  ['rename-error-ranges-key', 'ranges', 'rename', [{ timeRange: 't' }]],
+  ['rolling-ranges-3s', 'ranges', 'rolling', ['3s', { a: 'sum', b: 'count' }]],
+  // interval keys with text labels
+  ['asTime-labelled-end', 'labelled', 'asTime', [{ at: 'end' }]],
+  ['select-labelled', 'labelled', 'select', ['a']],
+  ['rename-labelled', 'labelled', 'rename', [{ a: 'x' }]],
+  ['rolling-labelled-6s', 'labelled', 'rolling', ['6s', { a: 'avg' }]],
 ];
 
 // Interval-keyed inputs (label, begin, end), the shape `aggregate` returns.
@@ -469,6 +483,28 @@ const BUCKET_ROWS = [
 const OVERLAP_ROWS = [
   [[0, 0, 5000], 1, 2],
   [[1000, 1000, 2000], 3, 4],
+];
+
+// Time-range keys (begin, end). Rows 0 and 1 share a start, so they sort by
+// end; row 2 is zero-length; row 4 overlaps row 3.
+const RANGE_SCHEMA = [
+  { name: 'timeRange', kind: 'timeRange' },
+  { name: 'a', kind: 'number', required: false },
+  { name: 'b', kind: 'number', required: false },
+];
+const RANGE_ROWS = [
+  [[0, 1000], 1, 10],
+  [[0, 3000], null, 11],
+  [[2000, 2000], 3, null],
+  [[5000, 9000], 4, 13],
+  [[6000, 8000], -1, 14],
+];
+// Interval keys labelled with text; labels need not be unique.
+const LABELLED_ROWS = [
+  [['mon', 0, 4000], 1, 10],
+  [['tue', 4000, 8000], null, 12],
+  [['mon', 8000, 12000], 5, null],
+  [['wed', 12000, 16000], 2, 3],
 ];
 
 // Text and true/false columns. `site` repeats few values over 20 rows, so
@@ -524,6 +560,24 @@ export function mixedSeries(pond) {
   });
 }
 
+/** The `ranges` input series, also exported to Arrow by export.mjs. */
+export function rangesSeries(pond) {
+  return pond.TimeSeries.fromJSON({
+    name: 'ranges',
+    schema: RANGE_SCHEMA,
+    rows: RANGE_ROWS,
+  });
+}
+
+/** The `labelled` input series, also exported to Arrow by export.mjs. */
+export function labelledSeries(pond) {
+  return pond.TimeSeries.fromJSON({
+    name: 'labelled',
+    schema: INTERVAL_SCHEMA,
+    rows: LABELLED_ROWS,
+  });
+}
+
 export function buildFixture(pond) {
   const { TimeSeries, Sequence } = pond;
   const series = (name, rows) =>
@@ -570,6 +624,8 @@ export function buildFixture(pond) {
       schema: INTERVAL_SCHEMA,
       rows: OVERLAP_ROWS,
     }),
+    ranges: rangesSeries(pond),
+    labelled: labelledSeries(pond),
     // A value column named `time` clashes with the key `asTime` makes.
     timeColumn: TimeSeries.fromJSON({
       name: 'timeColumn',

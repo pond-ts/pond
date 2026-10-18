@@ -14,12 +14,8 @@ import { buildFixture } from '../scripts/parity/cases.mjs';
 // @ts-expect-error -- plain .mjs generator shared with the build-time script
 import * as parityExport from '../scripts/parity/export.mjs';
 
-const {
-  EXPORT_FILE,
-  MIXED_EXPORT_FILE,
-  buildArrowExport,
-  buildMixedArrowExport,
-} = parityExport;
+const { EXPORT_FILE, TYPED_EXPORTS, buildArrowExport, buildTypedArrowExport } =
+  parityExport;
 
 describe('core parity fixture', () => {
   it('matches pond-ts output', () => {
@@ -32,7 +28,10 @@ describe('core parity fixture', () => {
 
   it.each([
     [EXPORT_FILE, buildArrowExport],
-    [MIXED_EXPORT_FILE, buildMixedArrowExport],
+    ...TYPED_EXPORTS.map(([file, input]: [string, (p: unknown) => unknown]) => [
+      file,
+      (p: unknown) => buildTypedArrowExport(input(p)),
+    ]),
   ])('matches the pond-ts Arrow export pond-rs reads (%s)', (file, build) => {
     const committed = readFileSync(
       new URL(`./fixtures/${file}`, import.meta.url),

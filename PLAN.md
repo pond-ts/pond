@@ -568,9 +568,9 @@ the study oracle) is done.
   every target (report: "R1a step 5" in `docs/plans/PND_RUST_PLAN.md`).
   Steps, each bit-for-bit against pond-ts:
   1. ~~Reshape and output layout~~ — done (#770).
-  2. Column kinds, in two parts: (a) text and true/false columns — PR #771;
-     (b) `TimeRange` keys and text interval labels; (c) more Arrow input
-     ([PND-RUSTARROWIN]); (d) exact decimals ([PND-RUSTDEC]).
+  2. Column kinds: ~~(a) text and true/false columns (#771); (b)
+     `TimeRange` keys and text interval labels~~ — done; (c) more Arrow
+     input ([PND-RUSTARROWIN]); (d) exact decimals ([PND-RUSTDEC]).
   3. Row-wise operations.
   4. `partition_by` / `group_by`, threaded across partitions.
   5. `align` / `materialize` / `dedupe`.
