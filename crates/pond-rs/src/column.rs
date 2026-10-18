@@ -1,8 +1,8 @@
-//! Value columns: numbers, text and true/false values.
+//! Value columns: numbers, exact decimals, text and true/false values.
 //!
 //! In a number column a gap is stored as `NaN`, as in pond-ts
-//! ([PND-NANREP]): any non-finite value in the buffer means "missing". Text
-//! and true/false columns mark gaps with an Arrow null.
+//! ([PND-NANREP]): any non-finite value in the buffer means "missing".
+//! Decimal, text and true/false columns mark gaps with an Arrow null.
 //!
 //! The values live in an Arrow buffer (shared, immutable, reference
 //! counted). So a column read from Arrow can point at Arrow's memory instead
@@ -14,7 +14,9 @@ use std::sync::Arc;
 use arrow_array::builder::StringBuilder;
 use arrow_array::cast::AsArray;
 use arrow_array::types::Int32Type;
-use arrow_array::{Array, ArrayRef, BooleanArray, DictionaryArray, Int32Array, StringArray};
+use arrow_array::{
+    Array, ArrayRef, BooleanArray, Decimal128Array, DictionaryArray, Int32Array, StringArray,
+};
 use arrow_buffer::{NullBuffer, ScalarBuffer};
 use arrow_schema::DataType;
 
@@ -272,10 +274,200 @@ impl BooleanColumn {
     }
 }
 
-/// What a value column holds: numbers, text, or true/false values.
+/// One exact decimal: `value × 10^-scale`, so `Decimal { value: 125, scale:
+/// 2 }` is `1.25`. Prints as a decimal (`1.25`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Decimal {
+    /// The whole number stored (Arrow's raw `i128`).
+    pub value: i128,
+    /// Digits after the decimal point (negative: zeros before it).
+    pub scale: i8,
+}
+
+impl Decimal {
+    /// The nearest `f64` (exact when the decimal is one; correctly rounded
+    /// otherwise).
+    pub fn to_f64(self) -> f64 {
+        // Both parts are exact and one division rounds once.
+        const EXACT: u128 = 1 << 53;
+        if (0..=22).contains(&self.scale) && self.value.unsigned_abs() <= EXACT {
+            return self.value as f64 / 10f64.powi(i32::from(self.scale));
+        }
+        // Rust's float parsing rounds correctly.
+        self.to_string().parse().expect("a decimal parses as f64")
+    }
+}
+
+impl std::fmt::Display for Decimal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let digits = self.value.unsigned_abs().to_string();
+        let sign = if self.value < 0 { "-" } else { "" };
+        let scale = i32::from(self.scale);
+        if scale <= 0 {
+            let zeros = if self.value == 0 {
+                0
+            } else {
+                (-scale) as usize
+            };
+            return write!(f, "{sign}{digits}{}", "0".repeat(zeros));
+        }
+        let scale = scale as usize;
+        let padded = format!("{digits:0>width$}", width = scale + 1);
+        let (whole, frac) = padded.split_at(padded.len() - scale);
+        write!(f, "{sign}{whole}.{frac}")
+    }
+}
+
+/// A column of exact decimals: Arrow `Decimal128(precision, scale)`. Each
+/// value is a whole number (`i128`) and the column has one scale, so `1.25`
+/// at scale 2 is stored as `125`. A gap is an Arrow null.
+///
+/// pond-ts has no decimal kind. pond-rs keeps decimals exact through
+/// `count`, `first`, `last`, `min`, `max` and `sum`; every other reducer
+/// works on the nearest `f64` and gives a number column.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecimalColumn {
+    values: Decimal128Array,
+}
+
+impl DecimalColumn {
+    /// Build from raw whole numbers at `scale` (`None` is a gap), with the
+    /// widest precision, 38 digits. An error if a value has more than 38
+    /// digits or `scale` is outside `-38..=38`.
+    pub fn from_options(
+        values: impl IntoIterator<Item = Option<i128>>,
+        scale: i8,
+    ) -> crate::error::Result<Self> {
+        let array: Decimal128Array = values.into_iter().collect();
+        Self::with_type(array, 38, scale)
+    }
+
+    /// [`DecimalColumn::from_options`] with no gaps.
+    pub fn from_values(values: Vec<i128>, scale: i8) -> crate::error::Result<Self> {
+        Self::from_options(values.into_iter().map(Some), scale)
+    }
+
+    pub(crate) fn with_type(
+        array: Decimal128Array,
+        precision: u8,
+        scale: i8,
+    ) -> crate::error::Result<Self> {
+        let invalid = |e: arrow_schema::ArrowError| crate::error::PondError::InvalidData {
+            call: "DecimalColumn",
+            message: e.to_string(),
+        };
+        let array = array
+            .with_precision_and_scale(precision, scale)
+            .map_err(invalid)?;
+        array
+            .validate_decimal_precision(precision)
+            .map_err(invalid)?;
+        Ok(Self { values: array })
+    }
+
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    /// Digits after the decimal point, the same for every row.
+    pub fn scale(&self) -> i8 {
+        self.values.scale()
+    }
+
+    /// The most digits a value may have (Arrow's precision, at most 38).
+    pub fn precision(&self) -> u8 {
+        self.values.precision()
+    }
+
+    /// The value at `i`, or `None` for a gap. Panics if `i` is out of range.
+    pub fn get(&self, i: usize) -> Option<Decimal> {
+        assert!(i < self.len(), "row {i} out of range ({} rows)", self.len());
+        self.values.is_valid(i).then(|| Decimal {
+            value: self.values.value(i),
+            scale: self.scale(),
+        })
+    }
+
+    /// Iterate as `Option<Decimal>`.
+    pub fn iter(&self) -> impl Iterator<Item = Option<Decimal>> + '_ {
+        (0..self.len()).map(|i| self.get(i))
+    }
+
+    /// The raw whole numbers (gaps hold an unspecified value; see
+    /// [`DecimalColumn::get`]).
+    pub(crate) fn raw(&self) -> &[i128] {
+        self.values.values()
+    }
+
+    /// Number of gaps.
+    pub fn missing_count(&self) -> usize {
+        self.values.null_count()
+    }
+
+    /// The Arrow array behind the column (shared, not copied).
+    pub(crate) fn arrow(&self) -> ArrayRef {
+        Arc::new(self.values.clone())
+    }
+
+    pub(crate) fn nulls(&self) -> Option<&NullBuffer> {
+        self.values.nulls()
+    }
+
+    /// Each row as the nearest `f64`, `NaN` for a gap.
+    pub(crate) fn to_f64s(&self) -> Vec<f64> {
+        let scale = self.scale();
+        // Decimal::to_f64's fast path with the divisor worked out once.
+        let divisor = (0..=22)
+            .contains(&scale)
+            .then(|| 10f64.powi(i32::from(scale)));
+        const EXACT: i128 = 1 << 53;
+        let raw = self.raw();
+        (0..self.len())
+            .map(|i| {
+                let value = raw[i];
+                match divisor {
+                    _ if self.values.is_null(i) => f64::NAN,
+                    Some(d) if (-EXACT..=EXACT).contains(&value) => value as i64 as f64 / d,
+                    _ => Decimal { value, scale }.to_f64(),
+                }
+            })
+            .collect()
+    }
+
+    /// Raw values at this column's scale and the given precision.
+    pub(crate) fn rebuild(
+        &self,
+        values: impl IntoIterator<Item = Option<i128>>,
+        precision: u8,
+    ) -> Self {
+        let array: Decimal128Array = values.into_iter().collect();
+        Self {
+            values: array
+                .with_precision_and_scale(precision, self.scale())
+                .expect("this column's own scale"),
+        }
+    }
+
+    /// The rows named by `rows`, in that order; `None` gives a gap.
+    pub(crate) fn take(&self, rows: &[Option<usize>]) -> Self {
+        self.rebuild(
+            rows.iter()
+                .map(|r| r.and_then(|i| self.values.is_valid(i).then(|| self.values.value(i)))),
+            self.precision(),
+        )
+    }
+}
+
+/// What a value column holds: numbers, exact decimals, text, or true/false
+/// values.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ColumnData {
     Number(Float64Column),
+    Decimal(DecimalColumn),
     String(StringColumn),
     Boolean(BooleanColumn),
 }
@@ -284,6 +476,7 @@ impl ColumnData {
     pub fn len(&self) -> usize {
         match self {
             ColumnData::Number(c) => c.len(),
+            ColumnData::Decimal(c) => c.len(),
             ColumnData::String(c) => c.len(),
             ColumnData::Boolean(c) => c.len(),
         }
@@ -297,17 +490,19 @@ impl ColumnData {
     pub fn missing_count(&self) -> usize {
         match self {
             ColumnData::Number(c) => c.missing_count(),
+            ColumnData::Decimal(c) => c.missing_count(),
             ColumnData::String(c) => c.missing_count(),
             ColumnData::Boolean(c) => c.missing_count(),
         }
     }
 
-    /// The Arrow validity bits of a text or true/false column (`None` when
-    /// it has no gaps, and always for numbers, whose gaps are non-finite
-    /// values instead).
+    /// The Arrow validity bits of a decimal, text or true/false column
+    /// (`None` when it has no gaps, and always for numbers, whose gaps are
+    /// non-finite values instead).
     pub(crate) fn arrow_nulls(&self) -> Option<NullBuffer> {
         match self {
             ColumnData::Number(_) => None,
+            ColumnData::Decimal(c) => c.nulls().cloned(),
             ColumnData::String(c) => c.arrow().logical_nulls(),
             ColumnData::Boolean(c) => c.values.nulls().cloned(),
         }
@@ -317,15 +512,18 @@ impl ColumnData {
     pub fn is_present(&self, i: usize) -> bool {
         match self {
             ColumnData::Number(c) => c.get(i).is_some(),
+            ColumnData::Decimal(c) => c.get(i).is_some(),
             ColumnData::String(c) => c.get(i).is_some(),
             ColumnData::Boolean(c) => c.get(i).is_some(),
         }
     }
 
-    /// What the column holds: [`ColumnKind::Number`], `String` or `Boolean`.
+    /// What the column holds: [`ColumnKind::Number`], `Decimal`, `String`
+    /// or `Boolean`.
     pub fn kind(&self) -> ColumnKind {
         match self {
             ColumnData::Number(_) => ColumnKind::Number,
+            ColumnData::Decimal(_) => ColumnKind::Decimal,
             ColumnData::String(_) => ColumnKind::String,
             ColumnData::Boolean(_) => ColumnKind::Boolean,
         }
@@ -335,6 +533,12 @@ impl ColumnData {
 impl From<Float64Column> for ColumnData {
     fn from(c: Float64Column) -> Self {
         ColumnData::Number(c)
+    }
+}
+
+impl From<DecimalColumn> for ColumnData {
+    fn from(c: DecimalColumn) -> Self {
+        ColumnData::Decimal(c)
     }
 }
 

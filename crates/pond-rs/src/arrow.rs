@@ -26,8 +26,8 @@ use std::sync::Arc;
 
 use arrow_array::cast::AsArray;
 use arrow_array::types::{
-    Float16Type, Float32Type, Float64Type, Int8Type, Int16Type, Int32Type, Int64Type, UInt8Type,
-    UInt16Type, UInt32Type, UInt64Type,
+    Decimal32Type, Decimal64Type, Decimal128Type, Float16Type, Float32Type, Float64Type, Int8Type,
+    Int16Type, Int32Type, Int64Type, UInt8Type, UInt16Type, UInt32Type, UInt64Type,
 };
 use arrow_array::{Array, ArrayRef, Float64Array, RecordBatch, TimestampMillisecondArray};
 use arrow_buffer::{BooleanBuffer, Buffer, NullBuffer};
@@ -36,7 +36,7 @@ use arrow_ipc::reader::{FileDecoder, StreamDecoder, read_footer_length};
 use arrow_ipc::writer::FileWriter;
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 
-use crate::column::{BooleanColumn, ColumnData, Float64Column, StringColumn};
+use crate::column::{BooleanColumn, ColumnData, DecimalColumn, Float64Column, StringColumn};
 use crate::error::{PondError, Result};
 use crate::series::{Column, IntervalKeys, Key, Labels, MAX_TIME_MS, TimeRangeKeys, TimeSeries};
 
@@ -246,8 +246,12 @@ impl TimeSeries {
     ///   is optional. With a single batch, a `Utf8` field, a
     ///   `Dictionary<Int32, Utf8>` field and a `Boolean` field are used in
     ///   place, without copying; other text types are copied into `Utf8`.
-    /// - Any other field type (decimals, binary, lists, structs, …) is an
-    ///   error naming it.
+    /// - `Decimal32`, `Decimal64` and `Decimal128` fields become exact
+    ///   decimal columns ([`DecimalColumn`]) with the field's precision and
+    ///   scale; nulls are gaps. A single `Decimal128` batch is used in place;
+    ///   the narrower types are widened into a copy.
+    /// - Any other field type (`Decimal256`, binary, lists, structs, …) is
+    ///   an error naming it.
     ///   Drop such fields first with [`RecordBatch::project`].
     ///
     /// The key column keeps its Arrow name.
@@ -337,6 +341,18 @@ impl TimeSeries {
                         batches.iter().flat_map(|b| b.column(c).as_boolean().iter()),
                     ),
                 };
+                let missing = data.missing_count();
+                columns.push(Column::from_data(
+                    field.name().clone(),
+                    data,
+                    required(missing),
+                ));
+                continue;
+            }
+            if let DataType::Decimal32(..) | DataType::Decimal64(..) | DataType::Decimal128(..) =
+                field.data_type()
+            {
+                let data = read_decimals(batches, c)?;
                 let missing = data.missing_count();
                 columns.push(Column::from_data(
                     field.name().clone(),
@@ -476,6 +492,7 @@ impl TimeSeries {
                     });
                     Arc::new(Float64Array::new(data.buffer().clone(), nulls))
                 }
+                ColumnData::Decimal(data) => data.arrow(),
                 ColumnData::String(data) => data.arrow(),
                 ColumnData::Boolean(data) => data.arrow(),
             };
@@ -691,6 +708,46 @@ fn read_time_values(
         }
         Ok(())
     })
+}
+
+/// A decimal field across all batches, as `Decimal128` with the field's
+/// precision and scale. One `Decimal128` batch is used in place; narrower
+/// decimals are widened (exactly) into a copy. Either way every value is
+/// checked to fit the field's precision (a file can hold values that do
+/// not).
+fn read_decimals(batches: &[RecordBatch], c: usize) -> Result<DecimalColumn> {
+    if let [batch] = batches {
+        if let Some(a) = batch.column(c).as_primitive_opt::<Decimal128Type>() {
+            // A clone shares the buffers; nothing is copied.
+            return DecimalColumn::with_type(a.clone(), a.precision(), a.scale());
+        }
+    }
+    let (precision, scale) = match batches[0].column(c).data_type() {
+        DataType::Decimal32(p, s) | DataType::Decimal64(p, s) | DataType::Decimal128(p, s) => {
+            (*p, *s)
+        }
+        other => unreachable!("not a decimal: {other}"),
+    };
+    let mut values: Vec<Option<i128>> = Vec::new();
+    for batch in batches {
+        let array = batch.column(c);
+        match array.data_type() {
+            DataType::Decimal32(..) => values.extend(
+                array
+                    .as_primitive::<Decimal32Type>()
+                    .iter()
+                    .map(|v| v.map(i128::from)),
+            ),
+            DataType::Decimal64(..) => values.extend(
+                array
+                    .as_primitive::<Decimal64Type>()
+                    .iter()
+                    .map(|v| v.map(i128::from)),
+            ),
+            _ => values.extend(array.as_primitive::<Decimal128Type>().iter()),
+        }
+    }
+    DecimalColumn::with_type(values.into_iter().collect(), precision, scale)
 }
 
 /// A text field across all batches. One `Utf8` or `Dictionary<Int32, Utf8>`
@@ -1046,6 +1103,17 @@ mod tests {
         ]);
         let e = TimeSeries::from_arrow("x", &[b], "time").unwrap_err();
         assert!(e.to_string().contains("'s'"), "{e}");
+
+        // Decimal256: values may not fit 128 bits
+        let wide = arrow_array::Decimal256Array::from(vec![arrow_buffer::i256::from_i128(1)])
+            .with_precision_and_scale(40, 2)
+            .unwrap();
+        let b = batch(vec![
+            ("time", ts(vec![1000])),
+            ("d", Arc::new(wide) as ArrayRef),
+        ]);
+        let e = TimeSeries::from_arrow("x", &[b], "time").unwrap_err();
+        assert!(e.to_string().contains("'d'"), "{e}");
 
         // missing time column, no batches
         let b = batch(vec![("t", ts(vec![1000]))]);
@@ -1510,6 +1578,98 @@ mod tests {
                 .iter()
                 .collect::<Vec<_>>(),
             up[2..]
+        );
+    }
+
+    #[test]
+    fn decimals_across_batches_are_joined_exactly() {
+        let ts = |v: Vec<i64>| -> ArrayRef {
+            Arc::new(arrow_array::Float64Array::from(
+                v.into_iter().map(|t| t as f64).collect::<Vec<_>>(),
+            ))
+        };
+        let batch = |cols: Vec<(&str, ArrayRef)>| RecordBatch::try_from_iter(cols).unwrap();
+        let dec = |v: Vec<Option<i128>>| {
+            Arc::new(
+                arrow_array::Decimal128Array::from(v)
+                    .with_precision_and_scale(12, 3)
+                    .unwrap(),
+            ) as ArrayRef
+        };
+        let one = batch(vec![
+            ("time", ts(vec![1000, 2000])),
+            ("d", dec(vec![Some(1), None])),
+        ]);
+        let two = batch(vec![
+            ("time", ts(vec![3000, 4000])),
+            ("d", dec(vec![Some(-999_999_999_999), None])),
+        ]);
+        let s = TimeSeries::from_arrow("x", &[one, two], "time").unwrap();
+        let d = s.column("d").unwrap().decimals().unwrap();
+        assert_eq!((d.precision(), d.scale()), (12, 3));
+        let got: Vec<_> = d.iter().map(|v| v.map(|v| v.to_string())).collect();
+        assert_eq!(
+            got,
+            [
+                Some("0.001".into()),
+                None,
+                Some("-999999999.999".into()),
+                None
+            ]
+        );
+        let out = s.to_arrow().unwrap();
+        assert_eq!(
+            out.schema().field(1).data_type(),
+            &DataType::Decimal128(12, 3)
+        );
+    }
+
+    #[test]
+    fn decimal_files_are_checked_and_gaps_can_hold_anything() {
+        let time: ArrayRef = Arc::new(arrow_array::Float64Array::from(vec![0.0, 1000.0]));
+        let dec = |values: Vec<i128>, nulls: Option<Vec<bool>>| -> ArrayRef {
+            Arc::new(
+                arrow_array::Decimal128Array::new(values.into(), nulls.map(Into::into))
+                    .with_precision_and_scale(5, 2)
+                    .unwrap(),
+            )
+        };
+        // 123456 has six digits, more than the field's five.
+        let b = RecordBatch::try_from_iter(vec![
+            ("time", time.clone()),
+            ("d", dec(vec![1, 123_456], None)),
+        ])
+        .unwrap();
+        let e = TimeSeries::from_arrow("x", &[b], "time").unwrap_err();
+        assert!(e.to_string().contains("precision"), "{e}");
+
+        // A gap's raw value is ignored, even the smallest i128.
+        let b = RecordBatch::try_from_iter(vec![
+            ("time", time),
+            ("d", dec(vec![i128::MIN, -250], Some(vec![false, true]))),
+        ])
+        .unwrap();
+        let s = TimeSeries::from_arrow("x", &[b], "time").unwrap();
+        let aggs = [
+            crate::Agg::new("min", "d", crate::Reducer::Min),
+            crate::Agg::new("sum", "d", crate::Reducer::Sum),
+            crate::Agg::new("avg", "d", crate::Reducer::Avg),
+        ];
+        let r = s.rolling("1m", &aggs).unwrap();
+        let text = |name: &str| {
+            r.column(name)
+                .unwrap()
+                .decimals()
+                .unwrap()
+                .get(1)
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(text("min"), "-2.50");
+        assert_eq!(text("sum"), "-2.50");
+        assert_eq!(
+            r.column("avg").unwrap().numbers().unwrap().get(1),
+            Some(-2.5)
         );
     }
 }

@@ -5,6 +5,7 @@
 //! the last bits of a sum. Each kernel names the pond-ts function it follows.
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use crate::column::ColumnData;
@@ -416,13 +417,14 @@ pub(crate) fn check_source_kind(
     reducer: Reducer,
 ) -> Result<(), PondError> {
     match (column.data(), reducer) {
-        (ColumnData::Number(_), _) | (_, Reducer::Count | Reducer::First | Reducer::Last) => Ok(()),
+        (ColumnData::Number(_) | ColumnData::Decimal(_), _)
+        | (_, Reducer::Count | Reducer::First | Reducer::Last) => Ok(()),
         (data, _) => Err(PondError::WrongKind {
             call,
             column: column.name().to_string(),
             kind: data.kind().as_str(),
             reason: format!(
-                "{} needs a number column; string and boolean columns take count, first or last",
+                "{} needs a number or decimal column; string and boolean columns take count, first or last",
                 reducer_name(reducer)
             ),
         }),
@@ -445,54 +447,149 @@ fn reducer_name(reducer: Reducer) -> String {
     }
 }
 
-/// [`kernel_input`] for each column in `used`, built once per column (a
-/// mapping often reduces one column several ways); `None` for the rest.
-pub(crate) fn kernel_inputs<'a>(
-    columns: &'a [Column],
-    used: &[usize],
-) -> Vec<Option<Cow<'a, [f64]>>> {
-    let mut out: Vec<Option<Cow<'a, [f64]>>> = columns.iter().map(|_| None).collect();
-    for &c in used {
-        if out[c].is_none() {
-            out[c] = Some(kernel_input(columns[c].data()));
-        }
-    }
-    out
+/// What the `f64` kernels run over for one source column and reducer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum InputKind {
+    /// A number column's own values.
+    Values,
+    /// Each row's index where it has a value, NaN where not: `count`,
+    /// `first` and `last` on decimal, text and true/false columns, whose
+    /// results then pick rows.
+    Rows,
+    /// `min` and `max` on decimals, kept exact: each raw whole number as
+    /// an `f64` when all fit within 2^53 (so the conversion is exact),
+    /// otherwise each value's rank among the column's distinct values.
+    /// Either way they compare as the decimals do.
+    Ranks,
+    /// Each decimal as its nearest `f64`: `avg`, `stdev`, `median`,
+    /// percentiles.
+    Floats,
+    /// `sum` of decimals: no kernel, summed exactly (see `decimal.rs`).
+    ExactSum,
 }
 
-/// What the kernels run over: a number column's values, or for any other
-/// kind each row's number where it has a value (NaN where it has none).
-fn kernel_input(data: &ColumnData) -> Cow<'_, [f64]> {
-    match data {
-        ColumnData::Number(c) => Cow::Borrowed(c.values()),
-        other => Cow::Owned(match other.arrow_nulls() {
+pub(crate) fn input_kind(data: &ColumnData, reducer: Reducer) -> InputKind {
+    match (data, reducer) {
+        (ColumnData::Number(_), _) => InputKind::Values,
+        (_, Reducer::Count | Reducer::First | Reducer::Last) => InputKind::Rows,
+        (ColumnData::Decimal(_), Reducer::Min | Reducer::Max) => InputKind::Ranks,
+        (ColumnData::Decimal(_), Reducer::Sum) => InputKind::ExactSum,
+        (ColumnData::Decimal(_), _) => InputKind::Floats,
+        // check_source_kind refused the rest.
+        (_, _) => InputKind::Rows,
+    }
+}
+
+/// One kernel input, and for [`InputKind::Ranks`] the distinct values the
+/// ranks index (`None` when the values are the raw numbers themselves).
+pub(crate) struct Input<'a> {
+    pub(crate) values: Cow<'a, [f64]>,
+    distinct: Option<Vec<i128>>,
+}
+
+/// The kernel inputs for a set of (source column, reducer) pairs, each
+/// built once (a mapping often reduces one column several ways).
+pub(crate) struct Inputs<'a>(HashMap<(usize, InputKind), Input<'a>>);
+
+impl<'a> Inputs<'a> {
+    pub(crate) fn build(columns: &'a [Column], used: &[(usize, Reducer)]) -> Self {
+        let mut map = HashMap::new();
+        for &(c, reducer) in used {
+            let data = columns[c].data();
+            let kind = input_kind(data, reducer);
+            map.entry((c, kind))
+                .or_insert_with(|| build_input(data, kind));
+        }
+        Self(map)
+    }
+
+    pub(crate) fn get(&self, column: usize, kind: InputKind) -> &Input<'a> {
+        &self.0[&(column, kind)]
+    }
+}
+
+fn build_input(data: &ColumnData, kind: InputKind) -> Input<'_> {
+    let plain = |values| Input {
+        values,
+        distinct: None,
+    };
+    match (data, kind) {
+        (ColumnData::Number(c), _) => plain(Cow::Borrowed(c.values())),
+        (ColumnData::Decimal(c), InputKind::Floats) => plain(Cow::Owned(c.to_f64s())),
+        (ColumnData::Decimal(c), InputKind::Ranks) => {
+            let present = |i: usize| c.nulls().is_none_or(|n| n.is_valid(i));
+            let raw = c.raw();
+            const EXACT: u128 = 1 << 53;
+            // Only present rows count: a gap's raw value can be anything.
+            if (0..raw.len()).all(|i| !present(i) || raw[i].unsigned_abs() <= EXACT) {
+                return plain(Cow::Owned(
+                    (0..raw.len())
+                        .map(|i| if present(i) { raw[i] as f64 } else { f64::NAN })
+                        .collect(),
+                ));
+            }
+            let mut distinct: Vec<i128> = (0..raw.len())
+                .filter(|&i| present(i))
+                .map(|i| raw[i])
+                .collect();
+            distinct.sort_unstable();
+            distinct.dedup();
+            let values = (0..raw.len())
+                .map(|i| {
+                    if present(i) {
+                        distinct.binary_search(&raw[i]).expect("listed") as f64
+                    } else {
+                        f64::NAN
+                    }
+                })
+                .collect();
+            Input {
+                values: Cow::Owned(values),
+                distinct: Some(distinct),
+            }
+        }
+        (ColumnData::Decimal(_), InputKind::ExactSum) => plain(Cow::Borrowed(&[])),
+        (other, _) => plain(Cow::Owned(match other.arrow_nulls() {
             None => (0..other.len()).map(|i| i as f64).collect(),
             Some(nulls) => nulls
                 .iter()
                 .enumerate()
                 .map(|(i, valid)| if valid { i as f64 } else { f64::NAN })
                 .collect(),
-        }),
+        })),
     }
 }
 
-/// The output column for `out`, the kernel results for a `source` column.
-/// Always optional (an empty window or bucket is a gap).
+/// The output column for `out`, the kernel results for a `source` column
+/// read through `input`. Always optional (an empty window or bucket is a
+/// gap).
 pub(crate) fn output_column(
     name: String,
     source: &ColumnData,
     reducer: Reducer,
+    input: &Input<'_>,
     out: Vec<f64>,
 ) -> Column {
-    let rows = || -> Vec<Option<usize>> {
+    let picked = || -> Vec<Option<usize>> {
         out.iter()
             .map(|&v| v.is_finite().then_some(v as usize))
             .collect()
     };
-    match (source, reducer) {
-        (ColumnData::Number(_), _) | (_, Reducer::Count) => Column::optional_raw(name, out),
-        (ColumnData::String(c), _) => Column::from_data(name, c.take(&rows()), false),
-        (ColumnData::Boolean(c), _) => Column::from_data(name, c.take(&rows()), false),
+    match (source, input_kind(source, reducer)) {
+        (ColumnData::Number(_), _) | (_, InputKind::Floats) => Column::optional_raw(name, out),
+        (_, _) if reducer == Reducer::Count => Column::optional_raw(name, out),
+        (ColumnData::Decimal(c), InputKind::Ranks) => {
+            let values = out.iter().map(|&v| {
+                v.is_finite().then(|| match &input.distinct {
+                    Some(distinct) => distinct[v as usize],
+                    None => v as i128,
+                })
+            });
+            Column::from_data(name, c.rebuild(values, c.precision()), false)
+        }
+        (ColumnData::Decimal(c), _) => Column::from_data(name, c.take(&picked()), false),
+        (ColumnData::String(c), _) => Column::from_data(name, c.take(&picked()), false),
+        (ColumnData::Boolean(c), _) => Column::from_data(name, c.take(&picked()), false),
     }
 }
 

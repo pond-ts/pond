@@ -5,12 +5,16 @@ of the type under test, and `expected.json` gives what pond-rs must read `v`
 as: numbers in milliseconds for time types, null for a gap. The expected
 values are worked out here from the raw inputs, not by reading the files back.
 
+Decimal files (`decimal*.arrow`) are read as exact decimals instead, so their
+expected values are strings in `expected-decimals.json`, with the scale.
+
 Run from this folder with pyarrow and polars installed:
     python generate.py
 """
 
 import datetime as dt
 import json
+from decimal import Decimal
 
 import polars as pl
 import pyarrow as pa
@@ -86,6 +90,30 @@ write_file(
     [9, None, 7],
 )
 
+# Exact decimals, every width pond-rs reads, plus one from polars.
+DECIMALS = {}
+VALUES = [Decimal("1234567.89"), None, Decimal("-0.05")]
+for name, kind in [
+    ("decimal32", pa.decimal32(9, 2)),
+    ("decimal64", pa.decimal64(10, 2)),
+    ("decimal128", pa.decimal128(10, 2)),
+]:
+    with ipc.new_file(f"{name}.arrow", table(pa.array(VALUES, kind)).schema) as w:
+        w.write_table(table(pa.array(VALUES, kind)))
+    DECIMALS[name] = {"scale": 2, "values": [None if v is None else str(v) for v in VALUES]}
+# 38 digits, the widest a Decimal128 holds.
+WIDE = [Decimal("9" * 38), Decimal("-" + "9" * 38), None]
+with ipc.new_file("decimal128_wide.arrow", table(pa.array(WIDE, pa.decimal128(38, 0))).schema) as w:
+    w.write_table(table(pa.array(WIDE, pa.decimal128(38, 0))))
+DECIMALS["decimal128_wide"] = {"scale": 0, "values": [None if v is None else str(v) for v in WIDE]}
+pl.from_arrow(table(pa.array(VALUES, pa.decimal128(10, 2)))).write_ipc(
+    "decimal_polars.arrow", compression="zstd"
+)
+DECIMALS["decimal_polars"] = DECIMALS["decimal128"]
+
 with open("expected.json", "w") as f:
     json.dump(EXPECTED, f, indent=1, sort_keys=True)
+    f.write("\n")
+with open("expected-decimals.json", "w") as f:
+    json.dump(DECIMALS, f, indent=1, sort_keys=True)
     f.write("\n")

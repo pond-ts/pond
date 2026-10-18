@@ -8,10 +8,11 @@
 
 use std::collections::VecDeque;
 
+use crate::column::ColumnData;
 use crate::duration::parse_duration;
 use crate::error::{PondError, Result};
 use crate::reducer::{
-    Agg, Reducer, check_source_kind, clamp_at_zero, kernel_inputs, output_column,
+    Agg, InputKind, Inputs, Reducer, check_source_kind, clamp_at_zero, input_kind, output_column,
     percentile_of_sorted,
 };
 use crate::series::{Column, TimeSeries};
@@ -330,12 +331,19 @@ fn lower_bound(sorted: &[f64], v: f64) -> usize {
     sorted.partition_point(|&x| x < v)
 }
 
-/// Run one column through pond-ts's trailing time window: each group of
-/// rows sharing a time `t` sees the rows with time in `(t - window, t]`.
-/// Rows enter before rows leave, as in pond-ts.
-fn roll<S: WindowState>(mut state: S, times: &[i64], values: &[f64], window_ms: i64) -> Vec<f64> {
+/// One pass of pond-ts's trailing time window over a column: rows `enter`
+/// and `leave`, and each group of rows sharing a time is `emit`ted with
+/// the window as it then stands.
+pub(crate) trait Window {
+    fn enter(&mut self, row: usize);
+    fn leave(&mut self, row: usize);
+    fn emit(&mut self, rows: std::ops::Range<usize>);
+}
+
+/// Each group of rows sharing a time `t` sees the rows with time in
+/// `(t - window, t]`. Rows enter before rows leave, as in pond-ts.
+pub(crate) fn walk(times: &[i64], window_ms: i64, w: &mut impl Window) {
     let rows = times.len();
-    let mut out = vec![f64::NAN; rows];
     let (mut window_start, mut window_end) = (0usize, 0usize);
     let mut group_start = 0;
     while group_start < rows {
@@ -345,31 +353,61 @@ fn roll<S: WindowState>(mut state: S, times: &[i64], values: &[f64], window_ms: 
             group_end += 1;
         }
         while window_end < rows && times[window_end] <= anchor {
-            let v = values[window_end];
-            if v.is_finite() {
-                state.add(window_end, v);
-            }
+            w.enter(window_end);
             window_end += 1;
         }
         // Keys are within ±MAX_TIME_MS, so when this saturates the true lower
         // edge is below every key and nothing is evicted, which is right.
         let lower = anchor.saturating_sub(window_ms);
         while window_start < window_end && times[window_start] <= lower {
-            let v = values[window_start];
-            if v.is_finite() {
-                state.remove(window_start, v);
-            }
+            w.leave(window_start);
             window_start += 1;
         }
+        w.emit(group_start..group_end);
+        group_start = group_end;
+    }
+}
+
+/// A [`WindowState`] over `f64` values, skipping gaps (non-finite values).
+struct Rolled<'a, S> {
+    state: S,
+    values: &'a [f64],
+    out: Vec<f64>,
+}
+
+impl<S: WindowState> Window for Rolled<'_, S> {
+    fn enter(&mut self, row: usize) {
+        let v = self.values[row];
+        if v.is_finite() {
+            self.state.add(row, v);
+        }
+    }
+    fn leave(&mut self, row: usize) {
+        let v = self.values[row];
+        if v.is_finite() {
+            self.state.remove(row, v);
+        }
+    }
+    fn emit(&mut self, rows: std::ops::Range<usize>) {
         // A non-finite result (an overflow) is a gap, as in pond-ts.
-        let snap = state
+        let snap = self
+            .state
             .snapshot()
             .filter(|v| v.is_finite())
             .unwrap_or(f64::NAN);
-        out[group_start..group_end].fill(snap);
-        group_start = group_end;
+        self.out[rows].fill(snap);
     }
-    out
+}
+
+/// Run one column through the trailing window with one reducer's state.
+fn roll<S: WindowState>(state: S, times: &[i64], values: &[f64], window_ms: i64) -> Vec<f64> {
+    let mut w = Rolled {
+        state,
+        values,
+        out: vec![f64::NAN; times.len()],
+    };
+    walk(times, window_ms, &mut w);
+    w.out
 }
 
 fn roll_column(times: &[i64], values: &[f64], window_ms: i64, reducer: Reducer) -> Vec<f64> {
@@ -449,7 +487,9 @@ impl TimeSeries {
     ///
     /// Text and true/false columns take `count` (a number column), `first`
     /// and `last` (a column of the same kind); any other reducer on them is
-    /// an error.
+    /// an error. Decimal columns take every reducer: `first`, `last`, `min`,
+    /// `max` and `sum` give exact decimals (`sum` at precision 38, an error
+    /// past it), the rest give numbers.
     pub fn rolling(&self, window: &str, aggs: &[Agg]) -> Result<TimeSeries> {
         let window_ms = parse_duration(window)?;
         // Range- and interval-keyed rows are anchored at their begin, as in
@@ -473,14 +513,29 @@ impl TimeSeries {
             // Stable, so equal positions keep their given order.
             plan.sort_by_key(|&(source, _)| source);
         }
-        let used: Vec<usize> = plan.iter().map(|&(source, _)| source).collect();
-        let inputs = kernel_inputs(self.columns(), &used);
+        let used: Vec<(usize, Reducer)> = plan
+            .iter()
+            .map(|&(source, agg)| (source, agg.reducer))
+            .collect();
+        let inputs = Inputs::build(self.columns(), &used);
         let columns = crate::par::map(&plan, |&(source, agg)| {
             let data = self.columns()[source].data();
-            let values = inputs[source].as_deref().expect("built for every source");
-            let out = roll_column(times, values, window_ms, agg.reducer);
-            output_column(agg.output.clone(), data, agg.reducer, out)
-        });
+            let kind = input_kind(data, agg.reducer);
+            if let (ColumnData::Decimal(d), InputKind::ExactSum) = (data, kind) {
+                return crate::decimal::rolling_sum(CALL, &agg.output, d, times, window_ms);
+            }
+            let input = inputs.get(source, kind);
+            let out = roll_column(times, &input.values, window_ms, agg.reducer);
+            Ok(output_column(
+                agg.output.clone(),
+                data,
+                agg.reducer,
+                input,
+                out,
+            ))
+        })
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
         Ok(TimeSeries::from_parts(
             self.name().to_string(),
             self.key_name().to_string(),
@@ -497,7 +552,10 @@ fn check_magnitude(column: &Column, reducer: Reducer) -> Result<()> {
         Reducer::Stdev => STDEV_SPLIT,
         _ => return Ok(()),
     };
-    let values = column.numbers()?.values();
+    // Decimals reach the f64 kernels below 1.7e38, far under either split.
+    let Ok(values) = column.numbers().map(|c| c.values()) else {
+        return Ok(());
+    };
     match values
         .iter()
         .position(|v| v.is_finite() && v.abs() >= split)

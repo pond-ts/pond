@@ -1,7 +1,10 @@
 //! `TimeSeries::aggregate`: reduce each bucket of a sequence to one row.
 
+use crate::column::ColumnData;
 use crate::error::{PondError, Result};
-use crate::reducer::{Agg, check_source_kind, kernel_inputs, output_column, reduce_range};
+use crate::reducer::{
+    Agg, InputKind, Inputs, Reducer, check_source_kind, input_kind, output_column, reduce_range,
+};
 use crate::sequence::Sequence;
 use crate::series::{IntervalKeys, Key, TimeSeries};
 
@@ -29,7 +32,10 @@ impl TimeSeries {
     /// An empty bucket gives `count` 0, `sum` 0, and a gap for every other
     /// reducer. Text and true/false columns take `count` (a number column),
     /// `first` and `last` (a column of the same kind); any other reducer on
-    /// them is an error.
+    /// them is an error. Decimal columns take every reducer: `first`,
+    /// `last`, `min`, `max` and `sum` give exact decimals (`sum` at
+    /// precision 38, an error past it; an empty bucket sums to 0), the rest
+    /// give numbers.
     pub fn aggregate(&self, sequence: &Sequence, aggs: &[Agg]) -> Result<TimeSeries> {
         let times = match self.key() {
             Key::Time(t) => t,
@@ -76,17 +82,34 @@ impl TimeSeries {
             ranges.push(start..cursor);
         }
 
-        let inputs = kernel_inputs(self.columns(), &sources);
+        let used: Vec<(usize, Reducer)> = sources
+            .iter()
+            .zip(aggs)
+            .map(|(&source, agg)| (source, agg.reducer))
+            .collect();
+        let inputs = Inputs::build(self.columns(), &used);
         let plan: Vec<(&Agg, usize)> = aggs.iter().zip(sources).collect();
         let columns = crate::par::map(&plan, |&(agg, source)| {
             let data = self.columns()[source].data();
-            let values = inputs[source].as_deref().expect("built for every source");
+            let kind = input_kind(data, agg.reducer);
+            if let (ColumnData::Decimal(d), InputKind::ExactSum) = (data, kind) {
+                return crate::decimal::sum_ranges(CALL, &agg.output, d, &ranges);
+            }
+            let input = inputs.get(source, kind);
             let out: Vec<f64> = ranges
                 .iter()
-                .map(|r| reduce_range(agg.reducer, &values[r.clone()]).unwrap_or(f64::NAN))
+                .map(|r| reduce_range(agg.reducer, &input.values[r.clone()]).unwrap_or(f64::NAN))
                 .collect();
-            output_column(agg.output.clone(), data, agg.reducer, out)
-        });
+            Ok(output_column(
+                agg.output.clone(),
+                data,
+                agg.reducer,
+                input,
+                out,
+            ))
+        })
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
         Ok(TimeSeries::from_parts(
             self.name().to_string(),
             "interval".to_string(),

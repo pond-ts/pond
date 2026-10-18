@@ -225,6 +225,8 @@ fn encode(data: &ColumnData, i: usize) -> Value {
             Some(v) if v == 0.0 && v.is_sign_negative() => json!({ "f64": "-0" }),
             Some(v) => json!(v),
         },
+        // pond-ts has no decimals, so no fixture holds one.
+        ColumnData::Decimal(_) => panic!("pond-ts has no decimal columns"),
         ColumnData::String(c) => c.get(i).map_or(Value::Null, |v| json!(v)),
         ColumnData::Boolean(c) => c.get(i).map_or(Value::Null, |v| json!(v)),
     }

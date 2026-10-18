@@ -487,3 +487,124 @@ fn rolling_sum_does_not_drift() {
         }
     }
 }
+
+/// Decimal columns: `count`, `first`, `last`, `min`, `max` and `sum` are
+/// exact, so they must equal a brute-force answer on the raw `i128`s, even
+/// for values far past what an `f64` holds exactly. `avg` goes through
+/// `f64`, so it must equal `avg` of a number column of the same values.
+#[test]
+fn decimal_reducers_are_exact() {
+    use pond_rs::{Decimal, DecimalColumn};
+    let exact = [
+        Reducer::Count,
+        Reducer::Sum,
+        Reducer::Min,
+        Reducer::Max,
+        Reducer::First,
+        Reducer::Last,
+    ];
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, shape) = random_series(&mut rng);
+        // Huge values (up to 34 digits, so a window of thousands still
+        // fits 38) or small ones with many ties.
+        let huge = rng.chance(50);
+        let raw: Vec<Option<i128>> = shape
+            .iter()
+            .map(|v| {
+                v.map(|_| {
+                    if huge {
+                        ((rng.next() >> 8) as i128 * (rng.next() >> 8) as i128)
+                            * if rng.chance(50) { -1 } else { 1 }
+                    } else {
+                        rng.below(7) as i128 - 3
+                    }
+                })
+            })
+            .collect();
+        let scale = rng.below(6) as i8;
+        let s = TimeSeries::new(
+            "s",
+            times.clone(),
+            vec![
+                Column::optional(
+                    "d",
+                    DecimalColumn::from_options(raw.clone(), scale).unwrap(),
+                ),
+                Column::optional(
+                    "f",
+                    raw.iter()
+                        .map(|v| v.map(|value| Decimal { value, scale }.to_f64()))
+                        .collect::<Vec<_>>(),
+                ),
+            ],
+        )
+        .unwrap();
+        let mut aggs: Vec<Agg> = exact
+            .iter()
+            .enumerate()
+            .map(|(i, &r)| Agg::new(format!("r{i}"), "d", r))
+            .collect();
+        aggs.push(Agg::new("d_avg", "d", Reducer::Avg));
+        aggs.push(Agg::new("f_avg", "f", Reducer::Avg));
+
+        // Brute force over the rows a window or bucket holds.
+        let want = |rows: &[usize], reducer: Reducer| -> Option<i128> {
+            let present: Vec<i128> = rows.iter().filter_map(|&r| raw[r]).collect();
+            match reducer {
+                Reducer::Count => Some(present.len() as i128),
+                Reducer::Sum => Some(present.iter().sum()),
+                Reducer::Min => present.iter().min().copied(),
+                Reducer::Max => present.iter().max().copied(),
+                Reducer::First => present.first().copied(),
+                Reducer::Last => present.last().copied(),
+                _ => unreachable!(),
+            }
+        };
+        let check_out = |what: &str, out: &TimeSeries, row: usize, rows: &[usize]| {
+            for (i, &reducer) in exact.iter().enumerate() {
+                let col = out.column(&format!("r{i}")).unwrap();
+                let got = match reducer {
+                    Reducer::Count => col.numbers().unwrap().get(row).map(|v| v as i128),
+                    _ => {
+                        let d = col.decimals().unwrap();
+                        assert_eq!(d.scale(), scale, "{what}");
+                        d.get(row).map(|d| d.value)
+                    }
+                };
+                assert_eq!(got, want(rows, reducer), "{what} {reducer:?}");
+            }
+            let bits = |name: &str| {
+                out.column(name)
+                    .unwrap()
+                    .numbers()
+                    .unwrap()
+                    .get(row)
+                    .map(f64::to_bits)
+            };
+            assert_eq!(bits("d_avg"), bits("f_avg"), "{what} avg");
+        };
+
+        let window_ms = [1, 250, 10_000][rng.below(3) as usize];
+        let out = s.rolling(&format!("{window_ms}ms"), &aggs).unwrap();
+        for (row, &t) in times.iter().enumerate() {
+            let rows: Vec<usize> = (0..times.len())
+                .filter(|&r| times[r] > t - window_ms && times[r] <= t)
+                .collect();
+            check_out(&format!("seed {seed} rolling row {row}"), &out, row, &rows);
+        }
+
+        let out = s
+            .aggregate(&Sequence::every_ms(1_000).unwrap(), &aggs)
+            .unwrap();
+        let Key::Interval(keys) = out.key() else {
+            panic!("interval keys")
+        };
+        for b in 0..keys.begin.len() {
+            let rows: Vec<usize> = (0..times.len())
+                .filter(|&r| times[r] >= keys.begin[b] && times[r] < keys.end[b])
+                .collect();
+            check_out(&format!("seed {seed} bucket {b}"), &out, b, &rows);
+        }
+    }
+}
