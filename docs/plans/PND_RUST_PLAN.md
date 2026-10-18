@@ -593,7 +593,8 @@ The one result short of a clean win is one-core B: polars is faster
      numbers, with Arrow in and out for each. Also `TimeRange` keys and
      text interval labels. This is the big API change: `Column` stops being
      number-only. The plan is a typed column enum, still checked at runtime,
-     per the RFC.
+     per the RFC. Split in two: **2a** text and true/false columns (done,
+     below), **2b** `TimeRange` keys and text interval labels.
   3. **Row-wise operations:**
      - `filter`, `slice`, `with_column`, `map` (Rust closures).
      - `diff`, `rate`, `pct_change`, `cumulative`, `shift`, `fill`.
@@ -624,7 +625,7 @@ The one result short of a clean win is one-core B: polars is faster
   An agent trial at the end of step 4 repeats the R1a setup on a
   partitioned workload.
 
-  **Step 1 (PR #770, 2026-10-18):** in review.
+  **Step 1 (PR #770, merged 2026-10-18):** done.
   - Choices, all matching pond-ts:
     - `select` keeps schema order, so a repeated name selects the column
       once.
@@ -641,6 +642,76 @@ The one result short of a clean win is one-core B: polars is faster
       keys are whole milliseconds; fractional keys are a step-2 question.
     - Interval labels are numbers only until step 2.
   - Fixture: 19 new cases, 53 of 64 now run in pond-rs.
+
+  **Step 2a (2026-10-18): text and true/false columns.**
+  - Shape:
+    - A value column is a `ColumnData`: `Number(Float64Column)`,
+      `String(StringColumn)` or `Boolean(BooleanColumn)`. The names are
+      pond-ts's own (`kind: 'string' | 'boolean'`), so agents moving between
+      the two do not translate.
+    - Text and true/false columns hold Arrow arrays (`Utf8`, or
+      `Dictionary<Int32, Utf8>` when read that way; `Boolean`). A gap is an
+      Arrow null. An empty string is a value.
+    - `Column::required` / `optional` take any of `Vec<f64>`, `Vec<&str>`,
+      `Vec<String>`, `Vec<bool>`, their `Option` forms, or arrays of them.
+      They no longer take a bare iterator, so callers `collect()` first.
+    - `TimeSeries::column(name)` now returns `Result<&Column>` (an error
+      listing the columns, rather than `None`). Then `numbers()` /
+      `strings()` / `booleans()` give the values, or a `WrongKind` error.
+      This follows polars (`df.column("x")?.f64()?`), and was chosen over
+      keeping a number-only `column()` that would return `None` for a text
+      column that exists.
+  - Reducers: `count`, `first` and `last` work on text and true/false
+    columns in `rolling` and `aggregate`. `count` gives a number column;
+    `first` / `last` give the same kind. They reuse the number kernels: they
+    run over each row's number where it has a value (NaN where not), then
+    pick out the chosen rows. Any other reducer on them is a `WrongKind`
+    error.
+  - Arrow:
+    - Reads `Utf8`, `LargeUtf8`, `Utf8View` and dictionaries of `Utf8` /
+      `LargeUtf8` with any key type, and `Boolean`.
+    - With one batch, `Utf8`, `Dictionary<Int32, Utf8>` and `Boolean` are
+      used in place. Anything else is copied into `Utf8`.
+    - Writes the types pond-ts `toArrow` names: `Utf8`,
+      `Dictionary<Int32, Utf8>` (when the column is one) and `Bool`.
+  - Differences from pond-ts:
+    - pond-ts runs number reducers on text at run time (`sum` gives 0,
+      `avg` gives gaps). pond-rs refuses them. Logged as [PND-KINDREDUCE].
+    - pond-ts chooses dictionary or plain text itself, by how repetitive
+      the column is. pond-rs keeps whatever it was given; built from Rust
+      values, it is plain.
+  - Fixture:
+    - 6 new cases on a `mixed` input (20 rows; a repetitive text column
+      that pond-ts holds as a dictionary, a mostly distinct one, a
+      true/false column, an empty string, gaps): `aggregate` fixed and
+      calendar, `rolling` spec and shorthand order, `select`, `rename`.
+      59 of 70 cases now run in pond-rs, all bit for bit.
+    - A second Arrow file written by pond-ts (`parity-export-mixed.arrow`:
+      Float64, Utf8, Dictionary<Int32, Utf8>, Bool) must read back as the
+      `mixed` input exactly.
+  - Perf (`examples/perf_text.rs`, 1M rows 1 s apart, ~5% gaps, one
+    thread, median of 7):
+
+    | column            | aggregate 1m count/first/last | rolling 5m last | IPC write + read |
+    | ----------------- | ----------------------------- | --------------- | ---------------- |
+    | number            | 2.8 ms                        | 16 ms           | 11 ms            |
+    | text              | 7.6 ms                        | 58 ms           | 12 ms            |
+    | text (dictionary) | 6.5 ms                        | 25 ms           | 7.6 ms           |
+    | true/false        | 5.8 ms                        | 29 ms           | 4.1 ms           |
+    - pond-ts on the same shape: `aggregate` 133 ms (text) / 120 ms
+      (true/false); `rolling` 267 ms / 199 ms.
+    - Rolling plain text is mostly copying 1M strings into the output.
+    - Two fixes came out of the check:
+      - Each source column's row numbers are built once per call, not
+        once per reducer: aggregate on text went from 13–17 ms to ~7 ms.
+      - Gaps are read from Arrow's validity bits rather than row by row.
+    - Number paths are unchanged. On the R1a benchmark (one thread),
+      compute and write for A and B are within run-to-run noise of main.
+      Read A came out 1.5–7 ms slower across runs (main ~27–29.5 ms). That
+      read is mostly the memory allocator: with glibc told to keep freed
+      memory (`MALLOC_MMAP_THRESHOLD_` / `MALLOC_TRIM_THRESHOLD_` = 4 GiB)
+      both read A in 12–14 ms with no consistent order between them. Timed
+      alone, 41 reads of the file take 14.6–15.3 ms on both.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

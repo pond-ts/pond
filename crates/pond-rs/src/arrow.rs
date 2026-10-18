@@ -13,6 +13,8 @@
 //!
 //! pond-rs keys are whole epoch milliseconds. Written keys are
 //! `Timestamp(Millisecond, "UTC")`; a gap in a value column is an Arrow null.
+//! Value columns are `Float64`, `Utf8` (or a dictionary of it) and `Boolean`,
+//! as pond-ts writes them.
 
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -30,7 +32,7 @@ use arrow_ipc::reader::{FileDecoder, read_footer_length};
 use arrow_ipc::writer::FileWriter;
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 
-use crate::column::Float64Column;
+use crate::column::{BooleanColumn, ColumnData, Float64Column, StringColumn};
 use crate::error::{PondError, Result};
 use crate::series::{Column, IntervalKeys, Key, MAX_TIME_MS, TimeSeries};
 
@@ -126,7 +128,13 @@ impl TimeSeries {
     ///   are gaps. A field Arrow marks nullable becomes an optional column
     ///   (even if it holds no nulls); a non-nullable one becomes required,
     ///   unless it holds `NaN` or infinities, which make it optional.
-    /// - Any other field type (strings, lists, …) is an error naming it.
+    /// - Text fields (`Utf8`, `LargeUtf8`, `Utf8View`, or a dictionary of
+    ///   `Utf8` / `LargeUtf8`) become string columns and `Boolean` fields
+    ///   true/false columns; nulls are gaps, and a field Arrow marks nullable
+    ///   is optional. With a single batch, a `Utf8` field, a
+    ///   `Dictionary<Int32, Utf8>` field and a `Boolean` field are used in
+    ///   place, without copying; other text types are copied into `Utf8`.
+    /// - Any other field type (lists, structs, …) is an error naming it.
     ///   Drop such fields first with [`RecordBatch::project`].
     ///
     /// The key column keeps its Arrow name.
@@ -162,6 +170,39 @@ impl TimeSeries {
         let mut columns = Vec::with_capacity(schema.fields().len().saturating_sub(1));
         for (c, field) in schema.fields().iter().enumerate() {
             if c == time_index {
+                continue;
+            }
+            let required = |missing: usize| !field.is_nullable() && missing == 0;
+            let is_text = match field.data_type() {
+                DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => true,
+                DataType::Dictionary(_, values) => {
+                    matches!(**values, DataType::Utf8 | DataType::LargeUtf8)
+                }
+                _ => false,
+            };
+            if is_text {
+                let data = read_strings(batches, c, field.name())?;
+                let missing = data.missing_count();
+                columns.push(Column::from_data(
+                    field.name().clone(),
+                    data,
+                    required(missing),
+                ));
+                continue;
+            }
+            if field.data_type() == &DataType::Boolean {
+                let data = match batches {
+                    [batch] => BooleanColumn::from_arrow(batch.column(c).as_boolean().clone()),
+                    _ => BooleanColumn::from_options(
+                        batches.iter().flat_map(|b| b.column(c).as_boolean().iter()),
+                    ),
+                };
+                let missing = data.missing_count();
+                columns.push(Column::from_data(
+                    field.name().clone(),
+                    data,
+                    required(missing),
+                ));
                 continue;
             }
             // One batch of Float64 with no nulls: point at Arrow's buffer,
@@ -244,8 +285,10 @@ impl TimeSeries {
     ///
     /// Fields: the key (`Timestamp(Millisecond, "UTC")`; an interval key adds
     /// `<key>End` after it and `<key>Label` at the end), then each value
-    /// column as `Float64`, nullable unless the column is required, with gaps
-    /// as nulls.
+    /// column, nullable unless the column is required, with gaps as nulls:
+    /// numbers as `Float64`, text as `Utf8` (or `Dictionary<Int32, Utf8>` if
+    /// it was read as one), true/false as `Boolean`. These are the types
+    /// pond-ts `toArrow` uses.
     pub fn to_arrow(&self) -> Result<RecordBatch> {
         let key_name = self.key_name().to_string();
         let mut fields = Vec::new();
@@ -270,18 +313,24 @@ impl TimeSeries {
         };
 
         for column in self.columns() {
-            let data = column.data();
-            let nulls = (!data.all_finite()).then(|| {
-                let v = data.values();
-                NullBuffer::new(BooleanBuffer::collect_bool(v.len(), |i| v[i].is_finite()))
-            });
+            // Each column's buffers are shared with the batch, not copied.
+            let array: ArrayRef = match column.data() {
+                ColumnData::Number(data) => {
+                    let nulls = (!data.all_finite()).then(|| {
+                        let v = data.values();
+                        NullBuffer::new(BooleanBuffer::collect_bool(v.len(), |i| v[i].is_finite()))
+                    });
+                    Arc::new(Float64Array::new(data.buffer().clone(), nulls))
+                }
+                ColumnData::String(data) => data.arrow(),
+                ColumnData::Boolean(data) => data.arrow(),
+            };
             fields.push(Field::new(
                 column.name(),
-                DataType::Float64,
+                array.data_type().clone(),
                 !column.is_required(),
             ));
-            // The values buffer is shared with the series, not copied.
-            arrays.push(Arc::new(Float64Array::new(data.buffer().clone(), nulls)));
+            arrays.push(array);
         }
 
         if let Some(label) = label {
@@ -419,6 +468,48 @@ fn read_time(array: &ArrayRef, name: &str, offset: usize, out: &mut Vec<i64>) ->
     Ok(())
 }
 
+/// A text field across all batches. One `Utf8` or `Dictionary<Int32, Utf8>`
+/// batch is kept as it is; anything else is copied into one `Utf8` array.
+fn read_strings(batches: &[RecordBatch], c: usize, name: &str) -> Result<StringColumn> {
+    if let [batch] = batches {
+        let array = batch.column(c);
+        if array.data_type() == &DataType::Utf8 {
+            return Ok(StringColumn::plain(array.as_string::<i32>().clone()));
+        }
+        if let Some(dict) = array.as_dictionary_opt::<Int32Type>() {
+            if let Some(column) = StringColumn::dictionary(dict.clone()) {
+                return Ok(column);
+            }
+        }
+    }
+    let mut values: Vec<Option<&str>> = Vec::new();
+    for batch in batches {
+        let array = batch.column(c);
+        match array.data_type() {
+            DataType::Utf8 => values.extend(array.as_string::<i32>().iter()),
+            DataType::LargeUtf8 => values.extend(array.as_string::<i64>().iter()),
+            DataType::Utf8View => values.extend(array.as_string_view().iter()),
+            DataType::Dictionary(..) => {
+                let dict = array.as_any_dictionary();
+                let keys = dict.normalized_keys();
+                let words: Vec<Option<&str>> = match dict.values().data_type() {
+                    DataType::Utf8 => dict.values().as_string::<i32>().iter().collect(),
+                    _ => dict.values().as_string::<i64>().iter().collect(),
+                };
+                values.extend(keys.iter().enumerate().map(|(i, &k)| {
+                    if dict.keys().is_valid(i) {
+                        words[k]
+                    } else {
+                        None
+                    }
+                }));
+            }
+            other => unreachable!("read_strings called on {other} for '{name}'"),
+        }
+    }
+    Ok(StringColumn::from_options(values))
+}
+
 /// Append one chunk of a value column to `out` as `f64`, nulls as `NaN`.
 fn read_number(array: &ArrayRef, name: &str, out: &mut Vec<f64>) -> Result<()> {
     macro_rules! widen {
@@ -443,7 +534,7 @@ fn read_number(array: &ArrayRef, name: &str, out: &mut Vec<f64>) -> Result<()> {
             return Err(PondError::Unsupported {
                 call: FROM,
                 message: format!(
-                    "column '{name}' is {other}; pond-rs reads number columns only (drop it first with RecordBatch::project)"
+                    "column '{name}' is {other}; pond-rs reads number, text and true/false columns only (drop it first with RecordBatch::project)"
                 ),
             });
         }
@@ -497,7 +588,12 @@ mod tests {
         assert_eq!(back.key(), series.key());
         assert_eq!(back.schema(), series.schema());
         for (x, y) in back.columns().iter().zip(series.columns()) {
-            assert_eq!(bits(x.data()), bits(y.data()), "{}", x.name());
+            assert_eq!(
+                bits(x.numbers().unwrap()),
+                bits(y.numbers().unwrap()),
+                "{}",
+                x.name()
+            );
         }
     }
 
@@ -547,7 +643,7 @@ mod tests {
         let series = series.unwrap();
         assert_eq!(series.key_name(), "ts");
         assert_eq!(series.key(), &Key::Time(vec![1000, 2000, 2000]));
-        let v = series.column("v").unwrap();
+        let v = series.column("v").unwrap().numbers().unwrap();
         assert_eq!(v.iter().collect::<Vec<_>>(), [Some(7.0), None, None]);
         assert!(!series.schema()[1].required);
     }
@@ -590,11 +686,19 @@ mod tests {
         let batch = s.to_arrow().unwrap();
         let written = batch.column(1).as_primitive::<Float64Type>().values();
         // Writing hands the series' own buffer to Arrow ...
-        assert_eq!(written.as_ptr(), s.column("v").unwrap().values().as_ptr());
+        assert_eq!(
+            written.as_ptr(),
+            s.column("v").unwrap().numbers().unwrap().values().as_ptr()
+        );
         // ... and reading it back points at Arrow's buffer.
         let back = TimeSeries::from_arrow("s", std::slice::from_ref(&batch), "time").unwrap();
         assert_eq!(
-            back.column("v").unwrap().values().as_ptr(),
+            back.column("v")
+                .unwrap()
+                .numbers()
+                .unwrap()
+                .values()
+                .as_ptr(),
             written.as_ptr()
         );
         // With a gap the values are copied (the null must become NaN).
@@ -607,14 +711,19 @@ mod tests {
         let batch = g.to_arrow().unwrap();
         let back = TimeSeries::from_arrow("g", std::slice::from_ref(&batch), "time").unwrap();
         assert_ne!(
-            back.column("v").unwrap().values().as_ptr(),
+            back.column("v")
+                .unwrap()
+                .numbers()
+                .unwrap()
+                .values()
+                .as_ptr(),
             batch
                 .column(1)
                 .as_primitive::<Float64Type>()
                 .values()
                 .as_ptr()
         );
-        assert_eq!(back.column("v").unwrap().get(1), None);
+        assert_eq!(back.column("v").unwrap().numbers().unwrap().get(1), None);
     }
 
     #[test]
@@ -626,7 +735,13 @@ mod tests {
         let file = bytes.as_ptr_range();
         let (start, end) = (file.start as usize, file.end as usize);
         let back = TimeSeries::from_ipc_bytes("s", bytes, "time").unwrap();
-        let v = back.column("v").unwrap().values().as_ptr() as usize;
+        let v = back
+            .column("v")
+            .unwrap()
+            .numbers()
+            .unwrap()
+            .values()
+            .as_ptr() as usize;
         assert!(start <= v && v < end, "column was copied out of the file");
     }
 
@@ -661,10 +776,13 @@ mod tests {
         let b = batch(vec![("time", ts(vec![2000, 1000]))]);
         assert!(TimeSeries::from_arrow("x", &[b], "time").is_err());
 
-        // a string column
+        // a binary column (bytes, not text)
         let b = batch(vec![
             ("time", ts(vec![1000])),
-            ("s", Arc::new(StringArray::from(vec!["x"])) as ArrayRef),
+            (
+                "s",
+                Arc::new(arrow_array::BinaryArray::from(vec![b"x".as_ref()])) as ArrayRef,
+            ),
         ]);
         let e = TimeSeries::from_arrow("x", &[b], "time").unwrap_err();
         assert!(e.to_string().contains("'s'"), "{e}");
@@ -706,5 +824,130 @@ mod tests {
             )
             .unwrap();
         assert!(series.to_arrow().is_err());
+    }
+
+    fn mixed() -> TimeSeries {
+        TimeSeries::new(
+            "m",
+            vec![0, 1000, 2000],
+            vec![
+                Column::optional("host", [Some("a"), None, Some("")]),
+                Column::required("up", vec![true, false, true]),
+                Column::optional("ok", [None, Some(false), Some(true)]),
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn text_and_booleans_round_trip_without_copying() {
+        let s = mixed();
+        let batch = s.to_arrow().unwrap();
+        let types: Vec<_> = batch
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| (f.data_type().clone(), f.is_nullable()))
+            .collect();
+        assert_eq!(
+            types[1..],
+            [
+                (DataType::Utf8, true),
+                (DataType::Boolean, false),
+                (DataType::Boolean, true)
+            ]
+        );
+        // The text buffer is the series' own.
+        let text = |b: &RecordBatch| b.column(1).as_string::<i32>().values().as_ptr();
+        assert_eq!(text(&batch), text(&s.to_arrow().unwrap()));
+        let back = TimeSeries::from_arrow("m", std::slice::from_ref(&batch), "time").unwrap();
+        assert_eq!(back, s);
+        assert_eq!(text(&back.to_arrow().unwrap()), text(&batch));
+
+        let mut bytes = Vec::new();
+        s.write_ipc(&mut bytes).unwrap();
+        assert_eq!(TimeSeries::from_ipc_bytes("m", bytes, "time").unwrap(), s);
+    }
+
+    #[test]
+    fn reads_every_text_layout_to_the_same_values() {
+        use arrow_array::types::Int8Type;
+        use arrow_array::{DictionaryArray, LargeStringArray, StringViewArray};
+        let want = [Some("x"), None, Some("y"), Some("x")];
+        let layouts: Vec<ArrayRef> = vec![
+            Arc::new(StringArray::from(want.to_vec())),
+            Arc::new(LargeStringArray::from(want.to_vec())),
+            Arc::new(StringViewArray::from(want.to_vec())),
+            Arc::new(want.iter().copied().collect::<DictionaryArray<Int32Type>>()),
+            Arc::new(want.iter().copied().collect::<DictionaryArray<Int8Type>>()),
+        ];
+        for array in layouts {
+            let kind = array.data_type().clone();
+            let b = RecordBatch::try_from_iter(vec![
+                (
+                    "time",
+                    Arc::new(arrow_array::Int64Array::from(vec![0, 1, 2, 3])) as ArrayRef,
+                ),
+                ("s", array),
+            ])
+            .unwrap();
+            for batches in [vec![b.clone()], vec![b.slice(0, 2), b.slice(2, 2)]] {
+                let s = TimeSeries::from_arrow("x", &batches, "time").unwrap();
+                let col = s.column("s").unwrap().strings().unwrap();
+                assert_eq!(col.iter().collect::<Vec<_>>(), want, "{kind}");
+                // Only one Dictionary<Int32, Utf8> batch stays a dictionary.
+                let stays = batches.len() == 1
+                    && kind
+                        == DataType::Dictionary(
+                            Box::new(DataType::Int32),
+                            Box::new(DataType::Utf8),
+                        );
+                assert_eq!(col.is_dictionary(), stays, "{kind}");
+                assert!(!s.schema()[1].required);
+            }
+        }
+    }
+
+    #[test]
+    fn a_dictionary_column_is_written_back_as_one() {
+        let dict: arrow_array::DictionaryArray<Int32Type> =
+            vec!["a", "b", "a"].into_iter().collect();
+        let b = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("time", DataType::Int64, false),
+                Field::new("s", dict.data_type().clone(), false),
+            ])),
+            vec![
+                Arc::new(arrow_array::Int64Array::from(vec![0, 1, 2])),
+                Arc::new(dict),
+            ],
+        )
+        .unwrap();
+        let s = TimeSeries::from_arrow("x", &[b], "time").unwrap();
+        assert!(s.schema()[1].required);
+        let out = s.to_arrow().unwrap();
+        assert_eq!(
+            out.schema().field(1).data_type(),
+            &DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8))
+        );
+        let mut bytes = Vec::new();
+        s.write_ipc(&mut bytes).unwrap();
+        assert_eq!(TimeSeries::from_ipc_bytes("x", bytes, "time").unwrap(), s);
+        // first / last keep the dictionary (the rows point into the same
+        // list of strings).
+        let last = s
+            .rolling("1s", &[crate::Agg::of("s", crate::Reducer::Last)])
+            .unwrap();
+        let col = last.column("s").unwrap().strings().unwrap();
+        assert!(col.is_dictionary());
+        // Equal to the same values held as plain text.
+        assert_eq!(
+            col,
+            &crate::StringColumn::from_options(["a", "b", "a"].map(Some))
+        );
+        assert_eq!(
+            col.iter().collect::<Vec<_>>(),
+            [Some("a"), Some("b"), Some("a")]
+        );
     }
 }

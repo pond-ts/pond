@@ -567,8 +567,9 @@ the study oracle) is done.
 - **[PND-RUST-R1B]** — Rest of batch core, adopted 2026-10-18 after R1a met
   every target (report: "R1a step 5" in `docs/plans/PND_RUST_PLAN.md`).
   Steps, each bit-for-bit against pond-ts:
-  1. Reshape and output layout ([PND-RUSTOUT] folded in): PR #770, in review.
-  2. Text and true/false columns.
+  1. ~~Reshape and output layout~~ — done (#770).
+  2. Column kinds, in two parts: (a) text and true/false columns — PR open;
+     (b) `TimeRange` keys and text interval labels.
   3. Row-wise operations.
   4. `partition_by` / `group_by`, threaded across partitions.
   5. `align` / `materialize` / `dedupe`.
@@ -588,6 +589,13 @@ the study oracle) is done.
   error cases: `diff('nope')` throws a raw `Cannot read properties of
 undefined`; `rolling` with an unknown column says "aggregate mapping".
   Agents act on error text, so both should name the column and the call.
+- **[PND-KINDREDUCE]** — pond-ts runs number reducers on text and
+  true/false columns at run time instead of refusing them: `aggregate` with
+  `sum` on a string column gives 0 per bucket, `avg` / `max` give gaps. Its
+  types already refuse these, so only untyped callers (JSON-driven mappings,
+  agents) reach it. pond-rs returns an error naming the column; pond-ts
+  should throw the same. Found 2026-10-18 while adding text columns to
+  pond-rs (R1b step 2a).
 - **[PND-ARROWREQ]** — pond-ts `fromArrow` declares every value column
   required, even one with nulls, so its own `toJSON` → `fromJSON` round trip
   then throws ("row 1 col 1 (v) is required"). Reproduced 2026-10-17 with a

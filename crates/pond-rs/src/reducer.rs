@@ -4,9 +4,12 @@
 //! with pond-ts is checked bit for bit: the order values are added in decides
 //! the last bits of a sum. Each kernel names the pond-ts function it follows.
 
+use std::borrow::Cow;
 use std::str::FromStr;
 
+use crate::column::ColumnData;
 use crate::error::PondError;
+use crate::series::Column;
 
 /// A built-in reducer.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -394,6 +397,103 @@ pub(crate) fn reduce_range(reducer: Reducer, values: &[f64]) -> Option<f64> {
         Reducer::Percentile(q) => percentile_range(values, q),
     };
     out.filter(|v| v.is_finite())
+}
+
+// ---------------------------------------------------------------------------
+// Text and true/false sources. They take `count`, `first` and `last` only
+// (pond-ts's types allow the same set, plus reducers pond-rs does not have
+// yet). The kernels above run over each row's number where the row has a
+// value and NaN where it has none; `first` / `last` then give the row whose
+// value to take.
+// ---------------------------------------------------------------------------
+
+/// Refuse a reducer that needs numbers on a text or true/false column.
+/// pond-ts's types refuse it too; at run time pond-ts answers anyway (`sum`
+/// gives 0, `avg` and `max` give gaps), where pond-rs returns this error.
+pub(crate) fn check_source_kind(
+    call: &'static str,
+    column: &Column,
+    reducer: Reducer,
+) -> Result<(), PondError> {
+    match (column.data(), reducer) {
+        (ColumnData::Number(_), _) | (_, Reducer::Count | Reducer::First | Reducer::Last) => Ok(()),
+        (data, _) => Err(PondError::WrongKind {
+            call,
+            column: column.name().to_string(),
+            kind: data.kind_name(),
+            reason: format!(
+                "{} needs a number column; string and boolean columns take count, first or last",
+                reducer_name(reducer)
+            ),
+        }),
+    }
+}
+
+/// pond-ts's name for a reducer.
+fn reducer_name(reducer: Reducer) -> String {
+    match reducer {
+        Reducer::Count => "count".into(),
+        Reducer::Sum => "sum".into(),
+        Reducer::Avg => "avg".into(),
+        Reducer::Min => "min".into(),
+        Reducer::Max => "max".into(),
+        Reducer::First => "first".into(),
+        Reducer::Last => "last".into(),
+        Reducer::Median => "median".into(),
+        Reducer::Stdev => "stdev".into(),
+        Reducer::Percentile(q) => format!("p{q}"),
+    }
+}
+
+/// [`kernel_input`] for each column in `used`, built once per column (a
+/// mapping often reduces one column several ways); `None` for the rest.
+pub(crate) fn kernel_inputs<'a>(
+    columns: &'a [Column],
+    used: &[usize],
+) -> Vec<Option<Cow<'a, [f64]>>> {
+    let mut out: Vec<Option<Cow<'a, [f64]>>> = columns.iter().map(|_| None).collect();
+    for &c in used {
+        if out[c].is_none() {
+            out[c] = Some(kernel_input(columns[c].data()));
+        }
+    }
+    out
+}
+
+/// What the kernels run over: a number column's values, or for any other
+/// kind each row's number where it has a value (NaN where it has none).
+fn kernel_input(data: &ColumnData) -> Cow<'_, [f64]> {
+    match data {
+        ColumnData::Number(c) => Cow::Borrowed(c.values()),
+        other => Cow::Owned(match other.arrow_nulls() {
+            None => (0..other.len()).map(|i| i as f64).collect(),
+            Some(nulls) => nulls
+                .iter()
+                .enumerate()
+                .map(|(i, valid)| if valid { i as f64 } else { f64::NAN })
+                .collect(),
+        }),
+    }
+}
+
+/// The output column for `out`, the kernel results for a `source` column.
+/// Always optional (an empty window or bucket is a gap).
+pub(crate) fn output_column(
+    name: String,
+    source: &ColumnData,
+    reducer: Reducer,
+    out: Vec<f64>,
+) -> Column {
+    let rows = || -> Vec<Option<usize>> {
+        out.iter()
+            .map(|&v| v.is_finite().then_some(v as usize))
+            .collect()
+    };
+    match (source, reducer) {
+        (ColumnData::Number(_), _) | (_, Reducer::Count) => Column::optional_raw(name, out),
+        (ColumnData::String(c), _) => Column::from_data(name, c.take(&rows()), false),
+        (ColumnData::Boolean(c), _) => Column::from_data(name, c.take(&rows()), false),
+    }
 }
 
 #[cfg(test)]

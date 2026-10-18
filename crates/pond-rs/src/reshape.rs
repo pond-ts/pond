@@ -69,7 +69,7 @@ impl TimeSeries {
     /// # use pond_rs::{Column, TimeSeries};
     /// let s = TimeSeries::new("s", vec![0], vec![Column::required("cpu", vec![0.5])])?;
     /// let renamed = s.rename(&[("cpu", "usage")])?;
-    /// assert!(renamed.column("usage").is_some());
+    /// assert!(renamed.column("usage").is_ok());
     /// # Ok::<(), pond_rs::PondError>(())
     /// ```
     pub fn rename(&self, renames: &[(&str, &str)]) -> Result<TimeSeries> {
@@ -241,7 +241,7 @@ mod tests {
         .unwrap();
         let picked = s.select(&["b"]).unwrap();
         let renamed = s.rename(&[("a", "x")]).unwrap();
-        let ptr = |s: &TimeSeries, i: usize| s.columns()[i].data().values().as_ptr();
+        let ptr = |s: &TimeSeries, i: usize| s.columns()[i].numbers().unwrap().values().as_ptr();
         assert_eq!(ptr(&picked, 0), ptr(&s, 1));
         assert_eq!(ptr(&renamed, 0), ptr(&s, 0));
     }
