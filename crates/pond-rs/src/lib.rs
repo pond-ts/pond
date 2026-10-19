@@ -14,7 +14,8 @@
 //! row-by-row [`TimeSeries::diff`] / `rate` / `pct_change` / `shift` /
 //! `cumulative` / `fill`, picking rows with [`TimeSeries::slice`] /
 //! `filter` (a closure over each [`Row`]) and changing columns with
-//! `with_column` / `map_numbers` and its siblings,
+//! `with_column` / `map_numbers` and its siblings, running any of these per
+//! entity with [`TimeSeries::partition_by`] (partitions on several cores),
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
 //! [`ArrowKey`], [`TimeSeries::write_ipc`]). Results match
 //! pond-ts bit for bit; the parity
@@ -25,7 +26,8 @@
 //! the output columns of one `rolling` or `aggregate` call are computed on
 //! several cores (rayon's pool; `RAYON_NUM_THREADS` sets its size). Each
 //! column is still computed by one thread, in order, so results are the same
-//! bits on any number of threads.
+//! bits on any number of threads. Partitions of a [`PartitionedSeries`] run
+//! on several cores the same way: each partition is computed by one thread.
 //!
 //! **Memory.** Columns hold their values in Arrow buffers. Reading a
 //! gap-free `Float64` field, a `Utf8` / `Dictionary<Int32, Utf8>` field or a
@@ -65,6 +67,7 @@ mod decimal;
 mod duration;
 mod error;
 mod par;
+mod partition;
 mod reducer;
 mod reshape;
 mod rolling;
@@ -74,13 +77,16 @@ mod sequence;
 mod series;
 
 pub use arrow::ArrowKey;
-pub use column::{BooleanColumn, ColumnData, Decimal, DecimalColumn, Float64Column, StringColumn};
+pub use column::{
+    BooleanColumn, ColumnData, Decimal, DecimalColumn, Float64Column, StringColumn, Value,
+};
 pub use duration::parse_duration;
 pub use error::{PondError, Result};
+pub use partition::{PartitionKey, PartitionedSeries};
 pub use reducer::{Agg, Reducer};
 pub use reshape::At;
 pub use rows::Row;
-pub use rowwise::{Fill, FillLimits, FillValue, FirstRow};
+pub use rowwise::{Fill, FillLimits, FirstRow};
 pub use sequence::{CalendarUnit, Sequence, tzdb_version};
 pub use series::{
     Column, ColumnDef, ColumnKind, IntervalKeys, Key, Labels, MAX_TIME_MS, TimeRangeKeys,
