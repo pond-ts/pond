@@ -85,6 +85,23 @@ Middle (median) time of several runs:
 Most of pond-ts's time here goes into putting the partitions back together
 (about 450 ms of it), which is logged as a pond-ts issue to fix.
 
+### Regular grids and duplicates: 1 million rows
+
+From the step 5 pull request ([#782](https://github.com/pond-ts/pond/pull/782));
+middle (median) time, every result checked against pond-ts.
+
+| Task                                      | pond-rs, 4 threads | pond-rs, 1 thread | pond-ts |
+| ----------------------------------------- | ------------------ | ----------------- | ------- |
+| `align` hold onto a 1-second grid         | 64                 | 64                | 4565    |
+| `align` linear onto a 1-second grid       | 127                | 113               | 1215    |
+| `materialize` last, 1-second grid         | 72                 | 75                | 990     |
+| `dedupe` last, 10% repeated times         | 42                 | 30                | 2314    |
+| 500 symbols × 1,000: align, then collect  | 127                | 145               | 3232    |
+| 500 symbols × 1,000: dedupe, then collect | 76                 | 135               | 2264    |
+
+On a single series, more threads did not make these faster (on `dedupe`,
+one thread was quicker); on the 500-symbol panel they did.
+
 ### Agents writing code against it
 
 pond-rs is built mainly for AI agents writing Rust, so one test was about

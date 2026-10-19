@@ -4,9 +4,12 @@
 # Each block must be a whole program (`fn main`). A failed assert fails it.
 #
 #   website/scripts/check-rust-snippets.sh
+#   POND_RS_DIR=/path/to/crates/pond-rs website/scripts/check-rust-snippets.sh
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 work="${SNIPPET_DIR:-$(mktemp -d)}"
+# POND_RS_DIR: check against another checkout of the crate (e.g. an open PR).
+crate="${POND_RS_DIR:-$repo/crates/pond-rs}"
 mkdir -p "$work/src/bin"
 rm -f "$work"/src/bin/*.rs
 cat > "$work/Cargo.toml" <<TOML
@@ -16,7 +19,7 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 [dependencies]
-pond-rs = { path = "$repo/crates/pond-rs" }
+pond-rs = { path = "$crate" }
 [workspace]
 TOML
 python3 - "$repo/website/docs/pond-rs" "$work/src/bin" <<'PY'

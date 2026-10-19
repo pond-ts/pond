@@ -346,10 +346,115 @@ fn main() -> Result<(), pond_rs::PondError> {
 }
 ```
 
+## Regular grids: `align` and `materialize`
+
+Sensors rarely report on the second. Both of these give one row per bucket
+of a `Sequence`, so the result lines up on a regular grid. They differ in
+where each row's values come from:
+
+- **`align`** asks "what was the value at this moment?" With
+  `AlignMethod::Hold` (the default) that is the latest reading at or before
+  the grid point. With `AlignMethod::Linear`, number columns follow a
+  straight line between the readings either side (time-keyed series only).
+  The result is keyed by interval, like `aggregate`.
+- **`materialize`** asks "which reading fell in this bucket?" It takes one
+  row from each bucket (`Pick::Last` by default, or `First`, or `Nearest`
+  to the sample point) and leaves gaps where a bucket had none. The result
+  is keyed by time.
+
+Neither reduces: unlike `aggregate`, nothing is averaged. Every value
+column comes out optional, since a grid point can have no value.
+
+```rust
+use pond_rs::{Align, AlignMethod, Column, Materialize, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Readings at 0 s, 2.5 s and 4 s.
+    let s = TimeSeries::new("temp", vec![0, 2_500, 4_000], vec![
+        Column::required("c", vec![10.0, 15.0, 18.0]),
+    ])?;
+    let every_second = Sequence::every("1s")?;
+
+    // Hold: the latest reading at or before each second.
+    let held = s.align(&every_second, Align::default())?;
+    assert_eq!(held.key().begin(), &[0, 1_000, 2_000, 3_000, 4_000]);
+    let got: Vec<_> = held.column("c")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(10.0), Some(10.0), Some(10.0), Some(15.0), Some(18.0)]);
+
+    // Linear: a straight line between the readings either side.
+    let linear = Align { method: AlignMethod::Linear, ..Align::default() };
+    let lined = s.align(&every_second, linear)?;
+    let got: Vec<_> = lined.column("c")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(10.0), Some(12.0), Some(14.0), Some(16.0), Some(18.0)]);
+
+    // Materialize: the reading that fell in each one-second bucket, if any.
+    let picked = s.materialize(&every_second, Materialize::default())?;
+    assert_eq!(picked.key_name(), "time");
+    let got: Vec<_> = picked.column("c")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(10.0), None, Some(15.0), None, Some(18.0)]);
+    Ok(())
+}
+```
+
+Both take options as a struct whose `Default` is pond-ts's default, so you
+set only what you change:
+
+- `sample`: which point of each bucket is used, `At::Begin` (default),
+  `At::Center` or `At::End`. For `materialize` this is also the row's time.
+- `range`: `Some((begin, end))` in epoch milliseconds to cover a chosen
+  span instead of the series' own first-to-last range.
+
+Calendar sequences work too: `Sequence::calendar("day", "Europe/London")`
+gives one row per local day. To align many hosts or symbols, partition
+first: `series.partition_by(&["host"])?.align(..)?` gives each host its own
+grid (see [Partitions](./partitions)).
+
+## Duplicate times: `dedupe`
+
+`dedupe(keep)` collapses rows that share a key (the same time; for time
+ranges and intervals, the same start, end and label). `Keep` says which row
+survives:
+
+| `Keep`           | Keeps                                                         |
+| ---------------- | ------------------------------------------------------------- |
+| `Last` (default) | the last of the rows                                          |
+| `First`          | the first                                                     |
+| `Min("col")`     | the one with the smallest value in a number or decimal column |
+| `Max("col")`     | the one with the largest                                      |
+| `Drop`           | none of them                                                  |
+| `Error`          | nothing: returns an error at the first repeated key           |
+
+For `Min` and `Max`, a gap loses to any value, and on a tie the earlier row
+wins.
+
+```rust
+use pond_rs::{Column, Keep, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // The same minute reported twice, with different quality scores.
+    let s = TimeSeries::new("feed", vec![0, 60_000, 60_000, 120_000], vec![
+        Column::required("price", vec![100.0, 101.0, 101.5, 102.0]),
+        Column::required("quality", vec![0.9, 0.4, 0.8, 0.9]),
+    ])?;
+
+    let last = s.dedupe(Keep::Last)?;
+    assert_eq!(last.column("price")?.numbers()?.values(), &[100.0, 101.5, 102.0]);
+
+    let best = s.dedupe(Keep::Max("quality".into()))?;
+    assert_eq!(best.column("price")?.numbers()?.get(1), Some(101.5));
+
+    let none = s.dedupe(Keep::Drop)?;
+    assert_eq!(none.len(), 2);
+
+    // Use Error to check an assumption: "this feed never repeats a time".
+    assert!(s.dedupe(Keep::Error).is_err());
+    Ok(())
+}
+```
+
 ## What is not here yet
 
-From pond-ts, still to come: `align`, `materialize` and `dedupe` (next),
-then `join`, then the rest as people ask for them (`at` / `nearest` and
+From pond-ts, still to come: `join` (next), then the rest as people ask for them (`at` / `nearest` and
 other lookups, `within` / `trim`, `reduce`, `smooth`, `baseline` /
 `outliers`, `pivot_by_group`, array columns). Financial studies come after
 the core.

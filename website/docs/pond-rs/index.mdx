@@ -57,11 +57,12 @@ pond-rs = { git = "https://github.com/pond-ts/pond" }
 | Reducers             | `count`, `sum`, `avg`, `min`, `max`, `first`, `last`, `median`, `stdev`, percentiles                                                  |
 | Row by row           | `diff`, `rate`, `pct_change`, `shift`, `cumulative`, `fill`                                                                           |
 | Picking and changing | `slice`, `filter` (a Rust closure per row), `with_column`, `map_numbers` and friends, `select`, `rename`, `as_time`                   |
+| Regular grids        | `align` (value at each grid point: hold or straight line), `materialize` (one reading per bucket), `dedupe` (repeated times)          |
 | Per entity           | `partition_by` / `group_by` on one or more columns, partitions run on several cores                                                   |
 | Arrow                | Read and write Arrow IPC (Feather v2) files and streams, compressed or not; columns can share the file's memory instead of copying it |
 
 **Not built yet:** financial studies (SMA, RSI, …), the live (streaming)
-layer, `align` / `materialize` / `dedupe`, `join`, and a WASM build that
+layer, `join`, and a WASM build that
 pond-ts can call. They come in roughly that order; see the
 [roadmap](#roadmap) below.
 

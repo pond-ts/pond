@@ -63,6 +63,13 @@ pond-rs returns an error instead.
   2^960 (about 10^289) or more, or a `stdev` over values of 2^480 (about
   10^144) or more, is an error. pond-ts switches to a slower exact method
   for these; pond-rs has not built it yet.
+- **`materialize` on a half millisecond.** With `At::Center` on buckets an
+  odd number of milliseconds long, the row's time would be on a half
+  millisecond; pond-rs returns an error (pond-ts gives e.g. `1.5`).
+- **`dedupe` with `Keep::Min` / `Max`** must name a number or decimal
+  column, checked before anything runs. pond-ts looks at the column only
+  when it meets a duplicate, and quietly keeps the first row if the column
+  does not exist.
 - **A repeated rename.** `rename` with the same `from` twice is an error
   (pond-ts's object syntax cannot express it).
 
@@ -92,6 +99,13 @@ bug is logged in `PLAN.md` to fix there.
   the Arrow field's nullability.
 
 ## Small differences
+
+- **`dedupe` has no custom keep function** yet (pond-ts takes a closure that
+  builds the surviving row), and `align` / `materialize` take a range as an
+  epoch-millisecond pair rather than a pond-ts `BoundedSequence`.
+- **`align` with `Linear` holds exact decimal columns** instead of drawing a
+  line through them, since a point between two decimals is generally not
+  exact. pond-ts has no decimal kind.
 
 - **`NaN` and infinities when building a series.** pond-ts's
   `fromJSON` and `new TimeSeries` refuse them; pond-rs reads them as gaps
