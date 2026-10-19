@@ -2,7 +2,7 @@
 //! intervals) plus named value columns (numbers, text, true/false), all the
 //! same length.
 
-use crate::column::{BooleanColumn, ColumnData, Float64Column, StringColumn};
+use crate::column::{BooleanColumn, ColumnData, DecimalColumn, Float64Column, StringColumn};
 use crate::error::{PondError, Result};
 
 /// What a schema column holds.
@@ -16,6 +16,8 @@ pub enum ColumnKind {
     Interval,
     /// A value column of `f64`.
     Number,
+    /// A value column of exact decimals (pond-rs only; pond-ts has none).
+    Decimal,
     /// A value column of text.
     String,
     /// A value column of true/false values.
@@ -24,13 +26,15 @@ pub enum ColumnKind {
 
 impl ColumnKind {
     /// The name pond-ts uses in a schema (`"time"`, `"timeRange"`,
-    /// `"interval"`, `"number"`, `"string"`, `"boolean"`).
+    /// `"interval"`, `"number"`, `"string"`, `"boolean"`), and `"decimal"`,
+    /// which pond-ts does not have.
     pub fn as_str(self) -> &'static str {
         match self {
             ColumnKind::Time => "time",
             ColumnKind::TimeRange => "timeRange",
             ColumnKind::Interval => "interval",
             ColumnKind::Number => "number",
+            ColumnKind::Decimal => "decimal",
             ColumnKind::String => "string",
             ColumnKind::Boolean => "boolean",
         }
@@ -274,6 +278,14 @@ impl Column {
         match &self.data {
             ColumnData::String(c) => Ok(c),
             _ => Err(self.wrong_kind("Column::strings", "string")),
+        }
+    }
+
+    /// The values of a decimal column; an error for any other kind.
+    pub fn decimals(&self) -> Result<&DecimalColumn> {
+        match &self.data {
+            ColumnData::Decimal(c) => Ok(c),
+            _ => Err(self.wrong_kind("Column::decimals", "decimal")),
         }
     }
 

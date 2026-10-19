@@ -6,7 +6,7 @@
 //!
 //! **Status: R1b, in progress** (the rest of the batch core). What exists:
 //! series keyed by time, by time ranges or by intervals labelled with
-//! numbers or text, with number, text and
+//! numbers or text, with number, exact decimal, text and
 //! true/false columns (gaps allowed; see [`Column`]),
 //! [`TimeSeries::rolling`] over a trailing time window, [`TimeSeries::aggregate`] into fixed-length buckets
 //! ([`Sequence::every`]) or calendar buckets in a time zone
@@ -26,7 +26,7 @@
 //! **Memory.** Columns hold their values in Arrow buffers. Reading a
 //! gap-free `Float64` field, a `Utf8` / `Dictionary<Int32, Utf8>` field or a
 //! `Boolean` field from a one-batch Arrow file uses the file's memory
-//! without copying (which keeps the file's bytes in memory while the
+//! (or a `Decimal128` field) without copying (which keeps the file's bytes in memory while the
 //! column lives), and writing hands each column's buffer to Arrow.
 //!
 //! ```
@@ -57,6 +57,7 @@
 mod aggregate;
 mod arrow;
 mod column;
+mod decimal;
 mod duration;
 mod error;
 mod par;
@@ -67,7 +68,7 @@ mod sequence;
 mod series;
 
 pub use arrow::ArrowKey;
-pub use column::{BooleanColumn, ColumnData, Float64Column, StringColumn};
+pub use column::{BooleanColumn, ColumnData, Decimal, DecimalColumn, Float64Column, StringColumn};
 pub use duration::parse_duration;
 pub use error::{PondError, Result};
 pub use reducer::{Agg, Reducer};

@@ -597,7 +597,7 @@ The one result short of a clean win is one-core B: polars is faster
      below), **2b** `TimeRange` keys and text interval labels (done,
      below), **2c** more
      Arrow input ([PND-RUSTARROWIN]) (done, below), **2d** exact decimals
-     ([PND-RUSTDEC]). 2c and 2d are below.
+     ([PND-RUSTDEC]) (done, below).
   3. **Row-wise operations:**
      - `filter`, `slice`, `with_column`, `map` (Rust closures).
      - `diff`, `rate`, `pct_change`, `cumulative`, `shift`, `fill`.
@@ -837,7 +837,7 @@ The one result short of a clean win is one-core B: polars is faster
     take one pass over the column each.
   - Not planned: `Binary`. `List` / `Struct` wait for array columns (step 7).
 
-  **Step 2d (next): exact decimals [PND-RUSTDEC].**
+  **Step 2d (done): exact decimals [PND-RUSTDEC].**
   - Arrow `Decimal128(precision, scale)` stores each value as a 128-bit
     whole number and a fixed count of decimal places for the column: `1.25`
     at scale 2 is stored as `125`. Databases, finance feeds, and pandas
@@ -862,6 +862,57 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
   - Decided 2026-10-18: **B** (Peter). Exactness is the reason people
     store decimals, and `sum` of prices or volumes is where `f64` drift
     shows.
+  - Shipped:
+    - `ColumnData::Decimal(DecimalColumn)` wraps an Arrow `Decimal128Array`
+      (zero-copy from a single Decimal128 batch). `Decimal { value, scale }`
+      is one value; it prints as a decimal and `to_f64` rounds once.
+      Built with `DecimalColumn::from_options(raw, scale)` (precision 38;
+      an error past 38 digits). `ColumnKind::Decimal` reads `"decimal"`.
+    - Arrow in: `Decimal32` / `Decimal64` / `Decimal128` (widened to 128,
+      precision and scale kept; every present value is checked against
+      the precision, since a file can hold values that do not fit; a gap's
+      raw value is never read). Arrow out: `Decimal128`. `Decimal256` is
+      still refused (values may not fit 128 bits).
+    - Reducers, `aggregate` and `rolling`:
+      - `count` / `first` / `last`: the row-index trick text uses, then
+        a gather of the chosen rows. Exact.
+      - `min` / `max`: the number kernels run on the raw whole numbers as
+        `f64` when every value fits within 2^53 (exact, and the common
+        case), otherwise on each value's rank among the column's sorted
+        distinct values. Either way the result maps back to the exact
+        decimal.
+      - `sum`: 256-bit running sums (`src/decimal.rs`), so nothing
+        overflows on the way; each result must fit 38 digits or the call
+        is an error naming the output and row. Output precision 38, same
+        scale. Empty window or bucket sums to 0, as for numbers.
+      - `avg` / `stdev` / `median` / percentiles: on the nearest `f64`,
+        giving a number column, bit-identical to a number column of the
+        same values (property test).
+    - `rolling` was split into a `Window` trait (`enter` / `leave` /
+      `emit`) and one `walk()`, so the exact sum reuses the window walk.
+      No measured change on number columns (`perf_slice`, 1 thread,
+      3 runs each: rolling 307–341 ms on main, 308–318 ms after).
+    - Tests: `decimal_reducers_are_exact` property test (rolling and
+      aggregate against brute force, values up to 34 digits and small
+      values with ties, scales 0–5); unit tests for printing,
+      conversion, bad input and sum overflow; pyarrow / polars decimal
+      files in `tests/data/arrow-types/` (`expected-decimals.json`) read
+      and round-tripped.
+  - Perf (`examples/perf_decimal.rs`, 1M rows, prices at scale 2, 4
+    threads, decimal vs number of the same values):
+
+    | reducers | aggregate 1m | rolling 5m |
+    | --- | --- | --- |
+    | sum | 5.0 vs 3.0 ms | 29.2 vs 31.1 ms |
+    | min + max | 16.4 vs 5.4 ms | 60.3 vs 37.1 ms |
+    | first + last | 5.6 vs 2.0 ms | 38.0 vs 26.4 ms |
+    | avg | 9.8 vs 3.5 ms | 30.1 vs 24.6 ms |
+
+    Before two fixes found by this check, decimal `min + max` aggregate
+    took 82 ms (sorting distinct values every time; now only when values
+    pass 2^53) and `avg` 24 ms (per-row overhead converting to `f64`).
+  - Not planned yet: decimals in the parity suite (pond-ts has none);
+    decimal arithmetic in row-wise operations waits for step 3.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
