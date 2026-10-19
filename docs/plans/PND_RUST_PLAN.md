@@ -1031,7 +1031,9 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     - An empty `mapColumns` mapping cannot be written in Rust (one column
       per call), so the harness stands in pond-ts's error for that case.
   - Parity: 31 new cases (156 in all): 12 `slice` (every bound form, all
-    three key kinds), 9 `filter`, 5 `mapColumns`, 5 `withColumn`. Closures
+    three key kinds), 9 `filter`, 5 `mapColumns` (one, the empty
+    mapping, is a stand-in error, so it tests nothing in pond-rs), 5
+    `withColumn`. Closures
     cannot be stored in JSON, so a case names one of a few fixed closures
     (`{ fn: { column: 'a', gt: 3 } }`, `{ fn: { mul: 2, add: 1 } }`, …);
     `cases.mjs` and the harness each build the same closure from it.

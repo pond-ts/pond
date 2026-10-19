@@ -829,8 +829,15 @@ export function buildFixture(pond) {
     // withColumn's values: JSON has no `undefined`, so `null` marks a gap.
     if (Array.isArray(arg)) return arg.map((v) => (v === null ? undefined : v));
     if (arg && typeof arg === 'object' && 'fn' in arg) return closure(arg.fn);
-    if (arg && typeof arg === 'object' && !('sequence' in arg)) {
-      // mapColumns: { column: { fn } }
+    // mapColumns: { column: { fn } }. Only a mapping whose every value is a
+    // closure spec, so an options object is never touched.
+    const isClosure = (v) => v && typeof v === 'object' && 'fn' in v;
+    if (
+      arg &&
+      typeof arg === 'object' &&
+      Object.keys(arg).length > 0 &&
+      Object.values(arg).every(isClosure)
+    ) {
       return Object.fromEntries(
         Object.entries(arg).map(([k, v]) => [k, decode(v)]),
       );
