@@ -79,6 +79,22 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`filter` is ~4–5× faster, and so is building a series from events.** On
+  1M rows (`packages/core/scripts/perf-filter.mjs`; each figure a median of 15
+  calls, repeated in 3 processes) a filter
+  keeping about half the rows went from ~155 ms to ~32 ms, keep-all from
+  ~290 ms to ~58 ms. `filter` now copies the kept rows out of each column
+  instead of rebuilding every column from the kept events, and a series built
+  from events (`filter`, `TimeSeries.fromEvents`, and every operator that
+  builds its result from events) now holds them in a plain list instead of a
+  per-row lookup table; `TimeSeries.fromEvents` on 1M events went from
+  ~230 ms to ~73 ms. Values are unchanged, and `filter` still returns the
+  source's own event objects ([PND-FILTERTAKE]). One difference in how a
+  column is stored: a text column that was dictionary-encoded keeps its whole
+  dictionary after `filter`, as it already did after `slice`, so `toArrow()`
+  can export it as a dictionary column (listing values no kept row uses) where
+  it used to export plain text.
+
 - **`shift`, `fill` and `mapColumns` are 2–24× faster on number columns.**
   They used to copy every cell into a plain JS list and rebuild the column from
   it; they now read and write the column's number buffer directly, as `diff`

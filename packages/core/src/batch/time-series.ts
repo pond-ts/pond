@@ -159,7 +159,7 @@ import {
 } from '../columnar/index.js';
 import { ValidationError } from '../core/errors.js';
 import type { KeyColumnForSchema, PublicColumnForKind } from '../column.js';
-import { SeriesStore } from '../live/series-store.js';
+import { type SeriesEvent, SeriesStore } from '../live/series-store.js';
 import { validateAndNormalize } from './validate.js';
 import type { DurationInput } from '../core/duration.js';
 import { parseDuration } from '../core/duration.js';
@@ -4768,11 +4768,35 @@ export class TimeSeries<S extends SeriesSchema> {
   filter(
     predicate: (event: EventForSchema<S>, index: number) => boolean,
   ): TimeSeries<S> {
-    return TimeSeries.#fromTrustedEvents(
-      this.name,
-      this.schema,
-      this.events.filter((event, index) => predicate(event, index)),
-    );
+    // [PND-FILTERTAKE]: the predicate still sees `Event`s, but the result is
+    // built by copying the kept rows out of each column (`withRowSelection`)
+    // rather than rebuilding every column from the kept `Event` objects. The
+    // kept events become the result's events, so `filtered.at(j)` is the
+    // same object as the source event, as before.
+    const events = this.events;
+    const n = events.length;
+    const keep = new Int32Array(n);
+    const kept: SeriesEvent[] = [];
+    let k = 0;
+    for (let i = 0; i < n; i += 1) {
+      const event = events[i]!;
+      if (predicate(event, i)) {
+        keep[k] = i;
+        k += 1;
+        kept.push(event as unknown as SeriesEvent);
+      }
+    }
+    const frozenSchema = Object.freeze(this.schema.slice()) as S;
+    const store = SeriesStore._fromStoreAndAlignedEventsModulePrivate(
+      withRowSelection(this.#store.store, keep.subarray(0, k)),
+      Object.freeze(kept),
+    ) as SeriesStore<S>;
+    const trustedInput: TrustedStoreInput<S> = {
+      name: this.name,
+      schema: frozenSchema,
+      [TRUSTED_STORE_SENTINEL]: store,
+    };
+    return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
   }
 
   /**

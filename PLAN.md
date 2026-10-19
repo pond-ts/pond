@@ -574,10 +574,10 @@ the study oracle) is done.
   3. ~~Row-wise operations: (a) `diff` / `rate` / `pct_change` /
      `cumulative` / `shift` / `fill` (#775); (b) `filter` / `slice` /
      `with_column` / `map`~~ — done.
-  4. Groups: (a) ~~`partition_by` / `group_by`, threaded across
-     partitions~~ — done; (b) agent trial on the partitioned workload
-     ([PND-AGENTBENCH] Q11).
-  5. `align` / `materialize` / `dedupe`.
+  4. ~~Groups: (a) `partition_by` / `group_by`, threaded across
+     partitions (#778); (b) agent trial on the partitioned workload
+     ([PND-AGENTBENCH] Q11)~~ — done.
+  5. ~~`align` / `materialize` / `dedupe`~~ — done.
   6. `join`.
   7. The rest, as friction asks.
 
@@ -637,16 +637,6 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   (`v => v * 1e308 + 1e308` on a required column). Same class as
   [PND-ARROWREQ]. pond-rs makes the column optional when a gap appears;
   pond-ts should do the same. Found 2026-10-19 (pond-rs R1b step 3b).
-- **[PND-FILTERTAKE]** — pond-ts `filter` takes 230–470 ms on 1M rows
-  (pond-rs: 4–10 ms). A CPU profile puts about half the time in rebuilding
-  the column store from the kept `Event` objects
-  (`buildSeriesStoreFromEvents`, via `#fromTrustedEvents`), a fifth in the
-  predicate loop, and 14% in garbage collection. Proposed fix: collect the
-  kept row numbers and copy those rows out of each column, as `slice`'s
-  `withRowRange` does for a range; the predicate can still be handed
-  `Event`s. Repro: `crates/pond-rs/bench/rowwise_pond_ts.mjs`. Found
-  2026-10-19 (pond-rs R1b step 3b). `mapColumns` (72–97 ms vs pond-rs
-  1.4 ms) is the boxed path already listed under [PND-BOXFREE].
 - **[PND-CONCATSORT]** — pond-ts `TimeSeries.concat` takes ~450 ms to put
   500 partitions × 1000 rows back together, and every partitioned
   operation calls it (`partitionBy('symbol').diff('close').collect()`:
@@ -659,6 +649,51 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   ties) and copy each column by those row numbers, as pond-rs does.
   Repro: `crates/pond-rs/bench/partition_pond_ts.mjs`. Found 2026-10-19
   (pond-rs R1b step 4a).
+- **[PND-ALIGNHOLD]** — pond-ts `align` with `method: 'hold'` (the
+  default) is ~4× slower than `'linear'` on the same grid: 4.6 s vs 1.2 s
+  for 1M rows onto a 1 s grid (pond-rs: 64 ms). Hold does, per bucket, a
+  `new Time`, a binary search through `atOrBefore` (each probe goes through
+  the store's key cache), builds the whole `Event` and its data object, then
+  `resultSchema.slice(1).map(...)` and an array spread. Linear walks a
+  cursor and reuses the column list. CPU profile: ~20% in the hold closure
+  itself, ~10% `bisect`, a third garbage collection. Proposed fix: walk a
+  cursor as linear does (the sample points rise) and read values straight
+  from the columns. Repro: `crates/pond-rs/bench/grid_pond_ts.mjs`. Found
+  2026-10-19 (pond-rs R1b step 5).
+- **[PND-DEDUPEMAP]** — pond-ts `dedupe` takes ~2.3 s on 1M rows with 10%
+  repeated times (pond-rs: 30–40 ms). CPU profile: a third in `dedupe`
+  itself, which builds a string key per row (`${event.begin()}`) and an
+  array per key in a `Map`; a third garbage collection; ~10% rebuilding the
+  column store from `Event` objects (as in [PND-FILTERTAKE]). Proposed fix:
+  rows are sorted by key, so equal keys are next to each other (except
+  interval labels on equal spans): compare neighbours, keep row numbers,
+  and take columns by row number. `materialize` (~1 s on the same size)
+  also goes through `Event` objects. Repro: as above. Found 2026-10-19
+  (pond-rs R1b step 5).
+- **[PND-RUSTTIME]** — pond-rs takes times only as epoch-ms `i64`, so
+  docs and agents compute values like `1_772_859_600_000` by hand. pond-ts
+  `fromJSON` accepts ISO strings with an offset (and wall-clock strings with
+  `parse.timeZone`); pond-rs already depends on jiff. Candidate: accept
+  `jiff::Timestamp` (maybe `Zoned`) where times go in (`new`,
+  `from_time_ranges`, `slice` by time, grid `range`), and/or an ISO parse
+  helper with pond-ts's rules. Raised 2026-10-19 by the pond-rs website docs
+  thread; when it lands, the `website/docs/pond-rs` examples switch to it.
+- **[PND-FLATSTDEV]** — rolling `stdev` (pond-ts and pond-rs alike, same
+  bits) over a window of identical values is not exactly 0 once different
+  values have left the window: ~1e-16 of the value (`5.1e-16` for a flat
+  window at 0.1, `1.7e-10` at 123456.789). The running sums carry rounding
+  from the values that left. Callers that divide by it (z-scores) or test
+  `sd > 0` get a meaningless value instead of a skip. Options: return exactly 0
+  when the window is flat (needs a cheap flatness check), or document it.
+  Found 2026-10-19 (pond-rs R1b step 4b agent trial: 5 of 10 agents
+  guarded against it).
+- **[PND-RUSTQ11]** — pond-rs friction from the step 4b agent trial
+  (counts out of 10 agents): no way to write a small ranked table that is
+  not a time series, so all 10 built Arrow by hand (10); no "value at the
+  latest row of each partition" helper (9); partition keys need a
+  `Some(Value::String(..))` match (6); docs do not say `rolling` keeps
+  only its outputs (2, one failed run). Candidates for R1b step 7; the
+  last is a doc fix. Detail in `docs/plans/PND_RUST_PLAN.md` step 4b.
 
 ### `@pond-ts/financial`
 

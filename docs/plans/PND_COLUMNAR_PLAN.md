@@ -541,6 +541,81 @@ Mutation-checked — each of these made the suite fail: shift not rewriting
 the final `NaN` rewrite; `fill` rebuilding an untouched column; `mapColumns`
 calling the mapper on a gap; `mapColumns` keeping a non-finite result.
 
+### [PND-FILTERTAKE] — SHIPPED 2026-10-19 (`filter` copies kept rows; dense event cache)
+
+Found by the pond-rs R1b step 3b bench: `filter` rebuilt its whole column
+store from the kept `Event` objects (`#fromTrustedEvents` →
+`buildSeriesStoreFromEvents`). Two changes:
+
+1. **`filter` copies the kept rows out of each column.** The predicate still
+   gets `(event, index)`; kept row numbers go into an `Int32Array` and
+   `withRowSelection` (already used by `partitionBy`) copies those rows from
+   the key and every column. This alone was only ~1.5× (≈150 → ≈100 ms at
+   ~50% kept, 1M rows), which is how the second cost was found.
+2. **A series built from events holds them as a dense array, not a per-row
+   `Map`.** Keeping event identity meant building `Map<rowIndex, Event>` with
+   one entry per row — measured ~90 of the remaining ~125 ms (switching it
+   off for an experiment took `filter` to ~30 ms). `SeriesStore` gained
+   `_fromStoreAndAlignedEventsModulePrivate(store, events)` holding a frozen
+   dense array, checked before the `Map` in `eventAt`, and returned directly by
+   `toEvents()`. `buildSeriesStoreFromEvents` uses it too (copying a non-frozen
+   caller array first, since the `Map` it replaces was a snapshot), so every
+   `#fromTrustedEvents` caller gets it: `TimeSeries.fromEvents` on 1M events
+   ≈230 → ≈73 ms.
+
+Identity is unchanged: `filtered.at(j)` is still the source's own `Event`.
+`SeriesStore` is internal (not exported), so this is not an API change; the
+public `eventCache` option on `fromTrustedStore` keeps its validated `Map`.
+
+**Measured** (`packages/core/scripts/perf-filter.mjs`, same data as the
+pond-rs bench plus a text column; median of 15; three processes per build;
+before = `main` at 5b5c87e, after = this change), 40 warm-up calls:
+
+| operation (1M rows)        | before (ms)           | after (ms)         | ×    |
+| -------------------------- | --------------------- | ------------------ | ---- |
+| filter v > 500 (keeps 49%) | 145.6 / 155.5 / 163.9 | 30.1 / 33.9 / 32.7 | 4.8× |
+| filter keep all            | 290.3 / 282.4 / 307.6 | 57.9 / 54.7 / 73.8 | 5.0× |
+| filter keep 1%             | 44.0 / 40.1 / 40.0    | 11.4 / 11.2 / 11.4 | 3.5× |
+| filter keep none           | 58.2 / 38.0 / 37.2    | 11.3 / 10.8 / 11.1 | 3.4× |
+| … then `.events`           | 191.9 / 258.7 / 194.6 | 37.3 / 49.3 / 50.5 | 3.9× |
+| … then `sum(v)`            | 169.4 / 146.5 / 134.6 | 32.8 / 35.4 / 51.3 | 4.1× |
+
+With 5 warm-up calls the ratios are similar (3.2–5.2×, 8.3× for "then
+`.events`").
+
+**The pond-rs bench's 348–473 ms "before".** Its script (5 warm-ups) on
+this container: 17 runs on the build it measured (`main` at 3851ec0, before
+[PND-BOXFREE]) gave 132–175 ms in 15 runs and 294 / 312 ms in 2; with only
+the filter case kept in the script, 128–160 ms. 11 runs on the later `main`
+(5b5c87e) gave 121–166 ms. So that build and script _can_ read ~300 ms here,
+but only rarely, and never 348–473; what made every run slow on the pond-rs
+side was not found (warm-up count, data shape and build were ruled out: same
+script, same data, same build). On this change the same script gives 29–32 ms.
+
+**One storage difference, not a value difference.** A dictionary-encoded
+text column keeps the source's whole dictionary after `filter`
+(`StringColumn.sliceByIndices` shares it — the same as `slice` and
+`partitionBy`); the old rebuild re-encoded from the kept rows, which for a few
+kept rows meant plain text. Values read back the same, but `toArrow()` can now
+export the column as a dictionary listing values no kept row uses. Pinned by a
+test; compacting is the deferred `compactDictionary` op noted on
+`sliceByIndices`.
+
+Remaining floor: "keep none" (~11 ms) is the predicate walk over the source's
+events — the `Event`-taking predicate is the cost now, and a column-reading
+predicate form would be the next step if anyone needs it.
+
+**Tests:** `packages/core/test/TimeSeries.filter-columnar.test.ts` compares
+against the old path, still reachable as
+`TimeSeries.fromEvents(source.events.filter(pred), …)`, over time / timeRange
+/ interval keys × number / string / boolean / array columns with gaps, `-0`,
+repeated timestamps and empty series, × 9 predicates (incl. truthy
+non-booleans and a random one replayed on both sides); plus predicate call
+order, event identity, frozen `events`, a throwing predicate, chained ops, and
+the dense-store contract. Mutation-checked: wrong kept event, index off by
+one, strict `=== true` truthiness, dropping the snapshot copy, unfrozen
+`toEvents()` — each failed the suite.
+
 ### [PND-ROLLKERN] — SHIPPED (per-column sweeps + `avg` specialisation)
 
 `tryRollingCountColumnarNumeric` already wrote typed result columns, but drove
