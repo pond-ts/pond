@@ -31,10 +31,19 @@ pub fn parse_time(text: &str) -> Result<i64> {
 ///   `time_zone`. A time the clocks skip (02:30 on a spring-forward night)
 ///   moves forward by the gap; a time that happens twice takes the earlier.
 /// - Anything else must name its offset (`Z`, `+01:00`, …), and
-///   `time_zone` is not used. A `[zone]` note after the offset is ignored.
+///   `time_zone` is not used (not even checked). Bracketed notes after the
+///   offset (`[Europe/Madrid]`, `[u-ca=iso8601]`) are checked as Temporal
+///   checks them, then ignored.
 ///
-/// Fractions below a millisecond round down (towards the past), as in
-/// pond-ts. An unknown `time_zone` or a malformed time is an error.
+/// `time_zone` is an IANA name (`"Europe/Madrid"`) or an offset (`"+05:30"`,
+/// `"+0530"`, `"+05"`). Fractions below a millisecond round down (towards
+/// the past), as in pond-ts. A malformed time, or an unknown `time_zone`
+/// when the text needs one, is an error.
+///
+/// Zone rules come from the tz database bundled into pond-rs
+/// ([`tzdb_version`](crate::tzdb_version)); pond-ts uses its JavaScript
+/// runtime's. Where the two disagree about a zone's history (or its
+/// predicted future), so do the results.
 ///
 /// ```
 /// # use pond_rs::parse_time_in;
@@ -47,11 +56,12 @@ pub fn parse_time_in(text: &str, time_zone: &str) -> Result<i64> {
         call: "parse_time",
         message: format!("cannot read {text:?} as a time: {why}"),
     };
-    let zone = || {
-        TimeZone::get(time_zone).map_err(|e| PondError::InvalidData {
+    let zone = || match crate::sequence::fixed_offset(time_zone) {
+        Some(zone) => Ok(zone),
+        None => TimeZone::get(time_zone).map_err(|e| PondError::InvalidData {
             call: "parse_time",
             message: format!("unknown time zone {time_zone:?}: {e}"),
-        })
+        }),
     };
     let b = text.as_bytes();
     let digits = |r: std::ops::Range<usize>| b[r].iter().all(u8::is_ascii_digit);
@@ -95,9 +105,86 @@ pub fn parse_time_in(text: &str, time_zone: &str) -> Result<i64> {
         let zoned = dt.to_zoned(zone()?).map_err(|e| bad(e.to_string()))?;
         return Ok(floor_ms(zoned.timestamp()));
     }
-    offset_check(text).map_err(|why| bad(why.into()))?;
-    let ts: Timestamp = text.parse().map_err(|e: jiff::Error| bad(e.to_string()))?;
+    let bare = strip_annotations(text).map_err(|why| bad(why.into()))?;
+    offset_check(bare).map_err(|why| bad(why.into()))?;
+    let ts: Timestamp = bare.parse().map_err(|e: jiff::Error| bad(e.to_string()))?;
     Ok(floor_ms(ts))
+}
+
+/// The text before its bracketed notes (`[Europe/Madrid]`, `[u-ca=iso8601]`),
+/// after checking the notes as Temporal's `Instant.from` does: at most one
+/// time-zone note, first (its zone is not used); then `key=value` notes with
+/// lower-case keys. A note marked critical (`[!…]`) is refused unless it is
+/// the zone or a calendar (`u-ca`, ignored), and a critical calendar is
+/// refused when a second calendar note is present. jiff refuses critical
+/// notes it does not know, so pond-rs reads the notes itself.
+fn strip_annotations(text: &str) -> std::result::Result<&str, &'static str> {
+    let Some(start) = text.find('[') else {
+        return Ok(text);
+    };
+    let (bare, mut rest) = text.split_at(start);
+    let (mut first, mut calendars, mut critical_calendar) = (true, 0, false);
+    while !rest.is_empty() {
+        let end = rest.find(']').ok_or("a '[' note is not closed")?;
+        let note = &rest[1..end];
+        rest = &rest[end + 1..];
+        if !rest.is_empty() && !rest.starts_with('[') {
+            return Err("text after a ']' note");
+        }
+        let (critical, note) = match note.strip_prefix('!') {
+            Some(n) => (true, n),
+            None => (false, note),
+        };
+        match note.split_once('=') {
+            Some((key, value)) => {
+                let key_ok = key
+                    .bytes()
+                    .next()
+                    .is_some_and(|b| b.is_ascii_lowercase() || b == b'_')
+                    && key.bytes().all(|b| {
+                        b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-'
+                    });
+                let value_ok = !value.is_empty()
+                    && value
+                        .split('-')
+                        .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric()));
+                if !key_ok || !value_ok {
+                    return Err("a malformed '[key=value]' note");
+                }
+                if key == "u-ca" {
+                    calendars += 1;
+                    critical_calendar |= critical;
+                } else if critical {
+                    return Err("a critical '[!…]' note of an unknown kind");
+                }
+            }
+            None => {
+                // An offset to the minute (`+01:00`, `+0100`, `+01`) or a
+                // zone name: `/`-separated parts, each starting with a
+                // letter, `.` or `_`.
+                let zone_ok = if note.starts_with(['+', '-']) {
+                    crate::sequence::fixed_offset(note).is_some()
+                } else {
+                    note.split('/').all(|part| {
+                        part.bytes()
+                            .next()
+                            .is_some_and(|b| b.is_ascii_alphabetic() || b == b'.' || b == b'_')
+                            && part
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b))
+                    })
+                };
+                if !first || !zone_ok {
+                    return Err("a malformed '[zone]' note");
+                }
+            }
+        }
+        first = false;
+    }
+    if calendars > 1 && critical_calendar {
+        return Err("a critical calendar note with a second calendar note");
+    }
+    Ok(bare)
 }
 
 /// Refuses the two offsets jiff reads but Temporal reads differently: hours
@@ -105,7 +192,6 @@ pub fn parse_time_in(text: &str, time_zone: &str) -> Result<i64> {
 /// second (Temporal keeps them; jiff rounds to the second, so pond-rs
 /// refuses rather than be half a second out).
 fn offset_check(text: &str) -> std::result::Result<(), &'static str> {
-    let text = text.split('[').next().unwrap_or(text);
     // The offset follows the time, which follows `T`, `t` or a space.
     let Some(time_at) = text.find(['T', 't', ' ']) else {
         return Ok(());

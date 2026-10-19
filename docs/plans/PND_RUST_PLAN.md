@@ -1413,23 +1413,35 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     Sub-millisecond parts round towards the past, as Temporal's
     `epochMilliseconds` does (`1969-12-31T23:59:59.9995Z` is -1, not 0).
   - jiff's timestamp parser accepted every offset form Temporal's
-    `Instant.from` did in the probe (hour-only `T09Z`, basic `20250101T0900Z`,
-    `+0100`, `+01`, `+01:00:30`, lowercase `t`/`z`, comma fractions,
-    bracketed zone and calendar notes, a 6-digit year), with one exception,
-    now checked before it: offsets past 23 hours (Temporal refuses; jiff took
-    up to 25, so pond-rs refuses). The wall-clock path refuses seconds past
-    60, as Temporal does.
+    `Instant.from` did in the probe (hour-only `T09Z`, basic
+    `20250101T0900Z`, `+0100`, `+01`, `+01:00:30`, lowercase `t`/`z`, comma
+    fractions, a 6-digit year) with one exception, now checked before it:
+    offsets past 23 hours (Temporal refuses; jiff took up to 25). The
+    wall-clock path refuses seconds past 60, as Temporal does.
+  - Bracketed notes (`[Europe/Madrid]`, `[u-ca=iso8601]`) are read by
+    pond-rs, not jiff, by Temporal's rules: one zone note, first; lower-case
+    `key=value` notes; a critical `[!…]` note refused unless it is the zone
+    or a calendar; a critical calendar refused next to a second calendar.
+    jiff refused critical calendar notes Temporal accepts (found in review).
+  - `time_zone` may be an offset (`+05:30`, `+0530`, `+05`), as in
+    Temporal and `Sequence::calendar` (found in review).
+  - Zone rules come from each side's tz database (Node's ICU 2025b vs
+    jiff's 2026e here), so results differ where the databases do: a review
+    fuzz found far-future Casablanca (its predicted clock changes) and
+    `EST5EDT` before 1967. Same caveat as `Sequence::calendar`; documented
+    on `parse_time_in`.
   - Differences from pond-ts, pinned in `time_parse.rs` tests, all errors in
     pond-rs: years beyond ±9999 and times after about 9999-12-30 22:00 UTC
     (jiff's range; Temporal's is ±271821), and offsets with a fraction of a
     second (`+00:00:00.5`; Temporal keeps it, jiff rounds it to the second,
     so pond-rs refuses rather than be half a second out).
-  - Parity: the core fixture gains `timeParse`, 90 texts × 10 zones = 900
-    results (326 of them errors) from pond-ts `Time.parse`, built by
+  - Parity: the core fixture gains `timeParse`, 111 texts × 12 zones =
+    1332 results (554 of them errors) from pond-ts `Time.parse`, built by
     `cases.mjs` and so covered by the drift test. Zones include Santiago and
     São Paulo (clocks once skipped midnight), Apia (skipped 2011-12-30
-    whole, which reads as the start of the 31st in both), `Etc/GMT+5` and
-    an unknown zone. All 900 match.
+    whole, which reads as the start of the 31st in both), `Etc/GMT+5`, an
+    unknown zone and two offsets. All 1332 match. A review fuzz of
+    80k random texts found nothing else beyond the differences above.
   - Not a perf step: parsing does not walk series.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one

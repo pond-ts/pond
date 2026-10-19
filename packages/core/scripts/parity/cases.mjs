@@ -169,16 +169,18 @@ const calendar = (unit, timeZone, weekStartsOn) => ({
   },
 });
 
-/** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
 // `Time.parse(text, { timeZone })` over every pairing of these texts and
 // zones, recorded as `timeParse` (milliseconds, or the error's name). The
 // texts cover each of pond-ts's three local shapes (month, day, wall-clock
 // time), clock changes in both directions (including Santiago and São
 // Paulo, whose clocks once skipped midnight), sub-millisecond fractions
-// before 1970 (which round down), leap seconds, and the offset forms
-// Temporal accepts or refuses. Left out because pond-rs reads them
-// differently (pinned in its own tests): years beyond ±9999, times after
-// 9999-12-30, and offsets with fractions of a second.
+// before 1970 (which round down), leap seconds, the offset forms and
+// bracketed notes Temporal accepts or refuses, and zones written as
+// offsets. Left out because pond-rs reads them differently (pinned in its
+// own tests): years beyond ±9999, times after 9999-12-30, and offsets with
+// fractions of a second. Also kept away from zones whose history differs
+// between Node's tz database and pond-rs's (far-future Casablanca, old
+// EST5EDT).
 const TIME_PARSE_TEXTS = [
   '2025-03',
   '2025-13',
@@ -270,6 +272,27 @@ const TIME_PARSE_TEXTS = [
   '2025-01-01T09:00:00[Europe/Madrid]',
   '2025-W01-1T00:00Z',
   '2025-001T00:00Z',
+  '2025-01-01T09:00:00Z[!u-ca=iso8601]',
+  '2025-01-01T09:00:00Z[!u-ca=japanese]',
+  '2025-01-01T09:00:00Z[foo=bar]',
+  '2025-01-01T09:00:00Z[!foo=bar]',
+  '2025-01-01T09:00:00Z[!u-ca=iso8601][u-ca=gregory]',
+  '2025-01-01T09:00:00Z[u-ca=iso8601][Europe/Madrid]',
+  '2025-01-01T09:00:00Z[UTC][!u-ca=iso8601][foo=bar]',
+  '2025-01-01T09:00:00Z[+01:00]',
+  '2025-01-01T09:00:00Z[+0100]',
+  '2025-01-01T09:00:00Z[+01:00:30]',
+  '2025-01-01T09:00:00Z[+24:00]',
+  '2025-01-01T09:00:00Z[1Foo]',
+  '2025-01-01T09:00:00Z[_x/Foo-Bar+5]',
+  '2025-01-01T09:00:00Z[Foo//Bar]',
+  '2025-01-01T09:00:00Z[x:y]',
+  '2025-01-01T09:00:00Z[U-CA=iso8601]',
+  '2025-01-01T09:00:00Z[a=b--c]',
+  '2025-01-01T09:00:00Z[]',
+  '2025-01-01T09:00:00Z[u-ca=]',
+  '2025-01-01T09:00:00Z[UTC]x',
+  '2025-01-01T09:00:00Z[Europe/Madrid',
 ];
 const TIME_PARSE_ZONES = [
   'UTC',
@@ -282,8 +305,11 @@ const TIME_PARSE_ZONES = [
   'Pacific/Apia',
   'Etc/GMT+5',
   'Mars/Base',
+  '+05:30',
+  '-03',
 ];
 
+/** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
 const CASES = [
   // rolling: time window, trailing, keyed at each event
   ['rolling-3s-avg-sum', 'gappy', 'rolling', ['3s', { a: 'avg', b: 'sum' }]],
