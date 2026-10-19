@@ -284,6 +284,19 @@ impl BooleanColumn {
     }
 }
 
+/// One value of any column kind: a [`Fill::Value`](crate::Fill::Value)
+/// literal, or one part of a partition key
+/// ([`PartitionedSeries`](crate::PartitionedSeries)), where `None` stands
+/// for a gap.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Number(f64),
+    /// As a fill value, must have the column's scale.
+    Decimal(Decimal),
+    String(String),
+    Boolean(bool),
+}
+
 /// One exact decimal: `value × 10^-scale`, so `Decimal { value: 125, scale:
 /// 2 }` is `1.25`. Prints as a decimal (`1.25`). Equality compares `value`
 /// and `scale` as stored, so `1.25` at scale 2 is not equal to `1.250` at
@@ -560,6 +573,67 @@ impl ColumnData {
             ColumnData::Boolean(c) => ColumnData::Boolean(BooleanColumn {
                 values: c.values.slice(offset, len),
             }),
+        }
+    }
+
+    /// Rows picked from several columns of this kind: `(source, row)`
+    /// pairs, in order. Every source must be the kind of the first.
+    pub(crate) fn gather(sources: &[&ColumnData], picks: &[(u32, u32)]) -> ColumnData {
+        macro_rules! each {
+            ($variant:ident) => {
+                sources
+                    .iter()
+                    .map(|s| match s {
+                        ColumnData::$variant(c) => c,
+                        _ => unreachable!("sources checked to share a kind"),
+                    })
+                    .collect::<Vec<_>>()
+            };
+        }
+        match sources[0] {
+            ColumnData::Number(_) => {
+                let cols = each!(Number);
+                let values: Vec<&[f64]> = cols.iter().map(|c| c.values()).collect();
+                ColumnData::from(
+                    picks
+                        .iter()
+                        .map(|&(s, r)| values[s as usize][r as usize])
+                        .collect::<Vec<f64>>(),
+                )
+            }
+            ColumnData::Decimal(first) => {
+                let cols = each!(Decimal);
+                let precision = cols.iter().map(|c| c.precision()).max().unwrap_or(38);
+                first
+                    .rebuild(
+                        picks
+                            .iter()
+                            .map(|&(s, r)| cols[s as usize].get(r as usize).map(|d| d.value)),
+                        precision,
+                    )
+                    .into()
+            }
+            ColumnData::String(_) => {
+                let cols = each!(String);
+                let picked: Vec<Option<&str>> = picks
+                    .iter()
+                    .map(|&(s, r)| cols[s as usize].get(r as usize))
+                    .collect();
+                // Sized up front, as in `StringColumn::take`.
+                let bytes = picked.iter().flatten().map(|s| s.len()).sum();
+                let mut out = StringBuilder::with_capacity(picked.len(), bytes);
+                for v in picked {
+                    out.append_option(v);
+                }
+                StringColumn::plain(out.finish()).into()
+            }
+            ColumnData::Boolean(_) => {
+                let cols = each!(Boolean);
+                BooleanColumn::from_options(
+                    picks.iter().map(|&(s, r)| cols[s as usize].get(r as usize)),
+                )
+                .into()
+            }
         }
     }
 

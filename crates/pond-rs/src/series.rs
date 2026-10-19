@@ -199,6 +199,58 @@ impl Key {
         }
     }
 
+    /// Rows picked from several keys of this kind: `(source, row)` pairs,
+    /// in order.
+    pub(crate) fn gather(sources: &[&Key], picks: &[(u32, u32)]) -> Key {
+        let pick = |v: &dyn Fn(&Key) -> &[i64]| -> Vec<i64> {
+            let cols: Vec<&[i64]> = sources.iter().map(|k| v(k)).collect();
+            picks
+                .iter()
+                .map(|&(s, r)| cols[s as usize][r as usize])
+                .collect()
+        };
+        let begin = pick(&|k| k.begin());
+        match sources[0] {
+            Key::Time(_) => Key::Time(begin),
+            Key::TimeRange(_) => Key::TimeRange(TimeRangeKeys {
+                begin,
+                end: pick(&|k| k.end().expect("same kind")),
+            }),
+            Key::Interval(first) => {
+                let labels: Vec<&Labels> = sources
+                    .iter()
+                    .map(|k| match k {
+                        Key::Interval(i) => &i.label,
+                        _ => unreachable!("same kind"),
+                    })
+                    .collect();
+                let label = match &first.label {
+                    Labels::Number(_) => Labels::Number(
+                        picks
+                            .iter()
+                            .map(|&(s, r)| {
+                                labels[s as usize].numbers().expect("same kind")[r as usize]
+                            })
+                            .collect(),
+                    ),
+                    Labels::String(_) => {
+                        Labels::String(StringColumn::from_options(picks.iter().map(|&(s, r)| {
+                            labels[s as usize]
+                                .strings()
+                                .expect("same kind")
+                                .get(r as usize)
+                        })))
+                    }
+                };
+                Key::Interval(IntervalKeys {
+                    label,
+                    begin,
+                    end: pick(&|k| k.end().expect("same kind")),
+                })
+            }
+        }
+    }
+
     /// The rows at `rows`, in that order, copied.
     pub(crate) fn take(&self, rows: &[usize]) -> Key {
         let pick = |v: &[i64]| rows.iter().map(|&i| v[i]).collect::<Vec<i64>>();
@@ -222,7 +274,7 @@ impl Key {
         }
     }
 
-    fn kind(&self) -> ColumnKind {
+    pub(crate) fn kind(&self) -> ColumnKind {
         match self {
             Key::Time(_) => ColumnKind::Time,
             Key::TimeRange(_) => ColumnKind::TimeRange,

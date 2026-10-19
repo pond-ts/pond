@@ -1056,6 +1056,112 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
       ([PND-FILTERTAKE]); `mapColumns` is the boxed path under
       [PND-BOXFREE].
 
+  **Step 4a (done): `partition_by` / `group_by`, threaded.** The agent
+  trial on the Q11 workload is step 4b, next.
+  - Rust shapes (`src/partition.rs`):
+    - `series.partition_by(&["symbol"])` (one or more columns of any kind)
+      gives a `PartitionedSeries`. Its `diff` / `rate` / `pct_change` /
+      `shift` / `cumulative` / `fill` / `fill_all` / `rolling` /
+      `aggregate` each run on every partition and return another
+      `PartitionedSeries`; `map(closure)` runs any `TimeSeries -> Result<
+      TimeSeries>` the same way; `apply(closure)` runs and puts the rows
+      back together (the closure may drop the partition columns there).
+    - `collect()` gives one series. `iter()` / `get(key)` /
+      `into_groups()` give the partitions (pond-ts `toMap`).
+      `group_by(&cols)` is `partition_by(..).into_groups()`.
+    - A key is `PartitionKey = Vec<Option<Value>>`, one typed value per
+      column, `None` for a gap. pond-ts keys `toMap` by strings (`String(v)`,
+      `' undefined'` for a gap; JSON for several columns). Typed keys let an
+      agent match on `Value::String(name)` instead of parsing text.
+    - `FillValue` is renamed `Value` (one value of any column kind), since
+      fill literals and partition keys are the same thing.
+  - pond-ts behaviour copied exactly (each has a parity case):
+    - Partitions are numbered in the order their first row appears; a gap is
+      a partition of its own; `-0` and `0` are one partition.
+    - Putting rows back together is pond-ts `TimeSeries.concat`: a stable
+      sort by key, so rows at a shared time come out partition by
+      partition, not in input order.
+    - `collect()` before any operation returns the source unchanged.
+    - `rolling` / `aggregate` carry each partition column through as a
+      `first` output at the end (unless an output already has its name).
+      An `aggregate` bucket with no rows gets a gap there, so it moves to
+      the gap partition for the next operation.
+    - An operation that drops a partition column is an error (pond-ts
+      throws on the next split).
+    - pond-ts merges after every operation and splits before the next.
+      pond-rs keeps partitions apart and redoes only what that merge and
+      split would change: drop partitions left empty, reorder by first row,
+      and split for real only when an operation changed a partition
+      column's values. One subtle case: `collect` merges in the order the
+      last operation ran the partitions, while the next operation sees the
+      new order (case `partition-two-drops`).
+  - Not built: pond-ts's typed `groups` option (declare the partition
+    values up front; `toMap` then lists them in that order, empty ones
+    included, and unknown values throw). It exists for TypeScript's types;
+    nothing has asked for it in Rust yet.
+  - Differences from pond-ts, none reachable through the built-in
+    operations:
+    - Text values are compared as text. pond-ts's fast path for a
+      dictionary-encoded column groups by dictionary code instead, so an
+      Arrow dictionary that repeats a value gives pond-ts two partitions
+      and pond-rs one. Such dictionaries are unusual (pyarrow and polars
+      do not write them).
+    - When a `map` / `apply` closure gives partitions different column
+      details, pond-rs's `collect` marks a column required only if every
+      partition has it required and takes the largest decimal precision;
+      pond-ts takes both from the first partition (which may then fail to
+      reload). Empty partitions are dropped before the column check.
+  - Found in the Layer-2 review and fixed: on an empty series, rows a `map`
+    closure makes from nothing had no key and were never split; they are
+    now split as pond-ts does (unit test
+    `rows_made_from_an_empty_series_are_split`).
+  - Threads: partitions run on several cores (rayon); each partition is
+    computed start to finish by one thread, so results are the same bits on
+    any number of threads (unit test on 1, 4 and 7 threads).
+  - Parity: 30 new cases (186 in all) over an 18-row hosts series with a gap
+    host, composite keys, number / boolean keys, every step-3 operation,
+    `rolling`, `aggregate` with empty buckets, chained operations, an
+    operation that changes the partition column (`partition-changed-values`:
+    `cumulative` sums `mem` 20 + 20 into the existing 40 partition), `toMap`
+    order, `groupBy`, the empty series and the error cases. `-0` keys are a
+    unit test (JSON cannot carry `-0`); `apply` has no parity case (it is
+    `map` then `collect`, both covered).
+  - Perf (`examples/perf_partition.rs` vs `bench/partition_pond_ts.mjs`; 500
+    symbols × 1000 one-minute bars = 500k rows, symbols interleaved, 2%
+    gaps; median ms on this 4-core machine; runs vary ±20%):
+
+    | case | pond-rs 4 threads | pond-rs 1 thread | pond-ts |
+    | --- | --- | --- | --- |
+    | split (`toMap`) | 17.5 | 29.0 | 28.7 |
+    | diff + collect | 45.4 | 89.6 | 637 |
+    | fill linear + collect | 45.6 | 107 | 811 |
+    | rolling 60m mean / sd / last + collect | 67.7 | 143 | 992 |
+    | Q11: rolling, last z per symbol, top 20 | 36.4 | 84.5 | 1072 |
+
+    First version, before tuning (4 threads / 1 thread): split 46.6 /
+    63.5, diff + collect 143 / 205, fill 201 / 141, rolling 251 / 247,
+    Q11 85 / 116. Timing each stage found three costs, all fixed:
+    - Collect sorted 500k (partition, row) pairs with a closure that looked
+      up each key through two indirections: 55–79 ms. Now a radix sort of
+      the key numbers (stable, so ties keep partition order; it skips the
+      16-bit digits where every key agrees): ~13 ms. A unit test checks it
+      against a plain stable sort with negative times, far-apart times,
+      repeats and time ranges.
+    - Split hashed a fresh `Vec` per row: ~30–50 ms. Now each column's
+      values are numbered once and several columns are folded pairwise;
+      copying the rows out runs on several cores: ~17 ms.
+    - The check that partition values did not change built a `String` per
+      row: ~15 ms per operation. Now compares in place: under 1 ms.
+
+    What is left: one thread spends about a third of `diff + collect` on
+    the split and a third on collect; collect's text column copy is ~14 ms
+    (500k strings from 500 sources). `rolling` per partition costs ~40 µs
+    of fixed setup per call (49 ms for 500 partitions vs 29 ms for the
+    same rows as one series).
+  - pond-ts finding: `TimeSeries.concat`, which every partitioned operation
+    calls to put rows back, takes ~450 ms on these 500 partitions
+    ([PND-CONCATSORT] in PLAN.md).
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).

@@ -574,7 +574,9 @@ the study oracle) is done.
   3. ~~Row-wise operations: (a) `diff` / `rate` / `pct_change` /
      `cumulative` / `shift` / `fill` (#775); (b) `filter` / `slice` /
      `with_column` / `map`~~ — done.
-  4. `partition_by` / `group_by`, threaded across partitions.
+  4. Groups: (a) ~~`partition_by` / `group_by`, threaded across
+     partitions~~ — done; (b) agent trial on the partitioned workload
+     ([PND-AGENTBENCH] Q11).
   5. `align` / `materialize` / `dedupe`.
   6. `join`.
   7. The rest, as friction asks.
@@ -639,6 +641,18 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   `Event`s. Repro: `crates/pond-rs/bench/rowwise_pond_ts.mjs`. Found
   2026-10-19 (pond-rs R1b step 3b). `mapColumns` (72–97 ms vs pond-rs
   1.4 ms) is the boxed path already listed under [PND-BOXFREE].
+- **[PND-CONCATSORT]** — pond-ts `TimeSeries.concat` takes ~450 ms to put
+  500 partitions × 1000 rows back together, and every partitioned
+  operation calls it (`partitionBy('symbol').diff('close').collect()`:
+  ~640 ms, of which `diff` itself is ~4 ms; pond-rs: 45 ms). A CPU profile:
+  30% rebuilding the column store from `Event` objects
+  (`buildSeriesStoreFromEvents`, as in [PND-FILTERTAKE]), ~30% the sort of
+  events and its comparator, 11% `#fromTrustedEvents`, 11% garbage
+  collection. Proposed fix: every input is already sorted, so merge the
+  key columns by row number (a stable merge keeps partition order on
+  ties) and copy each column by those row numbers, as pond-rs does.
+  Repro: `crates/pond-rs/bench/partition_pond_ts.mjs`. Found 2026-10-19
+  (pond-rs R1b step 4a).
 
 ### `@pond-ts/financial`
 

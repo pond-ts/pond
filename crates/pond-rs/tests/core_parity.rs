@@ -8,12 +8,13 @@
 mod common;
 
 use common::{
-    ColumnDef, CoreCase, CoreFixture, SeriesJson, cell_number, check_case, check_coverage,
+    ColumnDef, CoreCase, CoreFixture, Outcome, SeriesJson, cell_number, check_case, check_coverage,
     compare_series, load_core_fixture, report,
 };
+use pond_rs::Value as Literal;
 use pond_rs::{
-    Agg, ArrowKey, At, Column, ColumnData, ColumnKind, Fill, FillLimits, FillValue, FirstRow,
-    IntervalKeys, Key, Labels, Reducer, Sequence, TimeRangeKeys, TimeSeries,
+    Agg, ArrowKey, At, Column, ColumnData, ColumnKind, Fill, FillLimits, FirstRow, IntervalKeys,
+    Key, Labels, Reducer, Sequence, TimeRangeKeys, TimeSeries,
 };
 use serde_json::{Value, json};
 
@@ -35,6 +36,8 @@ const KNOWN_OPS: &[&str] = &[
     "filter",
     "mapColumns",
     "withColumn",
+    "partitionBy",
+    "groupBy",
 ];
 
 /// Ops with an arm in [`run`]. Every fixture case for a listed op must run
@@ -55,18 +58,149 @@ const IMPLEMENTED_OPS: &[&str] = &[
     "filter",
     "mapColumns",
     "withColumn",
+    "partitionBy",
+    "groupBy",
 ];
 
-/// Run one case through pond-rs. `None` means the op is not implemented yet.
-fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<SeriesJson, String>> {
-    let input = to_series(&fixture.inputs[&case.input]);
-    let result = match case.op.as_str() {
-        "rolling" => {
-            let window = case.args[0].as_str().expect("rolling window is a string");
-            mapping(&case.args[1]).and_then(|aggs| input.rolling(window, &aggs))
+/// The ops a plain series and a partitioned one both have, with the same
+/// argument shapes: `Some(result)`, or `None` for any other op.
+macro_rules! shared_op {
+    ($target:expr, $op:expr, $args:expr) => {{
+        let args: &[Value] = $args;
+        match $op {
+            "rolling" => {
+                let window = args[0].as_str().expect("rolling window is a string");
+                Some(mapping(&args[1]).and_then(|aggs| $target.rolling(window, &aggs)))
+            }
+            "aggregate" => {
+                Some(sequence(&args[0]["sequence"]).and_then(|seq| {
+                    mapping(&args[1]).and_then(|aggs| $target.aggregate(&seq, &aggs))
+                }))
+            }
+            "diff" | "rate" | "pctChange" => {
+                let names = column_names(&args[0]);
+                let first = match args.get(1).and_then(|o| o["drop"].as_bool()) {
+                    Some(true) => FirstRow::Drop,
+                    _ => FirstRow::Keep,
+                };
+                Some(match $op {
+                    "diff" => $target.diff(&names, first),
+                    "rate" => $target.rate(&names, first),
+                    _ => $target.pct_change(&names, first),
+                })
+            }
+            "cumulative" => Some($target.cumulative(&cumulative_spec(&args[0]))),
+            "shift" => {
+                let n = args[1].as_f64().expect("shift offset");
+                Some($target.shift(&column_names(&args[0]), n as i64))
+            }
+            "fill" => {
+                let limits = fill_limits(args.get(1));
+                Some(match &args[0] {
+                    Value::String(_) => $target.fill_all(fill_strategy(&args[0]), &limits),
+                    Value::Object(map) => {
+                        let spec: Vec<(&str, Fill)> = map
+                            .iter()
+                            .map(|(c, v)| (c.as_str(), fill_strategy(v)))
+                            .collect();
+                        $target.fill(&spec, &limits)
+                    }
+                    other => panic!("fill takes a strategy or a mapping, got {other}"),
+                })
+            }
+            _ => None,
         }
-        "aggregate" => sequence(&case.args[0]["sequence"])
-            .and_then(|seq| mapping(&case.args[1]).and_then(|aggs| input.aggregate(&seq, &aggs))),
+    }};
+}
+
+fn cumulative_spec(json: &Value) -> Vec<(&str, Reducer)> {
+    json.as_object()
+        .expect("cumulative takes a mapping")
+        .iter()
+        .map(|(c, r)| {
+            (
+                c.as_str(),
+                Reducer::parse(r.as_str().expect("reducer")).unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn fill_limits(options: Option<&Value>) -> FillLimits {
+    let mut limits = FillLimits::none();
+    if let Some(limit) = options.and_then(|o| o["limit"].as_u64()) {
+        limits = limits.limit(limit as usize);
+    }
+    if let Some(max_gap) = options.and_then(|o| o["maxGap"].as_str()) {
+        limits = limits.max_gap(max_gap);
+    }
+    limits
+}
+
+fn fill_strategy(v: &Value) -> Fill {
+    match v.as_str() {
+        Some("hold") => Fill::Hold,
+        Some("bfill") => Fill::Bfill,
+        Some("linear") => Fill::Linear,
+        Some("zero") => Fill::Zero,
+        Some(text) => Fill::Value(Literal::String(text.into())),
+        None => match v {
+            Value::Bool(b) => Fill::Value(Literal::Boolean(*b)),
+            _ => Fill::Value(Literal::Number(v.as_f64().expect("a literal"))),
+        },
+    }
+}
+
+/// A partition key as pond-ts writes it: `String(value)` for one column
+/// (`missing` for a gap), `JSON.stringify` of the values for several.
+fn partition_key(key: &[Option<Literal>], missing: &str) -> String {
+    fn js_number(v: f64) -> String {
+        assert!(
+            v == 0.0 || (1e-6..1e21).contains(&v.abs()),
+            "no JavaScript exponent form in the harness yet: {v}"
+        );
+        if v == v.trunc() {
+            format!("{}", v as i64)
+        } else {
+            format!("{v}")
+        }
+    }
+    let text = |v: &Literal| match v {
+        Literal::Number(x) => js_number(*x),
+        Literal::String(s) => s.clone(),
+        Literal::Boolean(b) => b.to_string(),
+        Literal::Decimal(d) => d.to_string(),
+    };
+    if let [one] = key {
+        return one.as_ref().map_or(missing.to_string(), text);
+    }
+    let parts: Vec<String> = key
+        .iter()
+        .map(|v| match v {
+            None => "null".to_string(),
+            Some(Literal::String(s)) => serde_json::to_string(s).unwrap(),
+            Some(other) => text(other),
+        })
+        .collect();
+    format!("[{}]", parts.join(","))
+}
+
+/// Run one case through pond-rs. `None` means the op is not implemented yet.
+fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>> {
+    let input = to_series(&fixture.inputs[&case.input]);
+    if case.op == "shift" && case.args[1].as_f64().is_some_and(|n| n.fract() != 0.0) {
+        // A fractional offset cannot be written in Rust (`n` is an i64);
+        // pond-ts rejects it, so stand in that error here.
+        return Some(Err("shift offset must be a whole number".into()));
+    }
+    if let Some(result) = shared_op!(input, case.op.as_str(), &case.args) {
+        return Some(
+            result
+                .map(|s| to_json(&s).into())
+                .map_err(|e| e.to_string()),
+        );
+    }
+    let result = match case.op.as_str() {
         "select" => {
             let names: Vec<&str> = case
                 .args
@@ -92,71 +226,6 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<SeriesJson, Stri
                 Some(other) => panic!("unknown asTime anchor {other}"),
             };
             input.as_time(at)
-        }
-        "diff" | "rate" | "pctChange" => {
-            let names = column_names(&case.args[0]);
-            let first = match case.args.get(1).and_then(|o| o["drop"].as_bool()) {
-                Some(true) => FirstRow::Drop,
-                _ => FirstRow::Keep,
-            };
-            match case.op.as_str() {
-                "diff" => input.diff(&names, first),
-                "rate" => input.rate(&names, first),
-                _ => input.pct_change(&names, first),
-            }
-        }
-        "cumulative" => {
-            let spec: Vec<(&str, Reducer)> = case.args[0]
-                .as_object()
-                .expect("cumulative takes a mapping")
-                .iter()
-                .map(|(c, r)| {
-                    (
-                        c.as_str(),
-                        Reducer::parse(r.as_str().expect("reducer")).unwrap(),
-                    )
-                })
-                .collect();
-            input.cumulative(&spec)
-        }
-        "shift" => {
-            let n = case.args[1].as_f64().expect("shift offset");
-            // A fractional offset cannot be written in Rust (`n` is an i64);
-            // pond-ts rejects it, so stand in that error here.
-            if n.fract() != 0.0 {
-                return Some(Err("shift offset must be a whole number".into()));
-            }
-            input.shift(&column_names(&case.args[0]), n as i64)
-        }
-        "fill" => {
-            let options = case.args.get(1);
-            let mut limits = FillLimits::none();
-            if let Some(limit) = options.and_then(|o| o["limit"].as_u64()) {
-                limits = limits.limit(limit as usize);
-            }
-            if let Some(max_gap) = options.and_then(|o| o["maxGap"].as_str()) {
-                limits = limits.max_gap(max_gap);
-            }
-            let strategy = |v: &Value| match v.as_str() {
-                Some("hold") => Fill::Hold,
-                Some("bfill") => Fill::Bfill,
-                Some("linear") => Fill::Linear,
-                Some("zero") => Fill::Zero,
-                Some(text) => Fill::Value(FillValue::String(text.into())),
-                None => match v {
-                    Value::Bool(b) => Fill::Value(FillValue::Boolean(*b)),
-                    _ => Fill::Value(FillValue::Number(v.as_f64().expect("a literal"))),
-                },
-            };
-            match &case.args[0] {
-                Value::String(_) => input.fill_all(strategy(&case.args[0]), &limits),
-                Value::Object(map) => {
-                    let spec: Vec<(&str, Fill)> =
-                        map.iter().map(|(c, v)| (c.as_str(), strategy(v))).collect();
-                    input.fill(&spec, &limits)
-                }
-                other => panic!("fill takes a strategy or a mapping, got {other}"),
-            }
         }
         "slice" => {
             let at = |i: usize| {
@@ -235,7 +304,7 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<SeriesJson, Stri
                         );
                         json.schema[1].required = None;
                     }
-                    json
+                    Outcome::from(json)
                 })
                 .map_err(|e| e.to_string()),
             );
@@ -250,9 +319,58 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<SeriesJson, Stri
                 .collect();
             input.with_column(Column::optional(name, values))
         }
+        "partitionBy" => {
+            let by = column_names(&case.args[0]);
+            let steps = case.args[1].as_array().expect("steps");
+            let mut view = match input.partition_by(&by) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e.to_string())),
+            };
+            for step in steps {
+                let step = step.as_array().expect("a step is [method, ...args]");
+                let method = step[0].as_str().expect("method name");
+                view = match shared_op!(view, method, &step[1..]) {
+                    Some(Ok(v)) => v,
+                    Some(Err(e)) => return Some(Err(e.to_string())),
+                    None => panic!("no partitioned '{method}' in the harness"),
+                };
+            }
+            return Some(match case.args[2].as_str() {
+                Some("collect") => view
+                    .collect()
+                    .map(|s| to_json(&s).into())
+                    .map_err(|e| e.to_string()),
+                Some("toMap") => Ok(Outcome::Groups(
+                    view.iter()
+                        .map(|(key, s)| (partition_key(key, " undefined"), to_json(s)))
+                        .collect(),
+                )),
+                other => panic!("unknown partition end {other:?}"),
+            });
+        }
+        "groupBy" => {
+            let column = case.args[0].as_str().expect("groupBy column");
+            return Some(
+                input
+                    .group_by(&[column])
+                    .map(|groups| {
+                        Outcome::Groups(
+                            groups
+                                .iter()
+                                .map(|(key, s)| (partition_key(key, "undefined"), to_json(s)))
+                                .collect(),
+                        )
+                    })
+                    .map_err(|e| e.to_string()),
+            );
+        }
         _ => return None,
     };
-    Some(result.map(|s| to_json(&s)).map_err(|e| e.to_string()))
+    Some(
+        result
+            .map(|s| to_json(&s).into())
+            .map_err(|e| e.to_string()),
+    )
 }
 
 /// `{every}` or `{calendar, timeZone, weekStartsOn?}`.
@@ -472,9 +590,10 @@ fn implemented_ops_match_pond_ts() {
 fn comparator_catches_mismatches() {
     let fixture = load_core_fixture();
     for case in &fixture.cases {
-        let own: Result<SeriesJson, String> = match &case.expected {
-            Some(expected) => Ok(expected.clone()),
-            None => Err("pond-rs error".to_string()),
+        let own: Result<Outcome, String> = match (&case.expected, &case.groups) {
+            (Some(expected), _) => Ok(Outcome::Series(expected.clone())),
+            (None, Some(groups)) => Ok(Outcome::Groups(groups.clone())),
+            (None, None) => Err("pond-rs error".to_string()),
         };
         check_case(case, &own).unwrap_or_else(|why| panic!("{} rejects itself: {why}", case.id));
     }
@@ -536,7 +655,20 @@ fn comparator_catches_mismatches() {
 
     // Success where pond-ts throws is caught, and the reverse.
     let error_case = find(&fixture, "error-unknown-column");
-    assert!(check_case(error_case, &Ok(expected.clone())).is_err());
+    assert!(check_case(error_case, &Ok(expected.clone().into())).is_err());
+
+    // Groups: a different key, a missing group or a series where groups
+    // are expected are all caught.
+    let case = find(&fixture, "partition-toMap");
+    let groups = case.groups.clone().unwrap();
+    let mut wrong = groups.clone();
+    wrong[0].0 = "zz".into();
+    assert!(check_case(case, &Ok(Outcome::Groups(wrong))).is_err());
+    let mut wrong = groups.clone();
+    wrong.pop();
+    assert!(check_case(case, &Ok(Outcome::Groups(wrong))).is_err());
+    assert!(check_case(case, &Ok(groups[0].1.clone().into())).is_err());
+    let case = find(&fixture, "pctChange-signed");
     assert!(check_case(case, &Err("boom".to_string())).is_err());
 }
 
