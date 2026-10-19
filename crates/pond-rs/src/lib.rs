@@ -16,6 +16,9 @@
 //! `filter` (a closure over each [`Row`]) and changing columns with
 //! `with_column` / `map_numbers` and its siblings, running any of these per
 //! entity with [`TimeSeries::partition_by`] (partitions on several cores),
+//! putting a series on a grid with [`TimeSeries::align`] /
+//! [`TimeSeries::materialize`] and collapsing repeated keys with
+//! [`TimeSeries::dedupe`],
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
 //! [`ArrowKey`], [`TimeSeries::write_ipc`]). Results match
 //! pond-ts bit for bit; the parity
@@ -66,6 +69,7 @@ mod column;
 mod decimal;
 mod duration;
 mod error;
+mod grid;
 mod par;
 mod partition;
 mod reducer;
@@ -82,6 +86,7 @@ pub use column::{
 };
 pub use duration::parse_duration;
 pub use error::{PondError, Result};
+pub use grid::{Align, AlignMethod, Keep, Materialize, Pick};
 pub use partition::{PartitionKey, PartitionedSeries};
 pub use reducer::{Agg, Reducer};
 pub use reshape::At;

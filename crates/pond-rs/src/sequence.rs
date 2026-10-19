@@ -8,7 +8,8 @@ use jiff::{Timestamp, ToSpan};
 
 use crate::duration::parse_duration;
 use crate::error::{PondError, Result};
-use crate::series::IntervalKeys;
+use crate::reshape::At;
+use crate::series::{IntervalKeys, Labels};
 
 /// A calendar unit for [`Sequence::calendar`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,29 +188,135 @@ impl Sequence {
                 }
                 Ok(labelled_by_start(starts, ends))
             }
-            Grid::Calendar {
-                unit,
-                zone,
-                week_starts_on,
-            } => {
+            Grid::Calendar { .. } => {
                 // pond-ts walks from the bucket holding `begin`, one bucket at
                 // a time, while the bucket starts at or before `end`.
                 let (mut starts, mut ends) = (vec![], vec![]);
-                // Each bucket's end is pond-ts `zone.next(unit, start)`: the
-                // unit after the one holding the local date of `start`. So a
-                // local day that never happens (Samoa skipped 2011-12-30)
-                // yields no bucket, rather than an empty one.
-                let first = unit_start(*unit, local_date(zone, begin)?, *week_starts_on)?;
-                let mut start = midnight_ms(zone, first)?;
-                while start <= end {
-                    let day = unit_start(*unit, local_date(zone, start)?, *week_starts_on)?;
-                    let next = midnight_ms(zone, advance(*unit, day)?)?;
+                self.walk_calendar(begin, |start, next| {
+                    if start > end {
+                        return false;
+                    }
                     starts.push(start);
                     ends.push(next);
-                    start = next;
+                    true
+                })?;
+                Ok(labelled_by_start(starts, ends))
+            }
+        }
+    }
+
+    /// The buckets whose sample point (`at`: start, middle or end) falls in
+    /// the closed range `[begin, end]`; for [`At::End`], in `(begin, end]`,
+    /// so a bucket wholly before `begin` is not picked by its end. This is
+    /// how pond-ts `align` and `materialize` realise their grid
+    /// (`bounded(range, { sample })`), where the sample point becomes the
+    /// row's time.
+    ///
+    /// pond-ts divides in floating point; this works exactly in integers
+    /// (in half milliseconds, so a middle on a half millisecond is exact).
+    pub(crate) fn buckets_sampled(&self, begin: i64, end: i64, at: At) -> Result<IntervalKeys> {
+        if end < begin {
+            return Err(grid_error(format!(
+                "range ends ({end}) before it begins ({begin})"
+            )));
+        }
+        // The sample point of `[start, next)`, doubled.
+        let sample2 = |start: i64, next: i64| -> i128 {
+            match at {
+                At::Begin => 2 * i128::from(start),
+                At::Center => i128::from(start) + i128::from(next),
+                At::End => 2 * i128::from(next),
+            }
+        };
+        let (begin2, end2) = (2 * i128::from(begin), 2 * i128::from(end));
+        let picked = |s2: i128| match at {
+            At::End => s2 > begin2,
+            _ => s2 >= begin2,
+        };
+        match &self.0 {
+            &Grid::Every { step_ms, anchor_ms } => {
+                let (step, anchor) = (i128::from(step_ms), i128::from(anchor_ms));
+                // Bucket k is [anchor + k·step, …); its doubled sample point
+                // is 2·anchor + 2k·step + offset.
+                let offset = match at {
+                    At::Begin => 0,
+                    At::Center => step,
+                    At::End => 2 * step,
+                };
+                let num = |t2: i128| t2 - offset - 2 * anchor;
+                let den = 2 * step;
+                let first = match at {
+                    At::End => num(begin2).div_euclid(den) + 1,
+                    _ => -(-num(begin2)).div_euclid(den),
+                };
+                let last = num(end2).div_euclid(den);
+                if last < first {
+                    return Ok(labelled_by_start(vec![], vec![]));
+                }
+                let count = usize::try_from(last - first + 1)
+                    .ok()
+                    .filter(|&n| n <= MAX_BUCKETS)
+                    .ok_or_else(|| {
+                        grid_error(format!(
+                            "[{begin}, {end}] with step {step_ms} ms is more than {MAX_BUCKETS} buckets"
+                        ))
+                    })?;
+                let edge = |k: i128| {
+                    i64::try_from(anchor + k * step).map_err(|_| {
+                        grid_error(format!(
+                            "bucket edge out of range for [{begin}, {end}] with step {step_ms} ms"
+                        ))
+                    })
+                };
+                let mut starts = Vec::with_capacity(count);
+                let mut ends = Vec::with_capacity(count);
+                for k in first..=last {
+                    starts.push(edge(k)?);
+                    ends.push(edge(k + 1)?);
                 }
                 Ok(labelled_by_start(starts, ends))
             }
+            Grid::Calendar { .. } => {
+                let (mut starts, mut ends) = (vec![], vec![]);
+                self.walk_calendar(begin, |start, next| {
+                    let s2 = sample2(start, next);
+                    if s2 > end2 {
+                        return false;
+                    }
+                    if picked(s2) {
+                        starts.push(start);
+                        ends.push(next);
+                    }
+                    true
+                })?;
+                Ok(labelled_by_start(starts, ends))
+            }
+        }
+    }
+
+    /// Calendar buckets from the one holding `begin`, in order, handed to
+    /// `visit(start, end)` until it returns false. Each bucket's end is
+    /// pond-ts `zone.next(unit, start)`: the unit after the one holding the
+    /// local date of `start`. So a local day that never happens (Samoa
+    /// skipped 2011-12-30) yields no bucket, rather than an empty one.
+    fn walk_calendar(&self, begin: i64, mut visit: impl FnMut(i64, i64) -> bool) -> Result<()> {
+        let Grid::Calendar {
+            unit,
+            zone,
+            week_starts_on,
+        } = &self.0
+        else {
+            unreachable!("called on calendar grids only");
+        };
+        let first = unit_start(*unit, local_date(zone, begin)?, *week_starts_on)?;
+        let mut start = midnight_ms(zone, first)?;
+        loop {
+            let day = unit_start(*unit, local_date(zone, start)?, *week_starts_on)?;
+            let next = midnight_ms(zone, advance(*unit, day)?)?;
+            if !visit(start, next) {
+                return Ok(());
+            }
+            start = next;
         }
     }
 }
@@ -325,7 +432,7 @@ fn midnight_ms(zone: &TimeZone, date: Date) -> Result<i64> {
 /// Buckets labelled by their start, as pond-ts labels them.
 fn labelled_by_start(begin: Vec<i64>, end: Vec<i64>) -> IntervalKeys {
     IntervalKeys {
-        label: begin.clone().into(),
+        label: Labels::Number(begin.iter().map(|&b| b as f64).collect()),
         begin,
         end,
     }

@@ -18,7 +18,10 @@
 use jiff::Timestamp;
 use jiff::civil::{Date, Weekday};
 use jiff::tz::TimeZone;
-use pond_rs::{Agg, CalendarUnit, Column, Key, Reducer, Sequence, TimeSeries};
+use pond_rs::{
+    Agg, Align, AlignMethod, At, CalendarUnit, Column, Keep, Key, Materialize, Pick, Reducer,
+    Sequence, TimeSeries,
+};
 
 /// SplitMix64: small, seeded, good enough to vary test inputs.
 struct Rng(u64);
@@ -607,5 +610,234 @@ fn decimal_reducers_are_exact() {
                 .collect();
             check_out(&format!("seed {seed} bucket {b}"), &out, b, &rows);
         }
+    }
+}
+
+/// A random fixed grid and grid options for `align` / `materialize`: step,
+/// anchor, sample point, and sometimes a range of its own.
+struct GridCase {
+    step: i64,
+    anchor: i64,
+    at: At,
+    range: Option<(i64, i64)>,
+}
+
+fn random_grid(rng: &mut Rng, times: &[i64]) -> GridCase {
+    let mut step = [1, 7, 250, 333, 1_000, 3_000][rng.below(6) as usize];
+    let span = times.last().zip(times.first()).map_or(0, |(l, f)| l - f);
+    while span / step > 3_000 {
+        step *= 10;
+    }
+    let at = [At::Begin, At::Center, At::End][rng.below(3) as usize];
+    let range = rng.chance(30).then(|| {
+        let b = rng.below(20_000) as i64 - 10_000;
+        (b, b + rng.below(20_000) as i64)
+    });
+    GridCase {
+        step,
+        anchor: rng.below(10_000) as i64 - 5_000,
+        at,
+        range,
+    }
+}
+
+impl GridCase {
+    fn sequence(&self) -> Sequence {
+        Sequence::every_ms(self.step)
+            .unwrap()
+            .with_anchor(self.anchor)
+    }
+
+    /// The buckets, worked out one by one: every bucket near the range
+    /// whose sample point (doubled, so a middle is whole) is in it —
+    /// `[begin, end]`, or `(begin, end]` when sampling at the end.
+    fn buckets(&self, times: &[i64]) -> Vec<(i64, i64, i64)> {
+        let Some((b, e)) = self
+            .range
+            .or_else(|| Some((*times.first()?, *times.last()?)))
+        else {
+            return vec![];
+        };
+        let first = (b - self.anchor).div_euclid(self.step) - 2;
+        let last = (e - self.anchor).div_euclid(self.step) + 2;
+        (first..=last)
+            .map(|k| {
+                let start = self.anchor + k * self.step;
+                let end = start + self.step;
+                let point2 = match self.at {
+                    At::Begin => 2 * start,
+                    At::Center => start + end,
+                    At::End => 2 * end,
+                };
+                (start, end, point2)
+            })
+            .filter(|&(_, _, p2)| match self.at {
+                At::End => p2 > 2 * b && p2 <= 2 * e,
+                _ => p2 >= 2 * b && p2 <= 2 * e,
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn align_matches_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let grid = random_grid(&mut rng, &times);
+        let buckets = grid.buckets(&times);
+        for method in [AlignMethod::Hold, AlignMethod::Linear] {
+            let options = Align {
+                method,
+                sample: grid.at,
+                range: grid.range,
+            };
+            let out = series(&times, &values)
+                .align(&grid.sequence(), options)
+                .unwrap();
+            let what = format!("seed {seed} {method:?} step {} {:?}", grid.step, grid.at);
+            let begins: Vec<i64> = buckets.iter().map(|b| b.0).collect();
+            assert_eq!(out.key().begin(), &begins[..], "{what}");
+            let got = out.column("v").unwrap().numbers().unwrap();
+            for (row, &(_, _, p2)) in buckets.iter().enumerate() {
+                // A row exactly at the point: the first of them. Otherwise
+                // the last row before it, and for linear the first after.
+                let at = times.iter().position(|&t| 2 * t == p2);
+                let before = times.iter().rposition(|&t| 2 * t < p2);
+                let after = times.iter().position(|&t| 2 * t > p2);
+                let want = match (at, before, after, method) {
+                    (Some(i), ..) => values[i],
+                    (None, None, _, _) => None,
+                    (None, Some(p), _, AlignMethod::Hold) | (None, Some(p), None, _) => values[p],
+                    (None, Some(p), Some(q), AlignMethod::Linear) => match (values[p], values[q]) {
+                        (Some(a), Some(b)) => {
+                            let ratio = (p2 as f64 / 2.0 - times[p] as f64)
+                                / (times[q] as f64 - times[p] as f64);
+                            Some(a + (b - a) * ratio)
+                        }
+                        _ => values[p],
+                    },
+                };
+                let got = got.get(row);
+                assert!(
+                    got.map(f64::to_bits) == want.map(f64::to_bits),
+                    "{what} row {row}: got {got:?}, want {want:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn materialize_matches_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let grid = random_grid(&mut rng, &times);
+        let buckets = grid.buckets(&times);
+        for pick in [Pick::First, Pick::Last, Pick::Nearest] {
+            let options = Materialize {
+                pick,
+                sample: grid.at,
+                range: grid.range,
+            };
+            let result = series(&times, &values).materialize(&grid.sequence(), options);
+            let what = format!("seed {seed} {pick:?} step {} {:?}", grid.step, grid.at);
+            if buckets.iter().any(|b| b.2 % 2 != 0) {
+                // A time on a half millisecond: an error, not a rounded key.
+                assert!(result.is_err(), "{what}");
+                continue;
+            }
+            let out = result.unwrap();
+            let want_time: Vec<i64> = buckets.iter().map(|b| b.2 / 2).collect();
+            assert_eq!(out.key().begin(), &want_time[..], "{what}");
+            let got = out.column("v").unwrap().numbers().unwrap();
+            for (row, &(start, end, p2)) in buckets.iter().enumerate() {
+                let inside: Vec<usize> = (0..times.len())
+                    .filter(|&i| times[i] >= start && times[i] < end)
+                    .collect();
+                let chosen = match pick {
+                    Pick::First => inside.first().copied(),
+                    Pick::Last => inside.last().copied(),
+                    // min_by_key keeps the first of equal keys.
+                    Pick::Nearest => inside
+                        .iter()
+                        .copied()
+                        .min_by_key(|&i| (2 * times[i] - p2).abs()),
+                };
+                let want = chosen.and_then(|i| values[i]);
+                assert!(
+                    got.get(row).map(f64::to_bits) == want.map(f64::to_bits),
+                    "{what} row {row}: got {:?}, want {want:?}",
+                    got.get(row)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn dedupe_matches_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let s = series(&times, &values);
+        let mut distinct = times.clone();
+        distinct.dedup();
+        for keep in [
+            Keep::First,
+            Keep::Last,
+            Keep::Drop,
+            Keep::Min("v".into()),
+            Keep::Max("v".into()),
+        ] {
+            let what = format!("seed {seed} {keep:?}");
+            let mut want_time = vec![];
+            let mut want_v = vec![];
+            for &t in &distinct {
+                let rows: Vec<usize> = (0..times.len()).filter(|&i| times[i] == t).collect();
+                let chosen = if rows.len() == 1 {
+                    Some(rows[0])
+                } else {
+                    match &keep {
+                        Keep::First => Some(rows[0]),
+                        Keep::Last => Some(*rows.last().unwrap()),
+                        Keep::Drop => None,
+                        // The first row with the smallest (largest) value;
+                        // gaps only win when every row is a gap.
+                        Keep::Min(_) | Keep::Max(_) => {
+                            let min = matches!(keep, Keep::Min(_));
+                            let best = rows.iter().copied().filter(|&i| values[i].is_some()).fold(
+                                None,
+                                |best: Option<usize>, i| match best {
+                                    None => Some(i),
+                                    Some(b) => {
+                                        let (vi, vb) = (values[i].unwrap(), values[b].unwrap());
+                                        if (min && vi < vb) || (!min && vi > vb) {
+                                            Some(i)
+                                        } else {
+                                            Some(b)
+                                        }
+                                    }
+                                },
+                            );
+                            Some(best.unwrap_or(rows[0]))
+                        }
+                        Keep::Error => unreachable!(),
+                    }
+                };
+                if let Some(i) = chosen {
+                    want_time.push(t);
+                    want_v.push(values[i]);
+                }
+            }
+            let out = s.dedupe(keep.clone()).unwrap();
+            assert_eq!(out.key().begin(), &want_time[..], "{what}");
+            let got: Vec<Option<f64>> =
+                out.column("v").unwrap().numbers().unwrap().iter().collect();
+            assert_eq!(got, want_v, "{what}");
+        }
+        let repeats = distinct.len() < times.len();
+        assert_eq!(s.dedupe(Keep::Error).is_err(), repeats, "seed {seed}");
     }
 }
