@@ -762,19 +762,6 @@ consumer signal. Plan:
   `smooth` rather than the rolling kernel; and re-asking the Rust question
   against this new baseline (`spikes/columnar-wasm/REPORT.md` §10).
 
-- **[PND-BOXFREE]** — Element-wise operators box every cell. **`cumulative`,
-  `diff`, `rate` and `pctChange` are done (4.0–7.1×); `fill`, `shift` and
-  `mapColumns` remain.** They are column-native only in the
-  sense of not materialising `Event`s: they still read each cell through the
-  polymorphic `read(i)` into a `ReadonlyArray<number | undefined>` and rebuild
-  via `float64ColumnFromArray`. Measured **~10–20× slower per column than a
-  plain typed-array walk** (exact `diff` control: 9.9× on gappy data, 17.1×
-  dense; `rate`/`fill`/`shift` fitted at 16–27×). At 1M rows × 4 columns
-  `diff` costs ~294 ms against ~16 ms for the same work unboxed. This is the
-  largest single performance finding from the Rust/WASM spike and has nothing
-  to do with Rust — see `spikes/columnar-wasm/REPORT.md` §9.3. Each operator
-  needs its own validity write, since the boxed array is currently how
-  validity gets derived; [PND-IVLCOL] is the worked example of that shape.
 - **[PND-COLAPI]** — Make the column-API augmentation bundle-safe (F-1,
   HIGH — methods tree-shake out of browser bundles) + `hasAnyDefined()`.
   Two consumers each. (`toFloat64Array` now returns `NaN` at a gap —
