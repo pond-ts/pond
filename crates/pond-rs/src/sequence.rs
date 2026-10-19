@@ -328,7 +328,7 @@ pub fn tzdb_version() -> Option<&'static str> {
 
 /// A fixed-offset zone name as Temporal (and so pond-ts) accepts it:
 /// `±HH`, `±HHMM` or `±HH:MM`, e.g. `"+05:30"`.
-fn fixed_offset(name: &str) -> Option<TimeZone> {
+pub(crate) fn fixed_offset(name: &str) -> Option<TimeZone> {
     let (sign, rest) = match name.as_bytes().first()? {
         b'+' => (1, &name[1..]),
         b'-' => (-1, &name[1..]),
