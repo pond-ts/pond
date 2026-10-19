@@ -579,7 +579,9 @@ the study oracle) is done.
      ([PND-AGENTBENCH] Q11)~~ — done.
   5. ~~`align` / `materialize` / `dedupe`~~ — done.
   6. ~~`join`~~ — done.
-  7. The rest, as friction asks.
+  7. The rest, as friction asks: (a) ~~reading times written as text
+     ([PND-RUSTTIME], `parse_time`)~~ — done; (b) the [PND-RUSTQ11] fixes
+     next.
 
   Detail in the breakout plan.
 
@@ -664,14 +666,6 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   and take columns by row number. `materialize` (~1 s on the same size)
   also goes through `Event` objects. Repro: as above. Found 2026-10-19
   (pond-rs R1b step 5).
-- **[PND-RUSTTIME]** — pond-rs takes times only as epoch-ms `i64`, so
-  docs and agents compute values like `1_772_859_600_000` by hand. pond-ts
-  `fromJSON` accepts ISO strings with an offset (and wall-clock strings with
-  `parse.timeZone`); pond-rs already depends on jiff. Candidate: accept
-  `jiff::Timestamp` (maybe `Zoned`) where times go in (`new`,
-  `from_time_ranges`, `slice` by time, grid `range`), and/or an ISO parse
-  helper with pond-ts's rules. Raised 2026-10-19 by the pond-rs website docs
-  thread; when it lands, the `website/docs/pond-rs` examples switch to it.
 - **[PND-FLATSTDEV]** — rolling `stdev` (pond-ts and pond-rs alike, same
   bits) over a window of identical values is not exactly 0 once different
   values have left the window: ~1e-16 of the value (`5.1e-16` for a flat

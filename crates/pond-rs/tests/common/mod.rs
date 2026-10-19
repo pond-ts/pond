@@ -146,6 +146,19 @@ pub struct CoreFixture {
     pub meta: Value,
     pub inputs: BTreeMap<String, SeriesJson>,
     pub cases: Vec<CoreCase>,
+    #[serde(rename = "timeParse")]
+    pub time_parse: Vec<TimeParseCase>,
+}
+
+/// One `Time.parse(input, { timeZone })` result: milliseconds, or the name
+/// of the error pond-ts threw.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TimeParseCase {
+    pub input: String,
+    pub time_zone: String,
+    pub expected: Option<i64>,
+    pub error: Option<String>,
 }
 
 pub fn load_core_fixture() -> CoreFixture {

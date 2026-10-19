@@ -642,6 +642,36 @@ fn encode(data: &ColumnData, i: usize) -> Value {
     }
 }
 
+/// Every text pond-ts's `Time.parse` reads (or refuses) in the fixture,
+/// read (or refused) the same by `parse_time_in`.
+#[test]
+fn times_parse_as_pond_ts_parses_them() {
+    let fixture = load_core_fixture();
+    assert!(
+        !fixture.time_parse.is_empty(),
+        "core fixture has no timeParse"
+    );
+    let mut failures = Vec::new();
+    for case in &fixture.time_parse {
+        let got = pond_rs::parse_time_in(&case.input, &case.time_zone);
+        let same = match (&got, case.expected) {
+            (Ok(ms), Some(want)) => *ms == want,
+            (Err(_), None) => true,
+            _ => false,
+        };
+        if !same {
+            failures.push(format!(
+                "{:?} in {}: pond-rs {got:?}, pond-ts {}",
+                case.input,
+                case.time_zone,
+                case.expected
+                    .map_or_else(|| format!("{:?}", case.error), |ms| ms.to_string())
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 #[test]
 fn fixture_ops_are_known() {
     let fixture = load_core_fixture();
