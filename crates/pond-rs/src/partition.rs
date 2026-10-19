@@ -173,7 +173,10 @@ impl PartitionedSeries {
             .iter()
             .map(|c| empty.column_index("PartitionedSeries", c))
             .collect::<Result<_>>()?;
-        let unchanged = parts.iter().all(|(key, s)| keeps_key(s, &by_index, key));
+        // With no partitions, any rows `f` made on the empty series have no
+        // key yet, so they are always split.
+        let unchanged =
+            !self.parts.is_empty() && parts.iter().all(|(key, s)| keeps_key(s, &by_index, key));
         if !unchanged {
             // The values moved: split the merged rows again, as pond-ts
             // does, and collect gives those merged rows.
@@ -719,6 +722,20 @@ mod tests {
         let out = p.diff(&["v"], FirstRow::Keep).unwrap().collect().unwrap();
         assert!(out.is_empty());
         assert_eq!(out.columns().len(), 2);
+    }
+
+    #[test]
+    fn rows_made_from_an_empty_series_are_split() {
+        // pond-ts runs the operation on the empty series and splits what
+        // comes back; `map` can make rows from nothing.
+        let p = hosts().row_range(0..0).partition_by(&["host"]).unwrap();
+        let made = p.map(|_| Ok(hosts())).unwrap();
+        assert_eq!(made.len(), 3);
+        let a = made.get(&[Some(Value::String("a".into()))]).unwrap();
+        assert_eq!(a.len(), 2);
+        let d = made.diff(&["v"], FirstRow::Keep).unwrap();
+        let a = d.get(&[Some(Value::String("a".into()))]).unwrap();
+        assert_eq!(a.column("v").unwrap().numbers().unwrap().get(1), Some(2.0));
     }
 
     #[test]

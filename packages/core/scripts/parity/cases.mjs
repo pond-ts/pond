@@ -774,6 +774,35 @@ const CASES = [
     'partitionBy',
     ['mem', [['cumulative', { cpu: 'count' }]], 'collect'],
   ],
+  // cumulative changes the partition column itself (mem 20 and 12 each
+  // appear twice), so the rows are split again by the new values before
+  // the diff.
+  [
+    'partition-changed-values',
+    'hosts',
+    'partitionBy',
+    [
+      'mem',
+      [
+        ['cumulative', { mem: 'sum' }],
+        ['diff', 'cpu'],
+      ],
+      'collect',
+    ],
+  ],
+  [
+    'partition-changed-values-toMap',
+    'hosts',
+    'partitionBy',
+    [
+      'mem',
+      [
+        ['cumulative', { mem: 'sum' }],
+        ['diff', 'cpu'],
+      ],
+      'toMap',
+    ],
+  ],
   [
     'partition-mixed-text',
     'mixed',

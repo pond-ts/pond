@@ -1099,15 +1099,33 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     values up front; `toMap` then lists them in that order, empty ones
     included, and unknown values throw). It exists for TypeScript's types;
     nothing has asked for it in Rust yet.
-  - Text values are compared as text, so a dictionary column whose
-    dictionary repeats a value still puts both codes in one partition.
+  - Differences from pond-ts, none reachable through the built-in
+    operations:
+    - Text values are compared as text. pond-ts's fast path for a
+      dictionary-encoded column groups by dictionary code instead, so an
+      Arrow dictionary that repeats a value gives pond-ts two partitions
+      and pond-rs one. Such dictionaries are unusual (pyarrow and polars
+      do not write them).
+    - When a `map` / `apply` closure gives partitions different column
+      details, pond-rs's `collect` marks a column required only if every
+      partition has it required and takes the largest decimal precision;
+      pond-ts takes both from the first partition (which may then fail to
+      reload). Empty partitions are dropped before the column check.
+  - Found in the Layer-2 review and fixed: on an empty series, rows a `map`
+    closure makes from nothing had no key and were never split; they are
+    now split as pond-ts does (unit test
+    `rows_made_from_an_empty_series_are_split`).
   - Threads: partitions run on several cores (rayon); each partition is
     computed start to finish by one thread, so results are the same bits on
     any number of threads (unit test on 1, 4 and 7 threads).
-  - Parity: 28 new cases (184 in all) over an 18-row hosts series with a gap
+  - Parity: 30 new cases (186 in all) over an 18-row hosts series with a gap
     host, composite keys, number / boolean keys, every step-3 operation,
-    `rolling`, `aggregate` with empty buckets, chained operations, `toMap`
-    order, `groupBy`, the empty series and the error cases.
+    `rolling`, `aggregate` with empty buckets, chained operations, an
+    operation that changes the partition column (`partition-changed-values`:
+    `cumulative` sums `mem` 20 + 20 into the existing 40 partition), `toMap`
+    order, `groupBy`, the empty series and the error cases. `-0` keys are a
+    unit test (JSON cannot carry `-0`); `apply` has no parity case (it is
+    `map` then `collect`, both covered).
   - Perf (`examples/perf_partition.rs` vs `bench/partition_pond_ts.mjs`; 500
     symbols × 1000 one-minute bars = 500k rows, symbols interleaved, 2%
     gaps; median ms on this 4-core machine; runs vary ±20%):
