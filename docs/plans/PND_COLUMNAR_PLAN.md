@@ -446,7 +446,8 @@ construction.
 
 **Remaining under [PND-BOXFREE]:** `fill` (four strategies, and it handles
 non-numeric kinds), `shift`, and `mapColumns` — the last of which takes a JS
-closure per cell and so needs a different answer, not just unboxing.
+closure per cell and so needs a different answer, not just unboxing. _(All
+three done 2026-10-19 — see the second-tranche section below.)_
 
 Measured 2026-10-19 while benchmarking pond-rs step 3a (1M rows, 2% gaps,
 `crates/pond-rs/bench/rowwise_pond_ts.mjs`): `shift` 56 ms,
@@ -458,6 +459,87 @@ boxed times array `getTimes` builds from `beginAt(i)`. A throwaway port of
 63 → 8 ms. `fill` needs more care (non-numeric kinds, edge runs, limits),
 but the numeric strategies can read `values` and write `NumericOutput` the
 same way.
+
+### [PND-BOXFREE] — second tranche SHIPPED (`shift`, `fill`, `mapColumns`) — 2026-10-19
+
+Each now has an unboxed path for **packed number columns**, beside the
+untouched boxed loop that stays as the fallback (chunked storage, and for
+`fill` the text / boolean / array kinds):
+
+- **`shift`** — one typed `Float64Array`: `NaN` padding at the vacated end,
+  a `subarray` copy of the source when it is `allFinite`, otherwise a loop
+  that rewrites a stray `±Infinity` gap as `NaN` (the boxed round trip did
+  that via `read(i)`).
+- **`fill`** — `src.slice(0, n)`, the same gap walk on `v - v !== 0`
+  instead of `=== undefined`, `TypedArray.fill` for `hold` / `bfill` /
+  `zero` / `literal`, the identical interpolation expression for `linear`,
+  then one final pass that rewrites any non-finite cell as `NaN` and derives
+  `allFinite` (an unfilled gap, a `NaN` / `±Infinity` literal, or an
+  overflowing interpolation all read back as missing, as before). An
+  `allFinite` source returns immediately (no gap), and a column with no gap
+  filled is kept by reference, as before. `getTimes` now builds a
+  `Float64Array` rather than a `number[]` (both paths).
+- **`mapColumns`** — reads the buffer and writes a typed output; the
+  mapper still runs once per defined cell, in row order. So the closure
+  cost remains (the "different answer" above is still open if anyone needs
+  it), but the boxed read + boxed intermediate + rebuild are gone, and that
+  turned out to be most of the time.
+
+**Measured** (`packages/core/scripts/perf-fill-shift-map.mjs`, same data as
+the pond-rs comparison: 1M rows, ~2% gaps in runs of 1–4; 40 warm-up
+iterations, median of 15; each figure is one process, three processes per
+build; "before" = `main` at 3851ec0, "after" = this change):
+
+| operation (1M rows)  | before (ms)        | after (ms)         | ×                     |
+| -------------------- | ------------------ | ------------------ | --------------------- |
+| `shift(1)`           | 70.6 / 58.1 / 68.8 | 3.1 / 2.7 / 2.9    | 23.6×                 |
+| `shift(-3)`          | 53.5 / 65.7 / 61.0 | 2.7 / 2.7 / 2.8    | 22.5×                 |
+| `fill hold`          | 57.3 / 56.1 / 69.5 | 8.5 / 6.2 / 6.2    | 9.2×                  |
+| `fill bfill`         | 55.5 / 56.0 / 61.6 | 7.9 / 6.1 / 5.7    | 9.2×                  |
+| `fill zero`          | 58.2 / 56.3 / 58.2 | 6.9 / 6.1 / 6.1    | 9.5×                  |
+| `fill linear`        | 23.3 / 22.9 / 21.7 | 12.4 / 9.7 / 9.2   | 2.4×                  |
+| `fill linear` maxGap | 22.1 / 24.4 / 21.4 | 9.2 / 8.9 / 9.0    | 2.4×                  |
+| `fill hold` limit 2  | 63.0 / 62.8 / 63.7 | 5.8 / 5.5 / 5.9    | 10.9×                 |
+| `fill hold` (text)   | 26.1 / 26.5 / 26.6 | 30.4 / 23.8 / 26.0 | 1.0× (unchanged path) |
+| `mapColumns(v*2)`    | 69.0 / 70.4 / 66.1 | 6.7 / 5.0 / 5.0    | 13.9×                 |
+| `diff` (control)     | 4.6 / 8.5 / 7.4    | 5.7 / 9.0 / 6.1    | 1.2× (untouched)      |
+
+**Why the "before" `fill linear` here (~23 ms) is not the 75 ms the pond-rs
+bench reported — warm-up.** Same data generator, same `main` build. Running
+the pond-rs script (`crates/pond-rs/bench/rowwise_pond_ts.mjs`, 5 warm-up
+calls) on `main` here gives 78 / 66 / 79 ms; the same script with 40 warm-up
+calls gives 23 / 26 ms, matching this bench. Timing each call of the old
+`fill('linear')` from a cold start shows ~55–130 ms per call that, in one
+run, dropped to ~22 ms from about the 25th call on, and in another had not
+dropped by call 40. Old `fill('hold')` showed no such drop (~45–100 ms
+throughout). So the old linear path had a slow-then-fast curve and the two
+benches sampled opposite ends of it; why V8 speeds that loop up late was not
+investigated. The new path has no such cliff: the pond-rs script (5 warm-ups)
+on this branch gives `fill linear` 9–10 ms against 71–77 ms on `main`, and
+`shift` 3.5–4.3 ms against 53–62 ms, `fill hold` 9–13 ms against 49–60 ms.
+For code that calls `fill` once, the cold numbers are the realistic ones, so
+the real `fill linear` gain is nearer 8× than 2.4×.
+
+`fill linear` stays the slowest of the four strategies (~9.5 ms against
+~6 ms). It is the one that also builds the times array (`getTimes`, one
+`store.beginAt(i)` call per row); whether that is where the remaining time
+goes was not measured — a quick hold-vs-hold-with-`maxGap` comparison was
+too noisy in this container to say.
+
+**Tests:** `packages/core/test/operators-unboxed-fill-shift-map.test.ts`.
+Differential, not hand-written expectations: the same random data is built
+once packed (new path) and once split across two chunks via `concatSorted`
+(old boxed loop, verbatim), and every output must match cell for cell
+(`Object.is`, so `-0` counts), with the same `allFinite`, the same raw `NaN`
+spelling, and the same "replaced vs kept by reference" outcome. 150 random
+shapes × every shift offset; × 8 fill specs × 5 limits × 5 maxGaps; × 7
+mappers (incl. ones returning `NaN`, `Infinity`, a string, `undefined`),
+also checking the mapper sees the same values in the same order.
+Mutation-checked — each of these made the suite fail: shift not rewriting
+`±Infinity` as `NaN`; shift keeping `allFinite` despite padding; `fill`
+`limit` off by one; wrong trailing-gap span for `maxGap`; `fill` skipping
+the final `NaN` rewrite; `fill` rebuilding an untouched column; `mapColumns`
+calling the mapper on a gap; `mapColumns` keeping a non-finite result.
 
 ### [PND-ROLLKERN] — SHIPPED (per-column sweeps + `avg` specialisation)
 

@@ -4,12 +4,14 @@ import {
   type ColumnSchema,
   arrayColumnFromArray,
   booleanColumnFromArray,
+  Float64Column,
   float64ColumnFromArray,
   stringColumnFromArray,
   withColumnReplaced,
 } from '../../columnar/index.js';
 import type { FillStrategy } from '../../schema/reshape.js';
 import type { ScalarValue, SeriesSchema } from '../../schema/index.js';
+import { packedNumericSource } from './numeric-io.js';
 
 /**
  * A fill strategy resolved to its operator-ready form: a built-in
@@ -118,10 +120,10 @@ export function fillOp<S extends SeriesSchema>(
   }
 
   // Times are needed only for `linear` and `maxGap`; build once, lazily.
-  let times: number[] | undefined;
-  const getTimes = (): number[] => {
+  let times: Float64Array | undefined;
+  const getTimes = (): Float64Array => {
     if (times === undefined) {
-      times = new Array<number>(n);
+      times = new Float64Array(n);
       for (let i = 0; i < n; i += 1) times[i] = store.beginAt(i);
     }
     return times;
@@ -138,6 +140,24 @@ export function fillOp<S extends SeriesSchema>(
       continue;
     }
 
+    // Unboxed path for packed number columns — [PND-BOXFREE].
+    const packed = kind === 'number' ? packedNumericSource(col) : null;
+    if (packed !== null) {
+      if (packed.allFinite) continue; // no gap to fill
+      const filled = fillPacked(
+        packed.values,
+        n,
+        name,
+        spec,
+        limit,
+        maxGapMs,
+        getTimes,
+      );
+      if (filled !== null) result = withColumnReplaced(result, name, filled);
+      continue;
+    }
+
+    // Boxed path: non-numeric kinds and chunked storage.
     const values = new Array<unknown>(n);
     for (let i = 0; i < n; i += 1) values[i] = col.read(i);
 
@@ -247,4 +267,135 @@ export function fillOp<S extends SeriesSchema>(
   }
 
   return { store: result as unknown as ColumnarStore<S>, schema };
+}
+
+/**
+ * `fill` over a packed number column, walking its `Float64Array`
+ * directly — [PND-BOXFREE]. Same gap walk, neighbour rules, `limit` /
+ * `maxGap` skips and arithmetic as the boxed loop in {@link fillOp}; the
+ * only difference is that a gap cell is a non-finite slot (`NaN`, or a
+ * stray `±Infinity`, [PND-NANREP]) rather than an `undefined` box.
+ *
+ * Returns `null` when no gap was filled, so the caller keeps the source
+ * column by reference exactly as the boxed path does.
+ *
+ * The output is finalised with the same rule `float64ColumnFromArray`
+ * applies: any non-finite cell (an unfilled gap, a `NaN` / `±Infinity`
+ * literal, an interpolation that overflows) is written as `NaN`, and
+ * `allFinite` is `true` only when no such cell remains.
+ */
+function fillPacked(
+  src: Float64Array,
+  n: number,
+  name: string,
+  spec: ResolvedFillSpec,
+  limit: number | undefined,
+  maxGapMs: number | undefined,
+  getTimes: () => Float64Array,
+): Float64Column | null {
+  const values = src.slice(0, n);
+  let changed = false;
+  let i = 0;
+  while (i < n) {
+    const vi = values[i]!;
+    // `v - v === 0` ⇔ finite ⇔ defined.
+    if (vi - vi === 0) {
+      i += 1;
+      continue;
+    }
+    const start = i;
+    i += 1;
+    while (i < n) {
+      const v = values[i]!;
+      if (v - v === 0) break;
+      i += 1;
+    }
+    const end = i; // exclusive
+    const hasPrev = start > 0;
+    const hasNext = end < n;
+
+    let strategyOk: boolean;
+    switch (spec.mode) {
+      case 'linear':
+        strategyOk = hasPrev && hasNext;
+        break;
+      case 'hold':
+        strategyOk = hasPrev;
+        break;
+      case 'bfill':
+        strategyOk = hasNext;
+        break;
+      default:
+        strategyOk = true; // zero, literal
+    }
+    if (!strategyOk) continue;
+
+    if (limit !== undefined && end - start > limit) continue;
+    if (maxGapMs !== undefined) {
+      const t = getTimes();
+      let span: number;
+      if (hasPrev && hasNext) {
+        span = t[end]! - t[start - 1]!;
+      } else if (hasPrev) {
+        span = t[end - 1]! - t[start - 1]!;
+      } else if (hasNext) {
+        span = t[end]! - t[start]!;
+      } else {
+        span = 0;
+      }
+      if (span > maxGapMs) continue;
+    }
+
+    switch (spec.mode) {
+      case 'hold':
+        values.fill(values[start - 1]!, start, end);
+        break;
+      case 'bfill':
+        values.fill(values[end]!, start, end);
+        break;
+      case 'zero':
+        values.fill(0, start, end);
+        break;
+      case 'literal': {
+        if (typeof spec.value !== 'number') {
+          throw new RangeError(
+            `fill: literal value ${JSON.stringify(spec.value)} for column '${name}' does not match its kind 'number'`,
+          );
+        }
+        values.fill(spec.value, start, end);
+        break;
+      }
+      case 'linear': {
+        const before = values[start - 1]!;
+        const after = values[end]!;
+        const t = getTimes();
+        const t0 = t[start - 1]!;
+        const t1 = t[end]!;
+        const tspan = t1 - t0;
+        for (let j = start; j < end; j += 1) {
+          values[j] =
+            tspan === 0
+              ? before
+              : before + (after - before) * ((t[j]! - t0) / tspan);
+        }
+        break;
+      }
+      default:
+        // Unknown mode (reachable only from untyped JS): leave the gap,
+        // as the boxed loop does.
+        continue;
+    }
+    changed = true;
+  }
+  if (!changed) return null;
+
+  let allFinite = true;
+  for (let j = 0; j < n; j += 1) {
+    const v = values[j]!;
+    if (v - v !== 0) {
+      values[j] = NaN;
+      allFinite = false;
+    }
+  }
+  return new Float64Column(values, n, allFinite);
 }
