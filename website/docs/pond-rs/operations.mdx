@@ -15,7 +15,10 @@ plain strings, durations are short strings like `"500ms"`, `"30s"`, `"5m"`,
 
 `rolling(window, aggs)` looks back from each row: for a row at time `t` it
 reduces the rows with time in `(t - window, t]`. The result has the same
-rows as the input, with one new column per `Agg`.
+rows and keys as the input, and **only the columns you ask for**: one per
+`Agg`. Every other column is dropped, as in pond-ts. To keep one, ask for it,
+for example `Agg::of("host", Reducer::Last)` (the row's own value, since the
+window ends at that row).
 
 ```rust
 use pond_rs::{Agg, Column, Reducer, TimeSeries};
@@ -43,6 +46,11 @@ fn main() -> Result<(), pond_rs::PondError> {
     assert_eq!(r.column("load_n")?.numbers()?.get(3), Some(2.0));
     // At 1s the window (-1s, 1s] holds only 1.0.
     assert_eq!(r.column("load_avg")?.numbers()?.get(1), Some(1.0));
+
+    // Only the asked-for columns come out; `load` itself is gone.
+    assert!(r.column("load").is_err());
+    let names: Vec<&str> = r.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["load_avg", "load_n"]);
     Ok(())
 }
 ```
