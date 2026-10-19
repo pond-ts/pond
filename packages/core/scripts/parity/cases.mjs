@@ -101,8 +101,6 @@ const NOISY_ROWS = Array.from({ length: 300 }, (_, i) => {
   return [repeated, x, y];
 });
 
-// Values whose running sums overflow: the variance comes out NaN, which
-// pond-ts turns into a gap (Math.max(0, NaN) is NaN).
 // Signed zeros first and among ties: a running sum starts from +0, and max /
 // min keep the earlier of two equal values.
 const ZERO_ROWS = [
@@ -123,10 +121,20 @@ const EDGE_ROWS = [
   [9000, null],
   [10000, null],
 ];
+// Values whose running sums overflow: the variance comes out NaN, which
+// pond-ts turns into a gap (Math.max(0, NaN) is NaN).
 const EXTREME_ROWS = [
   [0, Number.MAX_VALUE],
   [1, -Number.MAX_VALUE],
   [2, 1],
+];
+// A running sum that overflows at the second row and never comes back.
+const OVERFLOW_ROWS = [
+  [0, Number.MAX_VALUE],
+  [1000, Number.MAX_VALUE],
+  [2000, -Number.MAX_VALUE],
+  [3000, null],
+  [4000, 1],
 ];
 
 // Calendar buckets. `dst` crosses New York's spring-forward night (a 23-hour
@@ -425,6 +433,8 @@ const CASES = [
   ['fill-ranges-linear', 'ranges', 'fill', ['linear']],
   ['fill-labelled-linear', 'labelled', 'fill', ['linear']],
   ['fill-noisy-linear', 'noisy', 'fill', ['linear']],
+  ['cumulative-overflow', 'overflow', 'cumulative', [{ v: 'sum' }]],
+  ['diff-overflow', 'overflow', 'diff', ['v']],
   ['cumulative-zeros', 'zeros', 'cumulative', [{ v: 'sum' }]],
   ['cumulative-zeros-max', 'zeros', 'cumulative', [{ v: 'max' }]],
   ['cumulative-zeros-min', 'zeros', 'cumulative', [{ v: 'min' }]],
@@ -685,6 +695,7 @@ export function buildFixture(pond) {
     }),
     zeros: series('zeros', ZERO_ROWS),
     edges: series('edges', EDGE_ROWS),
+    overflow: series('overflow', OVERFLOW_ROWS),
     dst: series('dst', DST_ROWS),
     santiago: series('santiago', SANTIAGO_ROWS),
     apia: series('apia', APIA_ROWS),

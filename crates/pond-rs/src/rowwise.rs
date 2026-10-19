@@ -267,7 +267,8 @@ impl TimeSeries {
         let names: Vec<&str> = spec.iter().map(|&(name, _)| name).collect();
         let targets = self.targets(CALL, &names)?;
         let mut out = self.columns().to_vec();
-        for (&c, &(name, reducer)) in targets.iter().zip(spec) {
+        for (i, (&c, &(name, reducer))) in targets.iter().zip(spec).enumerate() {
+            named_once(CALL, names[..i].iter().copied(), name)?;
             if !matches!(
                 reducer,
                 Reducer::Sum | Reducer::Max | Reducer::Min | Reducer::Count
@@ -367,8 +368,9 @@ impl TimeSeries {
     /// ```
     pub fn fill(&self, spec: &[(&str, Fill)], limits: &FillLimits) -> Result<TimeSeries> {
         let mut plan = Vec::with_capacity(spec.len());
-        for (name, fill) in spec {
+        for (i, (name, fill)) in spec.iter().enumerate() {
             let c = self.column_index("fill", name)?;
+            named_once("fill", spec[..i].iter().map(|(n, _)| *n), name)?;
             check_fill(&self.columns()[c], fill)?;
             plan.push((c, fill));
         }
@@ -506,13 +508,19 @@ impl TimeSeries {
         )
     }
 
-    /// The rows in `range`, key and columns together.
+    /// The rows in `range`, key and columns together. Value columns share
+    /// their buffers with this series; the key is copied.
     pub(crate) fn rows(&self, range: Range<usize>) -> TimeSeries {
-        let rows: Vec<Option<usize>> = range.clone().map(Some).collect();
         let columns = self
             .columns()
             .iter()
-            .map(|c| Column::from_data(c.name().to_string(), c.data().take(&rows), c.is_required()))
+            .map(|c| {
+                Column::from_data(
+                    c.name().to_string(),
+                    c.data().slice(range.clone()),
+                    c.is_required(),
+                )
+            })
             .collect();
         TimeSeries::from_parts(
             self.name().to_string(),
@@ -521,6 +529,21 @@ impl TimeSeries {
             columns,
         )
     }
+}
+
+/// An error if `name` is among the earlier entries of a spec.
+fn named_once<'a>(
+    call: &'static str,
+    mut earlier: impl Iterator<Item = &'a str>,
+    name: &str,
+) -> Result<()> {
+    if earlier.any(|e| e == name) {
+        return Err(PondError::InvalidData {
+            call,
+            message: format!("column '{name}' is named twice"),
+        });
+    }
+    Ok(())
 }
 
 fn wrong_kind(call: &'static str, column: &Column, data: &ColumnData, reason: &str) -> PondError {
@@ -675,7 +698,17 @@ fn check_fill(column: &Column, fill: &Fill) -> Result<()> {
                     ),
                 });
             }
-            DecimalColumn::from_values(vec![x.value], x.scale)?;
+            let max = 10u128.pow(u32::from(d.precision())) - 1;
+            if x.value.unsigned_abs() > max {
+                return Err(PondError::InvalidData {
+                    call: "fill",
+                    message: format!(
+                        "fill value {x} for column '{}' has more than its {} digits",
+                        column.name(),
+                        d.precision()
+                    ),
+                });
+            }
             true
         }
         (Fill::Value(FillValue::String(_)), ColumnData::String(_)) => true,
@@ -849,6 +882,9 @@ mod tests {
             let e = s.fill(&[(name, fill)], &none).unwrap_err().to_string();
             assert!(e.contains(want), "{e}");
         }
+        let twice = [("host", Fill::Hold), ("host", Fill::Bfill)];
+        let e = s.fill(&twice, &none).unwrap_err().to_string();
+        assert!(e.contains("'host' is named twice"), "{e}");
         let e = s
             .fill_all(Fill::Value(FillValue::Boolean(true)), &none)
             .unwrap_err();
@@ -876,6 +912,11 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(e.contains("sum, max, min or count"), "{e}");
+        let e = s
+            .cumulative(&[("d", Reducer::Sum), ("d", Reducer::Max)])
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("'d' is named twice"), "{e}");
         let e = s
             .cumulative_with("host", |a, b| a + b)
             .unwrap_err()
@@ -948,5 +989,93 @@ mod tests {
         };
         assert_eq!(k.label.numbers().unwrap(), [1000.0]);
         assert_eq!(d.column("v").unwrap().numbers().unwrap().get(0), Some(1.0));
+    }
+
+    #[test]
+    fn a_fill_value_must_fit_the_column_precision() {
+        // A Decimal128(5, 2) column, as read from a file: 999.99 at most.
+        let narrow =
+            DecimalColumn::with_type(vec![Some(1i128), None].into_iter().collect(), 5, 2).unwrap();
+        let s = TimeSeries::new("s", vec![0, 1], vec![Column::optional("d", narrow)]).unwrap();
+        let big = Fill::Value(FillValue::Decimal(Decimal {
+            value: 123_456_789,
+            scale: 2,
+        }));
+        let e = s
+            .fill(&[("d", big)], &FillLimits::none())
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("more than its 5 digits"), "{e}");
+        let ok = Fill::Value(FillValue::Decimal(Decimal {
+            value: 99_999,
+            scale: 2,
+        }));
+        let f = s.fill(&[("d", ok)], &FillLimits::none()).unwrap();
+        let mut bytes = Vec::new();
+        f.write_ipc(&mut bytes).unwrap();
+        assert!(TimeSeries::from_ipc_bytes("s", bytes, "time").is_ok());
+    }
+
+    #[test]
+    fn sliced_rows_share_buffers_and_behave_like_copies() {
+        use arrow_array::{DictionaryArray, types::Int32Type};
+        let words: DictionaryArray<Int32Type> = vec![Some("x"), None, Some("y"), Some("x"), None]
+            .into_iter()
+            .collect();
+        let s = TimeSeries::new(
+            "s",
+            vec![0, 1000, 2000, 3000, 4000],
+            vec![
+                Column::optional("n", vec![Some(1.0), None, Some(3.0), Some(4.0), None]),
+                Column::optional(
+                    "d",
+                    DecimalColumn::from_options([Some(1), Some(2), None, Some(4), Some(5)], 1)
+                        .unwrap(),
+                ),
+                Column::optional("t", StringColumn::dictionary(words).unwrap()),
+                Column::optional("u", [Some("a"), Some("b"), None, Some("d"), Some("e")]),
+                Column::optional("b", [Some(true), None, Some(false), Some(true), None]),
+            ],
+        )
+        .unwrap();
+        let cut = s.rows(1..4);
+        // The same as copying rows 1..4 one by one.
+        let rows: Vec<Option<usize>> = (1..4).map(Some).collect();
+        for (sliced, full) in cut.columns().iter().zip(s.columns()) {
+            assert_eq!(sliced.data(), &full.data().take(&rows), "{}", sliced.name());
+        }
+        assert!(cut.column("t").unwrap().strings().unwrap().is_dictionary());
+        // Survives Arrow out and back, and feeds aggregate.
+        let mut bytes = Vec::new();
+        cut.write_ipc(&mut bytes).unwrap();
+        let back = TimeSeries::from_ipc_bytes("s", bytes, "time").unwrap();
+        assert_eq!(back.columns(), cut.columns());
+        let aggs = [
+            crate::Agg::new("n", "n", Reducer::Sum),
+            crate::Agg::new("d", "d", Reducer::Sum),
+            crate::Agg::new("dmax", "d", Reducer::Max),
+            crate::Agg::new("t", "t", Reducer::Last),
+            crate::Agg::new("b", "b", Reducer::First),
+        ];
+        let m = cut
+            .aggregate(&Sequence::every("1m").unwrap(), &aggs)
+            .unwrap();
+        assert_eq!(m.column("n").unwrap().numbers().unwrap().get(0), Some(7.0));
+        assert_eq!(text(&m, "d"), strs(&[Some("0.6")]));
+        assert_eq!(text(&m, "dmax"), strs(&[Some("0.4")]));
+        assert_eq!(text(&m, "t"), strs(&[Some("x")]));
+        assert_eq!(text(&m, "b"), strs(&[Some("false")]));
+    }
+
+    #[test]
+    fn number_columns_with_gaps_compare_equal() {
+        let a = Column::optional("v", vec![Some(1.0), None]);
+        assert_eq!(a, a.clone());
+        // A gap stored as an infinity equals one stored as NaN.
+        assert_eq!(a, Column::optional_raw("v", vec![1.0, f64::INFINITY]));
+        assert_ne!(
+            Column::required("v", vec![0.0]),
+            Column::required("v", vec![-0.0])
+        );
     }
 }

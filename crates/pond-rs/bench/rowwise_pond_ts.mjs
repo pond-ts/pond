@@ -33,8 +33,10 @@ const s = new TimeSeries({
   ],
   rows,
 });
+// Five warm-up runs: with one, V8 is still compiling during the timed runs
+// and the first ops listed come out several times slower than later ones.
 const median = (f) => {
-  f();
+  for (let i = 0; i < 5; i++) f();
   const t = [];
   for (let i = 0; i < 7; i++) {
     const a = performance.now();
@@ -58,4 +60,5 @@ const cases = [
 const gaps = rows.filter((r) => r[1] === undefined).length;
 const sum = rows.reduce((a, r) => a + (r[1] ?? 0), 0);
 console.log(`${ROWS} rows, ${gaps} gaps, sum ${sum}`);
-for (const [name, f] of cases) console.log(`| ${name} | ${median(f).toFixed(1)} ms |`);
+for (const [name, f] of cases)
+  console.log(`| ${name} | ${median(f).toFixed(1)} ms |`);

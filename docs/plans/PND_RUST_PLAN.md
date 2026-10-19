@@ -950,35 +950,51 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
       give numbers via `f64`; `fill` takes `Hold` / `Bfill` / `Zero` /
       a same-scale `Value`.
   - Tests:
-    - 42 new pond-ts parity cases (fixture now 123), including `drop`,
+    - 44 new pond-ts parity cases (fixture now 125), including `drop`,
       range and interval keys, overflow, signed zeros, every fill
-      strategy and cap on gaps at the start, middle and end, and 6 error
-      cases. All 123 match.
+      strategy and cap on gaps at the start, middle and end, sum
+      overflow, and 6 error
+      cases. All 125 match.
     - Four deliberate bugs planted in pond-rs were each caught: the rate
       expression, the edge-span rule, the `+0` sum start, and ties in
       max. The last three needed the new `zeros` / `edges` inputs.
     - Unit tests cover decimals, text, true/false, the extra errors,
       `cumulative_with`, and interval labels under `Drop`.
   - Perf (`examples/perf_rowwise.rs` vs `bench/rowwise_pond_ts.mjs`, same
-    1M rows, 4.8% gaps, checked by gap count and sum), median ms:
+    1M rows, 4.8% gaps, checked by gap count and sum), median ms; pond-ts
+    after five warm-up runs, median of three script runs:
 
     | op | pond-rs | pond-ts |
     | --- | --- | --- |
-    | diff | 3.9 | 74.6 |
-    | diff, drop first | 10.1 | 18.6 |
-    | rate | 4.6 | 34.8 |
-    | pct_change | 4.1 | 13.6 |
-    | cumulative sum | 4.6 | 8.2 |
-    | shift 1 | 3.2 | 204.9 |
-    | fill hold | 5.3 | 58.4 |
-    | fill linear | 5.6 | 84.1 |
-    | fill linear, maxGap 3s | 5.0 | 28.8 |
+    | diff | 3.5 | 7.9 |
+    | diff, drop first | 4.1 | 10.0 |
+    | rate | 4.5 | 17.3 |
+    | pct_change | 4.0 | 9.5 |
+    | cumulative sum | 3.9 | 8.6 |
+    | shift 1 | 4.5 | 55.6 |
+    | fill hold | 5.1 | 51.8 |
+    | fill linear | 5.6 | 75.1 |
+    | fill linear, maxGap 3s | 4.9 | 69.1 |
 
     Each op is one O(N) pass (fill: one to find runs, one to fill).
-    `FirstRow::Drop` copies the whole series once more, which is why it
-    costs about twice as much; step 3b's `slice` can share buffers
-    instead. pond-ts timings vary run to run (JIT warm-up); its `shift`
-    takes a boxed path.
+    - `FirstRow::Drop` first copied every column (14 ms, slower than
+      pond-ts). It now shares the column buffers, as pond-ts's
+      `withRowRange` does, and copies only the key. Step 3b's `slice`
+      reuses this.
+    - The first pond-ts timings used one warm-up run and were unstable:
+      `diff` took 75 ms and was slower than `diff` with drop. The
+      review of #775 caught it.
+  - Found on the way: number columns with gaps never compared equal,
+    not even to themselves, because the derived `PartialEq` compared the
+    `NaN` gaps. `Float64Column` now compares values bit for bit and gaps
+    by position.
+  - Review fixes (#775):
+    - A decimal fill value is now checked against the column's own
+      precision, not just 38 digits. Before, a `Decimal128(5,2)` column
+      could be filled with values its own Arrow type cannot hold.
+    - A column named twice in `cumulative` or `fill` is an error.
+    - New `overflow` input pins that a sum stays a gap after it
+      overflows.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

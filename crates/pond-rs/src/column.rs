@@ -24,7 +24,7 @@ use crate::series::ColumnKind;
 
 /// A column of `f64` values where any non-finite value (`NaN`, `±inf`) is a
 /// gap. Reading a gap gives `None`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Float64Column {
     values: ScalarBuffer<f64>,
     /// True when every value is finite (no gaps). Only a speed hint: the
@@ -91,6 +91,16 @@ impl Float64Column {
     /// Iterate as `Option<f64>`.
     pub fn iter(&self) -> impl Iterator<Item = Option<f64>> + '_ {
         self.values.iter().map(|&v| v.is_finite().then_some(v))
+    }
+}
+
+/// Two number columns are equal when they hold the same values, bit for bit
+/// (so `-0.0` and `0.0` differ), and gaps in the same rows, however each gap
+/// is stored (`NaN` or an infinity).
+impl PartialEq for Float64Column {
+    fn eq(&self, other: &Self) -> bool {
+        let bits = |c: &Self| c.iter().map(|v| v.map(f64::to_bits)).collect::<Vec<_>>();
+        self.len() == other.len() && bits(self) == bits(other)
     }
 }
 
@@ -526,6 +536,30 @@ impl ColumnData {
             ColumnData::Decimal(c) => c.nulls().cloned(),
             ColumnData::String(c) => c.arrow().logical_nulls(),
             ColumnData::Boolean(c) => c.values.nulls().cloned(),
+        }
+    }
+
+    /// The rows in `range`, sharing this column's buffers (no copy).
+    pub(crate) fn slice(&self, range: std::ops::Range<usize>) -> ColumnData {
+        let (offset, len) = (range.start, range.len());
+        match self {
+            ColumnData::Number(c) => ColumnData::Number(Float64Column {
+                values: c.values.slice(offset, len),
+                // A slice of a column with no gaps has none either.
+                all_finite: c.all_finite || c.values[range].iter().all(|v| v.is_finite()),
+            }),
+            ColumnData::Decimal(c) => ColumnData::Decimal(DecimalColumn {
+                values: c.values.slice(offset, len),
+            }),
+            ColumnData::String(c) => ColumnData::String(StringColumn {
+                repr: match &c.repr {
+                    StringRepr::Plain(a) => StringRepr::Plain(a.slice(offset, len)),
+                    StringRepr::Dictionary(a) => StringRepr::Dictionary(a.slice(offset, len)),
+                },
+            }),
+            ColumnData::Boolean(c) => ColumnData::Boolean(BooleanColumn {
+                values: c.values.slice(offset, len),
+            }),
         }
     }
 
