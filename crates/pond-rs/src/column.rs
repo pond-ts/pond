@@ -300,6 +300,55 @@ pub enum Value {
     Boolean(bool),
 }
 
+impl Value {
+    /// The number, if this is a [`Value::Number`].
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Value::Number(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// The decimal, if this is a [`Value::Decimal`].
+    pub fn as_decimal(&self) -> Option<Decimal> {
+        match self {
+            Value::Decimal(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// The text, if this is a [`Value::String`]. For a partition key part
+    /// (`Option<Value>`), `part.as_ref().and_then(Value::as_str)`:
+    ///
+    /// ```
+    /// # use pond_rs::{Column, TimeSeries, Value};
+    /// let s = TimeSeries::new("s", vec![0, 1], vec![
+    ///     Column::required("symbol", vec!["AAPL", "MSFT"]),
+    /// ])?;
+    /// let parts = s.partition_by(&["symbol"])?;
+    /// let names: Vec<&str> = parts
+    ///     .iter()
+    ///     .filter_map(|(key, _)| key[0].as_ref().and_then(Value::as_str))
+    ///     .collect();
+    /// assert_eq!(names, ["AAPL", "MSFT"]);
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Value::String(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// The true/false value, if this is a [`Value::Boolean`].
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Value::Boolean(v) => Some(*v),
+            _ => None,
+        }
+    }
+}
+
 /// One exact decimal: `value × 10^-scale`, so `Decimal { value: 125, scale:
 /// 2 }` is `1.25`. Prints as a decimal (`1.25`). Equality compares `value`
 /// and `scale` as stored, so `1.25` at scale 2 is not equal to `1.250` at

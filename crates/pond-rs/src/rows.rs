@@ -184,6 +184,58 @@ impl TimeSeries {
         })
     }
 
+    /// The first row, or `None` for an empty series (pond-ts `first()`).
+    pub fn first(&self) -> Option<Row<'_>> {
+        self.row(0)
+    }
+
+    /// The last row, or `None` for an empty series (pond-ts `last()`).
+    ///
+    /// ```
+    /// # use pond_rs::{Column, TimeSeries};
+    /// let s = TimeSeries::new("s", vec![0, 1000], vec![
+    ///     Column::required("close", vec![10.0, 11.5]),
+    /// ])?;
+    /// let last = s.last().expect("not empty");
+    /// assert_eq!((last.begin(), last.number("close")?), (1000, Some(11.5)));
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    pub fn last(&self) -> Option<Row<'_>> {
+        self.len().checked_sub(1).and_then(|i| self.row(i))
+    }
+
+    /// The rows in the trailing `duration` (`"60m"`, see
+    /// [`parse_duration`](crate::parse_duration)): those starting strictly
+    /// after the last row's start minus `duration`, as pond-ts
+    /// `tail(duration)`. An empty series is returned as is. Value columns
+    /// share memory with this series.
+    ///
+    /// With [`TimeSeries::reduce`], this is "the state over the last hour"
+    /// without a `rolling` pass over the whole history:
+    ///
+    /// ```
+    /// # use pond_rs::{Agg, Column, Reducer, TimeSeries};
+    /// let s = TimeSeries::new("s", vec![0, 1_800_000, 3_600_000], vec![
+    ///     Column::required("close", vec![10.0, 12.0, 14.0]),
+    /// ])?;
+    /// let hour = s.tail("60m")?; // starts after 0: the last two rows
+    /// assert_eq!(hour.len(), 2);
+    /// let r = hour.reduce(&[Agg::new("mean", "close", Reducer::Avg)])?;
+    /// assert_eq!(r.number("mean")?, Some(13.0));
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    pub fn tail(&self, duration: &str) -> Result<TimeSeries> {
+        let duration = crate::parse_duration(duration)?;
+        let begin = self.key().begin();
+        let Some(&last) = begin.last() else {
+            return Ok(self.clone());
+        };
+        let cutoff = last.saturating_sub(duration);
+        // Rows are in begin order, so the kept rows are a suffix.
+        let start = begin.partition_point(|&b| b <= cutoff);
+        Ok(self.row_range(start..begin.len()))
+    }
+
     /// This series with `column` added after the existing columns. An error
     /// if its length differs from the series, its name is taken (by a
     /// value column or the key), or it is required and has a gap. Existing

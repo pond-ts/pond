@@ -580,8 +580,9 @@ the study oracle) is done.
   5. ~~`align` / `materialize` / `dedupe`~~ — done.
   6. ~~`join`~~ — done.
   7. The rest, as friction asks: (a) ~~reading times written as text
-     ([PND-RUSTTIME], `parse_time`)~~ — done; (b) the [PND-RUSTQ11] fixes
-     next.
+     ([PND-RUSTTIME], `parse_time`)~~ — done; (b) ~~the step 4b agent-trial
+     fixes ([PND-RUSTQ11]: `tail` / `reduce` / `first` / `last`, partition
+     key helpers, docs)~~ — done.
 
   Detail in the breakout plan.
 
@@ -675,13 +676,6 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   when the window is flat (needs a cheap flatness check), or document it.
   Found 2026-10-19 (pond-rs R1b step 4b agent trial: 5 of 10 agents
   guarded against it).
-- **[PND-RUSTQ11]** — pond-rs friction from the step 4b agent trial
-  (counts out of 10 agents): no way to write a small ranked table that is
-  not a time series, so all 10 built Arrow by hand (10); no "value at the
-  latest row of each partition" helper (9); partition keys need a
-  `Some(Value::String(..))` match (6); docs do not say `rolling` keeps
-  only its outputs (2, one failed run). Candidates for R1b step 7; the
-  last is a doc fix. Detail in `docs/plans/PND_RUST_PLAN.md` step 4b.
 
 ### `@pond-ts/financial`
 
