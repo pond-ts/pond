@@ -13,8 +13,9 @@ use common::{
 };
 use pond_rs::Value as Literal;
 use pond_rs::{
-    Agg, ArrowKey, At, Column, ColumnData, ColumnKind, Fill, FillLimits, FirstRow, IntervalKeys,
-    Key, Labels, Reducer, Sequence, TimeRangeKeys, TimeSeries,
+    Agg, Align, AlignMethod, ArrowKey, At, Column, ColumnData, ColumnKind, Fill, FillLimits,
+    FirstRow, IntervalKeys, Keep, Key, Labels, Materialize, Pick, Reducer, Sequence, TimeRangeKeys,
+    TimeSeries,
 };
 use serde_json::{Value, json};
 
@@ -38,6 +39,9 @@ const KNOWN_OPS: &[&str] = &[
     "withColumn",
     "partitionBy",
     "groupBy",
+    "align",
+    "materialize",
+    "dedupe",
 ];
 
 /// Ops with an arm in [`run`]. Every fixture case for a listed op must run
@@ -60,6 +64,9 @@ const IMPLEMENTED_OPS: &[&str] = &[
     "withColumn",
     "partitionBy",
     "groupBy",
+    "align",
+    "materialize",
+    "dedupe",
 ];
 
 /// The ops a plain series and a partitioned one both have, with the same
@@ -108,9 +115,87 @@ macro_rules! shared_op {
                     other => panic!("fill takes a strategy or a mapping, got {other}"),
                 })
             }
+            "align" => Some(sequence(&args[0]["sequence"]).and_then(|seq| {
+                let o = args.get(1).unwrap_or(&Value::Null);
+                let method = match o["method"].as_str() {
+                    None | Some("hold") => AlignMethod::Hold,
+                    Some("linear") => AlignMethod::Linear,
+                    Some(other) => panic!("unknown align method {other}"),
+                };
+                $target.align(
+                    &seq,
+                    Align {
+                        method,
+                        sample: sample(o),
+                        range: range(o),
+                    },
+                )
+            })),
+            "materialize" => Some(sequence(&args[0]["sequence"]).and_then(|seq| {
+                let o = args.get(1).unwrap_or(&Value::Null);
+                let pick = match o["select"].as_str() {
+                    None | Some("last") => Pick::Last,
+                    Some("first") => Pick::First,
+                    Some("nearest") => Pick::Nearest,
+                    Some(other) => panic!("unknown materialize select {other}"),
+                };
+                $target.materialize(
+                    &seq,
+                    Materialize {
+                        pick,
+                        sample: sample(o),
+                        range: range(o),
+                    },
+                )
+            })),
+            "dedupe" => {
+                let keep = &args.first().unwrap_or(&Value::Null)["keep"];
+                let keep = match keep {
+                    Value::Null => Keep::Last,
+                    Value::String(k) => match k.as_str() {
+                        "first" => Keep::First,
+                        "last" => Keep::Last,
+                        "error" => Keep::Error,
+                        "drop" => Keep::Drop,
+                        other => panic!("unknown keep {other}"),
+                    },
+                    Value::Object(m) => match (m.get("min"), m.get("max")) {
+                        (Some(c), _) => Keep::Min(c.as_str().expect("column").into()),
+                        (_, Some(c)) => Keep::Max(c.as_str().expect("column").into()),
+                        _ => panic!("unknown keep {keep}"),
+                    },
+                    other => panic!("unknown keep {other}"),
+                };
+                Some($target.dedupe(keep))
+            }
             _ => None,
         }
     }};
+}
+
+/// `sample` in align / materialize options.
+fn sample(options: &Value) -> At {
+    match options["sample"].as_str() {
+        None | Some("begin") => At::Begin,
+        Some("center") => At::Center,
+        Some("end") => At::End,
+        Some(other) => panic!("unknown sample {other}"),
+    }
+}
+
+/// `range`: `{ start, end }` or one time (a zero-length range).
+fn range(options: &Value) -> Option<(i64, i64)> {
+    match &options["range"] {
+        Value::Null => None,
+        Value::Number(t) => {
+            let t = t.as_i64().expect("whole ms");
+            Some((t, t))
+        }
+        r => Some((
+            r["start"].as_i64().expect("range start"),
+            r["end"].as_i64().expect("range end"),
+        )),
+    }
 }
 
 fn cumulative_spec(json: &Value) -> Vec<(&str, Reducer)> {

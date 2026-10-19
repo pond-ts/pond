@@ -833,6 +833,191 @@ const CASES = [
   // groupBy: a missing value is the key 'undefined' (no leading space)
   ['groupBy-host', 'hosts', 'groupBy', ['host']],
   ['groupBy-up', 'hosts', 'groupBy', ['up']],
+  // align: hold takes atOrBefore (the first row at the point, else the last
+  // row before it); `noisy` repeats times, so both halves are pinned
+  ['align-hold', 'gappy', 'align', [every('1s')]],
+  ['align-hold-noisy', 'noisy', 'align', [every('700ms')]],
+  ['align-linear', 'gappy', 'align', [every('1s'), { method: 'linear' }]],
+  [
+    'align-linear-noisy',
+    'noisy',
+    'align',
+    [every('700ms'), { method: 'linear' }],
+  ],
+  ['align-center', 'gappy', 'align', [every('3s'), { sample: 'center' }]],
+  // a 333 ms step puts each middle on a half millisecond
+  [
+    'align-linear-center-half-ms',
+    'gappy',
+    'align',
+    [every('333ms'), { method: 'linear', sample: 'center' }],
+  ],
+  ['align-end', 'gappy', 'align', [every('2s'), { sample: 'end' }]],
+  [
+    'align-end-linear',
+    'gappy',
+    'align',
+    [every('2s'), { sample: 'end', method: 'linear' }],
+  ],
+  [
+    'align-range',
+    'gappy',
+    'align',
+    [every('2s'), { range: { start: -3000, end: 30000 } }],
+  ],
+  [
+    'align-range-linear',
+    'gappy',
+    'align',
+    [every('2s'), { method: 'linear', range: { start: -3000, end: 30000 } }],
+  ],
+  ['align-range-point', 'gappy', 'align', [every('1s'), { range: 5000 }]],
+  ['align-calendar', 'dst', 'align', [calendar('day', 'America/New_York')]],
+  [
+    'align-calendar-center',
+    'dst',
+    'align',
+    [calendar('day', 'America/New_York'), { sample: 'center' }],
+  ],
+  ['align-mixed', 'mixed', 'align', [every('2s')]],
+  [
+    'align-mixed-linear',
+    'mixed',
+    'align',
+    [every('1500ms'), { method: 'linear' }],
+  ],
+  // range and interval keys: a row counts when it starts before the point
+  ['align-ranges', 'ranges', 'align', [every('1s')]],
+  ['align-labelled', 'labelled', 'align', [every('2s')]],
+  ['align-buckets', 'buckets', 'align', [every('5s')]],
+  // a zero-length interval at the point sorts before it
+  ['align-zero-intervals', 'zeroIntervals', 'align', [every('1s')]],
+  ['align-empty', 'emptyHosts', 'align', [every('1s')]],
+  [
+    'align-error-linear-ranges',
+    'ranges',
+    'align',
+    [every('1s'), { method: 'linear' }],
+  ],
+  ['align-error-key-name', 'intervalColumn', 'align', [every('1s')]],
+  [
+    'align-error-range-reversed',
+    'gappy',
+    'align',
+    [every('1s'), { range: { start: 5000, end: 0 } }],
+  ],
+  // materialize: one source row per bucket by start, gaps when empty
+  ['materialize-last', 'gappy', 'materialize', [every('2s')]],
+  [
+    'materialize-first',
+    'gappy',
+    'materialize',
+    [every('2s'), { select: 'first' }],
+  ],
+  [
+    'materialize-nearest-center',
+    'gappy',
+    'materialize',
+    [every('2s'), { select: 'nearest', sample: 'center' }],
+  ],
+  [
+    'materialize-nearest-noisy',
+    'noisy',
+    'materialize',
+    [every('700ms'), { select: 'nearest' }],
+  ],
+  ['materialize-end', 'gappy', 'materialize', [every('3s'), { sample: 'end' }]],
+  [
+    'materialize-range',
+    'gappy',
+    'materialize',
+    [every('2s'), { range: { start: -5000, end: 30000 } }],
+  ],
+  ['materialize-mixed', 'mixed', 'materialize', [every('2500ms')]],
+  ['materialize-labelled', 'labelled', 'materialize', [every('3s')]],
+  ['materialize-ranges', 'ranges', 'materialize', [every('2s')]],
+  ['materialize-zero-intervals', 'zeroIntervals', 'materialize', [every('1s')]],
+  [
+    'materialize-calendar',
+    'dst',
+    'materialize',
+    [calendar('day', 'America/New_York'), { sample: 'center' }],
+  ],
+  ['materialize-empty', 'emptyHosts', 'materialize', [every('1s')]],
+  ['materialize-error-key-name', 'timeColumn', 'materialize', [every('1s')]],
+  // dedupe: the whole key (time; range start and end; interval span and
+  // label) decides a duplicate; groups keep first-appearance order
+  ['dedupe-last', 'noisy', 'dedupe', []],
+  ['dedupe-first', 'noisy', 'dedupe', [{ keep: 'first' }]],
+  ['dedupe-drop', 'noisy', 'dedupe', [{ keep: 'drop' }]],
+  ['dedupe-min', 'noisy', 'dedupe', [{ keep: { min: 'x' } }]],
+  ['dedupe-max', 'noisy', 'dedupe', [{ keep: { max: 'x' } }]],
+  ['dedupe-min-gaps', 'gappyDups', 'dedupe', [{ keep: { min: 'a' } }]],
+  ['dedupe-max-gaps', 'gappyDups', 'dedupe', [{ keep: { max: 'a' } }]],
+  ['dedupe-none', 'gappy', 'dedupe', [{ keep: 'error' }]],
+  ['dedupe-hosts', 'hosts', 'dedupe', [{ keep: 'last' }]],
+  ['dedupe-ranges', 'dupRanges', 'dedupe', []],
+  ['dedupe-labelled', 'dupLabelled', 'dedupe', []],
+  ['dedupe-labelled-drop', 'dupLabelled', 'dedupe', [{ keep: 'drop' }]],
+  ['dedupe-empty', 'emptyHosts', 'dedupe', []],
+  ['dedupe-error', 'noisy', 'dedupe', [{ keep: 'error' }]],
+  ['dedupe-error-ranges', 'dupRanges', 'dedupe', [{ keep: 'error' }]],
+  ['dedupe-error-labelled', 'dupLabelled', 'dedupe', [{ keep: 'error' }]],
+  // per partition
+  [
+    'partition-align',
+    'hosts',
+    'partitionBy',
+    ['host', [['align', every('2s')]], 'collect'],
+  ],
+  [
+    'partition-align-toMap',
+    'hosts',
+    'partitionBy',
+    ['host', [['align', every('2s')]], 'toMap'],
+  ],
+  [
+    'partition-align-linear',
+    'hosts',
+    'partitionBy',
+    ['host', [['align', every('1500ms'), { method: 'linear' }]], 'collect'],
+  ],
+  [
+    'partition-materialize',
+    'hosts',
+    'partitionBy',
+    ['host', [['materialize', every('2s')]], 'collect'],
+  ],
+  [
+    'partition-materialize-toMap',
+    'hosts',
+    'partitionBy',
+    [
+      ['region', 'up'],
+      [['materialize', every('3s'), { select: 'first' }]],
+      'toMap',
+    ],
+  ],
+  [
+    'partition-dedupe',
+    'hosts',
+    'partitionBy',
+    ['region', [['dedupe', { keep: 'first' }]], 'collect'],
+  ],
+  [
+    'partition-dedupe-then-materialize',
+    'hosts',
+    'partitionBy',
+    [
+      'region',
+      [
+        ['dedupe', { keep: { max: 'cpu' } }],
+        ['materialize', every('2s')],
+        ['fill', { cpu: 'linear' }],
+      ],
+      'collect',
+    ],
+  ],
 ];
 
 /**
@@ -1071,6 +1256,64 @@ export function buildFixture(pond) {
         { name: 'time', kind: 'number' },
       ],
       rows: [[[0, 0, 1000], 1]],
+    }),
+    // Zero-length intervals, one at each grid point.
+    zeroIntervals: TimeSeries.fromJSON({
+      name: 'zeroIntervals',
+      schema: INTERVAL_SCHEMA,
+      rows: [
+        [[0, 0, 0], 1, 10],
+        [[0, 0, 1000], 2, null],
+        [[1000, 1000, 1000], 3, 12],
+      ],
+    }),
+    // A value column named `interval` clashes with the key `align` makes.
+    intervalColumn: TimeSeries.fromJSON({
+      name: 'intervalColumn',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'interval', kind: 'number' },
+      ],
+      rows: [[0, 1]],
+    }),
+    // Repeated times with gaps in the column `min` / `max` read.
+    gappyDups: TimeSeries.fromJSON({
+      name: 'gappyDups',
+      schema: GAPPY_SCHEMA,
+      rows: [
+        [0, null, 1],
+        [0, 3, 2],
+        [0, 1, 3],
+        [0, 1, 4],
+        [1000, null, 5],
+        [1000, null, 6],
+        [2000, -0, 7],
+        [2000, 0, 8],
+      ],
+    }),
+    dupRanges: TimeSeries.fromJSON({
+      name: 'dupRanges',
+      schema: RANGE_SCHEMA,
+      rows: [
+        [[0, 1000], 1, 10],
+        [[0, 1000], 2, null],
+        [[0, 3000], 3, 12],
+        [[2000, 2000], 4, 13],
+        [[2000, 2000], 5, 14],
+      ],
+    }),
+    // Same span, labels interleaved: pond-ts groups by label, in the order
+    // each label first appears.
+    dupLabelled: TimeSeries.fromJSON({
+      name: 'dupLabelled',
+      schema: INTERVAL_SCHEMA,
+      rows: [
+        [['a', 0, 10], 1, 10],
+        [['b', 0, 10], 2, 11],
+        [['a', 0, 10], 3, 12],
+        [['b', 10, 20], 4, 13],
+        [['c', 20, 30], 5, 14],
+      ],
     }),
     extreme: TimeSeries.fromJSON({
       name: 'extreme',

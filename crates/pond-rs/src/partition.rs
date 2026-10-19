@@ -21,6 +21,7 @@ use std::collections::HashMap;
 
 use crate::column::{ColumnData, Value};
 use crate::error::{PondError, Result};
+use crate::grid::{Align, Keep, Materialize};
 use crate::par;
 use crate::reducer::{Agg, Reducer};
 use crate::rowwise::{Fill, FillLimits, FirstRow};
@@ -277,6 +278,46 @@ impl PartitionedSeries {
     pub fn aggregate(&self, sequence: &Sequence, aggs: &[Agg]) -> Result<PartitionedSeries> {
         let aggs = self.with_partition_outputs(aggs);
         self.map(|g| g.aggregate(sequence, &aggs))
+    }
+
+    /// [`TimeSeries::align`] on each partition. A bucket before a
+    /// partition's first row gets a gap in the partition columns too, so,
+    /// as in pond-ts, such rows move to the partition with no value.
+    pub fn align(&self, sequence: &Sequence, options: Align) -> Result<PartitionedSeries> {
+        self.map(|g| g.align(sequence, options))
+    }
+
+    /// [`TimeSeries::materialize`] on each partition, with the partition
+    /// columns filled in on empty buckets (pond-ts does the same), so every
+    /// row stays in its partition.
+    pub fn materialize(
+        &self,
+        sequence: &Sequence,
+        options: Materialize,
+    ) -> Result<PartitionedSeries> {
+        let by = self.by.clone();
+        self.map(move |g| {
+            let out = g.materialize(sequence, options)?;
+            if g.is_empty() {
+                return Ok(out);
+            }
+            // Every row of a partition holds its key, so the key's column
+            // is the first row's value on every output row.
+            let first = vec![Some(0); out.len()];
+            let mut columns = out.columns().to_vec();
+            for name in &by {
+                let at = out.column_index("materialize", name)?;
+                let source = g.column(name)?;
+                columns[at] = Column::from_data(name.clone(), source.data().take(&first), false);
+            }
+            Ok(out.with_value_columns(columns))
+        })
+    }
+
+    /// [`TimeSeries::dedupe`] on each partition: rows are duplicates when
+    /// they share the key and the partition values.
+    pub fn dedupe(&self, keep: Keep) -> Result<PartitionedSeries> {
+        self.map(|g| g.dedupe(keep.clone()))
     }
 
     fn with_partition_outputs(&self, aggs: &[Agg]) -> Vec<Agg> {

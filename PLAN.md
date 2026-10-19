@@ -577,7 +577,7 @@ the study oracle) is done.
   4. ~~Groups: (a) `partition_by` / `group_by`, threaded across
      partitions (#778); (b) agent trial on the partitioned workload
      ([PND-AGENTBENCH] Q11)~~ — done.
-  5. `align` / `materialize` / `dedupe`.
+  5. ~~`align` / `materialize` / `dedupe`~~ — done.
   6. `join`.
   7. The rest, as friction asks.
 
