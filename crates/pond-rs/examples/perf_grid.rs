@@ -76,7 +76,9 @@ fn main() -> pond_rs::Result<()> {
     // Sparse: 10k rows, one every 100 s, on a one-second grid.
     let sparse = TimeSeries::new(
         "sparse",
-        (0..10_000).map(|i| (i * 1000 + (i % 7) * 13) * 100).collect(),
+        (0..10_000)
+            .map(|i| (i * 1000 + (i % 7) * 13) * 100)
+            .collect(),
         vec![
             Column::optional("v", values[..10_000].to_vec()),
             Column::required("host", text[..10_000].to_vec()),
