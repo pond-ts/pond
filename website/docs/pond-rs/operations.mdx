@@ -2,7 +2,7 @@
 id: operations
 title: Operations
 sidebar_position: 4
-description: Everything pond-rs can do to a series today — rolling windows, fixed and calendar buckets, reducers, diff / rate / fill and friends, filter, slice, map, select and rename.
+description: Everything pond-rs can do to a series today — rolling windows, fixed and calendar buckets, reducers, diff / rate / fill and friends, filter, slice, tail, reduce, map, select, rename, align, dedupe and join.
 ---
 
 # Operations
@@ -292,6 +292,72 @@ fn main() -> Result<(), pond_rs::PondError> {
     let host = s.column("host")?.strings()?;
     let only_a = s.filter(|r| Ok(host.get(r.index()) == Some("a")))?;
     assert_eq!(only_a.len(), 2);
+    Ok(())
+}
+```
+
+`tail("60m")` keeps the rows in the last stretch of time: those that start
+**after** the last row's time minus 60 minutes, so a row exactly 60 minutes
+before the last one is left out. `first()` and `last()` give the first and
+last row, or `None` for an empty series.
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let min = 60_000;
+    let s = TimeSeries::new(
+        "price",
+        vec![0, 30 * min, 60 * min, 90 * min],
+        vec![Column::required("close", vec![10.0, 12.0, 14.0, 13.0])],
+    )?;
+
+    // The last row is at 90 minutes; the last hour is after 30 minutes.
+    let hour = s.tail("60m")?;
+    assert_eq!(hour.key().begin(), &[60 * min, 90 * min]);
+
+    let last = s.last().expect("not empty");
+    assert_eq!(last.begin(), 90 * min);
+    assert_eq!(last.number("close")?, Some(13.0));
+    Ok(())
+}
+```
+
+## One row for the whole series: `reduce`
+
+`reduce(&aggs)` boils the whole series down to one value per `Agg`, with
+the same reducers and rules as `aggregate` (as if the whole series were one
+bucket). It returns a `Reduced`, which you read by output name:
+`number`, `string`, `boolean` and `decimal` check the kind, `get` gives a
+`Value` of any kind. A gap is `Ok(None)`; an empty series gives `count` 0,
+`sum` 0 and gaps for the rest.
+
+With `tail`, this answers "what are things like right now" without
+computing a rolling window at every row of the history:
+
+```rust
+use pond_rs::{Agg, Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let min = 60_000;
+    let s = TimeSeries::new(
+        "price",
+        vec![0, 30 * min, 60 * min, 90 * min],
+        vec![
+            Column::required("symbol", vec!["A", "A", "A", "A"]),
+            Column::required("close", vec![10.0, 12.0, 14.0, 13.0]),
+        ],
+    )?;
+
+    let now = s.tail("60m")?.reduce(&[
+        Agg::new("mean", "close", Reducer::Avg),
+        Agg::new("close", "close", Reducer::Last),
+        Agg::new("symbol", "symbol", Reducer::First),
+    ])?;
+    assert_eq!(now.number("mean")?, Some(13.5)); // (14 + 13) / 2
+    assert_eq!(now.number("close")?, Some(13.0));
+    assert_eq!(now.string("symbol")?, Some("A"));
+    assert!(now.number("symbol").is_err()); // text, not a number
     Ok(())
 }
 ```
@@ -588,6 +654,6 @@ the other side first. `join` is not on `PartitionedSeries`.
 ## What is not here yet
 
 From pond-ts, still to come, as people ask for them: `at` / `nearest` and
-other lookups, `within` / `trim`, `reduce`, `smooth`, `baseline` /
+other lookups, `within` / `trim`, `smooth`, `baseline` /
 `outliers`, `pivot_by_group`, array columns). Financial studies come after
 the core.

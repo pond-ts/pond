@@ -49,18 +49,18 @@ pond-rs = { git = "https://github.com/pond-ts/pond" }
 
 ## What exists today
 
-| Area                 | In pond-rs now                                                                                                                        |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Series and keys      | Rows keyed by a time, a time range, or a labelled interval; `parse_time` reads times written as text                                  |
-| Column kinds         | Numbers, exact decimals, text, true/false; any may have gaps                                                                          |
-| Windows and buckets  | `rolling` over a trailing time window; `aggregate` into fixed buckets (`"5m"`) or calendar buckets in a time zone                     |
-| Reducers             | `count`, `sum`, `avg`, `min`, `max`, `first`, `last`, `median`, `stdev`, percentiles                                                  |
-| Row by row           | `diff`, `rate`, `pct_change`, `shift`, `cumulative`, `fill`                                                                           |
-| Picking and changing | `slice`, `filter` (a Rust closure per row), `with_column`, `map_numbers` and friends, `select`, `rename`, `as_time`                   |
-| Regular grids        | `align` (value at each grid point: hold or straight line), `materialize` (one reading per bucket), `dedupe` (repeated times)          |
-| Joining              | `join` and `join_many`: columns of several series side by side, matched by key                                                        |
-| Per entity           | `partition_by` / `group_by` on one or more columns, partitions run on several cores                                                   |
-| Arrow                | Read and write Arrow IPC (Feather v2) files and streams, compressed or not; columns can share the file's memory instead of copying it |
+| Area                 | In pond-rs now                                                                                                                                                                         |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Series and keys      | Rows keyed by a time, a time range, or a labelled interval; `parse_time` reads times written as text                                                                                   |
+| Column kinds         | Numbers, exact decimals, text, true/false; any may have gaps                                                                                                                           |
+| Windows and buckets  | `rolling` over a trailing time window; `aggregate` into fixed buckets (`"5m"`) or calendar buckets in a time zone                                                                      |
+| Reducers             | `count`, `sum`, `avg`, `min`, `max`, `first`, `last`, `median`, `stdev`, percentiles                                                                                                   |
+| Row by row           | `diff`, `rate`, `pct_change`, `shift`, `cumulative`, `fill`                                                                                                                            |
+| Picking and changing | `slice`, `tail`, `first` / `last`, `filter` (a Rust closure per row), `reduce` (one row for the whole series), `with_column`, `map_numbers` and friends, `select`, `rename`, `as_time` |
+| Regular grids        | `align` (value at each grid point: hold or straight line), `materialize` (one reading per bucket), `dedupe` (repeated times)                                                           |
+| Joining              | `join` and `join_many`: columns of several series side by side, matched by key                                                                                                         |
+| Per entity           | `partition_by` / `group_by` on one or more columns, partitions run on several cores                                                                                                    |
+| Arrow                | Read and write Arrow IPC (Feather v2) files and streams, compressed or not; columns can share the file's memory instead of copying it                                                  |
 
 **Not built yet:** financial studies (SMA, RSI, …), the live (streaming)
 layer, and a WASM build that
