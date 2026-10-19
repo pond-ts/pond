@@ -380,6 +380,10 @@ function fillPacked(
         }
         break;
       }
+      default:
+        // Unknown mode (reachable only from untyped JS): leave the gap,
+        // as the boxed loop does.
+        continue;
     }
     changed = true;
   }

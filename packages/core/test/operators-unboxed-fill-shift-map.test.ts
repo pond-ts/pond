@@ -355,3 +355,26 @@ describe('[PND-BOXFREE] mapColumns: unboxed path equals the boxed path', () => {
     });
   }
 });
+
+describe('[PND-BOXFREE] fill: an unknown mode (untyped JS) is a no-op on both paths', () => {
+  it('keeps the column by reference, like the boxed loop', () => {
+    const times = [0, 1000, 2000];
+    const raw = Float64Array.of(1, Infinity, 3);
+    const specs = new Map([
+      ['v', { mode: 'mean' } as never as ResolvedFillSpec],
+    ]);
+    for (const store of [
+      packedStore(times, raw),
+      chunkedStore(times, raw, 1),
+    ]) {
+      const out = fillOp(
+        store as never,
+        SCHEMA as never,
+        specs,
+        undefined,
+        undefined,
+      );
+      expect(out.store.columns.get('v')).toBe(store.columns.get('v'));
+    }
+  });
+});

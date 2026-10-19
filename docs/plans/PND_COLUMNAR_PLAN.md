@@ -493,6 +493,22 @@ build; "before" = `main` at 3851ec0, "after" = this change):
 | `mapColumns(v*2)`    | 69.0 / 70.4 / 66.1 | 6.7 / 5.0 / 5.0    | 13.9×                 |
 | `diff` (control)     | 4.6 / 8.5 / 7.4    | 5.7 / 9.0 / 6.1    | 1.2× (untouched)      |
 
+**Why the "before" `fill linear` here (~23 ms) is not the 75 ms the pond-rs
+bench reported — warm-up.** Same data generator, same `main` build. Running
+the pond-rs script (`crates/pond-rs/bench/rowwise_pond_ts.mjs`, 5 warm-up
+calls) on `main` here gives 78 / 66 / 79 ms; the same script with 40 warm-up
+calls gives 23 / 26 ms, matching this bench. Timing each call of the old
+`fill('linear')` from a cold start shows ~55–130 ms per call that, in one
+run, dropped to ~22 ms from about the 25th call on, and in another had not
+dropped by call 40. Old `fill('hold')` showed no such drop (~45–100 ms
+throughout). So the old linear path had a slow-then-fast curve and the two
+benches sampled opposite ends of it; why V8 speeds that loop up late was not
+investigated. The new path has no such cliff: the pond-rs script (5 warm-ups)
+on this branch gives `fill linear` 9–10 ms against 71–77 ms on `main`, and
+`shift` 3.5–4.3 ms against 53–62 ms, `fill hold` 9–13 ms against 49–60 ms.
+For code that calls `fill` once, the cold numbers are the realistic ones, so
+the real `fill linear` gain is nearer 8× than 2.4×.
+
 `fill linear` stays the slowest of the four strategies (~9.5 ms against
 ~6 ms). It is the one that also builds the times array (`getTimes`, one
 `store.beginAt(i)` call per row); whether that is where the remaining time
