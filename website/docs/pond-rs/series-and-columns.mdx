@@ -22,7 +22,8 @@ and unchanged columns are shared with the old one rather than copied.
 
 All times are **epoch milliseconds** (`i64`), always UTC. Time zones only
 come in when you ask for calendar buckets
-([Operations](./operations#calendar-buckets)).
+([Operations](./operations#calendar-buckets)) or read a time written as
+text (below).
 
 `aggregate` returns an interval-keyed series: each bucket is an interval
 labelled by its start. `as_time` turns one back into a time-keyed series.
@@ -75,6 +76,53 @@ fn main() -> Result<(), pond_rs::PondError> {
 Rules checked when a series is built: keys in order (by `begin`, then
 `end`), each `end` not before its `begin`, times within about 273,000 years
 either side of 1970 (`MAX_TIME_MS`, the same limit as a JavaScript `Date`), and every column as long as the key.
+
+## Times written as text
+
+`parse_time(text)` and `parse_time_in(text, time_zone)` turn a time written
+as text into epoch milliseconds, by the same rules as pond-ts's
+`Time.parse`. Use them anywhere pond-rs takes a time.
+
+| Text                                                                      | Means                                            |
+| ------------------------------------------------------------------------- | ------------------------------------------------ |
+| `2026-03` / `2026-03-07`                                                  | the start of that month or day, in the time zone |
+| `2026-03-07T09:00` or `2026-03-07 09:00` (seconds and fractions optional) | that clock time in the time zone                 |
+| `2026-03-07T09:00Z`, `…+05:30`, `…-04:00`                                 | that exact moment; the time zone is not used     |
+
+`parse_time` uses UTC. The time zone is an IANA name (`"America/New_York"`)
+or an offset (`"+05:30"`). A clock time that does not exist because the
+clocks went forward (02:30 on that night) moves forward by the jump; one
+that happens twice because the clocks went back takes the first. Notes in
+brackets after an offset, like `[Europe/Madrid]`, are allowed and ignored.
+Anything that cannot be read is an error that quotes the text.
+
+```rust
+use pond_rs::{parse_time, parse_time_in};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // A moment with its offset: the same moment however it is written.
+    assert_eq!(parse_time("2026-03-07T09:00:00Z")?, 1_772_874_000_000);
+    assert_eq!(parse_time("2026-03-07T10:00:00+01:00")?, 1_772_874_000_000);
+    assert_eq!(parse_time("2026-03-07T09:00:00Z[Europe/London]")?, 1_772_874_000_000);
+
+    // A clock time in New York (14:00 UTC in winter).
+    assert_eq!(
+        parse_time_in("2026-03-07 09:00", "America/New_York")?,
+        1_772_892_000_000
+    );
+
+    // 02:30 on 8 March 2026 never happened in New York; it reads as 03:30.
+    assert_eq!(
+        parse_time_in("2026-03-08 02:30", "America/New_York")?,
+        parse_time_in("2026-03-08 03:30", "America/New_York")?
+    );
+
+    assert!(parse_time("7 March 2026").is_err());
+    Ok(())
+}
+```
+
+Years run from -9999 to 9999 (pond-ts reads further).
 
 ## Value columns: four kinds
 

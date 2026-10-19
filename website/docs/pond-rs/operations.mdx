@@ -113,13 +113,13 @@ back; months have their real lengths. Weeks start on Monday;
 `.with_week_start(7)` starts them on Sunday (ISO numbering, 1 = Monday).
 
 ```rust
-use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries, parse_time_in};
 
 fn main() -> Result<(), pond_rs::PondError> {
     let hour = 3_600_000_i64;
     // Hourly sales for 50 hours from Saturday 24 October 2026, 00:00 in
     // London (still summer time, so 23:00 UTC the day before).
-    let start = 1_792_796_400_000_i64;
+    let start = parse_time_in("2026-10-24", "Europe/London")?;
     let times: Vec<i64> = (0..50).map(|h| start + h * hour).collect();
     let s = TimeSeries::new(
         "sales",

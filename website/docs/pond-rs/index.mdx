@@ -51,7 +51,7 @@ pond-rs = { git = "https://github.com/pond-ts/pond" }
 
 | Area                 | In pond-rs now                                                                                                                        |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Series and keys      | Rows keyed by a time, a time range, or a labelled interval                                                                            |
+| Series and keys      | Rows keyed by a time, a time range, or a labelled interval; `parse_time` reads times written as text                                  |
 | Column kinds         | Numbers, exact decimals, text, true/false; any may have gaps                                                                          |
 | Windows and buckets  | `rolling` over a trailing time window; `aggregate` into fixed buckets (`"5m"`) or calendar buckets in a time zone                     |
 | Reducers             | `count`, `sum`, `avg`, `min`, `max`, `first`, `last`, `median`, `stdev`, percentiles                                                  |

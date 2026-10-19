@@ -32,6 +32,7 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `series.asTime({ at: 'begin' })`             | `series.as_time(At::Begin)`                                              |
 | `a.join(b, { type: 'inner' })`               | `a.join(&b, Join { how: JoinType::Inner, ..Join::default() })`           |
 | `TimeSeries.joinMany([a, b, c])`             | `TimeSeries::join_many(&[&a, &b, &c], Join::default())`                  |
+| `Time.parse(text, { timeZone })`             | `parse_time_in(text, time_zone)?` (`parse_time` for UTC)                 |
 | `series.partitionBy('host')`                 | `series.partition_by(&["host"])`                                         |
 | `series.groupBy('host')` / `toMap()`         | `series.group_by(&["host"])` / `iter()`                                  |
 | `series.at(i).get('cpu')`                    | `series.column("cpu")?.numbers()?.get(i)`                                |
@@ -74,6 +75,11 @@ pond-rs returns an error instead.
   does not exist.
 - **`join_many` of no series** is an error that says so (pond-ts fails
   reading `undefined`).
+- **Very large years and odd offsets in `parse_time`.** Years beyond
+  ±9999, and offsets with a fraction of a second (`+00:00:00.5`), are
+  errors. pond-ts reads both; for the offset, the library pond-rs uses
+  would round to the second, so pond-rs refuses rather than be half a
+  second out.
 - **A repeated rename.** `rename` with the same `from` twice is an error
   (pond-ts's object syntax cannot express it).
 
@@ -129,6 +135,8 @@ bug is logged in `PLAN.md` to fix there.
   way.
 - Time-zone rules: pond-rs carries its own copy of the time-zone database;
   pond-ts uses the one in its JavaScript engine. They agree unless the two
-  copies are from releases that disagree about a zone's history.
+  copies are from releases that disagree about a zone's history. This
+  affects calendar buckets and `parse_time_in` alike; checks found it in
+  Casablanca's predicted future clock changes and in `EST5EDT` before 1967.
 - pond-ts's typed `groups` option on `partitionBy` (declare the partition
   values up front) is not built; nothing has needed it in Rust.

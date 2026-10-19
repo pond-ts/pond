@@ -31,12 +31,14 @@ The crate is named `pond-rs`; in code it is `pond_rs`.
 ## Build a series, bucket it by day
 
 ```rust
-use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries, parse_time_in};
 
 fn main() -> Result<(), pond_rs::PondError> {
     // One reading an hour for 72 hours, starting at midnight in New York on
-    // Saturday 7 March 2026 (05:00 UTC). Times are epoch milliseconds.
-    let start = 1_772_859_600_000_i64;
+    // Saturday 7 March 2026. Times are epoch milliseconds; `parse_time_in`
+    // turns a date written as text into one.
+    let start = parse_time_in("2026-03-07", "America/New_York")?;
+    assert_eq!(start, 1_772_859_600_000); // 05:00 UTC
     let hour = 3_600_000_i64;
     let times: Vec<i64> = (0..72).map(|h| start + h * hour).collect();
 
@@ -88,7 +90,9 @@ fn main() -> Result<(), pond_rs::PondError> {
 What happened, step by step:
 
 1. **`TimeSeries::new`** takes a name, the times (epoch milliseconds, in
-   order; repeats are allowed) and the value columns. Every column must be
+   order; repeats are allowed) and the value columns. `parse_time_in`
+   turned the date text into milliseconds; see
+   [Times written as text](./series-and-columns#times-written-as-text). Every column must be
    as long as the times.
 2. **`Column::optional`** makes a column that may have gaps. A `None` is a
    gap. `Column::required` makes one that may not, and building the series
