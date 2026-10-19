@@ -100,7 +100,33 @@ middle (median) time, every result checked against pond-ts.
 | 500 symbols × 1,000: dedupe, then collect | 76                 | 135               | 2264    |
 
 On a single series, more threads did not make these faster (on `dedupe`,
-one thread was quicker); on the 500-symbol panel they did.
+one thread was quicker); on the 500-symbol panel they did. Step 6 later
+made copying text columns faster, which helps these: in that run,
+`materialize` last went from 73 to 27 ms and `align` hold from 62 to 45 ms
+(one thread).
+
+### Joins: 1 million rows
+
+From the step 6 pull request ([#785](https://github.com/pond-ts/pond/pull/785)).
+Series a has 1 million rows a second apart; series b has 1 million rows
+every 1.5 seconds, so a third of a's times are in b. Each has a number
+column and a text column. Middle (median) time; pond-ts is the range over
+two separate runs; every result checked against pond-ts.
+
+| Task                                       | pond-rs | pond-ts |
+| ------------------------------------------ | ------- | ------- |
+| left join, a with b                        | 13–15   | 27–28   |
+| inner join, a with b                       | 11–12   | 26–36   |
+| outer join, a with b (1.67M rows out)      | 87–89   | 67–75   |
+| left join, a with a 10,000-row series      | 10–11   | 16–18   |
+| outer join, two series with the same times | 2.3–3.0 | 7–9     |
+| `join_many` of 3 with the same times       | 5.8–6.1 | 16–23   |
+
+`join` runs on one thread, so thread count does not change these. pond-ts's
+join was already fast, so the gap is smaller than elsewhere. The outer join
+is the one place pond-rs is slower: it builds about 100 MB of new output,
+and asking the operating system for fresh memory costs about 37 ms of its 87. Told to keep and reuse freed memory, the same join took 50 ms. JavaScript
+reuses its own memory between runs, so pond-ts does not pay that cost again.
 
 ### Agents writing code against it
 

@@ -30,6 +30,8 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `series.fill({ cpu: 'linear' }, { maxGap })` | `series.fill(&[("cpu", Fill::Linear)], &FillLimits::none().max_gap(..))` |
 | `series.mapColumns(...)`                     | `map_numbers` / `map_strings` / `map_booleans` / `map_decimals`          |
 | `series.asTime({ at: 'begin' })`             | `series.as_time(At::Begin)`                                              |
+| `a.join(b, { type: 'inner' })`               | `a.join(&b, Join { how: JoinType::Inner, ..Join::default() })`           |
+| `TimeSeries.joinMany([a, b, c])`             | `TimeSeries::join_many(&[&a, &b, &c], Join::default())`                  |
 | `series.partitionBy('host')`                 | `series.partition_by(&["host"])`                                         |
 | `series.groupBy('host')` / `toMap()`         | `series.group_by(&["host"])` / `iter()`                                  |
 | `series.at(i).get('cpu')`                    | `series.column("cpu")?.numbers()?.get(i)`                                |
@@ -70,6 +72,8 @@ pond-rs returns an error instead.
   column, checked before anything runs. pond-ts looks at the column only
   when it meets a duplicate, and quietly keeps the first row if the column
   does not exist.
+- **`join_many` of no series** is an error that says so (pond-ts fails
+  reading `undefined`).
 - **A repeated rename.** `rename` with the same `from` twice is an error
   (pond-ts's object syntax cannot express it).
 
@@ -103,6 +107,10 @@ bug is logged in `PLAN.md` to fix there.
 - **`dedupe` has no custom keep function** yet (pond-ts takes a closure that
   builds the surviving row), and `align` / `materialize` take a range as an
   epoch-millisecond pair rather than a pond-ts `BoundedSequence`.
+- **Text labels in `join`** compare as Node's `localeCompare` does under
+  an English (or the root) locale. Node uses the machine's locale, so
+  pond-ts on a machine set to another language can order interval labels
+  differently; pond-rs always uses the root order.
 - **`align` with `Linear` holds exact decimal columns** instead of drawing a
   line through them, since a point between two decimals is generally not
   exact. pond-ts has no decimal kind.

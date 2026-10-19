@@ -452,9 +452,142 @@ fn main() -> Result<(), pond_rs::PondError> {
 }
 ```
 
+## Putting series side by side: `join`
+
+`join` puts the columns of two series next to each other, matching rows by
+key. The key and the series name come from the left series. The left
+series' value columns come first, then the right's, and every value column
+comes out optional, since a row may be missing on one side.
+
+`JoinType` picks which rows survive:
+
+| `how`             | Keeps                          |
+| ----------------- | ------------------------------ |
+| `Outer` (default) | every key found on either side |
+| `Inner`           | only keys found on both sides  |
+| `Left`            | every row of the left series   |
+| `Right`           | every row of the right series  |
+
+```rust
+use pond_rs::{Column, Join, JoinType, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cpu = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000],
+        vec![Column::required("cpu", vec![0.5, 0.6, 0.7])],
+    )?;
+    let mem = TimeSeries::new(
+        "mem",
+        vec![1_000, 2_000, 3_000],
+        vec![Column::required("mem", vec![40.0, 41.0, 42.0])],
+    )?;
+
+    // Only the times both have.
+    let both = cpu.join(&mem, Join { how: JoinType::Inner, ..Join::default() })?;
+    assert_eq!(both.key().begin(), &[1_000, 2_000]);
+    assert_eq!(both.name(), "cpu"); // the left series' name
+
+    // Every time either has; the missing side is a gap.
+    let all = cpu.join(&mem, Join::default())?;
+    assert_eq!(all.key().begin(), &[0, 1_000, 2_000, 3_000]);
+    let mem_col: Vec<_> = all.column("mem")?.numbers()?.iter().collect();
+    assert_eq!(mem_col, [None, Some(40.0), Some(41.0), Some(42.0)]);
+    let cpu_col: Vec<_> = all.column("cpu")?.numbers()?.iter().collect();
+    assert_eq!(cpu_col, [Some(0.5), Some(0.6), Some(0.7), None]);
+    Ok(())
+}
+```
+
+The rules, all as in pond-ts:
+
+- **Keys must match exactly.** A reading at 1,000 ms does not pair with one
+  at 1,001 ms. To join readings that are close but not equal, put both on
+  the same grid first with [`align` or `materialize`](#regular-grids-align-and-materialize).
+- **Both series need the same kind of key**: time with time, time range
+  with time range, interval with interval. The key names may differ.
+- **Repeated keys pair one to one, in order.** If time 5 appears twice on
+  the left and three times on the right, you get two matched rows and one
+  right-only row, not 2 × 3 = 6 rows. Use [`dedupe`](#duplicate-times-dedupe)
+  first if you want one row per time.
+- **Interval labels.** Interval keys match on begin, end and label. Text
+  labels compare the way JavaScript's `localeCompare` does in English (so
+  `"a"` sorts before `"B"`, and the two ways of writing `é` in Unicode are the
+  same label). Number labels sort before text ones. An outer join that would
+  mix number labels from one side with text labels from the other is an
+  error.
+
+### Two series with the same column name
+
+If both series have a column called `value`, the join refuses by default
+and names the column. `OnConflict::Prefix` renames each repeated column to
+`<prefix>_<name>`, one prefix per series; columns that are not repeated
+keep their names. You can also [`rename`](#changing-columns) one side
+yourself first.
+
+```rust
+use pond_rs::{Column, Join, OnConflict, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let a = TimeSeries::new(
+        "a",
+        vec![0, 1_000],
+        vec![
+            Column::required("value", vec![1.0, 2.0]),
+            Column::required("a_only", vec![9.0, 9.0]),
+        ],
+    )?;
+    let b = TimeSeries::new("b", vec![0, 1_000], vec![Column::required("value", vec![3.0, 4.0])])?;
+
+    let err = a.join(&b, Join::default()).unwrap_err();
+    assert!(err.to_string().contains("duplicate column names: value"));
+
+    let joined = a.join(
+        &b,
+        Join {
+            on_conflict: OnConflict::Prefix(vec!["a".into(), "b".into()]),
+            ..Join::default()
+        },
+    )?;
+    let names: Vec<_> = joined.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["a_value", "a_only", "b_value"]);
+    Ok(())
+}
+```
+
+### More than two: `join_many`
+
+`TimeSeries::join_many(&[&a, &b, &c], options)` joins left to right, as
+repeated `join` calls with the same `how`. Repeated names are found across
+all the series first, so `Prefix` takes one prefix per series. A list of
+one series comes back unchanged; an empty list is an error.
+
+```rust
+use pond_rs::{Column, Join, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let times = vec![0, 1_000];
+    let cpu = TimeSeries::new("cpu", times.clone(), vec![Column::required("cpu", vec![0.5, 0.6])])?;
+    let mem = TimeSeries::new("mem", times.clone(), vec![Column::required("mem", vec![40.0, 41.0])])?;
+    let disk = TimeSeries::new("disk", times, vec![Column::required("disk", vec![7.0, 8.0])])?;
+
+    let wide = TimeSeries::join_many(&[&cpu, &mem, &disk], Join::default())?;
+    let names: Vec<_> = wide.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["cpu", "mem", "disk"]);
+    assert_eq!(wide.len(), 2);
+    Ok(())
+}
+```
+
+`join` runs on one thread. When every row of a side lands in the output once
+and in order (always the left side of a `Left` join, and both sides when the
+keys match one for one), that side's columns are shared rather than copied.
+To bring across only some columns, [`select`](#changing-columns) them on
+the other side first. `join` is not on `PartitionedSeries`.
+
 ## What is not here yet
 
-From pond-ts, still to come: `join` (next), then the rest as people ask for them (`at` / `nearest` and
+From pond-ts, still to come, as people ask for them: `at` / `nearest` and
 other lookups, `within` / `trim`, `reduce`, `smooth`, `baseline` /
 `outliers`, `pivot_by_group`, array columns). Financial studies come after
 the core.
