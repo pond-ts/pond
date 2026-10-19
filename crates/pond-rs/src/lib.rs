@@ -20,6 +20,8 @@
 //! [`TimeSeries::materialize`] and collapsing repeated keys with
 //! [`TimeSeries::dedupe`], putting series side by side with
 //! [`TimeSeries::join`] / [`TimeSeries::join_many`],
+//! reading times written as text with [`parse_time`] / [`parse_time_in`]
+//! (as pond-ts `Time.parse`),
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
 //! [`ArrowKey`], [`TimeSeries::write_ipc`]). Results match
 //! pond-ts bit for bit; the parity
@@ -40,7 +42,7 @@
 //! column lives), and writing hands each column's buffer to Arrow.
 //!
 //! ```
-//! use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
+//! use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries, parse_time_in};
 //!
 //! let series = TimeSeries::new(
 //!     "cpu",
@@ -59,7 +61,8 @@
 //!
 //! // Calendar days in New York: the day clocks spring forward is 23 hours.
 //! let days = Sequence::calendar("day", "America/New_York")?;
-//! let keys = days.buckets_overlapping(1_772_946_000_000, 1_772_946_000_000)?; // 2026-03-08
+//! let day = parse_time_in("2026-03-08", "America/New_York")?; // its start, as epoch ms
+//! let keys = days.buckets_overlapping(day, day)?;
 //! assert_eq!(keys.end[0] - keys.begin[0], 23 * 3_600_000);
 //! # Ok::<(), pond_rs::PondError>(())
 //! ```
@@ -81,6 +84,7 @@ mod rows;
 mod rowwise;
 mod sequence;
 mod series;
+mod time_parse;
 
 pub use arrow::ArrowKey;
 pub use column::{
@@ -100,6 +104,7 @@ pub use series::{
     Column, ColumnDef, ColumnKind, IntervalKeys, Key, Labels, MAX_TIME_MS, TimeRangeKeys,
     TimeSeries,
 };
+pub use time_parse::{parse_time, parse_time_in};
 
 /// The version of this crate.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

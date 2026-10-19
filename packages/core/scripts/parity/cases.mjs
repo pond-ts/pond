@@ -170,6 +170,120 @@ const calendar = (unit, timeZone, weekStartsOn) => ({
 });
 
 /** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
+// `Time.parse(text, { timeZone })` over every pairing of these texts and
+// zones, recorded as `timeParse` (milliseconds, or the error's name). The
+// texts cover each of pond-ts's three local shapes (month, day, wall-clock
+// time), clock changes in both directions (including Santiago and São
+// Paulo, whose clocks once skipped midnight), sub-millisecond fractions
+// before 1970 (which round down), leap seconds, and the offset forms
+// Temporal accepts or refuses. Left out because pond-rs reads them
+// differently (pinned in its own tests): years beyond ±9999, times after
+// 9999-12-30, and offsets with fractions of a second.
+const TIME_PARSE_TEXTS = [
+  '2025-03',
+  '2025-13',
+  '2025-00',
+  '0000-01',
+  '2025-01-01',
+  '2025-02-30',
+  '2024-02-29',
+  '2025-04-31',
+  '1969-12-31',
+  '0000-01-01',
+  '0001-01-01',
+  '+002025-01-01',
+  '2025-1-1',
+  '  2025-01-01',
+  '2025-W01',
+  '2025-001',
+  '',
+  'abc',
+  '2025-03-30T02:30',
+  '2025-03-30 02:30',
+  '2025-03-30T02:00',
+  '2025-10-26T02:30',
+  '2025-03-09T02:30',
+  '2025-11-02T01:30',
+  '2011-12-30',
+  '2011-12-30T12:00',
+  '2011-12-31',
+  '2025-09-07',
+  '2025-09-07T00:00',
+  '2025-04-06T00:00',
+  '2025-04-05T23:30',
+  '2025-02-29T00:00',
+  '2025-01-01T09:00:00',
+  '2025-01-01T09:00:00.1',
+  '2025-01-01T09:00:00.123456789',
+  '2025-01-01T09:00:00.1234567890',
+  '1969-12-31T23:59:59.9995',
+  '1969-12-31T23:59:59.999999999',
+  '2025-01-01T23:59:60',
+  '2025-01-01T23:59:61',
+  '2025-01-01T24:00',
+  '2025-01-01T25:00',
+  '2025-01-01T23:60',
+  '2025-01-01T09',
+  '2025-01-01T9:00',
+  '2025-01-01T09:00:00.',
+  '2025-01-01T09:00:.5',
+  '1970-01-01T00:00:00Z',
+  '1969-12-31T23:59:59.9995Z',
+  '1969-12-31T23:59:59.999999999Z',
+  '2025-06-30T23:59:60Z',
+  '2025-01-01T09:00:60Z',
+  '2025-01-01T09Z',
+  '2025-01-01T0900Z',
+  '20250101T090000Z',
+  '2025-01-01T09:00Z',
+  '2025-01-01T09:00z',
+  '2025-01-01 09:00Z',
+  '2025-01-01t09:00Z',
+  '2025-01-01T09:00:00.000Z',
+  '2025-01-01T09:00:00,5Z',
+  '2025-01-01T09:00:00.Z',
+  '2025-01-01T09:00:00Z ',
+  'T09:00Z',
+  '2025-01-01T09:00:00+01:00',
+  '2025-01-01T09:00+01:00',
+  '2025-01-01T09:00:00+0100',
+  '2025-01-01T09:00:00+01',
+  '2025-01-01T09:00:00-00:00',
+  '2025-01-01T09:00:00+14:00',
+  '2025-01-01T09:00:00+25:00',
+  '2025-01-01T09:00:00+01:00:30',
+  '2025-01-01T09:00:00.5+05:30',
+  '2025-01-01T09:00:00.5-03:30',
+  '2025-01-01T09:00:00 +01:00',
+  '2025-01-01T09:00:00\u221201:00',
+  '2025-12-31T23:59:59.999999999+00:00',
+  '2025-01-01T09:00:00.123+00:00:00',
+  '-000001-01-01T00:00Z',
+  '9999-12-30T21:00Z',
+  '2025-01-01T09:00:00+01:00[Europe/Madrid]',
+  '2025-01-01T09:00:00+01:00[America/New_York]',
+  '2025-01-01T09:00:00+01:00[!Europe/Madrid]',
+  '2025-01-01T09:00:00Z[Foo/Bar]',
+  '2025-01-01T09:00:00Z[u-ca=gregory]',
+  '2025-01-01T09:00:00+01:00[u-ca=japanese]',
+  '2025-01-01T09:00:00+01:00[Europe/Madrid][u-ca=iso8601]',
+  '2025-01-01T09:00:00[Europe/Madrid]',
+  '2025-W01-1T00:00Z',
+  '2025-001T00:00Z',
+];
+const TIME_PARSE_ZONES = [
+  'UTC',
+  'Europe/Madrid',
+  'Europe/London',
+  'America/New_York',
+  'America/Santiago',
+  'America/Sao_Paulo',
+  'Asia/Kolkata',
+  'Pacific/Apia',
+  'Etc/GMT+5',
+  'Mars/Base',
+];
+
 const CASES = [
   // rolling: time window, trailing, keyed at each event
   ['rolling-3s-avg-sum', 'gappy', 'rolling', ['3s', { a: 'avg', b: 'sum' }]],
@@ -1634,7 +1748,7 @@ export function buildFixture(pond) {
       generator: 'packages/core/scripts/parity/generate.mjs',
       reference: 'pond-ts',
       encoding:
-        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Sequence.every(d) as {"sequence":{"every":d}} and Sequence.calendar(u, {timeZone, weekStartsOn}) as {"sequence":{"calendar":u,"timeZone":z,"weekStartsOn"?:w}}; a case has expected (series), groups ([key, series] pairs, from toMap / groupBy) or error ({name,message}); partitionBy args are [by, steps, end] with steps [[method, ...args]] run on the partitioned view and end "collect" or "toMap"; {"series":name} is another input series; joinMany args are [[others...], options?] and call TimeSeries.joinMany([input, ...others], options); exact unless tolerance is set',
+        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Sequence.every(d) as {"sequence":{"every":d}} and Sequence.calendar(u, {timeZone, weekStartsOn}) as {"sequence":{"calendar":u,"timeZone":z,"weekStartsOn"?:w}}; a case has expected (series), groups ([key, series] pairs, from toMap / groupBy) or error ({name,message}); partitionBy args are [by, steps, end] with steps [[method, ...args]] run on the partitioned view and end "collect" or "toMap"; {"series":name} is another input series; joinMany args are [[others...], options?] and call TimeSeries.joinMany([input, ...others], options); exact unless tolerance is set; timeParse holds Time.parse(input, {timeZone}) as expected (ms) or error (its name)',
     },
     inputs: Object.fromEntries(
       Object.entries(inputs).map(([name, series]) => [
@@ -1682,5 +1796,15 @@ export function buildFixture(pond) {
       }
       return { ...head, expected: encodeSeries(result) };
     }),
+    timeParse: TIME_PARSE_TEXTS.flatMap((input) =>
+      TIME_PARSE_ZONES.map((timeZone) => {
+        try {
+          const expected = pond.Time.parse(input, { timeZone }).timestamp;
+          return { input, timeZone, expected };
+        } catch (e) {
+          return { input, timeZone, error: e.name };
+        }
+      }),
+    ),
   };
 }
