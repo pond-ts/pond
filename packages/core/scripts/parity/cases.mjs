@@ -618,6 +618,192 @@ const CASES = [
     'withColumn',
     ['time', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]],
   ],
+  // partitionBy: [by, steps, end]. Each step is [method, ...args] run on the
+  // partitioned view; `end` is 'collect' (one series) or 'toMap' (groups).
+  // `hosts` has rows for three hosts at shared times (the tie order after
+  // collecting is partition order, not input order), one row with no host,
+  // and gaps.
+  ['partition-collect', 'hosts', 'partitionBy', ['host', [], 'collect']],
+  ['partition-toMap', 'hosts', 'partitionBy', ['host', [], 'toMap']],
+  [
+    'partition-fill-hold',
+    'hosts',
+    'partitionBy',
+    ['host', [['fill', 'hold']], 'collect'],
+  ],
+  [
+    'partition-fill-linear-map',
+    'hosts',
+    'partitionBy',
+    ['host', [['fill', { cpu: 'linear' }]], 'toMap'],
+  ],
+  [
+    'partition-diff',
+    'hosts',
+    'partitionBy',
+    ['host', [['diff', 'cpu']], 'collect'],
+  ],
+  [
+    'partition-diff-drop-then-cumulative',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [
+        ['diff', 'cpu', { drop: true }],
+        ['cumulative', { cpu: 'sum' }],
+      ],
+      'collect',
+    ],
+  ],
+  // Two drops leave a's first row (3000) before b's (5000): the partition
+  // order flips, which decides the tie order at 6000 and 21000.
+  [
+    'partition-two-drops',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [
+        ['diff', 'cpu', { drop: true }],
+        ['diff', 'mem', { drop: true }],
+      ],
+      'collect',
+    ],
+  ],
+  [
+    'partition-two-drops-toMap',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [
+        ['diff', 'cpu', { drop: true }],
+        ['diff', 'mem', { drop: true }],
+      ],
+      'toMap',
+    ],
+  ],
+  [
+    'partition-rate-pct',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [
+        ['rate', 'cpu'],
+        ['pctChange', 'mem'],
+      ],
+      'collect',
+    ],
+  ],
+  [
+    'partition-shift',
+    'hosts',
+    'partitionBy',
+    ['region', [['shift', 'cpu', 1]], 'collect'],
+  ],
+  [
+    'partition-composite-cumulative',
+    'hosts',
+    'partitionBy',
+    [['region', 'host'], [['cumulative', { mem: 'max' }]], 'toMap'],
+  ],
+  [
+    'partition-rolling',
+    'hosts',
+    'partitionBy',
+    ['host', [['rolling', '3s', { cpu: 'avg', mem: 'count' }]], 'collect'],
+  ],
+  [
+    'partition-rolling-names-host',
+    'hosts',
+    'partitionBy',
+    ['host', [['rolling', '3s', { host: 'last', cpu: 'sum' }]], 'collect'],
+  ],
+  [
+    'partition-aggregate',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [['aggregate', every('5s'), { cpu: 'avg', mem: 'max' }]],
+      'collect',
+    ],
+  ],
+  // Empty buckets get no host from the injected `first`, so the next split
+  // puts them in the missing-host partition.
+  [
+    'partition-aggregate-toMap',
+    'hosts',
+    'partitionBy',
+    ['host', [['aggregate', every('5s'), { cpu: 'sum' }]], 'toMap'],
+  ],
+  [
+    'partition-aggregate-then-diff',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [
+        ['aggregate', every('5s'), { cpu: 'sum' }],
+        ['diff', 'cpu'],
+      ],
+      'collect',
+    ],
+  ],
+  [
+    'partition-composite-aggregate',
+    'hosts',
+    'partitionBy',
+    [
+      ['region', 'up'],
+      [['aggregate', every('10s'), { cpu: 'max' }]],
+      'collect',
+    ],
+  ],
+  [
+    'partition-boolean',
+    'hosts',
+    'partitionBy',
+    ['up', [['diff', 'mem']], 'toMap'],
+  ],
+  [
+    'partition-number',
+    'hosts',
+    'partitionBy',
+    ['mem', [['cumulative', { cpu: 'count' }]], 'collect'],
+  ],
+  [
+    'partition-mixed-text',
+    'mixed',
+    'partitionBy',
+    ['site', [['fill', { host: 'hold', up: 'bfill' }]], 'collect'],
+  ],
+  [
+    'partition-ranges',
+    'ranges',
+    'partitionBy',
+    ['b', [['diff', 'a']], 'toMap'],
+  ],
+  [
+    'partition-labelled',
+    'labelled',
+    'partitionBy',
+    ['b', [['cumulative', { a: 'sum' }]], 'collect'],
+  ],
+  [
+    'partition-empty',
+    'emptyHosts',
+    'partitionBy',
+    ['host', [['aggregate', every('5s'), { cpu: 'avg' }]], 'collect'],
+  ],
+  ['partition-empty-toMap', 'emptyHosts', 'partitionBy', ['host', [], 'toMap']],
+  ['partition-error-none', 'hosts', 'partitionBy', [[], [], 'collect']],
+  ['partition-error-unknown', 'hosts', 'partitionBy', ['zz', [], 'collect']],
+  // groupBy: a missing value is the key 'undefined' (no leading space)
+  ['groupBy-host', 'hosts', 'groupBy', ['host']],
+  ['groupBy-up', 'hosts', 'groupBy', ['up']],
 ];
 
 /**
@@ -703,6 +889,37 @@ const MIXED_ROWS = Array.from({ length: 20 }, (_, i) => [
   i % 5 === 2 ? null : (i * 3) % 4 < 2,
   i % 6 === 4 ? null : i / 4,
 ]);
+
+// Three hosts reporting at shared times, interleaved so that the input order
+// at a shared time is not partition order, one row with no host, and gaps.
+const HOSTS_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'host', kind: 'string', required: false },
+  { name: 'region', kind: 'string' },
+  { name: 'up', kind: 'boolean' },
+  { name: 'cpu', kind: 'number', required: false },
+  { name: 'mem', kind: 'number', required: false },
+];
+const HOSTS_ROWS = [
+  [0, 'b', 'eu', true, 0.5, 10],
+  [0, 'a', 'eu', true, 0.25, 20],
+  [1000, 'a', 'eu', false, 0.75, 20],
+  [1000, 'b', 'eu', true, null, 12],
+  [2000, 'c', 'us', true, 1.5, 30],
+  [3000, 'a', 'eu', true, null, 22],
+  [3000, 'c', 'us', false, 1.25, null],
+  [4000, null, 'us', true, 9, 40],
+  [5000, 'b', 'eu', true, 0.5, 12],
+  [6000, 'b', 'eu', false, 0.0, 14],
+  [6000, 'a', 'eu', true, 1, 21],
+  [9000, 'c', 'us', true, 2, 31],
+  [9000, 'a', 'eu', true, 0.5, null],
+  [12000, 'b', 'eu', true, null, 16],
+  [13000, 'a', 'eu', false, 0.25, 24],
+  [20000, 'c', 'us', true, 3, 33],
+  [21000, 'a', 'eu', true, 0.75, 25],
+  [21000, 'b', 'eu', true, 1.25, 15],
+];
 
 /** Tag the numbers plain JSON would lose or change. */
 function encodeCell(cell) {
@@ -807,6 +1024,16 @@ export function buildFixture(pond) {
     }),
     ranges: rangesSeries(pond),
     labelled: labelledSeries(pond),
+    hosts: TimeSeries.fromJSON({
+      name: 'hosts',
+      schema: HOSTS_SCHEMA,
+      rows: HOSTS_ROWS,
+    }),
+    emptyHosts: TimeSeries.fromJSON({
+      name: 'emptyHosts',
+      schema: HOSTS_SCHEMA,
+      rows: [],
+    }),
     // A value column named `time` clashes with the key `asTime` makes.
     timeColumn: TimeSeries.fromJSON({
       name: 'timeColumn',
@@ -854,7 +1081,7 @@ export function buildFixture(pond) {
       generator: 'packages/core/scripts/parity/generate.mjs',
       reference: 'pond-ts',
       encoding:
-        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Sequence.every(d) as {"sequence":{"every":d}} and Sequence.calendar(u, {timeZone, weekStartsOn}) as {"sequence":{"calendar":u,"timeZone":z,"weekStartsOn"?:w}}; a case has expected (series) or error ({name,message}); exact unless tolerance is set',
+        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Sequence.every(d) as {"sequence":{"every":d}} and Sequence.calendar(u, {timeZone, weekStartsOn}) as {"sequence":{"calendar":u,"timeZone":z,"weekStartsOn"?:w}}; a case has expected (series), groups ([key, series] pairs, from toMap / groupBy) or error ({name,message}); partitionBy args are [by, steps, end] with steps [[method, ...args]] run on the partitioned view and end "collect" or "toMap"; exact unless tolerance is set',
     },
     inputs: Object.fromEntries(
       Object.entries(inputs).map(([name, series]) => [
@@ -872,9 +1099,27 @@ export function buildFixture(pond) {
       };
       let result;
       try {
-        result = inputs[input][op](...args.map(decode));
+        if (op === 'partitionBy') {
+          const [by, steps, end] = args;
+          let view = inputs[input].partitionBy(by);
+          for (const [method, ...rest] of steps) {
+            view = view[method](...rest.map(decode));
+          }
+          result = end === 'toMap' ? view.toMap() : view.collect();
+        } else {
+          result = inputs[input][op](...args.map(decode));
+        }
       } catch (e) {
         return { ...head, error: { name: e.name, message: e.message } };
+      }
+      if (result instanceof Map) {
+        return {
+          ...head,
+          groups: [...result].map(([key, series]) => [
+            key,
+            encodeSeries(series),
+          ]),
+        };
       }
       return { ...head, expected: encodeSeries(result) };
     }),

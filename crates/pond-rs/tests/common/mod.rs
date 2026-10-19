@@ -77,6 +77,23 @@ pub struct CoreCase {
     /// checked; the message is pond-ts's, kept for reference.
     #[serde(default)]
     pub error: Option<ErrorJson>,
+    /// The result when pond-ts returns groups (`toMap`, `groupBy`): each
+    /// key, as pond-ts writes it, with its series, in order.
+    #[serde(default)]
+    pub groups: Option<Vec<(String, SeriesJson)>>,
+}
+
+/// What an operation gave: one series, or keyed groups of them.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Outcome {
+    Series(SeriesJson),
+    Groups(Vec<(String, SeriesJson)>),
+}
+
+impl From<SeriesJson> for Outcome {
+    fn from(s: SeriesJson) -> Self {
+        Outcome::Series(s)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -86,18 +103,40 @@ pub struct ErrorJson {
     pub message: String,
 }
 
-/// Check one case's outcome: success must match `expected`, and a pond-ts
-/// error must be an error in pond-rs too.
-pub fn check_case(case: &CoreCase, actual: &Result<SeriesJson, String>) -> Result<(), String> {
-    match (&case.expected, &case.error, actual) {
-        (Some(expected), None, Ok(actual)) => compare_series(expected, actual, case.tolerance),
-        (Some(_), None, Err(why)) => Err(format!("pond-ts succeeds, pond-rs errored: {why}")),
-        (None, Some(e), Ok(_)) => Err(format!(
-            "pond-ts throws ({}: {}), pond-rs succeeded",
-            e.name, e.message
-        )),
-        (None, Some(_), Err(_)) => Ok(()),
-        _ => Err("fixture case must have exactly one of expected / error".to_string()),
+/// Check one case's outcome: success must match `expected` (or `groups`),
+/// and a pond-ts error must be an error in pond-rs too.
+pub fn check_case(case: &CoreCase, actual: &Result<Outcome, String>) -> Result<(), String> {
+    let wanted = match (&case.expected, &case.groups, &case.error) {
+        (Some(e), None, None) => Some(Outcome::Series(e.clone())),
+        (None, Some(g), None) => Some(Outcome::Groups(g.clone())),
+        (None, None, Some(_)) => None,
+        _ => return Err("fixture case must have exactly one of expected / groups / error".into()),
+    };
+    match (wanted, actual) {
+        (Some(Outcome::Series(e)), Ok(Outcome::Series(a))) => compare_series(&e, a, case.tolerance),
+        (Some(Outcome::Groups(e)), Ok(Outcome::Groups(a))) => {
+            if e.len() != a.len() {
+                return Err(format!("expected {} groups, got {}", e.len(), a.len()));
+            }
+            for (i, ((ek, es), (ak, as_))) in e.iter().zip(a).enumerate() {
+                if ek != ak {
+                    return Err(format!("group {i}: expected key {ek:?}, got {ak:?}"));
+                }
+                compare_series(es, as_, case.tolerance)
+                    .map_err(|why| format!("group {ek:?}: {why}"))?;
+            }
+            Ok(())
+        }
+        (Some(_), Ok(_)) => Err("pond-ts and pond-rs give different result shapes".into()),
+        (Some(_), Err(why)) => Err(format!("pond-ts succeeds, pond-rs errored: {why}")),
+        (None, Ok(_)) => {
+            let e = case.error.as_ref().unwrap();
+            Err(format!(
+                "pond-ts throws ({}: {}), pond-rs succeeded",
+                e.name, e.message
+            ))
+        }
+        (None, Err(_)) => Ok(()),
     }
 }
 

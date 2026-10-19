@@ -10,7 +10,7 @@ use std::ops::Range;
 
 use arrow_buffer::i256;
 
-use crate::column::{BooleanColumn, ColumnData, Decimal, DecimalColumn, StringColumn};
+use crate::column::{BooleanColumn, ColumnData, DecimalColumn, StringColumn, Value};
 use crate::duration::parse_duration;
 use crate::error::{PondError, Result};
 use crate::reducer::Reducer;
@@ -41,17 +41,7 @@ pub enum Fill {
     /// Zero. Number and decimal columns only.
     Zero,
     /// This value. Its kind must match the column's.
-    Value(FillValue),
-}
-
-/// A literal for [`Fill::Value`].
-#[derive(Debug, Clone, PartialEq)]
-pub enum FillValue {
-    Number(f64),
-    /// Must have the column's scale.
-    Decimal(Decimal),
-    String(String),
-    Boolean(bool),
+    Value(Value),
 }
 
 /// Caps on which runs of gaps [`TimeSeries::fill`] fills. A run that breaks
@@ -420,7 +410,7 @@ impl TimeSeries {
                                 Fill::Hold => v[run.start - 1],
                                 Fill::Bfill => v[run.end],
                                 Fill::Zero => 0.0,
-                                Fill::Value(FillValue::Number(x)) => *x,
+                                Fill::Value(Value::Number(x)) => *x,
                                 Fill::Linear => {
                                     let (t0, t1) = (times[run.start - 1], times[run.end]);
                                     let (before, after) = (v[run.start - 1], v[run.end]);
@@ -444,7 +434,7 @@ impl TimeSeries {
                             Fill::Hold => v[run.start - 1],
                             Fill::Bfill => v[run.end],
                             Fill::Zero => Some(0),
-                            Fill::Value(FillValue::Decimal(x)) => Some(x.value),
+                            Fill::Value(Value::Decimal(x)) => Some(x.value),
                             _ => unreachable!("checked by check_fill"),
                         };
                         v[run.clone()].fill(value);
@@ -457,7 +447,7 @@ impl TimeSeries {
                         let value = match fill {
                             Fill::Hold => v[run.start - 1],
                             Fill::Bfill => v[run.end],
-                            Fill::Value(FillValue::String(x)) => Some(x.as_str()),
+                            Fill::Value(Value::String(x)) => Some(x.as_str()),
                             _ => unreachable!("checked by check_fill"),
                         };
                         v[run.clone()].fill(value);
@@ -470,7 +460,7 @@ impl TimeSeries {
                         let value = match fill {
                             Fill::Hold => v[run.start - 1],
                             Fill::Bfill => v[run.end],
-                            Fill::Value(FillValue::Boolean(x)) => Some(*x),
+                            Fill::Value(Value::Boolean(x)) => Some(*x),
                             _ => unreachable!("checked by check_fill"),
                         };
                         v[run.clone()].fill(value);
@@ -685,8 +675,8 @@ fn check_fill(column: &Column, fill: &Fill) -> Result<()> {
         (Fill::Hold | Fill::Bfill, _) => true,
         (Fill::Linear, ColumnData::Number(_)) => true,
         (Fill::Zero, ColumnData::Number(_) | ColumnData::Decimal(_)) => true,
-        (Fill::Value(FillValue::Number(_)), ColumnData::Number(_)) => true,
-        (Fill::Value(FillValue::Decimal(x)), ColumnData::Decimal(d)) => {
+        (Fill::Value(Value::Number(_)), ColumnData::Number(_)) => true,
+        (Fill::Value(Value::Decimal(x)), ColumnData::Decimal(d)) => {
             if x.scale != d.scale() {
                 return Err(PondError::InvalidData {
                     call: "fill",
@@ -711,8 +701,8 @@ fn check_fill(column: &Column, fill: &Fill) -> Result<()> {
             }
             true
         }
-        (Fill::Value(FillValue::String(_)), ColumnData::String(_)) => true,
-        (Fill::Value(FillValue::Boolean(_)), ColumnData::Boolean(_)) => true,
+        (Fill::Value(Value::String(_)), ColumnData::String(_)) => true,
+        (Fill::Value(Value::Boolean(_)), ColumnData::Boolean(_)) => true,
         _ => false,
     };
     if ok {
@@ -733,7 +723,7 @@ fn check_fill(column: &Column, fill: &Fill) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{IntervalKeys, Labels, Sequence};
+    use crate::{Decimal, IntervalKeys, Labels, Sequence};
 
     fn decimals(values: Vec<Option<i128>>) -> TimeSeries {
         let times = (0..values.len() as i64).map(|i| i * 1000).collect();
@@ -823,7 +813,7 @@ mod tests {
                 &[
                     (
                         "d",
-                        Fill::Value(FillValue::Decimal(Decimal {
+                        Fill::Value(Value::Decimal(Decimal {
                             value: -5,
                             scale: 2,
                         })),
@@ -870,12 +860,12 @@ mod tests {
             ("host", Fill::Zero, "Zero does not apply to a string column"),
             (
                 "up",
-                Fill::Value(FillValue::Number(1.0)),
+                Fill::Value(Value::Number(1.0)),
                 "does not apply to a boolean",
             ),
             (
                 "d",
-                Fill::Value(FillValue::Decimal(Decimal { value: 1, scale: 3 })),
+                Fill::Value(Value::Decimal(Decimal { value: 1, scale: 3 })),
                 "scale 2",
             ),
         ] {
@@ -886,7 +876,7 @@ mod tests {
         let e = s.fill(&twice, &none).unwrap_err().to_string();
         assert!(e.contains("'host' is named twice"), "{e}");
         let e = s
-            .fill_all(Fill::Value(FillValue::Boolean(true)), &none)
+            .fill_all(Fill::Value(Value::Boolean(true)), &none)
             .unwrap_err();
         assert!(e.to_string().contains("per column"), "{e}");
         let e = s
@@ -997,7 +987,7 @@ mod tests {
         let narrow =
             DecimalColumn::with_type(vec![Some(1i128), None].into_iter().collect(), 5, 2).unwrap();
         let s = TimeSeries::new("s", vec![0, 1], vec![Column::optional("d", narrow)]).unwrap();
-        let big = Fill::Value(FillValue::Decimal(Decimal {
+        let big = Fill::Value(Value::Decimal(Decimal {
             value: 123_456_789,
             scale: 2,
         }));
@@ -1006,7 +996,7 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(e.contains("more than its 5 digits"), "{e}");
-        let ok = Fill::Value(FillValue::Decimal(Decimal {
+        let ok = Fill::Value(Value::Decimal(Decimal {
             value: 99_999,
             scale: 2,
         }));
