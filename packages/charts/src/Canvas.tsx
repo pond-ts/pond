@@ -4,7 +4,8 @@ import { useLayoutEffect, useRef, type CSSProperties } from 'react';
  * A draw callback. The 2D context it receives is already transformed to device
  * pixels, so draw in **CSS-pixel coordinates** (`0..width`, `0..height`) and it
  * renders crisply at any device-pixel ratio. The context is freshly transformed
- * and cleared before each invocation.
+ * and cleared before each invocation, and any state the callback sets (alpha,
+ * dash, clip, …) is discarded when it returns.
  */
 export type CanvasDraw = (
   ctx: CanvasRenderingContext2D,
@@ -36,9 +37,10 @@ export interface CanvasProps {
  * callback works in CSS-pixel coordinates, clears, and calls `draw`.
  *
  * Drawing runs in `useLayoutEffect` (synchronous, before paint) so there is no
- * flash of an unsized or empty canvas. Setting `canvas.width`/`height` resets
- * all context state, so the transform is re-applied on every run — see trap #7
- * in `docs/rfcs/charts.md`.
+ * flash of an unsized or empty canvas. The backing buffer is resized only when
+ * its device-pixel size changes (trap #7 in `docs/rfcs/charts.md`). A redraw at
+ * the same size therefore resets nothing by itself, so the transform is
+ * re-applied and the draw bracketed in `save`/`restore` on every run.
  */
 export function Canvas({
   width,
@@ -54,15 +56,26 @@ export function Canvas({
     if (!canvas) return;
     const ratio =
       dpr ?? (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1);
-    // Resizing the backing buffer clears it and resets context state, so this
-    // must happen before the transform + draw.
-    canvas.width = Math.round(width * ratio);
-    canvas.height = Math.round(height * ratio);
+    // Assigning `width`/`height` reallocates and clears the backing buffer even
+    // to the value it already holds, and `draw` changes on every data update,
+    // so assign only a dimension that moved.
+    const bufferWidth = Math.round(width * ratio);
+    const bufferHeight = Math.round(height * ratio);
+    if (canvas.width !== bufferWidth) canvas.width = bufferWidth;
+    if (canvas.height !== bufferHeight) canvas.height = bufferHeight;
     const ctx = canvas.getContext('2d');
     if (!ctx) return; // SSR / headless environments without a 2D backend
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    draw(ctx, width, height);
+    // Without a resize nothing resets the context between draws, so this is
+    // what stops one draw's state leaking into the next (and a leaked clip
+    // would also confine the `clearRect` above).
+    ctx.save();
+    try {
+      draw(ctx, width, height);
+    } finally {
+      ctx.restore();
+    }
   }, [width, height, dpr, draw]);
 
   return (

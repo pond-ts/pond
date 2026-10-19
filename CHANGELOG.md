@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.74.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.75.0...HEAD
+[0.75.0]: https://github.com/pond-ts/pond/compare/v0.74.0...v0.75.0
 [0.74.0]: https://github.com/pond-ts/pond/compare/v0.73.0...v0.74.0
 [0.73.0]: https://github.com/pond-ts/pond/compare/v0.72.0...v0.73.0
 [0.72.0]: https://github.com/pond-ts/pond/compare/v0.71.0...v0.72.0
@@ -77,6 +78,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+## [0.75.0] — 2026-10-19
+
 ### Changed
 
 - **`filter` is ~4–5× faster, and so is building a series from events.** On
@@ -123,6 +126,17 @@ include new features and type-level changes; patch bumps are strictly additive.
   either. Results can differ from before in the last digits; speed is within
   about ±10% (rolling `sum` ~12% slower in a microbenchmark, end-to-end runs
   unchanged).
+- **Charts: a streaming chart no longer rebuilds its canvas on every update.**
+  `<Canvas>` assigned `canvas.width` / `canvas.height` on every redraw, and the
+  platform reallocates and clears the backing buffer on every assignment, even
+  to the value it already has. Since a chart redraws whenever its data changes,
+  every row's canvas was rebuilt on every tick (a live-append chart in the e2e
+  suite made 120 same-size writes in 1.5 s; it now makes none, and every visual
+  baseline is unchanged). The buffer is now resized only when its device-pixel
+  size changes. Each draw is also bracketed
+  in `save` / `restore`, because nothing else now resets the context between
+  draws: a `<Canvas draw>` callback still starts from the default state every
+  time, with or without a resize.
 
 ## [0.74.0] — 2026-10-14
 
