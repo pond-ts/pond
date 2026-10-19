@@ -581,10 +581,25 @@ before = `main` at 5b5c87e, after = this change), 40 warm-up calls:
 | … then `sum(v)`            | 169.4 / 146.5 / 134.6 | 32.8 / 35.4 / 51.3 | 4.1× |
 
 With 5 warm-up calls the ratios are similar (3.2–5.2×, 8.3× for "then
-`.events`"). The pond-rs script itself on this container: `filter v > 500`
-118–135 ms before, 29–32 ms after. It reported 348–473 ms for the same script
-when it found this; I could not reproduce that figure here and did not find
-why.
+`.events`").
+
+**The pond-rs bench's 348–473 ms "before".** Its script (5 warm-ups) on
+this container: 17 runs on the build it measured (`main` at 3851ec0, before
+[PND-BOXFREE]) gave 132–175 ms in 15 runs and 294 / 312 ms in 2; with only
+the filter case kept in the script, 128–160 ms. 11 runs on the later `main`
+(5b5c87e) gave 121–166 ms. So that build and script _can_ read ~300 ms here,
+but only rarely, and never 348–473; what made every run slow on the pond-rs
+side was not found (warm-up count, data shape and build were ruled out: same
+script, same data, same build). On this change the same script gives 29–32 ms.
+
+**One storage difference, not a value difference.** A dictionary-encoded
+text column keeps the source's whole dictionary after `filter`
+(`StringColumn.sliceByIndices` shares it — the same as `slice` and
+`partitionBy`); the old rebuild re-encoded from the kept rows, which for a few
+kept rows meant plain text. Values read back the same, but `toArrow()` can now
+export the column as a dictionary listing values no kept row uses. Pinned by a
+test; compacting is the deferred `compactDictionary` op noted on
+`sliceByIndices`.
 
 Remaining floor: "keep none" (~11 ms) is the predicate walk over the source's
 events — the `Event`-taking predicate is the cost now, and a column-reading

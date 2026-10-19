@@ -312,3 +312,38 @@ describe('[PND-FILTERTAKE] SeriesStore with a dense event array', () => {
     expect(ss.eventAt(0)).toBe(first);
   });
 });
+
+describe('[PND-FILTERTAKE] storage of a filtered text column', () => {
+  it('keeps a dictionary-encoded column dictionary-encoded, like slice', () => {
+    const rows: Array<[number, string]> = [];
+    for (let i = 0; i < 5000; i += 1)
+      rows.push([i * 1000, ['A', 'B', 'C'][i % 3]!]);
+    const s = new TimeSeries({
+      name: 'x',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'sym', kind: 'string' },
+      ] as const,
+      rows,
+    });
+    const src = s.column('sym') as unknown as { dictionary?: unknown };
+    expect(src.dictionary).toBeDefined(); // guard: source is dict-encoded
+    const f = s.filter((e) => e.get('sym') !== 'A');
+    const col = f.column('sym') as unknown as {
+      dictionary?: ReadonlyArray<string>;
+    };
+    // Values are what the old path gave; the dictionary is shared with the
+    // source (it still lists 'A'), exactly as after `slice`.
+    expect(col.dictionary).toBe(src.dictionary);
+    expect(
+      (s.slice(0, 2).column('sym') as unknown as { dictionary?: unknown })
+        .dictionary,
+    ).toBe(src.dictionary);
+    expect(f.toJSON()).toEqual(
+      referenceFilter(
+        s as never,
+        ((e: { get(n: string): unknown }) => e.get('sym') !== 'A') as never,
+      ).toJSON(),
+    );
+  });
+});
