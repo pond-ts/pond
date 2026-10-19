@@ -601,7 +601,8 @@ The one result short of a clean win is one-core B: polars is faster
   3. **Row-wise operations**, split in two:
      - **3a** `diff`, `rate`, `pct_change`, `cumulative`, `shift`, `fill`
        (done, below).
-     - **3b** `filter`, `slice`, `with_column`, `map` (Rust closures).
+     - **3b** `filter`, `slice`, `with_column`, `map` (Rust closures)
+       (done, below).
 
   4. **Groups:**
      - `partition_by` (one or more columns), with per-partition `rolling` /
@@ -995,6 +996,65 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     - A column named twice in `cumulative` or `fill` is an error.
     - New `overflow` input pins that a sum stays a gap after it
       overflows.
+
+  **Step 3b (done): `slice`, `filter`, `with_column`, `map`.**
+  - Rust shapes (`src/rows.rs`):
+    - `slice(range)` takes any `i64` range (`2..5`, `-3..`, `..=-1`) with
+      pond-ts's `Array.prototype.slice` rules: negative counts from the
+      end, out of range clamps, a backwards range is empty. Never fails.
+    - `filter(|row| -> Result<bool>)`. The closure gets a `Row` (index,
+      begin, end, and `number` / `decimal` / `string` / `boolean` by
+      column name). It returns `Result` so a wrong name or kind is an
+      error passed through with `?`, not a panic. Chosen over a mask or
+      expression API because it is what pond-ts's event predicate does
+      and what an agent writes first.
+    - `rows()` / `row(i)` walk the same `Row`s. They stand in for
+      pond-ts's whole-row `map(schema, event => event)`: collect a new
+      column from `rows()` and add it with `with_column`. pond-rs has no
+      row objects to rebuild, so a row-rebuilding `map` would be slower
+      and no clearer.
+    - `with_column(Column)`: any kind, and `Column::required` /
+      `optional` decide; pond-ts's `withColumn` takes numbers only and
+      always makes the column optional. Same checks as building a series
+      (length, name taken by a column or the key, gap in a required
+      column); the column rules are now one function, `check_columns`.
+    - `map_numbers` / `map_strings` / `map_booleans` / `map_decimals`
+      (pond-ts `mapColumns`), one column per call. One method per kind
+      rather than one generic `map_column`: a generic one needs the
+      closure's argument type written out (`|v: f64|`), and the compiler
+      error without it does not say so. Gaps are not passed to the
+      closure. A number result that is not finite is a gap. A decimal
+      result must keep the column's scale and fit its precision.
+  - Deviations from pond-ts:
+    - A mapped column that gains a gap becomes optional; pond-ts keeps it
+      required and then cannot reload its own output ([PND-MAPREQ]).
+    - An empty `mapColumns` mapping cannot be written in Rust (one column
+      per call), so the harness stands in pond-ts's error for that case.
+  - Parity: 31 new cases (156 in all): 12 `slice` (every bound form, all
+    three key kinds), 9 `filter`, 5 `mapColumns` (one, the empty
+    mapping, is a stand-in error, so it tests nothing in pond-rs), 5
+    `withColumn`. Closures
+    cannot be stored in JSON, so a case names one of a few fixed closures
+    (`{ fn: { column: 'a', gt: 3 } }`, `{ fn: { mul: 2, add: 1 } }`, …);
+    `cases.mjs` and the harness each build the same closure from it.
+  - Perf (same 1M rows as 3a, median ms; pond-ts median of three runs):
+
+    | op | pond-rs | pond-ts |
+    | --- | --- | --- |
+    | filter v > 500, value read by name | 10.4 | 348–473 |
+    | filter, column fetched once | 4.0 | — |
+    | map_numbers v × 2 / mapColumns | 1.4 | 72–97 |
+    | with_column | 0.7 | 4.2–4.8 |
+    | slice middle half | 0.4 | 0.0 |
+
+    - `filter` reading by name looks the column up on every row (a scan
+      of the column names); fetching the column once is 2.6× faster. The
+      doc comment shows both.
+    - pond-ts `slice` copies nothing (a view over the same buffers);
+      pond-rs copies the key (shares the value columns).
+    - pond-ts `filter` rebuilds its column store from `Event` objects
+      ([PND-FILTERTAKE]); `mapColumns` is the boxed path under
+      [PND-BOXFREE].
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

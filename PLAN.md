@@ -571,9 +571,9 @@ the study oracle) is done.
   2. ~~Column kinds: (a) text and true/false columns (#771); (b)
      `TimeRange` keys and text interval labels (#772); (c) more Arrow
      input (#773); (d) exact decimals~~ — done.
-  3. Row-wise operations: ~~(a) `diff` / `rate` / `pct_change` /
-     `cumulative` / `shift` / `fill`~~ — done; (b) `filter` / `slice` /
-     `with_column` / `map`.
+  3. ~~Row-wise operations: (a) `diff` / `rate` / `pct_change` /
+     `cumulative` / `shift` / `fill` (#775); (b) `filter` / `slice` /
+     `with_column` / `map`~~ — done.
   4. `partition_by` / `group_by`, threaded across partitions.
   5. `align` / `materialize` / `dedupe`.
   6. `join`.
@@ -622,6 +622,23 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   finding 5), so both read the same file to the same schema. Until then they
   differ on every pyarrow / polars file (both mark fields nullable by
   default): pond-rs reads such columns as optional, pond-ts as required.
+- **[PND-MAPREQ]** — pond-ts `mapColumns` keeps a column marked required
+  even when the mapping leaves a gap (a non-finite result is stored as a
+  gap), so its own `toJSON` → `fromJSON` round trip then throws ("row 3 col
+  1 (value) is required"). Repro: parity case `mapColumns-overflow`
+  (`v => v * 1e308 + 1e308` on a required column). Same class as
+  [PND-ARROWREQ]. pond-rs makes the column optional when a gap appears;
+  pond-ts should do the same. Found 2026-10-19 (pond-rs R1b step 3b).
+- **[PND-FILTERTAKE]** — pond-ts `filter` takes 230–470 ms on 1M rows
+  (pond-rs: 4–10 ms). A CPU profile puts about half the time in rebuilding
+  the column store from the kept `Event` objects
+  (`buildSeriesStoreFromEvents`, via `#fromTrustedEvents`), a fifth in the
+  predicate loop, and 14% in garbage collection. Proposed fix: collect the
+  kept row numbers and copy those rows out of each column, as `slice`'s
+  `withRowRange` does for a range; the predicate can still be handed
+  `Event`s. Repro: `crates/pond-rs/bench/rowwise_pond_ts.mjs`. Found
+  2026-10-19 (pond-rs R1b step 3b). `mapColumns` (72–97 ms vs pond-rs
+  1.4 ms) is the boxed path already listed under [PND-BOXFREE].
 
 ### `@pond-ts/financial`
 

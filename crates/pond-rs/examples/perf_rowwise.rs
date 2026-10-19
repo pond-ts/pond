@@ -5,7 +5,9 @@
 //!     cargo run --release -p pond-rs --example perf_rowwise
 //!
 //! Cost: each op is one O(N) pass over the column (fill: one pass to find
-//! runs, one to fill them), plus an O(N) copy of the key for `FirstRow::Drop`.
+//! runs, one to fill them), plus an O(N) copy of the key for `FirstRow::Drop`
+//! and `slice`. `filter` is one pass to choose rows plus a copy of the kept
+//! rows; `with_column` is one pass to check the new column.
 
 use std::time::Instant;
 
@@ -53,6 +55,8 @@ fn main() -> pond_rs::Result<()> {
     let sum: f64 = s.column("v")?.numbers()?.iter().flatten().sum();
     println!("{ROWS} rows, {gaps} gaps, sum {sum}");
     let none = FillLimits::none();
+    let v_col = s.column("v")?.numbers()?.clone();
+    let extra = Column::optional_raw("w", s.column("v")?.numbers()?.values().to_vec());
     type Case<'a> = (&'a str, Box<dyn Fn() + 'a>);
     let cases: Vec<Case> = vec![
         (
@@ -92,6 +96,36 @@ fn main() -> pond_rs::Result<()> {
                         .unwrap(),
                 )
             }),
+        ),
+        (
+            "filter v > 500 (by name)",
+            Box::new(|| {
+                drop(
+                    s.filter(|r| Ok(r.number("v")?.is_some_and(|x| x > 500.0)))
+                        .unwrap(),
+                )
+            }),
+        ),
+        (
+            "filter v > 500 (column fetched once)",
+            Box::new(|| {
+                drop(
+                    s.filter(|r| Ok(v_col.get(r.index()).is_some_and(|x| x > 500.0)))
+                        .unwrap(),
+                )
+            }),
+        ),
+        (
+            "map_numbers v * 2",
+            Box::new(|| drop(s.map_numbers("v", |x| x * 2.0).unwrap())),
+        ),
+        (
+            "with_column",
+            Box::new(|| drop(s.with_column(extra.clone()).unwrap())),
+        ),
+        (
+            "slice middle half",
+            Box::new(|| drop(s.slice(250_000..750_000))),
         ),
     ];
     for (name, f) in cases {

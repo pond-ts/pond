@@ -216,9 +216,9 @@ impl TimeSeries {
             };
             out[c] = Column::from_data(column.name().to_string(), data, false);
         }
-        let result = self.with_columns(out);
+        let result = self.with_value_columns(out);
         Ok(match first {
-            FirstRow::Drop if n > 0 => result.rows(1..n),
+            FirstRow::Drop if n > 0 => result.row_range(1..n),
             _ => result,
         })
     }
@@ -242,7 +242,7 @@ impl TimeSeries {
             let column = &self.columns()[c];
             out[c] = Column::from_data(column.name().to_string(), column.data().take(&rows), false);
         }
-        Ok(self.with_columns(out))
+        Ok(self.with_value_columns(out))
     }
 
     /// Running totals down each named column (pond-ts `cumulative`):
@@ -298,7 +298,7 @@ impl TimeSeries {
             };
             out[c] = Column::from_data(column.name().to_string(), data, false);
         }
-        Ok(self.with_columns(out))
+        Ok(self.with_value_columns(out))
     }
 
     /// A running fold of your own down one number column (pond-ts
@@ -340,7 +340,7 @@ impl TimeSeries {
             .collect();
         let mut out = self.columns().to_vec();
         out[c] = Column::from_data(source.name().to_string(), ColumnData::from(folded), false);
-        Ok(self.with_columns(out))
+        Ok(self.with_value_columns(out))
     }
 
     /// Fill runs of gaps in the named columns (pond-ts `fill({ col:
@@ -480,7 +480,7 @@ impl TimeSeries {
             };
             out[c] = Column::from_data(column.name().to_string(), filled, column.is_required());
         }
-        Ok(self.with_columns(out))
+        Ok(self.with_value_columns(out))
     }
 
     /// The value columns named, as indexes; an error for none or an unknown
@@ -499,7 +499,7 @@ impl TimeSeries {
     }
 
     /// This series with its value columns replaced.
-    fn with_columns(&self, columns: Vec<Column>) -> TimeSeries {
+    pub(crate) fn with_value_columns(&self, columns: Vec<Column>) -> TimeSeries {
         TimeSeries::from_parts(
             self.name().to_string(),
             self.key_name().to_string(),
@@ -510,7 +510,7 @@ impl TimeSeries {
 
     /// The rows in `range`, key and columns together. Value columns share
     /// their buffers with this series; the key is copied.
-    pub(crate) fn rows(&self, range: Range<usize>) -> TimeSeries {
+    pub(crate) fn row_range(&self, range: Range<usize>) -> TimeSeries {
         let columns = self
             .columns()
             .iter()
@@ -970,7 +970,7 @@ mod tests {
         let got: Vec<_> = d.column("v").unwrap().numbers().unwrap().iter().collect();
         assert_eq!(got, [Some(1.0), Some(2.0)]);
         // Number labels too, and an empty series drops nothing.
-        let empty = s.rows(0..0);
+        let empty = s.row_range(0..0);
         assert_eq!(empty.diff(&["v"], FirstRow::Drop).unwrap().len(), 0);
         let agg = TimeSeries::new(
             "t",
@@ -1038,7 +1038,7 @@ mod tests {
             ],
         )
         .unwrap();
-        let cut = s.rows(1..4);
+        let cut = s.row_range(1..4);
         // The same as copying rows 1..4 one by one.
         let rows: Vec<Option<usize>> = (1..4).map(Some).collect();
         for (sliced, full) in cut.columns().iter().zip(s.columns()) {
