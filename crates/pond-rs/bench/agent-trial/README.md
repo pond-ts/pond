@@ -1,5 +1,8 @@
 # R1a agent trial
 
+The R1b step 4b trial on a partitioned workload (top-20 z-scores across 500
+symbols) is in [`q11/`](q11/README.md).
+
 The last R1a target (RFC `docs/rfcs/pond-rs.md`, Amendment 1): _on workload B,
 an agent given pond-rs reaches the right answer at least as often as one given
 polars, with fewer retries (10 runs each side)._

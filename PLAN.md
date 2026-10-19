@@ -574,9 +574,9 @@ the study oracle) is done.
   3. ~~Row-wise operations: (a) `diff` / `rate` / `pct_change` /
      `cumulative` / `shift` / `fill` (#775); (b) `filter` / `slice` /
      `with_column` / `map`~~ — done.
-  4. Groups: (a) ~~`partition_by` / `group_by`, threaded across
-     partitions~~ — done; (b) agent trial on the partitioned workload
-     ([PND-AGENTBENCH] Q11).
+  4. ~~Groups: (a) `partition_by` / `group_by`, threaded across
+     partitions (#778); (b) agent trial on the partitioned workload
+     ([PND-AGENTBENCH] Q11)~~ — done.
   5. `align` / `materialize` / `dedupe`.
   6. `join`.
   7. The rest, as friction asks.
@@ -643,6 +643,22 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   ties) and copy each column by those row numbers, as pond-rs does.
   Repro: `crates/pond-rs/bench/partition_pond_ts.mjs`. Found 2026-10-19
   (pond-rs R1b step 4a).
+- **[PND-FLATSTDEV]** — rolling `stdev` (pond-ts and pond-rs alike, same
+  bits) over a window of identical values is not exactly 0 once different
+  values have left the window: ~1e-16 of the value (`5.1e-16` for a flat
+  window at 0.1, `1.7e-10` at 123456.789). The running sums carry rounding
+  from the values that left. Callers that divide by it (z-scores) or test
+  `sd > 0` get a meaningless value instead of a skip. Options: return exactly 0
+  when the window is flat (needs a cheap flatness check), or document it.
+  Found 2026-10-19 (pond-rs R1b step 4b agent trial: 5 of 10 agents
+  guarded against it).
+- **[PND-RUSTQ11]** — pond-rs friction from the step 4b agent trial
+  (counts out of 10 agents): no way to write a small ranked table that is
+  not a time series, so all 10 built Arrow by hand (10); no "value at the
+  latest row of each partition" helper (9); partition keys need a
+  `Some(Value::String(..))` match (6); docs do not say `rolling` keeps
+  only its outputs (2, one failed run). Candidates for R1b step 7; the
+  last is a doc fix. Detail in `docs/plans/PND_RUST_PLAN.md` step 4b.
 
 ### `@pond-ts/financial`
 
