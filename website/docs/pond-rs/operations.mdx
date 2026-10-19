@@ -1,0 +1,347 @@
+---
+id: operations
+title: Operations
+sidebar_position: 4
+description: Everything pond-rs can do to a series today — rolling windows, fixed and calendar buckets, reducers, diff / rate / fill and friends, filter, slice, map, select and rename.
+---
+
+# Operations
+
+Every operation takes a series and returns a new one. Column names are
+plain strings, durations are short strings like `"500ms"`, `"30s"`, `"5m"`,
+`"1h"` or `"1d"`, and every call returns a `Result`.
+
+## Rolling windows
+
+`rolling(window, aggs)` looks back from each row: for a row at time `t` it
+reduces the rows with time in `(t - window, t]`. The result has the same
+rows as the input, with one new column per `Agg`.
+
+```rust
+use pond_rs::{Agg, Column, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![Column::optional(
+            "load",
+            vec![Some(1.0), None, Some(3.0), Some(5.0)],
+        )],
+    )?;
+
+    let r = s.rolling(
+        "2s",
+        &[
+            Agg::new("load_avg", "load", Reducer::Avg),
+            Agg::new("load_n", "load", Reducer::Count),
+        ],
+    )?;
+
+    // At 3s the window (1s, 3s] holds 3.0 and 5.0; the gap at 1s is skipped.
+    assert_eq!(r.column("load_avg")?.numbers()?.get(3), Some(4.0));
+    assert_eq!(r.column("load_n")?.numbers()?.get(3), Some(2.0));
+    // At 1s the window (-1s, 1s] holds only 1.0.
+    assert_eq!(r.column("load_avg")?.numbers()?.get(1), Some(1.0));
+    Ok(())
+}
+```
+
+`Agg::new(output, source, reducer)` names the output column.
+`Agg::of(source, reducer)` reuses the source's name, like pond-ts's
+`{ load: 'avg' }`.
+
+## Buckets: `aggregate`
+
+`aggregate(sequence, aggs)` puts each row in the bucket that holds it
+(`begin <= t < end`) and reduces each bucket to one row. Buckets run from
+the one holding the first row to the one holding the last, **including
+empty buckets in between**, so a missing hour shows up as a row rather than
+disappearing. An empty bucket gives `count` 0, `sum` 0 and a gap for every
+other reducer.
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    // Readings in minutes 0 and 2; nothing in minute 1.
+    let s = TimeSeries::new(
+        "req",
+        vec![0, 30_000, 2 * minute],
+        vec![Column::required("ms", vec![120.0, 80.0, 200.0])],
+    )?;
+
+    let per_minute = s.aggregate(
+        &Sequence::every("1m")?,
+        &[
+            Agg::new("n", "ms", Reducer::Count),
+            Agg::new("avg", "ms", Reducer::Avg),
+            Agg::new("p95", "ms", Reducer::Percentile(95.0)),
+        ],
+    )?;
+
+    assert_eq!(per_minute.len(), 3); // minute 1 is there, empty
+    let n: Vec<_> = per_minute.column("n")?.numbers()?.iter().collect();
+    let avg: Vec<_> = per_minute.column("avg")?.numbers()?.iter().collect();
+    assert_eq!(n, [Some(2.0), Some(0.0), Some(1.0)]);
+    assert_eq!(avg, [Some(100.0), None, Some(200.0)]);
+    Ok(())
+}
+```
+
+### Fixed-length buckets
+
+`Sequence::every("15m")` gives 15-minute buckets lined up with Unix time 0
+(so on :00, :15, :30, :45 in UTC). `Sequence::every_ms(n)` takes
+milliseconds. `.with_anchor(t)` shifts the grid so a bucket starts at `t`.
+
+### Calendar buckets
+
+`Sequence::calendar(unit, time_zone)` gives calendar buckets in an IANA
+time zone: `"day"`, `"week"`, `"month"`, `"quarter"` or `"year"`. A New York
+day is 23 hours on the day the clocks go forward and 25 on the day they go
+back; months have their real lengths. Weeks start on Monday;
+`.with_week_start(7)` starts them on Sunday (ISO numbering, 1 = Monday).
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let hour = 3_600_000_i64;
+    // Hourly sales for 50 hours from Saturday 24 October 2026, 00:00 in
+    // London (still summer time, so 23:00 UTC the day before).
+    let start = 1_792_796_400_000_i64;
+    let times: Vec<i64> = (0..50).map(|h| start + h * hour).collect();
+    let s = TimeSeries::new(
+        "sales",
+        times,
+        vec![Column::required("units", vec![1.0; 50])],
+    )?;
+
+    let days = s.aggregate(
+        &Sequence::calendar("day", "Europe/London")?,
+        &[Agg::new("units", "units", Reducer::Sum)],
+    )?;
+    // UK clocks go back on Sunday 25 October, so that day has 25 hours.
+    let sums: Vec<_> = days.column("units")?.numbers()?.iter().collect();
+    assert_eq!(sums, [Some(24.0), Some(25.0), Some(1.0)]);
+    Ok(())
+}
+```
+
+Time-zone rules come from the time-zone database built into pond-rs
+(`pond_rs::tzdb_version()` says which release). pond-ts uses the one in its
+JavaScript engine; if the two releases disagree about a zone's history, the
+buckets will too.
+
+### Reducers
+
+| Reducer                   | Gives                                             | Also works on               |
+| ------------------------- | ------------------------------------------------- | --------------------------- |
+| `Count`                   | how many values (gaps not counted)                | every kind                  |
+| `Sum`                     | total; 0 when there are no values                 | decimals (exact)            |
+| `Avg`                     | mean                                              | decimals (as a number)      |
+| `Min`, `Max`              | smallest, largest                                 | decimals (exact)            |
+| `First`, `Last`           | first or last value in the window or bucket       | every kind (keeps the kind) |
+| `Median`, `Percentile(q)` | the middle value, or the `q`th percentile (0–100) | decimals (as a number)      |
+| `Stdev`                   | standard deviation (population, divides by n)     | decimals (as a number)      |
+
+On text and true/false columns only `Count`, `First` and `Last` are
+allowed; anything else is an error naming the column. `Reducer::parse("p95")`
+and `"avg".parse::<Reducer>()` turn pond-ts's reducer names into a
+`Reducer`.
+
+## Row by row
+
+These compare each row with the one before it, or carry a running value
+down the column. They take a list of columns; other columns pass through
+unchanged.
+
+| Call                            | Each row gets                                          |
+| ------------------------------- | ------------------------------------------------------ |
+| `diff(&cols, first)`            | value minus the previous row's                         |
+| `rate(&cols, first)`            | change per second of key time                          |
+| `pct_change(&cols, first)`      | change as a fraction of the previous value (not × 100) |
+| `shift(&cols, n)`               | the value from `n` rows up (negative `n`: rows down)   |
+| `cumulative(&[(col, reducer)])` | running `Sum`, `Min`, `Max` or `Count`                 |
+| `cumulative_with(col, closure)` | a running value of your own                            |
+| `fill(&[(col, Fill)], &limits)` | gaps filled by a rule                                  |
+
+`first` is `FirstRow::Keep` (the first row stays, with a gap) or
+`FirstRow::Drop` (it is removed). "Previous row" means the row directly
+above, not the last row with a value, so a gap on either side gives a gap.
+
+```rust
+use pond_rs::{Column, FirstRow, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // A counter read every 10 seconds; one reading is missing.
+    let s = TimeSeries::new(
+        "bytes",
+        vec![0, 10_000, 20_000, 30_000],
+        vec![Column::optional(
+            "total",
+            vec![Some(100.0), Some(400.0), None, Some(1_000.0)],
+        )],
+    )?;
+
+    let per_second = s.rate(&["total"], FirstRow::Keep)?;
+    let got: Vec<_> = per_second.column("total")?.numbers()?.iter().collect();
+    assert_eq!(got, [None, Some(30.0), None, None]);
+
+    let running = s.cumulative(&[("total", Reducer::Max)])?;
+    let got: Vec<_> = running.column("total")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(100.0), Some(400.0), Some(400.0), Some(1_000.0)]);
+    Ok(())
+}
+```
+
+### Filling gaps
+
+`Fill` says how: `Hold` (carry the last value forward), `Bfill` (take the
+next value), `Linear` (a straight line by time between the values either
+side; numbers only), `Zero`, or `Value(..)` (a fixed value of the column's
+kind). `FillLimits` caps which runs of gaps get filled; a run that is too
+long is left entirely as it was, never half filled.
+
+```rust
+use pond_rs::{Column, Fill, FillLimits, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let times: Vec<i64> = (0..7).map(|m| m * minute).collect();
+    let s = TimeSeries::new(
+        "temp",
+        times,
+        vec![Column::optional(
+            "c",
+            vec![
+                Some(20.0),
+                None,
+                Some(22.0), // a 1-row gap
+                None,
+                None,
+                None,
+                Some(30.0), // a 3-row gap
+            ],
+        )],
+    )?;
+
+    // Fill straight lines, but only across gaps of at most 2 minutes
+    // (measured from the value before to the value after).
+    let filled =
+        s.fill(&[("c", Fill::Linear)], &FillLimits::none().max_gap("2m"))?;
+    let got: Vec<_> = filled.column("c")?.numbers()?.iter().collect();
+    assert_eq!(
+        got,
+        [
+            Some(20.0),
+            Some(21.0),
+            Some(22.0),
+            None,
+            None,
+            None,
+            Some(30.0)
+        ]
+    );
+    Ok(())
+}
+```
+
+`fill_all(Fill::Hold, &limits)` applies one rule to every column.
+
+## Picking rows
+
+`slice(range)` picks rows by position, with negative positions counting
+from the end, as JavaScript's `slice` does. `filter(closure)` keeps the rows
+for which the closure returns `Ok(true)`; the closure gets a `Row` and can
+use `?` on its lookups.
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![
+            Column::required("host", vec!["a", "b", "a", "b"]),
+            Column::optional(
+                "load",
+                vec![Some(0.2), None, Some(0.9), Some(0.7)],
+            ),
+        ],
+    )?;
+
+    assert_eq!(s.slice(-2..).key().begin(), &[2_000, 3_000]); // the last two
+    assert_eq!(s.slice(1..3).len(), 2);
+
+    let busy = s.filter(|r| Ok(r.number("load")?.is_some_and(|v| v > 0.5)))?;
+    assert_eq!(busy.key().begin(), &[2_000, 3_000]);
+
+    // Faster for big series: look the column up once, then index by row.
+    let host = s.column("host")?.strings()?;
+    let only_a = s.filter(|r| Ok(host.get(r.index()) == Some("a")))?;
+    assert_eq!(only_a.len(), 2);
+    Ok(())
+}
+```
+
+## Changing columns
+
+- `map_numbers(col, |v| ..)` applies a function to every value of a number
+  column. Gaps stay gaps and are not passed in; a `NaN` result becomes a
+  gap. `map_strings`, `map_booleans` and `map_decimals` do the same for the
+  other kinds.
+- `with_column(Column)` adds a column you built yourself; it must be as
+  long as the series.
+- `select(&cols)` keeps only the named columns (in their existing order),
+  `rename(&[(from, to)])` renames them, and `as_time(At::Begin)` turns an
+  interval or time-range key into a plain time.
+
+```rust
+use pond_rs::{Agg, At, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "t",
+        vec![0, 30_000, 60_000],
+        vec![
+            Column::optional("celsius", vec![Some(20.0), None, Some(25.0)]),
+            Column::required("site", vec!["x", "x", "y"]),
+        ],
+    )?;
+
+    let f = s.map_numbers("celsius", |c| c * 1.8 + 32.0)?;
+    assert_eq!(f.column("celsius")?.numbers()?.get(0), Some(68.0));
+
+    // Add a column computed from another one.
+    let celsius = s.column("celsius")?.numbers()?;
+    let hot: Vec<Option<bool>> =
+        celsius.iter().map(|c| c.map(|c| c > 22.0)).collect();
+    let with_hot = s.with_column(Column::optional("hot", hot))?;
+    assert_eq!(with_hot.column("hot")?.booleans()?.get(2), Some(true));
+
+    // Per-minute averages, renamed, keyed by each minute's start.
+    let per_minute = s
+        .aggregate(
+            &Sequence::every("1m")?,
+            &[Agg::of("celsius", Reducer::Avg)],
+        )?
+        .rename(&[("celsius", "avg_c")])?
+        .as_time(At::Begin)?;
+    assert_eq!(per_minute.key_name(), "time");
+    assert_eq!(per_minute.key().begin(), &[0, 60_000]);
+    assert_eq!(per_minute.select(&["avg_c"])?.columns().len(), 1);
+    Ok(())
+}
+```
+
+## What is not here yet
+
+From pond-ts, still to come: `align`, `materialize` and `dedupe` (next),
+then `join`, then the rest as people ask for them (`at` / `nearest` and
+other lookups, `within` / `trim`, `reduce`, `smooth`, `baseline` /
+`outliers`, `pivot_by_group`, array columns). Financial studies come after
+the core.

@@ -1,0 +1,196 @@
+---
+id: series-and-columns
+title: Series and columns
+sidebar_position: 3
+description: How a pond-rs TimeSeries is laid out — the key (time, time range or interval), value columns of numbers, decimals, text or true/false, and gaps.
+---
+
+# Series and columns
+
+A `TimeSeries` is a table with one special column, the **key**, that says
+when each row happened, and any number of **value columns**. Rows are kept
+in key order. A series never changes: every operation returns a new one,
+and unchanged columns are shared with the old one rather than copied.
+
+## The key: three kinds
+
+| Key kind   | Each row is…                                        | Built with                     | Key column name |
+| ---------- | --------------------------------------------------- | ------------------------------ | --------------- |
+| Time       | a moment                                            | `TimeSeries::new`              | `time`          |
+| Time range | a span from `begin` to `end`                        | `TimeSeries::from_time_ranges` | `timeRange`     |
+| Interval   | a span `[begin, end)` with a label (number or text) | `TimeSeries::from_intervals`   | `interval`      |
+
+All times are **epoch milliseconds** (`i64`), always UTC. Time zones only
+come in when you ask for calendar buckets
+([Operations](./operations#calendar-buckets)).
+
+`aggregate` returns an interval-keyed series: each bucket is an interval
+labelled by its start. `as_time` turns one back into a time-keyed series.
+
+```rust
+use pond_rs::{Column, IntervalKeys, Key, TimeRangeKeys, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Moments.
+    let readings = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000],
+        vec![Column::required("load", vec![0.5, 0.7, 0.6])],
+    )?;
+    assert_eq!(readings.key_name(), "time");
+
+    // Spans: two outages.
+    let outages = TimeSeries::from_time_ranges(
+        "outages",
+        TimeRangeKeys {
+            begin: vec![0, 5_000],
+            end: vec![2_000, 5_500],
+        },
+        vec![Column::required("hosts", vec![3.0, 1.0])],
+    )?;
+    assert_eq!(outages.key_name(), "timeRange");
+
+    // Labelled spans: two days.
+    let days = TimeSeries::from_intervals(
+        "days",
+        IntervalKeys {
+            label: vec!["mon", "tue"].into(),
+            begin: vec![0, 86_400_000],
+            end: vec![86_400_000, 172_800_000],
+        },
+        vec![Column::required("total", vec![12.0, 7.5])],
+    )?;
+
+    // `key()` gives the key back. `begin()` works for every kind;
+    // `end()` is `None` for moments.
+    assert_eq!(days.key().begin(), &[0, 86_400_000]);
+    assert_eq!(readings.key().end(), None);
+    if let Key::Interval(keys) = days.key() {
+        assert_eq!(keys.label.strings().unwrap().get(1), Some("tue"));
+    }
+    Ok(())
+}
+```
+
+Rules checked when a series is built: keys in order (by `begin`, then
+`end`), each `end` not before its `begin`, times within about 273,000 years
+either side of 1970 (`MAX_TIME_MS`, the same limit as a JavaScript `Date`), and every column as long as the key.
+
+## Value columns: four kinds
+
+| Kind       | Rust values                   | Read back with | Gives             |
+| ---------- | ----------------------------- | -------------- | ----------------- |
+| Number     | `f64`                         | `.numbers()?`  | `Option<f64>`     |
+| Decimal    | whole numbers + a fixed scale | `.decimals()?` | `Option<Decimal>` |
+| Text       | `&str` / `String`             | `.strings()?`  | `Option<&str>`    |
+| True/false | `bool`                        | `.booleans()?` | `Option<bool>`    |
+
+`Column::required(name, values)` and `Column::optional(name, values)`
+accept a `Vec` (or array) of any of these, plain or wrapped in `Option`.
+The kind comes from the values; there is no schema to write.
+
+```rust
+use pond_rs::{Column, ColumnKind, DecimalColumn, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // 19.99 and 5.25, stored exactly as 1999 and 525 at scale 2.
+    let prices = DecimalColumn::from_values(vec![1999, 525], 2)?;
+
+    let orders = TimeSeries::new(
+        "orders",
+        vec![0, 60_000],
+        vec![
+            Column::required("qty", vec![3.0, 1.0]),
+            Column::required("price", prices),
+            Column::optional("coupon", vec![Some("SPRING"), None]),
+            Column::required("paid", vec![true, false]),
+        ],
+    )?;
+
+    assert_eq!(orders.column("coupon")?.kind(), ColumnKind::String);
+    assert_eq!(orders.column("coupon")?.strings()?.get(1), None); // a gap
+    assert_eq!(
+        orders
+            .column("price")?
+            .decimals()?
+            .get(0)
+            .unwrap()
+            .to_string(),
+        "19.99"
+    );
+    assert_eq!(orders.column("paid")?.booleans()?.get(1), Some(false));
+
+    // Asking for the wrong kind is an error, not a silent conversion.
+    let err = orders.column("coupon")?.numbers().unwrap_err();
+    println!("{err}");
+    Ok(())
+}
+```
+
+**Exact decimals** are for money and other values where `0.1 + 0.2` must be
+`0.3`. They are kept exact through `count`, `first`, `last`, `min`, `max`,
+`sum`, `diff`, `cumulative` and `fill`; reducers like `avg` or `stdev` work on
+the nearest `f64` and give a number column. Arrow `Decimal32`, `Decimal64`
+and `Decimal128` fields read as decimal columns. pond-ts has no decimal kind;
+this is new in pond-rs.
+
+## Gaps
+
+A **gap** is a missing value. It is not zero and not an empty string; it is
+"no value here". The rules are the same as in pond-ts:
+
+- `count` counts values, not rows. `sum` of no values is 0. Every other
+  reducer over no values gives a gap.
+- `diff` and `rate` give a gap when either row is a gap.
+- `fill` is how you replace gaps, on purpose
+  ([Operations](./operations#filling-gaps)).
+
+In a number column a gap is stored as `NaN`, so a raw `f64` that is `NaN` or
+infinite is read as a gap too. `Column::optional("v", vec![1.0, f64::NAN])`
+has one gap. For text and true/false columns, only `None` is a gap; an empty
+string is a value.
+
+**Required or optional.** `Column::required` promises there are no gaps,
+and building the series fails if there is one, with a message saying to use
+`Column::optional`. The flag is kept in the schema and written to Arrow as
+the field's nullability.
+
+## Reading a whole row
+
+`rows()` walks the series one row at a time; `row(i)` gives one. A `Row`
+reads values by column name. This is handy for printing and for
+`filter`; for tight loops over many rows, read the column once and index it.
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000],
+        vec![
+            Column::optional("host", vec![Some("a"), Some("b")]),
+            Column::optional("load", vec![Some(0.5), None]),
+        ],
+    )?;
+
+    for row in s.rows() {
+        let host = row.string("host")?.unwrap_or("?");
+        match row.number("load")? {
+            Some(load) => println!("{} {host} {load}", row.begin()),
+            None => println!("{} {host} (no reading)", row.begin()),
+        }
+    }
+
+    // The schema: the key first, then each column with its kind and flag.
+    for def in s.schema() {
+        println!(
+            "{} {} required={}",
+            def.name,
+            def.kind.as_str(),
+            def.required
+        );
+    }
+    Ok(())
+}
+```

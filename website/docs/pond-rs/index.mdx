@@ -1,0 +1,97 @@
+---
+id: pond-rs-index
+title: pond-rs (Rust)
+sidebar_position: 1
+description: pond-rs is a native Rust implementation of pond's time series core. Same operations, same answers as pond-ts to the bit, with threads and Arrow in and out.
+---
+
+# pond-rs (Rust)
+
+**pond-rs** is pond written in Rust. It does the same time series work as
+the `pond-ts` core (rolling windows, buckets by calendar day in a time zone,
+gaps that stay gaps, per-entity work) and gives **the same answers as pond-ts,
+to the last bit**. It is built mainly for AI agents that write Rust, and for
+anyone who wants pond's rules at native speed.
+
+:::caution Early work, not on crates.io yet
+
+pond-rs is being built now. It is not published to crates.io; you depend on
+it straight from GitHub (see [Getting started](./getting-started)). The API
+can still change between commits. These pages describe what exists in the
+repository today, and they grow as more of it is built.
+
+:::
+
+```toml
+# Cargo.toml
+[dependencies]
+pond-rs = { git = "https://github.com/pond-ts/pond" }
+```
+
+## Why a Rust version
+
+- **Speed and threads.** JavaScript runs one core at a time. pond-rs runs
+  independent pieces of work on several cores, and on one core it was
+  2.4× to 13× faster than pond-ts in every benchmark so far but one, where
+  the two tied. On the first benchmark (1 million rows), pond-rs
+  on 4 cores took 141–159 ms where polars took 209–231 ms and pond-ts about
+  3 seconds. Details on [Performance](./performance).
+- **The same answers.** Every operation is checked against pond-ts's own
+  output on a shared set of test cases, bit for bit. A result does not
+  change with the number of threads either.
+- **Time is the point.** General table libraries like polars are very good
+  at tables. pond's strengths are time-aware ones: rows keyed by a moment,
+  a span or a labelled bucket; calendar days that know a day can be 23 or
+  25 hours long; and clear rules for missing values.
+- **Errors that say what to fix.** Column types are checked when the code
+  runs, and each error names the call, the column and what was expected,
+  so an agent can fix its code from the message alone.
+
+## What exists today
+
+| Area                 | In pond-rs now                                                                                                                        |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Series and keys      | Rows keyed by a time, a time range, or a labelled interval                                                                            |
+| Column kinds         | Numbers, exact decimals, text, true/false; any may have gaps                                                                          |
+| Windows and buckets  | `rolling` over a trailing time window; `aggregate` into fixed buckets (`"5m"`) or calendar buckets in a time zone                     |
+| Reducers             | `count`, `sum`, `avg`, `min`, `max`, `first`, `last`, `median`, `stdev`, percentiles                                                  |
+| Row by row           | `diff`, `rate`, `pct_change`, `shift`, `cumulative`, `fill`                                                                           |
+| Picking and changing | `slice`, `filter` (a Rust closure per row), `with_column`, `map_numbers` and friends, `select`, `rename`, `as_time`                   |
+| Per entity           | `partition_by` / `group_by` on one or more columns, partitions run on several cores                                                   |
+| Arrow                | Read and write Arrow IPC (Feather v2) files and streams, compressed or not; columns can share the file's memory instead of copying it |
+
+**Not built yet:** financial studies (SMA, RSI, …), the live (streaming)
+layer, `align` / `materialize` / `dedupe`, `join`, and a WASM build that
+pond-ts can call. They come in roughly that order; see the
+[roadmap](#roadmap) below.
+
+## Where to go next
+
+- [Getting started](./getting-started): add the dependency, build a series,
+  bucket it by day.
+- [Series and columns](./series-and-columns): keys, column kinds, gaps, and
+  reading values back.
+- [Operations](./operations): rolling windows, buckets, row-by-row changes,
+  filtering and mapping.
+- [Partitions](./partitions): the same work per host, per symbol, per
+  anything.
+- [Arrow](./arrow): reading and writing files, and when memory is shared.
+- [Performance](./performance): threads, and what the benchmarks measured.
+- [Coming from pond-ts](./coming-from-pond-ts): what is the same, what is
+  different, and why.
+
+## Roadmap
+
+pond-rs follows a written plan in the repository
+([`docs/rfcs/pond-rs.md`](https://github.com/pond-ts/pond/blob/main/docs/rfcs/pond-rs.md)
+for the reasoning, `PLAN.md` for the current steps). In order:
+
+1. **Batch core** (in progress). The first slice, R1a, met every target it
+   set itself; the rest of the core, R1b, is being built step by step.
+2. **Financial studies**, checked against the same pandas / TA-Lib test
+   cases pond-ts uses.
+3. **Live layer**: series that update as data arrives.
+4. **WASM bridge**: the same Rust code running inside pond-ts where it
+   measurably helps.
+
+Charts, React and `@pond-ts/process` stay TypeScript only.

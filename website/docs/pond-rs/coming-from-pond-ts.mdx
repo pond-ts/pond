@@ -1,0 +1,104 @@
+---
+id: coming-from-pond-ts
+title: Coming from pond-ts
+sidebar_position: 8
+description: How pond-rs names map to pond-ts, and every place where pond-rs behaves differently on purpose.
+---
+
+# Coming from pond-ts
+
+pond-rs gives the same answers as pond-ts; the parity tests compare the two
+on the same inputs, bit for bit, including the inputs where pond-ts throws an
+error. What changes is the shape of the code, because Rust is not
+TypeScript, and a short list of places where pond-rs refuses something
+pond-ts lets through.
+
+## Names
+
+Methods are the pond-ts names in Rust's `snake_case`.
+
+| pond-ts                                      | pond-rs                                                                  |
+| -------------------------------------------- | ------------------------------------------------------------------------ |
+| `TimeSeries.fromJSON({ schema, rows })`      | `TimeSeries::new(name, times, columns)`                                  |
+| `{ name: 'cpu', kind: 'number' }`            | `Column::required("cpu", values)` / `Column::optional`                   |
+| `series.aggregate(seq, { cpu: 'avg' })`      | `series.aggregate(&seq, &[Agg::of("cpu", Reducer::Avg)])`                |
+| `{ cpu_avg: { from: 'cpu', using: 'avg' } }` | `Agg::new("cpu_avg", "cpu", Reducer::Avg)`                               |
+| `Sequence.every('1m')`                       | `Sequence::every("1m")?`                                                 |
+| `Sequence.calendar('day', { timeZone })`     | `Sequence::calendar("day", time_zone)?`                                  |
+| `series.pctChange(...)`                      | `series.pct_change(&cols, FirstRow::Keep)`                               |
+| `series.diff(cols, { drop: true })`          | `series.diff(&cols, FirstRow::Drop)`                                     |
+| `series.fill({ cpu: 'linear' }, { maxGap })` | `series.fill(&[("cpu", Fill::Linear)], &FillLimits::none().max_gap(..))` |
+| `series.mapColumns(...)`                     | `map_numbers` / `map_strings` / `map_booleans` / `map_decimals`          |
+| `series.asTime({ at: 'begin' })`             | `series.as_time(At::Begin)`                                              |
+| `series.partitionBy('host')`                 | `series.partition_by(&["host"])`                                         |
+| `series.groupBy('host')` / `toMap()`         | `series.group_by(&["host"])` / `iter()`                                  |
+| `series.at(i).get('cpu')`                    | `series.column("cpu")?.numbers()?.get(i)`                                |
+| `toArrow()` / `fromArrow()`                  | `to_arrow()` / `write_ipc()`, `from_arrow()` / `read_ipc()`              |
+
+## Types are checked when the code runs
+
+pond-ts tracks every column's name and type in TypeScript's type system, so
+`series.get('cpu')` is known to be a number before the code runs. Rust
+cannot express "this series has a number column called `cpu`" without a lot
+of machinery, so pond-rs checks when the code runs instead, as polars does.
+`column("cpu")?` fails if there is no such column and lists the ones there
+are; `.numbers()?` fails if it holds text. The errors are written to be
+fixed from the message alone.
+
+## Where pond-rs is stricter
+
+Each of these is a case where pond-ts quietly does something surprising and
+pond-rs returns an error instead.
+
+- **Number reducers on text.** pond-ts runs them anyway: `sum` of a text
+  column gives 0 and `avg` gives gaps. pond-rs allows only `count`, `first`
+  and `last` on text and true/false columns.
+- **`fill` mistakes.** An unknown column, `Linear` on a column that is not
+  numbers, or a fill value of the wrong kind is an error.
+- **Half milliseconds.** pond-rs keeps every time in whole milliseconds.
+  `as_time(At::Center)` on an interval an odd number of milliseconds long
+  would land on a half millisecond, where pond-ts gives e.g. `2499.5`;
+  pond-rs returns an error rather than a different answer.
+- **A repeated rename.** `rename` with the same `from` twice is an error
+  (pond-ts's object syntax cannot express it).
+
+## Where pond-rs does more
+
+- **Exact decimals.** A fourth column kind, for money and other exact
+  values; see [Series and columns](./series-and-columns#value-columns-four-kinds).
+- **`with_column`** takes any kind of column and you choose required or
+  optional. pond-ts's `withColumn` takes numbers only and always makes the
+  column optional.
+- **`shift`** works on every column kind (pond-ts: numbers only).
+- **`group_by`** takes several columns (pond-ts: one), and partition keys
+  are typed values (`Value::String("a")`) rather than strings to parse.
+
+## Where pond-rs fixes a pond-ts bug
+
+Building pond-rs turned up several pond-ts bugs. Where pond-rs could not
+copy the bug without being wrong, it does the right thing, and the pond-ts
+bug is logged in `PLAN.md` to fix there.
+
+- After `map_numbers` turns values into gaps, a required column becomes
+  optional. pond-ts keeps it marked required, which its own `fromJSON` then
+  refuses ([PND-MAPREQ]).
+- A column read from Arrow with nulls in it is optional. pond-ts's
+  `fromArrow` marks every column required, even one with nulls, so its own
+  save-and-reload then fails ([PND-ARROWREQ]). pond-rs takes the flag from
+  the Arrow field's nullability.
+
+## Small differences
+
+- The key column cannot be renamed yet. An interval key is always named
+  `interval` and a time key `time`; if you need `day_start` in a file,
+  rename that one Arrow field.
+- When pond-ts builds a text column it decides by itself whether to store
+  it as a dictionary (a list of distinct strings plus a number per row).
+  pond-rs keeps whatever it was given: built from Rust values, plain text;
+  read from Arrow, as it was in the file. The values are the same either
+  way.
+- Time-zone rules: pond-rs carries its own copy of the time-zone database;
+  pond-ts uses the one in its JavaScript engine. They agree unless the two
+  copies are from releases that disagree about a zone's history.
+- pond-ts's typed `groups` option on `partitionBy` (declare the partition
+  values up front) is not built; nothing has needed it in Rust.

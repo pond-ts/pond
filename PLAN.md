@@ -585,6 +585,12 @@ the study oracle) is done.
 
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
   independent).
+- **[PND-RUSTDOCS]** — pond-rs pages on the docs site
+  (`website/docs/pond-rs/`), added 2026-10-19 covering R1a and R1b steps
+  1–4a. Keep them in step as each R1b step lands. Every Rust example is a
+  whole program checked by `website/scripts/check-rust-snippets.sh`; not yet
+  run in CI. Open: run that script in CI, and publish `cargo doc` output as
+  the pond-rs API reference.
 - **[PND-ROLLGAP]** — pond-ts time-window `rolling` gets ~60% slower when a
   few windows are empty: 1M rows with three 10-minute outages (0.18% of rows)
   take `rolling('5m', avg)` from ~400 to ~650 ms. A profile puts the extra
