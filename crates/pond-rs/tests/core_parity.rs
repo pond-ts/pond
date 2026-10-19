@@ -12,8 +12,8 @@ use common::{
     compare_series, load_core_fixture, report,
 };
 use pond_rs::{
-    Agg, ArrowKey, At, Column, ColumnData, ColumnKind, IntervalKeys, Key, Labels, Reducer,
-    Sequence, TimeRangeKeys, TimeSeries,
+    Agg, ArrowKey, At, Column, ColumnData, ColumnKind, Fill, FillLimits, FillValue, FirstRow,
+    IntervalKeys, Key, Labels, Reducer, Sequence, TimeRangeKeys, TimeSeries,
 };
 use serde_json::{Value, json};
 
@@ -35,7 +35,19 @@ const KNOWN_OPS: &[&str] = &[
 
 /// Ops with an arm in [`run`]. Every fixture case for a listed op must run
 /// and match; an op that runs without being listed is also an error.
-const IMPLEMENTED_OPS: &[&str] = &["rolling", "aggregate", "select", "rename", "asTime"];
+const IMPLEMENTED_OPS: &[&str] = &[
+    "rolling",
+    "aggregate",
+    "select",
+    "rename",
+    "asTime",
+    "diff",
+    "rate",
+    "pctChange",
+    "cumulative",
+    "shift",
+    "fill",
+];
 
 /// Run one case through pond-rs. `None` means the op is not implemented yet.
 fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<SeriesJson, String>> {
@@ -73,12 +85,89 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<SeriesJson, Stri
             };
             input.as_time(at)
         }
+        "diff" | "rate" | "pctChange" => {
+            let names = column_names(&case.args[0]);
+            let first = match case.args.get(1).and_then(|o| o["drop"].as_bool()) {
+                Some(true) => FirstRow::Drop,
+                _ => FirstRow::Keep,
+            };
+            match case.op.as_str() {
+                "diff" => input.diff(&names, first),
+                "rate" => input.rate(&names, first),
+                _ => input.pct_change(&names, first),
+            }
+        }
+        "cumulative" => {
+            let spec: Vec<(&str, Reducer)> = case.args[0]
+                .as_object()
+                .expect("cumulative takes a mapping")
+                .iter()
+                .map(|(c, r)| {
+                    (
+                        c.as_str(),
+                        Reducer::parse(r.as_str().expect("reducer")).unwrap(),
+                    )
+                })
+                .collect();
+            input.cumulative(&spec)
+        }
+        "shift" => {
+            let n = case.args[1].as_f64().expect("shift offset");
+            // A fractional offset cannot be written in Rust (`n` is an i64);
+            // pond-ts rejects it, so stand in that error here.
+            if n.fract() != 0.0 {
+                return Some(Err("shift offset must be a whole number".into()));
+            }
+            input.shift(&column_names(&case.args[0]), n as i64)
+        }
+        "fill" => {
+            let options = case.args.get(1);
+            let mut limits = FillLimits::none();
+            if let Some(limit) = options.and_then(|o| o["limit"].as_u64()) {
+                limits = limits.limit(limit as usize);
+            }
+            if let Some(max_gap) = options.and_then(|o| o["maxGap"].as_str()) {
+                limits = limits.max_gap(max_gap);
+            }
+            let strategy = |v: &Value| match v.as_str() {
+                Some("hold") => Fill::Hold,
+                Some("bfill") => Fill::Bfill,
+                Some("linear") => Fill::Linear,
+                Some("zero") => Fill::Zero,
+                Some(text) => Fill::Value(FillValue::String(text.into())),
+                None => match v {
+                    Value::Bool(b) => Fill::Value(FillValue::Boolean(*b)),
+                    _ => Fill::Value(FillValue::Number(v.as_f64().expect("a literal"))),
+                },
+            };
+            match &case.args[0] {
+                Value::String(_) => input.fill_all(strategy(&case.args[0]), &limits),
+                Value::Object(map) => {
+                    let spec: Vec<(&str, Fill)> =
+                        map.iter().map(|(c, v)| (c.as_str(), strategy(v))).collect();
+                    input.fill(&spec, &limits)
+                }
+                other => panic!("fill takes a strategy or a mapping, got {other}"),
+            }
+        }
         _ => return None,
     };
     Some(result.map(|s| to_json(&s)).map_err(|e| e.to_string()))
 }
 
 /// `{every}` or `{calendar, timeZone, weekStartsOn?}`.
+/// One column name or a list of them.
+fn column_names(json: &Value) -> Vec<&str> {
+    match json {
+        Value::String(name) => vec![name.as_str()],
+        Value::Array(names) => names
+            .iter()
+            .map(|n| n.as_str().expect("column name"))
+            .collect(),
+        other => panic!("expected column names, got {other}"),
+    }
+}
+
 fn sequence(json: &Value) -> pond_rs::Result<Sequence> {
     if let Some(every) = json["every"].as_str() {
         return Sequence::every(every);

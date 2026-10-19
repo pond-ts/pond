@@ -448,6 +448,17 @@ construction.
 non-numeric kinds), `shift`, and `mapColumns` — the last of which takes a JS
 closure per cell and so needs a different answer, not just unboxing.
 
+Measured 2026-10-19 while benchmarking pond-rs step 3a (1M rows, 2% gaps,
+`crates/pond-rs/bench/rowwise_pond_ts.mjs`): `shift` 56 ms,
+`fill('hold')` 52 ms, `fill('linear')` 75 ms against `diff` 8 ms. A CPU
+profile puts 51–54% of each in garbage collection; the rest is the
+`read(i)` loop, `float64ColumnFromArray`, and for `fill('linear')` the
+boxed times array `getTimes` builds from `beginAt(i)`. A throwaway port of
+`shift` to the packed path (the same ten lines as `diff`) measured
+63 → 8 ms. `fill` needs more care (non-numeric kinds, edge runs, limits),
+but the numeric strategies can read `values` and write `NumericOutput` the
+same way.
+
 ### [PND-ROLLKERN] — SHIPPED (per-column sweeps + `avg` specialisation)
 
 `tryRollingCountColumnarNumeric` already wrote typed result columns, but drove

@@ -571,7 +571,9 @@ the study oracle) is done.
   2. ~~Column kinds: (a) text and true/false columns (#771); (b)
      `TimeRange` keys and text interval labels (#772); (c) more Arrow
      input (#773); (d) exact decimals~~ — done.
-  3. Row-wise operations.
+  3. Row-wise operations: ~~(a) `diff` / `rate` / `pct_change` /
+     `cumulative` / `shift` / `fill`~~ — done; (b) `filter` / `slice` /
+     `with_column` / `map`.
   4. `partition_by` / `group_by`, threaded across partitions.
   5. `align` / `materialize` / `dedupe`.
   6. `join`.
@@ -590,6 +592,16 @@ the study oracle) is done.
   error cases: `diff('nope')` throws a raw `Cannot read properties of
 undefined`; `rolling` with an unknown column says "aggregate mapping".
   Agents act on error text, so both should name the column and the call.
+  More from the pond-rs R1b step 3a survey (2026-10-19; each reproduced
+  against the built package): an unknown or key column in `rate` /
+  `pctChange` / `cumulative` / `shift` is a raw V8 `TypeError` too;
+  `cumulative({ a: 'avg' })` throws `apply is not a function` (and only
+  when the column has a value); `fill('bogus')` silently does nothing;
+  `fill({ nope: 'hold' })` silently ignores the unknown column; `fill`'s
+  `limit` is never checked (`NaN` means no limit); `parseDuration` rejects
+  the number `0` but accepts `'0s'`; `fill` on an empty series skips all
+  checks; the `maxGap` doc says "prior known value to next known value",
+  but gaps at either end are measured to their own first or last row.
 - **[PND-ARROWTSVAL]** — pond-ts `fromArrow` reads a `Timestamp` value
   column (not the key) as raw counts in its own unit: a microsecond column
   holding 1 comes in as `1`, not `0.001` ms. `Date32` value columns are
@@ -775,6 +787,12 @@ consumer signal. Plan:
   to do with Rust — see `spikes/columnar-wasm/REPORT.md` §9.3. Each operator
   needs its own validity write, since the boxed array is currently how
   validity gets derived; [PND-IVLCOL] is the worked example of that shape.
+  **2026-10-19 measurement (pond-rs step 3a bench, 1M rows, 2% gaps):**
+  `shift` 56 ms, `fill('hold')` 52 ms, `fill('linear')` 75 ms vs `diff` 8 ms;
+  CPU profile puts 51–54% of their time in garbage collection from the boxed
+  arrays (`fill` also boxes a times array in `getTimes`). A trial port of
+  `shift` to `packedNumericSource` + `NumericOutput` (not committed) took it
+  63 → 8 ms, so `shift` is the cheap first step.
 - **[PND-COLAPI]** — Make the column-API augmentation bundle-safe (F-1,
   HIGH — methods tree-shake out of browser bundles) + `hasAnyDefined()`.
   Two consumers each. (`toFloat64Array` now returns `NaN` at a gap —
