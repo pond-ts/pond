@@ -1313,7 +1313,9 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
       text, and text labels as JavaScript `localeCompare` does in Node (CLDR
       root collation: `"a" < "B"`, and a precomposed `é` equals `e` + a
       combining accent, so those rows match). pond-ts does not sort labels
-      within a span, so this order decides which rows pair.
+      within a span, so this order decides which rows pair. Node's
+      `localeCompare` follows the machine's default locale, so this matches
+      pond-ts under a root or English locale; pond-rs always uses root.
     - Number and text labels on rows from both sides (an outer join) are an
       error; a one-sided result keeps that side's label kind.
     - A value column name in more than one series is an error, or with

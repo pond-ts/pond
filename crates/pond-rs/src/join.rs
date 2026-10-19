@@ -69,8 +69,10 @@ impl TimeSeries {
     ///   interval); the key names may differ.
     /// - Keys compare by begin, then end, then (intervals) label, with
     ///   number labels before text and text labels compared the way
-    ///   JavaScript's `localeCompare` does (so `"a" < "B"`, and the two
-    ///   ways of writing `é` are the same label).
+    ///   JavaScript's `localeCompare` does under the root or English
+    ///   locale (so `"a" < "B"`, and the two ways of writing `é` are the
+    ///   same label). Node follows the machine's default locale, so pond-ts
+    ///   run under another locale can order text labels differently.
     /// - Equal keys pair **one to one** in order: a key `a` times on the
     ///   left and `b` times on the right gives `min(a, b)` matched rows and
     ///   `|a − b|` one-sided rows, not `a × b`.
@@ -462,8 +464,8 @@ impl<'a> KeyOrder<'a> {
 }
 
 /// The CLDR root collation at its default strength: what Node's
-/// `String.prototype.localeCompare` uses with no locale given (en-US
-/// tailors nothing).
+/// `String.prototype.localeCompare` uses with no locale given when the
+/// machine's default locale is root or English (en-US tailors nothing).
 fn root_collator() -> CollatorBorrowed<'static> {
     Collator::try_new(Default::default(), CollatorOptions::default())
         .expect("the root collation is compiled in")
@@ -515,7 +517,9 @@ fn output_key(lk: &Key, rk: &Key, picks: &[Pair]) -> Result<Key> {
                 .map(|p| if p.l != NONE { (0, p.l) } else { (1, p.r) })
                 .collect();
             let sources: [&Key; 2] = [lk, rk];
-            if from_left == 0 {
+            // pond-ts checks "all from the left" first, so an empty result
+            // keeps the left label kind.
+            if from_left == 0 && !picks.is_empty() {
                 let rows: Vec<(u32, u32)> = picks.iter().map(|&(_, r)| (0, r)).collect();
                 return Ok(Key::gather(&[rk], &rows));
             }
@@ -623,6 +627,34 @@ mod tests {
             right.join(&left, Join::default()).unwrap().key_name(),
             "time"
         );
+    }
+
+    #[test]
+    fn an_empty_interval_join_keeps_the_left_label_kind() {
+        let one = |label: Labels| {
+            let keys = crate::IntervalKeys {
+                label,
+                begin: vec![0],
+                end: vec![10],
+            };
+            TimeSeries::from_intervals("i", keys, vec![]).unwrap()
+        };
+        let text = one(vec!["x"].into());
+        let number = one(vec![5.0].into());
+        let inner = Join {
+            how: JoinType::Inner,
+            ..Join::default()
+        };
+        let is_text = |t: &TimeSeries| match t.key() {
+            Key::Interval(k) => matches!(k.label, Labels::String(_)),
+            _ => unreachable!(),
+        };
+        let out = text.join(&number, inner.clone()).unwrap();
+        assert_eq!(out.len(), 0);
+        assert!(is_text(&out));
+        let out = number.join(&text, inner).unwrap();
+        assert_eq!(out.len(), 0);
+        assert!(!is_text(&out));
     }
 
     #[test]

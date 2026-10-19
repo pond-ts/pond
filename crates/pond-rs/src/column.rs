@@ -15,8 +15,7 @@ use arrow_array::builder::StringBuilder;
 use arrow_array::cast::AsArray;
 use arrow_array::types::{Decimal128Type, Int32Type};
 use arrow_array::{
-    Array, ArrayRef, BooleanArray, Decimal128Array, DictionaryArray, Int32Array, StringArray,
-    UInt32Array,
+    Array, ArrayRef, BooleanArray, Decimal128Array, DictionaryArray, StringArray, UInt32Array,
 };
 use arrow_buffer::{NullBuffer, ScalarBuffer};
 use arrow_schema::DataType;
@@ -198,18 +197,7 @@ impl StringColumn {
     /// short result (an `aggregate` of a long column) still carries, and
     /// writes to Arrow, every distinct string of the source.
     pub(crate) fn take(&self, rows: &[Option<usize>]) -> Self {
-        match &self.repr {
-            StringRepr::Plain(_) => self.take_indices(&indices_of(rows)),
-            StringRepr::Dictionary(a) => {
-                let keys: Int32Array = rows
-                    .iter()
-                    .map(|r| r.and_then(|i| a.is_valid(i).then(|| a.keys().value(i))))
-                    .collect();
-                Self {
-                    repr: StringRepr::Dictionary(DictionaryArray::new(keys, a.values().clone())),
-                }
-            }
-        }
+        self.take_indices(&indices_of(rows))
     }
 }
 
