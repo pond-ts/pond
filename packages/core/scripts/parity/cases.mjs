@@ -545,7 +545,102 @@ const CASES = [
   ['select-labelled', 'labelled', 'select', ['a']],
   ['rename-labelled', 'labelled', 'rename', [{ a: 'x' }]],
   ['rolling-labelled-6s', 'labelled', 'rolling', ['6s', { a: 'avg' }]],
+  // slice: Array.prototype.slice positions (negative counts from the end;
+  // out of range clamps)
+  ['slice-all', 'gappy', 'slice', []],
+  ['slice-from', 'gappy', 'slice', [3]],
+  ['slice-range', 'gappy', 'slice', [2, 7]],
+  ['slice-negative-from', 'gappy', 'slice', [-3]],
+  ['slice-negative-end', 'gappy', 'slice', [1, -2]],
+  ['slice-negative-both', 'gappy', 'slice', [-5, -1]],
+  ['slice-empty-reversed', 'gappy', 'slice', [7, 2]],
+  ['slice-clamped', 'gappy', 'slice', [-100, 100]],
+  ['slice-past-end', 'gappy', 'slice', [50]],
+  ['slice-mixed', 'mixed', 'slice', [4, 15]],
+  ['slice-ranges', 'ranges', 'slice', [1, 3]],
+  ['slice-labelled', 'labelled', 'slice', [-3]],
+  // filter: the predicate is a closure, so the fixture names one of a few
+  // fixed predicates ({ fn: ... }); see `predicate` below.
+  ['filter-gt', 'gappy', 'filter', [{ fn: { column: 'a', gt: 3 } }]],
+  ['filter-missing', 'gappy', 'filter', [{ fn: { missing: 'b' } }]],
+  ['filter-none', 'gappy', 'filter', [{ fn: { column: 'a', gt: 1000 } }]],
+  ['filter-every-3rd', 'gappy', 'filter', [{ fn: { everyNth: 3 } }]],
+  ['filter-begin', 'gappy', 'filter', [{ fn: { beginAtLeast: 8000 } }]],
+  ['filter-text', 'mixed', 'filter', [{ fn: { column: 'site', eq: 'east' } }]],
+  ['filter-bool', 'mixed', 'filter', [{ fn: { column: 'up', eq: true } }]],
+  ['filter-ranges', 'ranges', 'filter', [{ fn: { endAtMost: 2000 } }]],
+  ['filter-labelled', 'labelled', 'filter', [{ fn: { everyNth: 2 } }]],
+  // mapColumns: fixed mappers ({ fn: ... }); missing cells stay missing and
+  // a non-finite number result is a gap
+  [
+    'mapColumns-number',
+    'gappy',
+    'mapColumns',
+    [{ a: { fn: { mul: 2, add: 1 } } }],
+  ],
+  [
+    'mapColumns-two',
+    'gappy',
+    'mapColumns',
+    [{ a: { fn: { mul: -1, add: 0 } }, b: { fn: { mul: 0.5, add: 0 } } }],
+  ],
+  [
+    'mapColumns-overflow',
+    'dense',
+    'mapColumns',
+    [{ value: { fn: { mul: 1e308, add: 1e308 } } }],
+  ],
+  [
+    'mapColumns-text-bool',
+    'mixed',
+    'mapColumns',
+    [{ host: { fn: 'upper' }, up: { fn: 'not' } }],
+  ],
+  ['mapColumns-error-empty', 'gappy', 'mapColumns', [{}]],
+  // withColumn: append a number column; `null` is a gap
+  [
+    'withColumn-gappy',
+    'gappy',
+    'withColumn',
+    ['c', [1, null, 3, 4, null, 6, 7, 8, 9, 10, 11, 12]],
+  ],
+  ['withColumn-ranges', 'ranges', 'withColumn', ['c', [0.5, null, 2, 3, null]]],
+  ['withColumn-error-length', 'gappy', 'withColumn', ['c', [1, 2]]],
+  [
+    'withColumn-error-name',
+    'gappy',
+    'withColumn',
+    ['a', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]],
+  ],
+  [
+    'withColumn-error-key-name',
+    'gappy',
+    'withColumn',
+    ['time', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]],
+  ],
 ];
+
+/**
+ * The closures a case can name, as `{ fn: spec }`. pond-rs's harness builds
+ * the same closure from the same spec.
+ */
+function closure(spec) {
+  if (spec === 'upper') return (v) => v.toUpperCase();
+  if (spec === 'not') return (v) => !v;
+  if ('mul' in spec) return (v) => v * spec.mul + spec.add;
+  if ('column' in spec) {
+    return (e) => {
+      const v = e.get(spec.column);
+      if (v === undefined) return false;
+      return 'gt' in spec ? v > spec.gt : v === spec.eq;
+    };
+  }
+  if ('missing' in spec) return (e) => e.get(spec.missing) === undefined;
+  if ('everyNth' in spec) return (_e, i) => i % spec.everyNth === 0;
+  if ('beginAtLeast' in spec) return (e) => e.begin() >= spec.beginAtLeast;
+  if ('endAtMost' in spec) return (e) => e.end() <= spec.endAtMost;
+  throw new Error(`unknown closure spec ${JSON.stringify(spec)}`);
+}
 
 // Interval-keyed inputs (label, begin, end), the shape `aggregate` returns.
 // Even lengths only: pond-rs keeps whole milliseconds, so it refuses a centre
@@ -731,6 +826,15 @@ export function buildFixture(pond) {
     }),
   };
   const decode = (arg) => {
+    // withColumn's values: JSON has no `undefined`, so `null` marks a gap.
+    if (Array.isArray(arg)) return arg.map((v) => (v === null ? undefined : v));
+    if (arg && typeof arg === 'object' && 'fn' in arg) return closure(arg.fn);
+    if (arg && typeof arg === 'object' && !('sequence' in arg)) {
+      // mapColumns: { column: { fn } }
+      return Object.fromEntries(
+        Object.entries(arg).map(([k, v]) => [k, decode(v)]),
+      );
+    }
     if (!(arg && typeof arg === 'object' && 'sequence' in arg)) return arg;
     const { every, calendar, timeZone, weekStartsOn } = arg.sequence;
     return every !== undefined

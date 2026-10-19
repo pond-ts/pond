@@ -33,6 +33,7 @@ const s = new TimeSeries({
   ],
   rows,
 });
+const extra = Float64Array.from(rows, (r) => r[1] ?? NaN);
 // Five warm-up runs: with one, V8 is still compiling during the timed runs
 // and the first ops listed come out several times slower than later ones.
 const median = (f) => {
@@ -56,6 +57,17 @@ const cases = [
   ['fill hold', () => s.fill('hold')],
   ['fill linear', () => s.fill('linear')],
   ['fill linear maxGap 3s', () => s.fill('linear', { maxGap: '3s' })],
+  [
+    'filter v > 500 (by name)',
+    () =>
+      s.filter((e) => {
+        const x = e.get('v');
+        return x !== undefined && x > 500;
+      }),
+  ],
+  ['map_numbers v * 2', () => s.mapColumns({ v: (x) => x * 2 })],
+  ['with_column', () => s.withColumn('w', extra)],
+  ['slice middle half', () => s.slice(250_000, 750_000)],
 ];
 const gaps = rows.filter((r) => r[1] === undefined).length;
 const sum = rows.reduce((a, r) => a + (r[1] ?? 0), 0);

@@ -199,6 +199,29 @@ impl Key {
         }
     }
 
+    /// The rows at `rows`, in that order, copied.
+    pub(crate) fn take(&self, rows: &[usize]) -> Key {
+        let pick = |v: &[i64]| rows.iter().map(|&i| v[i]).collect::<Vec<i64>>();
+        match self {
+            Key::Time(t) => Key::Time(pick(t)),
+            Key::TimeRange(k) => Key::TimeRange(TimeRangeKeys {
+                begin: pick(&k.begin),
+                end: pick(&k.end),
+            }),
+            Key::Interval(k) => Key::Interval(IntervalKeys {
+                label: match &k.label {
+                    Labels::Number(v) => Labels::Number(rows.iter().map(|&i| v[i]).collect()),
+                    Labels::String(s) => {
+                        let picks: Vec<Option<usize>> = rows.iter().map(|&i| Some(i)).collect();
+                        Labels::String(s.take(&picks))
+                    }
+                },
+                begin: pick(&k.begin),
+                end: pick(&k.end),
+            }),
+        }
+    }
+
     fn kind(&self) -> ColumnKind {
         match self {
             Key::Time(_) => ColumnKind::Time,
@@ -493,33 +516,7 @@ impl TimeSeries {
                 show(i - 1)
             )));
         }
-        for (c, column) in columns.iter().enumerate() {
-            if column.name == key_name {
-                return Err(invalid(format!(
-                    "value column '{}' has the same name as the key",
-                    column.name
-                )));
-            }
-            if columns[..c].iter().any(|other| other.name == column.name) {
-                return Err(invalid(format!("column '{}' appears twice", column.name)));
-            }
-            if column.data.len() != rows {
-                return Err(invalid(format!(
-                    "column '{}' has {} values but the key has {rows}",
-                    column.name,
-                    column.data.len()
-                )));
-            }
-            if column.required && column.data.missing_count() > 0 {
-                let i = (0..rows)
-                    .find(|&i| !column.data.is_present(i))
-                    .expect("a gap exists");
-                return Err(invalid(format!(
-                    "required column '{}' has a gap at row {i}; use Column::optional if gaps are allowed",
-                    column.name
-                )));
-            }
-        }
+        Self::check_columns(call, &key_name, rows, &columns)?;
         Ok(Self {
             name,
             key_name,
@@ -586,6 +583,45 @@ impl TimeSeries {
                 column: name.to_string(),
                 available: self.columns.iter().map(|c| c.name.clone()).collect(),
             })
+    }
+
+    /// The value-column rules: names unique and not the key's, every
+    /// column `rows` long, no gap in a required column.
+    pub(crate) fn check_columns(
+        call: &'static str,
+        key_name: &str,
+        rows: usize,
+        columns: &[Column],
+    ) -> Result<()> {
+        let invalid = |message: String| PondError::InvalidData { call, message };
+        for (c, column) in columns.iter().enumerate() {
+            if column.name == key_name {
+                return Err(invalid(format!(
+                    "value column '{}' has the same name as the key",
+                    column.name
+                )));
+            }
+            if columns[..c].iter().any(|other| other.name == column.name) {
+                return Err(invalid(format!("column '{}' appears twice", column.name)));
+            }
+            if column.data.len() != rows {
+                return Err(invalid(format!(
+                    "column '{}' has {} values but the key has {rows}",
+                    column.name,
+                    column.data.len()
+                )));
+            }
+            if column.required && column.data.missing_count() > 0 {
+                let i = (0..rows)
+                    .find(|&i| !column.data.is_present(i))
+                    .expect("a gap exists");
+                return Err(invalid(format!(
+                    "required column '{}' has a gap at row {i}; use Column::optional if gaps are allowed",
+                    column.name
+                )));
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn from_parts(
