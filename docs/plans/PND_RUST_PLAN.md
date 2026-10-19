@@ -1057,7 +1057,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
       [PND-BOXFREE].
 
   **Step 4a (done): `partition_by` / `group_by`, threaded.** The agent
-  trial on the Q11 workload is step 4b, next.
+  trial on the Q11 workload is step 4b (done, below).
   - Rust shapes (`src/partition.rs`):
     - `series.partition_by(&["symbol"])` (one or more columns of any kind)
       gives a `PartitionedSeries`. Its `diff` / `rate` / `pct_change` /
@@ -1161,6 +1161,40 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
   - pond-ts finding: `TimeSeries.concat`, which every partitioned operation
     calls to put rows back, takes ~450 ms on these 500 partitions
     ([PND-CONCATSORT] in PLAN.md).
+
+  **Step 4b (done): agent trial on the partitioned workload.** The R1a
+  trial repeated on [PND-AGENTBENCH] Q11: for 500 symbols, the z-score of
+  each latest close against its trailing 60 minutes, top 20 by |z|. 10 fresh
+  agents per side, same rules as R1a. Setup, prompt, grader and full write-up:
+  `crates/pond-rs/bench/agent-trial/q11/README.md`.
+
+  |                                  | pond-rs | polars |
+  | -------------------------------- | ------- | ------ |
+  | right answer                     | 10/10   | 10/10  |
+  | identical to pond-ts, to the bit | 9/10    | 0/10   |
+  | failed runs in total             | 1       | 4      |
+  | used the library for the maths   | 10/10   | 3/10   |
+
+  - Same picture as R1a: equal correctness, fewer failed runs. n = 10, so
+    this points the same way rather than proves it.
+  - 7 of 10 polars agents used polars only for file in and out and wrote
+    the window maths in plain Rust; none used polars' rolling functions.
+    So the comparison is pond-rs's API against hand-written Rust.
+  - The 60-rows-instead-of-60-minutes trap caught nobody; the prompt spells
+    the window out.
+  - Friction for pond-rs, logged in PLAN.md as [PND-RUSTQ11]:
+    - 10/10 built the output Arrow batch by hand: a ranked 20-row table is
+      not a `TimeSeries` (time order, key first).
+    - 9/10 wanted "the value at the latest row of each partition" and ran
+      `rolling` over the whole history to read one row.
+    - 6/10 found matching `Some(Value::String(..))` on a partition key
+      clumsy.
+    - 2/10 did not know `rolling` keeps only its outputs; this caused
+      pond-rs's one failed run (`UnknownColumn` on `close`).
+  - 5/10 worried that `Stdev` over a flat window is not exactly 0. Right:
+    after different values leave the window it is ~1e-16 of the value
+    (`5.1e-16` at 0.1). pond-ts gives the same bits, so parity holds; logged
+    as [PND-FLATSTDEV] in PLAN.md for both libraries.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

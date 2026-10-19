@@ -16,7 +16,9 @@ DATA="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
 RUNS="${3:-10}"
 POLARS_VERSION=0.55.2
 # polars 0.55.2 does not build with "ipc" unless "parquet" is also on.
-POLARS_FEATURES='"lazy", "ipc", "parquet", "temporal", "timezones", "dynamic_group_by", "dtype-datetime"'
+# A trial can set its own features and project name (q11/ does).
+POLARS_FEATURES="${POLARS_FEATURES:-\"lazy\", \"ipc\", \"parquet\", \"temporal\", \"timezones\", \"dynamic_group_by\", \"dtype-datetime\"}"
+NAME="${NAME:-daily}"
 
 mkdir -p "$T/pond-rs"
 cp -r "$crate/src" "$T/pond-rs/"
@@ -34,8 +36,8 @@ for side in pondrs polars; do
     else
       dep="polars = { version = \"=$POLARS_VERSION\", features = [$POLARS_FEATURES] }"
     fi
-    printf '[package]\nname = "daily_%s_%s"\nversion = "0.1.0"\nedition = "2024"\n\n[dependencies]\n%s\n' \
-      "$side" "$i" "$dep" > "$d/Cargo.toml"
+    printf '[package]\nname = "%s_%s_%s"\nversion = "0.1.0"\nedition = "2024"\n\n[dependencies]\n%s\n' \
+      "$NAME" "$side" "$i" "$dep" > "$d/Cargo.toml"
     # One build directory per side, so dependencies compile once.
     printf '[build]\ntarget-dir = "%s"\n' "$T/target-$side" > "$d/.cargo/config.toml"
     echo 'fn main() {}' > "$d/src/main.rs"

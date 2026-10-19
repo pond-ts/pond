@@ -1,0 +1,44 @@
+You are writing a small Rust program. Work only inside {DIR}.
+
+The task: `data.arrow` (in that folder) is an Arrow IPC file of one-minute
+price bars for 500 stock symbols over about 17 hours: a `time` column (UTC
+timestamps), a `symbol` column (text) and a `close` column (number). Rows
+are in time order with the symbols mixed together. Some closes are missing,
+and a symbol may have no row at all for some minutes.
+
+The question: which 20 symbols have the most unusual latest move? For each
+symbol:
+
+- take its latest row that has a close; call its time `t`;
+- take that symbol's closes with time in the 60 minutes up to and including
+  `t` (time > t − 60 minutes and ≤ t), ignoring missing closes;
+- z = (latest close − mean of those closes) / (standard deviation of those
+  closes), where the standard deviation divides by the number of closes
+  (population, not sample);
+- leave the symbol out if that standard deviation is 0.
+
+Rank the symbols by the size of z (largest |z| first; ties by symbol name)
+and write the top 20 to `out.arrow` (Arrow IPC file format), one row each,
+with these columns in this order:
+
+- `symbol`: text;
+- `time`: `t`, as a UTC timestamp (milliseconds);
+- `z`: the z value (with its sign).
+
+Use the {LIB}. A Cargo project is already set up in {DIR} with that
+dependency in `Cargo.toml` (you may add other dependencies if you need
+them). Write your program in `src/main.rs`. It takes the input and output
+paths as its two arguments.
+
+Rules for this exercise:
+- Build and run ONLY with `{DIR}/attempt.sh` (it runs
+  `cargo run --release -- data.arrow out.arrow`). Do not run `cargo` any
+  other way (no `cargo build`, `cargo check`, `cargo test`, `cargo doc`).
+- You may read the library's source code ({SRC}) and any files in {DIR}.
+  Do not read anything else on this machine, and do not use the web.
+- When you believe out.arrow is correct, stop. You can inspect your output
+  only by having your own program print things.
+
+When finished, reply with: whether you think the output is right, any
+problems you hit with the library (be specific), and anything you were
+unsure about.
