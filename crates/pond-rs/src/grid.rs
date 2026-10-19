@@ -360,7 +360,7 @@ impl TimeSeries {
                     return Err(PondError::InvalidData {
                         call: CALL,
                         message: format!(
-                            "{} events at {}. Specify a different Keep or fix upstream.",
+                            "{} events at {}. Specify a different 'keep' policy or fix upstream.",
                             group.len(),
                             self.describe_key(group[0])
                         ),
@@ -594,7 +594,7 @@ fn best_row(data: &ColumnData, group: &[usize], min: bool) -> usize {
             let mut best_v = c.get(best);
             for &i in &group[1..] {
                 let Some(v) = c.get(i) else { continue };
-                if best_v.is_none_or(|b| v.partial_cmp(&b).is_some_and(&better)) {
+                if best_v.is_none_or(|b| v.partial_cmp(&b).is_some_and(better)) {
                     best = i;
                     best_v = Some(v);
                 }
@@ -808,9 +808,10 @@ mod tests {
             vec![Column::required("v", vec![1.0, 2.0])],
         );
         let e = x.dedupe(Keep::Error).unwrap_err().to_string();
-        assert!(
-            e.contains("2 events at 1970-01-01T00:00:07.700Z (7700)"),
-            "{e}"
+        assert_eq!(
+            e,
+            "dedupe: 2 events at 1970-01-01T00:00:07.700Z (7700). \
+             Specify a different 'keep' policy or fix upstream."
         );
         let keys = IntervalKeys {
             label: vec![1.5, 1.5].into(),
@@ -819,7 +820,11 @@ mod tests {
         };
         let x = TimeSeries::from_intervals("i", keys, vec![]).unwrap();
         let e = x.dedupe(Keep::Error).unwrap_err().to_string();
-        assert!(e.contains("key \"0:10:1.5\""), "{e}");
+        assert_eq!(
+            e,
+            "dedupe: 2 events at key \"0:10:1.5\". \
+             Specify a different 'keep' policy or fix upstream."
+        );
     }
 
     #[test]

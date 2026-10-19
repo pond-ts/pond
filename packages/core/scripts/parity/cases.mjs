@@ -879,6 +879,12 @@ const CASES = [
     'align',
     [calendar('day', 'America/New_York'), { sample: 'center' }],
   ],
+  [
+    'align-calendar-end',
+    'dst',
+    'align',
+    [calendar('day', 'America/New_York'), { sample: 'end' }],
+  ],
   ['align-mixed', 'mixed', 'align', [every('2s')]],
   [
     'align-mixed-linear',
@@ -942,6 +948,12 @@ const CASES = [
     'dst',
     'materialize',
     [calendar('day', 'America/New_York'), { sample: 'center' }],
+  ],
+  [
+    'materialize-calendar-end',
+    'dst',
+    'materialize',
+    [calendar('day', 'America/New_York'), { sample: 'end' }],
   ],
   ['materialize-empty', 'emptyHosts', 'materialize', [every('1s')]],
   ['materialize-error-key-name', 'timeColumn', 'materialize', [every('1s')]],

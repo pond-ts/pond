@@ -1130,6 +1130,144 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     symbols × 1000 one-minute bars = 500k rows, symbols interleaved, 2%
     gaps; median ms on this 4-core machine; runs vary ±20%):
 
+    | case | pond-rs 4 threads | pond-rs 1 thread | pond-ts |
+    | --- | --- | --- | --- |
+    | split (`toMap`) | 17.5 | 29.0 | 28.7 |
+    | diff + collect | 45.4 | 89.6 | 637 |
+    | fill linear + collect | 45.6 | 107 | 811 |
+    | rolling 60m mean / sd / last + collect | 67.7 | 143 | 992 |
+    | Q11: rolling, last z per symbol, top 20 | 36.4 | 84.5 | 1072 |
+
+    First version, before tuning (4 threads / 1 thread): split 46.6 /
+    63.5, diff + collect 143 / 205, fill 201 / 141, rolling 251 / 247,
+    Q11 85 / 116. Timing each stage found three costs, all fixed:
+    - Collect sorted 500k (partition, row) pairs with a closure that looked
+      up each key through two indirections: 55–79 ms. Now a radix sort of
+      the key numbers (stable, so ties keep partition order; it skips the
+      16-bit digits where every key agrees): ~13 ms. A unit test checks it
+      against a plain stable sort with negative times, far-apart times,
+      repeats and time ranges.
+    - Split hashed a fresh `Vec` per row: ~30–50 ms. Now each column's
+      values are numbered once and several columns are folded pairwise;
+      copying the rows out runs on several cores: ~17 ms.
+    - The check that partition values did not change built a `String` per
+      row: ~15 ms per operation. Now compares in place: under 1 ms.
+
+    What is left: one thread spends about a third of `diff + collect` on
+    the split and a third on collect; collect's text column copy is ~14 ms
+    (500k strings from 500 sources). `rolling` per partition costs ~40 µs
+    of fixed setup per call (49 ms for 500 partitions vs 29 ms for the
+    same rows as one series).
+  - pond-ts finding: `TimeSeries.concat`, which every partitioned operation
+    calls to put rows back, takes ~450 ms on these 500 partitions
+    ([PND-CONCATSORT] in PLAN.md).
+
+  **Step 4b (done): agent trial on the partitioned workload.** The R1a
+  trial repeated on [PND-AGENTBENCH] Q11: for 500 symbols, the z-score of
+  each latest close against its trailing 60 minutes, top 20 by |z|. 10 fresh
+  agents per side, same rules as R1a. Setup, prompt, grader and full write-up:
+  `crates/pond-rs/bench/agent-trial/q11/README.md`.
+
+  |                                  | pond-rs | polars |
+  | -------------------------------- | ------- | ------ |
+  | right answer                     | 10/10   | 10/10  |
+  | identical to pond-ts, to the bit | 9/10    | 0/10   |
+  | failed runs in total             | 1       | 4      |
+  | used the library for the maths   | 10/10   | 3/10   |
+
+  - Same picture as R1a: equal correctness, fewer failed runs. n = 10, so
+    this points the same way rather than proves it.
+  - 7 of 10 polars agents used polars only for file in and out and wrote
+    the window maths in plain Rust; none used polars' rolling functions.
+    So the comparison is pond-rs's API against hand-written Rust.
+  - The 60-rows-instead-of-60-minutes trap caught nobody; the prompt spells
+    the window out.
+  - Friction for pond-rs, logged in PLAN.md as [PND-RUSTQ11]:
+    - 10/10 built the output Arrow batch by hand: a ranked 20-row table is
+      not a `TimeSeries` (time order, key first).
+    - 9/10 wanted "the value at the latest row of each partition" and ran
+      `rolling` over the whole history to read one row.
+    - 6/10 found matching `Some(Value::String(..))` on a partition key
+      clumsy.
+    - 2/10 did not know `rolling` keeps only its outputs; this caused
+      pond-rs's one failed run (`UnknownColumn` on `close`).
+  - 5/10 worried that `Stdev` over a flat window is not exactly 0. Right:
+    after different values leave the window it is ~1e-16 of the value
+    (`5.1e-16` at 0.1). pond-ts gives the same bits, so parity holds; logged
+    as [PND-FLATSTDEV] in PLAN.md for both libraries.
+
+  **Step 5 (done): `align`, `materialize`, `dedupe`.**
+  - Rust shapes (`src/grid.rs`), each also on `PartitionedSeries`:
+    - `series.align(&seq, Align { method, sample, range })`, where
+      `AlignMethod` is `Hold` (default) or `Linear`. Gives an interval-keyed
+      series (key `interval`, labelled by bucket start) with every value
+      column optional.
+    - `series.materialize(&seq, Materialize { pick, sample, range })`, where
+      `Pick` is `First`, `Last` (default) or `Nearest`. Gives a time-keyed
+      series with the key at each bucket's sample point.
+    - `series.dedupe(Keep::Last)`, where `Keep` is `First`, `Last`
+      (default), `Error`, `Drop`, `Min(col)` or `Max(col)`.
+    - All option structs implement `Default`, so `Align::default()` is
+      pond-ts's `align(seq)`.
+  - pond-ts behaviour copied exactly (each has a parity case):
+    - The grid is pond-ts's `sequence.bounded(range, { sample })`: a bucket
+      is in when its sample point is in `[begin, end]` (`(begin, end]` for
+      sample End). The default range is pond-ts's `timeRange()`: the last
+      row's begin for time keys, the largest end for time-range and interval
+      keys. pond-rs computes sample points in half milliseconds with exact
+      integers, so a centre on an odd step is exact.
+    - Hold takes the row at or before each sample point, by pond-ts's key
+      order: for time-range and interval keys a row counts as "before" when
+      it begins before the point, or is a zero-length interval at it.
+    - Linear (time keys only) interpolates numbers between the rows either
+      side with pond-ts's formula and rounding; text and true/false columns
+      take the earlier row's value; a result that is not finite is a gap.
+    - `materialize` picks from rows whose begin is in
+      `[bucket begin, bucket end)`; `Nearest` keeps the earliest row on a
+      tie. Partitioned
+      `materialize` fills the partition columns on empty buckets, as pond-ts
+      does.
+    - `dedupe` groups rows with the same key (begin; begin and end; begin,
+      end and label for intervals), in order of first appearance. Interval
+      rows with the same span but different labels stay apart, even when
+      interleaved. `Min` / `Max` treat a gap as losing and keep the earliest
+      row on a tie. The `Error` message matches pond-ts word for word,
+      including JavaScript's number and ISO-date formatting.
+    - Errors match: a value column already named `interval`, linear on a
+      non-time key, a reversed range.
+  - Differences from pond-ts:
+    - `materialize` with a sample point on a half millisecond (centre of an
+      odd-millisecond step) is an error: pond-rs time keys are whole
+      milliseconds; pond-ts stores the fraction.
+    - `Keep::Min` / `Max` check up front that the column exists and is a
+      number or decimal column; pond-ts compares whatever it finds.
+    - pond-ts's custom keep function, `BoundedSequence` input and
+      `TimeRange`-object ranges are not built; `range` is a `(begin, end)`
+      pair of epoch milliseconds.
+    - `Linear` holds decimal columns rather than interpolating (pond-ts has
+      no decimal column).
+  - Parity: 60 new cases (247 in all): every method, sample and pick
+    (calendar days at start, centre and end included), ranges
+    inside, outside and as a single point, time-range and interval keys
+    (including zero-length intervals and labels), gaps, text columns,
+    repeated times, every keep policy, the partitioned forms and the error
+    cases. The parity check compares error presence only, so a unit test
+    pins the `dedupe` error text to pond-ts's, word for word. Unit tests
+    also cover JavaScript number and date formatting (years outside
+    0–9999 included), the half-millisecond refusal and decimals.
+  - Property tests: align (hold and linear), materialize and dedupe each
+    checked against a brute-force version on random time-keyed series
+    (other key kinds rely on the parity cases).
+  - Complexity: N rows, B buckets, C columns. `align` hold and linear and
+    `materialize` walk rows and buckets together once: O(N + B·C). `dedupe`
+    is one pass over sorted keys, O(N·C); only interval rows with equal
+    spans use a hash map, to group by label.
+  - Perf (`examples/perf_grid.rs` vs `bench/grid_pond_ts.mjs`; dense = 1M
+    rows about 1 s apart with 2% gaps and a text column; sparse = 10k rows
+    100 s apart onto a 1 s grid; repeats = 1M rows, 10% repeated times;
+    panel = the 4a 500 × 1000 series; median ms on this 4-core machine;
+    every checksum matches):
+
     | case                            | pond-rs 4 threads | pond-rs 1 thread | pond-ts |
     | ------------------------------- | ----------------- | ---------------- | ------- |
     | align hold, 1 m grid            | 2.7               | 3.0              | 78      |
@@ -1153,6 +1291,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     this machine pays for in page faults (~6 ms per fresh 8 MB). Now groups
     are found in one flat pass and bucket rows are produced without
     intermediate vectors: 12 ms and 33 ms.
+
   - pond-ts findings, from CPU profiles: `align` hold is ~4× slower than
     linear on the same grid ([PND-ALIGNHOLD]); `dedupe` and `materialize`
     pay for strings and `Event` objects ([PND-DEDUPEMAP]).
