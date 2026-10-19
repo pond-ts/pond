@@ -1030,6 +1030,156 @@ const CASES = [
       'collect',
     ],
   ],
+  // join: exact keys, pairing repeats one to one; a matched row keeps the
+  // left key. joinB has 1000 three times to joinA's two. (pond-rs names
+  // keys by kind, so a key-name clash is a pond-rs unit test, via Arrow.)
+  ['join-outer', 'joinA', 'join', [{ series: 'joinB' }]],
+  ['join-inner', 'joinA', 'join', [{ series: 'joinB' }, { type: 'inner' }]],
+  ['join-left', 'joinA', 'join', [{ series: 'joinB' }, { type: 'left' }]],
+  ['join-right', 'joinA', 'join', [{ series: 'joinB' }, { type: 'right' }]],
+  ['join-reversed', 'joinB', 'join', [{ series: 'joinA' }]],
+  ['join-same-keys', 'gappy', 'join', [{ series: 'gappyOther' }]],
+  ['join-conflict-error', 'gappy', 'join', [{ series: 'joinConflict' }]],
+  [
+    'join-conflict-prefix',
+    'gappy',
+    'join',
+    [
+      { series: 'joinConflict' },
+      { onConflict: 'prefix', prefixes: ['l', 'r'] },
+    ],
+  ],
+  [
+    'join-self-prefix',
+    'gappy',
+    'join',
+    [
+      { series: 'gappy' },
+      { type: 'inner', onConflict: 'prefix', prefixes: ['l', 'r'] },
+    ],
+  ],
+  [
+    'join-prefix-unused',
+    'joinA',
+    'join',
+    [{ series: 'joinB' }, { onConflict: 'prefix', prefixes: ['x'] }],
+  ],
+  [
+    'join-prefix-count',
+    'gappy',
+    'join',
+    [{ series: 'joinConflict' }, { onConflict: 'prefix', prefixes: ['l'] }],
+  ],
+  [
+    'join-prefix-same',
+    'gappy',
+    'join',
+    [
+      { series: 'joinConflict' },
+      { onConflict: 'prefix', prefixes: ['p', 'p'] },
+    ],
+  ],
+  ['join-key-kinds', 'joinA', 'join', [{ series: 'ranges2' }]],
+  ['join-empty-right', 'joinA', 'join', [{ series: 'joinEmpty' }]],
+  ['join-empty-left', 'joinEmpty', 'join', [{ series: 'joinA' }]],
+  [
+    'join-empty-inner',
+    'joinA',
+    'join',
+    [{ series: 'joinEmpty' }, { type: 'inner' }],
+  ],
+  ['join-ranges', 'ranges', 'join', [{ series: 'ranges2' }]],
+  [
+    'join-ranges-inner',
+    'ranges',
+    'join',
+    [{ series: 'ranges2' }, { type: 'inner' }],
+  ],
+  [
+    'join-ranges-right',
+    'ranges',
+    'join',
+    [{ series: 'ranges2' }, { type: 'right' }],
+  ],
+  // Labels on one span compare as JavaScript's localeCompare: "a" < "B",
+  // and a precomposed é equals e + combining accent.
+  ['join-labels', 'labelsA', 'join', [{ series: 'labelsB' }]],
+  [
+    'join-labels-inner',
+    'labelsA',
+    'join',
+    [{ series: 'labelsB' }, { type: 'inner' }],
+  ],
+  [
+    'join-labels-left',
+    'labelsA',
+    'join',
+    [{ series: 'labelsB' }, { type: 'left' }],
+  ],
+  [
+    'join-labels-right',
+    'labelsA',
+    'join',
+    [{ series: 'labelsB' }, { type: 'right' }],
+  ],
+  ['join-labels-reversed', 'labelsB', 'join', [{ series: 'labelsA' }]],
+  ['join-label-kinds', 'labelsA', 'join', [{ series: 'numberLabels' }]],
+  [
+    'join-label-kinds-inner',
+    'labelsA',
+    'join',
+    [{ series: 'numberLabels' }, { type: 'inner' }],
+  ],
+  [
+    'join-label-kinds-left',
+    'labelsA',
+    'join',
+    [{ series: 'numberLabels' }, { type: 'left' }],
+  ],
+  [
+    'join-label-kinds-right',
+    'labelsA',
+    'join',
+    [{ series: 'numberLabels' }, { type: 'right' }],
+  ],
+  ['join-number-labels', 'buckets', 'join', [{ series: 'numberLabels' }]],
+  [
+    'join-zero-intervals',
+    'zeroIntervals',
+    'join',
+    [{ series: 'labelled' }, { onConflict: 'prefix', prefixes: ['z', 'l'] }],
+  ],
+  // joinMany: names repeated across any of the series take that series'
+  // prefix; then left to right.
+  [
+    'joinMany',
+    'joinA',
+    'joinMany',
+    [[{ series: 'joinB' }, { series: 'joinConflict' }]],
+  ],
+  [
+    'joinMany-inner',
+    'joinA',
+    'joinMany',
+    [[{ series: 'joinB' }, { series: 'joinConflict' }], { type: 'inner' }],
+  ],
+  [
+    'joinMany-prefix',
+    'gappy',
+    'joinMany',
+    [
+      [{ series: 'joinConflict' }, { series: 'gappyOther' }],
+      { onConflict: 'prefix', prefixes: ['g', 'c', 'o'] },
+    ],
+  ],
+  ['joinMany-conflict', 'gappy', 'joinMany', [[{ series: 'joinConflict' }]]],
+  ['joinMany-one', 'joinA', 'joinMany', [[]]],
+  [
+    'joinMany-prefix-count',
+    'gappy',
+    'joinMany',
+    [[{ series: 'joinConflict' }], { onConflict: 'prefix', prefixes: ['g'] }],
+  ],
 ];
 
 /**
@@ -1327,6 +1477,121 @@ export function buildFixture(pond) {
         [['c', 20, 30], 5, 14],
       ],
     }),
+    joinA: TimeSeries.fromJSON({
+      name: 'joinA',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'cpu', kind: 'number', required: false },
+        { name: 'host', kind: 'string', required: false },
+      ],
+      rows: [
+        [0, 0.5, 'a'],
+        [1000, 0.75, 'b'],
+        [1000, null, 'c'],
+        [2000, 1.25, null],
+        [4000, 2, 'd'],
+      ],
+    }),
+    joinB: TimeSeries.fromJSON({
+      name: 'joinB',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'mem', kind: 'number' },
+        { name: 'up', kind: 'boolean' },
+      ],
+      rows: [
+        [1000, 10, true],
+        [1000, 11, false],
+        [1000, 12, true],
+        [3000, 13, false],
+        [4000, 14, true],
+        [5000, 15, false],
+      ],
+    }),
+    joinConflict: TimeSeries.fromJSON({
+      name: 'joinConflict',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'a', kind: 'number' },
+      ],
+      rows: [
+        [0, 100],
+        [1000, 200],
+        [30000, 300],
+      ],
+    }),
+    // gappy's keys exactly, so both sides pass through.
+    gappyOther: TimeSeries.fromJSON({
+      name: 'gappyOther',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'c', kind: 'number', required: false },
+      ],
+      rows: GAPPY_ROWS.map(([t], i) => [t, i % 4 === 0 ? null : i]),
+    }),
+    joinEmpty: TimeSeries.fromJSON({
+      name: 'joinEmpty',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'w', kind: 'number' },
+      ],
+      rows: [],
+    }),
+    ranges2: TimeSeries.fromJSON({
+      name: 'ranges2',
+      schema: [
+        { name: 'timeRange', kind: 'timeRange' },
+        { name: 'c', kind: 'number' },
+      ],
+      rows: [
+        [[0, 1000], 5],
+        [[0, 3000], 6],
+        [[2000, 2000], 7],
+        [[2000, 2000], 8],
+        [[7000, 9000], 9],
+      ],
+    }),
+    labelsA: TimeSeries.fromJSON({
+      name: 'labelsA',
+      schema: [
+        { name: 'interval', kind: 'interval' },
+        { name: 'p', kind: 'number' },
+      ],
+      rows: [
+        [['b', 0, 10], 1],
+        [['a', 0, 10], 2],
+        [['B', 0, 10], 3],
+        [['\u00e9', 10, 20], 4],
+        [['x', 20, 30], 5],
+      ],
+    }),
+    labelsB: TimeSeries.fromJSON({
+      name: 'labelsB',
+      schema: [
+        { name: 'interval', kind: 'interval' },
+        { name: 'q', kind: 'number' },
+      ],
+      rows: [
+        [['a', 0, 10], 10],
+        [['b', 0, 10], 11],
+        [['A', 0, 10], 12],
+        [['e\u0301', 10, 20], 13],
+        [['x', 20, 30], 14],
+        [['y', 20, 30], 15],
+      ],
+    }),
+    numberLabels: TimeSeries.fromJSON({
+      name: 'numberLabels',
+      schema: [
+        { name: 'interval', kind: 'interval' },
+        { name: 'r', kind: 'number' },
+      ],
+      rows: [
+        [[0, 0, 10], 1],
+        [[7, 10, 20], 2],
+        [[5000, 5000, 10000], 3],
+      ],
+    }),
     extreme: TimeSeries.fromJSON({
       name: 'extreme',
       schema: [
@@ -1353,6 +1618,10 @@ export function buildFixture(pond) {
         Object.entries(arg).map(([k, v]) => [k, decode(v)]),
       );
     }
+    // Another input series, by name (join / joinMany).
+    if (arg && typeof arg === 'object' && 'series' in arg) {
+      return inputs[arg.series];
+    }
     if (!(arg && typeof arg === 'object' && 'sequence' in arg)) return arg;
     const { every, calendar, timeZone, weekStartsOn } = arg.sequence;
     return every !== undefined
@@ -1365,7 +1634,7 @@ export function buildFixture(pond) {
       generator: 'packages/core/scripts/parity/generate.mjs',
       reference: 'pond-ts',
       encoding:
-        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Sequence.every(d) as {"sequence":{"every":d}} and Sequence.calendar(u, {timeZone, weekStartsOn}) as {"sequence":{"calendar":u,"timeZone":z,"weekStartsOn"?:w}}; a case has expected (series), groups ([key, series] pairs, from toMap / groupBy) or error ({name,message}); partitionBy args are [by, steps, end] with steps [[method, ...args]] run on the partitioned view and end "collect" or "toMap"; exact unless tolerance is set',
+        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Sequence.every(d) as {"sequence":{"every":d}} and Sequence.calendar(u, {timeZone, weekStartsOn}) as {"sequence":{"calendar":u,"timeZone":z,"weekStartsOn"?:w}}; a case has expected (series), groups ([key, series] pairs, from toMap / groupBy) or error ({name,message}); partitionBy args are [by, steps, end] with steps [[method, ...args]] run on the partitioned view and end "collect" or "toMap"; {"series":name} is another input series; joinMany args are [[others...], options?] and call TimeSeries.joinMany([input, ...others], options); exact unless tolerance is set',
     },
     inputs: Object.fromEntries(
       Object.entries(inputs).map(([name, series]) => [
@@ -1390,6 +1659,12 @@ export function buildFixture(pond) {
             view = view[method](...rest.map(decode));
           }
           result = end === 'toMap' ? view.toMap() : view.collect();
+        } else if (op === 'joinMany') {
+          const [others, options] = args;
+          result = TimeSeries.joinMany(
+            [inputs[input], ...others.map(decode)],
+            options,
+          );
         } else {
           result = inputs[input][op](...args.map(decode));
         }

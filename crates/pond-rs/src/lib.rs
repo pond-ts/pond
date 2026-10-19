@@ -18,7 +18,8 @@
 //! entity with [`TimeSeries::partition_by`] (partitions on several cores),
 //! putting a series on a grid with [`TimeSeries::align`] /
 //! [`TimeSeries::materialize`] and collapsing repeated keys with
-//! [`TimeSeries::dedupe`],
+//! [`TimeSeries::dedupe`], putting series side by side with
+//! [`TimeSeries::join`] / [`TimeSeries::join_many`],
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
 //! [`ArrowKey`], [`TimeSeries::write_ipc`]). Results match
 //! pond-ts bit for bit; the parity
@@ -70,6 +71,7 @@ mod decimal;
 mod duration;
 mod error;
 mod grid;
+mod join;
 mod par;
 mod partition;
 mod reducer;
@@ -87,6 +89,7 @@ pub use column::{
 pub use duration::parse_duration;
 pub use error::{PondError, Result};
 pub use grid::{Align, AlignMethod, Keep, Materialize, Pick};
+pub use join::{Join, JoinType, OnConflict};
 pub use partition::{PartitionKey, PartitionedSeries};
 pub use reducer::{Agg, Reducer};
 pub use reshape::At;

@@ -578,7 +578,7 @@ the study oracle) is done.
      partitions (#778); (b) agent trial on the partitioned workload
      ([PND-AGENTBENCH] Q11)~~ — done.
   5. ~~`align` / `materialize` / `dedupe`~~ — done.
-  6. `join`.
+  6. ~~`join`~~ — done.
   7. The rest, as friction asks.
 
   Detail in the breakout plan.

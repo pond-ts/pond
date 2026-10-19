@@ -613,7 +613,7 @@ The one result short of a clean win is one-core B: polars is faster
      agent-workload pitch ([PND-AGENTBENCH] Q11: 500 symbols × 1000 bars).
 
   5. **Grid operations:** `align`, `materialize`, `dedupe` (done, below).
-  6. **`join`.**
+  6. **`join`** (done, below).
   7. **The rest, as friction asks for it:**
      - Queries (`at`, `bisect`, `nearest`, …) and range selection (`within`,
        `trim`, …).
@@ -1295,6 +1295,99 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
   - pond-ts findings, from CPU profiles: `align` hold is ~4× slower than
     linear on the same grid ([PND-ALIGNHOLD]); `dedupe` and `materialize`
     pay for strings and `Event` objects ([PND-DEDUPEMAP]).
+
+  **Step 6 (done): `join`, `join_many`.**
+  - Rust shapes (`src/join.rs`): `left.join(&right, Join { how, on_conflict })`
+    and `TimeSeries::join_many(&[&a, &b, &c], Join)`. `JoinType` is
+    `Inner` / `Left` / `Right` / `Outer` (default); `OnConflict` is `Error`
+    (default) or `Prefix(vec![..])`, one prefix per series.
+  - pond-ts behaviour copied exactly (each has a parity case):
+    - Exact keys only, same key kind on both sides (time, time range or
+      interval); one walk over both keys.
+    - Equal keys pair one to one in order: `a` rows on the left and `b` on
+      the right give `min(a, b)` matched rows, then the longer side's extra
+      rows alone. A matched row keeps the left key; the output takes the
+      left series' name and key name. Every value column comes out
+      optional.
+    - Interval keys compare by begin, end, then label: number labels before
+      text, and text labels as JavaScript `localeCompare` does in Node (CLDR
+      root collation: `"a" < "B"`, and a precomposed `é` equals `e` + a
+      combining accent, so those rows match). pond-ts does not sort labels
+      within a span, so this order decides which rows pair.
+    - Number and text labels on rows from both sides (an outer join) are an
+      error; a one-sided result keeps that side's label kind.
+    - A value column name in more than one series is an error, or with
+      `Prefix` becomes `<prefix>_<name>` in each series that has it. The
+      prefix count is only checked when some name repeats; prefixes that
+      still collide are an error. `join_many` finds repeats across all the
+      series, then joins left to right; one series comes back unchanged.
+  - Collation: pond-rs uses the `icu_collator` crate (ICU4X, compiled CLDR
+    data). pjm17971 chose it over plain byte order on 2026-10-19: it
+    matched Node's `localeCompare` on all 160,000 pairs of a 400-string
+    test set (ASCII, case, accents both ways, ß, æ, CJK, emoji, NUL, tabs),
+    at the cost of 46 small crates and ~1.3 MB in a built program. It is
+    only called when two labels on the same span differ as bytes.
+  - Differences from pond-ts:
+    - `join_many` of no series is an error (pond-ts throws a `TypeError`
+      reading `undefined`).
+    - A right-side value column named like the left key is a clear error up
+      front; pond-ts throws on the duplicate schema name. Only reachable
+      through Arrow input, since pond-rs otherwise names keys by kind
+      (unit test).
+    - A side with 4,294,967,295 rows or more is refused (row numbers are
+      held as `u32`).
+  - Parity: 36 new cases (283 in all): every join type, repeated keys (2 vs
+    3 at one time), both sides on identical keys, conflicts with and
+    without prefixes, empty sides, key-kind mismatch, time ranges, interval
+    labels in mixed case and both spellings of `é` in every join type,
+    number vs text labels, and `joinMany` (plain, inner, prefixed, one
+    series, conflict, wrong prefix count). New fixture encoding:
+    `{ "series": name }` names another input; `joinMany` args are
+    `[[others...], options]`.
+  - Property test: random time-keyed series with repeats, every join type,
+    against grouping by time.
+  - Complexity: N and M input rows, R output rows, C columns. One walk,
+    O(N + M); each column passes through (a side whose rows all land in
+    order, nothing in between: shared, no copy) or is gathered once, O(R).
+  - Perf (`examples/perf_join.rs` vs `bench/join_pond_ts.mjs`; a: 1M rows a
+    second; b: 1M rows every 1.5 s, so a third of a's times match; each
+    with a number column (2% gaps) and a text column; median ms; pond-ts
+    is two separate runs; every checksum matches):
+
+    | case                                 | pond-rs | pond-ts |
+    | ------------------------------------ | ------- | ------- |
+    | left join, 1M x 1M                   | 13–15   | 27–28   |
+    | inner join, 1M x 1M                  | 11–12   | 26–36   |
+    | outer join, 1M x 1M (1.67M rows out) | 87–89   | 67–75   |
+    | left join, 1M x 10k                  | 10–11   | 16–18   |
+    | outer join, same keys                | 2.3–3.0 | 7–9     |
+    | `joinMany` of 3, same keys           | 5.8–6.1 | 16–23   |
+
+    `join` runs on one thread, so the thread count does not change these.
+    pond-ts's join was already column-native ([PND-JOINCOL]: one walk,
+    then pass-through or one gather per column), so the gap is small.
+
+  - The outer join is slower than pond-ts in a fresh run. With glibc told
+    to keep freed memory (`GLIBC_TUNABLES` set to
+    `glibc.malloc.mmap_threshold=268435456:glibc.malloc.trim_threshold=1073741824`)
+    it takes 50 ms. So
+    ~37 ms is the first touch of new memory pages for ~100 MB of output and
+    temporaries. JavaScript reuses its own heap, so pond-ts does not pay
+    that again run after run.
+  - First version, before tuning (fresh run): left 66 ms, outer 152 ms,
+    same keys 17 ms, `joinMany` 34 ms. Changes:
+    - Output row pairs held as two `u32` instead of two `Option<usize>`:
+      8 bytes a row, not 32.
+    - Time keys compared with an inlined integer compare.
+    - Each gathered side builds one Arrow `UInt32Array` of row numbers,
+      used for every column, instead of a `Vec<Option<usize>>` per side.
+    - Text, true/false and decimal columns gather with Arrow's `take`
+      kernel (`arrow-select`, already built for `arrow-ipc`), which sizes
+      the output first and copies each row once. `StringColumn::take` now
+      uses it too, which speeds up the step-5 operations that copy text
+      (same checksums; `perf_grid`, same session, before → after):
+      `materialize` last 1 s 73 → 27 ms, `materialize` sparse 50 → 20 ms,
+      `align` hold 1 s 62 → 45 ms, `dedupe` last 23 → 19 ms.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

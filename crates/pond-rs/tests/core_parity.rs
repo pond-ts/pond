@@ -14,8 +14,8 @@ use common::{
 use pond_rs::Value as Literal;
 use pond_rs::{
     Agg, Align, AlignMethod, ArrowKey, At, Column, ColumnData, ColumnKind, Fill, FillLimits,
-    FirstRow, IntervalKeys, Keep, Key, Labels, Materialize, Pick, Reducer, Sequence, TimeRangeKeys,
-    TimeSeries,
+    FirstRow, IntervalKeys, Join, JoinType, Keep, Key, Labels, Materialize, OnConflict, Pick,
+    Reducer, Sequence, TimeRangeKeys, TimeSeries,
 };
 use serde_json::{Value, json};
 
@@ -42,6 +42,8 @@ const KNOWN_OPS: &[&str] = &[
     "align",
     "materialize",
     "dedupe",
+    "join",
+    "joinMany",
 ];
 
 /// Ops with an arm in [`run`]. Every fixture case for a listed op must run
@@ -67,6 +69,8 @@ const IMPLEMENTED_OPS: &[&str] = &[
     "align",
     "materialize",
     "dedupe",
+    "join",
+    "joinMany",
 ];
 
 /// The ops a plain series and a partitioned one both have, with the same
@@ -286,6 +290,20 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>
         );
     }
     let result = match case.op.as_str() {
+        "join" => {
+            let other = to_series(&fixture.inputs[series_name(&case.args[0])]);
+            input.join(&other, join_options(case.args.get(1)))
+        }
+        "joinMany" => {
+            let others: Vec<TimeSeries> = case.args[0]
+                .as_array()
+                .expect("joinMany takes a list of series")
+                .iter()
+                .map(|a| to_series(&fixture.inputs[series_name(a)]))
+                .collect();
+            let all: Vec<&TimeSeries> = std::iter::once(&input).chain(&others).collect();
+            TimeSeries::join_many(&all, join_options(case.args.get(1)))
+        }
         "select" => {
             let names: Vec<&str> = case
                 .args
@@ -823,4 +841,36 @@ fn reads_the_pond_ts_arrow_exports() {
             );
         }
     }
+}
+
+/// `{ "series": name }`: another fixture input.
+fn series_name(arg: &Value) -> &str {
+    arg["series"]
+        .as_str()
+        .expect("a series argument names an input")
+}
+
+/// pond-ts join options: `{ type?, onConflict?, prefixes? }`.
+fn join_options(arg: Option<&Value>) -> Join {
+    let o = arg.unwrap_or(&Value::Null);
+    let how = match o["type"].as_str() {
+        None | Some("outer") => JoinType::Outer,
+        Some("inner") => JoinType::Inner,
+        Some("left") => JoinType::Left,
+        Some("right") => JoinType::Right,
+        Some(other) => panic!("unknown join type {other}"),
+    };
+    let on_conflict = match o["onConflict"].as_str() {
+        None | Some("error") => OnConflict::Error,
+        Some("prefix") => OnConflict::Prefix(
+            o["prefixes"]
+                .as_array()
+                .expect("prefixes")
+                .iter()
+                .map(|p| p.as_str().expect("prefix").to_string())
+                .collect(),
+        ),
+        Some(other) => panic!("unknown onConflict {other}"),
+    };
+    Join { how, on_conflict }
 }

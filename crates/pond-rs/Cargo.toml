@@ -16,8 +16,13 @@ arrow-buffer = { version = "59.3.1", default-features = false }
 # zstd is C code; it builds for wasm32 with clang and needs no imports there.
 arrow-ipc = { version = "59.3.1", default-features = false, features = ["lz4", "zstd"] }
 arrow-schema = { version = "59.3.1", default-features = false }
+# Already built for arrow-ipc; its `take` gathers text rows fast.
+arrow-select = { version = "59.3.1", default-features = false }
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 jiff-tzdb = "0.1.9" # same crate jiff bundles; read only for its VERSION
+# Unicode collation (CLDR root, as JavaScript's `localeCompare` in Node):
+# `join` orders interval labels that share a span the way pond-ts does.
+icu_collator = "2.3.1"
 
 # Threads are not available on wasm32, so rayon is never built there; the
 # `parallel` feature then does nothing.
