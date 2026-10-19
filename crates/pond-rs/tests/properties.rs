@@ -19,8 +19,8 @@ use jiff::Timestamp;
 use jiff::civil::{Date, Weekday};
 use jiff::tz::TimeZone;
 use pond_rs::{
-    Agg, Align, AlignMethod, At, CalendarUnit, Column, Keep, Key, Materialize, Pick, Reducer,
-    Sequence, TimeSeries,
+    Agg, Align, AlignMethod, At, CalendarUnit, Column, Join, JoinType, Keep, Key, Materialize,
+    Pick, Reducer, Sequence, TimeSeries,
 };
 
 /// SplitMix64: small, seeded, good enough to vary test inputs.
@@ -839,5 +839,72 @@ fn dedupe_matches_brute_force() {
         }
         let repeats = distinct.len() < times.len();
         assert_eq!(s.dedupe(Keep::Error).is_err(), repeats, "seed {seed}");
+    }
+}
+
+/// `join` against grouping by time: at each time, rows pair in order while
+/// both sides have one, then the longer side's extra rows follow alone.
+#[test]
+fn join_matches_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (lt, lv) = random_series(&mut rng);
+        let (rt, rv) = random_series(&mut rng);
+        let left = series(&lt, &lv);
+        let right =
+            TimeSeries::new("r", rt.clone(), vec![Column::optional("w", rv.clone())]).unwrap();
+        let mut keys: Vec<i64> = lt.iter().chain(&rt).copied().collect();
+        keys.sort_unstable();
+        keys.dedup();
+        for how in [
+            JoinType::Inner,
+            JoinType::Left,
+            JoinType::Right,
+            JoinType::Outer,
+        ] {
+            let what = format!("seed {seed} {how:?}");
+            let (keep_left, keep_right) = match how {
+                JoinType::Inner => (false, false),
+                JoinType::Left => (true, false),
+                JoinType::Right => (false, true),
+                JoinType::Outer => (true, true),
+            };
+            let (mut want_t, mut want_v, mut want_w) = (vec![], vec![], vec![]);
+            for &t in &keys {
+                let l: Vec<usize> = (0..lt.len()).filter(|&i| lt[i] == t).collect();
+                let r: Vec<usize> = (0..rt.len()).filter(|&i| rt[i] == t).collect();
+                for k in 0..l.len().max(r.len()) {
+                    let (a, b) = (l.get(k), r.get(k));
+                    let keep = (a.is_some() && b.is_some())
+                        || (a.is_some() && keep_left)
+                        || (b.is_some() && keep_right);
+                    if keep {
+                        want_t.push(t);
+                        want_v.push(a.and_then(|&i| lv[i]));
+                        want_w.push(b.and_then(|&i| rv[i]));
+                    }
+                }
+            }
+            let out = left
+                .join(
+                    &right,
+                    Join {
+                        how,
+                        ..Join::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(out.key().begin(), &want_t[..], "{what}");
+            let col = |name: &str| -> Vec<Option<f64>> {
+                out.column(name)
+                    .unwrap()
+                    .numbers()
+                    .unwrap()
+                    .iter()
+                    .collect()
+            };
+            assert_eq!(col("v"), want_v, "{what}");
+            assert_eq!(col("w"), want_w, "{what}");
+        }
     }
 }
