@@ -100,15 +100,24 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   readonly store: ColumnarStore<S>;
   readonly #keyCache = new Map<number, EventKey>();
   readonly #eventCache: Map<number, SeriesEvent>;
+  /**
+   * Dense per-row events, aligned with `store` (`#dense[i]` is row `i`),
+   * when the store was built from a complete event array. Checked before
+   * `#eventCache`; a `Map` entry per row costs ~4× an array slot to build,
+   * and building that map was most of `filter`'s time ([PND-FILTERTAKE]).
+   */
+  readonly #dense: ReadonlyArray<SeriesEvent> | undefined;
   // Lazy full-materialization snapshot.
   #eventsArray?: ReadonlyArray<SeriesEvent>;
 
   private constructor(
     store: ColumnarStore<S>,
     eventCache: Map<number, SeriesEvent>,
+    dense?: ReadonlyArray<SeriesEvent>,
   ) {
     this.store = store;
     this.#eventCache = eventCache;
+    this.#dense = dense;
   }
 
   /** Schema declared at construction. */
@@ -248,6 +257,31 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   }
 
   /**
+   * Module-internal factory for a store whose every row already has its
+   * `Event`: `events[i]` **is** row `i` of `store` (same key, same cell
+   * values), and `events.length === store.length`. Same trust contract as
+   * {@link _fromValidatedStoreAndCacheModulePrivate} — callers guarantee
+   * the alignment by construction — but holds the events as a dense array
+   * instead of a per-row `Map`.
+   *
+   * The array is held, not copied, so it must not change afterwards: pass a
+   * frozen array (then `toEvents()` returns it as is) or one nobody else
+   * holds. A non-frozen array is still copied by `toEvents()` before being
+   * frozen and returned.
+   */
+  static _fromStoreAndAlignedEventsModulePrivate<S extends SeriesSchema>(
+    store: ColumnarStore<S>,
+    events: ReadonlyArray<SeriesEvent>,
+  ): SeriesStore<S> {
+    if (events.length !== store.length) {
+      throw new RangeError(
+        `SeriesStore: ${events.length} events for a store of ${store.length} rows`,
+      );
+    }
+    return new SeriesStore<S>(store, new Map(), events);
+  }
+
+  /**
    * Materializes the `EventKey` for row `i`. Returns the concrete
    * `Time` / `TimeRange` / `Interval` instance depending on the
    * underlying key column kind. Lazily cached — `keyAt(i) ===
@@ -278,6 +312,8 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
         `SeriesStore.eventAt out of range: ${i} not in [0, ${this.length})`,
       );
     }
+    const dense = this.#dense;
+    if (dense !== undefined) return dense[i]!;
     let cached = this.#eventCache.get(i);
     if (cached === undefined) {
       const key = this.keyAt(i) as Time | TimeRange | Interval;
@@ -304,6 +340,13 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
    */
   toEvents(): ReadonlyArray<SeriesEvent> {
     if (this.#eventsArray !== undefined) return this.#eventsArray;
+    const dense = this.#dense;
+    if (dense !== undefined) {
+      this.#eventsArray = Object.isFrozen(dense)
+        ? dense
+        : Object.freeze(dense.slice());
+      return this.#eventsArray;
+    }
     const events = new Array<SeriesEvent>(this.length);
     for (let i = 0; i < this.length; i += 1) {
       events[i] = this.eventAt(i);
@@ -647,19 +690,19 @@ function buildSeriesStoreFromEvents<S extends SeriesSchema>(
 
   // 3. Compose store + wrap with eventCache pre-populated.
   const store = ColumnarStore.fromTrustedStore(schema, keys, columns);
-  const cache = new Map<number, SeriesEvent>();
-  for (let i = 0; i < length; i += 1) {
-    cache.set(i, events[i]!);
-  }
   // Fast path: skip the per-entry cache validation that
-  // `fromTrustedStore` runs. The cache was just built from the
-  // same events that populated the store's columns; by
-  // construction the two are aligned. Bypassing validation
-  // recovers the O(N × M) cost that otherwise dominates intake
-  // on large series — for 100k rows × 2 value columns the
-  // redundant pass was ~20 ms (the substrate-build itself is
-  // ~10 ms).
-  return SeriesStore._fromValidatedStoreAndCacheModulePrivate(store, cache);
+  // `fromTrustedStore` runs. The store was just built from the same
+  // events; by construction the two are aligned. Bypassing validation
+  // recovers the O(N × M) cost that otherwise dominates intake on large
+  // series — for 100k rows × 2 value columns the redundant pass was
+  // ~20 ms (the substrate-build itself is ~10 ms). The events are held
+  // as a dense array rather than a per-row `Map` ([PND-FILTERTAKE]).
+  // A caller's mutable array is copied, so a later write to it cannot change
+  // what `eventAt` returns (the per-row `Map` this replaces was a snapshot).
+  return SeriesStore._fromStoreAndAlignedEventsModulePrivate(
+    store,
+    Object.isFrozen(events) ? events : Object.freeze(events.slice()),
+  );
 }
 
 // Re-exports so consumers can write `import { ColumnarStore, SeriesStore }

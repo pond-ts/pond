@@ -631,16 +631,6 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   (`v => v * 1e308 + 1e308` on a required column). Same class as
   [PND-ARROWREQ]. pond-rs makes the column optional when a gap appears;
   pond-ts should do the same. Found 2026-10-19 (pond-rs R1b step 3b).
-- **[PND-FILTERTAKE]** — pond-ts `filter` takes 230–470 ms on 1M rows
-  (pond-rs: 4–10 ms). A CPU profile puts about half the time in rebuilding
-  the column store from the kept `Event` objects
-  (`buildSeriesStoreFromEvents`, via `#fromTrustedEvents`), a fifth in the
-  predicate loop, and 14% in garbage collection. Proposed fix: collect the
-  kept row numbers and copy those rows out of each column, as `slice`'s
-  `withRowRange` does for a range; the predicate can still be handed
-  `Event`s. Repro: `crates/pond-rs/bench/rowwise_pond_ts.mjs`. Found
-  2026-10-19 (pond-rs R1b step 3b). `mapColumns` (72–97 ms vs pond-rs
-  1.4 ms) is the boxed path already listed under [PND-BOXFREE].
 - **[PND-CONCATSORT]** — pond-ts `TimeSeries.concat` takes ~450 ms to put
   500 partitions × 1000 rows back together, and every partitioned
   operation calls it (`partitionBy('symbol').diff('close').collect()`:
