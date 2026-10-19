@@ -147,7 +147,8 @@ A **gap** is a missing value. It is not zero and not an empty string; it is
 
 In a number column a gap is stored as `NaN`, so a raw `f64` that is `NaN` or
 infinite is read as a gap too. `Column::optional("v", vec![1.0, f64::NAN])`
-has one gap. For text and true/false columns, only `None` is a gap; an empty
+has one gap. (pond-ts refuses `NaN` and infinities when you build a series;
+pond-rs reads them as gaps.) For text and true/false columns, only `None` is a gap; an empty
 string is a value.
 
 **Required or optional.** `Column::required` promises there are no gaps,

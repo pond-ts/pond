@@ -105,7 +105,8 @@ fn main() -> Result<(), pond_rs::PondError> {
 | anything else (`Decimal256`, binary, lists, structs, …) | an error naming the field                      |
 
 Nulls become gaps. A field Arrow marks nullable becomes an optional column;
-a non-nullable one becomes required. Files compressed with LZ4 or ZSTD are
+a non-nullable one becomes required, unless it holds `NaN` or infinities,
+which makes it optional. Files compressed with LZ4 or ZSTD are
 read (pandas compresses with LZ4 by default). To skip fields pond-rs does
 not read, project them away first with `RecordBatch::project` and use
 `from_arrow`.

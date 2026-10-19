@@ -59,6 +59,10 @@ pond-rs returns an error instead.
   `as_time(At::Center)` on an interval an odd number of milliseconds long
   would land on a half millisecond, where pond-ts gives e.g. `2499.5`;
   pond-rs returns an error rather than a different answer.
+- **Huge numbers in `rolling`.** A rolling `sum` or `avg` over values of
+  2^960 (about 10^289) or more, or a `stdev` over values of 2^480 (about
+  10^144) or more, is an error. pond-ts switches to a slower exact method
+  for these; pond-rs has not built it yet.
 - **A repeated rename.** `rename` with the same `from` twice is an error
   (pond-ts's object syntax cannot express it).
 
@@ -88,6 +92,10 @@ bug is logged in `PLAN.md` to fix there.
   the Arrow field's nullability.
 
 ## Small differences
+
+- **`NaN` and infinities when building a series.** pond-ts's
+  `fromJSON` and `new TimeSeries` refuse them; pond-rs reads them as gaps
+  in a number column (and refuses them in a required one).
 
 - The key column cannot be renamed yet. An interval key is always named
   `interval` and a time key `time`; if you need `day_start` in a file,

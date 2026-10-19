@@ -36,8 +36,8 @@ pond-rs = { git = "https://github.com/pond-ts/pond" }
   the two tied. On the first benchmark (1 million rows), pond-rs
   on 4 cores took 141–159 ms where polars took 209–231 ms and pond-ts about
   3 seconds. Details on [Performance](./performance).
-- **The same answers.** Every operation is checked against pond-ts's own
-  output on a shared set of test cases, bit for bit. A result does not
+- **The same answers.** Every operation pond-ts also has is checked against
+  pond-ts's own output on a shared set of test cases, bit for bit. A result does not
   change with the number of threads either.
 - **Time is the point.** General table libraries like polars are very good
   at tables. pond's strengths are time-aware ones: rows keyed by a moment,
