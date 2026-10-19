@@ -101,12 +101,40 @@ const NOISY_ROWS = Array.from({ length: 300 }, (_, i) => {
   return [repeated, x, y];
 });
 
+// Signed zeros first and among ties: a running sum starts from +0, and max /
+// min keep the earlier of two equal values.
+const ZERO_ROWS = [
+  [0, -0],
+  [1000, null],
+  [2000, 0],
+  [3000, -0],
+  [4000, 3],
+];
+// Gaps at both ends and in the middle, spaced unevenly, so each way fill
+// measures a gap's span (neighbour to neighbour, edge to neighbour) shows.
+const EDGE_ROWS = [
+  [0, null],
+  [1000, null],
+  [2000, 1],
+  [5000, null],
+  [6000, 2],
+  [9000, null],
+  [10000, null],
+];
 // Values whose running sums overflow: the variance comes out NaN, which
 // pond-ts turns into a gap (Math.max(0, NaN) is NaN).
 const EXTREME_ROWS = [
   [0, Number.MAX_VALUE],
   [1, -Number.MAX_VALUE],
   [2, 1],
+];
+// A running sum that overflows at the second row and never comes back.
+const OVERFLOW_ROWS = [
+  [0, Number.MAX_VALUE],
+  [1000, Number.MAX_VALUE],
+  [2000, -Number.MAX_VALUE],
+  [3000, null],
+  [4000, 1],
 ];
 
 // Calendar buckets. `dst` crosses New York's spring-forward night (a 23-hour
@@ -369,6 +397,61 @@ const CASES = [
   ['pctChange-signed', 'signed', 'pctChange', ['v']],
   ['shift-signed', 'signed', 'shift', ['v', 1]],
   ['cumulative-signed', 'signed', 'cumulative', [{ v: 'sum' }]],
+  // element-wise: options, other keys, overflow, every fill strategy
+  ['diff-a-drop', 'gappy', 'diff', ['a', { drop: true }]],
+  ['rate-b-drop', 'gappy', 'rate', ['b', { drop: true }]],
+  ['rate-ranges', 'ranges', 'rate', [['a', 'b']]],
+  ['pctChange-labelled', 'labelled', 'pctChange', [['a', 'b']]],
+  ['diff-extreme', 'extreme', 'diff', ['v']],
+  ['rate-noisy', 'noisy', 'rate', [['x', 'y']]],
+  ['cumulative-count-min', 'gappy', 'cumulative', [{ a: 'count', b: 'min' }]],
+  ['cumulative-extreme', 'extreme', 'cumulative', [{ v: 'sum' }]],
+  ['cumulative-noisy', 'noisy', 'cumulative', [{ x: 'max', y: 'min' }]],
+  ['shift-a-0', 'gappy', 'shift', ['a', 0]],
+  ['shift-a-12', 'gappy', 'shift', ['a', 12]],
+  ['shift-b-minus20', 'gappy', 'shift', ['b', -20]],
+  ['fill-hold', 'gappy', 'fill', ['hold']],
+  ['fill-bfill-zero', 'gappy', 'fill', [{ a: 'bfill', b: 'zero' }]],
+  ['fill-literal', 'gappy', 'fill', [{ a: 7.5, b: -1 }]],
+  ['fill-hold-limit-1', 'gappy', 'fill', ['hold', { limit: 1 }]],
+  ['fill-linear-maxgap', 'gappy', 'fill', ['linear', { maxGap: '2s' }]],
+  [
+    'fill-edges-maxgap',
+    'gappy',
+    'fill',
+    [{ a: 'hold', b: 'bfill' }, { maxGap: '1500ms' }],
+  ],
+  ['fill-limit-maxgap', 'gappy', 'fill', ['zero', { limit: 2, maxGap: '3s' }]],
+  ['fill-mixed-hold', 'mixed', 'fill', ['hold']],
+  ['fill-mixed-zero', 'mixed', 'fill', ['zero']],
+  [
+    'fill-mixed-literal',
+    'mixed',
+    'fill',
+    [{ host: 'unknown', up: false, v: 'bfill' }],
+  ],
+  ['fill-ranges-linear', 'ranges', 'fill', ['linear']],
+  ['fill-labelled-linear', 'labelled', 'fill', ['linear']],
+  ['fill-noisy-linear', 'noisy', 'fill', ['linear']],
+  ['cumulative-overflow', 'overflow', 'cumulative', [{ v: 'sum' }]],
+  ['diff-overflow', 'overflow', 'diff', ['v']],
+  ['cumulative-zeros', 'zeros', 'cumulative', [{ v: 'sum' }]],
+  ['cumulative-zeros-max', 'zeros', 'cumulative', [{ v: 'max' }]],
+  ['cumulative-zeros-min', 'zeros', 'cumulative', [{ v: 'min' }]],
+  ['diff-zeros', 'zeros', 'diff', ['v']],
+  ['fill-edges-hold-1s', 'edges', 'fill', ['hold', { maxGap: '1s' }]],
+  ['fill-edges-hold-3s', 'edges', 'fill', ['hold', { maxGap: '3s' }]],
+  ['fill-edges-bfill-1s', 'edges', 'fill', ['bfill', { maxGap: '1s' }]],
+  ['fill-edges-bfill-2s', 'edges', 'fill', ['bfill', { maxGap: '2s' }]],
+  ['fill-edges-zero-1s', 'edges', 'fill', ['zero', { maxGap: '1s' }]],
+  ['fill-edges-zero-limit', 'edges', 'fill', ['zero', { limit: 1 }]],
+  ['fill-edges-linear-4s', 'edges', 'fill', ['linear', { maxGap: '4s' }]],
+  ['error-diff-no-columns', 'gappy', 'diff', [[]]],
+  ['error-shift-fraction', 'gappy', 'shift', ['a', 1.5]],
+  ['error-cumulative-empty', 'gappy', 'cumulative', [{}]],
+  ['error-fill-literal-kind', 'gappy', 'fill', [{ a: 'bogus' }]],
+  ['error-fill-maxgap', 'gappy', 'fill', ['hold', { maxGap: '2 s' }]],
+  ['error-diff-text', 'mixed', 'diff', ['host']],
   // errors: pond-ts throws. Only "an error is raised" is the contract for
   // now; the message is recorded for reference, not for matching.
   ['error-unknown-column', 'gappy', 'rolling', ['1s', { nope: 'avg' }]],
@@ -462,7 +545,102 @@ const CASES = [
   ['select-labelled', 'labelled', 'select', ['a']],
   ['rename-labelled', 'labelled', 'rename', [{ a: 'x' }]],
   ['rolling-labelled-6s', 'labelled', 'rolling', ['6s', { a: 'avg' }]],
+  // slice: Array.prototype.slice positions (negative counts from the end;
+  // out of range clamps)
+  ['slice-all', 'gappy', 'slice', []],
+  ['slice-from', 'gappy', 'slice', [3]],
+  ['slice-range', 'gappy', 'slice', [2, 7]],
+  ['slice-negative-from', 'gappy', 'slice', [-3]],
+  ['slice-negative-end', 'gappy', 'slice', [1, -2]],
+  ['slice-negative-both', 'gappy', 'slice', [-5, -1]],
+  ['slice-empty-reversed', 'gappy', 'slice', [7, 2]],
+  ['slice-clamped', 'gappy', 'slice', [-100, 100]],
+  ['slice-past-end', 'gappy', 'slice', [50]],
+  ['slice-mixed', 'mixed', 'slice', [4, 15]],
+  ['slice-ranges', 'ranges', 'slice', [1, 3]],
+  ['slice-labelled', 'labelled', 'slice', [-3]],
+  // filter: the predicate is a closure, so the fixture names one of a few
+  // fixed predicates ({ fn: ... }); see `predicate` below.
+  ['filter-gt', 'gappy', 'filter', [{ fn: { column: 'a', gt: 3 } }]],
+  ['filter-missing', 'gappy', 'filter', [{ fn: { missing: 'b' } }]],
+  ['filter-none', 'gappy', 'filter', [{ fn: { column: 'a', gt: 1000 } }]],
+  ['filter-every-3rd', 'gappy', 'filter', [{ fn: { everyNth: 3 } }]],
+  ['filter-begin', 'gappy', 'filter', [{ fn: { beginAtLeast: 8000 } }]],
+  ['filter-text', 'mixed', 'filter', [{ fn: { column: 'site', eq: 'east' } }]],
+  ['filter-bool', 'mixed', 'filter', [{ fn: { column: 'up', eq: true } }]],
+  ['filter-ranges', 'ranges', 'filter', [{ fn: { endAtMost: 2000 } }]],
+  ['filter-labelled', 'labelled', 'filter', [{ fn: { everyNth: 2 } }]],
+  // mapColumns: fixed mappers ({ fn: ... }); missing cells stay missing and
+  // a non-finite number result is a gap
+  [
+    'mapColumns-number',
+    'gappy',
+    'mapColumns',
+    [{ a: { fn: { mul: 2, add: 1 } } }],
+  ],
+  [
+    'mapColumns-two',
+    'gappy',
+    'mapColumns',
+    [{ a: { fn: { mul: -1, add: 0 } }, b: { fn: { mul: 0.5, add: 0 } } }],
+  ],
+  [
+    'mapColumns-overflow',
+    'dense',
+    'mapColumns',
+    [{ value: { fn: { mul: 1e308, add: 1e308 } } }],
+  ],
+  [
+    'mapColumns-text-bool',
+    'mixed',
+    'mapColumns',
+    [{ host: { fn: 'upper' }, up: { fn: 'not' } }],
+  ],
+  ['mapColumns-error-empty', 'gappy', 'mapColumns', [{}]],
+  // withColumn: append a number column; `null` is a gap
+  [
+    'withColumn-gappy',
+    'gappy',
+    'withColumn',
+    ['c', [1, null, 3, 4, null, 6, 7, 8, 9, 10, 11, 12]],
+  ],
+  ['withColumn-ranges', 'ranges', 'withColumn', ['c', [0.5, null, 2, 3, null]]],
+  ['withColumn-error-length', 'gappy', 'withColumn', ['c', [1, 2]]],
+  [
+    'withColumn-error-name',
+    'gappy',
+    'withColumn',
+    ['a', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]],
+  ],
+  [
+    'withColumn-error-key-name',
+    'gappy',
+    'withColumn',
+    ['time', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]],
+  ],
 ];
+
+/**
+ * The closures a case can name, as `{ fn: spec }`. pond-rs's harness builds
+ * the same closure from the same spec.
+ */
+function closure(spec) {
+  if (spec === 'upper') return (v) => v.toUpperCase();
+  if (spec === 'not') return (v) => !v;
+  if ('mul' in spec) return (v) => v * spec.mul + spec.add;
+  if ('column' in spec) {
+    return (e) => {
+      const v = e.get(spec.column);
+      if (v === undefined) return false;
+      return 'gt' in spec ? v > spec.gt : v === spec.eq;
+    };
+  }
+  if ('missing' in spec) return (e) => e.get(spec.missing) === undefined;
+  if ('everyNth' in spec) return (_e, i) => i % spec.everyNth === 0;
+  if ('beginAtLeast' in spec) return (e) => e.begin() >= spec.beginAtLeast;
+  if ('endAtMost' in spec) return (e) => e.end() <= spec.endAtMost;
+  throw new Error(`unknown closure spec ${JSON.stringify(spec)}`);
+}
 
 // Interval-keyed inputs (label, begin, end), the shape `aggregate` returns.
 // Even lengths only: pond-rs keeps whole milliseconds, so it refuses a centre
@@ -610,6 +788,9 @@ export function buildFixture(pond) {
       ],
       rows: SIGNED_ROWS,
     }),
+    zeros: series('zeros', ZERO_ROWS),
+    edges: series('edges', EDGE_ROWS),
+    overflow: series('overflow', OVERFLOW_ROWS),
     dst: series('dst', DST_ROWS),
     santiago: series('santiago', SANTIAGO_ROWS),
     apia: series('apia', APIA_ROWS),
@@ -645,6 +826,22 @@ export function buildFixture(pond) {
     }),
   };
   const decode = (arg) => {
+    // withColumn's values: JSON has no `undefined`, so `null` marks a gap.
+    if (Array.isArray(arg)) return arg.map((v) => (v === null ? undefined : v));
+    if (arg && typeof arg === 'object' && 'fn' in arg) return closure(arg.fn);
+    // mapColumns: { column: { fn } }. Only a mapping whose every value is a
+    // closure spec, so an options object is never touched.
+    const isClosure = (v) => v && typeof v === 'object' && 'fn' in v;
+    if (
+      arg &&
+      typeof arg === 'object' &&
+      Object.keys(arg).length > 0 &&
+      Object.values(arg).every(isClosure)
+    ) {
+      return Object.fromEntries(
+        Object.entries(arg).map(([k, v]) => [k, decode(v)]),
+      );
+    }
     if (!(arg && typeof arg === 'object' && 'sequence' in arg)) return arg;
     const { every, calendar, timeZone, weekStartsOn } = arg.sequence;
     return every !== undefined

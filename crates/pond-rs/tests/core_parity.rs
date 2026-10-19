@@ -12,8 +12,8 @@ use common::{
     compare_series, load_core_fixture, report,
 };
 use pond_rs::{
-    Agg, ArrowKey, At, Column, ColumnData, ColumnKind, IntervalKeys, Key, Labels, Reducer,
-    Sequence, TimeRangeKeys, TimeSeries,
+    Agg, ArrowKey, At, Column, ColumnData, ColumnKind, Fill, FillLimits, FillValue, FirstRow,
+    IntervalKeys, Key, Labels, Reducer, Sequence, TimeRangeKeys, TimeSeries,
 };
 use serde_json::{Value, json};
 
@@ -31,11 +31,31 @@ const KNOWN_OPS: &[&str] = &[
     "select",
     "rename",
     "asTime",
+    "slice",
+    "filter",
+    "mapColumns",
+    "withColumn",
 ];
 
 /// Ops with an arm in [`run`]. Every fixture case for a listed op must run
 /// and match; an op that runs without being listed is also an error.
-const IMPLEMENTED_OPS: &[&str] = &["rolling", "aggregate", "select", "rename", "asTime"];
+const IMPLEMENTED_OPS: &[&str] = &[
+    "rolling",
+    "aggregate",
+    "select",
+    "rename",
+    "asTime",
+    "diff",
+    "rate",
+    "pctChange",
+    "cumulative",
+    "shift",
+    "fill",
+    "slice",
+    "filter",
+    "mapColumns",
+    "withColumn",
+];
 
 /// Run one case through pond-rs. `None` means the op is not implemented yet.
 fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<SeriesJson, String>> {
@@ -73,12 +93,181 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<SeriesJson, Stri
             };
             input.as_time(at)
         }
+        "diff" | "rate" | "pctChange" => {
+            let names = column_names(&case.args[0]);
+            let first = match case.args.get(1).and_then(|o| o["drop"].as_bool()) {
+                Some(true) => FirstRow::Drop,
+                _ => FirstRow::Keep,
+            };
+            match case.op.as_str() {
+                "diff" => input.diff(&names, first),
+                "rate" => input.rate(&names, first),
+                _ => input.pct_change(&names, first),
+            }
+        }
+        "cumulative" => {
+            let spec: Vec<(&str, Reducer)> = case.args[0]
+                .as_object()
+                .expect("cumulative takes a mapping")
+                .iter()
+                .map(|(c, r)| {
+                    (
+                        c.as_str(),
+                        Reducer::parse(r.as_str().expect("reducer")).unwrap(),
+                    )
+                })
+                .collect();
+            input.cumulative(&spec)
+        }
+        "shift" => {
+            let n = case.args[1].as_f64().expect("shift offset");
+            // A fractional offset cannot be written in Rust (`n` is an i64);
+            // pond-ts rejects it, so stand in that error here.
+            if n.fract() != 0.0 {
+                return Some(Err("shift offset must be a whole number".into()));
+            }
+            input.shift(&column_names(&case.args[0]), n as i64)
+        }
+        "fill" => {
+            let options = case.args.get(1);
+            let mut limits = FillLimits::none();
+            if let Some(limit) = options.and_then(|o| o["limit"].as_u64()) {
+                limits = limits.limit(limit as usize);
+            }
+            if let Some(max_gap) = options.and_then(|o| o["maxGap"].as_str()) {
+                limits = limits.max_gap(max_gap);
+            }
+            let strategy = |v: &Value| match v.as_str() {
+                Some("hold") => Fill::Hold,
+                Some("bfill") => Fill::Bfill,
+                Some("linear") => Fill::Linear,
+                Some("zero") => Fill::Zero,
+                Some(text) => Fill::Value(FillValue::String(text.into())),
+                None => match v {
+                    Value::Bool(b) => Fill::Value(FillValue::Boolean(*b)),
+                    _ => Fill::Value(FillValue::Number(v.as_f64().expect("a literal"))),
+                },
+            };
+            match &case.args[0] {
+                Value::String(_) => input.fill_all(strategy(&case.args[0]), &limits),
+                Value::Object(map) => {
+                    let spec: Vec<(&str, Fill)> =
+                        map.iter().map(|(c, v)| (c.as_str(), strategy(v))).collect();
+                    input.fill(&spec, &limits)
+                }
+                other => panic!("fill takes a strategy or a mapping, got {other}"),
+            }
+        }
+        "slice" => {
+            let at = |i: usize| {
+                case.args
+                    .get(i)
+                    .map(|v| v.as_i64().expect("whole position"))
+            };
+            Ok(match (at(0), at(1)) {
+                (None, _) => input.slice(..),
+                (Some(b), None) => input.slice(b..),
+                (Some(b), Some(e)) => input.slice(b..e),
+            })
+        }
+        "filter" => {
+            let spec = &case.args[0]["fn"];
+            input.filter(|r| {
+                if let Some(column) = spec["column"].as_str() {
+                    return Ok(match (&spec["gt"], &spec["eq"]) {
+                        (Value::Number(gt), _) => {
+                            r.number(column)?.is_some_and(|v| v > gt.as_f64().unwrap())
+                        }
+                        (_, Value::String(eq)) => r.string(column)? == Some(eq.as_str()),
+                        (_, Value::Bool(eq)) => r.boolean(column)? == Some(*eq),
+                        _ => panic!("unknown filter spec {spec}"),
+                    });
+                }
+                if let Some(column) = spec["missing"].as_str() {
+                    return Ok(r.number(column)?.is_none());
+                }
+                if let Some(n) = spec["everyNth"].as_u64() {
+                    return Ok(r.index() % n as usize == 0);
+                }
+                if let Some(t) = spec["beginAtLeast"].as_i64() {
+                    return Ok(r.begin() >= t);
+                }
+                if let Some(t) = spec["endAtMost"].as_i64() {
+                    return Ok(r.end() <= t);
+                }
+                panic!("unknown filter spec {spec}")
+            })
+        }
+        "mapColumns" => {
+            let spec = case.args[0]
+                .as_object()
+                .expect("mapColumns takes a mapping");
+            if spec.is_empty() {
+                // pond-rs maps one column per call, so an empty mapping
+                // cannot be written; stand in pond-ts's error.
+                return Some(Err("mapColumns needs at least one column".into()));
+            }
+            let mut out = Ok(input);
+            for (column, mapper) in spec {
+                let column = column.as_str();
+                let mapper = &mapper["fn"];
+                out = out.and_then(|s| match mapper.as_str() {
+                    Some("upper") => s.map_strings(column, |v| v.to_uppercase()),
+                    Some("not") => s.map_booleans(column, |v| !v),
+                    _ => {
+                        let mul = mapper["mul"].as_f64().expect("mul");
+                        let add = mapper["add"].as_f64().expect("add");
+                        s.map_numbers(column, |v| v * mul + add)
+                    }
+                });
+            }
+            // pond-ts keeps a mapped column marked required even when the
+            // mapping leaves a gap ([PND-MAPREQ]); pond-rs makes it
+            // optional. Check that, then compare the rest as pond-ts has it.
+            return Some(
+                out.map(|s| {
+                    let mut json = to_json(&s);
+                    if case.id == "mapColumns-overflow" {
+                        assert_eq!(
+                            json.schema[1].required,
+                            Some(false),
+                            "mapped gap makes it optional"
+                        );
+                        json.schema[1].required = None;
+                    }
+                    json
+                })
+                .map_err(|e| e.to_string()),
+            );
+        }
+        "withColumn" => {
+            let name = case.args[0].as_str().expect("column name");
+            let values: Vec<Option<f64>> = case.args[1]
+                .as_array()
+                .expect("values")
+                .iter()
+                .map(Value::as_f64)
+                .collect();
+            input.with_column(Column::optional(name, values))
+        }
         _ => return None,
     };
     Some(result.map(|s| to_json(&s)).map_err(|e| e.to_string()))
 }
 
 /// `{every}` or `{calendar, timeZone, weekStartsOn?}`.
+/// One column name or a list of them.
+fn column_names(json: &Value) -> Vec<&str> {
+    match json {
+        Value::String(name) => vec![name.as_str()],
+        Value::Array(names) => names
+            .iter()
+            .map(|n| n.as_str().expect("column name"))
+            .collect(),
+        other => panic!("expected column names, got {other}"),
+    }
+}
+
 fn sequence(json: &Value) -> pond_rs::Result<Sequence> {
     if let Some(every) = json["every"].as_str() {
         return Sequence::every(every);

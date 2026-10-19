@@ -11,6 +11,10 @@
 //! [`TimeSeries::rolling`] over a trailing time window, [`TimeSeries::aggregate`] into fixed-length buckets
 //! ([`Sequence::every`]) or calendar buckets in a time zone
 //! ([`Sequence::calendar`]), [`TimeSeries::select`] / `rename` / `as_time`,
+//! row-by-row [`TimeSeries::diff`] / `rate` / `pct_change` / `shift` /
+//! `cumulative` / `fill`, picking rows with [`TimeSeries::slice`] /
+//! `filter` (a closure over each [`Row`]) and changing columns with
+//! `with_column` / `map_numbers` and its siblings,
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
 //! [`ArrowKey`], [`TimeSeries::write_ipc`]). Results match
 //! pond-ts bit for bit; the parity
@@ -64,6 +68,8 @@ mod par;
 mod reducer;
 mod reshape;
 mod rolling;
+mod rows;
+mod rowwise;
 mod sequence;
 mod series;
 
@@ -73,6 +79,8 @@ pub use duration::parse_duration;
 pub use error::{PondError, Result};
 pub use reducer::{Agg, Reducer};
 pub use reshape::At;
+pub use rows::Row;
+pub use rowwise::{Fill, FillLimits, FillValue, FirstRow};
 pub use sequence::{CalendarUnit, Sequence, tzdb_version};
 pub use series::{
     Column, ColumnDef, ColumnKind, IntervalKeys, Key, Labels, MAX_TIME_MS, TimeRangeKeys,
