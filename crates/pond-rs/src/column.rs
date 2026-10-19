@@ -529,6 +529,23 @@ impl ColumnData {
         }
     }
 
+    /// The rows named by `rows`, in that order; `None` gives a gap.
+    pub(crate) fn take(&self, rows: &[Option<usize>]) -> ColumnData {
+        match self {
+            ColumnData::Number(c) => {
+                let v = c.values();
+                ColumnData::from(
+                    rows.iter()
+                        .map(|r| r.map_or(f64::NAN, |i| v[i]))
+                        .collect::<Vec<f64>>(),
+                )
+            }
+            ColumnData::Decimal(c) => c.take(rows).into(),
+            ColumnData::String(c) => c.take(rows).into(),
+            ColumnData::Boolean(c) => c.take(rows).into(),
+        }
+    }
+
     /// True when row `i` holds a value. Panics if `i` is out of range.
     pub fn is_present(&self, i: usize) -> bool {
         match self {

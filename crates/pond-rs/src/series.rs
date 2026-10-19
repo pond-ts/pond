@@ -177,6 +177,28 @@ impl Key {
         }
     }
 
+    /// The rows in `range`, copied.
+    pub(crate) fn rows(&self, range: std::ops::Range<usize>) -> Key {
+        match self {
+            Key::Time(t) => Key::Time(t[range].to_vec()),
+            Key::TimeRange(k) => Key::TimeRange(TimeRangeKeys {
+                begin: k.begin[range.clone()].to_vec(),
+                end: k.end[range].to_vec(),
+            }),
+            Key::Interval(k) => Key::Interval(IntervalKeys {
+                label: match &k.label {
+                    Labels::Number(v) => Labels::Number(v[range.clone()].to_vec()),
+                    Labels::String(s) => {
+                        let rows: Vec<Option<usize>> = range.clone().map(Some).collect();
+                        Labels::String(s.take(&rows))
+                    }
+                },
+                begin: k.begin[range.clone()].to_vec(),
+                end: k.end[range].to_vec(),
+            }),
+        }
+    }
+
     fn kind(&self) -> ColumnKind {
         match self {
             Key::Time(_) => ColumnKind::Time,

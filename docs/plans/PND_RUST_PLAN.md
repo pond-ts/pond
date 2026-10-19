@@ -598,12 +598,10 @@ The one result short of a clean win is one-core B: polars is faster
      below), **2c** more
      Arrow input ([PND-RUSTARROWIN]) (done, below), **2d** exact decimals
      ([PND-RUSTDEC]) (done, below).
-  3. **Row-wise operations:**
-     - `filter`, `slice`, `with_column`, `map` (Rust closures).
-     - `diff`, `rate`, `pct_change`, `cumulative`, `shift`, `fill`.
-
-     The fixture already has `diff` / `rate` / `pctChange` / `cumulative` /
-     `shift` / `fill` cases waiting.
+  3. **Row-wise operations**, split in two:
+     - **3a** `diff`, `rate`, `pct_change`, `cumulative`, `shift`, `fill`
+       (done, below).
+     - **3b** `filter`, `slice`, `with_column`, `map` (Rust closures).
 
   4. **Groups:**
      - `partition_by` (one or more columns), with per-partition `rolling` /
@@ -913,6 +911,74 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     pass 2^53) and `avg` 24 ms (per-row overhead converting to `f64`).
   - Not planned yet: decimals in the parity suite (pond-ts has none);
     decimal arithmetic in row-wise operations waits for step 3.
+
+  **Step 3a (done): `diff`, `rate`, `pct_change`, `cumulative`, `shift`,
+  `fill`.**
+  - Rust shapes (`src/rowwise.rs`):
+    - `diff` / `rate` / `pct_change(&[cols], FirstRow::Keep | Drop)`:
+      pond-ts `{ drop }` as an enum rather than a bare `bool`.
+    - `shift(&[cols], n: i64)`; `cumulative(&[(col, Reducer)])`, which
+      reuses `Reducer` (only sum / max / min / count are allowed), plus
+      `cumulative_with(col, |acc, v| …)` for pond-ts's function form.
+    - `fill(&[(col, Fill)], &FillLimits)` and `fill_all(Fill, &FillLimits)`
+      for pond-ts's bare-string form. `Fill::{Hold, Bfill, Linear, Zero,
+      Value(FillValue)}`; `FillLimits::none().limit(n).max_gap("5m")`.
+  - Behaviour follows pond-ts exactly, from a survey of its operators
+    with probe scripts:
+    - The "previous row" is the row directly above, not the last row
+      with a value.
+    - Rate is `(cur - prev) / ((begin_i - begin_{i-1}) / 1000)`, using
+      begin for every key kind.
+    - A zero time step or a zero previous value gives a gap; non-finite
+      results are gaps; `-0` is kept.
+    - A running sum starts from `+0`, so a leading `-0` becomes `+0`; max
+      and min keep the earlier of two ties; overflow leaves the rest of
+      the column as gaps.
+    - Fill checks each run in pond-ts's order (neighbours, `limit`,
+      `maxGap`), all or nothing, with its edge-run span rule.
+    - Linear fill is `before + (after - before) * ((t - t0) / span)`.
+  - Deliberate differences from pond-ts:
+    - pond-rs errors where pond-ts is silent or crashes: unknown or key
+      columns everywhere, `fill` on an unknown column, `Linear` / `Zero`
+      on a kind they don't apply to (by name; `fill_all` skips such
+      columns as pond-ts does), and a literal of the wrong kind, which is
+      always an error rather than only when a gap gets filled.
+    - `shift` and `fill` work on text and true/false columns. pond-ts
+      types `shift` to numbers only.
+    - Decimals: `diff` and `cumulative` sum / max / min are exact
+      (precision 38, an error past it); `rate` / `pct_change` / `count`
+      give numbers via `f64`; `fill` takes `Hold` / `Bfill` / `Zero` /
+      a same-scale `Value`.
+  - Tests:
+    - 42 new pond-ts parity cases (fixture now 123), including `drop`,
+      range and interval keys, overflow, signed zeros, every fill
+      strategy and cap on gaps at the start, middle and end, and 6 error
+      cases. All 123 match.
+    - Four deliberate bugs planted in pond-rs were each caught: the rate
+      expression, the edge-span rule, the `+0` sum start, and ties in
+      max. The last three needed the new `zeros` / `edges` inputs.
+    - Unit tests cover decimals, text, true/false, the extra errors,
+      `cumulative_with`, and interval labels under `Drop`.
+  - Perf (`examples/perf_rowwise.rs` vs `bench/rowwise_pond_ts.mjs`, same
+    1M rows, 4.8% gaps, checked by gap count and sum), median ms:
+
+    | op | pond-rs | pond-ts |
+    | --- | --- | --- |
+    | diff | 3.9 | 74.6 |
+    | diff, drop first | 10.1 | 18.6 |
+    | rate | 4.6 | 34.8 |
+    | pct_change | 4.1 | 13.6 |
+    | cumulative sum | 4.6 | 8.2 |
+    | shift 1 | 3.2 | 204.9 |
+    | fill hold | 5.3 | 58.4 |
+    | fill linear | 5.6 | 84.1 |
+    | fill linear, maxGap 3s | 5.0 | 28.8 |
+
+    Each op is one O(N) pass (fill: one to find runs, one to fill).
+    `FirstRow::Drop` copies the whole series once more, which is why it
+    costs about twice as much; step 3b's `slice` can share buffers
+    instead. pond-ts timings vary run to run (JIT warm-up); its `shift`
+    takes a boxed path.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
