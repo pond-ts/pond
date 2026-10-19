@@ -85,7 +85,8 @@ include new features and type-level changes; patch bumps are strictly additive.
   and `cumulative` already did ([PND-BOXFREE]). On 1M rows with ~2% gaps
   (`packages/core/scripts/perf-fill-shift-map.mjs`, median of 3 runs): `shift`
   ~63 → ~2.8 ms, `fill('hold' | 'bfill' | 'zero')` ~57 → ~6 ms,
-  `fill('linear')` ~23 → ~9.5 ms, `mapColumns` ~69 → ~5 ms (the mapper itself
+  `fill('linear')` ~23 → ~9.5 ms (~75 → ~9.5 ms with only a few calls to
+  warm up, as in a one-off script), `mapColumns` ~69 → ~5 ms (the mapper itself
   still runs once per value). Results are unchanged, cell for cell. Text,
   boolean and array columns take the old path and are unchanged in speed.
 
