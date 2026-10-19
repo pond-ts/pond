@@ -1244,6 +1244,21 @@ const CASES = [
       },
     ],
   ],
+  // Signed zeros: the first value and the minimum are -0, and the sum
+  // starts from +0.
+  [
+    'reduce-zeros',
+    'zeros',
+    'reduce',
+    [
+      {
+        first: { from: 'v', using: 'first' },
+        min: { from: 'v', using: 'min' },
+        total: { from: 'v', using: 'sum' },
+        med: { from: 'v', using: 'median' },
+      },
+    ],
+  ],
   ['reduce-unknown-column', 'gappy', 'reduce', [{ nope: 'sum' }]],
   // join: exact keys, pairing repeats one to one; a matched row keeps the
   // left key. joinB has 1000 three times to joinA's two. (pond-rs names

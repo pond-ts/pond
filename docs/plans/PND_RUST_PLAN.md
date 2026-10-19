@@ -1454,8 +1454,12 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     same reducers, kernels and bits; checked in pond-ts that `reduce`
     equals a one-bucket `aggregate` on random data), plus `first()` /
     `last()` giving a `Row`. `reduce` returns `Reduced`, read by output
-    name with the `Row` calls (`number`, `string`, …), since a Rust value
-    per output needs a type; pond-ts returns a plain record.
+    name with the `Row` calls (`number`, `string`, …) or as a `Value`
+    with `get`, since a Rust value per output needs a type; pond-ts
+    returns a plain record. Its errors name `Reduced::*`, and it prints as
+    output name → value. As in pond-ts, `tail` on an empty series returns
+    it without reading the duration (so a bad duration is not an error
+    there).
   - 6/10 found partition keys clumsy (`Some(Value::String(..))`): added
     `Value::as_str` / `as_f64` / `as_bool` / `as_decimal`, so a key part
     reads `key[0].as_ref().and_then(Value::as_str)`. `PartitionKey` stays
@@ -1472,9 +1476,10 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     lacks (`unique`, `keep`, `top`, …). As in `aggregate`, a number
     reducer on a text column is an error in pond-rs where pond-ts gives 0
     or a gap ([PND-KINDREDUCE]).
-  - Parity: 15 new fixture cases (8 `tail`, 7 `reduce`, including an empty
-    series, signed zeros, text and true/false outputs, a zero and a bad
-    duration, time-range keys), all matching. `reduce` results are
+  - Parity: 16 new fixture cases (8 `tail`, 8 `reduce`, including an empty
+    series, signed zeros (`reduce-zeros`: first and min give -0), text and
+    true/false outputs, a zero and a bad duration, time-range keys), all
+    matching. `reduce` results are
     recorded as `reduced` (output name → cell).
   - Perf: no new walking code. `tail` is a binary search and a slice;
     `reduce` calls the `aggregate` kernels once over all rows.

@@ -207,8 +207,9 @@ impl TimeSeries {
     /// The rows in the trailing `duration` (`"60m"`, see
     /// [`parse_duration`](crate::parse_duration)): those starting strictly
     /// after the last row's start minus `duration`, as pond-ts
-    /// `tail(duration)`. An empty series is returned as is. Value columns
-    /// share memory with this series.
+    /// `tail(duration)`. An empty series is returned as is (without reading
+    /// `duration`, as in pond-ts). Value columns share memory with this
+    /// series.
     ///
     /// With [`TimeSeries::reduce`], this is "the state over the last hour"
     /// without a `rolling` pass over the whole history:
@@ -225,11 +226,12 @@ impl TimeSeries {
     /// # Ok::<(), pond_rs::PondError>(())
     /// ```
     pub fn tail(&self, duration: &str) -> Result<TimeSeries> {
-        let duration = crate::parse_duration(duration)?;
         let begin = self.key().begin();
+        // pond-ts returns an empty series before reading the duration.
         let Some(&last) = begin.last() else {
             return Ok(self.clone());
         };
+        let duration = crate::parse_duration(duration)?;
         let cutoff = last.saturating_sub(duration);
         // Rows are in begin order, so the kept rows are a suffix.
         let start = begin.partition_point(|&b| b <= cutoff);
@@ -394,7 +396,7 @@ impl TimeSeries {
 
 /// A wrong-kind error from a column accessor, renamed to the call the user
 /// made.
-fn as_call(e: PondError, call: &'static str) -> PondError {
+pub(crate) fn as_call(e: PondError, call: &'static str) -> PondError {
     match e {
         PondError::WrongKind {
             column,
@@ -427,6 +429,13 @@ mod tests {
             ],
         )
         .unwrap()
+    }
+
+    #[test]
+    fn tail_of_an_empty_series_does_not_read_the_duration() {
+        let empty = series().slice(0..0);
+        assert_eq!(empty.tail("garbage").unwrap().len(), 0);
+        assert!(series().tail("garbage").is_err());
     }
 
     #[test]
