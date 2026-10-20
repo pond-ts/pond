@@ -1,4 +1,5 @@
 import {
+  bucketStateFor,
   finiteOrMissing,
   resolveReducer,
   rollingStateFor,
@@ -171,24 +172,46 @@ type ColumnarAggregatePlan =
         end: number,
       ) => ColumnValue | undefined;
     }
-  | { kind: 'boundary'; column: Column; which: 'first' | 'last' };
+  | { kind: 'boundary'; column: Column; which: 'first' | 'last' }
+  | {
+      /**
+       * Everything else — `unique` / `top` / `samples` / `keep` /
+       * `difference`, a reducer over a non-number or chunked column, or a
+       * custom function: the reducer's own bucket state, fed this
+       * column's cells in order. The same values in the same order the
+       * row path feeds it, so the answer is what this column alone gets.
+       */
+      kind: 'state';
+      column: Column;
+      reducer: AggregateReducer;
+    };
 
 /**
  * Resolves each mapped column to a per-bucket execution plan.
  *
- * Returns `null` — caller takes the unchanged row path — when any column
- * doesn't qualify: a custom-function reducer; a reducer that is neither a
- * numeric `reduceColumn` kernel nor a `first`/`last` boundary selector
- * (`unique` / `top` / `samples` / `keep`); or a numeric reducer over a
- * non-numeric / chunked / missing source column. All-or-nothing per call
- * keeps the bucket walk single-pass; mixed mappings fall back wholesale.
+ * Each column is planned **on its own**, so a column's answer never
+ * depends on which other columns share the call ([PND-AGGSIBLING]):
  *
- * `first` / `last` qualify on **any** column kind / storage, via a
- * boundary scan (the first/last *defined* cell in the bucket — see
- * `ReducerDef.definedBoundary`). That is what lets a partitioned
- * `aggregate` take the fast path: its auto-injected partition-column
- * reducer is `'first'`, which previously tripped the gate for every
- * partitioned call.
+ * - a built-in numeric reducer with a range kernel over a packed number
+ *   column reduces the bucket's index range off the typed array;
+ * - `first` / `last` take a boundary scan, on **any** column kind /
+ *   storage (the first/last *defined* cell in the bucket — see
+ *   `ReducerDef.definedBoundary`). That is what lets a partitioned
+ *   `aggregate`, whose auto-injected partition-column reducer is
+ *   `'first'`, take this path;
+ * - every other column (`unique` / `top` / `samples` / `keep` /
+ *   `difference`, a reducer over a non-number or chunked column, a
+ *   custom function) feeds its reducer's bucket state, as the row path
+ *   does.
+ *
+ * This used to be all-or-nothing: one column of the third kind sent the
+ * whole call to the row path, where `sum` / `avg` lose the blocked
+ * summation (last-ulp differences on buckets of 32+ values) and `median`
+ * can pick the other sign of zero. So adding `host: 'count'` to a call
+ * could change `v: 'sum'`.
+ *
+ * Returns `null` — caller takes the row path — only when a source column
+ * is missing.
  */
 function planColumnarAggregate(
   getColumn: (name: string) => Column | undefined,
@@ -196,17 +219,12 @@ function planColumnarAggregate(
 ): ColumnarAggregatePlan[] | null {
   const plans: ColumnarAggregatePlan[] = [];
   for (const spec of columns) {
-    if (typeof spec.reducer !== 'string') return null; // custom function
-    const def = resolveReducer(spec.reducer);
     const source = getColumn(spec.source);
     if (source === undefined) return null; // missing source
+    const def =
+      typeof spec.reducer === 'string' ? resolveReducer(spec.reducer) : null;
 
-    if (def.definedBoundary !== undefined) {
-      // `first` / `last`: pick the first/last *defined* cell in the bucket
-      // via a boundary scan over any column kind / storage (`col.read(i)`).
-      // This is what lets a partitioned `aggregate` — whose auto-injected
-      // partition-column reducer is `'first'` — take the fast path instead
-      // of bailing the whole call for lack of a numeric `reduceColumn`.
+    if (def?.definedBoundary !== undefined) {
       plans.push({
         kind: 'boundary',
         column: source,
@@ -215,23 +233,20 @@ function planColumnarAggregate(
       continue;
     }
 
-    // Gate on the **range-scoped** kernel, not `reduceColumn`. Every
-    // built-in that has one has the other (they are declared together),
-    // so this excludes exactly the same reducers as before: `unique` /
-    // `top` / `samples` / `keep`. Gating here rather than falling back to
-    // `reduceColumn(sliceByRange(...))` avoids carrying a second bucket
-    // path that nothing exercises — a reducer that somehow had only the
-    // whole-column form would take the row path, which is correct, just
-    // slower.
-    if (def.reduceColumnRange === undefined) return null;
-    if (source.kind !== 'number' || source.storage !== 'packed') {
-      return null; // non-numeric / chunked numeric source
+    if (
+      def?.reduceColumnRange !== undefined &&
+      source.kind === 'number' &&
+      source.storage === 'packed'
+    ) {
+      plans.push({
+        kind: 'reduce',
+        column: source,
+        reduce: def.reduceColumnRange,
+      });
+      continue;
     }
-    plans.push({
-      kind: 'reduce',
-      column: source,
-      reduce: def.reduceColumnRange,
-    });
+
+    plans.push({ kind: 'state', column: source, reducer: spec.reducer });
   }
   return plans;
 }
@@ -258,6 +273,11 @@ function reduceBucket(
       // A non-finite result (an overflow) is missing — same as every
       // reducer result path (`finiteOrMissing`, [PND-NANREP]).
       out[p] = finiteOrMissing(plan.reduce(plan.column, start, scan));
+    } else if (plan.kind === 'state') {
+      // `bucketStateFor` applies the non-finite policy in and out.
+      const state = bucketStateFor(plan.reducer);
+      for (let i = start; i < scan; i += 1) state.add(plan.column.read(i));
+      out[p] = state.snapshot();
     } else if (plan.which === 'first') {
       // First defined cell in [start, scan); scans past missing cells and
       // past non-finite numeric cells (reducer non-finite policy,
@@ -376,8 +396,8 @@ function intervalKeysForBuckets(
  * non-overlapping, and positive-duration at construction, so re-deriving
  * it per bucket would be checking the same fact twice.
  *
- * Returns `null` for the same disqualifying mappings as before; the
- * caller falls back to the unchanged row path.
+ * Returns `null` only when a source column is missing; the caller then
+ * takes the row path.
  */
 export function tryAggregateColumnarStore(
   begins: Float64Array,
@@ -543,7 +563,9 @@ export function tryAggregateColumnarStore(
  * qualify: a custom-function reducer, a non-`'number'` output kind
  * (`unique` / `samples` / `keep` over a non-number source / an explicit
  * `kind` override), or a non-numeric / chunked / missing source column.
- * All-or-nothing per call, matching {@link tryAggregateColumnarStore}.
+ * All-or-nothing per call. Unlike `aggregate` ([PND-AGGSIBLING]) that
+ * cannot change a column's answer: this sweep drives the same rolling
+ * states as the generic one, so both give the same bits.
  *
  * Window shape replicates the generic count sweep exactly: rows are the unit
  * (`count` is a bar count — no equal-key grouping), `lo` / `hi` are monotonic

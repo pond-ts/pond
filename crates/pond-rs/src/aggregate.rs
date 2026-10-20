@@ -1,6 +1,7 @@
 //! `TimeSeries::aggregate`: reduce each bucket of a sequence to one row.
 
 use crate::column::{ColumnData, Decimal, Scalar, Value};
+use crate::elements::Elements;
 use crate::error::{PondError, Result};
 use crate::reducer::{
     Agg, InputKind, Inputs, Reducer, check_source_kind, input_kind, output_column, reduce_range,
@@ -32,10 +33,13 @@ impl TimeSeries {
     /// in the order of `aggs`. An empty series gives an empty result.
     ///
     /// An empty bucket gives `count` 0, `sum` 0, and a gap for every other
-    /// reducer. Text and true/false columns take `count` (a number column),
-    /// `first` and `last` (a column of the same kind); any other reducer on
-    /// them is an error. Decimal columns take every reducer: `first`,
-    /// `last`, `min`, `max` and `sum` give exact decimals (`sum` at
+    /// reducer, except `unique`, `top<N>` and `samples`, which give an empty
+    /// list. Text, true/false and array columns take `count` (a number
+    /// column), `first`, `last` and `keep` (a column of the same kind), and
+    /// the list reducers (an array column); any other reducer on them is an
+    /// error. Decimal columns take every
+    /// reducer: `first`, `last`, `min`, `max`, `keep`, `sum` and
+    /// `difference` give exact decimals (`sum` and `difference` at
     /// precision 38, an error past it; an empty bucket sums to 0), the rest
     /// give numbers.
     pub fn aggregate(&self, sequence: &Sequence, aggs: &[Agg]) -> Result<TimeSeries> {
@@ -93,11 +97,18 @@ impl TimeSeries {
         let plan: Vec<(&Agg, usize)> = aggs.iter().zip(sources).collect();
         let columns = crate::par::map(&plan, |&(agg, source)| {
             let data = self.columns()[source].data();
+            if agg.reducer.gives_list() {
+                let lists = Elements::new(data).reduce_ranges(agg.reducer, &ranges);
+                return Ok(Column::from_data(agg.output.clone(), lists, false));
+            }
             let kind = input_kind(data, agg.reducer);
             if let (ColumnData::Decimal(d), InputKind::ExactSum) = (data, kind) {
                 return crate::decimal::sum_ranges(CALL, &agg.output, d, &ranges);
             }
             let input = inputs.get(source, kind);
+            if let (ColumnData::Decimal(d), Reducer::Difference) = (data, agg.reducer) {
+                return decimal_difference(CALL, &agg.output, d, input, &ranges);
+            }
             let out: Vec<f64> = ranges
                 .iter()
                 .map(|r| reduce_range(agg.reducer, &input.values[r.clone()]).unwrap_or(f64::NAN))
@@ -154,12 +165,21 @@ impl TimeSeries {
         let mut columns = Vec::with_capacity(aggs.len());
         for (agg, &source) in aggs.iter().zip(&sources) {
             let data = self.columns()[source].data();
+            if agg.reducer.gives_list() {
+                let lists = Elements::new(data).reduce_ranges(agg.reducer, &all);
+                columns.push(Column::from_data(agg.output.clone(), lists, false));
+                continue;
+            }
             let kind = input_kind(data, agg.reducer);
             if let (ColumnData::Decimal(d), InputKind::ExactSum) = (data, kind) {
                 columns.push(crate::decimal::sum_ranges(CALL, &agg.output, d, &all)?);
                 continue;
             }
             let input = inputs.get(source, kind);
+            if let (ColumnData::Decimal(d), Reducer::Difference) = (data, agg.reducer) {
+                columns.push(decimal_difference(CALL, &agg.output, d, input, &all)?);
+                continue;
+            }
             let out = vec![reduce_range(agg.reducer, &input.values[..]).unwrap_or(f64::NAN)];
             columns.push(output_column(
                 agg.output.clone(),
@@ -176,6 +196,31 @@ impl TimeSeries {
             columns,
         )))
     }
+}
+
+/// `difference` of a decimal column over each row range: the smallest and
+/// largest by rank, then subtracted exactly.
+fn decimal_difference(
+    call: &'static str,
+    output: &str,
+    source: &crate::column::DecimalColumn,
+    input: &crate::reducer::Input<'_>,
+    ranges: &[std::ops::Range<usize>],
+) -> Result<Column> {
+    let pick = |reducer| -> Vec<f64> {
+        ranges
+            .iter()
+            .map(|r| reduce_range(reducer, &input.values[r.clone()]).unwrap_or(f64::NAN))
+            .collect()
+    };
+    crate::decimal::difference(
+        call,
+        output,
+        source,
+        input,
+        &pick(Reducer::Min),
+        &pick(Reducer::Max),
+    )
 }
 
 /// What [`TimeSeries::reduce`] gives: one value per output, read by name
@@ -440,7 +485,10 @@ mod tests {
             ] {
                 let err = result.unwrap_err();
                 assert!(matches!(err, PondError::WrongKind { .. }), "{err}");
-                assert!(err.to_string().contains("count, first or last"), "{err}");
+                assert!(
+                    err.to_string().contains("count, first, last, keep"),
+                    "{err}"
+                );
             }
         }
     }

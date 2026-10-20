@@ -132,6 +132,7 @@ mod arrow;
 mod column;
 mod decimal;
 mod duration;
+mod elements;
 mod error;
 mod grid;
 mod join;
