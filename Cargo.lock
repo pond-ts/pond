@@ -721,6 +721,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "zmij",
 ]
 
 [[package]]

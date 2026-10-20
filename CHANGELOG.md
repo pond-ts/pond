@@ -85,6 +85,11 @@ include new features and type-level changes; patch bumps are strictly additive.
   and `[2, 5]` trimmed at 3 gave `[3, 10]` before `[3, 5]`), so lookups such
   as `bisect` on the result were wrong and `fromJSON` refused to reload it.
   `trim` now re-sorts (stably) when clipping reorders keys.
+- **Interval labels must be text or numbers.** A label of `true`, `false`,
+  `null` or an array was quietly stored as a number (`true` became `1`,
+  `null` became `0`) by `fromJSON`, `new TimeSeries` and anything else that
+  builds an `Interval`. `new Interval` now throws instead, as `fromColumns`
+  already did.
 
 ## [0.75.0] — 2026-10-19
 

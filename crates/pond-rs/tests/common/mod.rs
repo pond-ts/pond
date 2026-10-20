@@ -170,6 +170,42 @@ pub struct CoreFixture {
     #[serde(rename = "timeParse")]
     pub time_parse: Vec<TimeParseCase>,
     pub queries: Vec<QueryCase>,
+    pub json: JsonFixture,
+}
+
+/// pond-ts `toJSON` / `fromJSON` results.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JsonFixture {
+    #[serde(rename = "toJSON")]
+    pub to_json: Vec<ToJsonCase>,
+    #[serde(rename = "fromJSON")]
+    pub from_json: Vec<FromJsonCase>,
+}
+
+/// `inputs[input].toJSON({ rowFormat })`, as written on the wire.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToJsonCase {
+    pub input: String,
+    #[serde(rename = "rowFormat")]
+    pub row_format: String,
+    pub expected: Value,
+}
+
+/// `TimeSeries.fromJSON(payload)` with `options` (`timeZone`, `ordering`):
+/// the series, or the error pond-ts threw.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FromJsonCase {
+    pub id: String,
+    pub payload: Value,
+    #[serde(default)]
+    pub options: Option<Value>,
+    #[serde(default)]
+    pub expected: Option<SeriesJson>,
+    #[serde(default)]
+    pub error: Option<ErrorJson>,
 }
 
 /// One row lookup, `inputs[input][op](arg)`: a row position (`null` for
