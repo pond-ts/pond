@@ -1875,13 +1875,12 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     40 gave a different `median`. pond-rs computes each column on its own,
     so it already disagreed with pond-ts on such calls, and every 8f
     reducer would have triggered it.
-  - Fixing pond-ts was the recommended option on the 2026-10-20 decision
-    card, over copying the behaviour into pond-rs or recording it as a
-    difference. Each
-    column is now planned on its own: range kernel, first/last boundary
-    scan, or else the reducer's bucket state fed that column's cells
-    (the same values, in the same order, the row path feeds it). The row
-    path remains only for a missing source column and for range- and
+  - Peter chose to fix pond-ts (2026-10-20 decision card, merged as #796)
+    over copying the behaviour into pond-rs or recording it as a
+    difference. Each column is now planned on its own: range kernel,
+    first/last boundary scan, or else the reducer's bucket state fed that
+    column's cells (the same values, in the same order, the row path feeds
+    it). The row path remains only for a missing source column and for range- and
     interval-keyed series.
   - Rolling and `reduce` were checked the same way and do not have the
     problem (count-window rolling is all-or-nothing too, but both of its
