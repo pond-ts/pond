@@ -185,11 +185,15 @@ row each, so the per-bucket cost shows); "rolling" is a 5-minute window.
 | `Samples`, numbers     | 74 vs 2,441 | 14,400 vs 97,800 | 22 vs 194        |
 
 A longer window does not slow pond-rs's rolling `Difference`: 25 ms over a
-whole day (86,400 rows in each window). pond-ts keeps each window sorted,
-so the same call takes 4.2 seconds over an hour and 96 seconds over a day
-(logged as a pond-ts issue). Rolling `Samples` is slow in both because
-each of the million rows gets a list of about 280 values; writing that
-out is the cost.
+whole day (86,400 rows in each window). pond-ts keeps each window sorted, so
+its time grows with the window. Measured again on the same rows in
+[#799](https://github.com/pond-ts/pond/pull/799), pond-ts took 354 ms over 5
+minutes, 557 ms over an hour and 11.3 seconds over a day. The 690 ms in the
+table above is from the first run, which these re-runs did not reproduce;
+the cause was not found. #799 changes pond-ts to work the way pond-rs does,
+which brings it to about 250 ms for every window length. Rolling `Samples`
+is slow in both because each of the million rows gets a list of about 280
+values; writing that out is the cost.
 
 ### Agents writing code against it
 
