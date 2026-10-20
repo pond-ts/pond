@@ -94,6 +94,16 @@ include new features and type-level changes; patch bumps are strictly additive.
   JSON carry `null` for a missing value, and `fromPoints` refused them
   ("expected finite number"), so chart data could not be read back. A `null`
   cell is now a gap, as in `fromJSON`; a required column still refuses it.
+- **An `aggregate` column no longer depends on the other columns in the
+  call.** One column using `unique`, `top`, `samples`, `keep` or
+  `difference`, a reducer over a text, boolean or array column, or a
+  custom function used to switch the whole call to a slower method. That
+  method sums in a different order, so `sum` and `avg` on buckets of 32+
+  values could change in the last digit, and `median` could return `-0`
+  where it returned `0`. For example, adding `host: 'count'` could change
+  `v: 'sum'`. Each column now gets the answer it gets alone, and these mixed
+  calls are 2–10× faster
+  (`packages/core/scripts/perf-aggregate-mixed.mjs`).
 
 ## [0.75.0] — 2026-10-19
 
