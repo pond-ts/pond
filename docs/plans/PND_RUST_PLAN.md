@@ -1593,9 +1593,10 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     pond-ts: a value column already named `timeRange` / `interval` is an
     error; labels must be one kind (all numbers or all text); an empty
     series gets text labels; a zero offset returns the series as it is;
-    `"1.5s"`, `"+1s"` and `"--1s"` are refused.
-  - Differences from pond-ts: number labels must be finite (pond-ts
-    refuses only `NaN`); times are whole milliseconds; `offset_time`
+    `"1.5s"`, `"+1s"` and `"--1s"` are refused, and so is a label that is
+    `NaN` or infinite (pond-ts stores it as a missing label and throws).
+  - Differences from pond-ts: offsets are whole milliseconds (pond-ts
+    takes `offsetTime(0.5)`); `offset_time`
     refuses a key moved past ±`MAX_TIME_MS` (pond-ts allows it, but such a
     key cannot be read back).
   - Parity: 108 new fixture cases (6 inputs of every key kind, including

@@ -223,7 +223,7 @@ impl TimeSeries {
     /// Make each row's key an interval over its current extent, every row
     /// labelled `label`, named `"interval"`, as pond-ts `asInterval(value)`.
     /// A value column already named `"interval"` is an error, as in pond-ts,
-    /// and so is a number label that is not finite (pond-ts refuses `NaN`).
+    /// and so is a number label that is `NaN` or infinite, as in pond-ts.
     ///
     /// ```
     /// # use pond_rs::{Column, Label, TimeSeries};
@@ -515,6 +515,8 @@ mod tests {
                 .is_err()
         );
         assert!(s.as_interval(f64::NAN).is_err());
+        assert!(s.as_interval(f64::INFINITY).is_err());
+        assert!(s.as_interval(f64::NEG_INFINITY).is_err());
         let clash = s.rename(&[("v", "interval")]).unwrap();
         assert!(clash.as_interval("x").is_err());
         let empty = s.slice(0..0).as_interval(5.0).unwrap();
