@@ -99,8 +99,8 @@ include new features and type-level changes; patch bumps are strictly additive.
   `difference`, a reducer over a text, boolean or array column, or a
   custom function used to switch the whole call to a slower method. That
   method sums in a different order, so `sum` and `avg` on buckets of 32+
-  values could change in the last digit, and `median` could return `-0`
-  where it returned `0`. For example, adding `host: 'count'` could change
+  values could change in the last digit, and `median` could return the
+  other sign of zero. For example, adding `host: 'count'` could change
   `v: 'sum'`. Each column now gets the answer it gets alone, and these mixed
   calls are 2–10× faster
   (`packages/core/scripts/perf-aggregate-mixed.mjs`).

@@ -92,3 +92,95 @@ describe('aggregate: a column does not depend on its siblings', () => {
     expect(r.get('k')).toBeUndefined();
   });
 });
+
+// The columns that moved off the row path must keep the answers they had
+// there: custom functions (inputs, call order, errors), boolean and array
+// sources, and partitioned calls.
+describe('aggregate: moved columns keep their row-path answers', () => {
+  const mixedSchema = [
+    { name: 'time', kind: 'time' },
+    { name: 'v', kind: 'number', required: false },
+    { name: 'ok', kind: 'boolean', required: false },
+    { name: 'tags', kind: 'array', required: false },
+  ] as const;
+  const s = new TimeSeries({
+    name: 'm',
+    schema: mixedSchema,
+    rows: [
+      [0, 1, true, ['a', 'b']],
+      [1000, undefined, true, ['b']],
+      [2000, -0, undefined, undefined],
+      [60_000, 4, false, ['c']],
+      [61_000, 5, true, ['c', 'a']],
+    ],
+  });
+
+  it('custom function sees gaps as undefined and -0 kept, bucket by bucket', () => {
+    const seen: unknown[][] = [];
+    s.aggregate(Sequence.every('1m'), {
+      v: 'sum',
+      f: {
+        from: 'v',
+        using: (values: ReadonlyArray<unknown>) => {
+          seen.push([...values]);
+          return values.length;
+        },
+        kind: 'number',
+      },
+    } as never);
+    expect(seen.length).toBe(2);
+    expect(seen[0]).toEqual([1, undefined, -0]);
+    expect(Object.is(seen[0]![2], -0)).toBe(true);
+    expect(seen[1]).toEqual([4, 5]);
+  });
+
+  it('custom function returning the wrong kind names the row and column', () => {
+    expect(() =>
+      s.aggregate(Sequence.every('1m'), {
+        v: 'sum',
+        f: { from: 'v', using: () => 'oops', kind: 'number' },
+      } as never),
+    ).toThrow(/row 0.*f|f.*row 0/);
+  });
+
+  it('boolean and array sources', () => {
+    const rows = s
+      .aggregate(Sequence.every('1m'), {
+        v: 'sum',
+        okKeep: { from: 'ok', using: 'keep' },
+        okCount: { from: 'ok', using: 'count' },
+        tagSet: { from: 'tags', using: 'unique' },
+      } as never)
+      .toArray();
+    expect(rows[0]!.get('okKeep' as never)).toBe(true);
+    expect(rows[0]!.get('okCount' as never)).toBe(2);
+    expect(rows[0]!.get('tagSet' as never)).toEqual(['a', 'b']);
+    expect(rows[1]!.get('okKeep' as never)).toBeUndefined();
+    expect(rows[1]!.get('tagSet' as never)).toEqual(['a', 'c']);
+  });
+
+  it('partitioned: each partition matches its own unpartitioned call', () => {
+    const seq = Sequence.every('1m');
+    const spec = {
+      v: 'sum',
+      u: { from: 'host', using: 'unique' },
+    } as const;
+    const parts = noisy
+      .partitionBy('host')
+      .aggregate(seq, spec as never)
+      .collect()
+      .toArray();
+    for (const host of ['h0', 'h1', 'h2']) {
+      const alone = noisy
+        .filter((e) => e.get('host') === host)
+        .aggregate(seq, { v: 'sum' })
+        .toArray()
+        .map((e) => e.get('v'));
+      const got = parts
+        .filter((e) => e.get('host' as never) === host)
+        .map((e) => e.get('v'));
+      expect(got.length).toBe(alone.length);
+      got.forEach((x, i) => expect(Object.is(x, alone[i])).toBe(true));
+    }
+  });
+});
