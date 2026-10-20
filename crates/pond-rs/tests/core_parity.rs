@@ -52,6 +52,9 @@ const KNOWN_OPS: &[&str] = &[
     "before",
     "after",
     "within",
+    "asTimeRange",
+    "asInterval",
+    "offsetTime",
 ];
 
 /// Ops with an arm in [`run`]. Every fixture case for a listed op must run
@@ -87,6 +90,9 @@ const IMPLEMENTED_OPS: &[&str] = &[
     "before",
     "after",
     "within",
+    "asTimeRange",
+    "asInterval",
+    "offsetTime",
 ];
 
 /// The ops a plain series and a partitioned one both have, with the same
@@ -331,6 +337,28 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>
             let ms = |i: usize| case.args[i].as_i64().expect("within takes whole ms");
             input.within(ms(0), ms(1))
         }
+        "asTimeRange" => input.as_time_range(),
+        "asInterval" => match &case.args[0] {
+            Value::String(label) => input.as_interval(label.as_str()),
+            Value::Object(o) if o.contains_key("fn") => {
+                let spec = o["fn"].as_str().expect("closure spec is a string");
+                input.as_interval_with(|range, i| -> pond_rs::Label {
+                    match spec {
+                        "rangeBegin" => (range.begin() as f64).into(),
+                        "rangeEnd" => (range.end() as f64).into(),
+                        "rowLabel" => format!("row{i}").into(),
+                        "mixedLabel" if i == 0 => 1.0.into(),
+                        "mixedLabel" => "b".into(),
+                        other => panic!("unknown asInterval closure '{other}'"),
+                    }
+                })
+            }
+            n => input.as_interval(decode_f64(n)),
+        },
+        "offsetTime" => match &case.args[0] {
+            Value::String(by) => input.offset_time(by),
+            n => input.offset_time_ms(n.as_i64().expect("offsetTime takes whole ms")),
+        },
         "join" => {
             let other = to_series(&fixture.inputs[series_name(&case.args[0])]);
             input.join(&other, join_options(case.args.get(1)))
@@ -627,6 +655,9 @@ fn to_json(series: &TimeSeries) -> SeriesJson {
                 Key::TimeRange(k) => json!([k.begin[i], k.end[i]]),
                 Key::Interval(k) => {
                     let label = match &k.label {
+                        Labels::Number(v) if v[i] == 0.0 && v[i].is_sign_negative() => {
+                            json!({ "f64": "-0" })
+                        }
                         Labels::Number(v) => json!(v[i]),
                         Labels::String(c) => json!(c.get(i)),
                     };

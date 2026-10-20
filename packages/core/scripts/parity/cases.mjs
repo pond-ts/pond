@@ -461,6 +461,38 @@ const SPAN_CASES = SPAN_INPUTS.flatMap((input) => [
   ].map(([b, e], i) => [`span-within-${input}-${i}`, input, 'within', [b, e]]),
 ]);
 
+// Changing key type: asTimeRange, asInterval (a constant label, or a
+// function of (range, index): closure specs rangeBegin / rangeEnd /
+// rowLabel / mixedLabel), offsetTime (ms or a duration, '-' for earlier).
+const KEY_INPUTS = [
+  'gappy',
+  'ranges',
+  'labelled',
+  'buckets',
+  'emptyHosts',
+  'intervalColumn',
+];
+const KEY_CASES = KEY_INPUTS.flatMap((input) => [
+  [`key-asTimeRange-${input}`, input, 'asTimeRange', []],
+  ...[
+    'day',
+    7,
+    { f64: '-0' }, // JSON drops the sign of a bare -0
+    { fn: 'rangeBegin' },
+    { fn: 'rangeEnd' },
+    { fn: 'rowLabel' },
+    { fn: 'mixedLabel' },
+  ].map((label, i) => [
+    `key-asInterval-${input}-${i}`,
+    input,
+    'asInterval',
+    [label],
+  ]),
+  ...['1m', '-1h', '0s', '-0s', 2500, -1000, 0, '1.5s', '+1s', '--1s'].map(
+    (by, i) => [`key-offsetTime-${input}-${i}`, input, 'offsetTime', [by]],
+  ),
+]);
+
 /** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
 const CASES = [
   // rolling: time window, trailing, keyed at each event
@@ -1563,6 +1595,7 @@ const CASES = [
     [[{ series: 'joinConflict' }], { onConflict: 'prefix', prefixes: ['g'] }],
   ],
   ...SPAN_CASES,
+  ...KEY_CASES,
 ];
 
 /**
@@ -1570,6 +1603,10 @@ const CASES = [
  * the same closure from the same spec.
  */
 function closure(spec) {
+  if (spec === 'rangeBegin') return (r) => r.begin();
+  if (spec === 'rangeEnd') return (r) => r.end();
+  if (spec === 'rowLabel') return (_r, i) => `row${i}`;
+  if (spec === 'mixedLabel') return (_r, i) => (i === 0 ? 1 : 'b');
   if (spec === 'upper') return (v) => v.toUpperCase();
   if (spec === 'not') return (v) => !v;
   if ('mul' in spec) return (v) => v * spec.mul + spec.add;
@@ -2001,6 +2038,7 @@ export function buildFixture(pond) {
         Object.entries(arg).map(([k, v]) => [k, decode(v)]),
       );
     }
+    if (arg && typeof arg === 'object' && arg.f64 === '-0') return -0;
     // pond-ts key objects (span ops).
     if (arg && typeof arg === 'object' && 'time' in arg) {
       return new pond.Time(arg.time);

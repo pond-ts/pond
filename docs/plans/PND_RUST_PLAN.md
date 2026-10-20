@@ -628,7 +628,7 @@ The one result short of a clean win is one-core B: polars is faster
        `contains` / `intersection`. (`tail` done in 7b; pond-rs had only
        `slice`, which takes positions.) (done, below)
      - **8c Changing key type:** `as_time_range`, `as_interval`,
-       `offset_time` (pond-rs has only `as_time`).
+       `offset_time` (pond-rs has only `as_time`). (done, below)
      - **8d Input and output:** `from_json` / `to_json`, `from_columns` /
        `to_columns`, `from_points` / `to_points`, `to_rows` /
        `to_objects`. pond-rs reads and writes Arrow only, plus building
@@ -1583,6 +1583,28 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     shares memory (O(log N)); range and interval keys are walked once
     (O(N)), as in pond-ts. `trim` adds an O(N) order check and sorts only
     when clipping reordered keys.
+
+  **Step 8c (done): changing key type ([PND-RUSTFULL]).**
+  - Calls: `as_time_range` (pond-ts `asTimeRange`), `as_interval(label)`
+    and `as_interval_with(|range, row| label)` (pond-ts `asInterval` with a
+    value or a function), `offset_time("-1h")` and `offset_time_ms(n)`
+    (pond-ts `offsetTime` with a duration or a number). Each keeps every
+    row's extent (or moves it) and shares the value columns. As in
+    pond-ts: a value column already named `timeRange` / `interval` is an
+    error; labels must be one kind (all numbers or all text); an empty
+    series gets text labels; a zero offset returns the series as it is;
+    `"1.5s"`, `"+1s"` and `"--1s"` are refused.
+  - Differences from pond-ts: number labels must be finite (pond-ts
+    refuses only `NaN`); times are whole milliseconds; `offset_time`
+    refuses a key moved past ±`MAX_TIME_MS` (pond-ts allows it, but such a
+    key cannot be read back).
+  - Parity: 108 new fixture cases (6 inputs of every key kind, including
+    an empty one and one with a column named `interval`: `asTimeRange`; 7
+    labels for `asInterval`, among them `-0`, per-row closures and a mixed
+    kind; 10 offsets for `offsetTime`), 29 of them errors. All match. The
+    fixture now writes a `-0` argument as `{"f64": "-0"}`, as JSON drops
+    the sign.
+  - Perf: one pass over the keys (O(N)); value columns are not copied.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

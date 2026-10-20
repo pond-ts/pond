@@ -585,7 +585,7 @@ the study oracle) is done.
      key helpers, docs)~~ — done.
   8. **The rest of the pond-ts batch surface** ([PND-RUSTFULL]), adopted
      2026-10-20 by pjm17971 as core work that needs no further case:
-     (a) ~~finding rows~~ — done; (b) ~~picking a time span~~ — done; (c) changing key type;
+     (a) ~~finding rows~~ — done; (b) ~~picking a time span~~ — done; (c) ~~changing key type~~ — done;
      (d) JSON / columns / points / rows input and output; (e) array
      columns; (f) reducers `unique` / `keep` / `top` / `difference` /
      `samples`; (g) rolling options (row-count, leading, centred, minimum
