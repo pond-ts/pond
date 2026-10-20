@@ -14,8 +14,8 @@ use common::{
 use pond_rs::Value as Literal;
 use pond_rs::{
     Agg, Align, AlignMethod, ArrowKey, At, Column, ColumnData, ColumnKind, Fill, FillLimits,
-    FirstRow, IntervalKeys, Join, JoinType, Keep, Key, Labels, Materialize, OnConflict, Pick,
-    Reducer, Sequence, TimeRangeKeys, TimeSeries,
+    FirstRow, IntervalKeys, Join, JoinType, JsonOptions, Keep, Key, KeyOrder, Labels, Materialize,
+    OnConflict, Pick, Reducer, RowFormat, Sequence, TimeRangeKeys, TimeSeries,
 };
 use serde_json::{Value, json};
 
@@ -1094,4 +1094,92 @@ fn join_options(arg: Option<&Value>) -> Join {
         Some(other) => panic!("unknown onConflict {other}"),
     };
     Join { how, on_conflict }
+}
+
+/// JSON numbers compare by value (`1` and `1.0` are the same), objects by
+/// their entries, as pond-ts's `JSON.parse` would see them.
+fn same_json(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
+        (Value::Array(x), Value::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(x, y)| same_json(x, y))
+        }
+        (Value::Object(x), Value::Object(y)) => {
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(k, v)| y.get(k).is_some_and(|w| same_json(v, w)))
+        }
+        _ => a == b,
+    }
+}
+
+/// `to_json` writes what pond-ts `toJSON` writes, and `from_json` reads
+/// every payload pond-ts `fromJSON` reads (each input in both row formats,
+/// plus the hand-written `JSON_PAYLOADS`) to the same series, and refuses
+/// what it refuses.
+#[test]
+fn json_matches_pond_ts() {
+    let fixture = load_core_fixture();
+    let mut failures = Vec::new();
+    for case in &fixture.json.to_json {
+        let label = format!("toJSON {} ({})", case.input, case.row_format);
+        let format = match case.row_format.as_str() {
+            "array" => RowFormat::Array,
+            "object" => RowFormat::Object,
+            other => panic!("unknown row format {other}"),
+        };
+        let series = to_series(&fixture.inputs[&case.input]);
+        match series.to_json(format) {
+            // Through text, as a reader of the wire would see it.
+            Ok(text) => {
+                let got: Value = serde_json::from_str(&text).expect("to_json writes JSON");
+                if !same_json(&case.expected, &got) {
+                    failures.push(format!("{label}: expected {}, got {got}", case.expected));
+                }
+            }
+            Err(e) => failures.push(format!("{label}: pond-rs errored: {e}")),
+        }
+    }
+    // Known differences: pond-rs times are whole milliseconds within
+    // ±MAX_TIME_MS; pond-ts takes 1.5 and 8.64e15 + 1.
+    const REFUSED_BY_POND_RS: &[&str] = &["fractionKey", "farKey"];
+    for case in &fixture.json.from_json {
+        let label = format!("fromJSON {}", case.id);
+        let mut options = JsonOptions::new();
+        if let Some(o) = &case.options {
+            if let Some(zone) = o.get("timeZone").and_then(Value::as_str) {
+                options = options.time_zone(zone);
+            }
+            options = options.order(match o.get("ordering").and_then(Value::as_str) {
+                None | Some("strict") => KeyOrder::Strict,
+                Some("reorder") => KeyOrder::Reorder,
+                Some("clamp") => KeyOrder::Clamp,
+                Some(other) => panic!("unknown ordering {other}"),
+            });
+        }
+        let got = TimeSeries::from_json(&case.payload.to_string(), &options);
+        // The parsed-value door must agree with the text door.
+        let same_door = TimeSeries::from_json_value(&case.payload, &options);
+        if got.as_ref().ok() != same_door.as_ref().ok() {
+            failures.push(format!("{label}: from_json and from_json_value disagree"));
+        }
+        let outcome = match (&case.expected, &got) {
+            _ if REFUSED_BY_POND_RS.contains(&case.id.as_str()) => match &got {
+                Err(_) => Ok(()),
+                Ok(_) => Err("expected pond-rs to refuse it (a known difference)".into()),
+            },
+            (Some(expected), Ok(series)) => compare_series(expected, &to_json(series), None),
+            (Some(_), Err(e)) => Err(format!("pond-ts reads it, pond-rs errored: {e}")),
+            (None, Ok(_)) => Err(format!(
+                "pond-ts throws ({}), pond-rs read it",
+                case.error.as_ref().map_or("?", |e| e.message.as_str())
+            )),
+            (None, Err(_)) => Ok(()),
+        };
+        if let Err(why) = outcome {
+            failures.push(format!("{label}: {why}"));
+        }
+    }
+    let total = fixture.json.to_json.len() + fixture.json.from_json.len();
+    report("core JSON parity", total, total, &failures);
 }
