@@ -733,6 +733,22 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   when the window is flat (needs a cheap flatness check), or document it.
   Found 2026-10-19 (pond-rs R1b step 4b agent trial: 5 of 10 agents
   guarded against it).
+- **[PND-ROLLSEQ]** — pond-ts `rolling(sequence, window, …)` (one window
+  per point of a `Sequence`) scans every row of the series for every point
+  (`this.events.filter(...)` in `time-series.ts`), so its cost is points ×
+  rows whatever the reducer: 1,000 rows one minute apart sampled every 10 s
+  take ~250 ms, 4,000 rows take ~3.3 s (`min` and `difference` alike); at
+  that rate 100k rows would take about half an hour (a run was stopped after
+  several minutes). Proposed fix: the points rise, so
+  slide two row cursors and drive the rolling states, as the per-row path
+  does. Found 2026-10-20 while measuring [PND-ROLLDIFF].
+- **[PND-DEQUEALLOC]** — pond-ts rolling `min` / `max` (`rollingMonotoneDeque`)
+  allocate an object per row and, on small windows, copy the deque's array
+  on almost every row (it compacts whenever half of it is used up): rolling
+  `min` on 1M rows takes ~280 ms with a 1-row window against ~210 ms with 5
+  minutes. The [PND-ROLLDIFF] state avoids both (plain number arrays,
+  compacts only past 1,024 used entries) and runs a 1-row window in ~125
+  ms. Proposed fix: give `min` / `max` the same deque. Found 2026-10-20.
 
 ### `@pond-ts/financial`
 

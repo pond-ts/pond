@@ -616,6 +616,54 @@ the dense-store contract. Mutation-checked: wrong kept event, index off by
 one, strict `=== true` truthiness, dropping the snapshot copy, unfrozen
 `toEvents()` — each failed the suite.
 
+### [PND-ROLLDIFF] — SHIPPED (rolling `difference` on two monotone deques)
+
+Found by the pond-rs thread (R1b step 8f). Rolling `difference` kept the
+window in a sorted array (`rollingSortedArray`) and spliced each row in and
+out, so a row cost O(W) for a window of W rows. It now keeps two monotone
+deques, one for the largest value and one for the smallest (the method
+rolling `min` / `max` already use, and the one pond-rs uses), so a row costs
+amortised O(1) whatever the window.
+
+- **Same answers, `-0` included.** The sorted array answered `-0` for some
+  all-zero windows: its zeros went in and out at the front of their run
+  (last in, first out), and the answer was the last minus the first. Which
+  zero sits where depends on the window's history, not only its contents. A
+  stack of zero signs replays that exactly. Checked with `Object.is` against
+  the old build on 2,400 random calls (time and count windows, every
+  alignment, sequences, zeros of both signs; 2,937 of the old answers were
+  `-0`), and in `test/rolling-difference.test.ts` against the old state
+  driven by the same adds and removes. Mutation-checked: dropping the zero
+  stack fails the tests.
+- **Reorder sources keep the sorted array.** A `reorder` source with
+  retention can evict any row, which a deque can't handle, so
+  `rollingStateFor(..., 'sorted')` swaps in the sorted array for
+  `difference` as it already does for `min` / `max` ([PND-LIVFIX]). A test
+  in `livfix-reduce-reorder.test.ts` fails without the swap.
+- **Plain number arrays, rare compaction.** A first version reused
+  `rollingMonotoneDeque` and was slower than the old code on 1-row windows
+  (~230 vs ~155 ms): an object per row, and an array copy on almost every
+  row. Parallel number arrays and compacting only past 1,024 used entries
+  fixed that. `min` / `max` have the same cost ([PND-DEQUEALLOC]).
+- **Measured** (`scripts/perf-rolling-difference.mjs`, 1M rows one second
+  apart, values as pond-rs's `perf_reducers` example, median of 3
+  processes):
+
+  | window      | before  | after  |
+  | ----------- | ------- | ------ |
+  | 1 s (1 row) | 150 ms  | 127 ms |
+  | 5 min       | 354 ms  | 243 ms |
+  | 1 h         | 557 ms  | 261 ms |
+  | 1 day       | 11.25 s | 246 ms |
+
+  The pond-rs thread reported 4.2 s (1 h) and 96 s (1 day) for the old
+  code; on this machine the same rows took 0.48 s and 11.4 s. The shape (cost
+  growing with the window) reproduced; the size didn't, and no pond-ts
+  script for those numbers is committed, so the gap is unexplained.
+
+- Rolling over a `Sequence` turned out to scan every row for every point,
+  for every reducer: logged as [PND-ROLLSEQ].
+
 ### [PND-ROLLKERN] — SHIPPED (per-column sweeps + `avg` specialisation)
 
 `tryRollingCountColumnarNumeric` already wrote typed result columns, but drove
