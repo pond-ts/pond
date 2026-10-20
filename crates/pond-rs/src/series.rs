@@ -2,7 +2,9 @@
 //! intervals) plus named value columns (numbers, text, true/false), all the
 //! same length.
 
-use crate::column::{BooleanColumn, ColumnData, DecimalColumn, Float64Column, StringColumn};
+use crate::column::{
+    ArrayColumn, BooleanColumn, ColumnData, DecimalColumn, Float64Column, StringColumn,
+};
 use crate::error::{PondError, Result};
 
 /// What a schema column holds.
@@ -22,11 +24,14 @@ pub enum ColumnKind {
     String,
     /// A value column of true/false values.
     Boolean,
+    /// A value column of arrays of numbers, text and true/false values
+    /// ([`ArrayColumn`](crate::ArrayColumn)).
+    Array,
 }
 
 impl ColumnKind {
     /// The name pond-ts uses in a schema (`"time"`, `"timeRange"`,
-    /// `"interval"`, `"number"`, `"string"`, `"boolean"`), and `"decimal"`,
+    /// `"interval"`, `"number"`, `"string"`, `"boolean"`, `"array"`), and `"decimal"`,
     /// which pond-ts does not have.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -37,6 +42,7 @@ impl ColumnKind {
             ColumnKind::Decimal => "decimal",
             ColumnKind::String => "string",
             ColumnKind::Boolean => "boolean",
+            ColumnKind::Array => "array",
         }
     }
 }
@@ -352,7 +358,8 @@ impl Column {
         self.required
     }
 
-    /// What the column holds: [`ColumnKind::Number`], `String` or `Boolean`.
+    /// What the column holds: [`ColumnKind::Number`], `Decimal`, `String`,
+    /// `Boolean` or `Array`.
     pub fn kind(&self) -> ColumnKind {
         self.data.kind()
     }
@@ -391,6 +398,14 @@ impl Column {
         match &self.data {
             ColumnData::Boolean(c) => Ok(c),
             _ => Err(self.wrong_kind("Column::booleans", "boolean")),
+        }
+    }
+
+    /// The values of an array column; an error for any other kind.
+    pub fn arrays(&self) -> Result<&ArrayColumn> {
+        match &self.data {
+            ColumnData::Array(c) => Ok(c),
+            _ => Err(self.wrong_kind("Column::arrays", "array")),
         }
     }
 
@@ -662,6 +677,14 @@ impl TimeSeries {
                     column.name,
                     column.data.len()
                 )));
+            }
+            if let ColumnData::Array(a) = &column.data {
+                if let Some((r, e)) = a.first_bad_element() {
+                    return Err(invalid(format!(
+                        "column '{}' row {r}: array element {e} must be a finite number, string, or boolean",
+                        column.name
+                    )));
+                }
             }
             if column.required && column.data.missing_count() > 0 {
                 let i = (0..rows)

@@ -495,6 +495,14 @@ impl TimeSeries {
                 ColumnData::Decimal(data) => data.arrow(),
                 ColumnData::String(data) => data.arrow(),
                 ColumnData::Boolean(data) => data.arrow(),
+                ColumnData::Array(_) => {
+                    return Err(PondError::WrongKind {
+                        call: TO,
+                        column: column.name().to_string(),
+                        kind: "array",
+                        reason: "Arrow output takes number, decimal, string and boolean columns (pond-ts's toArrow refuses arrays too); drop it with select first".into(),
+                    });
+                }
             };
             fields.push(Field::new(
                 column.name(),

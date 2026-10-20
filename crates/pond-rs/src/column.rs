@@ -1,8 +1,10 @@
-//! Value columns: numbers, exact decimals, text and true/false values.
+//! Value columns: numbers, exact decimals, text, true/false values and
+//! arrays.
 //!
 //! In a number column a gap is stored as `NaN`, as in pond-ts
 //! ([PND-NANREP]): any non-finite value in the buffer means "missing".
-//! Decimal, text and true/false columns mark gaps with an Arrow null.
+//! Decimal, text and true/false columns mark gaps with an Arrow null; an
+//! array column marks them with `None`.
 //!
 //! The values live in an Arrow buffer (shared, immutable, reference
 //! counted). So a column read from Arrow can point at Arrow's memory instead
@@ -298,6 +300,8 @@ pub enum Value {
     Decimal(Decimal),
     String(String),
     Boolean(bool),
+    /// The elements of one array cell (see [`ArrayColumn`]).
+    Array(Vec<Scalar>),
 }
 
 impl Value {
@@ -344,6 +348,14 @@ impl Value {
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Value::Boolean(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// The elements, if this is a [`Value::Array`].
+    pub fn as_array(&self) -> Option<&[Scalar]> {
+        match self {
+            Value::Array(v) => Some(v),
             _ => None,
         }
     }
@@ -558,14 +570,229 @@ impl DecimalColumn {
     }
 }
 
-/// What a value column holds: numbers, exact decimals, text, or true/false
-/// values.
+/// One element of an array cell: a number, text or a true/false value, as
+/// pond-ts's `ScalarValue`. Numbers must be finite (checked when a series
+/// is built).
+///
+/// `==` compares as JavaScript's `includes` does on finite elements
+/// (SameValueZero): `0.0` equals `-0.0`, and values of different kinds never
+/// match (`1` is not `"1"`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Scalar {
+    Number(f64),
+    String(String),
+    Boolean(bool),
+}
+
+impl Scalar {
+    /// The kind of column this element would sit in: number, string or
+    /// boolean.
+    pub fn kind(&self) -> ColumnKind {
+        match self {
+            Scalar::Number(_) => ColumnKind::Number,
+            Scalar::String(_) => ColumnKind::String,
+            Scalar::Boolean(_) => ColumnKind::Boolean,
+        }
+    }
+
+    /// The number, if this is a [`Scalar::Number`].
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Scalar::Number(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// The text, if this is a [`Scalar::String`].
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Scalar::String(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// The true/false value, if this is a [`Scalar::Boolean`].
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Scalar::Boolean(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// The same element as a [`Value`].
+    pub fn to_value(&self) -> Value {
+        match self {
+            Scalar::Number(v) => Value::Number(*v),
+            Scalar::String(v) => Value::String(v.clone()),
+            Scalar::Boolean(v) => Value::Boolean(*v),
+        }
+    }
+
+    /// Equal bit for bit: as `==`, except `0.0` and `-0.0` differ.
+    pub(crate) fn same(&self, other: &Scalar) -> bool {
+        match (self, other) {
+            (Scalar::Number(a), Scalar::Number(b)) => a.to_bits() == b.to_bits(),
+            _ => self == other,
+        }
+    }
+}
+
+impl From<f64> for Scalar {
+    fn from(v: f64) -> Self {
+        Scalar::Number(v)
+    }
+}
+
+impl From<i32> for Scalar {
+    fn from(v: i32) -> Self {
+        Scalar::Number(f64::from(v))
+    }
+}
+
+impl From<&str> for Scalar {
+    fn from(v: &str) -> Self {
+        Scalar::String(v.to_string())
+    }
+}
+
+impl From<String> for Scalar {
+    fn from(v: String) -> Self {
+        Scalar::String(v)
+    }
+}
+
+impl From<bool> for Scalar {
+    fn from(v: bool) -> Self {
+        Scalar::Boolean(v)
+    }
+}
+
+/// One array cell: its elements, shared (cloning a cell or a column does
+/// not copy them).
+pub(crate) type Cell = Arc<[Scalar]>;
+
+/// A column of arrays (pond-ts `kind: 'array'`): each row holds a list of
+/// numbers, text and true/false values, mixed freely, or is a gap. An empty
+/// list is a value, not a gap. Numbers must be finite.
+///
+/// ```
+/// # use pond_rs::{ArrayColumn, Column, Scalar, TimeSeries};
+/// let tags = ArrayColumn::from_options([
+///     Some(vec!["a".into(), "b".into()]),
+///     Some(vec![]),
+///     None,
+///     Some(vec![Scalar::from(1.0), true.into()]),
+/// ]);
+/// let s = TimeSeries::new("s", vec![0, 1, 2, 3], vec![Column::optional("tags", tags)])?;
+/// let tags = s.column("tags")?.arrays()?;
+/// assert_eq!(tags.get(0), Some(&[Scalar::from("a"), "b".into()][..]));
+/// assert_eq!(tags.get(1), Some(&[][..])); // empty, not a gap
+/// assert_eq!(tags.get(2), None);
+/// # Ok::<(), pond_rs::PondError>(())
+/// ```
+///
+/// Arrays have no Arrow form yet: [`TimeSeries::to_arrow`] refuses an
+/// array column, as pond-ts's `toArrow` does.
+///
+/// [`TimeSeries::to_arrow`]: crate::TimeSeries::to_arrow
+#[derive(Debug, Clone)]
+pub struct ArrayColumn {
+    cells: Arc<[Option<Cell>]>,
+    offset: usize,
+    len: usize,
+}
+
+impl ArrayColumn {
+    /// Build from optional lists; `None` is a gap.
+    pub fn from_options(values: impl IntoIterator<Item = Option<Vec<Scalar>>>) -> Self {
+        Self::from_cells(values.into_iter().map(|v| v.map(Cell::from)).collect())
+    }
+
+    pub(crate) fn from_cells(cells: Vec<Option<Cell>>) -> Self {
+        let len = cells.len();
+        Self {
+            cells: cells.into(),
+            offset: 0,
+            len,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn cells(&self) -> &[Option<Cell>] {
+        &self.cells[self.offset..self.offset + self.len]
+    }
+
+    /// The list at `i`, or `None` for a gap. Panics if `i` is out of range.
+    pub fn get(&self, i: usize) -> Option<&[Scalar]> {
+        self.cells()[i].as_deref()
+    }
+
+    /// The shared cell at `i`.
+    pub(crate) fn cell(&self, i: usize) -> Option<&Cell> {
+        self.cells()[i].as_ref()
+    }
+
+    /// Iterate as `Option<&[Scalar]>`.
+    pub fn iter(&self) -> impl Iterator<Item = Option<&[Scalar]>> + '_ {
+        self.cells().iter().map(|c| c.as_deref())
+    }
+
+    /// Number of gaps.
+    pub fn missing_count(&self) -> usize {
+        self.cells().iter().filter(|c| c.is_none()).count()
+    }
+
+    /// The first element that is not a finite number, string or boolean
+    /// (a non-finite number): `(row, element)`.
+    pub(crate) fn first_bad_element(&self) -> Option<(usize, usize)> {
+        self.iter().enumerate().find_map(|(r, cell)| {
+            cell?
+                .iter()
+                .position(|e| matches!(e, Scalar::Number(v) if !v.is_finite()))
+                .map(|e| (r, e))
+        })
+    }
+
+    /// The rows named by `rows`, in that order; `None` gives a gap. Cells
+    /// are shared, not copied.
+    pub(crate) fn take(&self, rows: &[Option<usize>]) -> Self {
+        Self::from_cells(
+            rows.iter()
+                .map(|r| r.and_then(|i| self.cell(i).cloned()))
+                .collect(),
+        )
+    }
+}
+
+/// Equal when the same rows are gaps and the lists hold the same elements
+/// bit for bit (so `-0.0` and `0.0` differ, as in number columns).
+impl PartialEq for ArrayColumn {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len
+            && self.iter().zip(other.iter()).all(|(a, b)| match (a, b) {
+                (None, None) => true,
+                (Some(a), Some(b)) => a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.same(y)),
+                _ => false,
+            })
+    }
+}
+
+/// What a value column holds: numbers, exact decimals, text, true/false
+/// values, or arrays.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ColumnData {
     Number(Float64Column),
     Decimal(DecimalColumn),
     String(StringColumn),
     Boolean(BooleanColumn),
+    Array(ArrayColumn),
 }
 
 impl ColumnData {
@@ -575,6 +802,7 @@ impl ColumnData {
             ColumnData::Decimal(c) => c.len(),
             ColumnData::String(c) => c.len(),
             ColumnData::Boolean(c) => c.len(),
+            ColumnData::Array(c) => c.len(),
         }
     }
 
@@ -589,10 +817,11 @@ impl ColumnData {
             ColumnData::Decimal(c) => c.missing_count(),
             ColumnData::String(c) => c.missing_count(),
             ColumnData::Boolean(c) => c.missing_count(),
+            ColumnData::Array(c) => c.missing_count(),
         }
     }
 
-    /// The Arrow validity bits of a decimal, text or true/false column
+    /// The validity bits of a decimal, text, true/false or array column
     /// (`None` when it has no gaps, and always for numbers, whose gaps are
     /// non-finite values instead).
     pub(crate) fn arrow_nulls(&self) -> Option<NullBuffer> {
@@ -601,6 +830,8 @@ impl ColumnData {
             ColumnData::Decimal(c) => c.nulls().cloned(),
             ColumnData::String(c) => c.arrow().logical_nulls(),
             ColumnData::Boolean(c) => c.values.nulls().cloned(),
+            ColumnData::Array(c) => (c.missing_count() > 0)
+                .then(|| NullBuffer::from(c.iter().map(|v| v.is_some()).collect::<Vec<bool>>())),
         }
     }
 
@@ -624,6 +855,11 @@ impl ColumnData {
             }),
             ColumnData::Boolean(c) => ColumnData::Boolean(BooleanColumn {
                 values: c.values.slice(offset, len),
+            }),
+            ColumnData::Array(c) => ColumnData::Array(ArrayColumn {
+                cells: c.cells.clone(),
+                offset: c.offset + offset,
+                len,
             }),
         }
     }
@@ -686,6 +922,16 @@ impl ColumnData {
                 )
                 .into()
             }
+            ColumnData::Array(_) => {
+                let cols = each!(Array);
+                ArrayColumn::from_cells(
+                    picks
+                        .iter()
+                        .map(|&(s, r)| cols[s as usize].cell(r as usize).cloned())
+                        .collect(),
+                )
+                .into()
+            }
         }
     }
 
@@ -703,6 +949,7 @@ impl ColumnData {
             ColumnData::Decimal(c) => c.take(rows).into(),
             ColumnData::String(c) => c.take(rows).into(),
             ColumnData::Boolean(c) => c.take(rows).into(),
+            ColumnData::Array(c) => c.take(rows).into(),
         }
     }
 
@@ -730,6 +977,13 @@ impl ColumnData {
             ColumnData::Boolean(c) => {
                 BooleanColumn::from_arrow(gather(&c.values).as_boolean().clone()).into()
             }
+            ColumnData::Array(c) => ArrayColumn::from_cells(
+                indices
+                    .iter()
+                    .map(|r| r.and_then(|i| c.cell(i as usize).cloned()))
+                    .collect(),
+            )
+            .into(),
         }
     }
 
@@ -740,17 +994,19 @@ impl ColumnData {
             ColumnData::Decimal(c) => c.get(i).is_some(),
             ColumnData::String(c) => c.get(i).is_some(),
             ColumnData::Boolean(c) => c.get(i).is_some(),
+            ColumnData::Array(c) => c.get(i).is_some(),
         }
     }
 
-    /// What the column holds: [`ColumnKind::Number`], `Decimal`, `String`
-    /// or `Boolean`.
+    /// What the column holds: [`ColumnKind::Number`], `Decimal`, `String`,
+    /// `Boolean` or `Array`.
     pub fn kind(&self) -> ColumnKind {
         match self {
             ColumnData::Number(_) => ColumnKind::Number,
             ColumnData::Decimal(_) => ColumnKind::Decimal,
             ColumnData::String(_) => ColumnKind::String,
             ColumnData::Boolean(_) => ColumnKind::Boolean,
+            ColumnData::Array(_) => ColumnKind::Array,
         }
     }
 }
@@ -779,7 +1035,14 @@ impl From<BooleanColumn> for ColumnData {
     }
 }
 
-/// `From` for plain values (`Vec<f64>`, `Vec<&str>`, `Vec<bool>`, …), their
+impl From<ArrayColumn> for ColumnData {
+    fn from(c: ArrayColumn) -> Self {
+        ColumnData::Array(c)
+    }
+}
+
+/// `From` for plain values (`Vec<f64>`, `Vec<&str>`, `Vec<bool>`,
+/// `Vec<Vec<Scalar>>`, …), their
 /// `Option` forms (`None` is a gap), and arrays of either.
 macro_rules! column_data_from {
     ($($item:ty => |$v:ident| $build:expr;)*) => {$(
@@ -805,4 +1068,6 @@ column_data_from! {
     Option<String> => |v| ColumnData::String(StringColumn::from_options(v));
     bool => |v| ColumnData::Boolean(BooleanColumn::from_options(v.into_iter().map(Some)));
     Option<bool> => |v| ColumnData::Boolean(BooleanColumn::from_options(v));
+    Vec<Scalar> => |v| ColumnData::Array(ArrayColumn::from_options(v.into_iter().map(Some)));
+    Option<Vec<Scalar>> => |v| ColumnData::Array(ArrayColumn::from_options(v));
 }

@@ -14,9 +14,9 @@ use common::{
 use pond_rs::ColumnDef as RsColumnDef;
 use pond_rs::Value as Literal;
 use pond_rs::{
-    Agg, Align, AlignMethod, ArrowKey, At, Column, ColumnData, ColumnKind, Fill, FillLimits,
-    FirstRow, IntervalKeys, Join, JoinType, JsonOptions, Keep, Key, KeyOrder, Labels, Materialize,
-    OnConflict, Pick, Reducer, RowFormat, Sequence, TimeRangeKeys, TimeSeries,
+    Agg, Align, AlignMethod, ArrayOptions, ArrowKey, At, Column, ColumnData, ColumnKind, Fill,
+    FillLimits, FirstRow, IntervalKeys, Join, JoinType, JsonOptions, Keep, Key, KeyOrder, Labels,
+    Materialize, OnConflict, Pick, Reducer, RowFormat, Scalar, Sequence, TimeRangeKeys, TimeSeries,
 };
 use serde_json::{Value, json};
 
@@ -56,6 +56,11 @@ const KNOWN_OPS: &[&str] = &[
     "asTimeRange",
     "asInterval",
     "offsetTime",
+    "arrayContains",
+    "arrayContainsAll",
+    "arrayContainsAny",
+    "arrayAggregate",
+    "arrayExplode",
 ];
 
 /// Ops with an arm in [`run`]. Every fixture case for a listed op must run
@@ -94,6 +99,11 @@ const IMPLEMENTED_OPS: &[&str] = &[
     "asTimeRange",
     "asInterval",
     "offsetTime",
+    "arrayContains",
+    "arrayContainsAll",
+    "arrayContainsAny",
+    "arrayAggregate",
+    "arrayExplode",
 ];
 
 /// The ops a plain series and a partitioned one both have, with the same
@@ -249,6 +259,23 @@ fn fill_limits(options: Option<&Value>) -> FillLimits {
     limits
 }
 
+/// One array element from the fixture (`{"f64": "-0"}` is -0).
+fn scalar(v: &Value) -> Scalar {
+    match v {
+        Value::String(s) => Scalar::String(s.clone()),
+        Value::Bool(b) => Scalar::Boolean(*b),
+        _ => Scalar::Number(decode_f64(v)),
+    }
+}
+
+/// `arrayAggregate` / `arrayExplode` options: `{ as, kind }`.
+fn array_options(v: Option<&Value>) -> ArrayOptions {
+    ArrayOptions {
+        output: v.and_then(|o| o["as"].as_str()).map(str::to_string),
+        kind: v.and_then(|o| o["kind"].as_str()).map(column_kind),
+    }
+}
+
 fn fill_strategy(v: &Value) -> Fill {
     match v.as_str() {
         Some("hold") => Fill::Hold,
@@ -258,6 +285,7 @@ fn fill_strategy(v: &Value) -> Fill {
         Some(text) => Fill::Value(Literal::String(text.into())),
         None => match v {
             Value::Bool(b) => Fill::Value(Literal::Boolean(*b)),
+            Value::Array(a) => Fill::Value(Literal::Array(a.iter().map(scalar).collect())),
             _ => Fill::Value(Literal::Number(v.as_f64().expect("a literal"))),
         },
     }
@@ -282,6 +310,7 @@ fn partition_key(key: &[Option<Literal>], missing: &str) -> String {
         Literal::String(s) => s.clone(),
         Literal::Boolean(b) => b.to_string(),
         Literal::Decimal(d) => d.to_string(),
+        Literal::Array(_) => unreachable!("partition_by refuses arrays"),
     };
     if let [one] = key {
         return one.as_ref().map_or(missing.to_string(), text);
@@ -374,6 +403,35 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>
             let all: Vec<&TimeSeries> = std::iter::once(&input).chain(&others).collect();
             TimeSeries::join_many(&all, join_options(case.args.get(1)))
         }
+        "arrayContains" => input.array_contains(
+            case.args[0].as_str().expect("column"),
+            scalar(&case.args[1]),
+        ),
+        "arrayContainsAll" | "arrayContainsAny" => {
+            let column = case.args[0].as_str().expect("column");
+            let values: Vec<Scalar> = case.args[1]
+                .as_array()
+                .expect("values")
+                .iter()
+                .map(scalar)
+                .collect();
+            if case.op == "arrayContainsAll" {
+                input.array_contains_all(column, &values)
+            } else {
+                input.array_contains_any(column, &values)
+            }
+        }
+        "arrayAggregate" => Reducer::parse(case.args[1].as_str().expect("reducer")).and_then(|r| {
+            input.array_aggregate(
+                case.args[0].as_str().expect("column"),
+                r,
+                &array_options(case.args.get(2)),
+            )
+        }),
+        "arrayExplode" => input.array_explode(
+            case.args[0].as_str().expect("column"),
+            &array_options(case.args.get(1)),
+        ),
         "select" => {
             let names: Vec<&str> = case
                 .args
@@ -570,6 +628,10 @@ fn to_series(json: &SeriesJson) -> TimeSeries {
                     .collect::<Vec<_>>()
                     .into(),
                 "boolean" => cells.map(Value::as_bool).collect::<Vec<_>>().into(),
+                "array" => cells
+                    .map(|v| v.as_array().map(|a| a.iter().map(scalar).collect()))
+                    .collect::<Vec<Option<Vec<Scalar>>>>()
+                    .into(),
                 other => panic!("{}.{}: unknown column kind {other}", json.name, def.name),
             };
             if def.required.unwrap_or(true) {
@@ -688,6 +750,20 @@ fn encode(data: &ColumnData, i: usize) -> Value {
         ColumnData::Decimal(_) => panic!("pond-ts has no decimal columns"),
         ColumnData::String(c) => c.get(i).map_or(Value::Null, |v| json!(v)),
         ColumnData::Boolean(c) => c.get(i).map_or(Value::Null, |v| json!(v)),
+        ColumnData::Array(c) => c.get(i).map_or(Value::Null, |v| {
+            Value::Array(
+                v.iter()
+                    .map(|e| match e {
+                        Scalar::Number(x) if *x == 0.0 && x.is_sign_negative() => {
+                            json!({ "f64": "-0" })
+                        }
+                        Scalar::Number(x) => json!(x),
+                        Scalar::String(x) => json!(x),
+                        Scalar::Boolean(x) => json!(x),
+                    })
+                    .collect(),
+            )
+        }),
     }
 }
 
@@ -899,6 +975,24 @@ fn implemented_ops_match_pond_ts() {
                 "{}: pond-rs should refuse the key",
                 case.id
             );
+            continue;
+        }
+        // Known difference: without a kind, pond-ts writes number arrays'
+        // first element and exploded elements as strings, and so throws;
+        // pond-rs takes the elements' kind, giving what pond-ts gives with
+        // `kind: 'number'`.
+        let kind_from_elements = [
+            (
+                "arrayAggregate-nums-first",
+                "arrayAggregate-nums-first-number",
+            ),
+            ("arrayExplode-nums", "arrayExplode-nums-number"),
+        ];
+        if let Some((_, same_as)) = kind_from_elements.iter().find(|(id, _)| *id == case.id) {
+            assert!(case.error.is_some(), "{}: pond-ts should throw", case.id);
+            if let Err(why) = check_case(find(&fixture, same_as), &actual) {
+                failures.push(format!("{} (as {same_as}): {why}", case.id));
+            }
             continue;
         }
         if let Err(why) = check_case(case, &actual) {
@@ -1335,6 +1429,7 @@ fn column_kind(kind: &str) -> ColumnKind {
         "number" => ColumnKind::Number,
         "string" => ColumnKind::String,
         "boolean" => ColumnKind::Boolean,
+        "array" => ColumnKind::Array,
         other => panic!("unknown kind {other}"),
     }
 }

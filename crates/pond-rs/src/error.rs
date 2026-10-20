@@ -28,7 +28,8 @@ pub enum PondError {
     WrongKind {
         call: &'static str,
         column: String,
-        /// The column's kind: `"number"`, `"string"` or `"boolean"`.
+        /// The column's kind: `"number"`, `"decimal"`, `"string"`,
+        /// `"boolean"` or `"array"`.
         kind: &'static str,
         reason: String,
     },
@@ -69,7 +70,13 @@ impl fmt::Display for PondError {
                 column,
                 kind,
                 reason,
-            } => write!(f, "{call}: column '{column}' is a {kind} column; {reason}"),
+            } => {
+                let a = if kind.starts_with('a') { "an" } else { "a" };
+                write!(
+                    f,
+                    "{call}: column '{column}' is {a} {kind} column; {reason}"
+                )
+            }
             PondError::Unsupported { call, message } => {
                 write!(f, "{call}: not supported in pond-rs yet: {message}")
             }

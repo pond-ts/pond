@@ -586,8 +586,8 @@ the study oracle) is done.
   8. **The rest of the pond-ts batch surface** ([PND-RUSTFULL]), adopted
      2026-10-20 by pjm17971 as core work that needs no further case:
      (a) ~~finding rows~~ — done; (b) ~~picking a time span~~ — done; (c) ~~changing key type~~ — done;
-     (d) ~~row JSON input and output~~ — done; (d2) ~~columns / points JSON~~ — done; (e) array
-     columns; (f) reducers `unique` / `keep` / `top` / `difference` /
+     (d) ~~row JSON input and output~~ — done; (d2) ~~columns / points JSON~~ — done; (e) ~~array
+     columns~~ — done; (f) reducers `unique` / `keep` / `top` / `difference` /
      `samples`; (g) rolling options (row-count, leading, centred, minimum
      samples, over a time grid); (h) `smooth` / `baseline` / `outliers` /
      `scan` / `sample`; (i) `pivot_by_group`, `by_column` /
@@ -662,6 +662,35 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   such a column in both directions; pond-ts should throw, as `toColumns`
   does for its own name collisions. Found 2026-10-20 (pond-rs R1b step
   8d2).
+- **[PND-ARRAYCHECK]** — pond-ts's array calls never check the column
+  they are given. `arrayContains('v', 1)` on a number column, or on a
+  column that does not exist, gives an empty series; `arrayAggregate` with
+  `count` on a number column replaces it with a column of gaps marked
+  optional; `arrayExplode('nope')` gives no rows. `mapColumns` and `fill`
+  with an array holding `NaN` silently leave a gap, where `map` and
+  `new TimeSeries` throw; `shift` / `diff` on an array column throw an
+  internal `withColumnReplaced` message. pond-rs returns errors naming the
+  column. Found 2026-10-20 (pond-rs R1b step 8e).
+- **[PND-ARRAYKIND]** — pond-ts `arrayAggregate` writes `first` / `last` /
+  custom results as `string` unless `kind` is given, and `arrayExplode`
+  defaults to `string` too, so both throw ("expected string") on number or
+  true/false arrays; `aggregate` on the same column takes the source kind.
+  `collapse` with an array result infers `string` and silently stores
+  gaps. pond-rs takes the elements' kind when none is given. Found
+  2026-10-20 (pond-rs R1b step 8e).
+- **[PND-ARRAYKEY]** — pond-ts compares arrays as text or by reference
+  where it needs a key or an order: `groupBy` / `partitionBy` /
+  `pivotByGroup` on an array column key by `String(arr)`, so `['a,b']` and
+  `['a', 'b']` share a group and `[]` is `''`; `dedupe({ max })` on arrays
+  compares their text (`[9]` beats `[10]`); `keep` compares arrays by
+  reference, so two equal arrays give a gap (the live store's
+  `valuesEqual` compares them element by element). pond-rs refuses array
+  partition keys. Found 2026-10-20 (pond-rs R1b step 8e).
+- **[PND-ARRAYSLOW]** — pond-ts's array calls go row by row through
+  `Event` objects: on 100k rows `arrayAggregate` takes 220–370 ms and
+  `arrayExplode` 150–890 ms (pond-rs: 2–46 ms), and `arrayContains` 9–71
+  ms (pond-rs: 1–6 ms). Repro: `crates/pond-rs/examples/perf_array.rs`
+  and the same calls in pond-ts. Found 2026-10-20 (pond-rs R1b step 8e).
 - **[PND-CONCATSORT]** — pond-ts `TimeSeries.concat` takes ~450 ms to put
   500 partitions × 1000 rows back together, and every partitioned
   operation calls it (`partitionBy('symbol').diff('close').collect()`:

@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::json_text::{Json, NULL};
 
-use crate::column::{BooleanColumn, ColumnData, Float64Column, StringColumn};
+use crate::column::{ArrayColumn, BooleanColumn, ColumnData, Float64Column, Scalar, StringColumn};
 use crate::error::{PondError, Result};
 use crate::series::{Column, ColumnKind, IntervalKeys, Key, Labels, TimeRangeKeys, TimeSeries};
 
@@ -448,6 +448,16 @@ pub(crate) fn read_rows(
                     .collect::<Result<Vec<_>>>()?,
             )
             .into(),
+            ColumnKind::Array => ArrayColumn::from_options(
+                (0..n)
+                    .map(|r| match cell(r) {
+                        Json::Null => Ok(None),
+                        Json::Array(a) => read_array(call, a, row_at(r), col_name).map(Some),
+                        _ => Err(wrong(r, "an array")),
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            )
+            .into(),
             _ => BooleanColumn::from_options(
                 (0..n)
                     .map(|r| match cell(r) {
@@ -524,8 +534,28 @@ pub(crate) fn push_cell(out: &mut Vec<u8>, data: &ColumnData, i: usize) {
             Some(false) => b"false",
             None => b"null",
         }),
+        ColumnData::Array(v) => match v.get(i) {
+            Some(x) => push_array(out, x),
+            None => out.extend_from_slice(b"null"),
+        },
         ColumnData::Decimal(_) => unreachable!("decimals are refused first"),
     }
+}
+
+/// One array cell, as `JSON.stringify` writes it (`-0` as `0`).
+pub(crate) fn push_array(out: &mut Vec<u8>, cell: &[Scalar]) {
+    out.push(b'[');
+    for (i, e) in cell.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        match e {
+            Scalar::Number(x) => push_number(out, *x),
+            Scalar::String(x) => push_text(out, x),
+            Scalar::Boolean(x) => out.extend_from_slice(if *x { b"true" } else { b"false" }),
+        }
+    }
+    out.push(b']');
 }
 
 /// pond-ts has no kind for exact decimals.
@@ -726,6 +756,29 @@ pub(crate) fn read_name<'a>(call: &'static str, value: &'a Json<'_>) -> Result<&
         .ok_or_else(|| invalid(call, "expected a \"name\" that is a string".into()))
 }
 
+/// One array cell's elements: numbers, text and true/false values only.
+pub(crate) fn read_array(
+    call: &'static str,
+    cell: &[Json],
+    row: usize,
+    column: &str,
+) -> Result<Vec<Scalar>> {
+    cell.iter()
+        .enumerate()
+        .map(|(e, v)| match v {
+            Json::Number(x) => Ok(Scalar::Number(x.as_f64().expect("always a number"))),
+            Json::String(x) => Ok(Scalar::String(x.to_string())),
+            Json::Bool(x) => Ok(Scalar::Boolean(*x)),
+            _ => Err(invalid(
+                call,
+                format!(
+                    "row {row} column '{column}': array element {e} must be a finite number, string, or boolean, got {v}"
+                ),
+            )),
+        })
+        .collect()
+}
+
 /// The schema as (name, kind, required), key first.
 pub(crate) fn read_schema(
     call: &'static str,
@@ -761,17 +814,10 @@ pub(crate) fn read_schema(
                 (_, "number") => ColumnKind::Number,
                 (_, "string") => ColumnKind::String,
                 (_, "boolean") => ColumnKind::Boolean,
-                (_, "array") => {
-                    return Err(PondError::Unsupported {
-                        call,
-                        message: format!(
-                            "column '{name}' is an array column, which pond-rs does not have yet"
-                        ),
-                    });
-                }
+                (_, "array") => ColumnKind::Array,
                 (_, other) => {
                     return Err(invalid(call, format!(
-                        "column '{name}' has kind '{other}'; value columns are 'number', 'string' or 'boolean'"
+                        "column '{name}' has kind '{other}'; value columns are 'number', 'string', 'boolean' or 'array'"
                     )));
                 }
             };

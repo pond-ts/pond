@@ -26,7 +26,7 @@ use crate::par;
 use crate::reducer::{Agg, Reducer};
 use crate::rowwise::{Fill, FillLimits, FirstRow};
 use crate::sequence::Sequence;
-use crate::series::{Column, Key, TimeSeries};
+use crate::series::{Column, ColumnKind, Key, TimeSeries};
 
 /// A partition key: one entry per partition column, `None` for a gap.
 pub type PartitionKey = Vec<Option<Value>>;
@@ -90,6 +90,7 @@ impl TimeSeries {
             .iter()
             .map(|c| self.column_index(CALL, c))
             .collect::<Result<_>>()?;
+        refuse_array_keys(CALL, self, &by)?;
         Ok(PartitionedSeries {
             by: columns.iter().map(|c| c.to_string()).collect(),
             run_order: Vec::new(),
@@ -174,6 +175,9 @@ impl PartitionedSeries {
             .iter()
             .map(|c| empty.column_index("PartitionedSeries", c))
             .collect::<Result<_>>()?;
+        // A step may turn a partition column into an array, which cannot
+        // be a key (see `partition_by`).
+        refuse_array_keys("PartitionedSeries", &empty, &by_index)?;
         // With no partitions, any rows `f` made on the empty series have no
         // key yet, so they are always split.
         let unchanged =
@@ -360,6 +364,24 @@ impl PartitionedSeries {
 
 /// The rows of `series` grouped by the values of the columns at `by`, in
 /// first-row order.
+/// Refuse an array column among the partition columns `by`. pond-ts keys
+/// an array by its text (`String(arr)`), so `['a,b']` and `['a', 'b']`
+/// would share a partition.
+fn refuse_array_keys(call: &'static str, series: &TimeSeries, by: &[usize]) -> Result<()> {
+    match by
+        .iter()
+        .find(|&&c| series.columns()[c].kind() == ColumnKind::Array)
+    {
+        Some(&c) => Err(PondError::WrongKind {
+            call,
+            column: series.columns()[c].name().to_string(),
+            kind: "array",
+            reason: "partitioning by an array column is not supported".into(),
+        }),
+        None => Ok(()),
+    }
+}
+
 fn split(series: &TimeSeries, by: &[usize]) -> Vec<(PartitionKey, TimeSeries)> {
     // One number per row that is equal exactly when the rows' values in
     // every partition column are: the first column's value numbers, then
@@ -422,6 +444,7 @@ fn value_ids(data: &ColumnData) -> Vec<u32> {
         ColumnData::Decimal(c) => ids(c.iter().map(|v| v.map(|d| d.value))),
         ColumnData::String(c) => ids(c.iter()),
         ColumnData::Boolean(c) => ids(c.iter()),
+        ColumnData::Array(_) => unreachable!("partition_by refuses array columns"),
     }
 }
 
@@ -431,6 +454,7 @@ fn value_at(data: &ColumnData, i: usize) -> Option<Value> {
         ColumnData::Decimal(c) => c.get(i).map(Value::Decimal),
         ColumnData::String(c) => c.get(i).map(|v| Value::String(v.to_string())),
         ColumnData::Boolean(c) => c.get(i).map(Value::Boolean),
+        ColumnData::Array(_) => unreachable!("partition_by refuses array columns"),
     }
 }
 
