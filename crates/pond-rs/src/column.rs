@@ -574,9 +574,9 @@ impl DecimalColumn {
 /// pond-ts's `ScalarValue`. Numbers must be finite (checked when a series
 /// is built).
 ///
-/// `==` compares as JavaScript's `includes` does (SameValueZero): `0.0`
-/// equals `-0.0`, and values of different kinds never match (`1` is not
-/// `"1"`).
+/// `==` compares as JavaScript's `includes` does on finite elements
+/// (SameValueZero): `0.0` equals `-0.0`, and values of different kinds never
+/// match (`1` is not `"1"`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Scalar {
     Number(f64),

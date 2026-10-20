@@ -1010,7 +1010,6 @@ const POINT_PAYLOADS = [
   ],
 ];
 
-/** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
 // Array columns. `tags` holds text, `nums` numbers (with -0 and 0, in both
 // orders), `items` mixes kinds. Rows at 3000 repeat a time.
 const TAGS_SCHEMA = [
@@ -1228,6 +1227,7 @@ const ARRAY_CASES = [
   ],
 ];
 
+/** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
 const CASES = [
   // rolling: time window, trailing, keyed at each event
   ['rolling-3s-avg-sum', 'gappy', 'rolling', ['3s', { a: 'avg', b: 'sum' }]],

@@ -514,6 +514,20 @@ mod tests {
         // Not as a partition key, not to Arrow.
         let e = s.partition_by(&["tags"]).unwrap_err().to_string();
         assert!(e.contains("partitioning by an array column"), "{e}");
+        // Nor when a step turns the partition column into an array.
+        let hosts = s
+            .with_column(Column::required("host", vec!["a", "b", "a", "b"]))
+            .unwrap();
+        let p = hosts.partition_by(&["host"]).unwrap();
+        let swapped = p.map(|g| g.select(&["tags"])?.rename(&[("tags", "host")]));
+        let e = swapped.unwrap_err().to_string();
+        assert!(e.contains("partitioning by an array column"), "{e}");
+        let seq = crate::Sequence::every("10s").unwrap();
+        let e = p
+            .aggregate(&seq, &[Agg::new("host", "tags", Reducer::Last)])
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("partitioning by an array column"), "{e}");
         let e = s.to_arrow().unwrap_err().to_string();
         assert!(e.contains("column 'tags' is an array column"), "{e}");
         assert!(s.select(&["v"]).unwrap().to_arrow().is_ok());
