@@ -78,6 +78,14 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`trim` keeps keys in order.** Clipping time ranges or intervals to a
+  range could leave two rows on the same start in the wrong order (`[0, 10]`
+  and `[2, 5]` trimmed at 3 gave `[3, 10]` before `[3, 5]`), so lookups such
+  as `bisect` on the result were wrong and `fromJSON` refused to reload it.
+  `trim` now re-sorts (stably) when clipping reorders keys.
+
 ## [0.75.0] — 2026-10-19
 
 ### Changed

@@ -46,6 +46,12 @@ const KNOWN_OPS: &[&str] = &[
     "joinMany",
     "tail",
     "reduce",
+    "overlapping",
+    "containedBy",
+    "trim",
+    "before",
+    "after",
+    "within",
 ];
 
 /// Ops with an arm in [`run`]. Every fixture case for a listed op must run
@@ -75,6 +81,12 @@ const IMPLEMENTED_OPS: &[&str] = &[
     "joinMany",
     "tail",
     "reduce",
+    "overlapping",
+    "containedBy",
+    "trim",
+    "before",
+    "after",
+    "within",
 ];
 
 /// The ops a plain series and a partitioned one both have, with the same
@@ -310,6 +322,15 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>
     }
     let result = match case.op.as_str() {
         "tail" => input.tail(case.args[0].as_str().expect("tail takes a duration string")),
+        "overlapping" => event_key(&case.args[0]).map(|k| input.overlapping(k)),
+        "containedBy" => event_key(&case.args[0]).map(|k| input.contained_by(k)),
+        "trim" => event_key(&case.args[0]).map(|k| input.trim(k)),
+        "before" => event_key(&case.args[0]).map(|k| input.before(k)),
+        "after" => event_key(&case.args[0]).map(|k| input.after(k)),
+        "within" => {
+            let ms = |i: usize| case.args[i].as_i64().expect("within takes whole ms");
+            input.within(ms(0), ms(1))
+        }
         "join" => {
             let other = to_series(&fixture.inputs[series_name(&case.args[0])]);
             input.join(&other, join_options(case.args.get(1)))
@@ -663,8 +684,9 @@ fn row_test(spec: &Value, r: &pond_rs::Row<'_>) -> pond_rs::Result<bool> {
     panic!("unknown filter spec {spec}")
 }
 
-/// A pond-ts `KeyLike` from the fixture: a number is a time, `[start,
-/// end]` a time range, `[label, start, end]` an interval.
+/// A pond-ts `KeyLike` from the fixture: a number or `{"time": t}` is a
+/// time, `[start, end]` a time range, `[label, start, end]` an interval
+/// (also as `{"timeRange": …}` / `{"interval": …}`).
 fn event_key(arg: &Value) -> pond_rs::Result<pond_rs::EventKey> {
     let ms = |v: &Value| v.as_i64().unwrap_or_else(|| panic!("whole ms, got {v}"));
     match arg {
@@ -676,6 +698,9 @@ fn event_key(arg: &Value) -> pond_rs::Result<pond_rs::EventKey> {
             };
             pond_rs::EventKey::interval(label, ms(&a[1]), ms(&a[2]))
         }
+        Value::Object(o) if o.contains_key("time") => Ok(pond_rs::EventKey::time(ms(&o["time"]))),
+        Value::Object(o) if o.contains_key("timeRange") => event_key(&o["timeRange"]),
+        Value::Object(o) if o.contains_key("interval") => event_key(&o["interval"]),
         v => Ok(pond_rs::EventKey::time(ms(v))),
     }
 }
@@ -707,12 +732,18 @@ fn row_lookups_match_pond_ts() {
     for q in &fixture.queries {
         let s = &inputs[q.input.as_str()];
         let pos = |r: Option<pond_rs::Row<'_>>| r.map_or(Value::Null, |r| json!(r.index()));
+        let span =
+            |r: Option<pond_rs::EventKey>| r.map_or(Value::Null, |r| json!([r.begin(), r.end()]));
         let got: pond_rs::Result<Value> = match q.op.as_str() {
             "at" => Ok(pos(s.at(q.arg.as_i64().expect("position")))),
             "find" => s.find(|r| row_test(&q.arg, r)).map(pos),
             "some" => s.some(|r| row_test(&q.arg, r)).map(|b| json!(b)),
             "every" => s.every(|r| row_test(&q.arg, r)).map(|b| json!(b)),
+            "timeRange" => Ok(span(s.time_range())),
             op => event_key(&q.arg).map(|k| match op {
+                "overlaps" => json!(s.overlaps(k)),
+                "contains" => json!(s.contains(k)),
+                "intersection" => span(s.intersection(k)),
                 "bisect" => json!(s.bisect(k)),
                 "includesKey" => json!(s.includes_key(k)),
                 "atOrBefore" => pos(s.at_or_before(k)),
@@ -729,7 +760,7 @@ fn row_lookups_match_pond_ts() {
         let same = match (&got, &want) {
             (Ok(v), Some(want)) => v == want,
             (Err(_), None) => true,
-            // Known difference: pond-ts `nearest` on an empty series returns
+            // Known difference: on an empty series pond-ts `nearest` returns
             // before it builds the key, so a backwards range is no error
             // there. pond-rs checks a key when it is built, before any call.
             (Err(_), Some(Value::Null)) => {
@@ -826,6 +857,18 @@ fn implemented_ops_match_pond_ts() {
             continue;
         };
         implemented += 1;
+        // Known difference: on an empty series pond-ts `overlapping` / `trim`
+        // never build their range, so a backwards one is no error there.
+        // pond-rs checks a key when it is built.
+        let empty_backwards = ["span-overlapping-emptyHosts-8", "span-trim-emptyHosts-8"];
+        if empty_backwards.contains(&case.id.as_str()) {
+            assert!(
+                actual.is_err(),
+                "{}: pond-rs should refuse the key",
+                case.id
+            );
+            continue;
+        }
         if let Err(why) = check_case(case, &actual) {
             failures.push(format!("{} ({}): {why}", case.id, case.op));
         }

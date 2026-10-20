@@ -5070,11 +5070,28 @@ export class TimeSeries<S extends SeriesSchema> {
    *
    * Non-overlapping events are dropped. Overlapping `TimeRange` and `Interval` keys are clipped
    * to the supplied range. Overlapping `Time` keys are preserved unchanged.
+   *
+   * Clipping can bring two keys to the same start out of `(begin, end)` order; the result is then
+   * re-sorted (stably) by key, so its rows may come back in a different order than the input's.
    */
   trim(range: RangeLike): TimeSeries<S> {
     const trimmedEvents = this.events
       .map((event) => event.trim(range))
       .filter((event): event is EventForSchema<S> => event !== undefined);
+
+    // Clipping can move two keys onto the same start in the wrong end order
+    // ([0, 10] and [2, 5] trimmed at 3 give [3, 10] before [3, 5]), which
+    // breaks the non-decreasing key order every lookup relies on. Re-sort,
+    // stably, only when that happened.
+    for (let i = 1; i < trimmedEvents.length; i += 1) {
+      if (
+        compareEventKeys(trimmedEvents[i - 1]!.key(), trimmedEvents[i]!.key()) >
+        0
+      ) {
+        trimmedEvents.sort((a, b) => compareEventKeys(a.key(), b.key()));
+        break;
+      }
+    }
 
     return TimeSeries.#fromTrustedEvents(this.name, this.schema, trimmedEvents);
   }

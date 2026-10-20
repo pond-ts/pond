@@ -386,6 +386,20 @@ const QUERY_KEY_OPS = [
   'atOrAfter',
   'nearest',
 ];
+// overlaps / contains / intersection: the series' whole span against these
+// (`{ time: t }` is a Time key; inclusive ends).
+const QUERY_SPAN_KEYS = [
+  [0, 21500],
+  [-5000, 0],
+  [21500, 30000],
+  [21501, 30000],
+  [2000, 9000],
+  [-5000, 99999],
+  ['x', 4000, 8000],
+  { time: 0 },
+  { time: 16000 },
+  [9000, 2000],
+];
 const QUERY_POSITIONS = [-7, -6, -5, -2, -1, 0, 1, 4, 5, 11, 12];
 // find / some / every: the same tests `filter` cases use.
 const QUERY_TESTS = [
@@ -397,6 +411,55 @@ const QUERY_TESTS = [
   { missing: 'a' },
   { column: 'a', gt: 3 },
 ];
+
+// Picking a time span: each op below over inputs of every key kind. A
+// `{ time: t }` arg is a pond-ts `Time` key (a bare number is not a RangeLike
+// in pond-ts); [start, end] is a time range, [label, start, end] an interval.
+// Spans are inclusive; `trim` on ranges / intervals clips keys, and some of
+// these clips bring two keys to one start (ranges at 6500, overlap at 1500).
+const SPAN_INPUTS = [
+  'gappy',
+  'gappyDups',
+  'emptyHosts',
+  'ranges',
+  'dupRanges',
+  'buckets',
+  'overlap',
+  'labelled',
+  'zeroIntervals',
+];
+const SPAN_RANGES = [
+  [2000, 9000],
+  [0, 0],
+  [1000, 7000],
+  [6500, 20000],
+  [1500, 9000],
+  [3000, 3000],
+  ['x', 2500, 12000],
+  { time: 2000 },
+  [9000, 2000],
+];
+// before / after take a time or a key object (a bare [start, end] is not a
+// BoundaryLike, and pond-ts compares against it as NaN, keeping nothing).
+const SPAN_BOUNDARIES = [
+  { time: 2500 },
+  { time: 9000 },
+  { timeRange: [2000, 9000] },
+  { interval: ['x', 3000, 5000] },
+];
+const SPAN_CASES = SPAN_INPUTS.flatMap((input) => [
+  ...['overlapping', 'containedBy', 'trim'].flatMap((op) =>
+    SPAN_RANGES.map((r, i) => [`span-${op}-${input}-${i}`, input, op, [r]]),
+  ),
+  ...['before', 'after'].flatMap((op) =>
+    SPAN_BOUNDARIES.map((b, i) => [`span-${op}-${input}-${i}`, input, op, [b]]),
+  ),
+  ...[
+    [2000, 9000],
+    [0, 21500],
+    [9000, 2000],
+  ].map(([b, e], i) => [`span-within-${input}-${i}`, input, 'within', [b, e]]),
+]);
 
 /** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
 const CASES = [
@@ -1499,6 +1562,7 @@ const CASES = [
     'joinMany',
     [[{ series: 'joinConflict' }], { onConflict: 'prefix', prefixes: ['g'] }],
   ],
+  ...SPAN_CASES,
 ];
 
 /**
@@ -1937,6 +2001,16 @@ export function buildFixture(pond) {
         Object.entries(arg).map(([k, v]) => [k, decode(v)]),
       );
     }
+    // pond-ts key objects (span ops).
+    if (arg && typeof arg === 'object' && 'time' in arg) {
+      return new pond.Time(arg.time);
+    }
+    if (arg && typeof arg === 'object' && 'timeRange' in arg) {
+      return new pond.TimeRange(arg.timeRange);
+    }
+    if (arg && typeof arg === 'object' && 'interval' in arg) {
+      return new pond.Interval(arg.interval);
+    }
     // Another input series, by name (join / joinMany).
     if (arg && typeof arg === 'object' && 'series' in arg) {
       return inputs[arg.series];
@@ -1953,7 +2027,7 @@ export function buildFixture(pond) {
       generator: 'packages/core/scripts/parity/generate.mjs',
       reference: 'pond-ts',
       encoding:
-        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Sequence.every(d) as {"sequence":{"every":d}} and Sequence.calendar(u, {timeZone, weekStartsOn}) as {"sequence":{"calendar":u,"timeZone":z,"weekStartsOn"?:w}}; a case has expected (series), groups ([key, series] pairs, from toMap / groupBy), reduced ({output: cell}, from reduce) or error ({name,message}); partitionBy args are [by, steps, end] with steps [[method, ...args]] run on the partitioned view and end "collect" or "toMap"; {"series":name} is another input series; joinMany args are [[others...], options?] and call TimeSeries.joinMany([input, ...others], options); exact unless tolerance is set; timeParse holds Time.parse(input, {timeZone}) as expected (ms) or error (its name); queries hold inputs[input][op](arg) as expected (a row position, null for none, a bool, or the bisect index) or error (its name), with KeyLike args for key lookups and filter test specs for find / some / every',
+        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Time / TimeRange / Interval keys as {"time":t} / {"timeRange":[s,e]} / {"interval":[v,s,e]}, Sequence.every(d) as {"sequence":{"every":d}} and Sequence.calendar(u, {timeZone, weekStartsOn}) as {"sequence":{"calendar":u,"timeZone":z,"weekStartsOn"?:w}}; a case has expected (series), groups ([key, series] pairs, from toMap / groupBy), reduced ({output: cell}, from reduce) or error ({name,message}); partitionBy args are [by, steps, end] with steps [[method, ...args]] run on the partitioned view and end "collect" or "toMap"; {"series":name} is another input series; joinMany args are [[others...], options?] and call TimeSeries.joinMany([input, ...others], options); exact unless tolerance is set; timeParse holds Time.parse(input, {timeZone}) as expected (ms) or error (its name); queries hold inputs[input][op](arg) as expected (a row position, null for none, a bool, the bisect index, or [begin, end] for timeRange / intersection) or error (its name), with KeyLike args for key lookups and filter test specs for find / some / every',
     },
     inputs: Object.fromEntries(
       Object.entries(inputs).map(([name, series]) => [
@@ -2011,6 +2085,14 @@ export function buildFixture(pond) {
     }),
     queries: QUERY_INPUTS.flatMap((input) => {
       const series = inputs[input];
+      const span = (r) =>
+        r === undefined
+          ? null
+          : typeof r === 'boolean'
+            ? r
+            : [r.begin(), r.end()];
+      const decodeSpan = (k) =>
+        typeof k === 'object' && !Array.isArray(k) ? new pond.Time(k.time) : k;
       const row = (event) =>
         event === undefined ? null : series.events.indexOf(event);
       const run = (op, arg, call) => {
@@ -2031,6 +2113,12 @@ export function buildFixture(pond) {
             }),
           ),
         ),
+        ...QUERY_SPAN_KEYS.flatMap((key) =>
+          ['overlaps', 'contains', 'intersection'].map((op) =>
+            run(op, key, () => span(series[op](decodeSpan(key)))),
+          ),
+        ),
+        run('timeRange', null, () => span(series.timeRange())),
         ...QUERY_POSITIONS.map((i) => run('at', i, () => row(series.at(i)))),
         ...QUERY_TESTS.flatMap((spec) => [
           run('find', spec, () => row(series.find(closure(spec)))),
