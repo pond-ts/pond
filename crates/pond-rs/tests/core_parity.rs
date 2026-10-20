@@ -11,6 +11,7 @@ use common::{
     ColumnDef, CoreCase, CoreFixture, Outcome, SeriesJson, cell_number, check_case, check_coverage,
     compare_series, load_core_fixture, report,
 };
+use pond_rs::ColumnDef as RsColumnDef;
 use pond_rs::Value as Literal;
 use pond_rs::{
     Agg, Align, AlignMethod, ArrowKey, At, Column, ColumnData, ColumnKind, Fill, FillLimits,
@@ -1182,4 +1183,158 @@ fn json_matches_pond_ts() {
     }
     let total = fixture.json.to_json.len() + fixture.json.from_json.len();
     report("core JSON parity", total, total, &failures);
+}
+
+/// `to_columns_json` / `to_points_json` write what pond-ts `toColumns` /
+/// `toPoints` write (each input), and `from_columns_json` /
+/// `from_points_json` read what pond-ts `fromColumns` / `fromPoints` read
+/// (each input's own output, plus the hand-written `COLUMN_PAYLOADS` and
+/// `POINT_PAYLOADS`) to the same series, and refuse what they refuse.
+#[test]
+fn columns_and_points_json_match_pond_ts() {
+    let fixture = load_core_fixture();
+    let cases = &fixture.columns_json;
+    let mut failures = Vec::new();
+    let wire = |label: String,
+                expected: &Option<Value>,
+                got: pond_rs::Result<String>,
+                failures: &mut Vec<String>| {
+        match (expected, got) {
+            (Some(expected), Ok(text)) => {
+                let got: Value = serde_json::from_str(&text).expect("writes JSON");
+                if !same_json(expected, &got) {
+                    failures.push(format!("{label}: expected {expected}, got {got}"));
+                }
+            }
+            (Some(_), Err(e)) => failures.push(format!("{label}: pond-rs errored: {e}")),
+            (None, Ok(_)) => failures.push(format!("{label}: pond-ts throws, pond-rs wrote it")),
+            (None, Err(_)) => {}
+        }
+    };
+    for case in &cases.to_columns {
+        let series = to_series(&fixture.inputs[&case.input]);
+        wire(
+            format!("toColumns {}", case.input),
+            &case.expected,
+            series.to_columns_json(),
+            &mut failures,
+        );
+    }
+    for case in &cases.to_points {
+        let series = to_series(&fixture.inputs[&case.input]);
+        wire(
+            format!("toPoints {}", case.input),
+            &case.expected,
+            series.to_points_json(),
+            &mut failures,
+        );
+    }
+
+    // Known differences, each in the docs: pond-rs refuses cells pond-ts
+    // coerces, times that are not whole milliseconds or are out of range, a
+    // payload with no name, and a value column named `ts` in points.
+    const COLUMNS_REFUSED: &[&str] = &[
+        "numberAsText",
+        "numberAsBool",
+        "textAsNumber",
+        "keyAsText",
+        "keyAsBool",
+        "fractionKey",
+        "farKey",
+        "noName",
+    ];
+    const POINTS_REFUSED: &[&str] = &["fractionTs", "farTs", "tsColumn"];
+    let judge = |label: &str,
+                 refused: bool,
+                 expected: Option<SeriesJson>,
+                 error: &Option<common::ErrorJson>,
+                 got: &pond_rs::Result<TimeSeries>|
+     -> Result<(), String> {
+        match (expected, got) {
+            _ if refused => match got {
+                Err(_) => Ok(()),
+                Ok(_) => Err("expected pond-rs to refuse it (a known difference)".into()),
+            },
+            (Some(expected), Ok(series)) => compare_series(&expected, &to_json(series), None),
+            (Some(_), Err(e)) => Err(format!("pond-ts reads it, pond-rs errored: {e}")),
+            (None, Ok(_)) => Err(format!(
+                "pond-ts throws ({}), pond-rs read it",
+                error.as_ref().map_or("?", |e| e.message.as_str())
+            )),
+            (None, Err(_)) => Ok(()),
+        }
+        .map_err(|why| format!("{label}: {why}"))
+    };
+    for case in &cases.from_columns {
+        let order = match case
+            .options
+            .as_ref()
+            .and_then(|o| o.get("ordering"))
+            .and_then(Value::as_str)
+        {
+            None | Some("strict") => KeyOrder::Strict,
+            Some("reorder") => KeyOrder::Reorder,
+            Some("clamp") => KeyOrder::Clamp,
+            Some(other) => panic!("unknown ordering {other}"),
+        };
+        let label = format!("fromColumns {}", case.id);
+        let got = TimeSeries::from_columns_json(&case.payload.to_string(), order);
+        let same_door = TimeSeries::from_columns_value(&case.payload, order);
+        if got.as_ref().ok() != same_door.as_ref().ok() {
+            failures.push(format!("{label}: the text and value doors disagree"));
+        }
+        let refused = COLUMNS_REFUSED.contains(&case.id.as_str());
+        let expected = case.expected.as_ref().filter(|_| !refused).map(|v| {
+            let mut s: SeriesJson = serde_json::from_value(v.clone()).expect("a series");
+            // pond-ts keeps a column with gaps marked required here; pond-rs
+            // marks it optional (a known difference).
+            for (c, def) in s.schema.iter_mut().enumerate().skip(1) {
+                if def.required.is_none() && s.rows.iter().any(|r| r[c].is_null()) {
+                    def.required = Some(false);
+                }
+            }
+            s
+        });
+        if let Err(why) = judge(&label, refused, expected, &case.error, &got) {
+            failures.push(why);
+        }
+    }
+    for case in &cases.from_points {
+        let label = format!("fromPoints {}", case.id);
+        let schema: Vec<RsColumnDef> = case
+            .schema
+            .iter()
+            .map(|d| RsColumnDef {
+                name: d.name.clone(),
+                kind: column_kind(&d.kind),
+                required: d.required != Some(false),
+            })
+            .collect();
+        let got = TimeSeries::from_points_json(&case.points.to_string(), "p", &schema);
+        let same_door = TimeSeries::from_points_value(&case.points, "p", &schema);
+        if got.as_ref().ok() != same_door.as_ref().ok() {
+            failures.push(format!("{label}: the text and value doors disagree"));
+        }
+        let refused = POINTS_REFUSED.contains(&case.id.as_str());
+        if let Err(why) = judge(&label, refused, case.expected.clone(), &case.error, &got) {
+            failures.push(why);
+        }
+    }
+    let total = cases.to_columns.len()
+        + cases.to_points.len()
+        + cases.from_columns.len()
+        + cases.from_points.len();
+    report("core columns / points JSON parity", total, total, &failures);
+}
+
+fn column_kind(kind: &str) -> ColumnKind {
+    match kind {
+        "time" => ColumnKind::Time,
+        "timeRange" => ColumnKind::TimeRange,
+        "interval" => ColumnKind::Interval,
+        "number" => ColumnKind::Number,
+        "string" => ColumnKind::String,
+        "boolean" => ColumnKind::Boolean,
+        other => panic!("unknown kind {other}"),
+    }
 }

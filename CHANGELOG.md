@@ -90,6 +90,10 @@ include new features and type-level changes; patch bumps are strictly additive.
   `null` became `0`) by `fromJSON`, `new TimeSeries` and anything else that
   builds an `Interval`. `new Interval` now throws instead, as `fromColumns`
   already did.
+- **`TimeSeries.fromPoints` reads `null` as a gap.** Points parsed from
+  JSON carry `null` for a missing value, and `fromPoints` refused them
+  ("expected finite number"), so chart data could not be read back. A `null`
+  cell is now a gap, as in `fromJSON`; a required column still refuses it.
 
 ## [0.75.0] — 2026-10-19
 

@@ -28,8 +28,10 @@
 //! `overlapping` / `trim` / `before` / `after`,
 //! changing the key with [`TimeSeries::as_time_range`] /
 //! `as_interval` / `offset_time`,
-//! pond-ts's JSON format with [`TimeSeries::from_json`] /
-//! [`TimeSeries::to_json`],
+//! pond-ts's JSON formats with [`TimeSeries::from_json`] /
+//! [`TimeSeries::to_json`] (rows), `from_columns_json` /
+//! `to_columns_json` (one array per column) and `from_points_json` /
+//! `to_points_json` (wide points for charts),
 //! reading times written as text with [`parse_time`] / [`parse_time_in`]
 //! (as pond-ts `Time.parse`),
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
@@ -130,6 +132,8 @@ mod error;
 mod grid;
 mod join;
 mod json;
+mod json_columns;
+mod json_text;
 mod par;
 mod partition;
 mod query;
