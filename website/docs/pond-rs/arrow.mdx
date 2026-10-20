@@ -194,6 +194,49 @@ above it (time keys only).
 `from_json_value` and `to_json_value` work on an already-parsed
 `serde_json::Value` (pond-rs re-exports `serde_json`).
 
+### Columns and points
+
+Two more JSON shapes, as pond-ts's `toColumns` / `fromColumns` and
+`toPoints` / `fromPoints`:
+
+- **Columns**: `{ "name", "schema", "columns" }`, one array per column
+  under its name, `null` for a gap. A time range key is written as two
+  columns, `timeRange` (the start) and `timeRangeEnd`; an interval key as
+  three, `interval`, `intervalEnd` and `intervalLabel`. Read with
+  `from_columns_json(text, KeyOrder)`, write with `to_columns_json()`.
+  Columns of true/false values are written but, as in pond-ts, cannot be
+  read back from this shape.
+- **Points**: `[{"ts": 0, "cpu": 0.5}, ...]`, one object per row with the
+  time under `ts`, the shape most chart libraries take. A gap is left out
+  on the way out; on the way in, a missing name or `null` is a gap. Points
+  carry no schema, so `from_points_json(text, name, &schema)` takes one,
+  and the key must be a plain time.
+
+```rust
+use pond_rs::{ColumnDef, ColumnKind, KeyOrder, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let columns = r#"{"name":"cpu",
+      "schema":[{"name":"time","kind":"time"},{"name":"load","kind":"number","required":false}],
+      "columns":{"time":[0,60000],"load":[0.5,null]}}"#;
+    let s = TimeSeries::from_columns_json(columns, KeyOrder::Strict)?;
+    assert_eq!(s.len(), 2);
+    assert_eq!(s.to_points_json()?, r#"[{"ts":0,"load":0.5},{"ts":60000}]"#);
+
+    let schema = [
+        ColumnDef { name: "time".into(), kind: ColumnKind::Time, required: true },
+        ColumnDef { name: "load".into(), kind: ColumnKind::Number, required: false },
+    ];
+    let back = TimeSeries::from_points_json(
+        r#"[{"ts":0,"load":0.5},{"ts":60000,"load":null}]"#,
+        "cpu",
+        &schema,
+    )?;
+    assert_eq!(back.to_columns_json()?, s.to_columns_json()?);
+    Ok(())
+}
+```
+
 Where pond-rs's JSON differs from pond-ts's:
 
 - **Times** must be whole milliseconds and within `MAX_TIME_MS` of 1970.
@@ -207,3 +250,14 @@ Where pond-rs's JSON differs from pond-ts's:
   Arrow.
 - **The schema written back** has only each column's `name`, `kind` and
   `"required": false`. pond-ts writes back the schema it was given.
+- **Column order in objects.** pond-rs writes names in schema order.
+  JavaScript always puts names that look like whole numbers (a column
+  called `"1"`) first, so pond-ts's text can list them in another order.
+  The JSON means the same.
+- **Columns JSON is read strictly.** A cell of the wrong kind is an error;
+  pond-ts turns `"5"` in a number column into 5, `true` into 1, and a
+  number in a text column into a gap. A number too big to store (`1e400`)
+  is an error too, where pond-ts stores a gap. pond-ts also ignores
+  `required` here; pond-rs makes any column with gaps optional.
+- **A value column named `ts`** is refused by both points calls, since it
+  would clash with the time.
