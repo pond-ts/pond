@@ -1949,6 +1949,56 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     sorted window, as pond-ts's do; a faster structure for those is not
     part of this step.
 
+  **Step 8f2 (done): `unique`, `top<N>` and `samples` ([PND-RUSTFULL]).**
+  - `Reducer::Unique`, `Reducer::Top(n)` and `Reducer::Samples` (parsed
+    from `"unique"`, `"top3"`, `"samples"`; `top0` is an unknown reducer,
+    as in pond-ts, and `top007` is 7) give lists: an array column. They
+    work in the same calls as 8f, on every column kind. Each array cell
+    is flattened one level, as pond-ts does, so a bucket of `["a", "b"]`
+    and `["b"]` holds `a`, `b`, `b`. Nothing present gives an empty list,
+    not a gap (also as pond-ts). Decimals are read as their nearest `f64`.
+  - Order: `unique` sorts numbers, then text, then true/false (pond-ts
+    `compareScalars`), text by UTF-16 code units as JavaScript's `<` does,
+    which is not Rust's byte order (`"\u{FFFF}"` sorts after `"😀"`; the
+    parity input holds both). `top` is most frequent first, ties in the
+    `unique` order. `0` and `-0` are one value, written `0`, as keys of a
+    JavaScript `Set` or `Map` are; `samples` keeps `-0` and arrival order.
+  - How: every element gets an id once per call (`elements.rs`, a hash
+    map, skipped on a repeat of the element before), and ids are numbered
+    in `unique` order, so counting and sorting never compare text.
+    Rolling keeps the window's distinct ids in a `BTreeSet` (`top`: by
+    count, then id); `samples` reads the window's rows directly, as the
+    window is always a run of rows. A list equal to the one before (a
+    host that reports for a while) shares its memory instead of copying
+    the values.
+  - Parity: 18 new pond-ts cases (aggregate, rolling and reduce over
+    numbers with signed zeros, text, true/false and array columns, an
+    empty series, partitioned aggregate, and `array_aggregate`). Seven
+    planted bugs each failed them (byte order for text, `-0` not merged,
+    `samples` merging `-0`, `top` ties reversed, empty list as a gap,
+    `unique` reversed, `top` one too many). A unit test checks the
+    rolling states against the bucket kernels on 200 random series.
+  - `PondError::UnsupportedReducer` is gone: pond-rs now has every
+    pond-ts reducer, so nothing returned it.
+  - Perf (`examples/perf_reducers.rs`, 1M rows 1 s apart, `v` numbers in
+    runs of 40, `host` one of 8 names in runs of 90). Cost: O(E) to give
+    ids to E elements, then per bucket O(k log k) for its k elements; per
+    rolling row O(log D) for D distinct values in the window, plus the
+    output list, which for `samples` is the whole window. Reusing equal
+    lists took aggregate over 1 s buckets from 188 to 81 ms and rolling
+    `unique` on `host` from 605 to 105 ms. pond-rs vs pond-ts, medians:
+
+    | Call           | agg 1m      | agg 1s        | rolling 5m     | reduce       |
+    | -------------- | ----------- | ------------- | -------------- | ------------ |
+    | `unique` nums  | 12 vs 65 ms | 81 vs 1828 ms | 123 vs 1814 ms | 8 vs 147 ms  |
+    | `unique` text  | 14 vs 43 ms | 89 vs 1792 ms | 105 vs 1383 ms | 10 vs 94 ms  |
+    | `top3` nums    | 15 vs 103ms | 86 vs 3112 ms | 186 vs 3329 ms | 9 vs 203 ms  |
+    | `top3` text    | 15 vs 71 ms | 89 vs 2920 ms | 163 vs 2619 ms | 11 vs 121 ms |
+    | `samples` nums | 41 vs 235ms | 74 vs 2441 ms | 14.4 vs 97.8 s | 22 vs 194 ms |
+
+    Rolling `samples` over 5 minutes writes about 280 values for each of
+    1M rows; that output, not the reducer, is the cost in both.
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).

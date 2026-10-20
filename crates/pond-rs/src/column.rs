@@ -419,7 +419,7 @@ impl std::fmt::Display for Decimal {
 /// pond-ts has no decimal kind. pond-rs keeps decimals exact through
 /// `count`, `first`, `last`, `min`, `max`, `keep`, `sum` and `difference`;
 /// every other reducer works on the nearest `f64` and gives a number
-/// column.
+/// column (or, for `unique`, `top<N>` and `samples`, a list of numbers).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DecimalColumn {
     values: Decimal128Array,

@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 
 use crate::column::ColumnData;
 use crate::duration::parse_duration;
+use crate::elements::Elements;
 use crate::error::{PondError, Result};
 use crate::reducer::{
     Agg, InputKind, Inputs, Reducer, check_source_kind, clamp_at_zero, input_kind, output_column,
@@ -529,6 +530,9 @@ fn roll_column(times: &[i64], values: &[f64], window_ms: i64, reducer: Reducer) 
         Reducer::Stdev => roll(StdevState::default(), times, values, window_ms),
         Reducer::Difference => roll(DiffState::default(), times, values, window_ms),
         Reducer::Keep => roll(KeepState::default(), times, values, window_ms),
+        Reducer::Unique | Reducer::Top(_) | Reducer::Samples => {
+            unreachable!("list reducers run in elements.rs")
+        }
     }
 }
 
@@ -564,8 +568,9 @@ impl TimeSeries {
     /// present values.
     ///
     /// Text, true/false and array columns take `count` (a number column),
-    /// `first`, `last` and `keep` (a column of the same kind); any other
-    /// reducer on them is an error. Decimal columns take every reducer:
+    /// `first`, `last` and `keep` (a column of the same kind), and `unique`,
+    /// `top<N>` and `samples` (an array column, an empty list for a window
+    /// with nothing present); any other reducer on them is an error. Decimal columns take every reducer:
     /// `first`, `last`, `min`, `max`, `keep`, `sum` and `difference` give
     /// exact decimals (`sum` and `difference` at precision 38, an error past
     /// it), the rest give numbers.
@@ -603,6 +608,10 @@ impl TimeSeries {
         let inputs = Inputs::build(self.columns(), &used);
         let columns = crate::par::map(&plan, |&(source, agg)| {
             let data = self.columns()[source].data();
+            if agg.reducer.gives_list() {
+                let lists = Elements::new(data).roll(agg.reducer, times, window_ms);
+                return Ok(Column::from_data(agg.output.clone(), lists, false));
+            }
             let kind = input_kind(data, agg.reducer);
             if let (ColumnData::Decimal(d), InputKind::ExactSum) = (data, kind) {
                 return crate::decimal::rolling_sum(CALL, &agg.output, d, times, window_ms);

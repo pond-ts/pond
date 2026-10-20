@@ -1,6 +1,7 @@
 //! `TimeSeries::aggregate`: reduce each bucket of a sequence to one row.
 
 use crate::column::{ColumnData, Decimal, Scalar, Value};
+use crate::elements::Elements;
 use crate::error::{PondError, Result};
 use crate::reducer::{
     Agg, InputKind, Inputs, Reducer, check_source_kind, input_kind, output_column, reduce_range,
@@ -32,9 +33,11 @@ impl TimeSeries {
     /// in the order of `aggs`. An empty series gives an empty result.
     ///
     /// An empty bucket gives `count` 0, `sum` 0, and a gap for every other
-    /// reducer. Text, true/false and array columns take `count` (a number
-    /// column), `first`, `last` and `keep` (a column of the same kind); any
-    /// other reducer on them is an error. Decimal columns take every
+    /// reducer, except `unique`, `top<N>` and `samples`, which give an empty
+    /// list. Text, true/false and array columns take `count` (a number
+    /// column), `first`, `last` and `keep` (a column of the same kind), and
+    /// the list reducers (an array column); any other reducer on them is an
+    /// error. Decimal columns take every
     /// reducer: `first`, `last`, `min`, `max`, `keep`, `sum` and
     /// `difference` give exact decimals (`sum` and `difference` at
     /// precision 38, an error past it; an empty bucket sums to 0), the rest
@@ -94,6 +97,10 @@ impl TimeSeries {
         let plan: Vec<(&Agg, usize)> = aggs.iter().zip(sources).collect();
         let columns = crate::par::map(&plan, |&(agg, source)| {
             let data = self.columns()[source].data();
+            if agg.reducer.gives_list() {
+                let lists = Elements::new(data).reduce_ranges(agg.reducer, &ranges);
+                return Ok(Column::from_data(agg.output.clone(), lists, false));
+            }
             let kind = input_kind(data, agg.reducer);
             if let (ColumnData::Decimal(d), InputKind::ExactSum) = (data, kind) {
                 return crate::decimal::sum_ranges(CALL, &agg.output, d, &ranges);
@@ -158,6 +165,11 @@ impl TimeSeries {
         let mut columns = Vec::with_capacity(aggs.len());
         for (agg, &source) in aggs.iter().zip(&sources) {
             let data = self.columns()[source].data();
+            if agg.reducer.gives_list() {
+                let lists = Elements::new(data).reduce_ranges(agg.reducer, &all);
+                columns.push(Column::from_data(agg.output.clone(), lists, false));
+                continue;
+            }
             let kind = input_kind(data, agg.reducer);
             if let (ColumnData::Decimal(d), InputKind::ExactSum) = (data, kind) {
                 columns.push(crate::decimal::sum_ranges(CALL, &agg.output, d, &all)?);
@@ -474,7 +486,7 @@ mod tests {
                 let err = result.unwrap_err();
                 assert!(matches!(err, PondError::WrongKind { .. }), "{err}");
                 assert!(
-                    err.to_string().contains("count, first, last or keep"),
+                    err.to_string().contains("count, first, last, keep"),
                     "{err}"
                 );
             }

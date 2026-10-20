@@ -1,6 +1,6 @@
-//! Timing of the `keep` and `difference` reducers in `aggregate`, `rolling`
-//! and `reduce`, beside `min` (a reducer with the same cost shape) for
-//! scale, on 1M rows one second apart:
+//! Timing of the `keep`, `difference`, `unique`, `top<N>` and `samples`
+//! reducers in `aggregate`, `rolling` and `reduce`, beside `min` for scale,
+//! on 1M rows one second apart:
 //!
 //! - `v`: numbers with a gap every 17th row and runs of equal values (so
 //!   `keep` finds some), `host`: text, one of 8 names, changing every 90
@@ -70,21 +70,39 @@ fn main() {
         ("keep host", "host", Reducer::Keep),
         ("keep d", "d", Reducer::Keep),
         ("difference d", "d", Reducer::Difference),
+        ("unique v", "v", Reducer::Unique),
+        ("unique host", "host", Reducer::Unique),
+        ("top3 v", "v", Reducer::Top(3)),
+        ("top3 host", "host", Reducer::Top(3)),
+        ("samples v", "v", Reducer::Samples),
     ];
+    let only: Option<String> = std::env::args().nth(1);
     let minute = Sequence::every("1m").unwrap();
     let second = Sequence::every("1s").unwrap();
     println!("| Reducer | agg 1m | agg 1s | rolling 5m | rolling 1d | reduce |");
     println!("| --- | --- | --- | --- | --- | --- |");
     for (name, column, reducer) in cases {
+        if only.as_deref().is_some_and(|o| !name.starts_with(o)) {
+            continue;
+        }
         let aggs = [Agg::new("out", column, reducer)];
+        // A list reducer's output grows with the window (`samples` over a
+        // day is 86,400 values a row), so the 1-day window is left out.
+        let lists = matches!(
+            reducer,
+            Reducer::Unique | Reducer::Top(_) | Reducer::Samples
+        );
         let row = [
-            time(|| s.aggregate(&minute, &aggs).unwrap()),
-            time(|| s.aggregate(&second, &aggs).unwrap()),
-            time(|| s.rolling("5m", &aggs).unwrap()),
-            time(|| s.rolling("1d", &aggs).unwrap()),
-            time(|| s.reduce(&aggs).unwrap()),
+            Some(time(|| s.aggregate(&minute, &aggs).unwrap())),
+            Some(time(|| s.aggregate(&second, &aggs).unwrap())),
+            Some(time(|| s.rolling("5m", &aggs).unwrap())),
+            (!lists).then(|| time(|| s.rolling("1d", &aggs).unwrap())),
+            Some(time(|| s.reduce(&aggs).unwrap())),
         ];
-        let cells: Vec<String> = row.iter().map(|ms| format!("{ms:.1} ms")).collect();
+        let cells: Vec<String> = row
+            .iter()
+            .map(|ms| ms.map_or("-".into(), |ms| format!("{ms:.1} ms")))
+            .collect();
         println!("| {name} | {} |", cells.join(" | "));
     }
 }

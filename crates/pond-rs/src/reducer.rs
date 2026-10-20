@@ -47,6 +47,20 @@ pub enum Reducer {
     /// pond-ts compares the array objects (so two equal arrays in
     /// different rows are kept here and give a gap in pond-ts).
     Keep,
+    /// The distinct present values as a list (an array column), sorted:
+    /// numbers, then text, then true/false; text in JavaScript's order (by
+    /// UTF-16 code units). An array column's lists are flattened one level
+    /// first. `0` and `-0` are one value, written `0`. Nothing present
+    /// gives an empty list, not a gap. Any column kind; decimals are read
+    /// as their nearest `f64`.
+    Unique,
+    /// The N most frequent present values (`"top3"`) as a list, most
+    /// frequent first, ties in [`Reducer::Unique`]'s order; flattening,
+    /// zeros and empty lists as there. N is at least 1.
+    Top(usize),
+    /// Every present value as a list in arrival order, duplicates and `-0`
+    /// kept; flattening and empty lists as [`Reducer::Unique`].
+    Samples,
 }
 
 impl Reducer {
@@ -59,14 +73,23 @@ impl Reducer {
                 call,
                 message: format!("percentile must be in [0, 100], got {q}"),
             }),
+            Reducer::Top(0) => Err(PondError::InvalidData {
+                call,
+                message: "top needs N of at least 1".into(),
+            }),
             _ => Ok(()),
         }
     }
     /// Parse a pond-ts reducer name: `count`, `sum`, `avg`, `mean`, `min`,
     /// `max`, `first`, `last`, `median`, `stdev`, `p<q>`, `difference`,
-    /// `keep`.
+    /// `keep`, `unique`, `samples`, `top<N>`.
     pub fn parse(name: &str) -> Result<Self, PondError> {
         name.parse()
+    }
+
+    /// `unique`, `top<N>` and `samples`: the result is a list.
+    pub(crate) fn gives_list(self) -> bool {
+        matches!(self, Reducer::Unique | Reducer::Top(_) | Reducer::Samples)
     }
 }
 
@@ -86,18 +109,13 @@ impl FromStr for Reducer {
             "stdev" => Reducer::Stdev,
             "difference" => Reducer::Difference,
             "keep" => Reducer::Keep,
-            "samples" | "unique" => {
-                return Err(PondError::UnsupportedReducer {
-                    name: name.to_string(),
-                });
-            }
+            "unique" => Reducer::Unique,
+            "samples" => Reducer::Samples,
             _ => {
                 if let Some(q) = parse_percentile(name) {
                     Reducer::Percentile(q)
-                } else if is_top_n(name) {
-                    return Err(PondError::UnsupportedReducer {
-                        name: name.to_string(),
-                    });
+                } else if let Some(n) = parse_top_n(name) {
+                    Reducer::Top(n)
                 } else {
                     return Err(PondError::UnknownReducer {
                         name: name.to_string(),
@@ -127,10 +145,18 @@ fn parse_percentile(name: &str) -> Option<f64> {
     (0.0..=100.0).contains(&q).then_some(q)
 }
 
-/// pond-ts `top<N>` (a reducer pond-rs does not have yet).
-fn is_top_n(name: &str) -> bool {
-    name.strip_prefix("top")
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+/// pond-ts `parseTopN`: `top` then digits, not all zero (`top007` is 7).
+/// A count too large for `usize` keeps every value, as pond-ts's would.
+fn parse_top_n(name: &str) -> Option<usize> {
+    let digits = name.strip_prefix("top")?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let digits = digits.trim_start_matches('0');
+    if digits.is_empty() {
+        return None;
+    }
+    Some(digits.parse().unwrap_or(usize::MAX))
 }
 
 /// One mapping entry: write `reducer(source)` to the output column `output`.
@@ -427,14 +453,17 @@ pub(crate) fn reduce_range(reducer: Reducer, values: &[f64]) -> Option<f64> {
         Reducer::Percentile(q) => percentile_range(values, q),
         Reducer::Difference => difference_range(values),
         Reducer::Keep => keep_range(values),
+        Reducer::Unique | Reducer::Top(_) | Reducer::Samples => {
+            unreachable!("list reducers run in elements.rs")
+        }
     };
     out.filter(|v| v.is_finite())
 }
 
 // ---------------------------------------------------------------------------
 // Text and true/false sources. They take `count`, `first`, `last` and
-// `keep` (pond-ts's types allow the same set, plus reducers pond-rs does not
-// have yet). The kernels above run over each row's number where the row has
+// `keep` here, and `unique` / `top<N>` / `samples` in elements.rs (the set
+// pond-ts's types allow). The kernels above run over each row's number where the row has
 // a value and NaN where it has none (`keep`: an id per distinct value);
 // `first` / `last` / `keep` then give the row whose value to take.
 // ---------------------------------------------------------------------------
@@ -452,12 +481,13 @@ pub(crate) fn check_source_kind(
     match (column.data(), reducer) {
         (ColumnData::Number(_) | ColumnData::Decimal(_), _)
         | (_, Reducer::Count | Reducer::First | Reducer::Last | Reducer::Keep) => Ok(()),
+        (_, r) if r.gives_list() => Ok(()),
         (data, _) => Err(PondError::WrongKind {
             call,
             column: column.name().to_string(),
             kind: data.kind().as_str(),
             reason: format!(
-                "{} needs a number or decimal column; string, boolean and array columns take count, first, last or keep",
+                "{} needs a number or decimal column; string, boolean and array columns take count, first, last, keep, unique, top<N> or samples",
                 reducer_name(reducer)
             ),
         }),
@@ -479,6 +509,9 @@ fn reducer_name(reducer: Reducer) -> String {
         Reducer::Percentile(q) => format!("p{q}"),
         Reducer::Difference => "difference".into(),
         Reducer::Keep => "keep".into(),
+        Reducer::Unique => "unique".into(),
+        Reducer::Top(n) => format!("top{n}"),
+        Reducer::Samples => "samples".into(),
     }
 }
 
@@ -550,6 +583,9 @@ impl<'a> Inputs<'a> {
     pub(crate) fn build(columns: &'a [Column], used: &[(usize, Reducer)]) -> Self {
         let mut map = HashMap::new();
         for &(c, reducer) in used {
+            if reducer.gives_list() {
+                continue;
+            }
             let data = columns[c].data();
             let kind = input_kind(data, reducer);
             map.entry((c, kind))
@@ -775,14 +811,20 @@ mod tests {
             Reducer::parse("bogus"),
             Err(PondError::UnknownReducer { .. })
         ));
-        assert!(matches!(
-            Reducer::parse("top3"),
-            Err(PondError::UnsupportedReducer { .. })
-        ));
-        assert!(matches!(
-            Reducer::parse("unique"),
-            Err(PondError::UnsupportedReducer { .. })
-        ));
+        assert_eq!(Reducer::parse("top3"), Ok(Reducer::Top(3)));
+        assert_eq!(Reducer::parse("top007"), Ok(Reducer::Top(7)));
+        assert_eq!(
+            Reducer::parse("top99999999999999999999999"),
+            Ok(Reducer::Top(usize::MAX))
+        );
+        for bad in ["top0", "top", "top-1", "top1.5", "top 2"] {
+            assert!(
+                matches!(Reducer::parse(bad), Err(PondError::UnknownReducer { .. })),
+                "{bad}"
+            );
+        }
+        assert_eq!(Reducer::parse("unique"), Ok(Reducer::Unique));
+        assert_eq!(Reducer::parse("samples"), Ok(Reducer::Samples));
         assert_eq!(Reducer::parse("keep"), Ok(Reducer::Keep));
         assert_eq!(Reducer::parse("difference"), Ok(Reducer::Difference));
     }
@@ -845,6 +887,60 @@ mod tests {
         .unwrap();
         let e = wide.rolling("1s", &aggs[1..]).unwrap_err().to_string();
         assert!(e.contains("decimal difference 'diff' at row 1"), "{e}");
+    }
+
+    #[test]
+    fn list_reducers_take_any_kind() {
+        use crate::{Agg, ArrayOptions, Column, ColumnKind, DecimalColumn, Scalar, TimeSeries};
+        let s = TimeSeries::new(
+            "s",
+            vec![0, 1000, 2000],
+            vec![
+                Column::optional(
+                    "d",
+                    DecimalColumn::from_options(vec![Some(150), None, Some(-25)], 2).unwrap(),
+                ),
+                Column::required(
+                    "tags",
+                    vec![
+                        vec![Scalar::from("b"), "a".into(), "b".into()],
+                        vec![],
+                        vec![Scalar::from(1.0)],
+                    ],
+                ),
+            ],
+        )
+        .unwrap();
+        // Decimals as their nearest f64.
+        let r = s
+            .reduce(&[
+                Agg::new("u", "d", Reducer::Unique),
+                Agg::new("t", "tags", Reducer::Top(1)),
+            ])
+            .unwrap();
+        let n = |v: f64| Scalar::Number(v);
+        assert_eq!(r.array("u").unwrap(), Some(&[n(-0.25), n(1.5)][..]));
+        assert_eq!(r.array("t").unwrap(), Some(&[Scalar::from("b")][..]));
+        // An empty list is a value, not a gap; a gap stays a gap.
+        let a = s
+            .array_aggregate("tags", Reducer::Samples, &ArrayOptions::default())
+            .unwrap();
+        let col = a.column("tags").unwrap().arrays().unwrap();
+        assert_eq!(col.get(1), Some(&[][..]));
+        let wrong = ArrayOptions {
+            kind: Some(ColumnKind::String),
+            ..ArrayOptions::default()
+        };
+        let e = s
+            .array_aggregate("tags", Reducer::Unique, &wrong)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("output kind must be array"), "{e}");
+        let e = s
+            .reduce(&[Agg::of("d", Reducer::Top(0))])
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("at least 1"), "{e}");
     }
 
     #[test]
@@ -917,7 +1013,7 @@ mod tests {
                 .map(|_| ()),
         ] {
             let e = result.unwrap_err().to_string();
-            assert!(e.contains("count, first, last or keep"), "{e}");
+            assert!(e.contains("count, first, last, keep"), "{e}");
         }
     }
 

@@ -140,6 +140,7 @@ fn naive(reducer: Reducer, present: &[f64]) -> Option<f64> {
             let max = present.iter().copied().reduce(f64::max)?;
             Some(max - present.iter().copied().reduce(f64::min)?)
         }
+        Reducer::Unique | Reducer::Top(_) | Reducer::Samples => unreachable!("lists"),
         Reducer::Keep => present
             .iter()
             .all(|&v| v == present[0])

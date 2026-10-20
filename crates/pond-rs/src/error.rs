@@ -10,8 +10,6 @@ pub enum PondError {
     InvalidDuration { input: String, reason: &'static str },
     /// A reducer name pond does not have (`"bogus"`).
     UnknownReducer { name: String },
-    /// A reducer pond-ts has that pond-rs does not implement yet.
-    UnsupportedReducer { name: String },
     /// A mapping or lookup names a column the series does not have.
     UnknownColumn {
         call: &'static str,
@@ -46,11 +44,7 @@ impl fmt::Display for PondError {
             ),
             PondError::UnknownReducer { name } => write!(
                 f,
-                "unknown reducer '{name}' (expected one of count, sum, avg, mean, min, max, first, last, median, stdev, difference, keep, or a percentile like p95)"
-            ),
-            PondError::UnsupportedReducer { name } => write!(
-                f,
-                "reducer '{name}' exists in pond-ts but is not implemented in pond-rs yet"
+                "unknown reducer '{name}' (expected one of count, sum, avg, mean, min, max, first, last, median, stdev, difference, keep, unique, samples, topN like top3, or a percentile like p95)"
             ),
             PondError::UnknownColumn {
                 call,

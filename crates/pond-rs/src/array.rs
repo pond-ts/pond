@@ -107,13 +107,17 @@ impl TimeSeries {
     ///   left to right, as pond-ts's do; on a tie, `Min` and `Max` keep the
     ///   first (so `-0` or `0`, whichever came first).
     /// - `Difference` gives the largest number minus the smallest.
+    /// - `Unique`, `Top(n)` and `Samples` give a list (an array column) as
+    ///   [`Reducer::Unique`] describes, over the array's elements; an empty
+    ///   array gives an empty list.
     /// - `First` and `Last` give the first or last element, of whatever
     ///   kind; an empty array gives a gap. `Keep` gives the first element
     ///   when every element equals it (`0` equals `-0`; `1` is not `"1"`),
     ///   otherwise a gap.
     ///
     /// See [`ArrayOptions`] for where the result goes. The output kind is
-    /// `Number` for every reducer but `First`, `Last` and `Keep`, whose output takes
+    /// `Array` for `Unique`, `Top` and `Samples`, and `Number` for every
+    /// other reducer but `First`, `Last` and `Keep`, whose output takes
     /// the kind of the elements found (`String` when there are none) unless
     /// [`ArrayOptions::kind`] names one.
     ///
@@ -151,6 +155,28 @@ impl TimeSeries {
         reducer.check(CALL)?;
         let arrays = self.array_column(CALL, column)?;
         let picks = matches!(reducer, Reducer::First | Reducer::Last | Reducer::Keep);
+        if reducer.gives_list() {
+            if let Some(k) = options.kind.filter(|&k| k != ColumnKind::Array) {
+                return Err(PondError::InvalidData {
+                    call: CALL,
+                    message: format!(
+                        "{reducer:?} gives lists, so the output kind must be array, not {}",
+                        k.as_str()
+                    ),
+                });
+            }
+            let ranges: Vec<_> = (0..arrays.len()).map(|r| r..r + 1).collect();
+            let lists = crate::elements::Elements::new(&ColumnData::Array(arrays.clone()))
+                .reduce_ranges(reducer, &ranges);
+            // A gap stays a gap; an empty array gives an empty list.
+            let rows: Vec<Option<usize>> = (0..arrays.len())
+                .map(|r| arrays.get(r).map(|_| r))
+                .collect();
+            let data = ColumnData::Array(lists.take(&rows));
+            return self.put_output(CALL, column, options, |name| {
+                Column::from_data(name, data, false)
+            });
+        }
         if !picks && options.kind.is_some_and(|k| k != ColumnKind::Number) {
             return Err(PondError::InvalidData {
                 call: CALL,
@@ -374,6 +400,7 @@ fn reduce_elements(reducer: Reducer, cell: &[Scalar]) -> Option<f64> {
             (n != 0.0).then(|| clamp_at_zero(m2 / n).sqrt())
         }
         Reducer::First | Reducer::Last | Reducer::Keep => unreachable!("picked, not reduced"),
+        Reducer::Unique | Reducer::Top(_) | Reducer::Samples => unreachable!("lists, not reduced"),
     };
     out.filter(|v| v.is_finite())
 }

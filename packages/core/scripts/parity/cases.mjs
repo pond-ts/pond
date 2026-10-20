@@ -103,7 +103,9 @@ const NOISY_ROWS = Array.from({ length: 300 }, (_, i) => {
 
 // Runs of equal values for `keep` and `difference`: zeros of both signs in
 // both orders (a rolling `difference` of zeros can be `-0`), equal runs
-// broken by one value, gaps inside runs, and text and true/false runs.
+// broken by one value, gaps inside runs, and text and true/false runs. The
+// text includes '\uffff' and '😀', which JavaScript sorts in the opposite
+// order to their UTF-8 bytes (for `unique` / `top`).
 const RUNS_SCHEMA = [
   { name: 'time', kind: 'time' },
   { name: 'v', kind: 'number', required: false },
@@ -155,9 +157,9 @@ const RUNS_S = [
   null,
   '',
   '',
-  'd',
-  'e',
-  'd',
+  '\uffff',
+  '😀',
+  '\uffff',
   null,
   null,
   null,
@@ -1135,6 +1137,9 @@ const ARRAY_REDUCERS = [
   'p90',
   'stdev',
   'difference',
+  'unique',
+  'top2',
+  'samples',
 ];
 const ARRAY_CASES = [
   ...[1, '1', true, 0, { f64: '-0' }, false, 'zz', 2.5].map((v, i) => [
@@ -1496,6 +1501,132 @@ const CASES = [
     'noisy',
     'rolling',
     ['20s', { x: 'difference', y: 'keep' }],
+  ],
+  // unique / top / samples: lists, flattened one level from array columns,
+  // zeros merged by unique / top and kept by samples, empty buckets []
+  ...['2s', '5s'].flatMap((every_) => [
+    [
+      `aggregate-runs-${every_}-lists`,
+      'runs',
+      'aggregate',
+      [
+        every(every_),
+        {
+          v_u: { from: 'v', using: 'unique' },
+          v_t: { from: 'v', using: 'top2' },
+          v_s: { from: 'v', using: 'samples' },
+          s_u: { from: 's', using: 'unique' },
+          s_t: { from: 's', using: 'top1' },
+          b_u: { from: 'b', using: 'unique' },
+          b_t: { from: 'b', using: 'top3' },
+          v: { from: 'v', using: 'sum' },
+        },
+      ],
+    ],
+    [
+      `rolling-runs-${every_}-lists`,
+      'runs',
+      'rolling',
+      [
+        every_,
+        {
+          v_u: { from: 'v', using: 'unique' },
+          v_t: { from: 'v', using: 'top2' },
+          v_s: { from: 'v', using: 'samples' },
+          s_u: { from: 's', using: 'unique' },
+          s_t: { from: 's', using: 'top2' },
+          b_s: { from: 'b', using: 'samples' },
+        },
+      ],
+    ],
+  ]),
+  [
+    'reduce-runs-lists',
+    'runs',
+    'reduce',
+    [
+      {
+        v_u: { from: 'v', using: 'unique' },
+        v_t: { from: 'v', using: 'top3' },
+        v_s: { from: 'v', using: 'samples' },
+        s_u: { from: 's', using: 'unique' },
+        s_t: { from: 's', using: 'top007' },
+        b_t: { from: 'b', using: 'top1' },
+      },
+    ],
+  ],
+  [
+    'aggregate-tags-lists',
+    'tags',
+    'aggregate',
+    [
+      every('3s'),
+      {
+        tags_u: { from: 'tags', using: 'unique' },
+        tags_t: { from: 'tags', using: 'top2' },
+        nums_s: { from: 'nums', using: 'samples' },
+        nums_u: { from: 'nums', using: 'unique' },
+      },
+    ],
+  ],
+  [
+    'rolling-tags-lists',
+    'tags',
+    'rolling',
+    [
+      '3s',
+      {
+        tags_u: { from: 'tags', using: 'unique' },
+        nums_t: { from: 'nums', using: 'top2' },
+        nums_s: { from: 'nums', using: 'samples' },
+      },
+    ],
+  ],
+  [
+    'reduce-items-lists',
+    'items',
+    'reduce',
+    [
+      {
+        u: { from: 'items', using: 'unique' },
+        t: { from: 'items', using: 'top3' },
+        s: { from: 'items', using: 'samples' },
+      },
+    ],
+  ],
+  [
+    'aggregate-noisy-30s-lists',
+    'noisy',
+    'aggregate',
+    [every('30s'), { x: 'sum', x_t: { from: 'x', using: 'top3' }, y: 'avg' }],
+  ],
+  [
+    'rolling-noisy-10s-lists',
+    'noisy',
+    'rolling',
+    ['10s', { x_u: { from: 'x', using: 'unique' }, y: 'samples' }],
+  ],
+  [
+    'reduce-emptyHosts-lists',
+    'emptyHosts',
+    'reduce',
+    [{ host: 'unique', cpu: 'samples' }],
+  ],
+  [
+    'partition-aggregate-lists',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [
+        [
+          'aggregate',
+          every('2s'),
+          { region: 'unique', cpu: 'samples', up: 'top1' },
+        ],
+      ],
+      'collect',
+    ],
   ],
   [
     'partition-aggregate-keep-difference',
