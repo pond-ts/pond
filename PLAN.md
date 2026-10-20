@@ -587,7 +587,7 @@ the study oracle) is done.
      2026-10-20 by pjm17971 as core work that needs no further case:
      (a) ~~finding rows~~ — done; (b) ~~picking a time span~~ — done; (c) ~~changing key type~~ — done;
      (d) ~~row JSON input and output~~ — done; (d2) ~~columns / points JSON~~ — done; (e) ~~array
-     columns~~ — done; (f) reducers `unique` / `keep` / `top` / `difference` /
+     columns~~ — done; (e2) ~~array columns as Arrow lists~~ — done; (f) reducers `unique` / `keep` / `top` / `difference` /
      `samples`; (g) rolling options (row-count, leading, centred, minimum
      samples, over a time grid); (h) `smooth` / `baseline` / `outliers` /
      `scan` / `sample`; (i) `pivot_by_group`, `by_column` /
