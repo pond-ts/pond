@@ -362,6 +362,63 @@ fn main() -> Result<(), pond_rs::PondError> {
 }
 ```
 
+## Finding rows
+
+These look up one row, or answer a yes/no question, without building a new
+series. Each is the pond-ts call of the same name.
+
+| Call                         | Gives                                                                   |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| `at(i)`                      | the row at position `i`; `-1` is the last row. `None` past either end   |
+| `bisect(key)`                | the position where `key` would go: the first row not before it          |
+| `includes_key(key)`          | whether a row has exactly that key                                      |
+| `at_or_before(key)`          | the row with exactly that key, else the last row before it              |
+| `at_or_after(key)`           | the first row not before the key                                        |
+| `nearest(key)`               | the row whose start is closest; a tie goes to the earlier row           |
+| `find(test)`                 | the first row for which the closure returns `Ok(true)`                  |
+| `some(test)` / `every(test)` | whether the closure is true for any row / for all rows; both stop early |
+
+A key is an `EventKey`; a plain `i64` time works as one. For other key
+kinds, build one with `EventKey::time_range(begin, end)` or
+`EventKey::interval(label, begin, end)`, both of which return an error if
+`begin` is after `end`. `row.key()` gives a row's key back as an
+`EventKey`. Lookups by key are binary searches, so they stay fast on big
+series.
+
+```rust
+use pond_rs::{Column, EventKey, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_500],
+        vec![Column::required("load", vec![0.2, 0.9, 0.4])],
+    )?;
+
+    assert_eq!(s.at(-1).unwrap().begin(), 2_500); // the last row
+    assert_eq!(s.bisect(1_200), 2); // between rows 1 and 2
+    assert!(s.includes_key(1_000));
+    assert!(!s.includes_key(1_200));
+
+    assert_eq!(s.at_or_before(1_200).unwrap().begin(), 1_000);
+    assert_eq!(s.at_or_after(1_200).unwrap().begin(), 2_500);
+    assert!(s.at_or_before(-5).is_none()); // every row is after it
+
+    // 1,750 is 750 ms from both 1,000 and 2,500: the earlier row wins.
+    assert_eq!(s.nearest(1_750).unwrap().begin(), 1_000);
+    // Outside the series: the last row.
+    assert_eq!(s.nearest(99_000).unwrap().begin(), 2_500);
+
+    let first_busy = s.find(|r| Ok(r.number("load")? > Some(0.5)))?;
+    assert_eq!(first_busy.unwrap().key(), EventKey::time(1_000));
+    assert!(s.every(|r| Ok(r.number("load")?.is_some()))?);
+
+    // A backwards range is refused when the key is built.
+    assert!(EventKey::time_range(2_000, 1_000).is_err());
+    Ok(())
+}
+```
+
 ## Changing columns
 
 - `map_numbers(col, |v| ..)` applies a function to every value of a number
@@ -653,7 +710,6 @@ the other side first. `join` is not on `PartitionedSeries`.
 
 ## What is not here yet
 
-From pond-ts, still to come, as people ask for them: `at` / `nearest` and
-other lookups, `within` / `trim`, `smooth`, `baseline` /
-`outliers`, `pivot_by_group`, array columns). Financial studies come after
+From pond-ts, still to come, as people ask for them: `within` / `trim`,
+`smooth`, `baseline` / `outliers`, `pivot_by_group`, and array columns. Financial studies come after
 the core.

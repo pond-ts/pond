@@ -38,6 +38,8 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `series.last()`                                | `series.last()` (an `Option<Row>`)                                          |
 | `series.partitionBy('host')`                   | `series.partition_by(&["host"])`                                            |
 | `series.groupBy('host')` / `toMap()`           | `series.group_by(&["host"])` / `iter()`                                     |
+| `series.atOrBefore(t)` / `nearest(t)`          | `series.at_or_before(t)` / `nearest(t)` (an `Option<Row>`)                  |
+| `new TimeRange(a, b)` as a lookup key          | `EventKey::time_range(a, b)?`                                               |
 | `series.at(i).get('cpu')`                      | `series.column("cpu")?.numbers()?.get(i)`                                   |
 | `toArrow()` / `fromArrow()`                    | `to_arrow()` / `write_ipc()`, `from_arrow()` / `read_ipc()`                 |
 
@@ -83,6 +85,11 @@ pond-rs returns an error instead.
   errors. pond-ts reads both; for the offset, the library pond-rs uses
   would round to the second, so pond-rs refuses rather than be half a
   second out.
+- **Lookup keys are checked when built.** `EventKey::time_range` and
+  `EventKey::interval` refuse a start after the end straight away, even
+  where pond-ts never reads the key (such as `nearest` on an empty
+  series). A number label must be finite, and times are whole
+  milliseconds.
 - **A repeated rename.** `rename` with the same `from` twice is an error
   (pond-ts's object syntax cannot express it).
 

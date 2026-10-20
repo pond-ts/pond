@@ -56,6 +56,7 @@ pond-rs = { git = "https://github.com/pond-ts/pond" }
 | Windows and buckets  | `rolling` over a trailing time window; `aggregate` into fixed buckets (`"5m"`) or calendar buckets in a time zone                                                                      |
 | Reducers             | `count`, `sum`, `avg`, `min`, `max`, `first`, `last`, `median`, `stdev`, percentiles                                                                                                   |
 | Row by row           | `diff`, `rate`, `pct_change`, `shift`, `cumulative`, `fill`                                                                                                                            |
+| Finding rows         | `at`, `bisect`, `at_or_before` / `at_or_after`, `nearest`, `find`, `some` / `every`                                                                                                    |
 | Picking and changing | `slice`, `tail`, `first` / `last`, `filter` (a Rust closure per row), `reduce` (one row for the whole series), `with_column`, `map_numbers` and friends, `select`, `rename`, `as_time` |
 | Regular grids        | `align` (value at each grid point: hold or straight line), `materialize` (one reading per bucket), `dedupe` (repeated times)                                                           |
 | Joining              | `join` and `join_many`: columns of several series side by side, matched by key                                                                                                         |
