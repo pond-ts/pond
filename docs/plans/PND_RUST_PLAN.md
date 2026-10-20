@@ -637,7 +637,10 @@ The one result short of a clean win is one-core B: polars is faster
        need no new call: `TimeSeries::rows` already hands out each row.
      - **8e Array columns:** a new column kind, with the whole set:
        `array_contains*`, `array_aggregate`, `array_explode`. (done,
-       below; no Arrow form yet, as in pond-ts)
+       below)
+     - **8e2 Arrow lists:** array columns read from and written to Arrow
+       `List` fields; pond-rs only, since pond-ts has no Arrow form for
+       arrays. (done, below)
      - **8f Reducers:** `unique`, `keep`, `top`, `difference`, `samples`.
        `unique`, `samples` and `topN` give arrays in pond-ts, so they wait
        for 8e.
@@ -1771,8 +1774,8 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     (pond-ts keys arrays by their text, so `['a,b']` and `['a', 'b']` share
     a partition); `map_arrays` and a fill value with a non-finite number are
     errors (pond-ts silently leaves a gap); `shift` works (pond-ts throws an
-    internal error). `to_arrow` refuses an array column, as pond-ts
-    `toArrow` does.
+    internal error). `to_arrow` refused an array column, as pond-ts
+    `toArrow` does, until 8e2.
   - Not yet: the reducers that give arrays (`unique`, `samples`, `top`) and
     `keep` / `difference`, which are step 8f.
   - pond-ts bugs logged, not fixed: [PND-ARRAYCHECK], [PND-ARRAYKIND],
@@ -1811,6 +1814,53 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     `from_json` spends most of its time making one list per row and one
     string per text element. pond-ts's array calls go row by row through its
     `Event` objects ([PND-ARRAYSLOW]).
+
+  **Step 8e2 (done): array columns as Arrow lists ([PND-RUSTFULL]).**
+  - Writing: `to_arrow` / `write_ipc` write an array column as a `List` of
+    `Float64`, `Utf8` or `Boolean` items (items never null), gaps as null
+    lists, the field nullable unless the column is required. Every element
+    in the column must be the same kind, as an Arrow list holds one item
+    type; a column that mixes kinds is an error naming the first element
+    that differs and suggesting `map_arrays` or `select`. A column with no
+    elements at all is written as a list of `Utf8`. Scope as Peter agreed
+    on the 2026-10-20 decision card: one item kind per list, mixed arrays
+    refused (an Arrow union type could hold them; not built).
+  - Reading: `from_arrow` / `read_ipc` read `List`, `LargeList` and
+    `FixedSizeList` fields as array columns. Items may be any type read as
+    a number column (integers, floats, times in milliseconds, number
+    dictionaries), any text type (dictionaries and `Utf8View` included) or
+    `Boolean`. A null list is a gap; a null item, or a `NaN` or infinite
+    number, is an error, since array elements cannot be gaps; decimal and
+    nested-list items are refused, naming the type. Only items some row
+    uses are read: items under a null list or outside a slice are never
+    looked at, so they cannot cause an error (the review of #795 found the
+    first version failing on a too-large time no row used, and naming the
+    wrong row for one a row did use).
+  - pond-ts: its `fromArrow` and `toArrow` refuse list fields, so a file
+    with an array column written by pond-rs does not read in pond-ts. Not
+    logged as a pond-ts task: nothing asks for it yet.
+  - Checked against other writers and readers: eight list files written by
+    pyarrow and polars (`tests/data/arrow-types/list*.arrow`, made by
+    `generate.py`; `List`, `LargeList`, `FixedSizeList`, items of `double`,
+    `int64`, `string`, text dictionaries, `string_view` from polars, `bool`
+    and `timestamp[us]`) read as `expected-lists.json` says, and write back
+    unchanged. pyarrow, polars and apache-arrow JS read a pond-rs file with
+    number, text and true/false list columns, gaps and empty lists (checked
+    by hand, not committed).
+  - Perf (`examples/perf_array.rs`, Arrow rows added; the two array columns
+    of the 8e benchmark alone, about 630k elements in 180k lists).
+    Cost: O(N + E) for N rows and E elements both ways; reading makes one
+    string per text element. The first version cloned each element out of
+    the decoded items; moving them instead halved the read. Medians, before
+    and after that change:
+
+    | Call                    | typical     | single     |
+    | ----------------------- | ----------- | ---------- |
+    | `to_arrow`              | 14 ms       | 4.9 ms     |
+    | `write_ipc`             | 15 ms       | 5.6 ms     |
+    | `from_arrow`            | 92 → 45 ms  | 32 → 24 ms |
+    | `read_ipc`              | 108 → 47 ms | 32 → 26 ms |
+    | `from_json` (for scale) | 190 ms      | 99 ms      |
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

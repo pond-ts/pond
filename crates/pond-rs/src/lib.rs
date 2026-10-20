@@ -37,7 +37,8 @@
 //! reading times written as text with [`parse_time`] / [`parse_time_in`]
 //! (as pond-ts `Time.parse`),
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
-//! [`ArrowKey`], [`TimeSeries::write_ipc`]). Results match
+//! [`ArrowKey`], [`TimeSeries::write_ipc`]), array columns as Arrow lists
+//! (pond-rs only). Results match
 //! pond-ts bit for bit; the parity
 //! harness under `tests/` checks that against pond-ts's own output
 //! (`packages/core/test/fixtures/parity.json`).

@@ -528,9 +528,12 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(e.contains("partitioning by an array column"), "{e}");
+        // Arrow lists hold one kind of element; these tags mix three.
         let e = s.to_arrow().unwrap_err().to_string();
-        assert!(e.contains("column 'tags' is an array column"), "{e}");
-        assert!(s.select(&["v"]).unwrap().to_arrow().is_ok());
+        assert!(
+            e.contains("column 'tags' is an array column; row 3 element 0 is a number"),
+            "{e}"
+        );
         // Rows and reduce read arrays.
         let row = s.row(0).unwrap();
         assert_eq!(row.array("tags").unwrap().map(<[Scalar]>::len), Some(2));
