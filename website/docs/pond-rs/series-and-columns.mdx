@@ -124,18 +124,25 @@ fn main() -> Result<(), pond_rs::PondError> {
 
 Years run from -9999 to 9999 (pond-ts reads further).
 
-## Value columns: four kinds
+## Value columns: five kinds
 
-| Kind       | Rust values                   | Read back with | Gives             |
-| ---------- | ----------------------------- | -------------- | ----------------- |
-| Number     | `f64`                         | `.numbers()?`  | `Option<f64>`     |
-| Decimal    | whole numbers + a fixed scale | `.decimals()?` | `Option<Decimal>` |
-| Text       | `&str` / `String`             | `.strings()?`  | `Option<&str>`    |
-| True/false | `bool`                        | `.booleans()?` | `Option<bool>`    |
+| Kind       | Rust values                   | Read back with | Gives               |
+| ---------- | ----------------------------- | -------------- | ------------------- |
+| Number     | `f64`                         | `.numbers()?`  | `Option<f64>`       |
+| Decimal    | whole numbers + a fixed scale | `.decimals()?` | `Option<Decimal>`   |
+| Text       | `&str` / `String`             | `.strings()?`  | `Option<&str>`      |
+| True/false | `bool`                        | `.booleans()?` | `Option<bool>`      |
+| List       | `Vec<Scalar>`                 | `.arrays()?`   | `Option<&[Scalar]>` |
 
 `Column::required(name, values)` and `Column::optional(name, values)`
 accept a `Vec` (or array) of any of these, plain or wrapped in `Option`.
 The kind comes from the values; there is no schema to write.
+
+A **list** column (pond-ts's `array` kind) holds a list of values in each
+row, such as a row's tags. Each element is a `Scalar`: a number, text or
+true/false value, and one list may mix them. An empty list is a value, not
+a gap. See [List columns](./operations#list-columns) for what you can do
+with them.
 
 ```rust
 use pond_rs::{Column, ColumnKind, DecimalColumn, TimeSeries};

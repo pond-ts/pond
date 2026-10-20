@@ -131,7 +131,8 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 Partitions are listed in the order their first row appears. Several
-columns work too: `partition_by(&["region", "host"])`.
+columns work too: `partition_by(&["region", "host"])`. A list column
+cannot be a partition column; that is an error.
 
 ## The latest state of each partition, as a table
 

@@ -604,6 +604,84 @@ fn main() -> Result<(), pond_rs::PondError> {
 }
 ```
 
+## List columns
+
+A list column holds a list of values in each row (see
+[Series and columns](./series-and-columns#value-columns-five-kinds)). Five
+calls work on one:
+
+| Call                                   | Does                                                                  |
+| -------------------------------------- | --------------------------------------------------------------------- |
+| `array_contains(col, value)`           | keeps the rows whose list holds `value`                               |
+| `array_contains_all(col, &values)`     | keeps the rows whose list holds every one of `values`                 |
+| `array_contains_any(col, &values)`     | keeps the rows whose list holds at least one of `values`              |
+| `array_aggregate(col, reducer, &opts)` | reduces each row's list to one value (`Count`, `Max`, `First`, …)     |
+| `array_explode(col, &opts)`            | one row per list element, each keeping its row's key and other values |
+
+Matching works like JavaScript's `includes`: `0` matches `-0`, and kinds
+never mix, so `1` does not match `"1"`. A gap or an empty list never
+matches. `array_aggregate`'s number reducers use only the list's numbers;
+`Count` counts every element. `ArrayOptions { output, kind }` says where
+the result goes: by default it replaces the list column, and
+`output: Some(name)` adds a new column and keeps the list.
+
+```rust
+use pond_rs::{ArrayOptions, Column, Reducer, Scalar, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "requests",
+        vec![0, 1_000, 2_000],
+        vec![
+            Column::optional(
+                "tags",
+                vec![
+                    Some(vec![Scalar::from("web"), "eu".into()]),
+                    None,
+                    Some(vec!["db".into()]),
+                ],
+            ),
+            Column::required(
+                "ms",
+                vec![vec![Scalar::from(12.0), 30.0.into()], vec![], vec![7.0.into()]],
+            ),
+        ],
+    )?;
+
+    assert_eq!(s.array_contains("tags", "web")?.key().begin(), &[0]);
+    let any = s.array_contains_any("tags", &["db".into(), "eu".into()])?;
+    assert_eq!(any.key().begin(), &[0, 2_000]);
+
+    // The slowest call in each request, as a new column.
+    let worst = s.array_aggregate(
+        "ms",
+        Reducer::Max,
+        &ArrayOptions { output: Some("worst".into()), ..ArrayOptions::default() },
+    )?;
+    let got: Vec<_> = worst.column("worst")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(30.0), None, Some(7.0)]); // an empty list gives a gap
+
+    // One row per tag; the key repeats.
+    let tags = s.array_explode("tags", &ArrayOptions::default())?;
+    assert_eq!(tags.key().begin(), &[0, 0, 2_000]);
+    let names: Vec<_> = tags.column("tags")?.strings()?.iter().collect();
+    assert_eq!(names, [Some("web"), Some("eu"), Some("db")]);
+    Ok(())
+}
+```
+
+List columns also pass through `select`, `rename`, `filter`, `slice`,
+`shift`, `fill` (`Hold`, `Bfill` or a fixed list), `align`, `materialize`,
+`dedupe`, `join` and the JSON readers and writers (except
+`from_columns_json`, as in pond-ts). In `aggregate`, `rolling` and `reduce`
+they take `Count`, `First` and `Last` only. `row.array(col)?` and
+`map_arrays` read and change them.
+
+A list column cannot be a partition column (`partition_by` gives an
+error). Not built yet: list columns in Arrow files (`to_arrow` refuses one,
+as pond-ts's `toArrow` does), and the reducers that produce lists
+(`unique`, `top` and friends).
+
 ## Regular grids: `align` and `materialize`
 
 Sensors rarely report on the second. Both of these give one row per bucket

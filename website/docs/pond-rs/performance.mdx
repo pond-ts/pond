@@ -148,6 +148,24 @@ include `JSON.stringify` / `JSON.parse`.
 One case was slower in pond-rs: reading columns JSON for a wide table (10,000
 rows × 41 columns of small whole numbers) took 14 ms against pond-ts's 6.
 
+### List columns: 100,000 rows
+
+From the step 8e pull request ([#794](https://github.com/pond-ts/pond/pull/794)):
+100,000 rows of text lists (0 to 6 words) and number lists (0 to 8 values),
+a gap every tenth row. Middle (median) time.
+
+| Task                    | pond-rs | pond-ts |
+| ----------------------- | ------- | ------- |
+| `array_contains`        | 4.1     | 44      |
+| `array_contains_any`    | 5.7     | 71      |
+| `array_aggregate` `Avg` | 6.9     | 366     |
+| `array_explode`, text   | 38      | 891     |
+| `to_json`               | 53      | 103     |
+| `from_json`             | 162     | 445     |
+
+pond-ts works through these row by row, which is logged as a pond-ts issue
+to fix.
+
 ### Agents writing code against it
 
 pond-rs is built mainly for AI agents writing Rust, so one test was about

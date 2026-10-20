@@ -36,6 +36,8 @@ for page in sorted(src.glob("*.mdx")):
 print(f"{n} snippets")
 PY
 cd "$work"
+# No debug info: dozens of binaries with it fill a small disk.
+export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-0}"
 cargo build --quiet --bins
 fail=0
 for bin in src/bin/*.rs; do

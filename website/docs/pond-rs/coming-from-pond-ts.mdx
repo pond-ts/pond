@@ -101,13 +101,27 @@ pond-rs returns an error instead.
   past `MAX_TIME_MS`, a missing `name`, and text with a lone surrogate.
   Columns JSON also refuses cells pond-ts quietly converts and numbers too
   big to store; see [Arrow and JSON](./arrow#json).
+- **List columns.** Each of these is an error in pond-rs where pond-ts
+  quietly gives an odd result:
+  - An `array_*` call on a column that is not a list. pond-ts gives an
+    empty series, or for `arrayAggregate` overwrites the column with gaps.
+  - `partition_by` on a list column. pond-ts groups lists by their text, so
+    `["a,b"]` and `["a", "b"]` land together.
+  - A number reducer in `array_aggregate` given a kind other than number.
+  - A number that is not finite from `map_arrays` or in a fill value
+    (pond-ts leaves a gap).
+
+  Also, `First`, `Last` and `array_explode` with no kind take the kind of
+  the elements; pond-ts assumes text and so fails on numbers. `shift` works
+  on list columns (pond-ts throws).
+
 - **A repeated rename.** `rename` with the same `from` twice is an error
   (pond-ts's object syntax cannot express it).
 
 ## Where pond-rs does more
 
 - **Exact decimals.** A fourth column kind, for money and other exact
-  values; see [Series and columns](./series-and-columns#value-columns-four-kinds).
+  values; see [Series and columns](./series-and-columns#value-columns-five-kinds).
 - **`with_column`** takes any kind of column and you choose required or
   optional. pond-ts's `withColumn` takes numbers only and always makes the
   column optional.
