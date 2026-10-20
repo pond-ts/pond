@@ -24,9 +24,12 @@ jiff-tzdb = "0.1.9" # same crate jiff bundles; read only for its VERSION
 # `join` orders interval labels that share a span the way pond-ts does.
 icu_collator = "2.3.1"
 # pond-ts's JSON wire format (`from_json` / `to_json`). float_roundtrip: read
-# numbers to the exact f64 JavaScript reads; preserve_order: write object
-# rows in schema order.
-serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+# numbers to the exact f64 JavaScript reads. Cargo turns a feature on for
+# every crate in a build, so this also makes other crates' serde_json number
+# parsing exact (and a little slower); no other feature is enabled.
+serde_json = { version = "1", features = ["float_roundtrip"] }
+# Shortest digits for numbers in `to_json` (serde_json already depends on it).
+zmij = "1"
 
 # Threads are not available on wasm32, so rayon is never built there; the
 # `parallel` feature then does nothing.

@@ -131,9 +131,11 @@ impl TimeSeries {
     /// read, or that ends before it starts; interval labels that are not all
     /// text or all numbers; keys out of order (see [`KeyOrder`]).
     ///
-    /// Also errors, where pond-ts accepts: a time that is not a whole
-    /// millisecond (`1.5`), or outside ±[`MAX_TIME_MS`](crate::MAX_TIME_MS);
-    /// a missing `name`; an `array` column (not in pond-rs yet).
+    /// Also errors, where pond-ts accepts: text holding a lone UTF-16
+    /// surrogate (`"\ud800"`), which is not valid Unicode; a time that is
+    /// not a whole millisecond (`1.5`), or outside
+    /// ±[`MAX_TIME_MS`](crate::MAX_TIME_MS); a missing `name`; an `array`
+    /// column (not in pond-rs yet).
     pub fn from_json(text: &str, options: &JsonOptions) -> Result<TimeSeries> {
         let value: Value = serde_json::from_str(text)
             .map_err(|e| invalid(format!("the text is not JSON: {e}")))?;
@@ -319,8 +321,14 @@ impl TimeSeries {
     /// Write the series in pond-ts's JSON format (see
     /// [`TimeSeries::from_json`]), as pond-ts `toJSON({ rowFormat })`: the text
     /// [`TimeSeries::from_json`] and pond-ts `fromJSON` read back. Times are
-    /// epoch milliseconds; a gap is `null`; `-0` is written `0`, as
-    /// JavaScript writes it.
+    /// epoch milliseconds; a gap is `null`; numbers are written as
+    /// JavaScript writes them (`0.000001`, `1e-7`, `1e+21`, `-0` as `0`).
+    ///
+    /// The schema holds each column's `name` and `kind`, and
+    /// `"required": false` on a value column that allows gaps. pond-ts
+    /// writes back the schema it was given, so a schema read with extra
+    /// entries (`"required": true`, other properties) comes out without
+    /// them here.
     ///
     /// An error for a decimal column, which pond-ts has no kind for: convert
     /// it with [`TimeSeries::map_decimals`] first, or write Arrow
@@ -406,7 +414,10 @@ impl TimeSeries {
         Ok(String::from_utf8(out).expect("JSON text is UTF-8"))
     }
 
-    /// [`TimeSeries::to_json`] as a [`serde_json::Value`].
+    /// [`TimeSeries::to_json`] as a [`serde_json::Value`]. Its objects keep
+    /// their keys in the order serde_json keeps them: sorted, unless your
+    /// build turns on serde_json's `preserve_order` feature (the text from
+    /// `to_json` always has schema order).
     pub fn to_json_value(&self, format: RowFormat) -> Result<Value> {
         Ok(serde_json::from_str(&self.to_json(format)?).expect("to_json writes JSON"))
     }
@@ -449,17 +460,161 @@ fn push_text(out: &mut Vec<u8>, text: &str) {
     serde_json::to_writer(out, text).expect("writing to a Vec cannot fail");
 }
 
-/// A number as JavaScript's `JSON.stringify` writes it: whole numbers
-/// without a fraction, `-0` as `0`, and anything not finite as `null`.
+/// A number as JavaScript's `JSON.stringify` writes it (ECMAScript
+/// `Number::toString`): the shortest digits that read back to the same
+/// number, written out in full from 1e-6 up to 1e21 and with an exponent
+/// (`1e-7`, `1.5e+21`) outside that; `-0` as `0`; `null` when not finite.
 fn push_number(out: &mut Vec<u8>, v: f64) {
-    // Whole numbers that fit an i64 are exact there (JavaScript writes them
-    // without an exponent up to 1e21).
-    if v.fract() == 0.0 && v.abs() < 9.2e18 {
-        push_int(out, v as i64);
-    } else {
-        // Shortest round-trip digits; `null` when not finite.
-        serde_json::to_writer(out, &v).expect("writing to a Vec cannot fail");
+    if !v.is_finite() {
+        out.extend_from_slice(b"null");
+        return;
     }
+    if v == 0.0 {
+        out.push(b'0');
+        return;
+    }
+    // Below 2^53 a whole number's exact digits are its shortest ones.
+    if v.fract() == 0.0 && v.abs() < 9_007_199_254_740_992.0 {
+        push_int(out, v as i64); // the common case
+        return;
+    }
+    // The shortest digits, from zmij (which serde_json writes numbers
+    // with): `1.5`, `0.001`, `1e-7`, `1.2345e+20`. Read them as
+    // 0.d1..dk × 10^n.
+    let mut buffer = zmij::Buffer::new();
+    let text = buffer.format_finite(v.abs()).as_bytes();
+    let (mantissa, exp10) = match text.iter().position(|&b| b == b'e') {
+        Some(i) => (
+            &text[..i],
+            std::str::from_utf8(&text[i + 1..])
+                .ok()
+                .and_then(|e| e.parse::<i32>().ok())
+                .expect("zmij writes a whole exponent"),
+        ),
+        None => (text, 0),
+    };
+    let point = mantissa
+        .iter()
+        .position(|&b| b == b'.')
+        .unwrap_or(mantissa.len());
+    let mut all = [0u8; 40];
+    let mut len = 0;
+    for &b in mantissa.iter().filter(|b| **b != b'.') {
+        all[len] = b;
+        len += 1;
+    }
+    let lead = all[..len].iter().take_while(|&&b| b == b'0').count();
+    let mut end = len;
+    while end > lead + 1 && all[end - 1] == b'0' {
+        end -= 1;
+    }
+    let digits = &mut all[lead..end];
+    let n = point as i32 - lead as i32 + exp10;
+    js_tie_to_even(v.abs(), digits, n);
+    let digits: &[u8] = digits;
+    let k = digits.len() as i32;
+    if v < 0.0 {
+        out.push(b'-');
+    }
+    if k <= n && n <= 21 {
+        out.extend_from_slice(digits);
+        out.extend(std::iter::repeat_n(b'0', (n - k) as usize));
+    } else if 0 < n && n <= 21 {
+        out.extend_from_slice(&digits[..n as usize]);
+        out.push(b'.');
+        out.extend_from_slice(&digits[n as usize..]);
+    } else if -6 < n && n <= 0 {
+        out.extend_from_slice(b"0.");
+        out.extend(std::iter::repeat_n(b'0', (-n) as usize));
+        out.extend_from_slice(digits);
+    } else {
+        out.push(digits[0]);
+        if k > 1 {
+            out.push(b'.');
+            out.extend_from_slice(&digits[1..]);
+        }
+        out.push(b'e');
+        out.push(if n - 1 < 0 { b'-' } else { b'+' });
+        push_int(out, i64::from((n - 1).abs()));
+    }
+}
+
+/// When the number lies exactly halfway between two shortest candidates
+/// (`…095.25` between `…095.2` and `…095.3`), JavaScript takes the one
+/// ending in an even digit; Rust's formatter rounds up. That needs the
+/// number's exact decimal value to have one more significant digit than
+/// the shortest form, ending in 5, which [`exact_digits`] finds cheaply.
+/// `digits` is `0.d1..dk × 10^n`.
+fn js_tie_to_even(v: f64, digits: &mut [u8], n: i32) {
+    let k = digits.len();
+    let Some(exact) = exact_digits(v, k + 1) else {
+        return;
+    };
+    if exact.len() != k + 1 || exact[k] != b'5' {
+        return;
+    }
+    // The two candidates: the exact digits cut to k, and one up from that.
+    let lower = &exact[..k];
+    let mut upper = lower.to_vec();
+    let mut i = k;
+    loop {
+        if i == 0 {
+            return; // 99…9 + 1 changes length; not a tie between k digits
+        }
+        i -= 1;
+        if upper[i] == b'9' {
+            upper[i] = b'0';
+        } else {
+            upper[i] += 1;
+            break;
+        }
+    }
+    let even: &[u8] = if lower[k - 1] % 2 == 0 { lower } else { &upper };
+    if *digits == *even {
+        return;
+    }
+    let mut text = String::from("0.");
+    text.push_str(std::str::from_utf8(even).expect("digits"));
+    if format!("{text}e{n}").parse::<f64>() == Ok(v) {
+        digits.copy_from_slice(even);
+    }
+}
+
+/// The significant digits of `v`'s exact decimal value (`v` > 0), or
+/// `None` when there are more than `most`. A double is `m × 2^e`; with `m`
+/// odd, the exact value has the digits of `m × 5^-e` (for `e < 0`) or of
+/// `m × 2^e` (for `e ≥ 0`), so this is integer arithmetic.
+fn exact_digits(v: f64, most: usize) -> Option<Vec<u8>> {
+    let bits = v.to_bits();
+    let raw_exp = ((bits >> 52) & 0x7ff) as i32;
+    let frac = bits & ((1u64 << 52) - 1);
+    let (mut m, mut e) = if raw_exp == 0 {
+        (frac, -1074)
+    } else {
+        (frac | (1u64 << 52), raw_exp - 1075)
+    };
+    let zeros = m.trailing_zeros();
+    m >>= zeros;
+    e += zeros as i32;
+    let value: u128 = if e >= 0 {
+        // Past u128 the number has well over `most` digits... unless it is
+        // a short digit run followed by zeros, which cannot be odd-halfway
+        // for the doubles this path sees (they are whole and ≥ 2^53, where
+        // every candidate is a whole number). Leave those alone.
+        if e as u32 + (64 - m.leading_zeros()) > 127 {
+            return None;
+        }
+        u128::from(m) << e
+    } else {
+        // m × 5^n has more than 18 digits once n > 26.
+        if -e > 26 {
+            return None;
+        }
+        u128::from(m) * 5u128.pow((-e) as u32)
+    };
+    let text = value.to_string();
+    let significant = text.trim_end_matches('0');
+    (significant.len() <= most).then(|| significant.as_bytes().to_vec())
 }
 
 /// The schema as (name, kind, required), key first.
@@ -609,6 +764,13 @@ mod tests {
         assert_eq!(text(1e300), "1e+300"); // as JavaScript
         assert_eq!(text(2f64.powi(53)), "9007199254740992");
         assert_eq!(text(1e-7), "1e-7");
+        assert_eq!(text(1e-6), "0.000001");
+        assert_eq!(text(-1.5e-6), "-0.0000015");
+        assert_eq!(text(1e19), "10000000000000000000");
+        assert_eq!(text(1.2345678901234568e20), "123456789012345680000");
+        assert_eq!(text(1e21), "1e+21");
+        assert_eq!(text(-1.5e21), "-1.5e+21");
+        assert_eq!(text(5e-324), "5e-324");
     }
 
     #[test]

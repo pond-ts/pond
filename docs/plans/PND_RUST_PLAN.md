@@ -1617,7 +1617,10 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     `time_zone` (pond-ts `parse.timeZone`; times written as text are read
     by `parse_time_in`) and `order` (`KeyOrder::Strict` / `Reorder` /
     `Clamp`, pond-ts `ordering`). `serde_json` became a normal dependency
-    (it was a test-only one), re-exported for the `_value` forms.
+    (it was a test-only one), re-exported for the `_value` forms, with
+    only `float_roundtrip` (Cargo shares features across a build, so
+    `preserve_order` was left to the tests); `zmij`, which serde_json
+    already uses, gives `to_json` its shortest digits.
   - pond-ts bug found and fixed in the same PR ([PND-JSONLABEL]): an
     interval label of `true`, `false`, `null` or an array was stored as a
     number (`true` became 1, `null` became 0) by `fromJSON`,
@@ -1626,7 +1629,11 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     "Fixed").
   - Differences from pond-ts: times must be whole milliseconds within
     ±`MAX_TIME_MS` (pond-ts takes `1.5` and `8.64e15 + 1`); a missing
-    `name` is an error; an `array` column is refused until 8e; `to_json`
+    `name` is an error; text with a lone UTF-16 surrogate (`"\ud800"`)
+    is refused, as it is not valid Unicode; `to_json` writes each schema
+    column's `name`, `kind` and `required: false` only, where pond-ts
+    writes back the schema it was given (extra properties,
+    `required: true`); an `array` column is refused until 8e; `to_json`
     refuses a decimal column (pond-ts has no decimal kind; writing it as
     a number would lose exactness), pointing to `map_decimals` or Arrow.
   - Parity: a new `json` fixture section. `toJSON`: every input in both
@@ -1640,17 +1647,21 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     text in and out; pond-ts is `JSON.stringify(toJSON())` and
     `fromJSON(JSON.parse(text))`):
 
-    | Workload           | to_json array | to_json object | from_json |
-    | ------------------ | ------------- | -------------- | --------- |
-    | dense 100k x 6     | 18 vs 148 ms  | 20 vs 128 ms   | 69 vs 152 |
-    | with text 100k x 7 | 18 vs 155 ms  | 25 vs 160 ms   | 90 vs 151 |
-    | 10% gaps 100k x 6  | 17 vs 108 ms  | 18 vs 131 ms   | 62 vs 172 |
-    | wide 10k x 41      | 15 vs 25 ms   | 17 vs 98 ms    | 23 vs 24  |
+    | Workload           | to_json array | to_json object | from_json   |
+    | ------------------ | ------------- | -------------- | ----------- |
+    | dense 100k x 6     | 34 vs 148 ms  | 30 vs 128 ms   | 71 vs 152   |
+    | with text 100k x 7 | 34 vs 155 ms  | 34 vs 160 ms   | 86 vs 151   |
+    | 10% gaps 100k x 6  | 30 vs 108 ms  | 32 vs 131 ms   | 69 vs 172   |
+    | wide 10k x 41      | 9 vs 25 ms    | 10 vs 98 ms    | 23–30 vs 24 |
 
     `to_json` writes text directly; a first version that built a
     `serde_json::Value` tree took 84 / 303 ms (array / object) on the
-    dense case, slower than pond-ts for object rows. `from_json` parses to
-    a `Value` tree, then walks it once (O(N·C)).
+    dense case, slower than pond-ts for object rows. Writing numbers
+    byte-for-byte as JavaScript does (`0.000001`, `1e+21`, ties to the
+    even digit; checked on 900,000 random numbers) costs about 15 ms of
+    the dense case. `from_json` parses to a `Value` tree, then walks it
+    once (O(N·C)); on the wide case it varies run to run around pond-ts's
+    time.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
