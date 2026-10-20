@@ -6026,11 +6026,11 @@ function aggregateInternal<S extends SeriesSchema>(
   const columns = aggregateColumns;
 
   if (isTimeKeyed(series)) {
-    // Step 3B columnar fast path: when every mapped column is a built-in
-    // numeric reducer with a `reduceColumn` kernel over a packed
-    // `Float64Column` source, reduce each bucket's contiguous index range
-    // off the typed arrays — no `series.events` materialization. Returns
-    // null (→ the row path below, unchanged) for any non-qualifying column.
+    // Step 3B columnar path: each mapped column is planned on its own
+    // (a range kernel, a first/last boundary scan, or its reducer's bucket
+    // state fed from the column) over each bucket's contiguous index range
+    // — no `series.events` materialization. Returns null (→ the row path
+    // below) only when a source column is missing ([PND-AGGSIBLING]).
     //
     // [PND-IVLCOL]: the result is assembled as a `ColumnarStore` and
     // adopted via trusted construction, rather than emitted as frozen

@@ -1862,6 +1862,32 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | `read_ipc`              | 108 → 47 ms | 32 → 26 ms |
     | `from_json` (for scale) | 190 ms      | 99 ms      |
 
+  **Before step 8f (done): a pond-ts fix, [PND-AGGSIBLING].**
+  - Found while planning 8f. pond-ts `aggregate` chose one method for the
+    whole call: a single column without a columnar kernel (`unique`, `top`,
+    `samples`, `keep`, `difference`, a reducer over a text, boolean or
+    array column, a custom function) sent every column down the row path.
+    There `sum` / `avg` add sequentially instead of in eight lanes (last-ulp
+    differences on buckets of 32+ values) and `median` sorts with a stable
+    sort instead of a typed-array sort (so a zero can come out as `-0`).
+    Checked: on 40 random series, 25 gave a different `sum` / `avg` once a
+    `count` of a text column joined the call; on series with zeros, 10 of
+    40 gave a different `median`. pond-rs computes each column on its own,
+    so it already disagreed with pond-ts on such calls, and every 8f
+    reducer would have triggered it.
+  - Fixing pond-ts was the recommended option on the 2026-10-20 decision
+    card, over copying the behaviour into pond-rs or recording it as a
+    difference. Each
+    column is now planned on its own: range kernel, first/last boundary
+    scan, or else the reducer's bucket state fed that column's cells
+    (the same values, in the same order, the row path feeds it). The row
+    path remains only for a missing source column and for range- and
+    interval-keyed series.
+  - Rolling and `reduce` were checked the same way and do not have the
+    problem (count-window rolling is all-or-nothing too, but both of its
+    paths drive the same rolling states).
+  - Mixed calls got 2-10x faster (`scripts/perf-aggregate-mixed.mjs`).
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).
