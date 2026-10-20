@@ -28,6 +28,9 @@ icu_collator = "2.3.1"
 # every crate in a build, so this also makes other crates' serde_json number
 # parsing exact (and a little slower); no other feature is enabled.
 serde_json = { version = "1", features = ["float_roundtrip"] }
+# The JSON readers parse into their own light tree (`json_text.rs`), which
+# serde builds (serde_json already depends on it).
+serde = "1"
 # Shortest digits for numbers in `to_json` (serde_json already depends on it).
 zmij = "1"
 

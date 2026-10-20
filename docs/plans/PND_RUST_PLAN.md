@@ -633,8 +633,8 @@ The one result short of a clean win is one-core B: polars is faster
        `to_columns`, `from_points` / `to_points`, `to_rows` /
        `to_objects`. pond-rs reads and writes Arrow only, plus building
        from Rust vectors. Split in two: 8d row JSON (done, below); 8d2
-       columns and points JSON. `to_rows` / `to_objects` need no new
-       call: `TimeSeries::rows` already hands out each row.
+       columns and points JSON (done, below). `to_rows` / `to_objects`
+       need no new call: `TimeSeries::rows` already hands out each row.
      - **8e Array columns:** a new column kind (Arrow `List`), with the
        whole set: `array_contains*`, `array_aggregate`, `array_explode`.
      - **8f Reducers:** `unique`, `keep`, `top`, `difference`, `samples`.
@@ -1662,6 +1662,78 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     the dense case. `from_json` parses to a `Value` tree, then walks it
     once (O(N·C)); on the wide case it varies run to run around pond-ts's
     time.
+
+  **Step 8d2 (done): columns and points JSON ([PND-RUSTFULL]).**
+  - Calls: `from_columns_json(text, KeyOrder)` / `from_columns_value` and
+    `to_columns_json` / `to_columns_value`, as pond-ts `fromColumns` /
+    `toColumns` (`{name, schema, columns}`, one array per column; a time
+    range or interval key is written as `<key>`, `<key>End` and
+    `<key>Label`, pond-ts's `flat-keys.ts` names). `from_points_json`
+    (text, a name and a `&[ColumnDef]` schema) / `from_points_value` and `to_points_json` /
+    `to_points_value`, as pond-ts `fromPoints` / `toPoints`
+    (`[{ts, col: value}]`, the time or a span's start under `ts`, a gap
+    left out). `fromColumns` takes no time zone, so it takes `KeyOrder`
+    alone rather than `JsonOptions`; `fromPoints` has no ordering option,
+    so pond-rs has none either.
+  - pond-ts bug found and fixed in the same PR: `fromPoints` refused a
+    `null` cell ("expected finite number"), so points parsed from JSON
+    with a gap could not be read back, though `fromJSON` reads `null` as a
+    gap. It now reads `null` as a gap (CHANGELOG "Fixed").
+  - pond-ts bugs logged, not fixed: [PND-COLSREQ] (`fromColumns` ignores
+    `required`) and [PND-POINTSTS] (a value column named `ts` in points).
+  - Differences from pond-ts: a column with gaps is optional whatever the
+    schema says ([PND-COLSREQ]; pond-rs cannot hold a required column
+    with gaps); `from_columns_json` refuses cells pond-ts coerces (`"5"`
+    or `true` in a number column, which pond-ts reads as 5 and 1; a
+    number in a text column, which pond-ts stores as a gap; a key written
+    as `"5"` or `true`); times must be whole milliseconds within
+    ±`MAX_TIME_MS`; a missing `name` is an error; a value column named
+    `ts` is refused by both points calls ([PND-POINTSTS]);
+    `from_columns_json` refuses a number too large for an `f64` (`1e400`,
+    which pond-ts reads as `Infinity`, a gap). Names are written in schema
+    order, where JavaScript puts names that look like whole numbers (`"1"`)
+    first (`to_json` object rows already differ the same way; the JSON
+    means the same). As in pond-ts, `from_columns_json` takes number and
+    text columns only (a `boolean` column is an error), though
+    `to_columns_json` writes true/false.
+  - Parity: a new `columnsJson` fixture section. `toColumns` and
+    `toPoints` of every input (34 each); `fromColumns` of each input's
+    own output plus 51 hand-written payloads (every key kind, the three
+    orderings, missing and short columns, label errors, name collisions,
+    the coerced cells): 80; `fromPoints` of each time-keyed input's
+    points plus 19 payloads: 41. 189 cases, all match. A fuzz of 40,000
+    random payloads (columns and points: random key kinds, orderings,
+    gaps, wrong-kind cells, interval labels) against pond-ts found no
+    differences, `to_columns_json` / `to_points_json` text byte-for-byte
+    included (its column names are `c0`, `p0`, …, so the name-order
+    difference above does not arise). The fuzz is not committed; the
+    fixture's `same_json` compares parsed JSON, so it checks values, not
+    text.
+  - Perf: reading first parsed into `serde_json::Value`, which made
+    `from_points_json` as slow as pond-ts on 100k points and 2.4x slower
+    on the wide case (116 vs 48 ms): a `Value` object is a sorted map that
+    owns every key. The readers (`from_json` too) now parse into a light
+    tree of their own (`json_text.rs`: text borrowed where it has no
+    escapes, objects as lists of pairs) and place each object entry by
+    position, falling back to a lookup by name. The `_value` forms borrow
+    the caller's `Value` into the same tree. Medians of three runs
+    (`examples/perf_json.rs`; pond-ts is `JSON.stringify(toColumns())`,
+    `fromColumns(JSON.parse(text))` and the same for points):
+
+    | Workload           | to_columns   | from_columns | to_points    | from_points  |
+    | ------------------ | ------------ | ------------ | ------------ | ------------ |
+    | dense 100k x 6     | 30 vs 72 ms  | 31 vs 46 ms  | 32 vs 147 ms | 65 vs 175 ms |
+    | with text 100k x 7 | 31 vs 121 ms | 36 vs 52 ms  | 38 vs 137 ms | 89 vs 166 ms |
+    | 10% gaps 100k x 6  | 28 vs 91 ms  | 30 vs 46 ms  | 29 vs 103 ms | 66 vs 133 ms |
+    | wide 10k x 41      | 9 vs 10 ms   | 14 vs 6 ms   | 12 vs 80 ms  | 28 vs 55 ms  |
+
+    `from_json` gained from the same change: 45 ms on the dense case (was
+    71), 58 with text (was 86), 46 with gaps (was 69). One case is slower
+    than pond-ts: `from_columns_json` on the wide case (410,000 small
+    whole numbers), 14 vs 6 ms. Parsing alone is 12 ms of it; serde_json
+    reads the same text into `Vec<Option<f64>>` in 7 ms, so a reader typed
+    by the schema could close most of the gap. Not done: it would mean a
+    second parser for one shape.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

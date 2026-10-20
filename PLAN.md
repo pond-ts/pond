@@ -586,7 +586,7 @@ the study oracle) is done.
   8. **The rest of the pond-ts batch surface** ([PND-RUSTFULL]), adopted
      2026-10-20 by pjm17971 as core work that needs no further case:
      (a) ~~finding rows~~ — done; (b) ~~picking a time span~~ — done; (c) ~~changing key type~~ — done;
-     (d) ~~row JSON input and output~~ — done; (d2) columns / points JSON; (e) array
+     (d) ~~row JSON input and output~~ — done; (d2) ~~columns / points JSON~~ — done; (e) array
      columns; (f) reducers `unique` / `keep` / `top` / `difference` /
      `samples`; (g) rolling options (row-count, leading, centred, minimum
      samples, over a time grid); (h) `smooth` / `baseline` / `outliers` /
@@ -650,6 +650,18 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   (`v => v * 1e308 + 1e308` on a required column). Same class as
   [PND-ARROWREQ]. pond-rs makes the column optional when a gap appears;
   pond-ts should do the same. Found 2026-10-19 (pond-rs R1b step 3b).
+- **[PND-COLSREQ]** — pond-ts `fromColumns` ignores `required`: a column
+  the schema marks required (the default) is read with its gaps and stays
+  marked required, so the series' own `toJSON` → `fromJSON` round trip
+  then throws. Same class as [PND-ARROWREQ] / [PND-MAPREQ]. pond-rs marks
+  such a column optional. Found 2026-10-20 (pond-rs R1b step 8d2).
+- **[PND-POINTSTS]** — a value column named `ts` collides with the time
+  in pond-ts's points: `toPoints` writes the column's value over the time
+  (and `JSON.stringify` then drops the time where the column has a gap),
+  and `fromPoints` reads the time into the column too. pond-rs refuses
+  such a column in both directions; pond-ts should throw, as `toColumns`
+  does for its own name collisions. Found 2026-10-20 (pond-rs R1b step
+  8d2).
 - **[PND-CONCATSORT]** — pond-ts `TimeSeries.concat` takes ~450 ms to put
   500 partitions × 1000 rows back together, and every partitioned
   operation calls it (`partitionBy('symbol').diff('close').collect()`:

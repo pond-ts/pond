@@ -1,15 +1,18 @@
 //! Timing of the JSON doors, on the workloads of pond-ts's
-//! `scripts/perf-to-json.mjs`: `to_json` (both row formats) and `from_json`
-//! of that text, end to end (text in, text out).
+//! `scripts/perf-to-json.mjs` and `perf-to-columns.mjs`, end to end (text
+//! in, text out): `to_json` (both row formats) and `from_json` of that text,
+//! `to_columns_json` / `from_columns_json`, and `to_points_json` /
+//! `from_points_json` (time keys only).
 //!
 //!     cargo run --release -p pond-rs --example perf_json
 //!
 //! pond-ts's equivalent is `JSON.stringify(series.toJSON())` and
-//! `TimeSeries.fromJSON(JSON.parse(text))`.
+//! `TimeSeries.fromJSON(JSON.parse(text))`, and likewise for `toColumns` /
+//! `fromColumns` and `toPoints` / `fromPoints`.
 
 use std::time::Instant;
 
-use pond_rs::{Agg, Column, JsonOptions, Reducer, RowFormat, Sequence, TimeSeries};
+use pond_rs::{Agg, Column, JsonOptions, KeyOrder, Reducer, RowFormat, Sequence, TimeSeries};
 
 const SYMBOLS: [&str; 4] = ["AAPL", "MSFT", "NVDA", "AMZN"];
 const NUMERIC: [&str; 5] = ["open", "high", "low", "close", "volume"];
@@ -95,6 +98,18 @@ fn main() -> pond_rs::Result<()> {
         println!(
             "{label}: to_json tuple {tuple:.2} ms, object {object:.2} ms, from_json {read:.2} ms"
         );
+        let columns = s.to_columns_json()?;
+        let to_columns = time(|| s.to_columns_json().unwrap());
+        let from_columns =
+            time(|| TimeSeries::from_columns_json(&columns, KeyOrder::Strict).unwrap());
+        println!("  to_columns_json {to_columns:.2} ms, from_columns_json {from_columns:.2} ms");
+        if s.key().end().is_none() {
+            let points = s.to_points_json()?;
+            let schema = s.schema();
+            let to_points = time(|| s.to_points_json().unwrap());
+            let from_points = time(|| TimeSeries::from_points_json(&points, "p", &schema).unwrap());
+            println!("  to_points_json {to_points:.2} ms, from_points_json {from_points:.2} ms");
+        }
     }
     Ok(())
 }

@@ -171,6 +171,62 @@ pub struct CoreFixture {
     pub time_parse: Vec<TimeParseCase>,
     pub queries: Vec<QueryCase>,
     pub json: JsonFixture,
+    #[serde(rename = "columnsJson")]
+    pub columns_json: ColumnsJsonFixture,
+}
+
+/// pond-ts `toColumns` / `fromColumns` / `toPoints` / `fromPoints` results.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColumnsJsonFixture {
+    #[serde(rename = "toColumns")]
+    pub to_columns: Vec<ToWireCase>,
+    #[serde(rename = "fromColumns")]
+    pub from_columns: Vec<FromColumnsCase>,
+    #[serde(rename = "toPoints")]
+    pub to_points: Vec<ToWireCase>,
+    #[serde(rename = "fromPoints")]
+    pub from_points: Vec<FromPointsCase>,
+}
+
+/// `inputs[input].toColumns()` / `.toPoints()`, as written on the wire, or
+/// the error pond-ts threw.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToWireCase {
+    pub input: String,
+    #[serde(default)]
+    pub expected: Option<Value>,
+    #[serde(default)]
+    pub error: Option<ErrorJson>,
+}
+
+/// `TimeSeries.fromColumns(payload)` with `options` (`ordering`). The
+/// series is a `Value`, since one case has no name.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FromColumnsCase {
+    pub id: String,
+    pub payload: Value,
+    #[serde(default)]
+    pub options: Option<Value>,
+    #[serde(default)]
+    pub expected: Option<Value>,
+    #[serde(default)]
+    pub error: Option<ErrorJson>,
+}
+
+/// `TimeSeries.fromPoints(points, { schema, name: 'p' })`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FromPointsCase {
+    pub id: String,
+    pub points: Value,
+    pub schema: Vec<ColumnDef>,
+    #[serde(default)]
+    pub expected: Option<SeriesJson>,
+    #[serde(default)]
+    pub error: Option<ErrorJson>,
 }
 
 /// pond-ts `toJSON` / `fromJSON` results.
