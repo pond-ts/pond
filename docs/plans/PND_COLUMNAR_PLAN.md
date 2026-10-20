@@ -657,9 +657,11 @@ amortised O(1) whatever the window.
   | 1 day       | 11.25 s | 246 ms |
 
   The pond-rs thread reported 4.2 s (1 h) and 96 s (1 day) for the old
-  code; on this machine the same rows took 0.48 s and 11.4 s. The shape (cost
-  growing with the window) reproduced; the size didn't, and no pond-ts
-  script for those numbers is committed, so the gap is unexplained.
+  code. Its own script (same rows, `fromJSON`, named output, one cold run,
+  with and without `--max-old-space-size=8000`) gives 0.43–0.45 s and
+  11.2–11.4 s here, and 0.17–0.22 s on the new code. Growth with the window
+  reproduces; the 96 s doesn't. That run was on a busy shared container,
+  which may account for it (not verified).
 
 - Rolling over a `Sequence` turned out to scan every row for every point,
   for every reducer: logged as [PND-ROLLSEQ].
