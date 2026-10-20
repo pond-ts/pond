@@ -24,7 +24,7 @@
 
 use std::ops::{Bound, RangeBounds};
 
-use crate::column::{BooleanColumn, ColumnData, Decimal, StringColumn};
+use crate::column::{ArrayColumn, BooleanColumn, ColumnData, Decimal, Scalar, StringColumn};
 use crate::error::{PondError, Result};
 use crate::series::{Column, TimeSeries};
 
@@ -92,6 +92,14 @@ impl<'a> Row<'a> {
             .booleans()
             .map(|c| c.get(self.index))
             .map_err(|e| as_call(e, "Row::boolean"))
+    }
+
+    /// The array in `column`, or `None` for a gap.
+    pub fn array(&self, column: &str) -> Result<Option<&'a [Scalar]>> {
+        self.column("Row::array", column)?
+            .arrays()
+            .map(|c| c.get(self.index))
+            .map_err(|e| as_call(e, "Row::array"))
     }
 
     fn column(&self, call: &'static str, name: &str) -> Result<&'a Column> {
@@ -313,6 +321,39 @@ impl TimeSeries {
         self.map_column("TimeSeries::map_booleans", column, |col| {
             let mapped = col.booleans()?.iter().map(|v| v.map(&mut f));
             Ok(BooleanColumn::from_options(mapped).into())
+        })
+    }
+
+    /// `column` with `f` applied to every array. Gaps stay gaps. Every
+    /// number in a result must be finite, or the call fails naming the row
+    /// (pond-ts's `mapColumns` silently turns such a result into a gap).
+    ///
+    /// ```
+    /// # use pond_rs::{Column, Scalar, TimeSeries};
+    /// let s = TimeSeries::new("s", vec![0], vec![
+    ///     Column::required("tags", vec![vec![Scalar::from("b"), "a".into()]]),
+    /// ])?;
+    /// let f = s.map_arrays("tags", |tags| tags.iter().rev().cloned().collect())?;
+    /// assert_eq!(f.column("tags")?.arrays()?.get(0), Some(&["a".into(), Scalar::from("b")][..]));
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    pub fn map_arrays<F>(&self, column: &str, mut f: F) -> Result<TimeSeries>
+    where
+        F: FnMut(&[Scalar]) -> Vec<Scalar>,
+    {
+        const CALL: &str = "TimeSeries::map_arrays";
+        self.map_column(CALL, column, |col| {
+            let mapped = ArrayColumn::from_options(col.arrays()?.iter().map(|v| v.map(&mut f)));
+            if let Some((row, e)) = mapped.first_bad_element() {
+                return Err(PondError::InvalidData {
+                    call: CALL,
+                    message: format!(
+                        "row {row} of '{}' maps to an array whose element {e} is not a finite number, string, or boolean",
+                        col.name()
+                    ),
+                });
+            }
+            Ok(mapped.into())
         })
     }
 

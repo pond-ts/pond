@@ -10,7 +10,9 @@ use std::ops::Range;
 
 use arrow_buffer::i256;
 
-use crate::column::{BooleanColumn, ColumnData, DecimalColumn, StringColumn, Value};
+use crate::column::{
+    ArrayColumn, BooleanColumn, Cell, ColumnData, DecimalColumn, Scalar, StringColumn, Value,
+};
 use crate::duration::parse_duration;
 use crate::error::{PondError, Result};
 use crate::reducer::Reducer;
@@ -467,6 +469,19 @@ impl TimeSeries {
                     }
                     BooleanColumn::from_options(v).into()
                 }
+                ColumnData::Array(a) => {
+                    let mut v: Vec<Option<Cell>> = (0..n).map(|i| a.cell(i).cloned()).collect();
+                    for run in &runs {
+                        let value = match fill {
+                            Fill::Hold => v[run.start - 1].clone(),
+                            Fill::Bfill => v[run.end].clone(),
+                            Fill::Value(Value::Array(x)) => Some(Cell::from(x.as_slice())),
+                            _ => unreachable!("checked by check_fill"),
+                        };
+                        v[run.clone()].fill(value);
+                    }
+                    ArrayColumn::from_cells(v).into()
+                }
             };
             out[c] = Column::from_data(column.name().to_string(), filled, column.is_required());
         }
@@ -703,6 +718,21 @@ fn check_fill(column: &Column, fill: &Fill) -> Result<()> {
         }
         (Fill::Value(Value::String(_)), ColumnData::String(_)) => true,
         (Fill::Value(Value::Boolean(_)), ColumnData::Boolean(_)) => true,
+        (Fill::Value(Value::Array(x)), ColumnData::Array(_)) => {
+            if let Some(e) = x
+                .iter()
+                .position(|e| matches!(e, Scalar::Number(v) if !v.is_finite()))
+            {
+                return Err(PondError::InvalidData {
+                    call: "fill",
+                    message: format!(
+                        "fill value for column '{}': array element {e} must be a finite number, string, or boolean",
+                        column.name()
+                    ),
+                });
+            }
+            true
+        }
         _ => false,
     };
     if ok {
@@ -746,6 +776,7 @@ mod tests {
             ColumnData::String(t) => t.iter().map(|v| v.map(str::to_string)).collect(),
             ColumnData::Boolean(b) => b.iter().map(|v| v.map(|v| v.to_string())).collect(),
             ColumnData::Number(f) => f.iter().map(|v| v.map(|v| v.to_string())).collect(),
+            ColumnData::Array(a) => a.iter().map(|v| v.map(|v| format!("{v:?}"))).collect(),
         }
     }
 

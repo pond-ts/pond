@@ -6,8 +6,8 @@
 //!
 //! **Status: R1b, in progress** (the rest of the batch core). What exists:
 //! series keyed by time, by time ranges or by intervals labelled with
-//! numbers or text, with number, exact decimal, text and
-//! true/false columns (gaps allowed; see [`Column`]),
+//! numbers or text, with number, exact decimal, text, true/false and array
+//! columns (gaps allowed; see [`Column`] and [`ArrayColumn`]),
 //! [`TimeSeries::rolling`] over a trailing time window, [`TimeSeries::aggregate`] into fixed-length buckets
 //! ([`Sequence::every`]) or calendar buckets in a time zone
 //! ([`Sequence::calendar`]), [`TimeSeries::select`] / `rename` / `as_time`,
@@ -32,6 +32,8 @@
 //! [`TimeSeries::to_json`] (rows), `from_columns_json` /
 //! `to_columns_json` (one array per column) and `from_points_json` /
 //! `to_points_json` (wide points for charts),
+//! working with array columns through [`TimeSeries::array_contains`] /
+//! `array_aggregate` / `array_explode`,
 //! reading times written as text with [`parse_time`] / [`parse_time_in`]
 //! (as pond-ts `Time.parse`),
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
@@ -124,6 +126,7 @@
 //! ```
 
 mod aggregate;
+mod array;
 mod arrow;
 mod column;
 mod decimal;
@@ -148,9 +151,11 @@ mod span;
 mod time_parse;
 
 pub use aggregate::Reduced;
+pub use array::ArrayOptions;
 pub use arrow::ArrowKey;
 pub use column::{
-    BooleanColumn, ColumnData, Decimal, DecimalColumn, Float64Column, StringColumn, Value,
+    ArrayColumn, BooleanColumn, ColumnData, Decimal, DecimalColumn, Float64Column, Scalar,
+    StringColumn, Value,
 };
 pub use duration::parse_duration;
 pub use error::{PondError, Result};

@@ -635,8 +635,9 @@ The one result short of a clean win is one-core B: polars is faster
        from Rust vectors. Split in two: 8d row JSON (done, below); 8d2
        columns and points JSON (done, below). `to_rows` / `to_objects`
        need no new call: `TimeSeries::rows` already hands out each row.
-     - **8e Array columns:** a new column kind (Arrow `List`), with the
-       whole set: `array_contains*`, `array_aggregate`, `array_explode`.
+     - **8e Array columns:** a new column kind, with the whole set:
+       `array_contains*`, `array_aggregate`, `array_explode`. (done,
+       below; no Arrow form yet, as in pond-ts)
      - **8f Reducers:** `unique`, `keep`, `top`, `difference`, `samples`.
        `unique`, `samples` and `topN` give arrays in pond-ts, so they wait
        for 8e.
@@ -1633,7 +1634,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     is refused, as it is not valid Unicode; `to_json` writes each schema
     column's `name`, `kind` and `required: false` only, where pond-ts
     writes back the schema it was given (extra properties,
-    `required: true`); an `array` column is refused until 8e; `to_json`
+    `required: true`); an `array` column was refused until 8e; `to_json`
     refuses a decimal column (pond-ts has no decimal kind; writing it as
     a number would lose exactness), pointing to `map_decimals` or Arrow.
   - Parity: a new `json` fixture section. `toJSON`: every input in both
@@ -1734,6 +1735,82 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     reads the same text into `Vec<Option<f64>>` in 7 ms, so a reader typed
     by the schema could close most of the gap. Not done: it would mean a
     second parser for one shape.
+
+  **Step 8e (done): array columns ([PND-RUSTFULL]).**
+  - Storage: `ArrayColumn`, one shared list per row (`Arc<[Scalar]>`) or
+    `None` for a gap, where a `Scalar` is a number, text or true/false
+    value, mixed freely, as pond-ts `kind: 'array'`. An empty list is a
+    value, not a gap. Slicing, picking rows and joining share the lists
+    rather than copying them. Numbers must be finite, checked when a series
+    is built. New with it: `ColumnKind::Array` (`"array"`), `Value::Array`,
+    `Column::arrays`, `Row::array`, `Reduced::array`, `map_arrays`.
+  - Calls: `array_contains` / `array_contains_all` / `array_contains_any`,
+    `array_aggregate` and `array_explode`, with
+    `ArrayOptions { output, kind }` for pond-ts's `{ as, kind }`. Matching
+    is JavaScript's `includes` (`0` matches `-0`, kinds never mix).
+    `array_aggregate` reduces each array as a bucket with pond-ts's row-path
+    kernels (sums left to right, the first of equal values for `min` /
+    `max`, a stable sort for percentiles), which differ from the column
+    kernels `aggregate` uses.
+  - Other calls with array columns: `select`, `rename`, `filter`, `slice`,
+    `shift`, `fill` (`Hold`, `Bfill` or a `Value::Array`; `Linear` and
+    `Zero` skip arrays in `fill_all`, as for text), `align` (holds),
+    `materialize`, `dedupe`, `join`, and partitioned calls by another
+    column. `aggregate` / `rolling` / `reduce` take `count` (of cells),
+    `first` and `last` on an array column; reducers that need numbers are an
+    error, as on text. JSON rows, points and `to_columns_json` read and
+    write arrays; `from_columns_json` refuses them, as pond-ts `fromColumns`
+    does.
+  - Differences from pond-ts, each where pond-ts gives an error or a result
+    that cannot be meant: a column that is not an array is an error (pond-ts
+    gives an empty series, or for `arrayAggregate` overwrites the column
+    with gaps); `first` / `last` / `array_explode` without a kind take the
+    elements' kind (pond-ts uses `string` and throws on numbers); a number
+    reducer with a kind other than number, or an output named after another
+    column, is an error up front; `partition_by` refuses an array column
+    (pond-ts keys arrays by their text, so `['a,b']` and `['a', 'b']` share
+    a partition); `map_arrays` and a fill value with a non-finite number are
+    errors (pond-ts silently leaves a gap); `shift` works (pond-ts throws an
+    internal error). `to_arrow` refuses an array column, as pond-ts
+    `toArrow` does.
+  - Not yet: the reducers that give arrays (`unique`, `samples`, `top`) and
+    `keep` / `difference`, which are step 8f.
+  - pond-ts bugs logged, not fixed: [PND-ARRAYCHECK], [PND-ARRAYKIND],
+    [PND-ARRAYKEY], [PND-ARRAYSLOW].
+  - Parity: 85 new cases on three new inputs (text arrays, number arrays
+    with `-0` and `0` in both orders, and arrays of mixed kinds): each
+    operation, every reducer, `as` and `kind`, the error cases, and arrays
+    through the other calls above. The new inputs also go through every JSON
+    door (24 more). Two cases are known differences (no kind on number
+    arrays); each is checked against its `kind: 'number'` twin. A fuzz of
+    40,000 random calls (all five operations, random element pools including
+    `-0`, gaps, empty arrays, `as` and `kind`) against pond-ts found no
+    differences. The fuzz is not committed.
+  - Perf (`examples/perf_array.rs`; 100k rows, text arrays of 0 to 6 words
+    and number arrays of 0 to 8 values, a gap every tenth row; "single" is
+    one element per array; pond-ts runs the same calls). Cost:
+    `array_contains*` O(N·L·V) for N rows, L elements and V values asked
+    for; `array_aggregate` O(N·L), with a sort per array for percentiles;
+    `array_explode` O(E·C) for E elements and C columns. Medians, pond-rs vs
+    pond-ts:
+
+    | Call                 | typical       | single        |
+    | -------------------- | ------------- | ------------- |
+    | `array_contains`     | 4.1 vs 44 ms  | 0.7 vs 12 ms  |
+    | `array_contains_any` | 5.7 vs 71 ms  | 1.9 vs 34 ms  |
+    | `array_contains_all` | 4.6 vs 43 ms  | 0.7 vs 9 ms   |
+    | aggregate `count`    | 6.6 vs 319 ms | 2.3 vs 223 ms |
+    | aggregate `avg`      | 6.9 vs 366 ms | 2.9 vs 229 ms |
+    | aggregate `median`   | 8.1 vs 331 ms | 3.5 vs 273 ms |
+    | aggregate `first`    | 3.7 vs 357 ms | 1.6 vs 245 ms |
+    | explode text         | 38 vs 891 ms  | 5.9 vs 213 ms |
+    | explode numbers      | 46 vs 823 ms  | 4.9 vs 146 ms |
+    | `to_json`            | 53 vs 103 ms  | 19 vs 65 ms   |
+    | `from_json`          | 162 vs 445 ms | 95 vs 298 ms  |
+
+    `from_json` spends most of its time making one list per row and one
+    string per text element. pond-ts's array calls go row by row through its
+    `Event` objects ([PND-ARRAYSLOW]).
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
