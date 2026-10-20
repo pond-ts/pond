@@ -1688,9 +1688,14 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     number in a text column, which pond-ts stores as a gap; a key written
     as `"5"` or `true`); times must be whole milliseconds within
     ±`MAX_TIME_MS`; a missing `name` is an error; a value column named
-    `ts` is refused by both points calls ([PND-POINTSTS]). As in pond-ts,
-    `from_columns_json` takes number and text columns only (a `boolean`
-    column is an error), though `to_columns_json` writes true/false.
+    `ts` is refused by both points calls ([PND-POINTSTS]);
+    `from_columns_json` refuses a number too large for an `f64` (`1e400`,
+    which pond-ts reads as `Infinity`, a gap). Names are written in schema
+    order, where JavaScript puts names that look like whole numbers (`"1"`)
+    first (`to_json` object rows already differ the same way; the JSON
+    means the same). As in pond-ts, `from_columns_json` takes number and
+    text columns only (a `boolean` column is an error), though
+    `to_columns_json` writes true/false.
   - Parity: a new `columnsJson` fixture section. `toColumns` and
     `toPoints` of every input (34 each); `fromColumns` of each input's
     own output plus 51 hand-written payloads (every key kind, the three
@@ -1700,7 +1705,10 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     random payloads (columns and points: random key kinds, orderings,
     gaps, wrong-kind cells, interval labels) against pond-ts found no
     differences, `to_columns_json` / `to_points_json` text byte-for-byte
-    included.
+    included (its column names are `c0`, `p0`, …, so the name-order
+    difference above does not arise). The fuzz is not committed; the
+    fixture's `same_json` compares parsed JSON, so it checks values, not
+    text.
   - Perf: reading first parsed into `serde_json::Value`, which made
     `from_points_json` as slow as pond-ts on 100k points and 2.4x slower
     on the wide case (116 vs 48 ms): a `Value` object is a sorted map that

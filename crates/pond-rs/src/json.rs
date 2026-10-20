@@ -155,7 +155,9 @@ impl TimeSeries {
     /// `"required": false` on a value column that allows gaps. pond-ts
     /// writes back the schema it was given, so a schema read with extra
     /// entries (`"required": true`, other properties) comes out without
-    /// them here.
+    /// them here. Object rows list names in schema order; JavaScript puts
+    /// names that look like whole numbers (`"1"`) first, so for such a
+    /// column pond-ts's text has another order (the JSON means the same).
     ///
     /// An error for a decimal column, which pond-ts has no kind for: convert
     /// it with [`TimeSeries::map_decimals`] first, or write Arrow

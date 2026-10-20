@@ -360,7 +360,9 @@ impl TimeSeries {
     ///   turns `"5"` in a number column into 5, `true` into 1, and a number
     ///   in a text column into a gap); a key written as text or `true`
     ///   (pond-ts reads `"5"` as 5); a time that is not a whole millisecond,
-    ///   or outside ±[`MAX_TIME_MS`](crate::MAX_TIME_MS); a missing `name`.
+    ///   or outside ±[`MAX_TIME_MS`](crate::MAX_TIME_MS); a missing `name`;
+    ///   a number too large for an `f64` (`1e400`), which JavaScript reads
+    ///   as `Infinity` and pond-ts stores as a gap.
     pub fn from_columns_json(text: &str, order: KeyOrder) -> Result<TimeSeries> {
         read_columns(&parse(FROM_COLUMNS, text)?, order)
     }
@@ -385,6 +387,10 @@ impl TimeSeries {
     ///
     /// pond-ts writes true/false columns too, though neither pond-ts nor
     /// pond-rs reads them back from this format.
+    ///
+    /// Columns are written in schema order. JavaScript puts names that look
+    /// like whole numbers (`"1"`) first in an object, so for such a column
+    /// pond-ts's text has another order; the JSON means the same.
     pub fn to_columns_json(&self) -> Result<String> {
         let call = TO_COLUMNS;
         refuse_decimals(call, self)?;
@@ -515,6 +521,10 @@ impl TimeSeries {
     /// Errors for a decimal column, as [`TimeSeries::to_json`] does, and for
     /// a value column named `ts` (pond-ts writes that column's value over
     /// the time, and drops the time where the column has a gap).
+    ///
+    /// Names are written `ts` first, then in schema order; as with
+    /// [`TimeSeries::to_columns_json`], pond-ts writes names that look like
+    /// whole numbers first.
     pub fn to_points_json(&self) -> Result<String> {
         let call = TO_POINTS;
         refuse_decimals(call, self)?;
