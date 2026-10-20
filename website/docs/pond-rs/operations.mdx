@@ -59,6 +59,109 @@ fn main() -> Result<(), pond_rs::PondError> {
 `Agg::of(source, reducer)` reuses the source's name, like pond-ts's
 `{ load: 'avg' }`.
 
+### Where the window sits: `rolling_with`
+
+`rolling_with(window, aggs, Rolling { alignment, min_samples })` is
+`rolling` with two choices. `Rolling::default()` gives the same result as
+`rolling`.
+
+| `alignment`                     | For a row at time `t`, the window holds times in |
+| ------------------------------- | ------------------------------------------------ |
+| `Alignment::Trailing` (default) | `(t - window, t]`: the row and what came before  |
+| `Alignment::Leading`            | `[t, t + window)`: the row and what comes after  |
+| `Alignment::Centered`           | `[t - window/2, t + window/2)`: around the row   |
+
+Rows that share a time share a window. `min_samples: n` gives a gap in
+every output column for a row whose window holds fewer than `n` rows. Rows
+are counted whether their value is there or a gap. The default, 0, gives
+every row a value.
+
+### Windows of N rows: `rolling_rows`
+
+`rolling_rows(n, aggs, Rolling)` uses the `n` rows ending at each row (or
+starting at it, or around it), whatever their times. This is the "20-bar"
+window of a trading study: a time window of 20 days would hold fewer bars
+across a weekend or holiday. A centred window of an even `n` has one more
+row after than before. Near the ends of the series a window holds fewer
+rows; set `min_samples` to `n` to give those rows gaps instead.
+
+```rust
+use pond_rs::{Agg, Alignment, Column, Reducer, Rolling, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let day = 86_400_000;
+    // Friday, Monday, Tuesday: two of the gaps are a weekend.
+    let s = TimeSeries::new(
+        "bars",
+        vec![0, 3 * day, 4 * day],
+        vec![Column::required("close", vec![10.0, 12.0, 14.0])],
+    )?;
+
+    // The last 2 bars, whatever the gap between them.
+    let sma = s.rolling_rows(
+        2,
+        &[Agg::new("sma", "close", Reducer::Avg)],
+        Rolling { min_samples: 2, ..Rolling::default() },
+    )?;
+    let got: Vec<_> = sma.column("sma")?.numbers()?.iter().collect();
+    assert_eq!(got, [None, Some(11.0), Some(13.0)]); // Friday has no bar before it
+
+    // The same over a 2-day time window: Monday's window misses Friday.
+    let by_time = s.rolling("2d", &[Agg::new("avg", "close", Reducer::Avg)])?;
+    let got: Vec<_> = by_time.column("avg")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(10.0), Some(12.0), Some(13.0)]);
+
+    // A leading window: each row and the 2 days after it.
+    let next = s.rolling_with(
+        "2d",
+        &[Agg::new("n", "close", Reducer::Count)],
+        Rolling { alignment: Alignment::Leading, ..Rolling::default() },
+    )?;
+    let got: Vec<_> = next.column("n")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(1.0), Some(2.0), Some(1.0)]);
+    Ok(())
+}
+```
+
+### A rolling window on a regular grid: `rolling_over`
+
+`rolling_over(&sequence, window, aggs, RollingOver)` gives one row per
+bucket of a `Sequence` rather than one per input row: for example a
+5-minute average, once a minute. The window is placed at each bucket's
+start (`sample: At::Center` or `At::End` move it) and lined up as
+`alignment` says. Each window is reduced as `aggregate` reduces a bucket,
+with the same reducers and rules. Buckets are picked as in
+[`align`](#regular-grids-align-and-materialize): those whose start (or
+`sample` point) falls in the series' time range, or in `range` if you give
+one. The result's key is the buckets, named `interval`.
+
+```rust
+use pond_rs::{Agg, Column, Reducer, RollingOver, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    // Readings every 30 seconds for 3 minutes.
+    let s = TimeSeries::new(
+        "cpu",
+        (0..7).map(|i| i * 30_000).collect(),
+        vec![Column::required("v", vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0])],
+    )?;
+
+    // A 2-minute average, once a minute.
+    let r = s.rolling_over(
+        &Sequence::every("1m")?,
+        "2m",
+        &[Agg::new("v_avg", "v", Reducer::Avg)],
+        RollingOver::default(),
+    )?;
+    assert_eq!(r.key().begin(), &[0, minute, 2 * minute, 3 * minute]);
+    let got: Vec<_> = r.column("v_avg")?.numbers()?.iter().collect();
+    // At 2 minutes the window (0m, 2m] holds 2, 3, 4 and 5.
+    assert_eq!(got, [Some(1.0), Some(2.0), Some(3.5), Some(5.5)]);
+    Ok(())
+}
+```
+
 ## Buckets: `aggregate`
 
 `aggregate(sequence, aggs)` puts each row in the bucket that holds it

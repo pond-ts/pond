@@ -195,6 +195,35 @@ which brings it to about 250 ms for every window length. Rolling `Samples`
 is slow in both because each of the million rows gets a list of about 280
 values; writing that out is the cost.
 
+### Rolling options: 1 million rows
+
+From the step 8g pull request ([#798](https://github.com/pond-ts/pond/pull/798)):
+1 million rows one second apart, a number column with a gap every 17th
+row. Middle (median) time in milliseconds; both sides give the same
+answers.
+
+| Call                                       | pond-rs | pond-ts |
+| ------------------------------------------ | ------- | ------- |
+| 5-minute `Avg`, trailing                   | 33      | 377     |
+| 5-minute `Avg`, leading                    | 36      | 474     |
+| 5-minute `Avg`, centred                    | 36      | 345     |
+| 5-minute `Avg`, at least 300 rows          | 30      | 576     |
+| 20 rows `Avg`                              | 26      | 31      |
+| 20 rows `Stdev`                            | 62      | 179     |
+| 20 rows `Avg`, per host                    | 169     | 3,252   |
+| 5-minute `Avg` once a minute, 100,000 rows | 0.7     | 12,856  |
+| 5-minute `Avg` once a minute, 1M rows      | 11      | not run |
+| 5-minute `Avg` once a second, 1M rows      | 352     | not run |
+
+Row-count windows of `Avg` are only about 1.2× faster than pond-ts.
+pond-ts already has a fast path for them, and both libraries add up the
+running sum the same way, one step after another, so that they give
+exactly the same answer; that sum sets the speed. pond-ts's grid windows
+(`rolling_over`) look through every row for every grid point, which is why
+it takes 12.9 seconds on 100,000 rows; that is logged as a pond-ts issue.
+The once-a-second grid is pond-rs's slowest case: each of its million
+windows (300 rows each) is added up from scratch.
+
 ### Agents writing code against it
 
 pond-rs is built mainly for AI agents writing Rust, so one test was about
