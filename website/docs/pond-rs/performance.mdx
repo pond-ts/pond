@@ -166,6 +166,31 @@ a gap every tenth row. Middle (median) time.
 pond-ts works through these row by row, which is logged as a pond-ts issue
 to fix.
 
+### The newer reducers: 1 million rows
+
+From the step 8f pull request ([#797](https://github.com/pond-ts/pond/pull/797)):
+1 million rows one second apart; a number column with a gap every 17th row
+that repeats in runs of 40, and a host column, one of 8 names in runs of 90. Middle (median) time,
+pond-rs then pond-ts. "Buckets" is `aggregate` into 1-second buckets (one
+row each, so the per-bucket cost shows); "rolling" is a 5-minute window.
+
+| Reducer                | Buckets     | Rolling          | `reduce`         |
+| ---------------------- | ----------- | ---------------- | ---------------- |
+| `Min` (for comparison) | 35 vs 413   | 16 vs 209        | 1.1 vs 2         |
+| `Keep`, numbers        | 35 vs 561   | 21 vs 190        | under 0.1 vs 102 |
+| `Difference`           | 37 vs 816   | 27 vs 690        | 2.2 vs 353       |
+| `Keep`, text           | 69 vs 415   | 49 vs 159        | 6.1 vs 71        |
+| `Unique`, text         | 89 vs 1,792 | 105 vs 1,383     | 10 vs 94         |
+| `Top(3)`, text         | 89 vs 2,920 | 163 vs 2,619     | 11 vs 121        |
+| `Samples`, numbers     | 74 vs 2,441 | 14,400 vs 97,800 | 22 vs 194        |
+
+A longer window does not slow pond-rs's rolling `Difference`: 25 ms over a
+whole day (86,400 rows in each window). pond-ts keeps each window sorted,
+so the same call takes 4.2 seconds over an hour and 96 seconds over a day
+(logged as a pond-ts issue). Rolling `Samples` is slow in both because
+each of the million rows gets a list of about 280 values; writing that
+out is the cost.
+
 ### Agents writing code against it
 
 pond-rs is built mainly for AI agents writing Rust, so one test was about

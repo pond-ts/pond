@@ -111,8 +111,8 @@ pond-rs returns an error instead.
   - A number that is not finite from `map_arrays` or in a fill value
     (pond-ts leaves a gap).
 
-  Also, `First`, `Last` and `array_explode` with no kind take the kind of
-  the elements; pond-ts assumes text and so fails on numbers. `shift` works
+  Also, `First`, `Last`, `Keep` and `array_explode` with no kind take the
+  kind of the elements; pond-ts assumes text and so fails on numbers. `shift` works
   on list columns (pond-ts throws).
 
 - **A repeated rename.** `rename` with the same `from` twice is an error
@@ -135,6 +135,10 @@ Building pond-rs turned up several pond-ts bugs. Where pond-rs could not
 copy the bug without being wrong, it does the right thing, and the pond-ts
 bug is logged in `PLAN.md` to fix there.
 
+- `Keep` on a list column keeps a list that is the same in every row.
+  pond-ts compares the lists as objects, so two equal lists in different
+  rows count as different and give a gap ([PND-ARRAYKEY]). pond-rs compares
+  the elements exactly, so `[0]` and `[-0]` count as different.
 - After `map_numbers` turns values into gaps, a required column becomes
   optional. pond-ts keeps it marked required, which its own `fromJSON` then
   refuses ([PND-MAPREQ]).

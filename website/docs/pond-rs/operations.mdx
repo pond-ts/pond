@@ -145,20 +145,76 @@ buckets will too.
 
 ### Reducers
 
-| Reducer                   | Gives                                             | Also works on               |
-| ------------------------- | ------------------------------------------------- | --------------------------- |
-| `Count`                   | how many values (gaps not counted)                | every kind                  |
-| `Sum`                     | total; 0 when there are no values                 | decimals (exact)            |
-| `Avg`                     | mean                                              | decimals (as a number)      |
-| `Min`, `Max`              | smallest, largest                                 | decimals (exact)            |
-| `First`, `Last`           | first or last value in the window or bucket       | every kind (keeps the kind) |
-| `Median`, `Percentile(q)` | the middle value, or the `q`th percentile (0–100) | decimals (as a number)      |
-| `Stdev`                   | standard deviation (population, divides by n)     | decimals (as a number)      |
+| Reducer                   | Gives                                                    | Also works on               |
+| ------------------------- | -------------------------------------------------------- | --------------------------- |
+| `Count`                   | how many values (gaps not counted)                       | every kind                  |
+| `Sum`                     | total; 0 when there are no values                        | decimals (exact)            |
+| `Avg`                     | mean                                                     | decimals (as a number)      |
+| `Min`, `Max`              | smallest, largest                                        | decimals (exact)            |
+| `Difference`              | largest minus smallest (the spread)                      | decimals (exact)            |
+| `First`, `Last`           | first or last value in the window or bucket              | every kind (keeps the kind) |
+| `Keep`                    | the value if every value is the same, else a gap         | every kind (keeps the kind) |
+| `Median`, `Percentile(q)` | the middle value, or the `q`th percentile (0–100)        | decimals (as a number)      |
+| `Stdev`                   | standard deviation (population, divides by n)            | decimals (as a number)      |
+| `Unique`                  | the different values, as a sorted list                   | every kind                  |
+| `Top(n)`                  | the `n` most common values, as a list, most common first | every kind                  |
+| `Samples`                 | every value, as a list, in the order they came           | every kind                  |
 
-On text and true/false columns only `Count`, `First` and `Last` are
-allowed; anything else is an error naming the column. `Reducer::parse("p95")`
-and `"avg".parse::<Reducer>()` turn pond-ts's reducer names into a
-`Reducer`.
+On text, true/false and list columns only `Count`, `First`, `Last`,
+`Keep`, `Unique`, `Top(n)` and `Samples` are allowed; anything else is an
+error naming the column. `Reducer::parse("p95")` and
+`"avg".parse::<Reducer>()` turn pond-ts's reducer names into a `Reducer`
+(`"keep"`, `"difference"`, `"unique"`, `"top3"`, `"samples"` too).
+
+The last three give a [list column](#list-columns). A bucket with no values
+gives an empty list, not a gap. If the source is itself a list column, its
+lists are joined first, so `["a", "b"]` and `["b"]` count as `a`, `b`, `b`.
+`Unique` puts numbers first, then text, then true/false; `Top(n)` breaks
+ties in that same order. Both treat `0` and `-0` as one value, written `0`;
+`Samples` keeps each value as it was. Decimals come out as plain numbers.
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Scalar, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let s = TimeSeries::new(
+        "req",
+        vec![0, 10_000, 20_000, 30_000, minute],
+        vec![
+            Column::required("host", vec!["b", "a", "b", "b", "a"]),
+            Column::required("region", vec!["eu", "eu", "eu", "eu", "us"]),
+            Column::required("ms", vec![120.0, 80.0, 200.0, 90.0, 60.0]),
+        ],
+    )?;
+
+    let per_minute = s.aggregate(
+        &Sequence::every("1m")?,
+        &[
+            Agg::new("hosts", "host", Reducer::Unique),
+            Agg::new("busiest", "host", Reducer::Top(1)),
+            Agg::new("region", "region", Reducer::Keep),
+            Agg::new("spread", "ms", Reducer::Difference),
+        ],
+    )?;
+
+    let hosts: Vec<_> = per_minute.column("hosts")?.arrays()?.iter().collect();
+    let a = || Scalar::from("a");
+    let b = || Scalar::from("b");
+    assert_eq!(hosts, [Some(&[a(), b()][..]), Some(&[a()][..])]);
+    let busiest: Vec<_> = per_minute.column("busiest")?.arrays()?.iter().collect();
+    assert_eq!(busiest, [Some(&[b()][..]), Some(&[a()][..])]); // b came 3 times
+    let spread: Vec<_> = per_minute.column("spread")?.numbers()?.iter().collect();
+    assert_eq!(spread, [Some(120.0), Some(0.0)]);
+    let region: Vec<_> = per_minute.column("region")?.strings()?.iter().collect();
+    assert_eq!(region, [Some("eu"), Some("us")]);
+    Ok(())
+}
+```
+
+`Keep` compares numbers the way JavaScript's `===` does, so `0` and `-0`
+count as the same value. In `aggregate` and `reduce` it gives back the
+first one; in `rolling` it gives `0`, as pond-ts does.
 
 ## Row by row
 
@@ -674,13 +730,13 @@ List columns also pass through `select`, `rename`, `filter`, `slice`,
 `shift`, `fill` (`Hold`, `Bfill` or a fixed list), `align`, `materialize`,
 `dedupe`, `join` and the JSON readers and writers (except
 `from_columns_json`, as in pond-ts). In `aggregate`, `rolling` and `reduce`
-they take `Count`, `First` and `Last` only. `row.array(col)?` and
+they take `Count`, `First`, `Last`, `Keep`, `Unique`, `Top(n)` and
+`Samples` (the last three join the lists). `row.array(col)?` and
 `map_arrays` read and change them.
 
 Arrow files hold list columns whose elements are all one kind; see
 [Arrow and JSON](./arrow#list-columns). A list column cannot be a partition
-column (`partition_by` gives an error). Not built yet: the reducers that
-produce lists (`unique`, `top` and friends).
+column (`partition_by` gives an error).
 
 ## Regular grids: `align` and `materialize`
 
@@ -923,5 +979,7 @@ the other side first. `join` is not on `PartitionedSeries`.
 
 ## What is not here yet
 
-From pond-ts, still to come, as people ask for them: `smooth`, `baseline` / `outliers`, `pivot_by_group`, and array columns. Financial studies come after
-the core.
+Still to come from pond-ts: more `rolling` options (by row count, centred
+windows, a minimum number of values), `smooth`, `baseline` / `outliers`,
+`scan`, `sample`, `collapse`, `concat` and the pivots (`pivot_by_group` and
+friends). Financial studies come after the core.
