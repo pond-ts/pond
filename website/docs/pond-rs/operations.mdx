@@ -677,10 +677,10 @@ List columns also pass through `select`, `rename`, `filter`, `slice`,
 they take `Count`, `First` and `Last` only. `row.array(col)?` and
 `map_arrays` read and change them.
 
-A list column cannot be a partition column (`partition_by` gives an
-error). Not built yet: list columns in Arrow files (`to_arrow` refuses one,
-as pond-ts's `toArrow` does), and the reducers that produce lists
-(`unique`, `top` and friends).
+Arrow files hold list columns whose elements are all one kind; see
+[Arrow and JSON](./arrow#list-columns). A list column cannot be a partition
+column (`partition_by` gives an error). Not built yet: the reducers that
+produce lists (`unique`, `top` and friends).
 
 ## Regular grids: `align` and `materialize`
 
