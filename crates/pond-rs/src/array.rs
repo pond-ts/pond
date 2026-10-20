@@ -106,11 +106,18 @@ impl TimeSeries {
     ///   With no numbers, `Sum` gives 0 and the rest give a gap. Sums add
     ///   left to right, as pond-ts's do; on a tie, `Min` and `Max` keep the
     ///   first (so `-0` or `0`, whichever came first).
+    /// - `Difference` gives the largest number minus the smallest.
+    /// - `Unique`, `Top(n)` and `Samples` give a list (an array column) as
+    ///   [`Reducer::Unique`] describes, over the array's elements; an empty
+    ///   array gives an empty list.
     /// - `First` and `Last` give the first or last element, of whatever
-    ///   kind; an empty array gives a gap.
+    ///   kind; an empty array gives a gap. `Keep` gives the first element
+    ///   when every element equals it (`0` equals `-0`; `1` is not `"1"`),
+    ///   otherwise a gap.
     ///
     /// See [`ArrayOptions`] for where the result goes. The output kind is
-    /// `Number` for every reducer but `First` and `Last`, whose output takes
+    /// `Array` for `Unique`, `Top` and `Samples`, and `Number` for every
+    /// other reducer but `First`, `Last` and `Keep`, whose output takes
     /// the kind of the elements found (`String` when there are none) unless
     /// [`ArrayOptions::kind`] names one.
     ///
@@ -132,7 +139,7 @@ impl TimeSeries {
     ///
     /// - A column that is not an array, or does not exist, is an error
     ///   (pond-ts quietly writes a column of gaps, or nothing).
-    /// - `First` and `Last` without a kind take the elements' kind; pond-ts
+    /// - `First`, `Last` and `Keep` without a kind take the elements' kind; pond-ts
     ///   writes a string column and so throws on numbers or true/false.
     ///   Elements of more than one kind across rows are an error either
     ///   way, since a column holds one kind.
@@ -147,7 +154,29 @@ impl TimeSeries {
         const CALL: &str = "TimeSeries::array_aggregate";
         reducer.check(CALL)?;
         let arrays = self.array_column(CALL, column)?;
-        let picks = matches!(reducer, Reducer::First | Reducer::Last);
+        let picks = matches!(reducer, Reducer::First | Reducer::Last | Reducer::Keep);
+        if reducer.gives_list() {
+            if let Some(k) = options.kind.filter(|&k| k != ColumnKind::Array) {
+                return Err(PondError::InvalidData {
+                    call: CALL,
+                    message: format!(
+                        "{reducer:?} gives lists, so the output kind must be array, not {}",
+                        k.as_str()
+                    ),
+                });
+            }
+            let ranges: Vec<_> = (0..arrays.len()).map(|r| r..r + 1).collect();
+            let lists = crate::elements::Elements::new(&ColumnData::Array(arrays.clone()))
+                .reduce_ranges(reducer, &ranges);
+            // A gap stays a gap; an empty array gives an empty list.
+            let rows: Vec<Option<usize>> = (0..arrays.len())
+                .map(|r| arrays.get(r).map(|_| r))
+                .collect();
+            let data = ColumnData::Array(lists.take(&rows));
+            return self.put_output(CALL, column, options, |name| {
+                Column::from_data(name, data, false)
+            });
+        }
         if !picks && options.kind.is_some_and(|k| k != ColumnKind::Number) {
             return Err(PondError::InvalidData {
                 call: CALL,
@@ -162,10 +191,12 @@ impl TimeSeries {
                 .iter()
                 .map(|cell| {
                     let cell = cell?;
-                    if reducer == Reducer::First {
-                        cell.first()
-                    } else {
-                        cell.last()
+                    match reducer {
+                        Reducer::First => cell.first(),
+                        Reducer::Last => cell.last(),
+                        // `===` on every element: `0` equals `-0`, `1` is
+                        // not `"1"`. The first one is kept.
+                        _ => cell.first().filter(|f| cell.iter().all(|e| e == *f)),
                     }
                 })
                 .collect();
@@ -343,6 +374,20 @@ fn reduce_elements(reducer: Reducer, cell: &[Scalar]) -> Option<f64> {
             .reduce(|a, b| if a >= b { a } else { b }),
         Reducer::Median => sorted_percentile(numeric, 50.0),
         Reducer::Percentile(q) => sorted_percentile(numeric, q),
+        // pond-ts `difference.reduce`: start from the first number, then
+        // `v < lo` / `v > hi`.
+        Reducer::Difference => {
+            let (mut lo, mut hi) = (*numeric.first()?, *numeric.first()?);
+            for &v in &numeric[1..] {
+                if v < lo {
+                    lo = v;
+                }
+                if v > hi {
+                    hi = v;
+                }
+            }
+            Some(hi - lo)
+        }
         Reducer::Stdev => {
             // Welford, as pond-ts's `welfordStdev`.
             let (mut n, mut mean, mut m2) = (0.0f64, 0.0f64, 0.0f64);
@@ -354,7 +399,8 @@ fn reduce_elements(reducer: Reducer, cell: &[Scalar]) -> Option<f64> {
             }
             (n != 0.0).then(|| clamp_at_zero(m2 / n).sqrt())
         }
-        Reducer::First | Reducer::Last => unreachable!("picked, not reduced"),
+        Reducer::First | Reducer::Last | Reducer::Keep => unreachable!("picked, not reduced"),
+        Reducer::Unique | Reducer::Top(_) | Reducer::Samples => unreachable!("lists, not reduced"),
     };
     out.filter(|v| v.is_finite())
 }

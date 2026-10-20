@@ -1,4 +1,5 @@
-//! Exact `sum` of decimal columns, for `aggregate` and `rolling`.
+//! Exact `sum` and `difference` of decimal columns, for `aggregate`,
+//! `reduce` and `rolling`.
 //!
 //! Running sums are held in 256 bits, so no sum of `i128` values a series
 //! can hold overflows on the way; each result is then checked to fit
@@ -11,6 +12,7 @@ use arrow_buffer::i256;
 
 use crate::column::DecimalColumn;
 use crate::error::{PondError, Result};
+use crate::reducer::Input;
 use crate::rolling::{Window, walk};
 use crate::series::Column;
 
@@ -22,14 +24,14 @@ fn max_value() -> i256 {
     i256::from_i128(10i128.pow(38) - 1)
 }
 
-/// The sum as a 38-digit decimal, or an error naming the output row.
-fn fit(call: &'static str, output: &str, row: usize, sum: i256) -> Result<i128> {
+/// The result as a 38-digit decimal, or an error naming the output row.
+fn fit(call: &'static str, what: &str, output: &str, row: usize, sum: i256) -> Result<i128> {
     let max = max_value();
     if sum > max || sum < -max {
         return Err(PondError::InvalidData {
             call,
             message: format!(
-                "decimal sum '{output}' at row {row} has more than {MAX_PRECISION} digits"
+                "decimal {what} '{output}' at row {row} has more than {MAX_PRECISION} digits"
             ),
         });
     }
@@ -38,14 +40,15 @@ fn fit(call: &'static str, output: &str, row: usize, sum: i256) -> Result<i128> 
 
 fn result(
     call: &'static str,
+    what: &str,
     output: &str,
     source: &DecimalColumn,
-    sums: Vec<i256>,
+    sums: Vec<Option<i256>>,
 ) -> Result<Column> {
     let values = sums
         .into_iter()
         .enumerate()
-        .map(|(row, s)| fit(call, output, row, s).map(Some))
+        .map(|(row, s)| s.map(|s| fit(call, what, output, row, s)).transpose())
         .collect::<Result<Vec<_>>>()?;
     Ok(Column::from_data(
         output.to_string(),
@@ -72,10 +75,10 @@ pub(crate) fn sum_ranges(
                     s = s.wrapping_add(i256::from_i128(raw[i]));
                 }
             }
-            s
+            Some(s)
         })
         .collect();
-    result(call, output, source, sums)
+    result(call, "sum", output, source, sums)
 }
 
 /// A running exact sum: values are added as they enter the window and
@@ -125,7 +128,40 @@ pub(crate) fn rolling_sum(
         out: vec![i256::ZERO; times.len()],
     };
     walk(times, window_ms, &mut w);
-    result(call, output, source, w.out)
+    result(
+        call,
+        "sum",
+        output,
+        source,
+        w.out.into_iter().map(Some).collect(),
+    )
+}
+
+/// The exact `difference` (largest minus smallest) for each output row,
+/// given the smallest and largest of each as [`InputKind::Ranks`] values
+/// (NaN where there were none, which gives a gap). At precision 38; a
+/// spread past 38 digits is an error naming the row.
+///
+/// [`InputKind::Ranks`]: crate::reducer::InputKind::Ranks
+pub(crate) fn difference(
+    call: &'static str,
+    output: &str,
+    source: &DecimalColumn,
+    input: &Input<'_>,
+    lo: &[f64],
+    hi: &[f64],
+) -> Result<Column> {
+    let spreads = lo
+        .iter()
+        .zip(hi)
+        .map(|(&lo, &hi)| {
+            (lo.is_finite() && hi.is_finite()).then(|| {
+                i256::from_i128(input.raw_decimal(hi))
+                    .wrapping_sub(i256::from_i128(input.raw_decimal(lo)))
+            })
+        })
+        .collect();
+    result(call, "difference", output, source, spreads)
 }
 
 #[cfg(test)]

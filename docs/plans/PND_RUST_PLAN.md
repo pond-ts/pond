@@ -1875,18 +1875,130 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     40 gave a different `median`. pond-rs computes each column on its own,
     so it already disagreed with pond-ts on such calls, and every 8f
     reducer would have triggered it.
-  - Fixing pond-ts was the recommended option on the 2026-10-20 decision
-    card, over copying the behaviour into pond-rs or recording it as a
-    difference. Each
-    column is now planned on its own: range kernel, first/last boundary
-    scan, or else the reducer's bucket state fed that column's cells
-    (the same values, in the same order, the row path feeds it). The row
-    path remains only for a missing source column and for range- and
+  - Peter chose to fix pond-ts (2026-10-20 decision card, merged as #796)
+    over copying the behaviour into pond-rs or recording it as a
+    difference. Each column is now planned on its own: range kernel,
+    first/last boundary scan, or else the reducer's bucket state fed that
+    column's cells (the same values, in the same order, the row path feeds
+    it). The row path remains only for a missing source column and for range- and
     interval-keyed series.
   - Rolling and `reduce` were checked the same way and do not have the
     problem (count-window rolling is all-or-nothing too, but both of its
     paths drive the same rolling states).
   - Mixed calls got 2-10x faster (`scripts/perf-aggregate-mixed.mjs`).
+
+  **Step 8f (done): `keep` and `difference` ([PND-RUSTFULL]).**
+  - Split: 8f is the two reducers that give one value; `unique`, `top` and
+    `samples`, which give arrays, follow as 8f2.
+  - `Reducer::Keep` and `Reducer::Difference` (parsed from `"keep"` and
+    `"difference"`) work in `aggregate`, `rolling`, `reduce`, partitioned
+    `aggregate` and `array_aggregate`.
+  - `difference`: number and decimal columns only (others are an error, as
+    for `sum`). `aggregate` / `reduce`: largest minus smallest, never `-0`.
+    `rolling`: pond-ts keeps the window sorted (a splice per row, O(W) per
+    row for a window of W rows) and answers last minus first. pond-rs uses
+    two monotone deques (O(1) per row) plus a stack of zero signs, because
+    pond-ts's sorted window gives a sign-dependent answer in one case: a
+    window of only zeros, where it can give `-0`. A unit test checks the
+    deques against a port of pond-ts's sorted window on 300 random series
+    full of `0` and `-0`. Decimals are exact: the smallest and largest by
+    rank, subtracted in 256 bits, at precision 38, an error past it
+    naming the row.
+  - `keep`: any column kind; the output has the source's kind. Numbers
+    compare as `===` (`0` equals `-0`): `aggregate` and `reduce` give the
+    first value's sign, `rolling` gives `0` (pond-ts counts values in a
+    `Map`, whose keys turn `-0` into `0`). `rolling` answers "one distinct
+    value" as largest equals smallest with two deques, not a counting map.
+    Text, true/false and array columns get an id per distinct value (a
+    hash map, skipped when a row repeats the row before). Decimals stay
+    exact through ranks.
+  - Differences from pond-ts, both already logged: pond-rs compares array
+    cells by their elements, bit for bit, where pond-ts compares the array
+    objects, so two equal arrays keep their value here and give a gap
+    there ([PND-ARRAYKEY]). Bit for bit, so `[0]` and `[-0]` differ: the
+    first version let them match, and a bucket holding only `[-0]` then
+    gave an earlier row's `[0]` (found in the review of #797); `array_aggregate` with `keep` takes the elements'
+    kind where pond-ts writes text and throws on numbers ([PND-ARRAYKIND]).
+  - Parity: 18 new pond-ts cases (fixture made with [PND-AGGSIBLING] in),
+    on a new `runs` input (equal runs, zeros of both signs in both orders,
+    text and true/false runs) plus `zeros`, `noisy`, `hosts` and the array
+    inputs, each `keep` / `difference` next to a `sum` or `avg`. Six
+    planted bugs (rolling `keep` without the `-0` to `0` change, rolling
+    `difference` reversed or without its sign, `keep` dropping the sign,
+    `difference` off by its low end, arrays compared by bits) each failed
+    the parity test. The brute-force property tests now cover both.
+  - Perf (`examples/perf_reducers.rs`, 1M rows 1 s apart). Cost: O(N) per
+    column for `aggregate`, `reduce` and `rolling`, any window size. Two
+    changes from the first version: rolling `keep` by deques instead of a
+    hash map (41 to 20 ms on numbers, 94 to 49 ms on text); and the
+    repeated-row check before hashing text (`reduce` 27 to 6 ms). pond-rs
+    vs pond-ts, medians:
+
+    | Call              | agg 1m       | agg 1s       | rolling 5m   | reduce         |
+    | ----------------- | ------------ | ------------ | ------------ | -------------- |
+    | `min` (for scale) | 3.0 vs 7 ms  | 35 vs 413 ms | 16 vs 209 ms | 1.1 vs 2 ms    |
+    | `keep` numbers    | 1.6 vs 19 ms | 35 vs 561 ms | 21 vs 190 ms | <0.1 vs 102 ms |
+    | `difference`      | 3.5 vs 29 ms | 37 vs 816 ms | 27 vs 690 ms | 2.2 vs 353 ms  |
+    | `keep` text       | 9.1 vs 26 ms | 69 vs 415 ms | 49 vs 159 ms | 6.1 vs 71 ms   |
+    | `keep` decimal    | 12 ms        | 62 ms        | 47 ms        | 8.5 ms         |
+    | `difference` dec. | 14 ms        | 99 ms        | 91 ms        | 12 ms          |
+
+    Rolling over a 1-day window (86,400 rows) costs pond-rs the same as
+    5 minutes (25 ms for `difference`); pond-ts's rolling `difference`
+    takes 376 ms at 5 minutes, 4.2 s at 1 hour and 96 s at 1 day
+    ([PND-ROLLDIFF]). pond-rs's rolling `median` and percentiles keep the
+    sorted window, as pond-ts's do; a faster structure for those is not
+    part of this step.
+
+  **Step 8f2 (done): `unique`, `top<N>` and `samples` ([PND-RUSTFULL]).**
+  - `Reducer::Unique`, `Reducer::Top(n)` and `Reducer::Samples` (parsed
+    from `"unique"`, `"top3"`, `"samples"`; `top0` is an unknown reducer,
+    as in pond-ts, and `top007` is 7) give lists: an array column. They
+    work in the same calls as 8f, on every column kind. Each array cell
+    is flattened one level, as pond-ts does, so a bucket of `["a", "b"]`
+    and `["b"]` holds `a`, `b`, `b`. Nothing present gives an empty list,
+    not a gap (also as pond-ts). Decimals are read as their nearest `f64`.
+  - Order: `unique` sorts numbers, then text, then true/false (pond-ts
+    `compareScalars`), text by UTF-16 code units as JavaScript's `<` does,
+    which is not Rust's byte order (`"\u{FFFF}"` sorts after `"😀"`; the
+    parity input holds both). `top` is most frequent first, ties in the
+    `unique` order. `0` and `-0` are one value, written `0`, as keys of a
+    JavaScript `Set` or `Map` are; `samples` keeps `-0` and arrival order.
+  - How: every element gets an id once per call (`elements.rs`, a hash
+    map, skipped on a repeat of the element before), and ids are numbered
+    in `unique` order, so counting and sorting never compare text.
+    Rolling keeps the window's distinct ids in a `BTreeSet` (`top`: by
+    count, then id); `samples` reads the window's rows directly, as the
+    window is always a run of rows. A list equal to the one before (a
+    host that reports for a while) shares its memory instead of copying
+    the values.
+  - Parity: 18 new pond-ts cases (aggregate, rolling and reduce over
+    numbers with signed zeros, text, true/false and array columns, an
+    empty series, partitioned aggregate, and `array_aggregate`). Seven
+    planted bugs each failed them (byte order for text, `-0` not merged,
+    `samples` merging `-0`, `top` ties reversed, empty list as a gap,
+    `unique` reversed, `top` one too many). A unit test checks the
+    rolling states against the bucket kernels on 200 random series.
+  - `PondError::UnsupportedReducer` is gone: pond-rs now has every
+    pond-ts reducer, so nothing returned it.
+  - Perf (`examples/perf_reducers.rs`, 1M rows 1 s apart, `v` numbers in
+    runs of 40, `host` one of 8 names in runs of 90). Cost: O(E) to give
+    ids to E elements, then per bucket O(k log k) for its k elements; per
+    rolling row O(log D) for D distinct values in the window, plus the
+    output list, which for `samples` is the whole window. Reusing equal
+    lists took aggregate over 1 s buckets from 188 to 81 ms and rolling
+    `unique` on `host` from 605 to 105 ms. pond-rs vs pond-ts, medians:
+
+    | Call           | agg 1m      | agg 1s        | rolling 5m     | reduce       |
+    | -------------- | ----------- | ------------- | -------------- | ------------ |
+    | `unique` nums  | 12 vs 65 ms | 81 vs 1828 ms | 123 vs 1814 ms | 8 vs 147 ms  |
+    | `unique` text  | 14 vs 43 ms | 89 vs 1792 ms | 105 vs 1383 ms | 10 vs 94 ms  |
+    | `top3` nums    | 15 vs 103ms | 86 vs 3112 ms | 186 vs 3329 ms | 9 vs 203 ms  |
+    | `top3` text    | 15 vs 71 ms | 89 vs 2920 ms | 163 vs 2619 ms | 11 vs 121 ms |
+    | `samples` nums | 41 vs 235ms | 74 vs 2441 ms | 14.4 vs 97.8 s | 22 vs 194 ms |
+
+    Rolling `samples` over 5 minutes writes about 280 values for each of
+    1M rows; that output, not the reducer, is the cost in both.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
