@@ -43,6 +43,10 @@ impl<'a> Row<'a> {
         self.index
     }
 
+    pub(crate) fn series(&self) -> &'a TimeSeries {
+        self.series
+    }
+
     /// The row's time in epoch milliseconds (its start, for time ranges and
     /// intervals).
     pub fn begin(&self) -> i64 {
