@@ -1,9 +1,12 @@
-//! Column reshaping: `select`, `rename`, and `as_time` (interval keys to
-//! time keys). None of these copy value columns: the columns keep sharing
-//! their buffers with the source series.
+//! Column reshaping and key changes: `select`, `rename`, `as_time`,
+//! `as_time_range`, `as_interval` / `as_interval_with` and `offset_time`.
+//! None of these copy value columns: the columns keep sharing their buffers
+//! with the source series.
 
+use crate::column::StringColumn;
 use crate::error::{PondError, Result};
-use crate::series::{Key, TimeSeries};
+use crate::query::{EventKey, Label};
+use crate::series::{IntervalKeys, Key, Labels, MAX_TIME_MS, TimeRangeKeys, TimeSeries};
 
 /// Where [`TimeSeries::as_time`] places each row's new time within its
 /// interval (pond-ts `asTime({ at })`).
@@ -197,6 +200,180 @@ impl TimeSeries {
     }
 }
 
+impl TimeSeries {
+    /// Make each row's key a time range covering its current extent (a
+    /// point in time `t` becomes `t..=t`; an interval drops its label),
+    /// named `"timeRange"`, as pond-ts `asTimeRange()`. A value column
+    /// already named `"timeRange"` is an error, as in pond-ts.
+    pub fn as_time_range(&self) -> Result<TimeSeries> {
+        self.check_free_key_name("as_time_range", "timeRange")?;
+        let begin = self.key().begin().to_vec();
+        let end = self
+            .key()
+            .end()
+            .map_or_else(|| begin.clone(), <[i64]>::to_vec);
+        Ok(TimeSeries::from_parts(
+            self.name().to_string(),
+            "timeRange".to_string(),
+            Key::TimeRange(TimeRangeKeys { begin, end }),
+            self.columns().to_vec(),
+        ))
+    }
+
+    /// Make each row's key an interval over its current extent, every row
+    /// labelled `label`, named `"interval"`, as pond-ts `asInterval(value)`.
+    /// A value column already named `"interval"` is an error, as in pond-ts,
+    /// and so is a number label that is `NaN` or infinite, as in pond-ts.
+    ///
+    /// ```
+    /// # use pond_rs::{Column, Label, TimeSeries};
+    /// let s = TimeSeries::new("s", vec![0, 1000], vec![
+    ///     Column::required("v", vec![1.0, 2.0]),
+    /// ])?;
+    /// let i = s.as_interval("day")?;
+    /// assert_eq!(i.key_name(), "interval");
+    /// let by_start = s.as_interval_with(|range, _| range.begin())?;
+    /// assert_eq!(by_start.at(1).unwrap().key().label(), Some(&Label::Number(1000.0)));
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    pub fn as_interval(&self, label: impl Into<Label>) -> Result<TimeSeries> {
+        let label = label.into();
+        self.make_intervals("as_interval", |_, _| label.clone())
+    }
+
+    /// Make each row's key an interval over its current extent, labelled by
+    /// `label(range, row)`, as pond-ts `asInterval((range, index) => …)`.
+    /// `range` is the row's extent as a time range. Every label must be of
+    /// one kind (all numbers or all text) and numbers finite, as in pond-ts.
+    pub fn as_interval_with<F, L>(&self, mut label: F) -> Result<TimeSeries>
+    where
+        F: FnMut(EventKey, usize) -> L,
+        L: Into<Label>,
+    {
+        self.make_intervals("as_interval_with", |range, i| label(range, i).into())
+    }
+
+    fn make_intervals(
+        &self,
+        call: &'static str,
+        mut label: impl FnMut(EventKey, usize) -> Label,
+    ) -> Result<TimeSeries> {
+        self.check_free_key_name(call, "interval")?;
+        let begin = self.key().begin().to_vec();
+        let end = self
+            .key()
+            .end()
+            .map_or_else(|| begin.clone(), <[i64]>::to_vec);
+        let mut numbers = Vec::new();
+        let mut texts = Vec::new();
+        for i in 0..begin.len() {
+            let range =
+                EventKey::time_range(begin[i], end[i]).expect("a key starts before it ends");
+            let kind_error = |was: &str, now: &str| PondError::InvalidData {
+                call,
+                message: format!(
+                    "the label at row {i} is {now} but earlier rows were {was}; interval labels must be one kind throughout"
+                ),
+            };
+            match label(range, i) {
+                Label::Number(v) if !texts.is_empty() => {
+                    return Err(kind_error("text", &format!("the number {v}")));
+                }
+                Label::String(t) if !numbers.is_empty() => {
+                    return Err(kind_error("numbers", &format!("the text {t:?}")));
+                }
+                Label::Number(v) if !v.is_finite() => {
+                    return Err(PondError::InvalidData {
+                        call,
+                        message: format!(
+                            "the label at row {i} is {v}; number labels must be finite"
+                        ),
+                    });
+                }
+                Label::Number(v) => numbers.push(v),
+                Label::String(t) => texts.push(t),
+            }
+        }
+        // An empty series gets text labels, as in pond-ts.
+        let label = if numbers.is_empty() {
+            Labels::String(StringColumn::from_options(texts.into_iter().map(Some)))
+        } else {
+            Labels::Number(numbers)
+        };
+        Ok(TimeSeries::from_parts(
+            self.name().to_string(),
+            "interval".to_string(),
+            Key::Interval(IntervalKeys { label, begin, end }),
+            self.columns().to_vec(),
+        ))
+    }
+
+    /// Move every key by `by` (`"1m"`, `"-1h"`; see
+    /// [`parse_duration`](crate::parse_duration), with a leading `-` for
+    /// earlier), as pond-ts `offsetTime`. Both edges of a range or interval
+    /// move; labels, the key kind and every value column stay. A zero offset
+    /// returns the series unchanged. A key moved past ±[`MAX_TIME_MS`] is an
+    /// error (pond-ts allows it).
+    pub fn offset_time(&self, by: &str) -> Result<TimeSeries> {
+        let ms = match by.strip_prefix('-') {
+            Some(rest) => -crate::parse_duration(rest)?,
+            None => crate::parse_duration(by)?,
+        };
+        self.offset_time_ms(ms)
+    }
+
+    /// [`offset_time`](TimeSeries::offset_time) by a number of milliseconds.
+    pub fn offset_time_ms(&self, ms: i64) -> Result<TimeSeries> {
+        if ms == 0 {
+            return Ok(self.clone());
+        }
+        let shift = |v: &[i64]| -> Result<Vec<i64>> {
+            v.iter()
+                .map(|&t| {
+                    t.checked_add(ms)
+                        .filter(|m| (-MAX_TIME_MS..=MAX_TIME_MS).contains(m))
+                        .ok_or_else(|| PondError::InvalidData {
+                            call: "offset_time",
+                            message: format!(
+                                "moving {t} ms by {ms} ms leaves the supported range (±{MAX_TIME_MS} ms)"
+                            ),
+                        })
+                })
+                .collect()
+        };
+        let key = match self.key() {
+            Key::Time(t) => Key::Time(shift(t)?),
+            Key::TimeRange(k) => Key::TimeRange(TimeRangeKeys {
+                begin: shift(&k.begin)?,
+                end: shift(&k.end)?,
+            }),
+            Key::Interval(k) => Key::Interval(IntervalKeys {
+                label: k.label.clone(),
+                begin: shift(&k.begin)?,
+                end: shift(&k.end)?,
+            }),
+        };
+        Ok(TimeSeries::from_parts(
+            self.name().to_string(),
+            self.key_name().to_string(),
+            key,
+            self.columns().to_vec(),
+        ))
+    }
+
+    fn check_free_key_name(&self, call: &'static str, key: &str) -> Result<()> {
+        if self.columns().iter().any(|c| c.name() == key) {
+            return Err(PondError::InvalidData {
+                call,
+                message: format!(
+                    "a value column is already named '{key}', the name the new key takes; rename it first"
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,5 +488,51 @@ mod tests {
         let s = TimeSeries::new("s", vec![0], vec![Column::required("a", vec![1.0])]).unwrap();
         let err = s.rename(&[("a", "x"), ("a", "y")]).unwrap_err().to_string();
         assert!(err.contains("renamed twice"), "{err}");
+    }
+
+    #[test]
+    fn key_changes_keep_extents_and_refuse_clashes() {
+        let s = TimeSeries::new(
+            "s",
+            vec![0, 1000],
+            vec![Column::required("v", vec![1.0, 2.0])],
+        )
+        .unwrap();
+        let r = s.as_time_range().unwrap();
+        assert_eq!(
+            (r.key_name(), r.key().end().unwrap()),
+            ("timeRange", &[0, 1000][..])
+        );
+        let i = s
+            .as_interval_with(|_, i| if i == 0 { "a" } else { "b" })
+            .unwrap();
+        assert_eq!(
+            i.at(1).unwrap().key(),
+            EventKey::interval("b", 1000, 1000).unwrap()
+        );
+        assert!(
+            s.as_interval_with(|_, i| if i == 0 { Label::from(1.0) } else { "b".into() })
+                .is_err()
+        );
+        assert!(s.as_interval(f64::NAN).is_err());
+        assert!(s.as_interval(f64::INFINITY).is_err());
+        assert!(s.as_interval(f64::NEG_INFINITY).is_err());
+        let clash = s.rename(&[("v", "interval")]).unwrap();
+        assert!(clash.as_interval("x").is_err());
+        let empty = s.slice(0..0).as_interval(5.0).unwrap();
+        assert!(matches!(&empty.key(), Key::Interval(k) if k.label.strings().is_some()));
+    }
+
+    #[test]
+    fn offset_time_moves_both_edges_and_checks_the_range() {
+        let b = buckets(vec![0, 1000], vec![1000, 2000]);
+        let moved = b.offset_time("-1s").unwrap();
+        assert_eq!(moved.key().begin(), &[-1000, 0]);
+        assert_eq!(moved.key().end().unwrap(), &[0, 1000]);
+        assert_eq!(b.offset_time("-0s").unwrap().key().begin(), &[0, 1000]);
+        assert!(b.offset_time("--1s").is_err());
+        assert!(b.offset_time("1.5s").is_err());
+        assert!(b.offset_time_ms(MAX_TIME_MS).is_err());
+        assert!(b.offset_time_ms(i64::MIN).is_err());
     }
 }

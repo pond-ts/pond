@@ -26,6 +26,8 @@
 //! `at_or_before` / `at_or_after` / `nearest` / `find` (keys as
 //! [`EventKey`]), picking a time span with [`TimeSeries::within`] /
 //! `overlapping` / `trim` / `before` / `after`,
+//! changing the key with [`TimeSeries::as_time_range`] /
+//! `as_interval` / `offset_time`,
 //! reading times written as text with [`parse_time`] / [`parse_time_in`]
 //! (as pond-ts `Time.parse`),
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
