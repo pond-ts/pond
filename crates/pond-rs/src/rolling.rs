@@ -687,8 +687,9 @@ impl TimeSeries {
     /// it), the rest give numbers.
     ///
     /// Signed zeros follow pond-ts's window states: a window of zeros gives
-    /// `keep` 0 whatever their signs, and `difference` can be `-0` (the
-    /// newest zero minus the oldest, as pond-ts's sorted window holds them).
+    /// `keep` 0 whatever their signs, and `difference` can be `-0`: pond-ts
+    /// keeps a window's zeros as a stack of signs and answers the bottom
+    /// minus the top, so the sign depends on the order zeros came and went.
     pub fn rolling(&self, window: &str, aggs: &[Agg]) -> Result<TimeSeries> {
         self.rolling_with(window, aggs, Rolling::default())
     }
