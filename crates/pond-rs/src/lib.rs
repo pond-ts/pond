@@ -24,7 +24,8 @@
 //! [`TimeSeries::reduce`],
 //! finding rows by key or test with [`TimeSeries::bisect`] /
 //! `at_or_before` / `at_or_after` / `nearest` / `find` (keys as
-//! [`EventKey`]),
+//! [`EventKey`]), picking a time span with [`TimeSeries::within`] /
+//! `overlapping` / `trim` / `before` / `after`,
 //! reading times written as text with [`parse_time`] / [`parse_time_in`]
 //! (as pond-ts `Time.parse`),
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
@@ -134,6 +135,7 @@ mod rows;
 mod rowwise;
 mod sequence;
 mod series;
+mod span;
 mod time_parse;
 
 pub use aggregate::Reduced;
