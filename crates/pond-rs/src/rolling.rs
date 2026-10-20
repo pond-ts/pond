@@ -468,6 +468,13 @@ impl TimeSeries {
     /// begin, as in pond-ts. The result keeps this series' keys; each mapping entry becomes
     /// a column that may have gaps.
     ///
+    /// **Only the outputs are kept**, as in pond-ts: a source column is gone
+    /// from the result unless an output carries it (add
+    /// `Agg::new("close", "close", Reducer::Last)` to keep `close` beside
+    /// its window stats). For the stats over the last window only, without
+    /// a value per row, use [`TimeSeries::tail`] and
+    /// [`TimeSeries::reduce`].
+    ///
     /// ```
     /// use pond_rs::{Agg, Column, Reducer, TimeSeries};
     /// let s = TimeSeries::new("cpu", vec![0, 1_000, 2_000],

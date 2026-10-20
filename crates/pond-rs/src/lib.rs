@@ -20,6 +20,8 @@
 //! [`TimeSeries::materialize`] and collapsing repeated keys with
 //! [`TimeSeries::dedupe`], putting series side by side with
 //! [`TimeSeries::join`] / [`TimeSeries::join_many`],
+//! the trailing window with [`TimeSeries::tail`] and a whole-series
+//! [`TimeSeries::reduce`],
 //! reading times written as text with [`parse_time`] / [`parse_time_in`]
 //! (as pond-ts `Time.parse`),
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
@@ -66,6 +68,50 @@
 //! assert_eq!(keys.end[0] - keys.begin[0], 23 * 3_600_000);
 //! # Ok::<(), pond_rs::PondError>(())
 //! ```
+//!
+//! **Latest state per entity, and results that are not a series.** A
+//! ranked table (one row per symbol, sorted by score) is not a
+//! [`TimeSeries`], which is always in time order with its key first. Reduce
+//! each partition's last window with [`TimeSeries::tail`] and
+//! [`TimeSeries::reduce`], then write the table with the re-exported
+//! [`arrow_array`] and [`arrow_ipc`]:
+//!
+//! ```
+//! use std::sync::Arc;
+//! use pond_rs::arrow_array::{ArrayRef, Float64Array, RecordBatch, StringArray};
+//! use pond_rs::{Agg, Column, Reducer, TimeSeries, Value};
+//!
+//! let bars = TimeSeries::new(
+//!     "bars",
+//!     vec![0, 0, 60_000, 60_000, 120_000, 120_000],
+//!     vec![
+//!         Column::required("symbol", vec!["A", "B", "A", "B", "A", "B"]),
+//!         Column::required("close", vec![10.0, 50.0, 11.0, 50.0, 14.0, 49.0]),
+//!     ],
+//! )?;
+//! let mut scores: Vec<(String, f64)> = Vec::new();
+//! for (key, part) in bars.partition_by(&["symbol"])?.iter() {
+//!     let symbol = key[0].as_ref().and_then(Value::as_str).unwrap_or("");
+//!     let last = part.tail("2m")?.reduce(&[
+//!         Agg::new("mean", "close", Reducer::Avg),
+//!         Agg::new("close", "close", Reducer::Last),
+//!     ])?;
+//!     if let (Some(mean), Some(close)) = (last.number("mean")?, last.number("close")?) {
+//!         scores.push((symbol.to_string(), close - mean));
+//!     }
+//! }
+//! scores.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs()));
+//! let table = RecordBatch::try_from_iter([
+//!     ("symbol", Arc::new(StringArray::from_iter_values(scores.iter().map(|s| &s.0))) as ArrayRef),
+//!     ("score", Arc::new(scores.iter().map(|s| s.1).collect::<Float64Array>()) as ArrayRef),
+//! ])
+//! .expect("columns of one length");
+//! assert_eq!(table.num_rows(), 2);
+//! // tail("2m") keeps rows after 0: A's mean is 12.5, its close 14.
+//! assert_eq!(scores[0], ("A".to_string(), 1.5));
+//! // Write it with arrow_ipc::writer::FileWriter, as TimeSeries::write_ipc does.
+//! # Ok::<(), pond_rs::PondError>(())
+//! ```
 
 mod aggregate;
 mod arrow;
@@ -86,6 +132,7 @@ mod sequence;
 mod series;
 mod time_parse;
 
+pub use aggregate::Reduced;
 pub use arrow::ArrowKey;
 pub use column::{
     BooleanColumn, ColumnData, Decimal, DecimalColumn, Float64Column, StringColumn, Value,

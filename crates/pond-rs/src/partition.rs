@@ -262,10 +262,10 @@ impl PartitionedSeries {
         self.map(|g| g.fill_all(fill.clone(), limits))
     }
 
-    /// [`TimeSeries::rolling`] on each partition. Each partition column
-    /// that no output is named after is carried through as a `first`
-    /// output at the end, as pond-ts does, so the result stays
-    /// partitioned.
+    /// [`TimeSeries::rolling`] on each partition. Only the outputs are
+    /// kept, plus each partition column that no output is named after,
+    /// carried through as a `first` output at the end (as pond-ts does), so
+    /// the result stays partitioned.
     pub fn rolling(&self, window: &str, aggs: &[Agg]) -> Result<PartitionedSeries> {
         let aggs = self.with_partition_outputs(aggs);
         self.map(|g| g.rolling(window, &aggs))
