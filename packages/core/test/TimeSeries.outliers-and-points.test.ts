@@ -304,6 +304,37 @@ describe('TimeSeries.fromPoints', () => {
     expect(custom.name).toBe('anomalies');
   });
 
+  it('reads null as a gap, as points parsed from JSON carry it', () => {
+    const points = JSON.parse('[{"ts":0,"v":1},{"ts":1000,"v":null}]');
+    const ts = TimeSeries.fromPoints(points, {
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number', required: false },
+      ] as const,
+    });
+    expect(ts.toPoints()).toEqual([
+      { ts: 0, v: 1 },
+      { ts: 1000, v: undefined },
+    ]);
+    // A required column still refuses the gap, and the time cannot be null.
+    expect(() =>
+      TimeSeries.fromPoints([{ ts: 0, v: null }], {
+        schema: [
+          { name: 'time', kind: 'time' },
+          { name: 'v', kind: 'number' },
+        ] as const,
+      }),
+    ).toThrow(/required/);
+    expect(() =>
+      TimeSeries.fromPoints([{ ts: null, v: 1 }] as never, {
+        schema: [
+          { name: 'time', kind: 'time' },
+          { name: 'v', kind: 'number', required: false },
+        ] as const,
+      }),
+    ).toThrow();
+  });
+
   it('rejects schemas with no value columns', () => {
     expect(() =>
       TimeSeries.fromPoints([{ ts: 0 }], {

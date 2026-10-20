@@ -742,6 +742,274 @@ const JSON_PAYLOADS = [
   ['unicode', jsonTime([[0, null, 'héllo − 😀', null]])],
 ];
 
+// fromColumns payloads, beyond each input's own round trip: every key kind
+// with its flattened columns, the orderings, the errors, and the cells
+// pond-ts coerces (which pond-rs refuses). [id, {schema, columns}, options?];
+// the payload's name is 'c' unless given.
+const COL_TIME_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'v', kind: 'number', required: false },
+  { name: 's', kind: 'string', required: false },
+];
+const COL_RANGE_SCHEMA = [
+  { name: 'timeRange', kind: 'timeRange' },
+  { name: 'v', kind: 'number', required: false },
+];
+const COL_INTERVAL_SCHEMA = [
+  { name: 'interval', kind: 'interval' },
+  { name: 'v', kind: 'number', required: false },
+];
+const colTime = (time, v, s, extra = {}) => ({
+  schema: COL_TIME_SCHEMA,
+  columns: { time, v, s, ...extra },
+});
+const colRange = (timeRange, timeRangeEnd, v) => ({
+  schema: COL_RANGE_SCHEMA,
+  columns: { timeRange, timeRangeEnd, v },
+});
+const colInterval = (interval, intervalEnd, intervalLabel, v) => ({
+  schema: COL_INTERVAL_SCHEMA,
+  columns: { interval, intervalEnd, intervalLabel, v },
+});
+const UNSORTED_TIMES = [3000, 1000, 2000, 1000, 5000];
+const COLUMN_PAYLOADS = [
+  ['plain', colTime([0, 1000], [1.5, null], ['a', null])],
+  ['empty', colTime([], [], [])],
+  ['extra', colTime([0], [1], ['a'], { other: [1, 2, 3] })],
+  [
+    'requiredGap',
+    {
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+        { name: 's', kind: 'string' },
+      ],
+      columns: { time: [0, 1], v: [1, null], s: [null, 'b'] },
+    },
+  ],
+  [
+    'requiredFull',
+    {
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ],
+      columns: { time: [0, 1], v: [1, 2] },
+    },
+  ],
+  [
+    'keyOnly',
+    { schema: [{ name: 'time', kind: 'time' }], columns: { time: [0, 5] } },
+  ],
+  [
+    'otherKeyName',
+    {
+      schema: [
+        { name: 'at', kind: 'time' },
+        { name: 'v', kind: 'number', required: false },
+      ],
+      columns: { at: [0, 5], v: [1, null] },
+    },
+  ],
+  ['noName', { name: undefined, ...colTime([0], [1], ['a']) }],
+  ['missingKey', { schema: COL_TIME_SCHEMA, columns: { v: [1], s: ['a'] } }],
+  ['missingValue', { schema: COL_TIME_SCHEMA, columns: { time: [0], v: [1] } }],
+  ['shortValue', colTime([0, 1], [1], ['a', 'b'])],
+  ['longValue', colTime([0], [1], ['a', 'b'])],
+  ['nullKey', colTime([null], [1], ['a'])],
+  ['textDateKey', colTime(['2025-01-01'], [1], ['a'])],
+  [
+    'booleanKind',
+    {
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'b', kind: 'boolean', required: false },
+      ],
+      columns: { time: [0], b: [true] },
+    },
+  ],
+  [
+    'arrayKind',
+    {
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'a', kind: 'array', required: false },
+      ],
+      columns: { time: [0], a: [[1]] },
+    },
+  ],
+  [
+    'badKeyKind',
+    {
+      schema: [
+        { name: 'v', kind: 'number' },
+        { name: 'w', kind: 'number' },
+      ],
+      columns: { v: [0], w: [1] },
+    },
+  ],
+  [
+    'duplicateName',
+    {
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number', required: false },
+        { name: 'v', kind: 'number', required: false },
+      ],
+      columns: { time: [0], v: [1] },
+    },
+  ],
+  [
+    'unsorted',
+    colTime(UNSORTED_TIMES, [1, 2, 3, 4, 5], ['a', 'b', null, 'd', 'e']),
+  ],
+  [
+    'unsorted-reorder',
+    colTime(UNSORTED_TIMES, [1, 2, 3, 4, 5], ['a', 'b', null, 'd', 'e']),
+    { ordering: 'reorder' },
+  ],
+  [
+    'unsorted-clamp',
+    colTime(UNSORTED_TIMES, [1, 2, 3, 4, 5], ['a', 'b', null, 'd', 'e']),
+    { ordering: 'clamp' },
+  ],
+  ['sorted-clamp', colTime([0, 0], [1, 2], ['a', 'b']), { ordering: 'clamp' }],
+  ['ranges', colRange([0, 0, 5], [1000, 2000, 5], [1, null, 3])],
+  ['rangesBackwards', colRange([1000], [0], [1])],
+  [
+    'rangesMissingEnd',
+    { schema: COL_RANGE_SCHEMA, columns: { timeRange: [0], v: [1] } },
+  ],
+  ['rangesShortEnd', colRange([0, 1], [5], [1, 2])],
+  [
+    'rangesUnsorted-reorder',
+    colRange([5, 0, 0, 5], [9, 9, 3, 9], [1, 2, 3, 4]),
+    { ordering: 'reorder' },
+  ],
+  ['rangesUnsorted', colRange([0, 0], [9, 3], [1, 2])],
+  ['rangesSorted-clamp', colRange([0], [3], [1]), { ordering: 'clamp' }],
+  [
+    'rangesCollision',
+    {
+      schema: [...COL_RANGE_SCHEMA, { name: 'timeRangeEnd', kind: 'number' }],
+      columns: { timeRange: [0], timeRangeEnd: [5], v: [1] },
+    },
+  ],
+  ['intervals', colInterval([0, 1000], [1000, 2000], ['a', 'b'], [1, null])],
+  ['intervalsNumber', colInterval([0, 1000], [1000, 2000], [0, -0], [1, 2])],
+  ['intervalsMixed', colInterval([0, 1000], [1000, 2000], ['a', 3], [1, 2])],
+  ['intervalsNullLabel', colInterval([0], [1000], [null], [1])],
+  ['intervalsBoolLabel', colInterval([0], [1000], [true], [1])],
+  [
+    'intervalsMissingLabel',
+    {
+      schema: COL_INTERVAL_SCHEMA,
+      columns: { interval: [0], intervalEnd: [1], v: [1] },
+    },
+  ],
+  ['intervalsShortLabel', colInterval([0, 1], [1, 2], ['a'], [1, 2])],
+  [
+    'intervalsUnsorted-reorder',
+    colInterval([5, 0, 0], [9, 9, 3], ['x', 'y', 'z'], [1, 2, 3]),
+    { ordering: 'reorder' },
+  ],
+  [
+    'intervalsCollision',
+    {
+      schema: [
+        ...COL_INTERVAL_SCHEMA,
+        { name: 'intervalLabel', kind: 'string' },
+      ],
+      columns: {
+        interval: [0],
+        intervalEnd: [5],
+        intervalLabel: ['a'],
+        v: [1],
+      },
+    },
+  ],
+  // Accepted by pond-ts, refused by pond-rs: pond-ts coerces the cell.
+  ['numberAsText', colTime([0], ['5'], [null])],
+  ['numberAsBool', colTime([0], [true], [null])],
+  ['textAsNumber', colTime([0], [null], [5])],
+  ['keyAsText', colTime(['5'], [1], [null])],
+  ['keyAsBool', colTime([true], [1], [null])],
+  ['fractionKey', colTime([1.5], [1], [null])],
+  ['farKey', colTime([8.64e15 + 1], [1], [null])],
+];
+
+// fromPoints payloads, beyond each time-keyed input's round trip.
+// [id, points, schema]; the name is always 'p'.
+const POINT_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'v', kind: 'number', required: false },
+  { name: 's', kind: 'string', required: false },
+  { name: 'b', kind: 'boolean', required: false },
+];
+const POINT_PAYLOADS = [
+  [
+    'plain',
+    [
+      { ts: 0, v: 1.5, s: 'a', b: true },
+      { ts: 1000, v: null, s: null, b: null },
+      { ts: 2000 },
+      { s: 'x', ts: 3000, other: 9 },
+    ],
+    POINT_SCHEMA,
+  ],
+  ['empty', [], POINT_SCHEMA],
+  [
+    'equalTimes',
+    [
+      { ts: 5, v: 1 },
+      { ts: 5, v: 2 },
+    ],
+    POINT_SCHEMA,
+  ],
+  ['unsorted', [{ ts: 5 }, { ts: 0 }], POINT_SCHEMA],
+  ['noTs', [{ v: 1 }], POINT_SCHEMA],
+  ['nullTs', [{ ts: null }], POINT_SCHEMA],
+  ['textTs', [{ ts: '2025-01-01T00:00:00Z' }], POINT_SCHEMA],
+  ['arrayPoint', [[0, 1]], POINT_SCHEMA],
+  ['nullPoint', [null], POINT_SCHEMA],
+  ['numberAsText', [{ ts: 0, v: '5' }], POINT_SCHEMA],
+  ['textAsNumber', [{ ts: 0, s: 5 }], POINT_SCHEMA],
+  ['boolAsNumber', [{ ts: 0, b: 1 }], POINT_SCHEMA],
+  [
+    'requiredGap',
+    [{ ts: 0 }],
+    [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number' },
+    ],
+  ],
+  [
+    'requiredFull',
+    [{ ts: 0, v: 2 }],
+    [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number' },
+    ],
+  ],
+  ['keyOnly', [{ ts: 0 }], [{ name: 'time', kind: 'time' }]],
+  [
+    'rangeKey',
+    [{ ts: 0, v: 1 }],
+    [{ name: 'timeRange', kind: 'timeRange' }, POINT_SCHEMA[1]],
+  ],
+  // Accepted by pond-ts, refused by pond-rs.
+  ['fractionTs', [{ ts: 1.5, v: 1 }], POINT_SCHEMA],
+  ['farTs', [{ ts: 8.64e15 + 1, v: 1 }], POINT_SCHEMA],
+  [
+    'tsColumn',
+    [{ ts: 7 }],
+    [
+      { name: 'time', kind: 'time' },
+      { name: 'ts', kind: 'number' },
+    ],
+  ],
+];
+
 /** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
 const CASES = [
   // rolling: time window, trailing, keyed at each event
@@ -1966,6 +2234,20 @@ const HOSTS_ROWS = [
   [21000, 'b', 'eu', true, 1.25, 15],
 ];
 
+/** As sent over the wire: `JSON.stringify` drops `undefined` and -0's sign. */
+function wire(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+/** `{ ...head, expected: run() }`, or `{ ...head, error }` if it throws. */
+function attempt(head, run) {
+  try {
+    return { ...head, expected: run() };
+  } catch (e) {
+    return { ...head, error: { name: e.name, message: e.message } };
+  }
+}
+
 /** Tag the numbers plain JSON would lose or change. */
 function encodeCell(cell) {
   if (Array.isArray(cell)) return cell.map(encodeCell);
@@ -2453,6 +2735,65 @@ export function buildFixture(pond) {
           return { ...head, error: { name: e.name, message: e.message } };
         }
       }),
+    },
+    // Columnar and point JSON (pond-ts toColumns / fromColumns / toPoints /
+    // fromPoints), as written on the wire: every input out, each one back,
+    // plus COLUMN_PAYLOADS and POINT_PAYLOADS. A case has expected or error.
+    columnsJson: {
+      toColumns: Object.entries(inputs).map(([input, series]) =>
+        attempt({ input }, () => wire(series.toColumns())),
+      ),
+      fromColumns: [
+        ...Object.entries(inputs).flatMap(([input, series]) => {
+          try {
+            return [[`roundTrip-${input}`, wire(series.toColumns())]];
+          } catch {
+            return [];
+          }
+        }),
+        ...COLUMN_PAYLOADS.map(([id, payload, options]) => [
+          id,
+          wire({ name: 'c', ...payload }),
+          options,
+        ]),
+      ].map(([id, payload, options]) =>
+        attempt(
+          options === undefined ? { id, payload } : { id, payload, options },
+          () =>
+            encodeSeries(
+              TimeSeries.fromColumns({
+                ...payload,
+                ...(options?.ordering === undefined
+                  ? {}
+                  : { ordering: options.ordering }),
+              }),
+            ),
+        ),
+      ),
+      toPoints: Object.entries(inputs).map(([input, series]) =>
+        attempt({ input }, () => wire(series.toPoints())),
+      ),
+      fromPoints: [
+        ...Object.entries(inputs)
+          .filter(
+            ([, series]) =>
+              series.schema[0].kind === 'time' && series.schema.length > 1,
+          )
+          .map(([input, series]) => [
+            `roundTrip-${input}`,
+            wire(series.toPoints()),
+            series.schema,
+          ]),
+        ...POINT_PAYLOADS.map(([id, points, schema]) => [
+          id,
+          wire(points),
+          schema,
+        ]),
+      ].map(([id, points, schema]) =>
+        attempt({ id, points, schema }, () =>
+          encodeSeries(TimeSeries.fromPoints(points, { schema, name: 'p' })),
+        ),
+      ),
     },
     timeParse: TIME_PARSE_TEXTS.flatMap((input) =>
       TIME_PARSE_ZONES.map((timeZone) => {

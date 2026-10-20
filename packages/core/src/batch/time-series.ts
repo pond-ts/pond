@@ -5939,7 +5939,8 @@ export class TimeSeries<S extends SeriesSchema> {
    * Example: `TimeSeries.fromPoints(pts, { schema: [...] })`.
    * Construct a `TimeSeries` from a flat array of wide-row points —
    * the inverse of `toPoints()`. Each point carries `ts` plus one key
-   * per value column from the schema; missing keys become `undefined`.
+   * per value column from the schema; a missing key or a `null` (as in
+   * points parsed from JSON) is a gap.
    *
    * The schema's first column must be `kind: 'time'` — `ts` is a
    * single timestamp and can't reconstruct a `TimeRange` or
@@ -5972,7 +5973,11 @@ export class TimeSeries<S extends SeriesSchema> {
         (p) =>
           [
             p.ts,
-            ...valueCols.map((col) => p[col.name] as ScalarValue | undefined),
+            // `null` is a gap, as in `fromJSON`: points parsed from JSON
+            // carry `null`, never `undefined`.
+            ...valueCols.map(
+              (col) => (p[col.name] ?? undefined) as ScalarValue | undefined,
+            ),
           ] as unknown,
       ) as unknown as TimeSeriesInput<S>['rows'],
     });

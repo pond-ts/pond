@@ -3,6 +3,8 @@
 
 use serde_json::Value;
 
+use crate::json_text::{Json, NULL};
+
 use crate::column::{BooleanColumn, ColumnData, Float64Column, StringColumn};
 use crate::error::{PondError, Result};
 use crate::series::{Column, ColumnKind, IntervalKeys, Key, Labels, TimeRangeKeys, TimeSeries};
@@ -74,11 +76,8 @@ pub enum RowFormat {
 const FROM: &str = "from_json";
 const TO: &str = "to_json";
 
-fn invalid(message: String) -> PondError {
-    PondError::InvalidData {
-        call: FROM,
-        message,
-    }
+pub(crate) fn invalid(call: &'static str, message: String) -> PondError {
+    PondError::InvalidData { call, message }
 }
 
 impl TimeSeries {
@@ -137,185 +136,13 @@ impl TimeSeries {
     /// ±[`MAX_TIME_MS`](crate::MAX_TIME_MS); a missing `name`; an `array`
     /// column (not in pond-rs yet).
     pub fn from_json(text: &str, options: &JsonOptions) -> Result<TimeSeries> {
-        let value: Value = serde_json::from_str(text)
-            .map_err(|e| invalid(format!("the text is not JSON: {e}")))?;
-        Self::from_json_value(&value, options)
+        read_json(&parse(FROM, text)?, options)
     }
 
     /// [`TimeSeries::from_json`] from JSON already parsed with
     /// [`serde_json`].
     pub fn from_json_value(value: &Value, options: &JsonOptions) -> Result<TimeSeries> {
-        let name = value
-            .get("name")
-            .and_then(Value::as_str)
-            .ok_or_else(|| invalid("expected a \"name\" that is a string".into()))?;
-        let schema = read_schema(value.get("schema"))?;
-        let rows = value
-            .get("rows")
-            .and_then(Value::as_array)
-            .ok_or_else(|| invalid("expected \"rows\" as an array".into()))?;
-        let (key_name, key_kind) = (&schema[0].0, schema[0].1);
-        if options.order == KeyOrder::Clamp && key_kind != ColumnKind::Time {
-            return Err(invalid(format!(
-                "KeyOrder::Clamp is for point-in-time keys only; this key is '{}' (use KeyOrder::Reorder, or sort the rows first)",
-                key_kind.as_str()
-            )));
-        }
-        let read_time = |v: &Value, row: usize| read_time(v, row, &options.time_zone);
-
-        let n = rows.len();
-        let mut begin = Vec::with_capacity(n);
-        let mut end = Vec::with_capacity(n);
-        let mut labels: Vec<LabelCell> = Vec::new();
-        let mut cells: Vec<Vec<&Value>> = vec![Vec::with_capacity(n); schema.len() - 1];
-        for (i, row) in rows.iter().enumerate() {
-            let at = |c: usize| -> Option<&Value> {
-                match row {
-                    Value::Array(a) => a.get(c),
-                    Value::Object(o) => o.get(&schema[c].0),
-                    _ => None,
-                }
-            };
-            match row {
-                Value::Array(a) if a.len() != schema.len() => {
-                    return Err(invalid(format!(
-                        "row {i} has {} values; the schema has {} columns",
-                        a.len(),
-                        schema.len()
-                    )));
-                }
-                Value::Array(_) | Value::Object(_) => {}
-                _ => return Err(invalid(format!("row {i} is not an array or an object"))),
-            }
-            let key = at(0).unwrap_or(&Value::Null);
-            match key_kind {
-                ColumnKind::Time => {
-                    let t = read_time(key, i)?;
-                    begin.push(t);
-                }
-                ColumnKind::TimeRange => {
-                    let (b, e) = read_span(key, i, false)?;
-                    begin.push(read_time(b, i)?);
-                    end.push(read_time(e, i)?);
-                }
-                _ => {
-                    let (b, e) = read_span(key, i, true)?;
-                    let label = match key {
-                        Value::Array(a) => &a[0],
-                        _ => &key["value"],
-                    };
-                    labels.push(read_label(label, i, labels.first())?);
-                    begin.push(read_time(b, i)?);
-                    end.push(read_time(e, i)?);
-                }
-            }
-            if let Some(&b) = end.last()
-                && b < *begin.last().expect("pushed with end")
-            {
-                return Err(invalid(format!(
-                    "the key at row {i} ends ({b}) before it starts ({})",
-                    begin[i]
-                )));
-            }
-            for (c, cells) in cells.iter_mut().enumerate() {
-                cells.push(at(c + 1).unwrap_or(&Value::Null));
-            }
-        }
-
-        // Rows in the order the series will hold them.
-        let order: Option<Vec<usize>> = match options.order {
-            KeyOrder::Reorder => {
-                let mut order: Vec<usize> = (0..n).collect();
-                order.sort_by_key(|&i| (begin[i], end.get(i).copied().unwrap_or(0)));
-                Some(order)
-            }
-            KeyOrder::Clamp => {
-                for i in 1..n {
-                    begin[i] = begin[i].max(begin[i - 1]);
-                }
-                None
-            }
-            KeyOrder::Strict => None,
-        };
-        let pick = |v: &mut Vec<i64>| {
-            if let Some(order) = order.as_ref().filter(|_| !v.is_empty()) {
-                *v = order.iter().map(|&i| v[i]).collect();
-            }
-        };
-        pick(&mut begin);
-        pick(&mut end);
-        let row_at = |r: usize| order.as_ref().map_or(r, |o| o[r]);
-
-        let mut columns = Vec::with_capacity(schema.len() - 1);
-        for (c, (col_name, kind, required)) in schema.iter().skip(1).enumerate() {
-            let cell = |r: usize| cells[c][row_at(r)];
-            let wrong = |r: usize, want: &str| {
-                invalid(format!(
-                    "row {} column '{col_name}': expected {want}, got {}",
-                    row_at(r),
-                    cells[c][row_at(r)]
-                ))
-            };
-            let data: ColumnData = match kind {
-                ColumnKind::Number => Float64Column::from_options(
-                    (0..n)
-                        .map(|r| match cell(r) {
-                            Value::Null => Ok(None),
-                            Value::Number(v) => Ok(v.as_f64()),
-                            _ => Err(wrong(r, "a number")),
-                        })
-                        .collect::<Result<Vec<_>>>()?,
-                )
-                .into(),
-                ColumnKind::String => StringColumn::from_options(
-                    (0..n)
-                        .map(|r| match cell(r) {
-                            Value::Null => Ok(None),
-                            Value::String(v) => Ok(Some(v.as_str())),
-                            _ => Err(wrong(r, "a string")),
-                        })
-                        .collect::<Result<Vec<_>>>()?,
-                )
-                .into(),
-                _ => BooleanColumn::from_options(
-                    (0..n)
-                        .map(|r| match cell(r) {
-                            Value::Null => Ok(None),
-                            Value::Bool(v) => Ok(Some(*v)),
-                            _ => Err(wrong(r, "true or false")),
-                        })
-                        .collect::<Result<Vec<_>>>()?,
-                )
-                .into(),
-            };
-            columns.push(Column::from_data(col_name.clone(), data, *required));
-        }
-
-        let key = match key_kind {
-            ColumnKind::Time => Key::Time(begin),
-            ColumnKind::TimeRange => Key::TimeRange(TimeRangeKeys { begin, end }),
-            _ => {
-                let label = if matches!(labels.first(), Some(LabelCell::Number(_))) {
-                    Labels::Number(
-                        (0..n)
-                            .map(|r| match labels[row_at(r)] {
-                                LabelCell::Number(v) => v,
-                                LabelCell::String(_) => unreachable!("one kind"),
-                            })
-                            .collect(),
-                    )
-                } else {
-                    Labels::String(StringColumn::from_options((0..n).map(|r| {
-                        match &labels[row_at(r)] {
-                            LabelCell::String(s) => Some(*s),
-                            LabelCell::Number(_) => unreachable!("one kind"),
-                        }
-                    })))
-                };
-                Key::Interval(IntervalKeys { label, begin, end })
-            }
-        };
-        TimeSeries::with_key(FROM, name.to_string(), key_name.clone(), key, columns)
+        read_json(&Json::from_value(value), options)
     }
 
     /// Write the series in pond-ts's JSON format (see
@@ -328,45 +155,23 @@ impl TimeSeries {
     /// `"required": false` on a value column that allows gaps. pond-ts
     /// writes back the schema it was given, so a schema read with extra
     /// entries (`"required": true`, other properties) comes out without
-    /// them here.
+    /// them here. Object rows list names in schema order; JavaScript puts
+    /// names that look like whole numbers (`"1"`) first, so for such a
+    /// column pond-ts's text has another order (the JSON means the same).
     ///
     /// An error for a decimal column, which pond-ts has no kind for: convert
     /// it with [`TimeSeries::map_decimals`] first, or write Arrow
     /// ([`TimeSeries::write_ipc`]), which keeps it exact.
     pub fn to_json(&self, format: RowFormat) -> Result<String> {
-        if let Some(c) = self
-            .columns()
-            .iter()
-            .find(|c| c.kind() == ColumnKind::Decimal)
-        {
-            return Err(PondError::Unsupported {
-                call: TO,
-                message: format!(
-                    "column '{}' holds exact decimals, which pond-ts's JSON has no kind for; map it to numbers first, or write Arrow, which keeps it exact",
-                    c.name()
-                ),
-            });
-        }
+        refuse_decimals(TO, self)?;
         // Written straight to text: building a `Value` tree first cost
         // several times as much (a map per object row).
         let mut out = Vec::with_capacity(64 + self.len() * 16 * (1 + self.columns().len()));
         out.extend_from_slice(b"{\"name\":");
         push_text(&mut out, self.name());
-        out.extend_from_slice(b",\"schema\":[");
-        for (i, def) in self.schema().iter().enumerate() {
-            if i > 0 {
-                out.push(b',');
-            }
-            out.extend_from_slice(b"{\"name\":");
-            push_text(&mut out, &def.name);
-            out.extend_from_slice(b",\"kind\":");
-            push_text(&mut out, def.kind.as_str());
-            if i > 0 && !def.required {
-                out.extend_from_slice(b",\"required\":false");
-            }
-            out.push(b'}');
-        }
-        out.extend_from_slice(b"],\"rows\":[");
+        out.extend_from_slice(b",\"schema\":");
+        push_schema(&mut out, self);
+        out.extend_from_slice(b",\"rows\":[");
         // Each name once, escaped, with its colon: `"cpu":`.
         let field = |name: &str| {
             let mut f = Vec::new();
@@ -391,22 +196,7 @@ impl TimeSeries {
                 if object {
                     out.extend_from_slice(&fields[c]);
                 }
-                match column.data() {
-                    ColumnData::Number(v) => match v.get(i) {
-                        Some(x) => push_number(&mut out, x),
-                        None => out.extend_from_slice(b"null"),
-                    },
-                    ColumnData::String(v) => match v.get(i) {
-                        Some(x) => push_text(&mut out, x),
-                        None => out.extend_from_slice(b"null"),
-                    },
-                    ColumnData::Boolean(v) => out.extend_from_slice(match v.get(i) {
-                        Some(true) => b"true",
-                        Some(false) => b"false",
-                        None => b"null",
-                    }),
-                    ColumnData::Decimal(_) => unreachable!("refused above"),
-                }
+                push_cell(&mut out, column.data(), i);
             }
             out.push(if object { b'}' } else { b']' });
         }
@@ -450,13 +240,319 @@ impl TimeSeries {
     }
 }
 
-fn push_int(out: &mut Vec<u8>, v: i64) {
+/// [`TimeSeries::from_json`] on parsed JSON.
+fn read_json(value: &Json, options: &JsonOptions) -> Result<TimeSeries> {
+    let name = read_name(FROM, value)?;
+    let schema = read_schema(FROM, value.get("schema"))?;
+    let rows = value
+        .get("rows")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| invalid(FROM, "expected \"rows\" as an array".into()))?;
+    read_rows(
+        FROM,
+        name,
+        &schema,
+        rows,
+        RowShape::Rows,
+        Some(&options.time_zone),
+        options.order,
+    )
+}
+
+/// How each row of [`read_rows`] is laid out.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RowShape {
+    /// pond-ts `fromJSON` rows: an array in schema order or an object keyed
+    /// by column name.
+    Rows,
+    /// pond-ts `fromPoints`: an object with the time under `ts`.
+    Points,
+}
+
+/// Build a series from row-shaped JSON. `zone` is `None` where pond-ts takes
+/// times only as numbers.
+pub(crate) fn read_rows(
+    call: &'static str,
+    name: &str,
+    schema: &[(String, ColumnKind, bool)],
+    rows: &[Json],
+    shape: RowShape,
+    zone: Option<&str>,
+    order: KeyOrder,
+) -> Result<TimeSeries> {
+    let (key_name, key_kind) = (&schema[0].0, schema[0].1);
+    if order == KeyOrder::Clamp && key_kind != ColumnKind::Time {
+        return Err(invalid(
+            call,
+            format!(
+                "KeyOrder::Clamp is for point-in-time keys only; this key is '{}' (use KeyOrder::Reorder, or sort the rows first)",
+                key_kind.as_str()
+            ),
+        ));
+    }
+    let read_time = |v: &Json, row: usize| read_time(call, v, row, zone);
+
+    let n = rows.len();
+    let mut begin = Vec::with_capacity(n);
+    let mut end = Vec::with_capacity(n);
+    let mut labels: Vec<LabelCell> = Vec::new();
+    let mut cells: Vec<Vec<&Json>> = vec![Vec::with_capacity(n); schema.len() - 1];
+    // Where each name in an object row goes. Points hold the time under
+    // "ts".
+    let names: Vec<&str> = std::iter::once(match shape {
+        RowShape::Points => "ts",
+        RowShape::Rows => key_name.as_str(),
+    })
+    .chain(schema[1..].iter().map(|c| c.0.as_str()))
+    .collect();
+    let mut column_of: std::collections::HashMap<&str, usize> = Default::default();
+    for (c, name) in names.iter().enumerate().rev() {
+        column_of.insert(name, c);
+    }
+    let mut slots: Vec<&Json> = vec![NULL; schema.len()];
+    for (i, row) in rows.iter().enumerate() {
+        match row {
+            Json::Object(o) => {
+                // A later entry with the same name wins, as in JSON.parse.
+                slots.fill(NULL);
+                for (p, (k, v)) in o.entries().iter().enumerate() {
+                    // Rows usually list names in schema order: check that
+                    // before hashing.
+                    let c = match names.get(p) {
+                        Some(name) if *name == k.as_ref() => Some(p),
+                        _ => column_of.get(k.as_ref()).copied(),
+                    };
+                    if let Some(c) = c {
+                        slots[c] = v;
+                    }
+                }
+            }
+            _ if shape == RowShape::Points => {
+                return Err(invalid(call, format!("point {i} is not an object")));
+            }
+            Json::Array(a) if a.len() != schema.len() => {
+                return Err(invalid(
+                    call,
+                    format!(
+                        "row {i} has {} values; the schema has {} columns",
+                        a.len(),
+                        schema.len()
+                    ),
+                ));
+            }
+            Json::Array(a) => {
+                for (slot, v) in slots.iter_mut().zip(a) {
+                    *slot = v;
+                }
+            }
+            _ => {
+                return Err(invalid(
+                    call,
+                    format!("row {i} is not an array or an object"),
+                ));
+            }
+        }
+        let key = slots[0];
+        match key_kind {
+            ColumnKind::Time => {
+                let t = read_time(key, i)?;
+                begin.push(t);
+            }
+            ColumnKind::TimeRange => {
+                let (b, e) = read_span(call, key, i, false)?;
+                begin.push(read_time(b, i)?);
+                end.push(read_time(e, i)?);
+            }
+            _ => {
+                let (b, e) = read_span(call, key, i, true)?;
+                let label = match key {
+                    Json::Array(a) => &a[0],
+                    _ => key.get("value").unwrap_or(NULL),
+                };
+                labels.push(read_label(call, label, i, labels.first())?);
+                begin.push(read_time(b, i)?);
+                end.push(read_time(e, i)?);
+            }
+        }
+        if let Some(&b) = end.last()
+            && b < *begin.last().expect("pushed with end")
+        {
+            return Err(invalid(
+                call,
+                format!(
+                    "the key at row {i} ends ({b}) before it starts ({})",
+                    begin[i]
+                ),
+            ));
+        }
+        for (cells, v) in cells.iter_mut().zip(&slots[1..]) {
+            cells.push(v);
+        }
+    }
+
+    // Rows in the order the series will hold them.
+    let order: Option<Vec<usize>> = match order {
+        KeyOrder::Reorder => {
+            let mut order: Vec<usize> = (0..n).collect();
+            order.sort_by_key(|&i| (begin[i], end.get(i).copied().unwrap_or(0)));
+            Some(order)
+        }
+        KeyOrder::Clamp => {
+            for i in 1..n {
+                begin[i] = begin[i].max(begin[i - 1]);
+            }
+            None
+        }
+        KeyOrder::Strict => None,
+    };
+    let pick = |v: &mut Vec<i64>| {
+        if let Some(order) = order.as_ref().filter(|_| !v.is_empty()) {
+            *v = order.iter().map(|&i| v[i]).collect();
+        }
+    };
+    pick(&mut begin);
+    pick(&mut end);
+    let row_at = |r: usize| order.as_ref().map_or(r, |o| o[r]);
+
+    let mut columns = Vec::with_capacity(schema.len() - 1);
+    for (c, (col_name, kind, required)) in schema.iter().skip(1).enumerate() {
+        let cell = |r: usize| cells[c][row_at(r)];
+        let wrong = |r: usize, want: &str| {
+            invalid(
+                call,
+                format!(
+                    "row {} column '{col_name}': expected {want}, got {}",
+                    row_at(r),
+                    cells[c][row_at(r)]
+                ),
+            )
+        };
+        let data: ColumnData = match kind {
+            ColumnKind::Number => Float64Column::from_options(
+                (0..n)
+                    .map(|r| match cell(r) {
+                        Json::Null => Ok(None),
+                        Json::Number(v) => Ok(v.as_f64()),
+                        _ => Err(wrong(r, "a number")),
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            )
+            .into(),
+            ColumnKind::String => StringColumn::from_options(
+                (0..n)
+                    .map(|r| match cell(r) {
+                        Json::Null => Ok(None),
+                        Json::String(v) => Ok(Some(v.as_ref())),
+                        _ => Err(wrong(r, "a string")),
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            )
+            .into(),
+            _ => BooleanColumn::from_options(
+                (0..n)
+                    .map(|r| match cell(r) {
+                        Json::Null => Ok(None),
+                        Json::Bool(v) => Ok(Some(*v)),
+                        _ => Err(wrong(r, "true or false")),
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            )
+            .into(),
+        };
+        columns.push(Column::from_data(col_name.clone(), data, *required));
+    }
+
+    let key = match key_kind {
+        ColumnKind::Time => Key::Time(begin),
+        ColumnKind::TimeRange => Key::TimeRange(TimeRangeKeys { begin, end }),
+        _ => {
+            let label = if matches!(labels.first(), Some(LabelCell::Number(_))) {
+                Labels::Number(
+                    (0..n)
+                        .map(|r| match labels[row_at(r)] {
+                            LabelCell::Number(v) => v,
+                            LabelCell::String(_) => unreachable!("one kind"),
+                        })
+                        .collect(),
+                )
+            } else {
+                Labels::String(StringColumn::from_options((0..n).map(|r| {
+                    match &labels[row_at(r)] {
+                        LabelCell::String(s) => Some(*s),
+                        LabelCell::Number(_) => unreachable!("one kind"),
+                    }
+                })))
+            };
+            Key::Interval(IntervalKeys { label, begin, end })
+        }
+    };
+    TimeSeries::with_key(call, name.to_string(), key_name.clone(), key, columns)
+}
+
+/// The schema as pond-ts writes it.
+pub(crate) fn push_schema(out: &mut Vec<u8>, series: &TimeSeries) {
+    out.push(b'[');
+    for (i, def) in series.schema().iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        out.extend_from_slice(b"{\"name\":");
+        push_text(out, &def.name);
+        out.extend_from_slice(b",\"kind\":");
+        push_text(out, def.kind.as_str());
+        if i > 0 && !def.required {
+            out.extend_from_slice(b",\"required\":false");
+        }
+        out.push(b'}');
+    }
+    out.push(b']');
+}
+
+/// One value cell; `null` for a gap. Not for decimal columns.
+pub(crate) fn push_cell(out: &mut Vec<u8>, data: &ColumnData, i: usize) {
+    match data {
+        ColumnData::Number(v) => match v.get(i) {
+            Some(x) => push_number(out, x),
+            None => out.extend_from_slice(b"null"),
+        },
+        ColumnData::String(v) => match v.get(i) {
+            Some(x) => push_text(out, x),
+            None => out.extend_from_slice(b"null"),
+        },
+        ColumnData::Boolean(v) => out.extend_from_slice(match v.get(i) {
+            Some(true) => b"true",
+            Some(false) => b"false",
+            None => b"null",
+        }),
+        ColumnData::Decimal(_) => unreachable!("decimals are refused first"),
+    }
+}
+
+/// pond-ts has no kind for exact decimals.
+pub(crate) fn refuse_decimals(call: &'static str, series: &TimeSeries) -> Result<()> {
+    match series
+        .columns()
+        .iter()
+        .find(|c| c.kind() == ColumnKind::Decimal)
+    {
+        Some(c) => Err(PondError::Unsupported {
+            call,
+            message: format!(
+                "column '{}' holds exact decimals, which pond-ts's JSON has no kind for; map it to numbers first, or write Arrow, which keeps it exact",
+                c.name()
+            ),
+        }),
+        None => Ok(()),
+    }
+}
+
+pub(crate) fn push_int(out: &mut Vec<u8>, v: i64) {
     use std::io::Write;
     write!(out, "{v}").expect("writing to a Vec cannot fail");
 }
 
 /// Text as a JSON string, escaped as `serde_json` escapes it.
-fn push_text(out: &mut Vec<u8>, text: &str) {
+pub(crate) fn push_text(out: &mut Vec<u8>, text: &str) {
     serde_json::to_writer(out, text).expect("writing to a Vec cannot fail");
 }
 
@@ -464,7 +560,7 @@ fn push_text(out: &mut Vec<u8>, text: &str) {
 /// `Number::toString`): the shortest digits that read back to the same
 /// number, written out in full from 1e-6 up to 1e21 and with an exponent
 /// (`1e-7`, `1.5e+21`) outside that; `-0` as `0`; `null` when not finite.
-fn push_number(out: &mut Vec<u8>, v: f64) {
+pub(crate) fn push_number(out: &mut Vec<u8>, v: f64) {
     if !v.is_finite() {
         out.extend_from_slice(b"null");
         return;
@@ -617,13 +713,32 @@ fn exact_digits(v: f64, most: usize) -> Option<Vec<u8>> {
     (significant.len() <= most).then(|| significant.as_bytes().to_vec())
 }
 
+/// Parse JSON text.
+pub(crate) fn parse<'a>(call: &'static str, text: &'a str) -> Result<Json<'a>> {
+    serde_json::from_str(text).map_err(|e| invalid(call, format!("the text is not JSON: {e}")))
+}
+
+/// The `name` of a JSON series.
+pub(crate) fn read_name<'a>(call: &'static str, value: &'a Json<'_>) -> Result<&'a str> {
+    value
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| invalid(call, "expected a \"name\" that is a string".into()))
+}
+
 /// The schema as (name, kind, required), key first.
-fn read_schema(schema: Option<&Value>) -> Result<Vec<(String, ColumnKind, bool)>> {
+pub(crate) fn read_schema(
+    call: &'static str,
+    schema: Option<&Json>,
+) -> Result<Vec<(String, ColumnKind, bool)>> {
     let entries = schema
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid("expected \"schema\" as an array".into()))?;
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| invalid(call, "expected \"schema\" as an array".into()))?;
     if entries.is_empty() {
-        return Err(invalid("the schema needs at least a key column".into()));
+        return Err(invalid(
+            call,
+            "the schema needs at least a key column".into(),
+        ));
     }
     entries
         .iter()
@@ -631,15 +746,15 @@ fn read_schema(schema: Option<&Value>) -> Result<Vec<(String, ColumnKind, bool)>
         .map(|(c, entry)| {
             let name = entry
                 .get("name")
-                .and_then(Value::as_str)
-                .ok_or_else(|| invalid(format!("schema column {c} has no \"name\"")))?;
-            let kind_text = entry.get("kind").and_then(Value::as_str).unwrap_or("");
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| invalid(call, format!("schema column {c} has no \"name\"")))?;
+            let kind_text = entry.get("kind").and_then(|v| v.as_str()).unwrap_or("");
             let kind = match (c, kind_text) {
                 (0, "time") => ColumnKind::Time,
                 (0, "timeRange") => ColumnKind::TimeRange,
                 (0, "interval") => ColumnKind::Interval,
                 (0, other) => {
-                    return Err(invalid(format!(
+                    return Err(invalid(call, format!(
                         "the first schema column is the key, and must be 'time', 'timeRange' or 'interval'; got '{other}'"
                     )));
                 }
@@ -648,29 +763,35 @@ fn read_schema(schema: Option<&Value>) -> Result<Vec<(String, ColumnKind, bool)>
                 (_, "boolean") => ColumnKind::Boolean,
                 (_, "array") => {
                     return Err(PondError::Unsupported {
-                        call: FROM,
+                        call,
                         message: format!(
                             "column '{name}' is an array column, which pond-rs does not have yet"
                         ),
                     });
                 }
                 (_, other) => {
-                    return Err(invalid(format!(
+                    return Err(invalid(call, format!(
                         "column '{name}' has kind '{other}'; value columns are 'number', 'string' or 'boolean'"
                     )));
                 }
             };
             // As in pond-ts, only `required: false` allows gaps.
-            let required = entry.get("required") != Some(&Value::Bool(false));
+            let required = entry.get("required") != Some(&Json::Bool(false));
             Ok((name.to_string(), kind, required))
         })
         .collect()
 }
 
-/// A time: epoch milliseconds, or text read in `zone`.
-fn read_time(v: &Value, row: usize, zone: &str) -> Result<i64> {
+/// A time: epoch milliseconds, or text read in `zone` (refused when `zone`
+/// is `None`).
+pub(crate) fn read_time(
+    call: &'static str,
+    v: &Json,
+    row: usize,
+    zone: Option<&str>,
+) -> Result<i64> {
     match v {
-        Value::Number(n) => {
+        Json::Number(n) => {
             if let Some(t) = n.as_i64() {
                 return Ok(t);
             }
@@ -679,62 +800,92 @@ fn read_time(v: &Value, row: usize, zone: &str) -> Result<i64> {
             if f.fract() == 0.0 && f.abs() < 9.3e18 {
                 return Ok(f as i64);
             }
-            Err(invalid(format!(
-                "row {row}: the time {n} is not a whole number of milliseconds (pond-rs times are whole milliseconds)"
-            )))
+            Err(invalid(
+                call,
+                format!(
+                    "row {row}: the time {n} is not a whole number of milliseconds (pond-rs times are whole milliseconds)"
+                ),
+            ))
         }
-        Value::String(text) => {
-            crate::parse_time_in(text, zone).map_err(|e| invalid(format!("row {row}: {e}")))
+        Json::String(text) if let Some(zone) = zone => {
+            crate::parse_time_in(text, zone).map_err(|e| invalid(call, format!("row {row}: {e}")))
         }
-        other => Err(invalid(format!(
-            "row {row}: expected a time as a number of milliseconds or as text, got {other}"
-        ))),
+        other if zone.is_some() => Err(invalid(
+            call,
+            format!(
+                "row {row}: expected a time as a number of milliseconds or as text, got {other}"
+            ),
+        )),
+        other => Err(invalid(
+            call,
+            format!("row {row}: expected a time as a number of milliseconds, got {other}"),
+        )),
     }
 }
 
 /// The start and end of a time range (`[begin, end]` / `{start, end}`) or
 /// an interval (`[label, begin, end]` / `{value, start, end}`).
-fn read_span(v: &Value, row: usize, interval: bool) -> Result<(&Value, &Value)> {
+fn read_span<'a>(
+    call: &'static str,
+    v: &'a Json<'a>,
+    row: usize,
+    interval: bool,
+) -> Result<(&'a Json<'a>, &'a Json<'a>)> {
     match v {
-        Value::Array(a) if !interval && a.len() == 2 => Ok((&a[0], &a[1])),
-        Value::Array(a) if interval && a.len() == 3 => Ok((&a[1], &a[2])),
-        Value::Object(o)
+        Json::Array(a) if !interval && a.len() == 2 => Ok((&a[0], &a[1])),
+        Json::Array(a) if interval && a.len() == 3 => Ok((&a[1], &a[2])),
+        Json::Object(o)
             if o.contains_key("start")
                 && o.contains_key("end")
                 && o.contains_key("value") == interval =>
         {
-            Ok((&o["start"], &o["end"]))
+            Ok((o.get("start").unwrap_or(NULL), o.get("end").unwrap_or(NULL)))
         }
-        _ if interval => Err(invalid(format!(
-            "row {row}: expected an interval as [label, start, end] or {{\"value\", \"start\", \"end\"}}, got {v}"
-        ))),
-        _ => Err(invalid(format!(
-            "row {row}: expected a time range as [start, end] or {{\"start\", \"end\"}}, got {v}"
-        ))),
+        _ if interval => Err(invalid(
+            call,
+            format!(
+                "row {row}: expected an interval as [label, start, end] or {{\"value\", \"start\", \"end\"}}, got {v}"
+            ),
+        )),
+        _ => Err(invalid(
+            call,
+            format!(
+                "row {row}: expected a time range as [start, end] or {{\"start\", \"end\"}}, got {v}"
+            ),
+        )),
     }
 }
 
-enum LabelCell<'a> {
+pub(crate) enum LabelCell<'a> {
     Number(f64),
     String(&'a str),
 }
 
 /// An interval label: text or a number, the same kind as the first row's.
-fn read_label<'a>(v: &'a Value, row: usize, first: Option<&LabelCell>) -> Result<LabelCell<'a>> {
+pub(crate) fn read_label<'a>(
+    call: &'static str,
+    v: &'a Json<'_>,
+    row: usize,
+    first: Option<&LabelCell>,
+) -> Result<LabelCell<'a>> {
     let label = match v {
-        Value::String(s) => LabelCell::String(s),
-        Value::Number(n) => LabelCell::Number(n.as_f64().expect("JSON numbers are finite")),
+        Json::String(s) => LabelCell::String(s.as_ref()),
+        Json::Number(n) => LabelCell::Number(n.as_f64().expect("JSON numbers are finite")),
         other => {
-            return Err(invalid(format!(
-                "row {row}: an interval label must be text or a number, got {other}"
-            )));
+            return Err(invalid(
+                call,
+                format!("row {row}: an interval label must be text or a number, got {other}"),
+            ));
         }
     };
     match (first, &label) {
         (Some(LabelCell::Number(_)), LabelCell::String(_))
-        | (Some(LabelCell::String(_)), LabelCell::Number(_)) => Err(invalid(format!(
-            "row {row}: interval labels must all be text or all numbers; this one is {v}, unlike row 0's"
-        ))),
+        | (Some(LabelCell::String(_)), LabelCell::Number(_)) => Err(invalid(
+            call,
+            format!(
+                "row {row}: interval labels must all be text or all numbers; this one is {v}, unlike row 0's"
+            ),
+        )),
         _ => Ok(label),
     }
 }
