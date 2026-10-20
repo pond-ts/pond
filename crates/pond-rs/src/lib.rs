@@ -22,6 +22,9 @@
 //! [`TimeSeries::join`] / [`TimeSeries::join_many`],
 //! the trailing window with [`TimeSeries::tail`] and a whole-series
 //! [`TimeSeries::reduce`],
+//! finding rows by key or test with [`TimeSeries::bisect`] /
+//! `at_or_before` / `at_or_after` / `nearest` / `find` (keys as
+//! [`EventKey`]),
 //! reading times written as text with [`parse_time`] / [`parse_time_in`]
 //! (as pond-ts `Time.parse`),
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
@@ -123,6 +126,7 @@ mod grid;
 mod join;
 mod par;
 mod partition;
+mod query;
 mod reducer;
 mod reshape;
 mod rolling;
@@ -142,6 +146,7 @@ pub use error::{PondError, Result};
 pub use grid::{Align, AlignMethod, Keep, Materialize, Pick};
 pub use join::{Join, JoinType, OnConflict};
 pub use partition::{PartitionKey, PartitionedSeries};
+pub use query::{EventKey, Label};
 pub use reducer::{Agg, Reducer};
 pub use reshape::At;
 pub use rows::Row;
