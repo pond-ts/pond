@@ -19,7 +19,7 @@ use crate::reducer::{
 };
 use crate::reshape::At;
 use crate::sequence::Sequence;
-use crate::series::{Column, Key, TimeSeries};
+use crate::series::{Column, IntervalKeys, Key, TimeSeries};
 
 const CALL: &str = "rolling";
 
@@ -522,7 +522,7 @@ pub(crate) fn walk(frame: &Frame, w: &mut impl Window) {
     let Span::Time(window_ms) = frame.span else {
         unreachable!()
     };
-    let window = i128::from(window_ms);
+    let window = window_ms as f64;
     let mut group_start = 0;
     while group_start < rows {
         let anchor = times[group_start];
@@ -530,32 +530,37 @@ pub(crate) fn walk(frame: &Frame, w: &mut impl Window) {
         while group_end < rows && times[group_end] == anchor {
             group_end += 1;
         }
-        // Bounds are compared doubled, so a centred window an odd number of
-        // ms long keeps its half millisecond, as pond-ts's float does.
-        let a2 = 2 * i128::from(anchor);
-        let t2 = |row: usize| 2 * i128::from(times[row]);
+        // The edges are worked out in f64 exactly as pond-ts does (keys are
+        // whole ms within ±8.64e15, so they convert exactly). A centred
+        // window an odd number of ms long has edges on a half millisecond,
+        // which f64 rounds to even past 2^52 ms; computing them another way
+        // would disagree with pond-ts there.
+        let a = anchor as f64;
+        let t = |row: usize| times[row] as f64;
         match frame.alignment {
             Alignment::Trailing => {
                 while end < rows && times[end] <= anchor {
                     w.enter(end);
                     end += 1;
                 }
-                while start < end && t2(start) <= a2 - 2 * window {
+                let lower = a - window;
+                while start < end && t(start) <= lower {
                     w.leave(start);
                     start += 1;
                 }
             }
             Alignment::Leading | Alignment::Centered => {
                 let (lower, upper) = if frame.alignment == Alignment::Leading {
-                    (a2, a2 + 2 * window)
+                    (a, a + window)
                 } else {
-                    (a2 - window, a2 + window)
+                    let half = window / 2.0;
+                    (a - half, a + half)
                 };
-                while start < end && t2(start) < lower {
+                while start < end && t(start) < lower {
                     w.leave(start);
                     start += 1;
                 }
-                while end < rows && t2(end) < upper {
+                while end < rows && t(end) < upper {
                     w.enter(end);
                     end += 1;
                 }
@@ -837,7 +842,8 @@ impl TimeSeries {
         };
         let ranges = grid_windows(
             self.key().begin(),
-            crate::grid::sample_points(&buckets, options.sample),
+            &buckets,
+            options.sample,
             window_ms,
             options.alignment,
         );
@@ -890,33 +896,44 @@ impl TimeSeries {
     }
 }
 
-/// Each grid point's window as a run of rows. `starts` are the rows' start
-/// times (sorted); `points` the doubled sample points (rising). Compared
-/// doubled, as in [`walk`].
+/// Each bucket's window as a run of rows. `starts` are the rows' start
+/// times (sorted). The window sits at the bucket's sample point, and both
+/// are worked out in f64 exactly as pond-ts does (`sampleTime` and
+/// `anchorInWindow`), as in [`walk`].
 fn grid_windows(
     starts: &[i64],
-    points: impl Iterator<Item = i128>,
+    buckets: &IntervalKeys,
+    sample: At,
     window_ms: i64,
     alignment: Alignment,
 ) -> Vec<std::ops::Range<usize>> {
-    let w = i128::from(window_ms);
-    let t2 = |row: usize| 2 * i128::from(starts[row]);
+    let w = window_ms as f64;
+    let t = |row: usize| starts[row] as f64;
     let n = starts.len();
     let (mut lo, mut hi) = (0usize, 0usize);
-    points
-        .map(|p| {
-            // A row is in when `from <= 2t < to` (trailing: `from < 2t <= to`).
+    buckets
+        .begin
+        .iter()
+        .zip(&buckets.end)
+        .map(|(&b, &e)| {
+            let (b, e) = (b as f64, e as f64);
+            let p = match sample {
+                At::Begin => b,
+                At::Center => b + (e - b) / 2.0,
+                At::End => e,
+            };
+            // A row is in when `from <= t < to` (trailing: `from < t <= to`).
             let (from, to) = match alignment {
-                Alignment::Trailing => (p - 2 * w, p),
-                Alignment::Leading => (p, p + 2 * w),
-                Alignment::Centered => (p - w, p + w),
+                Alignment::Trailing => (p - w, p),
+                Alignment::Leading => (p, p + w),
+                Alignment::Centered => (p - w / 2.0, p + w / 2.0),
             };
             let trailing = alignment == Alignment::Trailing;
-            while lo < n && (t2(lo) < from || (trailing && t2(lo) == from)) {
+            while lo < n && (t(lo) < from || (trailing && t(lo) == from)) {
                 lo += 1;
             }
             hi = hi.max(lo);
-            while hi < n && (t2(hi) < to || (trailing && t2(hi) == to)) {
+            while hi < n && (t(hi) < to || (trailing && t(hi) == to)) {
                 hi += 1;
             }
             lo..hi

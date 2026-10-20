@@ -1584,6 +1584,26 @@ const ROLLING_OPTION_CASES = [
     'rolling',
     [every('1s'), '2s', { interval: { from: 'a', using: 'avg' } }],
   ],
+  // keys past 2^52 ms: a half-ms window edge rounds to even in pond-ts
+  ...['1ms', '3ms'].map((window) => [
+    `rolling-big-${window}-centered`,
+    'bigTimes',
+    'rolling',
+    [window, { v: 'count', w: 'sum' }, { alignment: 'centered' }],
+  ]),
+  ...['begin', 'center'].map((sample) => [
+    `rolling-grid-big-${sample}-centered`,
+    'bigTimes',
+    'rolling',
+    [every('3ms'), '1ms', { v: 'count' }, { alignment: 'centered', sample }],
+  ]),
+  // a minimum on a grid gaps a list column too
+  [
+    'rolling-grid-tags-min2-lists',
+    'tags',
+    'rolling',
+    [every('1s'), '2s', ROLL_TAGS, { minSamples: 2 }],
+  ],
   // per partition
   [
     'rolling-partition-count2-min2',
@@ -3401,6 +3421,19 @@ export function buildFixture(pond) {
         [[7, 10, 20], 2],
         [[5000, 5000, 10000], 3],
       ],
+    }),
+    bigTimes: TimeSeries.fromJSON({
+      name: 'bigTimes',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+        { name: 'w', kind: 'number', required: false },
+      ],
+      rows: Array.from({ length: 7 }, (_, i) => [
+        2 ** 52 + i,
+        i,
+        i % 3 === 1 ? null : i / 4,
+      ]),
     }),
     extreme: TimeSeries.fromJSON({
       name: 'extreme',

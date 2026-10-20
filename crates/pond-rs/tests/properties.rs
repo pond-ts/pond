@@ -262,6 +262,22 @@ fn rolling_matches_brute_force() {
     }
 }
 
+/// The rows in the window at doubled sample point `p2`. (Exact for these
+/// small times; past 2^52 ms pond-ts's float edges round, which the parity
+/// fixture covers.)
+fn grid_window(times: &[i64], p2: i64, w: i64, alignment: Alignment) -> Vec<usize> {
+    (0..times.len())
+        .filter(|&r| {
+            let u = 2 * times[r];
+            match alignment {
+                Alignment::Trailing => u > p2 - 2 * w && u <= p2,
+                Alignment::Leading => u >= p2 && u < p2 + 2 * w,
+                Alignment::Centered => u >= p2 - w && u < p2 + w,
+            }
+        })
+        .collect()
+}
+
 /// `rolling_over`: each bucket's window, found by brute force on the
 /// bucket's sample point, reduces as `aggregate` would.
 #[test]
@@ -290,16 +306,7 @@ fn rolling_over_matches_brute_force() {
         let w = case.window_ms;
         for (b, &(begin, end, p2)) in buckets.iter().enumerate() {
             assert_eq!((keys.begin[b], keys.end[b]), (begin, end), "seed {seed}");
-            let rows: Vec<usize> = (0..times.len())
-                .filter(|&r| {
-                    let u = 2 * times[r];
-                    match options.alignment {
-                        Alignment::Trailing => u > p2 - 2 * w && u <= p2,
-                        Alignment::Leading => u >= p2 && u < p2 + 2 * w,
-                        Alignment::Centered => u >= p2 - w && u < p2 + w,
-                    }
-                })
-                .collect();
+            let rows = grid_window(&times, p2, w, options.alignment);
             let held = rows.len() >= options.min_samples;
             let present: Vec<f64> = rows.iter().filter_map(|&r| values[r]).collect();
             let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
@@ -730,6 +737,29 @@ fn decimal_reducers_are_exact() {
                     for c in out.columns() {
                         assert!(!c.data().is_present(row), "{what} {}", c.name());
                     }
+                }
+            }
+        }
+
+        let grid = random_grid(&mut rng, &times);
+        let options = RollingOver {
+            alignment: case.options.alignment,
+            min_samples: case.options.min_samples,
+            sample: grid.at,
+            range: grid.range,
+        };
+        let w = case.window_ms;
+        let out = s
+            .rolling_over(&grid.sequence(), &format!("{w}ms"), &aggs, options)
+            .unwrap();
+        for (b, &(_, _, p2)) in grid.buckets(&times).iter().enumerate() {
+            let rows = grid_window(&times, p2, w, options.alignment);
+            let what = format!("seed {seed} rolling_over bucket {b}");
+            if rows.len() >= options.min_samples {
+                check_out(&what, &out, b, &rows);
+            } else {
+                for c in out.columns() {
+                    assert!(!c.data().is_present(b), "{what} {}", c.name());
                 }
             }
         }

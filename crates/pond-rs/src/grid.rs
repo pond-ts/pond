@@ -558,7 +558,7 @@ impl TimeSeries {
 }
 
 /// Each bucket's sample point, doubled (so a middle is a whole number).
-pub(crate) fn sample_points(buckets: &IntervalKeys, at: At) -> impl Iterator<Item = i128> + '_ {
+fn sample_points(buckets: &IntervalKeys, at: At) -> impl Iterator<Item = i128> + '_ {
     buckets
         .begin
         .iter()

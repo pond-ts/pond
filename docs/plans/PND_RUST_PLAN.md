@@ -2015,8 +2015,12 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
   - `Alignment::Trailing` / `Leading` / `Centered` (pond-ts's spelling).
     A time window for a row at `t` holds starts in `(t - w, t]`,
     `[t, t + w)` or `[t - w/2, t + w/2)`; rows sharing a time share a
-    window. Bounds are compared doubled, so a centred window an odd
-    number of ms long keeps pond-ts's half millisecond. A row window
+    window. Window edges are worked out in f64 exactly as pond-ts does: a
+    centred window an odd number of ms long has edges on a half
+    millisecond, which f64 rounds to even past 2^52 ms (after the year
+    144,000). The first version compared doubled whole numbers, which kept
+    the half exactly and so disagreed with pond-ts there; the review of
+    #798 found it. A row window
     holds `n` rows by position (an even `n` centred has one more row
     after than before) and is per row, not per time.
   - `min_samples` counts rows in the window, gaps included (pond-ts
@@ -2034,17 +2038,18 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     buckets, named `interval`; buckets are picked as in `align`; an
     output named `interval` is an error. Any key kind works (ranges and
     intervals count by their start); `aggregate` still refuses them.
-  - Parity: 79 new pond-ts cases (952 in all). Every alignment over
+  - Parity: 84 new pond-ts cases (957 in all). Every alignment over
     time and row windows and grids on numbers with repeated times, signed
     zeros and a long silence, on text / true/false / list reducers and
     array columns, on interval keys; minimum counts; row counts 1, 3, 4
     and 500; half-millisecond edges; `sample` begin / center / end;
     `range`; an empty series; a calendar grid; per partition (`collect`
-    and `toMap`); errors for a 0-row window and an `interval` output.
+    and `toMap`); keys past 2^52 ms; a grid minimum gapping list columns;
+    errors for a 0-row window and an `interval` output.
     Eight planted bugs each failed them (one only after the two
     half-millisecond cases were added). Property tests now draw a random
-    alignment, row or time window and minimum for `rolling` (numbers and
-    decimals) and check `rolling_over` against brute force.
+    alignment, row or time window and minimum for `rolling` and
+    `rolling_over` (numbers and decimals) and check them by brute force.
   - Perf (`examples/perf_rolling.rs` and `bench/rolling_pond_ts.mjs`,
     1M rows 1 s apart, `v` with a gap every 17th row; checksums agree).
     Cost: a time or row window moves forward only, so each row enters
