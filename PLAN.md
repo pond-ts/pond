@@ -587,7 +587,7 @@ the study oracle) is done.
      2026-10-20 by pjm17971 as core work that needs no further case:
      (a) ~~finding rows~~ — done; (b) ~~picking a time span~~ — done; (c) ~~changing key type~~ — done;
      (d) ~~row JSON input and output~~ — done; (d2) ~~columns / points JSON~~ — done; (e) ~~array
-     columns~~ — done; (e2) ~~array columns as Arrow lists~~ — done; (f) reducers `unique` / `keep` / `top` / `difference` /
+     columns~~ — done; (e2) ~~array columns as Arrow lists~~ — done; (f) ~~reducers `keep` / `difference`~~ — done; (f2) reducers `unique` / `top` /
      `samples`; (g) rolling options (row-count, leading, centred, minimum
      samples, over a time grid); (h) `smooth` / `baseline` / `outliers` /
      `scan` / `sample`; (i) `pivot_by_group`, `by_column` /
@@ -691,6 +691,15 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   `arrayExplode` 150–890 ms (pond-rs: 2–46 ms), and `arrayContains` 9–71
   ms (pond-rs: 1–6 ms). Repro: `crates/pond-rs/examples/perf_array.rs`
   and the same calls in pond-ts. Found 2026-10-20 (pond-rs R1b step 8e).
+- **[PND-ROLLDIFF]** — pond-ts rolling `difference` keeps the window
+  sorted and splices each row in and out, so it costs O(W) per row for a
+  window of W rows: on 1M rows 1 s apart it takes 376 ms with a 5-minute
+  window, 4.2 s with 1 hour and 96 s with 1 day (pond-rs: 25 ms for
+  each). Proposed fix: two monotone deques for the largest and smallest,
+  as pond-rs does, plus a stack of zero signs to keep the `-0` answer a
+  window of only zeros gives today. Repro:
+  `crates/pond-rs/examples/perf_reducers.rs` and the same call in pond-ts.
+  Found 2026-10-20 (pond-rs R1b step 8f).
 - **[PND-CONCATSORT]** — pond-ts `TimeSeries.concat` takes ~450 ms to put
   500 partitions × 1000 rows back together, and every partitioned
   operation calls it (`partitionBy('symbol').diff('close').collect()`:

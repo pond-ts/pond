@@ -32,10 +32,11 @@ impl TimeSeries {
     /// in the order of `aggs`. An empty series gives an empty result.
     ///
     /// An empty bucket gives `count` 0, `sum` 0, and a gap for every other
-    /// reducer. Text and true/false columns take `count` (a number column),
-    /// `first` and `last` (a column of the same kind); any other reducer on
-    /// them is an error. Decimal columns take every reducer: `first`,
-    /// `last`, `min`, `max` and `sum` give exact decimals (`sum` at
+    /// reducer. Text, true/false and array columns take `count` (a number
+    /// column), `first`, `last` and `keep` (a column of the same kind); any
+    /// other reducer on them is an error. Decimal columns take every
+    /// reducer: `first`, `last`, `min`, `max`, `keep`, `sum` and
+    /// `difference` give exact decimals (`sum` and `difference` at
     /// precision 38, an error past it; an empty bucket sums to 0), the rest
     /// give numbers.
     pub fn aggregate(&self, sequence: &Sequence, aggs: &[Agg]) -> Result<TimeSeries> {
@@ -98,6 +99,9 @@ impl TimeSeries {
                 return crate::decimal::sum_ranges(CALL, &agg.output, d, &ranges);
             }
             let input = inputs.get(source, kind);
+            if let (ColumnData::Decimal(d), Reducer::Difference) = (data, agg.reducer) {
+                return decimal_difference(CALL, &agg.output, d, input, &ranges);
+            }
             let out: Vec<f64> = ranges
                 .iter()
                 .map(|r| reduce_range(agg.reducer, &input.values[r.clone()]).unwrap_or(f64::NAN))
@@ -160,6 +164,10 @@ impl TimeSeries {
                 continue;
             }
             let input = inputs.get(source, kind);
+            if let (ColumnData::Decimal(d), Reducer::Difference) = (data, agg.reducer) {
+                columns.push(decimal_difference(CALL, &agg.output, d, input, &all)?);
+                continue;
+            }
             let out = vec![reduce_range(agg.reducer, &input.values[..]).unwrap_or(f64::NAN)];
             columns.push(output_column(
                 agg.output.clone(),
@@ -176,6 +184,31 @@ impl TimeSeries {
             columns,
         )))
     }
+}
+
+/// `difference` of a decimal column over each row range: the smallest and
+/// largest by rank, then subtracted exactly.
+fn decimal_difference(
+    call: &'static str,
+    output: &str,
+    source: &crate::column::DecimalColumn,
+    input: &crate::reducer::Input<'_>,
+    ranges: &[std::ops::Range<usize>],
+) -> Result<Column> {
+    let pick = |reducer| -> Vec<f64> {
+        ranges
+            .iter()
+            .map(|r| reduce_range(reducer, &input.values[r.clone()]).unwrap_or(f64::NAN))
+            .collect()
+    };
+    crate::decimal::difference(
+        call,
+        output,
+        source,
+        input,
+        &pick(Reducer::Min),
+        &pick(Reducer::Max),
+    )
 }
 
 /// What [`TimeSeries::reduce`] gives: one value per output, read by name
@@ -440,7 +473,10 @@ mod tests {
             ] {
                 let err = result.unwrap_err();
                 assert!(matches!(err, PondError::WrongKind { .. }), "{err}");
-                assert!(err.to_string().contains("count, first or last"), "{err}");
+                assert!(
+                    err.to_string().contains("count, first, last or keep"),
+                    "{err}"
+                );
             }
         }
     }

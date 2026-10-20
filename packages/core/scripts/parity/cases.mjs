@@ -101,6 +101,86 @@ const NOISY_ROWS = Array.from({ length: 300 }, (_, i) => {
   return [repeated, x, y];
 });
 
+// Runs of equal values for `keep` and `difference`: zeros of both signs in
+// both orders (a rolling `difference` of zeros can be `-0`), equal runs
+// broken by one value, gaps inside runs, and text and true/false runs.
+const RUNS_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'v', kind: 'number', required: false },
+  { name: 's', kind: 'string', required: false },
+  { name: 'b', kind: 'boolean', required: false },
+];
+const RUNS_V = [
+  5,
+  5,
+  null,
+  5,
+  0,
+  -0,
+  0,
+  -0,
+  -0,
+  0,
+  2,
+  3,
+  7,
+  null,
+  7,
+  -0,
+  0,
+  -0,
+  1,
+  1,
+  1,
+  null,
+  null,
+  null,
+  4,
+  -0,
+  0,
+  9,
+  9,
+  8,
+];
+const RUNS_S = [
+  'a',
+  'a',
+  null,
+  'a',
+  'b',
+  'b',
+  'c',
+  'c',
+  'c',
+  null,
+  '',
+  '',
+  'd',
+  'e',
+  'd',
+  null,
+  null,
+  null,
+  'f',
+  'f',
+  'g',
+  'g',
+  'g',
+  'g',
+  null,
+  'h',
+  'h',
+  'h',
+  'i',
+  'h',
+];
+const RUNS_ROWS = RUNS_V.map((v, i) => [
+  i < 25 ? i * 1000 : 25_000 + (i - 25) * 400,
+  v,
+  RUNS_S[i],
+  i % 7 === 3 ? null : i % 11 < 6,
+]);
+
 // Signed zeros first and among ties: a running sum starts from +0, and max /
 // min keep the earlier of two equal values.
 const ZERO_ROWS = [
@@ -1054,6 +1134,7 @@ const ARRAY_REDUCERS = [
   'p25',
   'p90',
   'stdev',
+  'difference',
 ];
 const ARRAY_CASES = [
   ...[1, '1', true, 0, { f64: '-0' }, false, 'zz', 2.5].map((v, i) => [
@@ -1095,6 +1176,14 @@ const ARRAY_CASES = [
     ['nums', 'last', { as: 'lastNum', kind: 'number' }],
   ],
   ['arrayAggregate-tags-first', 'tags', 'arrayAggregate', ['tags', 'first']],
+  // keep: every element `===` the first (`0` and `-0` are equal)
+  [
+    'arrayAggregate-nums-keep',
+    'tags',
+    'arrayAggregate',
+    ['nums', 'keep', { kind: 'number' }],
+  ],
+  ['arrayAggregate-tags-keep', 'tags', 'arrayAggregate', ['tags', 'keep']],
   [
     'arrayAggregate-tags-last-as',
     'tags',
@@ -1323,6 +1412,110 @@ const CASES = [
     'noisy',
     'rolling',
     ['20s', { x: 'stdev', y: 'stdev' }],
+  ],
+  // keep and difference: one column each way, beside a sum (with #796
+  // pond-ts gives each column the answer it gets alone)
+  ...['2s', '3s', '5s'].flatMap((every_) => [
+    [
+      `aggregate-runs-${every_}-keep-difference`,
+      'runs',
+      'aggregate',
+      [
+        every(every_),
+        {
+          v_keep: { from: 'v', using: 'keep' },
+          v_diff: { from: 'v', using: 'difference' },
+          s_keep: { from: 's', using: 'keep' },
+          b_keep: { from: 'b', using: 'keep' },
+          v_sum: { from: 'v', using: 'sum' },
+        },
+      ],
+    ],
+    [
+      `rolling-runs-${every_}-keep-difference`,
+      'runs',
+      'rolling',
+      [
+        every_,
+        {
+          v_keep: { from: 'v', using: 'keep' },
+          v_diff: { from: 'v', using: 'difference' },
+          s_keep: { from: 's', using: 'keep' },
+          b_keep: { from: 'b', using: 'keep' },
+        },
+      ],
+    ],
+  ]),
+  [
+    'reduce-runs-keep-difference',
+    'runs',
+    'reduce',
+    [
+      {
+        v_keep: { from: 'v', using: 'keep' },
+        v_diff: { from: 'v', using: 'difference' },
+        s_keep: { from: 's', using: 'keep' },
+        b_keep: { from: 'b', using: 'keep' },
+      },
+    ],
+  ],
+  [
+    'reduce-zeros-keep-difference',
+    'zeros',
+    'reduce',
+    [
+      {
+        keep: { from: 'v', using: 'keep' },
+        diff: { from: 'v', using: 'difference' },
+      },
+    ],
+  ],
+  [
+    'rolling-zeros-3s-difference',
+    'zeros',
+    'rolling',
+    ['3s', { v: 'difference' }],
+  ],
+  ['rolling-zeros-3s-keep', 'zeros', 'rolling', ['3s', { v: 'keep' }]],
+  [
+    'aggregate-noisy-30s-keep-difference',
+    'noisy',
+    'aggregate',
+    [
+      every('30s'),
+      {
+        x: 'sum',
+        x_diff: { from: 'x', using: 'difference' },
+        y_keep: { from: 'y', using: 'keep' },
+        y_avg: { from: 'y', using: 'avg' },
+      },
+    ],
+  ],
+  [
+    'rolling-noisy-20s-difference',
+    'noisy',
+    'rolling',
+    ['20s', { x: 'difference', y: 'keep' }],
+  ],
+  [
+    'partition-aggregate-keep-difference',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [
+        [
+          'aggregate',
+          every('2s'),
+          {
+            region: 'keep',
+            up: 'keep',
+            cpu: 'difference',
+          },
+        ],
+      ],
+      'collect',
+    ],
   ],
   // shorthand out of schema order: pond-ts sorts it into schema order
   [
@@ -2551,6 +2744,11 @@ export function buildFixture(pond) {
       rows: SIGNED_ROWS,
     }),
     zeros: series('zeros', ZERO_ROWS),
+    runs: TimeSeries.fromJSON({
+      name: 'runs',
+      schema: RUNS_SCHEMA,
+      rows: RUNS_ROWS,
+    }),
     edges: series('edges', EDGE_ROWS),
     overflow: series('overflow', OVERFLOW_ROWS),
     dst: series('dst', DST_ROWS),

@@ -79,7 +79,7 @@ fn series(times: &[i64], values: &[Option<f64>]) -> TimeSeries {
     .unwrap()
 }
 
-const REDUCERS: [Reducer; 13] = [
+const REDUCERS: [Reducer; 15] = [
     Reducer::Count,
     Reducer::Sum,
     Reducer::Avg,
@@ -93,6 +93,8 @@ const REDUCERS: [Reducer; 13] = [
     Reducer::Percentile(37.5),
     Reducer::Percentile(99.9),
     Reducer::Percentile(100.0),
+    Reducer::Difference,
+    Reducer::Keep,
 ];
 
 fn aggs() -> Vec<Agg> {
@@ -134,6 +136,14 @@ fn naive(reducer: Reducer, present: &[f64]) -> Option<f64> {
             let m = mean();
             Some((present.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / n as f64).sqrt())
         }
+        Reducer::Difference => {
+            let max = present.iter().copied().reduce(f64::max)?;
+            Some(max - present.iter().copied().reduce(f64::min)?)
+        }
+        Reducer::Keep => present
+            .iter()
+            .all(|&v| v == present[0])
+            .then_some(present[0]),
     }
 }
 

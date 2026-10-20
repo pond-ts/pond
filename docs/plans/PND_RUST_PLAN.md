@@ -1888,6 +1888,67 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     paths drive the same rolling states).
   - Mixed calls got 2-10x faster (`scripts/perf-aggregate-mixed.mjs`).
 
+  **Step 8f (done): `keep` and `difference` ([PND-RUSTFULL]).**
+  - Split: 8f is the two reducers that give one value; `unique`, `top` and
+    `samples`, which give arrays, follow as 8f2.
+  - `Reducer::Keep` and `Reducer::Difference` (parsed from `"keep"` and
+    `"difference"`) work in `aggregate`, `rolling`, `reduce`, partitioned
+    `aggregate` and `array_aggregate`.
+  - `difference`: number and decimal columns only (others are an error, as
+    for `sum`). `aggregate` / `reduce`: largest minus smallest, never `-0`.
+    `rolling`: pond-ts keeps the window sorted (a splice per row, O(W) per
+    row for a window of W rows) and answers last minus first. pond-rs uses
+    two monotone deques (O(1) per row) plus a stack of zero signs, because
+    pond-ts's sorted window gives a sign-dependent answer in one case: a
+    window of only zeros, where it can give `-0`. A unit test checks the
+    deques against a port of pond-ts's sorted window on 300 random series
+    full of `0` and `-0`. Decimals are exact: the smallest and largest by
+    rank, subtracted in 256 bits, at precision 38, an error past it
+    naming the row.
+  - `keep`: any column kind; the output has the source's kind. Numbers
+    compare as `===` (`0` equals `-0`): `aggregate` and `reduce` give the
+    first value's sign, `rolling` gives `0` (pond-ts counts values in a
+    `Map`, whose keys turn `-0` into `0`). `rolling` answers "one distinct
+    value" as largest equals smallest with two deques, not a counting map.
+    Text, true/false and array columns get an id per distinct value (a
+    hash map, skipped when a row repeats the row before). Decimals stay
+    exact through ranks.
+  - Differences from pond-ts, both already logged: pond-rs compares array
+    cells by their elements where pond-ts compares the array objects, so
+    two equal arrays keep their value here and give a gap there
+    ([PND-ARRAYKEY]); `array_aggregate` with `keep` takes the elements'
+    kind where pond-ts writes text and throws on numbers ([PND-ARRAYKIND]).
+  - Parity: 18 new pond-ts cases (fixture made with [PND-AGGSIBLING] in),
+    on a new `runs` input (equal runs, zeros of both signs in both orders,
+    text and true/false runs) plus `zeros`, `noisy`, `hosts` and the array
+    inputs, each `keep` / `difference` next to a `sum` or `avg`. Six
+    planted bugs (rolling `keep` without the `-0` to `0` change, rolling
+    `difference` reversed or without its sign, `keep` dropping the sign,
+    `difference` off by its low end, arrays compared by bits) each failed
+    the parity test. The brute-force property tests now cover both.
+  - Perf (`examples/perf_reducers.rs`, 1M rows 1 s apart). Cost: O(N) per
+    column for `aggregate`, `reduce` and `rolling`, any window size. Two
+    changes from the first version: rolling `keep` by deques instead of a
+    hash map (41 to 20 ms on numbers, 94 to 49 ms on text); and the
+    repeated-row check before hashing text (`reduce` 27 to 6 ms). pond-rs
+    vs pond-ts, medians:
+
+    | Call              | agg 1m       | agg 1s       | rolling 5m   | reduce         |
+    | ----------------- | ------------ | ------------ | ------------ | -------------- |
+    | `min` (for scale) | 3.0 vs 7 ms  | 35 vs 413 ms | 16 vs 209 ms | 1.1 vs 2 ms    |
+    | `keep` numbers    | 1.6 vs 19 ms | 35 vs 561 ms | 21 vs 190 ms | <0.1 vs 102 ms |
+    | `difference`      | 3.5 vs 29 ms | 37 vs 816 ms | 27 vs 690 ms | 2.2 vs 353 ms  |
+    | `keep` text       | 9.1 vs 26 ms | 69 vs 415 ms | 49 vs 159 ms | 6.1 vs 71 ms   |
+    | `keep` decimal    | 12 ms        | 62 ms        | 47 ms        | 8.5 ms         |
+    | `difference` dec. | 14 ms        | 99 ms        | 91 ms        | 12 ms          |
+
+    Rolling over a 1-day window (86,400 rows) costs pond-rs the same as
+    5 minutes (25 ms for `difference`); pond-ts's rolling `difference`
+    takes 376 ms at 5 minutes, 4.2 s at 1 hour and 96 s at 1 day
+    ([PND-ROLLDIFF]). pond-rs's rolling `median` and percentiles keep the
+    sorted window, as pond-ts's do; a faster structure for those is not
+    part of this step.
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).

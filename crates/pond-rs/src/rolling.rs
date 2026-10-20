@@ -128,6 +128,7 @@ impl WindowState for AvgState {
 
 /// pond-ts `rollingMonotoneDeque`: (row, value) pairs, front is the answer;
 /// the earliest of equal values wins.
+#[derive(Default)]
 struct ExtremeState<const MAX: bool>(VecDeque<(usize, f64)>);
 
 impl<const MAX: bool> WindowState for ExtremeState<MAX> {
@@ -187,6 +188,74 @@ impl WindowState for SortedState {
     }
     fn snapshot(&mut self) -> Option<f64> {
         (!self.sorted.is_empty()).then(|| percentile_of_sorted(&self.sorted, self.q))
+    }
+}
+
+/// pond-ts `difference` `rollingState`, without its cost. pond-ts keeps
+/// the window sorted (`rollingSortedArray`, a splice per row, so a window
+/// of W rows costs O(W) a row) and answers last minus first. Here two
+/// monotone deques give the largest and smallest in O(1) a row.
+///
+/// The bits differ only in one case: every value in the window is a zero.
+/// pond-ts's sorted array then holds a run of `0` and `-0`, inserted at the
+/// front of the run and removed from the front (whichever zero leaves), so
+/// the run behaves as a stack of signs; its answer is the bottom minus the
+/// top, which can be `-0`. `zeros` is that stack. Otherwise one end is not
+/// a zero and the sign of the other cannot change the result.
+#[derive(Default)]
+struct DiffState {
+    max: ExtremeState<true>,
+    min: ExtremeState<false>,
+    zeros: VecDeque<f64>,
+}
+
+impl WindowState for DiffState {
+    fn add(&mut self, row: usize, v: f64) {
+        self.max.add(row, v);
+        self.min.add(row, v);
+        if v == 0.0 {
+            self.zeros.push_front(v);
+        }
+    }
+    fn remove(&mut self, row: usize, v: f64) {
+        self.max.remove(row, v);
+        self.min.remove(row, v);
+        if v == 0.0 {
+            self.zeros.pop_front();
+        }
+    }
+    fn snapshot(&mut self) -> Option<f64> {
+        let (hi, lo) = (self.max.snapshot()?, self.min.snapshot()?);
+        if hi == 0.0 && lo == 0.0 {
+            return Some(self.zeros.back()? - self.zeros.front()?);
+        }
+        Some(hi - lo)
+    }
+}
+
+/// pond-ts `keep` `rollingState`, which counts each distinct value in a
+/// `Map` and answers when one is left. One distinct value is the same as
+/// the largest equal to the smallest, so two monotone deques answer it
+/// without hashing. A `Map` key turns `-0` into `0`, so a window of zeros
+/// gives `0` (`+ 0.0` does the same here).
+#[derive(Default)]
+struct KeepState {
+    max: ExtremeState<true>,
+    min: ExtremeState<false>,
+}
+
+impl WindowState for KeepState {
+    fn add(&mut self, row: usize, v: f64) {
+        self.max.add(row, v);
+        self.min.add(row, v);
+    }
+    fn remove(&mut self, row: usize, v: f64) {
+        self.max.remove(row, v);
+        self.min.remove(row, v);
+    }
+    fn snapshot(&mut self) -> Option<f64> {
+        let (hi, lo) = (self.max.snapshot()?, self.min.snapshot()?);
+        (hi == lo).then_some(hi + 0.0)
     }
 }
 
@@ -458,6 +527,8 @@ fn roll_column(times: &[i64], values: &[f64], window_ms: i64, reducer: Reducer) 
             window_ms,
         ),
         Reducer::Stdev => roll(StdevState::default(), times, values, window_ms),
+        Reducer::Difference => roll(DiffState::default(), times, values, window_ms),
+        Reducer::Keep => roll(KeepState::default(), times, values, window_ms),
     }
 }
 
@@ -492,11 +563,16 @@ impl TimeSeries {
     /// none is 0, and the other reducers give a gap when the window has no
     /// present values.
     ///
-    /// Text and true/false columns take `count` (a number column), `first`
-    /// and `last` (a column of the same kind); any other reducer on them is
-    /// an error. Decimal columns take every reducer: `first`, `last`, `min`,
-    /// `max` and `sum` give exact decimals (`sum` at precision 38, an error
-    /// past it), the rest give numbers.
+    /// Text, true/false and array columns take `count` (a number column),
+    /// `first`, `last` and `keep` (a column of the same kind); any other
+    /// reducer on them is an error. Decimal columns take every reducer:
+    /// `first`, `last`, `min`, `max`, `keep`, `sum` and `difference` give
+    /// exact decimals (`sum` and `difference` at precision 38, an error past
+    /// it), the rest give numbers.
+    ///
+    /// Signed zeros follow pond-ts's window states: a window of zeros gives
+    /// `keep` 0 whatever their signs, and `difference` can be `-0` (the
+    /// newest zero minus the oldest, as pond-ts's sorted window holds them).
     pub fn rolling(&self, window: &str, aggs: &[Agg]) -> Result<TimeSeries> {
         let window_ms = parse_duration(window)?;
         // Range- and interval-keyed rows are anchored at their begin, as in
@@ -532,6 +608,11 @@ impl TimeSeries {
                 return crate::decimal::rolling_sum(CALL, &agg.output, d, times, window_ms);
             }
             let input = inputs.get(source, kind);
+            if let (ColumnData::Decimal(d), Reducer::Difference) = (data, agg.reducer) {
+                let lo = roll_column(times, &input.values, window_ms, Reducer::Min);
+                let hi = roll_column(times, &input.values, window_ms, Reducer::Max);
+                return crate::decimal::difference(CALL, &agg.output, d, input, &lo, &hi);
+            }
             let out = roll_column(times, &input.values, window_ms, agg.reducer);
             Ok(output_column(
                 agg.output.clone(),
@@ -604,6 +685,53 @@ mod tests {
         let too_early =
             TimeSeries::new("s", vec![i64::MIN], vec![Column::required("v", vec![7.0])]);
         assert!(too_early.is_err());
+    }
+
+    /// `DiffState` against a line-for-line port of pond-ts's sorted window,
+    /// on windows full of zeros of both signs.
+    #[test]
+    fn difference_matches_the_sorted_window_bit_for_bit() {
+        struct Sorted(Vec<f64>);
+        impl WindowState for Sorted {
+            fn add(&mut self, _: usize, v: f64) {
+                let at = lower_bound(&self.0, v);
+                self.0.insert(at, v);
+            }
+            fn remove(&mut self, _: usize, v: f64) {
+                let at = lower_bound(&self.0, v);
+                if at < self.0.len() && self.0[at] == v {
+                    self.0.remove(at);
+                }
+            }
+            fn snapshot(&mut self) -> Option<f64> {
+                Some(self.0.last()? - self.0.first()?)
+            }
+        }
+        let mut seed = 11u64;
+        let mut next = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            seed >> 33
+        };
+        for _ in 0..300 {
+            let n = 1 + next() as usize % 60;
+            let mut t = 0;
+            let times: Vec<i64> = (0..n)
+                .map(|_| {
+                    t += next() as i64 % 3;
+                    t
+                })
+                .collect();
+            let values: Vec<f64> = (0..n)
+                .map(|_| [0.0, -0.0, 0.0, -0.0, 1.0, -2.0, f64::NAN][next() as usize % 7])
+                .collect();
+            let window = 1 + next() as i64 % 8;
+            let want = roll(Sorted(Vec::new()), &times, &values, window);
+            let got = roll(DiffState::default(), &times, &values, window);
+            let bits = |xs: &[f64]| xs.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+            assert_eq!(bits(&got), bits(&want), "{times:?} {values:?} {window}");
+        }
     }
 
     #[test]

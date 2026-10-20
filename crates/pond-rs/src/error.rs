@@ -46,7 +46,7 @@ impl fmt::Display for PondError {
             ),
             PondError::UnknownReducer { name } => write!(
                 f,
-                "unknown reducer '{name}' (expected one of count, sum, avg, mean, min, max, first, last, median, stdev, or a percentile like p95)"
+                "unknown reducer '{name}' (expected one of count, sum, avg, mean, min, max, first, last, median, stdev, difference, keep, or a percentile like p95)"
             ),
             PondError::UnsupportedReducer { name } => write!(
                 f,

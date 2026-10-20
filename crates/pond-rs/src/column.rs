@@ -417,8 +417,9 @@ impl std::fmt::Display for Decimal {
 /// at scale 2 is stored as `125`. A gap is an Arrow null.
 ///
 /// pond-ts has no decimal kind. pond-rs keeps decimals exact through
-/// `count`, `first`, `last`, `min`, `max` and `sum`; every other reducer
-/// works on the nearest `f64` and gives a number column.
+/// `count`, `first`, `last`, `min`, `max`, `keep`, `sum` and `difference`;
+/// every other reducer works on the nearest `f64` and gives a number
+/// column.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DecimalColumn {
     values: Decimal128Array,
