@@ -938,25 +938,62 @@ fn read_lists(batches: &[RecordBatch], c: usize, name: &str) -> Result<ArrayColu
                 )
             }
         };
-        let mut elements = list_elements(values, name)?;
         let nulls = array.logical_nulls();
-        for (i, &(start, end)) in ranges.iter().enumerate() {
-            if nulls.as_ref().is_some_and(|n| n.is_null(i)) {
+        let first_row = cells.len();
+        // (row in the whole column, its item range in `values`) for each
+        // list that is not null.
+        let used: Vec<(usize, usize, usize)> = ranges
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !nulls.as_ref().is_some_and(|n| n.is_null(*i)))
+            .map(|(i, &(start, end))| (first_row + i, start, end))
+            .collect();
+        // Decode only the items some row uses: items under a null list or
+        // outside a slice are never looked at, and a slice of a large batch
+        // costs its own items rather than the whole child array. When the
+        // used items run on without a break (the usual case) that is a
+        // slice; otherwise they are picked out with `take`.
+        let lo = used.first().map_or(0, |u| u.1);
+        let hi = used.last().map_or(0, |u| u.2);
+        let (items, starts): (ArrayRef, Vec<usize>) = if used.windows(2).all(|w| w[0].2 == w[1].1) {
+            (
+                values.slice(lo, hi - lo),
+                used.iter().map(|u| u.1 - lo).collect(),
+            )
+        } else {
+            let mut picks = Vec::new();
+            let mut starts = Vec::with_capacity(used.len());
+            for &(_, start, end) in &used {
+                starts.push(picks.len());
+                picks.extend((start..end).map(|k| k as u64));
+            }
+            let picks = arrow_array::UInt64Array::from(picks);
+            let items = arrow_select::take::take(values, &picks, None)
+                .map_err(|e| invalid(FROM, e.to_string()))?;
+            (items, starts)
+        };
+        // Item `k` of `items` as (row, place in its list).
+        let locate = |k: usize| {
+            let u = starts.partition_point(|&s| s <= k) - 1;
+            (used[u].0, k - starts[u])
+        };
+        let mut elements = list_elements(&items, name, &locate)?;
+        let mut next = used.iter().zip(&starts).peekable();
+        for row in first_row..first_row + ranges.len() {
+            let Some((&(_, start, end), &at)) = next.next_if(|(u, _)| u.0 == row) else {
                 cells.push(None);
                 continue;
-            }
-            let items = &mut elements[start..end];
+            };
+            let items = &mut elements[at..at + (end - start)];
             if let Some(e) = items.iter().position(Option::is_none) {
                 return Err(invalid(
                     FROM,
                     format!(
-                        "column '{name}' row {}: list item {e} is null; array elements cannot be gaps",
-                        cells.len()
+                        "column '{name}' row {row}: list item {e} is null; array elements cannot be gaps"
                     ),
                 ));
             }
-            // List rows never share items (offsets only go up), so each
-            // item is moved out once rather than cloned.
+            // Each item belongs to one list, so it is moved out, not cloned.
             cells.push(Some(
                 items
                     .iter_mut()
@@ -968,8 +1005,13 @@ fn read_lists(batches: &[RecordBatch], c: usize, name: &str) -> Result<ArrayColu
     Ok(ArrayColumn::from_cells(cells))
 }
 
-/// The items of a list field as array elements, nulls as `None`.
-fn list_elements(values: &ArrayRef, name: &str) -> Result<Vec<Option<Scalar>>> {
+/// The items of a list field as array elements, nulls as `None`. `locate`
+/// gives an item's row and place in its list, for errors.
+fn list_elements(
+    values: &ArrayRef,
+    name: &str,
+    locate: &dyn Fn(usize) -> (usize, usize),
+) -> Result<Vec<Option<Scalar>>> {
     let data_type = values.data_type();
     if is_text(data_type) {
         let mut texts = Vec::with_capacity(values.len());
@@ -1002,7 +1044,24 @@ fn list_elements(values: &ArrayRef, name: &str) -> Result<Vec<Option<Scalar>>> {
         });
     }
     let mut numbers = Vec::with_capacity(values.len());
-    read_number(values, name, &mut numbers)?;
+    if let Err(e) = read_number(values, name, &mut numbers) {
+        // A time too large for milliseconds: the error names an item's
+        // place in the child array, so find the item and name its row.
+        let mut one = Vec::new();
+        for k in 0..values.len() {
+            one.clear();
+            if read_number(&values.slice(k, 1), name, &mut one).is_err() {
+                let (row, item) = locate(k);
+                return Err(invalid(
+                    FROM,
+                    format!(
+                        "column '{name}' row {row}: list item {item} is too large to hold exactly in milliseconds"
+                    ),
+                ));
+            }
+        }
+        return Err(e);
+    }
     let nulls = values.logical_nulls();
     Ok(numbers
         .into_iter()
@@ -1962,6 +2021,7 @@ mod tests {
         let mut bytes = Vec::new();
         s.write_ipc(&mut bytes).unwrap();
         let back = TimeSeries::from_ipc_bytes("s", bytes, "time").unwrap();
+        // The schema includes each column's required flag.
         assert_eq!(back.schema(), s.schema());
         for (x, y) in back.columns().iter().zip(s.columns()) {
             // `==` on array columns compares bit for bit, so -0.0 survives.
@@ -2052,6 +2112,23 @@ mod tests {
             Some(&["e".into(), "f".into()][..])
         );
         assert!(v.is_required());
+
+        // Null rows of a fixed-size list are gaps, and their items unread.
+        let fixed = arrow_array::FixedSizeListArray::new(
+            Arc::new(Field::new_list_field(DataType::Float64, true)),
+            2,
+            Arc::new(Float64Array::from(vec![1.0, 2.0, f64::NAN, 0.0, 5.0, 6.0])),
+            Some(NullBuffer::from(vec![true, false, true])),
+        );
+        let times: ArrayRef = Arc::new(arrow_array::Int64Array::from(vec![0, 1, 2]));
+        let batch =
+            RecordBatch::try_from_iter([("time", times), ("v", Arc::new(fixed) as ArrayRef)])
+                .unwrap();
+        let s = TimeSeries::from_arrow("s", &[batch], "time").unwrap();
+        let v = s.column("v").unwrap().arrays().unwrap();
+        assert_eq!(v.get(0), Some(&[Scalar::from(1), 2.into()][..]));
+        assert_eq!(v.get(1), None);
+        assert_eq!(v.get(2), Some(&[Scalar::from(5), 6.into()][..]));
     }
 
     /// Int64 epoch milliseconds from small test times.
@@ -2125,5 +2202,36 @@ mod tests {
         );
         let e = read(Arc::new(nested));
         assert!(e.contains("column 'v' is a list of List("), "{e}");
+
+        // A time too large for milliseconds names its row and place.
+        let seconds =
+            |v: Vec<i64>| -> ArrayRef { Arc::new(arrow_array::TimestampSecondArray::from(v)) };
+        let list = |items: ArrayRef, lengths: [usize; 2], nulls: Option<NullBuffer>| -> ArrayRef {
+            Arc::new(ListArray::new(
+                Arc::new(Field::new_list_field(items.data_type().clone(), true)),
+                OffsetBuffer::from_lengths(lengths),
+                items,
+                nulls,
+            ))
+        };
+        assert_eq!(
+            read(list(seconds(vec![1, 2, 3, i64::MAX]), [3, 1], None)),
+            "TimeSeries::from_arrow: column 'v' row 1: list item 0 is too large to hold exactly in milliseconds"
+        );
+        // Under a null list, the same item is never read.
+        let times: ArrayRef = Arc::new(arrow_array::Int64Array::from(vec![0, 1]));
+        let v = list(
+            seconds(vec![1, 2, 3, i64::MAX]),
+            [3, 1],
+            Some(NullBuffer::from(vec![true, false])),
+        );
+        let batch = RecordBatch::try_from_iter([("time", times), ("v", v)]).unwrap();
+        let s = TimeSeries::from_arrow("s", &[batch], "time").unwrap();
+        let v = s.column("v").unwrap().arrays().unwrap();
+        assert_eq!(
+            v.get(0),
+            Some(&[Scalar::from(1000), 2000.into(), 3000.into()][..])
+        );
+        assert_eq!(v.get(1), None);
     }
 }

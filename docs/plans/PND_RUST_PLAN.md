@@ -1831,7 +1831,11 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     dictionaries), any text type (dictionaries and `Utf8View` included) or
     `Boolean`. A null list is a gap; a null item, or a `NaN` or infinite
     number, is an error, since array elements cannot be gaps; decimal and
-    nested-list items are refused, naming the type.
+    nested-list items are refused, naming the type. Only items some row
+    uses are read: items under a null list or outside a slice are never
+    looked at, so they cannot cause an error (the review of #795 found the
+    first version failing on a too-large time no row used, and naming the
+    wrong row for one a row did use).
   - pond-ts: its `fromArrow` and `toArrow` refuse list fields, so a file
     with an array column written by pond-rs does not read in pond-ts. Not
     logged as a pond-ts task: nothing asks for it yet.
@@ -1854,8 +1858,8 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | ----------------------- | ----------- | ---------- |
     | `to_arrow`              | 14 ms       | 4.9 ms     |
     | `write_ipc`             | 15 ms       | 5.6 ms     |
-    | `from_arrow`            | 92 → 42 ms  | 32 → 21 ms |
-    | `read_ipc`              | 108 → 45 ms | 32 → 22 ms |
+    | `from_arrow`            | 92 → 45 ms  | 32 → 24 ms |
+    | `read_ipc`              | 108 → 47 ms | 32 → 26 ms |
     | `from_json` (for scale) | 190 ms      | 99 ms      |
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
