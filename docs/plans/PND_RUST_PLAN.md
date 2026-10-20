@@ -626,7 +626,7 @@ The one result short of a clean win is one-core B: polars is faster
      - **8b Picking a time span:** `within`, `before` / `after`, `trim`,
        `overlapping`, `contained_by`, and `time_range` / `overlaps` /
        `contains` / `intersection`. (`tail` done in 7b; pond-rs had only
-       `slice`, which takes positions.)
+       `slice`, which takes positions.) (done, below)
      - **8c Changing key type:** `as_time_range`, `as_interval`,
        `offset_time` (pond-rs has only `as_time`).
      - **8d Input and output:** `from_json` / `to_json`, `from_columns` /
@@ -1549,6 +1549,36 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     text-label compare builds the collator once per call, only when two
     keys tie up to the label); `find` / `some` / `every` stop at the first
     answer, as pond-ts.
+
+  **Step 8b (done): picking a time span ([PND-RUSTFULL]).**
+  - Calls, each as pond-ts's same-named one: `within(begin, end)`,
+    `contained_by` (pond-ts `containedBy`, and `within(range)`),
+    `overlapping`, `trim`, `before`, `after`, `time_range`, `overlaps`,
+    `contains`, `intersection`. Spans and boundaries are `EventKey`s (from
+    8a); every test is inclusive at both ends, as in pond-ts. `before` /
+    `after` both read the boundary's start (pond-ts does too). To test one
+    series' span against another's, pass `other.time_range()`.
+  - pond-ts bug found and fixed in the same PR ([PND-TRIMORDER]): `trim`
+    could leave two keys on the same start in the wrong end order
+    (`[0, 10]` and `[2, 5]` trimmed at 3 gave `[3, 10]` before `[3, 5]`).
+    Lookups such as `bisect` were then wrong and `fromJSON` refused to
+    reload the result. Both libraries now re-sort, stably, by start then end, only
+    when clipping reordered keys (CHANGELOG "Fixed").
+  - Differences from pond-ts: a span is checked when built, so a backwards
+    range is an error even on an empty series, where pond-ts `overlapping`
+    / `trim` never build it (the harness names those two cases). pond-ts
+    also throws on a bare number for `within(range)` / `containedBy` /
+    `overlaps` (its types exclude it), while a pond-rs `i64` is a point in
+    time; passing a `Time` in pond-ts gives the same answer.
+  - Parity: 342 new fixture cases (9 inputs of every key kind × 9 spans
+    for `overlapping` / `containedBy` / `trim`, 4 boundaries for `before` /
+    `after`, 3 `within` pairs), including trims that reorder keys; and 279
+    new `queries` entries for `timeRange` / `overlaps` / `contains` /
+    `intersection`. All match bar the named differences.
+  - Perf: point-in-time keys use two binary searches and a slice that
+    shares memory (O(log N)); range and interval keys are walked once
+    (O(N)), as in pond-ts. `trim` adds an O(N) order check and sorts only
+    when clipping reordered keys.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
