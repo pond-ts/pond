@@ -184,6 +184,60 @@ impl TimeSeries {
         })
     }
 
+    /// The first row, or `None` for an empty series (pond-ts `first()`).
+    pub fn first(&self) -> Option<Row<'_>> {
+        self.row(0)
+    }
+
+    /// The last row, or `None` for an empty series (pond-ts `last()`).
+    ///
+    /// ```
+    /// # use pond_rs::{Column, TimeSeries};
+    /// let s = TimeSeries::new("s", vec![0, 1000], vec![
+    ///     Column::required("close", vec![10.0, 11.5]),
+    /// ])?;
+    /// let last = s.last().expect("not empty");
+    /// assert_eq!((last.begin(), last.number("close")?), (1000, Some(11.5)));
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    pub fn last(&self) -> Option<Row<'_>> {
+        self.len().checked_sub(1).and_then(|i| self.row(i))
+    }
+
+    /// The rows in the trailing `duration` (`"60m"`, see
+    /// [`parse_duration`](crate::parse_duration)): those starting strictly
+    /// after the last row's start minus `duration`, as pond-ts
+    /// `tail(duration)`. An empty series is returned as is (without reading
+    /// `duration`, as in pond-ts). Value columns share memory with this
+    /// series.
+    ///
+    /// With [`TimeSeries::reduce`], this is "the state over the last hour"
+    /// without a `rolling` pass over the whole history:
+    ///
+    /// ```
+    /// # use pond_rs::{Agg, Column, Reducer, TimeSeries};
+    /// let s = TimeSeries::new("s", vec![0, 1_800_000, 3_600_000], vec![
+    ///     Column::required("close", vec![10.0, 12.0, 14.0]),
+    /// ])?;
+    /// let hour = s.tail("60m")?; // starts after 0: the last two rows
+    /// assert_eq!(hour.len(), 2);
+    /// let r = hour.reduce(&[Agg::new("mean", "close", Reducer::Avg)])?;
+    /// assert_eq!(r.number("mean")?, Some(13.0));
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    pub fn tail(&self, duration: &str) -> Result<TimeSeries> {
+        let begin = self.key().begin();
+        // pond-ts returns an empty series before reading the duration.
+        let Some(&last) = begin.last() else {
+            return Ok(self.clone());
+        };
+        let duration = crate::parse_duration(duration)?;
+        let cutoff = last.saturating_sub(duration);
+        // Rows are in begin order, so the kept rows are a suffix.
+        let start = begin.partition_point(|&b| b <= cutoff);
+        Ok(self.row_range(start..begin.len()))
+    }
+
     /// This series with `column` added after the existing columns. An error
     /// if its length differs from the series, its name is taken (by a
     /// value column or the key), or it is required and has a gap. Existing
@@ -342,7 +396,7 @@ impl TimeSeries {
 
 /// A wrong-kind error from a column accessor, renamed to the call the user
 /// made.
-fn as_call(e: PondError, call: &'static str) -> PondError {
+pub(crate) fn as_call(e: PondError, call: &'static str) -> PondError {
     match e {
         PondError::WrongKind {
             column,
@@ -375,6 +429,13 @@ mod tests {
             ],
         )
         .unwrap()
+    }
+
+    #[test]
+    fn tail_of_an_empty_series_does_not_read_the_duration() {
+        let empty = series().slice(0..0);
+        assert_eq!(empty.tail("garbage").unwrap().len(), 0);
+        assert!(series().tail("garbage").is_err());
     }
 
     #[test]

@@ -614,15 +614,46 @@ The one result short of a clean win is one-core B: polars is faster
 
   5. **Grid operations:** `align`, `materialize`, `dedupe` (done, below).
   6. **`join`** (done, below).
-  7. **The rest, as friction asks for it:**
-     - Queries (`at`, `bisect`, `nearest`, …) and range selection (`within`,
-       `trim`, …).
-     - `reduce`, `by_column`, `smooth`, `baseline` / `outliers`,
-       `pivot_by_group`, `collapse`, `sample`, `scan`.
-     - Array columns.
+  7. **Friction from the trials:** `parse_time` (7a) and the step 4b
+     agent-trial fixes (7b) (done, below).
+  8. **The rest of the pond-ts batch surface** ([PND-RUSTFULL]). Adopted
+     2026-10-20 by pjm17971: all of it is core functionality and does not
+     need to be justified again by friction. (Until then the plan was to
+     build these only when asked for.) Sub-steps, in dependency order:
+     - **8a Finding rows:** `at`, `bisect`, `at_or_before` /
+       `at_or_after`, `nearest`, `includes_key`, `find` / `some` /
+       `every`. (`first` / `last` done in 7b.)
+     - **8b Picking a time span:** `within`, `before` / `after`, `trim`,
+       `overlapping`, `contained_by`, and `time_range` / `overlaps` /
+       `contains` / `intersection`. (`tail` done in 7b; pond-rs had only
+       `slice`, which takes positions.)
+     - **8c Changing key type:** `as_time_range`, `as_interval`,
+       `offset_time` (pond-rs has only `as_time`).
+     - **8d Input and output:** `from_json` / `to_json`, `from_columns` /
+       `to_columns`, `from_points` / `to_points`, `to_rows` /
+       `to_objects`. pond-rs reads and writes Arrow only, plus building
+       from Rust vectors.
+     - **8e Array columns:** a new column kind (Arrow `List`), with the
+       whole set: `array_contains*`, `array_aggregate`, `array_explode`.
+     - **8f Reducers:** `unique`, `keep`, `top`, `difference`, `samples`.
+       `unique`, `samples` and `topN` give arrays in pond-ts, so they wait
+       for 8e.
+     - **8g Rolling options:** windows counted in rows, leading and centred
+       windows, a minimum sample count, rolling over a time grid. pond-rs
+       only does trailing time windows.
+     - **8h Smoothing and stats:** `smooth` (EMA, moving average, loess),
+       `baseline`, `outliers`, `scan` (a custom running step, a Rust
+       closure), `sample`. (`reduce` done in 7b.)
+     - **8i Grouping and reshaping:** `pivot_by_group`, `by_column` and
+       `rolling_by_column` (histograms), `by_value` and `ValueSeries`,
+       `collapse`, `concat`.
+     - **8j Grouped series:** `smooth`, `baseline`, `outliers`, `sample`
+       and `scan` per group.
 
-     Some of these may never be needed. They are not built until there is a
-     reason to.
+     Each sub-step follows the R1b rules above (fixture cases bit for bit,
+     property tests where an answer is easy to compute another way, the
+     perf check for code that walks rows). A sub-step may be split further
+     when it lands. Finance studies follow step 8.
 
   An agent trial at the end of step 4 repeats the R1a setup on a
   partitioned workload.
@@ -1443,6 +1474,46 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     unknown zone and two offsets. All 1332 match. A review fuzz of
     80k random texts found nothing else beyond the differences above.
   - Not a perf step: parsing does not walk series.
+
+  **Step 7b (done): the step 4b agent-trial fixes ([PND-RUSTQ11]).** Each
+  friction item from the Q11 trial, and what answered it:
+  - 9/10 had no "value at the latest row of each partition" and ran
+    `rolling` over the whole history to read one row. Answered with
+    pond-ts's own pieces: `tail(duration)` (rows starting strictly after
+    the last start minus the duration; a suffix slice, sharing memory) and
+    `reduce(&aggs)` (the whole series as one `aggregate` bucket, so the
+    same reducers, kernels and bits; checked in pond-ts that `reduce`
+    equals a one-bucket `aggregate` on random data), plus `first()` /
+    `last()` giving a `Row`. `reduce` returns `Reduced`, read by output
+    name with the `Row` calls (`number`, `string`, …) or as a `Value`
+    with `get`, since a Rust value per output needs a type; pond-ts
+    returns a plain record. Its errors name `Reduced::*`, and it prints as
+    output name → value. As in pond-ts, `tail` on an empty series returns
+    it without reading the duration (so a bad duration is not an error
+    there).
+  - 6/10 found partition keys clumsy (`Some(Value::String(..))`): added
+    `Value::as_str` / `as_f64` / `as_bool` / `as_decimal`, so a key part
+    reads `key[0].as_ref().and_then(Value::as_str)`. `PartitionKey` stays
+    `Vec<Option<Value>>` (changing it would break every caller).
+  - 10/10 built the ranked output table with `arrow_array` by hand, and
+    all called it easy. No table type added (pond-ts has none either);
+    the crate docs now show the whole Q11 shape: partition, `tail` +
+    `reduce`, rank, `RecordBatch::try_from_iter`.
+  - 2/10 did not know `rolling` keeps only its outputs: now said on
+    `TimeSeries::rolling` and `PartitionedSeries::rolling`, with the
+    `Last` output that keeps a source column.
+  - Not ported: pond-ts `reduce(column, reducer)` (the one-output form;
+    one `Agg` does it), custom reducer functions, and reducers pond-rs
+    lacks (`unique`, `keep`, `top`, …). As in `aggregate`, a number
+    reducer on a text column is an error in pond-rs where pond-ts gives 0
+    or a gap ([PND-KINDREDUCE]).
+  - Parity: 16 new fixture cases (8 `tail`, 8 `reduce`, including an empty
+    series, signed zeros (`reduce-zeros`: first and min give -0), text and
+    true/false outputs, a zero and a bad duration, time-range keys), all
+    matching. `reduce` results are
+    recorded as `reduced` (output name → cell).
+  - Perf: no new walking code. `tail` is a binary search and a slice;
+    `reduce` calls the `aggregate` kernels once over all rows.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

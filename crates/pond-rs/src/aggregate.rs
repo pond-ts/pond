@@ -1,11 +1,13 @@
 //! `TimeSeries::aggregate`: reduce each bucket of a sequence to one row.
 
-use crate::column::ColumnData;
+use crate::column::{ColumnData, Decimal, Value};
 use crate::error::{PondError, Result};
 use crate::reducer::{
     Agg, InputKind, Inputs, Reducer, check_source_kind, input_kind, output_column, reduce_range,
 };
+use crate::rows::as_call;
 use crate::sequence::Sequence;
+use crate::series::Column;
 use crate::series::{IntervalKeys, Key, TimeSeries};
 
 const CALL: &str = "aggregate";
@@ -119,9 +121,204 @@ impl TimeSeries {
     }
 }
 
+impl TimeSeries {
+    /// The whole series reduced to one value per entry of `aggs`, as pond-ts
+    /// `reduce({ out: { from, using } })`: the same reducers and rules as
+    /// [`TimeSeries::aggregate`] with the whole series as one bucket (an
+    /// empty series gives `count` 0, `sum` 0 and gaps). Read the values by
+    /// output name from the [`Reduced`]. See [`TimeSeries::tail`] for an
+    /// example.
+    pub fn reduce(&self, aggs: &[Agg]) -> Result<Reduced> {
+        const CALL: &str = "reduce";
+        let mut sources = Vec::with_capacity(aggs.len());
+        for (i, agg) in aggs.iter().enumerate() {
+            let source = self.column_index(CALL, &agg.source)?;
+            agg.reducer.check(CALL)?;
+            check_source_kind(CALL, &self.columns()[source], agg.reducer)?;
+            sources.push(source);
+            if aggs[..i].iter().any(|a| a.output == agg.output) {
+                return Err(PondError::DuplicateOutput {
+                    call: CALL,
+                    column: agg.output.clone(),
+                });
+            }
+        }
+        // One bucket: every row.
+        let all = std::iter::once(0..self.len()).collect::<Vec<_>>();
+        let used: Vec<(usize, Reducer)> = sources
+            .iter()
+            .zip(aggs)
+            .map(|(&source, agg)| (source, agg.reducer))
+            .collect();
+        let inputs = Inputs::build(self.columns(), &used);
+        let mut columns = Vec::with_capacity(aggs.len());
+        for (agg, &source) in aggs.iter().zip(&sources) {
+            let data = self.columns()[source].data();
+            let kind = input_kind(data, agg.reducer);
+            if let (ColumnData::Decimal(d), InputKind::ExactSum) = (data, kind) {
+                columns.push(crate::decimal::sum_ranges(CALL, &agg.output, d, &all)?);
+                continue;
+            }
+            let input = inputs.get(source, kind);
+            let out = vec![reduce_range(agg.reducer, &input.values[..]).unwrap_or(f64::NAN)];
+            columns.push(output_column(
+                agg.output.clone(),
+                data,
+                agg.reducer,
+                input,
+                out,
+            ));
+        }
+        Ok(Reduced(TimeSeries::from_parts(
+            self.name().to_string(),
+            "time".to_string(),
+            Key::Time(vec![0]),
+            columns,
+        )))
+    }
+}
+
+/// What [`TimeSeries::reduce`] gives: one value per output, read by name
+/// with the same calls as a [`Row`](crate::Row), or as a [`Value`] with
+/// [`Reduced::get`]. A name not among the outputs, or an output of another
+/// kind, is an error; `Ok(None)` is a gap.
+#[derive(Clone)]
+pub struct Reduced(TimeSeries);
+
+impl Reduced {
+    /// The number output `name`, or `None` for a gap.
+    pub fn number(&self, name: &str) -> Result<Option<f64>> {
+        const CALL: &str = "Reduced::number";
+        let c = self.column(CALL, name)?;
+        c.numbers().map(|c| c.get(0)).map_err(|e| as_call(e, CALL))
+    }
+
+    /// The exact decimal output `name`, or `None` for a gap.
+    pub fn decimal(&self, name: &str) -> Result<Option<Decimal>> {
+        const CALL: &str = "Reduced::decimal";
+        let c = self.column(CALL, name)?;
+        c.decimals().map(|c| c.get(0)).map_err(|e| as_call(e, CALL))
+    }
+
+    /// The text output `name`, or `None` for a gap.
+    pub fn string(&self, name: &str) -> Result<Option<&str>> {
+        const CALL: &str = "Reduced::string";
+        let c = self.column(CALL, name)?;
+        c.strings().map(|c| c.get(0)).map_err(|e| as_call(e, CALL))
+    }
+
+    /// The true/false output `name`, or `None` for a gap.
+    pub fn boolean(&self, name: &str) -> Result<Option<bool>> {
+        const CALL: &str = "Reduced::boolean";
+        let c = self.column(CALL, name)?;
+        c.booleans().map(|c| c.get(0)).map_err(|e| as_call(e, CALL))
+    }
+
+    /// The output `name` whatever its kind, or `None` for a gap.
+    pub fn get(&self, name: &str) -> Result<Option<Value>> {
+        Ok(value_at(self.column("Reduced::get", name)?.data()))
+    }
+
+    /// The outputs as columns of one row, in the order of `aggs`.
+    pub fn columns(&self) -> &[Column] {
+        self.0.columns()
+    }
+
+    fn column(&self, call: &'static str, name: &str) -> Result<&Column> {
+        Ok(&self.0.columns()[self.0.column_index(call, name)?])
+    }
+}
+
+/// Prints the outputs by name (`{"mean": Some(Number(12.5)), …}`).
+impl std::fmt::Debug for Reduced {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(
+                self.columns()
+                    .iter()
+                    .map(|c| (c.name(), value_at(c.data()))),
+            )
+            .finish()
+    }
+}
+
+fn value_at(data: &ColumnData) -> Option<Value> {
+    match data {
+        ColumnData::Number(c) => c.get(0).map(Value::Number),
+        ColumnData::Decimal(c) => c.get(0).map(Value::Decimal),
+        ColumnData::String(c) => c.get(0).map(|s| Value::String(s.to_string())),
+        ColumnData::Boolean(c) => c.get(0).map(Value::Boolean),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::{Agg, Column, ColumnKind, PondError, Reducer, Sequence, TimeSeries};
+    use crate::{Agg, Column, ColumnKind, PondError, Reducer, Sequence, TimeSeries, Value};
+
+    #[test]
+    fn reduced_values_are_read_by_name_and_kind() {
+        let r = hosts()
+            .reduce(&[
+                Agg::new("n", "host", Reducer::Count),
+                Agg::new("first_host", "host", Reducer::First),
+                Agg::new("last_up", "up", Reducer::Last),
+            ])
+            .unwrap();
+        assert_eq!(r.number("n").unwrap(), Some(3.0));
+        assert_eq!(r.string("first_host").unwrap(), Some("a"));
+        assert_eq!(r.boolean("last_up").unwrap(), Some(true));
+        assert!(r.number("first_host").is_err()); // text, not a number
+        assert!(r.number("nope").is_err());
+        let names: Vec<&str> = r.columns().iter().map(|c| c.name()).collect();
+        assert_eq!(names, ["n", "first_host", "last_up"]);
+    }
+
+    #[test]
+    fn reduced_values_are_read_as_values_and_printed_by_name() {
+        let r = hosts()
+            .reduce(&[
+                Agg::new("n", "host", Reducer::Count),
+                Agg::new("first_host", "host", Reducer::First),
+                Agg::new("first_up", "up", Reducer::First),
+            ])
+            .unwrap();
+        assert_eq!(r.get("n").unwrap(), Some(Value::Number(3.0)));
+        assert_eq!(
+            r.get("first_host").unwrap(),
+            Some(Value::String("a".into()))
+        );
+        assert_eq!(r.get("first_up").unwrap(), Some(Value::Boolean(false)));
+        assert_eq!(
+            format!("{r:?}"),
+            r#"{"n": Some(Number(3.0)), "first_host": Some(String("a")), "first_up": Some(Boolean(false))}"#
+        );
+        // Errors name the call that was made, not `Row`.
+        let e = r.number("first_host").unwrap_err().to_string();
+        assert!(e.contains("Reduced::number"), "{e}");
+        let e = r.get("nope").unwrap_err().to_string();
+        assert!(e.contains("Reduced::get"), "{e}");
+    }
+
+    #[test]
+    fn a_reduced_gap_is_none() {
+        let empty = hosts().slice(0..0);
+        let r = empty
+            .reduce(&[Agg::new("first_host", "host", Reducer::First)])
+            .unwrap();
+        assert_eq!(r.get("first_host").unwrap(), None);
+        assert_eq!(r.string("first_host").unwrap(), None);
+    }
+
+    #[test]
+    fn reduce_refuses_a_repeated_output() {
+        let e = hosts()
+            .reduce(&[
+                Agg::new("x", "host", Reducer::Count),
+                Agg::new("x", "up", Reducer::Count),
+            ])
+            .unwrap_err();
+        assert!(matches!(e, PondError::DuplicateOutput { .. }), "{e}");
+    }
 
     fn hosts() -> TimeSeries {
         TimeSeries::new(

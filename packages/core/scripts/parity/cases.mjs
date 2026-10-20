@@ -1170,6 +1170,96 @@ const CASES = [
       'collect',
     ],
   ],
+  // tail: rows starting strictly after (last start - duration); repeated
+  // times at the cut, time ranges, an empty series, a zero and a bad duration
+  ['tail-gappy-5s', 'gappy', 'tail', ['5s']],
+  ['tail-gappy-8500ms', 'gappy', 'tail', ['8500ms']],
+  ['tail-gappy-1h', 'gappy', 'tail', ['1h']],
+  ['tail-gappy-0s', 'gappy', 'tail', ['0s']],
+  ['tail-noisy-20s', 'noisy', 'tail', ['20s']],
+  ['tail-ranges-10s', 'ranges', 'tail', ['10s']],
+  ['tail-empty', 'emptyHosts', 'tail', ['1m']],
+  ['tail-bad-duration', 'gappy', 'tail', ['5 parsecs']],
+  // reduce: the whole series as one bucket, as a record
+  ['reduce-gappy-shorthand', 'gappy', 'reduce', [{ b: 'count', a: 'sum' }]],
+  [
+    'reduce-noisy-spread',
+    'noisy',
+    'reduce',
+    [
+      {
+        x_sum: { from: 'x', using: 'sum' },
+        x_avg: { from: 'x', using: 'avg' },
+        x_min: { from: 'x', using: 'min' },
+        x_max: { from: 'x', using: 'max' },
+        x_sd: { from: 'x', using: 'stdev' },
+        x_med: { from: 'x', using: 'median' },
+        x_p95: { from: 'x', using: 'p95' },
+        y_n: { from: 'y', using: 'count' },
+        y_first: { from: 'y', using: 'first' },
+        y_last: { from: 'y', using: 'last' },
+      },
+    ],
+  ],
+  [
+    'reduce-mixed-kinds',
+    'mixed',
+    'reduce',
+    [
+      {
+        host_first: { from: 'host', using: 'first' },
+        host_last: { from: 'host', using: 'last' },
+        host_n: { from: 'host', using: 'count' },
+        up_first: { from: 'up', using: 'first' },
+        up_last: { from: 'up', using: 'last' },
+        v_avg: { from: 'v', using: 'avg' },
+      },
+    ],
+  ],
+  ['reduce-signed', 'signed', 'reduce', [{ v: 'sum' }]],
+  [
+    'reduce-signed-spread',
+    'signed',
+    'reduce',
+    [
+      {
+        avg: { from: 'v', using: 'avg' },
+        min: { from: 'v', using: 'min' },
+        max: { from: 'v', using: 'max' },
+        med: { from: 'v', using: 'median' },
+      },
+    ],
+  ],
+  [
+    'reduce-empty',
+    'emptyHosts',
+    'reduce',
+    [
+      {
+        n: { from: 'cpu', using: 'count' },
+        total: { from: 'cpu', using: 'sum' },
+        mean: { from: 'cpu', using: 'avg' },
+        sd: { from: 'cpu', using: 'stdev' },
+        host: { from: 'host', using: 'first' },
+      },
+    ],
+  ],
+  // Signed zeros: the first value and the minimum are -0, and the sum
+  // starts from +0.
+  [
+    'reduce-zeros',
+    'zeros',
+    'reduce',
+    [
+      {
+        first: { from: 'v', using: 'first' },
+        min: { from: 'v', using: 'min' },
+        total: { from: 'v', using: 'sum' },
+        med: { from: 'v', using: 'median' },
+      },
+    ],
+  ],
+  ['reduce-unknown-column', 'gappy', 'reduce', [{ nope: 'sum' }]],
   // join: exact keys, pairing repeats one to one; a matched row keeps the
   // left key. joinB has 1000 three times to joinA's two. (pond-rs names
   // keys by kind, so a key-name clash is a pond-rs unit test, via Arrow.)
@@ -1774,7 +1864,7 @@ export function buildFixture(pond) {
       generator: 'packages/core/scripts/parity/generate.mjs',
       reference: 'pond-ts',
       encoding:
-        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Sequence.every(d) as {"sequence":{"every":d}} and Sequence.calendar(u, {timeZone, weekStartsOn}) as {"sequence":{"calendar":u,"timeZone":z,"weekStartsOn"?:w}}; a case has expected (series), groups ([key, series] pairs, from toMap / groupBy) or error ({name,message}); partitionBy args are [by, steps, end] with steps [[method, ...args]] run on the partitioned view and end "collect" or "toMap"; {"series":name} is another input series; joinMany args are [[others...], options?] and call TimeSeries.joinMany([input, ...others], options); exact unless tolerance is set; timeParse holds Time.parse(input, {timeZone}) as expected (ms) or error (its name)',
+        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Sequence.every(d) as {"sequence":{"every":d}} and Sequence.calendar(u, {timeZone, weekStartsOn}) as {"sequence":{"calendar":u,"timeZone":z,"weekStartsOn"?:w}}; a case has expected (series), groups ([key, series] pairs, from toMap / groupBy), reduced ({output: cell}, from reduce) or error ({name,message}); partitionBy args are [by, steps, end] with steps [[method, ...args]] run on the partitioned view and end "collect" or "toMap"; {"series":name} is another input series; joinMany args are [[others...], options?] and call TimeSeries.joinMany([input, ...others], options); exact unless tolerance is set; timeParse holds Time.parse(input, {timeZone}) as expected (ms) or error (its name)',
     },
     inputs: Object.fromEntries(
       Object.entries(inputs).map(([name, series]) => [
@@ -1810,6 +1900,14 @@ export function buildFixture(pond) {
         }
       } catch (e) {
         return { ...head, error: { name: e.name, message: e.message } };
+      }
+      if (op === 'reduce') {
+        return {
+          ...head,
+          reduced: Object.fromEntries(
+            Object.entries(result).map(([k, v]) => [k, encodeCell(v ?? null)]),
+          ),
+        };
       }
       if (result instanceof Map) {
         return {

@@ -81,6 +81,10 @@ pub struct CoreCase {
     /// key, as pond-ts writes it, with its series, in order.
     #[serde(default)]
     pub groups: Option<Vec<(String, SeriesJson)>>,
+    /// The result when pond-ts returns a record (`reduce`): each output
+    /// name with its cell, in order.
+    #[serde(default)]
+    pub reduced: Option<serde_json::Map<String, Value>>,
 }
 
 /// What an operation gave: one series, or keyed groups of them.
@@ -88,6 +92,7 @@ pub struct CoreCase {
 pub enum Outcome {
     Series(SeriesJson),
     Groups(Vec<(String, SeriesJson)>),
+    Record(serde_json::Map<String, Value>),
 }
 
 impl From<SeriesJson> for Outcome {
@@ -106,11 +111,16 @@ pub struct ErrorJson {
 /// Check one case's outcome: success must match `expected` (or `groups`),
 /// and a pond-ts error must be an error in pond-rs too.
 pub fn check_case(case: &CoreCase, actual: &Result<Outcome, String>) -> Result<(), String> {
-    let wanted = match (&case.expected, &case.groups, &case.error) {
-        (Some(e), None, None) => Some(Outcome::Series(e.clone())),
-        (None, Some(g), None) => Some(Outcome::Groups(g.clone())),
-        (None, None, Some(_)) => None,
-        _ => return Err("fixture case must have exactly one of expected / groups / error".into()),
+    let wanted = match (&case.expected, &case.groups, &case.reduced, &case.error) {
+        (Some(e), None, None, None) => Some(Outcome::Series(e.clone())),
+        (None, Some(g), None, None) => Some(Outcome::Groups(g.clone())),
+        (None, None, Some(r), None) => Some(Outcome::Record(r.clone())),
+        (None, None, None, Some(_)) => None,
+        _ => {
+            return Err(
+                "fixture case must have exactly one of expected / groups / reduced / error".into(),
+            );
+        }
     };
     match (wanted, actual) {
         (Some(Outcome::Series(e)), Ok(Outcome::Series(a))) => compare_series(&e, a, case.tolerance),
@@ -124,6 +134,17 @@ pub fn check_case(case: &CoreCase, actual: &Result<Outcome, String>) -> Result<(
                 }
                 compare_series(es, as_, case.tolerance)
                     .map_err(|why| format!("group {ek:?}: {why}"))?;
+            }
+            Ok(())
+        }
+        (Some(Outcome::Record(e)), Ok(Outcome::Record(a))) => {
+            let (ek, ak): (Vec<_>, Vec<_>) = (e.keys().collect(), a.keys().collect());
+            if ek != ak {
+                return Err(format!("expected outputs {ek:?}, got {ak:?}"));
+            }
+            for (name, cell) in &e {
+                compare_cell(cell, &a[name], case.tolerance)
+                    .map_err(|why| format!("output '{name}': {why}"))?;
             }
             Ok(())
         }

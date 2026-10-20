@@ -44,6 +44,8 @@ const KNOWN_OPS: &[&str] = &[
     "dedupe",
     "join",
     "joinMany",
+    "tail",
+    "reduce",
 ];
 
 /// Ops with an arm in [`run`]. Every fixture case for a listed op must run
@@ -71,6 +73,8 @@ const IMPLEMENTED_OPS: &[&str] = &[
     "dedupe",
     "join",
     "joinMany",
+    "tail",
+    "reduce",
 ];
 
 /// The ops a plain series and a partitioned one both have, with the same
@@ -289,7 +293,23 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>
                 .map_err(|e| e.to_string()),
         );
     }
+    if case.op == "reduce" {
+        let reduced = mapping(&case.args[0]).and_then(|aggs| input.reduce(&aggs));
+        return Some(
+            reduced
+                .map(|r| {
+                    Outcome::Record(
+                        r.columns()
+                            .iter()
+                            .map(|c| (c.name().to_string(), encode(c.data(), 0)))
+                            .collect(),
+                    )
+                })
+                .map_err(|e| e.to_string()),
+        );
+    }
     let result = match case.op.as_str() {
+        "tail" => input.tail(case.args[0].as_str().expect("tail takes a duration string")),
         "join" => {
             let other = to_series(&fixture.inputs[series_name(&case.args[0])]);
             input.join(&other, join_options(case.args.get(1)))
@@ -723,10 +743,11 @@ fn implemented_ops_match_pond_ts() {
 fn comparator_catches_mismatches() {
     let fixture = load_core_fixture();
     for case in &fixture.cases {
-        let own: Result<Outcome, String> = match (&case.expected, &case.groups) {
-            (Some(expected), _) => Ok(Outcome::Series(expected.clone())),
-            (None, Some(groups)) => Ok(Outcome::Groups(groups.clone())),
-            (None, None) => Err("pond-rs error".to_string()),
+        let own: Result<Outcome, String> = match (&case.expected, &case.groups, &case.reduced) {
+            (Some(expected), _, _) => Ok(Outcome::Series(expected.clone())),
+            (None, Some(groups), _) => Ok(Outcome::Groups(groups.clone())),
+            (None, None, Some(record)) => Ok(Outcome::Record(record.clone())),
+            (None, None, None) => Err("pond-rs error".to_string()),
         };
         check_case(case, &own).unwrap_or_else(|why| panic!("{} rejects itself: {why}", case.id));
     }
