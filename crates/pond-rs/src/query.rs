@@ -33,7 +33,8 @@ use crate::join::root_collator;
 use crate::rows::Row;
 use crate::series::{Key, Labels, TimeSeries};
 
-/// An interval label: a number or text, as pond-ts allows.
+/// One interval label: a number or text, as pond-ts allows. (A whole
+/// column of them is [`Labels`](crate::Labels).)
 #[derive(Debug, Clone, PartialEq)]
 pub enum Label {
     /// A number label. Must be finite.
@@ -70,7 +71,8 @@ impl From<String> for Label {
 /// One key: a point in time, a time range or a labelled interval, in
 /// epoch milliseconds, as pond-ts `Time` / `TimeRange` / `Interval`. Used to
 /// look rows up ([`TimeSeries::bisect`] and friends) and given by
-/// [`Row::key`]. A plain `i64` converts to a point in time.
+/// [`Row::key`]. A plain `i64` converts to a point in time. (A series'
+/// whole key column is a [`Key`](crate::Key).)
 #[derive(Debug, Clone, PartialEq)]
 pub struct EventKey {
     begin: i64,
@@ -493,6 +495,29 @@ mod tests {
         );
         assert_eq!(r.at(0).unwrap().key(), EventKey::time_range(0, 5).unwrap());
         assert_eq!(r.at(0).unwrap().key().kind(), "timeRange");
+    }
+
+    #[test]
+    fn row_key_gives_time_and_number_labelled_keys() {
+        let t = times().at(1).unwrap().key();
+        assert_eq!(
+            (t.clone(), t.kind(), t.label()),
+            (EventKey::time(1000), "time", None)
+        );
+        let n = TimeSeries::from_parts(
+            "n".into(),
+            "interval".into(),
+            Key::Interval(IntervalKeys {
+                label: vec![0.0, 5000.0].into(),
+                begin: vec![0, 5000],
+                end: vec![5000, 10000],
+            }),
+            vec![],
+        );
+        let k = n.at(-1).unwrap().key();
+        assert_eq!(k, EventKey::interval(5000.0, 5000, 10000).unwrap());
+        assert_eq!(k.label(), Some(&Label::Number(5000.0)));
+        assert!(n.includes_key(k));
     }
 
     #[test]
