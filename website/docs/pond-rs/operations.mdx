@@ -419,6 +419,95 @@ fn main() -> Result<(), pond_rs::PondError> {
 }
 ```
 
+## Picking a time span
+
+These keep the rows in a stretch of time. Every test includes both ends.
+A span is an `EventKey` (usually `EventKey::time_range(begin, end)?`), so a
+span whose start is after its end is refused when it is built.
+
+| Call                 | Keeps                                                                            |
+| -------------------- | -------------------------------------------------------------------------------- |
+| `within(begin, end)` | rows wholly inside `begin..=end` (an error if `begin > end`)                     |
+| `contained_by(span)` | rows wholly inside `span`                                                        |
+| `overlapping(span)`  | rows that touch `span` at all, keys unchanged                                    |
+| `trim(span)`         | the same rows as `overlapping`, with time ranges and intervals clipped to `span` |
+| `before(t)`          | rows that end strictly before `t`                                                |
+| `after(t)`           | rows that start strictly after `t`                                               |
+
+For a series keyed by moments, `contained_by`, `overlapping` and `trim`
+keep the same rows. They differ when rows are spans:
+
+```rust
+use pond_rs::{Column, EventKey, TimeRangeKeys, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Three jobs, each running from begin to end.
+    let jobs = TimeSeries::from_time_ranges(
+        "jobs",
+        TimeRangeKeys {
+            begin: vec![0, 2, 8],
+            end: vec![10, 5, 9],
+        },
+        vec![Column::required("id", vec!["a", "b", "c"])],
+    )?;
+    let span = EventKey::time_range(3, 20)?;
+
+    // Wholly inside 3..=20: only c.
+    assert_eq!(jobs.contained_by(span.clone()).len(), 1);
+    // Touching it at all: all three.
+    assert_eq!(jobs.overlapping(span.clone()).len(), 3);
+
+    // Clipped to start at 3. a (now 3..10) and b (now 3..5) start together,
+    // so the rows are re-sorted by end: b first.
+    let clipped = jobs.trim(span);
+    let ids: Vec<_> = clipped.column("id")?.strings()?.iter().collect();
+    assert_eq!(ids, [Some("b"), Some("a"), Some("c")]);
+    assert_eq!(clipped.key().begin(), &[3, 3, 8]);
+
+    assert_eq!(jobs.before(6).len(), 1); // b ends at 5
+    assert_eq!(jobs.after(1).len(), 2); // b and c start after 1
+    Ok(())
+}
+```
+
+`trim` re-sorts only when clipping put two rows that now start together in
+the wrong order, as above. pond-ts had a bug here: it left them out of
+order, which broke later lookups. It was fixed in pond-ts at the same time.
+
+Four more calls look at the whole series' span, from the first start to the
+latest end:
+
+| Call                 | Gives                                                           |
+| -------------------- | --------------------------------------------------------------- |
+| `time_range()`       | that span as an `EventKey`, or `None` for an empty series       |
+| `overlaps(span)`     | whether it touches `span` (`false` for an empty series)         |
+| `contains(span)`     | whether it wholly contains `span` (`false` for an empty series) |
+| `intersection(span)` | the shared part, or `None` if they do not overlap               |
+
+To compare two series, pass the other's span:
+`b.time_range().is_some_and(|r| a.overlaps(r))`.
+
+```rust
+use pond_rs::{Column, EventKey, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let a = TimeSeries::new("a", vec![0, 5_000, 10_000], vec![Column::required("v", vec![1.0, 2.0, 3.0])])?;
+    let b = TimeSeries::new("b", vec![8_000, 20_000], vec![Column::required("v", vec![4.0, 5.0])])?;
+
+    assert_eq!(a.time_range(), Some(EventKey::time_range(0, 10_000)?));
+    assert!(b.time_range().is_some_and(|r| a.overlaps(r)));
+    assert!(!a.contains(b.time_range().unwrap()));
+    assert_eq!(
+        a.intersection(b.time_range().unwrap()),
+        Some(EventKey::time_range(8_000, 10_000)?)
+    );
+
+    // Rows of a inside the shared part: just the one at 10 s.
+    assert_eq!(a.within(8_000, 10_000)?.len(), 1);
+    Ok(())
+}
+```
+
 ## Changing columns
 
 - `map_numbers(col, |v| ..)` applies a function to every value of a number
@@ -710,6 +799,5 @@ the other side first. `join` is not on `PartitionedSeries`.
 
 ## What is not here yet
 
-From pond-ts, still to come, as people ask for them: `within` / `trim`,
-`smooth`, `baseline` / `outliers`, `pivot_by_group`, and array columns. Financial studies come after
+From pond-ts, still to come, as people ask for them: `smooth`, `baseline` / `outliers`, `pivot_by_group`, and array columns. Financial studies come after
 the core.
