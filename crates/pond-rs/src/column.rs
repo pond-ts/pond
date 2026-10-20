@@ -691,10 +691,13 @@ pub(crate) type Cell = Arc<[Scalar]>;
 /// # Ok::<(), pond_rs::PondError>(())
 /// ```
 ///
-/// Arrays have no Arrow form yet: [`TimeSeries::to_arrow`] refuses an
-/// array column, as pond-ts's `toArrow` does.
+/// In Arrow an array column is a list: [`TimeSeries::to_arrow`] writes one
+/// when every element in the column is the same kind, and
+/// [`TimeSeries::from_arrow`] reads lists of numbers, text or true/false
+/// values. pond-ts has no Arrow form for arrays.
 ///
 /// [`TimeSeries::to_arrow`]: crate::TimeSeries::to_arrow
+/// [`TimeSeries::from_arrow`]: crate::TimeSeries::from_arrow
 #[derive(Debug, Clone)]
 pub struct ArrayColumn {
     cells: Arc<[Option<Cell>]>,

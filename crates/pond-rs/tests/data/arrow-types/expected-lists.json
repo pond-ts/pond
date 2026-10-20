@@ -1,0 +1,81 @@
+{
+ "list_bool": [
+  [
+   true
+  ],
+  [
+   false,
+   true
+  ],
+  null
+ ],
+ "list_fixed_size": [
+  [
+   1.0,
+   2.0
+  ],
+  null,
+  [
+   3.0,
+   4.0
+  ]
+ ],
+ "list_float64": [
+  [
+   1.5,
+   -2.0
+  ],
+  null,
+  []
+ ],
+ "list_int64_large": [
+  [
+   1,
+   2,
+   3
+  ],
+  [],
+  null
+ ],
+ "list_polars": [
+  [
+   "a"
+  ],
+  null,
+  [
+   "b",
+   "c"
+  ]
+ ],
+ "list_text": [
+  [
+   "a",
+   "b"
+  ],
+  null,
+  [
+   "",
+   "é"
+  ]
+ ],
+ "list_text_dictionary": [
+  [
+   "x",
+   "y"
+  ],
+  [
+   "x"
+  ],
+  null
+ ],
+ "list_timestamp_us": [
+  [
+   1.5
+  ],
+  null,
+  [
+   -1.5,
+   0
+  ]
+ ]
+}

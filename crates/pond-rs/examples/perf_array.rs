@@ -1,6 +1,6 @@
 //! Timing of the array-column calls (`array_contains` / `_any` / `_all`,
 //! `array_aggregate`, `array_explode`) and of reading and writing an array
-//! column as JSON rows, on 100k rows one second apart with a number column
+//! column as JSON rows and as Arrow lists, on 100k rows one second apart with a number column
 //! alongside:
 //!
 //! - `typical`: text arrays of 0 to 6 words (from 20) and number arrays of
@@ -10,7 +10,9 @@
 //!     cargo run --release -p pond-rs --example perf_array
 //!
 //! pond-ts's equivalent is the same calls on a `TimeSeries` built with
-//! `fromJSON` (`arrayContains`, `arrayAggregate`, …).
+//! `fromJSON` (`arrayContains`, `arrayAggregate`, …). pond-ts has no Arrow
+//! form for arrays, so the Arrow rows have nothing to compare with there;
+//! they time the `nums` and `tags` columns alone (`select`).
 
 use std::time::Instant;
 
@@ -89,6 +91,10 @@ fn main() -> pond_rs::Result<()> {
     for (name, single) in [("typical", false), ("single", true)] {
         let s = make(single);
         let text = s.to_json(RowFormat::Array)?;
+        let lists = s.select(&["tags", "nums"])?;
+        let batch = lists.to_arrow()?;
+        let mut ipc = Vec::new();
+        lists.write_ipc(&mut ipc)?;
         let rows = [
             ("contains", time(|| s.array_contains("tags", "w3").unwrap())),
             (
@@ -127,6 +133,23 @@ fn main() -> pond_rs::Result<()> {
             (
                 "fromJSON",
                 time(|| TimeSeries::from_json(&text, &JsonOptions::new()).unwrap()),
+            ),
+            ("toArrow", time(|| lists.to_arrow().unwrap())),
+            (
+                "fromArrow",
+                time(|| TimeSeries::from_arrow("b", std::slice::from_ref(&batch), "time").unwrap()),
+            ),
+            (
+                "writeIpc",
+                time(|| {
+                    let mut out = Vec::with_capacity(ipc.len());
+                    lists.write_ipc(&mut out).unwrap();
+                    out
+                }),
+            ),
+            (
+                "readIpc",
+                time(|| TimeSeries::from_ipc_bytes("b", ipc.clone(), "time").unwrap()),
             ),
         ];
         for (op, ms) in rows {

@@ -8,6 +8,10 @@ values are worked out here from the raw inputs, not by reading the files back.
 Decimal files (`decimal*.arrow`) are read as exact decimals instead, so their
 expected values are strings in `expected-decimals.json`, with the scale.
 
+List files (`list*.arrow`) are read as array columns; `expected-lists.json`
+gives each row's elements (numbers in milliseconds for time items), or null
+for a gap.
+
 Run from this folder with pyarrow and polars installed:
     python generate.py
 """
@@ -111,9 +115,61 @@ pl.from_arrow(table(pa.array(VALUES, pa.decimal128(10, 2)))).write_ipc(
 )
 DECIMALS["decimal_polars"] = DECIMALS["decimal128"]
 
+# Lists, read as array columns: each list type, item types, and polars.
+LISTS = {}
+
+
+def write_list(name, v, expected):
+    with ipc.new_file(f"{name}.arrow", table(v).schema) as w:
+        w.write_table(table(v))
+    LISTS[name] = expected
+
+
+ROWS = [[1.5, -2.0], None, []]
+write_list("list_float64", pa.array(ROWS, pa.list_(pa.float64())), ROWS)
+write_list(
+    "list_int64_large",
+    pa.array([[1, 2, 3], [], None], pa.large_list(pa.int64())),
+    [[1, 2, 3], [], None],
+)
+write_list(
+    "list_text",
+    pa.array([["a", "b"], None, ["", "é"]], pa.list_(pa.string())),
+    [["a", "b"], None, ["", "é"]],
+)
+write_list(
+    "list_text_dictionary",
+    pa.array(
+        [["x", "y"], ["x"], None], pa.list_(pa.dictionary(pa.int32(), pa.string()))
+    ),
+    [["x", "y"], ["x"], None],
+)
+write_list(
+    "list_bool",
+    pa.array([[True], [False, True], None], pa.list_(pa.bool_())),
+    [[True], [False, True], None],
+)
+write_list(
+    "list_fixed_size",
+    pa.array([[1.0, 2.0], None, [3.0, 4.0]], pa.list_(pa.float64(), 2)),
+    [[1.0, 2.0], None, [3.0, 4.0]],
+)
+write_list(
+    "list_timestamp_us",
+    pa.array([[1_500], None, [-1_500, 0]], pa.list_(pa.timestamp("us", tz="UTC"))),
+    [[1.5], None, [-1.5, 0]],
+)
+pl.from_arrow(table(pa.array([["a"], None, ["b", "c"]], pa.list_(pa.string())))).write_ipc(
+    "list_polars.arrow", compression="zstd"
+)
+LISTS["list_polars"] = [["a"], None, ["b", "c"]]
+
 with open("expected.json", "w") as f:
     json.dump(EXPECTED, f, indent=1, sort_keys=True)
     f.write("\n")
 with open("expected-decimals.json", "w") as f:
     json.dump(DECIMALS, f, indent=1, sort_keys=True)
+    f.write("\n")
+with open("expected-lists.json", "w") as f:
+    json.dump(LISTS, f, indent=1, sort_keys=True, ensure_ascii=False)
     f.write("\n")
