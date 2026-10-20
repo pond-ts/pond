@@ -1563,7 +1563,11 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     (`[0, 10]` and `[2, 5]` trimmed at 3 gave `[3, 10]` before `[3, 5]`).
     Lookups such as `bisect` were then wrong and `fromJSON` refused to
     reload the result. Both libraries now re-sort, stably, by start then end, only
-    when clipping reordered keys (CHANGELOG "Fixed").
+    when clipping reordered keys (CHANGELOG "Fixed"). Note the policy
+    differs from `asTime({ at: 'center' | 'end' })`, which refuses (throws)
+    when moving keys would reorder rows: `trim` keeps whole rows, so a
+    re-sort loses nothing, while `asTime` refusing was a choice already
+    pinned by fixture cases (step 1).
   - Differences from pond-ts: a span is checked when built, so a backwards
     range is an error even on an empty series, where pond-ts `overlapping`
     / `trim` never build it (the harness names those two cases). pond-ts
