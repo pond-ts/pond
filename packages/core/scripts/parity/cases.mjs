@@ -1337,6 +1337,286 @@ const ARRAY_CASES = [
   ],
 ];
 
+// Rolling options (pond-rs R1b step 8g): leading and centred windows, a
+// minimum row count, windows counted in rows, and windows placed on a
+// sequence's grid. Every reducer, on columns with gaps, repeated times,
+// signed zeros and a long silence.
+const ROLL_NOISY = {
+  x_sum: { from: 'x', using: 'sum' },
+  x_avg: { from: 'x', using: 'avg' },
+  x_min: { from: 'x', using: 'min' },
+  x_max: { from: 'x', using: 'max' },
+  x_med: { from: 'x', using: 'median' },
+  x_p10: { from: 'x', using: 'p10' },
+  x_sd: { from: 'x', using: 'stdev' },
+  x_keep: { from: 'x', using: 'keep' },
+  x_diff: { from: 'x', using: 'difference' },
+  y_n: { from: 'y', using: 'count' },
+  y_first: { from: 'y', using: 'first' },
+  y_last: { from: 'y', using: 'last' },
+  y_sd: { from: 'y', using: 'stdev' },
+};
+const ROLL_RUNS = {
+  v_keep: { from: 'v', using: 'keep' },
+  v_diff: { from: 'v', using: 'difference' },
+  v_sum: { from: 'v', using: 'sum' },
+  v_u: { from: 'v', using: 'unique' },
+  v_t: { from: 'v', using: 'top2' },
+  v_s: { from: 'v', using: 'samples' },
+  s_keep: { from: 's', using: 'keep' },
+  s_u: { from: 's', using: 'unique' },
+  s_first: { from: 's', using: 'first' },
+  b_t: { from: 'b', using: 'top2' },
+  b_n: { from: 'b', using: 'count' },
+};
+const ROLL_TAGS = {
+  tags_u: { from: 'tags', using: 'unique' },
+  tags_keep: { from: 'tags', using: 'keep' },
+  nums_t: { from: 'nums', using: 'top2' },
+  nums_s: { from: 'nums', using: 'samples' },
+  v_avg: { from: 'v', using: 'avg' },
+  host_last: { from: 'host', using: 'last' },
+};
+const ALIGNMENTS = ['trailing', 'leading', 'centered'];
+const ROLLING_OPTION_CASES = [
+  // time windows, each alignment
+  ...ALIGNMENTS.flatMap((alignment) => [
+    [
+      `rolling-noisy-20s-${alignment}`,
+      'noisy',
+      'rolling',
+      ['20s', ROLL_NOISY, { alignment }],
+    ],
+    [
+      `rolling-runs-3s-${alignment}`,
+      'runs',
+      'rolling',
+      ['3s', ROLL_RUNS, { alignment }],
+    ],
+    [
+      `rolling-tags-2s-${alignment}`,
+      'tags',
+      'rolling',
+      ['2s', ROLL_TAGS, { alignment }],
+    ],
+    [
+      `rolling-gappy-3s-${alignment}-min2`,
+      'gappy',
+      'rolling',
+      ['3s', { a: 'avg', b: 'count' }, { alignment, minSamples: 2 }],
+    ],
+    [
+      `rolling-buckets-6s-${alignment}`,
+      'buckets',
+      'rolling',
+      ['6s', { a: 'sum', b: 'last' }, { alignment }],
+    ],
+  ]),
+  // centred windows an odd number of ms long have half-ms edges
+  [
+    'rolling-gappy-1001ms-centered',
+    'gappy',
+    'rolling',
+    ['1001ms', { a: 'count', b: 'sum' }, { alignment: 'centered' }],
+  ],
+  [
+    'rolling-noisy-1401ms-centered',
+    'noisy',
+    'rolling',
+    ['1401ms', ROLL_NOISY, { alignment: 'centered' }],
+  ],
+  // a 999 ms centred window ends half a ms past a row 500 ms away
+  [
+    'rolling-gappy-999ms-centered',
+    'gappy',
+    'rolling',
+    ['999ms', { a: 'count', b: 'sum' }, { alignment: 'centered' }],
+  ],
+  [
+    'rolling-grid-gappy-1s-999ms-centered',
+    'gappy',
+    'rolling',
+    [every('1s'), '999ms', { a: 'count', b: 'sum' }, { alignment: 'centered' }],
+  ],
+  // a minimum no window reaches: every row is a gap
+  [
+    'rolling-gappy-1s-min99',
+    'gappy',
+    'rolling',
+    ['1s', { a: 'count', b: 'sum' }, { minSamples: 99 }],
+  ],
+  // windows counted in rows; an even count leans to the leading side
+  ...ALIGNMENTS.flatMap((alignment) =>
+    [1, 3, 4, 500].flatMap((count) => [
+      [
+        `rolling-noisy-count${count}-${alignment}`,
+        'noisy',
+        'rolling',
+        [{ count }, ROLL_NOISY, { alignment }],
+      ],
+      [
+        `rolling-runs-count${count}-${alignment}-min${count}`,
+        'runs',
+        'rolling',
+        [{ count }, ROLL_RUNS, { alignment, minSamples: count }],
+      ],
+    ]),
+  ),
+  ...ALIGNMENTS.map((alignment) => [
+    `rolling-tags-count2-${alignment}`,
+    'tags',
+    'rolling',
+    [{ count: 2 }, ROLL_TAGS, { alignment }],
+  ]),
+  [
+    'rolling-zeros-count3',
+    'zeros',
+    'rolling',
+    [{ count: 3 }, { v: 'difference' }],
+  ],
+  [
+    'rolling-count-shorthand',
+    'gappy',
+    'rolling',
+    [{ count: 2 }, { b: 'sum', a: 'avg' }],
+  ],
+  ['rolling-error-count0', 'gappy', 'rolling', [{ count: 0 }, { a: 'avg' }]],
+  [
+    'rolling-empty-count2',
+    'emptyHosts',
+    'rolling',
+    [{ count: 2 }, { cpu: 'avg' }],
+  ],
+  // windows on a sequence's grid
+  ...ALIGNMENTS.flatMap((alignment) => [
+    [
+      `rolling-grid-noisy-5s-20s-${alignment}`,
+      'noisy',
+      'rolling',
+      [every('5s'), '20s', ROLL_NOISY, { alignment }],
+    ],
+    [
+      `rolling-grid-runs-2s-3s-${alignment}`,
+      'runs',
+      'rolling',
+      [every('2s'), '3s', ROLL_RUNS, { alignment }],
+    ],
+    [
+      `rolling-grid-tags-1s-2s-${alignment}`,
+      'tags',
+      'rolling',
+      [every('1s'), '2s', ROLL_TAGS, { alignment }],
+    ],
+    [
+      `rolling-grid-buckets-4s-6s-${alignment}`,
+      'buckets',
+      'rolling',
+      [every('4s'), '6s', { a: 'sum', b: 'count' }, { alignment }],
+    ],
+  ]),
+  ...['begin', 'center', 'end'].flatMap((sample) => [
+    [
+      `rolling-grid-gappy-3s-sample-${sample}`,
+      'gappy',
+      'rolling',
+      [every('3s'), '4s', { a: 'avg', b: 'sum' }, { sample }],
+    ],
+    [
+      `rolling-grid-gappy-333ms-centered-${sample}`,
+      'gappy',
+      'rolling',
+      [
+        every('333ms'),
+        '1001ms',
+        { a: 'count', b: 'last' },
+        { sample, alignment: 'centered' },
+      ],
+    ],
+  ]),
+  [
+    'rolling-grid-gappy-min2',
+    'gappy',
+    'rolling',
+    [every('1s'), '3s', { a: 'avg', b: 'count' }, { minSamples: 2 }],
+  ],
+  [
+    'rolling-grid-gappy-range',
+    'gappy',
+    'rolling',
+    [every('2s'), '5s', { a: 'sum' }, { range: { start: -3000, end: 30000 } }],
+  ],
+  [
+    'rolling-grid-shorthand',
+    'gappy',
+    'rolling',
+    [every('2s'), '3s', { b: 'sum', a: 'avg' }],
+  ],
+  [
+    'rolling-grid-empty',
+    'emptyHosts',
+    'rolling',
+    [every('1s'), '2s', { cpu: 'avg', host: 'unique' }],
+  ],
+  [
+    'rolling-grid-empty-range',
+    'emptyHosts',
+    'rolling',
+    [
+      every('1s'),
+      '2s',
+      { cpu: 'avg', host: 'unique' },
+      { range: { start: 0, end: 3000 } },
+    ],
+  ],
+  [
+    'rolling-grid-calendar',
+    'dst',
+    'rolling',
+    [
+      { sequence: { calendar: 'day', timeZone: 'Europe/London' } },
+      '1d',
+      { v: 'sum' },
+    ],
+  ],
+  [
+    'rolling-grid-error-interval',
+    'gappy',
+    'rolling',
+    [every('1s'), '2s', { interval: { from: 'a', using: 'avg' } }],
+  ],
+  // per partition
+  [
+    'rolling-partition-count2-min2',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [['rolling', { count: 2 }, { cpu: 'avg' }, { minSamples: 2 }]],
+      'collect',
+    ],
+  ],
+  [
+    'rolling-partition-leading',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [['rolling', '2s', { cpu: 'sum' }, { alignment: 'leading' }]],
+      'toMap',
+    ],
+  ],
+  [
+    'rolling-partition-grid',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [['rolling', every('1s'), '2s', { cpu: 'avg', up: 'keep' }]],
+      'toMap',
+    ],
+  ],
+];
+
 /** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
 const CASES = [
   // rolling: time window, trailing, keyed at each event
@@ -2671,6 +2951,7 @@ const CASES = [
   ...SPAN_CASES,
   ...KEY_CASES,
   ...ARRAY_CASES,
+  ...ROLLING_OPTION_CASES,
 ];
 
 /**

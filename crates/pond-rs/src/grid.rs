@@ -456,7 +456,7 @@ impl TimeSeries {
     /// The range a grid covers: the one given (checked), else the series'
     /// own, from its first start to its latest end. `None` for an empty
     /// series with no range given.
-    fn grid_range(
+    pub(crate) fn grid_range(
         &self,
         call: &'static str,
         range: Option<(i64, i64)>,
@@ -558,7 +558,7 @@ impl TimeSeries {
 }
 
 /// Each bucket's sample point, doubled (so a middle is a whole number).
-fn sample_points(buckets: &IntervalKeys, at: At) -> impl Iterator<Item = i128> + '_ {
+pub(crate) fn sample_points(buckets: &IntervalKeys, at: At) -> impl Iterator<Item = i128> + '_ {
     buckets
         .begin
         .iter()
@@ -570,7 +570,7 @@ fn sample_points(buckets: &IntervalKeys, at: At) -> impl Iterator<Item = i128> +
         })
 }
 
-fn no_buckets() -> IntervalKeys {
+pub(crate) fn no_buckets() -> IntervalKeys {
     IntervalKeys {
         label: Vec::<f64>::new().into(),
         begin: vec![],

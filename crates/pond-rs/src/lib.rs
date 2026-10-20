@@ -8,7 +8,8 @@
 //! series keyed by time, by time ranges or by intervals labelled with
 //! numbers or text, with number, exact decimal, text, true/false and array
 //! columns (gaps allowed; see [`Column`] and [`ArrayColumn`]),
-//! [`TimeSeries::rolling`] over a trailing time window, [`TimeSeries::aggregate`] into fixed-length buckets
+//! [`TimeSeries::rolling`] over a window of time or rows (trailing, leading
+//! or centred, or on a sequence's grid), [`TimeSeries::aggregate`] into fixed-length buckets
 //! ([`Sequence::every`]) or calendar buckets in a time zone
 //! ([`Sequence::calendar`]), [`TimeSeries::select`] / `rename` / `as_time`,
 //! row-by-row [`TimeSeries::diff`] / `rate` / `pct_change` / `shift` /
@@ -168,6 +169,7 @@ pub use partition::{PartitionKey, PartitionedSeries};
 pub use query::{EventKey, Label};
 pub use reducer::{Agg, Reducer};
 pub use reshape::At;
+pub use rolling::{Alignment, Rolling, RollingOver};
 pub use rows::Row;
 pub use rowwise::{Fill, FillLimits, FirstRow};
 pub use sequence::{CalendarUnit, Sequence, tzdb_version};
