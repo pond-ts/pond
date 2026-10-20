@@ -28,6 +28,8 @@
 //! `overlapping` / `trim` / `before` / `after`,
 //! changing the key with [`TimeSeries::as_time_range`] /
 //! `as_interval` / `offset_time`,
+//! pond-ts's JSON format with [`TimeSeries::from_json`] /
+//! [`TimeSeries::to_json`],
 //! reading times written as text with [`parse_time`] / [`parse_time_in`]
 //! (as pond-ts `Time.parse`),
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
@@ -127,6 +129,7 @@ mod duration;
 mod error;
 mod grid;
 mod join;
+mod json;
 mod par;
 mod partition;
 mod query;
@@ -149,6 +152,7 @@ pub use duration::parse_duration;
 pub use error::{PondError, Result};
 pub use grid::{Align, AlignMethod, Keep, Materialize, Pick};
 pub use join::{Join, JoinType, OnConflict};
+pub use json::{JsonOptions, KeyOrder, RowFormat};
 pub use partition::{PartitionKey, PartitionedSeries};
 pub use query::{EventKey, Label};
 pub use reducer::{Agg, Reducer};
@@ -167,4 +171,4 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The Arrow crates pond-rs reads and writes, re-exported so callers use the
 /// same versions.
-pub use {arrow_array, arrow_ipc, arrow_schema};
+pub use {arrow_array, arrow_ipc, arrow_schema, serde_json};

@@ -74,6 +74,13 @@ export class Interval implements EventKey {
       rawStart = objectInput.start;
       rawEnd = objectInput.end;
     }
+    // A label is text or a number. Anything else used to slip through and be
+    // coerced by the label column (`true` -> 1, `null` -> 0) [PND-JSONLABEL].
+    if (typeof value !== 'string' && typeof value !== 'number') {
+      throw new TypeError(
+        `interval label must be a string or a number; got ${value === null ? 'null' : Array.isArray(value) ? 'an array' : typeof value}`,
+      );
+    }
     const start = normalizeTimestamp(rawStart, 'interval start');
     const end = normalizeTimestamp(rawEnd, 'interval end');
     if (start > end) {

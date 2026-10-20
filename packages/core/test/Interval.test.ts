@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Interval, TimeRange } from '../src/index.js';
+import { Interval, TimeRange, TimeSeries } from '../src/index.js';
 
 describe('Interval', () => {
   it('constructs a labeled interval', () => {
@@ -15,6 +15,25 @@ describe('Interval', () => {
     expect(interval.valueOf()).toBe('bucket-a');
     expect(interval.asString()).toBe('bucket-a');
     expect(interval.duration()).toBe(1000);
+  });
+
+  it('refuses a label that is not a string or a number [PND-JSONLABEL]', () => {
+    for (const value of [true, false, null, [1], { a: 1 }]) {
+      expect(
+        () => new Interval({ value: value as never, start: 0, end: 1 }),
+      ).toThrow(/interval label must be a string or a number/);
+    }
+    // fromJSON used to store these as numbers (true -> 1, null -> 0).
+    expect(() =>
+      TimeSeries.fromJSON({
+        name: 'x',
+        schema: [
+          { name: 'interval', kind: 'interval' },
+          { name: 'v', kind: 'number' },
+        ] as const,
+        rows: [[[true as never, 0, 1], 1]],
+      }),
+    ).toThrow(/interval label must be a string or a number; got boolean/);
   });
 
   it('uses label plus extent for equality and preserves label on trim', () => {

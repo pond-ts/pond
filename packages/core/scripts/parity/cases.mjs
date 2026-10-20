@@ -493,6 +493,255 @@ const KEY_CASES = KEY_INPUTS.flatMap((input) => [
   ),
 ]);
 
+// fromJSON payloads, beyond each input's own round trip: every key form, time
+// strings in a zone, object rows, the three orderings, and the errors.
+// [id, payload, options?]; the payload's name is always 'j'.
+const JSON_TIME_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'v', kind: 'number', required: false },
+  { name: 's', kind: 'string', required: false },
+  { name: 'b', kind: 'boolean', required: false },
+];
+const JSON_RANGE_SCHEMA = [
+  { name: 'timeRange', kind: 'timeRange' },
+  { name: 'v', kind: 'number', required: false },
+];
+const JSON_INTERVAL_SCHEMA = [
+  { name: 'interval', kind: 'interval' },
+  { name: 'v', kind: 'number', required: false },
+];
+const jsonTime = (rows) => ({ schema: JSON_TIME_SCHEMA, rows });
+const jsonRange = (rows) => ({ schema: JSON_RANGE_SCHEMA, rows });
+const jsonInterval = (rows) => ({ schema: JSON_INTERVAL_SCHEMA, rows });
+const UNSORTED = [
+  [3000, 1, 'a', true],
+  [1000, 2, 'b', false],
+  [2000, 3, null, null],
+  [1000, 4, 'd', true],
+  [5000, 5, 'e', false],
+];
+const JSON_PAYLOADS = [
+  [
+    'plain',
+    jsonTime([
+      [0, 1.5, 'a', true],
+      [1000, null, null, null],
+    ]),
+  ],
+  ['empty', jsonTime([])],
+  ['emptyInterval', jsonInterval([])],
+  [
+    'objects',
+    jsonTime([
+      { time: 0, v: 1, s: 'x', b: false, extra: 9 },
+      { time: 1000, s: 'y' },
+      { b: true, time: 2000 },
+    ]),
+  ],
+  ['objectNoKey', jsonTime([{ v: 1 }])],
+  ['nullKey', jsonTime([[null, 1, 'a', true]])],
+  ...['UTC', 'Europe/Madrid', 'America/Santiago', 'Pacific/Apia'].flatMap(
+    (timeZone) =>
+      [
+        [
+          'strings',
+          jsonTime([
+            ['2025-03', 1, null, null],
+            ['2025-03-30', 2, null, null],
+            ['2025-03-30T01:30', 3, null, null],
+            ['2025-03-30T02:30', 4, null, null],
+            ['2025-03-30T03:30:15.250', 5, null, null],
+            ['2025-03-30T12:00:00Z', 6, null, null],
+            ['2025-03-30T14:00:00+02:00', 7, null, null],
+            ['2025-10-26T02:30', 8, null, null],
+          ]),
+        ],
+        ['badString', jsonTime([['30/03/2025', 1, null, null]])],
+        ['numericString', jsonTime([['1000', 1, null, null]])],
+      ].map(([id, payload]) => [`${id}-${timeZone}`, payload, { timeZone }]),
+  ),
+  ['stringsDefaultZone', jsonTime([['2025-03-30T01:30', 1, null, null]])],
+  ['boolKey', jsonTime([[true, 1, null, null]])],
+  ['arrayKey', jsonTime([[[0, 1], 1, null, null]])],
+  [
+    'required',
+    {
+      ...jsonTime([[0, 1]]),
+      schema: JSON_TIME_SCHEMA.slice(0, 2).map((c) => ({
+        name: c.name,
+        kind: c.kind,
+      })),
+    },
+  ],
+  [
+    'requiredNull',
+    {
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ],
+      rows: [[0, null]],
+    },
+  ],
+  ['numberAsString', jsonTime([[0, '5', null, null]])],
+  ['stringAsNumber', jsonTime([[0, null, 5, null]])],
+  ['boolAsNumber', jsonTime([[0, null, null, 1]])],
+  ['numberAsBool', jsonTime([[0, true, null, null]])],
+  ['short', jsonTime([[0, 1, 'a']])],
+  ['long', jsonTime([[0, 1, 'a', true, 9]])],
+  ['unsorted', jsonTime(UNSORTED)],
+  ['unsorted-reorder', jsonTime(UNSORTED), { ordering: 'reorder' }],
+  ['unsorted-clamp', jsonTime(UNSORTED), { ordering: 'clamp' }],
+  [
+    'sorted-clamp',
+    jsonTime([
+      [0, 1, null, null],
+      [0, 2, null, null],
+    ]),
+    { ordering: 'clamp' },
+  ],
+  [
+    'ranges',
+    jsonRange([
+      [[0, 1000], 1],
+      [{ start: 0, end: 2000 }, 2],
+      [['2025-01-01', '2025-01-02'], 3],
+    ]),
+  ],
+  [
+    'rangesZone',
+    jsonRange([[['2025-03-30', '2025-03-31'], 1]]),
+    { timeZone: 'Europe/Madrid' },
+  ],
+  ['rangeBackwards', jsonRange([[[1000, 0], 1]])],
+  ['rangeNumber', jsonRange([[1000, 1]])],
+  ['rangeTriple', jsonRange([[[0, 1000, 2000], 1]])],
+  ['rangeObjectWithValue', jsonRange([[{ value: 'x', start: 0, end: 1 }, 1]])],
+  [
+    'rangesUnsorted-reorder',
+    jsonRange([
+      [[5, 9], 1],
+      [[0, 9], 2],
+      [[0, 3], 3],
+      [[5, 9], 4],
+    ]),
+    { ordering: 'reorder' },
+  ],
+  [
+    'rangesUnsorted',
+    jsonRange([
+      [[0, 9], 1],
+      [[0, 3], 2],
+    ]),
+  ],
+  ['rangesSorted-clamp', jsonRange([[[0, 3], 1]]), { ordering: 'clamp' }],
+  [
+    'intervals',
+    jsonInterval([
+      [['a', 0, 1000], 1],
+      [{ value: 'b', start: 1000, end: 2000 }, 2],
+    ]),
+  ],
+  [
+    'intervalNumbers',
+    jsonInterval([
+      [[7, 0, 1000], 1],
+      [[-2.5, 1000, 2000], 2],
+    ]),
+  ],
+  [
+    'intervalStrings',
+    jsonInterval([[['day', '2025-03-30', '2025-03-31'], 1]]),
+    { timeZone: 'Europe/Madrid' },
+  ],
+  [
+    'intervalMixed',
+    jsonInterval([
+      [['a', 0, 1000], 1],
+      [[1, 1000, 2000], 2],
+    ]),
+  ],
+  ['intervalBoolLabel', jsonInterval([[[true, 0, 1000], 1]])],
+  ['intervalNullLabel', jsonInterval([[[null, 0, 1000], 1]])],
+  ['intervalBackwards', jsonInterval([[['a', 1000, 0], 1]])],
+  ['intervalPair', jsonInterval([[[0, 1000], 1]])],
+  [
+    'intervalsSameSpan-reorder',
+    jsonInterval([
+      [['b', 5, 9], 1],
+      [['a', 0, 9], 2],
+      [['z', 5, 9], 3],
+      [['a', 5, 9], 4],
+    ]),
+    { ordering: 'reorder' },
+  ],
+  [
+    'keyNamedTs',
+    {
+      schema: [
+        { name: 'ts', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ],
+      rows: [[0, 1]],
+    },
+  ],
+  ['schemaEmpty', { schema: [], rows: [] }],
+  ['schemaKeyNumber', { schema: [{ name: 'n', kind: 'number' }], rows: [] }],
+  [
+    'schemaUnknownKind',
+    {
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'float' },
+      ],
+      rows: [],
+    },
+  ],
+  [
+    'schemaDuplicate',
+    {
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+        { name: 'v', kind: 'string' },
+      ],
+      rows: [],
+    },
+  ],
+  [
+    'schemaKeyNameClash',
+    {
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'time', kind: 'number' },
+      ],
+      rows: [],
+    },
+  ],
+  [
+    'keyOnly',
+    { schema: [{ name: 'time', kind: 'time' }], rows: [[0], [1000]] },
+  ],
+  [
+    'wholeFloatKey',
+    jsonTime([
+      [1000.0, 1, null, null],
+      [2e3, 2, null, null],
+    ]),
+  ],
+  ['fractionKey', jsonTime([[1.5, 1, null, null]])],
+  ['farKey', jsonTime([[8.64e15 + 1, 1, null, null]])],
+  [
+    'bigNumbers',
+    jsonTime([
+      [0, 1.7976931348623157e308, null, null],
+      [1, 5e-324, null, null],
+      [2, 0.1, null, null],
+    ]),
+  ],
+  ['unicode', jsonTime([[0, null, 'héllo − 😀', null]])],
+];
+
 /** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
 const CASES = [
   // rolling: time window, trailing, keyed at each event
@@ -2165,6 +2414,46 @@ export function buildFixture(pond) {
         ]),
       ];
     }),
+    // toJSON of every input in both row formats, as written on the wire
+    // (JSON.stringify drops -0's sign), and fromJSON of each of those back,
+    // plus JSON_PAYLOADS. A fromJSON case has expected (series, encoded as in
+    // `cases`) or error ({name, message}).
+    json: {
+      toJSON: Object.entries(inputs).flatMap(([input, series]) =>
+        ['array', 'object'].map((rowFormat) => ({
+          input,
+          rowFormat,
+          expected: JSON.parse(JSON.stringify(series.toJSON({ rowFormat }))),
+        })),
+      ),
+      fromJSON: [
+        ...Object.entries(inputs).flatMap(([input, series]) =>
+          ['array', 'object'].map((rowFormat) => [
+            `roundTrip-${input}-${rowFormat}`,
+            JSON.parse(JSON.stringify(series.toJSON({ rowFormat }))),
+          ]),
+        ),
+        ...JSON_PAYLOADS.map(([id, payload, options]) => [
+          id,
+          { name: 'j', ...payload },
+          options,
+        ]),
+      ].map(([id, payload, options]) => {
+        const head =
+          options === undefined ? { id, payload } : { id, payload, options };
+        try {
+          const { timeZone, ordering } = options ?? {};
+          const series = TimeSeries.fromJSON({
+            ...payload,
+            ...(timeZone === undefined ? {} : { parse: { timeZone } }),
+            ...(ordering === undefined ? {} : { ordering }),
+          });
+          return { ...head, expected: encodeSeries(series) };
+        } catch (e) {
+          return { ...head, error: { name: e.name, message: e.message } };
+        }
+      }),
+    },
     timeParse: TIME_PARSE_TEXTS.flatMap((input) =>
       TIME_PARSE_ZONES.map((timeZone) => {
         try {
