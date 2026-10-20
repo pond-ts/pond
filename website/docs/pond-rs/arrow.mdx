@@ -1,11 +1,11 @@
 ---
 id: arrow
-title: Arrow files
+title: Arrow and JSON
 sidebar_position: 6
-description: Read and write Apache Arrow IPC (Feather v2) files and streams with pond-rs, which field types it accepts, and when columns share the file's memory.
+description: Read and write Apache Arrow IPC (Feather v2) files and streams with pond-rs, which field types it accepts, when columns share the file's memory, and pond-ts's row JSON format.
 ---
 
-# Arrow files
+# Arrow and JSON
 
 [Apache Arrow](https://arrow.apache.org/) is the common format for passing
 tables between tools: pandas, polars, DuckDB and pond-ts all read and write
@@ -128,3 +128,82 @@ The cost: while any column that points into the file is alive, in this
 series or anything made from it, the whole file stays in memory, including
 the parts that were copied. If that matters, drop the series once you have
 your results, or read a smaller file.
+
+## JSON
+
+`TimeSeries::from_json(text, &options)` and `series.to_json(format)` read
+and write pond-ts's JSON format, the one `TimeSeries.fromJSON` and
+`toJSON` use. A file pond-ts wrote reads back in pond-rs and the other way
+round.
+
+The shape is `{ "name", "schema", "rows" }`. The schema lists the key column
+first, then each value column with its kind (`number`, `string` or
+`boolean`; `"required": false` allows gaps). A gap is `null`. Rows are
+arrays in schema order (`RowFormat::Array`) or objects keyed by column name
+(`RowFormat::Object`):
+
+| Key kind    | Array row             | Object row                  |
+| ----------- | --------------------- | --------------------------- |
+| `time`      | `1000`                | `1000`                      |
+| `timeRange` | `[begin, end]`        | `{"start", "end"}`          |
+| `interval`  | `[label, begin, end]` | `{"value", "start", "end"}` |
+
+On the way in, any time may be text instead of milliseconds, read the way
+[`parse_time_in`](./series-and-columns#times-written-as-text) reads it.
+`JsonOptions::new().time_zone("Europe/Madrid")` sets the zone for times
+written without an offset (UTC otherwise).
+
+```rust
+use pond_rs::{JsonOptions, KeyOrder, RowFormat, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let text = r#"{
+      "name": "cpu",
+      "schema": [
+        {"name": "time", "kind": "time"},
+        {"name": "load", "kind": "number", "required": false}
+      ],
+      "rows": [["2026-03-29T01:30", 0.5], ["2026-03-29T03:30", null]]
+    }"#;
+    // Madrid's clocks go forward at 02:00 that night, so these are an hour apart.
+    let s = TimeSeries::from_json(text, &JsonOptions::new().time_zone("Europe/Madrid"))?;
+    assert_eq!(s.key().begin()[1] - s.key().begin()[0], 3_600_000);
+
+    assert_eq!(
+        s.to_json(RowFormat::Object)?,
+        r#"{"name":"cpu","schema":[{"name":"time","kind":"time"},{"name":"load","kind":"number","required":false}],"rows":[{"time":1774744200000,"load":0.5},{"time":1774747800000,"load":null}]}"#
+    );
+
+    // Rows out of time order are refused unless you ask for them to be sorted.
+    let backwards = r#"{"name":"x","schema":[{"name":"time","kind":"time"},{"name":"v","kind":"number"}],
+                        "rows":[[2000, 1], [1000, 2]]}"#;
+    assert!(TimeSeries::from_json(backwards, &JsonOptions::new()).is_err());
+    let sorted = TimeSeries::from_json(backwards, &JsonOptions::new().order(KeyOrder::Reorder))?;
+    assert_eq!(sorted.key().begin(), &[1000, 2000]);
+    Ok(())
+}
+```
+
+`KeyOrder` has three settings, as pond-ts's `ordering` option: `Strict`
+(the default) refuses rows out of order, `Reorder` sorts them by key, and
+`Clamp` keeps them where they are and moves a backwards time up to the time
+above it (time keys only).
+
+`to_json` writes numbers exactly as JavaScript's `JSON.stringify` does
+(`0.000001`, `1e+21`), so its output matches pond-ts's byte for byte.
+`from_json_value` and `to_json_value` work on an already-parsed
+`serde_json::Value` (pond-rs re-exports `serde_json`).
+
+Where pond-rs's JSON differs from pond-ts's:
+
+- **Times** must be whole milliseconds and within `MAX_TIME_MS` of 1970.
+  pond-ts accepts `1.5`, and times just past the limit.
+- **A missing `name`** is an error.
+- **Text with a lone surrogate** (`"\ud800"`, half of a character
+  JavaScript stores in two pieces) is refused, since it is not valid text in
+  Rust.
+- **Decimal columns** cannot be written to JSON, since a JSON number would
+  lose their exactness. Turn them into numbers with `map_decimals`, or use
+  Arrow.
+- **The schema written back** has only each column's `name`, `kind` and
+  `"required": false`. pond-ts writes back the schema it was given.

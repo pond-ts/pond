@@ -62,7 +62,7 @@ pond-rs = { git = "https://github.com/pond-ts/pond" }
 | Regular grids        | `align` (value at each grid point: hold or straight line), `materialize` (one reading per bucket), `dedupe` (repeated times)                                                                                                                            |
 | Joining              | `join` and `join_many`: columns of several series side by side, matched by key                                                                                                                                                                          |
 | Per entity           | `partition_by` / `group_by` on one or more columns, partitions run on several cores                                                                                                                                                                     |
-| Arrow                | Read and write Arrow IPC (Feather v2) files and streams, compressed or not; columns can share the file's memory instead of copying it                                                                                                                   |
+| Arrow and JSON       | Read and write Arrow IPC (Feather v2) files and streams, compressed or not; columns can share the file's memory instead of copying it. Read and write pond-ts's JSON format                                                                             |
 
 **Not built yet:** financial studies (SMA, RSI, …), the live (streaming)
 layer, and a WASM build that
@@ -79,7 +79,7 @@ pond-ts can call. They come in roughly that order; see the
   filtering and mapping.
 - [Partitions](./partitions): the same work per host, per symbol, per
   anything.
-- [Arrow](./arrow): reading and writing files, and when memory is shared.
+- [Arrow and JSON](./arrow): reading and writing files, when memory is shared, and pond-ts's JSON format.
 - [Performance](./performance): threads, and what the benchmarks measured.
 - [Coming from pond-ts](./coming-from-pond-ts): what is the same, what is
   different, and why.

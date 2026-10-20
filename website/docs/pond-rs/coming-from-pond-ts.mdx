@@ -17,33 +17,34 @@ pond-ts lets through.
 
 Methods are the pond-ts names in Rust's `snake_case`.
 
-| pond-ts                                        | pond-rs                                                                     |
-| ---------------------------------------------- | --------------------------------------------------------------------------- |
-| `TimeSeries.fromJSON({ schema, rows })`        | `TimeSeries::new(name, times, columns)`                                     |
-| `{ name: 'cpu', kind: 'number' }`              | `Column::required("cpu", values)` / `Column::optional`                      |
-| `series.aggregate(seq, { cpu: 'avg' })`        | `series.aggregate(&seq, &[Agg::of("cpu", Reducer::Avg)])`                   |
-| `{ cpu_avg: { from: 'cpu', using: 'avg' } }`   | `Agg::new("cpu_avg", "cpu", Reducer::Avg)`                                  |
-| `Sequence.every('1m')`                         | `Sequence::every("1m")?`                                                    |
-| `Sequence.calendar('day', { timeZone })`       | `Sequence::calendar("day", time_zone)?`                                     |
-| `series.pctChange(...)`                        | `series.pct_change(&cols, FirstRow::Keep)`                                  |
-| `series.diff(cols, { drop: true })`            | `series.diff(&cols, FirstRow::Drop)`                                        |
-| `series.fill({ cpu: 'linear' }, { maxGap })`   | `series.fill(&[("cpu", Fill::Linear)], &FillLimits::none().max_gap(..))`    |
-| `series.mapColumns(...)`                       | `map_numbers` / `map_strings` / `map_booleans` / `map_decimals`             |
-| `series.asTime({ at: 'begin' })`               | `series.as_time(At::Begin)`                                                 |
-| `a.join(b, { type: 'inner' })`                 | `a.join(&b, Join { how: JoinType::Inner, ..Join::default() })`              |
-| `TimeSeries.joinMany([a, b, c])`               | `TimeSeries::join_many(&[&a, &b, &c], Join::default())`                     |
-| `Time.parse(text, { timeZone })`               | `parse_time_in(text, time_zone)?` (`parse_time` for UTC)                    |
-| `series.tail('1h')`                            | `series.tail("1h")?`                                                        |
-| `series.reduce({ m: { from, using: 'avg' } })` | `series.reduce(&[Agg::new("m", from, Reducer::Avg)])?` then `.number("m")?` |
-| `series.last()`                                | `series.last()` (an `Option<Row>`)                                          |
-| `series.asInterval(fn)` / `offsetTime('-1h')`  | `series.as_interval_with(fn)?` / `offset_time("-1h")?`                      |
-| `series.partitionBy('host')`                   | `series.partition_by(&["host"])`                                            |
-| `series.groupBy('host')` / `toMap()`           | `series.group_by(&["host"])` / `iter()`                                     |
-| `series.atOrBefore(t)` / `nearest(t)`          | `series.at_or_before(t)` / `nearest(t)` (an `Option<Row>`)                  |
-| `new TimeRange(a, b)` as a lookup key          | `EventKey::time_range(a, b)?`                                               |
-| `series.within(a, b)` / `containedBy(range)`   | `series.within(a, b)?` / `contained_by(range)`                              |
-| `series.at(i).get('cpu')`                      | `series.column("cpu")?.numbers()?.get(i)`                                   |
-| `toArrow()` / `fromArrow()`                    | `to_arrow()` / `write_ipc()`, `from_arrow()` / `read_ipc()`                 |
+| pond-ts                                        | pond-rs                                                                            |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `TimeSeries.fromJSON({ schema, rows })`        | `TimeSeries::new(name, times, columns)`, or `from_json` for JSON text              |
+| `{ name: 'cpu', kind: 'number' }`              | `Column::required("cpu", values)` / `Column::optional`                             |
+| `series.aggregate(seq, { cpu: 'avg' })`        | `series.aggregate(&seq, &[Agg::of("cpu", Reducer::Avg)])`                          |
+| `{ cpu_avg: { from: 'cpu', using: 'avg' } }`   | `Agg::new("cpu_avg", "cpu", Reducer::Avg)`                                         |
+| `Sequence.every('1m')`                         | `Sequence::every("1m")?`                                                           |
+| `Sequence.calendar('day', { timeZone })`       | `Sequence::calendar("day", time_zone)?`                                            |
+| `series.pctChange(...)`                        | `series.pct_change(&cols, FirstRow::Keep)`                                         |
+| `series.diff(cols, { drop: true })`            | `series.diff(&cols, FirstRow::Drop)`                                               |
+| `series.fill({ cpu: 'linear' }, { maxGap })`   | `series.fill(&[("cpu", Fill::Linear)], &FillLimits::none().max_gap(..))`           |
+| `series.mapColumns(...)`                       | `map_numbers` / `map_strings` / `map_booleans` / `map_decimals`                    |
+| `series.asTime({ at: 'begin' })`               | `series.as_time(At::Begin)`                                                        |
+| `a.join(b, { type: 'inner' })`                 | `a.join(&b, Join { how: JoinType::Inner, ..Join::default() })`                     |
+| `TimeSeries.joinMany([a, b, c])`               | `TimeSeries::join_many(&[&a, &b, &c], Join::default())`                            |
+| `Time.parse(text, { timeZone })`               | `parse_time_in(text, time_zone)?` (`parse_time` for UTC)                           |
+| `series.tail('1h')`                            | `series.tail("1h")?`                                                               |
+| `series.reduce({ m: { from, using: 'avg' } })` | `series.reduce(&[Agg::new("m", from, Reducer::Avg)])?` then `.number("m")?`        |
+| `series.last()`                                | `series.last()` (an `Option<Row>`)                                                 |
+| `series.asInterval(fn)` / `offsetTime('-1h')`  | `series.as_interval_with(fn)?` / `offset_time("-1h")?`                             |
+| `series.partitionBy('host')`                   | `series.partition_by(&["host"])`                                                   |
+| `series.groupBy('host')` / `toMap()`           | `series.group_by(&["host"])` / `iter()`                                            |
+| `series.atOrBefore(t)` / `nearest(t)`          | `series.at_or_before(t)` / `nearest(t)` (an `Option<Row>`)                         |
+| `new TimeRange(a, b)` as a lookup key          | `EventKey::time_range(a, b)?`                                                      |
+| `series.within(a, b)` / `containedBy(range)`   | `series.within(a, b)?` / `contained_by(range)`                                     |
+| `series.at(i).get('cpu')`                      | `series.column("cpu")?.numbers()?.get(i)`                                          |
+| `toJSON()` / `TimeSeries.fromJSON(json)`       | `to_json(RowFormat::Array)?` / `TimeSeries::from_json(text, &JsonOptions::new())?` |
+| `toArrow()` / `fromArrow()`                    | `to_arrow()` / `write_ipc()`, `from_arrow()` / `read_ipc()`                        |
 
 ## Types are checked when the code runs
 
@@ -95,6 +96,9 @@ pond-rs returns an error instead.
 - **`offset_time` past the time limit.** Moving a key beyond
   `MAX_TIME_MS` is an error; pond-ts allows it, but such a key cannot be
   read back. Offsets are whole milliseconds (pond-ts takes `0.5`).
+- **JSON input** refuses times that are not whole milliseconds or are
+  past `MAX_TIME_MS`, a missing `name`, and text with a lone surrogate;
+  see [Arrow and JSON](./arrow#json).
 - **A repeated rename.** `rename` with the same `from` twice is an error
   (pond-ts's object syntax cannot express it).
 
