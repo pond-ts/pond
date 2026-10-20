@@ -1189,6 +1189,22 @@ const ARRAY_CASES = [
     ['nums', 'keep', { kind: 'number' }],
   ],
   ['arrayAggregate-tags-keep', 'tags', 'arrayAggregate', ['tags', 'keep']],
+  // keep on whole array cells, one cell per bucket or window: each keeps its
+  // own cell (`[-0]` is not an earlier row's `[0]`)
+  [
+    'aggregate-items-1s-keep',
+    'items',
+    'aggregate',
+    [every('1s'), { items: 'keep' }],
+  ],
+  ['rolling-items-1s-keep', 'items', 'rolling', ['1s', { items: 'keep' }]],
+  [
+    'aggregate-tags-1s-keep',
+    'tags',
+    'aggregate',
+    [every('1s'), { tags: 'keep', nums: 'keep' }],
+  ],
+  ['rolling-tags-1s-keep', 'tags', 'rolling', ['1s', { nums: 'keep' }]],
   [
     'arrayAggregate-tags-last-as',
     'tags',

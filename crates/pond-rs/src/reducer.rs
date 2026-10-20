@@ -43,9 +43,10 @@ pub enum Reducer {
     /// (also missing when there are none). Any column kind; the output
     /// has the source's kind. Numbers compare as JavaScript's `===` does,
     /// so `0` equals `-0`: `aggregate` and `reduce` give the first one,
-    /// `rolling` gives `0`. Array cells compare by their elements, where
-    /// pond-ts compares the array objects (so two equal arrays in
-    /// different rows are kept here and give a gap in pond-ts).
+    /// `rolling` gives `0`. Array cells compare by their elements bit for
+    /// bit (so `[0]` and `[-0]` differ), where pond-ts compares the array
+    /// objects (so two equal arrays in different rows are kept here and
+    /// give a gap in pond-ts).
     Keep,
     /// The distinct present values as a list (an array column), sorted:
     /// numbers, then text, then true/false; text in JavaScript's order (by
@@ -663,8 +664,9 @@ fn build_input(data: &ColumnData, kind: InputKind) -> Input<'_> {
 
 /// An id per distinct value of a text, true/false or array column (NaN for
 /// a gap), and the first row holding each id. Array cells are equal when
-/// their elements are (`0` equals `-0`), where pond-ts compares the array
-/// objects themselves.
+/// their elements are, bit for bit (`[0]` and `[-0]` differ), so the row
+/// an id names holds exactly the cell of every row with that id; pond-ts
+/// compares the array objects themselves.
 fn ids(data: &ColumnData) -> (Vec<f64>, Vec<usize>) {
     fn dense<K: Eq + std::hash::Hash + Clone>(
         cells: impl Iterator<Item = Option<K>>,
@@ -701,14 +703,15 @@ fn ids(data: &ColumnData) -> (Vec<f64>, Vec<usize>) {
     }
 }
 
-/// An array cell as a map key: equal when the elements are equal as
-/// [`Scalar`]'s `==` has it (so `0` and `-0` hash alike).
+/// An array cell as a map key: equal when the elements are the same bit
+/// for bit ([`Scalar::same`](crate::column::Scalar), so `0` and `-0`
+/// differ).
 #[derive(Clone)]
 struct CellKey<'a>(&'a [crate::column::Scalar]);
 
 impl PartialEq for CellKey<'_> {
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+        self.0.len() == other.0.len() && self.0.iter().zip(other.0).all(|(a, b)| a.same(b))
     }
 }
 
@@ -720,8 +723,7 @@ impl std::hash::Hash for CellKey<'_> {
         state.write_usize(self.0.len());
         for e in self.0 {
             match e {
-                // `+ 0.0` turns -0 into +0.
-                Scalar::Number(v) => (0u8, (v + 0.0).to_bits()).hash(state),
+                Scalar::Number(v) => (0u8, v.to_bits()).hash(state),
                 Scalar::String(s) => (1u8, s).hash(state),
                 Scalar::Boolean(b) => (2u8, b).hash(state),
             }
@@ -958,7 +960,7 @@ mod tests {
                     "arr",
                     [
                         Some(vec![Scalar::from(0.0), "x".into()]),
-                        Some(vec![Scalar::from(-0.0), "x".into()]),
+                        Some(vec![Scalar::from(0.0), "x".into()]),
                         None,
                         Some(vec![Scalar::from(1.0)]),
                     ],
@@ -991,11 +993,35 @@ mod tests {
             [Some(true), None]
         );
         let arr = m.column("arr").unwrap().arrays().unwrap();
-        assert!(
-            arr.get(0).unwrap()[0].same(&Scalar::from(0.0)),
-            "first kept"
-        );
+        assert_eq!(arr.get(0), Some(&[Scalar::from(0.0), "x".into()][..]));
         assert_eq!(arr.get(1), Some(&[Scalar::from(1.0)][..]));
+        // Each one-row bucket keeps its own cell: `[-0]` is not the `[0]`
+        // of an earlier row (#797 review), and the two differ.
+        let zeros = TimeSeries::new(
+            "z",
+            vec![0, 1000, 2000, 3000],
+            vec![Column::required(
+                "a",
+                vec![
+                    vec![Scalar::from(0.0)],
+                    vec![Scalar::from("x")],
+                    vec![Scalar::from(-0.0)],
+                    vec![Scalar::from(0.0)],
+                ],
+            )],
+        )
+        .unwrap();
+        let one = [Agg::of("a", Reducer::Keep)];
+        let by_second = zeros
+            .aggregate(&Sequence::every("1s").unwrap(), &one)
+            .unwrap();
+        let cell =
+            |s: &TimeSeries, i| s.column("a").unwrap().arrays().unwrap().get(i).unwrap()[0].clone();
+        assert!(cell(&by_second, 2).same(&Scalar::from(-0.0)));
+        let rolled = zeros.rolling("1s", &one).unwrap();
+        assert!(cell(&rolled, 2).same(&Scalar::from(-0.0)));
+        let pair = zeros.rolling("2s", &one).unwrap();
+        assert_eq!(pair.column("a").unwrap().arrays().unwrap().get(3), None);
         let r = s.rolling("2s", &aggs).unwrap();
         assert_eq!(
             r.column("t")

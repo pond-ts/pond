@@ -1913,9 +1913,11 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     hash map, skipped when a row repeats the row before). Decimals stay
     exact through ranks.
   - Differences from pond-ts, both already logged: pond-rs compares array
-    cells by their elements where pond-ts compares the array objects, so
-    two equal arrays keep their value here and give a gap there
-    ([PND-ARRAYKEY]); `array_aggregate` with `keep` takes the elements'
+    cells by their elements, bit for bit, where pond-ts compares the array
+    objects, so two equal arrays keep their value here and give a gap
+    there ([PND-ARRAYKEY]). Bit for bit, so `[0]` and `[-0]` differ: the
+    first version let them match, and a bucket holding only `[-0]` then
+    gave an earlier row's `[0]` (found in the review of #797); `array_aggregate` with `keep` takes the elements'
     kind where pond-ts writes text and throws on numbers ([PND-ARRAYKIND]).
   - Parity: 18 new pond-ts cases (fixture made with [PND-AGGSIBLING] in),
     on a new `runs` input (equal runs, zeros of both signs in both orders,
