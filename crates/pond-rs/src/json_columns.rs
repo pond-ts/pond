@@ -225,7 +225,7 @@ fn read_points(value: &Json, name: &str, schema: &[ColumnDef]) -> Result<TimeSer
     }
     for def in &schema[1..] {
         match def.kind {
-            ColumnKind::Number | ColumnKind::String | ColumnKind::Boolean => {}
+            ColumnKind::Number | ColumnKind::String | ColumnKind::Boolean | ColumnKind::Array => {}
             ColumnKind::Decimal => {
                 return Err(PondError::Unsupported {
                     call,
@@ -239,7 +239,7 @@ fn read_points(value: &Json, name: &str, schema: &[ColumnDef]) -> Result<TimeSer
                 return Err(invalid(
                     call,
                     format!(
-                        "column '{}' has kind '{}'; value columns are 'number', 'string' or 'boolean'",
+                        "column '{}' has kind '{}'; value columns are 'number', 'string', 'boolean' or 'array'",
                         def.name,
                         other.as_str()
                     ),

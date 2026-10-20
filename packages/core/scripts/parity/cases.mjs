@@ -1011,6 +1011,223 @@ const POINT_PAYLOADS = [
 ];
 
 /** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
+// Array columns. `tags` holds text, `nums` numbers (with -0 and 0, in both
+// orders), `items` mixes kinds. Rows at 3000 repeat a time.
+const TAGS_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'tags', kind: 'array', required: false },
+  { name: 'nums', kind: 'array', required: false },
+  { name: 'v', kind: 'number', required: false },
+  { name: 'host', kind: 'string' },
+];
+const TAGS_ROWS = [
+  [0, ['a', 'b', 'a'], [3, 1, 2], 1, 'x'],
+  [1000, [], [], 2, 'y'],
+  [2000, null, null, null, 'x'],
+  [3000, ['b'], [-0, 0, 2, 3.5], 4, 'y'],
+  [3000, ['c', 'a'], [1.5], 5, 'x'],
+  [5000, ['a,b'], [10, 9, 10], 6, 'y'],
+  [6000, null, [0, -0], null, 'x'],
+  [8000, ['b', 'c'], [], 8, 'y'],
+  [9000, ['é', 'B', ''], [1e300, 1e300], 9, 'x'],
+];
+const ITEMS_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'items', kind: 'array', required: false },
+];
+const ITEMS_ROWS = [
+  [0, [1, '1', true]],
+  [1000, [0, 'x', false]],
+  [2000, ['1']],
+  [3000, [-0]],
+  [4000, [true, 2.5]],
+  [5000, null],
+  [6000, []],
+];
+const ARRAY_REDUCERS = [
+  'count',
+  'sum',
+  'avg',
+  'mean',
+  'min',
+  'max',
+  'median',
+  'p25',
+  'p90',
+  'stdev',
+];
+const ARRAY_CASES = [
+  ...[1, '1', true, 0, { f64: '-0' }, false, 'zz', 2.5].map((v, i) => [
+    `arrayContains-items-${i}`,
+    'items',
+    'arrayContains',
+    ['items', v],
+  ]),
+  ['arrayContains-tags-a', 'tags', 'arrayContains', ['tags', 'a']],
+  ['arrayContains-tags-comma', 'tags', 'arrayContains', ['tags', 'a,b']],
+  ...[[], [1, '1'], ['1'], [true, 1], ['zz']].map((vs, i) => [
+    `arrayContainsAll-items-${i}`,
+    'items',
+    'arrayContainsAll',
+    ['items', vs],
+  ]),
+  ['arrayContainsAll-tags', 'tags', 'arrayContainsAll', ['tags', ['a', 'c']]],
+  ...[[], ['1', 2.5], [false], ['zz']].map((vs, i) => [
+    `arrayContainsAny-items-${i}`,
+    'items',
+    'arrayContainsAny',
+    ['items', vs],
+  ]),
+  ['arrayContainsAny-tags', 'tags', 'arrayContainsAny', ['tags', ['c', 'é']]],
+  ...ARRAY_REDUCERS.flatMap((r) => [
+    [`arrayAggregate-nums-${r}`, 'tags', 'arrayAggregate', ['nums', r]],
+    [`arrayAggregate-items-${r}`, 'items', 'arrayAggregate', ['items', r]],
+  ]),
+  [
+    'arrayAggregate-nums-first-number',
+    'tags',
+    'arrayAggregate',
+    ['nums', 'first', { kind: 'number' }],
+  ],
+  [
+    'arrayAggregate-nums-last-as',
+    'tags',
+    'arrayAggregate',
+    ['nums', 'last', { as: 'lastNum', kind: 'number' }],
+  ],
+  ['arrayAggregate-tags-first', 'tags', 'arrayAggregate', ['tags', 'first']],
+  [
+    'arrayAggregate-tags-last-as',
+    'tags',
+    'arrayAggregate',
+    ['tags', 'last', { as: 'lastTag' }],
+  ],
+  [
+    'arrayAggregate-tags-count-as-self',
+    'tags',
+    'arrayAggregate',
+    ['tags', 'count', { as: 'tags' }],
+  ],
+  [
+    'arrayAggregate-nums-max-as',
+    'tags',
+    'arrayAggregate',
+    ['nums', 'max', { as: 'top' }],
+  ],
+  // Errors in both: mixed kinds, a taken name, a kind numbers can't fill.
+  ['arrayAggregate-items-first', 'items', 'arrayAggregate', ['items', 'first']],
+  ['arrayAggregate-items-last', 'items', 'arrayAggregate', ['items', 'last']],
+  [
+    'arrayAggregate-as-taken',
+    'tags',
+    'arrayAggregate',
+    ['nums', 'sum', { as: 'v' }],
+  ],
+  [
+    'arrayAggregate-count-as-string',
+    'tags',
+    'arrayAggregate',
+    ['nums', 'count', { kind: 'string' }],
+  ],
+  ['arrayAggregate-bogus', 'tags', 'arrayAggregate', ['nums', 'bogus']],
+  // Known difference: pond-ts writes 'string' here and throws on numbers.
+  ['arrayAggregate-nums-first', 'tags', 'arrayAggregate', ['nums', 'first']],
+  ['arrayExplode-tags', 'tags', 'arrayExplode', ['tags']],
+  ['arrayExplode-tags-as', 'tags', 'arrayExplode', ['tags', { as: 'tag' }]],
+  [
+    'arrayExplode-nums-number',
+    'tags',
+    'arrayExplode',
+    ['nums', { kind: 'number' }],
+  ],
+  ['arrayExplode-items', 'items', 'arrayExplode', ['items']],
+  [
+    'arrayExplode-items-number',
+    'items',
+    'arrayExplode',
+    ['items', { kind: 'number' }],
+  ],
+  ['arrayExplode-as-taken', 'tags', 'arrayExplode', ['tags', { as: 'v' }]],
+  ['arrayExplode-empty', 'emptyTags', 'arrayExplode', ['tags']],
+  // Known difference: pond-ts explodes as 'string' and throws on numbers.
+  ['arrayExplode-nums', 'tags', 'arrayExplode', ['nums']],
+  // Array columns through the other operators.
+  ['array-select', 'tags', 'select', ['tags', 'v']],
+  ['array-rename', 'tags', 'rename', [{ tags: 'labels' }]],
+  ['array-filter', 'tags', 'filter', [{ fn: { column: 'v', gt: 2 } }]],
+  ['array-slice', 'tags', 'slice', [1, 5]],
+  ['array-fill-hold', 'tags', 'fill', ['hold']],
+  ['array-fill-bfill', 'tags', 'fill', [{ tags: 'bfill', nums: 'hold' }]],
+  ['array-fill-linear', 'tags', 'fill', ['linear']],
+  ['array-fill-zero', 'tags', 'fill', ['zero']],
+  ['array-fill-literal', 'tags', 'fill', [{ tags: ['x', 1, false] }]],
+  ['array-fill-empty', 'tags', 'fill', [{ nums: [] }]],
+  ['array-fill-limit', 'tags', 'fill', ['hold', { limit: 1, maxGap: '1s' }]],
+  ['array-align-hold', 'tags', 'align', [every('2s')]],
+  ['array-align-linear', 'tags', 'align', [every('2s'), { method: 'linear' }]],
+  ['array-materialize', 'tags', 'materialize', [every('2s')]],
+  ['array-dedupe-first', 'tags', 'dedupe', [{ keep: 'first' }]],
+  ['array-dedupe-last', 'tags', 'dedupe', []],
+  [
+    'array-aggregate',
+    'tags',
+    'aggregate',
+    [
+      every('4s'),
+      {
+        n: { from: 'tags', using: 'count' },
+        first: { from: 'tags', using: 'first' },
+        last: { from: 'nums', using: 'last' },
+        v: 'sum',
+      },
+    ],
+  ],
+  [
+    'array-rolling',
+    'tags',
+    'rolling',
+    [
+      '3s',
+      {
+        n: { from: 'nums', using: 'count' },
+        first: { from: 'tags', using: 'first' },
+        last: { from: 'tags', using: 'last' },
+      },
+    ],
+  ],
+  [
+    'array-reduce',
+    'tags',
+    'reduce',
+    [
+      {
+        n: { from: 'tags', using: 'count' },
+        first: { from: 'tags', using: 'first' },
+        last: { from: 'nums', using: 'last' },
+      },
+    ],
+  ],
+  ['array-join', 'tags', 'join', [{ series: 'items' }]],
+  ['array-asTimeRange', 'tags', 'asTimeRange', []],
+  ['array-tail', 'tags', 'tail', ['4s']],
+  [
+    'array-partition-fill',
+    'tags',
+    'partitionBy',
+    ['host', [['fill', 'hold']], 'collect'],
+  ],
+  [
+    'array-partition-aggregate',
+    'tags',
+    'partitionBy',
+    [
+      'host',
+      [['aggregate', every('4s'), { tags: 'last', nums: 'count' }]],
+      'toMap',
+    ],
+  ],
+];
+
 const CASES = [
   // rolling: time window, trailing, keyed at each event
   ['rolling-3s-avg-sum', 'gappy', 'rolling', ['3s', { a: 'avg', b: 'sum' }]],
@@ -2113,6 +2330,7 @@ const CASES = [
   ],
   ...SPAN_CASES,
   ...KEY_CASES,
+  ...ARRAY_CASES,
 ];
 
 /**
@@ -2360,6 +2578,21 @@ export function buildFixture(pond) {
       name: 'emptyHosts',
       schema: HOSTS_SCHEMA,
       rows: [],
+    }),
+    tags: TimeSeries.fromJSON({
+      name: 'tags',
+      schema: TAGS_SCHEMA,
+      rows: TAGS_ROWS,
+    }),
+    emptyTags: TimeSeries.fromJSON({
+      name: 'emptyTags',
+      schema: TAGS_SCHEMA,
+      rows: [],
+    }),
+    items: TimeSeries.fromJSON({
+      name: 'items',
+      schema: ITEMS_SCHEMA,
+      rows: ITEMS_ROWS,
     }),
     // A value column named `time` clashes with the key `asTime` makes.
     timeColumn: TimeSeries.fromJSON({

@@ -408,9 +408,11 @@ pub(crate) fn reduce_range(reducer: Reducer, values: &[f64]) -> Option<f64> {
 // value to take.
 // ---------------------------------------------------------------------------
 
-/// Refuse a reducer that needs numbers on a text or true/false column.
-/// pond-ts's types refuse it too; at run time pond-ts answers anyway (`sum`
-/// gives 0, `avg` and `max` give gaps), where pond-rs returns this error.
+/// Refuse a reducer that needs numbers on a text, true/false or array
+/// column. pond-ts's types refuse it too; at run time pond-ts answers anyway
+/// (`sum` gives 0, `avg` and `max` give gaps), where pond-rs returns this
+/// error. On an array column each cell is one value: `count` counts cells,
+/// not elements, and `first` / `last` take whole cells.
 pub(crate) fn check_source_kind(
     call: &'static str,
     column: &Column,
@@ -424,7 +426,7 @@ pub(crate) fn check_source_kind(
             column: column.name().to_string(),
             kind: data.kind().as_str(),
             reason: format!(
-                "{} needs a number or decimal column; string and boolean columns take count, first or last",
+                "{} needs a number or decimal column; string, boolean and array columns take count, first or last",
                 reducer_name(reducer)
             ),
         }),
@@ -590,6 +592,7 @@ pub(crate) fn output_column(
         (ColumnData::Decimal(c), _) => Column::from_data(name, c.take(&picked()), false),
         (ColumnData::String(c), _) => Column::from_data(name, c.take(&picked()), false),
         (ColumnData::Boolean(c), _) => Column::from_data(name, c.take(&picked()), false),
+        (ColumnData::Array(c), _) => Column::from_data(name, c.take(&picked()), false),
     }
 }
 

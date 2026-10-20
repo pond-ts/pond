@@ -1,6 +1,6 @@
 //! `TimeSeries::aggregate`: reduce each bucket of a sequence to one row.
 
-use crate::column::{ColumnData, Decimal, Value};
+use crate::column::{ColumnData, Decimal, Scalar, Value};
 use crate::error::{PondError, Result};
 use crate::reducer::{
     Agg, InputKind, Inputs, Reducer, check_source_kind, input_kind, output_column, reduce_range,
@@ -214,6 +214,13 @@ impl Reduced {
         c.booleans().map(|c| c.get(0)).map_err(|e| as_call(e, CALL))
     }
 
+    /// The array output `name`, or `None` for a gap.
+    pub fn array(&self, name: &str) -> Result<Option<&[Scalar]>> {
+        const CALL: &str = "Reduced::array";
+        let c = self.column(CALL, name)?;
+        c.arrays().map(|c| c.get(0)).map_err(|e| as_call(e, CALL))
+    }
+
     /// The output `name` whatever its kind, or `None` for a gap.
     pub fn get(&self, name: &str) -> Result<Option<Value>> {
         Ok(value_at(self.column("Reduced::get", name)?.data()))
@@ -248,6 +255,7 @@ fn value_at(data: &ColumnData) -> Option<Value> {
         ColumnData::Decimal(c) => c.get(0).map(Value::Decimal),
         ColumnData::String(c) => c.get(0).map(|s| Value::String(s.to_string())),
         ColumnData::Boolean(c) => c.get(0).map(Value::Boolean),
+        ColumnData::Array(c) => c.get(0).map(|v| Value::Array(v.to_vec())),
     }
 }
 

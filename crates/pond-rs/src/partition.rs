@@ -26,7 +26,7 @@ use crate::par;
 use crate::reducer::{Agg, Reducer};
 use crate::rowwise::{Fill, FillLimits, FirstRow};
 use crate::sequence::Sequence;
-use crate::series::{Column, Key, TimeSeries};
+use crate::series::{Column, ColumnKind, Key, TimeSeries};
 
 /// A partition key: one entry per partition column, `None` for a gap.
 pub type PartitionKey = Vec<Option<Value>>;
@@ -90,6 +90,19 @@ impl TimeSeries {
             .iter()
             .map(|c| self.column_index(CALL, c))
             .collect::<Result<_>>()?;
+        if let Some(&c) = by
+            .iter()
+            .find(|&&c| self.columns()[c].kind() == ColumnKind::Array)
+        {
+            // pond-ts keys an array by its text (`String(arr)`), so
+            // `['a,b']` and `['a', 'b']` share a partition.
+            return Err(PondError::WrongKind {
+                call: CALL,
+                column: self.columns()[c].name().to_string(),
+                kind: "array",
+                reason: "partitioning by an array column is not supported".into(),
+            });
+        }
         Ok(PartitionedSeries {
             by: columns.iter().map(|c| c.to_string()).collect(),
             run_order: Vec::new(),
@@ -422,6 +435,7 @@ fn value_ids(data: &ColumnData) -> Vec<u32> {
         ColumnData::Decimal(c) => ids(c.iter().map(|v| v.map(|d| d.value))),
         ColumnData::String(c) => ids(c.iter()),
         ColumnData::Boolean(c) => ids(c.iter()),
+        ColumnData::Array(_) => unreachable!("partition_by refuses array columns"),
     }
 }
 
@@ -431,6 +445,7 @@ fn value_at(data: &ColumnData, i: usize) -> Option<Value> {
         ColumnData::Decimal(c) => c.get(i).map(Value::Decimal),
         ColumnData::String(c) => c.get(i).map(|v| Value::String(v.to_string())),
         ColumnData::Boolean(c) => c.get(i).map(Value::Boolean),
+        ColumnData::Array(_) => unreachable!("partition_by refuses array columns"),
     }
 }
 

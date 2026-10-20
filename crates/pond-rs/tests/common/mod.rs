@@ -371,6 +371,17 @@ pub fn cell_number(cell: &Value) -> Option<f64> {
 fn compare_cell(expected: &Value, actual: &Value, tolerance: Option<f64>) -> Result<(), String> {
     match (cell_number(expected), cell_number(actual)) {
         (Some(e), Some(a)) => compare_number(e, a, tolerance),
+        // An array cell: element by element, so `1` and `1.0` match.
+        _ if expected.is_array() && actual.is_array() => {
+            let (e, a) = (expected.as_array().unwrap(), actual.as_array().unwrap());
+            if e.len() != a.len() {
+                return Err(format!("expected {expected}, got {actual}"));
+            }
+            e.iter()
+                .zip(a)
+                .try_for_each(|(e, a)| compare_cell(e, a, tolerance))
+                .map_err(|why| format!("in {actual}: {why}"))
+        }
         _ if expected == actual => Ok(()),
         _ => Err(format!("expected {expected}, got {actual}")),
     }
