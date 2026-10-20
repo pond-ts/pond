@@ -1,0 +1,130 @@
+---
+id: arrow
+title: Arrow files
+sidebar_position: 6
+description: Read and write Apache Arrow IPC (Feather v2) files and streams with pond-rs, which field types it accepts, and when columns share the file's memory.
+---
+
+# Arrow files
+
+[Apache Arrow](https://arrow.apache.org/) is the common format for passing
+tables between tools: pandas, polars, DuckDB and pond-ts all read and write
+it. pond-rs reads and writes Arrow's IPC format, which is the `.arrow` /
+Feather v2 file (pandas `to_feather`, polars `write_ipc`, pond-ts
+`toArrow`), and the stream form of it.
+
+## Read and write
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000],
+        vec![
+            Column::required("host", vec!["a", "b"]),
+            Column::optional("load", vec![Some(0.5), None]),
+        ],
+    )?;
+
+    // Write to anything that implements `std::io::Write`:
+    // a file, a Vec, a socket.
+    let mut bytes = Vec::new();
+    s.write_ipc(&mut bytes)?;
+
+    // Read back. The last argument names the key field.
+    let back = TimeSeries::read_ipc("cpu", bytes.as_slice(), "time")?;
+    assert_eq!(back, s);
+    Ok(())
+}
+```
+
+For a file on disk: `TimeSeries::read_ipc("name", File::open(path)?, "time")`
+and `s.write_ipc(File::create(path)?)`. If the bytes are already in memory,
+`TimeSeries::from_ipc_bytes(name, bytes, key)` skips a copy. If you already
+have Arrow `RecordBatch`es, `TimeSeries::from_arrow` and `s.to_arrow()`
+convert directly.
+
+pond-rs re-exports the Arrow crates it uses (`pond_rs::arrow_array`,
+`pond_rs::arrow_schema`, `pond_rs::arrow_ipc`), so you do not need to add
+them yourself or match their versions.
+
+## The key field
+
+The third argument says which field is the key.
+
+- A plain name, `"time"` or `"ts"`, reads a **time** key from that field.
+- `ArrowKey::TimeRange("timeRange".into())` reads a **time range** from
+  `timeRange` and `timeRangeEnd`.
+- `ArrowKey::Interval("interval".into())` reads an **interval** from
+  `interval`, `intervalEnd` and `intervalLabel`. This is what pond-rs and
+  pond-ts write for an `aggregate` result.
+
+Key fields may be an Arrow `Timestamp` in any unit, `Date32`, `Date64`, or
+`Int64` / `Float64` epoch milliseconds. They must have no nulls and be in
+order. A micro- or nanosecond timestamp with a part smaller than a
+millisecond is an error rather than being rounded quietly.
+
+```rust
+use pond_rs::{Agg, ArrowKey, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 30_000, 60_000],
+        vec![Column::required("load", vec![1.0, 2.0, 4.0])],
+    )?;
+    let per_minute =
+        s.aggregate(&Sequence::every("1m")?, &[Agg::of("load", Reducer::Sum)])?;
+
+    let mut bytes = Vec::new();
+    per_minute.write_ipc(&mut bytes)?;
+    let back = TimeSeries::read_ipc(
+        "per_minute",
+        bytes.as_slice(),
+        ArrowKey::Interval("interval".into()),
+    )?;
+    assert_eq!(back.key(), per_minute.key());
+    Ok(())
+}
+```
+
+## Which value fields it reads
+
+| Arrow field type                                        | Becomes                                        |
+| ------------------------------------------------------- | ---------------------------------------------- |
+| any integer or float (`Int8`…`UInt64`, `Float16/32/64`) | number column (`f64`)                          |
+| `Decimal32`, `Decimal64`, `Decimal128`                  | exact decimal column, same precision and scale |
+| `Utf8`, `LargeUtf8`, `Utf8View`, dictionaries of text   | text column                                    |
+| `Boolean`                                               | true/false column                              |
+| `Timestamp`, `Date32`, `Date64`                         | number column: epoch milliseconds              |
+| `Time32`, `Time64`, `Duration`                          | number column: a length in milliseconds        |
+| `Null`                                                  | number column, all gaps                        |
+| a dictionary of numbers or times                        | number column, decoded                         |
+| anything else (`Decimal256`, binary, lists, structs, …) | an error naming the field                      |
+
+Nulls become gaps. A field Arrow marks nullable becomes an optional column;
+a non-nullable one becomes required, unless it holds `NaN` or infinities,
+which makes it optional. Files compressed with LZ4 or ZSTD are
+read (pandas compresses with LZ4 by default). To skip fields pond-rs does
+not read, project them away first with `RecordBatch::project` and use
+`from_arrow`.
+
+Writing uses the types pond-ts `toArrow` uses: the key as
+`Timestamp(Millisecond, "UTC")`, numbers as `Float64`, text as `Utf8` (or
+the dictionary form if it was read that way), true/false as `Boolean`,
+decimals as `Decimal128`, with gaps as nulls.
+
+## Memory: when the file is not copied
+
+For a file with one batch (the usual case for a file written in one go),
+some columns are used **in place**: pond-rs points at the file's own bytes
+instead of copying them. This applies to gap-free `Float64` fields, `Utf8`,
+`Dictionary<Int32, Utf8>`, `Boolean` and `Decimal128` fields. Writing is the
+same in reverse: each column's values are handed to Arrow without a copy.
+
+The cost: while any column that points into the file is alive, in this
+series or anything made from it, the whole file stays in memory, including
+the parts that were copied. If that matters, drop the series once you have
+your results, or read a smaller file.

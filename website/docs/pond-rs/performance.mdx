@@ -1,0 +1,154 @@
+---
+id: performance
+title: Performance
+sidebar_position: 7
+description: How pond-rs uses threads without changing answers, and what the benchmarks against pond-ts and polars measured.
+---
+
+# Performance
+
+## Threads, without changing the answer
+
+pond-rs uses several cores through the `parallel` Cargo feature, which is on
+by default. Two kinds of work are split across threads:
+
+- the **output columns** of one `rolling` or `aggregate` call, and
+- the **partitions** of a `PartitionedSeries`.
+
+Each column, and each partition, is still computed start to finish by one
+thread, in order. That matters because adding the same numbers in a
+different order can change the last digit of the result. Because pond-rs
+never splits one column's rows between threads, the answer is the same, to
+the bit, on 1 thread or 16. A test checks this on 1, 4 and 7 threads.
+
+The thread pool is [rayon](https://docs.rs/rayon)'s. Set
+`RAYON_NUM_THREADS` to choose its size. To build without threads:
+
+```toml
+pond-rs = { git = "https://github.com/pond-ts/pond", default-features = false }
+```
+
+The limit of this design: a call with a single output column, on a series
+that is not partitioned, uses one core.
+
+## What was measured
+
+The numbers below come from the pond-rs plan
+([`docs/plans/PND_RUST_PLAN.md`](https://github.com/pond-ts/pond/blob/main/docs/plans/PND_RUST_PLAN.md))
+and can be re-run from `crates/pond-rs/bench/` and
+`crates/pond-rs/examples/`. All were taken on the same 4-core machine.
+Times are milliseconds of computing, not counting reading the file; lower is
+better. Runs varied by roughly ±20%, so treat small differences as noise.
+
+### Rolling windows and buckets on 1 million rows
+
+**Workload A** is a general one: 1 million rows one second apart, four
+number columns with about 5% gaps (and three 10-minute outages where
+everything is missing). It runs per-minute buckets with average, minimum,
+maximum and count, and a 5-minute rolling average and standard deviation.
+**Workload B** buckets the same file by calendar day in New York; the data
+crosses the 8 March 2026 clock change, so one day is 23 hours long. Each
+cell is the range over three full runs, each run the median of seven.
+
+| Workload | pond-ts   | pond-rs, 1 thread | pond-rs, 4 threads | polars, 1 thread | polars, 4 threads |
+| -------- | --------- | ----------------- | ------------------ | ---------------- | ----------------- |
+| A        | 2901–3412 | 438–504           | **141–159**        | 519–590          | 209–231           |
+| B        | 77–115    | 31–47             | **11–14**          | 22–28            | 11–14             |
+
+What this shows:
+
+- On one core, pond-rs is about **6.5× faster than pond-ts** on A and about
+  2.4× on B.
+- On 4 cores, pond-rs is **faster than polars on A** and level with it on B.
+- The one case where pond-rs loses: B on one core, where polars is faster
+  (22–28 against 31–47 ms).
+- Every pond-rs result here is identical, bit for bit, to pond-ts's.
+
+Memory added during one run (MB, lower is better): on A, pond-rs 192,
+polars on one thread 256, pond-ts 362 (which includes memory its garbage collector had not yet
+freed); on B, pond-rs 78, polars 110.
+
+### Per-entity work: 500 symbols
+
+500 symbols × 1,000 one-minute bars (500,000 rows, symbols interleaved, 2%
+gaps), run through `partition_by("symbol")` and then put back together.
+Middle (median) time of several runs:
+
+| Task                                              | pond-rs, 4 threads | pond-rs, 1 thread | pond-ts |
+| ------------------------------------------------- | ------------------ | ----------------- | ------- |
+| split into partitions                             | 17.5               | 29.0              | 28.7    |
+| `diff`, then collect                              | 45.4               | 89.6              | 637     |
+| `fill` (linear), then collect                     | 45.6               | 107               | 811     |
+| rolling 60-minute mean, stdev, last, then collect | 67.7               | 143               | 992     |
+| rolling, then the last value per symbol, top 20   | 36.4               | 84.5              | 1072    |
+
+Most of pond-ts's time here goes into putting the partitions back together
+(about 450 ms of it), which is logged as a pond-ts issue to fix.
+
+### Regular grids and duplicates: 1 million rows
+
+From the step 5 pull request ([#782](https://github.com/pond-ts/pond/pull/782));
+middle (median) time, every result checked against pond-ts.
+
+| Task                                      | pond-rs, 4 threads | pond-rs, 1 thread | pond-ts |
+| ----------------------------------------- | ------------------ | ----------------- | ------- |
+| `align` hold onto a 1-second grid         | 64                 | 64                | 4565    |
+| `align` linear onto a 1-second grid       | 127                | 113               | 1215    |
+| `materialize` last, 1-second grid         | 72                 | 75                | 990     |
+| `dedupe` last, 10% repeated times         | 42                 | 30                | 2314    |
+| 500 symbols × 1,000: align, then collect  | 127                | 145               | 3232    |
+| 500 symbols × 1,000: dedupe, then collect | 76                 | 135               | 2264    |
+
+On a single series, more threads did not make these faster (on `dedupe`,
+one thread was quicker); on the 500-symbol panel they did. Step 6 later
+made copying text columns faster, which helps these: in that run,
+`materialize` last went from 73 to 27 ms and `align` hold from 62 to 45 ms
+(one thread).
+
+### Joins: 1 million rows
+
+From the step 6 pull request ([#785](https://github.com/pond-ts/pond/pull/785)).
+Series a has 1 million rows a second apart; series b has 1 million rows
+every 1.5 seconds, so a third of a's times are in b. Each has a number
+column and a text column. Middle (median) time; pond-ts is the range over
+two separate runs; every result checked against pond-ts.
+
+| Task                                       | pond-rs | pond-ts |
+| ------------------------------------------ | ------- | ------- |
+| left join, a with b                        | 13–15   | 27–28   |
+| inner join, a with b                       | 11–12   | 26–36   |
+| outer join, a with b (1.67M rows out)      | 87–89   | 67–75   |
+| left join, a with a 10,000-row series      | 10–11   | 16–18   |
+| outer join, two series with the same times | 2.3–3.0 | 7–9     |
+| `join_many` of 3 with the same times       | 5.8–6.1 | 16–23   |
+
+`join` runs on one thread, so thread count does not change these. pond-ts's
+join was already fast, so the gap is smaller than elsewhere. The outer join
+is the one place pond-rs is slower: it builds about 100 MB of new output,
+and asking the operating system for fresh memory costs about 37 ms of its 87. Told to keep and reuse freed memory, the same join took 50 ms. JavaScript
+reuses its own memory between runs, so pond-ts does not pay that cost again.
+
+### Agents writing code against it
+
+pond-rs is built mainly for AI agents writing Rust, so one test was about
+them. Twenty fresh agents were given the same task: daily average, minimum,
+maximum and count by New York calendar day over the benchmark file. Ten used
+pond-rs, ten used polars. None had web access; each could only read the
+library's source.
+
+|                                       | pond-rs | polars  |
+| ------------------------------------- | ------- | ------- |
+| right answer                          | 10 / 10 | 10 / 10 |
+| right on the first run                | 9 / 10  | 6 / 10  |
+| failed runs before the first good one | 2       | 4       |
+| failed runs in total                  | 2       | 10      |
+
+Both sides got every answer right, so this does not show that pond-rs makes
+agents more correct, only that they needed fewer tries. Six of polars'
+failed runs came after a right answer, while agents were adding their own
+checks. What the pond-rs agents struggled with (no way to rename or drop
+fields on output, and having to add the Arrow crate themselves) has since
+been fixed with `select`, `rename`, `as_time` and the Arrow re-exports.
+
+The trial's setup, task, grader and results are in
+`crates/pond-rs/bench/agent-trial/`.

@@ -191,6 +191,8 @@ const config: Config = {
       // #0C1A1A ... teal keywords"), not a light/dark pair.
       theme: pondCodeTheme,
       darkTheme: pondCodeTheme,
+      // Rust and TOML for the pond-rs pages (rust ships in the default set).
+      additionalLanguages: ['toml'],
     },
   } satisfies Preset.ThemeConfig,
 };

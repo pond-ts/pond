@@ -1,0 +1,170 @@
+---
+id: getting-started
+title: Getting started
+sidebar_position: 2
+description: Add pond-rs to a Rust project, build a series, bucket it by calendar day in New York, and read the result.
+---
+
+# Getting started with pond-rs
+
+This page builds one small program: hourly temperature readings, turned into
+one row per calendar day in New York. It shows the three things nearly every
+pond-rs program does: build a series, run an operation, read the values
+back.
+
+## Add the dependency
+
+pond-rs is not on crates.io yet, so point Cargo at the GitHub repository.
+The crate lives in the pond monorepo; Cargo finds it by name.
+
+```toml
+# Cargo.toml
+[dependencies]
+pond-rs = { git = "https://github.com/pond-ts/pond" }
+```
+
+To stay on one version while the API is still moving, pin a commit with
+`rev = "<commit sha>"`. pond-rs needs Rust 1.85 or newer (edition 2024).
+
+The crate is named `pond-rs`; in code it is `pond_rs`.
+
+## Build a series, bucket it by day
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries, parse_time_in};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // One reading an hour for 72 hours, starting at midnight in New York on
+    // Saturday 7 March 2026. Times are epoch milliseconds; `parse_time_in`
+    // turns a date written as text into one.
+    let start = parse_time_in("2026-03-07", "America/New_York")?;
+    assert_eq!(start, 1_772_859_600_000); // 05:00 UTC
+    let hour = 3_600_000_i64;
+    let times: Vec<i64> = (0..72).map(|h| start + h * hour).collect();
+
+    // The sensor missed one reading (hour 30). `None` marks the gap.
+    let temps: Vec<Option<f64>> = (0..72)
+        .map(|h| {
+            if h == 30 {
+                None
+            } else {
+                Some(10.0 + (h % 24) as f64 * 0.5)
+            }
+        })
+        .collect();
+
+    let series = TimeSeries::new(
+        "weather",
+        times,
+        vec![Column::optional("temp", temps)],
+    )?;
+
+    // One row per calendar day in New York.
+    let days = series.aggregate(
+        &Sequence::calendar("day", "America/New_York")?,
+        &[
+            Agg::new("readings", "temp", Reducer::Count),
+            Agg::new("high", "temp", Reducer::Max),
+        ],
+    )?;
+
+    // Sunday 8 March is the day the clocks go forward: it is 23 hours long.
+    let begin = days.key().begin();
+    let end = days.key().end().unwrap();
+    let lengths: Vec<i64> = (0..days.len())
+        .map(|i| (end[i] - begin[i]) / hour)
+        .collect();
+    assert_eq!(lengths, [24, 23, 24, 24]);
+
+    // 72 hourly readings cover four New York days, not three, because one
+    // day was short. The gap is not counted.
+    let readings: Vec<Option<f64>> =
+        days.column("readings")?.numbers()?.iter().collect();
+    assert_eq!(readings, [Some(24.0), Some(22.0), Some(24.0), Some(1.0)]);
+
+    println!("{} days", days.len());
+    Ok(())
+}
+```
+
+What happened, step by step:
+
+1. **`TimeSeries::new`** takes a name, the times (epoch milliseconds, in
+   order; repeats are allowed) and the value columns. `parse_time_in`
+   turned the date text into milliseconds; see
+   [Times written as text](./series-and-columns#times-written-as-text). Every column must be
+   as long as the times.
+2. **`Column::optional`** makes a column that may have gaps. A `None` is a
+   gap. `Column::required` makes one that may not, and building the series
+   fails if it has one.
+3. **`Sequence::calendar("day", "America/New_York")`** describes calendar
+   days in that time zone, including the short and long days when the
+   clocks change. `Sequence::every("1h")` would give fixed-length buckets
+   instead.
+4. **`aggregate`** puts each row in the bucket it falls in and reduces each
+   bucket to one row. Each `Agg` says: write this reducer of that source
+   column to this output column.
+5. **Reading back.** `days.column("readings")?` finds the column,
+   `.numbers()?` says you expect numbers, and `.get(i)` or `.iter()` give
+   `Option<f64>`, with `None` for a gap.
+
+The result is keyed by interval: each row has a start, an end, and a label
+(here, the start). [Series and columns](./series-and-columns) explains the
+three kinds of key.
+
+## When something is wrong
+
+Every call returns `Result<_, PondError>`. The error says which call failed,
+which column, and what to do about it. These are real messages:
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
+
+fn main() {
+    let series = TimeSeries::new(
+        "weather",
+        vec![0, 1_000],
+        vec![Column::required("temp", vec![20.5, 21.0])],
+    )
+    .unwrap();
+
+    // A typo in a column name lists the columns there are.
+    let err = series
+        .aggregate(
+            &Sequence::every("1h").unwrap(),
+            &[Agg::of("tmp", Reducer::Avg)],
+        )
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "aggregate: no column named 'tmp' (columns: temp)"
+    );
+
+    // A gap in a required column says how to allow gaps.
+    let err = TimeSeries::new(
+        "weather",
+        vec![0, 1_000],
+        vec![Column::required("temp", vec![Some(20.5), None])],
+    )
+    .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "TimeSeries::new: required column 'temp' has a gap at row 1; use Column::optional if gaps are allowed"
+    );
+
+    // A bad duration says what a good one looks like.
+    let err = Sequence::every("5 minutes").unwrap_err();
+    println!("{err}");
+}
+```
+
+`PondError` is an ordinary enum, so code can also `match` on its variants
+(`UnknownColumn`, `WrongKind`, `InvalidData`, …) instead of reading the
+text.
+
+## Next
+
+- [Series and columns](./series-and-columns) for keys, column kinds and
+  gaps.
+- [Operations](./operations) for everything you can do to a series.
+- [Arrow](./arrow) to read your own data from a file.

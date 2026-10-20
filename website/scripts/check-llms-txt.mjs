@@ -24,6 +24,7 @@ assert.equal(
 assert.equal(areaOf('docs/charts/cheat-sheet.mdx').key, 'charts');
 assert.equal(areaOf('docs/recipes/cpu-metrics.mdx').key, 'guides');
 assert.equal(areaOf('docs/api/core/index.mdx').key, 'reference');
+assert.equal(areaOf('docs/pond-rs/operations.mdx').key, 'pond-rs');
 assert.equal(areaOf('docs/somewhere-new.mdx').key, 'other');
 
 // Metadata path — the docs plugin's loaded content is the source of truth.

@@ -1,0 +1,206 @@
+---
+id: partitions
+title: Partitions
+sidebar_position: 5
+description: Run pond-rs operations per host, per symbol or per any column with partition_by, on several cores, and put the rows back together with collect.
+---
+
+# Partitions
+
+Data often mixes several sources in one table: readings from many hosts,
+prices for many symbols. Most operations should then look at each source on
+its own. A `diff` on a table of interleaved hosts would subtract host `b`'s
+reading from host `a`'s, which means nothing.
+
+`partition_by(&["host"])` splits the series by the values of one or more
+columns. Operations on the result run on each partition separately, and
+`collect()` puts the rows back into one series, in time order.
+
+```rust
+use pond_rs::{Column, FirstRow, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 0, 1_000, 1_000],
+        vec![
+            Column::required("host", vec!["a", "b", "a", "b"]),
+            Column::required("load", vec![1.0, 10.0, 3.0, 40.0]),
+        ],
+    )?;
+
+    // Without partitions: each row minus the row directly above it.
+    let mixed = s.diff(&["load"], FirstRow::Keep)?;
+    // Row 2 is host a minus host b: a meaningless number.
+    assert_eq!(mixed.column("load")?.numbers()?.get(2), Some(-7.0));
+
+    // With partitions: each host against its own previous reading.
+    let per_host = s
+        .partition_by(&["host"])?
+        .diff(&["load"], FirstRow::Keep)?
+        .collect()?;
+    assert_eq!(per_host.column("load")?.numbers()?.get(2), Some(2.0)); // a: 3 - 1
+    assert_eq!(per_host.column("load")?.numbers()?.get(3), Some(30.0)); // b: 40 - 10
+    Ok(())
+}
+```
+
+## What runs per partition
+
+A `PartitionedSeries` has `rolling`, `aggregate`, `diff`, `rate`,
+`pct_change`, `shift`, `cumulative`, `fill`, `fill_all`, `align`,
+`materialize` and `dedupe`. Each returns
+another `PartitionedSeries`, so they chain. For anything else, `map` runs
+your own closure on each partition and stays partitioned; `apply` runs it
+and collects in one step.
+
+`rolling` and `aggregate` keep the partition columns in their output (as a
+`first` of each bucket or window), so the result is still split by host.
+
+```rust
+use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 0, 30_000, minute, minute],
+        vec![
+            Column::required("host", vec!["a", "b", "a", "a", "b"]),
+            Column::required("load", vec![0.2, 0.9, 0.4, 0.6, 0.7]),
+        ],
+    )?;
+
+    // Per host, per minute: the average load, then only the busy minutes.
+    let busy = s
+        .partition_by(&["host"])?
+        .aggregate(
+            &Sequence::every("1m")?,
+            &[Agg::new("avg", "load", Reducer::Avg)],
+        )?
+        .apply(|one_host| {
+            one_host.filter(|r| Ok(r.number("avg")?.is_some_and(|v| v > 0.5)))
+        })?;
+
+    // b at minute 0 (0.9), a at minute 1 (0.6), b at minute 1 (0.7).
+    assert_eq!(busy.len(), 3);
+    let hosts: Vec<_> = busy.column("host")?.strings()?.iter().collect();
+    assert_eq!(hosts, [Some("b"), Some("a"), Some("b")]);
+    Ok(())
+}
+```
+
+## Looking at one partition
+
+`iter()` walks the partitions with their keys, `get(&key)` finds one, and
+`group_by(&cols)` (or `into_groups()`) gives owned `(key, series)` pairs.
+A key has one value per partition column, as `Option<Value>`; `None` means
+the rows with a gap there, which form a partition of their own.
+
+```rust
+use pond_rs::{Column, TimeSeries, Value};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "trades",
+        vec![0, 1, 2, 3],
+        vec![
+            Column::optional(
+                "symbol",
+                vec![Some("AAPL"), Some("MSFT"), None, Some("AAPL")],
+            ),
+            Column::required("qty", vec![10.0, 5.0, 1.0, 20.0]),
+        ],
+    )?;
+
+    let by_symbol = s.partition_by(&["symbol"])?;
+    assert_eq!(by_symbol.len(), 3); // AAPL, MSFT, and the row with no symbol
+
+    let aapl = by_symbol
+        .get(&[Some(Value::String("AAPL".into()))])
+        .unwrap();
+    assert_eq!(aapl.len(), 2);
+
+    for (key, rows) in by_symbol.iter() {
+        // `as_str` reads a text key part; `as_f64` and `as_bool` the others.
+        let name = key[0].as_ref().and_then(Value::as_str).unwrap_or("(none)");
+        println!("{name}: {} rows", rows.len());
+    }
+    Ok(())
+}
+```
+
+Partitions are listed in the order their first row appears. Several
+columns work too: `partition_by(&["region", "host"])`.
+
+## The latest state of each partition, as a table
+
+A common question is "for each symbol, what does the last hour look like,
+ranked". The answer is one row per symbol, sorted by a score, which is not
+a time series (a series is always in time order with its key first). So
+build it in two steps: `tail` and `reduce` on each partition give the
+numbers, and the table is plain Rust, or an Arrow `RecordBatch` (pond-rs
+re-exports `arrow_array` and `arrow_ipc`) if you want to write it to a file.
+
+```rust
+use pond_rs::arrow_array::{ArrayRef, Float64Array, RecordBatch, StringArray};
+use pond_rs::{Agg, Column, Reducer, TimeSeries, Value};
+use std::sync::Arc;
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let min = 60_000;
+    let bars = TimeSeries::new(
+        "bars",
+        vec![0, 0, min, min, 2 * min, 2 * min],
+        vec![
+            Column::required("symbol", vec!["A", "B", "A", "B", "A", "B"]),
+            Column::required("close", vec![10.0, 50.0, 11.0, 50.0, 14.0, 49.0]),
+        ],
+    )?;
+
+    // Score: how far the last close is from the mean of the last 2 minutes.
+    let mut scores: Vec<(String, f64)> = Vec::new();
+    for (key, part) in bars.partition_by(&["symbol"])?.iter() {
+        let symbol = key[0].as_ref().and_then(Value::as_str).unwrap_or("");
+        let last = part.tail("2m")?.reduce(&[
+            Agg::new("mean", "close", Reducer::Avg),
+            Agg::new("close", "close", Reducer::Last),
+        ])?;
+        if let (Some(mean), Some(close)) = (last.number("mean")?, last.number("close")?) {
+            scores.push((symbol.to_string(), close - mean));
+        }
+    }
+    scores.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs())); // biggest first
+
+    // A: rows after 0 are 11 and 14, mean 12.5, last 14, score 1.5.
+    assert_eq!(scores[0], ("A".to_string(), 1.5));
+    assert_eq!(scores[1], ("B".to_string(), -0.5));
+
+    let table = RecordBatch::try_from_iter([
+        (
+            "symbol",
+            Arc::new(StringArray::from_iter_values(scores.iter().map(|s| &s.0))) as ArrayRef,
+        ),
+        (
+            "score",
+            Arc::new(scores.iter().map(|s| s.1).collect::<Float64Array>()) as ArrayRef,
+        ),
+    ])
+    .expect("columns of one length");
+    assert_eq!(table.num_rows(), 2);
+    Ok(())
+}
+```
+
+Running `rolling` over each partition and reading its last row looks at
+the same rows, but computes a window at every row of the history to use
+one.
+
+## Threads
+
+With the `parallel` feature (on by default), partitions run on several
+cores. Each partition is still computed start to finish by one thread, so
+the answer is the same, to the bit, however many threads run. On 500
+symbols × 1,000 one-minute bars, a rolling one-hour mean, standard deviation
+and last value per symbol, collected, took 68 ms on 4 threads, 143 ms on 1,
+and 992 ms in pond-ts. More on [Performance](./performance).

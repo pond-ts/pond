@@ -251,6 +251,20 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'pond-rs (Rust)',
+      link: { type: 'doc', id: 'pond-rs/pond-rs-index' },
+      items: [
+        'pond-rs/getting-started',
+        'pond-rs/series-and-columns',
+        'pond-rs/operations',
+        'pond-rs/partitions',
+        'pond-rs/arrow',
+        'pond-rs/performance',
+        'pond-rs/coming-from-pond-ts',
+      ],
+    },
+    {
+      type: 'category',
       label: 'How-to guides',
       link: { type: 'doc', id: 'how-to-guides/how-to-guides-index' },
       items: [

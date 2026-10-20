@@ -90,6 +90,13 @@ const AREAS = [
     match: (/** @type {string} */ p) => p.startsWith('docs/process/'),
   },
   {
+    key: 'pond-rs',
+    title: 'pond-rs (Rust)',
+    blurb:
+      'The Rust crate: same operations and answers as pond-ts, with threads and Arrow I/O. Early; not on crates.io.',
+    match: (/** @type {string} */ p) => p.startsWith('docs/pond-rs/'),
+  },
+  {
     key: 'guides',
     title: 'How-to guides and recipes',
     blurb:
