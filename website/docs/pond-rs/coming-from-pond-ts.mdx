@@ -36,6 +36,7 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `series.tail('1h')`                            | `series.tail("1h")?`                                                        |
 | `series.reduce({ m: { from, using: 'avg' } })` | `series.reduce(&[Agg::new("m", from, Reducer::Avg)])?` then `.number("m")?` |
 | `series.last()`                                | `series.last()` (an `Option<Row>`)                                          |
+| `series.asInterval(fn)` / `offsetTime('-1h')`  | `series.as_interval_with(fn)?` / `offset_time("-1h")?`                      |
 | `series.partitionBy('host')`                   | `series.partition_by(&["host"])`                                            |
 | `series.groupBy('host')` / `toMap()`           | `series.group_by(&["host"])` / `iter()`                                     |
 | `series.atOrBefore(t)` / `nearest(t)`          | `series.at_or_before(t)` / `nearest(t)` (an `Option<Row>`)                  |
@@ -91,6 +92,9 @@ pond-rs returns an error instead.
   where pond-ts never reads the key (such as `nearest`, `overlapping` or
   `trim` on an empty series). A number label must be finite, and times are whole
   milliseconds.
+- **`offset_time` past the time limit.** Moving a key beyond
+  `MAX_TIME_MS` is an error; pond-ts allows it, but such a key cannot be
+  read back. Offsets are whole milliseconds (pond-ts takes `0.5`).
 - **A repeated rename.** `rename` with the same `from` twice is an error
   (pond-ts's object syntax cannot express it).
 

@@ -558,6 +558,52 @@ fn main() -> Result<(), pond_rs::PondError> {
 }
 ```
 
+## Changing the key
+
+These change what kind of key a series has, or move every time. The value
+columns are shared with the original, not copied.
+
+| Call                                  | Does                                                                                    |
+| ------------------------------------- | --------------------------------------------------------------------------------------- |
+| `as_time(At::Begin)`                  | turns ranges or intervals into moments (`Begin`, `Center` or `End`)                     |
+| `as_time_range()`                     | turns each row into a time range over the same stretch; a moment `t` becomes `t` to `t` |
+| `as_interval(label)`                  | the same, as intervals all carrying `label` (a number or text)                          |
+| `as_interval_with(\|range, row\| ..)` | the same, with each row's label from a closure                                          |
+| `offset_time("-1h")`                  | moves every time by a fixed amount; `offset_time_ms(n)` takes milliseconds              |
+
+Labels must all be numbers or all text, and number labels must be finite.
+A value column already named `timeRange` or `interval` is an error, since
+the new key would take that name.
+
+```rust
+use pond_rs::{Column, Label, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let hour = 3_600_000;
+    let s = TimeSeries::new(
+        "load",
+        vec![0, hour],
+        vec![Column::required("v", vec![1.0, 2.0])],
+    )?;
+
+    let ranges = s.as_time_range()?;
+    assert_eq!(ranges.key_name(), "timeRange");
+    assert_eq!(ranges.key().end().unwrap(), &[0, hour]); // zero-length spans
+
+    // Label each row by its hour of the day.
+    let labelled = s.as_interval_with(|range, _row| (range.begin() / hour).to_string())?;
+    assert_eq!(labelled.key_name(), "interval");
+    assert_eq!(labelled.at(1).unwrap().key().label(), Some(&Label::from("1")));
+
+    // Readings stamped an hour late: move them back.
+    let fixed = s.offset_time("-1h")?;
+    assert_eq!(fixed.key().begin(), &[-hour, 0]);
+
+    assert!(s.as_interval(f64::INFINITY).is_err()); // labels must be finite
+    Ok(())
+}
+```
+
 ## Regular grids: `align` and `materialize`
 
 Sensors rarely report on the second. Both of these give one row per bucket
