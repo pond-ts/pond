@@ -309,6 +309,95 @@ const TIME_PARSE_ZONES = [
   '-03',
 ];
 
+// Row lookups: every key below against every input below, for each of
+// bisect / includesKey / atOrBefore / atOrAfter / nearest. A key is a
+// pond-ts KeyLike: a number is a time, [start, end] a time range, [label,
+// start, end] an interval. Keys of every kind meet inputs of every kind, so
+// the cross-kind order (start, end, kind name, then label) is pinned too.
+const QUERY_INPUTS = [
+  'gappy',
+  'gappyDups',
+  'emptyHosts',
+  'ranges',
+  'dupRanges',
+  'labelled',
+  'dupLabelled',
+  'buckets',
+  'zeroIntervals',
+];
+const QUERY_KEYS = [
+  -1000,
+  0,
+  1,
+  500,
+  999,
+  1000,
+  1750,
+  2000,
+  2500,
+  2750,
+  4000,
+  9250,
+  12000,
+  21250,
+  21500,
+  30000,
+  [0, 0],
+  [0, 10],
+  [0, 500],
+  [0, 1000],
+  [0, 3000],
+  [0, 5000],
+  [2000, 2000],
+  [5000, 9000],
+  [6000, 8000],
+  [10, 20],
+  [1000, 0],
+  ['a', 0, 10],
+  ['b', 0, 10],
+  ['B', 0, 10],
+  ['A', 0, 10],
+  ['c', 0, 10],
+  ['', 0, 10],
+  ['_', 0, 10],
+  ['1', 0, 10],
+  [0, 0, 10],
+  ['mon', 0, 4000],
+  ['Mon', 0, 4000],
+  ['tue', 4000, 8000],
+  ['mon', 8000, 12000],
+  ['mon', 8000, 11999],
+  [0, 0, 5000],
+  [-0, 0, 5000],
+  [5000, 5000, 10000],
+  [4999, 0, 5000],
+  ['0', 0, 5000],
+  [1, 0, 0],
+  [0, 0, 0],
+  [1000, 1000, 1000],
+  ['x', 20, 30],
+  ['c', 20, 30],
+  [0, 10, 0],
+];
+const QUERY_KEY_OPS = [
+  'bisect',
+  'includesKey',
+  'atOrBefore',
+  'atOrAfter',
+  'nearest',
+];
+const QUERY_POSITIONS = [-7, -6, -5, -2, -1, 0, 1, 4, 5, 11, 12];
+// find / some / every: the same tests `filter` cases use.
+const QUERY_TESTS = [
+  { everyNth: 3 },
+  { beginAtLeast: 5000 },
+  { beginAtLeast: 99999 },
+  { endAtMost: 4000 },
+  { endAtMost: -1 },
+  { missing: 'a' },
+  { column: 'a', gt: 3 },
+];
+
 /** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
 const CASES = [
   // rolling: time window, trailing, keyed at each event
@@ -1864,7 +1953,7 @@ export function buildFixture(pond) {
       generator: 'packages/core/scripts/parity/generate.mjs',
       reference: 'pond-ts',
       encoding:
-        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Sequence.every(d) as {"sequence":{"every":d}} and Sequence.calendar(u, {timeZone, weekStartsOn}) as {"sequence":{"calendar":u,"timeZone":z,"weekStartsOn"?:w}}; a case has expected (series), groups ([key, series] pairs, from toMap / groupBy), reduced ({output: cell}, from reduce) or error ({name,message}); partitionBy args are [by, steps, end] with steps [[method, ...args]] run on the partitioned view and end "collect" or "toMap"; {"series":name} is another input series; joinMany args are [[others...], options?] and call TimeSeries.joinMany([input, ...others], options); exact unless tolerance is set; timeParse holds Time.parse(input, {timeZone}) as expected (ms) or error (its name)',
+        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Sequence.every(d) as {"sequence":{"every":d}} and Sequence.calendar(u, {timeZone, weekStartsOn}) as {"sequence":{"calendar":u,"timeZone":z,"weekStartsOn"?:w}}; a case has expected (series), groups ([key, series] pairs, from toMap / groupBy), reduced ({output: cell}, from reduce) or error ({name,message}); partitionBy args are [by, steps, end] with steps [[method, ...args]] run on the partitioned view and end "collect" or "toMap"; {"series":name} is another input series; joinMany args are [[others...], options?] and call TimeSeries.joinMany([input, ...others], options); exact unless tolerance is set; timeParse holds Time.parse(input, {timeZone}) as expected (ms) or error (its name); queries hold inputs[input][op](arg) as expected (a row position, null for none, a bool, or the bisect index) or error (its name), with KeyLike args for key lookups and filter test specs for find / some / every',
     },
     inputs: Object.fromEntries(
       Object.entries(inputs).map(([name, series]) => [
@@ -1919,6 +2008,36 @@ export function buildFixture(pond) {
         };
       }
       return { ...head, expected: encodeSeries(result) };
+    }),
+    queries: QUERY_INPUTS.flatMap((input) => {
+      const series = inputs[input];
+      const row = (event) =>
+        event === undefined ? null : series.events.indexOf(event);
+      const run = (op, arg, call) => {
+        try {
+          return { input, op, arg, expected: call() };
+        } catch (e) {
+          return { input, op, arg, error: e.name };
+        }
+      };
+      return [
+        ...QUERY_KEYS.flatMap((key) =>
+          QUERY_KEY_OPS.map((op) =>
+            run(op, encodeCell(key), () => {
+              const result = series[op](key);
+              return typeof result === 'object' || result === undefined
+                ? row(result)
+                : result;
+            }),
+          ),
+        ),
+        ...QUERY_POSITIONS.map((i) => run('at', i, () => row(series.at(i)))),
+        ...QUERY_TESTS.flatMap((spec) => [
+          run('find', spec, () => row(series.find(closure(spec)))),
+          run('some', spec, () => series.some(closure(spec))),
+          run('every', spec, () => series.every(closure(spec))),
+        ]),
+      ];
     }),
     timeParse: TIME_PARSE_TEXTS.flatMap((input) =>
       TIME_PARSE_ZONES.map((timeZone) => {

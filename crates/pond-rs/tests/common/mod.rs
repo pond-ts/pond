@@ -169,6 +169,20 @@ pub struct CoreFixture {
     pub cases: Vec<CoreCase>,
     #[serde(rename = "timeParse")]
     pub time_parse: Vec<TimeParseCase>,
+    pub queries: Vec<QueryCase>,
+}
+
+/// One row lookup, `inputs[input][op](arg)`: a row position (`null` for
+/// none), a bool or a `bisect` index; or the name of the error pond-ts
+/// threw.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryCase {
+    pub input: String,
+    pub op: String,
+    pub arg: Value,
+    pub expected: Option<Value>,
+    pub error: Option<String>,
 }
 
 /// One `Time.parse(input, { timeZone })` result: milliseconds, or the name

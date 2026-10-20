@@ -466,7 +466,7 @@ impl<'a> KeyOrder<'a> {
 /// The CLDR root collation at its default strength: what Node's
 /// `String.prototype.localeCompare` uses with no locale given when the
 /// machine's default locale is root or English (en-US tailors nothing).
-fn root_collator() -> CollatorBorrowed<'static> {
+pub(crate) fn root_collator() -> CollatorBorrowed<'static> {
     Collator::try_new(Default::default(), CollatorOptions::default())
         .expect("the root collation is compiled in")
 }

@@ -622,7 +622,7 @@ The one result short of a clean win is one-core B: polars is faster
      build these only when asked for.) Sub-steps, in dependency order:
      - **8a Finding rows:** `at`, `bisect`, `at_or_before` /
        `at_or_after`, `nearest`, `includes_key`, `find` / `some` /
-       `every`. (`first` / `last` done in 7b.)
+       `every`. (`first` / `last` done in 7b.) (done, below)
      - **8b Picking a time span:** `within`, `before` / `after`, `trim`,
        `overlapping`, `contained_by`, and `time_range` / `overlaps` /
        `contains` / `intersection`. (`tail` done in 7b; pond-rs had only
@@ -1514,6 +1514,41 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     recorded as `reduced` (output name → cell).
   - Perf: no new walking code. `tail` is a binary search and a slice;
     `reduce` calls the `aggregate` kernels once over all rows.
+
+  **Step 8a (done): finding rows ([PND-RUSTFULL]).**
+  - Calls, each as pond-ts's same-named one: `at(i)` (negative counts from
+    the end), `bisect(key)`, `includes_key`, `at_or_before`,
+    `at_or_after`, `nearest` (ties to the earlier row; outside the series
+    gives the first or last row), and `find` / `some` / `every` with a
+    closure over each `Row` (`FnMut(&Row) -> Result<bool>`, as `filter`).
+    Rows come back as `Row`; `Row::key()` gives the row's key.
+  - Keys are a new `EventKey`: `EventKey::time(t)` (or a plain `i64`),
+    `time_range(begin, end)`, `interval(label, begin, end)` with a `Label`
+    (number or text). The constructors refuse start > end, as pond-ts's
+    `TimeRange` / `Interval` do.
+  - Order, as pond-ts `compare`: start, then end, then kind name under
+    `localeCompare` (interval, time, time range), then between two
+    intervals the label (numbers before text, text by the ICU root
+    collation already used by `join`). Equality is pond-ts `equals`: same
+    kind, start, end, and label by `===` (text byte for byte). `bisect` is
+    pond-ts's binary search step for step, so rows out of label order
+    (the `dupLabelled` input) give the same answer.
+  - Differences from pond-ts:
+    - A key is checked when built, so a backwards range is an error even
+      where pond-ts never reads the key (`nearest` on an empty series).
+    - Number labels must be finite (pond-ts does not check; pond-rs labels
+      are finite everywhere).
+    - Times are whole milliseconds (pond-ts accepts fractions).
+  - Parity: a new `queries` section in the fixture, 2,628 lookups: 9
+    inputs (every key kind, repeated keys, an empty series, labels out of
+    order) × 52 keys of every kind (cross-kind, text labels that differ
+    only by case, `-0` labels, backwards ranges) × the five key lookups,
+    plus `at` at 11 positions and `find` / `some` / `every` with 7 tests.
+    All match, bar the one known difference above.
+  - Perf: no perf script. Key lookups are O(log N) binary searches (a
+    text-label compare builds the collator once per call, only when two
+    keys tie up to the label); `find` / `some` / `every` stop at the first
+    answer, as pond-ts.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

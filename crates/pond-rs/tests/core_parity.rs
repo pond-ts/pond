@@ -364,31 +364,7 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>
         }
         "filter" => {
             let spec = &case.args[0]["fn"];
-            input.filter(|r| {
-                if let Some(column) = spec["column"].as_str() {
-                    return Ok(match (&spec["gt"], &spec["eq"]) {
-                        (Value::Number(gt), _) => {
-                            r.number(column)?.is_some_and(|v| v > gt.as_f64().unwrap())
-                        }
-                        (_, Value::String(eq)) => r.string(column)? == Some(eq.as_str()),
-                        (_, Value::Bool(eq)) => r.boolean(column)? == Some(*eq),
-                        _ => panic!("unknown filter spec {spec}"),
-                    });
-                }
-                if let Some(column) = spec["missing"].as_str() {
-                    return Ok(r.number(column)?.is_none());
-                }
-                if let Some(n) = spec["everyNth"].as_u64() {
-                    return Ok(r.index() % n as usize == 0);
-                }
-                if let Some(t) = spec["beginAtLeast"].as_i64() {
-                    return Ok(r.begin() >= t);
-                }
-                if let Some(t) = spec["endAtMost"].as_i64() {
-                    return Ok(r.end() <= t);
-                }
-                panic!("unknown filter spec {spec}")
-            })
+            input.filter(|r| row_test(spec, r))
         }
         "mapColumns" => {
             let spec = case.args[0]
@@ -660,6 +636,126 @@ fn encode(data: &ColumnData, i: usize) -> Value {
         ColumnData::String(c) => c.get(i).map_or(Value::Null, |v| json!(v)),
         ColumnData::Boolean(c) => c.get(i).map_or(Value::Null, |v| json!(v)),
     }
+}
+
+/// A `filter` / `find` test spec from the fixture (cases.mjs `closure`).
+fn row_test(spec: &Value, r: &pond_rs::Row<'_>) -> pond_rs::Result<bool> {
+    if let Some(column) = spec["column"].as_str() {
+        return Ok(match (&spec["gt"], &spec["eq"]) {
+            (Value::Number(gt), _) => r.number(column)?.is_some_and(|v| v > gt.as_f64().unwrap()),
+            (_, Value::String(eq)) => r.string(column)? == Some(eq.as_str()),
+            (_, Value::Bool(eq)) => r.boolean(column)? == Some(*eq),
+            _ => panic!("unknown filter spec {spec}"),
+        });
+    }
+    if let Some(column) = spec["missing"].as_str() {
+        return Ok(r.number(column)?.is_none());
+    }
+    if let Some(n) = spec["everyNth"].as_u64() {
+        return Ok(r.index() % n as usize == 0);
+    }
+    if let Some(t) = spec["beginAtLeast"].as_i64() {
+        return Ok(r.begin() >= t);
+    }
+    if let Some(t) = spec["endAtMost"].as_i64() {
+        return Ok(r.end() <= t);
+    }
+    panic!("unknown filter spec {spec}")
+}
+
+/// A pond-ts `KeyLike` from the fixture: a number is a time, `[start,
+/// end]` a time range, `[label, start, end]` an interval.
+fn event_key(arg: &Value) -> pond_rs::Result<pond_rs::EventKey> {
+    let ms = |v: &Value| v.as_i64().unwrap_or_else(|| panic!("whole ms, got {v}"));
+    match arg {
+        Value::Array(a) if a.len() == 2 => pond_rs::EventKey::time_range(ms(&a[0]), ms(&a[1])),
+        Value::Array(a) if a.len() == 3 => {
+            let label: pond_rs::Label = match &a[0] {
+                Value::String(t) => t.as_str().into(),
+                v => decode_f64(v).into(),
+            };
+            pond_rs::EventKey::interval(label, ms(&a[1]), ms(&a[2]))
+        }
+        v => Ok(pond_rs::EventKey::time(ms(v))),
+    }
+}
+
+/// A number cell, with the fixture's tags for -0 / NaN / infinities.
+fn decode_f64(v: &Value) -> f64 {
+    match v["f64"].as_str() {
+        Some("-0") => -0.0,
+        Some("NaN") => f64::NAN,
+        Some("inf") => f64::INFINITY,
+        Some("-inf") => f64::NEG_INFINITY,
+        _ => v.as_f64().unwrap_or_else(|| panic!("a number, got {v}")),
+    }
+}
+
+/// Every row lookup in the fixture (`bisect`, `includesKey`, `atOrBefore`,
+/// `atOrAfter`, `nearest`, `at`, `find`, `some`, `every`) gives the row,
+/// index or answer pond-ts gives, or fails where pond-ts throws.
+#[test]
+fn row_lookups_match_pond_ts() {
+    let fixture = load_core_fixture();
+    assert!(!fixture.queries.is_empty(), "core fixture has no queries");
+    let inputs: std::collections::BTreeMap<&str, TimeSeries> = fixture
+        .queries
+        .iter()
+        .map(|q| (q.input.as_str(), to_series(&fixture.inputs[&q.input])))
+        .collect();
+    let mut failures = Vec::new();
+    for q in &fixture.queries {
+        let s = &inputs[q.input.as_str()];
+        let pos = |r: Option<pond_rs::Row<'_>>| r.map_or(Value::Null, |r| json!(r.index()));
+        let got: pond_rs::Result<Value> = match q.op.as_str() {
+            "at" => Ok(pos(s.at(q.arg.as_i64().expect("position")))),
+            "find" => s.find(|r| row_test(&q.arg, r)).map(pos),
+            "some" => s.some(|r| row_test(&q.arg, r)).map(|b| json!(b)),
+            "every" => s.every(|r| row_test(&q.arg, r)).map(|b| json!(b)),
+            op => event_key(&q.arg).map(|k| match op {
+                "bisect" => json!(s.bisect(k)),
+                "includesKey" => json!(s.includes_key(k)),
+                "atOrBefore" => pos(s.at_or_before(k)),
+                "atOrAfter" => pos(s.at_or_after(k)),
+                "nearest" => pos(s.nearest(k)),
+                _ => panic!("unknown query op {op}"),
+            }),
+        };
+        // A `null` expected (no row) reads as `None`; `error` tells them apart.
+        let want = q
+            .error
+            .is_none()
+            .then(|| q.expected.clone().unwrap_or(Value::Null));
+        let same = match (&got, &want) {
+            (Ok(v), Some(want)) => v == want,
+            (Err(_), None) => true,
+            // Known difference: pond-ts `nearest` on an empty series returns
+            // before it builds the key, so a backwards range is no error
+            // there. pond-rs checks a key when it is built, before any call.
+            (Err(_), Some(Value::Null)) => {
+                q.op == "nearest" && s.is_empty() && matches!(&q.arg, Value::Array(_))
+            }
+            _ => false,
+        };
+        if !same {
+            failures.push(format!(
+                "{}.{}({}): pond-rs {got:?}, pond-ts {}",
+                q.input,
+                q.op,
+                q.arg,
+                q.expected
+                    .as_ref()
+                    .map_or_else(|| format!("{:?}", q.error), |v| v.to_string())
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} differ:\n{}",
+        failures.len(),
+        fixture.queries.len(),
+        failures.join("\n")
+    );
 }
 
 /// Every text pond-ts's `Time.parse` reads (or refuses) in the fixture,
