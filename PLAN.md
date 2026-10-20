@@ -583,6 +583,16 @@ the study oracle) is done.
      ([PND-RUSTTIME], `parse_time`)~~ — done; (b) ~~the step 4b agent-trial
      fixes ([PND-RUSTQ11]: `tail` / `reduce` / `first` / `last`, partition
      key helpers, docs)~~ — done.
+  8. **The rest of the pond-ts batch surface** ([PND-RUSTFULL]), adopted
+     2026-10-20 by pjm17971 as core work that needs no further case:
+     (a) finding rows; (b) picking a time span; (c) changing key type;
+     (d) JSON / columns / points / rows input and output; (e) array
+     columns; (f) reducers `unique` / `keep` / `top` / `difference` /
+     `samples`; (g) rolling options (row-count, leading, centred, minimum
+     samples, over a time grid); (h) `smooth` / `baseline` / `outliers` /
+     `scan` / `sample`; (i) `pivot_by_group`, `by_column` /
+     `rolling_by_column`, `by_value` + `ValueSeries`, `collapse`,
+     `concat`; (j) the (h) operations per group. Same rules as steps 1–7.
 
   Detail in the breakout plan.
 
