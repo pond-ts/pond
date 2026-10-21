@@ -2229,6 +2229,18 @@ const RESHAPE_CASES = [
     [['a'], 'none', { fn: { collapse: 'none', keys: [] } }],
   ],
   [
+    'collapse-nan',
+    'gappy',
+    'collapse',
+    [['a'], 'n', { fn: { collapse: 'nan', keys: [] } }],
+  ],
+  [
+    'collapse-nan-then-text',
+    'firstGap',
+    'collapse',
+    [['v'], 'w', { fn: { collapse: 'nanOrText', keys: ['v'] } }],
+  ],
+  [
     'collapse-empty',
     'joinEmpty',
     'collapse',
@@ -3737,6 +3749,9 @@ function closure(spec) {
       return (v) => (all(v) ? vals(v).join('|') : undefined);
     }
     if (spec.collapse === 'none') return () => undefined;
+    // NaN still counts as a number for the output kind (stored as a gap).
+    if (spec.collapse === 'nan') return () => NaN;
+    if (spec.collapse === 'nanOrText') return (v) => (all(v) ? 'x' : NaN);
   }
   if ('column' in spec) {
     return (e) => {

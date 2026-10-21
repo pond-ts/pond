@@ -646,8 +646,7 @@ impl TimeSeries {
     /// Every series must have the same key (name and kind) and the same
     /// columns in the same order (name and kind; decimals also the same
     /// scale, interval labels the same kind). A column is required in the
-    /// result only when it is required in every input; pond-ts takes the
-    /// first series' flag, which can mark a column with gaps required.
+    /// result only when it is required in every input.
     ///
     /// ```
     /// # use pond_rs::{Column, TimeSeries};

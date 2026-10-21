@@ -53,7 +53,8 @@ impl TimeSeries {
     ///
     /// The output column's kind is the kind of `f`'s first value that is
     /// not a gap (a text column if every row is a gap), and every value
-    /// must be that kind. A number that is not finite is a gap. The column
+    /// must be that kind. A number that is not finite counts as a number
+    /// for the kind but is stored as a gap, as in pond-ts. The column
     /// is required when it has no gaps, else optional. pond-ts marks it
     /// required even when it has gaps.
     ///
@@ -120,10 +121,9 @@ impl TimeSeries {
         let mut kind: Option<ColumnKind> = None;
         let mut values: Vec<Option<Scalar>> = Vec::with_capacity(self.len());
         for row in self.rows() {
-            let v = match f(&row)? {
-                Some(Scalar::Number(x)) if !x.is_finite() => None,
-                v => v,
-            };
+            // The kind counts a non-finite number (as pond-ts does: NaN is
+            // still a number there); the value itself is stored as a gap.
+            let v = f(&row)?;
             if let Some(v) = &v {
                 let k = v.kind();
                 match kind {
@@ -140,7 +140,10 @@ impl TimeSeries {
                     Some(_) => {}
                 }
             }
-            values.push(v);
+            values.push(match v {
+                Some(Scalar::Number(x)) if !x.is_finite() => None,
+                v => v,
+            });
         }
         let data: ColumnData = match kind.unwrap_or(ColumnKind::String) {
             ColumnKind::Number => values

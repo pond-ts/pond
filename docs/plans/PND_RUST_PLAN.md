@@ -2203,7 +2203,8 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     every input has it required.
   - `collapse` takes its output kind from the first value that is not a
     gap and refuses a later value of another kind; a non-finite number
-    is a gap. The output is required when it has no gaps.
+    counts as a number for that (as in pond-ts) but is stored as a gap.
+    The output is required when it has no gaps.
   - `pivot_by_group` names groups as JavaScript's `String` does (number
     formatting, `true` / `false`, array elements joined by commas, a gap
     as `undefined`, sharing a column with the text `"undefined"` as in
@@ -2227,7 +2228,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     output required even when it holds gaps ([PND-COLLAPSEREQ], logged;
     its reducer's type returns no `undefined`, so fixing it changes a
     public type).
-  - Parity: 62 new pond-ts cases (1154 in all): concat of two and three
+  - Parity: 64 new pond-ts cases (1156 in all): concat of two and three
     series with shared keys, itself, one series, empty inputs, ranges,
     labelled intervals, arrays, text and true/false columns, and both
     mismatch errors; collapse sums, ratios (non-finite results), a

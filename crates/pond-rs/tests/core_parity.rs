@@ -377,6 +377,11 @@ fn run_collapse(input: &TimeSeries, args: &[Value]) -> pond_rs::Result<TimeSerie
                 .collect::<pond_rs::Result<Option<Vec<&str>>>>()?
                 .map(|v| Scalar::String(v.join("|"))),
             "none" => None,
+            "nan" => Some(Scalar::Number(f64::NAN)),
+            "nanOrText" => Some(match numbers()? {
+                Some(_) => Scalar::String("x".into()),
+                None => Scalar::Number(f64::NAN),
+            }),
             other => panic!("unknown collapse spec {other}"),
         })
     };
