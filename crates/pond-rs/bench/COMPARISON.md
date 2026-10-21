@@ -6,38 +6,49 @@ wherever polars has a matching call. Run on 2026-10-21 at commit `6a42155`.
 
 ## Short answer
 
-- **pond-rs vs pond-ts:** pond-rs is faster in 172 of the 176 cases timed
-  on both (median **5.7× faster**; from 1.1× up to ~100× on grid, dedupe,
-  smoothing and reducer work, and 12,000× on one pond-ts case that scans every
-  row per bucket, [PND-ROLLGRID]). It is slower in 4:
-  - outer join of two 1M-row series: 107 vs 67 ms (pond-ts's join was
-    already column-based, and pond-rs pays to touch fresh memory for the
-    output; see "join" in `PND_RUST_PLAN.md` step 6);
+Counts below compare cases where both sides take at least 0.5 ms (a few
+calls cost one side next to nothing, e.g. polars `shift`, which does not
+copy the column, or pond-rs `keep` over a whole series, which stops at
+the first differing value); those are in the tables but not in the counts.
+
+- **pond-rs vs pond-ts:** pond-rs (4 cores) is faster in 171 of 174 cases
+  (median **5.7× faster**; from 1.1× up to ~100× on grid, dedupe,
+  smoothing and reducer work, and 12,000× on one pond-ts case that scans
+  every row per bucket, [PND-ROLLGRID]). pond-ts is one thread, but most of
+  these cases run on one core in pond-rs too: on 1 core pond-rs is faster
+  in 169 of 174, same median. It is slower in:
+  - outer join of two 1M-row series: 107 ms (85 on 1 core) vs 67 ms
+    (pond-ts's join was already column-based, and pond-rs pays to touch
+    fresh memory for the output; see step 6 in `PND_RUST_PLAN.md`);
   - JSON in on the wide 10k × 41 series (410,000 small whole numbers):
-    `from_json` 54 vs 30 ms and `from_columns_json` 19 vs 7.8 ms. Step
-    8d2 found most of pond-rs's time there is parsing the text, and
-    left a schema-typed reader undone;
-  - `ValueSeries.to_arrow`: pond-ts hands back views (0 ms), pond-rs
-    builds gap bits (1.4 ms).
+    `from_json` 54 ms (34 on 1 core) vs 30 ms and `from_columns_json` 19
+    vs 7.8 ms. Step 8d2 found most of pond-rs's time there is parsing the
+    text, and left a schema-typed reader undone;
+  - on 1 core only, also: splitting 500k rows by symbol (42 vs 33 ms) and
+    dense `from_columns_json` (58 vs 53 ms);
+  - `ValueSeries.to_arrow` (not counted: pond-ts hands back views, 0 ms;
+    pond-rs builds gap bits, 1.4 ms).
 - **R1a workloads (the targets pond-rs was judged on):** on workload A
-  pond-rs and polars now compute in about the same time on 4 cores
-  (128–139 vs 134–166 ms) and on 1 core (353–378 vs 353–369 ms); pond-rs
-  grows memory by 192 MB against polars' 256–281 MB. On B (12 daily
-  buckets) polars is faster on 1 core (20–24 vs 30–37 ms compute) and they
-  are even on 4 (10–11 ms each).
-- **pond-rs vs polars, all other cases (4 cores each):** about even overall —
-  pond-rs faster in 62 cases, slower in 69, same in 2; median ratio 0.95
-  (polars ~5% faster). On 1 core pond-rs is faster in 78, slower in 50.
-  - pond-rs is much faster on: outer joins (4–48×), pivots with many groups
-    (1.3–2×, 5–6× on 1 core), per-entity `materialize` (2.4×), `unique` /
-    `top3` reducers and `keep` on numbers (1.3–4×), JSON text (1.4–2.4×; polars' JSON is
-    slow), `explode` (1.4–2.6×), EMA (1.7×).
+  pond-rs computes slightly faster than polars on 4 cores (128–139 vs
+  134–166 ms) and the same on 1 core (353–378 vs 353–369 ms); pond-rs grows
+  memory by 192 MB against polars' 256–281 MB. On B (12 daily buckets)
+  polars is faster on 1 core (20–24 vs 30–37 ms compute) and they are even
+  on 4 (10–11 ms each).
+- **pond-rs vs polars, all other cases:** about even. On 4 cores each,
+  pond-rs is faster in 61 cases, slower in 64, same in 2 (median ratio
+  0.95: polars ~5% faster). On 1 core each, pond-rs is faster in 75,
+  slower in 46, same in 5 (median: pond-rs ~25% faster).
+  - pond-rs is much faster on: joins that keep every row (outer joins
+    2.5–40×), pivots with many groups (1.3–2×; 5–6× on 1 core),
+    per-entity `materialize` (2.4×), `unique` / `top3` reducers and `keep`
+    on numbers (1.3–4×), JSON text (1.4–2.4×; polars' JSON is slow),
+    `explode` (1.4–2.6×), EMA (1.7×).
   - polars is much faster on: simple column arithmetic (`diff`, `filter`,
-    `map`: 2–6×; `shift` costs polars 0.2 ms, which means it does not copy
-    the column), `collapse` (14×: pond calls a function once a row, polars
-    adds two columns in one vectorised step), row-count windows per entity
-    (4×), `align` hold onto a 1 s grid (5×), list-column Arrow in and out
-    and `len` / `mean` / `first` of lists (2–26×), `concat` (2–4×).
+    `map`: 2–6×), `collapse` (14×: pond calls a function once a row,
+    polars adds two columns in one vectorised step), row-count windows per
+    entity (4×), `align` hold onto a 1 s grid (5×), list-column Arrow in
+    and out and `len` / `mean` / `first` of lists (2–26×), `concat`
+    (2–4×), left and inner joins (2×).
 
 All three libraries give the same answers on the cases checked (below).
 
@@ -48,15 +59,17 @@ All three libraries give the same answers on the cases checked (below).
   work runs in polars' Rust engine, and the Python call overhead is
   microseconds per call). Nothing else ran during the timed runs.
 - Each runner builds the same data (same generators, same values), runs
-  each case once to warm up and then 7 times (9 for arrays and JSON), and
-  reports the median. Every family ran **3 times** (3 separate processes
+  each case once to warm up (pond-ts: see below) and then 7 times (pond-rs
+  and pond-ts use 9 for arrays and JSON), and reports the median. Every family ran **3 times** (3 separate processes
   per engine); each cell below is the median of the 3, with the range in
   brackets when it spans more than ±15%.
 - pond-rs ran twice, with `RAYON_NUM_THREADS=1` and with all 4 cores;
   polars ran with `POLARS_MAX_THREADS=1` and with all cores. pond-ts is
   one thread. pond-rs uses several cores only across columns, across
-  partitions and in loess, so on single-column, single-series cases "4 cores" is the
-  same work and the difference is noise.
+  partitions and in loess, so on single-column, single-series cases "4
+  cores" is the same work and the difference is noise. The "pond-rs vs
+  pond-ts" column compares pond-rs on 4 cores; compare the "pond-rs 1
+  core" column for one thread against one thread.
 - **pond-ts warm-up caveat:** most pond-ts runners warm up once (the
   row-by-row and array ones 3–5 times). V8 sometimes speeds a call up only
   after dozens of calls (fill linear: 75 ms after 5 warm-ups, 23 ms after
@@ -111,10 +124,13 @@ median of 7 runs.
 | B        | polars, 1 core   | 14–15   | 20–24      | 1.0–1.9  | 35–43     | 110              |
 | B        | polars, 4 cores  | 16–18   | 10–11      | 1.1      | 28–30     | 111–112          |
 
-pond-rs is 15× faster than pond-ts on A's compute (4 cores; 5.7× on one)
-and 5.5× on B. Against the R1a targets: ≥2× pond-ts single-core (met: 5.7×
-and 1.7×); within 1.25× of polars multi-core (met: 0.8–1.0×); memory growth
-no more than 1-thread polars (met: 192 vs 256 MB).
+From the medians: pond-rs computes A 16× faster than pond-ts on 4 cores
+(5.7× on 1) and B 5.5× faster (1.8× on 1). Against the R1a targets:
+≥2× pond-ts single-core is met on A (5.7× compute, 4.8× total) but **not on
+B's compute (1.8×)**; B's total time, with reading and writing, is 2.2×.
+Within 1.25× of polars multi-core: met (pond-rs takes 0.84× polars' time
+on A's compute, 0.96× on B's). Memory growth no more than 1-thread polars:
+met (192 vs 256 MB).
 
 ## Numbers that differ from what was reported before
 
@@ -133,6 +149,9 @@ no more than 1-thread polars (met: 192 vs 256 MB).
   compare numbers within one table.
 
 ## Results by family
+
+The polars join rows were re-run (3 repeats) after review found a faster
+polars form for the 1M × 1M outer join; see `polars/bench_join.py`.
 
 ### Row-by-row operations (1M rows)
 
@@ -191,12 +210,12 @@ Times in ms; median of 3 repeats (range when over ±15%).
 
 | case                          | pond-ts    | pond-rs 1 core | pond-rs 4 cores | polars 1 core | polars 4 cores | pond-rs vs pond-ts | pond-rs vs polars, 1 core | pond-rs vs polars, 4 cores |
 | ----------------------------- | ---------- | -------------- | --------------- | ------------- | -------------- | ------------------ | ------------------------- | -------------------------- |
-| left join, 1M x 1M, 1/3 match | 21         | 18 (16–22)     | 18 (16–23)      | 19 (13–23)    | 11             | 1.1× faster        | 1.1× faster               | 1.7× slower                |
-| inner join, 1M x 1M           | 21 (20–25) | 14 (13–19)     | 12              | 15            | 7.0            | 1.7× faster        | 1.1× faster               | 1.8× slower                |
-| outer join, 1M x 1M           | 67         | 85 (84–99)     | 107 (85–119)    | 1,039         | 427            | 1.6× slower        | 12.2× faster              | 4.0× faster                |
-| left join, 1M x 10k sparse    | 23 (23–32) | 13             | 13              | 13 (13–20)    | 10             | 1.8× faster        | same                      | 1.3× slower                |
-| outer join, same keys         | 7.6        | 5.7 (4.5–6.3)  | 4.3             | 271 (269–316) | 207            | 1.8× faster        | 47.6× faster              | 48.1× faster               |
-| joinMany 3 on same keys       | 17         | 12 (11–14)     | 10 (10–15)      | 598           | 421            | 1.7× faster        | 51.1× faster              | 41.7× faster               |
+| left join, 1M x 1M, 1/3 match | 21         | 18 (16–22)     | 18 (16–23)      | 14            | 8.5 (6.5–9.4)  | 1.1× faster        | 1.3× slower               | 2.2× slower                |
+| inner join, 1M x 1M           | 21 (20–25) | 14 (13–19)     | 12              | 13            | 6.0            | 1.7× faster        | 1.1× slower               | 2.1× slower                |
+| outer join, 1M x 1M           | 67         | 85 (84–99)     | 107 (85–119)    | 474           | 268 (240–322)  | 1.6× slower        | 5.6× faster               | 2.5× faster                |
+| left join, 1M x 10k sparse    | 23 (23–32) | 13             | 13              | 14            | 10 (8.2–12)    | 1.8× faster        | same                      | 1.3× slower                |
+| outer join, same keys         | 7.6        | 5.7 (4.5–6.3)  | 4.3             | 274           | 172            | 1.8× faster        | 48.0× faster              | 40.1× faster               |
+| joinMany 3 on same keys       | 17         | 12 (11–14)     | 10 (10–15)      | 541           | 385            | 1.7× faster        | 46.2× faster              | 38.1× faster               |
 
 ### Rolling windows
 

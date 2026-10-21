@@ -50,7 +50,8 @@ declare -A PL=([rowwise]=bench_rowwise.py [partition]=bench_partition.py [grid]=
 try() {
   local out="$1"
   shift
-  "$@" > "$out" || echo "FAILED ($?): $*" >&2
+  # a failed run's partial output is removed, so collect.py never counts it
+  "$@" > "$out" || { echo "FAILED ($?): $*" >&2; rm -f "$out"; }
 }
 
 for r in $(seq "$START" "$REPEATS"); do
