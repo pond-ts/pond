@@ -23,7 +23,7 @@ import { first } from './first.js';
 import { last } from './last.js';
 import { median } from './median.js';
 import { stdev } from './stdev.js';
-import { difference } from './difference.js';
+import { difference, rollingDifferenceSorted } from './difference.js';
 import { keep } from './keep.js';
 import { samples } from './samples.js';
 import { unique } from './unique.js';
@@ -173,7 +173,7 @@ export function rollingStateFor(
 ): RollingReducerState {
   if (typeof reducer === 'string') {
     if (evictionOrder === 'sorted') {
-      // [PND-LIVFIX] The four forward-sliding-window states assume
+      // [PND-LIVFIX] The forward-sliding-window states assume
       // oldest-arrived-first eviction; swap in the any-order structures
       // for a source that evicts its sorted prefix. Every other built-in
       // already removes by index or by value.
@@ -186,6 +186,8 @@ export function rollingStateFor(
           return skipNonFiniteRolling(rollingIndexedEntries('first'));
         case 'last':
           return skipNonFiniteRolling(rollingIndexedEntries('last'));
+        case 'difference':
+          return skipNonFiniteRolling(rollingDifferenceSorted());
       }
     }
     return skipNonFiniteRolling(resolveReducer(reducer).rollingState());

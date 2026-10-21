@@ -691,15 +691,6 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   `arrayExplode` 150–890 ms (pond-rs: 2–46 ms), and `arrayContains` 9–71
   ms (pond-rs: 1–6 ms). Repro: `crates/pond-rs/examples/perf_array.rs`
   and the same calls in pond-ts. Found 2026-10-20 (pond-rs R1b step 8e).
-- **[PND-ROLLDIFF]** — pond-ts rolling `difference` keeps the window
-  sorted and splices each row in and out, so it costs O(W) per row for a
-  window of W rows: on 1M rows 1 s apart it takes 376 ms with a 5-minute
-  window, 4.2 s with 1 hour and 96 s with 1 day (pond-rs: 25 ms for
-  each). Proposed fix: two monotone deques for the largest and smallest,
-  as pond-rs does, plus a stack of zero signs to keep the `-0` answer a
-  window of only zeros gives today. Repro:
-  `crates/pond-rs/examples/perf_reducers.rs` and the same call in pond-ts.
-  Found 2026-10-20 (pond-rs R1b step 8f).
 - **[PND-ROLLFAST]** — pond-ts `rolling({ count })` has a fast path for
   number outputs, but it is all-or-nothing per call: one text output (a
   `first` of a name column) sends every column to the slow general sweep.
@@ -717,7 +708,9 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   sorted by start, so each window is a run of rows that two cursors can
   find in O(N + B), as pond-rs does. Repro:
   `crates/pond-rs/bench/rolling_pond_ts.mjs`. Found 2026-10-20 (pond-rs
-  R1b step 8g).
+  R1b step 8g). Same cost for every reducer: 1,000 rows one minute apart
+  sampled every 10 s take ~250 ms and 4,000 rows ~3.3 s (`min` and
+  `difference` alike; found again while measuring [PND-ROLLDIFF]).
 - **[PND-CONCATSORT]** — pond-ts `TimeSeries.concat` takes ~450 ms to put
   500 partitions × 1000 rows back together, and every partitioned
   operation calls it (`partitionBy('symbol').diff('close').collect()`:
@@ -760,6 +753,13 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   when the window is flat (needs a cheap flatness check), or document it.
   Found 2026-10-19 (pond-rs R1b step 4b agent trial: 5 of 10 agents
   guarded against it).
+- **[PND-DEQUEALLOC]** — pond-ts rolling `min` / `max` (`rollingMonotoneDeque`)
+  allocate an object per row and, on small windows, copy the deque's array
+  on almost every row (it compacts whenever half of it is used up): rolling
+  `min` on 1M rows takes ~280 ms with a 1-row window against ~210 ms with 5
+  minutes. The [PND-ROLLDIFF] state avoids both (plain number arrays,
+  compacts only past 1,024 used entries) and runs a 1-row window in ~125
+  ms. Proposed fix: give `min` / `max` the same deque. Found 2026-10-20.
 
 ### `@pond-ts/financial`
 
