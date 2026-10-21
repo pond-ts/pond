@@ -90,7 +90,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   `polyline` and `bounds` use only the fixes, and the summary carries
   `gpsSpans` so a chart position can be placed on the map: new
   `lineDistanceAt` / `lineRange` (null where there was no fix). Tracks with a
-  fix on every sample are unchanged. `stepDistances` now skips non-finite
+  fix on every sample are unchanged. **Type-level break:** code that reads
+  `streams.latlng` entries must now handle `null`. A device distance that goes
+  backwards (a counter reset) is not used for gaps; the joined fixes are. `stepDistances` now skips non-finite
   positions instead of returning NaN, and `cleanSwimTrack` accepts `null`.
 
 ### Fixed

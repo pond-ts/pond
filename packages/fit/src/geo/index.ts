@@ -281,6 +281,11 @@ export function lineDistanceAt(
  * A stretch of the distance axis on the map line, by the {@link gpsSpans}:
  * the part with fixes, from the first fix at or after `startMeters` to the
  * last at or before `endMeters`. Null when no fix falls inside it.
+ *
+ * The result is in raw-line metres: to slice a simplified polyline pass
+ * `domainTotal` (the last span's `lineEndMeters`) to {@link polylineSlice}.
+ * Use this, not `domainTotal` alone, when the summary has `gpsSpans` — a
+ * proportional rescale would spread the line over metres it never covered.
  */
 export function lineRange(
   spans: ReadonlyArray<GpsSpan>,

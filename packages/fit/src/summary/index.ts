@@ -75,10 +75,13 @@ export interface ActivitySummary {
   splits: Split[];
   /** Recorded laps (device-marked), if the source carried them. */
   laps: Lap[];
-  /** Present only when some samples had no GPS fix and distance came from the
-   *  device: where each run of fixes sits on the distance axis and on the map
-   *  line. Place a chart position on the map with `geo.lineDistanceAt` /
-   *  `geo.lineRange`; without it the two rulers are the same. */
+  /** Present only when some samples had no GPS fix (an open water swim never:
+   *  its cleaned line has a position at every sample): where each run of
+   *  fixes sits on the distance axis and on the map line. Place a chart
+   *  position on the map with `lineDistanceAt` / `lineRange`; their metres are
+   *  along the raw joined fixes, so slice the simplified `polyline` with
+   *  `polylineSlice(..., { domainTotal: gpsSpans.at(-1).lineEndMeters })`.
+   *  Without it the two rulers are the same. */
   gpsSpans?: geo.GpsSpan[];
 }
 
@@ -482,6 +485,19 @@ function usableDistance(distance: Float64Array | undefined): boolean {
   return finite >= distance.length / 2 && last > 0;
 }
 
+/** Whether a device distance column never goes backwards (by more than a
+ *  metre of rounding). */
+function neverDecreases(distance: Float64Array | undefined): boolean {
+  if (!distance) return false;
+  let prev = -Infinity;
+  for (const v of distance) {
+    if (!Number.isFinite(v)) continue;
+    if (v < prev - 1) return false;
+    prev = Math.max(prev, v);
+  }
+  return true;
+}
+
 /** Decode an activity's streams into the shared per-sample arrays. ONE path now:
  *  build the canonical series, read its columns; distance comes from haversine
  *  when there are positions, else the device `distance` column (GPS-less, or
@@ -501,8 +517,13 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
   // track with samples that have no fix (before the watch found satellites):
   // the watch kept counting through them, the line can't.
   const positionGaps = hasTrack && geo.hasPositionGaps(cols.lat, cols.lng);
+  // (A device distance that goes backwards — a counter reset — would flatten
+  // the rest of the axis, so position gaps fall back to the joined fixes.)
   const deviceDistance =
-    (streams.openWater || positionGaps) && usableDistance(cols.distance);
+    (streams.openWater && usableDistance(cols.distance)) ||
+    (positionGaps &&
+      usableDistance(cols.distance) &&
+      neverDecreases(cols.distance));
   if (hasTrack && !deviceDistance) {
     step = geo.stepDistances(cols.lat, cols.lng);
     cum = geo.cumulative(step);

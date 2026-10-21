@@ -317,6 +317,33 @@ describe('a run whose first minutes have no GPS fix', () => {
     expect(s.pointCount).toBe(101);
   });
 
+  it('keeps spans when the watch kept no distance (rulers then agree)', () => {
+    const s = computeActivitySummary(run(false));
+    expect(s.gpsSpans).toHaveLength(1);
+    expect(s.gpsSpans![0]!.endMeters).toBeCloseTo(
+      s.gpsSpans![0]!.lineEndMeters,
+      6,
+    );
+  });
+
+  it('measures the joined fixes when the watch distance goes backwards', () => {
+    const a = run();
+    // a counter reset half way: device distance would flatten the rest
+    a.streams.distanceMeters = a.streams.distanceMeters!.map((d) =>
+      d > 1000 ? d - 1000 : d,
+    );
+    const s = computeActivitySummary(a);
+    expect(s.distanceMeters).toBeCloseTo(1400, 0);
+  });
+
+  it('an open water swim with no-fix samples gets a position for each: no spans', () => {
+    const a = run();
+    a.streams.openWater = true;
+    const s = computeActivitySummary(a);
+    expect(s.gpsSpans).toBeUndefined();
+    expect(s.distanceMeters).toBeCloseTo(2000, 6);
+  });
+
   it('leaves a full track as before: no spans', () => {
     const a = run();
     a.streams.latlng = a.streams.latlng.map(
@@ -361,5 +388,12 @@ describe('a dropout in the middle', () => {
     // the line joins 60 → 140 straight, so the second run starts 140 m along
     expect(s.gpsSpans![1]!.lineStartMeters).toBeCloseTo(140, 0);
     expect(lineDistanceAt(s.gpsSpans!, 100)).toBeNull();
+    // a stretch with an end inside the gap lights the fixes on either side
+    const r = lineRange(s.gpsSpans!, 30, 100)!;
+    expect(r[0]).toBeCloseTo(30, 0);
+    expect(r[1]).toBeCloseTo(60, 0);
+    const across = lineRange(s.gpsSpans!, 50, 180)!;
+    expect(across[0]).toBeCloseTo(50, 0);
+    expect(across[1]).toBeCloseTo(180, 0);
   });
 });
