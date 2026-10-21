@@ -265,6 +265,21 @@ busy machine (runs varied by about ±30%); both sides give the same answers.
 | `pivot_by_group`, 4 hosts × 250,000 times  | 39      | 751     |
 | `pivot_by_group`, 2 rows per cell, `Avg`   | 72      | 619     |
 
+### Along a number column: 1 million rows
+
+From the step 8i2 pull request ([#803](https://github.com/pond-ts/pond/pull/803)):
+1 million rows. Middle (median) time in milliseconds, 4 cores, on a busy
+machine (runs varied by about ±30%); both sides give the same answers.
+
+| Call                                                  | pond-rs | pond-ts |
+| ----------------------------------------------------- | ------- | ------- |
+| `by_column`, 1,000 bins of width 10                   | 26      | 93      |
+| `by_column`, 6 zones                                  | 20      | 97      |
+| `by_column`, width 10, 5th and 95th percentiles       | 38      | 415     |
+| `rolling_by_column`, ~100 rows a window, `Avg`        | 35      | 265     |
+| `rolling_by_column`, ~100 rows a window, 5th and 95th | 94      | 843     |
+| `rolling_by_column_at`, 1,000 centers                 | 22      | 119     |
+
 ### Agents writing code against it
 
 pond-rs is built mainly for AI agents writing Rust, so one test was about
