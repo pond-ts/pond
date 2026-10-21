@@ -143,6 +143,17 @@ include new features and type-level changes; patch bumps are strictly additive.
   plain products: the last bit of some fits changes once, and a 0.05 span
   over 20k rows takes ~0.12 s instead of ~2.7 s.
 
+- **`collapse` keeps numbers after a first-row gap.** The output column's
+  kind came from the first row's result alone, so an `undefined` there made
+  it a text column and every later number became a gap. The kind now comes
+  from the first defined result; a result of another kind throws instead of
+  being dropped silently, and an unknown key names itself (it used to fail
+  with `Cannot read properties of undefined`).
+- **`TimeSeries.concat` marks a column optional when any input does.** It
+  took each column's `required` flag from the first series, so gaps from a
+  later series sat in a column marked required and the result could not be
+  reloaded with `fromJSON`.
+
 ### Changed
 
 - **`scan(…, { output })` marks its new column optional.** Rows before the

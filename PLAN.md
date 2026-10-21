@@ -590,9 +590,10 @@ the study oracle) is done.
      columns~~ — done; (e2) ~~array columns as Arrow lists~~ — done; (f) ~~reducers `keep` / `difference`~~ — done; (f2) ~~reducers `unique` / `top` /
      `samples`~~ — done; (g) ~~rolling options (row-count, leading, centred, minimum
      samples, over a time grid)~~ — done; (h) ~~`smooth` / `baseline` / `outliers` /
-     `scan` / `sample`~~ — done; (i) `pivot_by_group`, `by_column` /
-     `rolling_by_column`, `by_value` + `ValueSeries`, `collapse`,
-     `concat`; (j) the (h) operations per group. Same rules as steps 1–7.
+     `scan` / `sample`~~ — done; (i) ~~`concat` / `collapse` /
+     `pivot_by_group`~~ — done; (i2) `by_column` / `rolling_by_column`;
+     (i3) `by_value` + `ValueSeries`; (j) the (h) operations per group.
+     Same rules as steps 1–7.
 
   Detail in the breakout plan.
 
@@ -725,6 +726,14 @@ stride })` 32 ms (pond-rs: 18, 54, 49, 7 and 1 ms). Proposed fix: read
   gap in every row (`baseline` on a text column also gives gaps). pond-rs
   refuses both. Proposed fix: the `RangeError` `scan` already gives.
   Found 2026-10-21 (pond-rs R1b step 8h).
+- **[PND-COLLAPSEREQ]** — pond-ts `collapse` marks its output column
+  required, but a non-finite result (`0 / 0`) or a reducer returning
+  `undefined` leaves gaps in it, and the series then fails to reload
+  through `fromJSON`. The reducer's type returns `ScalarValue` (no
+  `undefined`), so the fix (output `required: false`, typed `R |
+undefined`, or required only when it has no gaps) changes a public
+  type and needs a yes. pond-rs marks it required only when it has no
+  gaps. Found 2026-10-21 (pond-rs R1b step 8i).
 - **[PND-CONCATSORT]** — pond-ts `TimeSeries.concat` takes ~450 ms to put
   500 partitions × 1000 rows back together, and every partitioned
   operation calls it (`partitionBy('symbol').diff('close').collect()`:
