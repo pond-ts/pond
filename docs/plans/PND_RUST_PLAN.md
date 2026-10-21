@@ -2366,7 +2366,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     result written three ways and probed with `nearestIndex` (every
     value, midpoints, past both ends, NaN, ±infinity) and
     `sliceByValue` (many ranges, reversed, NaN bounds); then `fromJSON`
-    / `fromColumns` on every result's own output and 40 hand-written
+    / `fromColumns` on every result's own output and 42 hand-written
     payloads (orderings, gaps, bad cells, bad schemas). A unit test
     pins -0 / 0 under each ordering, which JSON fixtures cannot carry.
     One property test (nearest row and slices against brute force). Of
