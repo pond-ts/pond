@@ -2510,14 +2510,14 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     [PND-STUDYSRC]). A decimal column is refused (pond-ts has none). A
     period is a `usize`, so negative and fractional periods cannot be
     written.
-  - Parity: new pond-ts fixture `study-parity.json` (553 cases, written
+  - Parity: new pond-ts fixture `study-parity.json` (556 cases, written
     by `packages/financial/scripts/parity/generate.mjs`, kept fresh by
     `study-parity.test.ts`) over the oracle's 80 bars and 900 closes plus
     gappy (leading, single, runs longer than the period, trailing), 1e15
     and 1e9 magnitudes, flat runs with signed zeros, 3 rows and none; every
     study and type at periods from 1 to past the row count, five
     percentiles (`p1e-7` naming), other columns, custom outputs and the
-    errors. 463 match bit for bit, 28 errors agree, 48 refused (known),
+    errors. 464 match bit for bit, 30 errors agree, 48 refused (known),
     14 periods Rust cannot write. Oracle: the 29 step-1 cases pass
     (`study_oracle.rs`, 5e-10). Of 14 planted bugs, 12 caught; the two
     survivors change nothing (`count` and Welford's `n` always agree;

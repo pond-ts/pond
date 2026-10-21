@@ -203,8 +203,10 @@ impl TimeSeries {
     /// with `type`), output `ma`. `Sma` and `Ema` give exactly
     /// [`TimeSeries::sma`] and [`TimeSeries::ema`]. The others need whole
     /// windows: `Wma`, `Trima` and `Hull` give a gap while the window holds
-    /// a gap; `Smma` and `Kama` start after leading gaps but turn every
-    /// value after a later gap into a gap (as in pond-ts). O(N) for every
+    /// a gap; `Dema`, `Tema` and `Zlema` skip gaps as `Ema` does (a gap
+    /// row gets a gap; `Zlema` also where the value `(period - 1) / 2` rows
+    /// back is a gap); `Smma` and `Kama` start after leading gaps but turn
+    /// every value after a later gap into a gap (as in pond-ts). O(N) for every
     /// type.
     pub fn moving_average(&self, kind: MaType, study: Study) -> Result<TimeSeries> {
         const CALL: &str = "TimeSeries::moving_average";

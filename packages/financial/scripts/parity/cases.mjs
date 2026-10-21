@@ -15,8 +15,8 @@
  * Each case calls `financial[study](inputs[input], options)` and records
  * either `expected` (the columns the study appended, in order: name, kind,
  * required and every value) or `error` (`{ name, message }`). A value is a
- * JSON number, `null` for a gap, or `{ "f64": "-0" }` for a negative zero,
- * which plain JSON cannot carry. Values must agree exactly.
+ * JSON number, `null` for a gap, or `{ "f64": "-0" | "NaN" | "inf" |
+ * "-inf" }` for what plain JSON cannot carry. Values must agree exactly.
  */
 
 const OHLCV_SCHEMA = [
@@ -216,6 +216,9 @@ function cases() {
     add('movingAverage', 'gappy', { period: 3, column: 'nope', type });
     add('movingAverage', 'flat', { period: 3, column: 'open', type });
   }
+  for (const output of ['out', 'close', 'time']) {
+    add('movingAverage', 'bars', { period: 5, type: 'wma', output });
+  }
   add('movingAverage', 'bars', { period: 5, type: 'nope' });
   add('movingAverage', 'bars', { period: 0, type: 'nope' });
   for (const q of [-1, 101]) add('rollingPercentile', 'bars', { period: 5, q });
@@ -227,7 +230,9 @@ function encodeCell(cell) {
   if (cell === undefined || cell === null) return null;
   if (typeof cell !== 'number') return cell;
   if (Object.is(cell, -0)) return { f64: '-0' };
-  if (!Number.isFinite(cell)) return { f64: String(cell) };
+  if (Number.isNaN(cell)) return { f64: 'NaN' };
+  if (cell === Infinity) return { f64: 'inf' };
+  if (cell === -Infinity) return { f64: '-inf' };
   return cell;
 }
 
@@ -278,7 +283,7 @@ export function buildFixture(pond, financial, oracle) {
   return {
     meta: {
       description:
-        '@pond-ts/financial study output for pond-rs to match bit for bit; inputs are TimeSeries.toJSON() with -0 tagged {"f64":"-0"}; each case is financial[study](inputs[input], options) giving expected (the appended columns: name, kind, required, values with null for a gap) or error ({name, message})',
+        '@pond-ts/financial study output for pond-rs to match bit for bit; inputs are TimeSeries.toJSON(); -0 / NaN / ±Infinity are tagged {"f64":"-0"|"NaN"|"inf"|"-inf"}; each case is financial[study](inputs[input], options) giving expected (the appended columns: name, kind, required, values with null for a gap) or error ({name, message})',
     },
     inputs: encoded,
     cases: cases().map((c, i) => ({
