@@ -219,6 +219,29 @@ pub struct ValueSeriesFixture {
     pub from_json: Vec<FromColumnsCase>,
     #[serde(rename = "fromColumns")]
     pub from_columns: Vec<FromColumnsCase>,
+    /// The value series export.mjs writes to `parity-export-value.arrow`
+    /// through pond-ts `toArrow`.
+    #[serde(rename = "arrowExport")]
+    pub arrow_export: SeriesJson,
+}
+
+/// One `parity-value-arrow.json` case: an Arrow IPC file (hex) built by
+/// apache-arrow, and what pond-ts `ValueSeries.fromArrow(table, { axis })`
+/// made of it, or its error.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValueArrowCase {
+    pub id: String,
+    pub axis: String,
+    pub ipc: String,
+    #[serde(default)]
+    pub expected: Option<SeriesJson>,
+    #[serde(default)]
+    pub error: Option<ErrorJson>,
+}
+
+pub fn load_value_arrow_cases() -> Vec<ValueArrowCase> {
+    read_json("packages/core/test/fixtures/parity-value-arrow.json")
 }
 
 /// `series.byValue(axis)` (series from `inputs` or `sources`): the value

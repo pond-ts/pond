@@ -14,8 +14,14 @@ import { buildFixture } from '../scripts/parity/cases.mjs';
 // @ts-expect-error -- plain .mjs generator shared with the build-time script
 import * as parityExport from '../scripts/parity/export.mjs';
 
-const { EXPORT_FILE, TYPED_EXPORTS, buildArrowExport, buildTypedArrowExport } =
-  parityExport;
+const {
+  EXPORT_FILE,
+  TYPED_EXPORTS,
+  VALUE_ARROW_FILE,
+  buildArrowExport,
+  buildTypedArrowExport,
+  buildValueArrowCases,
+} = parityExport;
 
 describe('core parity fixture', () => {
   it('matches pond-ts output', () => {
@@ -38,5 +44,16 @@ describe('core parity fixture', () => {
     );
     const fresh = Buffer.from(build(pond));
     expect(fresh.equals(committed)).toBe(true);
+  });
+
+  it('matches pond-ts ValueSeries.fromArrow on the Arrow files pond-rs reads', () => {
+    const committed = JSON.parse(
+      readFileSync(
+        new URL(`./fixtures/${VALUE_ARROW_FILE}`, import.meta.url),
+        'utf8',
+      ),
+    );
+    const fresh = JSON.parse(JSON.stringify(buildValueArrowCases(pond)));
+    expect(fresh).toEqual(committed);
   });
 });

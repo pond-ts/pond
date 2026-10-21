@@ -47,6 +47,7 @@ use crate::column::{
 use crate::error::{PondError, Result};
 use crate::series::ColumnKind;
 use crate::series::{Column, IntervalKeys, Key, Labels, MAX_TIME_MS, TimeRangeKeys, TimeSeries};
+use crate::value_series::ValueSeries;
 
 const FROM: &str = "TimeSeries::from_arrow";
 const TO: &str = "TimeSeries::to_arrow";
@@ -332,91 +333,7 @@ impl TimeSeries {
             }
         };
 
-        let mut columns = Vec::with_capacity(schema.fields().len().saturating_sub(1));
-        for (c, field) in schema.fields().iter().enumerate() {
-            if key_fields.contains(&c) {
-                continue;
-            }
-            let required = |missing: usize| !field.is_nullable() && missing == 0;
-            if is_text(field.data_type()) {
-                let data = read_strings(batches, c, field.name())?;
-                let missing = data.missing_count();
-                columns.push(Column::from_data(
-                    field.name().clone(),
-                    data,
-                    required(missing),
-                ));
-                continue;
-            }
-            if field.data_type() == &DataType::Boolean {
-                let data = match batches {
-                    [batch] => BooleanColumn::from_arrow(batch.column(c).as_boolean().clone()),
-                    _ => BooleanColumn::from_options(
-                        batches.iter().flat_map(|b| b.column(c).as_boolean().iter()),
-                    ),
-                };
-                let missing = data.missing_count();
-                columns.push(Column::from_data(
-                    field.name().clone(),
-                    data,
-                    required(missing),
-                ));
-                continue;
-            }
-            if let DataType::List(_) | DataType::LargeList(_) | DataType::FixedSizeList(..) =
-                field.data_type()
-            {
-                let data = read_lists(batches, c, field.name())?;
-                let missing = data.missing_count();
-                columns.push(Column::from_data(
-                    field.name().clone(),
-                    data,
-                    required(missing),
-                ));
-                continue;
-            }
-            if let DataType::Decimal32(..) | DataType::Decimal64(..) | DataType::Decimal128(..) =
-                field.data_type()
-            {
-                let data = read_decimals(batches, c)?;
-                let missing = data.missing_count();
-                columns.push(Column::from_data(
-                    field.name().clone(),
-                    data,
-                    required(missing),
-                ));
-                continue;
-            }
-            // One batch of Float64 with no nulls: point at Arrow's buffer,
-            // no copy. (Nulls must become NaN, and several batches must be
-            // joined, so those cases copy.)
-            if let [batch] = batches {
-                let array = batch.column(c);
-                if array.data_type() == &DataType::Float64 && array.logical_null_count() == 0 {
-                    let data = Float64Column::from_buffer(
-                        array.as_primitive::<Float64Type>().values().clone(),
-                    );
-                    let required = !field.is_nullable() && data.all_finite();
-                    columns.push(Column::from_data(field.name().clone(), data, required));
-                    continue;
-                }
-            }
-            let mut values = Vec::with_capacity(rows);
-            for batch in batches {
-                read_number(batch.column(c), field.name(), &mut values)?;
-            }
-            // Arrow's own flag decides: a nullable field is optional even
-            // when this file has no nulls, so `to_arrow` → `from_arrow`
-            // keeps the schema. A non-nullable float field holding NaN is
-            // still optional, since NaN is a gap.
-            columns.push(
-                if !field.is_nullable() && values.iter().all(|v| v.is_finite()) {
-                    Column::required(field.name().clone(), values)
-                } else {
-                    Column::optional_raw(field.name().clone(), values)
-                },
-            );
-        }
+        let columns = read_columns(batches, &schema, &key_fields, rows)?;
 
         TimeSeries::with_key(
             FROM,
@@ -516,45 +433,13 @@ impl TimeSeries {
             }
         };
 
-        for column in self.columns() {
-            // Each column's buffers are shared with the batch, not copied.
-            let array: ArrayRef = match column.data() {
-                ColumnData::Number(data) => {
-                    let nulls = (!data.all_finite()).then(|| {
-                        let v = data.values();
-                        NullBuffer::new(BooleanBuffer::collect_bool(v.len(), |i| v[i].is_finite()))
-                    });
-                    Arc::new(Float64Array::new(data.buffer().clone(), nulls))
-                }
-                ColumnData::Decimal(data) => data.arrow(),
-                ColumnData::String(data) => data.arrow(),
-                ColumnData::Boolean(data) => data.arrow(),
-                ColumnData::Array(data) => list_array(column.name(), data)?,
-            };
-            fields.push(Field::new(
-                column.name(),
-                array.data_type().clone(),
-                !column.is_required(),
-            ));
-            arrays.push(array);
-        }
+        push_columns(self.columns(), &mut fields, &mut arrays)?;
 
         if let Some(label) = label {
             push_label(&mut fields, &mut arrays, format!("{key_name}Label"), label);
         }
 
-        for (i, field) in fields.iter().enumerate() {
-            if fields[..i].iter().any(|f| f.name() == field.name()) {
-                return Err(invalid(
-                    TO,
-                    format!(
-                        "field name '{}' would appear twice; a value column clashes with a key field",
-                        field.name()
-                    ),
-                ));
-            }
-        }
-
+        check_unique(&fields)?;
         RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays)
             .map_err(|e| invalid(TO, e.to_string()))
     }
@@ -564,6 +449,299 @@ impl TimeSeries {
     pub fn write_ipc(&self, writer: impl Write) -> Result<()> {
         let batch = self.to_arrow()?;
         let ipc = |e: arrow_schema::ArrowError| invalid("TimeSeries::write_ipc", e.to_string());
+        let mut file = FileWriter::try_new(writer, &batch.schema()).map_err(ipc)?;
+        file.write(&batch).map_err(ipc)?;
+        file.finish().map_err(ipc)
+    }
+}
+
+/// Every field not in `skip` as a value column, in field order (see
+/// [`TimeSeries::from_arrow`] for how each type is read).
+pub(crate) fn read_columns(
+    batches: &[RecordBatch],
+    schema: &Schema,
+    skip: &[usize],
+    rows: usize,
+) -> Result<Vec<Column>> {
+    let mut columns = Vec::with_capacity(schema.fields().len().saturating_sub(1));
+    for (c, field) in schema.fields().iter().enumerate() {
+        if skip.contains(&c) {
+            continue;
+        }
+        let required = |missing: usize| !field.is_nullable() && missing == 0;
+        if is_text(field.data_type()) {
+            let data = read_strings(batches, c, field.name())?;
+            let missing = data.missing_count();
+            columns.push(Column::from_data(
+                field.name().clone(),
+                data,
+                required(missing),
+            ));
+            continue;
+        }
+        if field.data_type() == &DataType::Boolean {
+            let data = match batches {
+                [batch] => BooleanColumn::from_arrow(batch.column(c).as_boolean().clone()),
+                _ => BooleanColumn::from_options(
+                    batches.iter().flat_map(|b| b.column(c).as_boolean().iter()),
+                ),
+            };
+            let missing = data.missing_count();
+            columns.push(Column::from_data(
+                field.name().clone(),
+                data,
+                required(missing),
+            ));
+            continue;
+        }
+        if let DataType::List(_) | DataType::LargeList(_) | DataType::FixedSizeList(..) =
+            field.data_type()
+        {
+            let data = read_lists(batches, c, field.name())?;
+            let missing = data.missing_count();
+            columns.push(Column::from_data(
+                field.name().clone(),
+                data,
+                required(missing),
+            ));
+            continue;
+        }
+        if let DataType::Decimal32(..) | DataType::Decimal64(..) | DataType::Decimal128(..) =
+            field.data_type()
+        {
+            let data = read_decimals(batches, c)?;
+            let missing = data.missing_count();
+            columns.push(Column::from_data(
+                field.name().clone(),
+                data,
+                required(missing),
+            ));
+            continue;
+        }
+        // One batch of Float64 with no nulls: point at Arrow's buffer,
+        // no copy. (Nulls must become NaN, and several batches must be
+        // joined, so those cases copy.)
+        if let [batch] = batches {
+            let array = batch.column(c);
+            if array.data_type() == &DataType::Float64 && array.logical_null_count() == 0 {
+                let data = Float64Column::from_buffer(
+                    array.as_primitive::<Float64Type>().values().clone(),
+                );
+                let required = !field.is_nullable() && data.all_finite();
+                columns.push(Column::from_data(field.name().clone(), data, required));
+                continue;
+            }
+        }
+        let mut values = Vec::with_capacity(rows);
+        for batch in batches {
+            read_number(batch.column(c), field.name(), &mut values)?;
+        }
+        // Arrow's own flag decides: a nullable field is optional even
+        // when this file has no nulls, so `to_arrow` → `from_arrow`
+        // keeps the schema. A non-nullable float field holding NaN is
+        // still optional, since NaN is a gap.
+        columns.push(
+            if !field.is_nullable() && values.iter().all(|v| v.is_finite()) {
+                Column::required(field.name().clone(), values)
+            } else {
+                Column::optional_raw(field.name().clone(), values)
+            },
+        );
+    }
+
+    Ok(columns)
+}
+
+/// Each value column as an Arrow field and array, its buffers shared (see
+/// [`TimeSeries::to_arrow`]).
+pub(crate) fn push_columns(
+    columns: &[Column],
+    fields: &mut Vec<Field>,
+    arrays: &mut Vec<ArrayRef>,
+) -> Result<()> {
+    for column in columns {
+        // Each column's buffers are shared with the batch, not copied.
+        let array: ArrayRef = match column.data() {
+            ColumnData::Number(data) => {
+                let nulls = (!data.all_finite()).then(|| {
+                    let v = data.values();
+                    NullBuffer::new(BooleanBuffer::collect_bool(v.len(), |i| v[i].is_finite()))
+                });
+                Arc::new(Float64Array::new(data.buffer().clone(), nulls))
+            }
+            ColumnData::Decimal(data) => data.arrow(),
+            ColumnData::String(data) => data.arrow(),
+            ColumnData::Boolean(data) => data.arrow(),
+            ColumnData::Array(data) => list_array(column.name(), data)?,
+        };
+        fields.push(Field::new(
+            column.name(),
+            array.data_type().clone(),
+            !column.is_required(),
+        ));
+        arrays.push(array);
+    }
+
+    Ok(())
+}
+
+/// No two fields share a name.
+pub(crate) fn check_unique(fields: &[Field]) -> Result<()> {
+    for (i, field) in fields.iter().enumerate() {
+        if fields[..i].iter().any(|f| f.name() == field.name()) {
+            return Err(invalid(
+                TO,
+                format!(
+                    "field name '{}' would appear twice; a value column clashes with a key field",
+                    field.name()
+                ),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+const VALUE_FROM: &str = "ValueSeries::from_arrow";
+const VALUE_TO: &str = "ValueSeries::to_arrow";
+const VALUE_READ: &str = "ValueSeries::read_ipc";
+
+impl ValueSeries {
+    /// Build a value series from Arrow record batches, as pond-ts
+    /// `ValueSeries.fromArrow(table, { axis })`. `axis` names the field
+    /// that becomes the key: an integer field (`Int8` … `UInt64`) or a
+    /// `Float32` / `Float64` field, read as `f64` at face value, with no nulls,
+    /// every value finite and none below the one before. With a single
+    /// batch, a `Float64` axis is used in place, sharing Arrow's buffer.
+    ///
+    /// Every other field becomes a value column, in field order, read as
+    /// [`TimeSeries::from_arrow`] reads value fields (numbers, text,
+    /// true/false, decimals and lists; nullable fields are optional).
+    ///
+    /// ```
+    /// use pond_rs::{Column, ValueSeries};
+    /// let chain = ValueSeries::new("calls", "strike", vec![90.0, 95.0, 100.0], vec![
+    ///     Column::optional("bid", [Some(11.2), None, Some(3.4)]),
+    /// ])?;
+    /// let mut file = Vec::new();
+    /// chain.write_ipc(&mut file)?;
+    /// let back = ValueSeries::from_ipc_bytes("calls", file, "strike")?;
+    /// assert_eq!(back, chain);
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    ///
+    /// Errors, as in pond-ts: no batches, no field named `axis`, a null or
+    /// non-finite axis value, a `Float16` axis, the axis out of order (sort
+    /// the rows first; pond-ts's `ordering` option is not here, as on
+    /// [`TimeSeries::from_arrow`]). Also an error where pond-ts reads it
+    /// otherwise: an axis field of a time type (pond-ts takes the raw
+    /// count of its unit) or a dictionary. pond-ts refuses true/false,
+    /// decimal and list value fields, which pond-rs reads.
+    pub fn from_arrow(
+        name: impl Into<String>,
+        batches: &[RecordBatch],
+        axis: &str,
+    ) -> Result<Self> {
+        let Some(first) = batches.first() else {
+            return Err(invalid(VALUE_FROM, "no record batches given".into()));
+        };
+        let schema = first.schema();
+        if let Some(i) = batches.iter().position(|b| b.schema() != schema) {
+            return Err(invalid(
+                VALUE_FROM,
+                format!("batch {i} has a different schema from batch 0"),
+            ));
+        }
+        let Ok(c) = schema.index_of(axis) else {
+            return Err(PondError::UnknownColumn {
+                call: VALUE_FROM,
+                column: axis.to_string(),
+                available: schema.fields().iter().map(|f| f.name().clone()).collect(),
+            });
+        };
+        let data_type = schema.field(c).data_type();
+        if !(data_type.is_integer() || matches!(data_type, DataType::Float32 | DataType::Float64)) {
+            return Err(invalid(
+                VALUE_FROM,
+                format!(
+                    "axis '{axis}' is {data_type}; the axis must be an integer, Float32 or Float64 field"
+                ),
+            ));
+        }
+        let nulls: usize = batches
+            .iter()
+            .map(|b| b.column(c).logical_null_count())
+            .sum();
+        if nulls > 0 {
+            return Err(invalid(
+                VALUE_FROM,
+                format!(
+                    "axis '{axis}' has {nulls} null value(s); every axis value must be present"
+                ),
+            ));
+        }
+        let rows: usize = batches.iter().map(RecordBatch::num_rows).sum();
+        let values = match batches {
+            [batch] if data_type == &DataType::Float64 => Float64Column::from_buffer(
+                batch
+                    .column(c)
+                    .as_primitive::<Float64Type>()
+                    .values()
+                    .clone(),
+            ),
+            _ => {
+                let mut values = Vec::with_capacity(rows);
+                for batch in batches {
+                    read_number(batch.column(c), axis, &mut values)
+                        .map_err(|e| e.renamed(VALUE_FROM))?;
+                }
+                Float64Column::from_values(values)
+            }
+        };
+        // The shared readers name `TimeSeries` calls; say which call failed.
+        let columns =
+            read_columns(batches, &schema, &[c], rows).map_err(|e| e.renamed(VALUE_FROM))?;
+        ValueSeries::checked(VALUE_FROM, name.into(), axis.to_string(), values, columns)
+    }
+
+    /// Read a value series from an Arrow IPC file or stream, as
+    /// [`TimeSeries::read_ipc`] reads one; see [`ValueSeries::from_arrow`].
+    pub fn read_ipc(name: impl Into<String>, mut reader: impl Read, axis: &str) -> Result<Self> {
+        let mut bytes = Vec::new();
+        reader
+            .read_to_end(&mut bytes)
+            .map_err(|e| invalid(VALUE_READ, e.to_string()))?;
+        Self::from_ipc_bytes(name, bytes, axis)
+    }
+
+    /// Read a value series from the bytes of an Arrow IPC file in memory,
+    /// as [`TimeSeries::from_ipc_bytes`] does (gap-free `Float64` fields of
+    /// a one-batch file point into `bytes`).
+    pub fn from_ipc_bytes(name: impl Into<String>, bytes: Vec<u8>, axis: &str) -> Result<Self> {
+        let batches = decode_ipc(bytes).map_err(|e| e.renamed(VALUE_READ))?;
+        Self::from_arrow(name, &batches, axis)
+    }
+
+    /// The series as one Arrow record batch, as pond-ts `toArrow`: the axis
+    /// first as a non-nullable `Float64` field, then each value column as
+    /// [`TimeSeries::to_arrow`] writes it. Nothing is copied but list
+    /// columns.
+    pub fn to_arrow(&self) -> Result<RecordBatch> {
+        let mut fields = vec![Field::new(self.axis_name(), DataType::Float64, false)];
+        let mut arrays: Vec<ArrayRef> = vec![Arc::new(Float64Array::new(
+            self.axis_column().buffer().clone(),
+            None,
+        ))];
+        push_columns(self.columns(), &mut fields, &mut arrays).map_err(|e| e.renamed(VALUE_TO))?;
+        RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays)
+            .map_err(|e| invalid(VALUE_TO, e.to_string()))
+    }
+
+    /// Write the series as an Arrow IPC file; see
+    /// [`ValueSeries::to_arrow`].
+    pub fn write_ipc(&self, writer: impl Write) -> Result<()> {
+        let batch = self.to_arrow()?;
+        let ipc = |e: arrow_schema::ArrowError| invalid("ValueSeries::write_ipc", e.to_string());
         let mut file = FileWriter::try_new(writer, &batch.schema()).map_err(ipc)?;
         file.write(&batch).map_err(ipc)?;
         file.finish().map_err(ipc)
@@ -2233,5 +2411,74 @@ mod tests {
             Some(&[Scalar::from(1000), 2000.into(), 3000.into()][..])
         );
         assert_eq!(v.get(1), None);
+    }
+
+    #[test]
+    fn value_series_round_trip_and_refusals() {
+        let chain = ValueSeries::new(
+            "c",
+            "strike",
+            vec![-0.0, 0.0, 2.5],
+            vec![
+                Column::optional("bid", [Some(-0.0), None, Some(1.5)]),
+                Column::required("side", vec!["put", "call", "call"]),
+                Column::required("open", vec![true, false, true]),
+            ],
+        )
+        .unwrap();
+        let batch = chain.to_arrow().unwrap();
+        assert!(!batch.schema().field(0).is_nullable());
+        let back = ValueSeries::from_arrow("c", std::slice::from_ref(&batch), "strike").unwrap();
+        assert_eq!(back, chain);
+        assert_eq!(back.axis()[0].to_bits(), (-0.0f64).to_bits());
+        // One Float64 batch: the axis points into Arrow's buffer.
+        let arrow_axis = batch.column(0).as_primitive::<Float64Type>().values();
+        assert_eq!(back.axis().as_ptr(), arrow_axis.as_ptr());
+        let mut file = Vec::new();
+        chain.write_ipc(&mut file).unwrap();
+        let read = ValueSeries::read_ipc("c", std::io::Cursor::new(file), "strike").unwrap();
+        assert_eq!(read, chain);
+
+        let err = |batches: &[RecordBatch], axis: &str| {
+            ValueSeries::from_arrow("c", batches, axis)
+                .unwrap_err()
+                .to_string()
+        };
+        assert!(err(&[], "strike").contains("no record batches"));
+        let other = RecordBatch::try_from_iter([(
+            "strike",
+            Arc::new(Float64Array::from(vec![3.0])) as ArrayRef,
+        )])
+        .unwrap();
+        assert!(err(&[batch.clone(), other], "strike").contains("different schema"));
+        assert!(err(std::slice::from_ref(&batch), "side").contains("integer, Float32 or Float64"));
+        assert!(err(std::slice::from_ref(&batch), "nope").contains("nope"));
+        let dict: arrow_array::DictionaryArray<arrow_array::types::Int32Type> =
+            vec!["1", "2"].into_iter().collect();
+        let dict = RecordBatch::try_from_iter([("k", Arc::new(dict) as ArrayRef)]).unwrap();
+        assert!(err(&[dict], "k").contains("integer, Float32 or Float64"));
+
+        // Errors from the readers and writers shared with TimeSeries name
+        // the ValueSeries call.
+        let mixed =
+            ArrayColumn::from_options([Some(vec![Scalar::from(1.0)]), Some(vec!["x".into()])]);
+        let v =
+            ValueSeries::new("c", "k", vec![1.0, 2.0], vec![Column::required("m", mixed)]).unwrap();
+        let e = v.to_arrow().unwrap_err().to_string();
+        assert!(e.starts_with("ValueSeries::to_arrow: column 'm'"), "{e}");
+        let bad = RecordBatch::try_from_iter([
+            ("k", Arc::new(Float64Array::from(vec![1.0])) as ArrayRef),
+            (
+                "d",
+                Arc::new(arrow_array::BinaryArray::from(vec![&b"x"[..]])) as ArrayRef,
+            ),
+        ])
+        .unwrap();
+        let e = err(&[bad], "k");
+        assert!(e.starts_with("ValueSeries::from_arrow: "), "{e}");
+        let e = ValueSeries::from_ipc_bytes("c", vec![1, 2, 3], "k")
+            .unwrap_err()
+            .to_string();
+        assert!(e.starts_with("ValueSeries::read_ipc: "), "{e}");
     }
 }

@@ -2390,6 +2390,52 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | to_columns_json, 300k rows   | 49 ms   | 81 ms   |
     | from_columns_json, 300k rows | 70 ms   | 106 ms  |
 
+  **Step 8i4 (done): `ValueSeries` Arrow in and out ([PND-RUSTFULL]).**
+  - Calls: `ValueSeries::from_arrow(name, batches, axis)` (pond-ts
+    `ValueSeries.fromArrow(table, { axis })`), `read_ipc` /
+    `from_ipc_bytes`, `to_arrow` (pond-ts `toArrow`) and `write_ipc`.
+    The axis is any integer field or `Float32` / `Float64`, read at face
+    value (no unit), with no nulls, all finite, never down; one
+    `Float64` batch is used in place. Every other field is a value
+    column, read by the same code as `TimeSeries::from_arrow` (shared
+    now as `read_columns`; writing shares `push_columns`).
+  - As pond-ts: a `Float16` axis is refused. Known differences: pond-ts
+    reads a `Timestamp` axis as its stored numbers (pond-rs refuses a
+    time-typed axis); pond-ts refuses true/false, decimal and list value
+    fields, pond-rs reads them; pond-ts marks a value field with nulls
+    required ([PND-ARROWREQ]), pond-rs optional. No `ordering` and
+    `columns` options, as for `TimeSeries::from_arrow`.
+  - Parity: `parity-value-arrow.json`, 18 Arrow files (hex) made by
+    apache-arrow in `export.mjs` (Int32, Int64, UInt8 and UInt64 axes,
+    the 64-bit ones past 2^53; Float32, Float16, dictionary text, empty, two
+    batches, null / NaN / infinite / unsorted / text / missing /
+    timestamp axis, true/false values) with pond-ts's result or error
+    for each; and `parity-export-value.arrow`, pond-ts's own `toArrow`
+    of a series with -0, a gap and the smallest subnormal, read back and
+    rewritten. A unit test covers what apache-arrow tables cannot make
+    (batches with different schemas), a dictionary axis, that the axis
+    shares Arrow's buffer, and that errors from the readers and writers
+    shared with `TimeSeries` name the `ValueSeries` call (via
+    `PondError::renamed`). Of 6 planted bugs, all are caught.
+  - Perf (`examples/perf_value_series.rs` and
+    `bench/value_series_pond_ts.mjs`, new rows; checksums agree). 1M
+    rows, a number axis, a number column with gaps and a text column.
+    Cost: `to_arrow` shares every value buffer and builds null bits for
+    number columns with gaps (O(N)); `from_arrow` shares gap-free number
+    buffers and checks the axis (O(N·C)); IPC in and out copy (O(N·C)).
+    pond-ts has no IPC writer; its side is apache-arrow's `tableToIPC`.
+    pond-ts `toArrow` hands back views, so it costs nothing. pond-ts
+    `fromArrow` spends most of its time on the text column; logged as
+    [PND-ARROWTEXT]. The shared reader is no slower for `TimeSeries`
+    (`perf_text` IPC column against `main`, three runs, within noise).
+
+    | Call           | pond-rs | pond-ts |
+    | -------------- | ------- | ------- |
+    | to_arrow       | 1 ms    | 0 ms    |
+    | from_arrow     | 5 ms    | 420 ms  |
+    | write_ipc      | 10 ms   | 27 ms   |
+    | from_ipc_bytes | 13 ms   | 402 ms  |
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).

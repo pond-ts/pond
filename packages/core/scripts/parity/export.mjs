@@ -7,11 +7,19 @@
 import {
   Bool,
   Dictionary,
+  Float16,
+  Float32,
   Float64,
+  Int16,
   Int32,
+  Int64,
   RecordBatch,
   Schema,
   Table,
+  TimestampMillisecond,
+  Uint8,
+  Uint32,
+  Uint64,
   Utf8,
   makeData,
   makeVector,
@@ -19,10 +27,12 @@ import {
   vectorFromArray,
 } from 'apache-arrow';
 import {
+  encodeValueSeries,
   labelledSeries,
   mixedSeries,
   noisySeries,
   rangesSeries,
+  valueExportSeries,
 } from './cases.mjs';
 
 export const EXPORT_FILE = 'parity-export.arrow';
@@ -32,6 +42,7 @@ export const TYPED_EXPORTS = [
   ['parity-export-mixed.arrow', mixedSeries],
   ['parity-export-ranges.arrow', rangesSeries],
   ['parity-export-labelled.arrow', labelledSeries],
+  ['parity-export-value.arrow', valueExportSeries],
 ];
 
 /** The IPC bytes; `pond` is the pond-ts module (built or source). */
@@ -112,4 +123,103 @@ export function buildTypedArrowExport(series) {
     ),
     'file',
   );
+}
+
+export const VALUE_ARROW_FILE = 'parity-value-arrow.json';
+
+// Arrow tables of many field types, each read by pond-ts
+// `ValueSeries.fromArrow(table, { axis })`. pond-rs reads the same bytes
+// (`ipc`, hex) and must give the same series, or refuse what pond-ts
+// refuses.
+export function buildValueArrowCases(pond) {
+  const v = (type, values) => vectorFromArray(values, type);
+  const table = (columns) => new Table(columns);
+  const cases = [
+    [
+      'int32Axis',
+      'x',
+      table({
+        x: v(new Int32(), [1, 2, 2, 5]),
+        y: v(new Float64(), [0.5, null, -0, 3]),
+        s: v(new Utf8(), ['a', null, 'b', 'c']),
+      }),
+    ],
+    [
+      'int64Axis',
+      'x',
+      table({
+        x: v(new Int64(), [-(2n ** 60n), -1n, 0n, 2n ** 53n + 1n, 2n ** 62n]),
+        y: v(new Int16(), [1, 2, null, 4, 5]),
+      }),
+    ],
+    [
+      'uint8Axis',
+      'x',
+      table({ x: v(new Uint8(), [0, 7, 255]), y: v(new Uint32(), [1, 2, 3]) }),
+    ],
+    [
+      'uint64Axis',
+      'x',
+      table({ x: v(new Uint64(), [1n, 2n ** 63n, 2n ** 64n - 1n]) }),
+    ],
+    [
+      'float32Axis',
+      'x',
+      table({
+        x: v(new Float32(), [0.1, 0.5, 1e30]),
+        y: v(new Float32(), [0.2, null, 1]),
+      }),
+    ],
+    ['float16Axis', 'x', table({ x: v(new Float16(), [0.1, 1.5, 2]) })],
+    [
+      'dictionaryValues',
+      'x',
+      table({
+        x: v(new Float64(), [1, 2, 3]),
+        s: v(new Dictionary(new Utf8(), new Int32()), ['a', 'b', 'a']),
+      }),
+    ],
+    ['empty', 'x', table({ x: v(new Float64(), []), y: v(new Float64(), []) })],
+    [
+      'twoBatches',
+      'x',
+      table({
+        x: v(new Float64(), [1, 2]),
+        y: v(new Float64(), [3, null]),
+      }).concat(
+        table({ x: v(new Float64(), [2, 4]), y: v(new Float64(), [5, 6]) }),
+      ),
+    ],
+    ['nullAxis', 'x', table({ x: v(new Float64(), [1, null, 3]) })],
+    // A null whose hidden slot (0) would keep the axis in order.
+    ['nullAxisInOrder', 'x', table({ x: v(new Float64(), [0, null, 3]) })],
+    ['nanAxis', 'x', table({ x: v(new Float64(), [1, NaN, 3]) })],
+    ['infAxis', 'x', table({ x: v(new Float64(), [1, 2, Infinity]) })],
+    ['unsorted', 'x', table({ x: v(new Float64(), [1, 3, 2]) })],
+    ['textAxis', 'x', table({ x: v(new Utf8(), ['1', '2']) })],
+    ['noAxis', 'z', table({ x: v(new Float64(), [1, 2]) })],
+    [
+      'timestampAxis',
+      'x',
+      table({ x: v(new TimestampMillisecond(), [1000, 2000]) }),
+    ],
+    [
+      'boolValues',
+      'x',
+      table({ x: v(new Float64(), [1, 2]), b: v(new Bool(), [true, null]) }),
+    ],
+  ];
+  return cases.map(([id, axis, t]) => {
+    const head = {
+      id,
+      axis,
+      ipc: Buffer.from(tableToIPC(t, 'file')).toString('hex'),
+    };
+    try {
+      const vs = pond.ValueSeries.fromArrow(t, { axis, name: 'va' });
+      return { ...head, expected: encodeValueSeries(vs) };
+    } catch (e) {
+      return { ...head, error: { name: e.name, message: e.message } };
+    }
+  });
 }

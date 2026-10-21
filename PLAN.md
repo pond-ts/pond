@@ -592,8 +592,8 @@ the study oracle) is done.
      samples, over a time grid)~~ — done; (h) ~~`smooth` / `baseline` / `outliers` /
      `scan` / `sample`~~ — done; (i) ~~`concat` / `collapse` /
      `pivot_by_group`~~ — done; (i2) ~~`by_column` / `rolling_by_column`~~ — done;
-     (i3) ~~`by_value` + `ValueSeries`~~ — done; (i4) `ValueSeries` Arrow in
-     and out; (j) the (h) operations per group.
+     (i3) ~~`by_value` + `ValueSeries`~~ — done; (i4) ~~`ValueSeries` Arrow
+     in and out~~ — done; (j) the (h) operations per group.
      Same rules as steps 1–7.
 
   Detail in the breakout plan.
@@ -645,6 +645,14 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   finding 5), so both read the same file to the same schema. Until then they
   differ on every pyarrow / polars file (both mark fields nullable by
   default): pond-rs reads such columns as optional, pond-ts as required.
+- **[PND-ARROWTEXT]** — pond-ts `fromArrow` is slow on text columns: a
+  1M-row `Utf8` column takes ~500 ms to read (`ValueSeries.fromArrow`, the
+  axis alone ~8 ms). 345 ms of that is apache-arrow's own `toArray()`
+  turning each string into a JS string; the rest is pond's `readStrings`.
+  Reading the offsets and bytes directly (decoding each distinct string
+  once) may avoid most of it; not tried. A nullable number column adds
+  ~60 ms per 1M rows, cause not looked into. Found 2026-10-21 by the
+  pond-rs step 8i4 bench (pond-rs: 5 ms for the same table).
 - **[PND-MAPREQ]** — pond-ts `mapColumns` keeps a column marked required
   even when the mapping leaves a gap (a non-finite result is stored as a
   gap), so its own `toJSON` → `fromJSON` round trip then throws ("row 3 col
