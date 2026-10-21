@@ -188,9 +188,115 @@ export function stepDistances(
 ): Float64Array {
   const n = lat.length;
   const out = new Float64Array(n);
-  for (let i = 1; i < n; i++)
-    out[i] = haversineMeters(lat[i - 1]!, lng[i - 1]!, lat[i]!, lng[i]!);
+  // A sample with no fix (NaN) adds nothing; the next fix measures from the
+  // last one, as the map line joins them.
+  let last = -1;
+  for (let i = 0; i < n; i++) {
+    if (!Number.isFinite(lat[i]!) || !Number.isFinite(lng[i]!)) continue;
+    if (last >= 0)
+      out[i] = haversineMeters(lat[last]!, lng[last]!, lat[i]!, lng[i]!);
+    last = i;
+  }
   return out;
+}
+
+/** Whether some samples of a GPS activity have no fix (NaN position). */
+export function hasPositionGaps(lat: Float64Array, lng: Float64Array): boolean {
+  for (let i = 0; i < lat.length; i++)
+    if (!Number.isFinite(lat[i]!) || !Number.isFinite(lng[i]!)) return true;
+  return false;
+}
+
+/**
+ * One unbroken run of GPS fixes, placed on both rulers: the activity's
+ * distance axis (`startMeters`–`endMeters`, the chart's metres) and the map
+ * line (`lineStartMeters`–`lineEndMeters`, metres along the joined fixes).
+ * Only needed when the two differ: some samples had no fix and the distance
+ * axis counts the device's own distance through them.
+ */
+export interface GpsSpan {
+  startMeters: number;
+  endMeters: number;
+  lineStartMeters: number;
+  lineEndMeters: number;
+}
+
+/**
+ * The runs of fixes in a track with position gaps (see {@link GpsSpan}).
+ * `cum` is the activity's distance axis, one value per sample. The line
+ * ruler joins consecutive fixes across a gap, as the map draws them.
+ */
+export function gpsSpans(
+  lat: Float64Array,
+  lng: Float64Array,
+  cum: ArrayLike<number>,
+): GpsSpan[] {
+  const spans: GpsSpan[] = [];
+  let line = 0;
+  let last = -1;
+  let open: GpsSpan | null = null;
+  for (let i = 0; i < lat.length; i++) {
+    const fix = Number.isFinite(lat[i]!) && Number.isFinite(lng[i]!);
+    if (!fix) {
+      open = null;
+      continue;
+    }
+    if (last >= 0)
+      line += haversineMeters(lat[last]!, lng[last]!, lat[i]!, lng[i]!);
+    last = i;
+    if (!open) {
+      open = {
+        startMeters: cum[i]!,
+        endMeters: cum[i]!,
+        lineStartMeters: line,
+        lineEndMeters: line,
+      };
+      spans.push(open);
+    }
+    open.endMeters = cum[i]!;
+    open.lineEndMeters = line;
+  }
+  return spans;
+}
+
+/**
+ * Where a point of the distance axis falls on the map line, by the
+ * {@link gpsSpans}: linear within a span, null outside every span (the device
+ * had no fix there, so there is no place to show).
+ */
+export function lineDistanceAt(
+  spans: ReadonlyArray<GpsSpan>,
+  meters: number,
+): number | null {
+  for (const s of spans) {
+    if (meters < s.startMeters || meters > s.endMeters) continue;
+    const len = s.endMeters - s.startMeters;
+    const f = len > 0 ? (meters - s.startMeters) / len : 0;
+    return s.lineStartMeters + f * (s.lineEndMeters - s.lineStartMeters);
+  }
+  return null;
+}
+
+/**
+ * A stretch of the distance axis on the map line, by the {@link gpsSpans}:
+ * the part with fixes, from the first fix at or after `startMeters` to the
+ * last at or before `endMeters`. Null when no fix falls inside it.
+ */
+export function lineRange(
+  spans: ReadonlyArray<GpsSpan>,
+  startMeters: number,
+  endMeters: number,
+): [number, number] | null {
+  const lo = Math.min(startMeters, endMeters);
+  const hi = Math.max(startMeters, endMeters);
+  let from: number | null = null;
+  let to: number | null = null;
+  for (const s of spans) {
+    if (s.endMeters < lo || s.startMeters > hi) continue;
+    from ??= lineDistanceAt(spans, Math.max(lo, s.startMeters));
+    to = lineDistanceAt([s], Math.min(hi, s.endMeters));
+  }
+  return from != null && to != null ? [from, to] : null;
 }
 
 /** Running total of a per-step series (cumulative[0] = step[0]). */
@@ -485,7 +591,7 @@ export interface CleanSwimTrackOptions {
  * Cost O(n·w), w the kept fixes within ±3σ of a sample.
  */
 export function cleanSwimTrack(
-  latlng: ReadonlyArray<[number, number]>,
+  latlng: ReadonlyArray<[number, number] | null>,
   timeSeconds: ReadonlyArray<number>,
   options: CleanSwimTrackOptions = {},
 ): Array<[number, number]> {
@@ -493,6 +599,7 @@ export function cleanSwimTrack(
   const n = latlng.length;
   if (n === 0) return [];
   const finite = (i: number) =>
+    latlng[i] != null &&
     Number.isFinite(timeSeconds[i]) &&
     Number.isFinite(latlng[i]![0]) &&
     Number.isFinite(latlng[i]![1]);
@@ -512,7 +619,8 @@ export function cleanSwimTrack(
   // backwards from it, the rest forwards.
   const head: number[] = [];
   for (let i = 0; i < n && head.length < 5; i++) if (finite(i)) head.push(i);
-  if (head.length === 0) return latlng.map((p) => [p[0], p[1]]);
+  if (head.length === 0)
+    return latlng.map((p) => (p ? [p[0], p[1]] : [NaN, NaN]));
   const median = (vs: number[]) => {
     const s = [...vs].sort((a, b) => a - b);
     return s[s.length >> 1]!;

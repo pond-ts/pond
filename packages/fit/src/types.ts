@@ -19,7 +19,12 @@ export type ActivitySource = 'strava' | 'manual';
  * Channels are parallel arrays — index i of each is the same sample.
  */
 export interface ActivityStreams {
-  latlng: GeoPoint[];
+  /** The position at each sample; `null` for a sample the device recorded
+   *  without a GPS fix (before it found satellites, or a dropout). A GPS-less
+   *  activity has an empty array. When some samples lack a fix and the device
+   *  recorded `distanceMeters`, distance comes from that (the device kept
+   *  counting without GPS); the map line joins only the fixes. */
+  latlng: Array<GeoPoint | null>;
   altitudeMeters?: number[];
   timeSeconds?: number[];
   heartrate?: number[];

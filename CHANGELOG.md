@@ -78,6 +78,21 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **`@pond-ts/fit`: samples without a GPS fix.** `ActivityStreams.latlng`
+  entries may now be `null` (type `Array<GeoPoint | null>`) for a sample the
+  device recorded with no fix — the minutes before a watch finds satellites,
+  or a dropout. Before, a source had to drop those samples, losing their heart
+  rate and the device's distance (a run whose first 5 minutes had no fix read
+  3.7 mi against the watch's 4.0 mi). With gaps present, distance comes from
+  the device's `distanceMeters` when recorded (else the joined fixes), the map
+  `polyline` and `bounds` use only the fixes, and the summary carries
+  `gpsSpans` so a chart position can be placed on the map: new
+  `lineDistanceAt` / `lineRange` (null where there was no fix). Tracks with a
+  fix on every sample are unchanged. `stepDistances` now skips non-finite
+  positions instead of returning NaN, and `cleanSwimTrack` accepts `null`.
+
 ### Fixed
 
 - **Rolling `difference` no longer slows down with window size.** It kept

@@ -4,6 +4,7 @@ import {
   prepareActivity,
   windowChannels,
 } from '../src/summary/index.js';
+import { lineDistanceAt, lineRange } from '../src/geo/index.js';
 import type { ImportedActivity } from '../src/types.js';
 
 /** A synthetic ride: N points ~10 m apart (eastward), 1 Hz, with a finely
@@ -232,5 +233,133 @@ describe('open water swims', () => {
     const p = prepareActivity(swim(true));
     const v = Array.from(p.speed).filter(Number.isFinite);
     expect(Math.max(...v)).toBeCloseTo(0.7, 6);
+  });
+});
+
+describe('a run whose first minutes have no GPS fix', () => {
+  // 1,000 s at 2 m/s, a sample every 10 s. The watch finds satellites at
+  // 300 s: before that it records its own distance (from the wrist's motion
+  // sensor) and heart rate, but no position. The fixes run north at 2 m/s.
+  const dLat = 1 / 111195; // ~1 m of latitude
+  function run(withDistance = true): ImportedActivity {
+    const latlng: Array<[number, number] | null> = [];
+    const timeSeconds: number[] = [];
+    const distanceMeters: number[] = [];
+    const heartrate: number[] = [];
+    for (let t = 0; t <= 1000; t += 10) {
+      latlng.push(t < 300 ? null : [38.5 + (2 * t - 600) * dLat, -123]);
+      timeSeconds.push(t);
+      distanceMeters.push(2 * t);
+      heartrate.push(120 + t / 100);
+    }
+    return {
+      activity: {
+        id: 'test:lock',
+        source: 'manual',
+        externalId: 'lock',
+        name: 'Morning run',
+        startTimeUtc: '2026-10-20T09:04:20Z',
+        distanceMeters: 0,
+        movingTimeSeconds: 0,
+        elapsedTimeSeconds: 0,
+        elevationGainMeters: 0,
+        sportType: 'Run',
+      },
+      streams: {
+        latlng,
+        timeSeconds,
+        heartrate,
+        ...(withDistance ? { distanceMeters } : {}),
+      },
+    };
+  }
+
+  it("measures by the watch's own distance, the minutes before the fix included", () => {
+    const s = computeActivitySummary(run());
+    expect(s.distanceMeters).toBeCloseTo(2000, 6);
+    expect(s.pointCount).toBe(101);
+    // heart rate spans the whole run on the distance axis
+    const hr = s.channels.find((c) => c.key === 'heartrate')!;
+    expect(hr.points[0]!.distanceMeters).toBeLessThan(200);
+  });
+
+  it('draws only the fixes on the map', () => {
+    const s = computeActivitySummary(run());
+    expect(s.polyline.length).toBeGreaterThan(1);
+    for (const [lat, lng] of s.polyline) {
+      expect(Number.isFinite(lat)).toBe(true);
+      expect(Number.isFinite(lng)).toBe(true);
+    }
+    expect(s.bounds![0][0]).toBeCloseTo(38.5, 6);
+    expect(s.bounds![1][0]).toBeCloseTo(38.5 + 1400 * dLat, 6);
+  });
+
+  it('places chart metres on the line, and nothing before the fix', () => {
+    const s = computeActivitySummary(run());
+    expect(s.gpsSpans).toHaveLength(1);
+    const span = s.gpsSpans![0]!;
+    expect(span.startMeters).toBeCloseTo(600, 6);
+    expect(span.endMeters).toBeCloseTo(2000, 6);
+    expect(span.lineStartMeters).toBe(0);
+    expect(span.lineEndMeters).toBeCloseTo(1400, 0);
+    expect(lineDistanceAt(s.gpsSpans!, 300)).toBeNull();
+    expect(lineDistanceAt(s.gpsSpans!, 1300)).toBeCloseTo(700, 0);
+    // a lap over the first km lights the part with fixes
+    const r = lineRange(s.gpsSpans!, 0, 1000)!;
+    expect(r[0]).toBeCloseTo(0, 6);
+    expect(r[1]).toBeCloseTo(400, 0);
+    expect(lineRange(s.gpsSpans!, 0, 500)).toBeNull();
+  });
+
+  it('measures the joined fixes when the watch kept no distance', () => {
+    const s = computeActivitySummary(run(false));
+    expect(s.distanceMeters).toBeCloseTo(1400, 0);
+    expect(s.pointCount).toBe(101);
+  });
+
+  it('leaves a full track as before: no spans', () => {
+    const a = run();
+    a.streams.latlng = a.streams.latlng.map(
+      (p, i) => p ?? [38.5 + (2 * i * 10 - 600) * dLat, -123],
+    );
+    const s = computeActivitySummary(a);
+    expect(s.gpsSpans).toBeUndefined();
+  });
+});
+
+describe('a dropout in the middle', () => {
+  it('splits the spans and joins the line across the gap', () => {
+    const dLat = 1 / 111195;
+    const latlng: Array<[number, number] | null> = [];
+    const distanceMeters: number[] = [];
+    const timeSeconds: number[] = [];
+    for (let t = 0; t <= 100; t += 10) {
+      latlng.push(t >= 40 && t <= 60 ? null : [38.5 + 2 * t * dLat, -123]);
+      distanceMeters.push(2 * t);
+      timeSeconds.push(t);
+    }
+    const s = computeActivitySummary({
+      activity: {
+        id: 'test:drop',
+        source: 'manual',
+        externalId: 'drop',
+        name: 'Tunnel',
+        startTimeUtc: '2026-10-20T09:00:00Z',
+        distanceMeters: 0,
+        movingTimeSeconds: 0,
+        elapsedTimeSeconds: 0,
+        elevationGainMeters: 0,
+        sportType: 'Run',
+      },
+      streams: { latlng, distanceMeters, timeSeconds },
+    });
+    expect(s.distanceMeters).toBeCloseTo(200, 6);
+    expect(s.gpsSpans!.map((g) => [g.startMeters, g.endMeters])).toEqual([
+      [0, 60],
+      [140, 200],
+    ]);
+    // the line joins 60 → 140 straight, so the second run starts 140 m along
+    expect(s.gpsSpans![1]!.lineStartMeters).toBeCloseTo(140, 0);
+    expect(lineDistanceAt(s.gpsSpans!, 100)).toBeNull();
   });
 });

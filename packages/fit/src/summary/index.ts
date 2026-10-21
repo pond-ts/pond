@@ -75,6 +75,11 @@ export interface ActivitySummary {
   splits: Split[];
   /** Recorded laps (device-marked), if the source carried them. */
   laps: Lap[];
+  /** Present only when some samples had no GPS fix and distance came from the
+   *  device: where each run of fixes sits on the distance axis and on the map
+   *  line. Place a chart position on the map with `geo.lineDistanceAt` /
+   *  `geo.lineRange`; without it the two rulers are the same. */
+  gpsSpans?: geo.GpsSpan[];
 }
 
 /** Options for {@link computeActivitySummary}. */
@@ -391,11 +396,14 @@ export function buildTrackFromStreams(
   const points: geo.TrackPoint[] = new Array(n);
   for (let i = 0; i < n; i++) {
     const ms = startMs + (timeSeconds?.[i] ?? i) * 1000;
+    // A sample with no fix (null, or a non-finite pair) is a missing cell.
     const pos = latlng[i];
+    const fix =
+      pos != null && Number.isFinite(pos[0]) && Number.isFinite(pos[1]);
     points[i] = [
       ms,
-      pos ? pos[0] : undefined,
-      pos ? pos[1] : undefined,
+      fix ? pos[0] : undefined,
+      fix ? pos[1] : undefined,
       cell(altitudeMeters, i),
       cell(heartrate, i),
       cell(watts, i),
@@ -434,6 +442,8 @@ export interface PreparedActivity {
   /** Whether the activity has a GPS track. False for GPS-less sources (indoor /
    *  GPS-off head units): no map, distance comes from the device stream. */
   hasTrack: boolean;
+  /** Some samples of a GPS track have no fix (NaN in `cols.lat`). */
+  positionGaps: boolean;
   /** Per-sample sustained-coast mask per output channel (speed/power/cadence),
    *  computed ONCE here (it's window-independent and the pond-fill pass is the
    *  expensive part) and reused by every channel build / zoom. */
@@ -487,8 +497,12 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
   let step: Float64Array;
   let cum: Float64Array;
   // An open water swim measures by the watch's own distance when it has one:
-  // its line, even cleaned, is no measure (see geo.cleanSwimTrack).
-  const deviceDistance = streams.openWater && usableDistance(cols.distance);
+  // its line, even cleaned, is no measure (see geo.cleanSwimTrack). So does a
+  // track with samples that have no fix (before the watch found satellites):
+  // the watch kept counting through them, the line can't.
+  const positionGaps = hasTrack && geo.hasPositionGaps(cols.lat, cols.lng);
+  const deviceDistance =
+    (streams.openWater || positionGaps) && usableDistance(cols.distance);
   if (hasTrack && !deviceDistance) {
     step = geo.stepDistances(cols.lat, cols.lng);
     cum = geo.cumulative(step);
@@ -534,6 +548,7 @@ export function prepareActivity(imported: ImportedActivity): PreparedActivity {
     n,
     hasTime: !!streams.timeSeconds,
     hasTrack,
+    positionGaps,
     coastMasks,
   };
 }
@@ -655,9 +670,12 @@ export function summaryFromPrepared(
   const { gainMeters, lossMeters } = geo.elevationGainLoss(cols.ele);
 
   // map outputs only exist for a GPS activity; GPS-less ⇒ no polyline / bounds.
-  const latlng: Array<[number, number]> = prep.hasTrack ? new Array(n) : [];
+  // Only the fixes: a sample with no fix has no place on the map.
+  const latlng: Array<[number, number]> = [];
   if (prep.hasTrack)
-    for (let i = 0; i < n; i++) latlng[i] = [cols.lat[i]!, cols.lng[i]!];
+    for (let i = 0; i < n; i++)
+      if (Number.isFinite(cols.lat[i]!) && Number.isFinite(cols.lng[i]!))
+        latlng.push([cols.lat[i]!, cols.lng[i]!]);
 
   const channels = buildChannels(prep, profileBucketMeters);
 
@@ -699,6 +717,9 @@ export function summaryFromPrepared(
       splitExtras,
     ),
     laps: imported.laps ?? [],
+    ...(prep.positionGaps
+      ? { gpsSpans: geo.gpsSpans(cols.lat, cols.lng, cum) }
+      : {}),
   };
 }
 
