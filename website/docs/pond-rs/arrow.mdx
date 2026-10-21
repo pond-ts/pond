@@ -310,3 +310,39 @@ Where pond-rs's JSON differs from pond-ts's:
   `required` here; pond-rs makes any column with gaps optional.
 - **A value column named `ts`** is refused by both points calls, since it
   would clash with the time.
+
+### Value series
+
+A [`ValueSeries`](./operations#keyed-by-distance-instead-of-time-by_value)
+reads and writes the same two JSON shapes as pond-ts's `ValueSeries`:
+`from_json` / `to_json` for rows, and `from_columns_json` /
+`to_columns_json` for one array per column. The axis comes first in the
+schema, with kind `"value"`, and every axis cell must be a number.
+`KeyOrder` decides what happens to an axis value below the one before it,
+as for a time series. Arrow files for a value series are not built yet.
+
+```rust
+use pond_rs::{KeyOrder, RowFormat, ValueSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let text = r#"{"name": "calls",
+      "schema": [{"name": "strike", "kind": "value"}, {"name": "bid", "kind": "number"}],
+      "rows": [[100, 3.4], [90, 11.2], {"strike": 95, "bid": 6.9}]}"#;
+
+    assert!(ValueSeries::from_json(text, KeyOrder::Strict).is_err()); // 90 after 100
+    let chain = ValueSeries::from_json(text, KeyOrder::Reorder)?;
+    assert_eq!(chain.axis(), &[90.0, 95.0, 100.0]);
+
+    let back = chain.to_json(RowFormat::Array)?;
+    assert!(back.ends_with(r#""rows":[[90,11.2],[95,6.9],[100,3.4]]}"#));
+    let cols = ValueSeries::from_columns_json(&chain.to_columns_json()?, KeyOrder::Strict)?;
+    assert_eq!(cols.axis(), chain.axis());
+    Ok(())
+}
+```
+
+As in pond-ts, only number and text value columns read back in: a
+true/false or list column kept by `by_value` is written out but refused on
+the way back. The differences listed above for a time series apply here
+too (a missing `name` and wrongly typed cells are refused, and a column
+with gaps read from columns JSON is optional).

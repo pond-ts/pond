@@ -280,6 +280,23 @@ machine (runs varied by about ±30%); both sides give the same answers.
 | `rolling_by_column`, ~100 rows a window, 5th and 95th | 94      | 843     |
 | `rolling_by_column_at`, 1,000 centers                 | 22      | 119     |
 
+### Value series
+
+From the step 8i3 pull request ([#804](https://github.com/pond-ts/pond/pull/804)).
+Middle (median) time in milliseconds, 4 cores, on a busy machine (runs
+varied by about ±30%); both sides give the same answers.
+
+| Call                             | pond-rs | pond-ts |
+| -------------------------------- | ------- | ------- |
+| `by_value`, 1M rows              | 3       | 34      |
+| `nearest_index`, 1M lookups      | 166     | 357     |
+| `slice_by_value`, 100,000 slices | 90      | 401     |
+| `to_json` rows, 300,000 rows     | 59      | 178     |
+| `from_json` rows, 300,000 rows   | 100     | 129     |
+
+`by_value` checks the axis once and copies nothing, which is why it is so
+quick.
+
 ### Agents writing code against it
 
 pond-rs is built mainly for AI agents writing Rust, so one test was about

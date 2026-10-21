@@ -1494,8 +1494,63 @@ fn main() -> Result<(), pond_rs::PondError> {
 }
 ```
 
+## Keyed by distance instead of time: `by_value`
+
+`by_value(axis)` turns a series into a `ValueSeries`, keyed by a number
+column instead of time: a run keyed by distance, an option chain keyed by
+strike price. The axis column must have no gaps and never go down (repeats
+are fine). It leaves the value columns, the time key is dropped, and every
+other column is kept without copying. `ValueSeries::new(name, axis_name,
+axis, columns)` builds one directly.
+
+A `ValueSeries` answers two questions, both by binary search:
+
+| Call                     | Gives                                                                                  |
+| ------------------------ | -------------------------------------------------------------------------------------- |
+| `nearest_index(x)`       | the row whose axis value is closest to `x` (the earlier one on a tie; `None` if empty) |
+| `slice_by_value(lo, hi)` | the rows with axis values from `lo` up to, but not including, `hi`                     |
+
+It also has `axis()`, `axis_name()`, `column(name)`, `columns()` and
+`schema()`, and reads and writes JSON (see
+[Arrow and JSON](./arrow#value-series)). It has no time calls
+(`aggregate`, `rolling`, …), since an axis is not a clock; to bin or roll
+along distance, use [`by_column` / `rolling_by_column`](#along-a-number-column-instead-of-time)
+on the time series.
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let run = TimeSeries::new(
+        "run",
+        vec![0, 60_000, 120_000, 180_000],
+        vec![
+            Column::required("km", vec![0.0, 0.2, 0.45, 0.7]),
+            Column::required("hr", vec![120.0, 135.0, 142.0, 150.0]),
+        ],
+    )?;
+
+    let by_km = run.by_value("km")?;
+    assert_eq!(by_km.axis(), &[0.0, 0.2, 0.45, 0.7]);
+    assert!(by_km.column("km").is_err()); // the axis is the key now
+
+    // Heart rate nearest 0.4 km.
+    let i = by_km.nearest_index(0.4).unwrap();
+    assert_eq!(by_km.column("hr")?.numbers()?.get(i), Some(142.0));
+
+    // The first 0.35 km.
+    let start = by_km.slice_by_value(0.0, 0.35);
+    assert_eq!(start.column("hr")?.numbers()?.values(), &[120.0, 135.0]);
+
+    // A distance that goes down cannot be an axis.
+    let back = TimeSeries::new("run", vec![0, 1_000], vec![Column::required("km", vec![1.0, 0.5])])?;
+    assert!(back.by_value("km").is_err());
+    Ok(())
+}
+```
+
 ## What is not here yet
 
-Still to come from pond-ts: `by_value`, then `smooth`, `baseline`,
+Still to come from pond-ts: Arrow files for a `ValueSeries`, then `smooth`, `baseline`,
 `outliers`, `sample` and `scan` run per partition (for now, use `apply` as
 shown above). Financial studies come after the core.
