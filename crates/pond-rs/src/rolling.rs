@@ -455,11 +455,14 @@ pub struct RollingOver {
     pub range: Option<(i64, i64)>,
 }
 
-/// How long a window is: a time span in ms, or a number of rows.
+/// How long a window is: a time span in ms, or a number of rows. Or the
+/// windows themselves, one run of rows per output row, each starting and
+/// ending no earlier than the one before (`rolling_by_column`).
 #[derive(Clone, Copy)]
-pub(crate) enum Span {
+pub(crate) enum Span<'a> {
     Time(i64),
     Rows(usize),
+    Windows(&'a [std::ops::Range<usize>]),
 }
 
 /// A row's place in time for a rolling window: whole ms (`i64`), or an
@@ -486,14 +489,18 @@ impl Anchor for f64 {
 #[derive(Clone, Copy)]
 pub(crate) struct Frame<'a, T: Anchor = i64> {
     pub times: &'a [T],
-    pub span: Span,
+    pub span: Span<'a>,
     pub alignment: Alignment,
     pub min_samples: usize,
 }
 
 impl<T: Anchor> Frame<'_, T> {
+    /// The number of output rows.
     pub fn len(&self) -> usize {
-        self.times.len()
+        match self.span {
+            Span::Windows(w) => w.len(),
+            _ => self.times.len(),
+        }
     }
 }
 
@@ -514,6 +521,22 @@ pub(crate) fn walk<T: Anchor>(frame: &Frame<T>, w: &mut impl Window) {
             Window::emit(w, out);
         }
     };
+    if let Span::Windows(windows) = frame.span {
+        // Rows enter before rows leave, as pond-ts's `rollingByColumn`
+        // sweep does.
+        for (i, r) in windows.iter().enumerate() {
+            while end < r.end {
+                w.enter(end);
+                end += 1;
+            }
+            while start < r.start {
+                w.leave(start);
+                start += 1;
+            }
+            emit(w, i..i + 1, start, end);
+        }
+        return;
+    }
     if let Span::Rows(n) = frame.span {
         let left = (n - 1) / 2;
         let right = n - 1 - left;
@@ -777,15 +800,33 @@ impl TimeSeries {
             min_samples: options.min_samples,
         };
         let plan = self.rolling_plan(aggs, self.key_name())?;
-        for &(source, agg) in &plan {
-            check_magnitude(CALL, &self.columns()[source], agg.reducer)?;
+        let columns = self.roll_columns(CALL, &frame, &plan)?;
+        Ok(TimeSeries::from_parts(
+            self.name().to_string(),
+            self.key_name().to_string(),
+            self.key().clone(),
+            columns,
+        ))
+    }
+
+    /// Each entry of `plan` (a source column and its mapping entry) rolled
+    /// through `frame`'s windows, one output column each.
+    pub(crate) fn roll_columns(
+        &self,
+        call: &'static str,
+        frame: &Frame,
+        plan: &[(usize, &Agg)],
+    ) -> Result<Vec<Column>> {
+        for &(source, agg) in plan {
+            check_magnitude(call, &self.columns()[source], agg.reducer)?;
         }
+        let frame = *frame;
         let used: Vec<(usize, Reducer)> = plan
             .iter()
             .map(|&(source, agg)| (source, agg.reducer))
             .collect();
         let inputs = Inputs::build(self.columns(), &used);
-        let columns = crate::par::map(&plan, |&(source, agg)| {
+        crate::par::map(plan, |&(source, agg)| {
             let data = self.columns()[source].data();
             if agg.reducer.gives_list() {
                 let lists = Elements::new(data).roll(agg.reducer, &frame);
@@ -793,13 +834,13 @@ impl TimeSeries {
             }
             let kind = input_kind(data, agg.reducer);
             if let (ColumnData::Decimal(d), InputKind::ExactSum) = (data, kind) {
-                return crate::decimal::rolling_sum(CALL, &agg.output, d, &frame);
+                return crate::decimal::rolling_sum(call, &agg.output, d, &frame);
             }
             let input = inputs.get(source, kind);
             if let (ColumnData::Decimal(d), Reducer::Difference) = (data, agg.reducer) {
                 let lo = roll_column(&frame, &input.values, Reducer::Min);
                 let hi = roll_column(&frame, &input.values, Reducer::Max);
-                return crate::decimal::difference(CALL, &agg.output, d, input, &lo, &hi);
+                return crate::decimal::difference(call, &agg.output, d, input, &lo, &hi);
             }
             let out = roll_column(&frame, &input.values, agg.reducer);
             Ok(output_column(
@@ -811,13 +852,7 @@ impl TimeSeries {
             ))
         })
         .into_iter()
-        .collect::<Result<Vec<_>>>()?;
-        Ok(TimeSeries::from_parts(
-            self.name().to_string(),
-            self.key_name().to_string(),
-            self.key().clone(),
-            columns,
-        ))
+        .collect()
     }
 
     /// One row per bucket of `sequence`, holding the reducers over a window

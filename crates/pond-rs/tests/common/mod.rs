@@ -85,6 +85,11 @@ pub struct CoreCase {
     /// name with its cell, in order.
     #[serde(default)]
     pub reduced: Option<serde_json::Map<String, Value>>,
+    /// The result when pond-ts returns an array of records (`byColumn`,
+    /// `rollingByColumn`): each record's outputs with their cells, in
+    /// order.
+    #[serde(default)]
+    pub records: Option<Vec<serde_json::Map<String, Value>>>,
 }
 
 /// What an operation gave: one series, or keyed groups of them.
@@ -93,6 +98,7 @@ pub enum Outcome {
     Series(SeriesJson),
     Groups(Vec<(String, SeriesJson)>),
     Record(serde_json::Map<String, Value>),
+    Records(Vec<serde_json::Map<String, Value>>),
 }
 
 impl From<SeriesJson> for Outcome {
@@ -111,14 +117,22 @@ pub struct ErrorJson {
 /// Check one case's outcome: success must match `expected` (or `groups`),
 /// and a pond-ts error must be an error in pond-rs too.
 pub fn check_case(case: &CoreCase, actual: &Result<Outcome, String>) -> Result<(), String> {
-    let wanted = match (&case.expected, &case.groups, &case.reduced, &case.error) {
-        (Some(e), None, None, None) => Some(Outcome::Series(e.clone())),
-        (None, Some(g), None, None) => Some(Outcome::Groups(g.clone())),
-        (None, None, Some(r), None) => Some(Outcome::Record(r.clone())),
-        (None, None, None, Some(_)) => None,
+    let wanted = match (
+        &case.expected,
+        &case.groups,
+        &case.reduced,
+        &case.records,
+        &case.error,
+    ) {
+        (Some(e), None, None, None, None) => Some(Outcome::Series(e.clone())),
+        (None, Some(g), None, None, None) => Some(Outcome::Groups(g.clone())),
+        (None, None, Some(r), None, None) => Some(Outcome::Record(r.clone())),
+        (None, None, None, Some(r), None) => Some(Outcome::Records(r.clone())),
+        (None, None, None, None, Some(_)) => None,
         _ => {
             return Err(
-                "fixture case must have exactly one of expected / groups / reduced / error".into(),
+                "fixture case must have exactly one of expected / groups / reduced / records / error"
+                    .into(),
             );
         }
     };
@@ -137,14 +151,14 @@ pub fn check_case(case: &CoreCase, actual: &Result<Outcome, String>) -> Result<(
             }
             Ok(())
         }
-        (Some(Outcome::Record(e)), Ok(Outcome::Record(a))) => {
-            let (ek, ak): (Vec<_>, Vec<_>) = (e.keys().collect(), a.keys().collect());
-            if ek != ak {
-                return Err(format!("expected outputs {ek:?}, got {ak:?}"));
+        (Some(Outcome::Record(e)), Ok(Outcome::Record(a))) => compare_record(&e, a, case.tolerance),
+        (Some(Outcome::Records(e)), Ok(Outcome::Records(a))) => {
+            if e.len() != a.len() {
+                return Err(format!("expected {} records, got {}", e.len(), a.len()));
             }
-            for (name, cell) in &e {
-                compare_cell(cell, &a[name], case.tolerance)
-                    .map_err(|why| format!("output '{name}': {why}"))?;
+            for (i, (er, ar)) in e.iter().zip(a).enumerate() {
+                compare_record(er, ar, case.tolerance)
+                    .map_err(|why| format!("record {i}: {why}"))?;
             }
             Ok(())
         }
@@ -159,6 +173,22 @@ pub fn check_case(case: &CoreCase, actual: &Result<Outcome, String>) -> Result<(
         }
         (None, Err(_)) => Ok(()),
     }
+}
+
+/// One record's outputs: the same names in the same order, each cell equal.
+fn compare_record(
+    e: &serde_json::Map<String, Value>,
+    a: &serde_json::Map<String, Value>,
+    tolerance: Option<f64>,
+) -> Result<(), String> {
+    let (ek, ak): (Vec<_>, Vec<_>) = (e.keys().collect(), a.keys().collect());
+    if ek != ak {
+        return Err(format!("expected outputs {ek:?}, got {ak:?}"));
+    }
+    for (name, cell) in e {
+        compare_cell(cell, &a[name], tolerance).map_err(|why| format!("output '{name}': {why}"))?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Deserialize)]

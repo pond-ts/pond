@@ -654,7 +654,7 @@ The one result short of a clean win is one-core B: polars is faster
        `rolling_by_column` (histograms), `by_value` and `ValueSeries`,
        `collapse`, `concat`. Split in three: 8i `concat`, `collapse`,
        `pivot_by_group` (done, below); 8i2 `by_column` /
-       `rolling_by_column`; 8i3 `by_value` and `ValueSeries`.
+       `rolling_by_column` (done, below); 8i3 `by_value` and `ValueSeries`.
      - **8j Grouped series:** `smooth`, `baseline`, `outliers`, `sample`
        and `scan` per group.
 
@@ -2263,6 +2263,68 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | pivot, 4 hosts × 250k times    | 39 ms   | 751 ms  |
     | pivot, 100 hosts, 2 rows, avg  | 72 ms   | 619 ms  |
     | pivot, 100 hosts, 2 rows, last | 74 ms   | 1036 ms |
+
+  **Step 8i2 (done): `by_column`, `rolling_by_column`
+  ([PND-RUSTFULL]).**
+  - Calls: `by_column(column, &Bins, aggs)` (pond-ts `byColumn`) with
+    `Bins::width(w)` / `width_from(w, origin)` / `edges(e)` /
+    `edges_upper_inclusive(e)` (pond-ts `{ width, origin }` and
+    `{ edges, inclusive }`); `rolling_by_column(column, radius, aggs)`
+    and `rolling_by_column_at(column, radius, centers, aggs)` (pond-ts
+    `rollingByColumn` with `{ radius }` and `{ radius, at }`). Both give
+    a new `Table`: columns of equal length with no key, read by name as
+    on a series (pond-ts gives an array of records). `by_column` puts
+    `start` and `end` first.
+  - `by_column` works out each row's bin with pond-ts's arithmetic (a
+    width bin is `floor((v - origin) / width)`, then moved a step when
+    the product `origin + bin * width` puts `v` outside it; edges by
+    the same binary search), sorts the rows by bin with a counting sort
+    (row order kept inside a bin) and reduces each bin with the
+    `aggregate` reducers. Its errors are pond-ts's: reserved outputs
+    `start` / `end`, bad widths and edges, more than a million bins, a
+    bin number past 2^53, and bins whose edges f64 cannot tell apart.
+  - `rolling_by_column` keeps the rows with a value, places each window
+    with pond-ts's two pointers (in while `value <= center + radius`,
+    out while `value < center - radius`) and runs the `rolling` window
+    states through a new kind of rolling frame: one explicit run of rows
+    per output row, rows entering before rows leave, as pond-ts does.
+    That order matters: a stdev, and the sign of a difference or median
+    over signed zeros, change with it (the `rollcol-order` case). A row
+    whose axis value is a gap gets each reducer's empty value, taken
+    from an empty window.
+  - Not ported: decimal columns as the axis (refused as not a number
+    column; pond-ts has no decimals). pond-ts runs `sum` on an array
+    column and gives 0 ([PND-KINDREDUCE]); pond-rs refuses it, as it
+    does elsewhere.
+  - Parity: 36 new pond-ts cases (1192 in all), a new `records` result
+    shape in the fixture: width bins (fractional, offset, signed values
+    with 0 and -0, values pond-ts moves a bin either way), edges in both
+    inclusive modes with values outside them, array reducers, empty
+    input, every reducer on numbers and the ones text takes, windows
+    per row and at centers (none in range, repeated, far apart), the
+    enter-before-leave order, and every error. Two property tests (bins
+    and windows against direct filtering). Of 11 planted bugs, all are
+    caught.
+  - Perf (`examples/perf_value_axis.rs` and
+    `bench/value_axis_pond_ts.mjs`, 1M rows; checksums agree). Cost, for
+    N rows, B bins, W rows a window and C centers: `by_column` is O(N +
+    B) plus the reducers (O(N log B) for edges); `rolling_by_column` is
+    O(N + C) pointer moves, with O(1) window states for most reducers
+    and O(W) a row for median / percentiles. Handing the row order to
+    Arrow's gather as plain row numbers instead of optional ones took
+    the histogram from 40 to ~25 ms. Medians, 4 cores (busy container,
+    ±30%):
+
+    | Call                                    | pond-rs | pond-ts |
+    | --------------------------------------- | ------- | ------- |
+    | by_column, width 10, 1000 bins          | 26 ms   | 93 ms   |
+    | by_column, 6 zones                      | 20 ms   | 97 ms   |
+    | by_column, 1251-bin histogram           | 23 ms   | 68 ms   |
+    | by_column, width 10, p5 + p95           | 38 ms   | 415 ms  |
+    | rolling_by_column, ~100 rows, avg       | 35 ms   | 265 ms  |
+    | rolling_by_column, ~100 rows, p5 + p95  | 94 ms   | 843 ms  |
+    | rolling_by_column, ~1000 rows, p5 + p95 | 188 ms  | 932 ms  |
+    | rolling_by_column, 1000 centers         | 22 ms   | 119 ms  |
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

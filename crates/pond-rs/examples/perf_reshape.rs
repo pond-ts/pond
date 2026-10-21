@@ -7,10 +7,10 @@
 //!
 //! Cost, for N rows: `concat` of N rows sorts their keys (a radix sort, a
 //! few passes over N) and copies each column once (O(N)). `collapse` calls
-//! the closure once a row (O(N)). `pivot_by_group` names each row's group
-//! (a hash lookup), sorts each time's run of rows by group (O(N log g) for
-//! g rows sharing a time), and writes T × G cells for T times and G groups,
-//! reducing only the cells with two or more rows.
+//! the closure once a row (O(N)). `pivot_by_group` names each distinct
+//! group once (a hash lookup a row), places rows with a counting sort over
+//! the T × G cells for T times and G groups (O(N + T·G)), and reduces only
+//! the cells with two or more rows.
 
 use std::time::Instant;
 
