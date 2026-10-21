@@ -594,11 +594,20 @@ the study oracle) is done.
      `pivot_by_group`~~ — done; (i2) ~~`by_column` / `rolling_by_column`~~ — done;
      (i3) ~~`by_value` + `ValueSeries`~~ — done; (i4) ~~`ValueSeries` Arrow
      in and out~~ — done; (j) ~~the (h) operations per group~~ — done.
-     Same rules as steps 1–7. **R1b is complete** with (j); next by the
-     RFC's order is R2, the financial studies against the pandas oracle
-     (not yet planned).
+     Same rules as steps 1–7. **R1b is complete** with (j).
 
   Detail in the breakout plan.
+
+- **[PND-RUST-R2]** — The financial studies in pond-rs, planned 2026-10-21.
+  Every study must match pond-ts bit for bit (a new pond-ts study fixture)
+  AND the pandas / TA-Lib oracle within 5e-10 (pjm17971 chose both). Studies
+  are methods on `TimeSeries` in a `pond_rs::financial` module of the same
+  crate; no worker pool. Steps: 1. ~~foundations (study options and checks,
+  shared kernels, `sma` / `ema` / `moving_average` / rolling stats /
+  `z_score`)~~ — done; 2. one PR per family: (a) moving averages, (b) bands, (c)
+  momentum, (d) trend, (e) volatility and statistics, (f) volume, (g)
+  price; 3. trading calendars, then session VWAP and anchored VWAP; 4. the
+  catalog; 5. perf check and an agent trial. Detail in the breakout plan.
 
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
   independent).
@@ -608,6 +617,15 @@ the study oracle) is done.
   whole program checked by `website/scripts/check-rust-snippets.sh`; not yet
   run in CI. Open: run that script in CI, and publish `cargo doc` output as
   the pond-rs API reference.
+- **[PND-STUDYSRC]** — `@pond-ts/financial` studies pointed at a source
+  column that is missing (a typo) or not a number column return an output of
+  all gaps instead of an error, so a mistake looks like "no data". Except
+  `rollingMin` / `rollingMax` / `rollingPercentile`, which throw on a missing
+  column (core `rolling` checks the name) but still give gaps for a text
+  column. Found building pond-rs R2 step 1, which refuses both. Fix: check
+  the source in the shared study helpers (a behaviour change, so it needs a
+  CHANGELOG entry); the study parity fixture's `name` / `flag` / `nope` cases
+  pin today's behaviour.
 - **[PND-ROLLGAP]** — pond-ts time-window `rolling` gets ~60% slower when a
   few windows are empty: 1M rows with three 10-minute outages (0.18% of rows)
   take `rolling('5m', avg)` from ~400 to ~650 ms. A profile puts the extra

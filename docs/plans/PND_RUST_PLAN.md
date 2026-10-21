@@ -2469,6 +2469,84 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     `map`, which already runs partitions in parallel (CLAUDE.md exempts
     operators that only delegate).
 
+- **[PND-RUST-R2]** — the financial studies (planned 2026-10-21, after R1b).
+  - Exactness, chosen by pjm17971: every study matches pond-ts
+    (`@pond-ts/financial`) bit for bit, checked against a new fixture
+    `packages/financial/test/fixtures/study-parity.json` that a pond-ts
+    test keeps fresh, AND the pandas / TA-Lib oracle
+    (`study-oracle.json`, 220 cases over 109 studies) within 5e-10,
+    through `tests/study_oracle.rs`.
+  - Defaults: studies are methods on `TimeSeries`, in a
+    `pond_rs::financial` module of the same crate, with pond-ts's
+    contract (source `column`, default `close`; `output`, default the
+    study name; bar-count periods; a warm-up that keeps every row). No
+    port of pond-ts's worker pool: a study is one pass over one column.
+  - Steps: 1. foundations: the options and checks every study shares,
+    the shared kernels (window mean and spread, Wilder, weighted and
+    exponential averages), `sma`, `ema`, `moving_average` (all 10
+    types), `rolling_stdev` / `rolling_min` / `rolling_max` /
+    `rolling_percentile`, `z_score`; 2. one PR per family: (a) moving
+    averages, (b) bands, (c) momentum, (d) trend, (e) volatility and
+    statistics, (f) volume, (g) price; 3. trading calendars, then
+    session VWAP and anchored VWAP; 4. the catalog; 5. perf check
+    against pond-ts and an agent trial.
+
+  **R2 step 1 (done): foundations.**
+  - Calls, as `@pond-ts/financial`: `TimeSeries::sma`, `ema`,
+    `moving_average(MaType, …)` (all 10 types), `rolling_stdev`,
+    `rolling_min`, `rolling_max`, `rolling_percentile(q, …)` and
+    `z_score`, each taking a `Study` (`period`, `.column`, `.output`).
+    Kernels in `src/financial/kernels.rs` are line-for-line ports of
+    pond-ts's `ranged.ts` (window mean and spread, shifted and rebuilt
+    every `period` rows), `rolling.ts` (z-score deviation),
+    `rolling-mean.ts`, `wilder.ts` and `moving-average.ts`; min, max and
+    percentile go through `rolling_rows`, as pond-ts goes through core
+    `rolling({ count })`. `ema` is the same arithmetic as
+    `smooth(ema_span(p).min_samples(p))`. KAMA's `** 2` is `c * c` (V8
+    and fdlibm compute it that way too; the fixture agrees).
+  - Known differences: pond-ts reads a missing or non-number source
+    column as all gaps (except min / max / percentile on a missing one,
+    which throw); pond-rs refuses both (logged for pond-ts as
+    [PND-STUDYSRC]). A decimal column is refused (pond-ts has none). A
+    period is a `usize`, so negative and fractional periods cannot be
+    written.
+  - Parity: new pond-ts fixture `study-parity.json` (553 cases, written
+    by `packages/financial/scripts/parity/generate.mjs`, kept fresh by
+    `study-parity.test.ts`) over the oracle's 80 bars and 900 closes plus
+    gappy (leading, single, runs longer than the period, trailing), 1e15
+    and 1e9 magnitudes, flat runs with signed zeros, 3 rows and none; every
+    study and type at periods from 1 to past the row count, five
+    percentiles (`p1e-7` naming), other columns, custom outputs and the
+    errors. 463 match bit for bit, 28 errors agree, 48 refused (known),
+    14 periods Rust cannot write. Oracle: the 29 step-1 cases pass
+    (`study_oracle.rs`, 5e-10). Of 14 planted bugs, 12 caught; the two
+    survivors change nothing (`count` and Welford's `n` always agree;
+    adding `0 * sum`).
+  - Perf (`examples/perf_studies.rs`, `bench/studies_pond_ts.mjs`; 1M
+    bars, checksums agree). All O(N) (a rebuild of `period` rows every
+    `period` rows), except the percentile, which keeps each window sorted.
+    The rebuild test is a counter, not `i % period` (a division per row,
+    ~2-3 ms per 1M rows). Medians, 4 cores, busy container (±30%):
+
+    | Study       | pond-rs | pond-ts |
+    | ----------- | ------- | ------- |
+    | sma 20      | 16 ms   | 65 ms   |
+    | sma 200     | 24 ms   | 58 ms   |
+    | ema 20      | 8 ms    | 18 ms   |
+    | stdev 20    | 28 ms   | 41 ms   |
+    | min 20      | 29 ms   | 90 ms   |
+    | max 200     | 25 ms   | 131 ms  |
+    | p90 20      | 72 ms   | 251 ms  |
+    | zscore 20   | 31 ms   | 106 ms  |
+    | ma wma 20   | 12 ms   | 43 ms   |
+    | ma smma 20  | 12 ms   | 19 ms   |
+    | ma dema 20  | 14 ms   | 29 ms   |
+    | ma tema 20  | 17 ms   | 38 ms   |
+    | ma trima 20 | 31 ms   | 75 ms   |
+    | ma hull 20  | 30 ms   | 69 ms   |
+    | ma kama 20  | 13 ms   | 36 ms   |
+    | ma zlema 20 | 9 ms    | 25 ms   |
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).
