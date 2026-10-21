@@ -5,7 +5,7 @@
 import { performance } from 'node:perf_hooks';
 
 const distPath = process.argv[2] ?? '../dist/index.js';
-const { TimeSeries, Sequence } = await import(
+const { TimeSeries } = await import(
   distPath.startsWith('.') ? distPath : `file://${distPath}`
 );
 
@@ -102,24 +102,9 @@ for (const [name, s] of [
     ),
   );
 }
-// Sparse source on a dense grid: 100k rows a minute apart, sampled every second.
-const sparse = new TimeSeries({
-  name: 'sparse',
-  schema,
-  rows: Array.from({ length: 100_000 }, (_, i) => [
-    i * 60_000,
-    (i * 7919) % 10_007,
-    'a',
-  ]),
-});
-results.push(
-  benchmark(
-    'sparse 100k rows 1m apart, 1h window, every 10s (600k points)',
-    () =>
-      sparse.rolling(Sequence.every('10s'), 3_600_000, { value: 'difference' }),
-    1,
-  ),
-);
+// No sparse-source-on-a-dense-grid case: rolling over a `Sequence` scans
+// every row for every output point, whatever the reducer ([PND-ROLLGRID]),
+// so it would measure that, not `difference`.
 results.push(
   benchmark(
     'partitioned by host, 1M rows, window 1h',

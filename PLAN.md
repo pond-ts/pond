@@ -588,8 +588,8 @@ the study oracle) is done.
      (a) ~~finding rows~~ — done; (b) ~~picking a time span~~ — done; (c) ~~changing key type~~ — done;
      (d) ~~row JSON input and output~~ — done; (d2) ~~columns / points JSON~~ — done; (e) ~~array
      columns~~ — done; (e2) ~~array columns as Arrow lists~~ — done; (f) ~~reducers `keep` / `difference`~~ — done; (f2) ~~reducers `unique` / `top` /
-     `samples`~~ — done; (g) rolling options (row-count, leading, centred, minimum
-     samples, over a time grid); (h) `smooth` / `baseline` / `outliers` /
+     `samples`~~ — done; (g) ~~rolling options (row-count, leading, centred, minimum
+     samples, over a time grid)~~ — done; (h) `smooth` / `baseline` / `outliers` /
      `scan` / `sample`; (i) `pivot_by_group`, `by_column` /
      `rolling_by_column`, `by_value` + `ValueSeries`, `collapse`,
      `concat`; (j) the (h) operations per group. Same rules as steps 1–7.
@@ -691,6 +691,26 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   `arrayExplode` 150–890 ms (pond-rs: 2–46 ms), and `arrayContains` 9–71
   ms (pond-rs: 1–6 ms). Repro: `crates/pond-rs/examples/perf_array.rs`
   and the same calls in pond-ts. Found 2026-10-20 (pond-rs R1b step 8e).
+- **[PND-ROLLFAST]** — pond-ts `rolling({ count })` has a fast path for
+  number outputs, but it is all-or-nothing per call: one text output (a
+  `first` of a name column) sends every column to the slow general sweep.
+  On 1M rows a 20-row `avg` takes 51 ms alone and 920 ms beside
+  `host: first`. Partitioned rolling always adds such an output for the
+  partition column, so a 20-row `avg` per host takes 3.1 s (pond-rs:
+  169 ms). Proposed fix: decide per column, as [PND-AGGSIBLING] did for
+  `aggregate`; the fast path already drives the same window states, so
+  answers do not change. Repro: `crates/pond-rs/bench/rolling_pond_ts.mjs`.
+  Found 2026-10-20 (pond-rs R1b step 8g).
+- **[PND-ROLLGRID]** — pond-ts `rolling(sequence, window, mapping)` scans
+  every row for every bucket (`this.events.filter` per bucket), so it
+  costs O(B·N): a 5-minute `avg` on a 1-minute grid over 100k rows takes
+  12.9 s (pond-rs: 0.7 ms; pond-rs does 1M rows in 11 ms). Rows are
+  sorted by start, so each window is a run of rows that two cursors can
+  find in O(N + B), as pond-rs does. Repro:
+  `crates/pond-rs/bench/rolling_pond_ts.mjs`. Found 2026-10-20 (pond-rs
+  R1b step 8g). Same cost for every reducer: 1,000 rows one minute apart
+  sampled every 10 s take ~250 ms and 4,000 rows ~3.3 s (`min` and
+  `difference` alike; found again while measuring [PND-ROLLDIFF]).
 - **[PND-CONCATSORT]** — pond-ts `TimeSeries.concat` takes ~450 ms to put
   500 partitions × 1000 rows back together, and every partitioned
   operation calls it (`partitionBy('symbol').diff('close').collect()`:
@@ -733,15 +753,6 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   when the window is flat (needs a cheap flatness check), or document it.
   Found 2026-10-19 (pond-rs R1b step 4b agent trial: 5 of 10 agents
   guarded against it).
-- **[PND-ROLLSEQ]** — pond-ts `rolling(sequence, window, …)` (one window
-  per point of a `Sequence`) scans every row of the series for every point
-  (`this.events.filter(...)` in `time-series.ts`), so its cost is points ×
-  rows whatever the reducer: 1,000 rows one minute apart sampled every 10 s
-  take ~250 ms, 4,000 rows take ~3.3 s (`min` and `difference` alike); at
-  that rate 100k rows would take about half an hour (a run was stopped after
-  several minutes). Proposed fix: the points rise, so
-  slide two row cursors and drive the rolling states, as the per-row path
-  does. Found 2026-10-20 while measuring [PND-ROLLDIFF].
 - **[PND-DEQUEALLOC]** — pond-ts rolling `min` / `max` (`rollingMonotoneDeque`)
   allocate an object per row and, on small windows, copy the deque's array
   on almost every row (it compacts whenever half of it is used up): rolling

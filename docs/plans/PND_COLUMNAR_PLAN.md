@@ -664,7 +664,7 @@ amortised O(1) whatever the window.
   which may account for it (not verified).
 
 - Rolling over a `Sequence` turned out to scan every row for every point,
-  for every reducer: logged as [PND-ROLLSEQ].
+  for every reducer: already logged as [PND-ROLLGRID].
 
 ### [PND-ROLLKERN] — SHIPPED (per-column sweeps + `avg` specialisation)
 

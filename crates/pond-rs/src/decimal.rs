@@ -13,7 +13,7 @@ use arrow_buffer::i256;
 use crate::column::DecimalColumn;
 use crate::error::{PondError, Result};
 use crate::reducer::Input;
-use crate::rolling::{Window, walk};
+use crate::rolling::{Frame, Window, walk};
 use crate::series::Column;
 
 /// Arrow's widest decimal precision.
@@ -86,7 +86,7 @@ pub(crate) fn sum_ranges(
 struct RollingSum<'a> {
     source: &'a DecimalColumn,
     sum: i256,
-    out: Vec<i256>,
+    out: Vec<Option<i256>>,
 }
 
 impl RollingSum<'_> {
@@ -110,31 +110,24 @@ impl Window for RollingSum<'_> {
         }
     }
     fn emit(&mut self, rows: Range<usize>) {
-        self.out[rows].fill(self.sum);
+        self.out[rows].fill(Some(self.sum));
     }
 }
 
-/// The exact sum of each row's trailing window (see `TimeSeries::rolling`).
+/// The exact sum of each row's rolling window (see `TimeSeries::rolling`).
 pub(crate) fn rolling_sum(
     call: &'static str,
     output: &str,
     source: &DecimalColumn,
-    times: &[i64],
-    window_ms: i64,
+    frame: &Frame,
 ) -> Result<Column> {
     let mut w = RollingSum {
         source,
         sum: i256::ZERO,
-        out: vec![i256::ZERO; times.len()],
+        out: vec![None; frame.len()],
     };
-    walk(times, window_ms, &mut w);
-    result(
-        call,
-        "sum",
-        output,
-        source,
-        w.out.into_iter().map(Some).collect(),
-    )
+    walk(frame, &mut w);
+    result(call, "sum", output, source, w.out)
 }
 
 /// The exact `difference` (largest minus smallest) for each output row,

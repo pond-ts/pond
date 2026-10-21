@@ -19,8 +19,8 @@ use jiff::Timestamp;
 use jiff::civil::{Date, Weekday};
 use jiff::tz::TimeZone;
 use pond_rs::{
-    Agg, Align, AlignMethod, At, CalendarUnit, Column, Join, JoinType, Keep, Key, Materialize,
-    Pick, Reducer, Sequence, TimeSeries,
+    Agg, Align, AlignMethod, Alignment, At, CalendarUnit, Column, Join, JoinType, Keep, Key,
+    Materialize, Pick, Reducer, Rolling, RollingOver, Sequence, TimeSeries,
 };
 
 /// SplitMix64: small, seeded, good enough to vary test inputs.
@@ -164,25 +164,85 @@ fn check(what: &str, reducer: Reducer, got: Option<f64>, want: Option<f64>, scal
     assert!(close, "{what} {reducer:?}: got {got:?}, want {want:?}");
 }
 
+/// A random rolling window: time or rows, any alignment, sometimes a
+/// minimum row count.
+struct RollCase {
+    rows: Option<usize>,
+    window_ms: i64,
+    options: Rolling,
+}
+
+impl RollCase {
+    fn random(rng: &mut Rng) -> Self {
+        let alignment =
+            [Alignment::Trailing, Alignment::Leading, Alignment::Centered][rng.below(3) as usize];
+        let min_samples = if rng.chance(30) {
+            rng.below(6) as usize
+        } else {
+            0
+        };
+        RollCase {
+            rows: rng.chance(40).then(|| 1 + rng.below(9) as usize),
+            window_ms: [1, 7, 250, 1_000, 1_001, 10_000, 1_000_000][rng.below(7) as usize],
+            options: Rolling {
+                alignment,
+                min_samples,
+            },
+        }
+    }
+
+    fn run(&self, s: &TimeSeries, aggs: &[Agg]) -> TimeSeries {
+        match self.rows {
+            Some(n) => s.rolling_rows(n, aggs, self.options),
+            None => s.rolling_with(&format!("{}ms", self.window_ms), aggs, self.options),
+        }
+        .unwrap()
+    }
+
+    /// The rows in `row`'s window, or `None` when the window holds fewer
+    /// than the minimum.
+    fn window(&self, times: &[i64], row: usize) -> Option<Vec<usize>> {
+        let n = times.len();
+        let rows: Vec<usize> = match self.rows {
+            Some(k) => {
+                let (before, after) = match self.options.alignment {
+                    Alignment::Trailing => (k - 1, 0),
+                    Alignment::Leading => (0, k - 1),
+                    Alignment::Centered => ((k - 1) / 2, k - 1 - (k - 1) / 2),
+                };
+                (row.saturating_sub(before)..(row + after + 1).min(n)).collect()
+            }
+            None => {
+                // Doubled, so a centred odd window keeps its half ms.
+                let (t, w) = (2 * times[row], self.window_ms);
+                (0..n)
+                    .filter(|&r| {
+                        let u = 2 * times[r];
+                        match self.options.alignment {
+                            Alignment::Trailing => u > t - 2 * w && u <= t,
+                            Alignment::Leading => u >= t && u < t + 2 * w,
+                            Alignment::Centered => u >= t - w && u < t + w,
+                        }
+                    })
+                    .collect()
+            }
+        };
+        (rows.len() >= self.options.min_samples).then_some(rows)
+    }
+}
+
 #[test]
 fn rolling_matches_brute_force() {
     let aggs = aggs();
     for seed in 0..SEEDS {
         let mut rng = Rng(seed);
         let (times, values) = random_series(&mut rng);
-        let window_ms = [1, 7, 250, 1_000, 10_000, 1_000_000][rng.below(6) as usize];
-        let out = series(&times, &values)
-            .rolling(&format!("{window_ms}ms"), &aggs)
-            .unwrap();
+        let case = RollCase::random(&mut rng);
+        let out = case.run(&series(&times, &values), &aggs);
         assert_eq!(out.key(), &Key::Time(times.clone()), "seed {seed}");
-        for (row, &t) in times.iter().enumerate() {
-            // (t - window, t], including later rows at the same time.
-            let present: Vec<f64> = times
-                .iter()
-                .zip(&values)
-                .filter(|&(&u, _)| u > t - window_ms && u <= t)
-                .filter_map(|(_, v)| *v)
-                .collect();
+        for row in 0..times.len() {
+            let window = case.window(&times, row);
+            let present: Vec<f64> = window.iter().flatten().filter_map(|&r| values[r]).collect();
             let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
             for (i, &reducer) in REDUCERS.iter().enumerate() {
                 let got = out
@@ -191,8 +251,75 @@ fn rolling_matches_brute_force() {
                     .numbers()
                     .unwrap()
                     .get(row);
-                let what = format!("seed {seed} window {window_ms}ms row {row}");
-                check(&what, reducer, got, naive(reducer, &present), scale);
+                let what = format!(
+                    "seed {seed} rows {:?} window {}ms {:?} row {row}",
+                    case.rows, case.window_ms, case.options
+                );
+                let want = window.as_ref().and_then(|_| naive(reducer, &present));
+                check(&what, reducer, got, want, scale);
+            }
+        }
+    }
+}
+
+/// The rows in the window at doubled sample point `p2`. (Exact for these
+/// small times; past 2^52 ms pond-ts's float edges round, which the parity
+/// fixture covers.)
+fn grid_window(times: &[i64], p2: i64, w: i64, alignment: Alignment) -> Vec<usize> {
+    (0..times.len())
+        .filter(|&r| {
+            let u = 2 * times[r];
+            match alignment {
+                Alignment::Trailing => u > p2 - 2 * w && u <= p2,
+                Alignment::Leading => u >= p2 && u < p2 + 2 * w,
+                Alignment::Centered => u >= p2 - w && u < p2 + w,
+            }
+        })
+        .collect()
+}
+
+/// `rolling_over`: each bucket's window, found by brute force on the
+/// bucket's sample point, reduces as `aggregate` would.
+#[test]
+fn rolling_over_matches_brute_force() {
+    let aggs = aggs();
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let grid = random_grid(&mut rng, &times);
+        let case = RollCase::random(&mut rng);
+        let options = RollingOver {
+            alignment: case.options.alignment,
+            min_samples: case.options.min_samples,
+            sample: grid.at,
+            range: grid.range,
+        };
+        let window = format!("{}ms", case.window_ms);
+        let out = series(&times, &values)
+            .rolling_over(&grid.sequence(), &window, &aggs, options)
+            .unwrap();
+        let buckets = grid.buckets(&times);
+        let Key::Interval(keys) = out.key() else {
+            panic!("interval keys")
+        };
+        assert_eq!(keys.begin.len(), buckets.len(), "seed {seed}");
+        let w = case.window_ms;
+        for (b, &(begin, end, p2)) in buckets.iter().enumerate() {
+            assert_eq!((keys.begin[b], keys.end[b]), (begin, end), "seed {seed}");
+            let rows = grid_window(&times, p2, w, options.alignment);
+            let held = rows.len() >= options.min_samples;
+            let present: Vec<f64> = rows.iter().filter_map(|&r| values[r]).collect();
+            let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+            for (i, &reducer) in REDUCERS.iter().enumerate() {
+                let got = out
+                    .column(&format!("r{i}"))
+                    .unwrap()
+                    .numbers()
+                    .unwrap()
+                    .get(b);
+                let what = format!("seed {seed} {window} {options:?} bucket {b}");
+                let want = if held { naive(reducer, &present) } else { None };
+                check(&what, reducer, got, want, scale);
             }
         }
     }
@@ -600,13 +727,41 @@ fn decimal_reducers_are_exact() {
             assert_eq!(bits("d_avg"), bits("f_avg"), "{what} avg");
         };
 
-        let window_ms = [1, 250, 10_000][rng.below(3) as usize];
-        let out = s.rolling(&format!("{window_ms}ms"), &aggs).unwrap();
-        for (row, &t) in times.iter().enumerate() {
-            let rows: Vec<usize> = (0..times.len())
-                .filter(|&r| times[r] > t - window_ms && times[r] <= t)
-                .collect();
-            check_out(&format!("seed {seed} rolling row {row}"), &out, row, &rows);
+        let case = RollCase::random(&mut rng);
+        let out = case.run(&s, &aggs);
+        for row in 0..times.len() {
+            let what = format!("seed {seed} rolling row {row}");
+            match case.window(&times, row) {
+                Some(rows) => check_out(&what, &out, row, &rows),
+                None => {
+                    for c in out.columns() {
+                        assert!(!c.data().is_present(row), "{what} {}", c.name());
+                    }
+                }
+            }
+        }
+
+        let grid = random_grid(&mut rng, &times);
+        let options = RollingOver {
+            alignment: case.options.alignment,
+            min_samples: case.options.min_samples,
+            sample: grid.at,
+            range: grid.range,
+        };
+        let w = case.window_ms;
+        let out = s
+            .rolling_over(&grid.sequence(), &format!("{w}ms"), &aggs, options)
+            .unwrap();
+        for (b, &(_, _, p2)) in grid.buckets(&times).iter().enumerate() {
+            let rows = grid_window(&times, p2, w, options.alignment);
+            let what = format!("seed {seed} rolling_over bucket {b}");
+            if rows.len() >= options.min_samples {
+                check_out(&what, &out, b, &rows);
+            } else {
+                for c in out.columns() {
+                    assert!(!c.data().is_present(b), "{what} {}", c.name());
+                }
+            }
         }
 
         let out = s

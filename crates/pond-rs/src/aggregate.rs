@@ -88,26 +88,42 @@ impl TimeSeries {
             ranges.push(start..cursor);
         }
 
-        let used: Vec<(usize, Reducer)> = sources
+        let plan: Vec<(&Agg, usize)> = aggs.iter().zip(sources).collect();
+        let columns = self.reduce_columns(CALL, &plan, &ranges)?;
+        Ok(TimeSeries::from_parts(
+            self.name().to_string(),
+            "interval".to_string(),
+            Key::Interval(buckets),
+            columns,
+        ))
+    }
+
+    /// Each entry of `plan` (an output and its source column) reduced over
+    /// each run of rows in `ranges`, as `aggregate` reduces its buckets.
+    pub(crate) fn reduce_columns(
+        &self,
+        call: &'static str,
+        plan: &[(&Agg, usize)],
+        ranges: &[std::ops::Range<usize>],
+    ) -> Result<Vec<Column>> {
+        let used: Vec<(usize, Reducer)> = plan
             .iter()
-            .zip(aggs)
-            .map(|(&source, agg)| (source, agg.reducer))
+            .map(|&(agg, source)| (source, agg.reducer))
             .collect();
         let inputs = Inputs::build(self.columns(), &used);
-        let plan: Vec<(&Agg, usize)> = aggs.iter().zip(sources).collect();
-        let columns = crate::par::map(&plan, |&(agg, source)| {
+        crate::par::map(plan, |&(agg, source)| {
             let data = self.columns()[source].data();
             if agg.reducer.gives_list() {
-                let lists = Elements::new(data).reduce_ranges(agg.reducer, &ranges);
+                let lists = Elements::new(data).reduce_ranges(agg.reducer, ranges);
                 return Ok(Column::from_data(agg.output.clone(), lists, false));
             }
             let kind = input_kind(data, agg.reducer);
             if let (ColumnData::Decimal(d), InputKind::ExactSum) = (data, kind) {
-                return crate::decimal::sum_ranges(CALL, &agg.output, d, &ranges);
+                return crate::decimal::sum_ranges(call, &agg.output, d, ranges);
             }
             let input = inputs.get(source, kind);
             if let (ColumnData::Decimal(d), Reducer::Difference) = (data, agg.reducer) {
-                return decimal_difference(CALL, &agg.output, d, input, &ranges);
+                return decimal_difference(call, &agg.output, d, input, ranges);
             }
             let out: Vec<f64> = ranges
                 .iter()
@@ -122,13 +138,7 @@ impl TimeSeries {
             ))
         })
         .into_iter()
-        .collect::<Result<Vec<_>>>()?;
-        Ok(TimeSeries::from_parts(
-            self.name().to_string(),
-            "interval".to_string(),
-            Key::Interval(buckets),
-            columns,
-        ))
+        .collect()
     }
 }
 

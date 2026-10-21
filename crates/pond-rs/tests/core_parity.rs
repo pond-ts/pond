@@ -14,9 +14,10 @@ use common::{
 use pond_rs::ColumnDef as RsColumnDef;
 use pond_rs::Value as Literal;
 use pond_rs::{
-    Agg, Align, AlignMethod, ArrayOptions, ArrowKey, At, Column, ColumnData, ColumnKind, Fill,
-    FillLimits, FirstRow, IntervalKeys, Join, JoinType, JsonOptions, Keep, Key, KeyOrder, Labels,
-    Materialize, OnConflict, Pick, Reducer, RowFormat, Scalar, Sequence, TimeRangeKeys, TimeSeries,
+    Agg, Align, AlignMethod, Alignment, ArrayOptions, ArrowKey, At, Column, ColumnData, ColumnKind,
+    Fill, FillLimits, FirstRow, IntervalKeys, Join, JoinType, JsonOptions, Keep, Key, KeyOrder,
+    Labels, Materialize, OnConflict, Pick, Reducer, Rolling, RollingOver, RowFormat, Scalar,
+    Sequence, TimeRangeKeys, TimeSeries,
 };
 use serde_json::{Value, json};
 
@@ -112,10 +113,28 @@ macro_rules! shared_op {
     ($target:expr, $op:expr, $args:expr) => {{
         let args: &[Value] = $args;
         match $op {
-            "rolling" => {
-                let window = args[0].as_str().expect("rolling window is a string");
-                Some(mapping(&args[1]).and_then(|aggs| $target.rolling(window, &aggs)))
-            }
+            "rolling" => Some(if let Some(window) = args[0].as_str() {
+                let options = rolling_options(args.get(2));
+                mapping(&args[1]).and_then(|aggs| $target.rolling_with(window, &aggs, options))
+            } else if let Some(rows) = args[0]["count"].as_u64() {
+                let options = rolling_options(args.get(2));
+                mapping(&args[1])
+                    .and_then(|aggs| $target.rolling_rows(rows as usize, &aggs, options))
+            } else {
+                let window = args[1].as_str().expect("rolling window is a string");
+                let o = args.get(3).unwrap_or(&Value::Null);
+                let r = rolling_options(Some(o));
+                let options = RollingOver {
+                    alignment: r.alignment,
+                    min_samples: r.min_samples,
+                    sample: sample(o),
+                    range: range(o),
+                };
+                sequence(&args[0]["sequence"]).and_then(|seq| {
+                    mapping(&args[2])
+                        .and_then(|aggs| $target.rolling_over(&seq, window, &aggs, options))
+                })
+            }),
             "aggregate" => {
                 Some(sequence(&args[0]["sequence"]).and_then(|seq| {
                     mapping(&args[1]).and_then(|aggs| $target.aggregate(&seq, &aggs))
@@ -208,6 +227,22 @@ macro_rules! shared_op {
             _ => None,
         }
     }};
+}
+
+/// `alignment` and `minSamples` in rolling options.
+fn rolling_options(options: Option<&Value>) -> Rolling {
+    let Some(o) = options else {
+        return Rolling::default();
+    };
+    Rolling {
+        alignment: match o["alignment"].as_str() {
+            None | Some("trailing") => Alignment::Trailing,
+            Some("leading") => Alignment::Leading,
+            Some("centered") => Alignment::Centered,
+            Some(other) => panic!("unknown alignment {other}"),
+        },
+        min_samples: o["minSamples"].as_u64().unwrap_or(0) as usize,
+    }
 }
 
 /// `sample` in align / materialize options.
