@@ -20,8 +20,8 @@ use jiff::civil::{Date, Weekday};
 use jiff::tz::TimeZone;
 use pond_rs::{
     Agg, Align, AlignMethod, Alignment, At, CalendarUnit, Column, Join, JoinType, Keep, Key,
-    Materialize, Pick, Reducer, Rolling, RollingOver, Sample, Sequence, Smooth, TimeRangeKeys,
-    TimeSeries,
+    Materialize, Pick, Pivot, Reducer, Rolling, RollingOver, Sample, Scalar, Sequence, Smooth,
+    TimeRangeKeys, TimeSeries,
 };
 
 /// SplitMix64: small, seeded, good enough to vary test inputs.
@@ -1321,5 +1321,165 @@ fn scan_and_stride_match_simple_versions() {
             .collect();
         let got = s.sample(Sample::Stride(stride)).unwrap();
         assert_eq!(got.key().begin(), &want[..], "seed {seed} stride {stride}");
+    }
+}
+
+/// `concat` is a stable sort, by begin then end, of the inputs laid one
+/// after another; on time and time-range keys, with empty inputs.
+#[test]
+fn concat_is_a_stable_sort() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let ranges = rng.chance(50);
+        let count = 1 + rng.below(4) as usize;
+        let mut parts = Vec::new();
+        // (begin, end, value) of every input row, inputs one after another.
+        let mut all: Vec<(i64, i64, Option<f64>)> = Vec::new();
+        for _ in 0..count {
+            let (times, values) = random_series(&mut rng);
+            let s = if ranges {
+                ranged(&mut rng, &times, &values).0
+            } else {
+                series(&times, &values)
+            };
+            let key = s.key();
+            for (i, v) in values.iter().enumerate() {
+                let end = key.end().map_or(key.begin()[i], |e| e[i]);
+                all.push((key.begin()[i], end, *v));
+            }
+            parts.push(s);
+        }
+        all.sort_by_key(|&(b, e, _)| (b, e));
+        let refs: Vec<&TimeSeries> = parts.iter().collect();
+        let got = TimeSeries::concat(&refs).unwrap();
+        let begins: Vec<i64> = all.iter().map(|r| r.0).collect();
+        assert_eq!(got.key().begin(), &begins[..], "seed {seed}");
+        if ranges {
+            let ends: Vec<i64> = all.iter().map(|r| r.1).collect();
+            assert_eq!(got.key().end().unwrap(), &ends[..], "seed {seed}");
+        }
+        let want: Vec<Option<f64>> = all.iter().map(|r| r.2).collect();
+        let got_values = numbers(&got, "v");
+        assert_eq!(got_values.len(), want.len(), "seed {seed}");
+        for (g, w) in got_values.iter().zip(&want) {
+            assert_eq!(g.map(f64::to_bits), w.map(f64::to_bits), "seed {seed}");
+        }
+    }
+}
+
+/// `pivot_by_group` against a direct build: a row per distinct time, a
+/// column per group (named as JavaScript writes the number, `undefined`
+/// for a gap, in text order), a lone row copied as is, several reduced.
+#[test]
+fn pivot_matches_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let groups: Vec<Option<f64>> = times
+            .iter()
+            .map(|_| (!rng.chance(10)).then(|| (rng.below(12) as f64 - 2.0) / 2.0))
+            .collect();
+        let s = TimeSeries::new(
+            "s",
+            times.clone(),
+            vec![
+                Column::optional("g", groups.clone()),
+                Column::optional("v", values.clone()),
+            ],
+        )
+        .unwrap();
+        let reducer = REDUCERS[rng.below(REDUCERS.len() as u64) as usize];
+        let got = s
+            .pivot_by_group("g", "v", &Pivot::default().aggregate(reducer))
+            .unwrap();
+
+        let name = |g: Option<f64>| match g {
+            None => "undefined".to_string(),
+            Some(x) if x == x.trunc() => format!("{}", x as i64),
+            Some(x) => format!("{x}"),
+        };
+        let mut names: Vec<String> = groups.iter().map(|&g| name(g)).collect();
+        names.sort();
+        names.dedup();
+        let mut distinct = times.clone();
+        distinct.dedup();
+        assert_eq!(got.key().begin(), &distinct[..], "seed {seed}");
+        let columns: Vec<String> = got.columns().iter().map(|c| c.name().to_string()).collect();
+        let want_columns: Vec<String> = names.iter().map(|n| format!("{n}_v")).collect();
+        assert_eq!(columns, want_columns, "seed {seed}");
+        for n in &names {
+            let column = numbers(&got, &format!("{n}_v"));
+            for (row, &t) in distinct.iter().enumerate() {
+                let cell: Vec<Option<f64>> = (0..times.len())
+                    .filter(|&i| times[i] == t && name(groups[i]) == *n)
+                    .map(|i| values[i])
+                    .collect();
+                let want = match cell.len() {
+                    0 => None,
+                    1 => cell[0],
+                    _ => naive(reducer, &cell.iter().flatten().copied().collect::<Vec<_>>()),
+                };
+                let scale = cell.iter().flatten().fold(0.0f64, |m, v| m.max(v.abs()));
+                check(
+                    &format!("seed {seed} {n} at {t}"),
+                    reducer,
+                    column[row],
+                    want,
+                    scale,
+                );
+            }
+        }
+    }
+}
+
+/// `collapse` is the closure applied row by row; the output is required
+/// exactly when it has no gaps.
+#[test]
+fn collapse_applies_the_closure_per_row() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let other: Vec<Option<f64>> = values.iter().map(|v| v.map(|x| x * 2.0 - 1.0)).collect();
+        let s = TimeSeries::new(
+            "s",
+            times,
+            vec![
+                Column::optional("v", values.clone()),
+                Column::optional("w", other.clone()),
+            ],
+        )
+        .unwrap();
+        let got = s
+            .collapse(&["v", "w"], "q", |r| {
+                Ok(match (r.number("v")?, r.number("w")?) {
+                    (Some(a), Some(b)) => Some(Scalar::Number(a / b)),
+                    _ => None,
+                })
+            })
+            .unwrap();
+        let want: Vec<Option<f64>> = values
+            .iter()
+            .zip(&other)
+            .map(|(a, b)| a.zip(*b).map(|(a, b)| a / b).filter(|q| q.is_finite()))
+            .collect();
+        if want.iter().all(Option::is_none) {
+            // No value to take a kind from: a text column of gaps, as pond-ts.
+            let q = got.column("q").unwrap();
+            assert_eq!(q.kind(), pond_rs::ColumnKind::String, "seed {seed}");
+            assert_eq!(q.data().missing_count(), want.len(), "seed {seed}");
+            continue;
+        }
+        let q = numbers(&got, "q");
+        assert_eq!(
+            q.iter().map(|v| v.map(f64::to_bits)).collect::<Vec<_>>(),
+            want.iter().map(|v| v.map(f64::to_bits)).collect::<Vec<_>>(),
+            "seed {seed}"
+        );
+        assert_eq!(got.columns().len(), 1, "seed {seed}");
+        assert_eq!(
+            got.column("q").unwrap().is_required(),
+            want.iter().all(Option::is_some),
+            "seed {seed}"
+        );
     }
 }

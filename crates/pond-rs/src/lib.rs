@@ -39,6 +39,9 @@
 //! rolling bands with [`TimeSeries::baseline`] / `outliers`, a fold of your
 //! own with [`TimeSeries::scan`], and picking some rows with
 //! [`TimeSeries::sample`],
+//! stacking series with [`TimeSeries::concat`], replacing columns with one
+//! computed per row with [`TimeSeries::collapse`], long rows into wide ones
+//! with [`TimeSeries::pivot_by_group`],
 //! reading times written as text with [`parse_time`] / [`parse_time_in`]
 //! (as pond-ts `Time.parse`),
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
@@ -147,6 +150,7 @@ mod json_columns;
 mod json_text;
 mod par;
 mod partition;
+mod pivot;
 mod query;
 mod reducer;
 mod reshape;
@@ -172,6 +176,7 @@ pub use grid::{Align, AlignMethod, Keep, Materialize, Pick};
 pub use join::{Join, JoinType, OnConflict};
 pub use json::{JsonOptions, KeyOrder, RowFormat};
 pub use partition::{PartitionKey, PartitionedSeries};
+pub use pivot::Pivot;
 pub use query::{EventKey, Label};
 pub use reducer::{Agg, Reducer};
 pub use reshape::At;

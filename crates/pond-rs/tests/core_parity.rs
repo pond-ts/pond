@@ -67,6 +67,9 @@ const KNOWN_OPS: &[&str] = &[
     "outliers",
     "scan",
     "sample",
+    "concat",
+    "collapse",
+    "pivotByGroup",
 ];
 
 /// Ops with an arm in [`run`]. Every fixture case for a listed op must run
@@ -115,6 +118,9 @@ const IMPLEMENTED_OPS: &[&str] = &[
     "outliers",
     "scan",
     "sample",
+    "concat",
+    "collapse",
+    "pivotByGroup",
 ];
 
 /// The ops a plain series and a partitioned one both have, with the same
@@ -331,6 +337,61 @@ fn run_scan(input: &TimeSeries, args: &[Value]) -> pond_rs::Result<TimeSeries> {
             )
         }
         other => panic!("unknown scan spec {other}"),
+    }
+}
+
+/// pond-ts `collapse(keys, output, reducer, { append })`, with the reducer
+/// named by the closure spec (cases.mjs `closure`).
+fn run_collapse(input: &TimeSeries, args: &[Value]) -> pond_rs::Result<TimeSeries> {
+    let columns: Vec<&str> = args[0]
+        .as_array()
+        .expect("collapse keys")
+        .iter()
+        .map(|k| k.as_str().expect("key"))
+        .collect();
+    let output = args[1].as_str().expect("output");
+    let spec = &args[2]["fn"];
+    let keys: Vec<String> = spec["keys"]
+        .as_array()
+        .expect("closure keys")
+        .iter()
+        .map(|k| k.as_str().expect("key").to_string())
+        .collect();
+    let how = spec["collapse"]
+        .as_str()
+        .expect("collapse spec")
+        .to_string();
+    let step = move |r: &pond_rs::Row<'_>| -> pond_rs::Result<Option<Scalar>> {
+        let numbers = || -> pond_rs::Result<Option<Vec<f64>>> {
+            keys.iter()
+                .map(|k| r.number(k))
+                .collect::<pond_rs::Result<Option<Vec<f64>>>>()
+        };
+        Ok(match how.as_str() {
+            "sum" => numbers()?.map(|v| Scalar::Number(v.iter().fold(0.0, |s, x| s + x))),
+            "ratio" => numbers()?.map(|v| Scalar::Number(v[0] / v[1])),
+            "gt" => numbers()?.map(|v| Scalar::Boolean(v[0] > v[1])),
+            "join" => keys
+                .iter()
+                .map(|k| r.string(k))
+                .collect::<pond_rs::Result<Option<Vec<&str>>>>()?
+                .map(|v| Scalar::String(v.join("|"))),
+            "none" => None,
+            "nan" => Some(Scalar::Number(f64::NAN)),
+            "nanOrText" => Some(match numbers()? {
+                Some(_) => Scalar::String("x".into()),
+                None => Scalar::Number(f64::NAN),
+            }),
+            other => panic!("unknown collapse spec {other}"),
+        })
+    };
+    if args
+        .get(3)
+        .is_some_and(|o| o["append"] == Value::Bool(true))
+    {
+        input.collapse_keep(&columns, output, step)
+    } else {
+        input.collapse(&columns, output, step)
     }
 }
 
@@ -597,6 +658,35 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>
             }
         }
         "scan" => run_scan(&input, &case.args),
+        "concat" => {
+            let others: Vec<TimeSeries> = case.args[0]
+                .as_array()
+                .expect("concat takes a list of series")
+                .iter()
+                .map(|a| to_series(&fixture.inputs[series_name(a)]))
+                .collect();
+            let all: Vec<&TimeSeries> = std::iter::once(&input).chain(&others).collect();
+            TimeSeries::concat(&all)
+        }
+        "collapse" => run_collapse(&input, &case.args),
+        "pivotByGroup" => {
+            let o = case.args.get(2);
+            let mut pivot = pond_rs::Pivot::default();
+            if let Some(name) = o.and_then(|o| o["aggregate"].as_str()) {
+                match Reducer::parse(name) {
+                    Ok(r) => pivot = pivot.aggregate(r),
+                    Err(e) => return Some(Err(e.to_string())),
+                }
+            }
+            if let Some(groups) = o.and_then(|o| o["groups"].as_array()) {
+                pivot = pivot.groups(groups.iter().map(|g| g.as_str().expect("group name")));
+            }
+            input.pivot_by_group(
+                case.args[0].as_str().expect("group column"),
+                case.args[1].as_str().expect("value column"),
+                &pivot,
+            )
+        }
         "sample" => {
             let o = &case.args[0];
             let whole = |v: &Value| v.as_f64().filter(|n| n.fract() == 0.0 && *n >= 0.0);
@@ -1190,7 +1280,29 @@ fn implemented_ops_match_pond_ts() {
             }
             continue;
         }
-        if let Err(why) = check_case(case, &actual) {
+        // Known difference ([PND-COLLAPSEREQ]): pond-ts marks collapse's
+        // output required even when it holds gaps; pond-rs marks it
+        // optional then (and required when it has none, as pond-ts).
+        let mut case = case.clone();
+        if case.op == "collapse" {
+            if let Some(expected) = case.expected.as_mut() {
+                let name = case.args[1].as_str().expect("output");
+                let at = expected
+                    .schema
+                    .iter()
+                    .position(|c| c.name == name)
+                    .expect("collapse output in the schema");
+                if expected.rows.iter().any(|r| r[at].is_null()) {
+                    assert_eq!(
+                        expected.schema[at].required, None,
+                        "{}: pond-ts fixed [PND-COLLAPSEREQ]",
+                        case.id
+                    );
+                    expected.schema[at].required = Some(false);
+                }
+            }
+        }
+        if let Err(why) = check_case(&case, &actual) {
             failures.push(format!("{} ({}): {why}", case.id, case.op));
         }
     }
