@@ -33,6 +33,8 @@
 
 mod kernels;
 
+use std::borrow::Cow;
+
 use crate::column::ColumnData;
 use crate::error::{PondError, Result};
 use crate::reducer::{Agg, Reducer};
@@ -231,13 +233,19 @@ impl TimeSeries {
     /// `min`. A row gets a value once `period` rows have passed; gaps are
     /// skipped and a window of only gaps gives a gap.
     pub fn rolling_min(&self, study: Study) -> Result<TimeSeries> {
-        self.rolling_stat("TimeSeries::rolling_min", study, Reducer::Min, "min")
+        const CALL: &str = "TimeSeries::rolling_min";
+        let (values, output) = self.study_input(CALL, &study, "min")?;
+        let min = kernels::rolling_extreme::<false>(&values, study.period);
+        self.study_output(CALL, output, min)
     }
 
     /// Highest value over `period` bars (pond-ts `rollingMax`), output
     /// `max`; gaps as for [`TimeSeries::rolling_min`].
     pub fn rolling_max(&self, study: Study) -> Result<TimeSeries> {
-        self.rolling_stat("TimeSeries::rolling_max", study, Reducer::Max, "max")
+        const CALL: &str = "TimeSeries::rolling_max";
+        let (values, output) = self.study_input(CALL, &study, "max")?;
+        let max = kernels::rolling_extreme::<true>(&values, study.period);
+        self.study_output(CALL, output, max)
     }
 
     /// The `q`th percentile (0 to 100) over `period` bars, interpolated
@@ -272,9 +280,8 @@ impl TimeSeries {
         self.study_output(CALL, output, z)
     }
 
-    /// Min / max / percentile go through `rolling_rows`, as pond-ts sends
-    /// them through core `rolling({ count: period }, …, { minSamples:
-    /// period })`.
+    /// The percentile goes through `rolling_rows`, as pond-ts sends it
+    /// through core `rolling({ count: period }, …, { minSamples: period })`.
     fn rolling_stat(
         &self,
         call: &'static str,
@@ -298,13 +305,13 @@ impl TimeSeries {
     }
 
     /// The checks every study runs, and its source column's numbers with
-    /// every gap as `NaN`.
+    /// every gap as `NaN` (borrowed when they already are).
     fn study_input(
         &self,
         call: &'static str,
         study: &Study,
         default: &str,
-    ) -> Result<(Vec<f64>, String)> {
+    ) -> Result<(Cow<'_, [f64]>, String)> {
         if study.period == 0 {
             return Err(PondError::InvalidData {
                 call,
@@ -322,7 +329,17 @@ impl TimeSeries {
         }
         let source = &self.columns()[self.column_index(call, study.source())?];
         match source.data() {
-            ColumnData::Number(v) => Ok((kernels::gaps_as_nan(v.values()), output)),
+            ColumnData::Number(v) => {
+                // Gaps must read as NaN; copy only if one is stored as an
+                // infinity.
+                let values = v.values();
+                let values = if v.all_finite() || !values.iter().any(|x| x.is_infinite()) {
+                    Cow::Borrowed(values)
+                } else {
+                    Cow::Owned(kernels::gaps_as_nan(values))
+                };
+                Ok((values, output))
+            }
             other => Err(PondError::WrongKind {
                 call,
                 column: source.name().to_string(),
@@ -340,5 +357,36 @@ impl TimeSeries {
     ) -> Result<TimeSeries> {
         self.with_column(Column::optional(output, values))
             .map_err(|e| e.renamed(call))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A gap stored as an infinity (which `Column::optional` keeps as it
+    /// is) gives the same result as one stored as NaN.
+    #[test]
+    fn infinite_gaps_read_as_gaps() {
+        let make = |gap: f64| {
+            let close = vec![1.0, 2.0, gap, 4.0, 5.0, 6.0, 7.0, 8.0];
+            let time = (0..close.len() as i64).collect();
+            TimeSeries::new("s", time, vec![Column::optional("close", close)]).unwrap()
+        };
+        for kind in MaType::ALL {
+            let with = |gap| {
+                make(gap)
+                    .moving_average(kind, Study::period(2))
+                    .unwrap()
+                    .column("ma")
+                    .unwrap()
+                    .numbers()
+                    .unwrap()
+                    .iter()
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(with(f64::INFINITY), with(f64::NAN), "{}", kind.as_str());
+            assert_eq!(with(f64::NEG_INFINITY), with(f64::NAN), "{}", kind.as_str());
+        }
     }
 }

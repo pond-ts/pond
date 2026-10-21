@@ -6,6 +6,7 @@ use crate::column::{
     ArrayColumn, BooleanColumn, ColumnData, DecimalColumn, Float64Column, StringColumn,
 };
 use crate::error::{PondError, Result};
+use std::sync::Arc;
 
 /// What a schema column holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -428,7 +429,9 @@ impl Column {
 pub struct TimeSeries {
     name: String,
     key_name: String,
-    key: Key,
+    /// Shared: operations that keep the rows share the key instead of
+    /// copying it.
+    key: Arc<Key>,
     columns: Vec<Column>,
 }
 
@@ -591,7 +594,7 @@ impl TimeSeries {
         Ok(Self {
             name,
             key_name,
-            key,
+            key: Arc::new(key),
             columns,
         })
     }
@@ -706,9 +709,10 @@ impl TimeSeries {
     pub(crate) fn from_parts(
         name: String,
         key_name: String,
-        key: Key,
+        key: impl Into<Arc<Key>>,
         columns: Vec<Column>,
     ) -> Self {
+        let key = key.into();
         debug_assert!(columns.iter().all(|c| c.data.len() == key.len()));
         Self {
             name,
@@ -716,6 +720,11 @@ impl TimeSeries {
             key,
             columns,
         }
+    }
+
+    /// The key, shared rather than copied, for a result with the same rows.
+    pub(crate) fn shared_key(&self) -> Arc<Key> {
+        Arc::clone(&self.key)
     }
 }
 

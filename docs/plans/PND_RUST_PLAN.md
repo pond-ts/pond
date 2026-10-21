@@ -2499,9 +2499,10 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     Kernels in `src/financial/kernels.rs` are line-for-line ports of
     pond-ts's `ranged.ts` (window mean and spread, shifted and rebuilt
     every `period` rows), `rolling.ts` (z-score deviation),
-    `rolling-mean.ts`, `wilder.ts` and `moving-average.ts`; min, max and
-    percentile go through `rolling_rows`, as pond-ts goes through core
-    `rolling({ count })`. `ema` is the same arithmetic as
+    `rolling-mean.ts`, `wilder.ts` and `moving-average.ts`; the
+    percentile goes through `rolling_rows`, as pond-ts goes through core
+    `rolling({ count })`; min and max use their own queue (same results,
+    earliest of equal values wins). `ema` is the same arithmetic as
     `smooth(ema_span(p).min_samples(p))`. KAMA's `** 2` is `c * c` (V8
     and fdlibm compute it that way too; the fixture agrees).
   - Known differences: pond-ts reads a missing or non-number source
@@ -2525,27 +2526,40 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
   - Perf (`examples/perf_studies.rs`, `bench/studies_pond_ts.mjs`; 1M
     bars, checksums agree). All O(N) (a rebuild of `period` rows every
     `period` rows), except the percentile, which keeps each window sorted.
-    The rebuild test is a counter, not `i % period` (a division per row,
-    ~2-3 ms per 1M rows). Medians, 4 cores, busy container (±30%):
+    First cut was only 1.5–5x pond-ts; timing the parts showed most of a
+    study's time was taking fresh memory from the system (page faults),
+    not the maths: copying the source column (8 MB), copying the time key
+    for the result (8 MB; every pond-rs call that keeps the rows did
+    this) and the output. Fixes: `TimeSeries` now shares its key
+    (`Arc<Key>`) with results that keep the rows (`with_column`, `select`,
+    `rename`, `rolling` and the other users of `with_value_columns`); a
+    study reads its source in place unless a gap is stored as an infinity;
+    min / max use their own O(N) queue instead of `rolling_rows`;
+    dema / tema / hull reuse buffers. The rebuild test is a counter, not
+    `i % period`. What is left is the arithmetic itself: EMA, Wilder and
+    Welford's spread are chains where each row waits on the last
+    (multiply-add, or a division, per row), the same chain V8 runs, and
+    matching pond-ts's bits rules out reordering them. Medians of 3 runs
+    of 7, 4 cores, ms:
 
-    | Study       | pond-rs | pond-ts |
-    | ----------- | ------- | ------- |
-    | sma 20      | 16 ms   | 65 ms   |
-    | sma 200     | 24 ms   | 58 ms   |
-    | ema 20      | 8 ms    | 18 ms   |
-    | stdev 20    | 28 ms   | 41 ms   |
-    | min 20      | 29 ms   | 90 ms   |
-    | max 200     | 25 ms   | 131 ms  |
-    | p90 20      | 72 ms   | 251 ms  |
-    | zscore 20   | 31 ms   | 106 ms  |
-    | ma wma 20   | 12 ms   | 43 ms   |
-    | ma smma 20  | 12 ms   | 19 ms   |
-    | ma dema 20  | 14 ms   | 29 ms   |
-    | ma tema 20  | 17 ms   | 38 ms   |
-    | ma trima 20 | 31 ms   | 75 ms   |
-    | ma hull 20  | 30 ms   | 69 ms   |
-    | ma kama 20  | 13 ms   | 36 ms   |
-    | ma zlema 20 | 9 ms    | 25 ms   |
+    | Study       | pond-rs | pond-ts | ratio |
+    | ----------- | ------- | ------- | ----- |
+    | sma 20      | 4.8     | 40.1    | 8.4x  |
+    | sma 200     | 5.1     | 33.5    | 6.6x  |
+    | ema 20      | 3.2     | 10.7    | 3.3x  |
+    | stdev 20    | 22.0    | 34.9    | 1.6x  |
+    | min 20      | 6.6     | 58.9    | 8.9x  |
+    | max 200     | 6.8     | 78.1    | 11.5x |
+    | p90 20      | 56.6    | 151.4   | 2.7x  |
+    | zscore 20   | 24.6    | 75.8    | 3.1x  |
+    | ma wma 20   | 5.3     | 29.5    | 5.6x  |
+    | ma smma 20  | 7.6     | 16.4    | 2.2x  |
+    | ma dema 20  | 7.7     | 21.9    | 2.8x  |
+    | ma tema 20  | 12.4    | 33.1    | 2.7x  |
+    | ma trima 20 | 12.7    | 35.6    | 2.8x  |
+    | ma hull 20  | 18.2    | 46.0    | 2.5x  |
+    | ma kama 20  | 4.7     | 23.8    | 5.1x  |
+    | ma zlema 20 | 5.6     | 15.3    | 2.7x  |
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

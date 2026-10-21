@@ -77,10 +77,22 @@ pub(crate) fn rolling_mean_sd(
     period: usize,
     want_sd: bool,
 ) -> (Vec<f64>, Option<Vec<f64>>) {
+    if want_sd {
+        let (mean, sd) = mean_sd::<true>(values, period);
+        (mean, Some(sd))
+    } else {
+        (mean_sd::<false>(values, period).0, None)
+    }
+}
+
+/// [`rolling_mean_sd`]'s loop, with the spread compiled in or out. pond-ts
+/// walks the window with two `while` loops; each row adds exactly one value
+/// and, once `period` rows have passed, drops exactly one, so this does the
+/// same additions and removals in the same order without them.
+fn mean_sd<const SD: bool>(values: &[f64], period: usize) -> (Vec<f64>, Vec<f64>) {
     let n = values.len();
     let mut mean = vec![f64::NAN; n];
-    let mut sd = want_sd.then(|| vec![f64::NAN; n]);
-    let (mut window_start, mut window_end) = (0usize, 0usize);
+    let mut sd = if SD { vec![f64::NAN; n] } else { Vec::new() };
     let mut anchor = 0.0;
     let mut shifted_sum = 0.0;
     let mut count = 0usize;
@@ -89,30 +101,25 @@ pub(crate) fn rolling_mean_sd(
     let mut next_rebuild = 0usize;
 
     for i in 0..n {
-        let lo = (i + 1).saturating_sub(period);
-        while window_end <= i {
-            let x = values[window_end];
-            if x.is_finite() {
-                let y = x - anchor;
-                shifted_sum += y;
-                count += 1;
-                if want_sd {
-                    spread.add(y);
-                }
+        let x = values[i];
+        if x.is_finite() {
+            let y = x - anchor;
+            shifted_sum += y;
+            count += 1;
+            if SD {
+                spread.add(y);
             }
-            window_end += 1;
         }
-        while window_start < lo {
-            let x = values[window_start];
+        if i >= period {
+            let x = values[i - period];
             if x.is_finite() {
                 let y = x - anchor;
                 shifted_sum -= y;
                 count -= 1;
-                if want_sd {
+                if SD {
                     spread.remove(y);
                 }
             }
-            window_start += 1;
         }
 
         if i == next_rebuild {
@@ -122,24 +129,25 @@ pub(crate) fn rolling_mean_sd(
             shifted_sum = 0.0;
             count = 0;
             spread = Spread::default();
-            for &x in &values[window_start..window_end] {
+            for &x in &values[(i + 1).saturating_sub(period)..=i] {
                 if !x.is_finite() {
                     continue;
                 }
                 let y = x - anchor;
                 shifted_sum += y;
                 count += 1;
-                if want_sd {
+                if SD {
                     spread.add(y);
                 }
             }
         }
 
-        if window_end - window_start < period || count == 0 {
+        // The window spans `min(i + 1, period)` rows.
+        if i + 1 < period || count == 0 {
             continue;
         }
         mean[i] = anchor + shifted_sum / count as f64;
-        if let Some(sd) = sd.as_mut() {
+        if SD {
             sd[i] = spread.sd();
         }
     }
@@ -348,21 +356,23 @@ pub(crate) fn wma_values(values: &[f64], period: usize) -> Vec<f64> {
 
 fn dema_values(values: &[f64], period: usize) -> Vec<f64> {
     let first = ema_values(values, period);
-    let second = ema_values(&first, period);
-    first
-        .iter()
-        .zip(&second)
-        .map(|(&a, &b)| 2.0 * a - b)
-        .collect()
+    let mut out = ema_values(&first, period);
+    // In place: one fresh buffer fewer (getting fresh memory from the
+    // system is a real share of the cost at 1M rows).
+    for (o, &a) in out.iter_mut().zip(&first) {
+        *o = 2.0 * a - *o;
+    }
+    out
 }
 
 fn tema_values(values: &[f64], period: usize) -> Vec<f64> {
     let first = ema_values(values, period);
     let second = ema_values(&first, period);
-    let third = ema_values(&second, period);
-    (0..values.len())
-        .map(|i| 3.0 * first[i] - 3.0 * second[i] + third[i])
-        .collect()
+    let mut out = ema_values(&second, period);
+    for ((o, &a), &b) in out.iter_mut().zip(&first).zip(&second) {
+        *o += 3.0 * a - 3.0 * b; // (3a - 3b) + o, as pond-ts adds it
+    }
+    out
 }
 
 /// An SMA of an SMA whose two lengths add up to `period + 1`.
@@ -381,9 +391,11 @@ fn hull_values(values: &[f64], period: usize) -> Vec<f64> {
     // JavaScript's Math.round rounds halves up; a square root of a whole
     // number is never exactly a half, so `round` gives the same.
     let root = ((period as f64).sqrt().round() as usize).max(1);
-    let fast = wma_values(values, half);
+    let mut raw = wma_values(values, half);
     let slow = wma_values(values, period);
-    let raw: Vec<f64> = fast.iter().zip(&slow).map(|(&f, &s)| 2.0 * f - s).collect();
+    for (r, &s) in raw.iter_mut().zip(&slow) {
+        *r = 2.0 * *r - s;
+    }
     wma_values(&raw, root)
 }
 
@@ -447,4 +459,39 @@ pub(crate) fn moving_average_values(values: &[f64], period: usize, kind: MaType)
         MaType::Kama => kama_values(values, period),
         MaType::Zlema => zlema_values(values, period),
     }
+}
+
+/// The lowest (or, with `MAX`, highest) finite value in each `period`-row
+/// window, as core `rolling({ count: period }, min | max, { minSamples:
+/// period })` gives it: a gap until `period` rows have passed, and where
+/// the window holds no finite value. Of equal values the earliest wins, so
+/// a window of `-0` then `0` gives `-0` for both.
+///
+/// A queue of candidate rows (each better than every later one in the
+/// queue), so O(N) whatever the period.
+pub(crate) fn rolling_extreme<const MAX: bool>(values: &[f64], period: usize) -> Vec<f64> {
+    let n = values.len();
+    let mut out = vec![f64::NAN; n];
+    let mut queue = std::collections::VecDeque::with_capacity(period.min(n));
+    // `a` beats `b` strictly: a later equal value never pushes out an
+    // earlier one.
+    let beats = |a: f64, b: f64| if MAX { a > b } else { a < b };
+    for i in 0..n {
+        let x = values[i];
+        if x.is_finite() {
+            while queue.back().is_some_and(|&j: &usize| beats(x, values[j])) {
+                queue.pop_back();
+            }
+            queue.push_back(i);
+        }
+        if queue.front().is_some_and(|&j| j + period <= i) {
+            queue.pop_front();
+        }
+        if i + 1 >= period {
+            if let Some(&j) = queue.front() {
+                out[i] = values[j];
+            }
+        }
+    }
+    out
 }

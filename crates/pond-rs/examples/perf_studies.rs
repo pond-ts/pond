@@ -8,9 +8,9 @@
 //!
 //! Cost, for N rows and period P: the mean / spread, weighted, Wilder,
 //! exponential and z-score kernels read each row a constant number of
-//! times, plus a rebuild of P rows every P rows (O(N)). Min / max /
-//! percentile go through `rolling_rows` (min and max O(N); a percentile
-//! keeps the window sorted, O(N·P) worst case).
+//! times, plus a rebuild of P rows every P rows (O(N)). Min / max keep a
+//! queue of candidates (O(N)); the percentile goes through `rolling_rows`,
+//! which keeps the window sorted (O(N·P) worst case).
 
 use std::time::Instant;
 
