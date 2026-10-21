@@ -250,6 +250,21 @@ takes 56 and 20 ms. pond-ts's moving average, `baseline` and `outliers`
 build an object per row, which is most of their time; that is logged as a
 pond-ts issue.
 
+### Stacking and reshaping: 1 million rows
+
+From the step 8i pull request ([#802](https://github.com/pond-ts/pond/pull/802)):
+1 million rows in all. Middle (median) time in milliseconds, 4 cores, on a
+busy machine (runs varied by about ±30%); both sides give the same answers.
+
+| Call                                       | pond-rs | pond-ts |
+| ------------------------------------------ | ------- | ------- |
+| `concat` of 10 series × 100,000 rows       | 49      | 279     |
+| `concat` of 1,000 series × 1,000 rows      | 50      | 432     |
+| `collapse`, sum of two columns             | 24      | 145     |
+| `pivot_by_group`, 100 hosts × 10,000 times | 47      | 553     |
+| `pivot_by_group`, 4 hosts × 250,000 times  | 39      | 751     |
+| `pivot_by_group`, 2 rows per cell, `Avg`   | 72      | 619     |
+
 ### Agents writing code against it
 
 pond-rs is built mainly for AI agents writing Rust, so one test was about

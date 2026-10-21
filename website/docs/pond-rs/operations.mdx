@@ -1134,6 +1134,133 @@ fn main() -> Result<(), pond_rs::PondError> {
 }
 ```
 
+## Stacking series: `concat`
+
+`TimeSeries::concat(&[&a, &b, …])` puts the rows of several series into one,
+sorted by key. Rows that share a key keep the order of the list, then their
+order within each series. The series must match: the same key, and the
+same columns in the same order with the same kinds (decimals also the same
+number of places). A column is required in the result only if it is
+required in every input. The result takes the first series' name.
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let monday = TimeSeries::new("cpu", vec![0, 2_000], vec![Column::required("v", vec![1.0, 3.0])])?;
+    let tuesday = TimeSeries::new(
+        "cpu",
+        vec![1_000, 2_000],
+        vec![Column::optional("v", vec![None, Some(4.0)])],
+    )?;
+
+    let both = TimeSeries::concat(&[&monday, &tuesday])?;
+    assert_eq!(both.key().begin(), &[0, 1_000, 2_000, 2_000]);
+    let got: Vec<_> = both.column("v")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(1.0), None, Some(3.0), Some(4.0)]); // at 2s, monday first
+    assert!(!both.column("v")?.is_required()); // tuesday's column has gaps
+
+    let other = TimeSeries::new("cpu", vec![0], vec![Column::required("w", vec![1.0])])?;
+    assert!(TimeSeries::concat(&[&monday, &other]).is_err()); // different columns
+    Ok(())
+}
+```
+
+## One column from several: `collapse`
+
+`collapse(&columns, output, f)` replaces some columns with one, worked out
+row by row by your closure. `f` gets the
+[row](./series-and-columns#reading-a-whole-row) and returns
+`Ok(Some(Scalar))`, or `Ok(None)` for a gap. The other columns are kept, and
+`output` comes last. `collapse_keep` keeps the source columns too. The
+output's kind is the kind of the first value that is not a gap, and every
+other value must be that kind. A number that is not finite (a division by
+zero, say) is stored as a gap.
+
+```rust
+use pond_rs::{Column, Scalar, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "net",
+        vec![0, 1_000, 2_000],
+        vec![
+            Column::required("host", vec!["a", "a", "b"]),
+            Column::required("sent", vec![10.0, 30.0, 5.0]),
+            Column::required("lost", vec![1.0, 3.0, 0.0]),
+        ],
+    )?;
+
+    let ratio = |r: &pond_rs::Row| {
+        Ok(match (r.number("lost")?, r.number("sent")?) {
+            (Some(l), Some(s)) => Some(Scalar::Number(l / s)),
+            _ => None,
+        })
+    };
+    let loss = s.collapse(&["sent", "lost"], "loss", ratio)?;
+    let names: Vec<&str> = loss.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["host", "loss"]);
+    let got: Vec<_> = loss.column("loss")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(0.1), Some(0.1), Some(0.0)]);
+
+    let kept = s.collapse_keep(&["sent", "lost"], "loss", ratio)?;
+    assert_eq!(kept.columns().len(), 4);
+    Ok(())
+}
+```
+
+## Long rows into wide ones: `pivot_by_group`
+
+Data often arrives "long": one row per host per time, with a `host` column.
+`pivot_by_group(group, value, &Pivot)` turns it "wide": one row per time and
+one column per host, named `<group value>_<value column>` (`a_cpu`,
+`b_cpu`). A time with no row for a host gets a gap there. The series must be
+keyed by time, and every new column is optional.
+
+Two rows with the same time and host are an error unless
+`Pivot::default().aggregate(reducer)` says how to combine them (`Avg`,
+`First`, `Last`, or `Count` on numbers: the result must keep the value
+column's kind). `.groups(["a", "b"])` fixes the columns and their order: a
+listed host with no rows still gets a column, and a host not on the list is
+an error. Without it, the hosts found become columns in sorted order.
+
+Group names are written as JavaScript writes them, so a number group `1.5`
+gives `1.5_cpu` and a gap gives `undefined_cpu`, as in pond-ts.
+
+```rust
+use pond_rs::{Column, Pivot, Reducer, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let long = TimeSeries::new(
+        "cpu",
+        vec![0, 0, 0, 1_000],
+        vec![
+            Column::required("host", vec!["b", "a", "a", "a"]),
+            Column::required("cpu", vec![0.5, 0.2, 0.4, 0.3]),
+        ],
+    )?;
+
+    // Host a reported twice at 0s.
+    assert!(long.pivot_by_group("host", "cpu", &Pivot::default()).is_err());
+
+    let wide = long.pivot_by_group("host", "cpu", &Pivot::default().aggregate(Reducer::Last))?;
+    assert_eq!(wide.key().begin(), &[0, 1_000]);
+    let a: Vec<_> = wide.column("a_cpu")?.numbers()?.iter().collect();
+    let b: Vec<_> = wide.column("b_cpu")?.numbers()?.iter().collect();
+    assert_eq!(a, [Some(0.4), Some(0.3)]);
+    assert_eq!(b, [Some(0.5), None]); // no row for b at 1s
+
+    let fixed = long.pivot_by_group(
+        "host",
+        "cpu",
+        &Pivot::default().aggregate(Reducer::Avg).groups(["a", "b", "c"]),
+    )?;
+    let names: Vec<&str> = fixed.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["a_cpu", "b_cpu", "c_cpu"]); // c has no rows, still a column
+    Ok(())
+}
+```
+
 ## Putting series side by side: `join`
 
 `join` puts the columns of two series next to each other, matching rows by
@@ -1269,7 +1396,7 @@ the other side first. `join` is not on `PartitionedSeries`.
 
 ## What is not here yet
 
-Still to come from pond-ts: `collapse`, `concat`, the pivots
-(`pivot_by_group` and friends) and `by_value`, then `smooth`, `baseline`,
+Still to come from pond-ts: `by_column` and `rolling_by_column`
+(histograms), `by_value`, then `smooth`, `baseline`,
 `outliers`, `sample` and `scan` run per partition (for now, use `apply` as
 shown above). Financial studies come after the core.

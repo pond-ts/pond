@@ -30,6 +30,9 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `series.baseline('cpu', { window, sigma })`          | `series.baseline("cpu", window, sigma, Rolling::default())?`                              |
 | `series.scan('cpu', step, init)`                     | `series.scan("cpu", init, step)?` (step takes `(state, value, row)`)                      |
 | `series.sample({ reservoir: { size } })`             | `series.sample(Sample::Reservoir { size, seed })?`                                        |
+| `TimeSeries.concat([a, b])`                          | `TimeSeries::concat(&[&a, &b])?`                                                          |
+| `series.collapse(keys, out, fn, { append })`         | `series.collapse(&keys, out, f)?` / `collapse_keep`                                       |
+| `series.pivotByGroup('host', 'cpu')`                 | `series.pivot_by_group("host", "cpu", &Pivot::default())?`                                |
 | `Sequence.every('1m')`                               | `Sequence::every("1m")?`                                                                  |
 | `Sequence.calendar('day', { timeZone })`             | `Sequence::calendar("day", time_zone)?`                                                   |
 | `series.pctChange(...)`                              | `series.pct_change(&cols, FirstRow::Keep)`                                                |
@@ -130,6 +133,8 @@ pond-rs returns an error instead.
 - **An option a smoothing method does not take** (`warmup` on a loess,
   say) is an error when the code runs; pond-ts's types refuse it when
   the code is checked.
+- **`concat` of series whose interval labels differ in kind** (text in
+  one, numbers in another) is an error; pond-ts allows the mix.
 - **A repeated rename.** `rename` with the same `from` twice is an error
   (pond-ts's object syntax cannot express it).
 
@@ -168,6 +173,11 @@ bug is logged in `PLAN.md` to fix there.
 
 ## Small differences
 
+- **`collapse`'s output is optional when it has gaps.** pond-ts marks it
+  required even then, so its own `fromJSON` refuses the result (logged
+  as a pond-ts issue, [PND-COLLAPSEREQ]). Decimal groups in
+  `pivot_by_group`, which pond-ts has no kind for, are named in full
+  (`1.50_cpu`).
 - **`reduce` returns a `Reduced`**, read by output name with `number`,
   `string` and so on, rather than a plain object. The one-column form
   (`reduce('cpu', 'avg')`) and custom reducer functions are not built; one
