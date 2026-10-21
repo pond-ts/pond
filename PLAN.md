@@ -589,8 +589,8 @@ the study oracle) is done.
      (d) ~~row JSON input and output~~ — done; (d2) ~~columns / points JSON~~ — done; (e) ~~array
      columns~~ — done; (e2) ~~array columns as Arrow lists~~ — done; (f) ~~reducers `keep` / `difference`~~ — done; (f2) ~~reducers `unique` / `top` /
      `samples`~~ — done; (g) ~~rolling options (row-count, leading, centred, minimum
-     samples, over a time grid)~~ — done; (h) `smooth` / `baseline` / `outliers` /
-     `scan` / `sample`; (i) `pivot_by_group`, `by_column` /
+     samples, over a time grid)~~ — done; (h) ~~`smooth` / `baseline` / `outliers` /
+     `scan` / `sample`~~ — done; (i) `pivot_by_group`, `by_column` /
      `rolling_by_column`, `by_value` + `ValueSeries`, `collapse`,
      `concat`; (j) the (h) operations per group. Same rules as steps 1–7.
 
@@ -718,6 +718,27 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   find in O(N + B), as pond-rs does. Repro:
   `crates/pond-rs/bench/rolling_pond_ts.mjs`. Found 2026-10-20 (pond-rs
   R1b step 8g).
+- **[PND-SMOOTHSLOW]** — pond-ts `smooth` (`movingAverage`, `loess`) and
+  `baseline` build one `Event` per row and rebuild the series from rows. On
+  1M rows `movingAverage` over 5 minutes takes ~2 s and `baseline` ~3.9 s,
+  where `rolling` with the same `avg` and `stdev` takes ~0.3 s; making the
+  `Event`s alone takes ~1.2 s. `outliers` ~2 s, `scan` 80 ms, `sample({
+stride })` 32 ms (pond-rs: 18, 54, 49, 7 and 1 ms). Proposed fix: read
+  the column and write the result column directly, as `ema`'s fast path
+  already does. Repro: `crates/pond-rs/bench/smooth_pond_ts.mjs`. Found
+  2026-10-21 (pond-rs R1b step 8h).
+- **[PND-SCANREQ]** — pond-ts `scan(…, { output })` marks the new column
+  required (its schema has no `required: false`, and its type is
+  `ColumnDef<Name, 'number'>`), but rows before the first value and
+  non-finite outputs are gaps. Fixing it narrows `event.get(output)` to
+  `number | undefined`, which can break typed callers, so it needs a yes
+  before it lands. pond-rs marks the column optional. Found 2026-10-21
+  (pond-rs R1b step 8h).
+- **[PND-SMOOTHCHECK]** — pond-ts `smooth` does not check its column: an
+  unknown name gives the series back unchanged, and a text column gives a
+  gap in every row (`baseline` on a text column also gives gaps). pond-rs
+  refuses both. Proposed fix: the `RangeError` `scan` already gives.
+  Found 2026-10-21 (pond-rs R1b step 8h).
 - **[PND-CONCATSORT]** — pond-ts `TimeSeries.concat` takes ~450 ms to put
   500 partitions × 1000 rows back together, and every partitioned
   operation calls it (`partitionBy('symbol').diff('close').collect()`:

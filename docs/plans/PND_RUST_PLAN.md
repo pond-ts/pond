@@ -649,7 +649,7 @@ The one result short of a clean win is one-core B: polars is faster
        below)
      - **8h Smoothing and stats:** `smooth` (EMA, moving average, loess),
        `baseline`, `outliers`, `scan` (a custom running step, a Rust
-       closure), `sample`. (`reduce` done in 7b.)
+       closure), `sample`. (`reduce` done in 7b.) (done, below)
      - **8i Grouping and reshaping:** `pivot_by_group`, `by_column` and
        `rolling_by_column` (histograms), `by_value` and `ValueSeries`,
        `collapse`, `concat`.
@@ -2086,6 +2086,97 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     row for every bucket). The 1 s grid is pond-rs's slowest case: each
     of 1M windows is reduced afresh (300 rows each); sliding states
     would be faster but give `aggregate`'s bits only for some reducers.
+
+  **Step 8h (done): smoothing and band statistics ([PND-RUSTFULL]).**
+  - Calls: `smooth(column, &Smooth)` with `Smooth::ema(alpha)`,
+    `Smooth::ema_span(span)`, `Smooth::moving_average(window)` and
+    `Smooth::loess(span)`, plus `.output(name)`, `.warmup(rows)`,
+    `.min_samples(n)`, `.alignment(a)` and `.skip_missing()` (pond-ts
+    `smooth(column, method, options)`). An option the method does not
+    take is an error, where pond-ts's types forbid it.
+    `baseline(column, window, sigma, Rolling)` and `baseline_named`
+    (which adds the four names: avg, sd, upper, lower),
+    `outliers(column, window, sigma, Rolling)` (reusing `Rolling` for
+    `alignment` / `min_samples`), `scan(column, init, step)` and
+    `scan_to(column, output, init, step)` with a step of type
+    `FnMut(A, f64, usize) -> (A, f64)`, and `sample` taking
+    `Sample::Stride(n)` or `Sample::Reservoir { size, seed }`.
+  - Moving average and loess place a time-range or interval row at its
+    midpoint, `begin + (end - begin) / 2` in f64 as pond-ts does, which
+    can be half a millisecond. The window walk now takes `f64` anchors
+    as well as whole ms (an `Anchor` trait on `Frame`), so the moving
+    average is the rolling `avg` state over those anchors and gives its
+    bits; a property test checks the two agree exactly on time keys.
+  - Reservoir sampling is random in pond-ts (`Math.random`, no seed).
+    pond-rs takes a seed (SplitMix64) so a run can be repeated, and keeps
+    the picked rows in series order; pond-ts sorts them by key, which
+    can order rows that share a key differently. Only a reservoir that
+    keeps every row is in the fixture.
+  - Two pond-ts bugs fixed here. [PND-SMOOTHMID]: keys sort by start, so
+    the midpoints of a long range before a short one run backwards, and
+    `movingAverage` and `loess` both assumed they were in order (a 2 ms
+    moving average over `[0, 10]`, `[1, 1]`, `[2, 2]`, `[3, 3]` gave every
+    row the mean of all four). Both now work in midpoint order; time
+    keys and ranges whose midpoints are in order are unchanged. Found by
+    the moving-average property test on random range keys.
+    [PND-LOESSPOW]: the loess weight used `**`. Node 22's V8 computes it
+    with an fdlibm port; current V8 uses a correctly rounded `pow`. On 2M
+    values `r ** 3` from Node 22 differed from glibc's `pow` in ~10% of
+    cases, so a fit's last bits depended on the Node version, and Rust
+    could not match both. The weights are now products, which round the
+    same everywhere; this also made pond-ts loess ~23x faster (0.05 span
+    over 20k rows: 2651 to 117 ms).
+  - Known differences, each checked by the harness: pond-rs refuses an
+    unknown or non-number column for `smooth` and a non-number column
+    for `baseline`, where pond-ts passes the series through or gives
+    gaps ([PND-SMOOTHCHECK]); pond-rs marks `scan_to`'s column optional,
+    where pond-ts marks it required though it can hold gaps
+    ([PND-SCANREQ], not fixed in pond-ts because it narrows a public
+    type). Values of 2^960 or more are refused by the moving average and
+    `baseline`, as by `rolling`.
+  - Parity: 135 new pond-ts cases (1092 in all): every method and option
+    on gaps, repeated times, signed zeros, overflow, odd-length and
+    backwards range midpoints, keys past 2^52 ms, a loess fit whose
+    denominator rounds to a tiny non-zero number and one where every
+    neighbour shares a time, flat baseline windows, the four `scan`
+    steps (sum, row index, non-finite outputs, hysteresis gain), strides,
+    and each error. Planted bugs (13) failed them, after adding cases for
+    the three the first set missed (an even-length range, so loess's
+    shift invariance could not hide a wrong midpoint; the two loess
+    corner cases; a flat window whose mean rounds off its value). Four
+    property tests check the moving average, loess (a different
+    neighbour rule and least-squares solve), `baseline` / `outliers` and
+    `scan` / stride by brute force; another checks reservoir picks are
+    even over 20,000 seeds.
+  - Perf (`examples/perf_smooth.rs` and `bench/smooth_pond_ts.mjs`, 1M
+    rows 1 s apart, a gap every 17th row; checksums agree). Cost: EMA,
+    `scan` and `sample` read each row once, O(N); the moving average,
+    `baseline` and `outliers` slide a window as `rolling` does, O(N),
+    plus O(N log N) to sort backwards midpoints; loess is O(N·k) for k =
+    span·N neighbours, so O(N^2) for a fixed span, in both libraries.
+    Medians, 4 cores:
+
+    | Call                            | pond-rs | pond-ts |
+    | ------------------------------- | ------- | ------- |
+    | EMA alpha 0.1                   | 5.6 ms  | 12 ms   |
+    | EMA span 20, minimum 20         | 4.7 ms  | 11 ms   |
+    | moving average 5m               | 18 ms   | 1967 ms |
+    | moving average 5m centred, skip | 20 ms   | 1509 ms |
+    | moving average 5m, range keys   | 68 ms   | 1684 ms |
+    | loess 0.05, 20k rows            | 16 ms   | 113 ms  |
+    | loess 0.3, 5k rows              | 5.5 ms  | 32 ms   |
+    | `baseline` 5m                   | 54 ms   | 3862 ms |
+    | `outliers` 5m                   | 49 ms   | 2007 ms |
+    | `scan` running sum              | 7.0 ms  | 80 ms   |
+    | `scan` hysteresis gain          | 5.9 ms  | 48 ms   |
+    | `sample` stride 10              | 1.1 ms  | 32 ms   |
+    | `sample` reservoir 1000         | 1.0 ms  | 17 ms   |
+
+    Loess spreads rows over the cores; on one thread it takes 56 and
+    20 ms. EMA is 2.2x pond-ts, whose EMA already runs straight off the
+    column. pond-ts's moving average, `baseline` and `outliers` build one
+    `Event` per row (~1.2 s of the ~2 s moving average), logged as
+    [PND-SMOOTHSLOW].
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

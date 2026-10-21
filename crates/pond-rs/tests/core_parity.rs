@@ -62,6 +62,11 @@ const KNOWN_OPS: &[&str] = &[
     "arrayContainsAny",
     "arrayAggregate",
     "arrayExplode",
+    "smooth",
+    "baseline",
+    "outliers",
+    "scan",
+    "sample",
 ];
 
 /// Ops with an arm in [`run`]. Every fixture case for a listed op must run
@@ -105,6 +110,11 @@ const IMPLEMENTED_OPS: &[&str] = &[
     "arrayContainsAny",
     "arrayAggregate",
     "arrayExplode",
+    "smooth",
+    "baseline",
+    "outliers",
+    "scan",
+    "sample",
 ];
 
 /// The ops a plain series and a partitioned one both have, with the same
@@ -227,6 +237,101 @@ macro_rules! shared_op {
             _ => None,
         }
     }};
+}
+
+/// pond-ts `smooth(column, method, options)` as a pond-rs [`Smooth`], or
+/// the error pond-ts gives for options pond-rs cannot even express (a
+/// missing or doubled rate, a fractional count).
+fn smooth_options(method: &Value, o: &Value) -> Result<pond_rs::Smooth, String> {
+    use pond_rs::Smooth;
+    let count = |k: &str| match &o[k] {
+        Value::Null => Ok(None),
+        v => v
+            .as_u64()
+            .map(|n| Some(n as usize))
+            .ok_or_else(|| format!("{k} must be a whole number")),
+    };
+    let mut smooth = match method.as_str().expect("method") {
+        "ema" => match (o["alpha"].as_f64(), o["span"].as_f64()) {
+            (Some(a), None) => Smooth::ema(a),
+            (None, Some(s)) => Smooth::ema_span(s),
+            _ => return Err("ema needs exactly one of alpha or span".into()),
+        },
+        "movingAverage" => match o["window"].as_str() {
+            Some(w) => Smooth::moving_average(w),
+            None => return Err("moving_average needs a window".into()),
+        },
+        "loess" => match o["span"].as_f64() {
+            Some(s) => Smooth::loess(s),
+            None => return Err("loess needs a span".into()),
+        },
+        other => panic!("unknown smooth method {other}"),
+    };
+    if let Some(n) = count("warmup")? {
+        smooth = smooth.warmup(n);
+    }
+    if let Some(n) = count("minSamples")? {
+        smooth = smooth.min_samples(n);
+    }
+    if o["alignment"].is_string() {
+        smooth = smooth.alignment(rolling_options(Some(o)).alignment);
+    }
+    match o["missing"].as_str() {
+        None | Some("bridge") => {}
+        Some("skip") => smooth = smooth.skip_missing(),
+        Some(other) => panic!("unknown missing {other}"),
+    }
+    if let Some(name) = o["output"].as_str() {
+        smooth = smooth.output(name);
+    }
+    Ok(smooth)
+}
+
+/// pond-ts `scan(column, step, init, { output })`, with the step named by
+/// the closure spec (cases.mjs `closure`).
+fn run_scan(input: &TimeSeries, args: &[Value]) -> pond_rs::Result<TimeSeries> {
+    let column = args[0].as_str().expect("column");
+    let spec = &args[1]["fn"];
+    let output = args.get(3).and_then(|o| o["output"].as_str());
+    fn go<A>(
+        input: &TimeSeries,
+        column: &str,
+        output: Option<&str>,
+        init: A,
+        step: impl FnMut(A, f64, usize) -> (A, f64),
+    ) -> pond_rs::Result<TimeSeries> {
+        match output {
+            None => input.scan(column, init, step),
+            Some(name) => input.scan_to(column, name, init, step),
+        }
+    }
+    match spec["scan"].as_str().expect("scan spec") {
+        "sum" => go(input, column, output, decode_f64(&args[2]), |a, v, _| {
+            (a + v, a + v)
+        }),
+        "index" => go(input, column, output, decode_f64(&args[2]), |a, v, i| {
+            (a + 1.0, v * i as f64 - a)
+        }),
+        "nonfinite" => go(input, column, output, decode_f64(&args[2]), |a, v, _| {
+            (a + 1.0, v / (a % 3.0))
+        }),
+        "gain" => {
+            let band = spec["band"].as_f64().expect("band");
+            go(
+                input,
+                column,
+                output,
+                (None::<f64>, 0.0),
+                move |(reference, gain), v, _| match reference {
+                    None => ((Some(v), 0.0), 0.0),
+                    Some(r) if v - r >= band => ((Some(v), gain + v - r), gain + v - r),
+                    Some(r) if v - r <= -band => ((Some(v), gain), gain),
+                    Some(r) => ((Some(r), gain), gain),
+                },
+            )
+        }
+        other => panic!("unknown scan spec {other}"),
+    }
 }
 
 /// `alignment` and `minSamples` in rolling options.
@@ -467,6 +572,46 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>
             case.args[0].as_str().expect("column"),
             &array_options(case.args.get(1)),
         ),
+        "smooth" => match smooth_options(&case.args[1], &case.args[2]) {
+            Ok(smooth) => input.smooth(case.args[0].as_str().expect("column"), &smooth),
+            Err(why) => return Some(Err(why)),
+        },
+        "baseline" | "outliers" => {
+            let column = case.args[0].as_str().expect("column");
+            let o = &case.args[1];
+            let window = o["window"].as_str().expect("window");
+            let sigma = o["sigma"].as_f64().expect("sigma");
+            let options = rolling_options(Some(o));
+            if case.op == "outliers" {
+                input.outliers(column, window, sigma, options)
+            } else {
+                let names = &o["names"];
+                let name = |k: &'static str| names[k].as_str().unwrap_or(k);
+                input.baseline_named(
+                    column,
+                    window,
+                    sigma,
+                    options,
+                    [name("avg"), name("sd"), name("upper"), name("lower")],
+                )
+            }
+        }
+        "scan" => run_scan(&input, &case.args),
+        "sample" => {
+            let o = &case.args[0];
+            let whole = |v: &Value| v.as_f64().filter(|n| n.fract() == 0.0 && *n >= 0.0);
+            let how = match (whole(&o["stride"]), whole(&o["reservoir"]["size"])) {
+                (Some(n), _) => pond_rs::Sample::Stride(n as usize),
+                (_, Some(n)) => pond_rs::Sample::Reservoir {
+                    size: n as usize,
+                    seed: 0,
+                },
+                // A fractional or negative count cannot be written in Rust
+                // (`usize`); pond-ts rejects it, so stand in that error.
+                _ => return Some(Err("sample count must be a whole number".into())),
+            };
+            input.sample(how)
+        }
         "select" => {
             let names: Vec<&str> = case
                 .args
@@ -1030,7 +1175,40 @@ fn implemented_ops_match_pond_ts() {
             }
             continue;
         }
-        if let Err(why) = check_case(case, &actual) {
+        // Known difference: pond-ts smooths a text column to all gaps,
+        // passes an unknown column through, and baselines a text column to
+        // gaps; pond-rs refuses all three.
+        let refused = ["smooth-ema-text", "smooth-ema-unknown", "baseline-text"];
+        if refused.contains(&case.id.as_str()) {
+            assert!(
+                case.expected.is_some(),
+                "{}: pond-ts gives a series",
+                case.id
+            );
+            if actual.is_ok() {
+                failures.push(format!("{}: pond-rs should refuse", case.id));
+            }
+            continue;
+        }
+        // Known difference ([PND-SCANREQ]): pond-ts marks scan's new column
+        // required though it can hold gaps; pond-rs marks it optional.
+        let mut case = case.clone();
+        if case.op == "scan" {
+            if let (Some(name), Some(expected)) = (
+                case.args.get(3).and_then(|o| o["output"].as_str()),
+                case.expected.as_mut(),
+            ) {
+                let column = expected.schema.iter_mut().find(|c| c.name == name);
+                let column = column.expect("scan output in the schema");
+                assert_eq!(
+                    column.required, None,
+                    "{}: pond-ts fixed [PND-SCANREQ]",
+                    case.id
+                );
+                column.required = Some(false);
+            }
+        }
+        if let Err(why) = check_case(&case, &actual) {
             failures.push(format!("{} ({}): {why}", case.id, case.op));
         }
     }

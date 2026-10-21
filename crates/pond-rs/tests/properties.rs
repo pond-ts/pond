@@ -20,7 +20,8 @@ use jiff::civil::{Date, Weekday};
 use jiff::tz::TimeZone;
 use pond_rs::{
     Agg, Align, AlignMethod, Alignment, At, CalendarUnit, Column, Join, JoinType, Keep, Key,
-    Materialize, Pick, Reducer, Rolling, RollingOver, Sequence, TimeSeries,
+    Materialize, Pick, Reducer, Rolling, RollingOver, Sample, Sequence, Smooth, TimeRangeKeys,
+    TimeSeries,
 };
 
 /// SplitMix64: small, seeded, good enough to vary test inputs.
@@ -1072,5 +1073,253 @@ fn join_matches_brute_force() {
             assert_eq!(col("v"), want_v, "{what}");
             assert_eq!(col("w"), want_w, "{what}");
         }
+    }
+}
+
+/// `random_series`, keyed by time ranges of random lengths from 0 to 5 ms,
+/// so `smooth` anchors (range middles) can fall on a half millisecond.
+/// Returns the series and each row's doubled anchor (`begin + end`).
+fn ranged(rng: &mut Rng, times: &[i64], values: &[Option<f64>]) -> (TimeSeries, Vec<i64>) {
+    let mut ends: Vec<i64> = times.iter().map(|&t| t + rng.below(6) as i64).collect();
+    // Keys sort by begin, then end.
+    for i in 1..times.len() {
+        if times[i] == times[i - 1] && ends[i] < ends[i - 1] {
+            ends[i] = ends[i - 1];
+        }
+    }
+    let keys = TimeRangeKeys {
+        begin: times.to_vec(),
+        end: ends.clone(),
+    };
+    let s = TimeSeries::from_time_ranges("s", keys, vec![Column::optional("v", values.to_vec())])
+        .unwrap();
+    let doubled = times.iter().zip(&ends).map(|(b, e)| b + e).collect();
+    (s, doubled)
+}
+
+fn numbers(s: &TimeSeries, name: &str) -> Vec<Option<f64>> {
+    s.column(name).unwrap().numbers().unwrap().iter().collect()
+}
+
+/// `smooth`'s moving average is the mean of the values whose anchor is in
+/// the window, checked by brute force on time and time-range keys; on time
+/// keys it is the rolling `avg` bit for bit.
+#[test]
+fn moving_average_matches_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let case = RollCase::random(&mut rng);
+        let (alignment, w) = (case.options.alignment, case.window_ms);
+        let skip = rng.chance(50);
+        let mut smooth = Smooth::moving_average(&format!("{w}ms")).alignment(alignment);
+        if skip {
+            smooth = smooth.skip_missing();
+        }
+        let plain = series(&times, &values);
+        let (ranges, doubled) = ranged(&mut rng, &times, &values);
+        let by_time: Vec<i64> = times.iter().map(|t| 2 * t).collect();
+        for (s, anchors) in [(&plain, &by_time), (&ranges, &doubled)] {
+            let got = numbers(&s.smooth("v", &smooth).unwrap(), "v");
+            for row in 0..times.len() {
+                let t = anchors[row];
+                let present: Vec<f64> = (0..times.len())
+                    .filter(|&r| {
+                        let u = anchors[r];
+                        match alignment {
+                            Alignment::Trailing => u > t - 2 * w && u <= t,
+                            Alignment::Leading => u >= t && u < t + 2 * w,
+                            Alignment::Centered => u >= t - w && u < t + w,
+                        }
+                    })
+                    .filter_map(|r| values[r])
+                    .collect();
+                let want = if skip && values[row].is_none() {
+                    None
+                } else {
+                    naive(Reducer::Avg, &present)
+                };
+                let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+                let what = format!("seed {seed} {w}ms {alignment:?} skip {skip} row {row}");
+                check(&what, Reducer::Avg, got[row], want, scale);
+            }
+        }
+        let rolled = plain
+            .rolling_with(
+                &format!("{w}ms"),
+                &[Agg::new("v", "v", Reducer::Avg)],
+                Rolling {
+                    alignment,
+                    min_samples: 0,
+                },
+            )
+            .unwrap();
+        let smoothed = numbers(&plain.smooth("v", &smooth).unwrap(), "v");
+        for (row, (a, b)) in numbers(&rolled, "v").iter().zip(&smoothed).enumerate() {
+            let a = if skip && values[row].is_none() {
+                None
+            } else {
+                *a
+            };
+            assert_eq!(
+                a.map(f64::to_bits),
+                b.map(f64::to_bits),
+                "seed {seed} row {row}"
+            );
+        }
+    }
+}
+
+/// `smooth`'s loess at each present row is the weighted straight-line fit
+/// over the nearest `span` share of values, solved here another way: the
+/// values nearer than the k-th nearest, by sorting distances, then the
+/// weighted least squares around their weighted mean time.
+#[test]
+fn loess_matches_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let span = [0.05, 0.2, 0.5, 1.0][rng.below(4) as usize];
+        let got = numbers(
+            &series(&times, &values)
+                .smooth("v", &Smooth::loess(span).skip_missing())
+                .unwrap(),
+            "v",
+        );
+        let (at, ys): (Vec<f64>, Vec<f64>) = times
+            .iter()
+            .zip(&values)
+            .filter_map(|(&t, v)| v.map(|v| (t as f64, v)))
+            .unzip();
+        let n = at.len();
+        for row in 0..times.len() {
+            let what = format!("seed {seed} span {span} row {row}");
+            if values[row].is_none() {
+                assert_eq!(got[row], None, "{what}");
+                continue;
+            }
+            let x = times[row] as f64;
+            let want = if n == 1 {
+                ys[0]
+            } else {
+                let k = ((span * n as f64).ceil() as usize).clamp(2, n);
+                // The fit's reach is the k-th smallest distance; every value
+                // nearer than that has weight.
+                let mut distances: Vec<f64> = at.iter().map(|a| (a - x).abs()).collect();
+                distances.sort_by(f64::total_cmp);
+                let h = distances[k - 1];
+                let near: Vec<usize> = (0..n).filter(|&i| (at[i] - x).abs() < h).collect();
+                if h == 0.0 {
+                    let here: Vec<f64> = (0..n).filter(|&i| at[i] == x).map(|i| ys[i]).collect();
+                    here.iter().sum::<f64>() / here.len() as f64
+                } else {
+                    let w: Vec<f64> = near
+                        .iter()
+                        .map(|&i| (1.0 - ((at[i] - x).abs() / h).powi(3)).max(0.0).powi(3))
+                        .collect();
+                    let sw: f64 = w.iter().sum();
+                    let mean_t = near.iter().zip(&w).map(|(&i, w)| w * at[i]).sum::<f64>() / sw;
+                    let mean_y = near.iter().zip(&w).map(|(&i, w)| w * ys[i]).sum::<f64>() / sw;
+                    let (mut sxy, mut sxx) = (0.0, 0.0);
+                    for (&i, w) in near.iter().zip(&w) {
+                        sxy += w * (at[i] - mean_t) * (ys[i] - mean_y);
+                        sxx += w * (at[i] - mean_t).powi(2);
+                    }
+                    // The row itself is in the fit with weight 1, so some
+                    // spread in time remains unless every weighted value
+                    // shares its time.
+                    if sxx == 0.0 {
+                        mean_y
+                    } else {
+                        mean_y + sxy / sxx * (x - mean_t)
+                    }
+                }
+            };
+            let g = got[row].unwrap_or_else(|| panic!("{what}: gap"));
+            let scale = ys.iter().fold(1.0f64, |m, v| m.max(v.abs()));
+            assert!(
+                (g - want).abs() <= 1e-9 * scale,
+                "{what}: got {g}, want {want}"
+            );
+        }
+    }
+}
+
+/// `baseline` is the rolling `avg` and `stdev` plus a band; `outliers` is
+/// the rows outside that band.
+#[test]
+fn baseline_and_outliers_follow_rolling() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let case = RollCase::random(&mut rng);
+        let window = format!("{}ms", case.window_ms);
+        let sigma = [0.5, 1.0, 2.0][rng.below(3) as usize];
+        let s = series(&times, &values);
+        let base = s.baseline("v", &window, sigma, case.options).unwrap();
+        let rolled = s
+            .rolling_with(
+                &window,
+                &[
+                    Agg::new("avg", "v", Reducer::Avg),
+                    Agg::new("sd", "v", Reducer::Stdev),
+                ],
+                case.options,
+            )
+            .unwrap();
+        let bits = |v: Vec<Option<f64>>| -> Vec<Option<u64>> {
+            v.into_iter().map(|x| x.map(f64::to_bits)).collect()
+        };
+        let what = format!("seed {seed} {window} {:?} sigma {sigma}", case.options);
+        assert_eq!(
+            bits(numbers(&base, "avg")),
+            bits(numbers(&rolled, "avg")),
+            "{what}"
+        );
+        assert_eq!(
+            bits(numbers(&base, "sd")),
+            bits(numbers(&rolled, "sd")),
+            "{what}"
+        );
+        let (avg, sd) = (numbers(&base, "avg"), numbers(&base, "sd"));
+        let (upper, lower) = (numbers(&base, "upper"), numbers(&base, "lower"));
+        let mut flagged = vec![];
+        for row in 0..times.len() {
+            let band = match (avg[row], sd[row]) {
+                (Some(a), Some(d)) if d > 0.0 => Some((a + sigma * d, a - sigma * d)),
+                _ => None,
+            };
+            assert_eq!(upper[row].zip(lower[row]), band, "{what} row {row}");
+            if let (Some(v), Some(a), Some(d)) = (values[row], avg[row], sd[row]) {
+                if d > 0.0 && (v - a).abs() > sigma * d {
+                    flagged.push(times[row]);
+                }
+            }
+        }
+        let out = s.outliers("v", &window, sigma, case.options).unwrap();
+        assert_eq!(out.key().begin(), &flagged[..], "{what}");
+    }
+}
+
+/// `scan` with a running-sum step is `cumulative_with` addition, and
+/// `sample` by stride keeps every `n`th row.
+#[test]
+fn scan_and_stride_match_simple_versions() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let s = series(&times, &values);
+        let scanned = s.scan("v", 0.0, |a, v, _| (a + v, a + v)).unwrap();
+        let folded = s.cumulative_with("v", |a, v| a + v).unwrap();
+        assert_eq!(numbers(&scanned, "v"), numbers(&folded, "v"), "seed {seed}");
+        let stride = 1 + rng.below(7) as usize;
+        let want: Vec<i64> = times
+            .iter()
+            .skip(stride - 1)
+            .step_by(stride)
+            .copied()
+            .collect();
+        let got = s.sample(Sample::Stride(stride)).unwrap();
+        assert_eq!(got.key().begin(), &want[..], "seed {seed} stride {stride}");
     }
 }

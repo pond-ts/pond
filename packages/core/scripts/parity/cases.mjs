@@ -1638,6 +1638,450 @@ const ROLLING_OPTION_CASES = [
 ];
 
 /** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
+// Smoothing and stats (pond-rs R1b step 8h): `smooth` (ema, movingAverage,
+// loess), `baseline`, `outliers`, `scan` and `sample`. Gaps, repeated times,
+// signed zeros, overflowing values, and time-range / interval keys (anchored
+// at their midpoint by movingAverage and loess, which can fall on a half
+// millisecond).
+const SMOOTH_CASES = [
+  // ema
+  ['smooth-ema-noisy-x', 'noisy', 'smooth', ['x', 'ema', { alpha: 0.3 }]],
+  [
+    'smooth-ema-noisy-y-span',
+    'noisy',
+    'smooth',
+    ['y', 'ema', { span: 12, output: 'y_ema' }],
+  ],
+  [
+    'smooth-ema-gappy-warmup',
+    'gappy',
+    'smooth',
+    ['a', 'ema', { alpha: 0.5, warmup: 5 }],
+  ],
+  [
+    'smooth-ema-gappy-warmup-all',
+    'gappy',
+    'smooth',
+    ['a', 'ema', { alpha: 0.5, warmup: 50 }],
+  ],
+  [
+    'smooth-ema-gappy-minSamples',
+    'gappy',
+    'smooth',
+    ['a', 'ema', { alpha: 0.5, minSamples: 3, output: 'e' }],
+  ],
+  [
+    'smooth-ema-gappy-both',
+    'gappy',
+    'smooth',
+    ['b', 'ema', { span: 3, minSamples: 2, warmup: 1 }],
+  ],
+  [
+    'smooth-ema-dense-alpha1',
+    'dense',
+    'smooth',
+    ['value', 'ema', { alpha: 1 }],
+  ],
+  [
+    'smooth-ema-dense-span1',
+    'dense',
+    'smooth',
+    ['value', 'ema', { span: 1, output: 's' }],
+  ],
+  ['smooth-ema-zeros', 'zeros', 'smooth', ['v', 'ema', { alpha: 0.25 }]],
+  ['smooth-ema-signed', 'signed', 'smooth', ['v', 'ema', { alpha: 0.5 }]],
+  ['smooth-ema-overflow', 'overflow', 'smooth', ['v', 'ema', { alpha: 0.5 }]],
+  ['smooth-ema-extreme', 'extreme', 'smooth', ['v', 'ema', { span: 2 }]],
+  ['smooth-ema-ranges', 'ranges', 'smooth', ['a', 'ema', { alpha: 0.5 }]],
+  [
+    'smooth-ema-labelled',
+    'labelled',
+    'smooth',
+    ['a', 'ema', { alpha: 0.5, output: 'a' }],
+  ],
+  ['smooth-ema-empty', 'joinEmpty', 'smooth', ['w', 'ema', { alpha: 0.5 }]],
+  ['smooth-ema-both', 'gappy', 'smooth', ['a', 'ema', { alpha: 0.5, span: 3 }]],
+  ['smooth-ema-neither', 'gappy', 'smooth', ['a', 'ema', {}]],
+  ['smooth-ema-alpha0', 'gappy', 'smooth', ['a', 'ema', { alpha: 0 }]],
+  ['smooth-ema-alpha-big', 'gappy', 'smooth', ['a', 'ema', { alpha: 1.5 }]],
+  ['smooth-ema-span-small', 'gappy', 'smooth', ['a', 'ema', { span: 0.5 }]],
+  [
+    'smooth-ema-warmup-neg',
+    'gappy',
+    'smooth',
+    ['a', 'ema', { alpha: 0.5, warmup: -1 }],
+  ],
+  [
+    'smooth-ema-warmup-frac',
+    'gappy',
+    'smooth',
+    ['a', 'ema', { alpha: 0.5, warmup: 1.5 }],
+  ],
+  [
+    'smooth-ema-minSamples-frac',
+    'gappy',
+    'smooth',
+    ['a', 'ema', { alpha: 0.5, minSamples: 0.5 }],
+  ],
+  [
+    'smooth-ema-output-taken',
+    'gappy',
+    'smooth',
+    ['a', 'ema', { alpha: 0.5, output: 'b' }],
+  ],
+  [
+    'smooth-ema-output-key',
+    'gappy',
+    'smooth',
+    ['a', 'ema', { alpha: 0.5, output: 'time' }],
+  ],
+  // movingAverage
+  ...ALIGNMENTS.flatMap((alignment) => [
+    [
+      `smooth-ma-noisy-5s-${alignment}`,
+      'noisy',
+      'smooth',
+      ['x', 'movingAverage', { window: '5s', alignment }],
+    ],
+    [
+      `smooth-ma-noisy-y-skip-${alignment}`,
+      'noisy',
+      'smooth',
+      [
+        'y',
+        'movingAverage',
+        { window: '7s', alignment, missing: 'skip', output: 'y_ma' },
+      ],
+    ],
+    [
+      `smooth-ma-gappy-3s-${alignment}`,
+      'gappy',
+      'smooth',
+      ['a', 'movingAverage', { window: '3s', alignment }],
+    ],
+    [
+      `smooth-ma-oddRanges-${alignment}`,
+      'oddRanges',
+      'smooth',
+      ['a', 'movingAverage', { window: '1001ms', alignment }],
+    ],
+    [
+      `smooth-ma-labelled-${alignment}`,
+      'labelled',
+      'smooth',
+      ['a', 'movingAverage', { window: '5s', alignment, output: 'ma' }],
+    ],
+    [
+      `smooth-ma-bigTimes-3ms-${alignment}`,
+      'bigTimes',
+      'smooth',
+      ['w', 'movingAverage', { window: '3ms', alignment }],
+    ],
+  ]),
+  [
+    'smooth-ma-gappy-skip',
+    'gappy',
+    'smooth',
+    ['b', 'movingAverage', { window: '2s', missing: 'skip' }],
+  ],
+  [
+    'smooth-ma-gappy-bridge',
+    'gappy',
+    'smooth',
+    ['b', 'movingAverage', { window: '2s', missing: 'bridge' }],
+  ],
+  [
+    'smooth-ma-gappy-0s',
+    'gappy',
+    'smooth',
+    ['a', 'movingAverage', { window: '0s' }],
+  ],
+  [
+    'smooth-ma-gappy-999ms',
+    'gappy',
+    'smooth',
+    ['a', 'movingAverage', { window: '999ms', alignment: 'centered' }],
+  ],
+  [
+    'smooth-ma-dupRanges',
+    'dupRanges',
+    'smooth',
+    ['a', 'movingAverage', { window: '2s' }],
+  ],
+  [
+    'smooth-ma-zeros',
+    'zeros',
+    'smooth',
+    ['v', 'movingAverage', { window: '2s' }],
+  ],
+  [
+    'smooth-ma-empty',
+    'joinEmpty',
+    'smooth',
+    ['w', 'movingAverage', { window: '2s' }],
+  ],
+  ['smooth-ma-no-window', 'gappy', 'smooth', ['a', 'movingAverage', {}]],
+  [
+    'smooth-ma-bad-window',
+    'gappy',
+    'smooth',
+    ['a', 'movingAverage', { window: '-1s' }],
+  ],
+  // loess
+  ...[0.1, 0.3, 0.75, 1].map((span) => [
+    `smooth-loess-noisy-${span}`,
+    'noisy',
+    'smooth',
+    ['x', 'loess', { span }],
+  ]),
+  [
+    'smooth-loess-noisy-y-skip',
+    'noisy',
+    'smooth',
+    ['y', 'loess', { span: 0.2, missing: 'skip', output: 'fit' }],
+  ],
+  ['smooth-loess-gappy', 'gappy', 'smooth', ['a', 'loess', { span: 0.5 }]],
+  [
+    'smooth-loess-gappy-skip',
+    'gappy',
+    'smooth',
+    ['b', 'loess', { span: 0.5, missing: 'skip' }],
+  ],
+  [
+    'smooth-loess-gappy-tiny',
+    'gappy',
+    'smooth',
+    ['a', 'loess', { span: 0.01 }],
+  ],
+  ['smooth-loess-dense', 'dense', 'smooth', ['value', 'loess', { span: 0.25 }]],
+  [
+    'smooth-loess-oddRanges',
+    'oddRanges',
+    'smooth',
+    ['a', 'loess', { span: 0.6 }],
+  ],
+  ['smooth-loess-labelled', 'labelled', 'smooth', ['a', 'loess', { span: 1 }]],
+  [
+    'smooth-loess-dupRanges',
+    'dupRanges',
+    'smooth',
+    ['a', 'loess', { span: 0.5 }],
+  ],
+  [
+    'smooth-loess-bigTimes',
+    'bigTimes',
+    'smooth',
+    ['w', 'loess', { span: 0.7 }],
+  ],
+  ['smooth-loess-zeros', 'zeros', 'smooth', ['v', 'loess', { span: 1 }]],
+  ...ALIGNMENTS.map((alignment) => [
+    `smooth-ma-backRanges-${alignment}`,
+    'backRanges',
+    'smooth',
+    ['a', 'movingAverage', { window: '2ms', alignment }],
+  ]),
+  [
+    'smooth-ma-backRanges-skip',
+    'backRanges',
+    'smooth',
+    ['a', 'movingAverage', { window: '3ms', missing: 'skip', output: 'm' }],
+  ],
+  [
+    'smooth-loess-backRanges',
+    'backRanges',
+    'smooth',
+    ['a', 'loess', { span: 0.5 }],
+  ],
+  [
+    'smooth-loess-backRanges-b',
+    'backRanges',
+    'smooth',
+    ['b', 'loess', { span: 0.3 }],
+  ],
+  ['smooth-loess-flat', 'loessEdge', 'smooth', ['a', 'loess', { span: 1 }]],
+  [
+    'smooth-loess-coincident',
+    'loessEdge',
+    'smooth',
+    ['b', 'loess', { span: 0.4 }],
+  ],
+  [
+    'smooth-loess-gappyDups',
+    'gappyDups',
+    'smooth',
+    ['a', 'loess', { span: 0.4 }],
+  ],
+  ['smooth-loess-one', 'edges', 'smooth', ['v', 'loess', { span: 0.5 }]],
+  ['smooth-loess-empty', 'joinEmpty', 'smooth', ['w', 'loess', { span: 0.5 }]],
+  ['smooth-loess-no-span', 'gappy', 'smooth', ['a', 'loess', {}]],
+  ['smooth-loess-span0', 'gappy', 'smooth', ['a', 'loess', { span: 0 }]],
+  ['smooth-loess-span-big', 'gappy', 'smooth', ['a', 'loess', { span: 1.5 }]],
+  [
+    'smooth-loess-output-taken',
+    'gappy',
+    'smooth',
+    ['a', 'loess', { span: 1, output: 'b' }],
+  ],
+  // pond-ts gives a gap in every row for a text column and passes the series
+  // through for an unknown one; pond-rs refuses both (see the harness).
+  ['smooth-ema-text', 'mixed', 'smooth', ['host', 'ema', { alpha: 0.5 }]],
+  ['smooth-ema-unknown', 'gappy', 'smooth', ['nope', 'ema', { alpha: 0.5 }]],
+  // baseline
+  ...ALIGNMENTS.flatMap((alignment) => [
+    [
+      `baseline-noisy-20s-${alignment}`,
+      'noisy',
+      'baseline',
+      ['x', { window: '20s', sigma: 2, alignment }],
+    ],
+    [
+      `outliers-noisy-20s-${alignment}`,
+      'noisy',
+      'outliers',
+      ['x', { window: '20s', sigma: 1, alignment }],
+    ],
+  ]),
+  [
+    'baseline-noisy-y-minSamples',
+    'noisy',
+    'baseline',
+    ['y', { window: '10s', sigma: 1.5, minSamples: 8 }],
+  ],
+  ['baseline-gappy', 'gappy', 'baseline', ['a', { window: '3s', sigma: 1 }]],
+  [
+    'baseline-gappy-names',
+    'gappy',
+    'baseline',
+    ['b', { window: '5s', sigma: 0.5, names: { avg: 'm', upper: 'hi' } }],
+  ],
+  ['baseline-zeros', 'zeros', 'baseline', ['v', { window: '3s', sigma: 1 }]],
+  ['baseline-ranges', 'ranges', 'baseline', ['a', { window: '4s', sigma: 1 }]],
+  [
+    'baseline-empty',
+    'joinEmpty',
+    'baseline',
+    ['w', { window: '4s', sigma: 1 }],
+  ],
+  [
+    'baseline-taken',
+    'gappy',
+    'baseline',
+    ['a', { window: '3s', sigma: 1, names: { sd: 'b' } }],
+  ],
+  [
+    'baseline-key',
+    'gappy',
+    'baseline',
+    ['a', { window: '3s', sigma: 1, names: { avg: 'time' } }],
+  ],
+  [
+    'baseline-same-names',
+    'gappy',
+    'baseline',
+    ['a', { window: '3s', sigma: 1, names: { avg: 'x', lower: 'x' } }],
+  ],
+  ['baseline-sigma0', 'gappy', 'baseline', ['a', { window: '3s', sigma: 0 }]],
+  ['baseline-text', 'mixed', 'baseline', ['host', { window: '3s', sigma: 1 }]],
+  [
+    'outliers-noisy-y-minSamples',
+    'noisy',
+    'outliers',
+    ['y', { window: '10s', sigma: 1, minSamples: 8 }],
+  ],
+  // Flat windows of 0.1: the mean comes out 0.10000000000000002, so a
+  // check that skipped the flat-window rule would flag every row.
+  ['outliers-flat', 'flat', 'outliers', ['v', { window: '3s', sigma: 1 }]],
+  ['baseline-flat', 'flat', 'baseline', ['v', { window: '3s', sigma: 1 }]],
+  ['outliers-gappy', 'gappy', 'outliers', ['a', { window: '5s', sigma: 0.5 }]],
+  [
+    'outliers-mixed',
+    'mixed',
+    'outliers',
+    ['v', { window: '6s', sigma: 0.8, alignment: 'centered' }],
+  ],
+  [
+    'outliers-empty',
+    'joinEmpty',
+    'outliers',
+    ['w', { window: '4s', sigma: 1 }],
+  ],
+  [
+    'outliers-sigma-neg',
+    'gappy',
+    'outliers',
+    ['a', { window: '3s', sigma: -1 }],
+  ],
+  [
+    'outliers-unknown',
+    'gappy',
+    'outliers',
+    ['nope', { window: '3s', sigma: 1 }],
+  ],
+  // scan: the step is named by a closure spec (see `closure`)
+  ['scan-sum', 'gappy', 'scan', ['a', { fn: { scan: 'sum' } }, 0]],
+  [
+    'scan-sum-output',
+    'noisy',
+    'scan',
+    ['x', { fn: { scan: 'sum' } }, 0, { output: 'run' }],
+  ],
+  [
+    'scan-gain',
+    'noisy',
+    'scan',
+    [
+      'y',
+      { fn: { scan: 'gain', band: 5e5 } },
+      { ref: null, gain: 0 },
+      { output: 'gain' },
+    ],
+  ],
+  ['scan-index', 'gappy', 'scan', ['b', { fn: { scan: 'index' } }, 0]],
+  [
+    'scan-nonfinite',
+    'gappy',
+    'scan',
+    ['a', { fn: { scan: 'nonfinite' } }, 0, { output: 'r' }],
+  ],
+  [
+    'scan-zeros',
+    'zeros',
+    'scan',
+    ['v', { fn: { scan: 'sum' } }, { f64: '-0' }],
+  ],
+  ['scan-empty', 'joinEmpty', 'scan', ['w', { fn: { scan: 'sum' } }, 0]],
+  [
+    'scan-taken',
+    'gappy',
+    'scan',
+    ['a', { fn: { scan: 'sum' } }, 0, { output: 'b' }],
+  ],
+  [
+    'scan-key',
+    'gappy',
+    'scan',
+    ['a', { fn: { scan: 'sum' } }, 0, { output: 'time' }],
+  ],
+  ['scan-unknown', 'gappy', 'scan', ['nope', { fn: { scan: 'sum' } }, 0]],
+  ['scan-text', 'mixed', 'scan', ['host', { fn: { scan: 'sum' } }, 0]],
+  // sample: reservoir is random in pond-ts, so only the cases with one answer
+  ...[1, 2, 3, 7, 12, 13, 1000].map((stride) => [
+    `sample-stride-${stride}`,
+    'gappy',
+    'sample',
+    [{ stride }],
+  ]),
+  ['sample-stride-noisy', 'noisy', 'sample', [{ stride: 13 }]],
+  ['sample-stride-labelled', 'labelled', 'sample', [{ stride: 2 }]],
+  ['sample-stride-empty', 'joinEmpty', 'sample', [{ stride: 2 }]],
+  ['sample-stride-0', 'gappy', 'sample', [{ stride: 0 }]],
+  ['sample-stride-frac', 'gappy', 'sample', [{ stride: 1.5 }]],
+  ['sample-reservoir-all', 'gappy', 'sample', [{ reservoir: { size: 12 } }]],
+  ['sample-reservoir-more', 'mixed', 'sample', [{ reservoir: { size: 100 } }]],
+  ['sample-reservoir-0', 'gappy', 'sample', [{ reservoir: { size: 0 } }]],
+  ['sample-reservoir-frac', 'gappy', 'sample', [{ reservoir: { size: 2.5 } }]],
+];
+
 const CASES = [
   // rolling: time window, trailing, keyed at each event
   ['rolling-3s-avg-sum', 'gappy', 'rolling', ['3s', { a: 'avg', b: 'sum' }]],
@@ -2972,6 +3416,7 @@ const CASES = [
   ...KEY_CASES,
   ...ARRAY_CASES,
   ...ROLLING_OPTION_CASES,
+  ...SMOOTH_CASES,
 ];
 
 /**
@@ -2986,6 +3431,21 @@ function closure(spec) {
   if (spec === 'upper') return (v) => v.toUpperCase();
   if (spec === 'not') return (v) => !v;
   if ('mul' in spec) return (v) => v * spec.mul + spec.add;
+  // scan steps: (acc, value, index) => [nextAcc, output]
+  if (spec.scan === 'sum') return (a, v) => [a + v, a + v];
+  if (spec.scan === 'index') return (a, v, i) => [a + 1, v * i - a];
+  // Divides by zero every third value: ±Infinity, or NaN for 0 / 0.
+  if (spec.scan === 'nonfinite') return (a, v) => [a + 1, v / (a % 3)];
+  // Hysteresis gain: climbs count once they pass `band` from the reference.
+  if (spec.scan === 'gain') {
+    return (acc, v) => {
+      if (acc.ref === null) return [{ ref: v, gain: 0 }, 0];
+      const d = v - acc.ref;
+      if (d >= spec.band) return [{ ref: v, gain: acc.gain + d }, acc.gain + d];
+      if (d <= -spec.band) return [{ ref: v, gain: acc.gain }, acc.gain];
+      return [acc, acc.gain];
+    };
+  }
   if ('column' in spec) {
     return (e) => {
       const v = e.get(spec.column);
@@ -3198,6 +3658,13 @@ export function buildFixture(pond) {
       rows: RUNS_ROWS,
     }),
     edges: series('edges', EDGE_ROWS),
+    flat: series('flat', [
+      [0, 0.1],
+      [1000, 0.1],
+      [2000, 0.1],
+      [3000, 0.1],
+      [4000, 5],
+    ]),
     overflow: series('overflow', OVERFLOW_ROWS),
     dst: series('dst', DST_ROWS),
     santiago: series('santiago', SANTIAGO_ROWS),
@@ -3434,6 +3901,56 @@ export function buildFixture(pond) {
         i,
         i % 3 === 1 ? null : i / 4,
       ]),
+    }),
+    // Odd-length time ranges: midpoints on a half millisecond, one past
+    // 2^52 ms where that rounds to even. One even length, so the midpoints
+    // are not all the same distance from a whole millisecond (loess would
+    // not notice a shift of them all).
+    oddRanges: TimeSeries.fromJSON({
+      name: 'oddRanges',
+      schema: RANGE_SCHEMA,
+      rows: [
+        [[0, 3], 2, null],
+        [[0, 1001], 1, 10],
+        [[500, 1501], null, 12],
+        [[1000, 1001], 4, 13],
+        [[1500, 2999], -3, 14],
+        [[2001, 2003], 5, null],
+        [[4000, 4001], 0.25, 15],
+        [[2 ** 52 + 1, 2 ** 52 + 4], 6, 16],
+        [[2 ** 52 + 2, 2 ** 52 + 3], 7, 17],
+      ],
+    }),
+    // Long ranges before short ones, so the midpoints run backwards
+    // ([PND-SMOOTHMID]), with a gap and two rows sharing a midpoint.
+    backRanges: TimeSeries.fromJSON({
+      name: 'backRanges',
+      schema: RANGE_SCHEMA,
+      rows: [
+        [[0, 10], 1, 10],
+        [[1, 1], 100, 11],
+        [[2, 2], 3, null],
+        [[2, 9], null, 13],
+        [[3, 3], 5, 14],
+        [[4, 7], -2, 15],
+        [[5, 6], 8, 16],
+        [[6, 6], 0.5, 17],
+      ],
+    }),
+    // loess corner cases (time ranges, so anchors can be half ms): for row
+    // 0, whose value is a gap, every weighted neighbour sits at 2.5, so the
+    // fit's denominator rounds to a tiny non-zero number; and three rows
+    // share 2.5, so a narrow span puts every neighbour there.
+    loessEdge: TimeSeries.fromJSON({
+      name: 'loessEdge',
+      schema: RANGE_SCHEMA,
+      rows: [
+        [[0, 0], null, 1],
+        [[2, 3], 2, 1],
+        [[2, 3], 3, 1],
+        [[2, 3], 5, 2],
+        [[3, 3], 7, 2],
+      ],
     }),
     extreme: TimeSeries.fromJSON({
       name: 'extreme',

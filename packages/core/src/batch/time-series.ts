@@ -499,7 +499,14 @@ function loessAt(
     const pointY = values[index]!;
     const distance = Math.abs(dx);
     const ratio = distance / bandwidth;
-    const weight = ratio >= 1 ? 0 : (1 - ratio ** 3) ** 3;
+    // Tricube weight, written as products: `**` is `Math.pow`, which V8 has
+    // computed differently across versions (Node 22's fdlibm port vs the
+    // correctly rounded pow newer V8 ships), so the last bits of the fit
+    // depended on the Node version. `*` is exactly rounded everywhere
+    // ([PND-LOESSPOW]).
+    const cube = ratio * ratio * ratio;
+    const tail = 1 - cube;
+    const weight = ratio >= 1 ? 0 : tail * tail * tail;
     if (weight === 0) {
       continue;
     }
@@ -522,6 +529,18 @@ function loessAt(
 
   // Value at the query point: intercept + slope * dx, with dx = 0.
   return (sumWY * sumWXX - sumWX * sumWXY) / denominator;
+}
+
+/** Row indexes in anchor order (stable), or `undefined` if already sorted. */
+function anchorOrder(anchors: ReadonlyArray<number>): number[] | undefined {
+  for (let index = 1; index < anchors.length; index++) {
+    if (anchors[index]! < anchors[index - 1]!) {
+      return anchors
+        .map((_, row) => row)
+        .sort((a, b) => anchors[a]! - anchors[b]! || a - b);
+    }
+  }
+  return undefined;
 }
 
 function lowerBound(values: ReadonlyArray<number>, target: number): number {
@@ -4539,6 +4558,11 @@ export class TimeSeries<S extends SeriesSchema> {
         return typeof raw === 'number' ? raw : undefined;
       },
     );
+    // Rows in anchor order. Time-range and interval keys sort by begin, so
+    // their midpoints can run backwards (a long range before a short one);
+    // the window sweep and the loess neighbour search both need anchors in
+    // order ([PND-SMOOTHMID]). `undefined` when they already are.
+    const byAnchor = anchorOrder(anchors);
 
     if (method === 'loess') {
       if (!('span' in options)) {
@@ -4558,7 +4582,7 @@ export class TimeSeries<S extends SeriesSchema> {
 
       const loessAnchors: number[] = [];
       const loessValues: number[] = [];
-      for (let index = 0; index < anchors.length; index++) {
+      for (const index of byAnchor ?? anchors.keys()) {
         const value = sourceValues[index];
         if (typeof value === 'number') {
           loessAnchors.push(anchors[index]!);
@@ -4611,6 +4635,15 @@ export class TimeSeries<S extends SeriesSchema> {
     const alignment = options.alignment ?? 'trailing';
     const skipMissing = options.missing === 'skip';
     const resultValues = new Array<number | undefined>(this.events.length);
+    // Anchors and values in anchor order; positions below index these.
+    const sorted =
+      byAnchor === undefined
+        ? anchors
+        : byAnchor.map((index) => anchors[index]!);
+    const sortedValues =
+      byAnchor === undefined
+        ? sourceValues
+        : byAnchor.map((index) => sourceValues[index]);
     let windowStart = 0;
     let windowEnd = 0;
     // Two-lane running sum (see `reducers/overflow-lanes.ts`) so an
@@ -4621,14 +4654,14 @@ export class TimeSeries<S extends SeriesSchema> {
     const numericSum = new LanedSum();
     let numericCount = 0;
     const addEvent = (index: number): void => {
-      const value = sourceValues[index];
+      const value = sortedValues[index];
       if (typeof value === 'number' && value - value === 0) {
         numericCount += 1;
         numericSum.add(value);
       }
     };
     const removeEvent = (index: number): void => {
-      const value = sourceValues[index];
+      const value = sortedValues[index];
       if (typeof value === 'number' && value - value === 0) {
         numericCount -= 1;
         numericSum.remove(value);
@@ -4638,28 +4671,25 @@ export class TimeSeries<S extends SeriesSchema> {
       numericCount === 0 ? undefined : numericSum.total() / numericCount;
 
     for (let groupStart = 0; groupStart < this.events.length; ) {
-      const anchor = anchors[groupStart]!;
+      const anchor = sorted[groupStart]!;
       let groupEnd = groupStart + 1;
-      while (groupEnd < this.events.length && anchors[groupEnd] === anchor) {
+      while (groupEnd < this.events.length && sorted[groupEnd] === anchor) {
         groupEnd += 1;
       }
 
       if (alignment === 'trailing') {
-        while (
-          windowEnd < this.events.length &&
-          anchors[windowEnd]! <= anchor
-        ) {
+        while (windowEnd < this.events.length && sorted[windowEnd]! <= anchor) {
           addEvent(windowEnd);
           windowEnd += 1;
         }
 
         const lowerBound = anchor - windowMs;
-        while (windowStart < windowEnd && anchors[windowStart]! <= lowerBound) {
+        while (windowStart < windowEnd && sorted[windowStart]! <= lowerBound) {
           removeEvent(windowStart);
           windowStart += 1;
         }
       } else if (alignment === 'leading') {
-        while (windowStart < windowEnd && anchors[windowStart]! < anchor) {
+        while (windowStart < windowEnd && sorted[windowStart]! < anchor) {
           removeEvent(windowStart);
           windowStart += 1;
         }
@@ -4667,7 +4697,7 @@ export class TimeSeries<S extends SeriesSchema> {
         const upperBound = anchor + windowMs;
         while (
           windowEnd < this.events.length &&
-          anchors[windowEnd]! < upperBound
+          sorted[windowEnd]! < upperBound
         ) {
           addEvent(windowEnd);
           windowEnd += 1;
@@ -4676,7 +4706,7 @@ export class TimeSeries<S extends SeriesSchema> {
         const halfWindow = windowMs / 2;
         while (
           windowStart < windowEnd &&
-          anchors[windowStart]! < anchor - halfWindow
+          sorted[windowStart]! < anchor - halfWindow
         ) {
           removeEvent(windowStart);
           windowStart += 1;
@@ -4685,7 +4715,7 @@ export class TimeSeries<S extends SeriesSchema> {
         const upperBound = anchor + halfWindow;
         while (
           windowEnd < this.events.length &&
-          anchors[windowEnd]! < upperBound
+          sorted[windowEnd]! < upperBound
         ) {
           addEvent(windowEnd);
           windowEnd += 1;
@@ -4694,12 +4724,11 @@ export class TimeSeries<S extends SeriesSchema> {
 
       const smoothed = snapshot();
       for (let index = groupStart; index < groupEnd; index++) {
+        const row = byAnchor === undefined ? index : byAnchor[index]!;
         // `missing: 'skip'` — a cell whose own value is missing stays missing
         // (don't fabricate it from the window average). Default `'bridge'` fills.
-        resultValues[index] =
-          skipMissing && sourceValues[index] === undefined
-            ? undefined
-            : smoothed;
+        resultValues[row] =
+          skipMissing && sourceValues[row] === undefined ? undefined : smoothed;
       }
 
       groupStart = groupEnd;
