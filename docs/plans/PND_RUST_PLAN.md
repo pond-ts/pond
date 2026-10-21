@@ -654,7 +654,9 @@ The one result short of a clean win is one-core B: polars is faster
        `rolling_by_column` (histograms), `by_value` and `ValueSeries`,
        `collapse`, `concat`. Split in three: 8i `concat`, `collapse`,
        `pivot_by_group` (done, below); 8i2 `by_column` /
-       `rolling_by_column` (done, below); 8i3 `by_value` and `ValueSeries`.
+       `rolling_by_column` (done, below); 8i3 `by_value` and `ValueSeries`
+       (done, below); 8i4 `ValueSeries` Arrow in and out (pond-ts
+       `fromArrow` / `toArrow`).
      - **8j Grouped series:** `smooth`, `baseline`, `outliers`, `sample`
        and `scan` per group.
 
@@ -2331,6 +2333,62 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | rolling_by_column, ~100 rows, p5 + p95  | 94 ms   | 843 ms  |
     | rolling_by_column, ~1000 rows, p5 + p95 | 188 ms  | 932 ms  |
     | rolling_by_column, 1000 centers         | 22 ms   | 119 ms  |
+
+  **Step 8i3 (done): `by_value` and `ValueSeries` ([PND-RUSTFULL]).**
+  - Calls: `TimeSeries::by_value(axis)` (pond-ts `byValue`) and a new
+    `ValueSeries`: rows keyed by a number that never goes down
+    (distance, strike, frequency) instead of time. `ValueSeries::new`,
+    `axis()` (pond-ts `axisValues` / `axisAt`), `axis_name`, `column`,
+    `schema`, `nearest_index(x)` and `slice_by_value(lo, hi)` (pond-ts
+    `nearestIndex` / `sliceByValue`), JSON rows and columns in and out
+    (`from_json` / `to_json`, `from_columns_json` / `to_columns_json`,
+    each with a `_value` twin for `serde_json`). The schema kind is a
+    new `ColumnKind::Value`; the time-series readers refuse it.
+  - `by_value` checks the axis (no gaps, never down), drops it from the
+    columns and shares every column's memory. As pond-ts, a series with
+    no rows takes any column as the axis (pond-ts checks row by row).
+    The readers reuse the time-series JSON code (now split into
+    `row_cells` / `row_columns` / `columnar_columns`) with an axis
+    reader of their own; `KeyOrder::Reorder` is a stable sort and
+    `Clamp` raises a value to the one above, both treating -0 and 0 as
+    equal, as pond-ts does.
+  - Not ported here: `fromArrow` / `toArrow` (8i4); `toRows` /
+    `toObjects` (read columns by name instead). pond-ts reads only
+    `number` and `string` columns back (a true/false or array column
+    from `byValue` writes out but does not read in); pond-rs matches.
+    Known differences, as for `TimeSeries`: a missing `name` and coerced
+    cells (`"5"` in a number column or the axis) are refused; a column
+    with a gap read from columns is optional.
+  - Parity: a new `valueSeries` fixture section (357 cases): `byValue`
+    on every number column of every input (and a text or array column,
+    the key and an unknown name) plus two sources of its own (signed
+    zeros, repeats, array and true/false columns, float ties), each
+    result written three ways and probed with `nearestIndex` (every
+    value, midpoints, past both ends, NaN, ±infinity) and
+    `sliceByValue` (many ranges, reversed, NaN bounds); then `fromJSON`
+    / `fromColumns` on every result's own output and 40 hand-written
+    payloads (orderings, gaps, bad cells, bad schemas). A unit test
+    pins -0 / 0 under each ordering, which JSON fixtures cannot carry.
+    One property test (nearest row and slices against brute force). Of
+    7 planted bugs, all are caught (the two in -0 / 0 order only by
+    that unit test).
+  - Perf (`examples/perf_value_series.rs` and
+    `bench/value_series_pond_ts.mjs`; checksums agree). Cost, for N
+    rows and C columns: `by_value` is one O(N) check and no copy;
+    `nearest_index` and `slice_by_value` are binary searches, and a
+    slice shares memory (a number column with gaps is scanned once for
+    its no-gaps flag, about a third of the slice time here). JSON is
+    O(N·C). Medians, 4 cores (busy container, ±30%):
+
+    | Call                         | pond-rs | pond-ts |
+    | ---------------------------- | ------- | ------- |
+    | by_value, 1M rows            | 3 ms    | 34 ms   |
+    | nearest_index, 1M probes     | 166 ms  | 357 ms  |
+    | slice_by_value, 100k slices  | 90 ms   | 401 ms  |
+    | to_json rows, 300k rows      | 59 ms   | 178 ms  |
+    | from_json rows, 300k rows    | 100 ms  | 129 ms  |
+    | to_columns_json, 300k rows   | 49 ms   | 81 ms   |
+    | from_columns_json, 300k rows | 70 ms   | 106 ms  |
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

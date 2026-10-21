@@ -16,6 +16,9 @@ pub enum ColumnKind {
     TimeRange,
     /// Key: a labelled `[begin, end)` span, epoch milliseconds.
     Interval,
+    /// Key of a [`ValueSeries`](crate::ValueSeries): a number axis
+    /// (distance, strike, frequency), not a time.
+    Value,
     /// A value column of `f64`.
     Number,
     /// A value column of exact decimals (pond-rs only; pond-ts has none).
@@ -31,13 +34,14 @@ pub enum ColumnKind {
 
 impl ColumnKind {
     /// The name pond-ts uses in a schema (`"time"`, `"timeRange"`,
-    /// `"interval"`, `"number"`, `"string"`, `"boolean"`, `"array"`), and `"decimal"`,
+    /// `"interval"`, `"value"`, `"number"`, `"string"`, `"boolean"`, `"array"`), and `"decimal"`,
     /// which pond-ts does not have.
     pub fn as_str(self) -> &'static str {
         match self {
             ColumnKind::Time => "time",
             ColumnKind::TimeRange => "timeRange",
             ColumnKind::Interval => "interval",
+            ColumnKind::Value => "value",
             ColumnKind::Number => "number",
             ColumnKind::Decimal => "decimal",
             ColumnKind::String => "string",

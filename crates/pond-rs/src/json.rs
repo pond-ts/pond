@@ -7,7 +7,9 @@ use crate::json_text::{Json, NULL};
 
 use crate::column::{ArrayColumn, BooleanColumn, ColumnData, Float64Column, Scalar, StringColumn};
 use crate::error::{PondError, Result};
-use crate::series::{Column, ColumnKind, IntervalKeys, Key, Labels, TimeRangeKeys, TimeSeries};
+use crate::series::{
+    Column, ColumnDef, ColumnKind, IntervalKeys, Key, Labels, TimeRangeKeys, TimeSeries,
+};
 
 /// What [`TimeSeries::from_json`] does when a row's key sorts before the
 /// row above it, as pond-ts `fromJSON({ ordering })`.
@@ -163,14 +165,14 @@ impl TimeSeries {
     /// it with [`TimeSeries::map_decimals`] first, or write Arrow
     /// ([`TimeSeries::write_ipc`]), which keeps it exact.
     pub fn to_json(&self, format: RowFormat) -> Result<String> {
-        refuse_decimals(TO, self)?;
+        refuse_decimals(TO, self.columns())?;
         // Written straight to text: building a `Value` tree first cost
         // several times as much (a map per object row).
         let mut out = Vec::with_capacity(64 + self.len() * 16 * (1 + self.columns().len()));
         out.extend_from_slice(b"{\"name\":");
         push_text(&mut out, self.name());
         out.extend_from_slice(b",\"schema\":");
-        push_schema(&mut out, self);
+        push_schema(&mut out, &self.schema());
         out.extend_from_slice(b",\"rows\":[");
         // Each name once, escaped, with its colon: `"cpu":`.
         let field = |name: &str| {
@@ -290,18 +292,124 @@ pub(crate) fn read_rows(
             ),
         ));
     }
+    if key_kind == ColumnKind::Value {
+        return Err(invalid(
+            call,
+            format!("the key '{key_name}' is a 'value' axis: read it with ValueSeries::from_json"),
+        ));
+    }
     let read_time = |v: &Json, row: usize| read_time(call, v, row, zone);
 
+    let cells = row_cells(call, schema, rows, shape)?;
     let n = rows.len();
     let mut begin = Vec::with_capacity(n);
     let mut end = Vec::with_capacity(n);
     let mut labels: Vec<LabelCell> = Vec::new();
-    let mut cells: Vec<Vec<&Json>> = vec![Vec::with_capacity(n); schema.len() - 1];
+    for (i, &key) in cells[0].iter().enumerate() {
+        match key_kind {
+            ColumnKind::Time => {
+                let t = read_time(key, i)?;
+                begin.push(t);
+            }
+            ColumnKind::TimeRange => {
+                let (b, e) = read_span(call, key, i, false)?;
+                begin.push(read_time(b, i)?);
+                end.push(read_time(e, i)?);
+            }
+            _ => {
+                let (b, e) = read_span(call, key, i, true)?;
+                let label = match key {
+                    Json::Array(a) => &a[0],
+                    _ => key.get("value").unwrap_or(NULL),
+                };
+                labels.push(read_label(call, label, i, labels.first())?);
+                begin.push(read_time(b, i)?);
+                end.push(read_time(e, i)?);
+            }
+        }
+        if let Some(&b) = end.last()
+            && b < *begin.last().expect("pushed with end")
+        {
+            return Err(invalid(
+                call,
+                format!(
+                    "the key at row {i} ends ({b}) before it starts ({})",
+                    begin[i]
+                ),
+            ));
+        }
+    }
+
+    // Rows in the order the series will hold them.
+    let order: Option<Vec<usize>> = match order {
+        KeyOrder::Reorder => {
+            let mut order: Vec<usize> = (0..n).collect();
+            order.sort_by_key(|&i| (begin[i], end.get(i).copied().unwrap_or(0)));
+            Some(order)
+        }
+        KeyOrder::Clamp => {
+            for i in 1..n {
+                begin[i] = begin[i].max(begin[i - 1]);
+            }
+            None
+        }
+        KeyOrder::Strict => None,
+    };
+    let pick = |v: &mut Vec<i64>| {
+        if let Some(order) = order.as_ref().filter(|_| !v.is_empty()) {
+            *v = order.iter().map(|&i| v[i]).collect();
+        }
+    };
+    pick(&mut begin);
+    pick(&mut end);
+    let row_at = |r: usize| order.as_ref().map_or(r, |o| o[r]);
+
+    let columns = row_columns(call, &schema[1..], &cells[1..], n, &row_at)?;
+
+    let key = match key_kind {
+        ColumnKind::Time => Key::Time(begin),
+        ColumnKind::TimeRange => Key::TimeRange(TimeRangeKeys { begin, end }),
+        _ => {
+            let label = if matches!(labels.first(), Some(LabelCell::Number(_))) {
+                Labels::Number(
+                    (0..n)
+                        .map(|r| match labels[row_at(r)] {
+                            LabelCell::Number(v) => v,
+                            LabelCell::String(_) => unreachable!("one kind"),
+                        })
+                        .collect(),
+                )
+            } else {
+                Labels::String(StringColumn::from_options((0..n).map(|r| {
+                    match &labels[row_at(r)] {
+                        LabelCell::String(s) => Some(*s),
+                        LabelCell::Number(_) => unreachable!("one kind"),
+                    }
+                })))
+            };
+            Key::Interval(IntervalKeys { label, begin, end })
+        }
+    };
+    TimeSeries::with_key(call, name.to_string(), key_name.clone(), key, columns)
+}
+
+/// Each row's cells, column by column (`cells[c][i]`, key first). A row is
+/// an array in schema order or an object keyed by column name; a point is
+/// an object with the key under `ts`. A name an object row leaves out is a
+/// `null`.
+pub(crate) fn row_cells<'b, 'a>(
+    call: &'static str,
+    schema: &[(String, ColumnKind, bool)],
+    rows: &'b [Json<'a>],
+    shape: RowShape,
+) -> Result<Vec<Vec<&'b Json<'a>>>> {
+    let n = rows.len();
+    let mut cells: Vec<Vec<&Json>> = vec![Vec::with_capacity(n); schema.len()];
     // Where each name in an object row goes. Points hold the time under
     // "ts".
     let names: Vec<&str> = std::iter::once(match shape {
         RowShape::Points => "ts",
-        RowShape::Rows => key_name.as_str(),
+        RowShape::Rows => schema[0].0.as_str(),
     })
     .chain(schema[1..].iter().map(|c| c.0.as_str()))
     .collect();
@@ -352,70 +460,26 @@ pub(crate) fn read_rows(
                 ));
             }
         }
-        let key = slots[0];
-        match key_kind {
-            ColumnKind::Time => {
-                let t = read_time(key, i)?;
-                begin.push(t);
-            }
-            ColumnKind::TimeRange => {
-                let (b, e) = read_span(call, key, i, false)?;
-                begin.push(read_time(b, i)?);
-                end.push(read_time(e, i)?);
-            }
-            _ => {
-                let (b, e) = read_span(call, key, i, true)?;
-                let label = match key {
-                    Json::Array(a) => &a[0],
-                    _ => key.get("value").unwrap_or(NULL),
-                };
-                labels.push(read_label(call, label, i, labels.first())?);
-                begin.push(read_time(b, i)?);
-                end.push(read_time(e, i)?);
-            }
-        }
-        if let Some(&b) = end.last()
-            && b < *begin.last().expect("pushed with end")
-        {
-            return Err(invalid(
-                call,
-                format!(
-                    "the key at row {i} ends ({b}) before it starts ({})",
-                    begin[i]
-                ),
-            ));
-        }
-        for (cells, v) in cells.iter_mut().zip(&slots[1..]) {
+        for (cells, v) in cells.iter_mut().zip(&slots) {
             cells.push(v);
         }
     }
+    Ok(cells)
+}
 
-    // Rows in the order the series will hold them.
-    let order: Option<Vec<usize>> = match order {
-        KeyOrder::Reorder => {
-            let mut order: Vec<usize> = (0..n).collect();
-            order.sort_by_key(|&i| (begin[i], end.get(i).copied().unwrap_or(0)));
-            Some(order)
-        }
-        KeyOrder::Clamp => {
-            for i in 1..n {
-                begin[i] = begin[i].max(begin[i - 1]);
-            }
-            None
-        }
-        KeyOrder::Strict => None,
-    };
-    let pick = |v: &mut Vec<i64>| {
-        if let Some(order) = order.as_ref().filter(|_| !v.is_empty()) {
-            *v = order.iter().map(|&i| v[i]).collect();
-        }
-    };
-    pick(&mut begin);
-    pick(&mut end);
-    let row_at = |r: usize| order.as_ref().map_or(r, |o| o[r]);
-
-    let mut columns = Vec::with_capacity(schema.len() - 1);
-    for (c, (col_name, kind, required)) in schema.iter().skip(1).enumerate() {
+/// The value columns of row-shaped JSON, as [`row_cells`] splits it:
+/// `schema` and `cells` without the key. Row `r` of the result is row
+/// `row_at(r)` of the input. A gap in a required column is refused when
+/// the series is built.
+pub(crate) fn row_columns(
+    call: &'static str,
+    schema: &[(String, ColumnKind, bool)],
+    cells: &[Vec<&Json>],
+    n: usize,
+    row_at: &dyn Fn(usize) -> usize,
+) -> Result<Vec<Column>> {
+    let mut columns = Vec::with_capacity(schema.len());
+    for (c, (col_name, kind, required)) in schema.iter().enumerate() {
         let cell = |r: usize| cells[c][row_at(r)];
         let wrong = |r: usize, want: &str| {
             invalid(
@@ -471,38 +535,13 @@ pub(crate) fn read_rows(
         };
         columns.push(Column::from_data(col_name.clone(), data, *required));
     }
-
-    let key = match key_kind {
-        ColumnKind::Time => Key::Time(begin),
-        ColumnKind::TimeRange => Key::TimeRange(TimeRangeKeys { begin, end }),
-        _ => {
-            let label = if matches!(labels.first(), Some(LabelCell::Number(_))) {
-                Labels::Number(
-                    (0..n)
-                        .map(|r| match labels[row_at(r)] {
-                            LabelCell::Number(v) => v,
-                            LabelCell::String(_) => unreachable!("one kind"),
-                        })
-                        .collect(),
-                )
-            } else {
-                Labels::String(StringColumn::from_options((0..n).map(|r| {
-                    match &labels[row_at(r)] {
-                        LabelCell::String(s) => Some(*s),
-                        LabelCell::Number(_) => unreachable!("one kind"),
-                    }
-                })))
-            };
-            Key::Interval(IntervalKeys { label, begin, end })
-        }
-    };
-    TimeSeries::with_key(call, name.to_string(), key_name.clone(), key, columns)
+    Ok(columns)
 }
 
 /// The schema as pond-ts writes it.
-pub(crate) fn push_schema(out: &mut Vec<u8>, series: &TimeSeries) {
+pub(crate) fn push_schema(out: &mut Vec<u8>, schema: &[ColumnDef]) {
     out.push(b'[');
-    for (i, def) in series.schema().iter().enumerate() {
+    for (i, def) in schema.iter().enumerate() {
         if i > 0 {
             out.push(b',');
         }
@@ -559,12 +598,8 @@ pub(crate) fn push_array(out: &mut Vec<u8>, cell: &[Scalar]) {
 }
 
 /// pond-ts has no kind for exact decimals.
-pub(crate) fn refuse_decimals(call: &'static str, series: &TimeSeries) -> Result<()> {
-    match series
-        .columns()
-        .iter()
-        .find(|c| c.kind() == ColumnKind::Decimal)
-    {
+pub(crate) fn refuse_decimals(call: &'static str, columns: &[Column]) -> Result<()> {
+    match columns.iter().find(|c| c.kind() == ColumnKind::Decimal) {
         Some(c) => Err(PondError::Unsupported {
             call,
             message: format!(
@@ -806,9 +841,10 @@ pub(crate) fn read_schema(
                 (0, "time") => ColumnKind::Time,
                 (0, "timeRange") => ColumnKind::TimeRange,
                 (0, "interval") => ColumnKind::Interval,
+                (0, "value") => ColumnKind::Value,
                 (0, other) => {
                     return Err(invalid(call, format!(
-                        "the first schema column is the key, and must be 'time', 'timeRange' or 'interval'; got '{other}'"
+                        "the first schema column is the key, and must be 'time', 'timeRange', 'interval' or (for a ValueSeries) 'value'; got '{other}'"
                     )));
                 }
                 (_, "number") => ColumnKind::Number,

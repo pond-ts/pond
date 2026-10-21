@@ -469,16 +469,7 @@ fn group_name(data: &ColumnData, i: usize) -> String {
 }
 
 fn kind_name(kind: ColumnKind) -> &'static str {
-    match kind {
-        ColumnKind::Number => "number",
-        ColumnKind::Decimal => "decimal",
-        ColumnKind::String => "string",
-        ColumnKind::Boolean => "boolean",
-        ColumnKind::Array => "array",
-        ColumnKind::Time => "time",
-        ColumnKind::TimeRange => "timeRange",
-        ColumnKind::Interval => "interval",
-    }
+    kind.as_str()
 }
 
 #[cfg(test)]

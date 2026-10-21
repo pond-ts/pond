@@ -12,7 +12,7 @@ use crate::json::{
     KeyOrder, LabelCell, RowShape, invalid, parse, push_cell, push_int, push_number, push_schema,
     push_text, read_label, read_name, read_rows, read_schema, read_time, refuse_decimals,
 };
-use crate::json_text::Json;
+use crate::json_text::{Json, Obj};
 use crate::series::{
     Column, ColumnDef, ColumnKind, IntervalKeys, Key, Labels, TimeRangeKeys, TimeSeries,
 };
@@ -37,6 +37,14 @@ fn read_columns(value: &Json, order: KeyOrder) -> Result<TimeSeries> {
             format!(
                 "column '{col}' is '{}'; this format takes 'number' and 'string' value columns, as in pond-ts",
                 kind.as_str()
+            ),
+        ));
+    }
+    if key_kind == ColumnKind::Value {
+        return Err(invalid(
+            call,
+            format!(
+                "the key '{key_name}' is a 'value' axis: read it with ValueSeries::from_columns_json"
             ),
         ));
     }
@@ -137,10 +145,61 @@ fn read_columns(value: &Json, order: KeyOrder) -> Result<TimeSeries> {
         }
     }
 
-    let mut out = Vec::with_capacity(schema.len() - 1);
-    for (col_name, kind, required) in &schema[1..] {
-        let cells = column(col_name)?;
-        same_length(col_name, cells)?;
+    let out = columnar_columns(call, key_name, &schema[1..], columns, n, &row_at)?;
+
+    let key = match key_kind {
+        ColumnKind::Time => Key::Time(begin),
+        ColumnKind::TimeRange => Key::TimeRange(TimeRangeKeys { begin, end }),
+        _ => {
+            let label = match labels.first() {
+                Some(LabelCell::Number(_)) => Labels::Number(
+                    (0..n)
+                        .map(|r| match labels[row_at(r)] {
+                            LabelCell::Number(v) => v,
+                            LabelCell::String(_) => unreachable!("one kind"),
+                        })
+                        .collect(),
+                ),
+                _ => Labels::String(StringColumn::from_options((0..n).map(|r| {
+                    match &labels[row_at(r)] {
+                        LabelCell::String(s) => Some(*s),
+                        LabelCell::Number(_) => unreachable!("one kind"),
+                    }
+                }))),
+            };
+            Key::Interval(IntervalKeys { label, begin, end })
+        }
+    };
+    TimeSeries::with_key(call, name.to_string(), key_name.clone(), key, out)
+}
+
+/// The value columns of one-array-per-column JSON (`schema` without the
+/// key; `n` rows, as the key column `key_name` has). Row `r` of the result
+/// is row `row_at(r)` of the input. As pond-ts, `required` is not checked:
+/// a column with a gap is optional.
+pub(crate) fn columnar_columns(
+    call: &'static str,
+    key_name: &str,
+    schema: &[(String, ColumnKind, bool)],
+    columns: &Obj,
+    n: usize,
+    row_at: &dyn Fn(usize) -> usize,
+) -> Result<Vec<Column>> {
+    let mut out = Vec::with_capacity(schema.len());
+    for (col_name, kind, required) in schema {
+        let cells = columns
+            .get(col_name)
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| invalid(call, format!("missing column '{col_name}' (an array)")))?;
+        if cells.len() != n {
+            return Err(invalid(
+                call,
+                format!(
+                    "column '{col_name}' has {} values; the key column '{key_name}' has {n}",
+                    cells.len()
+                ),
+            ));
+        }
         let wrong = |r: usize, want: &str| {
             invalid(
                 call,
@@ -178,31 +237,7 @@ fn read_columns(value: &Json, order: KeyOrder) -> Result<TimeSeries> {
         let required = *required && data.missing_count() == 0;
         out.push(Column::from_data(col_name.clone(), data, required));
     }
-
-    let key = match key_kind {
-        ColumnKind::Time => Key::Time(begin),
-        ColumnKind::TimeRange => Key::TimeRange(TimeRangeKeys { begin, end }),
-        _ => {
-            let label = match labels.first() {
-                Some(LabelCell::Number(_)) => Labels::Number(
-                    (0..n)
-                        .map(|r| match labels[row_at(r)] {
-                            LabelCell::Number(v) => v,
-                            LabelCell::String(_) => unreachable!("one kind"),
-                        })
-                        .collect(),
-                ),
-                _ => Labels::String(StringColumn::from_options((0..n).map(|r| {
-                    match &labels[row_at(r)] {
-                        LabelCell::String(s) => Some(*s),
-                        LabelCell::Number(_) => unreachable!("one kind"),
-                    }
-                }))),
-            };
-            Key::Interval(IntervalKeys { label, begin, end })
-        }
-    };
-    TimeSeries::with_key(call, name.to_string(), key_name.clone(), key, out)
+    Ok(out)
 }
 
 /// [`TimeSeries::from_points_json`] on parsed JSON.
@@ -393,7 +428,7 @@ impl TimeSeries {
     /// pond-ts's text has another order; the JSON means the same.
     pub fn to_columns_json(&self) -> Result<String> {
         let call = TO_COLUMNS;
-        refuse_decimals(call, self)?;
+        refuse_decimals(call, self.columns())?;
         check_flat_key_names(
             call,
             self.key_name(),
@@ -405,7 +440,7 @@ impl TimeSeries {
         out.extend_from_slice(b"{\"name\":");
         push_text(&mut out, self.name());
         out.extend_from_slice(b",\"schema\":");
-        push_schema(&mut out, self);
+        push_schema(&mut out, &self.schema());
         out.extend_from_slice(b",\"columns\":{");
         let (end_name, label_name) = flat_key_names(self.key_name(), self.key().kind());
         let open = |out: &mut Vec<u8>, name: &str, first: bool| {
@@ -527,7 +562,7 @@ impl TimeSeries {
     /// whole numbers first.
     pub fn to_points_json(&self) -> Result<String> {
         let call = TO_POINTS;
-        refuse_decimals(call, self)?;
+        refuse_decimals(call, self.columns())?;
         if self.columns().iter().any(|c| c.name() == "ts") {
             return Err(invalid(
                 call,

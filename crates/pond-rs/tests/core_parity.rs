@@ -17,7 +17,7 @@ use pond_rs::{
     Agg, Align, AlignMethod, Alignment, ArrayOptions, ArrowKey, At, Bins, Column, ColumnData,
     ColumnKind, Fill, FillLimits, FirstRow, IntervalKeys, Join, JoinType, JsonOptions, Keep, Key,
     KeyOrder, Labels, Materialize, OnConflict, Pick, Reducer, Rolling, RollingOver, RowFormat,
-    Scalar, Sequence, TimeRangeKeys, TimeSeries,
+    Scalar, Sequence, TimeRangeKeys, TimeSeries, ValueSeries,
 };
 use serde_json::{Value, json};
 
@@ -1778,6 +1778,186 @@ fn columns_and_points_json_match_pond_ts() {
         + cases.from_columns.len()
         + cases.from_points.len();
     report("core columns / points JSON parity", total, total, &failures);
+}
+
+/// `by_value` gives what pond-ts `byValue` gives (on every number column of
+/// every input, and of the fixture's own `sources`), refuses what it
+/// refuses, writes it as `toJSON` / `toColumns` write it, and finds the
+/// rows `nearestIndex` / `sliceByValue` find. `ValueSeries::from_json` /
+/// `from_columns_json` read what pond-ts `fromJSON` / `fromColumns` read
+/// (each `byValue` result's own output, plus hand-written payloads) and
+/// refuse what they refuse.
+#[test]
+fn value_series_match_pond_ts() {
+    let fixture = load_core_fixture();
+    let vs = &fixture.value_series;
+    let mut failures = Vec::new();
+    let mut check = |label: String, outcome: Result<(), String>| {
+        if let Err(why) = outcome {
+            failures.push(format!("{label}: {why}"));
+        }
+    };
+    let same_wire =
+        |expected: &Option<Value>, got: pond_rs::Result<String>| -> Result<(), String> {
+            let expected = expected.as_ref().ok_or("no wire form in the fixture")?;
+            let got: Value = serde_json::from_str(&got.map_err(|e| e.to_string())?).unwrap();
+            if same_json(expected, &got) {
+                Ok(())
+            } else {
+                Err(format!("expected {expected}, got {got}"))
+            }
+        };
+    for case in &vs.by_value {
+        let label = format!("byValue {}.{}", case.input, case.axis);
+        let source = fixture
+            .inputs
+            .get(&case.input)
+            .or_else(|| vs.sources.get(&case.input));
+        let series = to_series(source.expect("a known input"));
+        let got = series.by_value(&case.axis);
+        let (expected, got) = match (&case.expected, got) {
+            (Some(e), Ok(g)) => (e, g),
+            (Some(_), Err(e)) => {
+                check(
+                    label,
+                    Err(format!("pond-ts succeeds, pond-rs errored: {e}")),
+                );
+                continue;
+            }
+            (None, Ok(_)) => {
+                check(label, Err("pond-ts throws, pond-rs succeeded".into()));
+                continue;
+            }
+            (None, Err(_)) => continue,
+        };
+        check(
+            label.clone(),
+            compare_series(expected, &value_json(&got), None),
+        );
+        check(
+            format!("{label} toJSON"),
+            same_wire(&case.to_json, got.to_json(RowFormat::Array)),
+        );
+        check(
+            format!("{label} toJSON object"),
+            same_wire(&case.to_objects, got.to_json(RowFormat::Object)),
+        );
+        check(
+            format!("{label} toColumns"),
+            same_wire(&case.to_columns, got.to_columns_json()),
+        );
+        for (probe, want) in &case.nearest {
+            let p = cell_number(probe).expect("a number");
+            let have = got.nearest_index(p);
+            if have != *want {
+                check(
+                    format!("{label} nearest({p})"),
+                    Err(format!("expected {want:?}, got {have:?}")),
+                );
+            }
+        }
+        for (lo, hi, want) in &case.slices {
+            let (lo, hi) = (cell_number(lo).unwrap(), cell_number(hi).unwrap());
+            check(
+                format!("{label} slice({lo}, {hi})"),
+                compare_series(want, &value_json(&got.slice_by_value(lo, hi)), None),
+            );
+        }
+    }
+
+    let order_of = |options: &Option<Value>| match options
+        .as_ref()
+        .and_then(|o| o.get("ordering"))
+        .and_then(Value::as_str)
+    {
+        None | Some("strict") => KeyOrder::Strict,
+        Some("reorder") => KeyOrder::Reorder,
+        Some("clamp") => KeyOrder::Clamp,
+        Some(other) => panic!("unknown ordering {other}"),
+    };
+    let judge = |expected: &Option<Value>, got: &pond_rs::Result<ValueSeries>| match (expected, got)
+    {
+        (Some(e), Ok(g)) => {
+            let e: SeriesJson = serde_json::from_value(e.clone()).expect("a series");
+            compare_series(&e, &value_json(g), None)
+        }
+        (Some(_), Err(e)) => Err(format!("pond-ts reads it, pond-rs errored: {e}")),
+        (None, Ok(_)) => Err("pond-ts throws, pond-rs read it".into()),
+        (None, Err(_)) => Ok(()),
+    };
+    for case in &vs.from_json {
+        let order = order_of(&case.options);
+        let got = ValueSeries::from_json(&case.payload.to_string(), order);
+        let same_door = ValueSeries::from_json_value(&case.payload, order);
+        let label = format!("ValueSeries.fromJSON {} {:?}", case.id, order);
+        if got.as_ref().ok() != same_door.as_ref().ok() {
+            check(
+                label.clone(),
+                Err("the text and value doors disagree".into()),
+            );
+        }
+        check(label, judge(&case.expected, &got));
+    }
+    for case in &vs.from_columns {
+        let order = order_of(&case.options);
+        let got = ValueSeries::from_columns_json(&case.payload.to_string(), order);
+        let same_door = ValueSeries::from_columns_value(&case.payload, order);
+        let label = format!("ValueSeries.fromColumns {} {:?}", case.id, order);
+        if got.as_ref().ok() != same_door.as_ref().ok() {
+            check(
+                label.clone(),
+                Err("the text and value doors disagree".into()),
+            );
+        }
+        // pond-ts keeps a column with gaps marked required here; pond-rs
+        // marks it optional (a known difference, as for TimeSeries).
+        let expected = case.expected.clone().map(|mut v| {
+            let rows = v["rows"].clone();
+            for (c, def) in v["schema"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .enumerate()
+                .skip(1)
+            {
+                let gap = rows.as_array().unwrap().iter().any(|r| r[c].is_null());
+                if def.get("required").is_none() && gap {
+                    def["required"] = json!(false);
+                }
+            }
+            v
+        });
+        check(label, judge(&expected, &got));
+    }
+    let total = vs.by_value.len() + vs.from_json.len() + vs.from_columns.len();
+    report("core ValueSeries parity", total, total, &failures);
+}
+
+/// A value series in pond-ts `toJSON()` form, -0 tagged.
+fn value_json(series: &ValueSeries) -> SeriesJson {
+    let schema = series
+        .schema()
+        .into_iter()
+        .enumerate()
+        .map(|(c, def)| ColumnDef {
+            name: def.name,
+            kind: def.kind.as_str().to_string(),
+            required: (c > 0 && !def.required).then_some(false),
+        })
+        .collect();
+    let axis = ColumnData::from(pond_rs::Float64Column::from_values(series.axis().to_vec()));
+    let rows = (0..series.len())
+        .map(|i| {
+            std::iter::once(encode(&axis, i))
+                .chain(series.columns().iter().map(|c| encode(c.data(), i)))
+                .collect()
+        })
+        .collect();
+    SeriesJson {
+        name: series.name().to_string(),
+        schema,
+        rows,
+    }
 }
 
 fn column_kind(kind: &str) -> ColumnKind {
