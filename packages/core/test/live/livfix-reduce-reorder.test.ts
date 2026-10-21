@@ -62,6 +62,20 @@ describe('[PND-LIVFIX] LiveReduce windowed reducers on reorder + retention', () 
     expect(r.value()).toEqual({ lo: 30, hi: 50 });
   });
 
+  it('difference tracks a sorted-prefix eviction ([PND-ROLLDIFF])', () => {
+    // `difference` uses the min/max deques on arrival-order sources, so it
+    // must swap to the any-order sorted array here exactly as min/max do.
+    const live = reorderSource({ maxEvents: 3 });
+    const r = live.reduce({ d: { from: 'value', using: 'difference' } });
+    live.push([5000, 50]);
+    live.push([1000, 5]); // late: will be the sorted prefix
+    live.push([4000, 40]);
+    live.push([3000, 30]); // evicts 1000 (v=5), the second arrival
+    expect(r.value()).toEqual({ d: 20 });
+    live.push([2000, 1]); // the new sorted prefix → evicted immediately
+    expect(r.value()).toEqual({ d: 20 });
+  });
+
   it('first/last (arrival order) never report an evicted value', () => {
     const live = reorderSource({ maxEvents: 2 });
     const r = live.reduce({

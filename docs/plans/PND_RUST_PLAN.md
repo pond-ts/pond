@@ -1945,8 +1945,10 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
 
     Rolling over a 1-day window (86,400 rows) costs pond-rs the same as
     5 minutes (25 ms for `difference`); pond-ts's rolling `difference`
-    takes 376 ms at 5 minutes, 4.2 s at 1 hour and 96 s at 1 day
-    ([PND-ROLLDIFF]). pond-rs's rolling `median` and percentiles keep the
+    took 376 ms at 5 minutes, 4.2 s at 1 hour and 96 s at 1 day as
+    measured here ([PND-ROLLDIFF]; since fixed in pond-ts on the same two
+    deques, ~250 ms at every window size; the fix's own run of the old code
+    measured 11.4 s at 1 day, see `PND_COLUMNAR_PLAN.md`). pond-rs's rolling `median` and percentiles keep the
     sorted window, as pond-ts's do; a faster structure for those is not
     part of this step.
 
