@@ -10,7 +10,7 @@ use arrow_array::UInt32Array;
 use crate::column::ColumnData;
 use crate::error::{PondError, Result};
 use crate::reducer::{Agg, check_source_kind};
-use crate::rolling::{Alignment, Frame, Span};
+use crate::rolling::{Alignment, Frame, Span, check_magnitude_in};
 use crate::series::{Column, Key, TimeSeries};
 
 /// How [`TimeSeries::by_column`] cuts a number column into bins (pond-ts
@@ -382,6 +382,12 @@ impl TimeSeries {
             Some(centers) => windows.extend(centers.iter().map(|&c| place(c))),
             None => windows.extend(axis.iter().map(|&c| place(c))),
         }
+        // Rows past the last window never enter one, so their values do not
+        // matter (pond-ts never reads them either).
+        rows.truncate(windows.last().map_or(0, |w| w.end));
+        for &(source, agg) in &plan {
+            check_magnitude_in(CALL, &self.columns()[source], agg.reducer, Some(&rows))?;
+        }
         let (holder, plan) = self.holder(&plan, &rows);
         let rolled = holder.roll_columns(CALL, &windows_frame(&windows), &plan)?;
         let columns = if centers.is_none() && rows.len() < values.len() {
@@ -569,4 +575,102 @@ fn width_bin(v: f64, width: f64, origin: f64) -> f64 {
         bin += 1.0;
     }
     bin
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Reducer;
+
+    fn track() -> TimeSeries {
+        TimeSeries::new(
+            "t",
+            vec![0, 1000, 2000, 3000],
+            vec![
+                Column::required("d", vec![0.0, 1.0, 2.0, 3.0]),
+                Column::optional("v", [Some(1.0), Some(2e300), None, Some(4.0)]),
+            ],
+        )
+        .unwrap()
+    }
+
+    /// The refusals the parity fixture cannot write (non-finite numbers
+    /// are not JSON) and the ones it leaves out.
+    #[test]
+    fn refuses_what_pond_ts_refuses() {
+        let s = track();
+        let count = [Agg::new("n", "d", Reducer::Count)];
+        for bins in [
+            Bins::width(f64::INFINITY),
+            Bins::width(f64::NAN),
+            Bins::width_from(1.0, f64::NAN),
+            Bins::width_from(1.0, f64::NEG_INFINITY),
+            Bins::edges([0.0, f64::INFINITY]),
+            Bins::edges([f64::NAN, 1.0]),
+            Bins::edges_upper_inclusive([0.0, 0.0]),
+        ] {
+            assert!(s.by_column("d", &bins, &count).is_err(), "{bins:?}");
+        }
+        for radius in [f64::NAN, f64::INFINITY] {
+            assert!(s.rolling_by_column("d", radius, &count).is_err());
+        }
+        for centers in [[0.0, f64::NAN], [f64::NEG_INFINITY, 0.0]] {
+            assert!(s.rolling_by_column_at("d", 1.0, &centers, &count).is_err());
+        }
+        let twice = [
+            Agg::new("n", "d", Reducer::Count),
+            Agg::new("n", "v", Reducer::Count),
+        ];
+        assert!(matches!(
+            s.by_column("d", &Bins::width(1.0), &twice),
+            Err(PondError::DuplicateOutput { .. })
+        ));
+        assert!(matches!(
+            s.rolling_by_column("d", 1.0, &twice),
+            Err(PondError::DuplicateOutput { .. })
+        ));
+        let end = [Agg::new("end", "d", Reducer::Count)];
+        assert!(s.by_column("d", &Bins::width(1.0), &end).is_err());
+        // `start` / `end` are free names when nothing else uses them.
+        assert!(s.rolling_by_column("d", 1.0, &end).is_ok());
+    }
+
+    #[test]
+    fn table_reads_columns_by_name() {
+        let s = track();
+        let t = s
+            .by_column(
+                "d",
+                &Bins::width(2.0),
+                &[Agg::new("n", "v", Reducer::Count)],
+            )
+            .unwrap();
+        assert_eq!((t.len(), t.is_empty()), (2, false));
+        let names: Vec<&str> = t.columns().iter().map(|c| c.name()).collect();
+        assert_eq!(names, ["start", "end", "n"]);
+        assert_eq!(
+            t.column("n").unwrap().numbers().unwrap().values(),
+            &[2.0, 1.0]
+        );
+        assert!(matches!(
+            t.column("nope"),
+            Err(PondError::UnknownColumn { .. })
+        ));
+    }
+
+    /// A value too large for a rolling sum is refused with its row in the
+    /// series, and only when a window reads it.
+    #[test]
+    fn huge_values_refused_only_when_read() {
+        let s = track();
+        let sum = [Agg::new("s", "v", Reducer::Sum)];
+        let err = s.rolling_by_column("d", 0.5, &sum).unwrap_err().to_string();
+        assert!(err.contains("row 1"), "{err}");
+        // Windows around 3 only: rows 0 to 1 still enter (and leave) on the
+        // way, so the value is read.
+        assert!(s.rolling_by_column_at("d", 0.5, &[3.0], &sum).is_err());
+        // A window around 0 only never reaches row 1.
+        let t = s.rolling_by_column_at("d", 0.5, &[0.0], &sum).unwrap();
+        assert_eq!(t.column("s").unwrap().numbers().unwrap().values(), &[1.0]);
+    }
 }

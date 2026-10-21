@@ -956,8 +956,6 @@ fn to_series(json: &SeriesJson) -> TimeSeries {
     }
 }
 
-/// pond-ts mapping object: `{ out: 'avg' }` (shorthand) or
-/// `{ out: { from, using } }`, in key order.
 /// `byColumn` / `rollingByColumn`, as records.
 fn value_axis(input: &TimeSeries, case: &CoreCase) -> pond_rs::Result<Outcome> {
     let column = case.args[0].as_str().expect("column name");
@@ -1001,6 +999,8 @@ fn value_axis(input: &TimeSeries, case: &CoreCase) -> pond_rs::Result<Outcome> {
     ))
 }
 
+/// pond-ts mapping object: `{ out: 'avg' }` (shorthand) or
+/// `{ out: { from, using } }`, in key order.
 fn mapping(json: &Value) -> pond_rs::Result<Vec<Agg>> {
     json.as_object()
         .expect("mapping is an object")

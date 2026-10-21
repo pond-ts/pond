@@ -2302,9 +2302,15 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     inclusive modes with values outside them, array reducers, empty
     input, every reducer on numbers and the ones text takes, windows
     per row and at centers (none in range, repeated, far apart), the
-    enter-before-leave order, and every error. Two property tests (bins
-    and windows against direct filtering). Of 11 planted bugs, all are
-    caught.
+    enter-before-leave order, and the errors JSON can write; unit tests
+    cover the rest (non-finite widths, origins, edges, radii and
+    centers; repeated outputs). Two property tests (bins and windows
+    against direct filtering). Of 11 planted bugs, all are caught.
+  - Review (#803): a value too large for a rolling sum is now refused
+    with its row in the series, and only when a window reads it
+    (`rolling_by_column_at` once refused rows past its last window).
+    Left for later: `Table` has no way out yet (Arrow, JSON, rows); add
+    one when a caller needs it.
   - Perf (`examples/perf_value_axis.rs` and
     `bench/value_axis_pond_ts.mjs`, 1M rows; checksums agree). Cost, for
     N rows, B bins, W rows a window and C centers: `by_column` is O(N +

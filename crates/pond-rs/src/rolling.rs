@@ -1001,6 +1001,17 @@ fn grid_windows(
 
 /// Refuse values pond-ts would route to its big-integer lanes.
 pub(crate) fn check_magnitude(call: &'static str, column: &Column, reducer: Reducer) -> Result<()> {
+    check_magnitude_in(call, column, reducer, None)
+}
+
+/// [`check_magnitude`] over only `rows` of the column (all rows when
+/// `None`), naming the row as numbered in the column.
+pub(crate) fn check_magnitude_in(
+    call: &'static str,
+    column: &Column,
+    reducer: Reducer,
+    rows: Option<&[u32]>,
+) -> Result<()> {
     let split = match reducer {
         Reducer::Sum | Reducer::Avg => SUM_SPLIT,
         Reducer::Stdev => STDEV_SPLIT,
@@ -1011,10 +1022,12 @@ pub(crate) fn check_magnitude(call: &'static str, column: &Column, reducer: Redu
     let Ok(values) = column.numbers().map(|c| c.values()) else {
         return Ok(());
     };
-    match values
-        .iter()
-        .position(|v| v.is_finite() && v.abs() >= split)
-    {
+    let too_big = |&row: &usize| values[row].is_finite() && values[row].abs() >= split;
+    let found = match rows {
+        None => (0..values.len()).find(too_big),
+        Some(rows) => rows.iter().map(|&r| r as usize).find(too_big),
+    };
+    match found {
         None => Ok(()),
         Some(row) => Err(PondError::Unsupported {
             call,
