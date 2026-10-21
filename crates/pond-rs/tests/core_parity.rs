@@ -1933,6 +1933,75 @@ fn value_series_match_pond_ts() {
     report("core ValueSeries parity", total, total, &failures);
 }
 
+/// `ValueSeries::from_ipc_bytes` reads the Arrow files pond-ts
+/// `ValueSeries.fromArrow` reads (integer, float, dictionary, empty and
+/// two-batch tables) to the same series, and refuses what it refuses.
+/// pond-rs marks a nullable value field optional where pond-ts leaves the
+/// schema bare. Known differences, checked as such: pond-ts reads a
+/// Timestamp axis as its raw count (pond-rs refuses a time-typed axis) and
+/// refuses a true/false value field (pond-rs reads it). Also reads back
+/// `parity-export-value.arrow`, pond-ts's own `toArrow` output.
+#[test]
+fn value_series_arrow_match_pond_ts() {
+    let cases = common::load_value_arrow_cases();
+    let mut failures = Vec::new();
+    for case in &cases {
+        let bytes = hex(&case.ipc);
+        let schema = arrow_ipc::reader::FileReader::try_new(std::io::Cursor::new(&bytes), None)
+            .unwrap()
+            .schema();
+        let got = ValueSeries::from_ipc_bytes("va", bytes, &case.axis);
+        let outcome = match (case.id.as_str(), &case.expected, &got) {
+            ("timestampAxis", Some(_), Err(_)) | ("boolValues", None, Ok(_)) => Ok(()),
+            ("timestampAxis" | "boolValues", ..) => {
+                Err("expected the known difference".to_string())
+            }
+            (_, Some(e), Ok(g)) => {
+                let mut e = e.clone();
+                for def in e.schema.iter_mut().skip(1) {
+                    if schema.field_with_name(&def.name).unwrap().is_nullable() {
+                        def.required.get_or_insert(false);
+                    }
+                }
+                compare_series(&e, &value_json(g), None)
+            }
+            (_, Some(_), Err(err)) => Err(format!("pond-ts reads it, pond-rs errored: {err}")),
+            (_, None, Ok(_)) => Err("pond-ts throws, pond-rs read it".into()),
+            (_, None, Err(_)) => Ok(()),
+        };
+        if let Err(why) = outcome {
+            failures.push(format!("{}: {why}", case.id));
+        }
+    }
+    report(
+        "ValueSeries.fromArrow parity",
+        cases.len(),
+        cases.len(),
+        &failures,
+    );
+
+    let fixture = load_core_fixture();
+    let expected = &fixture.value_series.arrow_export;
+    let bytes = std::fs::read(common::repo_path(
+        "packages/core/test/fixtures/parity-export-value.arrow",
+    ))
+    .unwrap();
+    let series = ValueSeries::from_ipc_bytes("vexport", bytes, "strike").unwrap();
+    compare_series(expected, &value_json(&series), None)
+        .unwrap_or_else(|why| panic!("parity-export-value.arrow: {why}"));
+    let mut written = Vec::new();
+    series.write_ipc(&mut written).unwrap();
+    let again = ValueSeries::from_ipc_bytes("vexport", written, "strike").unwrap();
+    assert_eq!(again, series);
+}
+
+fn hex(text: &str) -> Vec<u8> {
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
+        .collect()
+}
+
 /// A value series in pond-ts `toJSON()` form, -0 tagged.
 fn value_json(series: &ValueSeries) -> SeriesJson {
     let schema = series

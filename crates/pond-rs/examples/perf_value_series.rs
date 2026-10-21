@@ -1,5 +1,5 @@
 //! Timing for `by_value` and `ValueSeries`: the projection, nearest-row and
-//! slice lookups, and JSON in and out. Same data as
+//! slice lookups, and JSON and Arrow in and out. Same data as
 //! `bench/value_series_pond_ts.mjs` for the pond-ts side; both print a
 //! checksum per case so the answers can be compared.
 //!
@@ -9,6 +9,10 @@
 //! and shares every column's memory (no copy); `nearest_index` and
 //! `slice_by_value` are binary searches (O(log N)), and a slice shares
 //! memory too (O(C)). JSON in and out is O(N·C), as for `TimeSeries`.
+//! Arrow out shares every value buffer but builds null bits for number
+//! columns with gaps (O(N) each); Arrow in from one batch shares the
+//! gap-free number buffers and checks the axis (O(N·C)); IPC in and out
+//! copy the bytes (O(N·C)).
 
 use std::time::Instant;
 
@@ -70,6 +74,9 @@ fn main() -> pond_rs::Result<()> {
     let small = v.slice_by_value(0.0, 1000.0); // 300k rows, for JSON
     let rows_json = small.to_json(RowFormat::Array)?;
     let columns_json = small.to_columns_json()?;
+    let batch = v.to_arrow()?;
+    let mut ipc = Vec::new();
+    v.write_ipc(&mut ipc)?;
     let probes: Vec<f64> = (0..1_000_000usize)
         .map(|i| ((i * 7919) % 333_400) as f64 / 100.0)
         .collect();
@@ -113,6 +120,36 @@ fn main() -> pond_rs::Result<()> {
             "from_columns_json, 300k",
             Box::new(|| {
                 checksum(&ValueSeries::from_columns_json(&columns_json, KeyOrder::Strict).unwrap())
+            }),
+        ),
+        (
+            "to_arrow, 1M rows",
+            Box::new(|| {
+                let b = v.to_arrow().unwrap();
+                (b.num_rows() * b.num_columns()) as f64
+            }),
+        ),
+        (
+            "from_arrow, 1M rows",
+            Box::new(|| {
+                checksum(
+                    &ValueSeries::from_arrow("bench", std::slice::from_ref(&batch), "dist")
+                        .unwrap(),
+                )
+            }),
+        ),
+        (
+            "write_ipc, 1M rows",
+            Box::new(|| {
+                let mut out = Vec::new();
+                v.write_ipc(&mut out).unwrap();
+                out.len() as f64
+            }),
+        ),
+        (
+            "from_ipc_bytes, 1M rows",
+            Box::new(|| {
+                checksum(&ValueSeries::from_ipc_bytes("bench", ipc.clone(), "dist").unwrap())
             }),
         ),
     ];

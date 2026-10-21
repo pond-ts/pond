@@ -9,8 +9,10 @@ import { buildFixture } from './cases.mjs';
 import {
   EXPORT_FILE,
   TYPED_EXPORTS,
+  VALUE_ARROW_FILE,
   buildArrowExport,
   buildTypedArrowExport,
+  buildValueArrowCases,
 } from './export.mjs';
 
 const out = fileURLToPath(
@@ -33,3 +35,9 @@ for (const [file, input] of TYPED_EXPORTS) {
   writeFileSync(typedOut, buildTypedArrowExport(input(pond)));
   console.log(`wrote ${typedOut}`);
 }
+
+const valueArrowOut = fileURLToPath(
+  new URL(`../../test/fixtures/${VALUE_ARROW_FILE}`, import.meta.url),
+);
+writeFileSync(valueArrowOut, JSON.stringify(buildValueArrowCases(pond)) + '\n');
+console.log(`wrote ${valueArrowOut}`);

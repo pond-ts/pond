@@ -4421,6 +4421,32 @@ function encodeSeries(series) {
   return { ...json, rows: json.rows.map((row) => row.map(encodeCell)) };
 }
 
+/** A value series as `toJSON()`, with the numbers JSON would lose tagged. */
+export function encodeValueSeries(vs) {
+  const json = vs.toJSON();
+  return { ...json, rows: json.rows.map((row) => row.map(encodeCell)) };
+}
+
+/** The value series export.mjs writes to Arrow for pond-rs to read back. */
+export function valueExportSeries(pond) {
+  return pond.ValueSeries.fromJSON({
+    name: 'vexport',
+    schema: [
+      { name: 'strike', kind: 'value' },
+      { name: 'bid', kind: 'number', required: false },
+      { name: 'ask', kind: 'number' },
+      { name: 'side', kind: 'string', required: false },
+    ],
+    rows: [
+      [-2.5, 1.25, 1.5, 'put'],
+      [-0, null, 2, null],
+      [0, -0, 2.25, 'call'],
+      [0, 3, 3.5, 'call'],
+      [1e300, 5e-324, 4, 'put'],
+    ],
+  });
+}
+
 /** The `noisy` input series, also exported to Arrow by export.mjs. */
 export function noisySeries(pond) {
   return pond.TimeSeries.fromJSON({
@@ -5232,6 +5258,7 @@ export function buildFixture(pond) {
         byValue,
         fromJSON,
         fromColumns,
+        arrowExport: encodeValueSeries(valueExportSeries(pond)),
       };
     })(),
     timeParse: TIME_PARSE_TEXTS.flatMap((input) =>
