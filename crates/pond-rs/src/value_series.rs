@@ -88,7 +88,7 @@ impl ValueSeries {
     }
 
     /// Build one, checking every rule.
-    fn checked(
+    pub(crate) fn checked(
         call: &'static str,
         name: String,
         axis_name: String,
@@ -127,6 +127,11 @@ impl ValueSeries {
     /// `axis()[i]` is pond-ts `axisAt(i)`).
     pub fn axis(&self) -> &[f64] {
         self.axis.values()
+    }
+
+    /// The axis as a column (no gaps).
+    pub(crate) fn axis_column(&self) -> &Float64Column {
+        &self.axis
     }
 
     /// The schema: the axis first (kind [`ColumnKind::Value`]), then each

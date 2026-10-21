@@ -4,6 +4,14 @@
 //     npm run build --workspace=pond-ts
 //     node crates/pond-rs/bench/value_series_pond_ts.mjs [name prefix]
 import { TimeSeries, ValueSeries } from '../../../packages/core/dist/index.js';
+import {
+  Float64,
+  Table,
+  Utf8,
+  tableFromIPC,
+  tableToIPC,
+  vectorFromArray,
+} from 'apache-arrow';
 
 const rows = 1_000_000;
 const zones = ['easy', 'steady', 'tempo', 'hard', 'max'];
@@ -37,6 +45,22 @@ const v = s.byValue('dist');
 const small = v.sliceByValue(0, 1000);
 const rowsJson = JSON.stringify(small.toJSON());
 const columnsJson = JSON.stringify(small.toColumns());
+// The same 1M-row value series as an Arrow table (pond-rs: `to_arrow`).
+const table = new Table({
+  dist: vectorFromArray(v.axisValues(), new Float64()),
+  watts: vectorFromArray(
+    Array.from(
+      { length: v.length },
+      (_, i) => v.column('watts').read(i) ?? null,
+    ),
+    new Float64(),
+  ),
+  zone: vectorFromArray(
+    Array.from({ length: v.length }, (_, i) => v.column('zone').read(i)),
+    new Utf8(),
+  ),
+});
+const ipc = tableToIPC(table, 'file');
 const probes = Array.from(
   { length: 1_000_000 },
   (_, i) => ((i * 7919) % 333_400) / 100,
@@ -72,6 +96,17 @@ const cases = [
   [
     'from_columns_json, 300k',
     () => checksum(ValueSeries.fromColumns(JSON.parse(columnsJson))),
+  ],
+  ['to_arrow, 1M rows', () => v.toArrow().length * 3],
+  [
+    'from_arrow, 1M rows',
+    () => checksum(ValueSeries.fromArrow(table, { axis: 'dist' })),
+  ],
+  // pond-ts has no IPC writer of its own: apache-arrow writes the table.
+  ['write_ipc, 1M rows', () => tableToIPC(table, 'file').length],
+  [
+    'from_ipc_bytes, 1M rows',
+    () => checksum(ValueSeries.fromArrow(tableFromIPC(ipc), { axis: 'dist' })),
   ],
 ];
 

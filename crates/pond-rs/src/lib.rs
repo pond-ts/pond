@@ -46,7 +46,8 @@
 //! [`TimeSeries::by_column`], and windows along one with
 //! [`TimeSeries::rolling_by_column`],
 //! rows keyed by a number column instead of time with
-//! [`TimeSeries::by_value`] (a [`ValueSeries`]: nearest row, slices, JSON),
+//! [`TimeSeries::by_value`] (a [`ValueSeries`]: nearest row, slices, JSON
+//! and Arrow),
 //! reading times written as text with [`parse_time`] / [`parse_time_in`]
 //! (as pond-ts `Time.parse`),
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
