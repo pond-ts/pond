@@ -1676,3 +1676,63 @@ fn rolling_by_column_matches_brute_force() {
         }
     }
 }
+
+/// `by_value` on a random non-decreasing axis (with repeats): the nearest
+/// row holds the closest value, and a slice holds
+/// exactly the rows with `lo <= axis < hi`, in order.
+#[test]
+fn value_series_nearest_and_slice_match_brute_force() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let n = rng.below(40) as usize;
+        let mut x = 0.0;
+        let axis: Vec<f64> = (0..n)
+            .map(|_| {
+                if !rng.chance(30) {
+                    x += (1 + rng.below(50)) as f64 / [1.0, 4.0, 10.0][rng.below(3) as usize];
+                }
+                x
+            })
+            .collect();
+        let row: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let s = TimeSeries::new(
+            "s",
+            (0..n as i64).collect(),
+            vec![
+                Column::required("x", axis.clone()),
+                Column::required("row", row),
+            ],
+        )
+        .unwrap();
+        let v = s.by_value("x").unwrap();
+        assert_eq!(v.axis(), axis.as_slice(), "seed {seed}");
+        let probe = |rng: &mut Rng| {
+            (rng.below(4_000) as f64 - 500.0) / [1.0, 4.0, 10.0][rng.below(3) as usize]
+        };
+        for _ in 0..20 {
+            let p = probe(&mut rng);
+            // The closest value, the lower one on a tie; of the rows holding
+            // it, the one next to where `p` would go: the last when it is
+            // below `p`, else the first.
+            let best = (0..n)
+                .map(|i| axis[i])
+                .min_by(|a, b| (a - p).abs().total_cmp(&(b - p).abs()).then(a.total_cmp(b)));
+            let want = best.map(|b| {
+                let mut rows = (0..n).filter(|&i| axis[i] == b);
+                if b < p { rows.next_back() } else { rows.next() }.unwrap()
+            });
+            assert_eq!(v.nearest_index(p), want, "seed {seed} nearest({p})");
+            let (lo, hi) = (p, probe(&mut rng));
+            let want: Vec<f64> = (0..n)
+                .filter(|&i| lo <= axis[i] && axis[i] < hi)
+                .map(|i| i as f64)
+                .collect();
+            let got = v.slice_by_value(lo, hi);
+            assert_eq!(
+                got.column("row").unwrap().numbers().unwrap().values(),
+                want.as_slice(),
+                "seed {seed} slice({lo}, {hi})"
+            );
+        }
+    }
+}

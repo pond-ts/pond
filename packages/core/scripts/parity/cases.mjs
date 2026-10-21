@@ -2478,6 +2478,190 @@ const VALUE_AXIS_CASES = [
   ],
 ];
 
+// ValueSeries: byValue sources beyond `inputs`, and the payloads the
+// direct doors (fromJSON / fromColumns) read.
+const CLIMB_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'dist', kind: 'number' },
+  { name: 'watts', kind: 'number', required: false },
+  { name: 'ele', kind: 'number' },
+  { name: 's', kind: 'string', required: false },
+  { name: 'up', kind: 'boolean', required: false },
+  { name: 'tags', kind: 'array', required: false },
+];
+const CLIMB_ROWS = [
+  [0, -0, 100, 10, 'a', true, [1, 'x']],
+  [1000, 0, null, 10.5, null, false, null],
+  [2000, 0.1, 150, 11, 'b', null, []],
+  [3000, 0.3, 200, 11.2, 'a', true, [-0, true]],
+  [4000, 0.3, 210, 10.9, 'c', false, ['y']],
+  [5000, 0.7, null, 12, null, true, null],
+  [6000, 1e15, 220, 12, 'b', false, [2]],
+];
+// Axes for nearest-row ties: repeats, exact midpoints, and float
+// midpoints that round to either side.
+const TIES_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'x', kind: 'number' },
+  { name: 'f', kind: 'number' },
+  { name: 'n', kind: 'number', required: false },
+];
+const TIES_ROWS = [
+  [0, -1e300, 0.1, 1],
+  [1, 0, 0.2, null],
+  [2, 1, 0.3, 3],
+  [3, 1, 0.7, 4],
+  [4, 2, 1.1, 5],
+  [5, 4, 1.3000000000000003, null],
+  [6, 4, 2.5, 7],
+  [7, 4, 1e16, 8],
+  [8, 10, 1e16 + 2, 9],
+];
+const VS_SCHEMA = [
+  { name: 'd', kind: 'value' },
+  { name: 'v', kind: 'number', required: false },
+  { name: 's', kind: 'string', required: false },
+];
+const VS_REQUIRED_SCHEMA = [
+  { name: 'd', kind: 'value' },
+  { name: 'v', kind: 'number' },
+  { name: 's', kind: 'string' },
+];
+const VS_UNSORTED = [
+  [3, 1, 'a'],
+  [1, 2, 'b'],
+  [2, 3, null],
+  [1, 4, 'd'],
+  [-0, 5, 'e'],
+  [0, 6, 'f'],
+  [5, null, 'g'],
+];
+const vsRows = (rows, schema = VS_SCHEMA) => ({ schema, rows });
+const VS_JSON_PAYLOADS = [
+  [
+    'plain',
+    vsRows([
+      [0, 1.5, 'a'],
+      [0.5, null, null],
+      [0.5, 2, 'b'],
+      [1e308, -3, ''],
+    ]),
+  ],
+  [
+    'objects',
+    vsRows([
+      { d: 0, v: 1, s: 'x', extra: 9 },
+      { d: 1, s: 'y' },
+      { s: 'z', v: 3, d: 2 },
+    ]),
+  ],
+  ['mixed', vsRows([[0, 1, 'a'], { d: 1, v: 2 }, [2, null, 'c']])],
+  ['empty', vsRows([])],
+  ['axisOnly', vsRows([[5e-324], [1], [1]], [{ name: 'd', kind: 'value' }])],
+  ['axisText', vsRows([['5', 1, 'a']])],
+  ['axisNull', vsRows([[null, 1, 'a']])],
+  ['axisBool', vsRows([[true, 1, 'a']])],
+  ['axisArray', vsRows([[[1], 1, 'a']])],
+  ['objectNoAxis', vsRows([{ v: 1, s: 'a' }])],
+  ['unsorted', vsRows(VS_UNSORTED)],
+  ['unsorted', vsRows(VS_UNSORTED), { ordering: 'reorder' }],
+  ['unsorted', vsRows(VS_UNSORTED), { ordering: 'clamp' }],
+  ['unsorted', vsRows(VS_UNSORTED), { ordering: 'strict' }],
+  ['requiredFull', vsRows([[0, 1, 'a']], VS_REQUIRED_SCHEMA)],
+  ['requiredGapNumber', vsRows([[0, null, 'a']], VS_REQUIRED_SCHEMA)],
+  ['requiredGapText', vsRows([[0, 1, null]], VS_REQUIRED_SCHEMA)],
+  ['requiredObjectMissing', vsRows([{ d: 0, v: 1 }], VS_REQUIRED_SCHEMA)],
+  ['numberAsText', vsRows([[0, '1', 'a']])],
+  ['textAsNumber', vsRows([[0, 1, 2]])],
+  ['numberAsBool', vsRows([[0, true, 'a']])],
+  [
+    'booleanColumn',
+    vsRows(
+      [[0, true]],
+      [
+        { name: 'd', kind: 'value' },
+        { name: 'b', kind: 'boolean' },
+      ],
+    ),
+  ],
+  [
+    'arrayColumn',
+    vsRows(
+      [[0, [1]]],
+      [
+        { name: 'd', kind: 'value' },
+        { name: 'a', kind: 'array' },
+      ],
+    ),
+  ],
+  [
+    'timeKey',
+    vsRows(
+      [[0, 1]],
+      [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ],
+    ),
+  ],
+  [
+    'dupName',
+    vsRows(
+      [[0, 1]],
+      [
+        { name: 'd', kind: 'value' },
+        { name: 'd', kind: 'number' },
+      ],
+    ),
+  ],
+  ['shortRow', vsRows([[0, 1]])],
+  ['longRow', vsRows([[0, 1, 'a', 2]])],
+  ['notARow', vsRows([5])],
+];
+const colValue = (columns, schema = VS_SCHEMA) => ({ schema, columns });
+const VS_COLUMN_PAYLOADS = [
+  [
+    'plain',
+    colValue({ d: [0, 0.5, 0.5], v: [1.5, null, 2], s: ['a', null, 'b'] }),
+  ],
+  ['empty', colValue({ d: [], v: [], s: [] })],
+  ['extra', colValue({ d: [0], v: [1], s: ['a'], other: [1, 2, 3] })],
+  [
+    'requiredGap',
+    colValue({ d: [0, 1], v: [1, null], s: [null, 'b'] }, VS_REQUIRED_SCHEMA),
+  ],
+  [
+    'requiredFull',
+    colValue({ d: [0, 1], v: [1, 2], s: ['a', 'b'] }, VS_REQUIRED_SCHEMA),
+  ],
+  ['missingColumn', colValue({ d: [0], v: [1] })],
+  ['missingAxis', colValue({ v: [1], s: ['a'] })],
+  ['lengthMismatch', colValue({ d: [0, 1], v: [1], s: ['a', 'b'] })],
+  ['axisNull', colValue({ d: [0, null], v: [1, 2], s: ['a', 'b'] })],
+  ...['strict', 'reorder', 'clamp'].map((ordering) => [
+    'unsorted',
+    colValue({
+      d: VS_UNSORTED.map((r) => r[0]),
+      v: VS_UNSORTED.map((r) => r[1]),
+      s: VS_UNSORTED.map((r) => r[2]),
+    }),
+    { ordering },
+  ]),
+  [
+    'timeKey',
+    colValue({ time: [0], v: [1] }, [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number' },
+    ]),
+  ],
+  [
+    'booleanColumn',
+    colValue({ d: [0], b: [true] }, [
+      { name: 'd', kind: 'value' },
+      { name: 'b', kind: 'boolean' },
+    ]),
+  ],
+];
 const RESHAPE_CASES = [
   // concat: ties keep input order, then row order.
   ['concat-two', 'concatA', 'concat', [[{ series: 'concatB' }]]],
@@ -4912,6 +5096,144 @@ export function buildFixture(pond) {
         ),
       ),
     },
+    // ValueSeries (pond-ts byValue / fromJSON / fromColumns): byValue on
+    // every number column of every input and of VALUE_SOURCES, each result
+    // written every way and probed with nearestIndex / sliceByValue; and
+    // the direct doors on their own output plus the hand-written payloads.
+    valueSeries: (() => {
+      const sources = {
+        climb: TimeSeries.fromJSON({
+          name: 'climb',
+          schema: CLIMB_SCHEMA,
+          rows: CLIMB_ROWS,
+        }),
+        ties: TimeSeries.fromJSON({
+          name: 'ties',
+          schema: TIES_SCHEMA,
+          rows: TIES_ROWS,
+        }),
+        none: TimeSeries.fromJSON({
+          name: 'none',
+          schema: TIES_SCHEMA,
+          rows: [],
+        }),
+      };
+      const all = { ...inputs, ...sources };
+      const encodeValue = (vs) => {
+        const json = vs.toJSON();
+        return { ...json, rows: json.rows.map((row) => row.map(encodeCell)) };
+      };
+      const outputs = [];
+      const byValue = Object.entries(all).flatMap(([input, series]) =>
+        [
+          ...series.schema
+            .slice(1)
+            .filter((c) => c.kind !== 'number')
+            .slice(0, 1)
+            .map((c) => c.name),
+          ...series.schema
+            .slice(1)
+            .filter((c) => c.kind === 'number')
+            .map((c) => c.name),
+          series.schema[0].name,
+          'nope',
+        ].map((axis) => {
+          let vs;
+          try {
+            vs = series.byValue(axis);
+          } catch (e) {
+            return { input, axis, error: { name: e.name, message: e.message } };
+          }
+          outputs.push(vs);
+          const ax = [...vs.axisValues()];
+          const probes = [-1, -0, 0, ...ax, NaN, Infinity, -Infinity];
+          for (let i = 1; i < ax.length; i += 1) {
+            probes.push((ax[i - 1] + ax[i]) / 2);
+          }
+          if (ax.length > 0) probes.push(ax[ax.length - 1] + 1);
+          const bounds = [
+            [-Infinity, Infinity],
+            [NaN, Infinity],
+            [0, NaN],
+            [5, 1],
+            ...ax
+              .slice(0, 4)
+              .flatMap((lo, i) => ax.slice(i, i + 4).map((hi) => [lo, hi])),
+            ...ax.slice(0, 3).map((lo) => [lo + 1e-9, lo + 0.5]),
+          ];
+          return {
+            input,
+            axis,
+            expected: encodeValue(vs),
+            toJSON: wire(vs.toJSON()),
+            toObjects: wire(vs.toJSON({ rowFormat: 'object' })),
+            toColumns: wire(vs.toColumns()),
+            nearest: probes.map((p) => {
+              const i = vs.nearestIndex(p);
+              return [encodeCell(p), i < 0 ? null : i];
+            }),
+            slices: bounds.map(([lo, hi]) => [
+              encodeCell(lo),
+              encodeCell(hi),
+              encodeValue(vs.sliceByValue(lo, hi)),
+            ]),
+          };
+        }),
+      );
+      const ordered = (options) =>
+        options?.ordering === undefined ? {} : { ordering: options.ordering };
+      const fromJSON = [
+        ...outputs.flatMap((vs, k) =>
+          ['array', 'object'].map((rowFormat) => [
+            `roundTrip-${k}-${vs.name}-${vs.axisName}-${rowFormat}`,
+            wire(vs.toJSON({ rowFormat })),
+          ]),
+        ),
+        ...VS_JSON_PAYLOADS.map(([id, payload, options]) => [
+          id,
+          wire({ name: 'vj', ...payload }),
+          options,
+        ]),
+      ].map(([id, payload, options]) =>
+        attempt(
+          options === undefined ? { id, payload } : { id, payload, options },
+          () =>
+            encodeValue(
+              pond.ValueSeries.fromJSON({ ...payload, ...ordered(options) }),
+            ),
+        ),
+      );
+      const fromColumns = [
+        ...outputs.map((vs, k) => [
+          `roundTrip-${k}-${vs.name}-${vs.axisName}`,
+          wire(vs.toColumns()),
+        ]),
+        ...VS_COLUMN_PAYLOADS.map(([id, payload, options]) => [
+          id,
+          wire({ name: 'vc', ...payload }),
+          options,
+        ]),
+      ].map(([id, payload, options]) =>
+        attempt(
+          options === undefined ? { id, payload } : { id, payload, options },
+          () =>
+            encodeValue(
+              pond.ValueSeries.fromColumns({ ...payload, ...ordered(options) }),
+            ),
+        ),
+      );
+      return {
+        sources: Object.fromEntries(
+          Object.entries(sources).map(([name, series]) => [
+            name,
+            encodeSeries(series),
+          ]),
+        ),
+        byValue,
+        fromJSON,
+        fromColumns,
+      };
+    })(),
     timeParse: TIME_PARSE_TEXTS.flatMap((input) =>
       TIME_PARSE_ZONES.map((timeZone) => {
         try {
