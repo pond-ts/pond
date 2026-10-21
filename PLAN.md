@@ -591,7 +591,7 @@ the study oracle) is done.
      `samples`~~ — done; (g) ~~rolling options (row-count, leading, centred, minimum
      samples, over a time grid)~~ — done; (h) ~~`smooth` / `baseline` / `outliers` /
      `scan` / `sample`~~ — done; (i) ~~`concat` / `collapse` /
-     `pivot_by_group`~~ — done; (i2) `by_column` / `rolling_by_column`;
+     `pivot_by_group`~~ — done; (i2) ~~`by_column` / `rolling_by_column`~~ — done;
      (i3) `by_value` + `ValueSeries`; (j) the (h) operations per group.
      Same rules as steps 1–7.
 

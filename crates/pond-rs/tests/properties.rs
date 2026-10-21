@@ -19,7 +19,7 @@ use jiff::Timestamp;
 use jiff::civil::{Date, Weekday};
 use jiff::tz::TimeZone;
 use pond_rs::{
-    Agg, Align, AlignMethod, Alignment, At, CalendarUnit, Column, Join, JoinType, Keep, Key,
+    Agg, Align, AlignMethod, Alignment, At, Bins, CalendarUnit, Column, Join, JoinType, Keep, Key,
     Materialize, Pick, Pivot, Reducer, Rolling, RollingOver, Sample, Scalar, Sequence, Smooth,
     TimeRangeKeys, TimeSeries,
 };
@@ -1481,5 +1481,198 @@ fn collapse_applies_the_closure_per_row() {
             want.iter().all(Option::is_some),
             "seed {seed}"
         );
+    }
+}
+
+/// `by_column` with random bins: each bin holds exactly the rows whose
+/// axis value lies in its range, reduced in row order; every row with a
+/// value inside the edges lands in one bin.
+#[test]
+fn by_column_matches_brute_force() {
+    let aggs = aggs();
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let axis: Vec<Option<f64>> = (0..times.len())
+            .map(|_| {
+                (!rng.chance(15)).then(|| {
+                    (rng.below(4_000) as f64 - 2_000.0) / [1.0, 100.0][rng.below(2) as usize]
+                })
+            })
+            .collect();
+        let s = TimeSeries::new(
+            "s",
+            times.clone(),
+            vec![
+                Column::optional("v", values.clone()),
+                Column::optional("a", axis.clone()),
+            ],
+        )
+        .unwrap();
+        let bins = if rng.chance(50) {
+            let width = [0.25, 0.5, 1.0, 3.0, 7.5, 100.0][rng.below(6) as usize];
+            let origin = [0.0, 0.3, -1.0, 12.5][rng.below(4) as usize];
+            Bins::width_from(width, origin)
+        } else {
+            let mut edges: Vec<f64> = (0..2 + rng.below(6))
+                .map(|_| (rng.below(4_000) as f64 - 2_000.0) / 100.0)
+                .collect();
+            edges.sort_by(f64::total_cmp);
+            edges.dedup();
+            if edges.len() < 2 {
+                edges.push(edges[0] + 1.0);
+            }
+            if rng.chance(50) {
+                Bins::edges_upper_inclusive(edges)
+            } else {
+                Bins::edges(edges)
+            }
+        };
+        let out = s.by_column("a", &bins, &aggs).unwrap();
+        let starts = out
+            .column("start")
+            .unwrap()
+            .numbers()
+            .unwrap()
+            .values()
+            .to_vec();
+        let ends = out
+            .column("end")
+            .unwrap()
+            .numbers()
+            .unwrap()
+            .values()
+            .to_vec();
+        let upper = matches!(
+            bins,
+            Bins::Edges {
+                upper_inclusive: true,
+                ..
+            }
+        );
+        let mut seen = vec![0; axis.len()];
+        for b in 0..out.len() {
+            let inside = |a: f64| {
+                if upper {
+                    (a > starts[b] || (b == 0 && a == starts[b])) && a <= ends[b]
+                } else {
+                    a >= starts[b] && a < ends[b]
+                }
+            };
+            let rows: Vec<usize> = (0..axis.len())
+                .filter(|&r| axis[r].is_some_and(inside))
+                .collect();
+            for &r in &rows {
+                seen[r] += 1;
+            }
+            let present: Vec<f64> = rows.iter().filter_map(|&r| values[r]).collect();
+            let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+            for (i, &reducer) in REDUCERS.iter().enumerate() {
+                let got = out
+                    .column(&format!("r{i}"))
+                    .unwrap()
+                    .numbers()
+                    .unwrap()
+                    .get(b);
+                let what = format!("seed {seed} {bins:?} bin {b}");
+                check(&what, reducer, got, naive(reducer, &present), scale);
+            }
+        }
+        for (r, a) in axis.iter().enumerate() {
+            let want = match (&bins, a) {
+                (_, None) => 0,
+                (Bins::Width { .. }, Some(_)) => 1,
+                (
+                    Bins::Edges {
+                        edges,
+                        upper_inclusive,
+                    },
+                    Some(a),
+                ) => {
+                    let (lo, hi) = (edges[0], edges[edges.len() - 1]);
+                    usize::from(*a >= lo && if *upper_inclusive { *a <= hi } else { *a < hi })
+                }
+            };
+            assert_eq!(seen[r], want, "seed {seed} {bins:?} row {r} ({a:?})");
+        }
+        if let Bins::Width { .. } = bins
+            && !out.is_empty()
+        {
+            for b in 1..out.len() {
+                assert_eq!(starts[b], ends[b - 1], "seed {seed}: bins touch");
+            }
+            let count = out.column("r0").unwrap().numbers().unwrap();
+            let holds = |b: usize| {
+                (0..axis.len()).any(|r| axis[r].is_some_and(|a| a >= starts[b] && a < ends[b]))
+            };
+            assert!(
+                holds(0) && holds(out.len() - 1),
+                "seed {seed}: end bins hold rows ({:?})",
+                count.values()
+            );
+        }
+    }
+}
+
+/// `rolling_by_column`, per row and at centers: each window holds the rows
+/// whose axis value is within the radius; a row without a value gets the
+/// empty window.
+#[test]
+fn rolling_by_column_matches_brute_force() {
+    let aggs = aggs();
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let (times, values) = random_series(&mut rng);
+        let axis: Vec<Option<f64>> = times
+            .iter()
+            .map(|&t| (!rng.chance(10)).then_some(t as f64 / 1000.0))
+            .collect();
+        let s = TimeSeries::new(
+            "s",
+            times.clone(),
+            vec![
+                Column::optional("v", values.clone()),
+                Column::optional("a", axis.clone()),
+            ],
+        )
+        .unwrap();
+        let radius = [0.001, 0.25, 1.0, 3.0, 1e6][rng.below(5) as usize];
+        let centers: Option<Vec<f64>> = rng.chance(40).then(|| {
+            let mut c: Vec<f64> = (0..rng.below(20))
+                .map(|_| (rng.below(40_000) as f64 - 20_000.0) / 1000.0)
+                .collect();
+            c.sort_by(f64::total_cmp);
+            c
+        });
+        let out = match &centers {
+            Some(c) => s.rolling_by_column_at("a", radius, c, &aggs),
+            None => s.rolling_by_column("a", radius, &aggs),
+        }
+        .unwrap();
+        let points: Vec<Option<f64>> = match &centers {
+            Some(c) => c.iter().map(|&x| Some(x)).collect(),
+            None => axis.clone(),
+        };
+        assert_eq!(out.len(), points.len(), "seed {seed}");
+        for (k, p) in points.iter().enumerate() {
+            let rows: Vec<usize> = match p {
+                None => vec![],
+                Some(p) => (0..axis.len())
+                    .filter(|&r| axis[r].is_some_and(|a| a >= p - radius && a <= p + radius))
+                    .collect(),
+            };
+            let present: Vec<f64> = rows.iter().filter_map(|&r| values[r]).collect();
+            let scale = present.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+            for (i, &reducer) in REDUCERS.iter().enumerate() {
+                let got = out
+                    .column(&format!("r{i}"))
+                    .unwrap()
+                    .numbers()
+                    .unwrap()
+                    .get(k);
+                let what = format!("seed {seed} radius {radius} at {p:?} (output {k})");
+                check(&what, reducer, got, naive(reducer, &present), scale);
+            }
+        }
     }
 }

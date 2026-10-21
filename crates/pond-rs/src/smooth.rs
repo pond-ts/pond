@@ -304,7 +304,11 @@ impl SplitMix64 {
 
 impl TimeSeries {
     /// The source column as numbers (gaps as NaN), or a wrong-kind error.
-    fn number_source(&self, call: &'static str, column: &str) -> Result<(usize, &[f64])> {
+    pub(crate) fn number_source(
+        &self,
+        call: &'static str,
+        column: &str,
+    ) -> Result<(usize, &[f64])> {
         let c = self.column_index(call, column)?;
         let source = &self.columns()[c];
         match source.data() {

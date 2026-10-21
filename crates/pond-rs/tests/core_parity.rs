@@ -14,10 +14,10 @@ use common::{
 use pond_rs::ColumnDef as RsColumnDef;
 use pond_rs::Value as Literal;
 use pond_rs::{
-    Agg, Align, AlignMethod, Alignment, ArrayOptions, ArrowKey, At, Column, ColumnData, ColumnKind,
-    Fill, FillLimits, FirstRow, IntervalKeys, Join, JoinType, JsonOptions, Keep, Key, KeyOrder,
-    Labels, Materialize, OnConflict, Pick, Reducer, Rolling, RollingOver, RowFormat, Scalar,
-    Sequence, TimeRangeKeys, TimeSeries,
+    Agg, Align, AlignMethod, Alignment, ArrayOptions, ArrowKey, At, Bins, Column, ColumnData,
+    ColumnKind, Fill, FillLimits, FirstRow, IntervalKeys, Join, JoinType, JsonOptions, Keep, Key,
+    KeyOrder, Labels, Materialize, OnConflict, Pick, Reducer, Rolling, RollingOver, RowFormat,
+    Scalar, Sequence, TimeRangeKeys, TimeSeries,
 };
 use serde_json::{Value, json};
 
@@ -70,6 +70,8 @@ const KNOWN_OPS: &[&str] = &[
     "concat",
     "collapse",
     "pivotByGroup",
+    "byColumn",
+    "rollingByColumn",
 ];
 
 /// Ops with an arm in [`run`]. Every fixture case for a listed op must run
@@ -121,6 +123,8 @@ const IMPLEMENTED_OPS: &[&str] = &[
     "concat",
     "collapse",
     "pivotByGroup",
+    "byColumn",
+    "rollingByColumn",
 ];
 
 /// The ops a plain series and a partitioned one both have, with the same
@@ -542,6 +546,9 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>
                 .map_err(|e| e.to_string()),
         );
     }
+    if case.op == "byColumn" || case.op == "rollingByColumn" {
+        return Some(value_axis(&input, case).map_err(|e| e.to_string()));
+    }
     if case.op == "reduce" {
         let reduced = mapping(&case.args[0]).and_then(|aggs| input.reduce(&aggs));
         return Some(
@@ -949,6 +956,49 @@ fn to_series(json: &SeriesJson) -> TimeSeries {
     }
 }
 
+/// `byColumn` / `rollingByColumn`, as records.
+fn value_axis(input: &TimeSeries, case: &CoreCase) -> pond_rs::Result<Outcome> {
+    let column = case.args[0].as_str().expect("column name");
+    let spec = &case.args[1];
+    let aggs = mapping(&case.args[2])?;
+    let numbers = |v: &Value| -> Vec<f64> {
+        v.as_array()
+            .expect("an array of numbers")
+            .iter()
+            .map(|x| x.as_f64().expect("a number"))
+            .collect()
+    };
+    let table = if case.op == "byColumn" {
+        let bins = match spec.get("edges") {
+            Some(edges) if spec["inclusive"] == "(]" => Bins::edges_upper_inclusive(numbers(edges)),
+            Some(edges) => Bins::edges(numbers(edges)),
+            None => Bins::width_from(
+                spec["width"].as_f64().expect("width"),
+                spec.get("origin")
+                    .map_or(0.0, |o| o.as_f64().expect("origin")),
+            ),
+        };
+        input.by_column(column, &bins, &aggs)?
+    } else {
+        let radius = spec["radius"].as_f64().expect("radius");
+        match spec.get("at") {
+            Some(at) => input.rolling_by_column_at(column, radius, &numbers(at), &aggs)?,
+            None => input.rolling_by_column(column, radius, &aggs)?,
+        }
+    };
+    Ok(Outcome::Records(
+        (0..table.len())
+            .map(|row| {
+                table
+                    .columns()
+                    .iter()
+                    .map(|c| (c.name().to_string(), encode(c.data(), row)))
+                    .collect()
+            })
+            .collect(),
+    ))
+}
+
 /// pond-ts mapping object: `{ out: 'avg' }` (shorthand) or
 /// `{ out: { from, using } }`, in key order.
 fn mapping(json: &Value) -> pond_rs::Result<Vec<Agg>> {
@@ -1315,12 +1365,14 @@ fn implemented_ops_match_pond_ts() {
 fn comparator_catches_mismatches() {
     let fixture = load_core_fixture();
     for case in &fixture.cases {
-        let own: Result<Outcome, String> = match (&case.expected, &case.groups, &case.reduced) {
-            (Some(expected), _, _) => Ok(Outcome::Series(expected.clone())),
-            (None, Some(groups), _) => Ok(Outcome::Groups(groups.clone())),
-            (None, None, Some(record)) => Ok(Outcome::Record(record.clone())),
-            (None, None, None) => Err("pond-rs error".to_string()),
-        };
+        let own: Result<Outcome, String> =
+            match (&case.expected, &case.groups, &case.reduced, &case.records) {
+                (Some(expected), _, _, _) => Ok(Outcome::Series(expected.clone())),
+                (None, Some(groups), _, _) => Ok(Outcome::Groups(groups.clone())),
+                (None, None, Some(record), _) => Ok(Outcome::Record(record.clone())),
+                (None, None, None, Some(records)) => Ok(Outcome::Records(records.clone())),
+                (None, None, None, None) => Err("pond-rs error".to_string()),
+            };
         check_case(case, &own).unwrap_or_else(|why| panic!("{} rejects itself: {why}", case.id));
     }
 

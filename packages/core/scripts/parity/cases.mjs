@@ -2132,6 +2132,352 @@ const CONCAT_C = [
   [2000, null, null],
 ];
 
+// `byColumn` and `rollingByColumn`: rows grouped by a number column's value.
+// `dist` never goes down (with gaps, repeats and a -0 first); `watts` goes up
+// and down, sits on zone edges (100, 200, 300), has 0, -0 and a negative.
+const TRACK_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'dist', kind: 'number', required: false },
+  { name: 'watts', kind: 'number', required: false },
+  { name: 'ele', kind: 'number', required: false },
+  { name: 's', kind: 'string', required: false },
+  { name: 'up', kind: 'boolean', required: false },
+];
+const TRACK_ROWS = [
+  [0, -0, 0, 10, 'a', true],
+  [1000, 0, 100, 10.5, 'b', false],
+  [2000, 0.25, 150, 11, null, true],
+  [3000, null, 200, 11.2, 'a', null],
+  [4000, 0.5, null, null, 'c', true],
+  [5000, 0.5, 250, 12, 'a', false],
+  [6000, 0.95, -0, 12, 'b', true],
+  [7000, 1, 100, 11.5, 'b', true],
+  [8000, 1, 99.5, 11, null, false],
+  [9000, 1.4, 300, 10, 'c', true],
+  [10000, null, 200, 9.5, 'a', true],
+  [11000, 1.5, 1000, 9.5, 'a', null],
+  [12000, 2, 150, 10, 'b', false],
+  [13000, 2.05, null, 10.2, 'c', true],
+  [14000, 2.5, 55, 10.4, 'c', true],
+  [15000, 3, 200, 10, 'a', false],
+  [16000, 3, -20, null, 'b', true],
+  [17000, 3.2, 0, 9, null, false],
+];
+const ORDER_X = [
+  0, 21621358394.622803, 827883481979370.1, -8817541599273.682,
+  -332909703254699.7, -5257.582664489746, 2.8358960151672363, 0,
+  -0.44770050048828125, -284173488616943.4, -39450716.972351074,
+  -209895968.43719482,
+];
+const ORDER_Y = [
+  -495704531669616.7, 0, -0, 0, 0.28798341751098633, -0, 0, 337704539299011200,
+  0.09560048580169678, -0, 0, -0,
+];
+const BY_COLUMN_REDUCERS = [
+  'count',
+  'sum',
+  'avg',
+  'min',
+  'max',
+  'first',
+  'last',
+  'median',
+  'p90',
+  'stdev',
+  'difference',
+  'keep',
+];
+// Every reducer over watts, and the ones text takes over s.
+const BY_COLUMN_MAPPING = {
+  ...Object.fromEntries(
+    BY_COLUMN_REDUCERS.map((r) => [`w_${r}`, { from: 'watts', using: r }]),
+  ),
+  s_count: { from: 's', using: 'count' },
+  s_first: { from: 's', using: 'first' },
+  s_last: { from: 's', using: 'last' },
+  s_keep: { from: 's', using: 'keep' },
+  s_unique: { from: 's', using: 'unique' },
+  s_top2: { from: 's', using: 'top2' },
+  s_samples: { from: 's', using: 'samples' },
+  up_last: { from: 'up', using: 'last' },
+};
+const VALUE_AXIS_CASES = [
+  [
+    'bycol-width',
+    'track',
+    'byColumn',
+    ['dist', { width: 0.5 }, BY_COLUMN_MAPPING],
+  ],
+  [
+    'bycol-width-fraction',
+    'track',
+    'byColumn',
+    [
+      'dist',
+      { width: 0.1, origin: -0.05 },
+      { ele: 'avg', n: { from: 'dist', using: 'count' } },
+    ],
+  ],
+  [
+    'bycol-width-origin',
+    'track',
+    'byColumn',
+    ['dist', { width: 1, origin: 0.3 }, { ele: 'avg' }],
+  ],
+  [
+    'bycol-width-signed',
+    'track',
+    'byColumn',
+    [
+      'watts',
+      { width: 100 },
+      { n: { from: 'watts', using: 'count' }, ele: 'last' },
+    ],
+  ],
+  [
+    'bycol-width-tenth',
+    'track',
+    'byColumn',
+    ['ele', { width: 0.1 }, { n: { from: 'ele', using: 'count' } }],
+  ],
+  [
+    'bycol-edges',
+    'track',
+    'byColumn',
+    ['watts', { edges: [0, 100, 200, 300] }, BY_COLUMN_MAPPING],
+  ],
+  [
+    'bycol-edges-upper',
+    'track',
+    'byColumn',
+    [
+      'watts',
+      { edges: [0, 100, 200, 300], inclusive: '(]' },
+      { n: { from: 'watts', using: 'count' }, s: 'samples' },
+    ],
+  ],
+  [
+    'bycol-edges-inside',
+    'track',
+    'byColumn',
+    [
+      'watts',
+      { edges: [50, 150, 250] },
+      { n: { from: 'watts', using: 'count' } },
+    ],
+  ],
+  [
+    'bycol-edges-inside-upper',
+    'track',
+    'byColumn',
+    [
+      'watts',
+      { edges: [-20, 150, 250], inclusive: '(]' },
+      { n: { from: 'watts', using: 'count' } },
+    ],
+  ],
+  [
+    'bycol-arrays',
+    'tags',
+    'byColumn',
+    [
+      'v',
+      { width: 2 },
+      {
+        tags_unique: { from: 'tags', using: 'unique' },
+        tags_top2: { from: 'tags', using: 'top2' },
+        nums_samples: { from: 'nums', using: 'samples' },
+        n: { from: 'v', using: 'count' },
+      },
+    ],
+  ],
+  [
+    'bycol-empty-width',
+    'emptyHosts',
+    'byColumn',
+    ['cpu', { width: 1 }, { cpu: 'avg' }],
+  ],
+  [
+    'bycol-empty-edges',
+    'emptyHosts',
+    'byColumn',
+    [
+      'cpu',
+      { edges: [0, 1, 2] },
+      {
+        cpu: 'avg',
+        n: { from: 'cpu', using: 'count' },
+        h: { from: 'host', using: 'unique' },
+      },
+    ],
+  ],
+  [
+    'bycol-one-edge',
+    'track',
+    'byColumn',
+    ['dist', { edges: [0] }, { ele: 'avg' }],
+  ],
+  [
+    'bycol-edges-flat',
+    'track',
+    'byColumn',
+    ['dist', { edges: [0, 1, 1] }, { ele: 'avg' }],
+  ],
+  [
+    'bycol-edges-down',
+    'track',
+    'byColumn',
+    ['dist', { edges: [0, 2, 1] }, { ele: 'avg' }],
+  ],
+  [
+    'bycol-width-zero',
+    'track',
+    'byColumn',
+    ['dist', { width: 0 }, { ele: 'avg' }],
+  ],
+  [
+    'bycol-width-negative',
+    'track',
+    'byColumn',
+    ['dist', { width: -1 }, { ele: 'avg' }],
+  ],
+  [
+    'bycol-too-many',
+    'track',
+    'byColumn',
+    ['dist', { width: 1e-6 }, { ele: 'avg' }],
+  ],
+  ['bycol-unsafe', 'far', 'byColumn', ['v', { width: 1e-300 }, { v: 'count' }]],
+  [
+    'bycol-collapsed',
+    'far',
+    'byColumn',
+    ['v', { width: 1, origin: 1e20 }, { v: 'count' }],
+  ],
+  [
+    'bycol-reserved',
+    'track',
+    'byColumn',
+    ['dist', { width: 1 }, { start: { from: 'ele', using: 'avg' } }],
+  ],
+  ['bycol-text-axis', 'track', 'byColumn', ['s', { width: 1 }, { ele: 'avg' }]],
+  [
+    'bycol-unknown',
+    'track',
+    'byColumn',
+    ['nope', { width: 1 }, { ele: 'avg' }],
+  ],
+  [
+    'bycol-nudge',
+    'nudge',
+    'byColumn',
+    ['v', { width: 0.1 }, { n: { from: 'v', using: 'count' }, v: 'first' }],
+  ],
+  [
+    'rollcol-order',
+    'order',
+    'rollingByColumn',
+    [
+      'd',
+      { radius: 1 },
+      {
+        x_sd: { from: 'x', using: 'stdev' },
+        x_sum: { from: 'x', using: 'sum' },
+        y_diff: { from: 'y', using: 'difference' },
+        y_median: { from: 'y', using: 'median' },
+        y_keep: { from: 'y', using: 'keep' },
+      },
+    ],
+  ],
+  // rollingByColumn: a window of ±radius along `dist`.
+  [
+    'rollcol-each',
+    'track',
+    'rollingByColumn',
+    ['dist', { radius: 0.5 }, BY_COLUMN_MAPPING],
+  ],
+  [
+    'rollcol-small',
+    'track',
+    'rollingByColumn',
+    [
+      'dist',
+      { radius: 0.05 },
+      {
+        ele: 'avg',
+        n: { from: 'ele', using: 'count' },
+        ele_sum: { from: 'ele', using: 'sum' },
+      },
+    ],
+  ],
+  [
+    'rollcol-at',
+    'track',
+    'rollingByColumn',
+    [
+      'dist',
+      { radius: 0.25, at: [-1, 0, 0.6, 0.6, 1.2, 1.25, 5, 10] },
+      BY_COLUMN_MAPPING,
+    ],
+  ],
+  [
+    'rollcol-at-none',
+    'track',
+    'rollingByColumn',
+    ['dist', { radius: 1, at: [] }, { ele: 'avg' }],
+  ],
+  [
+    'rollcol-dense-down',
+    'dense',
+    'rollingByColumn',
+    [
+      'value',
+      { radius: 3 },
+      { value: 'stdev', n: { from: 'value', using: 'count' } },
+    ],
+  ],
+  [
+    'rollcol-empty',
+    'emptyHosts',
+    'rollingByColumn',
+    [
+      'cpu',
+      { radius: 1 },
+      { cpu: 'avg', h: { from: 'host', using: 'samples' } },
+    ],
+  ],
+  [
+    'rollcol-down',
+    'track',
+    'rollingByColumn',
+    ['watts', { radius: 1 }, { ele: 'avg' }],
+  ],
+  [
+    'rollcol-radius-zero',
+    'track',
+    'rollingByColumn',
+    ['dist', { radius: 0 }, { ele: 'avg' }],
+  ],
+  [
+    'rollcol-radius-negative',
+    'track',
+    'rollingByColumn',
+    ['dist', { radius: -1 }, { ele: 'avg' }],
+  ],
+  [
+    'rollcol-at-down',
+    'track',
+    'rollingByColumn',
+    ['dist', { radius: 1, at: [1, 0] }, { ele: 'avg' }],
+  ],
+  [
+    'rollcol-text-axis',
+    'track',
+    'rollingByColumn',
+    ['s', { radius: 1 }, { ele: 'avg' }],
+  ],
+];
+
 const RESHAPE_CASES = [
   // concat: ties keep input order, then row order.
   ['concat-two', 'concatA', 'concat', [[{ series: 'concatB' }]]],
@@ -3702,6 +4048,7 @@ const CASES = [
   ...ROLLING_OPTION_CASES,
   ...SMOOTH_CASES,
   ...RESHAPE_CASES,
+  ...VALUE_AXIS_CASES,
 ];
 
 /**
@@ -4081,6 +4428,34 @@ export function buildFixture(pond) {
       ],
     }),
     pivotLong: series('pivotLong', PIVOT_ROWS, PIVOT_SCHEMA),
+    track: series('track', TRACK_ROWS, TRACK_SCHEMA),
+    // Values whose 0.1-wide bin `floor(v / 0.1)` gets wrong by one, either
+    // way (pond-ts moves them into the bin whose edges hold them).
+    nudge: series('nudge', [
+      [0, -5.800000000000001],
+      [1000, -5.300000000000001],
+      [2000, 1.7],
+      [3000, 3.4],
+      [4000, 3.9],
+    ]),
+    // A rising axis with values whose stdev, and whose difference and
+    // median over signed zeros, depend on whether a row enters a window
+    // before another leaves it.
+    order: series(
+      'order',
+      ORDER_X.map((x, i) => [i * 1000, i, x, ORDER_Y[i]]),
+      [
+        { name: 'time', kind: 'time' },
+        { name: 'd', kind: 'number' },
+        { name: 'x', kind: 'number' },
+        { name: 'y', kind: 'number' },
+      ],
+    ),
+    // Values far from 0, where a narrow bin's edges round together.
+    far: series('far', [
+      [0, 1e20],
+      [1000, 1e20],
+    ]),
     // The first row is a gap ([PND-COLLAPSEKIND]: collapse once took its
     // output kind from that row alone).
     firstGap: series('firstGap', [
@@ -4323,7 +4698,7 @@ export function buildFixture(pond) {
       generator: 'packages/core/scripts/parity/generate.mjs',
       reference: 'pond-ts',
       encoding:
-        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Time / TimeRange / Interval keys as {"time":t} / {"timeRange":[s,e]} / {"interval":[v,s,e]}, Sequence.every(d) as {"sequence":{"every":d}} and Sequence.calendar(u, {timeZone, weekStartsOn}) as {"sequence":{"calendar":u,"timeZone":z,"weekStartsOn"?:w}}; a case has expected (series), groups ([key, series] pairs, from toMap / groupBy), reduced ({output: cell}, from reduce) or error ({name,message}); partitionBy args are [by, steps, end] with steps [[method, ...args]] run on the partitioned view and end "collect" or "toMap"; {"series":name} is another input series; joinMany args are [[others...], options?] and call TimeSeries.joinMany([input, ...others], options); exact unless tolerance is set; timeParse holds Time.parse(input, {timeZone}) as expected (ms) or error (its name); queries hold inputs[input][op](arg) as expected (a row position, null for none, a bool, the bisect index, or [begin, end] for timeRange / intersection) or error (its name), with KeyLike args for key lookups and filter test specs for find / some / every',
+        'series are TimeSeries.toJSON(); null = missing; -0/NaN/±Infinity tagged as {"f64":"-0"|"NaN"|"inf"|"-inf"}; args encode Time / TimeRange / Interval keys as {"time":t} / {"timeRange":[s,e]} / {"interval":[v,s,e]}, Sequence.every(d) as {"sequence":{"every":d}} and Sequence.calendar(u, {timeZone, weekStartsOn}) as {"sequence":{"calendar":u,"timeZone":z,"weekStartsOn"?:w}}; a case has expected (series), groups ([key, series] pairs, from toMap / groupBy), reduced ({output: cell}, from reduce), records ([{output: cell}], from byColumn / rollingByColumn) or error ({name,message}); partitionBy args are [by, steps, end] with steps [[method, ...args]] run on the partitioned view and end "collect" or "toMap"; {"series":name} is another input series; joinMany args are [[others...], options?] and call TimeSeries.joinMany([input, ...others], options); exact unless tolerance is set; timeParse holds Time.parse(input, {timeZone}) as expected (ms) or error (its name); queries hold inputs[input][op](arg) as expected (a row position, null for none, a bool, the bisect index, or [begin, end] for timeRange / intersection) or error (its name), with KeyLike args for key lookups and filter test specs for find / some / every',
     },
     inputs: Object.fromEntries(
       Object.entries(inputs).map(([name, series]) => [
@@ -4367,6 +4742,19 @@ export function buildFixture(pond) {
           ...head,
           reduced: Object.fromEntries(
             Object.entries(result).map(([k, v]) => [k, encodeCell(v ?? null)]),
+          ),
+        };
+      }
+      if (Array.isArray(result)) {
+        return {
+          ...head,
+          records: result.map((record) =>
+            Object.fromEntries(
+              Object.entries(record).map(([k, v]) => [
+                k,
+                encodeCell(v ?? null),
+              ]),
+            ),
           ),
         };
       }

@@ -42,6 +42,9 @@
 //! stacking series with [`TimeSeries::concat`], replacing columns with one
 //! computed per row with [`TimeSeries::collapse`], long rows into wide ones
 //! with [`TimeSeries::pivot_by_group`],
+//! histograms and splits by a number column's value with
+//! [`TimeSeries::by_column`], and windows along one with
+//! [`TimeSeries::rolling_by_column`],
 //! reading times written as text with [`parse_time`] / [`parse_time_in`]
 //! (as pond-ts `Time.parse`),
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
@@ -138,6 +141,7 @@
 mod aggregate;
 mod array;
 mod arrow;
+mod bycolumn;
 mod column;
 mod decimal;
 mod duration;
@@ -166,6 +170,7 @@ mod time_parse;
 pub use aggregate::Reduced;
 pub use array::ArrayOptions;
 pub use arrow::ArrowKey;
+pub use bycolumn::{Bins, Table};
 pub use column::{
     ArrayColumn, BooleanColumn, ColumnData, Decimal, DecimalColumn, Float64Column, Scalar,
     StringColumn, Value,
