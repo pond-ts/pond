@@ -21,7 +21,7 @@ use std::ops::Range;
 
 use crate::column::{ArrayColumn, Cell, ColumnData, Scalar};
 use crate::reducer::Reducer;
-use crate::rolling::{Window, walk};
+use crate::rolling::{Frame, Window, walk};
 
 /// A source column's elements, row by row, as ids.
 pub(crate) struct Elements {
@@ -188,9 +188,9 @@ impl Elements {
         )
     }
 
-    /// One list per row of a trailing window (see `TimeSeries::rolling`).
-    pub(crate) fn roll(&self, reducer: Reducer, times: &[i64], window_ms: i64) -> ArrayColumn {
-        let mut w = Rolling {
+    /// One list per row of a rolling window (see `TimeSeries::rolling`).
+    pub(crate) fn roll(&self, reducer: Reducer, frame: &Frame) -> ArrayColumn {
+        let mut w = RollingLists {
             elements: self,
             reducer,
             counts: vec![0; self.distinct.len()],
@@ -200,9 +200,9 @@ impl Elements {
             end: 0,
             ids: Vec::new(),
             lists: Lists::new(self, reducer),
-            out: vec![None; times.len()],
+            out: vec![None; frame.len()],
         };
-        walk(times, window_ms, &mut w);
+        walk(frame, &mut w);
         ArrayColumn::from_cells(w.out)
     }
 }
@@ -323,7 +323,7 @@ impl<'a> Builder<'a> {
 /// contiguous run of rows, `start..end`, so `samples` reads its elements
 /// straight from that run; `unique` keeps the distinct ids present and
 /// `top` the ids ordered by count.
-struct Rolling<'a> {
+struct RollingLists<'a> {
     elements: &'a Elements,
     reducer: Reducer,
     counts: Vec<u32>,
@@ -337,7 +337,7 @@ struct Rolling<'a> {
     out: Vec<Option<Cell>>,
 }
 
-impl Rolling<'_> {
+impl RollingLists<'_> {
     fn change(&mut self, row: usize, up: bool) {
         if self.reducer == Reducer::Samples {
             return;
@@ -365,7 +365,7 @@ impl Rolling<'_> {
     }
 }
 
-impl Window for Rolling<'_> {
+impl Window for RollingLists<'_> {
     fn enter(&mut self, row: usize) {
         self.end = row + 1;
         self.change(row, true);
@@ -453,7 +453,13 @@ mod tests {
                     })
                     .collect();
                 for reducer in [Reducer::Unique, Reducer::Top(2), Reducer::Samples] {
-                    let got = e.roll(reducer, &times, window);
+                    let frame = Frame {
+                        times: &times,
+                        span: crate::rolling::Span::Time(window),
+                        alignment: crate::rolling::Alignment::Trailing,
+                        min_samples: 0,
+                    };
+                    let got = e.roll(reducer, &frame);
                     let want = e.reduce_ranges(reducer, &ranges);
                     assert_eq!(got, want, "{reducer:?} {times:?} {window}");
                 }

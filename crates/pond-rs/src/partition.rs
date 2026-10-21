@@ -24,6 +24,7 @@ use crate::error::{PondError, Result};
 use crate::grid::{Align, Keep, Materialize};
 use crate::par;
 use crate::reducer::{Agg, Reducer};
+use crate::rolling::{Rolling, RollingOver};
 use crate::rowwise::{Fill, FillLimits, FirstRow};
 use crate::sequence::Sequence;
 use crate::series::{Column, ColumnKind, Key, TimeSeries};
@@ -273,6 +274,48 @@ impl PartitionedSeries {
     pub fn rolling(&self, window: &str, aggs: &[Agg]) -> Result<PartitionedSeries> {
         let aggs = self.with_partition_outputs(aggs);
         self.map(|g| g.rolling(window, &aggs))
+    }
+
+    /// [`TimeSeries::rolling_with`] on each partition, carrying the
+    /// partition columns as [`PartitionedSeries::rolling`] does. A row
+    /// held back by [`Rolling::min_samples`] gets a gap there too, so, as
+    /// in pond-ts, it moves to the partition with no value on the next
+    /// split.
+    pub fn rolling_with(
+        &self,
+        window: &str,
+        aggs: &[Agg],
+        options: Rolling,
+    ) -> Result<PartitionedSeries> {
+        let aggs = self.with_partition_outputs(aggs);
+        self.map(|g| g.rolling_with(window, &aggs, options))
+    }
+
+    /// [`TimeSeries::rolling_rows`] on each partition, carrying the
+    /// partition columns as [`PartitionedSeries::rolling_with`] does.
+    pub fn rolling_rows(
+        &self,
+        rows: usize,
+        aggs: &[Agg],
+        options: Rolling,
+    ) -> Result<PartitionedSeries> {
+        let aggs = self.with_partition_outputs(aggs);
+        self.map(|g| g.rolling_rows(rows, &aggs, options))
+    }
+
+    /// [`TimeSeries::rolling_over`] on each partition, carrying the
+    /// partition columns as [`PartitionedSeries::aggregate`] does: a bucket
+    /// whose window holds no rows, or fewer than
+    /// [`RollingOver::min_samples`], gets a gap there.
+    pub fn rolling_over(
+        &self,
+        sequence: &Sequence,
+        window: &str,
+        aggs: &[Agg],
+        options: RollingOver,
+    ) -> Result<PartitionedSeries> {
+        let aggs = self.with_partition_outputs(aggs);
+        self.map(|g| g.rolling_over(sequence, window, &aggs, options))
     }
 
     /// [`TimeSeries::aggregate`] on each partition, carrying the partition

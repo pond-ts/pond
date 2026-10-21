@@ -1,4 +1,5 @@
-//! `TimeSeries::rolling`: a trailing time window ending at each row.
+//! `TimeSeries::rolling` and its options: a window of time or of rows
+//! around each row, or around each bucket of a sequence.
 //!
 //! The window states are ports of pond-ts's `rollingState`s (add a value as
 //! it enters the window, remove it as it leaves), so results match pond-ts
@@ -16,7 +17,9 @@ use crate::reducer::{
     Agg, InputKind, Inputs, Reducer, check_source_kind, clamp_at_zero, input_kind, output_column,
     percentile_of_sorted,
 };
-use crate::series::{Column, TimeSeries};
+use crate::reshape::At;
+use crate::sequence::Sequence;
+use crate::series::{Column, IntervalKeys, Key, TimeSeries};
 
 const CALL: &str = "rolling";
 
@@ -401,20 +404,125 @@ fn lower_bound(sorted: &[f64], v: f64) -> usize {
     sorted.partition_point(|&x| x < v)
 }
 
-/// One pass of pond-ts's trailing time window over a column: rows `enter`
-/// and `leave`, and each group of rows sharing a time is `emit`ted with
-/// the window as it then stands.
+/// One pass of a rolling window over a column: rows `enter` and `leave`,
+/// and output rows are `emit`ted with the window as it then stands.
 pub(crate) trait Window {
     fn enter(&mut self, row: usize);
     fn leave(&mut self, row: usize);
     fn emit(&mut self, rows: std::ops::Range<usize>);
 }
 
-/// Each group of rows sharing a time `t` sees the rows with time in
-/// `(t - window, t]`. Rows enter before rows leave, as in pond-ts.
-pub(crate) fn walk(times: &[i64], window_ms: i64, w: &mut impl Window) {
+/// Where a rolling window sits around each row (pond-ts `alignment`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Alignment {
+    /// The window ends at the row: times in `(t - window, t]`, or the
+    /// `n` rows ending at this one (pond-ts default).
+    #[default]
+    Trailing,
+    /// The window starts at the row: times in `[t, t + window)`, or the
+    /// `n` rows starting at this one.
+    Leading,
+    /// The window is centred on the row: times in
+    /// `[t - window/2, t + window/2)`, or `n` rows around this one, one
+    /// more after it than before when `n` is even.
+    Centered,
+}
+
+/// Options for [`TimeSeries::rolling_with`] and
+/// [`TimeSeries::rolling_rows`]. `Rolling::default()` is pond-ts's
+/// default: a trailing window, every row given a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Rolling {
+    pub alignment: Alignment,
+    /// A row whose window holds fewer rows than this gets a gap in every
+    /// output column (pond-ts `minSamples`). Rows are counted whether or
+    /// not their value is a gap. 0 (the default) gives every row a value.
+    pub min_samples: usize,
+}
+
+/// Options for [`TimeSeries::rolling_over`]. `RollingOver::default()` is
+/// pond-ts's default: a trailing window ending at each bucket's start,
+/// over the series' own time range, every bucket given a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RollingOver {
+    pub alignment: Alignment,
+    /// As [`Rolling::min_samples`], per bucket.
+    pub min_samples: usize,
+    /// The point of each bucket the window is placed at: its start, middle
+    /// or end. Also picks which buckets are used, as in
+    /// [`Align::sample`](crate::Align::sample).
+    pub sample: At,
+    /// As [`Align::range`](crate::Align::range).
+    pub range: Option<(i64, i64)>,
+}
+
+/// How long a window is: a time span in ms, or a number of rows.
+#[derive(Clone, Copy)]
+pub(crate) enum Span {
+    Time(i64),
+    Rows(usize),
+}
+
+/// One rolling pass's windows: one per row of `times`.
+#[derive(Clone, Copy)]
+pub(crate) struct Frame<'a> {
+    pub times: &'a [i64],
+    pub span: Span,
+    pub alignment: Alignment,
+    pub min_samples: usize,
+}
+
+impl Frame<'_> {
+    pub fn len(&self) -> usize {
+        self.times.len()
+    }
+}
+
+/// Walk `frame`'s windows in row order, as pond-ts's rolling sweep does.
+/// A time window is shared by the rows sharing a time; a row window is
+/// per row. Each window's rows are a run `start..end` of rows that only
+/// moves forward. The order rows enter and leave in is pond-ts's (it can
+/// change the last bits of a running sum): a trailing or a row window
+/// takes rows in before letting rows go; a leading or centred time window
+/// lets rows go first. A window holding fewer than `min_samples` rows is
+/// not emitted, so those rows keep the gap each output starts with.
+pub(crate) fn walk(frame: &Frame, w: &mut impl Window) {
+    let times = frame.times;
     let rows = times.len();
-    let (mut window_start, mut window_end) = (0usize, 0usize);
+    let (mut start, mut end) = (0usize, 0usize);
+    let emit = |w: &mut _, out: std::ops::Range<usize>, start: usize, end: usize| {
+        if end - start >= frame.min_samples {
+            Window::emit(w, out);
+        }
+    };
+    if let Span::Rows(n) = frame.span {
+        let left = (n - 1) / 2;
+        let right = n - 1 - left;
+        for i in 0..rows {
+            let (lo, hi) = match frame.alignment {
+                Alignment::Trailing => (i.saturating_sub(n - 1), i),
+                Alignment::Leading => (i, i.saturating_add(n - 1).min(rows - 1)),
+                Alignment::Centered => (
+                    i.saturating_sub(left),
+                    i.saturating_add(right).min(rows - 1),
+                ),
+            };
+            while end <= hi {
+                w.enter(end);
+                end += 1;
+            }
+            while start < lo {
+                w.leave(start);
+                start += 1;
+            }
+            emit(w, i..i + 1, start, end);
+        }
+        return;
+    }
+    let Span::Time(window_ms) = frame.span else {
+        unreachable!()
+    };
+    let window = window_ms as f64;
     let mut group_start = 0;
     while group_start < rows {
         let anchor = times[group_start];
@@ -422,18 +530,43 @@ pub(crate) fn walk(times: &[i64], window_ms: i64, w: &mut impl Window) {
         while group_end < rows && times[group_end] == anchor {
             group_end += 1;
         }
-        while window_end < rows && times[window_end] <= anchor {
-            w.enter(window_end);
-            window_end += 1;
+        // The edges are worked out in f64 exactly as pond-ts does (keys are
+        // whole ms within ±8.64e15, so they convert exactly). A centred
+        // window an odd number of ms long has edges on a half millisecond,
+        // which f64 rounds to even past 2^52 ms; computing them another way
+        // would disagree with pond-ts there.
+        let a = anchor as f64;
+        let t = |row: usize| times[row] as f64;
+        match frame.alignment {
+            Alignment::Trailing => {
+                while end < rows && times[end] <= anchor {
+                    w.enter(end);
+                    end += 1;
+                }
+                let lower = a - window;
+                while start < end && t(start) <= lower {
+                    w.leave(start);
+                    start += 1;
+                }
+            }
+            Alignment::Leading | Alignment::Centered => {
+                let (lower, upper) = if frame.alignment == Alignment::Leading {
+                    (a, a + window)
+                } else {
+                    let half = window / 2.0;
+                    (a - half, a + half)
+                };
+                while start < end && t(start) < lower {
+                    w.leave(start);
+                    start += 1;
+                }
+                while end < rows && t(end) < upper {
+                    w.enter(end);
+                    end += 1;
+                }
+            }
         }
-        // Keys are within ±MAX_TIME_MS, so when this saturates the true lower
-        // edge is below every key and nothing is evicted, which is right.
-        let lower = anchor.saturating_sub(window_ms);
-        while window_start < window_end && times[window_start] <= lower {
-            w.leave(window_start);
-            window_start += 1;
-        }
-        w.emit(group_start..group_end);
+        emit(w, group_start..group_end, start, end);
         group_start = group_end;
     }
 }
@@ -469,67 +602,45 @@ impl<S: WindowState> Window for Rolled<'_, S> {
     }
 }
 
-/// Run one column through the trailing window with one reducer's state.
-fn roll<S: WindowState>(state: S, times: &[i64], values: &[f64], window_ms: i64) -> Vec<f64> {
+/// Run one column through `frame`'s windows with one reducer's state.
+fn roll<S: WindowState>(state: S, frame: &Frame, values: &[f64]) -> Vec<f64> {
     let mut w = Rolled {
         state,
         values,
-        out: vec![f64::NAN; times.len()],
+        out: vec![f64::NAN; frame.len()],
     };
-    walk(times, window_ms, &mut w);
+    walk(frame, &mut w);
     w.out
 }
 
-fn roll_column(times: &[i64], values: &[f64], window_ms: i64, reducer: Reducer) -> Vec<f64> {
+fn roll_column(frame: &Frame, values: &[f64], reducer: Reducer) -> Vec<f64> {
     match reducer {
-        Reducer::Count => roll(CountState::default(), times, values, window_ms),
-        Reducer::Sum => roll(SumState::default(), times, values, window_ms),
-        Reducer::Avg => roll(AvgState::default(), times, values, window_ms),
-        Reducer::Min => roll(
-            ExtremeState::<false>(VecDeque::new()),
-            times,
-            values,
-            window_ms,
-        ),
-        Reducer::Max => roll(
-            ExtremeState::<true>(VecDeque::new()),
-            times,
-            values,
-            window_ms,
-        ),
-        Reducer::First => roll(
-            OrderedState::<false>(VecDeque::new()),
-            times,
-            values,
-            window_ms,
-        ),
-        Reducer::Last => roll(
-            OrderedState::<true>(VecDeque::new()),
-            times,
-            values,
-            window_ms,
-        ),
+        Reducer::Count => roll(CountState::default(), frame, values),
+        Reducer::Sum => roll(SumState::default(), frame, values),
+        Reducer::Avg => roll(AvgState::default(), frame, values),
+        Reducer::Min => roll(ExtremeState::<false>(VecDeque::new()), frame, values),
+        Reducer::Max => roll(ExtremeState::<true>(VecDeque::new()), frame, values),
+        Reducer::First => roll(OrderedState::<false>(VecDeque::new()), frame, values),
+        Reducer::Last => roll(OrderedState::<true>(VecDeque::new()), frame, values),
         Reducer::Median => roll(
             SortedState {
                 sorted: Vec::new(),
                 q: 50.0,
             },
-            times,
+            frame,
             values,
-            window_ms,
         ),
         Reducer::Percentile(q) => roll(
             SortedState {
                 sorted: Vec::new(),
                 q,
             },
-            times,
+            frame,
             values,
-            window_ms,
         ),
-        Reducer::Stdev => roll(StdevState::default(), times, values, window_ms),
-        Reducer::Difference => roll(DiffState::default(), times, values, window_ms),
-        Reducer::Keep => roll(KeepState::default(), times, values, window_ms),
+        Reducer::Stdev => roll(StdevState::default(), frame, values),
+        Reducer::Difference => roll(DiffState::default(), frame, values),
+        Reducer::Keep => roll(KeepState::default(), frame, values),
         Reducer::Unique | Reducer::Top(_) | Reducer::Samples => {
             unreachable!("list reducers run in elements.rs")
         }
@@ -576,30 +687,76 @@ impl TimeSeries {
     /// it), the rest give numbers.
     ///
     /// Signed zeros follow pond-ts's window states: a window of zeros gives
-    /// `keep` 0 whatever their signs, and `difference` can be `-0` (the
-    /// newest zero minus the oldest, as pond-ts's sorted window holds them).
+    /// `keep` 0 whatever their signs, and `difference` can be `-0`: pond-ts
+    /// keeps a window's zeros as a stack of signs and answers the bottom
+    /// minus the top, so the sign depends on the order zeros came and went.
     pub fn rolling(&self, window: &str, aggs: &[Agg]) -> Result<TimeSeries> {
+        self.rolling_with(window, aggs, Rolling::default())
+    }
+
+    /// [`TimeSeries::rolling`] with a choice of where the window sits
+    /// ([`Alignment`]) and a minimum number of rows per window
+    /// ([`Rolling::min_samples`]), as pond-ts
+    /// `rolling(window, mapping, { alignment, minSamples })`. A leading
+    /// window for a row at `t` holds the rows with time in
+    /// `[t, t + window)`; a centred one, `[t - window/2, t + window/2)`.
+    ///
+    /// ```
+    /// use pond_rs::{Agg, Alignment, Column, Reducer, Rolling, TimeSeries};
+    /// let s = TimeSeries::new("cpu", vec![0, 1_000, 2_000],
+    ///     vec![Column::required("v", vec![1.0, 2.0, 3.0])])?;
+    /// let next = s.rolling_with("2s", &[Agg::new("v_sum", "v", Reducer::Sum)],
+    ///     Rolling { alignment: Alignment::Leading, ..Rolling::default() })?;
+    /// assert_eq!(next.column("v_sum")?.numbers()?.get(0), Some(3.0)); // [0s, 2s) holds 1 and 2
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    pub fn rolling_with(&self, window: &str, aggs: &[Agg], options: Rolling) -> Result<TimeSeries> {
         let window_ms = parse_duration(window)?;
+        self.roll(Span::Time(window_ms), aggs, options)
+    }
+
+    /// For each row, reduce a window of `rows` rows, whatever their times
+    /// (pond-ts `rolling({ count: rows }, mapping, options)`): the row and
+    /// the `rows - 1` before it by default. This is the "N-bar" window of a
+    /// trading study, which a time window gets wrong across weekends and
+    /// overnight. Rows sharing a time do not share a window here. Near
+    /// either end the window holds fewer rows; set
+    /// [`Rolling::min_samples`] to `rows` to give those rows gaps instead.
+    ///
+    /// ```
+    /// use pond_rs::{Agg, Column, Reducer, Rolling, TimeSeries};
+    /// let s = TimeSeries::new("bars", vec![0, 60_000, 259_200_000],
+    ///     vec![Column::required("close", vec![10.0, 12.0, 14.0])])?;
+    /// let sma2 = s.rolling_rows(2, &[Agg::new("sma", "close", Reducer::Avg)],
+    ///     Rolling { min_samples: 2, ..Rolling::default() })?;
+    /// let sma = sma2.column("sma")?.numbers()?;
+    /// assert_eq!((sma.get(0), sma.get(2)), (None, Some(13.0))); // across the weekend
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    ///
+    /// `rows` must be at least 1.
+    pub fn rolling_rows(&self, rows: usize, aggs: &[Agg], options: Rolling) -> Result<TimeSeries> {
+        if rows == 0 {
+            return Err(PondError::InvalidData {
+                call: CALL,
+                message: "a row window must hold at least 1 row".into(),
+            });
+        }
+        self.roll(Span::Rows(rows), aggs, options)
+    }
+
+    fn roll(&self, span: Span, aggs: &[Agg], options: Rolling) -> Result<TimeSeries> {
         // Range- and interval-keyed rows are anchored at their begin, as in
         // pond-ts.
-        let times = self.key().begin();
-        let mut plan = Vec::with_capacity(aggs.len());
-        for (i, agg) in aggs.iter().enumerate() {
-            let source = self.column_index(CALL, &agg.source)?;
-            agg.reducer.check(CALL)?;
-            if agg.output == self.key_name() || aggs[..i].iter().any(|a| a.output == agg.output) {
-                return Err(PondError::DuplicateOutput {
-                    call: CALL,
-                    column: agg.output.clone(),
-                });
-            }
-            check_source_kind(CALL, &self.columns()[source], agg.reducer)?;
+        let frame = Frame {
+            times: self.key().begin(),
+            span,
+            alignment: options.alignment,
+            min_samples: options.min_samples,
+        };
+        let plan = self.rolling_plan(aggs, self.key_name())?;
+        for &(source, agg) in &plan {
             check_magnitude(&self.columns()[source], agg.reducer)?;
-            plan.push((source, agg));
-        }
-        if aggs.iter().all(|a| a.shorthand) {
-            // Stable, so equal positions keep their given order.
-            plan.sort_by_key(|&(source, _)| source);
         }
         let used: Vec<(usize, Reducer)> = plan
             .iter()
@@ -609,20 +766,20 @@ impl TimeSeries {
         let columns = crate::par::map(&plan, |&(source, agg)| {
             let data = self.columns()[source].data();
             if agg.reducer.gives_list() {
-                let lists = Elements::new(data).roll(agg.reducer, times, window_ms);
+                let lists = Elements::new(data).roll(agg.reducer, &frame);
                 return Ok(Column::from_data(agg.output.clone(), lists, false));
             }
             let kind = input_kind(data, agg.reducer);
             if let (ColumnData::Decimal(d), InputKind::ExactSum) = (data, kind) {
-                return crate::decimal::rolling_sum(CALL, &agg.output, d, times, window_ms);
+                return crate::decimal::rolling_sum(CALL, &agg.output, d, &frame);
             }
             let input = inputs.get(source, kind);
             if let (ColumnData::Decimal(d), Reducer::Difference) = (data, agg.reducer) {
-                let lo = roll_column(times, &input.values, window_ms, Reducer::Min);
-                let hi = roll_column(times, &input.values, window_ms, Reducer::Max);
+                let lo = roll_column(&frame, &input.values, Reducer::Min);
+                let hi = roll_column(&frame, &input.values, Reducer::Max);
                 return crate::decimal::difference(CALL, &agg.output, d, input, &lo, &hi);
             }
-            let out = roll_column(times, &input.values, window_ms, agg.reducer);
+            let out = roll_column(&frame, &input.values, agg.reducer);
             Ok(output_column(
                 agg.output.clone(),
                 data,
@@ -640,6 +797,149 @@ impl TimeSeries {
             columns,
         ))
     }
+
+    /// One row per bucket of `sequence`, holding the reducers over a window
+    /// of `window` placed at the bucket (pond-ts
+    /// `rolling(sequence, window, mapping, options)`): a smoothed line on a
+    /// regular grid, such as a 5-minute average every minute. The window
+    /// sits at each bucket's sample point ([`RollingOver::sample`], its
+    /// start by default) as [`Alignment`] says, holding the rows whose
+    /// time (or start, for time-range and interval keys) is in it.
+    ///
+    /// ```
+    /// use pond_rs::{Agg, Column, Reducer, RollingOver, Sequence, TimeSeries};
+    /// let s = TimeSeries::new("cpu", vec![0, 30_000, 60_000, 90_000],
+    ///     vec![Column::required("v", vec![1.0, 2.0, 3.0, 4.0])])?;
+    /// let r = s.rolling_over(&Sequence::every("1m")?, "1m",
+    ///     &[Agg::new("v_avg", "v", Reducer::Avg)], RollingOver::default())?;
+    /// assert_eq!(r.key().begin(), &[0, 60_000]);
+    /// assert_eq!(r.column("v_avg")?.numbers()?.get(1), Some(2.5)); // (0s, 60s] holds 2 and 3
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    ///
+    /// The result is keyed by the buckets (an interval labelled by its
+    /// start, named `"interval"`). Buckets are picked as in
+    /// [`TimeSeries::align`]: those whose sample point is in
+    /// [`RollingOver::range`], by default the series' own range.
+    ///
+    /// Each window is reduced as [`TimeSeries::aggregate`] reduces a bucket,
+    /// with the same reducers, kinds and rules (an empty window gives
+    /// `count` 0, `sum` 0, an empty list for the list reducers, and gaps
+    /// otherwise); columns come out in the order [`TimeSeries::rolling`]
+    /// gives. An empty series with no range gives an empty result. An
+    /// output named `"interval"` is an error.
+    pub fn rolling_over(
+        &self,
+        sequence: &Sequence,
+        window: &str,
+        aggs: &[Agg],
+        options: RollingOver,
+    ) -> Result<TimeSeries> {
+        let window_ms = parse_duration(window)?;
+        let plan = self.rolling_plan(aggs, "interval")?;
+        let buckets = match self.grid_range(CALL, options.range)? {
+            None => crate::grid::no_buckets(),
+            Some((begin, end)) => sequence.buckets_sampled(begin, end, options.sample)?,
+        };
+        let ranges = grid_windows(
+            self.key().begin(),
+            &buckets,
+            options.sample,
+            window_ms,
+            options.alignment,
+        );
+        let plan: Vec<(&Agg, usize)> = plan
+            .into_iter()
+            .map(|(source, agg)| (agg, source))
+            .collect();
+        let mut columns = self.reduce_columns(CALL, &plan, &ranges)?;
+        if ranges.iter().any(|r| r.len() < options.min_samples) {
+            let keep: Vec<Option<usize>> = ranges
+                .iter()
+                .enumerate()
+                .map(|(i, r)| (r.len() >= options.min_samples).then_some(i))
+                .collect();
+            for c in &mut columns {
+                *c = Column::from_data(c.name().to_string(), c.data().take(&keep), false);
+            }
+        }
+        Ok(TimeSeries::from_parts(
+            self.name().to_string(),
+            "interval".to_string(),
+            Key::Interval(buckets),
+            columns,
+        ))
+    }
+
+    /// Check `aggs` for a rolling call and pair each with its source
+    /// column, in output order: the order given, or this series' schema
+    /// order when every entry is an [`Agg::of`] shorthand (pond-ts sorts
+    /// those). `key` is the result's key name, which no output may take.
+    fn rolling_plan<'a>(&self, aggs: &'a [Agg], key: &str) -> Result<Vec<(usize, &'a Agg)>> {
+        let mut plan = Vec::with_capacity(aggs.len());
+        for (i, agg) in aggs.iter().enumerate() {
+            let source = self.column_index(CALL, &agg.source)?;
+            agg.reducer.check(CALL)?;
+            if agg.output == key || aggs[..i].iter().any(|a| a.output == agg.output) {
+                return Err(PondError::DuplicateOutput {
+                    call: CALL,
+                    column: agg.output.clone(),
+                });
+            }
+            check_source_kind(CALL, &self.columns()[source], agg.reducer)?;
+            plan.push((source, agg));
+        }
+        if aggs.iter().all(|a| a.shorthand) {
+            // Stable, so equal positions keep their given order.
+            plan.sort_by_key(|&(source, _)| source);
+        }
+        Ok(plan)
+    }
+}
+
+/// Each bucket's window as a run of rows. `starts` are the rows' start
+/// times (sorted). The window sits at the bucket's sample point, and both
+/// are worked out in f64 exactly as pond-ts does (`sampleTime` and
+/// `anchorInWindow`), as in [`walk`].
+fn grid_windows(
+    starts: &[i64],
+    buckets: &IntervalKeys,
+    sample: At,
+    window_ms: i64,
+    alignment: Alignment,
+) -> Vec<std::ops::Range<usize>> {
+    let w = window_ms as f64;
+    let t = |row: usize| starts[row] as f64;
+    let n = starts.len();
+    let (mut lo, mut hi) = (0usize, 0usize);
+    buckets
+        .begin
+        .iter()
+        .zip(&buckets.end)
+        .map(|(&b, &e)| {
+            let (b, e) = (b as f64, e as f64);
+            let p = match sample {
+                At::Begin => b,
+                At::Center => b + (e - b) / 2.0,
+                At::End => e,
+            };
+            // A row is in when `from <= t < to` (trailing: `from < t <= to`).
+            let (from, to) = match alignment {
+                Alignment::Trailing => (p - w, p),
+                Alignment::Leading => (p, p + w),
+                Alignment::Centered => (p - w / 2.0, p + w / 2.0),
+            };
+            let trailing = alignment == Alignment::Trailing;
+            while lo < n && (t(lo) < from || (trailing && t(lo) == from)) {
+                lo += 1;
+            }
+            hi = hi.max(lo);
+            while hi < n && (t(hi) < to || (trailing && t(hi) == to)) {
+                hi += 1;
+            }
+            lo..hi
+        })
+        .collect()
 }
 
 /// Refuse values pond-ts would route to its big-integer lanes.
@@ -736,8 +1036,14 @@ mod tests {
                 .map(|_| [0.0, -0.0, 0.0, -0.0, 1.0, -2.0, f64::NAN][next() as usize % 7])
                 .collect();
             let window = 1 + next() as i64 % 8;
-            let want = roll(Sorted(Vec::new()), &times, &values, window);
-            let got = roll(DiffState::default(), &times, &values, window);
+            let frame = Frame {
+                times: &times,
+                span: Span::Time(window),
+                alignment: Alignment::Trailing,
+                min_samples: 0,
+            };
+            let want = roll(Sorted(Vec::new()), &frame, &values);
+            let got = roll(DiffState::default(), &frame, &values);
             let bits = |xs: &[f64]| xs.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
             assert_eq!(bits(&got), bits(&want), "{times:?} {values:?} {window}");
         }

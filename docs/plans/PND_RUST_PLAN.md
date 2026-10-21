@@ -645,8 +645,8 @@ The one result short of a clean win is one-core B: polars is faster
        `unique`, `samples` and `topN` give arrays in pond-ts, so they wait
        for 8e.
      - **8g Rolling options:** windows counted in rows, leading and centred
-       windows, a minimum sample count, rolling over a time grid. pond-rs
-       only does trailing time windows.
+       windows, a minimum sample count, rolling over a time grid. (done,
+       below)
      - **8h Smoothing and stats:** `smooth` (EMA, moving average, loess),
        `baseline`, `outliers`, `scan` (a custom running step, a Rust
        closure), `sample`. (`reduce` done in 7b.)
@@ -1999,6 +1999,93 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
 
     Rolling `samples` over 5 minutes writes about 280 values for each of
     1M rows; that output, not the reducer, is the cost in both.
+
+  **Step 8g (done): rolling options ([PND-RUSTFULL]).**
+  - Calls: `rolling_with(window, aggs, Rolling)` and
+    `rolling_rows(n, aggs, Rolling)` (pond-ts `rolling(window, …)` and
+    `rolling({ count }, …)`; `Rolling` holds `alignment` and
+    `min_samples`, pond-ts's `alignment` and `minSamples`), and
+    `rolling_over(&sequence, window, aggs, RollingOver)` (pond-ts
+    `rolling(sequence, window, …)`; `RollingOver` adds `sample` and
+    `range`). `rolling(window, aggs)` is unchanged and is
+    `rolling_with` with `Rolling::default()`. All three are also on
+    `PartitionedSeries`. Separate calls rather than one `rolling` taking
+    an enum, so each reads plainly at the call site, and the options
+    structs follow `Align` / `Materialize`.
+  - `Alignment::Trailing` / `Leading` / `Centered` (pond-ts's spelling).
+    A time window for a row at `t` holds starts in `(t - w, t]`,
+    `[t, t + w)` or `[t - w/2, t + w/2)`; rows sharing a time share a
+    window. Window edges are worked out in f64 exactly as pond-ts does: a
+    centred window an odd number of ms long has edges on a half
+    millisecond, which f64 rounds to even past 2^52 ms (after the year
+    144,000). The first version compared doubled whole numbers, which kept
+    the half exactly and so disagreed with pond-ts there; the review of
+    #798 found it. A row window
+    holds `n` rows by position (an even `n` centred has one more row
+    after than before) and is per row, not per time.
+  - `min_samples` counts rows in the window, gaps included (pond-ts
+    `windowEnd - windowStart`). A window under it is not read at all,
+    as in pond-ts; that matters for `stdev`, whose state can move its
+    reference point when read.
+  - The order rows enter and leave the window follows pond-ts: a
+    trailing or row window takes rows in first, a leading or centred
+    time window lets rows go first. This changes the last bits of a
+    running sum: swapping it for leading windows fails 3 parity cases.
+  - `rolling_over` reduces each window as `aggregate` reduces a bucket
+    (pond-ts runs its aggregate reducers there, not the rolling states),
+    so the bucket-reducing code moved into `reduce_columns`, shared by
+    both. Windows are found with two cursors. The result is keyed by the
+    buckets, named `interval`; buckets are picked as in `align`; an
+    output named `interval` is an error. Any key kind works (ranges and
+    intervals count by their start); `aggregate` still refuses them.
+  - Parity: 84 new pond-ts cases (957 in all). Every alignment over
+    time and row windows and grids on numbers with repeated times, signed
+    zeros and a long silence, on text / true/false / list reducers and
+    array columns, on interval keys; minimum counts; row counts 1, 3, 4
+    and 500; half-millisecond edges; `sample` begin / center / end;
+    `range`; an empty series; a calendar grid; per partition (`collect`
+    and `toMap`); keys past 2^52 ms; a grid minimum gapping list columns;
+    errors for a 0-row window and an `interval` output.
+    Eight planted bugs each failed them (one only after the two
+    half-millisecond cases were added). Property tests now draw a random
+    alignment, row or time window and minimum for `rolling` and
+    `rolling_over` (numbers and decimals) and check them by brute force.
+  - Perf (`examples/perf_rolling.rs` and `bench/rolling_pond_ts.mjs`,
+    1M rows 1 s apart, `v` with a gap every 17th row; checksums agree).
+    Cost: a time or row window moves forward only, so each row enters
+    and leaves once, O(N), plus the reducer state; a grid window costs
+    O(N + B) to find and O(W) to reduce, so O(B·W) for B buckets of W
+    rows. Trailing windows did not slow down (26 to 29 ms for `avg` over
+    5 minutes before and after, on a busy machine). pond-rs vs pond-ts,
+    medians:
+
+    | Call                         | pond-rs | pond-ts  |
+    | ---------------------------- | ------- | -------- |
+    | time 5m `avg` trailing       | 33 ms   | 377 ms   |
+    | time 5m `avg` leading        | 36 ms   | 474 ms   |
+    | time 5m `avg` centred        | 36 ms   | 345 ms   |
+    | time 5m `stdev` centred      | 64 ms   | 403 ms   |
+    | time 5m `avg`, minimum 300   | 30 ms   | 576 ms   |
+    | 20 rows `avg`                | 26 ms   | 31 ms    |
+    | 20 rows `avg`, minimum 20    | 24 ms   | 28 ms    |
+    | 20 rows `stdev`              | 62 ms   | 179 ms   |
+    | 300 rows `avg` centred       | 27 ms   | 30 ms    |
+    | 20 rows `avg` per host       | 169 ms  | 3252 ms  |
+    | grid 1m, 5m `avg`, 100k rows | 0.7 ms  | 12856 ms |
+    | grid 1m, 5m `avg`, 1M rows   | 11 ms   | -        |
+    | grid 1s, 5m `avg`, 1M rows   | 352 ms  | -        |
+
+    Row windows of `avg` are only 1.2x pond-ts, under the 2x target.
+    pond-ts has a fast path for them that runs the same double-double
+    running sum; that sum is a chain of dependent additions, and both
+    sides must do it the same way to give the same bits. Evidence: a
+    1-row `avg` window still takes 21 ms where a 20-row `count` takes 9.
+    Two pond-ts slowdowns found here are logged as [PND-ROLLFAST] (one
+    text output drops a row-window call off that fast path, which every
+    partitioned call hits) and [PND-ROLLGRID] (grid windows scan every
+    row for every bucket). The 1 s grid is pond-rs's slowest case: each
+    of 1M windows is reduced afresh (300 rows each); sliding states
+    would be faster but give `aggregate`'s bits only for some reducers.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
