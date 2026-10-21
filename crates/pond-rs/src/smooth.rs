@@ -78,7 +78,8 @@ impl Smooth {
     /// `'movingAverage'`): trailing `(t - window, t]` by default. Rows
     /// sharing a time share a window. A row keyed by a time range or an
     /// interval sits at its middle, which may be half a millisecond.
-    /// A window with no values gives a gap.
+    /// A window with no values gives a gap. A value of 2^960 or more is
+    /// refused, as by [`TimeSeries::rolling`] (pond-ts gives a number).
     pub fn moving_average(window: &str) -> Self {
         Self::new(Method::MovingAverage(window.to_string()))
     }
@@ -93,8 +94,9 @@ impl Smooth {
         Self::new(Method::Loess(span))
     }
 
-    /// Write the result to a new column with this name (it must not exist
-    /// yet) instead of replacing the source column.
+    /// Write the result to a column with this name instead of replacing
+    /// the source column. It must not be the key's name or another
+    /// existing column; naming the source column replaces it.
     pub fn output(mut self, name: &str) -> Self {
         self.output = Some(name.to_string());
         self
@@ -490,7 +492,9 @@ impl TimeSeries {
     /// ```
     ///
     /// `sigma` must be a positive finite number, and `column` a number
-    /// column (pond-ts gives gaps for any other kind).
+    /// column (pond-ts gives gaps for any other kind). A value of 2^480 or
+    /// more is refused, as by a rolling standard deviation (pond-ts gives
+    /// a number).
     pub fn baseline(
         &self,
         column: &str,
@@ -509,7 +513,8 @@ impl TimeSeries {
 
     /// [`TimeSeries::baseline`] with the four new columns named `names`, in
     /// the order avg, sd, upper, lower (pond-ts `names`). The names must be
-    /// new and distinct.
+    /// new and distinct: not the key's name, an existing column or each
+    /// other (pond-ts checks only the existing columns).
     pub fn baseline_named(
         &self,
         column: &str,
@@ -553,7 +558,7 @@ impl TimeSeries {
     /// window, sigma, alignment, minSamples })`): the rows
     /// [`TimeSeries::baseline`] puts outside its band. Rows with a gap, a
     /// flat window (`sd` is 0) or no baseline are never outliers. The
-    /// result keeps every column.
+    /// result keeps every column. Errors as [`TimeSeries::baseline`].
     ///
     /// ```
     /// # use pond_rs::{Column, Rolling, TimeSeries};
