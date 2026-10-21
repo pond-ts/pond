@@ -592,7 +592,8 @@ the study oracle) is done.
      samples, over a time grid)~~ — done; (h) ~~`smooth` / `baseline` / `outliers` /
      `scan` / `sample`~~ — done; (i) ~~`concat` / `collapse` /
      `pivot_by_group`~~ — done; (i2) ~~`by_column` / `rolling_by_column`~~ — done;
-     (i3) `by_value` + `ValueSeries`; (j) the (h) operations per group.
+     (i3) ~~`by_value` + `ValueSeries`~~ — done; (i4) `ValueSeries` Arrow in
+     and out; (j) the (h) operations per group.
      Same rules as steps 1–7.
 
   Detail in the breakout plan.

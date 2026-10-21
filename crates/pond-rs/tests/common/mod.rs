@@ -203,6 +203,46 @@ pub struct CoreFixture {
     pub json: JsonFixture,
     #[serde(rename = "columnsJson")]
     pub columns_json: ColumnsJsonFixture,
+    #[serde(rename = "valueSeries")]
+    pub value_series: ValueSeriesFixture,
+}
+
+/// pond-ts `ValueSeries` results: `byValue` on every number column of the
+/// inputs and of `sources`, and the `fromJSON` / `fromColumns` doors.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValueSeriesFixture {
+    pub sources: BTreeMap<String, SeriesJson>,
+    #[serde(rename = "byValue")]
+    pub by_value: Vec<ByValueCase>,
+    #[serde(rename = "fromJSON")]
+    pub from_json: Vec<FromColumnsCase>,
+    #[serde(rename = "fromColumns")]
+    pub from_columns: Vec<FromColumnsCase>,
+}
+
+/// `series.byValue(axis)` (series from `inputs` or `sources`): the value
+/// series as `toJSON()` with tagged numbers, its three wire forms, and
+/// `nearestIndex(probe)` / `sliceByValue(lo, hi)` results; or the error.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ByValueCase {
+    pub input: String,
+    pub axis: String,
+    #[serde(default)]
+    pub expected: Option<SeriesJson>,
+    #[serde(default)]
+    pub error: Option<ErrorJson>,
+    #[serde(default, rename = "toJSON")]
+    pub to_json: Option<Value>,
+    #[serde(default, rename = "toObjects")]
+    pub to_objects: Option<Value>,
+    #[serde(default, rename = "toColumns")]
+    pub to_columns: Option<Value>,
+    #[serde(default)]
+    pub nearest: Vec<(Value, Option<usize>)>,
+    #[serde(default)]
+    pub slices: Vec<(Value, Value, SeriesJson)>,
 }
 
 /// pond-ts `toColumns` / `fromColumns` / `toPoints` / `fromPoints` results.

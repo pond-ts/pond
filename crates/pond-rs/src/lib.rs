@@ -45,6 +45,8 @@
 //! histograms and splits by a number column's value with
 //! [`TimeSeries::by_column`], and windows along one with
 //! [`TimeSeries::rolling_by_column`],
+//! rows keyed by a number column instead of time with
+//! [`TimeSeries::by_value`] (a [`ValueSeries`]: nearest row, slices, JSON),
 //! reading times written as text with [`parse_time`] / [`parse_time_in`]
 //! (as pond-ts `Time.parse`),
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
@@ -166,6 +168,7 @@ mod series;
 mod smooth;
 mod span;
 mod time_parse;
+mod value_series;
 
 pub use aggregate::Reduced;
 pub use array::ArrayOptions;
@@ -195,6 +198,7 @@ pub use series::{
 };
 pub use smooth::{Sample, Smooth};
 pub use time_parse::{parse_time, parse_time_in};
+pub use value_series::ValueSeries;
 
 /// The version of this crate.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
