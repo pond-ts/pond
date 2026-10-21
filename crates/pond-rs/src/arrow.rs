@@ -49,9 +49,9 @@ use crate::series::ColumnKind;
 use crate::series::{Column, IntervalKeys, Key, Labels, MAX_TIME_MS, TimeRangeKeys, TimeSeries};
 use crate::value_series::ValueSeries;
 
-const FROM: &str = "from_arrow";
-const TO: &str = "to_arrow";
-const READ: &str = "read_ipc";
+const FROM: &str = "TimeSeries::from_arrow";
+const TO: &str = "TimeSeries::to_arrow";
+const READ: &str = "TimeSeries::read_ipc";
 
 /// Every record batch in an Arrow IPC file held in memory. Uses arrow's
 /// `FileDecoder`, which slices the batches out of `bytes` without copying
@@ -603,6 +603,8 @@ pub(crate) fn check_unique(fields: &[Field]) -> Result<()> {
 }
 
 const VALUE_FROM: &str = "ValueSeries::from_arrow";
+const VALUE_TO: &str = "ValueSeries::to_arrow";
+const VALUE_READ: &str = "ValueSeries::read_ipc";
 
 impl ValueSeries {
     /// Build a value series from Arrow record batches, as pond-ts
@@ -690,12 +692,15 @@ impl ValueSeries {
             _ => {
                 let mut values = Vec::with_capacity(rows);
                 for batch in batches {
-                    read_number(batch.column(c), axis, &mut values)?;
+                    read_number(batch.column(c), axis, &mut values)
+                        .map_err(|e| e.renamed(VALUE_FROM))?;
                 }
                 Float64Column::from_values(values)
             }
         };
-        let columns = read_columns(batches, &schema, &[c], rows)?;
+        // The shared readers name `TimeSeries` calls; say which call failed.
+        let columns =
+            read_columns(batches, &schema, &[c], rows).map_err(|e| e.renamed(VALUE_FROM))?;
         ValueSeries::checked(VALUE_FROM, name.into(), axis.to_string(), values, columns)
     }
 
@@ -705,7 +710,7 @@ impl ValueSeries {
         let mut bytes = Vec::new();
         reader
             .read_to_end(&mut bytes)
-            .map_err(|e| invalid(READ, e.to_string()))?;
+            .map_err(|e| invalid(VALUE_READ, e.to_string()))?;
         Self::from_ipc_bytes(name, bytes, axis)
     }
 
@@ -713,7 +718,8 @@ impl ValueSeries {
     /// as [`TimeSeries::from_ipc_bytes`] does (gap-free `Float64` fields of
     /// a one-batch file point into `bytes`).
     pub fn from_ipc_bytes(name: impl Into<String>, bytes: Vec<u8>, axis: &str) -> Result<Self> {
-        Self::from_arrow(name, &decode_ipc(bytes)?, axis)
+        let batches = decode_ipc(bytes).map_err(|e| e.renamed(VALUE_READ))?;
+        Self::from_arrow(name, &batches, axis)
     }
 
     /// The series as one Arrow record batch, as pond-ts `toArrow`: the axis
@@ -726,10 +732,9 @@ impl ValueSeries {
             self.axis_column().buffer().clone(),
             None,
         ))];
-        push_columns(self.columns(), &mut fields, &mut arrays)?;
-        check_unique(&fields)?;
+        push_columns(self.columns(), &mut fields, &mut arrays).map_err(|e| e.renamed(VALUE_TO))?;
         RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays)
-            .map_err(|e| invalid(TO, e.to_string()))
+            .map_err(|e| invalid(VALUE_TO, e.to_string()))
     }
 
     /// Write the series as an Arrow IPC file; see
@@ -2220,7 +2225,7 @@ mod tests {
         let e = s.to_arrow().unwrap_err().to_string();
         assert_eq!(
             e,
-            "to_arrow: column 'm' is an array column; row 2 element 1 is a string but row 0 element 0 is a number; an Arrow list holds one kind of element, so convert the elements first (map_arrays) or drop the column with select"
+            "TimeSeries::to_arrow: column 'm' is an array column; row 2 element 1 is a string but row 0 element 0 is a number; an Arrow list holds one kind of element, so convert the elements first (map_arrays) or drop the column with select"
         );
     }
 
@@ -2334,7 +2339,7 @@ mod tests {
         b.append(true);
         assert_eq!(
             read(Arc::new(b.finish())),
-            "from_arrow: column 'v' row 1: list item 1 is null; array elements cannot be gaps"
+            "TimeSeries::from_arrow: column 'v' row 1: list item 1 is null; array elements cannot be gaps"
         );
         // A NaN item: arrays hold finite numbers only.
         let mut b = ListBuilder::new(Float64Builder::new());
@@ -2389,7 +2394,7 @@ mod tests {
         };
         assert_eq!(
             read(list(seconds(vec![1, 2, 3, i64::MAX]), [3, 1], None)),
-            "from_arrow: column 'v' row 1: list item 0 is too large to hold exactly in milliseconds"
+            "TimeSeries::from_arrow: column 'v' row 1: list item 0 is too large to hold exactly in milliseconds"
         );
         // Under a null list, the same item is never read.
         let times: ArrayRef = Arc::new(arrow_array::Int64Array::from(vec![0, 1]));
@@ -2448,5 +2453,32 @@ mod tests {
         assert!(err(&[batch.clone(), other], "strike").contains("different schema"));
         assert!(err(std::slice::from_ref(&batch), "side").contains("integer, Float32 or Float64"));
         assert!(err(std::slice::from_ref(&batch), "nope").contains("nope"));
+        let dict: arrow_array::DictionaryArray<arrow_array::types::Int32Type> =
+            vec!["1", "2"].into_iter().collect();
+        let dict = RecordBatch::try_from_iter([("k", Arc::new(dict) as ArrayRef)]).unwrap();
+        assert!(err(&[dict], "k").contains("integer, Float32 or Float64"));
+
+        // Errors from the readers and writers shared with TimeSeries name
+        // the ValueSeries call.
+        let mixed =
+            ArrayColumn::from_options([Some(vec![Scalar::from(1.0)]), Some(vec!["x".into()])]);
+        let v =
+            ValueSeries::new("c", "k", vec![1.0, 2.0], vec![Column::required("m", mixed)]).unwrap();
+        let e = v.to_arrow().unwrap_err().to_string();
+        assert!(e.starts_with("ValueSeries::to_arrow: column 'm'"), "{e}");
+        let bad = RecordBatch::try_from_iter([
+            ("k", Arc::new(Float64Array::from(vec![1.0])) as ArrayRef),
+            (
+                "d",
+                Arc::new(arrow_array::BinaryArray::from(vec![&b"x"[..]])) as ArrayRef,
+            ),
+        ])
+        .unwrap();
+        let e = err(&[bad], "k");
+        assert!(e.starts_with("ValueSeries::from_arrow: "), "{e}");
+        let e = ValueSeries::from_ipc_bytes("c", vec![1, 2, 3], "k")
+            .unwrap_err()
+            .to_string();
+        assert!(e.starts_with("ValueSeries::read_ipc: "), "{e}");
     }
 }

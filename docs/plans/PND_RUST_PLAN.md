@@ -2406,15 +2406,17 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     required ([PND-ARROWREQ]), pond-rs optional. No `ordering` and
     `columns` options, as for `TimeSeries::from_arrow`.
   - Parity: `parity-value-arrow.json`, 18 Arrow files (hex) made by
-    apache-arrow in `export.mjs` (Int8–UInt64 axes including int64 and
-    uint64 past 2^53, Float32, Float16, dictionary text, empty, two
+    apache-arrow in `export.mjs` (Int32, Int64, UInt8 and UInt64 axes,
+    the 64-bit ones past 2^53; Float32, Float16, dictionary text, empty, two
     batches, null / NaN / infinite / unsorted / text / missing /
     timestamp axis, true/false values) with pond-ts's result or error
     for each; and `parity-export-value.arrow`, pond-ts's own `toArrow`
     of a series with -0, a gap and the smallest subnormal, read back and
     rewritten. A unit test covers what apache-arrow tables cannot make
-    (batches with different schemas) and that the axis shares Arrow's
-    buffer. Of 6 planted bugs, all are caught.
+    (batches with different schemas), a dictionary axis, that the axis
+    shares Arrow's buffer, and that errors from the readers and writers
+    shared with `TimeSeries` name the `ValueSeries` call (via
+    `PondError::renamed`). Of 6 planted bugs, all are caught.
   - Perf (`examples/perf_value_series.rs` and
     `bench/value_series_pond_ts.mjs`, new rows; checksums agree). 1M
     rows, a number axis, a number column with gaps and a text column.

@@ -35,6 +35,39 @@ pub enum PondError {
     Unsupported { call: &'static str, message: String },
 }
 
+impl PondError {
+    /// The same error, naming `call` instead: for shared helpers that one
+    /// call reuses from another.
+    pub(crate) fn renamed(self, to: &'static str) -> Self {
+        match self {
+            PondError::UnknownColumn {
+                column, available, ..
+            } => PondError::UnknownColumn {
+                call: to,
+                column,
+                available,
+            },
+            PondError::DuplicateOutput { column, .. } => {
+                PondError::DuplicateOutput { call: to, column }
+            }
+            PondError::InvalidData { message, .. } => PondError::InvalidData { call: to, message },
+            PondError::WrongKind {
+                column,
+                kind,
+                reason,
+                ..
+            } => PondError::WrongKind {
+                call: to,
+                column,
+                kind,
+                reason,
+            },
+            PondError::Unsupported { message, .. } => PondError::Unsupported { call: to, message },
+            other => other,
+        }
+    }
+}
+
 impl fmt::Display for PondError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
