@@ -130,7 +130,8 @@ pond-rs returns an error instead.
 
 - **`smooth` and `baseline` on the wrong column.** An unknown column or
   one that is not numbers is an error. pond-ts passes the series through
-  unchanged (`smooth` on an unknown column) or gives a gap in every row.
+  unchanged (`smooth` on an unknown column) or gives a gap in every row,
+  on a partitioned series too.
 - **`baseline_named`** refuses a name that is the key's, or the same name
   twice; pond-ts only checks the existing columns.
 - **An option a smoothing method does not take** (`warmup` on a loess,
@@ -148,7 +149,9 @@ pond-rs returns an error instead.
 - **Repeatable random samples.** `Sample::Reservoir` takes a seed, so
   the same seed picks the same rows; pond-ts's reservoir has none. The
   picked rows keep their order in the series, where pond-ts sorts them by
-  key, which can order rows sharing a key differently.
+  key, which can order rows sharing a key differently. On a partitioned
+  series each partition gets its own seed, made from yours, so those picks
+  repeat too.
 - **Exact decimals.** A column kind of their own, for money and other exact
   values; see [Series and columns](./series-and-columns#value-columns-five-kinds).
 - **`with_column`** takes any kind of column and you choose required or
@@ -194,6 +197,10 @@ bug is logged in `PLAN.md` to fix there.
   an English (or the root) locale. Node uses the machine's locale, so
   pond-ts on a machine set to another language can order interval labels
   differently; pond-rs always uses the root order.
+- **A partitioned `scan` gives each partition its own copy of the start
+  value.** pond-ts hands every partition the same start object, so a step
+  that changes it in place carries state from one partition into the
+  next. In pond-rs every partition starts from a fresh copy.
 - **`align` with `Linear` holds exact decimal columns** instead of drawing a
   line through them, since a point between two decimals is generally not
   exact. pond-ts has no decimal kind.

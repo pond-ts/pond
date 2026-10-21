@@ -576,34 +576,61 @@ fn main() -> Result<(), pond_rs::PondError> {
 ### One entity at a time
 
 On a series holding several hosts or devices, these five mix their rows
-together, as in pond-ts. To smooth each host on its own, split first and
-use `apply` (see [Partitions](./partitions)):
+together. To run them on each host alone, split first with `partition_by`
+(see [Partitions](./partitions)): the partitioned series has `smooth`,
+`baseline`, `baseline_named`, `outliers`, `scan`, `scan_to` and `sample`
+too, as pond-ts's partitioned series does. Each one sees only its own
+host's rows, and the partitions run on several cores.
+
+- `scan` starts every partition from its own copy of the start value, and
+  the row number counts from 0 in each. The step must be `Fn` (it cannot
+  change outside state), because partitions run at the same time.
+- `sample(Sample::Stride(n))` counts rows within each partition. A
+  `Sample::Reservoir` seeds each partition from your seed and the
+  partition's place in order, so partitions pick separately, and the same
+  input and seed give the same rows every run.
+- `outliers` drops a partition that has no outliers left.
 
 ```rust
-use pond_rs::{Column, Smooth, TimeSeries};
+use pond_rs::{Column, Sample, Smooth, TimeSeries};
 
 fn main() -> Result<(), pond_rs::PondError> {
     let s = TimeSeries::new(
         "cpu",
-        vec![0, 0, 1_000, 1_000],
+        vec![0, 0, 1_000, 1_000, 2_000, 2_000],
         vec![
-            Column::required("host", vec!["a", "b", "a", "b"]),
-            Column::required("v", vec![0.0, 100.0, 10.0, 100.0]),
+            Column::required("host", vec!["a", "b", "a", "b", "a", "b"]),
+            Column::required("v", vec![0.0, 100.0, 10.0, 100.0, 20.0, 100.0]),
         ],
     )?;
+    let hosts = s.partition_by(&["host"])?;
 
-    let per_host = s.partition_by(&["host"])?.apply(|one_host| {
-        one_host.smooth("v", &Smooth::ema(0.5).output("ema"))
-    })?;
     // Host a's EMA never sees host b's 100s.
-    let rows: Vec<_> = per_host
+    let ema = hosts.smooth("v", &Smooth::ema(0.5).output("ema"))?.collect()?;
+    let rows: Vec<_> = ema
         .rows()
         .map(|r| (r.string("host").unwrap(), r.number("ema").unwrap()))
         .collect();
     assert!(rows.contains(&(Some("a"), Some(5.0))));
+
+    // A running total that restarts for each host.
+    let total = hosts
+        .scan_to("v", "total", 0.0, |sum, v, _row| (sum + v, sum + v))?
+        .collect()?;
+    let last: Vec<_> = total.rows().skip(4).map(|r| r.number("total").unwrap()).collect();
+    assert_eq!(last, [Some(30.0), Some(300.0)]);
+
+    // Two rows from each host, the same two every run.
+    let a = hosts.sample(Sample::Reservoir { size: 2, seed: 7 })?.collect()?;
+    let b = hosts.sample(Sample::Reservoir { size: 2, seed: 7 })?.collect()?;
+    assert_eq!(a.len(), 4);
+    assert_eq!(a.key().begin(), b.key().begin());
     Ok(())
 }
 ```
+
+Smoothing the partition column itself splits the rows again by the new
+values, as `map` does.
 
 ## Picking rows
 
@@ -1551,6 +1578,5 @@ fn main() -> Result<(), pond_rs::PondError> {
 
 ## What is not here yet
 
-Still to come from pond-ts: `smooth`, `baseline`,
-`outliers`, `sample` and `scan` run per partition (for now, use `apply` as
-shown above). Financial studies come after the core.
+Nothing from pond-ts's batch core is missing now. Financial studies come
+next, then the live layer.

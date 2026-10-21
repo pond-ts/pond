@@ -50,7 +50,8 @@ fn main() -> Result<(), pond_rs::PondError> {
 A `PartitionedSeries` has `rolling` (and `rolling_with`, `rolling_rows`,
 `rolling_over`), `aggregate`, `diff`, `rate`,
 `pct_change`, `shift`, `cumulative`, `fill`, `fill_all`, `align`,
-`materialize` and `dedupe`. Each returns
+`materialize`, `dedupe`, `smooth`, `baseline`, `baseline_named`,
+`outliers`, `scan`, `scan_to` and `sample`. Each returns
 another `PartitionedSeries`, so they chain. For anything else, `map` runs
 your own closure on each partition and stays partitioned; `apply` runs it
 and collects in one step.
