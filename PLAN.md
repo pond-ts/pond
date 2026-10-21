@@ -593,8 +593,10 @@ the study oracle) is done.
      `scan` / `sample`~~ — done; (i) ~~`concat` / `collapse` /
      `pivot_by_group`~~ — done; (i2) ~~`by_column` / `rolling_by_column`~~ — done;
      (i3) ~~`by_value` + `ValueSeries`~~ — done; (i4) ~~`ValueSeries` Arrow
-     in and out~~ — done; (j) the (h) operations per group.
-     Same rules as steps 1–7.
+     in and out~~ — done; (j) ~~the (h) operations per group~~ — done.
+     Same rules as steps 1–7. **R1b is complete** with (j); next by the
+     RFC's order is R2, the financial studies against the pandas oracle
+     (not yet planned).
 
   Detail in the breakout plan.
 

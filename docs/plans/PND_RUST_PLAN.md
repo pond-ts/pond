@@ -2436,6 +2436,39 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | write_ipc      | 10 ms   | 27 ms   |
     | from_ipc_bytes | 13 ms   | 402 ms  |
 
+  **Step 8j (done): the 8h operations per group ([PND-RUSTFULL]).**
+  - Calls: `smooth`, `baseline`, `baseline_named`, `outliers`, `scan`,
+    `scan_to` and `sample` on `PartitionedSeries`, as pond-ts's
+    same-named `PartitionedTimeSeries` methods. Each runs the
+    `TimeSeries` call on every partition through `map` (several cores,
+    same bits), so a partition is smoothed, banded or scanned on its own
+    rows only. `scan`'s step is `Fn + Sync` (not `FnMut`) and each
+    partition starts from its own clone of `init`, with the row index
+    counting from 0.
+  - Edges, as pond-ts: smoothing the partition column itself splits the
+    rows again by the new values; `outliers` drops a partition left with
+    no rows. Known differences: pond-ts smooths a text column to gaps
+    per partition too (pond-rs refuses it, as for `TimeSeries`); a
+    reservoir sample seeds each partition from `seed` and its place in
+    partition order, so partitions pick independently but repeatably
+    (pond-ts uses `Math.random`); pond-ts hands every partition the same
+    `init` object, so a step that changes it in place leaks state from
+    one partition to the next, where pond-rs clones `init`.
+  - Parity: 22 `partitionBy` cases on `hosts` (ema with span, warmup and
+    output; moving average trailing and centred; loess; smooth then
+    `diff`; smoothing the partition column; baseline with names and
+    minimum samples; outliers, also with none left; scan sum, index and
+    gain; stride samples; a reservoir as large as each partition; the
+    errors). The harness now runs these five calls through one path for
+    `TimeSeries` and `PartitionedSeries`, and calls `baseline` (not
+    only `baseline_named`) when no names are given. A unit test checks
+    the per-partition reservoir and that a scan restarts per partition.
+    Of 7 planted bugs (including running on the whole series instead of
+    per partition), all are caught.
+  - Perf: no check; each call only hands the `TimeSeries` operation to
+    `map`, which already runs partitions in parallel (CLAUDE.md exempts
+    operators that only delegate).
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).
