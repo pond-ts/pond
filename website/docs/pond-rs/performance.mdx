@@ -224,6 +224,32 @@ it takes 12.9 seconds on 100,000 rows; that is logged as a pond-ts issue.
 The once-a-second grid is pond-rs's slowest case: each of its million
 windows (300 rows each) is added up from scratch.
 
+### Smoothing and bands: 1 million rows
+
+From the step 8h pull request ([#800](https://github.com/pond-ts/pond/pull/800)):
+1 million rows one second apart, a gap every 17th row (loess on smaller
+series, since its time grows with the square of the row count). Middle
+(median) time in milliseconds, 4 cores; both sides give the same answers.
+
+| Call                               | pond-rs | pond-ts |
+| ---------------------------------- | ------- | ------- |
+| EMA, alpha 0.1                     | 5.6     | 12      |
+| moving average, 5 minutes          | 18      | 1,967   |
+| moving average, 5 minutes, centred | 20      | 1,509   |
+| loess, span 0.05, 20,000 rows      | 16      | 113     |
+| loess, span 0.3, 5,000 rows        | 5.5     | 32      |
+| `baseline`, 5 minutes              | 54      | 3,862   |
+| `outliers`, 5 minutes              | 49      | 2,007   |
+| `scan`, running sum                | 7.0     | 80      |
+| `sample`, every 10th row           | 1.1     | 32      |
+| `sample`, reservoir of 1,000       | 1.0     | 17      |
+
+The EMA is only about 2× faster: pond-ts's EMA already reads the column
+straight through. Loess spreads its rows over the cores; on one core it
+takes 56 and 20 ms. pond-ts's moving average, `baseline` and `outliers`
+build an object per row, which is most of their time; that is logged as a
+pond-ts issue.
+
 ### Agents writing code against it
 
 pond-rs is built mainly for AI agents writing Rust, so one test was about

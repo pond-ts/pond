@@ -600,7 +600,7 @@ the study oracle) is done.
   independent).
 - **[PND-RUSTDOCS]** — pond-rs pages on the docs site
   (`website/docs/pond-rs/`), added 2026-10-19 covering R1a and R1b steps
-  1–6, 7a, 7b, 8a, 8b, 8c, 8d, 8d2, 8e, 8e2, 8f, 8f2 and 8g. Keep them in step as each R1b step lands. Every Rust example is a
+  1–6, 7a, 7b, 8a, 8b, 8c, 8d, 8d2, 8e, 8e2, 8f, 8f2, 8g and 8h. Keep them in step as each R1b step lands. Every Rust example is a
   whole program checked by `website/scripts/check-rust-snippets.sh`; not yet
   run in CI. Open: run that script in CI, and publish `cargo doc` output as
   the pond-rs API reference.

@@ -26,6 +26,10 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `series.rolling('5m', m, { alignment, minSamples })` | `series.rolling_with("5m", &aggs, Rolling { alignment, min_samples })`                    |
 | `series.rolling({ count: 20 }, m)`                   | `series.rolling_rows(20, &aggs, Rolling::default())`                                      |
 | `series.rolling(seq, '5m', m)`                       | `series.rolling_over(&seq, "5m", &aggs, RollingOver::default())`                          |
+| `series.smooth('cpu', 'ema', { span: 20 })`          | `series.smooth("cpu", &Smooth::ema_span(20.0))?`                                          |
+| `series.baseline('cpu', { window, sigma })`          | `series.baseline("cpu", window, sigma, Rolling::default())?`                              |
+| `series.scan('cpu', step, init)`                     | `series.scan("cpu", init, step)?` (step takes `(state, value, row)`)                      |
+| `series.sample({ reservoir: { size } })`             | `series.sample(Sample::Reservoir { size, seed })?`                                        |
 | `Sequence.every('1m')`                               | `Sequence::every("1m")?`                                                                  |
 | `Sequence.calendar('day', { timeZone })`             | `Sequence::calendar("day", time_zone)?`                                                   |
 | `series.pctChange(...)`                              | `series.pct_change(&cols, FirstRow::Keep)`                                                |
@@ -118,12 +122,24 @@ pond-rs returns an error instead.
   kind of the elements; pond-ts assumes text and so fails on numbers. `shift` works
   on list columns (pond-ts throws).
 
+- **`smooth` and `baseline` on the wrong column.** An unknown column or
+  one that is not numbers is an error. pond-ts passes the series through
+  unchanged (`smooth` on an unknown column) or gives a gap in every row.
+- **`baseline_named`** refuses a name that is the key's, or the same name
+  twice; pond-ts only checks the existing columns.
+- **An option a smoothing method does not take** (`warmup` on a loess,
+  say) is an error when the code runs; pond-ts's types refuse it when
+  the code is checked.
 - **A repeated rename.** `rename` with the same `from` twice is an error
   (pond-ts's object syntax cannot express it).
 
 ## Where pond-rs does more
 
-- **Exact decimals.** A fourth column kind, for money and other exact
+- **Repeatable random samples.** `Sample::Reservoir` takes a seed, so
+  the same seed picks the same rows; pond-ts's reservoir has none. The
+  picked rows keep their order in the series, where pond-ts sorts them by
+  key, which can order rows sharing a key differently.
+- **Exact decimals.** A column kind of their own, for money and other exact
   values; see [Series and columns](./series-and-columns#value-columns-five-kinds).
 - **`with_column`** takes any kind of column and you choose required or
   optional. pond-ts's `withColumn` takes numbers only and always makes the

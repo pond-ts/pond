@@ -418,6 +418,193 @@ fn main() -> Result<(), pond_rs::PondError> {
 
 `fill_all(Fill::Hold, &limits)` applies one rule to every column.
 
+## Smoothing, bands and running totals
+
+These five work on one number column and keep every row (except
+`outliers` and `sample`, whose job is to pick rows).
+
+### Smoothing a column: `smooth`
+
+`smooth(column, &Smooth)` replaces the column with a smoothed version, or
+writes it to a new column with `.output(name)`. Either way the result
+column is optional, since smoothing can leave gaps. Pick a method, then add
+options:
+
+| Method                      | What it does                                                                          | Options it takes                        |
+| --------------------------- | ------------------------------------------------------------------------------------- | --------------------------------------- |
+| `Smooth::ema(alpha)`        | exponential moving average: each value `v` gives `alpha * v + (1 - alpha) * previous` | `.warmup(rows)`, `.min_samples(values)` |
+| `Smooth::ema_span(span)`    | the same, with `alpha = 2 / (span + 1)` (the finance convention for "a 20-bar EMA")   | `.warmup(rows)`, `.min_samples(values)` |
+| `Smooth::moving_average(w)` | the mean of the values in a time window, as `rolling` with `Avg`                      | `.alignment(a)`, `.skip_missing()`      |
+| `Smooth::loess(span)`       | a local straight-line fit through the nearest `span` fraction (0 to 1) of the values  | `.skip_missing()`                       |
+
+All four take `.output(name)`. Giving a method an option it does not take
+is an error. For the EMA, a gap stays a gap and the average carries on
+from the last value; `.min_samples(n)` gives gaps until `n` values have
+been read, and `.warmup(n)` drops the first `n` rows from the result
+altogether. The moving average and loess fill a gap from the values around
+it by default; `.skip_missing()` leaves the gap. Loess compares every row
+with its neighbours, so its time grows with the square of the row count.
+
+```rust
+use pond_rs::{Column, Smooth, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![Column::optional("v", vec![Some(2.0), Some(4.0), None, Some(8.0)])],
+    )?;
+
+    // alpha = 2 / (3 + 1) = 0.5; nothing until 2 values have been read.
+    let ema = s.smooth("v", &Smooth::ema_span(3.0).min_samples(2).output("ema"))?;
+    let got: Vec<_> = ema.column("ema")?.numbers()?.iter().collect();
+    assert_eq!(got, [None, Some(3.0), None, Some(5.5)]); // the gap stays a gap
+
+    // A 2-second average; the gap at 2s is filled from its window.
+    let avg = s.smooth("v", &Smooth::moving_average("2s").output("avg"))?;
+    let got: Vec<_> = avg.column("avg")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(2.0), Some(3.0), Some(4.0), Some(8.0)]);
+
+    let kept = s.smooth("v", &Smooth::moving_average("2s").skip_missing())?;
+    assert_eq!(kept.column("v")?.numbers()?.get(2), None);
+    Ok(())
+}
+```
+
+### A normal band, and what falls outside it: `baseline` and `outliers`
+
+`baseline(column, window, sigma, Rolling)` works out a rolling mean and
+standard deviation over a time window and adds four columns: `avg`, `sd`,
+`upper` (`avg + sigma * sd`) and `lower` (`avg - sigma * sd`).
+`baseline_named` takes four names of your own instead. `Rolling` sets the
+window's alignment and minimum rows, as for
+[`rolling_with`](#where-the-window-sits-rolling_with). When every value in
+the window is the same, `sd` is 0 and `upper` / `lower` are gaps, since a
+band of zero width would flag every other value.
+
+`outliers(column, window, sigma, Rolling)` keeps only the rows outside that
+band, with all their columns. Gaps, flat windows and rows with no band are
+never outliers.
+
+```rust
+use pond_rs::{Column, Rolling, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 1_000, 2_000, 3_000],
+        vec![Column::required("cpu", vec![1.0, 1.0, 1.0, 9.0])],
+    )?;
+
+    let b = s.baseline("cpu", "4s", 1.0, Rolling::default())?;
+    let names: Vec<&str> = b.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["cpu", "avg", "sd", "upper", "lower"]);
+    // The first three windows hold only 1s: flat, so no band.
+    assert_eq!(b.column("upper")?.numbers()?.get(2), None);
+    // The last window holds 1, 1, 1, 9: mean 3, deviation √12.
+    assert_eq!(b.column("avg")?.numbers()?.get(3), Some(3.0));
+
+    let odd = s.outliers("cpu", "4s", 1.0, Rolling::default())?;
+    assert_eq!(odd.key().begin(), &[3_000]);
+    Ok(())
+}
+```
+
+### A running total of your own: `scan`
+
+`scan(column, start, step)` walks down a number column with a Rust closure.
+`step(state, value, row)` returns the new state and this row's output. The
+state can be any type, so it can hold more than the output: a last low
+point and a total, say. `scan` replaces the column; `scan_to(column,
+output, start, step)` writes a new column and keeps the source. A gap does
+not call `step`: the row repeats the last output (or is a gap, before the
+first value). A non-finite output is a gap, so the column is optional.
+
+```rust
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "track",
+        vec![0, 1_000, 2_000, 3_000, 4_000],
+        vec![Column::optional(
+            "ele",
+            vec![Some(10.0), Some(12.0), None, Some(11.0), Some(14.0)],
+        )],
+    )?;
+
+    // Total climb: add each rise above the last point.
+    let gain = s.scan_to("ele", "gain", (f64::NAN, 0.0), |(last, total), v, _row| {
+        let total = if v > last { total + v - last } else { total };
+        ((v, total), total)
+    })?;
+    let got: Vec<_> = gain.column("gain")?.numbers()?.iter().collect();
+    assert_eq!(got, [Some(0.0), Some(2.0), Some(2.0), Some(2.0), Some(5.0)]);
+    assert!(gain.column("ele").is_ok()); // scan_to keeps the source
+    Ok(())
+}
+```
+
+### Picking some rows: `sample`
+
+`sample(Sample::Stride(n))` keeps every `n`th row (rows `n - 1`, `2n - 1`,
+…). `sample(Sample::Reservoir { size, seed })` keeps `size` rows picked at
+random, every row equally likely, in their order in the series. The same
+`seed` always picks the same rows, so a run can be repeated; pond-ts has no
+seed. A series with no more than `size` rows is kept whole.
+
+```rust
+use pond_rs::{Column, Sample, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "s",
+        (0..10).map(|i| i * 1_000).collect(),
+        vec![Column::required("v", (0..10).map(f64::from).collect::<Vec<_>>())],
+    )?;
+
+    assert_eq!(s.sample(Sample::Stride(4))?.key().begin(), &[3_000, 7_000]);
+
+    let a = s.sample(Sample::Reservoir { size: 3, seed: 7 })?;
+    let b = s.sample(Sample::Reservoir { size: 3, seed: 7 })?;
+    assert_eq!(a.len(), 3);
+    assert_eq!(a.key().begin(), b.key().begin()); // same seed, same rows
+    Ok(())
+}
+```
+
+### One entity at a time
+
+On a series holding several hosts or devices, these five mix their rows
+together, as in pond-ts. To smooth each host on its own, split first and
+use `apply` (see [Partitions](./partitions)):
+
+```rust
+use pond_rs::{Column, Smooth, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let s = TimeSeries::new(
+        "cpu",
+        vec![0, 0, 1_000, 1_000],
+        vec![
+            Column::required("host", vec!["a", "b", "a", "b"]),
+            Column::required("v", vec![0.0, 100.0, 10.0, 100.0]),
+        ],
+    )?;
+
+    let per_host = s.partition_by(&["host"])?.apply(|one_host| {
+        one_host.smooth("v", &Smooth::ema(0.5).output("ema"))
+    })?;
+    // Host a's EMA never sees host b's 100s.
+    let rows: Vec<_> = per_host
+        .rows()
+        .map(|r| (r.string("host").unwrap(), r.number("ema").unwrap()))
+        .collect();
+    assert!(rows.contains(&(Some("a"), Some(5.0))));
+    Ok(())
+}
+```
+
 ## Picking rows
 
 `slice(range)` picks rows by position, with negative positions counting
@@ -1082,7 +1269,7 @@ the other side first. `join` is not on `PartitionedSeries`.
 
 ## What is not here yet
 
-Still to come from pond-ts: more `rolling` options (by row count, centred
-windows, a minimum number of values), `smooth`, `baseline` / `outliers`,
-`scan`, `sample`, `collapse`, `concat` and the pivots (`pivot_by_group` and
-friends). Financial studies come after the core.
+Still to come from pond-ts: `collapse`, `concat`, the pivots
+(`pivot_by_group` and friends) and `by_value`, then `smooth`, `baseline`,
+`outliers`, `sample` and `scan` run per partition (for now, use `apply` as
+shown above). Financial studies come after the core.
