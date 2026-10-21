@@ -116,7 +116,8 @@ export function scanOp<
   const result = withColumnAppended(base, output, column);
   const outSchema = Object.freeze([
     ...schema,
-    { name: output, kind: 'number' as const },
+    // Optional: rows before the first value and non-finite outputs are gaps.
+    { name: output, kind: 'number' as const, required: false as const },
   ]) as unknown as OutSchema;
   return {
     store: result as unknown as ColumnarStore<OutSchema>,

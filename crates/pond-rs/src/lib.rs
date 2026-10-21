@@ -35,6 +35,10 @@
 //! `to_points_json` (wide points for charts),
 //! working with array columns through [`TimeSeries::array_contains`] /
 //! `array_aggregate` / `array_explode`,
+//! smoothing with [`TimeSeries::smooth`] (EMA, moving average, loess),
+//! rolling bands with [`TimeSeries::baseline`] / `outliers`, a fold of your
+//! own with [`TimeSeries::scan`], and picking some rows with
+//! [`TimeSeries::sample`],
 //! reading times written as text with [`parse_time`] / [`parse_time_in`]
 //! (as pond-ts `Time.parse`),
 //! and Arrow in and out for every key kind ([`TimeSeries::read_ipc`] with
@@ -50,6 +54,7 @@
 //! column is still computed by one thread, in order, so results are the same
 //! bits on any number of threads. Partitions of a [`PartitionedSeries`] run
 //! on several cores the same way: each partition is computed by one thread.
+//! Loess fits each row on its own, so its rows are spread over the cores.
 //!
 //! **Memory.** Columns hold their values in Arrow buffers. Reading a
 //! gap-free `Float64` field, a `Utf8` / `Dictionary<Int32, Utf8>` field or a
@@ -150,6 +155,7 @@ mod rows;
 mod rowwise;
 mod sequence;
 mod series;
+mod smooth;
 mod span;
 mod time_parse;
 
@@ -177,6 +183,7 @@ pub use series::{
     Column, ColumnDef, ColumnKind, IntervalKeys, Key, Labels, MAX_TIME_MS, TimeRangeKeys,
     TimeSeries,
 };
+pub use smooth::{Sample, Smooth};
 pub use time_parse::{parse_time, parse_time_in};
 
 /// The version of this crate.
