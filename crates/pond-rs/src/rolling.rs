@@ -195,17 +195,16 @@ impl WindowState for SortedState {
     }
 }
 
-/// pond-ts `difference` `rollingState`, without its cost. pond-ts keeps
-/// the window sorted (`rollingSortedArray`, a splice per row, so a window
-/// of W rows costs O(W) a row) and answers last minus first. Here two
-/// monotone deques give the largest and smallest in O(1) a row.
+/// pond-ts `difference` `rollingState`: two monotone deques give the
+/// largest and smallest in O(1) a row, as pond-ts's do since
+/// [PND-ROLLDIFF] (#799).
 ///
-/// The bits differ only in one case: every value in the window is a zero.
-/// pond-ts's sorted array then holds a run of `0` and `-0`, inserted at the
-/// front of the run and removed from the front (whichever zero leaves), so
-/// the run behaves as a stack of signs; its answer is the bottom minus the
-/// top, which can be `-0`. `zeros` is that stack. Otherwise one end is not
-/// a zero and the sign of the other cannot change the result.
+/// One case needs more: every value in the window is a zero. pond-ts's
+/// answer then follows its old sorted window, a run of `0` and `-0`
+/// inserted and removed at the front of the run (whichever zero leaves),
+/// so the run behaves as a stack of signs; the answer is the bottom minus
+/// the top, which can be `-0`. `zeros` is that stack. Otherwise one end is
+/// not a zero and the sign of the other cannot change the result.
 #[derive(Default)]
 struct DiffState {
     max: ExtremeState<true>,
@@ -463,16 +462,36 @@ pub(crate) enum Span {
     Rows(usize),
 }
 
+/// A row's place in time for a rolling window: whole ms (`i64`), or an
+/// `f64` for anchors that can fall on a half millisecond (the middle of a
+/// time range, which `smooth` uses).
+pub(crate) trait Anchor: Copy + PartialEq {
+    fn ms(self) -> f64;
+}
+
+impl Anchor for i64 {
+    fn ms(self) -> f64 {
+        // Keys are whole ms within ±8.64e15, so they convert exactly.
+        self as f64
+    }
+}
+
+impl Anchor for f64 {
+    fn ms(self) -> f64 {
+        self
+    }
+}
+
 /// One rolling pass's windows: one per row of `times`.
 #[derive(Clone, Copy)]
-pub(crate) struct Frame<'a> {
-    pub times: &'a [i64],
+pub(crate) struct Frame<'a, T: Anchor = i64> {
+    pub times: &'a [T],
     pub span: Span,
     pub alignment: Alignment,
     pub min_samples: usize,
 }
 
-impl Frame<'_> {
+impl<T: Anchor> Frame<'_, T> {
     pub fn len(&self) -> usize {
         self.times.len()
     }
@@ -486,7 +505,7 @@ impl Frame<'_> {
 /// takes rows in before letting rows go; a leading or centred time window
 /// lets rows go first. A window holding fewer than `min_samples` rows is
 /// not emitted, so those rows keep the gap each output starts with.
-pub(crate) fn walk(frame: &Frame, w: &mut impl Window) {
+pub(crate) fn walk<T: Anchor>(frame: &Frame<T>, w: &mut impl Window) {
     let times = frame.times;
     let rows = times.len();
     let (mut start, mut end) = (0usize, 0usize);
@@ -530,16 +549,15 @@ pub(crate) fn walk(frame: &Frame, w: &mut impl Window) {
         while group_end < rows && times[group_end] == anchor {
             group_end += 1;
         }
-        // The edges are worked out in f64 exactly as pond-ts does (keys are
-        // whole ms within ±8.64e15, so they convert exactly). A centred
-        // window an odd number of ms long has edges on a half millisecond,
-        // which f64 rounds to even past 2^52 ms; computing them another way
-        // would disagree with pond-ts there.
-        let a = anchor as f64;
-        let t = |row: usize| times[row] as f64;
+        // The edges are worked out in f64 exactly as pond-ts does. A
+        // centred window an odd number of ms long has edges on a half
+        // millisecond, which f64 rounds to even past 2^52 ms; computing them
+        // another way would disagree with pond-ts there.
+        let a = anchor.ms();
+        let t = |row: usize| times[row].ms();
         match frame.alignment {
             Alignment::Trailing => {
-                while end < rows && times[end] <= anchor {
+                while end < rows && t(end) <= a {
                     w.enter(end);
                     end += 1;
                 }
@@ -603,7 +621,7 @@ impl<S: WindowState> Window for Rolled<'_, S> {
 }
 
 /// Run one column through `frame`'s windows with one reducer's state.
-fn roll<S: WindowState>(state: S, frame: &Frame, values: &[f64]) -> Vec<f64> {
+fn roll<S: WindowState, T: Anchor>(state: S, frame: &Frame<T>, values: &[f64]) -> Vec<f64> {
     let mut w = Rolled {
         state,
         values,
@@ -613,7 +631,11 @@ fn roll<S: WindowState>(state: S, frame: &Frame, values: &[f64]) -> Vec<f64> {
     w.out
 }
 
-fn roll_column(frame: &Frame, values: &[f64], reducer: Reducer) -> Vec<f64> {
+pub(crate) fn roll_column<T: Anchor>(
+    frame: &Frame<T>,
+    values: &[f64],
+    reducer: Reducer,
+) -> Vec<f64> {
     match reducer {
         Reducer::Count => roll(CountState::default(), frame, values),
         Reducer::Sum => roll(SumState::default(), frame, values),
@@ -756,7 +778,7 @@ impl TimeSeries {
         };
         let plan = self.rolling_plan(aggs, self.key_name())?;
         for &(source, agg) in &plan {
-            check_magnitude(&self.columns()[source], agg.reducer)?;
+            check_magnitude(CALL, &self.columns()[source], agg.reducer)?;
         }
         let used: Vec<(usize, Reducer)> = plan
             .iter()
@@ -943,7 +965,7 @@ fn grid_windows(
 }
 
 /// Refuse values pond-ts would route to its big-integer lanes.
-fn check_magnitude(column: &Column, reducer: Reducer) -> Result<()> {
+pub(crate) fn check_magnitude(call: &'static str, column: &Column, reducer: Reducer) -> Result<()> {
     let split = match reducer {
         Reducer::Sum | Reducer::Avg => SUM_SPLIT,
         Reducer::Stdev => STDEV_SPLIT,
@@ -960,7 +982,7 @@ fn check_magnitude(column: &Column, reducer: Reducer) -> Result<()> {
     {
         None => Ok(()),
         Some(row) => Err(PondError::Unsupported {
-            call: CALL,
+            call,
             message: format!(
                 "column '{}' row {row} holds {:e}, too large for a rolling {:?} (limit {split:e})",
                 column.name(),

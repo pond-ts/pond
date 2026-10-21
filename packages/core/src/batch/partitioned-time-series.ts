@@ -8,7 +8,6 @@ import type {
   AggregateMap,
   AggregateSchema,
   AlignSchema,
-  AppendColumn,
   BaselineSchema,
   DedupeKeep,
   DiffSchema,
@@ -821,7 +820,7 @@ export class PartitionedTimeSeries<
     step: ScanStep<A>,
     init: A,
     options: { output: Name },
-  ): PartitionedTimeSeries<AppendColumn<S, Name, 'number'>, K, By>;
+  ): PartitionedTimeSeries<SmoothAppendSchema<S, Name>, K, By>;
   scan(
     source: string,
     step: (acc: any, value: number, index: number) => readonly [any, number],

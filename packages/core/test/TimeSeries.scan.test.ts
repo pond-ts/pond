@@ -52,6 +52,27 @@ describe('TimeSeries.scan', () => {
       expect(s.at(3)?.get('running')).toBe(100);
     });
 
+    it('marks the new column optional, since it can hold gaps [PND-SCANREQ]', () => {
+      const s = makeSeries([undefined, 5]).scan(
+        'value',
+        (a, v) => [a + v, a + v],
+        0,
+        { output: 'running' },
+      );
+      expect(s.schema[2]).toEqual({
+        name: 'running',
+        kind: 'number',
+        required: false,
+      });
+      // Row 0 is before the first value: a gap.
+      expect(s.at(0)?.get('running')).toBeUndefined();
+      const parts = makeSeries()
+        .partitionBy('value')
+        .scan('value', (a, v) => [a + v, a + v], 0, { output: 'running' })
+        .collect();
+      expect(parts.schema[2]?.required).toBe(false);
+    });
+
     it('rejects an output name that already exists, pointing at replace', () => {
       expect(() =>
         makeSeries().scan('value', (a, v) => [a + v, a + v], 0, {

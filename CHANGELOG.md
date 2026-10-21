@@ -78,6 +78,23 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **`@pond-ts/fit`: samples without a GPS fix.** `ActivityStreams.latlng`
+  entries may now be `null` (type `Array<GeoPoint | null>`) for a sample the
+  device recorded with no fix — the minutes before a watch finds satellites,
+  or a dropout. Before, a source had to drop those samples, losing their heart
+  rate and the device's distance (a run whose first 5 minutes had no fix read
+  3.7 mi against the watch's 4.0 mi). With gaps present, distance comes from
+  the device's `distanceMeters` when recorded (else the joined fixes), the map
+  `polyline` and `bounds` use only the fixes, and the summary carries
+  `gpsSpans` so a chart position can be placed on the map: new
+  `lineDistanceAt` / `lineRange` (null where there was no fix). Tracks with a
+  fix on every sample are unchanged. **Type-level break:** code that reads
+  `streams.latlng` entries must now handle `null`. A device distance that goes
+  backwards (a counter reset) is not used for gaps; the joined fixes are. `stepDistances` now skips non-finite
+  positions instead of returning NaN, and `cleanSwimTrack` accepts `null`.
+
 ### Fixed
 
 - **Rolling `difference` no longer slows down with window size.** It kept
@@ -110,6 +127,30 @@ include new features and type-level changes; patch bumps are strictly additive.
   `v: 'sum'`. Each column now gets the answer it gets alone, and these mixed
   calls are 2–10× faster
   (`packages/core/scripts/perf-aggregate-mixed.mjs`).
+- **`smooth` on time-range and interval keys windows by midpoint.**
+  `movingAverage` and `loess` place such a row at its midpoint, but keys
+  sort by start, so a long range before a short one put the midpoints out
+  of order, and both methods assumed they were in order: the moving
+  average could take in rows far outside its window (`[0, 10]`, `[1, 1]`,
+  `[2, 2]`, `[3, 3]` with a 2 ms window gave every row the mean of all
+  four), and loess fitted from the wrong neighbours. Both now work in
+  midpoint order. Time keys, and ranges whose midpoints are in order,
+  give the same answers as before.
+- **`loess` gives the same answer on every Node version, and is faster.**
+  Its weights used `**`, which V8 has computed differently across
+  versions (Node 22 and newer V8 can differ in the last bit), so the last
+  digits of a fit depended on the Node version. The weights are now
+  plain products: the last bit of some fits changes once, and a 0.05 span
+  over 20k rows takes ~0.12 s instead of ~2.7 s.
+
+### Changed
+
+- **`scan(…, { output })` marks its new column optional.** Rows before the
+  first value and non-finite step outputs are gaps, but the column was typed
+  and declared required. Its schema entry now has `required: false`, and
+  `event.get(output)` is typed `number | undefined` (on `TimeSeries` and
+  `PartitionedTimeSeries`). Typed code that read it as a plain `number` needs
+  a gap check.
 
 ## [0.75.0] — 2026-10-19
 

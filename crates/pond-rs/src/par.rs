@@ -4,6 +4,8 @@
 //! computed from start to finish, in order, by one thread, so its bits do
 //! not depend on how many threads ran. (Splitting one column's rows would
 //! change the order values are added in, and so the last bits of a sum.)
+//! The one exception is loess, where each row's value is a fit of its own
+//! that reads no other row's result, so rows can go to any thread.
 
 /// `items.iter().map(f).collect()`, on several cores when the `parallel`
 /// feature is on (and not on wasm32). Output order is input order.
