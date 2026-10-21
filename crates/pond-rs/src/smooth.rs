@@ -659,8 +659,7 @@ impl TimeSeries {
 
     /// [`TimeSeries::scan`], writing the outputs to a new optional column
     /// `output` (pond-ts `{ output }`) and keeping the source. `output`
-    /// must be a new name. pond-ts marks this column required although it
-    /// can have gaps ([PND-SCANREQ]).
+    /// must be a new name.
     pub fn scan_to<A>(
         &self,
         column: &str,

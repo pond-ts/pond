@@ -2129,13 +2129,14 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
   - Known differences, each checked by the harness: pond-rs refuses an
     unknown or non-number column for `smooth` and a non-number column
     for `baseline`, where pond-ts passes the series through or gives
-    gaps ([PND-SMOOTHCHECK]); pond-rs marks `scan_to`'s column optional,
-    where pond-ts marks it required though it can hold gaps
-    ([PND-SCANREQ], not fixed in pond-ts because it narrows a public
-    type). `baseline_named` refuses the key's name and repeated names,
+    gaps ([PND-SMOOTHCHECK]). `baseline_named` refuses the key's name and repeated names,
     which pond-ts lets through. Values of 2^960 or more are refused by
     the moving average, and of 2^480 or more by `baseline` / `outliers`,
     as by `rolling`.
+  - [PND-SCANREQ] fixed in pond-ts here (Peter approved the type change):
+    `scan(…, { output })` used to mark its new column required though
+    rows before the first value and non-finite outputs are gaps. It is
+    now optional, so `get(output)` reads `number | undefined`.
   - Parity: 135 new pond-ts cases (1092 in all): every method and option
     on gaps, repeated times, signed zeros, overflow, odd-length and
     backwards range midpoints, keys past 2^52 ms, a loess fit whose

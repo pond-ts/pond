@@ -1190,25 +1190,7 @@ fn implemented_ops_match_pond_ts() {
             }
             continue;
         }
-        // Known difference ([PND-SCANREQ]): pond-ts marks scan's new column
-        // required though it can hold gaps; pond-rs marks it optional.
-        let mut case = case.clone();
-        if case.op == "scan" {
-            if let (Some(name), Some(expected)) = (
-                case.args.get(3).and_then(|o| o["output"].as_str()),
-                case.expected.as_mut(),
-            ) {
-                let column = expected.schema.iter_mut().find(|c| c.name == name);
-                let column = column.expect("scan output in the schema");
-                assert_eq!(
-                    column.required, None,
-                    "{}: pond-ts fixed [PND-SCANREQ]",
-                    case.id
-                );
-                column.required = Some(false);
-            }
-        }
-        if let Err(why) = check_case(&case, &actual) {
+        if let Err(why) = check_case(case, &actual) {
             failures.push(format!("{} ({}): {why}", case.id, case.op));
         }
     }

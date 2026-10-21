@@ -13,7 +13,6 @@ import type {
   AggregateOutputSpec,
   AggregateMap,
   AggregateSchema,
-  AppendColumn,
   OptionalNumberColumn,
   CollapseSchema,
   EventDataForSchema,
@@ -3436,8 +3435,8 @@ export class TimeSeries<S extends SeriesSchema> {
    *
    * With no `options.output` the source column is **replaced** in place (widened
    * to optional `number`, as `cumulative` does). With `options.output` a **new**
-   * column of that name is appended and the source is left intact (as
-   * {@link TimeSeries.withColumn} does); the name must not already exist.
+   * optional `number` column of that name is appended and the source is left
+   * intact; the name must not already exist.
    *
    * **Missing cells carry:** a missing / undefined source cell does not call
    * `step` — the accumulator is held and the row re-emits the last output (so it
@@ -3465,7 +3464,7 @@ export class TimeSeries<S extends SeriesSchema> {
     step: ScanStep<A>,
     init: A,
     options: { output: Name },
-  ): TimeSeries<AppendColumn<S, Name, 'number'>>;
+  ): TimeSeries<SmoothAppendSchema<S, Name>>;
   scan(
     source: string,
     step: (acc: any, value: number, index: number) => readonly [any, number],

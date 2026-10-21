@@ -727,13 +727,6 @@ stride })` 32 ms (pond-rs: 18, 54, 49, 7 and 1 ms). Proposed fix: read
   the column and write the result column directly, as `ema`'s fast path
   already does. Repro: `crates/pond-rs/bench/smooth_pond_ts.mjs`. Found
   2026-10-21 (pond-rs R1b step 8h).
-- **[PND-SCANREQ]** — pond-ts `scan(…, { output })` marks the new column
-  required (its schema has no `required: false`, and its type is
-  `ColumnDef<Name, 'number'>`), but rows before the first value and
-  non-finite outputs are gaps. Fixing it narrows `event.get(output)` to
-  `number | undefined`, which can break typed callers, so it needs a yes
-  before it lands. pond-rs marks the column optional. Found 2026-10-21
-  (pond-rs R1b step 8h).
 - **[PND-SMOOTHCHECK]** — pond-ts `smooth` does not check its column: an
   unknown name gives the series back unchanged, and a text column gives a
   gap in every row (`baseline` on a text column also gives gaps). pond-rs

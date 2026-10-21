@@ -120,6 +120,15 @@ include new features and type-level changes; patch bumps are strictly additive.
   plain products: the last bit of some fits changes once, and a 0.05 span
   over 20k rows takes ~0.12 s instead of ~2.7 s.
 
+### Changed
+
+- **`scan(…, { output })` marks its new column optional.** Rows before the
+  first value and non-finite step outputs are gaps, but the column was typed
+  and declared required. Its schema entry now has `required: false`, and
+  `event.get(output)` is typed `number | undefined` (on `TimeSeries` and
+  `PartitionedTimeSeries`). Typed code that read it as a plain `number` needs
+  a gap check.
+
 ## [0.75.0] — 2026-10-19
 
 ### Changed
