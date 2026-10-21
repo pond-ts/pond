@@ -1,0 +1,297 @@
+---
+id: finance-studies
+title: Finance studies
+sidebar_position: 5.5
+---
+
+# Finance studies
+
+A study is a calculation traders run over price bars: a moving average, a
+rolling high or low, how unusual today's price is. pond-rs has the same
+studies as pond-ts's `@pond-ts/financial`, as methods on `TimeSeries` in
+the `pond_rs::financial` module. They are being added family by family;
+this page lists what is built so far.
+
+The results match `@pond-ts/financial` exactly, number for number. That is
+checked against 556 cases that pond-ts itself writes out. They also match
+the pandas and TA-Lib reference results pond-ts is tested against, to
+within 5e-10.
+
+## How every study works
+
+- **It reads one number column**, `close` unless you name another with
+  `.column("open")`.
+- **It adds one column** named after the study (`sma`, `ema`, …) unless you
+  name it with `.output("sma20")`. The name must not already be taken.
+- **A period counts bars, not time.** A 20-bar average spans a weekend as
+  easily as a minute.
+- **Every row stays.** Rows before the first full window get a gap
+  instead of being dropped, so the result lines up with the bars.
+
+You describe a study with `Study::period(n)`, then chain `.column(...)` and
+`.output(...)` if you need them. Calls chain too:
+
+```rust
+use pond_rs::financial::Study;
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let bars = TimeSeries::new(
+        "bars",
+        vec![0, minute, 2 * minute, 3 * minute],
+        vec![Column::required("close", vec![10.0, 11.0, 12.0, 14.0])],
+    )?;
+
+    let out = bars
+        .sma(Study::period(2))?
+        .ema(Study::period(3).output("ema3"))?;
+
+    let sma: Vec<_> = out.column("sma")?.numbers()?.iter().collect();
+    assert_eq!(sma, [None, Some(10.5), Some(11.5), Some(13.0)]);
+    // Gaps until 3 bars have been read; then 10 → 10.5 → 11.25 → 12.625.
+    let ema: Vec<_> = out.column("ema3")?.numbers()?.iter().collect();
+    assert_eq!(ema, [None, None, Some(11.25), Some(12.625)]);
+    Ok(())
+}
+```
+
+## Moving averages
+
+`sma` (the plain average of the window) and `ema` (an average that weights
+recent bars more, alpha `2 / (period + 1)`) have their own methods.
+`moving_average(MaType, study)` gives these two and eight more, the same
+ten pond-ts offers. Its output is called `ma`.
+
+| `MaType` | What it is                                                                        |
+| -------- | --------------------------------------------------------------------------------- |
+| `Sma`    | Plain average (the same numbers as `sma`)                                         |
+| `Ema`    | Exponential average (the same numbers as `ema`)                                   |
+| `Wma`    | Weighted 1, 2, …, period, newest bar heaviest                                     |
+| `Smma`   | Wilder's smoothing, the average RSI and ATR use                                   |
+| `Dema`   | Double exponential: `2 × ema − ema of the ema`, which lags less                   |
+| `Tema`   | Triple exponential, lags less again                                               |
+| `Trima`  | Triangular: an average of an average, so the middle of the window counts the most |
+| `Hull`   | Hull: built from weighted averages to cut lag                                     |
+| `Kama`   | Kaufman's adaptive average: fast when prices trend, slow when they chop           |
+| `Zlema`  | Zero-lag exponential: an EMA of the price pushed forward by its own recent change |
+
+`MaType::parse("hull")` turns pond-ts's name for a type into the `MaType`,
+which helps when the type comes from a setting or a file.
+
+```rust
+use pond_rs::financial::{MaType, Study};
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let bars = TimeSeries::new(
+        "bars",
+        vec![0, minute, 2 * minute, 3 * minute],
+        vec![Column::required("close", vec![10.0, 11.0, 12.0, 14.0])],
+    )?;
+
+    let wma = bars.moving_average(MaType::Wma, Study::period(3))?;
+    // Weights 1, 2, 3 on 11, 12, 14: (11 + 24 + 42) / 6.
+    assert_eq!(wma.column("ma")?.numbers()?.get(3), Some(77.0 / 6.0));
+
+    let kind = MaType::parse("hull")?;
+    assert_eq!(kind, MaType::Hull);
+    assert!(MaType::parse("hma").is_err()); // the error lists the ten names
+    Ok(())
+}
+```
+
+## Rolling statistics and the z-score
+
+| Call                           | Output                      | What each row gets                                                        |
+| ------------------------------ | --------------------------- | ------------------------------------------------------------------------- |
+| `rolling_stdev(study)`         | `stdev`                     | The spread of the window (population standard deviation)                  |
+| `rolling_min(study)`           | `min`                       | The lowest value in the window                                            |
+| `rolling_max(study)`           | `max`                       | The highest value in the window                                           |
+| `rolling_percentile(q, study)` | `p` and `q` (`p90`, `p2.5`) | The `q`th percentile, 0 to 100, in between ranks drawn as a straight line |
+| `z_score(study)`               | `zscore`                    | How many standard deviations this bar sits from its window's average      |
+
+A z-score has no answer when the window is flat (no spread), so that row
+gets a gap.
+
+```rust
+use pond_rs::financial::Study;
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let bars = TimeSeries::new(
+        "bars",
+        (0..5).map(|i| i * minute).collect(),
+        vec![Column::required("close", vec![5.0, 5.0, 3.0, 7.0, 7.0])],
+    )?;
+
+    let out = bars
+        .rolling_min(Study::period(3))?
+        .rolling_max(Study::period(3))?
+        .rolling_percentile(50.0, Study::period(3))?
+        .z_score(Study::period(2))?;
+
+    let low: Vec<_> = out.column("min")?.numbers()?.iter().collect();
+    assert_eq!(low, [None, None, Some(3.0), Some(3.0), Some(3.0)]);
+    let high: Vec<_> = out.column("max")?.numbers()?.iter().collect();
+    assert_eq!(high, [None, None, Some(5.0), Some(7.0), Some(7.0)]);
+    assert_eq!(out.column("p50")?.numbers()?.get(2), Some(5.0));
+
+    // 5, 5 is flat: no z-score. 3 after 5 is one deviation below.
+    let z: Vec<_> = out.column("zscore")?.numbers()?.iter().collect();
+    assert_eq!(z, [None, None, Some(-1.0), Some(1.0), None]);
+    Ok(())
+}
+```
+
+## Gaps in the prices
+
+A gap in the source column never shifts the rows. What a study does with
+it depends on the study, as in pond-ts:
+
+- `sma`, `rolling_stdev`, `rolling_min`, `rolling_max` and
+  `rolling_percentile` skip it and use the window's other values. A window
+  of only gaps gives a gap.
+- `ema` gives the gap row a gap and carries on from where it was. `Dema`,
+  `Tema` and `Zlema` do the same.
+- `Wma`, `Trima` and `Hull` give a gap while the window holds one.
+- `Smma` and `Kama` start after gaps at the beginning, but a gap later on
+  turns every value after it into a gap.
+
+```rust
+use pond_rs::financial::{MaType, Study};
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let bars = TimeSeries::new(
+        "bars",
+        (0..4).map(|i| i * minute).collect(),
+        vec![Column::optional(
+            "close",
+            vec![Some(10.0), None, Some(12.0), Some(14.0)],
+        )],
+    )?;
+
+    let sma = bars.sma(Study::period(2))?;
+    let got: Vec<_> = sma.column("sma")?.numbers()?.iter().collect();
+    // The gap is skipped: 10 alone, then 12 alone, then 12 and 14.
+    assert_eq!(got, [None, Some(10.0), Some(12.0), Some(13.0)]);
+
+    let wma = bars.moving_average(MaType::Wma, Study::period(2))?;
+    let got: Vec<_> = wma.column("ma")?.numbers()?.iter().collect();
+    // A gap while the window holds the gap.
+    assert_eq!(got, [None, None, None, Some((12.0 + 2.0 * 14.0) / 3.0)]);
+    Ok(())
+}
+```
+
+## Several symbols
+
+A study runs down the whole series. For a series holding several symbols,
+split it with `partition_by` and run the study on each symbol with `apply`
+(see [Partitions](./partitions)):
+
+```rust
+use pond_rs::financial::Study;
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let bars = TimeSeries::new(
+        "bars",
+        vec![0, 0, minute, minute],
+        vec![
+            Column::required("symbol", vec!["AAA", "BBB", "AAA", "BBB"]),
+            Column::required("close", vec![10.0, 200.0, 12.0, 210.0]),
+        ],
+    )?;
+
+    let out = bars
+        .partition_by(&["symbol"])?
+        .apply(|one| one.sma(Study::period(2)))?;
+    let rows: Vec<_> = out
+        .rows()
+        .map(|r| (r.string("symbol").unwrap(), r.number("sma").unwrap()))
+        .collect();
+    // AAA's average never sees BBB's prices.
+    assert!(rows.contains(&(Some("AAA"), Some(11.0))));
+    assert!(rows.contains(&(Some("BBB"), Some(205.0))));
+    Ok(())
+}
+```
+
+## Mistakes are errors
+
+pond-rs refuses a study it cannot run, with a message naming the call and
+the problem:
+
+- a period of 0;
+- an output name that is already a column (or the key);
+- a source column that does not exist, or is not numbers.
+
+The last one differs from pond-ts. pond-ts gives a column of all gaps for
+a misspelled or text source column, so a typo looks like "no data"
+(`rolling_min`, `rolling_max` and `rolling_percentile` do throw on a
+missing column). That is logged as a pond-ts issue, [PND-STUDYSRC].
+pond-rs also refuses an exact decimal column, which pond-ts has no kind
+for. A period is a whole number (`usize`), so the negative and fractional
+periods pond-ts has to check for cannot be written.
+
+```rust
+use pond_rs::financial::Study;
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let bars = TimeSeries::new(
+        "bars",
+        vec![0, 60_000],
+        vec![
+            Column::required("close", vec![10.0, 11.0]),
+            Column::required("venue", vec!["X", "Y"]),
+        ],
+    )?;
+
+    assert!(bars.sma(Study::period(0)).is_err());
+    assert!(bars.sma(Study::period(2).column("clsoe")).is_err());
+    assert!(bars.sma(Study::period(2).column("venue")).is_err());
+    assert!(bars.sma(Study::period(2).output("close")).is_err());
+    Ok(())
+}
+```
+
+## Speed
+
+One million bars, the same checksums from both libraries, median times
+(4 cores, on a busy machine, so allow about ±30%). A study is one pass over
+one column, so threads do not come into it.
+
+| Study               | pond-rs | pond-ts |
+| ------------------- | ------- | ------- |
+| `sma` 20            | 16 ms   | 65 ms   |
+| `sma` 200           | 24 ms   | 58 ms   |
+| `ema` 20            | 8 ms    | 18 ms   |
+| `rolling_stdev` 20  | 28 ms   | 41 ms   |
+| `rolling_min` 20    | 29 ms   | 90 ms   |
+| `rolling_max` 200   | 25 ms   | 131 ms  |
+| 90th percentile, 20 | 72 ms   | 251 ms  |
+| `z_score` 20        | 31 ms   | 106 ms  |
+| `Wma` 20            | 12 ms   | 43 ms   |
+| `Smma` 20           | 12 ms   | 19 ms   |
+| `Dema` 20           | 14 ms   | 29 ms   |
+| `Tema` 20           | 17 ms   | 38 ms   |
+| `Trima` 20          | 31 ms   | 75 ms   |
+| `Hull` 20           | 30 ms   | 69 ms   |
+| `Kama` 20           | 13 ms   | 36 ms   |
+| `Zlema` 20          | 9 ms    | 25 ms   |
+
+Every study takes time in line with the number of bars. The percentile is
+the slowest, because it keeps each window sorted.
+
+## Still to come
+
+Bands (Bollinger and others), momentum (RSI, MACD, …), trend, volatility,
+volume and price studies, one family at a time; then trading calendars and
+session VWAP.

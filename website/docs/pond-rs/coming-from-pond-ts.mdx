@@ -22,6 +22,8 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `TimeSeries.fromJSON({ schema, rows })`                           | `TimeSeries::new(name, times, columns)`, or `from_json` for JSON text                         |
 | `{ name: 'cpu', kind: 'number' }`                                 | `Column::required("cpu", values)` / `Column::optional`                                        |
 | `series.aggregate(seq, { cpu: 'avg' })`                           | `series.aggregate(&seq, &[Agg::of("cpu", Reducer::Avg)])`                                     |
+| `sma(bars, { period: 20 })` or `bars.sma({ period: 20 })`         | `bars.sma(Study::period(20))?` (`use pond_rs::financial::Study`)                              |
+| `movingAverage(bars, { type: 'hull', period: 20 })`               | `bars.moving_average(MaType::Hull, Study::period(20))?`                                       |
 | `{ cpu_avg: { from: 'cpu', using: 'avg' } }`                      | `Agg::new("cpu_avg", "cpu", Reducer::Avg)`                                                    |
 | `series.rolling('5m', m, { alignment, minSamples })`              | `series.rolling_with("5m", &aggs, Rolling { alignment, min_samples })`                        |
 | `series.rolling({ count: 20 }, m)`                                | `series.rolling_rows(20, &aggs, Rolling::default())`                                          |
@@ -75,6 +77,10 @@ fixed from the message alone.
 Each of these is a case where pond-ts quietly does something surprising and
 pond-rs returns an error instead.
 
+- **A study on a missing or text column.** Most of pond-ts's financial
+  studies give a column of all gaps, so a typo in the column name looks like "no
+  data" (logged as a pond-ts issue, [PND-STUDYSRC]). pond-rs returns an
+  error naming the column.
 - **Number reducers on text.** pond-ts runs them anyway: `sum` of a text
   column gives 0 and `avg` gives gaps. pond-rs allows only `count`, `first`
   and `last` on text and true/false columns.
