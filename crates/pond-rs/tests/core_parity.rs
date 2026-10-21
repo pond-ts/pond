@@ -244,6 +244,50 @@ macro_rules! shared_op {
                 };
                 Some($target.dedupe(keep))
             }
+            "smooth" => Some(match smooth_options(&args[1], &args[2]) {
+                Ok(smooth) => $target.smooth(args[0].as_str().expect("column"), &smooth),
+                Err(why) => return Some(Err(why)),
+            }),
+            "baseline" | "outliers" => {
+                let column = args[0].as_str().expect("column");
+                let o = &args[1];
+                let window = o["window"].as_str().expect("window");
+                let sigma = o["sigma"].as_f64().expect("sigma");
+                let options = rolling_options(Some(o));
+                Some(if $op == "outliers" {
+                    $target.outliers(column, window, sigma, options)
+                } else if o["names"].is_null() {
+                    $target.baseline(column, window, sigma, options)
+                } else {
+                    let names = &o["names"];
+                    let name = |k: &'static str| names[k].as_str().unwrap_or(k);
+                    $target.baseline_named(
+                        column,
+                        window,
+                        sigma,
+                        options,
+                        [name("avg"), name("sd"), name("upper"), name("lower")],
+                    )
+                })
+            }
+            "scan" => Some(run_scan(&$target, args)),
+            "sample" => {
+                let o = &args[0];
+                let whole = |v: &Value| v.as_f64().filter(|n| n.fract() == 0.0 && *n >= 0.0);
+                Some(
+                    match (whole(&o["stride"]), whole(&o["reservoir"]["size"])) {
+                        (Some(n), _) => $target.sample(pond_rs::Sample::Stride(n as usize)),
+                        (_, Some(n)) => $target.sample(pond_rs::Sample::Reservoir {
+                            size: n as usize,
+                            seed: 0,
+                        }),
+                        // A fractional or negative count cannot be written in
+                        // Rust (`usize`); pond-ts rejects it, so stand in that
+                        // error.
+                        _ => return Some(Err("sample count must be a whole number".into())),
+                    },
+                )
+            }
             _ => None,
         }
     }};
@@ -299,21 +343,18 @@ fn smooth_options(method: &Value, o: &Value) -> Result<pond_rs::Smooth, String> 
 
 /// pond-ts `scan(column, step, init, { output })`, with the step named by
 /// the closure spec (cases.mjs `closure`).
-fn run_scan(input: &TimeSeries, args: &[Value]) -> pond_rs::Result<TimeSeries> {
+fn run_scan<T: Scan>(input: &T, args: &[Value]) -> pond_rs::Result<T> {
     let column = args[0].as_str().expect("column");
     let spec = &args[1]["fn"];
     let output = args.get(3).and_then(|o| o["output"].as_str());
-    fn go<A>(
-        input: &TimeSeries,
+    fn go<T: Scan, A: Clone + Send + Sync>(
+        input: &T,
         column: &str,
         output: Option<&str>,
         init: A,
-        step: impl FnMut(A, f64, usize) -> (A, f64),
-    ) -> pond_rs::Result<TimeSeries> {
-        match output {
-            None => input.scan(column, init, step),
-            Some(name) => input.scan_to(column, name, init, step),
-        }
+        step: impl Fn(A, f64, usize) -> (A, f64) + Send + Sync,
+    ) -> pond_rs::Result<T> {
+        input.scan_any(column, output, init, step)
     }
     match spec["scan"].as_str().expect("scan spec") {
         "sum" => go(input, column, output, decode_f64(&args[2]), |a, v, _| {
@@ -341,6 +382,47 @@ fn run_scan(input: &TimeSeries, args: &[Value]) -> pond_rs::Result<TimeSeries> {
             )
         }
         other => panic!("unknown scan spec {other}"),
+    }
+}
+
+/// `scan` / `scan_to` on a series or a partitioned view.
+trait Scan: Sized {
+    fn scan_any<A: Clone + Send + Sync>(
+        &self,
+        column: &str,
+        output: Option<&str>,
+        init: A,
+        step: impl Fn(A, f64, usize) -> (A, f64) + Send + Sync,
+    ) -> pond_rs::Result<Self>;
+}
+
+impl Scan for TimeSeries {
+    fn scan_any<A: Clone + Send + Sync>(
+        &self,
+        column: &str,
+        output: Option<&str>,
+        init: A,
+        step: impl Fn(A, f64, usize) -> (A, f64) + Send + Sync,
+    ) -> pond_rs::Result<Self> {
+        match output {
+            None => self.scan(column, init, step),
+            Some(name) => self.scan_to(column, name, init, step),
+        }
+    }
+}
+
+impl Scan for pond_rs::PartitionedSeries {
+    fn scan_any<A: Clone + Send + Sync>(
+        &self,
+        column: &str,
+        output: Option<&str>,
+        init: A,
+        step: impl Fn(A, f64, usize) -> (A, f64) + Send + Sync,
+    ) -> pond_rs::Result<Self> {
+        match output {
+            None => self.scan(column, init, step),
+            Some(name) => self.scan_to(column, name, init, step),
+        }
     }
 }
 
@@ -640,31 +722,6 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>
             case.args[0].as_str().expect("column"),
             &array_options(case.args.get(1)),
         ),
-        "smooth" => match smooth_options(&case.args[1], &case.args[2]) {
-            Ok(smooth) => input.smooth(case.args[0].as_str().expect("column"), &smooth),
-            Err(why) => return Some(Err(why)),
-        },
-        "baseline" | "outliers" => {
-            let column = case.args[0].as_str().expect("column");
-            let o = &case.args[1];
-            let window = o["window"].as_str().expect("window");
-            let sigma = o["sigma"].as_f64().expect("sigma");
-            let options = rolling_options(Some(o));
-            if case.op == "outliers" {
-                input.outliers(column, window, sigma, options)
-            } else {
-                let names = &o["names"];
-                let name = |k: &'static str| names[k].as_str().unwrap_or(k);
-                input.baseline_named(
-                    column,
-                    window,
-                    sigma,
-                    options,
-                    [name("avg"), name("sd"), name("upper"), name("lower")],
-                )
-            }
-        }
-        "scan" => run_scan(&input, &case.args),
         "concat" => {
             let others: Vec<TimeSeries> = case.args[0]
                 .as_array()
@@ -693,21 +750,6 @@ fn run(fixture: &CoreFixture, case: &CoreCase) -> Option<Result<Outcome, String>
                 case.args[1].as_str().expect("value column"),
                 &pivot,
             )
-        }
-        "sample" => {
-            let o = &case.args[0];
-            let whole = |v: &Value| v.as_f64().filter(|n| n.fract() == 0.0 && *n >= 0.0);
-            let how = match (whole(&o["stride"]), whole(&o["reservoir"]["size"])) {
-                (Some(n), _) => pond_rs::Sample::Stride(n as usize),
-                (_, Some(n)) => pond_rs::Sample::Reservoir {
-                    size: n as usize,
-                    seed: 0,
-                },
-                // A fractional or negative count cannot be written in Rust
-                // (`usize`); pond-ts rejects it, so stand in that error.
-                _ => return Some(Err("sample count must be a whole number".into())),
-            };
-            input.sample(how)
         }
         "select" => {
             let names: Vec<&str> = case
@@ -1315,10 +1357,15 @@ fn implemented_ops_match_pond_ts() {
             }
             continue;
         }
-        // Known difference: pond-ts smooths a text column to all gaps,
-        // passes an unknown column through, and baselines a text column to
-        // gaps; pond-rs refuses all three.
-        let refused = ["smooth-ema-text", "smooth-ema-unknown", "baseline-text"];
+        // Known difference: pond-ts smooths a text column to all gaps (per
+        // partition too), passes an unknown column through, and baselines a
+        // text column to gaps; pond-rs refuses them.
+        let refused = [
+            "smooth-ema-text",
+            "smooth-ema-unknown",
+            "baseline-text",
+            "partition-smooth-text",
+        ];
         if refused.contains(&case.id.as_str()) {
             assert!(
                 case.expected.is_some(),

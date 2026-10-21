@@ -28,6 +28,7 @@ use crate::rolling::{Rolling, RollingOver};
 use crate::rowwise::{Fill, FillLimits, FirstRow};
 use crate::sequence::Sequence;
 use crate::series::{Column, ColumnKind, Key, Labels, TimeSeries};
+use crate::smooth::{Sample, Smooth};
 
 /// A partition key: one entry per partition column, `None` for a gap.
 pub type PartitionKey = Vec<Option<Value>>;
@@ -365,6 +366,88 @@ impl PartitionedSeries {
     /// they share the key and the partition values.
     pub fn dedupe(&self, keep: Keep) -> Result<PartitionedSeries> {
         self.map(|g| g.dedupe(keep.clone()))
+    }
+
+    /// [`TimeSeries::smooth`] on each partition: each one is smoothed on
+    /// its own rows only.
+    pub fn smooth(&self, column: &str, smooth: &Smooth) -> Result<PartitionedSeries> {
+        self.map(|g| g.smooth(column, smooth))
+    }
+
+    /// [`TimeSeries::baseline`] on each partition.
+    pub fn baseline(
+        &self,
+        column: &str,
+        window: &str,
+        sigma: f64,
+        options: Rolling,
+    ) -> Result<PartitionedSeries> {
+        self.map(|g| g.baseline(column, window, sigma, options))
+    }
+
+    /// [`TimeSeries::baseline_named`] on each partition.
+    pub fn baseline_named(
+        &self,
+        column: &str,
+        window: &str,
+        sigma: f64,
+        options: Rolling,
+        names: [&str; 4],
+    ) -> Result<PartitionedSeries> {
+        self.map(|g| g.baseline_named(column, window, sigma, options, names))
+    }
+
+    /// [`TimeSeries::outliers`] on each partition: a row is an outlier
+    /// against its own partition's band. A partition left with no rows is
+    /// dropped.
+    pub fn outliers(
+        &self,
+        column: &str,
+        window: &str,
+        sigma: f64,
+        options: Rolling,
+    ) -> Result<PartitionedSeries> {
+        self.map(|g| g.outliers(column, window, sigma, options))
+    }
+
+    /// [`TimeSeries::scan`] on each partition: every partition starts from
+    /// its own copy of `init`, and `step`'s row index counts from 0 within
+    /// the partition. `step` is `Fn` (not `FnMut`) because partitions may
+    /// run on several cores.
+    pub fn scan<A>(
+        &self,
+        column: &str,
+        init: A,
+        step: impl Fn(A, f64, usize) -> (A, f64) + Sync + Send,
+    ) -> Result<PartitionedSeries>
+    where
+        A: Clone + Sync + Send,
+    {
+        self.map(|g| g.scan(column, init.clone(), &step))
+    }
+
+    /// [`TimeSeries::scan_to`] on each partition, as
+    /// [`PartitionedSeries::scan`].
+    pub fn scan_to<A>(
+        &self,
+        column: &str,
+        output: &str,
+        init: A,
+        step: impl Fn(A, f64, usize) -> (A, f64) + Sync + Send,
+    ) -> Result<PartitionedSeries>
+    where
+        A: Clone + Sync + Send,
+    {
+        self.map(|g| g.scan_to(column, output, init.clone(), &step))
+    }
+
+    /// [`TimeSeries::sample`] on each partition: a stride counts within
+    /// each partition, and a reservoir samples each one separately. Every
+    /// partition's reservoir starts from the same seed, so two partitions
+    /// with the same number of rows keep the same row positions (pond-ts
+    /// draws from `Math.random`, so its picks differ each run).
+    pub fn sample(&self, how: Sample) -> Result<PartitionedSeries> {
+        self.map(|g| g.sample(how))
     }
 
     fn with_partition_outputs(&self, aggs: &[Agg]) -> Vec<Agg> {
@@ -1022,5 +1105,68 @@ mod tests {
         assert!(one.len() > 30_000);
         assert_eq!(one, run(4));
         assert_eq!(one, run(7));
+    }
+
+    #[test]
+    fn reservoir_and_scan_run_per_partition() {
+        // Two hosts, 20 rows each, interleaved in time.
+        let n = 40;
+        let s = TimeSeries::new(
+            "r",
+            (0..n as i64).map(|i| i * 1000).collect(),
+            vec![
+                Column::required(
+                    "host",
+                    (0..n)
+                        .map(|i| if i % 2 == 0 { "a" } else { "b" })
+                        .collect::<Vec<_>>(),
+                ),
+                Column::required("v", (0..n).map(|i| i as f64).collect::<Vec<_>>()),
+            ],
+        )
+        .unwrap();
+        let p = s.partition_by(&["host"]).unwrap();
+        let how = Sample::Reservoir { size: 5, seed: 3 };
+        let picked = p.sample(how).unwrap();
+        let rows: Vec<Vec<f64>> = picked
+            .iter()
+            .map(|(_, g)| {
+                g.column("v")
+                    .unwrap()
+                    .numbers()
+                    .unwrap()
+                    .iter()
+                    .flatten()
+                    .collect()
+            })
+            .collect();
+        assert_eq!(rows.len(), 2);
+        // Five from each partition, each from its own rows, and the same
+        // row positions in both (one seed, same length).
+        assert!(rows.iter().all(|r| r.len() == 5));
+        assert!(rows[0].iter().all(|v| *v as usize % 2 == 0));
+        assert!(rows[1].iter().all(|v| *v as usize % 2 == 1));
+        let positions = |r: &Vec<f64>| r.iter().map(|v| (*v as usize) / 2).collect::<Vec<_>>();
+        assert_eq!(positions(&rows[0]), positions(&rows[1]));
+        assert_eq!(p.sample(how).unwrap().collect(), picked.collect());
+
+        // A running count restarts in each partition, from its own `init`.
+        let counted = p
+            .scan_to("v", "k", 100.0, |acc, _, i| (acc + 1.0, acc + i as f64))
+            .unwrap();
+        for (_, g) in counted.iter() {
+            let k: Vec<f64> = g
+                .column("k")
+                .unwrap()
+                .numbers()
+                .unwrap()
+                .iter()
+                .flatten()
+                .collect();
+            assert_eq!(
+                k,
+                (0..20).map(|i| 100.0 + 2.0 * i as f64).collect::<Vec<_>>()
+            );
+        }
     }
 }
