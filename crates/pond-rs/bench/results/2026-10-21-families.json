@@ -1,0 +1,1311 @@
+{
+  "array": {
+    "typical contains": {
+      "pond-rs-all": [6.78, 6.76, 6.11],
+      "pond-rs-1t": [6.96, 5.46, 5.52],
+      "pond-ts": [43.29, 40.88, 40.17],
+      "polars-1t": [8.3, 5.2, 7.2],
+      "polars-all": [3.0, 3.8, 3.3]
+    },
+    "typical containsAny": {
+      "pond-rs-all": [13.37, 11.17, 8.42],
+      "pond-rs-1t": [9.43, 8.07, 8.38],
+      "pond-ts": [67.66, 69.19, 62.37],
+      "polars-1t": [12.4, 8.1, 9.2],
+      "polars-all": [3.4, 4.8, 3.6]
+    },
+    "typical containsAll": {
+      "pond-rs-all": [7.86, 8.15, 5.98],
+      "pond-rs-1t": [7.13, 5.59, 6.21],
+      "pond-ts": [46.42, 43.41, 39.36],
+      "polars-1t": [11.0, 7.6, 8.7],
+      "polars-all": [3.5, 3.5, 3.6]
+    },
+    "typical aggregate count": {
+      "pond-rs-all": [5.25, 9.54, 4.93],
+      "pond-rs-1t": [5.07, 4.74, 5.34],
+      "pond-ts": [342.73, 318.91, 287.56],
+      "polars-1t": [0.2, 0.2, 0.3],
+      "polars-all": [0.2, 0.2, 0.2]
+    },
+    "typical aggregate avg": {
+      "pond-rs-all": [9.63, 5.76, 5.79],
+      "pond-rs-1t": [5.47, 5.58, 9.53],
+      "pond-ts": [336.45, 307.86, 330.75],
+      "polars-1t": [0.6, 1.3, 1.1],
+      "polars-all": [0.6, 1.0, 0.8]
+    },
+    "typical aggregate median": {
+      "pond-rs-all": [7.51, 12.31, 6.36],
+      "pond-rs-1t": [6.83, 7.46, 11.73],
+      "pond-ts": [361.48, 367.1, 340.89],
+      "polars-1t": [11.6, 13.9, 20.2],
+      "polars-all": [11.3, 11.4, 11.9]
+    },
+    "typical aggregate first": {
+      "pond-rs-all": [6.06, 6.17, 4.39],
+      "pond-rs-1t": [5.41, 4.22, 6.78],
+      "pond-ts": [385.36, 362.1, 336.11],
+      "polars-1t": [1.2, 1.6, 1.2],
+      "polars-all": [1.4, 1.4, 1.3]
+    },
+    "typical explode tags": {
+      "pond-rs-all": [44.66, 39.89, 40.54],
+      "pond-rs-1t": [44.63, 38.5, 39.89],
+      "pond-ts": [1084.95, 1013.29, 930.07],
+      "polars-1t": [57.3, 54.4, 47.6],
+      "polars-all": [52.0, 56.3, 58.6]
+    },
+    "typical explode nums": {
+      "pond-rs-all": [59.09, 49.95, 58.49],
+      "pond-rs-1t": [57.5, 58.46, 56.51],
+      "pond-ts": [891.72, 876.67, 882.26],
+      "polars-1t": [93.3, 92.1, 96.8],
+      "polars-all": [99.3, 86.0, 96.4]
+    },
+    "typical toJSON": {
+      "pond-rs-all": [69.12, 50.95, 55.23],
+      "pond-rs-1t": [74.19, 60.68, 55.06],
+      "pond-ts": [146.39, 116.44, 109.74],
+      "polars-1t": [62.6, 67.4, 60.0],
+      "polars-all": [68.2, 61.8, 66.4]
+    },
+    "typical fromJSON": {
+      "pond-rs-all": [206.1, 210.72, 195.12],
+      "pond-rs-1t": [205.41, 193.86, 186.42],
+      "pond-ts": [493.22, 459.04, 469.5],
+      "polars-1t": [225.8, 227.7, 201.0],
+      "polars-all": [195.7, 170.3, 206.3]
+    },
+    "typical toArrow": {
+      "pond-rs-all": [22.81, 19.43, 15.02],
+      "pond-rs-1t": [21.57, 15.21, 14.95],
+      "polars-1t": [2.6, 1.4, 1.3],
+      "polars-all": [1.5, 1.4, 1.5]
+    },
+    "typical fromArrow": {
+      "pond-rs-all": [65.24, 71.75, 52.73],
+      "pond-rs-1t": [73.8, 51.47, 54.81],
+      "polars-1t": [4.3, 3.3, 3.2],
+      "polars-all": [3.3, 3.3, 4.0]
+    },
+    "typical writeIpc": {
+      "pond-rs-all": [18.03, 22.34, 22.32],
+      "pond-rs-1t": [27.7, 16.39, 17.64],
+      "polars-1t": [6.0, 5.2, 6.5],
+      "polars-all": [6.2, 6.9, 6.2]
+    },
+    "typical readIpc": {
+      "pond-rs-all": [61.79, 56.68, 64.68],
+      "pond-rs-1t": [84.66, 55.03, 56.24],
+      "polars-1t": [7.4, 6.2, 6.3],
+      "polars-all": [10.6, 9.9, 9.8]
+    },
+    "single contains": {
+      "pond-rs-all": [1.68, 1.35, 1.59],
+      "pond-rs-1t": [2.43, 1.42, 1.21],
+      "pond-ts": [7.12, 6.67, 7.01],
+      "polars-1t": [2.0, 1.2, 2.0],
+      "polars-all": [1.3, 1.2, 0.8]
+    },
+    "single containsAny": {
+      "pond-rs-all": [6.39, 3.02, 3.32],
+      "pond-rs-1t": [6.46, 2.66, 3.29],
+      "pond-ts": [30.35, 31.32, 29.53],
+      "polars-1t": [5.5, 4.0, 8.1],
+      "polars-all": [2.4, 2.8, 2.2]
+    },
+    "single containsAll": {
+      "pond-rs-all": [1.6, 1.01, 1.61],
+      "pond-rs-1t": [1.75, 1.98, 1.1],
+      "pond-ts": [7.13, 6.97, 6.89],
+      "polars-1t": [2.2, 1.8, 4.7],
+      "polars-all": [1.1, 1.5, 1.2]
+    },
+    "single aggregate count": {
+      "pond-rs-all": [2.71, 4.22, 3.1],
+      "pond-rs-1t": [2.97, 2.59, 2.67],
+      "pond-ts": [269.51, 236.07, 212.25],
+      "polars-1t": [0.2, 0.1, 0.2],
+      "polars-all": [0.1, 0.2, 0.2]
+    },
+    "single aggregate avg": {
+      "pond-rs-all": [3.2, 4.86, 3.13],
+      "pond-rs-1t": [3.54, 3.07, 3.23],
+      "pond-ts": [228.72, 226.45, 287.42],
+      "polars-1t": [0.5, 0.4, 0.6],
+      "polars-all": [0.5, 0.5, 0.5]
+    },
+    "single aggregate median": {
+      "pond-rs-all": [3.43, 6.19, 3.04],
+      "pond-rs-1t": [3.66, 3.0, 3.02],
+      "pond-ts": [277.38, 263.94, 288.94],
+      "polars-1t": [10.6, 9.8, 9.8],
+      "polars-all": [9.9, 11.1, 9.8]
+    },
+    "single aggregate first": {
+      "pond-rs-all": [2.44, 2.74, 2.0],
+      "pond-rs-1t": [2.9, 1.97, 2.01],
+      "pond-ts": [303.57, 279.16, 289.07],
+      "polars-1t": [1.1, 0.6, 1.2],
+      "polars-all": [1.0, 1.0, 1.0]
+    },
+    "single explode tags": {
+      "pond-rs-all": [9.25, 9.43, 6.78],
+      "pond-rs-1t": [10.51, 6.82, 7.36],
+      "pond-ts": [234.6, 267.9, 227.55],
+      "polars-1t": [17.6, 23.3, 18.1],
+      "polars-all": [14.6, 12.8, 13.4]
+    },
+    "single explode nums": {
+      "pond-rs-all": [8.43, 8.54, 8.42],
+      "pond-rs-1t": [9.97, 7.97, 7.01],
+      "pond-ts": [191.06, 227.0, 227.34],
+      "polars-1t": [25.8, 24.0, 22.8],
+      "polars-all": [26.5, 16.9, 21.7]
+    },
+    "single toJSON": {
+      "pond-rs-all": [18.8, 18.4, 19.27],
+      "pond-rs-1t": [18.31, 17.59, 17.75],
+      "pond-ts": [80.94, 68.35, 79.02],
+      "polars-1t": [40.6, 41.5, 44.5],
+      "polars-all": [40.5, 38.8, 43.5]
+    },
+    "single fromJSON": {
+      "pond-rs-all": [128.28, 123.3, 104.47],
+      "pond-rs-1t": [120.4, 99.47, 111.3],
+      "pond-ts": [393.16, 333.43, 379.76],
+      "polars-1t": [144.1, 135.0, 146.2],
+      "polars-all": [148.3, 124.5, 130.5]
+    },
+    "single toArrow": {
+      "pond-rs-all": [8.92, 5.46, 5.69],
+      "pond-rs-1t": [6.44, 5.09, 5.51],
+      "polars-1t": [0.9, 0.4, 0.4],
+      "polars-all": [0.7, 0.4, 0.5]
+    },
+    "single fromArrow": {
+      "pond-rs-all": [32.39, 25.44, 25.47],
+      "pond-rs-1t": [28.88, 23.86, 26.25],
+      "polars-1t": [1.3, 1.2, 1.1],
+      "polars-all": [1.0, 1.3, 1.1]
+    },
+    "single writeIpc": {
+      "pond-rs-all": [9.4, 6.07, 6.25],
+      "pond-rs-1t": [7.04, 5.78, 6.41],
+      "polars-1t": [2.3, 2.6, 2.7],
+      "polars-all": [3.2, 2.6, 2.4]
+    },
+    "single readIpc": {
+      "pond-rs-all": [41.85, 26.65, 32.45],
+      "pond-rs-1t": [27.41, 25.52, 27.67],
+      "polars-1t": [4.6, 2.6, 2.9],
+      "polars-all": [5.3, 4.6, 5.2]
+    }
+  },
+  "grid": {
+    "align hold 1m (1M rows)": {
+      "pond-rs-all": [4.6, 2.9, 4.0],
+      "pond-rs-1t": [2.7, 3.1, 2.8],
+      "pond-ts": [87.6, 85.6, 66.9],
+      "polars-1t": [3.4, 2.4, 3.4],
+      "polars-all": [2.7, 2.4, 3.1]
+    },
+    "align hold 1s (1M rows)": {
+      "pond-rs-all": [45.6, 42.9, 56.5],
+      "pond-rs-1t": [45.6, 55.1, 46.5],
+      "pond-ts": [4195.0, 3606.1, 3750.0],
+      "polars-1t": [15.0, 11.9, 16.7],
+      "polars-all": [9.4, 8.4, 8.7]
+    },
+    "align linear 1s (1M rows)": {
+      "pond-rs-all": [72.7, 75.1, 82.4],
+      "pond-rs-1t": [71.6, 72.4, 70.3],
+      "pond-ts": [1219.6, 978.0, 865.9],
+      "polars-1t": [54.8, 49.8, 54.5],
+      "polars-all": [42.4, 39.5, 42.9]
+    },
+    "align hold 1s (10k rows, 1M buckets)": {
+      "pond-rs-all": [22.8, 22.4, 25.4],
+      "pond-rs-1t": [22.2, 22.8, 25.6],
+      "pond-ts": [2595.4, 2513.5, 2465.1],
+      "polars-1t": [10.5, 16.4, 9.7],
+      "polars-all": [10.5, 8.1, 10.8]
+    },
+    "materialize last 1s (1M rows)": {
+      "pond-rs-all": [27.9, 28.1, 28.1],
+      "pond-rs-1t": [28.6, 27.6, 31.5],
+      "pond-ts": [933.9, 805.1, 850.4],
+      "polars-1t": [60.5, 66.8, 58.5],
+      "polars-all": [50.0, 55.5, 44.2]
+    },
+    "materialize nearest 1m (1M rows)": {
+      "pond-rs-all": [4.1, 4.1, 4.0],
+      "pond-rs-1t": [6.0, 4.0, 5.8],
+      "pond-ts": [76.2, 38.2, 40.7],
+      "polars-1t": [3.1, 8.1, 5.1],
+      "polars-all": [3.7, 4.3, 3.3]
+    },
+    "materialize last 1s (10k rows, 1M buckets)": {
+      "pond-rs-all": [23.4, 30.6, 23.2],
+      "pond-rs-1t": [33.2, 23.2, 36.8],
+      "pond-ts": [966.1, 946.9, 737.4],
+      "polars-1t": [16.8, 20.3, 21.1],
+      "polars-all": [13.8, 13.1, 11.9]
+    },
+    "dedupe last (1M rows, 10% repeats)": {
+      "pond-rs-all": [23.1, 20.0, 22.2],
+      "pond-rs-1t": [21.3, 21.9, 27.2],
+      "pond-ts": [1764.1, 1630.8, 1607.2],
+      "polars-1t": [16.2, 16.4, 22.5],
+      "polars-all": [10.2, 9.9, 10.0]
+    },
+    "dedupe max v (1M rows, 10% repeats)": {
+      "pond-rs-all": [24.5, 21.5, 23.0],
+      "pond-rs-1t": [22.4, 32.3, 22.3],
+      "pond-ts": [1831.5, 1741.7, 1990.9],
+      "polars-1t": [106.1, 96.6, 122.4],
+      "polars-all": [50.3, 41.5, 58.8]
+    },
+    "panel: align 1m per symbol + collect": {
+      "pond-rs-all": [101.7, 85.8, 91.7],
+      "pond-rs-1t": [129.7, 103.7, 137.2],
+      "pond-ts": [2582.9, 2263.9, 2370.7],
+      "polars-1t": [150.3, 132.3, 139.7],
+      "polars-all": [62.2, 57.1, 61.0]
+    },
+    "panel: materialize 1m per symbol + collect": {
+      "pond-rs-all": [90.7, 68.1, 77.9],
+      "pond-rs-1t": [108.9, 97.6, 120.6],
+      "pond-ts": [1424.4, 1473.3, 1499.7],
+      "polars-1t": [369.7, 330.9, 375.9],
+      "polars-all": [205.2, 187.7, 185.6]
+    },
+    "panel: dedupe per symbol + collect": {
+      "pond-rs-all": [75.8, 54.7, 65.9],
+      "pond-rs-1t": [102.0, 99.7, 105.1],
+      "pond-ts": [1438.2, 1350.8, 1364.3],
+      "polars-1t": [128.2, 97.4, 115.6],
+      "polars-all": [78.5, 71.6, 78.6]
+    }
+  },
+  "join": {
+    "left join, 1M x 1M, 1/3 match": {
+      "pond-rs-all": [23.0, 18.3, 16.1],
+      "pond-rs-1t": [18.1, 22.2, 16.3],
+      "pond-ts": [20.4, 21.4, 21.0],
+      "polars-1t": [12.6, 19.4, 22.9],
+      "polars-all": [9.3, 10.6, 11.1]
+    },
+    "inner join, 1M x 1M": {
+      "pond-rs-all": [12.5, 12.7, 12.5],
+      "pond-rs-1t": [12.7, 13.5, 18.6],
+      "pond-ts": [21.2, 25.3, 20.5],
+      "polars-1t": [15.1, 15.0, 15.5],
+      "polars-all": [6.0, 7.0, 7.8]
+    },
+    "outer join, 1M x 1M": {
+      "pond-rs-all": [119.2, 84.8, 106.9],
+      "pond-rs-1t": [99.1, 85.0, 83.6],
+      "pond-ts": [75.5, 67.4, 64.2],
+      "polars-1t": [1038.9, 1075.2, 1009.1],
+      "polars-all": [427.4, 443.0, 392.7]
+    },
+    "left join, 1M x 10k sparse": {
+      "pond-rs-all": [12.1, 13.0, 12.9],
+      "pond-rs-1t": [13.5, 12.8, 13.3],
+      "pond-ts": [23.1, 22.6, 32.2],
+      "polars-1t": [20.4, 13.4, 13.2],
+      "polars-all": [10.2, 11.7, 9.5]
+    },
+    "outer join, same keys": {
+      "pond-rs-all": [4.3, 4.3, 4.4],
+      "pond-rs-1t": [6.3, 5.7, 4.5],
+      "pond-ts": [7.6, 7.7, 7.5],
+      "polars-1t": [268.9, 271.2, 316.1],
+      "polars-all": [203.1, 221.3, 206.7]
+    },
+    "joinMany 3 on same keys": {
+      "pond-rs-all": [14.7, 10.0, 10.1],
+      "pond-rs-1t": [14.3, 11.7, 10.6],
+      "pond-ts": [17.1, 17.8, 17.3],
+      "polars-1t": [660.5, 597.9, 581.5],
+      "polars-all": [391.6, 454.5, 421.0]
+    }
+  },
+  "json": {
+    "dense numeric (100k x 6) to_json tuple": {
+      "pond-rs-all": [52.02, 39.04, 54.52],
+      "pond-rs-1t": [44.41, 36.72, 37.56],
+      "pond-ts": [165.45, 152.43, 143.76]
+    },
+    "dense numeric (100k x 6) to_json object": {
+      "pond-rs-all": [46.25, 40.96, 58.05],
+      "pond-rs-1t": [40.26, 39.06, 66.2],
+      "pond-ts": [147.19, 134.85, 139.39],
+      "polars-1t": [54.7, 53.7, 68.5],
+      "polars-all": [63.8, 58.4, 62.7]
+    },
+    "dense numeric (100k x 6) from_json": {
+      "pond-rs-all": [80.06, 93.05, 82.76],
+      "pond-rs-1t": [75.57, 71.97, 74.43],
+      "pond-ts": [135.81, 132.34, 137.09],
+      "polars-1t": [199.8, 175.0, 192.2],
+      "polars-all": [193.6, 194.5, 232.4]
+    },
+    "dense numeric (100k x 6) to_columns_json": {
+      "pond-rs-all": [36.61, 62.19, 35.12],
+      "pond-rs-1t": [36.46, 41.52, 38.43],
+      "pond-ts": [77.73, 73.84, 73.45]
+    },
+    "dense numeric (100k x 6) from_columns_json": {
+      "pond-rs-all": [43.55, 42.95, 44.81],
+      "pond-rs-1t": [43.62, 58.6, 57.87],
+      "pond-ts": [55.16, 50.53, 52.66]
+    },
+    "dense numeric (100k x 6) to_points_json": {
+      "pond-rs-all": [38.22, 38.18, 38.2],
+      "pond-rs-1t": [40.09, 41.11, 69.36],
+      "pond-ts": [162.66, 146.16, 151.3]
+    },
+    "dense numeric (100k x 6) from_points_json": {
+      "pond-rs-all": [111.24, 104.0, 100.54],
+      "pond-rs-1t": [105.53, 97.56, 95.85],
+      "pond-ts": [154.19, 178.76, 169.52]
+    },
+    "with a string column (100k x 7) to_json tuple": {
+      "pond-rs-all": [39.32, 38.39, 40.01],
+      "pond-rs-1t": [38.95, 37.94, 48.59],
+      "pond-ts": [129.93, 180.29, 146.79]
+    },
+    "with a string column (100k x 7) to_json object": {
+      "pond-rs-all": [41.98, 41.47, 46.79],
+      "pond-rs-1t": [44.9, 51.61, 64.36],
+      "pond-ts": [148.67, 160.89, 140.1],
+      "polars-1t": [66.5, 73.3, 63.7],
+      "polars-all": [70.4, 67.8, 61.1]
+    },
+    "with a string column (100k x 7) from_json": {
+      "pond-rs-all": [88.86, 78.71, 83.81],
+      "pond-rs-1t": [89.19, 81.52, 85.53],
+      "pond-ts": [153.1, 173.0, 146.88],
+      "polars-1t": [207.7, 240.1, 205.5],
+      "polars-all": [228.6, 185.5, 193.6]
+    },
+    "with a string column (100k x 7) to_columns_json": {
+      "pond-rs-all": [42.46, 40.27, 37.54],
+      "pond-rs-1t": [46.94, 37.36, 39.51],
+      "pond-ts": [111.13, 102.4, 108.17]
+    },
+    "with a string column (100k x 7) from_columns_json": {
+      "pond-rs-all": [68.82, 46.67, 46.79],
+      "pond-rs-1t": [53.9, 45.85, 59.99],
+      "pond-ts": [67.73, 58.16, 68.47]
+    },
+    "with a string column (100k x 7) to_points_json": {
+      "pond-rs-all": [53.39, 44.33, 45.44],
+      "pond-rs-1t": [42.27, 44.82, 42.01],
+      "pond-ts": [162.58, 163.58, 153.55]
+    },
+    "with a string column (100k x 7) from_points_json": {
+      "pond-rs-all": [120.33, 105.72, 131.78],
+      "pond-rs-1t": [114.01, 107.24, 103.31],
+      "pond-ts": [243.43, 242.77, 217.82]
+    },
+    "~10% gaps (100k x 6) to_json tuple": {
+      "pond-rs-all": [59.87, 35.34, 34.97],
+      "pond-rs-1t": [35.22, 42.04, 32.48],
+      "pond-ts": [112.65, 108.57, 124.81]
+    },
+    "~10% gaps (100k x 6) to_json object": {
+      "pond-rs-all": [45.16, 38.01, 37.57],
+      "pond-rs-1t": [40.63, 38.32, 37.24],
+      "pond-ts": [116.47, 118.12, 124.83],
+      "polars-1t": [60.1, 53.5, 52.9],
+      "polars-all": [58.5, 54.6, 53.0]
+    },
+    "~10% gaps (100k x 6) from_json": {
+      "pond-rs-all": [82.24, 88.76, 103.54],
+      "pond-rs-1t": [77.35, 79.68, 66.89],
+      "pond-ts": [139.43, 144.85, 142.98],
+      "polars-1t": [198.8, 189.4, 174.4],
+      "polars-all": [188.3, 184.9, 167.1]
+    },
+    "~10% gaps (100k x 6) to_columns_json": {
+      "pond-rs-all": [34.05, 37.12, 55.08],
+      "pond-rs-1t": [36.3, 46.24, 33.77],
+      "pond-ts": [100.99, 96.98, 89.72]
+    },
+    "~10% gaps (100k x 6) from_columns_json": {
+      "pond-rs-all": [44.42, 39.4, 39.07],
+      "pond-rs-1t": [52.42, 42.15, 46.44],
+      "pond-ts": [83.31, 53.01, 57.68]
+    },
+    "~10% gaps (100k x 6) to_points_json": {
+      "pond-rs-all": [34.62, 56.27, 34.21],
+      "pond-rs-1t": [50.73, 36.95, 36.48],
+      "pond-ts": [119.42, 118.71, 125.74]
+    },
+    "~10% gaps (100k x 6) from_points_json": {
+      "pond-rs-all": [101.32, 106.41, 94.97],
+      "pond-rs-1t": [103.1, 99.22, 99.93],
+      "pond-ts": [192.14, 180.44, 210.88]
+    },
+    "wide (10k x 41) to_json tuple": {
+      "pond-rs-all": [13.31, 14.65, 13.71],
+      "pond-rs-1t": [15.08, 14.14, 16.53],
+      "pond-ts": [30.99, 29.24, 28.83]
+    },
+    "wide (10k x 41) to_json object": {
+      "pond-rs-all": [15.79, 15.86, 14.27],
+      "pond-rs-1t": [15.73, 26.11, 17.09],
+      "pond-ts": [101.79, 78.93, 76.81],
+      "polars-1t": [41.2, 32.4, 34.6],
+      "polars-all": [46.2, 30.2, 34.4]
+    },
+    "wide (10k x 41) from_json": {
+      "pond-rs-all": [52.42, 53.69, 54.26],
+      "pond-rs-1t": [39.28, 32.54, 33.51],
+      "pond-ts": [30.12, 28.7, 31.96],
+      "polars-1t": [132.5, 126.2, 112.8],
+      "polars-all": [116.0, 130.1, 126.0]
+    },
+    "wide (10k x 41) to_columns_json": {
+      "pond-rs-all": [11.81, 10.96, 11.43],
+      "pond-rs-1t": [12.57, 11.01, 11.49],
+      "pond-ts": [12.45, 12.62, 13.35]
+    },
+    "wide (10k x 41) from_columns_json": {
+      "pond-rs-all": [19.16, 17.37, 20.3],
+      "pond-rs-1t": [18.9, 19.65, 18.53],
+      "pond-ts": [9.81, 7.85, 7.14]
+    },
+    "wide (10k x 41) to_points_json": {
+      "pond-rs-all": [19.2, 17.22, 30.7],
+      "pond-rs-1t": [18.74, 18.12, 21.87],
+      "pond-ts": [80.39, 85.3, 114.72]
+    },
+    "wide (10k x 41) from_points_json": {
+      "pond-rs-all": [56.54, 47.7, 77.62],
+      "pond-rs-1t": [54.11, 50.74, 49.03],
+      "pond-ts": [61.79, 70.96, 72.32]
+    },
+    "per-element floor (1k x 6) to_json tuple": {
+      "pond-rs-all": [0.31, 0.31, 0.33],
+      "pond-rs-1t": [0.31, 0.41, 0.32]
+    },
+    "per-element floor (1k x 6) to_json object": {
+      "pond-rs-all": [0.33, 0.32, 0.34],
+      "pond-rs-1t": [0.33, 0.34, 0.33]
+    },
+    "per-element floor (1k x 6) from_json": {
+      "pond-rs-all": [0.41, 0.42, 0.42],
+      "pond-rs-1t": [0.48, 0.5, 0.4]
+    },
+    "per-element floor (1k x 6) to_columns_json": {
+      "pond-rs-all": [0.36, 0.3, 0.3],
+      "pond-rs-1t": [0.3, 0.33, 0.32]
+    },
+    "per-element floor (1k x 6) from_columns_json": {
+      "pond-rs-all": [0.29, 0.28, 0.29],
+      "pond-rs-1t": [0.31, 0.35, 0.31]
+    },
+    "per-element floor (1k x 6) to_points_json": {
+      "pond-rs-all": [0.39, 0.32, 0.32],
+      "pond-rs-1t": [0.32, 0.38, 0.63]
+    },
+    "per-element floor (1k x 6) from_points_json": {
+      "pond-rs-all": [0.52, 0.51, 0.51],
+      "pond-rs-1t": [0.52, 0.54, 1.03]
+    },
+    "interval key (1667 x 3) to_json tuple": {
+      "pond-rs-all": [0.37, 0.35, 0.35],
+      "pond-rs-1t": [0.35, 0.38, 0.36]
+    },
+    "interval key (1667 x 3) to_json object": {
+      "pond-rs-all": [0.38, 0.37, 0.38],
+      "pond-rs-1t": [0.39, 0.38, 0.38]
+    },
+    "interval key (1667 x 3) from_json": {
+      "pond-rs-all": [0.67, 0.62, 0.63],
+      "pond-rs-1t": [0.64, 0.74, 0.64]
+    },
+    "interval key (1667 x 3) to_columns_json": {
+      "pond-rs-all": [0.35, 0.34, 0.35],
+      "pond-rs-1t": [0.34, 0.36, 0.35]
+    },
+    "interval key (1667 x 3) from_columns_json": {
+      "pond-rs-all": [0.34, 0.33, 0.35],
+      "pond-rs-1t": [0.66, 0.35, 0.37]
+    }
+  },
+  "partition": {
+    "split": {
+      "pond-rs-all": [37.8, 24.7, 25.8],
+      "pond-rs-1t": [41.6, 41.5, 41.8],
+      "pond-ts": [44.4, 31.3, 32.8],
+      "polars-1t": [49.0, 52.3, 51.7],
+      "polars-all": [31.3, 31.6, 32.3]
+    },
+    "diff + collect": {
+      "pond-rs-all": [70.7, 62.4, 58.5],
+      "pond-rs-1t": [86.5, 81.8, 91.1],
+      "pond-ts": [814.8, 668.8, 694.1],
+      "polars-1t": [39.5, 26.5, 33.6],
+      "polars-all": [26.0, 25.2, 33.1]
+    },
+    "fill linear + collect": {
+      "pond-rs-all": [70.0, 58.6, 73.5],
+      "pond-rs-1t": [88.7, 82.7, 119.4],
+      "pond-ts": [668.7, 673.1, 715.4],
+      "polars-1t": [30.1, 29.4, 26.9],
+      "polars-all": [21.8, 18.8, 26.7]
+    },
+    "rolling 60m mean/sd + collect": {
+      "pond-rs-all": [89.8, 79.8, 80.2],
+      "pond-rs-1t": [174.5, 162.7, 162.9],
+      "pond-ts": [1415.0, 1445.5, 1359.5],
+      "polars-1t": [78.9, 69.3, 86.4],
+      "polars-all": [67.3, 70.1, 67.7]
+    },
+    "Q11: rolling 60m, last z per symbol, top 20": {
+      "pond-rs-all": [51.8, 48.1, 52.4],
+      "pond-rs-1t": [122.4, 118.1, 109.7],
+      "pond-ts": [1617.5, 1545.2, 1531.7],
+      "polars-1t": [90.8, 93.8, 96.5],
+      "polars-all": [106.9, 81.2, 76.7]
+    }
+  },
+  "reducers": {
+    "min v, agg 1m": {
+      "pond-rs-all": [3.6, 3.6, 4.8],
+      "pond-rs-1t": [3.8, 3.3, 3.0],
+      "pond-ts": [7.5, 6.9, 7.9],
+      "polars-1t": [8.7, 8.9, 7.4],
+      "polars-all": [10.0, 7.2, 7.0]
+    },
+    "min v, agg 1s": {
+      "pond-rs-all": [37.1, 40.5, 34.7],
+      "pond-rs-1t": [42.1, 39.3, 36.5],
+      "pond-ts": [442.4, 502.1, 420.6],
+      "polars-1t": [56.0, 43.6, 36.2],
+      "polars-all": [31.6, 27.0, 29.4]
+    },
+    "min v, rolling 5m": {
+      "pond-rs-all": [18.5, 27.7, 18.4],
+      "pond-rs-1t": [25.5, 24.7, 19.2],
+      "pond-ts": [231.0, 226.8, 249.6],
+      "polars-1t": [27.8, 50.1, 57.1],
+      "polars-all": [29.2, 30.8, 34.0]
+    },
+    "min v, rolling 1d": {
+      "pond-rs-all": [18.3, 21.2, 18.6],
+      "pond-rs-1t": [31.6, 19.2, 20.1],
+      "pond-ts": [217.8, 215.2, 239.3],
+      "polars-1t": [31.8, 30.8, 32.1],
+      "polars-all": [34.8, 32.8, 39.7]
+    },
+    "min v, reduce": {
+      "pond-rs-all": [1.7, 2.0, 1.7],
+      "pond-rs-1t": [2.0, 2.1, 1.6],
+      "pond-ts": [2.6, 2.6, 6.2],
+      "polars-1t": [1.5, 0.9, 0.6],
+      "polars-all": [1.1, 0.8, 1.0]
+    },
+    "keep v, agg 1m": {
+      "pond-rs-all": [3.1, 4.0, 3.4],
+      "pond-rs-1t": [3.7, 3.2, 2.8],
+      "pond-ts": [19.1, 18.8, 25.4],
+      "polars-1t": [16.3, 16.5, 25.8],
+      "polars-all": [16.5, 13.4, 8.5]
+    },
+    "keep v, agg 1s": {
+      "pond-rs-all": [46.7, 51.2, 36.3],
+      "pond-rs-1t": [56.0, 38.1, 40.0],
+      "pond-ts": [486.5, 447.1, 472.7],
+      "polars-1t": [104.5, 105.4, 108.9],
+      "polars-all": [58.8, 69.5, 60.5]
+    },
+    "keep v, rolling 5m": {
+      "pond-rs-all": [38.9, 25.7, 25.1],
+      "pond-rs-1t": [31.7, 41.3, 26.5],
+      "pond-ts": [220.9, 192.0, 254.0],
+      "polars-1t": [89.0, 96.6, 147.2],
+      "polars-all": [80.3, 87.3, 94.4]
+    },
+    "keep v, rolling 1d": {
+      "pond-rs-all": [34.7, 37.1, 43.2],
+      "pond-rs-1t": [34.3, 26.5, 26.4],
+      "pond-ts": [211.8, 225.0, 204.5],
+      "polars-1t": [109.8, 97.1, 141.1],
+      "polars-all": [74.6, 102.7, 94.4]
+    },
+    "keep v, reduce": {
+      "pond-rs-all": [0.0, 0.0, 0.0],
+      "pond-rs-1t": [0.0, 0.0, 0.0],
+      "pond-ts": [130.0, 150.4, 113.4],
+      "polars-1t": [21.1, 19.1, 20.9],
+      "polars-all": [15.9, 15.0, 17.0]
+    },
+    "difference v, agg 1m": {
+      "pond-rs-all": [7.2, 6.6, 6.6],
+      "pond-rs-1t": [4.8, 4.0, 4.4],
+      "pond-ts": [37.3, 49.1, 28.0],
+      "polars-1t": [10.9, 15.3, 12.6],
+      "polars-all": [18.5, 10.8, 11.5]
+    },
+    "difference v, agg 1s": {
+      "pond-rs-all": [42.5, 39.3, 38.0],
+      "pond-rs-1t": [53.8, 39.6, 46.1],
+      "pond-ts": [505.7, 631.0, 477.0],
+      "polars-1t": [49.2, 64.0, 51.6],
+      "polars-all": [37.3, 34.7, 37.6]
+    },
+    "difference v, rolling 5m": {
+      "pond-rs-all": [26.9, 27.2, 44.6],
+      "pond-rs-1t": [48.5, 28.5, 43.6],
+      "pond-ts": [372.2, 368.0, 343.8],
+      "polars-1t": [65.6, 55.5, 86.2],
+      "polars-all": [43.4, 31.3, 43.5]
+    },
+    "difference v, rolling 1d": {
+      "pond-rs-all": [28.1, 26.2, 54.4],
+      "pond-rs-1t": [53.9, 28.0, 27.7],
+      "pond-ts": [413.7, 429.5, 356.5],
+      "polars-1t": [97.7, 76.9, 84.4],
+      "polars-all": [36.4, 55.5, 64.0]
+    },
+    "difference v, reduce": {
+      "pond-rs-all": [3.4, 2.8, 4.1],
+      "pond-rs-1t": [3.8, 3.3, 2.7],
+      "pond-ts": [128.1, 128.8, 117.8],
+      "polars-1t": [2.4, 2.3, 2.9],
+      "polars-all": [1.0, 1.6, 0.8]
+    },
+    "keep host, agg 1m": {
+      "pond-rs-all": [10.9, 10.0, 16.4],
+      "pond-rs-1t": [15.1, 10.5, 10.6],
+      "pond-ts": [23.9, 26.6, 35.6],
+      "polars-1t": [14.6, 15.5, 14.6],
+      "polars-all": [7.5, 9.1, 7.0]
+    },
+    "keep host, agg 1s": {
+      "pond-rs-all": [93.5, 76.0, 64.9],
+      "pond-rs-1t": [104.5, 80.8, 87.0],
+      "pond-ts": [763.7, 567.9, 530.0],
+      "polars-1t": [39.4, 50.4, 56.7],
+      "polars-all": [33.3, 35.4, 40.0]
+    },
+    "keep host, rolling 5m": {
+      "pond-rs-all": [76.8, 54.7, 79.6],
+      "pond-rs-1t": [88.0, 58.2, 69.7],
+      "pond-ts": [169.9, 171.6, 209.8]
+    },
+    "keep host, rolling 1d": {
+      "pond-rs-all": [54.6, 76.9, 51.2],
+      "pond-rs-1t": [53.1, 75.5, 61.3],
+      "pond-ts": [182.0, 198.5, 214.7]
+    },
+    "keep host, reduce": {
+      "pond-rs-all": [7.1, 6.6, 7.2],
+      "pond-rs-1t": [6.2, 6.4, 13.5],
+      "pond-ts": [90.1, 85.3, 76.8],
+      "polars-1t": [11.4, 10.1, 11.7],
+      "polars-all": [9.7, 10.1, 9.8]
+    },
+    "keep d, agg 1m": {
+      "pond-rs-all": [13.7, 14.6, 12.5],
+      "pond-rs-1t": [13.1, 12.7, 12.2]
+    },
+    "keep d, agg 1s": {
+      "pond-rs-all": [65.9, 73.0, 64.6],
+      "pond-rs-1t": [71.6, 76.1, 68.2]
+    },
+    "keep d, rolling 5m": {
+      "pond-rs-all": [94.8, 59.5, 52.8],
+      "pond-rs-1t": [83.0, 61.5, 53.2]
+    },
+    "keep d, rolling 1d": {
+      "pond-rs-all": [89.4, 54.9, 71.8],
+      "pond-rs-1t": [82.3, 58.7, 51.4]
+    },
+    "keep d, reduce": {
+      "pond-rs-all": [16.0, 13.7, 13.9],
+      "pond-rs-1t": [16.8, 16.8, 9.2]
+    },
+    "difference d, agg 1m": {
+      "pond-rs-all": [18.4, 26.2, 14.9],
+      "pond-rs-1t": [23.9, 23.4, 14.5]
+    },
+    "difference d, agg 1s": {
+      "pond-rs-all": [134.0, 149.5, 99.4],
+      "pond-rs-1t": [124.5, 111.4, 103.2]
+    },
+    "difference d, rolling 5m": {
+      "pond-rs-all": [133.6, 108.5, 93.6],
+      "pond-rs-1t": [128.8, 103.5, 98.0]
+    },
+    "difference d, rolling 1d": {
+      "pond-rs-all": [132.8, 134.7, 110.5],
+      "pond-rs-1t": [132.6, 112.2, 95.5]
+    },
+    "difference d, reduce": {
+      "pond-rs-all": [17.5, 13.4, 13.3],
+      "pond-rs-1t": [17.4, 14.9, 12.4]
+    },
+    "unique v, agg 1m": {
+      "pond-rs-all": [42.2, 14.6, 17.9],
+      "pond-rs-1t": [21.7, 14.6, 13.6],
+      "pond-ts": [74.3, 78.2, 65.9],
+      "polars-1t": [57.1, 79.6, 67.7],
+      "polars-all": [32.5, 34.3, 32.8]
+    },
+    "unique v, agg 1s": {
+      "pond-rs-all": [114.6, 90.9, 91.9],
+      "pond-rs-1t": [104.8, 117.7, 105.7],
+      "pond-ts": [2130.9, 1908.9, 1936.5],
+      "polars-1t": [466.0, 464.7, 413.0],
+      "polars-all": [149.2, 154.4, 155.9]
+    },
+    "unique v, rolling 5m": {
+      "pond-rs-all": [158.7, 143.1, 177.5],
+      "pond-rs-1t": [127.4, 129.0, 132.9],
+      "pond-ts": [2141.7, 2199.4, 2136.6]
+    },
+    "unique v, reduce": {
+      "pond-rs-all": [16.2, 12.0, 10.1],
+      "pond-rs-1t": [19.1, 10.6, 10.0],
+      "pond-ts": [435.5, 467.5, 446.8],
+      "polars-1t": [21.2, 20.6, 31.0],
+      "polars-all": [16.8, 15.9, 15.0]
+    },
+    "unique host, agg 1m": {
+      "pond-rs-all": [18.6, 16.0, 26.3],
+      "pond-rs-1t": [24.3, 15.6, 15.6],
+      "pond-ts": [51.6, 70.9, 55.2],
+      "polars-1t": [45.1, 71.0, 64.2],
+      "polars-all": [30.0, 26.8, 33.4]
+    },
+    "unique host, agg 1s": {
+      "pond-rs-all": [105.1, 91.5, 94.9],
+      "pond-rs-1t": [104.8, 108.7, 103.4],
+      "pond-ts": [1834.8, 1655.3, 1821.4],
+      "polars-1t": [483.1, 452.0, 435.5],
+      "polars-all": [176.0, 153.7, 178.5]
+    },
+    "unique host, rolling 5m": {
+      "pond-rs-all": [175.5, 147.0, 175.1],
+      "pond-rs-1t": [167.0, 120.9, 155.9],
+      "pond-ts": [1562.6, 1890.9, 1420.0]
+    },
+    "unique host, reduce": {
+      "pond-rs-all": [16.4, 21.0, 11.3],
+      "pond-rs-1t": [11.4, 13.4, 10.8],
+      "pond-ts": [293.2, 100.7, 256.5],
+      "polars-1t": [9.6, 10.7, 19.2],
+      "polars-all": [10.9, 10.1, 19.9]
+    },
+    "top3 v, agg 1m": {
+      "pond-rs-all": [30.6, 14.9, 25.9],
+      "pond-rs-1t": [14.5, 16.2, 14.0],
+      "pond-ts": [124.3, 157.6, 95.7],
+      "polars-1t": [56.1, 53.6, 61.0],
+      "polars-all": [36.4, 36.8, 38.2]
+    },
+    "top3 v, agg 1s": {
+      "pond-rs-all": [109.2, 108.5, 108.1],
+      "pond-rs-1t": [111.7, 128.6, 112.1],
+      "pond-ts": [3290.8, 3334.6, 3107.5],
+      "polars-1t": [410.7, 490.3, 427.5],
+      "polars-all": [158.9, 160.5, 148.9]
+    },
+    "top3 v, rolling 5m": {
+      "pond-rs-all": [241.7, 173.8, 274.6],
+      "pond-rs-1t": [246.3, 201.0, 189.6],
+      "pond-ts": [3897.9, 3932.7, 3625.7]
+    },
+    "top3 v, reduce": {
+      "pond-rs-all": [11.4, 9.9, 10.9],
+      "pond-rs-1t": [12.1, 11.7, 17.7],
+      "pond-ts": [516.4, 257.2, 455.2],
+      "polars-1t": [13.7, 19.9, 13.7],
+      "polars-all": [15.2, 20.0, 14.3]
+    },
+    "top3 host, agg 1m": {
+      "pond-rs-all": [17.7, 21.5, 17.4],
+      "pond-rs-1t": [16.7, 16.9, 17.8],
+      "pond-ts": [72.9, 72.9, 77.9],
+      "polars-1t": [60.7, 55.1, 45.8],
+      "polars-all": [25.9, 28.1, 25.7]
+    },
+    "top3 host, agg 1s": {
+      "pond-rs-all": [96.8, 96.3, 100.3],
+      "pond-rs-1t": [114.9, 99.4, 97.2],
+      "pond-ts": [3194.9, 3115.4, 2963.6],
+      "polars-1t": [476.2, 476.6, 507.5],
+      "polars-all": [181.4, 158.5, 162.5]
+    },
+    "top3 host, rolling 5m": {
+      "pond-rs-all": [187.8, 179.4, 190.5],
+      "pond-rs-1t": [193.1, 180.0, 197.1],
+      "pond-ts": [2655.6, 2984.8, 2713.3]
+    },
+    "top3 host, reduce": {
+      "pond-rs-all": [13.6, 15.3, 19.8],
+      "pond-rs-1t": [19.8, 12.4, 12.6],
+      "pond-ts": [277.9, 126.1, 261.5],
+      "polars-1t": [20.6, 27.2, 20.5],
+      "polars-all": [27.2, 28.9, 19.8]
+    },
+    "samples v, agg 1m": {
+      "pond-rs-all": [47.4, 50.6, 56.9],
+      "pond-rs-1t": [59.4, 46.7, 45.3],
+      "pond-ts": [245.6, 245.6, 253.3],
+      "polars-1t": [10.2, 13.8, 12.4],
+      "polars-all": [10.8, 11.3, 10.5]
+    },
+    "samples v, agg 1s": {
+      "pond-rs-all": [103.7, 121.8, 99.8],
+      "pond-rs-1t": [92.9, 100.9, 97.8],
+      "pond-ts": [2226.3, 2505.1, 2110.2],
+      "polars-1t": [79.3, 103.5, 78.6],
+      "polars-all": [53.7, 60.7, 55.9]
+    },
+    "samples v, rolling 5m": {
+      "pond-rs-all": [15554.6, 15456.9, 15215.7],
+      "pond-rs-1t": [15855.0, 15472.6, 15795.6],
+      "pond-ts": [81918.9, 80923.9, 100748.6]
+    },
+    "samples v, reduce": {
+      "pond-rs-all": [21.1, 19.4, 23.2],
+      "pond-rs-1t": [21.1, 30.5, 34.9],
+      "pond-ts": [840.9, 834.7, 771.5],
+      "polars-1t": [2.0, 1.9, 2.1],
+      "polars-all": [2.2, 2.0, 1.8]
+    }
+  },
+  "reshape": {
+    "concat 10 x 100k": {
+      "pond-rs-all": [92.9, 74.2, 48.3],
+      "pond-rs-1t": [56.9, 63.6, 48.4],
+      "pond-ts": [258.8, 236.1, 220.7],
+      "polars-1t": [52.5, 38.3, 34.7],
+      "polars-all": [20.2, 18.9, 15.5]
+    },
+    "concat 1000 x 1k": {
+      "pond-rs-all": [79.1, 58.7, 56.5],
+      "pond-rs-1t": [61.0, 61.4, 54.5],
+      "pond-ts": [451.1, 449.3, 373.4],
+      "polars-1t": [75.7, 73.9, 66.2],
+      "polars-all": [28.2, 27.1, 25.6]
+    },
+    "collapse sum": {
+      "pond-rs-all": [47.8, 40.2, 37.9],
+      "pond-rs-1t": [46.6, 40.3, 39.5],
+      "pond-ts": [174.0, 168.8, 156.8],
+      "polars-1t": [3.1, 2.8, 3.0],
+      "polars-all": [3.0, 2.9, 2.8]
+    },
+    "collapse_keep sum": {
+      "pond-rs-all": [45.3, 40.8, 39.5],
+      "pond-rs-1t": [49.7, 42.9, 40.8],
+      "pond-ts": [139.8, 172.1, 134.5],
+      "polars-1t": [2.8, 2.5, 3.5],
+      "polars-all": [2.8, 3.1, 2.4]
+    },
+    "pivot 100 hosts": {
+      "pond-rs-all": [60.3, 79.8, 55.8],
+      "pond-rs-1t": [108.6, 82.9, 75.1],
+      "pond-ts": [1098.2, 1009.1, 651.9],
+      "polars-1t": [522.1, 528.1, 417.9],
+      "polars-all": [126.1, 117.4, 122.2]
+    },
+    "pivot 4 hosts": {
+      "pond-rs-all": [52.8, 49.9, 50.9],
+      "pond-rs-1t": [64.2, 64.2, 51.5],
+      "pond-ts": [962.7, 964.5, 877.6],
+      "polars-1t": [85.9, 95.7, 81.2],
+      "polars-all": [35.8, 37.2, 34.2]
+    },
+    "pivot 100 hosts x2 avg": {
+      "pond-rs-all": [103.6, 99.2, 96.0],
+      "pond-rs-1t": [96.9, 134.6, 90.0],
+      "pond-ts": [785.2, 698.5, 682.4],
+      "polars-1t": [585.7, 646.4, 506.0],
+      "polars-all": [134.5, 149.4, 143.9]
+    },
+    "pivot 100 hosts x2 last": {
+      "pond-rs-all": [109.6, 103.3, 85.3],
+      "pond-rs-1t": [138.3, 97.4, 88.2],
+      "pond-ts": [553.9, 619.8, 1012.9],
+      "polars-1t": [491.8, 573.9, 493.1],
+      "polars-all": [154.0, 131.7, 134.0]
+    }
+  },
+  "rolling": {
+    "time 5m avg trailing": {
+      "pond-rs-all": [26.6, 24.9, 29.0],
+      "pond-rs-1t": [23.8, 31.4, 24.0],
+      "pond-ts": [249.1, 262.5, 220.9],
+      "polars-1t": [31.0, 28.4, 30.9],
+      "polars-all": [33.0, 51.3, 32.0]
+    },
+    "time 5m avg leading": {
+      "pond-rs-all": [29.9, 27.5, 25.3],
+      "pond-rs-1t": [23.7, 23.7, 24.1],
+      "pond-ts": [231.8, 237.7, 229.7]
+    },
+    "time 5m avg centered": {
+      "pond-rs-all": [29.3, 28.2, 23.9],
+      "pond-rs-1t": [24.4, 24.1, 24.8],
+      "pond-ts": [259.1, 247.4, 257.4]
+    },
+    "time 5m stdev centered": {
+      "pond-rs-all": [59.2, 41.0, 40.2],
+      "pond-rs-1t": [40.9, 41.6, 40.1],
+      "pond-ts": [288.0, 298.8, 227.5]
+    },
+    "time 5m avg min 300": {
+      "pond-rs-all": [30.2, 23.0, 23.6],
+      "pond-rs-1t": [24.0, 22.4, 25.7],
+      "pond-ts": [326.5, 391.3, 359.3]
+    },
+    "rows 20 avg": {
+      "pond-rs-all": [26.1, 28.0, 23.8],
+      "pond-rs-1t": [26.7, 25.3, 25.9],
+      "pond-ts": [49.4, 48.7, 37.6],
+      "polars-1t": [10.0, 10.5, 11.6],
+      "polars-all": [10.9, 10.0, 10.1]
+    },
+    "rows 20 avg min 20": {
+      "pond-rs-all": [22.8, 22.7, 22.9],
+      "pond-rs-1t": [23.3, 22.3, 22.8],
+      "pond-ts": [33.4, 29.5, 23.0]
+    },
+    "rows 20 stdev": {
+      "pond-rs-all": [48.9, 49.8, 61.3],
+      "pond-rs-1t": [53.9, 54.9, 49.0],
+      "pond-ts": [57.7, 68.4, 60.2],
+      "polars-1t": [35.3, 23.4, 30.5],
+      "polars-all": [24.2, 22.3, 25.8]
+    },
+    "rows 300 avg centered": {
+      "pond-rs-all": [23.3, 25.3, 26.3],
+      "pond-rs-1t": [23.8, 23.1, 25.8],
+      "pond-ts": [44.0, 43.0, 27.5],
+      "polars-1t": [15.5, 9.9, 10.0],
+      "polars-all": [19.1, 22.0, 9.7]
+    },
+    "rows 20 avg by host": {
+      "pond-rs-all": [165.8, 138.7, 159.0],
+      "pond-rs-1t": [222.9, 197.6, 213.6],
+      "pond-ts": [2348.4, 2356.8, 2146.4],
+      "polars-1t": [42.5, 42.6, 46.6],
+      "polars-all": [36.6, 39.8, 31.2]
+    },
+    "grid 1m, 5m avg, 100k rows": {
+      "pond-rs-all": [0.6, 1.2, 0.7],
+      "pond-rs-1t": [0.6, 1.2, 0.6],
+      "pond-ts": [8574.0, 9205.3, 8600.7],
+      "polars-1t": [2.4, 2.4, 3.2],
+      "polars-all": [2.6, 3.1, 2.8]
+    },
+    "grid 1m, 5m avg, 1M rows": {
+      "pond-rs-all": [7.4, 11.7, 12.3],
+      "pond-rs-1t": [7.9, 7.0, 7.3],
+      "polars-1t": [15.9, 16.0, 18.7],
+      "polars-all": [18.4, 15.6, 16.0]
+    },
+    "grid 1s, 5m avg, 1M rows": {
+      "pond-rs-all": [262.3, 244.1, 306.7],
+      "pond-rs-1t": [342.6, 234.6, 305.1],
+      "polars-1t": [160.5, 159.4, 176.0],
+      "polars-all": [179.4, 159.0, 161.8]
+    }
+  },
+  "rowwise": {
+    "diff": {
+      "pond-rs-all": [5.9, 5.4, 5.9],
+      "pond-rs-1t": [6.4, 5.4, 5.8],
+      "pond-ts": [13.0, 7.3, 9.6],
+      "polars-1t": [2.1, 2.1, 1.6],
+      "polars-all": [2.6, 2.2, 2.0]
+    },
+    "diff drop": {
+      "pond-rs-all": [7.0, 6.9, 7.0],
+      "pond-rs-1t": [7.4, 7.6, 7.1],
+      "pond-ts": [15.9, 8.0, 11.0],
+      "polars-1t": [2.1, 2.0, 2.0],
+      "polars-all": [2.6, 2.2, 2.3]
+    },
+    "rate": {
+      "pond-rs-all": [6.4, 6.3, 6.2],
+      "pond-rs-1t": [6.6, 6.3, 9.2],
+      "pond-ts": [16.2, 14.3, 20.2],
+      "polars-1t": [10.6, 9.2, 9.7],
+      "polars-all": [10.6, 10.1, 9.7]
+    },
+    "pct_change": {
+      "pond-rs-all": [5.7, 5.8, 6.2],
+      "pond-rs-1t": [6.0, 5.6, 8.0],
+      "pond-ts": [10.8, 8.9, 12.5],
+      "polars-1t": [4.6, 3.9, 4.1],
+      "polars-all": [4.7, 4.5, 4.2]
+    },
+    "cumulative sum": {
+      "pond-rs-all": [6.6, 7.5, 6.8],
+      "pond-rs-1t": [6.7, 6.2, 7.9],
+      "pond-ts": [12.9, 15.2, 16.0],
+      "polars-1t": [9.0, 6.8, 7.0],
+      "polars-all": [7.0, 7.2, 7.0]
+    },
+    "shift 1": {
+      "pond-rs-all": [8.0, 7.6, 7.8],
+      "pond-rs-1t": [7.6, 6.9, 8.6],
+      "pond-ts": [8.6, 10.3, 13.2],
+      "polars-1t": [0.0, 0.0, 0.0],
+      "polars-all": [0.2, 0.2, 0.2]
+    },
+    "fill hold": {
+      "pond-rs-all": [8.3, 8.2, 8.6],
+      "pond-rs-1t": [7.9, 7.9, 10.9],
+      "pond-ts": [11.4, 12.5, 14.2],
+      "polars-1t": [6.2, 5.5, 5.6],
+      "polars-all": [5.7, 5.7, 7.4]
+    },
+    "fill linear": {
+      "pond-rs-all": [9.2, 8.8, 9.6],
+      "pond-rs-1t": [8.9, 8.8, 12.1],
+      "pond-ts": [13.7, 20.7, 20.0],
+      "polars-1t": [7.0, 6.3, 6.3],
+      "polars-all": [6.2, 6.2, 9.0]
+    },
+    "fill linear maxGap 3s": {
+      "pond-rs-all": [7.9, 7.9, 9.9],
+      "pond-rs-1t": [7.8, 7.8, 10.4],
+      "pond-ts": [17.2, 20.7, 19.2]
+    },
+    "filter v > 500 (by name)": {
+      "pond-rs-all": [17.7, 17.3, 29.3],
+      "pond-rs-1t": [17.1, 16.5, 17.0],
+      "pond-ts": [38.0, 42.0, 43.3],
+      "polars-1t": [4.7, 3.2, 3.4],
+      "polars-all": [3.1, 2.6, 2.8]
+    },
+    "filter v > 500 (column fetched once)": {
+      "pond-rs-all": [7.7, 7.3, 8.7],
+      "pond-rs-1t": [6.9, 6.7, 7.1]
+    },
+    "map_numbers v * 2": {
+      "pond-rs-all": [3.7, 3.2, 3.8],
+      "pond-rs-1t": [3.4, 3.0, 3.2],
+      "pond-ts": [5.7, 7.8, 8.5],
+      "polars-1t": [1.7, 1.6, 1.9],
+      "polars-all": [1.7, 1.6, 1.5]
+    },
+    "with_column": {
+      "pond-rs-all": [0.7, 0.7, 1.2],
+      "pond-rs-1t": [0.7, 0.7, 0.6],
+      "pond-ts": [6.1, 5.0, 7.3],
+      "polars-1t": [0.0, 0.0, 0.0],
+      "polars-all": [0.0, 0.0, 0.0]
+    },
+    "slice middle half": {
+      "pond-rs-all": [0.3, 0.3, 0.4],
+      "pond-rs-1t": [0.3, 0.3, 0.3],
+      "pond-ts": [0.0, 0.0, 0.0],
+      "polars-1t": [0.0, 0.0, 0.0],
+      "polars-all": [0.0, 0.0, 0.0]
+    }
+  },
+  "smooth": {
+    "ema alpha 0.1": {
+      "pond-rs-all": [6.9, 5.8, 6.5],
+      "pond-rs-1t": [6.0, 6.1, 7.0],
+      "pond-ts": [12.5, 13.5, 13.0],
+      "polars-1t": [10.5, 10.0, 11.2],
+      "polars-all": [13.2, 10.8, 11.1]
+    },
+    "ema span 20 min 20": {
+      "pond-rs-all": [6.7, 5.8, 6.3],
+      "pond-rs-1t": [6.0, 5.9, 6.8],
+      "pond-ts": [15.3, 12.4, 18.7],
+      "polars-1t": [10.3, 20.8, 10.7],
+      "polars-all": [11.6, 19.9, 10.8]
+    },
+    "moving average 5m": {
+      "pond-rs-all": [28.4, 25.7, 27.0],
+      "pond-rs-1t": [29.8, 33.1, 26.7],
+      "pond-ts": [2216.4, 2237.4, 1870.6],
+      "polars-1t": [36.7, 54.3, 27.2],
+      "polars-all": [51.3, 38.0, 29.7]
+    },
+    "moving average 5m centered skip": {
+      "pond-rs-all": [31.1, 26.4, 29.0],
+      "pond-rs-1t": [26.6, 26.0, 27.7],
+      "pond-ts": [2098.6, 2130.7, 1937.4]
+    },
+    "moving average 5m, ranges": {
+      "pond-rs-all": [79.0, 74.4, 91.2],
+      "pond-rs-1t": [88.0, 83.3, 82.0],
+      "pond-ts": [2636.9, 2405.8, 2060.4]
+    },
+    "loess 0.05, 20k rows": {
+      "pond-rs-all": [22.8, 20.2, 20.1],
+      "pond-rs-1t": [90.2, 72.7, 70.5],
+      "pond-ts": [144.6, 175.7, 160.2]
+    },
+    "loess 0.3, 5k rows": {
+      "pond-rs-all": [9.2, 7.2, 8.0],
+      "pond-rs-1t": [26.4, 27.0, 26.9],
+      "pond-ts": [50.0, 62.2, 45.4]
+    },
+    "baseline 5m": {
+      "pond-rs-all": [67.6, 60.0, 59.2],
+      "pond-rs-1t": [75.7, 81.0, 83.2],
+      "pond-ts": [4477.4, 4527.7, 3913.0],
+      "polars-1t": [89.5, 84.9, 74.5],
+      "polars-all": [59.4, 63.6, 48.7]
+    },
+    "outliers 5m": {
+      "pond-rs-all": [57.5, 57.5, 58.4],
+      "pond-rs-1t": [84.3, 73.8, 79.8],
+      "pond-ts": [2600.2, 2818.8, 2101.5],
+      "polars-1t": [133.6, 94.2, 89.0],
+      "polars-all": [46.2, 47.4, 45.4]
+    },
+    "scan sum": {
+      "pond-rs-all": [6.0, 6.2, 6.7],
+      "pond-rs-1t": [7.0, 5.9, 6.3],
+      "pond-ts": [100.7, 33.9, 34.1],
+      "polars-1t": [8.2, 8.0, 7.9],
+      "polars-all": [7.9, 7.8, 7.8]
+    },
+    "scan gain": {
+      "pond-rs-all": [6.0, 6.3, 6.6],
+      "pond-rs-1t": [7.1, 5.7, 6.8],
+      "pond-ts": [66.4, 66.0, 46.1]
+    },
+    "sample stride 10": {
+      "pond-rs-all": [1.7, 1.9, 2.0],
+      "pond-rs-1t": [2.5, 2.0, 2.1],
+      "pond-ts": [35.5, 43.7, 25.5],
+      "polars-1t": [4.3, 5.3, 4.4],
+      "polars-all": [1.9, 2.4, 2.5]
+    },
+    "sample reservoir 1000": {
+      "pond-rs-all": [1.5, 1.5, 1.5],
+      "pond-rs-1t": [2.7, 1.5, 1.7],
+      "pond-ts": [15.1, 26.3, 32.9],
+      "polars-1t": [0.1, 0.1, 0.0],
+      "polars-all": [0.2, 0.2, 0.3]
+    }
+  },
+  "value_axis": {
+    "by_column width 10, 1000 bins": {
+      "pond-rs-all": [25.9, 38.0, 27.8],
+      "pond-rs-1t": [31.7, 33.9, 29.1],
+      "pond-ts": [177.1, 115.3, 124.8],
+      "polars-1t": [36.6, 31.5, 32.2],
+      "polars-all": [18.1, 18.4, 17.9]
+    },
+    "by_column 6 zones": {
+      "pond-rs-all": [19.3, 20.3, 21.3],
+      "pond-rs-1t": [26.4, 27.1, 23.0],
+      "pond-ts": [116.7, 120.9, 112.8],
+      "polars-1t": [65.5, 53.5, 45.9],
+      "polars-all": [48.3, 51.0, 39.3]
+    },
+    "by_column histogram, 1251 bins": {
+      "pond-rs-all": [38.8, 32.2, 33.4],
+      "pond-rs-1t": [50.2, 50.2, 33.9],
+      "pond-ts": [91.8, 79.2, 68.2],
+      "polars-1t": [26.0, 22.5, 28.5],
+      "polars-all": [14.4, 16.3, 14.9]
+    },
+    "by_column width 10, p5 p95": {
+      "pond-rs-all": [44.9, 43.6, 37.5],
+      "pond-rs-1t": [59.6, 53.9, 46.2],
+      "pond-ts": [513.2, 503.2, 532.5],
+      "polars-1t": [107.4, 86.6, 83.1],
+      "polars-all": [35.9, 40.0, 36.5]
+    },
+    "rolling_by_column radius 0.5, avg": {
+      "pond-rs-all": [43.0, 48.7, 48.9],
+      "pond-rs-1t": [49.6, 52.3, 44.1],
+      "pond-ts": [302.2, 315.8, 306.7]
+    },
+    "rolling_by_column radius 0.5, p5 p95": {
+      "pond-rs-all": [121.7, 118.5, 112.8],
+      "pond-rs-1t": [203.9, 195.0, 194.8],
+      "pond-ts": [987.1, 934.3, 901.1]
+    },
+    "rolling_by_column radius 5, p5 p95": {
+      "pond-rs-all": [240.9, 199.8, 200.9],
+      "pond-rs-1t": [428.8, 387.8, 367.5],
+      "pond-ts": [1295.3, 1235.2, 1118.0]
+    },
+    "rolling_by_column at 1000 centers, radius 5": {
+      "pond-rs-all": [39.0, 38.9, 35.6],
+      "pond-rs-1t": [59.0, 55.3, 58.1],
+      "pond-ts": [148.7, 151.9, 147.8]
+    }
+  },
+  "value_series": {
+    "by_value, 1M rows": {
+      "pond-rs-all": [5.9, 5.0, 5.3],
+      "pond-rs-1t": [6.6, 5.7, 5.7],
+      "pond-ts": [67.0, 44.4, 39.0]
+    },
+    "nearest_index, 1M probes": {
+      "pond-rs-all": [348.2, 345.5, 288.5],
+      "pond-rs-1t": [310.0, 309.6, 310.4],
+      "pond-ts": [379.6, 475.3, 412.1]
+    },
+    "slice_by_value, 100k slices": {
+      "pond-rs-all": [121.4, 128.0, 149.1],
+      "pond-rs-1t": [138.1, 185.6, 128.2],
+      "pond-ts": [704.1, 774.7, 641.4]
+    },
+    "to_json rows, 300k": {
+      "pond-rs-all": [51.6, 48.0, 47.1],
+      "pond-rs-1t": [53.9, 52.3, 50.8],
+      "pond-ts": [201.8, 168.0, 199.3]
+    },
+    "from_json rows, 300k": {
+      "pond-rs-all": [130.3, 150.0, 111.8],
+      "pond-rs-1t": [106.1, 102.6, 112.3],
+      "pond-ts": [267.1, 214.7, 186.4]
+    },
+    "to_columns_json, 300k": {
+      "pond-rs-all": [70.8, 47.5, 44.2],
+      "pond-rs-1t": [47.2, 44.1, 44.7],
+      "pond-ts": [105.6, 84.9, 77.6]
+    },
+    "from_columns_json, 300k": {
+      "pond-rs-all": [77.4, 69.9, 65.7],
+      "pond-rs-1t": [65.0, 65.0, 73.9],
+      "pond-ts": [99.0, 78.3, 71.5]
+    },
+    "to_arrow, 1M rows": {
+      "pond-rs-all": [1.4, 1.1, 1.8],
+      "pond-rs-1t": [0.9, 0.9, 1.4],
+      "pond-ts": [0.0, 0.0, 0.0]
+    },
+    "from_arrow, 1M rows": {
+      "pond-rs-all": [10.0, 10.8, 9.2],
+      "pond-rs-1t": [9.0, 9.2, 9.9],
+      "pond-ts": [445.1, 523.0, 435.5]
+    },
+    "write_ipc, 1M rows": {
+      "pond-rs-all": [10.8, 10.1, 9.9],
+      "pond-rs-1t": [9.8, 9.2, 11.4],
+      "pond-ts": [27.0, 16.7, 15.8]
+    },
+    "from_ipc_bytes, 1M rows": {
+      "pond-rs-all": [17.0, 15.0, 15.1],
+      "pond-rs-1t": [15.4, 14.8, 14.4],
+      "pond-ts": [536.2, 662.4, 434.3]
+    }
+  }
+}
