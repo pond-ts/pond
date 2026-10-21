@@ -2082,6 +2082,278 @@ const SMOOTH_CASES = [
   ['sample-reservoir-frac', 'gappy', 'sample', [{ reservoir: { size: 2.5 } }]],
 ];
 
+// Grouping and reshaping (pond-rs R1b step 8i): `TimeSeries.concat`,
+// `collapse` and `pivotByGroup`. `pivotLong` repeats (time, group) pairs,
+// has gaps in its group columns, the text "undefined" beside a real gap,
+// number groups that JavaScript writes oddly (-0, 1e21, 1e-7), and two
+// groups whose order differs between UTF-16 and code points (an emoji, a
+// surrogate pair, against U+FF5E).
+const PIVOT_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'g', kind: 'string', required: false },
+  { name: 'n', kind: 'number', required: false },
+  { name: 'up', kind: 'boolean', required: false },
+  { name: 'v', kind: 'number', required: false },
+  { name: 's', kind: 'string', required: false },
+];
+const PIVOT_ROWS = [
+  [0, 'b', 1, true, 1, 'x'],
+  [0, 'a', 1.5, false, 2, 'y'],
+  [0, 'b', 1, true, 3, 'z'],
+  [1000, 'a', -0, null, null, null],
+  [1000, null, 1e21, true, 4, 'w'],
+  [1000, 'undefined', 1e-7, false, 5, 'v'],
+  [2000, '\u{1F600}', 10, true, 6, 'u'],
+  [2000, '～', 10, true, 0.5, 't'],
+  [2000, 'a', 1.5, false, -0, 's'],
+  [2000, 'a', 1.5, null, null, 'r'],
+  [2000, 'a', 2, true, 7, null],
+  [5000, 'b', null, false, 8, 'q'],
+];
+// Same shape, for concat: keys interleave and repeat across the three.
+const CONCAT_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'v', kind: 'number', required: false },
+  { name: 'host', kind: 'string', required: false },
+];
+const CONCAT_A = [
+  [0, 1, 'a'],
+  [2000, 2, null],
+  [2000, 3, 'a'],
+  [5000, null, 'a'],
+];
+const CONCAT_B = [
+  [1000, 10, 'b'],
+  [2000, 20, 'b'],
+  [6000, -0, 'b'],
+];
+const CONCAT_C = [
+  [0, 100, 'c'],
+  [2000, null, null],
+];
+
+const RESHAPE_CASES = [
+  // concat: ties keep input order, then row order.
+  ['concat-two', 'concatA', 'concat', [[{ series: 'concatB' }]]],
+  [
+    'concat-three',
+    'concatA',
+    'concat',
+    [[{ series: 'concatB' }, { series: 'concatC' }]],
+  ],
+  [
+    'concat-reversed',
+    'concatC',
+    'concat',
+    [[{ series: 'concatB' }, { series: 'concatA' }]],
+  ],
+  ['concat-self', 'concatA', 'concat', [[{ series: 'concatA' }]]],
+  ['concat-one', 'concatA', 'concat', [[]]],
+  ['concat-empty-first', 'concatEmpty', 'concat', [[{ series: 'concatA' }]]],
+  ['concat-empty-last', 'concatA', 'concat', [[{ series: 'concatEmpty' }]]],
+  ['concat-ranges', 'ranges', 'concat', [[{ series: 'ranges' }]]],
+  ['concat-labelled', 'labelled', 'concat', [[{ series: 'labelled' }]]],
+  ['concat-arrays', 'tags', 'concat', [[{ series: 'tags' }]]],
+  ['concat-mixed', 'mixed', 'concat', [[{ series: 'mixed' }]]],
+  ['concat-mismatch', 'concatA', 'concat', [[{ series: 'gappy' }]]],
+  ['concat-key-kinds', 'gappy', 'concat', [[{ series: 'ranges' }]]],
+  // collapse: the closure gets the named columns' values.
+  [
+    'collapse-sum',
+    'gappy',
+    'collapse',
+    [['a', 'b'], 'ab', { fn: { collapse: 'sum', keys: ['a', 'b'] } }],
+  ],
+  [
+    'collapse-sum-append',
+    'gappy',
+    'collapse',
+    [
+      ['a', 'b'],
+      'ab',
+      { fn: { collapse: 'sum', keys: ['a', 'b'] } },
+      { append: true },
+    ],
+  ],
+  [
+    'collapse-one',
+    'gappy',
+    'collapse',
+    [['b'], 'b2', { fn: { collapse: 'sum', keys: ['b'] } }],
+  ],
+  [
+    'collapse-same-name',
+    'gappy',
+    'collapse',
+    [['a'], 'a', { fn: { collapse: 'sum', keys: ['a'] } }],
+  ],
+  [
+    'collapse-ratio',
+    'gappy',
+    'collapse',
+    [['a', 'b'], 'r', { fn: { collapse: 'ratio', keys: ['a', 'b'] } }],
+  ],
+  [
+    'collapse-ratio-zero',
+    'signed',
+    'collapse',
+    [['v'], 'r', { fn: { collapse: 'ratio', keys: ['v', 'v'] } }],
+  ],
+  [
+    'collapse-gt',
+    'hosts',
+    'collapse',
+    [['cpu', 'mem'], 'hot', { fn: { collapse: 'gt', keys: ['mem', 'cpu'] } }],
+  ],
+  [
+    'collapse-join',
+    'mixed',
+    'collapse',
+    [
+      ['site', 'host'],
+      'where',
+      { fn: { collapse: 'join', keys: ['site', 'host'] } },
+      { append: true },
+    ],
+  ],
+  [
+    'collapse-first-gap',
+    'firstGap',
+    'collapse',
+    [['v'], 'w', { fn: { collapse: 'sum', keys: ['v'] } }],
+  ],
+  [
+    'collapse-none',
+    'gappy',
+    'collapse',
+    [['a'], 'none', { fn: { collapse: 'none', keys: [] } }],
+  ],
+  [
+    'collapse-empty',
+    'joinEmpty',
+    'collapse',
+    [['w'], 'x', { fn: { collapse: 'sum', keys: ['w'] } }],
+  ],
+  [
+    'collapse-ranges',
+    'ranges',
+    'collapse',
+    [['a', 'b'], 'ab', { fn: { collapse: 'sum', keys: ['a', 'b'] } }],
+  ],
+  [
+    'collapse-labelled',
+    'labelled',
+    'collapse',
+    [['b'], 'c', { fn: { collapse: 'sum', keys: ['b'] } }, { append: true }],
+  ],
+  [
+    'collapse-clash',
+    'gappy',
+    'collapse',
+    [['a'], 'b', { fn: { collapse: 'sum', keys: ['a'] } }],
+  ],
+  [
+    'collapse-unknown',
+    'gappy',
+    'collapse',
+    [['zz'], 'x', { fn: { collapse: 'none', keys: [] } }],
+  ],
+  // pivotByGroup
+  ['pivot-hosts-cpu', 'hosts', 'pivotByGroup', ['host', 'cpu']],
+  ['pivot-hosts-up', 'hosts', 'pivotByGroup', ['host', 'up']],
+  [
+    'pivot-region-host',
+    'hosts',
+    'pivotByGroup',
+    ['region', 'host', { aggregate: 'first' }],
+  ],
+  [
+    'pivot-hosts-declared',
+    'hosts',
+    'pivotByGroup',
+    ['host', 'mem', { groups: ['c', 'undefined', 'a', 'b', 'z'] }],
+  ],
+  [
+    'pivot-hosts-undeclared',
+    'hosts',
+    'pivotByGroup',
+    ['host', 'mem', { groups: ['a', 'b'] }],
+  ],
+  ['pivot-dup-error', 'pivotLong', 'pivotByGroup', ['g', 'v']],
+  ...[
+    'avg',
+    'sum',
+    'count',
+    'min',
+    'max',
+    'first',
+    'last',
+    'median',
+    'p90',
+    'stdev',
+    'difference',
+    'keep',
+  ].map((r) => [
+    `pivot-g-v-${r}`,
+    'pivotLong',
+    'pivotByGroup',
+    ['g', 'v', { aggregate: r }],
+  ]),
+  [
+    'pivot-g-v-unique',
+    'pivotLong',
+    'pivotByGroup',
+    ['g', 'v', { aggregate: 'unique' }],
+  ],
+  [
+    'pivot-g-s-avg',
+    'pivotLong',
+    'pivotByGroup',
+    ['g', 's', { aggregate: 'avg' }],
+  ],
+  ...['first', 'last', 'keep', 'min'].map((r) => [
+    `pivot-g-s-${r}`,
+    'pivotLong',
+    'pivotByGroup',
+    ['g', 's', { aggregate: r }],
+  ]),
+  [
+    'pivot-g-up-last',
+    'pivotLong',
+    'pivotByGroup',
+    ['g', 'up', { aggregate: 'last' }],
+  ],
+  [
+    'pivot-n-v-sum',
+    'pivotLong',
+    'pivotByGroup',
+    ['n', 'v', { aggregate: 'sum' }],
+  ],
+  [
+    'pivot-up-s-first',
+    'pivotLong',
+    'pivotByGroup',
+    ['up', 's', { aggregate: 'first' }],
+  ],
+  [
+    'pivot-host-tags',
+    'tags',
+    'pivotByGroup',
+    ['host', 'tags', { aggregate: 'last' }],
+  ],
+  ['pivot-tags-v', 'tags', 'pivotByGroup', ['tags', 'v']],
+  ['pivot-empty', 'emptyHosts', 'pivotByGroup', ['host', 'cpu']],
+  [
+    'pivot-empty-declared',
+    'emptyHosts',
+    'pivotByGroup',
+    ['host', 'cpu', { groups: ['a', 'b'] }],
+  ],
+  ['pivot-ranges', 'ranges', 'pivotByGroup', ['a', 'b']],
+  ['pivot-unknown-group', 'hosts', 'pivotByGroup', ['nope', 'cpu']],
+  ['pivot-unknown-value', 'hosts', 'pivotByGroup', ['host', 'nope']],
+];
+
 const CASES = [
   // rolling: time window, trailing, keyed at each event
   ['rolling-3s-avg-sum', 'gappy', 'rolling', ['3s', { a: 'avg', b: 'sum' }]],
@@ -3417,6 +3689,7 @@ const CASES = [
   ...ARRAY_CASES,
   ...ROLLING_OPTION_CASES,
   ...SMOOTH_CASES,
+  ...RESHAPE_CASES,
 ];
 
 /**
@@ -3445,6 +3718,25 @@ function closure(spec) {
       if (d <= -spec.band) return [{ ref: v, gain: acc.gain }, acc.gain];
       return [acc, acc.gain];
     };
+  }
+  // collapse closures over `keys` (undefined when any is missing).
+  if ('collapse' in spec) {
+    const { keys } = spec;
+    const vals = (v) => keys.map((k) => v[k]);
+    const all = (v) => vals(v).every((x) => x !== undefined);
+    if (spec.collapse === 'sum') {
+      return (v) => (all(v) ? vals(v).reduce((s, x) => s + x, 0) : undefined);
+    }
+    if (spec.collapse === 'ratio') {
+      return (v) => (all(v) ? v[keys[0]] / v[keys[1]] : undefined);
+    }
+    if (spec.collapse === 'gt') {
+      return (v) => (all(v) ? v[keys[0]] > v[keys[1]] : undefined);
+    }
+    if (spec.collapse === 'join') {
+      return (v) => (all(v) ? vals(v).join('|') : undefined);
+    }
+    if (spec.collapse === 'none') return () => undefined;
   }
   if ('column' in spec) {
     return (e) => {
@@ -3621,15 +3913,14 @@ export function labelledSeries(pond) {
 
 export function buildFixture(pond) {
   const { TimeSeries, Sequence } = pond;
-  const series = (name, rows) =>
-    TimeSeries.fromJSON({
-      name,
-      schema: [
-        { name: 'time', kind: 'time' },
-        { name: 'v', kind: 'number', required: false },
-      ],
-      rows,
-    });
+  const series = (
+    name,
+    rows,
+    schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number', required: false },
+    ],
+  ) => TimeSeries.fromJSON({ name, schema, rows });
   const inputs = {
     gappy: TimeSeries.fromJSON({
       name: 'gappy',
@@ -3774,6 +4065,18 @@ export function buildFixture(pond) {
         [['c', 20, 30], 5, 14],
       ],
     }),
+    pivotLong: series('pivotLong', PIVOT_ROWS, PIVOT_SCHEMA),
+    // The first row is a gap ([PND-COLLAPSEKIND]: collapse once took its
+    // output kind from that row alone).
+    firstGap: series('firstGap', [
+      [0, null],
+      [1000, 2],
+      [2000, -0],
+    ]),
+    concatA: series('concatA', CONCAT_A, CONCAT_SCHEMA),
+    concatB: series('concatB', CONCAT_B, CONCAT_SCHEMA),
+    concatC: series('concatC', CONCAT_C, CONCAT_SCHEMA),
+    concatEmpty: series('concatEmpty', [], CONCAT_SCHEMA),
     joinA: TimeSeries.fromJSON({
       name: 'joinA',
       schema: [
@@ -4030,6 +4333,8 @@ export function buildFixture(pond) {
             view = view[method](...rest.map(decode));
           }
           result = end === 'toMap' ? view.toMap() : view.collect();
+        } else if (op === 'concat') {
+          result = TimeSeries.concat([inputs[input], ...args[0].map(decode)]);
         } else if (op === 'joinMany') {
           const [others, options] = args;
           result = TimeSeries.joinMany(

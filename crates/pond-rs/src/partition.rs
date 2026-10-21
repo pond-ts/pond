@@ -27,7 +27,7 @@ use crate::reducer::{Agg, Reducer};
 use crate::rolling::{Rolling, RollingOver};
 use crate::rowwise::{Fill, FillLimits, FirstRow};
 use crate::sequence::Sequence;
-use crate::series::{Column, ColumnKind, Key, TimeSeries};
+use crate::series::{Column, ColumnKind, Key, Labels, TimeSeries};
 
 /// A partition key: one entry per partition column, `None` for a gap.
 pub type PartitionKey = Vec<Option<Value>>;
@@ -543,20 +543,85 @@ fn merge(series: &[&TimeSeries], empty: &TimeSeries) -> Result<TimeSeries> {
     if series.len() == 1 {
         return Ok((*head).clone());
     }
-    for s in &series[1..] {
-        let same_columns = s.columns().len() == head.columns().len()
-            && s.columns()
-                .iter()
-                .zip(head.columns())
-                .all(|(a, b)| a.name() == b.name() && a.kind() == b.kind());
-        if !same_columns || s.key_name() != head.key_name() || s.key().kind() != head.key().kind() {
-            return Err(PondError::InvalidData {
-                call: "PartitionedSeries",
-                message: "partitions came back with different columns; every partition must give the same columns".into(),
-            });
+    if let Some(why) = mismatch(&series) {
+        return Err(PondError::InvalidData {
+            call: "PartitionedSeries",
+            message: format!(
+                "partitions came back with different columns ({why}); every partition must give the same columns"
+            ),
+        });
+    }
+    Ok(stack(head.name(), &series))
+}
+
+/// Why `series` cannot be stacked: the first difference from the first
+/// series in key, column names, kinds, decimal scales or label kinds.
+fn mismatch(series: &[&TimeSeries]) -> Option<String> {
+    let head = series[0];
+    for (i, s) in series.iter().enumerate().skip(1) {
+        if s.key_name() != head.key_name() || s.key().kind() != head.key().kind() {
+            return Some(format!(
+                "series {i} is keyed by '{}' ({:?}), series 0 by '{}' ({:?})",
+                s.key_name(),
+                s.key().kind(),
+                head.key_name(),
+                head.key().kind()
+            ));
+        }
+        if let (Key::Interval(a), Key::Interval(b)) = (head.key(), s.key()) {
+            if std::mem::discriminant(&a.label) != std::mem::discriminant(&b.label) {
+                return Some(format!(
+                    "series {i} has {} interval labels, series 0 {}",
+                    label_kind(&b.label),
+                    label_kind(&a.label)
+                ));
+            }
+        }
+        if s.columns().len() != head.columns().len() {
+            return Some(format!(
+                "series {i} has {} columns, series 0 has {}",
+                s.columns().len(),
+                head.columns().len()
+            ));
+        }
+        for (c, (a, b)) in head.columns().iter().zip(s.columns()).enumerate() {
+            if a.name() != b.name() || a.kind() != b.kind() {
+                return Some(format!(
+                    "column {c} is '{}' ({:?}) in series {i} but '{}' ({:?}) in series 0",
+                    b.name(),
+                    b.kind(),
+                    a.name(),
+                    a.kind()
+                ));
+            }
+            if let (ColumnData::Decimal(x), ColumnData::Decimal(y)) = (a.data(), b.data()) {
+                if x.scale() != y.scale() {
+                    return Some(format!(
+                        "decimal column '{}' has scale {} in series {i} but {} in series 0",
+                        a.name(),
+                        y.scale(),
+                        x.scale()
+                    ));
+                }
+            }
         }
     }
-    let picks = merge_order(&series);
+    None
+}
+
+fn label_kind(labels: &Labels) -> &'static str {
+    match labels {
+        Labels::Number(_) => "number",
+        Labels::String(_) => "text",
+    }
+}
+
+/// `series` (already checked by [`mismatch`]) as one series named `name`:
+/// rows sorted by key, ties in series order then row order. A column is
+/// required only when it is required in every input.
+fn stack(name: &str, series: &[&TimeSeries]) -> TimeSeries {
+    let head = series[0];
+    let picks = merge_order(series);
     let keys: Vec<&Key> = series.iter().map(|s| s.key()).collect();
     let key = Key::gather(&keys, &picks);
     let columns: Vec<usize> = (0..head.columns().len()).collect();
@@ -569,12 +634,49 @@ fn merge(series: &[&TimeSeries], empty: &TimeSeries) -> Result<TimeSeries> {
             required,
         )
     });
-    Ok(TimeSeries::from_parts(
-        head.name().to_string(),
-        head.key_name().to_string(),
-        key,
-        columns,
-    ))
+    TimeSeries::from_parts(name.to_string(), head.key_name().to_string(), key, columns)
+}
+
+impl TimeSeries {
+    /// The rows of several series as one, sorted by key (pond-ts
+    /// `TimeSeries.concat`): rows that share a key keep the order of
+    /// `series`, then their order within it. The result takes the first
+    /// series' name.
+    ///
+    /// Every series must have the same key (name and kind) and the same
+    /// columns in the same order (name and kind; decimals also the same
+    /// scale, interval labels the same kind). A column is required in the
+    /// result only when it is required in every input; pond-ts takes the
+    /// first series' flag, which can mark a column with gaps required.
+    ///
+    /// ```
+    /// # use pond_rs::{Column, TimeSeries};
+    /// let a = TimeSeries::new("cpu", vec![0, 2000], vec![Column::required("v", vec![1.0, 3.0])])?;
+    /// let b = TimeSeries::new("cpu", vec![1000, 2000], vec![Column::required("v", vec![2.0, 4.0])])?;
+    /// let both = TimeSeries::concat(&[&a, &b])?;
+    /// assert_eq!(both.key().begin(), &[0, 1000, 2000, 2000]);
+    /// assert_eq!(both.column("v")?.numbers()?.values(), &[1.0, 2.0, 3.0, 4.0]);
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    pub fn concat(series: &[&TimeSeries]) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::concat";
+        let Some(head) = series.first() else {
+            return Err(PondError::InvalidData {
+                call: CALL,
+                message: "needs at least one series".into(),
+            });
+        };
+        if let Some(why) = mismatch(series) {
+            return Err(PondError::InvalidData {
+                call: CALL,
+                message: format!("the series do not match: {why}"),
+            });
+        }
+        if series.len() == 1 {
+            return Ok((*head).clone());
+        }
+        Ok(stack(head.name(), series))
+    }
 }
 
 /// The order to take rows in: by key (begin, then end), rows with the same

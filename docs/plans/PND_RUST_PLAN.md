@@ -652,7 +652,9 @@ The one result short of a clean win is one-core B: polars is faster
        closure), `sample`. (`reduce` done in 7b.) (done, below)
      - **8i Grouping and reshaping:** `pivot_by_group`, `by_column` and
        `rolling_by_column` (histograms), `by_value` and `ValueSeries`,
-       `collapse`, `concat`.
+       `collapse`, `concat`. Split in three: 8i `concat`, `collapse`,
+       `pivot_by_group` (done, below); 8i2 `by_column` /
+       `rolling_by_column`; 8i3 `by_value` and `ValueSeries`.
      - **8j Grouped series:** `smooth`, `baseline`, `outliers`, `sample`
        and `scan` per group.
 
@@ -2183,6 +2185,83 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     column. pond-ts's moving average, `baseline` and `outliers` build one
     `Event` per row (~1.2 s of the ~2 s moving average), logged as
     [PND-SMOOTHSLOW].
+
+  **Step 8i (done): `concat`, `collapse`, `pivot_by_group`
+  ([PND-RUSTFULL]).**
+  - Calls: `TimeSeries::concat(&[&TimeSeries])` (pond-ts
+    `TimeSeries.concat`), `collapse(columns, output, f)` and
+    `collapse_keep` (pond-ts `collapse(keys, output, reducer)`, the
+    second with `{ append: true }`; `f` is
+    `FnMut(&Row) -> Result<Option<Scalar>>`), and
+    `pivot_by_group(group, value, &Pivot)` with `Pivot::aggregate(r)` and
+    `Pivot::groups(names)`.
+  - `concat` shares the partition merge (a stable radix sort by begin
+    then end, then one gather per column). It refuses what it cannot
+    stack: different keys or columns, decimals of different scales,
+    interval labels of different kinds (pond-rs holds one label kind
+    per series; pond-ts allows a mix). A column is required only when
+    every input has it required.
+  - `collapse` takes its output kind from the first value that is not a
+    gap and refuses a later value of another kind; a non-finite number
+    is a gap. The output is required when it has no gaps.
+  - `pivot_by_group` names groups as JavaScript's `String` does (number
+    formatting, `true` / `false`, array elements joined by commas, a gap
+    as `undefined`, sharing a column with the text `"undefined"` as in
+    pond-ts) and sorts them by UTF-16 code units, as JavaScript's
+    default sort does (an emoji sorts before U+FF5E; by code points it
+    would not). A lone row is copied as is; only cells of two or more
+    rows go through the reducer, whose result must keep the value
+    column's kind (checked up front, as pond-ts does). Decimal groups,
+    which pond-ts has no kind for, are named in full (`1.50`).
+  - Two pond-ts bugs fixed here. [PND-COLLAPSEKIND]: `collapse` took the
+    output kind from the first row only, so a gap there made the column
+    text and every later number became a gap; a result of a different
+    kind was also dropped silently. The kind now comes from the first
+    defined result and a mixed kind throws; an unknown key names itself
+    instead of failing on `undefined.read`. [PND-CONCATREQ]: `concat`
+    took each column's `required` flag from the first series, so gaps
+    from a later series sat in a column marked required and the result
+    failed to reload through `fromJSON`; a column is now optional when
+    any input has it optional.
+  - Known difference, checked by the harness: pond-ts marks `collapse`'s
+    output required even when it holds gaps ([PND-COLLAPSEREQ], logged;
+    its reducer's type returns no `undefined`, so fixing it changes a
+    public type).
+  - Parity: 62 new pond-ts cases (1154 in all): concat of two and three
+    series with shared keys, itself, one series, empty inputs, ranges,
+    labelled intervals, arrays, text and true/false columns, and both
+    mismatch errors; collapse sums, ratios (non-finite results), a
+    comparison giving true/false, joined text, all gaps, a first-row
+    gap, an empty series, range and interval keys, and its errors;
+    pivot on text, number and true/false groups with every reducer that
+    keeps the kind, the ones that do not, declared and undeclared
+    groups, arrays as groups and values, empty input, and its errors.
+    Three property tests (concat as a stable sort, pivot against a
+    direct build with each reducer, collapse row by row) and unit tests
+    for the refusals. Of 23 planted bugs, all are caught but three that
+    change nothing (a different sort order inside a time's rows, keeping
+    `inf` instead of a gap where both read as a gap, a name cache that
+    misses on `-0`).
+  - Perf (`examples/perf_reshape.rs` and `bench/reshape_pond_ts.mjs`,
+    1M rows; checksums agree). Cost: `concat` is a radix sort plus a
+    copy per column, O(N); `collapse` calls the closure once a row,
+    O(N); `pivot_by_group` names each distinct group once (a hash lookup
+    a row), places rows with a counting sort over the T × G cells, O(N +
+    T·G), and reduces only cells of two or more rows. The first version
+    named every row's group afresh and sorted each time's rows (95 ms
+    for 100 hosts); naming each group once and the counting sort brought
+    it to ~45 ms. Medians, 4 cores (busy container, ±30%):
+
+    | Call                           | pond-rs | pond-ts |
+    | ------------------------------ | ------- | ------- |
+    | concat 10 × 100k               | 49 ms   | 279 ms  |
+    | concat 1000 × 1k               | 50 ms   | 432 ms  |
+    | collapse, sum of two columns   | 24 ms   | 145 ms  |
+    | collapse keeping the columns   | 24 ms   | 140 ms  |
+    | pivot, 100 hosts × 10k times   | 47 ms   | 553 ms  |
+    | pivot, 4 hosts × 250k times    | 39 ms   | 751 ms  |
+    | pivot, 100 hosts, 2 rows, avg  | 72 ms   | 619 ms  |
+    | pivot, 100 hosts, 2 rows, last | 74 ms   | 1036 ms |
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

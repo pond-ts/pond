@@ -94,6 +94,40 @@ describe('column-native collapse()', () => {
     expect(strC.at(1)!.get('r')).toBe('30/50');
   });
 
+  it('takes the kind from the first defined result [PND-COLLAPSEKIND]', () => {
+    const s = new TimeSeries({
+      name: 'gappy',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'a', kind: 'number', required: false },
+      ] as const,
+      rows: [
+        [0, undefined],
+        [1000, 2],
+        [2000, 4],
+      ],
+    });
+    // The first row's result is undefined; the numbers after it survive.
+    const c = s.collapse(['a'], 'twice', ({ a }) =>
+      a === undefined ? (undefined as unknown as number) : a * 2,
+    );
+    expect(c.schema[1]!.kind).toBe('number');
+    expect(c.toJSON().rows).toEqual([
+      [0, null],
+      [1000, 4],
+      [2000, 8],
+    ]);
+    // A result of another kind is an error, not a silently dropped value.
+    expect(() =>
+      s.collapse(['a'], 'x', ({ a }) =>
+        a === 2 ? 'two' : ((a ?? 0) as number | string),
+      ),
+    ).toThrow(/row 1 gives a string but earlier rows gave a number/);
+    expect(() => s.collapse(['zz' as 'a'], 'x', () => 1)).toThrow(
+      /collapse: no column 'zz'/,
+    );
+  });
+
   it('passes a missing keyed cell to the reducer as undefined', () => {
     const s = new TimeSeries({
       name: 'gappy',

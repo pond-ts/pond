@@ -1358,7 +1358,19 @@ export class TimeSeries<S extends SeriesSchema> {
       for (const event of s.events) allEvents.push(event);
     }
     allEvents.sort((a, b) => compareEventKeys(a.key(), b.key()));
-    return TimeSeries.#fromTrustedEvents(head.name, head.schema, allEvents);
+    // A column is required only when it is required in every input: one
+    // input's gaps would otherwise sit in a column marked required, which
+    // `fromJSON` then refuses to reload ([PND-CONCATREQ]).
+    const schema = Object.freeze(
+      head.schema.map((col, c) =>
+        c > 0 &&
+        col.required !== false &&
+        series.some((s) => s.schema[c]!.required === false)
+          ? { ...col, required: false }
+          : col,
+      ),
+    ) as unknown as S;
+    return TimeSeries.#fromTrustedEvents(head.name, schema, allEvents);
   }
 
   /** Example: `new TimeSeries({ name, schema, rows })`. Creates an immutable time series from a schema and row-oriented input data. */
