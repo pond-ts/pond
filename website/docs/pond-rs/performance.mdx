@@ -128,6 +128,143 @@ is the one place pond-rs is slower: it builds about 100 MB of new output,
 and asking the operating system for fresh memory costs about 37 ms of its 87. Told to keep and reuse freed memory, the same join took 50 ms. JavaScript
 reuses its own memory between runs, so pond-ts does not pay that cost again.
 
+### JSON: 100,000 rows
+
+From the JSON pull requests ([#791](https://github.com/pond-ts/pond/pull/791),
+[#793](https://github.com/pond-ts/pond/pull/793)): 100,000 rows of six
+number columns, text in and out, middle (median) time. pond-ts's times
+include `JSON.stringify` / `JSON.parse`.
+
+| Task                   | pond-rs | pond-ts |
+| ---------------------- | ------- | ------- |
+| `to_json`, array rows  | 34      | 148     |
+| `to_json`, object rows | 30      | 128     |
+| `from_json`            | 45      | 152     |
+| `to_columns_json`      | 30      | 72      |
+| `from_columns_json`    | 31      | 46      |
+| `to_points_json`       | 32      | 147     |
+| `from_points_json`     | 65      | 175     |
+
+One case was slower in pond-rs: reading columns JSON for a wide table (10,000
+rows × 41 columns of small whole numbers) took 14 ms against pond-ts's 6.
+
+### List columns: 100,000 rows
+
+From the step 8e pull request ([#794](https://github.com/pond-ts/pond/pull/794)):
+100,000 rows of text lists (0 to 6 words) and number lists (0 to 8 values),
+a gap every tenth row. Middle (median) time.
+
+| Task                    | pond-rs | pond-ts |
+| ----------------------- | ------- | ------- |
+| `array_contains`        | 4.1     | 44      |
+| `array_contains_any`    | 5.7     | 71      |
+| `array_aggregate` `Avg` | 6.9     | 366     |
+| `array_explode`, text   | 38      | 891     |
+| `to_json`               | 53      | 103     |
+| `from_json`             | 162     | 445     |
+
+pond-ts works through these row by row, which is logged as a pond-ts issue
+to fix.
+
+### The newer reducers: 1 million rows
+
+From the step 8f pull request ([#797](https://github.com/pond-ts/pond/pull/797)):
+1 million rows one second apart; a number column with a gap every 17th row
+that repeats in runs of 40, and a host column, one of 8 names in runs of 90. Middle (median) time,
+pond-rs then pond-ts. "Buckets" is `aggregate` into 1-second buckets (one
+row each, so the per-bucket cost shows); "rolling" is a 5-minute window.
+
+| Reducer                | Buckets     | Rolling          | `reduce`         |
+| ---------------------- | ----------- | ---------------- | ---------------- |
+| `Min` (for comparison) | 35 vs 413   | 16 vs 209        | 1.1 vs 2         |
+| `Keep`, numbers        | 35 vs 561   | 21 vs 190        | under 0.1 vs 102 |
+| `Difference`           | 37 vs 816   | 27 vs 690        | 2.2 vs 353       |
+| `Keep`, text           | 69 vs 415   | 49 vs 159        | 6.1 vs 71        |
+| `Unique`, text         | 89 vs 1,792 | 105 vs 1,383     | 10 vs 94         |
+| `Top(3)`, text         | 89 vs 2,920 | 163 vs 2,619     | 11 vs 121        |
+| `Samples`, numbers     | 74 vs 2,441 | 14,400 vs 97,800 | 22 vs 194        |
+
+A longer window does not slow pond-rs's rolling `Difference`: 25 ms over a
+whole day (86,400 rows in each window). pond-ts used to keep each window
+sorted, so its time grew with the window: measured again on the same rows,
+354 ms over 5 minutes, 557 ms over an hour and 11.3 seconds over a day. (The
+690 ms in the table above is from the first run, which these re-runs did not
+reproduce; the cause was not found.) pond-ts now works the way pond-rs does
+([#799](https://github.com/pond-ts/pond/pull/799), merged after pond-ts
+v0.75.0, so in its next release), and takes about 250 ms at every window
+length. Rolling `Samples` is slow in both because each of the million rows
+gets a list of about 280 values; writing that out is the cost.
+
+### Rolling options: 1 million rows
+
+From the step 8g pull request ([#798](https://github.com/pond-ts/pond/pull/798)):
+1 million rows one second apart, a number column with a gap every 17th
+row. Middle (median) time in milliseconds; both sides give the same
+answers.
+
+| Call                                       | pond-rs | pond-ts |
+| ------------------------------------------ | ------- | ------- |
+| 5-minute `Avg`, trailing                   | 33      | 377     |
+| 5-minute `Avg`, leading                    | 36      | 474     |
+| 5-minute `Avg`, centred                    | 36      | 345     |
+| 5-minute `Avg`, at least 300 rows          | 30      | 576     |
+| 20 rows `Avg`                              | 26      | 31      |
+| 20 rows `Stdev`                            | 62      | 179     |
+| 20 rows `Avg`, per host                    | 169     | 3,252   |
+| 5-minute `Avg` once a minute, 100,000 rows | 0.7     | 12,856  |
+| 5-minute `Avg` once a minute, 1M rows      | 11      | not run |
+| 5-minute `Avg` once a second, 1M rows      | 352     | not run |
+
+Row-count windows of `Avg` are only about 1.2× faster than pond-ts.
+pond-ts already has a fast path for them, and both libraries add up the
+running sum the same way, one step after another, so that they give
+exactly the same answer; that sum sets the speed. pond-ts's grid windows
+(`rolling_over`) look through every row for every grid point, which is why
+it takes 12.9 seconds on 100,000 rows; that is logged as a pond-ts issue.
+The once-a-second grid is pond-rs's slowest case: each of its million
+windows (300 rows each) is added up from scratch.
+
+### Smoothing and bands: 1 million rows
+
+From the step 8h pull request ([#800](https://github.com/pond-ts/pond/pull/800)):
+1 million rows one second apart, a gap every 17th row (loess on smaller
+series, since its time grows with the square of the row count). Middle
+(median) time in milliseconds, 4 cores; both sides give the same answers.
+
+| Call                               | pond-rs | pond-ts |
+| ---------------------------------- | ------- | ------- |
+| EMA, alpha 0.1                     | 5.6     | 12      |
+| moving average, 5 minutes          | 18      | 1,967   |
+| moving average, 5 minutes, centred | 20      | 1,509   |
+| loess, span 0.05, 20,000 rows      | 16      | 113     |
+| loess, span 0.3, 5,000 rows        | 5.5     | 32      |
+| `baseline`, 5 minutes              | 54      | 3,862   |
+| `outliers`, 5 minutes              | 49      | 2,007   |
+| `scan`, running sum                | 7.0     | 80      |
+| `sample`, every 10th row           | 1.1     | 32      |
+| `sample`, reservoir of 1,000       | 1.0     | 17      |
+
+The EMA is only about 2× faster: pond-ts's EMA already reads the column
+straight through. Loess spreads its rows over the cores; on one core it
+takes 56 and 20 ms. pond-ts's moving average, `baseline` and `outliers`
+build an object per row, which is most of their time; that is logged as a
+pond-ts issue.
+
+### Stacking and reshaping: 1 million rows
+
+From the step 8i pull request ([#802](https://github.com/pond-ts/pond/pull/802)):
+1 million rows in all. Middle (median) time in milliseconds, 4 cores, on a
+busy machine (runs varied by about ±30%); both sides give the same answers.
+
+| Call                                       | pond-rs | pond-ts |
+| ------------------------------------------ | ------- | ------- |
+| `concat` of 10 series × 100,000 rows       | 49      | 279     |
+| `concat` of 1,000 series × 1,000 rows      | 50      | 432     |
+| `collapse`, sum of two columns             | 24      | 145     |
+| `pivot_by_group`, 100 hosts × 10,000 times | 47      | 553     |
+| `pivot_by_group`, 4 hosts × 250,000 times  | 39      | 751     |
+| `pivot_by_group`, 2 rows per cell, `Avg`   | 72      | 619     |
+
 ### Agents writing code against it
 
 pond-rs is built mainly for AI agents writing Rust, so one test was about

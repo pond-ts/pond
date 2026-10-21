@@ -47,7 +47,8 @@ fn main() -> Result<(), pond_rs::PondError> {
 
 ## What runs per partition
 
-A `PartitionedSeries` has `rolling`, `aggregate`, `diff`, `rate`,
+A `PartitionedSeries` has `rolling` (and `rolling_with`, `rolling_rows`,
+`rolling_over`), `aggregate`, `diff`, `rate`,
 `pct_change`, `shift`, `cumulative`, `fill`, `fill_all`, `align`,
 `materialize` and `dedupe`. Each returns
 another `PartitionedSeries`, so they chain. For anything else, `map` runs
@@ -56,6 +57,9 @@ and collects in one step.
 
 `rolling` and `aggregate` keep the partition columns in their output (as a
 `first` of each bucket or window), so the result is still split by host.
+One catch, as in pond-ts: a row that `min_samples` leaves without a value
+gets a gap in the partition columns too, so if you split the result again
+it lands in the partition with no value.
 
 ```rust
 use pond_rs::{Agg, Column, Reducer, Sequence, TimeSeries};
@@ -131,7 +135,8 @@ fn main() -> Result<(), pond_rs::PondError> {
 ```
 
 Partitions are listed in the order their first row appears. Several
-columns work too: `partition_by(&["region", "host"])`.
+columns work too: `partition_by(&["region", "host"])`. A list column
+cannot be a partition column; that is an error.
 
 ## The latest state of each partition, as a table
 
