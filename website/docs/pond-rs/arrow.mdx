@@ -319,7 +319,7 @@ reads and writes the same two JSON shapes as pond-ts's `ValueSeries`:
 `to_columns_json` for one array per column. The axis comes first in the
 schema, with kind `"value"`, and every axis cell must be a number.
 `KeyOrder` decides what happens to an axis value below the one before it,
-as for a time series. Arrow files for a value series are not built yet.
+as for a time series.
 
 ```rust
 use pond_rs::{KeyOrder, RowFormat, ValueSeries};
@@ -346,3 +346,50 @@ true/false or list column kept by `by_value` is written out but refused on
 the way back. The differences listed above for a time series apply here
 too (a missing `name` and wrongly typed cells are refused, and a column
 with gaps read from columns JSON is optional).
+
+Arrow files work too. `write_ipc` / `to_arrow` write the axis first, as a
+`Float64` field with no nulls, then each value column as a time series
+writes it. `read_ipc(name, reader, axis)`, `from_ipc_bytes(name, bytes,
+axis)` and `from_arrow(name, &batches, axis)` read one back, naming the
+field to use as the axis. The axis field can be any integer type, `Float32`
+or `Float64`, read as it is stored (no unit), and must have no nulls, only
+finite values, and never go down. Every other field is read as a time
+series reads value fields.
+
+```rust
+use pond_rs::{Column, ValueSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let chain = ValueSeries::new(
+        "calls",
+        "strike",
+        vec![90.0, 95.0, 100.0],
+        vec![
+            Column::optional("bid", vec![Some(11.2), None, Some(3.4)]),
+            Column::required("liquid", vec![true, false, true]),
+        ],
+    )?;
+
+    let mut file = Vec::new();
+    chain.write_ipc(&mut file)?;
+    let back = ValueSeries::from_ipc_bytes("calls", file, "strike")?;
+    assert_eq!(back, chain);
+    assert!(!back.column("bid")?.is_required()); // a field with nulls is optional
+
+    // The axis must name a field in the file.
+    let mut file = Vec::new();
+    chain.write_ipc(&mut file)?;
+    assert!(ValueSeries::from_ipc_bytes("calls", file, "price").is_err());
+    Ok(())
+}
+```
+
+Three differences from pond-ts's `ValueSeries.fromArrow`:
+
+- **A time-typed axis** (an Arrow `Timestamp`, say) is refused. pond-ts
+  reads its stored numbers, which are in the field's unit, not
+  milliseconds.
+- **True/false, decimal and list value fields** are read. pond-ts refuses
+  them.
+- **A value field with nulls** is optional. pond-ts marks it required,
+  which its own JSON reader then refuses ([PND-ARROWREQ]).
