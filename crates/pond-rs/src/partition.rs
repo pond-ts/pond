@@ -442,12 +442,32 @@ impl PartitionedSeries {
     }
 
     /// [`TimeSeries::sample`] on each partition: a stride counts within
-    /// each partition, and a reservoir samples each one separately. Every
-    /// partition's reservoir starts from the same seed, so two partitions
-    /// with the same number of rows keep the same row positions (pond-ts
-    /// draws from `Math.random`, so its picks differ each run).
+    /// each partition, and a reservoir samples each one separately. Each
+    /// partition's reservoir gets its own seed, made from `seed` and the
+    /// partition's place in partition order, so partitions pick
+    /// independently and the same input and seed always give the same
+    /// rows (pond-ts draws from `Math.random`, so its picks differ each
+    /// run).
     pub fn sample(&self, how: Sample) -> Result<PartitionedSeries> {
-        self.map(|g| g.sample(how))
+        let Sample::Reservoir { size, seed } = how else {
+            return self.map(|g| g.sample(how));
+        };
+        // `map` hands each partition's own series to the closure, so its
+        // address finds its place.
+        let place: HashMap<usize, u64> = self
+            .parts
+            .iter()
+            .enumerate()
+            .map(|(i, (_, g))| (g as *const TimeSeries as usize, i as u64))
+            .collect();
+        self.map(|g| {
+            let i = place
+                .get(&(g as *const TimeSeries as usize))
+                .copied()
+                .unwrap_or(0);
+            let seed = seed ^ i.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            g.sample(Sample::Reservoir { size, seed })
+        })
     }
 
     fn with_partition_outputs(&self, aggs: &[Agg]) -> Vec<Agg> {
@@ -1128,26 +1148,32 @@ mod tests {
         let p = s.partition_by(&["host"]).unwrap();
         let how = Sample::Reservoir { size: 5, seed: 3 };
         let picked = p.sample(how).unwrap();
-        let rows: Vec<Vec<f64>> = picked
-            .iter()
-            .map(|(_, g)| {
-                g.column("v")
-                    .unwrap()
-                    .numbers()
-                    .unwrap()
-                    .iter()
-                    .flatten()
-                    .collect()
-            })
-            .collect();
-        assert_eq!(rows.len(), 2);
-        // Five from each partition, each from its own rows, and the same
-        // row positions in both (one seed, same length).
+        // Partitions are in first-row order after sampling: look them up.
+        let v_of = |g: &TimeSeries| -> Vec<f64> {
+            g.column("v")
+                .unwrap()
+                .numbers()
+                .unwrap()
+                .iter()
+                .flatten()
+                .collect()
+        };
+        let key = |h: &str| vec![Some(Value::String(h.into()))];
+        let rows = [
+            v_of(picked.get(&key("a")).unwrap()),
+            v_of(picked.get(&key("b")).unwrap()),
+        ];
+        assert_eq!(picked.len(), 2);
+        // Five from each partition, each from its own rows; the first
+        // partition uses `seed` itself, and the second picks other
+        // positions (its own seed). The same seed gives the same rows.
         assert!(rows.iter().all(|r| r.len() == 5));
         assert!(rows[0].iter().all(|v| *v as usize % 2 == 0));
         assert!(rows[1].iter().all(|v| *v as usize % 2 == 1));
-        let positions = |r: &Vec<f64>| r.iter().map(|v| (*v as usize) / 2).collect::<Vec<_>>();
-        assert_eq!(positions(&rows[0]), positions(&rows[1]));
+        let positions = |r: &[f64]| r.iter().map(|v| (*v as usize) / 2).collect::<Vec<_>>();
+        let alone = v_of(&p.get(&key("a")).unwrap().sample(how).unwrap());
+        assert_eq!(rows[0], alone);
+        assert_ne!(positions(&rows[0]), positions(&rows[1]));
         assert_eq!(p.sample(how).unwrap().collect(), picked.collect());
 
         // A running count restarts in each partition, from its own `init`.

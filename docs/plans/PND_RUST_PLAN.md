@@ -2449,9 +2449,11 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     rows again by the new values; `outliers` drops a partition left with
     no rows. Known differences: pond-ts smooths a text column to gaps
     per partition too (pond-rs refuses it, as for `TimeSeries`); a
-    reservoir sample uses one seed for every partition, so partitions of
-    the same length keep the same row positions (pond-ts uses
-    `Math.random`).
+    reservoir sample seeds each partition from `seed` and its place in
+    partition order, so partitions pick independently but repeatably
+    (pond-ts uses `Math.random`); pond-ts hands every partition the same
+    `init` object, so a step that changes it in place leaks state from
+    one partition to the next, where pond-rs clones `init`.
   - Parity: 22 `partitionBy` cases on `hosts` (ema with span, warmup and
     output; moving average trailing and centred; loess; smooth then
     `diff`; smoothing the partition column; baseline with names and
