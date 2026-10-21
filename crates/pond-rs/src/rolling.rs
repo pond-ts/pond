@@ -195,17 +195,16 @@ impl WindowState for SortedState {
     }
 }
 
-/// pond-ts `difference` `rollingState`, without its cost. pond-ts keeps
-/// the window sorted (`rollingSortedArray`, a splice per row, so a window
-/// of W rows costs O(W) a row) and answers last minus first. Here two
-/// monotone deques give the largest and smallest in O(1) a row.
+/// pond-ts `difference` `rollingState`: two monotone deques give the
+/// largest and smallest in O(1) a row, as pond-ts's do since
+/// [PND-ROLLDIFF] (#799).
 ///
-/// The bits differ only in one case: every value in the window is a zero.
-/// pond-ts's sorted array then holds a run of `0` and `-0`, inserted at the
-/// front of the run and removed from the front (whichever zero leaves), so
-/// the run behaves as a stack of signs; its answer is the bottom minus the
-/// top, which can be `-0`. `zeros` is that stack. Otherwise one end is not
-/// a zero and the sign of the other cannot change the result.
+/// One case needs more: every value in the window is a zero. pond-ts's
+/// answer then follows its old sorted window, a run of `0` and `-0`
+/// inserted and removed at the front of the run (whichever zero leaves),
+/// so the run behaves as a stack of signs; the answer is the bottom minus
+/// the top, which can be `-0`. `zeros` is that stack. Otherwise one end is
+/// not a zero and the sign of the other cannot change the result.
 #[derive(Default)]
 struct DiffState {
     max: ExtremeState<true>,

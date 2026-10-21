@@ -1895,11 +1895,12 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     `aggregate` and `array_aggregate`.
   - `difference`: number and decimal columns only (others are an error, as
     for `sum`). `aggregate` / `reduce`: largest minus smallest, never `-0`.
-    `rolling`: pond-ts keeps the window sorted (a splice per row, O(W) per
-    row for a window of W rows) and answers last minus first. pond-rs uses
+    `rolling`: pond-ts kept the window sorted (a splice per row, O(W) per
+    row for a window of W rows) and answered last minus first. pond-rs uses
     two monotone deques (O(1) per row) plus a stack of zero signs, because
-    pond-ts's sorted window gives a sign-dependent answer in one case: a
-    window of only zeros, where it can give `-0`. A unit test checks the
+    the sorted window gives a sign-dependent answer in one case: a window
+    of only zeros, where it can give `-0`. pond-ts now does the same
+    ([PND-ROLLDIFF], #799). A unit test checks the
     deques against a port of pond-ts's sorted window on 300 random series
     full of `0` and `-0`. Decimals are exact: the smallest and largest by
     rank, subtracted in 256 bits, at precision 38, an error past it
@@ -1944,11 +1945,13 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | `difference` dec. | 14 ms        | 99 ms        | 91 ms        | 12 ms          |
 
     Rolling over a 1-day window (86,400 rows) costs pond-rs the same as
-    5 minutes (25 ms for `difference`); pond-ts's rolling `difference`
-    takes 376 ms at 5 minutes, 4.2 s at 1 hour and 96 s at 1 day
-    ([PND-ROLLDIFF]). pond-rs's rolling `median` and percentiles keep the
-    sorted window, as pond-ts's do; a faster structure for those is not
-    part of this step.
+    5 minutes (25 ms for `difference`). pond-ts's rolling `difference`
+    kept a sorted window then, so it grew with the window: 11.4 s at 1
+    day. [PND-ROLLDIFF] (#799) moved it onto the same two deques, ~250 ms
+    at every window size (see `PND_COLUMNAR_PLAN.md`). An earlier run here
+    measured 96 s at 1 day, which did not reproduce. pond-rs's rolling
+    `median` and percentiles keep the sorted window, as pond-ts's do; a
+    faster structure for those is not part of this step.
 
   **Step 8f2 (done): `unique`, `top<N>` and `samples` ([PND-RUSTFULL]).**
   - `Reducer::Unique`, `Reducer::Top(n)` and `Reducer::Samples` (parsed

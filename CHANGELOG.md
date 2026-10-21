@@ -80,6 +80,12 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **Rolling `difference` no longer slows down with window size.** It kept
+  the window as a sorted list and inserted and removed each row, so a row
+  cost more the bigger the window: on 1M rows one second apart, 11 s with a
+  1-day window. It now tracks the largest and smallest values the way
+  rolling `min` / `max` do: ~250 ms for windows from 5 minutes to 1 day.
+  Answers are unchanged, bit for bit (`packages/core/scripts/perf-rolling-difference.mjs`).
 - **`trim` keeps keys in order.** Clipping time ranges or intervals to a
   range could leave two rows on the same start in the wrong order (`[0, 10]`
   and `[2, 5]` trimmed at 3 gave `[3, 10]` before `[3, 5]`), so lookups such
