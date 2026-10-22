@@ -2692,19 +2692,28 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     takes JS `Math.max` (a gap gives a gap, `+0` beats `-0`), then
     Wilder's smoothing; Donchian is step 1's rolling high and low; prime
     bands port pond-ts's 6k ± 1 ladder (whole numbers up to 2^53 - 1).
-  - Parity: the fixture grew to 1,896 cases. A new `ohlc` input has gaps
+  - Parity: the fixture grew to 1,887 cases. A new `ohlc` input has gaps
     in close only, high only, low only and whole bars, a stretch where
     high = low = close (zero spread and zero true range), signed zeros,
     a `prime` column across the prime limits, and columns a band prefix
-    collides with. 1,433 match bit for bit, 139 errors agree, 213
-    refused (the known missing-column difference, now checked for every
-    price column a study reads), 111 calls Rust cannot write. Oracle:
+    collides with. Because Wilder's smoothing never recovers from a gap,
+    a second input, `lead`, has gaps only at the start (shifting the
+    seed) and a zero-true-range stretch, so the ATR studies get 70-80
+    values a case; `ohlcEmpty` is the empty bar input. Studies of price
+    bars only run on inputs with high and low. 1,504 match bit for bit,
+    139 errors agree, 133 refused (the known missing-column difference,
+    now checked for every price column a study reads), 111 calls Rust
+    cannot write. Oracle:
     all 18 family cases pass (76 of 220 now); the oracle input now
     carries open, high, low and volume too. Planted bugs: 17 of 20
-    caught; the other 3 cannot change any output (`(h + l) / 2` vs
-    `h / 2 + l / 2`, and `c + -k * w` vs `c - k * w` twice are the same
-    in floating point). A unit test pins `js_max` on signed zeros (the
-    true range never produces `-0`, so the fixture can't).
+    caught; the other 3 change no output here: `c + -k * w` vs
+    `c - k * w` (twice) is always the same in floating point, and
+    `(h + l) / 2` vs `h / 2 + l / 2` differ only on overflow or numbers
+    too small for full precision, which no fixture input has. A unit
+    test pins `js_max` on signed zeros (the true range never produces
+    `-0`, so the fixture can't). Two ATR bugs planted after the review
+    (Wilder's seed not shifted past leading gaps; gaps dropped by the
+    max) are both caught.
   - Perf: all O(N) except prime bands, which cost O(√x) per value (as in
     pond-ts). The average true range is one sequential pass (each value
     needs the last, so it cannot split across cores without changing

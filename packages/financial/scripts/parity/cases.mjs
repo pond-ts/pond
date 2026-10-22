@@ -183,6 +183,29 @@ const OHLC_GAPPY_SCHEMA = [
   { name: 'lLower', kind: 'number' },
 ];
 
+// Clean bars after a leading gap run, so the average true range warms up
+// and keeps going: whole bars missing at rows 0-2 and the close alone at
+// row 3 (the first true range is row 5, which shifts Wilder's seed), a
+// stretch where high = low = close (40-54, zero true range), no gaps after.
+const LEAD_ROWS = Array.from({ length: 90 }, (_, i) => {
+  const flat = i >= 40 && i < 55;
+  const price = flat ? 80 : 80 + Math.sin(i / 4) * 3 + unit(i, 69069);
+  const spread = flat ? 0 : 0.2 + unit(i, 40503);
+  const whole = i < 3;
+  return [
+    i * 60_000,
+    whole ? null : price + spread,
+    whole ? null : price - spread,
+    whole || i === 3 ? null : price + (unit(i, 2654435761) - 0.5) * spread,
+  ];
+});
+const LEAD_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'high', kind: 'number', required: false },
+  { name: 'low', kind: 'number', required: false },
+  { name: 'close', kind: 'number', required: false },
+];
+
 const TINY_ROWS = [
   [0, 3],
   [1000, 1],
@@ -221,6 +244,8 @@ function inputs(oracle) {
     tiny: { name: 'tiny', schema: CLOSE_SCHEMA, rows: TINY_ROWS },
     named: { name: 'named', schema: NAMED_SCHEMA, rows: NAMED_ROWS },
     ohlc: { name: 'ohlc', schema: OHLC_GAPPY_SCHEMA, rows: OHLC_ROWS },
+    lead: { name: 'lead', schema: LEAD_SCHEMA, rows: LEAD_ROWS },
+    ohlcEmpty: { name: 'ohlcEmpty', schema: LEAD_SCHEMA, rows: [] },
     empty: { name: 'empty', schema: CLOSE_SCHEMA, rows: [] },
   };
 }
@@ -559,27 +584,24 @@ const BAND_OUTPUT = {
 };
 
 function bandFamilyCases(add) {
-  const inputs = [
-    'bars',
-    'long',
-    'gappy',
-    'large',
-    'flat',
-    'tiny',
-    'empty',
-    'ohlc',
-  ];
   for (const [study, settings] of Object.entries(BAND_SMALL)) {
+    // Studies of price bars only take inputs that have high and low.
+    const bars = BAND_READS[study][0] !== 'column' || study === 'atrBands';
+    const inputs = bars
+      ? ['bars', 'ohlc', 'lead', 'ohlcEmpty']
+      : ['bars', 'long', 'gappy', 'large', 'flat', 'tiny', 'empty', 'ohlc'];
+    const smallInputs = bars
+      ? ['bars', 'ohlc', 'lead']
+      : ['bars', 'ohlc', 'lead', 'gappy', 'large', 'flat', 'tiny'];
     for (const input of inputs) add(study, input, {});
     const typeOption = BAND_TYPE_OPTION[study];
     for (const [index, small] of settings.entries()) {
-      for (const input of ['bars', 'ohlc', 'gappy', 'large', 'flat', 'tiny']) {
-        add(study, input, small);
-      }
+      for (const input of smallInputs) add(study, input, small);
       if (typeOption && index === 0) {
         for (const type of MA_TYPES) {
           add(study, 'bars', { ...small, [typeOption]: type });
           add(study, 'ohlc', { ...small, [typeOption]: type });
+          add(study, 'lead', { ...small, [typeOption]: type });
         }
       }
     }
