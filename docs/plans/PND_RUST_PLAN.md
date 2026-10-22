@@ -2598,6 +2598,82 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | ma kama 20  | 5.5              | 6.6             | 28.3    | 4.3x  |
     | ma zlema 20 | 6.1              | 5.7             | 18.9    | 3.3x  |
 
+  **R2 step 2a (done): the moving-average family.**
+  - Calls, as `@pond-ts/financial`'s moving-average family: `macd`,
+    `price_oscillator`, `moving_average_cross`, `guppy`, `rainbow`,
+    `rainbow_oscillator`, `trix`, `schaff_trend_cycle`, `coppock`, `kst`,
+    `special_k`, `price_momentum_oscillator` each take an options struct
+    named after the study (`Macd::default().fast(5).prefix("m")`):
+    `Default` is pond-ts's defaults, one setter per option, `column`, and
+    `output` or `prefix`. `moving_average_deviation`, `disparity_index`
+    and `detrended_price_oscillator` take `(MaType, Study)`, like
+    `moving_average`. `OscillatorMode` is the price oscillator's `mode`;
+    `ma` is pond-ts's `type` / `maType`.
+  - Ported as pond-ts writes them: averages read from the column go
+    through `ma_column` (pond-ts `movingAverageColumn`: `Sma` counts rows,
+    as `sma` does); averages of a derived line through
+    `moving_average_values` (waits for whole windows); `percentChange`,
+    `rollingExtremesValues`, `percentOfRangeValues`, `foldRows` (the cross
+    and the Schaff half-smoothing) and the KST / Special K terms in the
+    same order. macd refuses a series holding its scratch column
+    `__macdLine__`, as pond-ts does. Same known difference as step 1
+    (missing or non-number source refused).
+  - Parity: the fixture grew to 1,411 cases (inputs gained `named`, a
+    series that already has columns the studies write): every study at
+    its defaults on every input, small settings, every moving-average
+    type, other columns, signed zeros, custom names, collisions and every
+    error. 1,163 match bit for bit, 86 errors agree, 93 refused (known),
+    69 calls Rust cannot write (negative or fractional periods, an
+    unknown `mode` or moving-average name). Oracle: all 29 family cases pass (58 of 220 now).
+    Both harnesses call studies through one door,
+    `tests/common/studies.rs`. Planted bugs: 12 of 16 caught at first;
+    three cannot change any output (a guard that turns `±inf` into `NaN`,
+    and pond-rs reads every non-finite value as a gap anyway) and one (a
+    tie between `-0` and `0` in the high / low queue) is now caught by a
+    unit test against pond-ts's queue. 7 of 7 caught after the speed work.
+  - Perf (`examples/perf_studies.rs`, `bench/studies_pond_ts.mjs`; 1M
+    bars at pond-ts's defaults, checksums agree). All O(N): each study is
+    a fixed number of O(N) kernels. First cut was 2.3–5.8x pond-ts; what
+    was slow and the fixes, each giving the same bits:
+    - Fresh memory again: guppy holds twelve 8 MB columns, Special K made
+      24 in between. Independent averages now run on separate cores
+      (`par::map`, `par::join`); KST / Special K work through their terms
+      stretch by stretch with small buffers of their own (no term is
+      held for the whole column), checked by a unit test that cuts 6,000
+      rows into stretches of 1 to 6,000.
+    - Chained EMAs (macd, trix, the PMO, Schaff's MACD line, and step 1's
+      `Dema` / `Tema`) run in one pass with a row-at-a-time `Ema` (the
+      same operations in the same order): no column in between, and the
+      chains overlap in the processor. Dema 9.9 → 6.6 ms, Tema 13.1 → 5.6.
+    - pond-ts's high / low queue (Schaff) was 18 ms: replaced by van Herk
+      / Gil-Werman blocks (three comparisons a row, later rows win ties,
+      stretches on separate cores); a unit test checks it against the
+      queue, signed-zero ties included, at every stretch size (6 of 6
+      planted tie bugs caught). `rolling_mean_values` (the masked mean)
+      and the rainbow oscillator's per-row loop split across cores too.
+  - Medians of 7, 1M bars, ms; 1 thread is `RAYON_NUM_THREADS=1`:
+
+    | Study    | first cut | 1 thread | 4 cores | pond-ts | ratio |
+    | -------- | --------- | -------- | ------- | ------- | ----- |
+    | macd     | 26.6      | 7.9      | 8.1     | 73.5    | 9.1x  |
+    | priceOsc | 10.6      | 8.6      | 11.5    | 48.1    | 4.2x  |
+    | maCross  | 11.1      | 21.0     | 12.4    | 64.6    | 5.2x  |
+    | maDev    | 4.2       | 7.2      | 4.3     | 31.9    | 7.4x  |
+    | dispar.  | 3.9       | 8.4      | 4.4     | 44.1    | 10x   |
+    | dpo      | 3.8       | 11.5     | 5.3     | 29.7    | 5.6x  |
+    | guppy    | 79.1      | 93.5     | 30.8    | 184.6   | 6.0x  |
+    | rainbow  | 49.1      | 101.0    | 41.4    | 234.2   | 5.7x  |
+    | rbo      | 70.3      | 152.3    | 56.6    | 404.9   | 7.2x  |
+    | trix     | 18.7      | 8.6      | 8.0     | 45.0    | 5.6x  |
+    | stc      | 67.3      | 55.3     | 41.6    | 158.5   | 3.8x  |
+    | coppock  | 9.3       | 19.4     | 12.8    | 38.4    | 3.0x  |
+    | kst      | 47.5      | 86.0     | 20.5    | 138.4   | 6.8x  |
+    | specialK | 100.2     | 112.4    | 42.1    | 278.9   | 6.6x  |
+    | pmo      | 15.3      | 7.4      | 8.3     | 44.0    | 5.3x  |
+
+    This box runs four cores in a shared VM; single runs move by up to
+    a third, so read ratios to one significant figure.
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).
