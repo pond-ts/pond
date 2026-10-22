@@ -1,5 +1,10 @@
 # R1a benchmark
 
+> **All pond-rs / pond-ts / polars comparisons in one place:**
+> [COMPARISON.md](COMPARISON.md) (re-run 2026-10-21, every family, polars
+> added). `compare_all.sh` + `collect.py` rebuild it; the polars runners
+> are in `polars/`.
+
 The two workloads [PND-RUST-R1A] is judged on (RFC `docs/rfcs/pond-rs.md`,
 Amendment 1), run on pond-ts, pond-rs and polars. Every runner reads the same Arrow IPC file and writes Arrow IPC back, so
 the times include getting data in and out.
@@ -14,16 +19,18 @@ the times include getting data in and out.
   starts at New York midnight on 2026-03-03 and crosses the 2026-03-08
   daylight-saving change, so one day is 23 hours long.
 
-| file                       | what it does                                                          |
-| -------------------------- | --------------------------------------------------------------------- |
-| `gen_data.py`              | writes the input file (fixed seed, so every machine gets the same)    |
-| `pond_ts.mjs`              | pond-ts runner (the built `packages/core/dist`)                       |
-| `../examples/r1a_bench.rs` | pond-rs runner (`cargo run --release -p pond-rs --example r1a_bench`) |
-| `polars_bench.py`          | polars runner; `POLARS_MAX_THREADS=1` for the one-thread run          |
-| `compare.py`               | checks pond-ts and polars give the same answers                       |
-| `same.py`                  | checks pond-rs gives exactly pond-ts's answers, bit for bit           |
-| `run.sh`                   | all of the above                                                      |
-| `agent-trial/`             | the R1a agent trial: 10 agents with pond-rs vs 10 with polars on B    |
+| file                           | what it does                                                                |
+| ------------------------------ | --------------------------------------------------------------------------- |
+| `gen_data.py`                  | writes the input file (fixed seed, so every machine gets the same)          |
+| `pond_ts.mjs`                  | pond-ts runner (the built `packages/core/dist`)                             |
+| `../examples/r1a_bench.rs`     | pond-rs runner (`cargo run --release -p pond-rs --example r1a_bench`)       |
+| `polars_bench.py`              | polars runner; `POLARS_MAX_THREADS=1` for the one-thread run                |
+| `compare.py`                   | checks pond-ts and polars give the same answers                             |
+| `same.py`                      | checks pond-rs gives exactly pond-ts's answers, bit for bit                 |
+| `run.sh`                       | all of the above                                                            |
+| `compare_all.sh`, `collect.py` | every per-step family on all three engines, and the tables in COMPARISON.md |
+| `polars/`                      | polars runners for the per-step families                                    |
+| `agent-trial/`                 | the R1a agent trial: 10 agents with pond-rs vs 10 with polars on B          |
 
 ```
 npm run build --workspace=pond-ts
