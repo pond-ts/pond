@@ -75,6 +75,7 @@ import type {
 } from '../schema/index.js';
 import { float64ColumnFromTypedArray } from './operators/numeric-io.js';
 import {
+  intervalKeysForBuckets,
   isAggregateOutputSpec,
   normalizeAggregateColumns,
   tryAggregateColumnarStore,
@@ -920,51 +921,13 @@ function timeSeriesFromTrustedStore<S extends SeriesSchema>(
 /**
  * Builds a series from **computed** rows — an operator's own output
  * assembled row-shaped (`smooth`, `baseline`, `align`, the row paths of
- * `aggregate` / `rolling` / `pivotByGroup` / `arrayAggregate`). Same
+ * `aggregate` / `pivotByGroup` / `arrayAggregate`). Same
  * validation as row intake with one difference: a non-finite number in a
  * `number` column (`NaN`, `±Infinity` — an overflow, `Infinity - Infinity`)
  * is stored as **missing** rather than rejected, because a non-finite number
  * in a number column means missing ([PND-NANREP]). User-supplied rows keep
  * the strict door (`new TimeSeries`), which rejects them.
  */
-/**
- * Interval key column for a list of sequence buckets, built straight from
- * the `Interval`s (begin / end / label buffers) instead of through row
- * intake. Same label rules as `SeriesStore.fromValidatedRows`: all-number
- * labels make a number label column, otherwise string labels
- * (dictionary-encoded); mixed label types throw the same error.
- * Precondition: `intervals` is sorted and non-overlapping (a bounded
- * sequence guarantees it).
- */
-function intervalKeyColumnFromIntervals(
-  intervals: ReadonlyArray<Interval>,
-): IntervalKeyColumn {
-  const length = intervals.length;
-  const begin = new Float64Array(length);
-  const end = new Float64Array(length);
-  const labels = new Array<string | number>(length);
-  let labelKind: 'string' | 'number' | undefined;
-  for (let i = 0; i < length; i += 1) {
-    const interval = intervals[i]!;
-    begin[i] = interval.begin();
-    end[i] = interval.end();
-    const label = interval.value;
-    labels[i] = label;
-    if (labelKind === undefined) {
-      labelKind = typeof label === 'string' ? 'string' : 'number';
-    } else if (typeof label !== labelKind) {
-      throw new RangeError(
-        `SeriesStore.fromValidatedRows: row ${i} has interval label of type ${typeof label} but earlier rows had ${labelKind} labels — interval-keyed series must use one label type throughout`,
-      );
-    }
-  }
-  const labelColumn =
-    labelKind === 'number'
-      ? new Float64Column(Float64Array.from(labels as number[]), length)
-      : stringColumnFromArray(labels as string[], { forceDict: true });
-  return new IntervalKeyColumn(begin, end, labelColumn, length);
-}
-
 function timeSeriesFromComputedRows<S extends SeriesSchema>(
   name: string,
   schema: S,
@@ -4154,7 +4117,7 @@ export class TimeSeries<S extends SeriesSchema> {
       }
       const seqResultStore = ColumnarStore.fromTrustedStore(
         resultSchema as unknown as ColumnSchema,
-        intervalKeyColumnFromIntervals(buckets),
+        intervalKeysForBuckets(buckets),
         seqColumns,
       );
       return TimeSeries.#fromTrustedStore(

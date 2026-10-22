@@ -78,7 +78,7 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
-### Fixed
+### Changed
 
 - **`rolling(sequence, window, mapping)` no longer scans every row for every
   grid point** ([PND-ROLLGRID]). Two forward cursors find each bucket's window,

@@ -17,6 +17,7 @@ import {
   Interval,
   Sequence,
   TimeSeries,
+  ValidationError,
 } from '../src/index.js';
 
 const schema = [
@@ -235,5 +236,36 @@ describe('rolling over a sequence matches a brute-force window scan', () => {
     const out = series.rolling(seq, 10, { v: 'sum' });
     expect(out.toArray().map((e) => e.key().value)).toEqual([1, 2]);
     expect(out.toArray().map((e) => e.get('v'))).toEqual([1, 2]);
+  });
+
+  it('rejects a custom reducer result of the wrong kind', () => {
+    const series = new TimeSeries({
+      name: 's',
+      schema,
+      rows: [
+        [0, 1, 'a'],
+        [10, 2, 'a'],
+      ],
+    });
+    expect(() =>
+      series.rolling(Sequence.every(10), 10, {
+        bad: { from: 'v', using: () => 'text' as unknown as number },
+      }),
+    ).toThrow(ValidationError);
+  });
+
+  it('rejects buckets with mixed label types', () => {
+    const series = new TimeSeries({
+      name: 's',
+      schema,
+      rows: [[0, 1, 'a']],
+    });
+    const seq = new BoundedSequence([
+      new Interval({ value: 'x', start: 0, end: 10 }),
+      new Interval({ value: 2, start: 10, end: 20 }),
+    ]);
+    expect(() => series.rolling(seq, 10, { v: 'sum' })).toThrow(
+      /row 1 has interval label of type number but earlier rows had string labels/,
+    );
   });
 });
