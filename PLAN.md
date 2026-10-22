@@ -732,16 +732,6 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   `aggregate`; the fast path already drives the same window states, so
   answers do not change. Repro: `crates/pond-rs/bench/rolling_pond_ts.mjs`.
   Found 2026-10-20 (pond-rs R1b step 8g).
-- **[PND-ROLLGRID]** — pond-ts `rolling(sequence, window, mapping)` scans
-  every row for every bucket (`this.events.filter` per bucket), so it
-  costs O(B·N): a 5-minute `avg` on a 1-minute grid over 100k rows takes
-  12.9 s (pond-rs: 0.7 ms; pond-rs does 1M rows in 11 ms). Rows are
-  sorted by start, so each window is a run of rows that two cursors can
-  find in O(N + B), as pond-rs does. Repro:
-  `crates/pond-rs/bench/rolling_pond_ts.mjs`. Found 2026-10-20 (pond-rs
-  R1b step 8g). Same cost for every reducer: 1,000 rows one minute apart
-  sampled every 10 s take ~250 ms and 4,000 rows ~3.3 s (`min` and
-  `difference` alike; found again while measuring [PND-ROLLDIFF]).
 - **[PND-SMOOTHSLOW]** — pond-ts `smooth` (`movingAverage`, `loess`) and
   `baseline` build one `Event` per row and rebuild the series from rows. On
   1M rows `movingAverage` over 5 minutes takes ~2 s and `baseline` ~3.9 s,
