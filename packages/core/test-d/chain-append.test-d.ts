@@ -68,3 +68,9 @@ const partV: number = parts.at(0)!.get('v');
 const partDv: number | undefined = parts.at(0)!.get('dv');
 void partV;
 void partDv;
+
+// `append: false` is accepted on both, giving the usual result.
+series.rolling('10s', { vAvg: { from: 'v', using: 'avg' } }, { append: false });
+series
+  .partitionBy('host')
+  .rolling('10s', { vAvg: { from: 'v', using: 'avg' } }, { append: false });

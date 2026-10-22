@@ -5,7 +5,10 @@
 //! whole chain.
 
 use pond_rs::financial::Study;
-use pond_rs::{Agg, Change, Column, Fill, FirstRow, Reducer, Rolling, TimeSeries, Value};
+use pond_rs::{
+    Agg, Change, Column, ColumnKind, DecimalColumn, Fill, FirstRow, Reducer, Rolling, TimeSeries,
+    Value,
+};
 
 fn bars() -> TimeSeries {
     let time: Vec<i64> = (0..60).map(|i| i * 60_000).collect();
@@ -257,4 +260,49 @@ fn one_value_folds() {
     assert!(e.contains("reduce_number"), "{e}");
     let empty = s.within(-10, -5).unwrap();
     assert_eq!(empty.reduce_number("close", Reducer::Avg).unwrap(), None);
+}
+
+#[test]
+fn decimal_diff_output_stays_decimal() {
+    // As for the in-place diff, a decimal source gives an exact decimal
+    // change (pond-ts has no decimal columns); rate and pct_change give numbers.
+    let s = TimeSeries::new(
+        "d",
+        vec![0, 1_000, 2_000],
+        vec![Column::optional(
+            "p",
+            DecimalColumn::from_options([Some(105), None, Some(110)], 1).unwrap(),
+        )],
+    )
+    .unwrap();
+    let d = s.diff_with(&["p"], Change::default().output("dp")).unwrap();
+    assert_eq!(d.column("dp").unwrap().kind(), ColumnKind::Decimal);
+    let source = s.column("p").unwrap().decimals().unwrap().get(2);
+    assert_eq!(d.column("p").unwrap().decimals().unwrap().get(2), source);
+    let r = s.rate_with(&["p"], Change::default().output("rp")).unwrap();
+    assert_eq!(r.column("rp").unwrap().kind(), ColumnKind::Number);
+}
+
+#[test]
+fn empty_series_keep_every_column() {
+    let empty = bars().within(-10, -5).unwrap();
+    let rolled = empty
+        .rolling_with(
+            "5m",
+            &[Agg::new("avg", "close", Reducer::Avg)],
+            Rolling {
+                append: true,
+                ..Rolling::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(rolled.len(), 0);
+    assert_eq!(names(&rolled), ["time", "close", "host", "avg"]);
+    let changed = empty
+        .diff_with(
+            &["close"],
+            Change::default().output("dc").first(FirstRow::Drop),
+        )
+        .unwrap();
+    assert_eq!(names(&changed), ["time", "close", "host", "dc"]);
 }

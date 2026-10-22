@@ -636,7 +636,11 @@ export class PartitionedTimeSeries<
   rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     window: DurationInput,
     mapping: Mapping,
-    options?: { alignment?: RollingAlignment; minSamples?: number },
+    options?: {
+      alignment?: RollingAlignment;
+      minSamples?: number;
+      append?: false;
+    },
   ): PartitionedTimeSeries<
     RollingSchema<S, WithPartitionColumns<S, Mapping, By>>,
     K,

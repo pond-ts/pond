@@ -89,6 +89,40 @@ describe('rolling { append: true }', () => {
     ).toThrow(/append is not supported with a sequence/);
   });
 
+  it('refuses an output named after the key', () => {
+    const s = makeSeries();
+    expect(() =>
+      s.rolling('2s', { time: { from: 'v', using: 'avg' } }, { append: true }),
+    ).toThrow();
+    expect(() => s.diff('v', { output: 'time' })).toThrow(
+      /output column 'time' already exists/,
+    );
+  });
+
+  it('an empty series gives an empty series with every column', () => {
+    const empty = new TimeSeries({ name: 'e', schema, rows: [] });
+    const rolled = empty.rolling(
+      '2s',
+      { vAvg: { from: 'v', using: 'avg' } },
+      { append: true },
+    );
+    expect(rolled.length).toBe(0);
+    expect(rolled.schema.map((c) => c.name)).toEqual([
+      'time',
+      'host',
+      'v',
+      'vAvg',
+    ]);
+    const changed = empty.diff('v', { output: 'dv', drop: true });
+    expect(changed.length).toBe(0);
+    expect(changed.schema.map((c) => c.name)).toEqual([
+      'time',
+      'host',
+      'v',
+      'dv',
+    ]);
+  });
+
   it('append: false is the usual result', () => {
     const s = makeSeries();
     const out = s.rolling(

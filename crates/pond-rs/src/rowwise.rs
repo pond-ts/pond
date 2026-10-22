@@ -58,7 +58,9 @@ impl Change {
 
     /// Put the result in a new optional column of this name and keep the
     /// source column as it was (pond-ts `{ output }`). Takes exactly one
-    /// source column; the name must not already exist.
+    /// source column; the name must not already exist. The new column has
+    /// the kind the in-place result would: a decimal source stays an exact
+    /// decimal for `diff`, and gives numbers for `rate` and `pct_change`.
     pub fn output(mut self, name: &str) -> Self {
         self.output = Some(name.to_string());
         self
