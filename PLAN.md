@@ -606,7 +606,7 @@ the study oracle) is done.
   rows across cores instead, same bits). Steps: 1. ~~foundations (study options and checks,
   shared kernels, `sma` / `ema` / `moving_average` / rolling stats /
   `z_score`)~~ — done; 2. one PR per family: ~~(a) moving averages~~ — done, ~~(b) bands~~ — done, ~~(c)
-  momentum~~ — done, ~~(d) trend~~ — done, (e) volatility and statistics (part 1 done: volatility, 8 of 14 studies), (f) volume, (g)
+  momentum~~ — done, ~~(d) trend~~ — done, ~~(e) volatility and statistics~~ — done, (f) volume, (g)
   price; 3. trading calendars, then session VWAP and anchored VWAP; 4. the
   catalog; 5. perf check and an agent trial. Detail in the breakout plan.
 

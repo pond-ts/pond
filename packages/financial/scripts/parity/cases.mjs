@@ -282,7 +282,11 @@ const LEAD_SCHEMA = [
 // reverse (220-259); zeros in `bench` (300, 301) and in `close` (310);
 // `step`, prices that plateau between 1% steps with a jitter of a few ulps
 // (the windows the kernel fits again on demand); `twin` = 3 x close and
-// `mirror` = 7 - 2 x close (a correlation that rounds past +1 or -1).
+// `mirror` = 7 - 2 x close (a correlation that rounds past +1 or -1);
+// `small` / `smallStep` and `big` / `bigStep` (close and step scaled by
+// 1e-100 and 1e100: the product of two variances underflows to 0 or
+// overflows to infinity, where each variance does not); and `stepTwin` =
+// 3 x step + 1.
 const PAIR_ROWS = Array.from({ length: 400 }, (_, i) => {
   let close = 100 + Math.sin(i / 5) * 4 + unit(i, 69069) * 2;
   let bench = 1e12 + Math.cos(i / 7) * 3 + unit(i, 40503);
@@ -301,6 +305,11 @@ const PAIR_ROWS = Array.from({ length: 400 }, (_, i) => {
     gapClose ? null : close * 3,
     gapClose ? null : 7 - 2 * close,
     i % 2 === 0 ? 'a' : 'b',
+    gapClose ? null : close * 1e-100,
+    step * 1e-100,
+    gapClose ? null : close * 1e100,
+    step * 1e100,
+    step * 3 + 1,
   ];
 });
 const PAIR_SCHEMA = [
@@ -311,6 +320,11 @@ const PAIR_SCHEMA = [
   { name: 'twin', kind: 'number', required: false },
   { name: 'mirror', kind: 'number', required: false },
   { name: 'name', kind: 'string' },
+  { name: 'small', kind: 'number', required: false },
+  { name: 'smallStep', kind: 'number' },
+  { name: 'big', kind: 'number', required: false },
+  { name: 'bigStep', kind: 'number' },
+  { name: 'stepTwin', kind: 'number' },
 ];
 
 const TINY_ROWS = [
@@ -1394,6 +1408,9 @@ function statisticsFamilyCases(add) {
     ['pair', { column: 'step' }, 'bench'],
     ['pair', { column: 'step' }, 'close'],
     ['pair', { column: 'bench' }, 'step'],
+    ['pair', { column: 'small' }, 'smallStep'],
+    ['pair', { column: 'big' }, 'bigStep'],
+    ['pair', { column: 'step' }, 'stepTwin'],
   ];
   for (const [study, settings] of Object.entries(small)) {
     for (const [input, extra, benchmark] of pairs) {

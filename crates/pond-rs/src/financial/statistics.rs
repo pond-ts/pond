@@ -6,12 +6,13 @@
 use super::Study;
 use super::averages::positive;
 use super::bivariate::rolling_bivariate_values;
-use super::kernels::{js_atan, percent_change_values};
+use super::kernels::{js_atan, percent_change_at};
 use super::regression::{linear_regression_values, regression_at};
 use std::borrow::Cow;
 
 use crate::column::ColumnData;
 use crate::error::{PondError, Result};
+use crate::par;
 use crate::series::TimeSeries;
 
 study_options! {
@@ -79,11 +80,13 @@ impl TimeSeries {
         let fit = linear_regression_values(&values, options.period);
         let value = regression_at(&fit, (options.period - 1) as f64);
         let degrees_per_radian = 180.0 / std::f64::consts::PI;
-        let angle = fit
-            .slope
-            .iter()
-            .map(|&m| js_atan(m) * degrees_per_radian)
-            .collect();
+        // The slope as an angle, split across cores.
+        let mut angle = vec![0.0; fit.slope.len()];
+        par::fill_chunks(&mut angle, &mut [], 1 << 16, |start, out, _| {
+            for (a, &m) in out.iter_mut().zip(&fit.slope[start..]) {
+                *a = js_atan(m) * degrees_per_radian;
+            }
+        });
         let [value_name, slope_name, intercept_name, angle_name, r2_name] = names;
         self.study_outputs(
             CALL,
@@ -129,11 +132,21 @@ impl TimeSeries {
             &options,
             "a column has a beta of exactly 1 against itself",
         )?;
-        let moments = rolling_bivariate_values(
-            &percent_change_values(&values, 1),
-            &percent_change_values(&benchmark, 1),
-            options.period,
+        // Both columns' returns in one pass, split across cores.
+        let (mut returns, mut benchmark_returns) =
+            (vec![0.0; values.len()], vec![0.0; values.len()]);
+        par::fill_chunks(
+            &mut returns,
+            &mut benchmark_returns,
+            1 << 16,
+            |start, a, b| {
+                for (k, (a, b)) in a.iter_mut().zip(b).enumerate() {
+                    *a = percent_change_at(&values, 1, start + k);
+                    *b = percent_change_at(&benchmark, 1, start + k);
+                }
+            },
         );
+        let moments = rolling_bivariate_values(&returns, &benchmark_returns, options.period);
         let out = moments
             .covariance
             .iter()
