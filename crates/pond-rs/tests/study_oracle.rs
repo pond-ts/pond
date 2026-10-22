@@ -16,8 +16,8 @@ use std::collections::BTreeMap;
 
 /// Studies with an arm in [`run`]. Every oracle case for a listed study must
 /// run and match; a study that runs without being listed is also an error.
-/// The case's input: the oracle's bars (open, high, low, close, volume) or
-/// its long run of closes.
+/// The case's input: the oracle's bars (open, high, low, close, volume, and
+/// the two-column studies' `bench`) or its long run of closes.
 fn bars(fixture: &StudyFixture, case: &StudyCase) -> TimeSeries {
     let input = &fixture.input;
     let columns = match case.input.as_deref() {
@@ -27,6 +27,7 @@ fn bars(fixture: &StudyFixture, case: &StudyCase) -> TimeSeries {
             Column::required("low", input.lows.clone()),
             Column::required("close", input.closes.clone()),
             Column::required("volume", input.volumes.clone()),
+            Column::required("bench", input.benchmarks.clone()),
         ],
         Some("long") => vec![Column::required("close", input.long_closes.clone())],
         Some(other) => panic!("{}: input '{other}' is not bars or closes", case.study),

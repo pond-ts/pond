@@ -129,6 +129,16 @@ const cases = [
   ['v-gapo', 'gapo', () => f.gopalakrishnanRangeIndex(bars)],
   ['v-ulcer', 'ulcer', () => f.ulcerIndex(bars)],
   ['v-relvol', 'relVol', () => f.relativeVolatilityIndex(bars)],
+  ['s-linreg', 'linregR2', () => f.linearRegression(bars)],
+  ['s-tsf', 'tsf', () => f.timeSeriesForecast(bars)],
+  ['s-beta', 'beta', () => f.beta(bars, { benchmark: 'open' })],
+  ['s-corr', 'corr', () => f.correlation(bars, { benchmark: 'open' })],
+  [
+    's-pricerel',
+    'priceRel',
+    () => f.priceRelative(bars, { benchmark: 'open' }),
+  ],
+  ['s-perf', 'perf', () => f.performanceIndex(bars, { benchmark: 'open' })],
 ];
 
 const only = process.argv[2];

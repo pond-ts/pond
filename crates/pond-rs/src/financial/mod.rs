@@ -52,9 +52,11 @@
 mod options;
 mod averages;
 mod bands;
+mod bivariate;
 mod kernels;
 mod momentum;
 mod regression;
+mod statistics;
 mod trend;
 mod volatility;
 
@@ -72,6 +74,7 @@ pub use momentum::{
     Stochastic, StochasticMomentumIndex, StochasticRsi, TrueStrengthIndex, UltimateOscillator,
     WilliamsR,
 };
+pub use statistics::{Beta, Correlation, LinearRegression, PerformanceIndex, PriceRelative};
 pub use trend::{
     AccumulativeSwingIndex, Aroon, AtrTrailingStop, DirectionalMovement, ElderImpulse, ElderRay,
     Ichimoku, ParabolicSar, RandomWalkIndex, Ravi, SuperTrend, SwingIndex, TrendIntensityIndex,

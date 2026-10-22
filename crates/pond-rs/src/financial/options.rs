@@ -9,7 +9,42 @@
 /// `Name(period: usize), …` makes that field required: no `Default`, a
 /// `new(period)` instead. `reads [high, low, close]` lists the columns the
 /// study reads instead of `column`; each defaults to its own name.
+/// `Name(benchmark), …` reads `column` and a second column, `benchmark`,
+/// that has no default: `new(benchmark)`.
 macro_rules! study_options {
+    // A two-column study: reads `column` and a required `benchmark`.
+    (
+        $(#[$meta:meta])*
+        $name:ident(benchmark), $naming:ident = $default_name:literal
+        {
+            $( $(#[$field_meta:meta])* $field:ident : $ty:ty = $default:expr ),* $(,)?
+        }
+    ) => {
+        study_options! {
+            @struct
+            $(#[$meta])*
+            $name, $naming = $default_name, reads [column, benchmark],
+            fields { $( $(#[$field_meta])* $field : $ty ),* }
+        }
+
+        impl $name {
+            /// The options comparing against the `benchmark` column, every
+            /// other setting at pond-ts's default.
+            pub fn new(benchmark: &str) -> Self {
+                Self {
+                    $( $field: $default, )*
+                    column: None,
+                    benchmark: Some(benchmark.to_string()),
+                    $naming: None,
+                }
+            }
+
+            /// The column the study compares against.
+            fn benchmark_name(&self) -> &str {
+                self.benchmark.as_deref().unwrap_or_default()
+            }
+        }
+    };
     // Without `reads`: the study reads `column`.
     (
         $(#[$meta:meta])*
@@ -124,6 +159,13 @@ macro_rules! study_options {
         #[allow(dead_code)]
         fn source(&self) -> &str {
             self.column.as_deref().unwrap_or(super::DEFAULT_SOURCE)
+        }
+    };
+    (@source benchmark) => {
+        /// Compare against this number column instead.
+        pub fn benchmark(mut self, name: &str) -> Self {
+            self.benchmark = Some(name.to_string());
+            self
         }
     };
     (@source $src:ident) => {

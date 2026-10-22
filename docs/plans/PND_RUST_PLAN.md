@@ -3076,6 +3076,66 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | ulcer   | 15.8     | 9.0     | 154.0   | 17x   |
     | relvol  | 32.6     | 17.2    | 68.1    | 4.0x  |
 
+  **R2 step 2e part 2 (done): statistics, the other 6 studies; the family
+  is complete.**
+  - Calls: `linear_regression` (`LinearRegression`, a `prefix`; writes
+    value, slope, intercept, angle in degrees and r squared, in that
+    order), `time_series_forecast` (a plain `Study`, pond-ts default 14),
+    and four studies that compare `column` with a second column:
+    `beta`, `correlation`, `price_relative` and `performance_index`. Their
+    options take the `benchmark` column in `new` (`Beta::new("spy")`), as
+    pond-ts has no default for it; `study_options!` gained a
+    `Name(benchmark)` form for them. Errors in pond-ts's order: the
+    period, then the benchmark (not the column itself, on the series, a
+    number column), then the output name, then the column. Parity checks
+    only that both sides fail; a unit test pins the order and part of
+    each message.
+  - New kernels: `rolling_bivariate_values`, pond-ts
+    `rollingBivariateValues` (covariance and the two variances of each
+    window, in a frame shifted by the window's first pair, rebuilt every
+    `period` rows and again where a moment looks like rounding residue),
+    split across cores by the same rebuild rows; and `js_atan`, V8's
+    `Math.atan` (fdlibm), checked against node on 2M values. The
+    regression's r squared, unchecked since part 2 of momentum, is now
+    checked by parity.
+  - A bug of mine the stretch test caught before review: a stretch
+    skipped the rebuild-on-demand check on the rows before its first
+    output row, but a rebuild there carries forward, so the bits
+    differed from one sweep.
+  - Parity: the fixture grew to 3,931 cases, with a new `pair` input
+    (gaps on different rows in each column, each column flat while the
+    other moves, zeros, plateau prices with a few ulps of jitter, columns
+    scaled by 1e-100 and 1e100 so the product of two variances underflows
+    or overflows, and exact multiples of the close). 2,948 match bit for
+    bit, 390 errors agree, 335 refused (known missing-column difference),
+    258 calls Rust cannot write. The oracle's bars gained its benchmark
+    column; oracle: 178 of 220 cases (was 167).
+  - Planted bugs: 22 of 28 caught at first; the scaled columns caught 2
+    more: 24 of 28. The 4 missed: price relative and the performance
+    index without their zero guards (dividing by 0 then gives an
+    infinity or NaN, both stored as a gap); and two in the kernel that
+    gave 0 differences in 8.4M readings of random gappy, plateau and
+    near-duplicate inputs: a looser Cauchy-Schwarz slack (1e-6 for 1e-9),
+    and dropping the closed form for a window down to one pair. Neither
+    is proven harmless; the inputs that would show them were not found.
+  - Parity inputs are under one 65,536-row stretch, so they never split
+    across cores; the split is checked by the stretch unit test and the
+    1M-row bit comparison below (review on #823).
+  - Perf: all O(N). Beta's two return columns are one pass split across
+    cores, as is the regression's angle. At 1M rows all six match pond-ts
+    on every bit, on 4 cores and on 1 (`POND_BITS=1`).
+  - Medians of 7, 1M bars at pond-ts's defaults (benchmark: the open),
+    ms:
+
+    | Study    | 1 thread | 4 cores | pond-ts | ratio |
+    | -------- | -------- | ------- | ------- | ----- |
+    | linreg   | 33.8     | 15.2    | 83.2    | 5.5x  |
+    | tsf      | 13.7     | 4.6     | 23.9    | 5.2x  |
+    | beta     | 27.8     | 8.7     | 45.3    | 5.2x  |
+    | corr     | 29.5     | 10.3    | 53.0    | 5.1x  |
+    | pricerel | 1.3      | 1.2     | 16.9    | 14x   |
+    | perf     | 2.6      | 2.5     | 10.8    | 4.3x  |
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).

@@ -616,6 +616,43 @@ fn main() -> pond_rs::Result<()> {
         ),
     ];
     cases.extend(volatility);
+    // R2 step 2e part 2.
+    let statistics: Vec<Case> = vec![
+        (
+            "s-linreg".into(),
+            "linregR2",
+            Box::new(|| bars.linear_regression(LinearRegression::default()).unwrap()),
+        ),
+        (
+            "s-tsf".into(),
+            "tsf",
+            Box::new(|| bars.time_series_forecast(Study::period(14)).unwrap()),
+        ),
+        (
+            "s-beta".into(),
+            "beta",
+            Box::new(|| bars.beta(Beta::new("open")).unwrap()),
+        ),
+        (
+            "s-corr".into(),
+            "corr",
+            Box::new(|| bars.correlation(Correlation::new("open")).unwrap()),
+        ),
+        (
+            "s-pricerel".into(),
+            "priceRel",
+            Box::new(|| bars.price_relative(PriceRelative::new("open")).unwrap()),
+        ),
+        (
+            "s-perf".into(),
+            "perf",
+            Box::new(|| {
+                bars.performance_index(PerformanceIndex::new("open"))
+                    .unwrap()
+            }),
+        ),
+    ];
+    cases.extend(statistics);
     // POND_BITS=1: instead of timing, print a hash of every bit of every
     // number column in the result (a gap hashes as one fixed value), the
     // same hash bench/studies_pond_ts.mjs prints under the same variable.

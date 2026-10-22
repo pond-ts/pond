@@ -9,7 +9,6 @@ use crate::par;
 pub(crate) struct Regression {
     pub(crate) slope: Vec<f64>,
     pub(crate) intercept: Vec<f64>,
-    #[allow(dead_code)]
     pub(crate) r2: Vec<f64>,
 }
 

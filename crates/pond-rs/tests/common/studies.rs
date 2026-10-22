@@ -85,6 +85,12 @@ pub const STUDIES: &[&str] = &[
     "gopalakrishnanRangeIndex",
     "ulcerIndex",
     "relativeVolatilityIndex",
+    "linearRegression",
+    "timeSeriesForecast",
+    "beta",
+    "correlation",
+    "priceRelative",
+    "performanceIndex",
 ];
 
 /// The columns `study` reads with these options: `column` (default
@@ -765,6 +771,27 @@ pub fn call_study(
             RelativeVolatilityIndex::default()
                 .period(int("period", 14))
                 .stdev_period(int("stdevPeriod", 10)),
+            output
+        )),
+        "linearRegression" => series.linear_regression(named!(
+            LinearRegression::default().period(int("period", 14)),
+            prefix
+        )),
+        "timeSeriesForecast" => series.time_series_forecast(study_of(14)),
+        "beta" => series.beta(named!(
+            Beta::new(text("benchmark").unwrap()).period(int("period", 5)),
+            output
+        )),
+        "correlation" => series.correlation(named!(
+            Correlation::new(text("benchmark").unwrap()).period(int("period", 30)),
+            output
+        )),
+        "priceRelative" => series.price_relative(named!(
+            PriceRelative::new(text("benchmark").unwrap()),
+            output
+        )),
+        "performanceIndex" => series.performance_index(named!(
+            PerformanceIndex::new(text("benchmark").unwrap()).period(int("period", 20)),
             output
         )),
         other => panic!("no pond-rs call for study '{other}'"),
