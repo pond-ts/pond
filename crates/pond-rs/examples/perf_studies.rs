@@ -55,10 +55,30 @@ fn make(rows: usize, gappy: bool) -> TimeSeries {
     TimeSeries::new("bench", time, vec![Column::optional("close", close)]).unwrap()
 }
 
+/// 1M price bars: high and low a varying spread either side of the close.
+fn make_bars(rows: usize) -> TimeSeries {
+    let time = (0..rows as i64).map(|i| i * 60_000).collect();
+    let spread = |i: usize| ((i * 31) % 97) as f64 / 100.0 + 0.1;
+    let high: Vec<f64> = (0..rows).map(|i| price(i) + spread(i)).collect();
+    let low: Vec<f64> = (0..rows).map(|i| price(i) - spread(i)).collect();
+    let close: Vec<f64> = (0..rows).map(price).collect();
+    TimeSeries::new(
+        "bars",
+        time,
+        vec![
+            Column::required("high", high),
+            Column::required("low", low),
+            Column::required("close", close),
+        ],
+    )
+    .unwrap()
+}
+
 fn main() -> pond_rs::Result<()> {
     let only: Option<String> = std::env::args().nth(1);
     let dense = make(1_000_000, false);
     let gappy = make(1_000_000, true);
+    let bars = make_bars(1_000_000);
     let p = Study::period;
     type Case<'a> = (String, &'a str, Box<dyn Fn() -> TimeSeries + 'a>);
     let mut cases: Vec<Case> = vec![
@@ -220,6 +240,69 @@ fn main() -> pond_rs::Result<()> {
         ),
     ];
     cases.extend(family);
+    // R2 step 2b: the bands family, at pond-ts's defaults.
+    let bands: Vec<Case> = vec![
+        (
+            "bollinger 20".into(),
+            "bbUpper",
+            Box::new(|| bars.bollinger(Bollinger::new(20)).unwrap()),
+        ),
+        (
+            "bbWidth".into(),
+            "bbWidth",
+            Box::new(|| {
+                bars.bollinger_bandwidth(BollingerBandwidth::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "percentB".into(),
+            "percentB",
+            Box::new(|| {
+                bars.bollinger_percent_b(BollingerPercentB::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "keltner".into(),
+            "kcUpper",
+            Box::new(|| bars.keltner(Keltner::default()).unwrap()),
+        ),
+        (
+            "starc".into(),
+            "starcUpper",
+            Box::new(|| bars.starc_bands(StarcBands::default()).unwrap()),
+        ),
+        (
+            "atrBands".into(),
+            "atrbUpper",
+            Box::new(|| bars.atr_bands(AtrBands::default()).unwrap()),
+        ),
+        (
+            "donchian".into(),
+            "dcMiddle",
+            Box::new(|| bars.donchian(Donchian::default()).unwrap()),
+        ),
+        (
+            "highLowBands".into(),
+            "hlbUpper",
+            Box::new(|| bars.high_low_bands(HighLowBands::default()).unwrap()),
+        ),
+        (
+            "primeBands".into(),
+            "pnbUpper",
+            Box::new(|| {
+                bars.prime_number_bands(PrimeNumberBands::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "envelope 20".into(),
+            "envUpper",
+            Box::new(|| bars.envelope(Envelope::new(20)).unwrap()),
+        ),
+    ];
+    cases.extend(bands);
     println!("| Case | pond-rs | checksum |");
     println!("| --- | --- | --- |");
     for (name, column, f) in &cases {

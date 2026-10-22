@@ -2674,6 +2674,71 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     This box runs four cores in a shared VM; single runs move by up to
     a third, so read ratios to one significant figure.
 
+  **R2 step 2b (done): the bands family.**
+  - Calls, as `@pond-ts/financial`'s bands family: `bollinger`,
+    `bollinger_bandwidth`, `bollinger_percent_b`, `keltner`,
+    `starc_bands`, `atr_bands`, `donchian`, `high_low_bands`,
+    `prime_number_bands` and `envelope`, each with an options struct
+    named after it, as in step 2a. pond-ts has no default period for
+    `bollinger` and `envelope`, so those structs have `new(period)`
+    instead of `Default`. Studies that read price bars take `high`,
+    `low` and `close` setters instead of `column` (`atr_bands` has both;
+    its `column` follows a moved `close`, as in pond-ts). The macro that
+    writes the structs moved to `src/financial/options.rs`.
+  - Ported as pond-ts writes them: Bollinger through the range-exact
+    mean and spread; Keltner and high-low bands average a derived line
+    (typical or median price) through `moving_average_values`, STARC and
+    the envelope average the column through `ma_column`; the true range
+    takes JS `Math.max` (a gap gives a gap, `+0` beats `-0`), then
+    Wilder's smoothing; Donchian is step 1's rolling high and low; prime
+    bands port pond-ts's 6k ± 1 ladder (whole numbers up to 2^53 - 1).
+  - Parity: the fixture grew to 1,887 cases. A new `ohlc` input has gaps
+    in close only, high only, low only and whole bars, a stretch where
+    high = low = close (zero spread and zero true range), signed zeros,
+    a `prime` column across the prime limits, and columns a band prefix
+    collides with. Because Wilder's smoothing never recovers from a gap,
+    a second input, `lead`, has gaps only at the start (shifting the
+    seed) and a zero-true-range stretch, so the ATR studies get 70-80
+    values a case; `ohlcEmpty` is the empty bar input. Studies of price
+    bars only run on inputs with high and low. 1,504 match bit for bit,
+    139 errors agree, 133 refused (the known missing-column difference,
+    now checked for every price column a study reads), 111 calls Rust
+    cannot write. Oracle:
+    all 18 family cases pass (76 of 220 now); the oracle input now
+    carries open, high, low and volume too. Planted bugs: 17 of 20
+    caught; the other 3 change no output here: `c + -k * w` vs
+    `c - k * w` (twice) is always the same in floating point, and
+    `(h + l) / 2` vs `h / 2 + l / 2` differ only on overflow or numbers
+    too small for full precision, which no fixture input has. A unit
+    test pins `js_max` on signed zeros (the true range never produces
+    `-0`, so the fixture can't). Two ATR bugs planted after the review
+    (Wilder's seed not shifted past leading gaps; gaps dropped by the
+    max) are both caught.
+  - Perf: all O(N) except prime bands, which cost O(√x) per value (as in
+    pond-ts). The average true range is one sequential pass (each value
+    needs the last, so it cannot split across cores without changing
+    bits); it now takes each row's true range as it goes instead of
+    building the column first. Centre and true range run on separate
+    cores; band arithmetic and prime rows split across cores.
+  - Medians of 7, 1M bars at pond-ts's defaults, ms:
+
+    | Study     | 1 thread | 4 cores | pond-ts | ratio |
+    | --------- | -------- | ------- | ------- | ----- |
+    | bollinger | 39.8     | 12.2    | 80.2    | 6.6x  |
+    | bbWidth   | 24.3     | 10.7    | 53.5    | 5.0x  |
+    | percentB  | 26.7     | 12.1    | 83.7    | 6.9x  |
+    | keltner   | 22.6     | 12.6    | 63.0    | 5.0x  |
+    | starc     | 24.1     | 12.8    | 71.0    | 5.5x  |
+    | atrBands  | 24.5     | 16.2    | 49.3    | 3.0x  |
+    | donchian  | 17.7     | 8.6     | 165.9   | 19x   |
+    | hlBands   | 36.1     | 15.0    | 78.8    | 5.3x  |
+    | prime     | 41.6     | 17.0    | 68.3    | 4.0x  |
+    | envelope  | 18.6     | 7.1     | 66.5    | 9.4x  |
+
+    atrBands is the slowest ratio: its Wilder pass is a chain of
+    multiply, add and divide on every row (about 8 ms at 1M rows), which
+    pond-ts pays too.
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).

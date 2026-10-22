@@ -7,66 +7,6 @@ use crate::error::{PondError, Result};
 use crate::par;
 use crate::series::TimeSeries;
 
-/// Declares a study's options: a struct whose `Default` is pond-ts's
-/// defaults, one setter per field, `column` for the source and `output` or
-/// `prefix` for the names it writes.
-macro_rules! study_options {
-    (
-        $(#[$meta:meta])*
-        $name:ident, $naming:ident = $default_name:literal {
-            $( $(#[$field_meta:meta])* $field:ident : $ty:ty = $default:expr ),* $(,)?
-        }
-    ) => {
-        $(#[$meta])*
-        #[derive(Debug, Clone, PartialEq)]
-        pub struct $name {
-            $( $field: $ty, )*
-            column: Option<String>,
-            $naming: Option<String>,
-        }
-
-        impl Default for $name {
-            fn default() -> Self {
-                Self {
-                    $( $field: $default, )*
-                    column: None,
-                    $naming: None,
-                }
-            }
-        }
-
-        impl $name {
-            $(
-                $(#[$field_meta])*
-                pub fn $field(mut self, value: $ty) -> Self {
-                    self.$field = value;
-                    self
-                }
-            )*
-
-            /// Read this number column instead of `close`.
-            pub fn column(mut self, name: &str) -> Self {
-                self.column = Some(name.to_string());
-                self
-            }
-
-            #[doc = concat!("Name what the study writes with this ", stringify!($naming), " instead of `", $default_name, "`.")]
-            pub fn $naming(mut self, name: &str) -> Self {
-                self.$naming = Some(name.to_string());
-                self
-            }
-
-            fn source(&self) -> &str {
-                self.column.as_deref().unwrap_or(super::DEFAULT_SOURCE)
-            }
-
-            fn name(&self) -> &str {
-                self.$naming.as_deref().unwrap_or($default_name)
-            }
-        }
-    };
-}
-
 study_options! {
     /// Options for [`TimeSeries::macd`]: EMA spans in bars, fast 12, slow
     /// 26, signal 9; writes `macdLine`, `macdSignal` and `macdHist` (the
@@ -724,7 +664,7 @@ fn weighted_rates_chunked(values: &[f64], terms: &[(usize, usize, f64)], chunk: 
     line
 }
 
-fn positive(call: &'static str, name: &str, period: usize) -> Result<()> {
+pub(super) fn positive(call: &'static str, name: &str, period: usize) -> Result<()> {
     if period == 0 {
         return Err(PondError::InvalidData {
             call,

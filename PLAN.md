@@ -605,7 +605,7 @@ the study oracle) is done.
   crate; no worker pool (kernels that restart every `period` rows split
   rows across cores instead, same bits). Steps: 1. ~~foundations (study options and checks,
   shared kernels, `sma` / `ema` / `moving_average` / rolling stats /
-  `z_score`)~~ — done; 2. one PR per family: ~~(a) moving averages~~ — done, (b) bands, (c)
+  `z_score`)~~ — done; 2. one PR per family: ~~(a) moving averages~~ — done, ~~(b) bands~~ — done, (c)
   momentum, (d) trend, (e) volatility and statistics, (f) volume, (g)
   price; 3. trading calendars, then session VWAP and anchored VWAP; 4. the
   catalog; 5. perf check and an agent trial. Detail in the breakout plan.

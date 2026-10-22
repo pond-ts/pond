@@ -109,6 +109,103 @@ const NAMED_SCHEMA = [
   { name: 'rainbow10', kind: 'number' },
 ];
 
+// Bars with gaps on every side, for the studies that read high, low and
+// close: a gap in close only (rows 7, 30), in high only (12), in low only
+// (19), a run of 9 whole-bar gaps (40-48), a stretch where high = low =
+// close (60-74, so the spread and the true range are zero), signed zeros in
+// `open`, a `prime` column of values around and past the prime limits,
+// and columns a band prefix of `m`, `u` or `l` collides with.
+const OHLC_LENGTH = 100;
+const PRIME_VALUES = [
+  -3,
+  0,
+  1,
+  1.5,
+  2,
+  2.5,
+  3,
+  4,
+  7,
+  7.5,
+  8,
+  9.99,
+  10,
+  89,
+  90,
+  113.5,
+  1e6,
+  1e6 + 0.5,
+  2 ** 31,
+  2 ** 53 - 111,
+  2 ** 53 - 112,
+  2 ** 53 - 1,
+  2 ** 53,
+  1e300,
+];
+const OHLC_ROWS = (() => {
+  let price = 50;
+  return Array.from({ length: OHLC_LENGTH }, (_, i) => {
+    const flat = i >= 60 && i < 75;
+    if (!flat) price += (unit(i + 7, 2654435761) - 0.5) * 2;
+    const spread = flat ? 0 : 0.25 + unit(i, 40503) * 1.5;
+    const whole = i >= 40 && i < 49;
+    const high = whole || i === 12 ? null : price + spread;
+    const low = whole || i === 19 ? null : price - spread;
+    const close =
+      whole || i === 7 || i === 30
+        ? null
+        : price + (unit(i, 69069) - 0.5) * spread;
+    const open = i % 4 === 0 ? -0 : i % 4 === 2 ? 0 : price;
+    return [
+      i * 60_000,
+      open,
+      high,
+      low,
+      close,
+      PRIME_VALUES[i % PRIME_VALUES.length],
+      i % 2 === 0 ? 'a' : 'b',
+      i,
+      i,
+      i,
+    ];
+  });
+})();
+const OHLC_GAPPY_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'open', kind: 'number' },
+  { name: 'high', kind: 'number', required: false },
+  { name: 'low', kind: 'number', required: false },
+  { name: 'close', kind: 'number', required: false },
+  { name: 'prime', kind: 'number' },
+  { name: 'name', kind: 'string' },
+  { name: 'mMiddle', kind: 'number' },
+  { name: 'uUpper', kind: 'number' },
+  { name: 'lLower', kind: 'number' },
+];
+
+// Clean bars after a leading gap run, so the average true range warms up
+// and keeps going: whole bars missing at rows 0-2 and the close alone at
+// row 3 (the first true range is row 5, which shifts Wilder's seed), a
+// stretch where high = low = close (40-54, zero true range), no gaps after.
+const LEAD_ROWS = Array.from({ length: 90 }, (_, i) => {
+  const flat = i >= 40 && i < 55;
+  const price = flat ? 80 : 80 + Math.sin(i / 4) * 3 + unit(i, 69069);
+  const spread = flat ? 0 : 0.2 + unit(i, 40503);
+  const whole = i < 3;
+  return [
+    i * 60_000,
+    whole ? null : price + spread,
+    whole ? null : price - spread,
+    whole || i === 3 ? null : price + (unit(i, 2654435761) - 0.5) * spread,
+  ];
+});
+const LEAD_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'high', kind: 'number', required: false },
+  { name: 'low', kind: 'number', required: false },
+  { name: 'close', kind: 'number', required: false },
+];
+
 const TINY_ROWS = [
   [0, 3],
   [1000, 1],
@@ -146,6 +243,9 @@ function inputs(oracle) {
     flat: { name: 'flat', schema: FLAT_SCHEMA, rows: FLAT_ROWS },
     tiny: { name: 'tiny', schema: CLOSE_SCHEMA, rows: TINY_ROWS },
     named: { name: 'named', schema: NAMED_SCHEMA, rows: NAMED_ROWS },
+    ohlc: { name: 'ohlc', schema: OHLC_GAPPY_SCHEMA, rows: OHLC_ROWS },
+    lead: { name: 'lead', schema: LEAD_SCHEMA, rows: LEAD_ROWS },
+    ohlcEmpty: { name: 'ohlcEmpty', schema: LEAD_SCHEMA, rows: [] },
     empty: { name: 'empty', schema: CLOSE_SCHEMA, rows: [] },
   };
 }
@@ -244,6 +344,7 @@ function cases() {
   for (const q of [-1, 101]) add('rollingPercentile', 'bars', { period: 5, q });
 
   averageFamilyCases(add);
+  bandFamilyCases(add);
   return out;
 }
 
@@ -413,6 +514,138 @@ function averageFamilyCases(add) {
   });
   add('detrendedPriceOscillator', 'long', { period: 101 });
   add('rainbowOscillator', 'long', { period: 5, lookback: 60 });
+}
+
+// R2 step 2b: the bands family. Every study at its defaults on every
+// input, small settings on the inputs with bars, every moving-average type
+// where the study takes one, other columns, and every error.
+const BAND_SMALL = {
+  bollinger: [{ period: 5 }, { period: 4, stdDev: 1.5 }],
+  bollingerBandwidth: [{ period: 5 }, { period: 4, stdDev: 1 }],
+  bollingerPercentB: [{ period: 5 }, { period: 4, stdDev: 3 }],
+  keltner: [
+    { period: 5, atrPeriod: 3 },
+    { period: 4, atrPeriod: 7, multiplier: 1.5 },
+  ],
+  starcBands: [
+    { period: 5, atrPeriod: 3 },
+    { period: 6, atrPeriod: 4, multiplier: 0.5 },
+  ],
+  atrBands: [{ period: 5 }, { period: 3, multiplier: 1.25 }],
+  donchian: [{ period: 5 }, { period: 1 }],
+  highLowBands: [{ period: 5 }, { period: 4, percent: 3 }],
+  primeNumberBands: [{}],
+  envelope: [{ period: 5 }, { period: 4, percent: 10 }],
+};
+const BAND_TYPE_OPTION = {
+  keltner: 'maType',
+  starcBands: 'maType',
+  highLowBands: 'maType',
+  envelope: 'maType',
+};
+const BAND_NUMBERS = {
+  bollinger: ['stdDev'],
+  bollingerBandwidth: ['stdDev'],
+  bollingerPercentB: ['stdDev'],
+  keltner: ['multiplier'],
+  starcBands: ['multiplier'],
+  atrBands: ['multiplier'],
+  highLowBands: ['percent'],
+  envelope: ['percent'],
+};
+const BAND_PERIODS = {
+  bollinger: ['period'],
+  bollingerBandwidth: ['period'],
+  bollingerPercentB: ['period'],
+  keltner: ['period', 'atrPeriod'],
+  starcBands: ['period', 'atrPeriod'],
+  atrBands: ['period'],
+  donchian: ['period'],
+  highLowBands: ['period'],
+  primeNumberBands: [],
+  envelope: ['period'],
+};
+// What each study reads: `column` or high / low / close (atrBands both).
+const BAND_READS = {
+  bollinger: ['column'],
+  bollingerBandwidth: ['column'],
+  bollingerPercentB: ['column'],
+  keltner: ['high', 'low', 'close'],
+  starcBands: ['high', 'low', 'close'],
+  atrBands: ['column', 'high', 'low', 'close'],
+  donchian: ['high', 'low'],
+  highLowBands: ['high', 'low'],
+  primeNumberBands: ['high', 'low'],
+  envelope: ['column'],
+};
+const BAND_OUTPUT = {
+  bollingerBandwidth: 'output',
+  bollingerPercentB: 'output',
+};
+
+function bandFamilyCases(add) {
+  for (const [study, settings] of Object.entries(BAND_SMALL)) {
+    // Studies of price bars only take inputs that have high and low.
+    const bars = BAND_READS[study][0] !== 'column' || study === 'atrBands';
+    const inputs = bars
+      ? ['bars', 'ohlc', 'lead', 'ohlcEmpty']
+      : ['bars', 'long', 'gappy', 'large', 'flat', 'tiny', 'empty', 'ohlc'];
+    const smallInputs = bars
+      ? ['bars', 'ohlc', 'lead']
+      : ['bars', 'ohlc', 'lead', 'gappy', 'large', 'flat', 'tiny'];
+    for (const input of inputs) add(study, input, {});
+    const typeOption = BAND_TYPE_OPTION[study];
+    for (const [index, small] of settings.entries()) {
+      for (const input of smallInputs) add(study, input, small);
+      if (typeOption && index === 0) {
+        for (const type of MA_TYPES) {
+          add(study, 'bars', { ...small, [typeOption]: type });
+          add(study, 'ohlc', { ...small, [typeOption]: type });
+          add(study, 'lead', { ...small, [typeOption]: type });
+        }
+      }
+    }
+    const small = settings[0];
+    // Other columns: the signed zeros of `open`, the prime ladder, a text
+    // column and a missing one.
+    for (const option of BAND_READS[study]) {
+      for (const column of ['open', 'prime', 'name', 'nope']) {
+        add(study, 'ohlc', { ...small, [option]: column });
+      }
+    }
+    // Custom names, and names that collide.
+    const naming = BAND_OUTPUT[study] ?? 'prefix';
+    add(study, 'ohlc', { ...small, [naming]: 'x' });
+    add(study, 'ohlc', { ...small, [naming]: 'close' });
+    add(study, 'ohlc', { ...small, [naming]: 'time' });
+    add(study, 'ohlc', { ...small, [naming]: '' });
+    if (naming === 'prefix') {
+      for (const prefix of ['m', 'u', 'l']) {
+        add(study, 'ohlc', { ...small, prefix });
+      }
+    }
+    // Periods that are not positive whole numbers, and multipliers or
+    // percents that are not positive.
+    for (const option of BAND_PERIODS[study]) {
+      for (const bad of [0, -1, 1.5]) {
+        add(study, 'ohlc', { ...small, [option]: bad });
+      }
+    }
+    for (const option of BAND_NUMBERS[study] ?? []) {
+      for (const bad of [0, -1])
+        add(study, 'ohlc', { ...small, [option]: bad });
+      add(study, 'ohlc', { ...small, [option]: 1e-9 });
+    }
+    if (typeOption) add(study, 'ohlc', { ...small, [typeOption]: 'nope' });
+  }
+  // A long period on the 900 closes, and the true range's own columns
+  // moved: atrBands' centre follows a moved close.
+  add('bollinger', 'long', { period: 101, stdDev: 2.5 });
+  add('envelope', 'long', { period: 50, maType: 'hull' });
+  add('atrBands', 'ohlc', { period: 3, close: 'open' });
+  add('atrBands', 'ohlc', { period: 3, close: 'open', column: 'close' });
+  add('keltner', 'bars', { period: 50, atrPeriod: 30, maType: 'kama' });
+  add('donchian', 'bars', { period: 60, high: 'close', low: 'open' });
 }
 
 function encodeCell(cell) {

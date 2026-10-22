@@ -16,19 +16,27 @@ use std::collections::BTreeMap;
 
 /// Studies with an arm in [`run`]. Every oracle case for a listed study must
 /// run and match; a study that runs without being listed is also an error.
-fn closes(fixture: &StudyFixture, case: &StudyCase) -> TimeSeries {
-    let closes = match case.input.as_deref() {
-        None => &fixture.input.closes,
-        Some("long") => &fixture.input.long_closes,
-        Some(other) => panic!("{}: input '{other}' is not close-only", case.study),
+/// The case's input: the oracle's bars (open, high, low, close, volume) or
+/// its long run of closes.
+fn bars(fixture: &StudyFixture, case: &StudyCase) -> TimeSeries {
+    let input = &fixture.input;
+    let columns = match case.input.as_deref() {
+        None => vec![
+            Column::required("open", input.opens.clone()),
+            Column::required("high", input.highs.clone()),
+            Column::required("low", input.lows.clone()),
+            Column::required("close", input.closes.clone()),
+            Column::required("volume", input.volumes.clone()),
+        ],
+        Some("long") => vec![Column::required("close", input.long_closes.clone())],
+        Some(other) => panic!("{}: input '{other}' is not bars or closes", case.study),
     };
-    let time = (0..closes.len() as i64).collect();
-    TimeSeries::new(
-        "oracle",
-        time,
-        vec![Column::required("close", closes.clone())],
-    )
-    .expect("oracle closes are a valid series")
+    let rows = match case.input.as_deref() {
+        None => input.closes.len(),
+        _ => input.long_closes.len(),
+    };
+    let time = (0..rows as i64).collect();
+    TimeSeries::new("oracle", time, columns).expect("oracle bars are a valid series")
 }
 
 /// Run one case through pond-rs. `None` means the study is not implemented yet.
@@ -36,7 +44,7 @@ fn run(fixture: &StudyFixture, case: &StudyCase) -> Option<BTreeMap<String, Vec<
     if !STUDIES.contains(&case.study.as_str()) {
         return None;
     }
-    let out = call_study(&closes(fixture, case), &case.study, &case.params)
+    let out = call_study(&bars(fixture, case), &case.study, &case.params)
         .expect("oracle calls are expressible")
         .unwrap_or_else(|e| panic!("{}: {e}", case.study));
     Some(
