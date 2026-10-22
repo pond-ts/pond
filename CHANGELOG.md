@@ -78,6 +78,16 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`rolling(sequence, window, mapping)` no longer scans every row for every
+  grid point** ([PND-ROLLGRID]). Two forward cursors find each bucket's window,
+  so finding windows costs O(rows + buckets) instead of O(rows × buckets). A
+  5-minute `avg` on a 1-minute grid over 100k rows: 7.4 s → 5 ms. Results are
+  bit-for-bit unchanged (each window is still reduced as `aggregate` reduces a
+  bucket), and the result's keys and columns are built directly instead of
+  through row intake.
+
 ### Changed
 
 - **`@pond-ts/fit`: samples without a GPS fix.** `ActivityStreams.latlng`

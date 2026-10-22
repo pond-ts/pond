@@ -927,6 +927,44 @@ function timeSeriesFromTrustedStore<S extends SeriesSchema>(
  * in a number column means missing ([PND-NANREP]). User-supplied rows keep
  * the strict door (`new TimeSeries`), which rejects them.
  */
+/**
+ * Interval key column for a list of sequence buckets, built straight from
+ * the `Interval`s (begin / end / label buffers) instead of through row
+ * intake. Same label rules as `SeriesStore.fromValidatedRows`: all-number
+ * labels make a number label column, otherwise string labels
+ * (dictionary-encoded); mixed label types throw the same error.
+ * Precondition: `intervals` is sorted and non-overlapping (a bounded
+ * sequence guarantees it).
+ */
+function intervalKeyColumnFromIntervals(
+  intervals: ReadonlyArray<Interval>,
+): IntervalKeyColumn {
+  const length = intervals.length;
+  const begin = new Float64Array(length);
+  const end = new Float64Array(length);
+  const labels = new Array<string | number>(length);
+  let labelKind: 'string' | 'number' | undefined;
+  for (let i = 0; i < length; i += 1) {
+    const interval = intervals[i]!;
+    begin[i] = interval.begin();
+    end[i] = interval.end();
+    const label = interval.value;
+    labels[i] = label;
+    if (labelKind === undefined) {
+      labelKind = typeof label === 'string' ? 'string' : 'number';
+    } else if (typeof label !== labelKind) {
+      throw new RangeError(
+        `SeriesStore.fromValidatedRows: row ${i} has interval label of type ${typeof label} but earlier rows had ${labelKind} labels — interval-keyed series must use one label type throughout`,
+      );
+    }
+  }
+  const labelColumn =
+    labelKind === 'number'
+      ? new Float64Column(Float64Array.from(labels as number[]), length)
+      : stringColumnFromArray(labels as string[], { forceDict: true });
+  return new IntervalKeyColumn(begin, end, labelColumn, length);
+}
+
 function timeSeriesFromComputedRows<S extends SeriesSchema>(
   name: string,
   schema: S,
@@ -3998,19 +4036,6 @@ export class TimeSeries<S extends SeriesSchema> {
       );
     }
     const undefinedRow = columnSpecs.map(() => undefined);
-    const anchorInWindow = (candidate: number, anchor: number): boolean => {
-      if (alignment === 'trailing') {
-        return candidate > anchor - windowMs && candidate <= anchor;
-      }
-      if (alignment === 'leading') {
-        return candidate >= anchor && candidate < anchor + windowMs;
-      }
-      const halfWindow = windowMs / 2;
-      return (
-        candidate >= anchor - halfWindow && candidate < anchor + halfWindow
-      );
-    };
-
     if (sequence) {
       const sample = options.sample ?? 'begin';
       const range = options.range ?? this.timeRange();
@@ -4028,26 +4053,115 @@ export class TimeSeries<S extends SeriesSchema> {
       }
 
       const buckets = toBoundedSequence(sequence, range, sample).intervals();
-      const resultRows = buckets.map((bucket) => {
-        const anchor = sampleTime(bucket, sample);
-        const contributors = this.events.filter((candidate) =>
-          anchorInWindow(candidate.begin(), anchor),
-        );
-        const aggregated =
-          contributors.length < minSamples
-            ? undefinedRow
-            : columnSpecs.map((spec) => {
-                const values = contributors.map((candidate) => {
-                  const data = candidate.data();
-                  return data[spec.source as keyof typeof data];
-                }) as ReadonlyArray<ColumnValue | undefined>;
-                return applyAggregateReducer(spec.reducer, values);
-              });
-
-        return Object.freeze([bucket, ...aggregated]);
+      // [PND-ROLLGRID] Two cursors over the begin-sorted rows instead of a
+      // full scan of every row per bucket. Bucket anchors strictly increase
+      // (a bounded sequence is sorted and non-overlapping), so each window's
+      // rows are a contiguous run `[lo, hi)` whose ends only move forward:
+      // O(N + B) to find the windows, O(W) to reduce each one.
+      //
+      // Each window is still reduced the way `aggregate` reduces a bucket —
+      // the reducer's `reduce` over the window's values in row order — not
+      // with the incremental rolling states the event-driven branch uses, so
+      // results are bit-for-bit what the old per-bucket scan gave (pond-rs's
+      // `rolling_over` parity fixture pins those bits). Cost: O(N + B·W).
+      const seqStore = this.#store.store;
+      const seqRowCount = seqStore.length;
+      const seqBegin = seqStore.keys.begin;
+      const seqSourceCols = columnSpecs.map(
+        (spec) => seqStore.columns.get(spec.source as string)!,
+      );
+      // Packed number source + built-in reducer: read the window straight
+      // off the typed buffer. A number column's defined cells are its
+      // finite ones ([PND-NANREP]), so `defined` and `numeric` are the same
+      // list — exactly what `aggregateValues` would pass the reducer.
+      const seqPacked = columnSpecs.map((spec, c) => {
+        const col = seqSourceCols[c]!;
+        return isBuiltInAggregateReducer(spec.reducer) &&
+          col.kind === 'number' &&
+          col.storage === 'packed'
+          ? { values: col._values, def: resolveReducer(spec.reducer) }
+          : null;
       });
+      const bucketCount = buckets.length;
+      const seqOut: (ColumnValue | undefined)[][] = columnSpecs.map(
+        () => new Array(bucketCount),
+      );
+      // Window membership, as in the event-driven branch below: trailing
+      // `(a - w, a]`, leading `[a, a + w)`, centered `[a - w/2, a + w/2)`.
+      const halfWindowMs = windowMs / 2;
+      let lo = 0;
+      let hi = 0;
+      for (let b = 0; b < bucketCount; b += 1) {
+        const anchor = sampleTime(buckets[b]!, sample);
+        if (alignment === 'trailing') {
+          const lower = anchor - windowMs;
+          while (lo < seqRowCount && seqBegin[lo]! <= lower) lo += 1;
+          if (hi < lo) hi = lo;
+          while (hi < seqRowCount && seqBegin[hi]! <= anchor) hi += 1;
+        } else {
+          const lower =
+            alignment === 'leading' ? anchor : anchor - halfWindowMs;
+          const upper =
+            alignment === 'leading' ? anchor + windowMs : anchor + halfWindowMs;
+          while (lo < seqRowCount && seqBegin[lo]! < lower) lo += 1;
+          if (hi < lo) hi = lo;
+          while (hi < seqRowCount && seqBegin[hi]! < upper) hi += 1;
+        }
+        if (hi - lo < minSamples) {
+          for (let c = 0; c < seqOut.length; c += 1) seqOut[c]![b] = undefined;
+          continue;
+        }
+        for (let c = 0; c < columnSpecs.length; c += 1) {
+          const packed = seqPacked[c];
+          if (packed) {
+            const src = packed.values;
+            const numeric: number[] = [];
+            for (let j = lo; j < hi; j += 1) {
+              const v = src[j]!;
+              if (v - v === 0) numeric.push(v);
+            }
+            seqOut[c]![b] = finiteOrMissing(
+              packed.def.reduce(numeric, numeric),
+            );
+            continue;
+          }
+          const col = seqSourceCols[c]!;
+          const values: (ColumnValue | undefined)[] = [];
+          for (let j = lo; j < hi; j += 1) values.push(col.read(j));
+          seqOut[c]![b] = applyAggregateReducer(
+            columnSpecs[c]!.reducer,
+            values,
+          );
+        }
+      }
 
-      return timeSeriesFromComputedRows(this.name, resultSchema, resultRows);
+      const seqColumns = new Map<string, ColumnarColumn>();
+      for (let c = 0; c < columnSpecs.length; c += 1) {
+        const kind = resultColumnDefs[c]!.kind;
+        const values = seqOut[c]!;
+        // Same kind contract as the event-driven branch (and as the row
+        // intake this path used before): a custom reducer / `kind` override
+        // that returns the wrong type throws rather than writing a gap.
+        assertColumnValuesMatchKind(
+          kind,
+          values,
+          `rolling column '${columnSpecs[c]!.output}'`,
+        );
+        seqColumns.set(
+          columnSpecs[c]!.output,
+          columnFromValuesByKind(kind, values),
+        );
+      }
+      const seqResultStore = ColumnarStore.fromTrustedStore(
+        resultSchema as unknown as ColumnSchema,
+        intervalKeyColumnFromIntervals(buckets),
+        seqColumns,
+      );
+      return TimeSeries.#fromTrustedStore(
+        this.name,
+        resultSchema,
+        seqResultStore as unknown as ColumnarStore<ColumnSchema>,
+      );
     }
 
     const resultSchema = Object.freeze([
