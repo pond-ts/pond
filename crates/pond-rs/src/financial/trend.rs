@@ -1255,6 +1255,40 @@ fn cumulative_values(values: &[f64]) -> Vec<f64> {
 mod tests {
     use super::*;
 
+    /// Limits and deviations that are not positive finite numbers are
+    /// refused (JSON cases cannot carry an infinity or NaN).
+    #[test]
+    fn non_finite_limits_and_deviations_are_refused() {
+        let price = |k: f64| (0..4).map(|i| 10.0 + k * f64::from(i)).collect::<Vec<_>>();
+        let series = TimeSeries::new(
+            "s",
+            (0..4).collect(),
+            vec![
+                crate::Column::required("open", price(0.5)),
+                crate::Column::required("high", price(1.5)),
+                crate::Column::required("low", price(0.2)),
+                crate::Column::required("close", price(1.0)),
+            ],
+        )
+        .unwrap();
+        for bad in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN, 0.0, -1.0] {
+            let si = series.swing_index(SwingIndex::new(bad)).unwrap_err();
+            assert!(si.to_string().contains("swingIndex limit"), "{si}");
+            let asi = series
+                .accumulative_swing_index(AccumulativeSwingIndex::new(bad))
+                .unwrap_err();
+            assert!(
+                asi.to_string().contains("accumulativeSwingIndex limit"),
+                "{asi}"
+            );
+            let zz = series
+                .zig_zag(ZigZag::default().deviation(bad))
+                .unwrap_err();
+            assert!(zz.to_string().contains("zigZag deviation"), "{zz}");
+        }
+        assert!(series.swing_index(SwingIndex::new(1.0)).is_ok());
+    }
+
     /// Stretches started anywhere give the bits of one sweep, on bars with
     /// gaps, flat runs and a large offset.
     #[test]

@@ -2935,6 +2935,58 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | psar   | 10.3     | 9.7     | 62.4    | 6.4x  |
     | ats    | 18.2     | 21.0    | 73.4    | 3.5x  |
 
+  **R2 step 2d part 2 (done): trend, the other 8 studies; the family is
+  complete.**
+  - Calls: `zig_zag` (`ZigZag`, `deviation` in percent, default 5),
+    `ichimoku` (`Ichimoku`; `Ichimoku::offsets()` is pond-ts
+    `ichimokuOffsets`, the shifts a chart applies), `elder_impulse`,
+    `elder_ray`, `trend_intensity_index`, `ravi` (each its own options
+    struct), and `swing_index` / `accumulative_swing_index`, which take
+    `SwingIndex::new(limit)` / `AccumulativeSwingIndex::new(limit)`: the
+    limit move has no default in pond-ts either. Errors and their order as
+    pond-ts, including `elderImpulse` refusing a series that already holds
+    its MACD scratch columns (`__elderMacd__Line` …).
+  - Ported as pond-ts writes them: ZigZag's `zigZagStep` state machine
+    plus the pass that fills the legs (each run of rows without a gap
+    starts again; no leg crosses a gap); Ichimoku's midpoints on the
+    strict rolling extremes; the swing index's branch order (ties go to A,
+    then B, then D).
+  - Parity: the fixture grew to 3,229 cases, with a new `ties` input: a
+    first ZigZag swing of exactly the deviation (25 is 0.25 times 100, no
+    rounding) and closes alternating 1 and -1 (a two-bar average of
+    exactly 0, which RAVI turns into a gap). 2,426 match bit for bit, 285
+    errors agree, 292 refused (known missing-column difference), 226 calls
+    Rust cannot write. A unit test covers infinite and NaN limits and
+    deviations (JSON cases cannot carry them).
+  - Planted bugs: 21 of 28 caught at first; the cases above (plus one-bar
+    Ichimoku windows on the `edge` bars, whose high plus low overflows)
+    and the unit test caught 4 more: 25 of 28. The 3 missed change no
+    output: the swing index's tie between A and B, and between B and D
+    (with A = B both branches give the same value; B = D forces A = 0,
+    and again both agree); and ZigZag remembering the later of two equal
+    lows on a rising leg (a reversal needs a strictly lower low, which
+    replaces the remembered row anyway).
+  - Perf: all O(N). Ichimoku is O(N) per window (strict extremes, three
+    windows split across cores); it computes both the highest and lowest
+    for each column and uses one, a 2x it leaves on the table (still 7.8x
+    pond-ts). ZigZag, the impulse's MACD and the running total are one
+    sequential pass each. At 1M rows all eight match pond-ts on every bit
+    of every column, on 4 cores and on 1 (`POND_BITS=1`).
+  - Medians of 7, 1M bars at pond-ts's defaults (swing limit 20), ms
+    (the swing index uses one core; its 4-core figure is noise, 7-10 ms
+    either way):
+
+    | Study   | 1 thread | 4 cores | pond-ts | ratio |
+    | ------- | -------- | ------- | ------- | ----- |
+    | zz      | 18.1     | 17.5    | 254.1   | 15x   |
+    | ichi    | 113.2    | 36.5    | 284.9   | 7.8x  |
+    | impulse | 19.2     | 12.6    | 125.6   | 10x   |
+    | ray     | 9.6      | 9.6     | 39.5    | 4.1x  |
+    | tii     | 30.6     | 14.6    | 110.0   | 7.5x  |
+    | ravi    | 15.8     | 8.0     | 58.4    | 7.3x  |
+    | si      | 7.0      | 11.7    | 42.2    | 3.6x  |
+    | asi     | 11.5     | 14.9    | 56.9    | 3.8x  |
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).

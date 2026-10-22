@@ -241,6 +241,17 @@ const EDGE_ROWS = Array.from({ length: 60 }, (_, i) => {
   if (i === 34) [high, low, close] = [1.7e308, 1.7e308, 1.7e308];
   return [time, high, low, close, price];
 });
+// Exact ties: a ZigZag first swing of exactly 25% (25 = 0.25 * 100, no
+// rounding), then closes alternating 1 and -1, so a two-bar average is
+// exactly 0 (RAVI's zero long average).
+const TIE_ROWS = [
+  [0, 100, 100, 1, 100],
+  [60_000, 125, 110, -1, 110],
+  [120_000, 124, 112, 1, 120],
+  [180_000, 120, 90, -1, 100],
+  [240_000, 118, 100, 1, 105],
+  [300_000, 116, 101, -1, 104],
+];
 const LEAD_SCHEMA = [
   { name: 'time', kind: 'time' },
   { name: 'high', kind: 'number', required: false },
@@ -289,6 +300,7 @@ function inputs(oracle) {
     ohlc: { name: 'ohlc', schema: OHLC_GAPPY_SCHEMA, rows: OHLC_ROWS },
     lead: { name: 'lead', schema: LEAD_SCHEMA, rows: LEAD_ROWS },
     edge: { name: 'edge', schema: LEAD_SCHEMA, rows: EDGE_ROWS },
+    ties: { name: 'ties', schema: LEAD_SCHEMA, rows: TIE_ROWS },
     ohlcEmpty: { name: 'ohlcEmpty', schema: LEAD_SCHEMA, rows: [] },
     empty: { name: 'empty', schema: CLOSE_SCHEMA, rows: [] },
   };
@@ -1082,6 +1094,16 @@ function trendFamilyCases2(add) {
     basePeriod: 3,
     spanBPeriod: 5,
   });
+  // One-bar windows on the edge bars: a bar at 1.7e308 whose high plus
+  // low overflows (the midpoint is then infinite, as pond-ts adds first).
+  add('ichimoku', 'edge', {
+    conversionPeriod: 1,
+    basePeriod: 1,
+    spanBPeriod: 2,
+  });
+  // A first swing of exactly the deviation, and a zero long average.
+  add('zigZag', 'ties', { deviation: 25 });
+  add('ravi', 'ties', { shortPeriod: 1, longPeriod: 2 });
 }
 
 function encodeCell(cell) {
