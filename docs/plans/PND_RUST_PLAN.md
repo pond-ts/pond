@@ -552,6 +552,21 @@ numbers did not reproduce: pond-ts `shift` / `fill` (fixed since, #776) and
 pond-rs `from_json` dense (45 ms in step 8d2's table; 75–91 ms at that
 step's own commit on this machine, so not a regression).
 
+**Revised 2026-10-22 after a Codex review** found polars runners doing
+different work or giving different answers (gap handling in cumulative
+sum, an off-by-one centred window, a missing reducer, dropped buckets, tie
+rules, missing time / interval columns, different JSON formats). Every
+pond-rs and polars runner now writes each case's answer (`BENCH_DUMP`) and
+`bench/check_outputs.py` / `check_all.sh` compare them cell by cell; all
+147 compared cases match. Polars cases were added where polars has a
+counterpart the first run missed (leading / centred time windows, minimum
+row counts, rolling list reducers). Re-timed on main with #811: pond-rs vs
+pond-ts faster in 170 of 173 (median 7.5×); vs polars on 4 cores faster in
+73, slower in 59, same in 9 (median 1.08). R1a A compute 117–120 vs polars
+142–177 ms on 4 cores; B's ≥2× single-core target still missed (1.9×).
+Decision: an answer check is now part of the benchmark, so a polars
+"equivalent" that is not equivalent fails rather than reads as a number.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:
@@ -1034,6 +1049,23 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | fill linear, maxGap 3s | 4.9 | 69.1 |
 
     Each op is one O(N) pass (fill: one to find runs, one to fill).
+    - Gap loops sped up (2026-10-22, after the polars comparison in
+      `bench/COMPARISON.md`). `diff` / `rate` / `pct_change` tested
+      every row for a gap before doing the maths; that branch kept the
+      compiler from working on several rows at once. A gap is a
+      non-finite value, and the maths on one is non-finite too, so
+      `finite_or_gap` on the plain expression gives the same bits (unit
+      test against the old loop on NaN/±inf gaps, ±0, overflow and
+      repeated times). Number `shift` is now one block copy, and `fill`
+      finds gaps on the raw numbers. Medians of 7 runs, before → after:
+      diff 3.8 → 1.5, rate 4.7 → 2.1, pct_change 4.2 → 1.6, shift
+      3.8 → 1.7, fill hold 5.8 → 3.1, fill linear 6.1 → 3.7 ms. polars
+      (1 thread, same session): 1.0 / 4.5 / 2.0 / 0.0 / 3.7 / 4.0.
+      Partitioned `diff + collect` did not move (~40 ms: splitting and
+      collecting dominate). This also answered "should gaps stop being
+      NaN?": no. A NaN subtract (0.65 ms) is as fast as polars' bitmap
+      style (0.64 ms); the cost of NaN is only at Arrow in/out (about
+      2.3 / 0.7 ms per 1M-row column with gaps).
     - `FirstRow::Drop` first copied every column (14 ms, slower than
       pond-ts). It now shares the column buffers, as pond-ts's
       `withRowRange` does, and copies only the key. Step 3b's `slice`
@@ -2450,6 +2482,151 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | from_arrow     | 5 ms    | 420 ms  |
     | write_ipc      | 10 ms   | 27 ms   |
     | from_ipc_bytes | 13 ms   | 402 ms  |
+
+  **Step 8j (done): the 8h operations per group ([PND-RUSTFULL]).**
+  - Calls: `smooth`, `baseline`, `baseline_named`, `outliers`, `scan`,
+    `scan_to` and `sample` on `PartitionedSeries`, as pond-ts's
+    same-named `PartitionedTimeSeries` methods. Each runs the
+    `TimeSeries` call on every partition through `map` (several cores,
+    same bits), so a partition is smoothed, banded or scanned on its own
+    rows only. `scan`'s step is `Fn + Sync` (not `FnMut`) and each
+    partition starts from its own clone of `init`, with the row index
+    counting from 0.
+  - Edges, as pond-ts: smoothing the partition column itself splits the
+    rows again by the new values; `outliers` drops a partition left with
+    no rows. Known differences: pond-ts smooths a text column to gaps
+    per partition too (pond-rs refuses it, as for `TimeSeries`); a
+    reservoir sample seeds each partition from `seed` and its place in
+    partition order, so partitions pick independently but repeatably
+    (pond-ts uses `Math.random`); pond-ts hands every partition the same
+    `init` object, so a step that changes it in place leaks state from
+    one partition to the next, where pond-rs clones `init`.
+  - Parity: 22 `partitionBy` cases on `hosts` (ema with span, warmup and
+    output; moving average trailing and centred; loess; smooth then
+    `diff`; smoothing the partition column; baseline with names and
+    minimum samples; outliers, also with none left; scan sum, index and
+    gain; stride samples; a reservoir as large as each partition; the
+    errors). The harness now runs these five calls through one path for
+    `TimeSeries` and `PartitionedSeries`, and calls `baseline` (not
+    only `baseline_named`) when no names are given. A unit test checks
+    the per-partition reservoir and that a scan restarts per partition.
+    Of 7 planted bugs (including running on the whole series instead of
+    per partition), all are caught.
+  - Perf: no check; each call only hands the `TimeSeries` operation to
+    `map`, which already runs partitions in parallel (CLAUDE.md exempts
+    operators that only delegate).
+
+- **[PND-RUST-R2]** — the financial studies (planned 2026-10-21, after R1b).
+  - Exactness, chosen by pjm17971: every study matches pond-ts
+    (`@pond-ts/financial`) bit for bit, checked against a new fixture
+    `packages/financial/test/fixtures/study-parity.json` that a pond-ts
+    test keeps fresh, AND the pandas / TA-Lib oracle
+    (`study-oracle.json`, 220 cases over 109 studies) within 5e-10,
+    through `tests/study_oracle.rs`.
+  - Defaults: studies are methods on `TimeSeries`, in a
+    `pond_rs::financial` module of the same crate, with pond-ts's
+    contract (source `column`, default `close`; `output`, default the
+    study name; bar-count periods; a warm-up that keeps every row). No
+    port of pond-ts's worker pool: a study is one pass over one column,
+    split across cores (rayon) only where a stretch of rows gives the
+    same bits as the whole column (pjm17971 chose this in #809).
+  - Steps: 1. foundations: the options and checks every study shares,
+    the shared kernels (window mean and spread, Wilder, weighted and
+    exponential averages), `sma`, `ema`, `moving_average` (all 10
+    types), `rolling_stdev` / `rolling_min` / `rolling_max` /
+    `rolling_percentile`, `z_score`; 2. one PR per family: (a) moving
+    averages, (b) bands, (c) momentum, (d) trend, (e) volatility and
+    statistics, (f) volume, (g) price; 3. trading calendars, then
+    session VWAP and anchored VWAP; 4. the catalog; 5. perf check
+    against pond-ts and an agent trial.
+
+  **R2 step 1 (done): foundations.**
+  - Calls, as `@pond-ts/financial`: `TimeSeries::sma`, `ema`,
+    `moving_average(MaType, …)` (all 10 types), `rolling_stdev`,
+    `rolling_min`, `rolling_max`, `rolling_percentile(q, …)` and
+    `z_score`, each taking a `Study` (`period`, `.column`, `.output`).
+    Kernels in `src/financial/kernels.rs` are line-for-line ports of
+    pond-ts's `ranged.ts` (window mean and spread, shifted and rebuilt
+    every `period` rows), `rolling.ts` (z-score deviation),
+    `rolling-mean.ts`, `wilder.ts` and `moving-average.ts`; the
+    percentile goes through `rolling_rows`, as pond-ts goes through core
+    `rolling({ count })`; min and max use their own queue (same results,
+    earliest of equal values wins). `ema` is the same arithmetic as
+    `smooth(ema_span(p).min_samples(p))`. KAMA's `** 2` is `c * c` (V8
+    and fdlibm compute it that way too; the fixture agrees).
+  - Known differences: pond-ts reads a missing or non-number source
+    column as all gaps (except min / max / percentile on a missing one,
+    which throw); pond-rs refuses both (logged for pond-ts as
+    [PND-STUDYSRC]). A decimal column is refused (pond-ts has none). A
+    period is a `usize`, so negative and fractional periods cannot be
+    written.
+  - Parity: new pond-ts fixture `study-parity.json` (556 cases, written
+    by `packages/financial/scripts/parity/generate.mjs`, kept fresh by
+    `study-parity.test.ts`) over the oracle's 80 bars and 900 closes plus
+    gappy (leading, single, runs longer than the period, trailing), 1e15
+    and 1e9 magnitudes, flat runs with signed zeros, 3 rows and none; every
+    study and type at periods from 1 to past the row count, five
+    percentiles (`p1e-7` naming), other columns, custom outputs and the
+    errors. 464 match bit for bit, 30 errors agree, 48 refused (known),
+    14 periods Rust cannot write. Oracle: the 29 step-1 cases pass
+    (`study_oracle.rs`, 5e-10). Of 14 planted bugs, 12 caught; the two
+    survivors change nothing (`count` and Welford's `n` always agree;
+    adding `0 * sum`).
+  - Perf (`examples/perf_studies.rs`, `bench/studies_pond_ts.mjs`; 1M
+    bars, checksums agree). All O(N) (a rebuild of `period` rows every
+    `period` rows), except the percentile, which keeps each window sorted.
+    First cut was only 1.5–5x pond-ts; timing the parts showed most of a
+    study's time was taking fresh memory from the system (page faults),
+    not the maths: copying the source column (8 MB), copying the time key
+    for the result (8 MB; every pond-rs call that keeps the rows did
+    this) and the output. Fixes: `TimeSeries` now shares its key
+    (`Arc<Key>`) with results that keep the rows (`with_column`, `select`,
+    `rename`, `rolling` and the other users of `with_value_columns`); a
+    study reads its source in place unless a gap is stored as an infinity;
+    min / max use their own O(N) queue instead of `rolling_rows`;
+    dema / tema / hull reuse buffers. The rebuild test is a counter, not
+    `i % period`.
+  - Across cores (pjm17971 asked for it in #809): the mean / spread
+    (`sma`, `rolling_stdev`, `moving_average` Sma and Trima), `wma`
+    (also inside Hull) and min / max kernels fill stretches of 64k rows
+    (or 8 periods) on rayon's pool. Each stretch starts at the last
+    multiple of `period` at or before its first row, where every sum is
+    rebuilt from the window (pond-ts's `rollingReadBack` uses the same
+    property), so it gives the same bits as one sweep; min / max read
+    from the first row of the window. Output buffers start zeroed, so the
+    system hands pages out as the threads write. A unit test cuts a
+    noisy column (gaps, signed zeros, infinities, 1e15) into stretches of
+    1 to 2,999 rows at periods 1 to 3,001 and checks every bit; 4 of 4
+    planted bugs (stretch starting at its first row, min / max queue not
+    read back, no reset at the rebuild) are caught. Review found the
+    min / max queue reserved `period` slots (period 1e12 on 10 rows asked
+    for 8 TB) and `period + i` overflows at `usize::MAX`; fixed, and a
+    test runs every study at periods up to `usize::MAX`.
+  - What does not split: EMA, Wilder (smma), Dema / Tema / Zlema / KAMA
+    and the z-score, where each row waits on the one before (a
+    multiply-add or a division per row, the same chain V8 runs; matching
+    pond-ts's bits rules out reordering it), and the percentile (still
+    `rolling_rows`). Medians of 3 runs of 7, 1M bars, ms; 1 thread is
+    `RAYON_NUM_THREADS=1`; checksums agree between all three:
+
+    | Study       | pond-rs 1 thread | pond-rs 4 cores | pond-ts | ratio |
+    | ----------- | ---------------- | --------------- | ------- | ----- |
+    | sma 20      | 6.0              | 2.5             | 43.7    | 17x   |
+    | sma 200     | 5.8              | 2.4             | 41.9    | 17x   |
+    | ema 20      | 3.7              | 4.0             | 11.7    | 2.9x  |
+    | stdev 20    | 22.7             | 6.9             | 36.4    | 5.3x  |
+    | min 20      | 8.0              | 2.5             | 59.6    | 24x   |
+    | max 200     | 8.3              | 2.8             | 86.1    | 31x   |
+    | p90 20      | 58.7             | 55.5            | 183.4   | 3.3x  |
+    | zscore 20   | 25.3             | 25.4            | 82.2    | 3.2x  |
+    | ma wma 20   | 6.5              | 2.7             | 30.4    | 11x   |
+    | ma smma 20  | 7.9              | 8.4             | 18.2    | 2.2x  |
+    | ma dema 20  | 9.2              | 9.9             | 23.4    | 2.4x  |
+    | ma tema 20  | 14.0             | 13.1            | 35.3    | 2.7x  |
+    | ma trima 20 | 14.8             | 8.0             | 40.1    | 5.0x  |
+    | ma hull 20  | 20.9             | 9.9             | 50.0    | 5.1x  |
+    | ma kama 20  | 5.5              | 6.6             | 28.3    | 4.3x  |
+    | ma zlema 20 | 6.1              | 5.7             | 18.9    | 3.3x  |
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

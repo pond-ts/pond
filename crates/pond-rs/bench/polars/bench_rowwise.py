@@ -1,4 +1,9 @@
-"""polars side of examples/perf_rowwise.rs: 1M rows 1 s apart, ~5% gaps."""
+"""polars side of examples/perf_rowwise.rs: 1M rows 1 s apart, ~5% gaps.
+
+- cumulative sum: pond carries the running total through gap rows, so
+  `cum_sum().forward_fill()` (polars' `cum_sum` alone leaves the gaps).
+- No polars counterpart: linear fill with a maximum gap length.
+"""
 
 import numpy as np
 import polars as pl
@@ -33,7 +38,7 @@ run(
         ("diff drop", lambda: df.with_columns(v_.diff()).slice(1)),
         ("rate", lambda: df.with_columns(v_.diff() / secs)),
         ("pct_change", lambda: df.with_columns(v_.pct_change())),
-        ("cumulative sum", lambda: df.with_columns(v_.cum_sum())),
+        ("cumulative sum", lambda: df.with_columns(v_.cum_sum().forward_fill())),
         ("shift 1", lambda: df.with_columns(v_.shift(1))),
         ("fill hold", lambda: df.with_columns(v_.forward_fill())),
         ("fill linear", lambda: df.with_columns(v_.interpolate())),

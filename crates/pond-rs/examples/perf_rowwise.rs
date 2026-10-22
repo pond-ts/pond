@@ -9,22 +9,9 @@
 //! and `slice`. `filter` is one pass to choose rows plus a copy of the kept
 //! rows; `with_column` is one pass to check the new column.
 
-use std::time::Instant;
+mod common;
 
 use pond_rs::{Column, Fill, FillLimits, FirstRow, Reducer, TimeSeries};
-
-fn median_ms(mut f: impl FnMut()) -> f64 {
-    f(); // warm-up
-    let mut t: Vec<f64> = (0..7)
-        .map(|_| {
-            let s = Instant::now();
-            f();
-            s.elapsed().as_secs_f64() * 1000.0
-        })
-        .collect();
-    t.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    t[3]
-}
 
 fn main() -> pond_rs::Result<()> {
     const ROWS: usize = 1_000_000;
@@ -57,79 +44,64 @@ fn main() -> pond_rs::Result<()> {
     let none = FillLimits::none();
     let v_col = s.column("v")?.numbers()?.clone();
     let extra = Column::optional_raw("w", s.column("v")?.numbers()?.values().to_vec());
-    type Case<'a> = (&'a str, Box<dyn Fn() + 'a>);
+    type Case<'a> = (&'a str, Box<dyn Fn() -> TimeSeries + 'a>);
     let cases: Vec<Case> = vec![
-        (
-            "diff",
-            Box::new(|| drop(s.diff(&["v"], FirstRow::Keep).unwrap())),
-        ),
+        ("diff", Box::new(|| s.diff(&["v"], FirstRow::Keep).unwrap())),
         (
             "diff drop",
-            Box::new(|| drop(s.diff(&["v"], FirstRow::Drop).unwrap())),
+            Box::new(|| s.diff(&["v"], FirstRow::Drop).unwrap()),
         ),
-        (
-            "rate",
-            Box::new(|| drop(s.rate(&["v"], FirstRow::Keep).unwrap())),
-        ),
+        ("rate", Box::new(|| s.rate(&["v"], FirstRow::Keep).unwrap())),
         (
             "pct_change",
-            Box::new(|| drop(s.pct_change(&["v"], FirstRow::Keep).unwrap())),
+            Box::new(|| s.pct_change(&["v"], FirstRow::Keep).unwrap()),
         ),
         (
             "cumulative sum",
-            Box::new(|| drop(s.cumulative(&[("v", Reducer::Sum)]).unwrap())),
+            Box::new(|| s.cumulative(&[("v", Reducer::Sum)]).unwrap()),
         ),
-        ("shift 1", Box::new(|| drop(s.shift(&["v"], 1).unwrap()))),
+        ("shift 1", Box::new(|| s.shift(&["v"], 1).unwrap())),
         (
             "fill hold",
-            Box::new(|| drop(s.fill_all(Fill::Hold, &none).unwrap())),
+            Box::new(|| s.fill_all(Fill::Hold, &none).unwrap()),
         ),
         (
             "fill linear",
-            Box::new(|| drop(s.fill_all(Fill::Linear, &none).unwrap())),
+            Box::new(|| s.fill_all(Fill::Linear, &none).unwrap()),
         ),
         (
             "fill linear maxGap 3s",
             Box::new(|| {
-                drop(
-                    s.fill_all(Fill::Linear, &FillLimits::none().max_gap("3s"))
-                        .unwrap(),
-                )
+                s.fill_all(Fill::Linear, &FillLimits::none().max_gap("3s"))
+                    .unwrap()
             }),
         ),
         (
             "filter v > 500 (by name)",
             Box::new(|| {
-                drop(
-                    s.filter(|r| Ok(r.number("v")?.is_some_and(|x| x > 500.0)))
-                        .unwrap(),
-                )
+                s.filter(|r| Ok(r.number("v")?.is_some_and(|x| x > 500.0)))
+                    .unwrap()
             }),
         ),
         (
             "filter v > 500 (column fetched once)",
             Box::new(|| {
-                drop(
-                    s.filter(|r| Ok(v_col.get(r.index()).is_some_and(|x| x > 500.0)))
-                        .unwrap(),
-                )
+                s.filter(|r| Ok(v_col.get(r.index()).is_some_and(|x| x > 500.0)))
+                    .unwrap()
             }),
         ),
         (
             "map_numbers v * 2",
-            Box::new(|| drop(s.map_numbers("v", |x| x * 2.0).unwrap())),
+            Box::new(|| s.map_numbers("v", |x| x * 2.0).unwrap()),
         ),
         (
             "with_column",
-            Box::new(|| drop(s.with_column(extra.clone()).unwrap())),
+            Box::new(|| s.with_column(extra.clone()).unwrap()),
         ),
-        (
-            "slice middle half",
-            Box::new(|| drop(s.slice(250_000..750_000))),
-        ),
+        ("slice middle half", Box::new(|| s.slice(250_000..750_000))),
     ];
     for (name, f) in cases {
-        println!("| {name} | {:.1} ms |", median_ms(&f));
+        println!("| {name} | {:.1} ms |", common::time_case(name, 7, &f));
     }
     Ok(())
 }

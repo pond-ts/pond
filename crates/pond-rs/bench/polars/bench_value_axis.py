@@ -4,6 +4,7 @@
 - zones (edges, upper end inclusive): `cut(..., left_closed=False)`; every
   value here lies in 0..1300, so the open outer bins stay empty.
 - percentiles: `quantile(q, "linear")`.
+- Each case's answer is checked against pond-rs's (`../check_outputs.py`).
 - No polars counterpart: `rolling_by_column` (a window over a float
   column; polars' `rolling_*_by` needs a time or integer column).
 """
@@ -42,7 +43,7 @@ def zones():
     edges = [0.0, 200.0, 400.0, 600.0, 800.0, 1000.0, 1300.0]
     z = w.cut(edges[1:-1], left_closed=False).alias("zone")
     out = s.filter(w.is_not_null()).group_by(z).agg(counts).sort("zone")
-    return out.with_columns(pl.Series("start", edges[:-1]), pl.Series("end", edges[1:])).drop("zone")
+    return out.select(pl.Series("start", edges[:-1]), pl.Series("end", edges[1:]), pl.exclude("zone"))
 
 
 run(

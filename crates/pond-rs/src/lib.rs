@@ -38,7 +38,7 @@
 //! smoothing with [`TimeSeries::smooth`] (EMA, moving average, loess),
 //! rolling bands with [`TimeSeries::baseline`] / `outliers`, a fold of your
 //! own with [`TimeSeries::scan`], and picking some rows with
-//! [`TimeSeries::sample`],
+//! [`TimeSeries::sample`] (all five per partition too),
 //! stacking series with [`TimeSeries::concat`], replacing columns with one
 //! computed per row with [`TimeSeries::collapse`], long rows into wide ones
 //! with [`TimeSeries::pivot_by_group`],
@@ -150,6 +150,7 @@ mod decimal;
 mod duration;
 mod elements;
 mod error;
+pub mod financial;
 mod grid;
 mod join;
 mod json;

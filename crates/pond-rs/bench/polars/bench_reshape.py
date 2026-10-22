@@ -6,6 +6,9 @@
 - pivot: `DataFrame.pivot(on="host", index="time", values="v")`; one row per
   cell needs no aggregate, two use `mean` / the last present value (pond's
   `last` skips gaps; polars' `"last"` does not).
+- pivot columns are named and ordered as pond's (`h0_v`, `h1_v`, `h10_v`,
+  …: sorted by name).
+- Each case's answer is checked against pond-rs's (`../check_outputs.py`).
 - pond's collapse calls a function once a row; polars adds two columns in
   one vectorised step. Same answer, different kind of work.
 """
@@ -49,7 +52,9 @@ v, w = pl.col("v"), pl.col("w")
 
 
 def pivot(df, agg=None):
-    return df.pivot(on="host", index="time", values="v", aggregate_function=agg)
+    # pond names the columns `<group>_<value column>`, sorted by name
+    out = df.pivot(on="host", index="time", values="v", aggregate_function=agg, sort_columns=True)
+    return out.rename(lambda c: c if c == "time" else f"{c}_v")
 
 
 run(
