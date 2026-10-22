@@ -181,7 +181,11 @@ impl TimeSeries {
     /// window of only gaps gives a gap.
     ///
     /// Sums are kept relative to a recent value and restarted every
-    /// `period` rows, so prices near 1e15 keep their low digits. O(N).
+    /// `period` rows, so prices near 1e15 keep their low digits. O(N), and
+    /// split across cores with the `parallel` feature: because the sums
+    /// restart every `period` rows, each stretch gives the same bits as one
+    /// sweep (as for `rolling_stdev`, `rolling_min` / `rolling_max` and the
+    /// `Wma` / `Trima` / `Hull` moving averages).
     pub fn sma(&self, study: Study) -> Result<TimeSeries> {
         const CALL: &str = "TimeSeries::sma";
         let (values, output) = self.study_input(CALL, &study, "sma")?;

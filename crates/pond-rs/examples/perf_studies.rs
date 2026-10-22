@@ -11,6 +11,8 @@
 //! times, plus a rebuild of P rows every P rows (O(N)). Min / max keep a
 //! queue of candidates (O(N)); the percentile goes through `rolling_rows`,
 //! which keeps the window sorted (O(N·P) worst case).
+//! Mean / spread, WMA and min / max split rows across cores (same bits);
+//! `RAYON_NUM_THREADS=1` times them on one.
 
 use std::time::Instant;
 

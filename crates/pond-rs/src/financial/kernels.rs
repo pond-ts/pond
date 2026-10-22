@@ -85,44 +85,61 @@ pub(crate) fn rolling_mean_sd(
     }
 }
 
-/// [`rolling_mean_sd`]'s loop, with the spread compiled in or out. pond-ts
-/// walks the window with two `while` loops; each row adds exactly one value
-/// and, once `period` rows have passed, drops exactly one, so this does the
-/// same additions and removals in the same order without them.
+/// Rows per stretch when a kernel runs on several cores: big enough that
+/// the `period` rows each stretch re-reads cost nothing.
+fn chunk_rows(period: usize) -> usize {
+    (1 << 16).max(period.saturating_mul(8))
+}
+
 fn mean_sd<const SD: bool>(values: &[f64], period: usize) -> (Vec<f64>, Vec<f64>) {
+    mean_sd_chunked::<SD>(values, period, chunk_rows(period))
+}
+
+/// Zeroed buffers: the system hands out zero pages lazily, so the threads
+/// filling the stretches take the page faults in parallel.
+fn mean_sd_chunked<const SD: bool>(
+    values: &[f64],
+    period: usize,
+    chunk: usize,
+) -> (Vec<f64>, Vec<f64>) {
     let n = values.len();
-    let mut mean = vec![f64::NAN; n];
-    let mut sd = if SD { vec![f64::NAN; n] } else { Vec::new() };
+    let mut mean = vec![0.0; n];
+    let mut sd = if SD { vec![0.0; n] } else { Vec::new() };
+    crate::par::fill_chunks(&mut mean, &mut sd, chunk, |start, mean, sd| {
+        mean_sd_into::<SD>(values, period, start, mean, sd)
+    });
+    (mean, sd)
+}
+
+/// [`rolling_mean_sd`] for rows `start..start + mean.len()`, written to
+/// `mean` (and `sd`). Every row from `start` on gets exactly the bits the
+/// whole-column sweep gives it: the sums are thrown away and rebuilt from
+/// the window at every row that is a multiple of `period`, so the sweep
+/// can begin at the last such row at or before `start` (pond-ts's
+/// `rollingReadBack` relies on the same property).
+///
+/// Between rebuilds each row adds its own value and, once `period` rows
+/// have passed, drops the value leaving the window: the same additions and
+/// removals, in the same order, as pond-ts's two `while` loops.
+fn mean_sd_into<const SD: bool>(
+    values: &[f64],
+    period: usize,
+    start: usize,
+    mean: &mut [f64],
+    sd: &mut [f64],
+) {
+    let end = start + mean.len();
+    let first = start / period * period;
     let mut anchor = 0.0;
     let mut shifted_sum = 0.0;
     let mut count = 0usize;
     let mut spread = Spread::default();
     // `i % period == 0`, without a division per row.
-    let mut next_rebuild = 0usize;
+    let mut next_rebuild = first;
 
-    for i in 0..n {
-        let x = values[i];
-        if x.is_finite() {
-            let y = x - anchor;
-            shifted_sum += y;
-            count += 1;
-            if SD {
-                spread.add(y);
-            }
-        }
-        if i >= period {
-            let x = values[i - period];
-            if x.is_finite() {
-                let y = x - anchor;
-                shifted_sum -= y;
-                count -= 1;
-                if SD {
-                    spread.remove(y);
-                }
-            }
-        }
-
+    for i in first..end {
         if i == next_rebuild {
+            // Whatever this row would add and drop is thrown away here.
             next_rebuild += period;
             let at = values[i];
             anchor = if at.is_finite() { at } else { 0.0 };
@@ -140,18 +157,46 @@ fn mean_sd<const SD: bool>(values: &[f64], period: usize) -> (Vec<f64>, Vec<f64>
                     spread.add(y);
                 }
             }
+        } else {
+            let x = values[i];
+            if x.is_finite() {
+                let y = x - anchor;
+                shifted_sum += y;
+                count += 1;
+                if SD {
+                    spread.add(y);
+                }
+            }
+            if i >= period {
+                let x = values[i - period];
+                if x.is_finite() {
+                    let y = x - anchor;
+                    shifted_sum -= y;
+                    count -= 1;
+                    if SD {
+                        spread.remove(y);
+                    }
+                }
+            }
         }
 
-        // The window spans `min(i + 1, period)` rows.
-        if i + 1 < period || count == 0 {
+        if i < start {
             continue;
         }
-        mean[i] = anchor + shifted_sum / count as f64;
+        let k = i - start;
+        // The window spans `min(i + 1, period)` rows.
+        if i + 1 < period || count == 0 {
+            mean[k] = f64::NAN;
+            if SD {
+                sd[k] = f64::NAN;
+            }
+            continue;
+        }
+        mean[k] = anchor + shifted_sum / count as f64;
         if SD {
-            sd[i] = spread.sd();
+            sd[k] = spread.sd();
         }
     }
-    (mean, sd)
 }
 
 /// pond-ts `rollingMeanValues`: [`rolling_mean_sd`]'s mean, but a gap
@@ -303,32 +348,31 @@ pub(crate) fn ema_values(values: &[f64], period: usize) -> Vec<f64> {
 /// running weighted sum, rebuilt every `period` rows like
 /// [`rolling_mean_sd`].
 pub(crate) fn wma_values(values: &[f64], period: usize) -> Vec<f64> {
-    let n = values.len();
-    let mut out = vec![f64::NAN; n];
+    wma_chunked(values, period, chunk_rows(period))
+}
+
+fn wma_chunked(values: &[f64], period: usize, chunk: usize) -> Vec<f64> {
+    let mut out = vec![0.0; values.len()];
+    crate::par::fill_chunks(&mut out, &mut [], chunk, |start, out, _| {
+        wma_into(values, period, start, out)
+    });
+    out
+}
+
+/// [`wma_values`] for rows `start..start + out.len()`; like
+/// [`mean_sd_into`], it can begin at the last multiple of `period` at or
+/// before `start`, where every sum is rebuilt from the window.
+fn wma_into(values: &[f64], period: usize, start: usize, out: &mut [f64]) {
+    let end = start + out.len();
+    let first = start / period * period;
     let p = period as f64;
     let denominator = (p * (p + 1.0)) / 2.0;
     let mut sum = 0.0;
     let mut weighted = 0.0;
     let mut missing = 0usize;
-    let mut next_rebuild = 0usize; // `i % period == 0`, as above
+    let mut next_rebuild = first; // `i % period == 0`, as above
 
-    for i in 0..n {
-        let entering = values[i];
-        weighted = weighted - sum + p * (if entering.is_finite() { entering } else { 0.0 });
-        if entering.is_finite() {
-            sum += entering;
-        } else {
-            missing += 1;
-        }
-        if i >= period {
-            let leaving = values[i - period];
-            if leaving.is_finite() {
-                sum -= leaving;
-            } else {
-                missing -= 1;
-            }
-        }
-
+    for i in first..end {
         if i == next_rebuild {
             next_rebuild += period;
             // `low` can be negative in pond-ts; the weight is `k - low + 1`.
@@ -345,13 +389,32 @@ pub(crate) fn wma_values(values: &[f64], period: usize) -> Vec<f64> {
                 sum += x;
                 weighted += (k as f64 - low + 1.0) * x;
             }
+        } else {
+            let entering = values[i];
+            weighted = weighted - sum + p * (if entering.is_finite() { entering } else { 0.0 });
+            if entering.is_finite() {
+                sum += entering;
+            } else {
+                missing += 1;
+            }
+            if i >= period {
+                let leaving = values[i - period];
+                if leaving.is_finite() {
+                    sum -= leaving;
+                } else {
+                    missing -= 1;
+                }
+            }
         }
 
-        if i + 1 >= period && missing == 0 {
-            out[i] = weighted / denominator;
+        if i >= start {
+            out[i - start] = if i + 1 >= period && missing == 0 {
+                weighted / denominator
+            } else {
+                f64::NAN
+            };
         }
     }
-    out
 }
 
 fn dema_values(values: &[f64], period: usize) -> Vec<f64> {
@@ -470,13 +533,27 @@ pub(crate) fn moving_average_values(values: &[f64], period: usize, kind: MaType)
 /// A queue of candidate rows (each better than every later one in the
 /// queue), so O(N) whatever the period.
 pub(crate) fn rolling_extreme<const MAX: bool>(values: &[f64], period: usize) -> Vec<f64> {
-    let n = values.len();
-    let mut out = vec![f64::NAN; n];
-    let mut queue = std::collections::VecDeque::with_capacity(period.min(n));
+    extreme_chunked::<MAX>(values, period, chunk_rows(period))
+}
+
+fn extreme_chunked<const MAX: bool>(values: &[f64], period: usize, chunk: usize) -> Vec<f64> {
+    let mut out = vec![0.0; values.len()];
+    crate::par::fill_chunks(&mut out, &mut [], chunk, |start, out, _| {
+        extreme_into::<MAX>(values, period, start, out)
+    });
+    out
+}
+
+/// [`rolling_extreme`] for rows `start..start + out.len()`, reading from
+/// the first row of `start`'s window (a lowest value is exact, so where
+/// the sweep begins cannot change it).
+fn extreme_into<const MAX: bool>(values: &[f64], period: usize, start: usize, out: &mut [f64]) {
+    let end = start + out.len();
+    let mut queue = std::collections::VecDeque::with_capacity(period.min(out.len() + period));
     // `a` beats `b` strictly: a later equal value never pushes out an
     // earlier one.
     let beats = |a: f64, b: f64| if MAX { a > b } else { a < b };
-    for i in 0..n {
+    for i in (start + 1).saturating_sub(period)..end {
         let x = values[i];
         if x.is_finite() {
             while queue.back().is_some_and(|&j: &usize| beats(x, values[j])) {
@@ -487,11 +564,82 @@ pub(crate) fn rolling_extreme<const MAX: bool>(values: &[f64], period: usize) ->
         if queue.front().is_some_and(|&j| j + period <= i) {
             queue.pop_front();
         }
-        if i + 1 >= period {
-            if let Some(&j) = queue.front() {
-                out[i] = values[j];
+        if i >= start {
+            out[i - start] = match queue.front() {
+                Some(&j) if i + 1 >= period => values[j],
+                _ => f64::NAN,
+            };
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Noisy input with gaps, runs of gaps, signed zeros, a stored infinity
+    /// and values near 1e15, where a sum that kept its history would drift.
+    fn noisy(n: usize) -> Vec<f64> {
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        (0..n)
+            .map(|i| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                let r = (x % 1_000_003) as f64 / 7.0;
+                match i {
+                    _ if (300..340).contains(&i) => f64::NAN,
+                    _ if x % 23 == 0 => f64::NAN,
+                    _ if x % 97 == 0 => -0.0,
+                    _ if i % 1000 == 999 => 0.0,
+                    _ if (2000..2600).contains(&i) => 1e15 + r,
+                    _ => r - 70_000.0,
+                }
+            })
+            .collect()
+    }
+
+    fn same_bits(a: &[f64], b: &[f64]) -> bool {
+        a.len() == b.len()
+            && a.iter()
+                .zip(b)
+                .all(|(x, y)| x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan()))
+    }
+
+    /// Cut into stretches of any size, a column comes out with the same
+    /// bits as in one sweep: what makes running the stretches on several
+    /// cores safe.
+    #[test]
+    fn stretches_give_the_same_bits_as_one_sweep() {
+        let values = noisy(3_000);
+        let n = values.len();
+        for period in [1, 2, 3, 7, 20, 64, 500, 3_001] {
+            let mean = mean_sd_chunked::<false>(&values, period, n).0;
+            let (sd_mean, sd) = mean_sd_chunked::<true>(&values, period, n);
+            let wma = wma_chunked(&values, period, n);
+            let min = extreme_chunked::<false>(&values, period, n);
+            let max = extreme_chunked::<true>(&values, period, n);
+            for chunk in [1, 2, 3, 5, 19, 64, 999, 2_999] {
+                let label = format!("period {period}, stretch {chunk}");
+                assert!(
+                    same_bits(&mean, &mean_sd_chunked::<false>(&values, period, chunk).0),
+                    "mean {label}"
+                );
+                let (m, s) = mean_sd_chunked::<true>(&values, period, chunk);
+                assert!(same_bits(&sd_mean, &m) && same_bits(&sd, &s), "sd {label}");
+                assert!(
+                    same_bits(&wma, &wma_chunked(&values, period, chunk)),
+                    "wma {label}"
+                );
+                assert!(
+                    same_bits(&min, &extreme_chunked::<false>(&values, period, chunk)),
+                    "min {label}"
+                );
+                assert!(
+                    same_bits(&max, &extreme_chunked::<true>(&values, period, chunk)),
+                    "max {label}"
+                );
             }
         }
     }
-    out
 }

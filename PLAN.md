@@ -602,7 +602,8 @@ the study oracle) is done.
   Every study must match pond-ts bit for bit (a new pond-ts study fixture)
   AND the pandas / TA-Lib oracle within 5e-10 (pjm17971 chose both). Studies
   are methods on `TimeSeries` in a `pond_rs::financial` module of the same
-  crate; no worker pool. Steps: 1. ~~foundations (study options and checks,
+  crate; no worker pool (kernels that restart every `period` rows split
+  rows across cores instead, same bits). Steps: 1. ~~foundations (study options and checks,
   shared kernels, `sma` / `ema` / `moving_average` / rolling stats /
   `z_score`)~~ — done; 2. one PR per family: (a) moving averages, (b) bands, (c)
   momentum, (d) trend, (e) volatility and statistics, (f) volume, (g)

@@ -2480,7 +2480,9 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     `pond_rs::financial` module of the same crate, with pond-ts's
     contract (source `column`, default `close`; `output`, default the
     study name; bar-count periods; a warm-up that keeps every row). No
-    port of pond-ts's worker pool: a study is one pass over one column.
+    port of pond-ts's worker pool: a study is one pass over one column,
+    split across cores (rayon) only where a stretch of rows gives the
+    same bits as the whole column (pjm17971 chose this in #809).
   - Steps: 1. foundations: the options and checks every study shares,
     the shared kernels (window mean and spread, Wilder, weighted and
     exponential averages), `sma`, `ema`, `moving_average` (all 10
@@ -2536,30 +2538,45 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     study reads its source in place unless a gap is stored as an infinity;
     min / max use their own O(N) queue instead of `rolling_rows`;
     dema / tema / hull reuse buffers. The rebuild test is a counter, not
-    `i % period`. What is left is the arithmetic itself: EMA, Wilder and
-    Welford's spread are chains where each row waits on the last
-    (multiply-add, or a division, per row), the same chain V8 runs, and
-    matching pond-ts's bits rules out reordering them. Medians of 3 runs
-    of 7, 4 cores, ms:
+    `i % period`.
+  - Across cores (pjm17971 asked for it in #809): the mean / spread
+    (`sma`, `rolling_stdev`, `moving_average` Sma and Trima), `wma`
+    (also inside Hull) and min / max kernels fill stretches of 64k rows
+    (or 8 periods) on rayon's pool. Each stretch starts at the last
+    multiple of `period` at or before its first row, where every sum is
+    rebuilt from the window (pond-ts's `rollingReadBack` uses the same
+    property), so it gives the same bits as one sweep; min / max read
+    from the first row of the window. Output buffers start zeroed, so the
+    system hands pages out as the threads write. A unit test cuts a
+    noisy column (gaps, signed zeros, an infinity, 1e15) into stretches of
+    1 to 2,999 rows at periods 1 to 3,001 and checks every bit; 4 of 4
+    planted bugs (stretch starting at its first row, min / max queue not
+    read back, no reset at the rebuild) are caught.
+  - What does not split: EMA, Wilder (smma), Dema / Tema / Zlema / KAMA
+    and the z-score, where each row waits on the one before (a
+    multiply-add or a division per row, the same chain V8 runs; matching
+    pond-ts's bits rules out reordering it), and the percentile (still
+    `rolling_rows`). Medians of 3 runs of 7, 1M bars, ms; 1 thread is
+    `RAYON_NUM_THREADS=1`; checksums agree between all three:
 
-    | Study       | pond-rs | pond-ts | ratio |
-    | ----------- | ------- | ------- | ----- |
-    | sma 20      | 4.8     | 40.1    | 8.4x  |
-    | sma 200     | 5.1     | 33.5    | 6.6x  |
-    | ema 20      | 3.2     | 10.7    | 3.3x  |
-    | stdev 20    | 22.0    | 34.9    | 1.6x  |
-    | min 20      | 6.6     | 58.9    | 8.9x  |
-    | max 200     | 6.8     | 78.1    | 11.5x |
-    | p90 20      | 56.6    | 151.4   | 2.7x  |
-    | zscore 20   | 24.6    | 75.8    | 3.1x  |
-    | ma wma 20   | 5.3     | 29.5    | 5.6x  |
-    | ma smma 20  | 7.6     | 16.4    | 2.2x  |
-    | ma dema 20  | 7.7     | 21.9    | 2.8x  |
-    | ma tema 20  | 12.4    | 33.1    | 2.7x  |
-    | ma trima 20 | 12.7    | 35.6    | 2.8x  |
-    | ma hull 20  | 18.2    | 46.0    | 2.5x  |
-    | ma kama 20  | 4.7     | 23.8    | 5.1x  |
-    | ma zlema 20 | 5.6     | 15.3    | 2.7x  |
+    | Study       | pond-rs 1 thread | pond-rs 4 cores | pond-ts | ratio |
+    | ----------- | ---------------- | --------------- | ------- | ----- |
+    | sma 20      | 6.0              | 2.5             | 43.7    | 17x   |
+    | sma 200     | 5.8              | 2.4             | 41.9    | 17x   |
+    | ema 20      | 3.7              | 4.0             | 11.7    | 2.9x  |
+    | stdev 20    | 22.7             | 6.9             | 36.4    | 5.3x  |
+    | min 20      | 8.0              | 2.5             | 59.6    | 24x   |
+    | max 200     | 8.3              | 2.8             | 86.1    | 31x   |
+    | p90 20      | 58.7             | 55.5            | 183.4   | 3.3x  |
+    | zscore 20   | 25.3             | 25.4            | 82.2    | 3.2x  |
+    | ma wma 20   | 6.5              | 2.7             | 30.4    | 11x   |
+    | ma smma 20  | 7.9              | 8.4             | 18.2    | 2.2x  |
+    | ma dema 20  | 9.2              | 9.9             | 23.4    | 2.4x  |
+    | ma tema 20  | 14.0             | 13.1            | 35.3    | 2.7x  |
+    | ma trima 20 | 14.8             | 8.0             | 40.1    | 5.0x  |
+    | ma hull 20  | 20.9             | 9.9             | 50.0    | 5.1x  |
+    | ma kama 20  | 5.5              | 6.6             | 28.3    | 4.3x  |
+    | ma zlema 20 | 6.1              | 5.7             | 18.9    | 3.3x  |
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
