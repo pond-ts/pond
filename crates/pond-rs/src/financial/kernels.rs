@@ -835,6 +835,60 @@ pub(crate) fn js_max(a: f64, b: f64) -> f64 {
     }
 }
 
+/// JS `Math.min(a, b)`: a NaN gives NaN, and `-0` beats `+0`.
+pub(crate) fn js_min(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a < b || (a == b && a.is_sign_negative()) {
+        a
+    } else {
+        b
+    }
+}
+
+/// pond-ts `trueRangeValues`: [`true_range_at`] for every row.
+pub(crate) fn true_range_values(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
+    (0..high.len())
+        .map(|i| true_range_at(high, low, close, i))
+        .collect()
+}
+
+/// One change split into its rise (`d` when above zero, else 0) and its
+/// fall (`-d` when below zero, else 0); a gap in both where `d` is a gap.
+pub(crate) fn leg(d: f64) -> (f64, f64) {
+    if d.is_nan() {
+        (d, d)
+    } else {
+        (
+            if d > 0.0 { d } else { 0.0 },
+            if d < 0.0 { -d } else { 0.0 },
+        )
+    }
+}
+
+/// pond-ts `upDownLegValues`: [`leg`] for every change, in one pass.
+pub(crate) fn up_down_legs(deltas: impl ExactSizeIterator<Item = f64>) -> (Vec<f64>, Vec<f64>) {
+    let mut up = Vec::with_capacity(deltas.len());
+    let mut down = Vec::with_capacity(deltas.len());
+    for d in deltas {
+        let (u, w) = leg(d);
+        up.push(u);
+        down.push(w);
+    }
+    (up, down)
+}
+
+/// Row-to-row change: a gap on row 0, then `v[i] - v[i - 1]`.
+pub(crate) fn deltas(values: &[f64]) -> impl ExactSizeIterator<Item = f64> + '_ {
+    (0..values.len()).map(|i| {
+        if i == 0 {
+            f64::NAN
+        } else {
+            values[i] - values[i - 1]
+        }
+    })
+}
+
 /// pond-ts `trueRangeValues` at row `i`: the largest of the bar's range
 /// and the gaps from the previous close; `NaN` on row 0 and wherever an
 /// input is missing.
@@ -950,6 +1004,34 @@ mod tests {
         assert!(js_max(-0.0, -0.0).is_sign_negative());
         assert_eq!(js_max(-1.0, 2.0), 2.0);
         assert_eq!(js_max(3.0, 2.0), 3.0);
+    }
+
+    /// JS `Math.min`: NaN wins, `-0` beats `+0` in either order.
+    #[test]
+    fn js_min_matches_math_min() {
+        assert!(js_min(f64::NAN, 1.0).is_nan());
+        assert!(js_min(1.0, f64::NAN).is_nan());
+        for (a, b) in [(-0.0, 0.0), (0.0, -0.0)] {
+            let m = js_min(a, b);
+            assert!(m == 0.0 && m.is_sign_negative(), "{a:?} {b:?}");
+        }
+        assert!(js_min(0.0, 0.0).is_sign_positive());
+        assert_eq!(js_min(-1.0, 2.0), -1.0);
+        assert_eq!(js_min(3.0, 2.0), 2.0);
+    }
+
+    /// A `-0` change is neither a rise nor a fall: both legs are `+0`, as
+    /// pond-ts's `d > 0 ? d : 0` gives.
+    #[test]
+    fn up_down_legs_split_changes() {
+        let (up, down) = up_down_legs([f64::NAN, 2.0, -3.0, -0.0, 0.0].into_iter());
+        assert!(up[0].is_nan() && down[0].is_nan());
+        assert_eq!((up[1], down[1]), (2.0, 0.0));
+        assert_eq!((up[2], down[2]), (0.0, 3.0));
+        for i in 3..5 {
+            assert!(up[i] == 0.0 && up[i].is_sign_positive(), "up {i}");
+            assert!(down[i] == 0.0 && down[i].is_sign_positive(), "down {i}");
+        }
     }
 
     /// The prime ladder against trial division, and its edges.

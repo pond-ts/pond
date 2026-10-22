@@ -2739,6 +2739,55 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     multiply, add and divide on every row (about 8 ms at 1M rows), which
     pond-ts pays too.
 
+  **R2 step 2c part 1 (done): momentum, first 11 studies.**
+  - Calls, as `@pond-ts/financial`'s momentum family: `rsi`,
+    `chande_momentum` and `momentum` take a plain `Study` (pond-ts's
+    default periods 14, 14 and 10 are in their docs); `stochastic`,
+    `stochastic_momentum_index`, `stochastic_rsi`, `williams_r`,
+    `percent_change`, `intraday_momentum_index`, `awesome_oscillator`
+    and `ultimate_oscillator` take an options struct named after the
+    study, as in step 2b. `stochastic_rsi` refuses a series that has
+    pond-ts's scratch column `__stochRsiRsi__`, as pond-ts does (it
+    writes its RSI there first). Part 2 (cci, fisher transform,
+    psychological line, pretty good oscillator, prime number oscillator,
+    qstick, relative vigor index, centre of gravity, Chande forecast,
+    true strength index) is next.
+  - Ported as pond-ts writes them: rises and falls of each change, then
+    Wilder's average (RSI) or the window mean (CMO, IMI); stochastics
+    through step 1's rolling high and low, except stochastic RSI, which
+    uses pond-ts's own rolling-extremes kernel; JS `Math.min` (new
+    `js_min`: a gap gives a gap, `-0` beats `+0`) for the ultimate
+    oscillator's buying pressure.
+  - Parity: the fixture grew to 2,274 cases (the `lead` input gained an
+    open column; the `named` input gained the scratch column). 1,753
+    match bit for bit, 191 errors agree, 175 refused (known missing
+    column difference), 155 calls Rust cannot write. Oracle: 98 of 220
+    cases now. Planted bugs: 19 of 22 caught; the 3 missed were a change
+    of `-0` (neither a rise nor a fall, and no input row gives one), `-0`
+    in `js_min`, and a mutation that changed nothing. Unit tests now pin
+    both signed-zero cases.
+  - Perf: all O(N). RSI runs both Wilder averages in one pass with no
+    column in between (33 → 9 ms); SMI runs its five EMAs row by row in
+    one pass (48 → 25 ms). Both are the same operations in the same
+    order, so the same bits (parity still passes; planted swaps in
+    either are caught).
+  - Medians of 7, 1M bars at pond-ts's defaults, ms (pond-ts run alone
+    per study):
+
+    | Study      | 1 thread | 4 cores | pond-ts | ratio |
+    | ---------- | -------- | ------- | ------- | ----- |
+    | rsi        | 9.9      | 9.2     | 58.2    | 6.3x  |
+    | stochastic | 61.7     | 19.8    | 320.9   | 16x   |
+    | smi        | 49.5     | 25.5    | 284.9   | 11x   |
+    | stochRsi   | 47.0     | 30.3    | 218.2   | 7.2x  |
+    | williamsR  | 30.0     | 12.1    | 220.7   | 18x   |
+    | cmo        | 27.4     | 17.1    | 94.6    | 5.5x  |
+    | momentum   | 3.0      | 2.9     | 19.6    | 6.8x  |
+    | pctChange  | 3.1      | 2.5     | 23.4    | 9.4x  |
+    | imi        | 27.5     | 17.2    | 116.6   | 6.8x  |
+    | ao         | 31.1     | 13.4    | 75.0    | 5.6x  |
+    | uo         | 73.4     | 32.5    | 262.9   | 8.1x  |
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).

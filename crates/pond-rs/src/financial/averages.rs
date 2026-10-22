@@ -674,7 +674,7 @@ pub(super) fn positive(call: &'static str, name: &str, period: usize) -> Result<
     Ok(())
 }
 
-fn shorter(call: &'static str, study: &str, fast: usize, slow: usize) -> Result<()> {
+pub(super) fn shorter(call: &'static str, study: &str, fast: usize, slow: usize) -> Result<()> {
     if fast >= slow {
         return Err(PondError::InvalidData {
             call,

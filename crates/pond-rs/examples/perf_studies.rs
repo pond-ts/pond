@@ -55,13 +55,15 @@ fn make(rows: usize, gappy: bool) -> TimeSeries {
     TimeSeries::new("bench", time, vec![Column::optional("close", close)]).unwrap()
 }
 
-/// 1M price bars: high and low a varying spread either side of the close.
+/// 1M price bars: high and low a varying spread either side of the close,
+/// and an open (the next close).
 fn make_bars(rows: usize) -> TimeSeries {
     let time = (0..rows as i64).map(|i| i * 60_000).collect();
     let spread = |i: usize| ((i * 31) % 97) as f64 / 100.0 + 0.1;
     let high: Vec<f64> = (0..rows).map(|i| price(i) + spread(i)).collect();
     let low: Vec<f64> = (0..rows).map(|i| price(i) - spread(i)).collect();
     let close: Vec<f64> = (0..rows).map(price).collect();
+    let open: Vec<f64> = (0..rows).map(|i| price(i + 1)).collect();
     TimeSeries::new(
         "bars",
         time,
@@ -69,6 +71,7 @@ fn make_bars(rows: usize) -> TimeSeries {
             Column::required("high", high),
             Column::required("low", low),
             Column::required("close", close),
+            Column::required("open", open),
         ],
     )
     .unwrap()
@@ -303,6 +306,77 @@ fn main() -> pond_rs::Result<()> {
         ),
     ];
     cases.extend(bands);
+    // R2 step 2c part 1: momentum, at pond-ts's defaults.
+    let momentum: Vec<Case> = vec![
+        (
+            "rsi".into(),
+            "rsi",
+            Box::new(|| bars.rsi(Study::period(14)).unwrap()),
+        ),
+        (
+            "stochastic".into(),
+            "stochD",
+            Box::new(|| bars.stochastic(Stochastic::default()).unwrap()),
+        ),
+        (
+            "smi".into(),
+            "smiSignal",
+            Box::new(|| {
+                bars.stochastic_momentum_index(StochasticMomentumIndex::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "stochRsi".into(),
+            "stochRsiD",
+            Box::new(|| bars.stochastic_rsi(StochasticRsi::default()).unwrap()),
+        ),
+        (
+            "williamsR".into(),
+            "williamsR",
+            Box::new(|| bars.williams_r(WilliamsR::default()).unwrap()),
+        ),
+        (
+            "cmo".into(),
+            "cmo",
+            Box::new(|| bars.chande_momentum(Study::period(14)).unwrap()),
+        ),
+        (
+            "momentum".into(),
+            "momentum",
+            Box::new(|| bars.momentum(Study::period(10)).unwrap()),
+        ),
+        (
+            "pctChange".into(),
+            "pctChange",
+            Box::new(|| bars.percent_change(PercentChange::default()).unwrap()),
+        ),
+        (
+            "imi".into(),
+            "imi",
+            Box::new(|| {
+                bars.intraday_momentum_index(IntradayMomentumIndex::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "ao".into(),
+            "ao",
+            Box::new(|| {
+                bars.awesome_oscillator(AwesomeOscillator::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "uo".into(),
+            "uo",
+            Box::new(|| {
+                bars.ultimate_oscillator(UltimateOscillator::default())
+                    .unwrap()
+            }),
+        ),
+    ];
+    cases.extend(momentum);
     println!("| Case | pond-rs | checksum |");
     println!("| --- | --- | --- |");
     for (name, column, f) in &cases {

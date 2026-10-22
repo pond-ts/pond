@@ -32,12 +32,14 @@ const bars = new TimeSeries({
     { name: 'high', kind: 'number' },
     { name: 'low', kind: 'number' },
     { name: 'close', kind: 'number' },
+    { name: 'open', kind: 'number' },
   ],
   rows: Array.from({ length: 1_000_000 }, (_, i) => [
     i * 60_000,
     price(i) + spread(i),
     price(i) - spread(i),
     price(i),
+    price(i + 1),
   ]),
 });
 
@@ -82,6 +84,17 @@ const cases = [
   ['highLowBands', 'hlbUpper', () => f.highLowBands(bars)],
   ['primeBands', 'pnbUpper', () => f.primeNumberBands(bars)],
   ['envelope 20', 'envUpper', () => f.envelope(bars, { period: 20 })],
+  ['rsi', 'rsi', () => f.rsi(bars)],
+  ['stochastic', 'stochD', () => f.stochastic(bars)],
+  ['smi', 'smiSignal', () => f.stochasticMomentumIndex(bars)],
+  ['stochRsi', 'stochRsiD', () => f.stochasticRsi(bars)],
+  ['williamsR', 'williamsR', () => f.williamsR(bars)],
+  ['cmo', 'cmo', () => f.chandeMomentum(bars)],
+  ['momentum', 'momentum', () => f.momentum(bars)],
+  ['pctChange', 'pctChange', () => f.percentChange(bars)],
+  ['imi', 'imi', () => f.intradayMomentumIndex(bars)],
+  ['ao', 'ao', () => f.awesomeOscillator(bars)],
+  ['uo', 'uo', () => f.ultimateOscillator(bars)],
 ];
 
 const only = process.argv[2];
