@@ -138,15 +138,13 @@ Measured 2026-10-22 with throwaway probes (not committed), one core, same
 data as the row-by-row and rolling families. Times move run to run; the
 comparisons are within one probe run.
 
-- **Memory handling (row-by-row cases).** Each pond-rs call here makes a
-  fresh 8 MB output column. With Rust's default allocator (glibc) the
-  freed 8 MB goes back to the operating system, and the next call pays to
-  get fresh memory pages again. Telling glibc to keep freed memory
-  (`GLIBC_TUNABLES=glibc.malloc.mmap_threshold=268435456:glibc.malloc.trim_threshold=1073741824`)
-  took `diff` from 8.3 to 4.7 ms, `map_numbers` from 6.2 to 1.3 ms and
-  `shift` from 12.1 to 2.8 ms, with no code change. polars ships its own
-  allocator (jemalloc, built into its library file), which keeps memory
-  for reuse.
+- **Not the memory manager.** A first probe suggested glibc handing freed
+  memory back to the operating system cost pond-rs several ms per call
+  (`diff` 8.3 → 4.7 ms with glibc told to keep freed memory). That was the
+  probe's own allocation pattern: in the benchmark runner itself the same
+  setting moves `diff` only 4.0–4.6 → 3.4–3.5 ms (two runs each) and
+  the other row-by-row cases within run-to-run noise. Swapping the whole memory manager doesn't close the gap
+  either (see "Memory manager" below).
 - **`diff` itself.** pond-rs checks each pair of values for gaps before
   subtracting (a gap is NaN): that loop takes 2.6 ms; the same subtraction
   without the checks takes 0.6 ms. Copying the time key into the new
@@ -178,6 +176,30 @@ comparisons are within one probe run.
   every row in pond-rs (3–5 ms), and Arrow in and out costs polars almost
   nothing while pond-rs converts every row (and makes one text string per
   text element).
+
+## Memory manager (glibc, jemalloc, mimalloc)
+
+polars ships its own memory manager (jemalloc, built into its library
+file); pond-rs uses Rust's default (glibc on Linux). Tried on pond-rs,
+2026-10-22, 3 repeats each, same machine:
+
+- **jemalloc** (system `libjemalloc` 5.3 via `LD_PRELOAD`, every family):
+  slower in 119 of 198 cases, faster in 15; median 14% slower. R1a A total
+  187 → 282 ms, memory growth 192 → 251 MB. Turning off its memory
+  return (`MALLOC_CONF=dirty_decay_ms:-1,muzzy_decay_ms:-1`) did not help
+  the row-by-row cases.
+- **mimalloc** (the `mimalloc` crate as `#[global_allocator]`, in copies
+  of the row-by-row, join, smoothing and grid runners and the R1a runner):
+  no change overall (44 cases, median 1.0; 7 faster, 5 slower). Big wins
+  only where a call writes a large fresh output: `align` onto a 1 s grid
+  2× (38 → 19 ms, 64 → 31 ms), 1M × 1M outer join 1.75× (78 → 45 ms).
+  R1a A total 187 → 178 ms, but memory growth 192 → 342 MB, past
+  polars' 256 MB (the R1a memory target).
+- A library can't choose the memory manager for the program that uses
+  it (in Rust that is the program's `#[global_allocator]`), and neither
+  option is a general win, so pond-rs keeps the default. A program whose
+  hot path is grid alignment or big outer joins can switch to mimalloc
+  itself.
 
 ## Numbers that differ from what was reported before
 
