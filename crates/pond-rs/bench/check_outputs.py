@@ -18,8 +18,11 @@ this requires:
   [...]}` is compared by its `rows`);
 - `.arrow`: read with polars, then compared as columns.
 
-Cases only one side wrote are listed and do not fail the check (polars has
-no counterpart for some). Exit status 1 if any compared case differs.
+Cases only pond-rs wrote are listed and do not fail the check (polars has
+no counterpart for some). A case only polars wrote fails it: every polars
+case mirrors a pond-rs one, so it means a name no longer matches and the
+case silently dropped out. Exit status 1 if any compared case differs or
+any case is polars-only.
 """
 
 import io
@@ -148,8 +151,9 @@ def main():
     for case in sorted(a.keys() - b.keys()):
         print(f"pond-rs only  {case}")
     for case in sorted(b.keys() - a.keys()):
-        print(f"polars only   {case}")
-    print(f"{failed} differing case(s)")
+        failed += 1
+        print(f"polars only   {case}  (no pond-rs answer to compare)")
+    print(f"{failed} differing or unmatched case(s)")
     sys.exit(1 if failed else 0)
 
 

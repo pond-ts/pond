@@ -53,8 +53,9 @@ the first differing value); those are in the tables but not in the counts.
     every row (outer joins 3.6–44×), per-entity `materialize` (2.7×),
     `dedupe` keeping the largest value (2.5×), `unique` / `top3` in
     buckets (1.4–2.6×), `keep` on numbers (1.4–3.7×), the row-by-row `rate` / `pct_change` /
-    cumulative sum (3–3.6×), a time window that needs a minimum row count
-    (3×), grid rolling onto 1-minute buckets (2.7–4.7×), EMA (2.2×), JSON
+    cumulative sum (3–3.6×; polars needs an extra `forward_fill` pass to
+    carry the total through gaps), a time window that needs a minimum row
+    count (3×; polars counts the rows in a second rolling pass), grid rolling onto 1-minute buckets (2.7–4.7×), EMA (2.2×), JSON
     object rows in (1.5–2.1×), pivots with many groups (1.2–1.6×; 4.6–5×
     on 1 core), `explode` of numbers (1.7–3.1×).
   - polars is much faster on: `collapse` (13–18×: pond calls a function
@@ -79,7 +80,8 @@ the bit, and on the other families by per-case checksums.
 - Each runner builds the same data (same generators, same values), runs
   each case once to warm up (pond-ts: see below) and then 7 times (pond-rs
   and pond-ts use 9 for arrays and JSON; polars uses 3 for a case whose
-  warm-up takes over 2 s, its rolling `top3`), and reports the median.
+  warm-up takes over 2 s, such as its rolling `top3` and `samples`), and
+  reports the median.
   Every family ran **3 times** (3 separate processes per engine); each
   cell below is the median of the 3, with the range in brackets when it
   spans more than ±15%.

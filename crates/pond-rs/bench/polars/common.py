@@ -106,7 +106,7 @@ def median_ms(f, runs=7, name=None, dump=None):
     a = time.perf_counter()
     out = f()  # warm-up; its result gives the checksum (and the dump)
     if time.perf_counter() - a > 2:
-        runs = 3  # a case over 2 s (polars' rolling top3) gets 3 timed runs
+        runs = 3  # a case over 2 s (e.g. rolling top3 / samples) gets 3 timed runs
     if name is not None and os.environ.get("BENCH_DUMP"):
         write_dump(name, dump(out) if dump else out)
     t = []
