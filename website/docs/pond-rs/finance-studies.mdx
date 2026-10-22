@@ -264,31 +264,43 @@ fn main() -> Result<(), pond_rs::PondError> {
 
 ## Speed
 
-One million bars, the same checksums from both libraries, median times
-(4 cores, on a busy machine, so allow about ±30%). A study is one pass over
-one column, so threads do not come into it.
+One million bars, median times in milliseconds, with the same checksums
+from all three runs. "1 thread" is pond-rs with `RAYON_NUM_THREADS=1`.
 
-| Study               | pond-rs | pond-ts |
-| ------------------- | ------- | ------- |
-| `sma` 20            | 16 ms   | 65 ms   |
-| `sma` 200           | 24 ms   | 58 ms   |
-| `ema` 20            | 8 ms    | 18 ms   |
-| `rolling_stdev` 20  | 28 ms   | 41 ms   |
-| `rolling_min` 20    | 29 ms   | 90 ms   |
-| `rolling_max` 200   | 25 ms   | 131 ms  |
-| 90th percentile, 20 | 72 ms   | 251 ms  |
-| `z_score` 20        | 31 ms   | 106 ms  |
-| `Wma` 20            | 12 ms   | 43 ms   |
-| `Smma` 20           | 12 ms   | 19 ms   |
-| `Dema` 20           | 14 ms   | 29 ms   |
-| `Tema` 20           | 17 ms   | 38 ms   |
-| `Trima` 20          | 31 ms   | 75 ms   |
-| `Hull` 20           | 30 ms   | 69 ms   |
-| `Kama` 20           | 13 ms   | 36 ms   |
-| `Zlema` 20          | 9 ms    | 25 ms   |
+| Study               | pond-rs, 1 thread | pond-rs, 4 cores | pond-ts | pond-ts ÷ pond-rs, 4 cores |
+| ------------------- | ----------------- | ---------------- | ------- | -------------------------- |
+| `sma` 20            | 6.0               | 2.5              | 43.7    | 17×                        |
+| `sma` 200           | 5.8               | 2.4              | 41.9    | 17×                        |
+| `ema` 20            | 3.7               | 4.0              | 11.7    | 2.9×                       |
+| `rolling_stdev` 20  | 22.7              | 6.9              | 36.4    | 5.3×                       |
+| `rolling_min` 20    | 8.0               | 2.5              | 59.6    | 24×                        |
+| `rolling_max` 200   | 8.3               | 2.8              | 86.1    | 31×                        |
+| 90th percentile, 20 | 58.7              | 55.5             | 183.4   | 3.3×                       |
+| `z_score` 20        | 25.3              | 25.4             | 82.2    | 3.2×                       |
+| `Wma` 20            | 6.5               | 2.7              | 30.4    | 11×                        |
+| `Smma` 20           | 7.9               | 8.4              | 18.2    | 2.2×                       |
+| `Dema` 20           | 9.2               | 9.9              | 23.4    | 2.4×                       |
+| `Tema` 20           | 14.0              | 13.1             | 35.3    | 2.7×                       |
+| `Trima` 20          | 14.8              | 8.0              | 40.1    | 5.0×                       |
+| `Hull` 20           | 20.9              | 9.9              | 50.0    | 5.1×                       |
+| `Kama` 20           | 5.5               | 6.6              | 28.3    | 4.3×                       |
+| `Zlema` 20          | 6.1               | 5.7              | 18.9    | 3.3×                       |
 
-Every study takes time in line with the number of bars. The percentile is
-the slowest, because it keeps each window sorted.
+**Why some use several cores and some don't.** The window studies (`sma`,
+`rolling_stdev`, `rolling_min` / `rolling_max`, and the `Wma`, `Trima` and
+`Hull` averages) cut the bars into long stretches and work on them at the
+same time. The answer is still the same to the last bit: each stretch
+starts where a running sum is rebuilt from scratch anyway, so it does
+exactly what one pass would. `ema`, `Smma`, `Dema`, `Tema`, `Zlema`,
+`Kama` and the z-score cannot be cut up, because each row needs the
+answer for the row before it; changing the order of the sums would also
+stop them matching pond-ts exactly. The percentile keeps each window
+sorted, which makes it the slowest.
+
+Most of the first version's time was spent getting fresh memory, not on
+the maths. A study now reads the price column where it is instead of
+copying it, and the result shares the input's times instead of copying
+them.
 
 ## Still to come
 
