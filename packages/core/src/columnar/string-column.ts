@@ -459,17 +459,25 @@ export function stringColumnFromArray(
       : new StringColumn(0, { dictionary: [], indices: new Int32Array(0) });
   }
 
+  const forceDict = options?.forceDict === true;
+  const forceFallback = options?.forceFallback === true;
+  const ratio = options?.dictRatio ?? DICT_ENCODE_RATIO;
+  const minLen = options?.minDictLength ?? DICT_ENCODE_MIN_LENGTH;
+
   // Single pass: build a dictionary + indices, and track missing slots.
+  // Unless dict encoding is forced, stop as soon as the dictionary is too
+  // big to win (`distinct / length >= ratio` can only stay true from there):
+  // a mostly-distinct column then skips most of the `Map` work.
+  const canWin = forceDict || (!forceFallback && length >= minLen);
   const dictionary: string[] = [];
   const dictionaryIndex = new Map<string, number>();
-  const indices = new Int32Array(length);
-  let missing = 0;
+  const indices = new Int32Array(canWin ? length : 0);
+  let tooMany = !canWin;
 
-  for (let i = 0; i < length; i += 1) {
+  for (let i = 0; i < length && !tooMany; i += 1) {
     const v = source[i];
     if (typeof v !== 'string') {
       indices[i] = 0; // placeholder; validity bitmap will mark invalid
-      missing += 1;
       continue;
     }
     let dictIdx = dictionaryIndex.get(v);
@@ -477,24 +485,20 @@ export function stringColumnFromArray(
       dictIdx = dictionary.length;
       dictionaryIndex.set(v, dictIdx);
       dictionary.push(v);
+      if (!forceDict && dictionary.length / length >= ratio) tooMany = true;
     }
     indices[i] = dictIdx;
   }
 
-  const validity =
-    missing === 0
-      ? undefined
-      : validityFromPredicate(length, (i) => typeof source[i] === 'string');
+  // `undefined` when every slot holds a string.
+  const validity = validityFromPredicate(
+    length,
+    (i) => typeof source[i] === 'string',
+  );
 
   // Decide encoding mode.
-  const forceDict = options?.forceDict === true;
-  const forceFallback = options?.forceFallback === true;
-  const ratio = options?.dictRatio ?? DICT_ENCODE_RATIO;
-  const minLen = options?.minDictLength ?? DICT_ENCODE_MIN_LENGTH;
-  const distinct = dictionary.length;
   const dictWins =
-    forceDict ||
-    (!forceFallback && length >= minLen && distinct / length < ratio);
+    forceDict || (!tooMany && dictionary.length / length < ratio);
 
   if (dictWins) {
     if (dictionary.length === 0) {

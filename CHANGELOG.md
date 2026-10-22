@@ -987,6 +987,19 @@ series)` replaces one source, and only nodes reading it recompute — the
 
 ### Changed
 
+- **`fromArrow` reads text columns straight from Arrow's buffers**
+  ([PND-ARROWTEXT]) instead of through apache-arrow's `toArray()`. Each
+  distinct string is decoded once (a `Dictionary<Utf8>` column decodes only
+  its dictionary). Same strings, same column storage, same all-null rule.
+  `TimeSeries.fromArrow` / `ValueSeries.fromArrow` on 1M rows with a text
+  column of 100 labels: ~480 → ~50 ms; `Dictionary<Utf8>` 123 → ~20 ms;
+  every row distinct ~1.1 s → ~500 ms. Applies to interval label columns
+  too. A vector without a `type` / `data` (a hand-made stand-in), and
+  `LargeUtf8` / `Utf8View`, keep the old path.
+- **Building a string column stops counting distinct values once it knows
+  the column will be stored plain** (`stringColumnFromArray`, used by every
+  text-column door). Same result; a mostly-distinct column skips most of
+  the work.
 - **`TimeSeries.concat` merges its sorted inputs on the key columns**
   ([PND-CONCATSORT]) instead of sorting every input's `Event`s and
   rebuilding the store from them. Every partitioned operation's
