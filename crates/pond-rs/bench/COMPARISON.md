@@ -132,6 +132,53 @@ Within 1.25× of polars multi-core: met (pond-rs takes 0.84× polars' time
 on A's compute, 0.96× on B's). Memory growth no more than 1-thread polars:
 met (192 vs 256 MB).
 
+## Why polars wins where it does
+
+Measured 2026-10-22 with throwaway probes (not committed), one core, same
+data as the row-by-row and rolling families. Times move run to run; the
+comparisons are within one probe run.
+
+- **Memory handling (row-by-row cases).** Each pond-rs call here makes a
+  fresh 8 MB output column. With Rust's default allocator (glibc) the
+  freed 8 MB goes back to the operating system, and the next call pays to
+  get fresh memory pages again. Telling glibc to keep freed memory
+  (`GLIBC_TUNABLES=glibc.malloc.mmap_threshold=268435456:glibc.malloc.trim_threshold=1073741824`)
+  took `diff` from 8.3 to 4.7 ms, `map_numbers` from 6.2 to 1.3 ms and
+  `shift` from 12.1 to 2.8 ms, with no code change. polars ships its own
+  allocator (jemalloc, built into its library file), which keeps memory
+  for reuse.
+- **`diff` itself.** pond-rs checks each pair of values for gaps before
+  subtracting (a gap is NaN): that loop takes 2.6 ms; the same subtraction
+  without the checks takes 0.6 ms. Copying the time key into the new
+  series adds 0.6 ms. polars keeps gaps in a separate bit list, so it
+  subtracts straight through and combines the bit lists afterwards.
+- **`shift`.** polars does not copy the column: the result is the original
+  column plus a one-row gap placed in front (checked: the shifted column
+  is made of 2 pieces, 1 row and 999,999 rows). pond-rs copies every value
+  through a list of 1M row numbers.
+- **`filter` and `collapse`.** Both take a function that pond-rs calls
+  once per row, and the function looks columns up by name on every row.
+  pond-rs's own numbers show the cost: `filter` by name 17 ms, the same
+  filter with the column fetched once 7 ms. `collapse` also builds a
+  general "number or text or true/false" value per row before turning
+  them into a column. polars runs `v > 500` or `v + w` over whole columns
+  at once (3 ms).
+- **Row windows per entity** (`rows 20 avg by host`, 8 hosts): pond-rs
+  splits the series into 8 separate series (every column copied, text
+  included: 40 ms), runs the window on each (38 ms) and merges them back
+  in time order (60 ms); the same window over the unsplit series takes 13
+  ms. polars' `.over("host")` works out which rows belong to which host
+  and writes results back into one column, without building separate
+  tables.
+- **List columns.** pond-rs stores each row's list as its own small array
+  of general values (each element can be a number, text or true/false).
+  polars stores lists the way Arrow does: one flat array of all elements
+  plus the position where each row's list starts. So a list's length is
+  one subtraction in polars (0.2 ms for 100k rows) against a walk over
+  every row in pond-rs (3–5 ms), and Arrow in and out costs polars almost
+  nothing while pond-rs converts every row (and makes one text string per
+  text element).
+
 ## Numbers that differ from what was reported before
 
 - **pond-ts `shift` / `fill`** are much faster than in the step 3a table
