@@ -14,13 +14,13 @@ this page lists what is built so far.
 
 Built so far: moving averages and rolling statistics, the
 moving-average family (MACD and 14 more), bands (Bollinger, Keltner and
-8 more) and the first 11 momentum studies (RSI, stochastics, Williams %R
+8 more) and momentum (21 studies: RSI, stochastics, CCI, true strength index
 and more).
 
 The results match `@pond-ts/financial` exactly, number for number. That is
-checked against 2,274 cases that pond-ts itself writes out. They also match
+checked against 2,632 cases that pond-ts itself writes out. They also match
 the pandas and TA-Lib reference results pond-ts is tested against, to
-within 5e-10 (98 of those 220 cases cover studies built so far).
+within 5e-10 (117 of those 220 cases cover studies built so far).
 
 ## How every study works
 
@@ -287,21 +287,66 @@ gap.
 
 How fast and how far the price is moving.
 
-| Call                                                 | Writes                   | What it shows                                                                                           |
-| ---------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------- |
-| `rsi(Study)`                                         | `rsi`                    | Relative strength index, 0 to 100: recent rises against recent falls (pond-ts's period: 14)             |
-| `chande_momentum(Study)`                             | `cmo`                    | Chande's version, −100 to 100: rises minus falls over their total (period 14)                           |
-| `momentum(Study)`                                    | `momentum`               | The price minus the price `period` bars back (period 10)                                                |
-| `percent_change(PercentChange)`                      | `pctChange`              | The change from `periods` bars back, as a percent                                                       |
-| `stochastic(Stochastic)`                             | `stochK`, `stochD`       | Where the close sits in the recent high-low range, 0 to 100, smoothed (%K), and an average of that (%D) |
-| `stochastic_momentum_index(StochasticMomentumIndex)` | `smi`, `smiSignal`       | How far the close is from the middle of the recent range, smoothed twice                                |
-| `stochastic_rsi(StochasticRsi)`                      | `stochRsiK`, `stochRsiD` | The stochastic of the RSI instead of the price                                                          |
-| `williams_r(WilliamsR)`                              | `williamsR`              | Williams %R: where the close sits in the recent range, from −100 (the low) to 0 (the high)              |
-| `intraday_momentum_index(IntradayMomentumIndex)`     | `imi`                    | The RSI idea on each bar's body (close minus open)                                                      |
-| `awesome_oscillator(AwesomeOscillator)`              | `ao`                     | A 5-bar average of the median price minus a 34-bar one                                                  |
-| `ultimate_oscillator(UltimateOscillator)`            | `uo`                     | Buying pressure over three windows (7, 14 and 28 bars), weighted 4, 2 and 1                             |
+| Call                                                 | Writes                   | What it shows                                                                                                     |
+| ---------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `rsi(Study)`                                         | `rsi`                    | Relative strength index, 0 to 100: recent rises against recent falls (pond-ts's period: 14)                       |
+| `chande_momentum(Study)`                             | `cmo`                    | Chande's version, −100 to 100: rises minus falls over their total (period 14)                                     |
+| `momentum(Study)`                                    | `momentum`               | The price minus the price `period` bars back (period 10)                                                          |
+| `percent_change(PercentChange)`                      | `pctChange`              | The change from `periods` bars back, as a percent                                                                 |
+| `stochastic(Stochastic)`                             | `stochK`, `stochD`       | Where the close sits in the recent high-low range, 0 to 100, smoothed (%K), and an average of that (%D)           |
+| `stochastic_momentum_index(StochasticMomentumIndex)` | `smi`, `smiSignal`       | How far the close is from the middle of the recent range, smoothed twice                                          |
+| `stochastic_rsi(StochasticRsi)`                      | `stochRsiK`, `stochRsiD` | The stochastic of the RSI instead of the price                                                                    |
+| `williams_r(WilliamsR)`                              | `williamsR`              | Williams %R: where the close sits in the recent range, from −100 (the low) to 0 (the high)                        |
+| `intraday_momentum_index(IntradayMomentumIndex)`     | `imi`                    | The RSI idea on each bar's body (close minus open)                                                                |
+| `awesome_oscillator(AwesomeOscillator)`              | `ao`                     | A 5-bar average of the median price minus a 34-bar one                                                            |
+| `ultimate_oscillator(UltimateOscillator)`            | `uo`                     | Buying pressure over three windows (7, 14 and 28 bars), weighted 4, 2 and 1                                       |
+| `commodity_channel_index(CommodityChannelIndex)`     | `cci`                    | Commodity channel index: how far the typical price is from its 20-bar average, in units of its usual distance     |
+| `fisher_transform(FisherTransform)`                  | `fisher`, `fisherSignal` | The median price's place in its 10-bar range, stretched so turning points stand out; the signal is the bar before |
+| `psychological_line(Study)`                          | `psy`                    | The percent of the last `period` bars that closed higher than the bar before (period 12)                          |
+| `pretty_good_oscillator(PrettyGoodOscillator)`       | `pgo`                    | How far the close is from its 14-bar average, in average true ranges                                              |
+| `prime_number_oscillator(PrimeNumberOscillator)`     | `pno`                    | The price minus the nearest prime (the lower one on a tie)                                                        |
+| `qstick(Qstick)`                                     | `qstick`                 | An 8-bar average of each bar's body (close minus open)                                                            |
+| `relative_vigor_index(RelativeVigorIndex)`           | `rvi`, `rviSignal`       | Bar bodies against bar ranges over 10 bars: closing near the high means buyers are strong                         |
+| `center_of_gravity(Study)`                           | `cog`                    | Where the window's values balance, in bars (period 10)                                                            |
+| `chande_forecast_oscillator(Study)`                  | `cfo`                    | How far the price is from a straight-line fit's forecast, as a percent (period 14, at least 2)                    |
+| `true_strength_index(TrueStrengthIndex)`             | `tsi`, `tsiSignal`       | Each bar's change over its size, both smoothed twice, so −100 to 100                                              |
 
 `rsi` is 100 when nothing fell in the window, and a gap when nothing moved.
+
+The Fisher transform takes a logarithm. Rust's own `ln` gives a slightly
+different last digit from JavaScript's `Math.log` on about 2% of inputs,
+so pond-rs carries a copy of the routine V8 uses (fdlibm's), which matched
+Node on all 2 million values tried. That is what keeps `fisher_transform`
+exactly equal to pond-ts.
+
+```rust
+use pond_rs::financial::{Qstick, Study};
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let bars = TimeSeries::new(
+        "bars",
+        (0..4).map(|i| i * minute).collect(),
+        vec![
+            Column::required("open", vec![10.0, 10.0, 12.0, 12.0]),
+            Column::required("close", vec![11.0, 12.0, 11.0, 13.0]),
+        ],
+    )?;
+
+    let out = bars
+        .qstick(Qstick::default().period(2))?
+        .psychological_line(Study::period(2))?;
+
+    // Bodies are 1, 2, -1 and 1; qstick averages each pair.
+    let q: Vec<_> = out.column("qstick")?.numbers()?.iter().collect();
+    assert_eq!(q, [None, Some(1.5), Some(0.5), Some(0.0)]);
+    // Of the last two bars, one closed higher than the bar before.
+    let psy: Vec<_> = out.column("psy")?.numbers()?.iter().collect();
+    assert_eq!(psy, [None, None, Some(50.0), Some(50.0)]);
+    Ok(())
+}
+```
 
 ```rust
 use pond_rs::financial::{Study, WilliamsR};
@@ -529,6 +574,16 @@ At pond-ts's default settings, same machine and setup:
 | `intraday_momentum_index`    | 27.5              | 17.2             | 116.6   | 6.8×  |
 | `awesome_oscillator`         | 31.1              | 13.4             | 75.0    | 5.6×  |
 | `ultimate_oscillator`        | 73.4              | 32.5             | 262.9   | 8.1×  |
+| `commodity_channel_index`    | 41.2              | 21.8             | 136.0   | 6.2×  |
+| `fisher_transform`           | 40.2              | 39.0             | 129.5   | 3.3×  |
+| `psychological_line`         | 11.5              | 7.8              | 61.1    | 7.8×  |
+| `pretty_good_oscillator`     | 19.2              | 14.8             | 113.5   | 7.7×  |
+| `prime_number_oscillator`    | 35.3              | 11.5             | 63.8    | 5.5×  |
+| `qstick`                     | 11.0              | 6.7              | 52.2    | 7.8×  |
+| `relative_vigor_index`       | 31.0              | 32.1             | 161.9   | 5.0×  |
+| `center_of_gravity`          | 25.5              | 8.6              | 65.9    | 7.7×  |
+| `chande_forecast_oscillator` | 21.6              | 13.6             | 62.3    | 4.6×  |
+| `true_strength_index`        | 13.7              | 18.0             | 75.4    | 4.2×  |
 
 The machine is a shared virtual machine with four cores, and single runs
 move by up to a third, so read the ratios as rough. `atr_bands` gains the
@@ -553,6 +608,5 @@ them.
 
 ## Still to come
 
-The rest of momentum (CCI, Fisher transform, true strength index and
-others), then trend, volatility, volume and price studies, one family at a
-time; then trading calendars and session VWAP.
+Trend, volatility, volume and price studies, one family at a time; then
+trading calendars and session VWAP.
