@@ -2915,9 +2915,12 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     rows across cores (each row's maximum stands alone; a unit test checks
     stretches of 1, 7, 64 and 1000 rows give the bits of one sweep).
     SuperTrend, the SAR and the ATR stop are one sequential pass each
-    (each row needs the last). Checksums at 1M rows match pond-ts for all
-    eight, which also covers the split code (the parity inputs are
-    shorter than one stretch).
+    (each row needs the last). At 1M rows all eight match pond-ts on
+    every bit of every column, on 4 cores and on 1, which covers the
+    split code (the parity inputs are shorter than one stretch): both
+    bench scripts print a hash of every output bit under `POND_BITS=1`
+    (added after the review on #819 rated the split code as checked by
+    reading only).
   - Medians of 7, 1M bars at pond-ts's defaults, ms (pond-ts run alone
     per study):
 

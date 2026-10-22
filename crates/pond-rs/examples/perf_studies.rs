@@ -42,6 +42,23 @@ fn checksum(s: &TimeSeries, column: &str) -> (usize, f64) {
     (present.len(), present.iter().sum())
 }
 
+/// FNV-1a over every row of every number column: the value's bits, or
+/// one fixed value for a gap.
+fn bits_hash(s: &TimeSeries) -> u64 {
+    const GAP: u64 = 0x7ff8_dead_0000_0000;
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for column in s.columns() {
+        let Ok(numbers) = column.numbers() else {
+            continue;
+        };
+        for i in 0..numbers.len() {
+            h ^= numbers.get(i).map_or(GAP, f64::to_bits);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    h
+}
+
 fn price(i: usize) -> f64 {
     100.0 + ((i * 7919) % 10_007) as f64 / 800.0
 }
@@ -493,6 +510,18 @@ fn main() -> pond_rs::Result<()> {
         ),
     ];
     cases.extend(trend);
+    // POND_BITS=1: instead of timing, print a hash of every bit of every
+    // number column in the result (a gap hashes as one fixed value), the
+    // same hash bench/studies_pond_ts.mjs prints under the same variable.
+    if std::env::var_os("POND_BITS").is_some() {
+        for (name, _, f) in &cases {
+            if only.as_deref().is_some_and(|o| !name.starts_with(o)) {
+                continue;
+            }
+            println!("{name} {:x}", bits_hash(&f()));
+        }
+        return Ok(());
+    }
     println!("| Case | pond-rs | checksum |");
     println!("| --- | --- | --- |");
     for (name, column, f) in &cases {

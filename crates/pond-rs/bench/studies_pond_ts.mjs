@@ -116,6 +116,37 @@ const cases = [
 ];
 
 const only = process.argv[2];
+// POND_BITS=1: instead of timing, print a hash of every bit of every
+// number column in the result (a gap hashes as one fixed value), to check
+// the 1M-row outputs match pond-rs bit for bit (pond-rs prints the same
+// hash under the same variable).
+if (process.env.POND_BITS) {
+  const f64 = new Float64Array(1);
+  const u64 = new BigUint64Array(f64.buffer);
+  const mask = (1n << 64n) - 1n;
+  const GAP = 0x7ff8dead00000000n;
+  for (const [name, , run] of cases) {
+    if (only && !name.startsWith(only)) continue;
+    const result = run();
+    let h = 0xcbf29ce484222325n;
+    for (const def of result.schema) {
+      if (def.kind !== 'number') continue;
+      const col = result.column(def.name);
+      for (let i = 0; i < result.length; i += 1) {
+        const v = col.at(i);
+        if (v === undefined) {
+          h ^= GAP;
+        } else {
+          f64[0] = v;
+          h ^= u64[0];
+        }
+        h = (h * 0x100000001b3n) & mask;
+      }
+    }
+    console.log(`${name} ${h.toString(16)}`);
+  }
+  process.exit(0);
+}
 console.log('| Case | pond-ts | checksum |');
 console.log('| --- | --- | --- |');
 for (const [name, column, run] of cases) {
