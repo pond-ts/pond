@@ -1,6 +1,7 @@
-//! Timing for the R2 step 1 financial studies (`sma`, `ema`,
+//! Timing for the R2 financial studies: step 1 (`sma`, `ema`,
 //! `moving_average` of every type, `rolling_stdev` / `min` / `max` /
-//! `percentile`, `z_score`). Same data as `bench/studies_pond_ts.mjs` for
+//! `percentile`, `z_score`) and step 2a, the moving-average family (at
+//! pond-ts's defaults). Same data as `bench/studies_pond_ts.mjs` for
 //! the `@pond-ts/financial` side; both print a checksum per case (present
 //! values in the output and their sum) so the answers can be compared.
 //!
@@ -10,13 +11,15 @@
 //! exponential and z-score kernels read each row a constant number of
 //! times, plus a rebuild of P rows every P rows (O(N)). Min / max keep a
 //! queue of candidates (O(N)); the percentile goes through `rolling_rows`,
-//! which keeps the window sorted (O(N·P) worst case).
+//! which keeps the window sorted (O(N·P) worst case). Every step 2a study
+//! is a fixed number of those kernels plus O(N) arithmetic (guppy 12,
+//! rainbow 10, Special K 12 averages), so O(N).
 //! Mean / spread, WMA and min / max split rows across cores (same bits);
 //! `RAYON_NUM_THREADS=1` times them on one.
 
 use std::time::Instant;
 
-use pond_rs::financial::{MaType, Study};
+use pond_rs::financial::*;
 use pond_rs::{Column, TimeSeries};
 
 fn median_ms(mut f: impl FnMut() -> TimeSeries) -> (f64, TimeSeries) {
@@ -118,6 +121,105 @@ fn main() -> pond_rs::Result<()> {
             Box::new(move || dense.moving_average(kind, p(20)).unwrap()),
         ));
     }
+    // R2 step 2a: the moving-average family, at pond-ts's defaults.
+    let family: Vec<Case> = vec![
+        (
+            "macd".into(),
+            "macdSignal",
+            Box::new(|| dense.macd(Macd::default()).unwrap()),
+        ),
+        (
+            "priceOsc".into(),
+            "priceOsc",
+            Box::new(|| dense.price_oscillator(PriceOscillator::default()).unwrap()),
+        ),
+        (
+            "maCross".into(),
+            "maCross",
+            Box::new(|| {
+                dense
+                    .moving_average_cross(MovingAverageCross::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "maDev 20".into(),
+            "maDev",
+            Box::new(|| dense.moving_average_deviation(MaType::Sma, p(20)).unwrap()),
+        ),
+        (
+            "disparity 14".into(),
+            "disparity",
+            Box::new(|| dense.disparity_index(MaType::Sma, p(14)).unwrap()),
+        ),
+        (
+            "dpo 20".into(),
+            "dpo",
+            Box::new(|| {
+                dense
+                    .detrended_price_oscillator(MaType::Sma, p(20))
+                    .unwrap()
+            }),
+        ),
+        (
+            "guppy".into(),
+            "gmmaL60",
+            Box::new(|| dense.guppy(Guppy::default()).unwrap()),
+        ),
+        (
+            "rainbow".into(),
+            "rainbow10",
+            Box::new(|| dense.rainbow(Rainbow::default()).unwrap()),
+        ),
+        (
+            "rbo".into(),
+            "rbo",
+            Box::new(|| {
+                dense
+                    .rainbow_oscillator(RainbowOscillator::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "trix".into(),
+            "trixSignal",
+            Box::new(|| dense.trix(Trix::default()).unwrap()),
+        ),
+        (
+            "stc".into(),
+            "stc",
+            Box::new(|| {
+                dense
+                    .schaff_trend_cycle(SchaffTrendCycle::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "coppock".into(),
+            "coppock",
+            Box::new(|| dense.coppock(Coppock::default()).unwrap()),
+        ),
+        (
+            "kst".into(),
+            "kstSignal",
+            Box::new(|| dense.kst(Kst::default()).unwrap()),
+        ),
+        (
+            "specialK".into(),
+            "specialK",
+            Box::new(|| dense.special_k(SpecialK::default()).unwrap()),
+        ),
+        (
+            "pmo".into(),
+            "pmoSignal",
+            Box::new(|| {
+                dense
+                    .price_momentum_oscillator(PriceMomentumOscillator::default())
+                    .unwrap()
+            }),
+        ),
+    ];
+    cases.extend(family);
     println!("| Case | pond-rs | checksum |");
     println!("| --- | --- | --- |");
     for (name, column, f) in &cases {

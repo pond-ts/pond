@@ -6,29 +6,16 @@
 
 mod common;
 
+use common::studies::{STUDIES, call_study};
 use common::{
     STUDY_TOLERANCE, StudyCase, StudyFixture, check_coverage, compare_column, load_study_fixture,
     report,
 };
-use pond_rs::financial::{MaType, Study};
 use pond_rs::{Column, TimeSeries};
 use std::collections::BTreeMap;
 
 /// Studies with an arm in [`run`]. Every oracle case for a listed study must
 /// run and match; a study that runs without being listed is also an error.
-const IMPLEMENTED_STUDIES: &[&str] = &[
-    "sma",
-    "ema",
-    "movingAverage",
-    "rollingStdev",
-    "rollingMin",
-    "rollingMax",
-    "rollingPercentile",
-    "zScore",
-];
-
-/// The close-only series the oracle computed over (row index as the time),
-/// as `study-oracle.test.ts` builds it.
 fn closes(fixture: &StudyFixture, case: &StudyCase) -> TimeSeries {
     let closes = match case.input.as_deref() {
         None => &fixture.input.closes,
@@ -46,25 +33,12 @@ fn closes(fixture: &StudyFixture, case: &StudyCase) -> TimeSeries {
 
 /// Run one case through pond-rs. `None` means the study is not implemented yet.
 fn run(fixture: &StudyFixture, case: &StudyCase) -> Option<BTreeMap<String, Vec<Option<f64>>>> {
-    let p = &case.params;
-    let period = || Study::period(p["period"].as_u64().expect("period") as usize);
-    let out = match case.study.as_str() {
-        "sma" => closes(fixture, case).sma(period()),
-        "ema" => closes(fixture, case).ema(period()),
-        "movingAverage" => {
-            let kind = MaType::parse(p["type"].as_str().expect("type")).expect("known type");
-            closes(fixture, case).moving_average(kind, period())
-        }
-        "rollingStdev" => closes(fixture, case).rolling_stdev(period()),
-        "rollingMin" => closes(fixture, case).rolling_min(period()),
-        "rollingMax" => closes(fixture, case).rolling_max(period()),
-        "rollingPercentile" => {
-            closes(fixture, case).rolling_percentile(p["q"].as_f64().expect("q"), period())
-        }
-        "zScore" => closes(fixture, case).z_score(period()),
-        _ => return None,
+    if !STUDIES.contains(&case.study.as_str()) {
+        return None;
     }
-    .unwrap_or_else(|e| panic!("{}: {e}", case.study));
+    let out = call_study(&closes(fixture, case), &case.study, &case.params)
+        .expect("oracle calls are expressible")
+        .unwrap_or_else(|e| panic!("{}: {e}", case.study));
     Some(
         case.expected
             .keys()
@@ -118,7 +92,7 @@ fn implemented_studies_match_oracle() {
         check_coverage(
             &label,
             &case.study,
-            IMPLEMENTED_STUDIES,
+            STUDIES,
             actual.is_some(),
             &mut failures,
         );

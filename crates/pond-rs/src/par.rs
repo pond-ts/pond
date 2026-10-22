@@ -29,6 +29,25 @@ where
     }
 }
 
+/// `(a(), b())`, the two on separate cores when the `parallel` feature is
+/// on (and not on wasm32).
+pub(crate) fn join<A, B, RA, RB>(a: A, b: B) -> (RA, RB)
+where
+    A: FnOnce() -> RA + Send,
+    B: FnOnce() -> RB + Send,
+    RA: Send,
+    RB: Send,
+{
+    #[cfg(all(feature = "parallel", not(target_arch = "wasm32")))]
+    {
+        rayon::join(a, b)
+    }
+    #[cfg(not(all(feature = "parallel", not(target_arch = "wasm32"))))]
+    {
+        (a(), b())
+    }
+}
+
 /// Fill `a`, and `b` when it is not empty (then the same length), in
 /// stretches of `chunk` rows: `f(first_row, a_stretch, b_stretch)`, on
 /// several cores when the `parallel` feature is on (and not on wasm32).

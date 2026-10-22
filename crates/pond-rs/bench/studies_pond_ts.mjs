@@ -39,6 +39,21 @@ const cases = [
     'ma',
     () => f.movingAverage(dense, { period: 20, type }),
   ]),
+  ['macd', 'macdSignal', () => f.macd(dense)],
+  ['priceOsc', 'priceOsc', () => f.priceOscillator(dense)],
+  ['maCross', 'maCross', () => f.movingAverageCross(dense)],
+  ['maDev 20', 'maDev', () => f.movingAverageDeviation(dense, { period: 20 })],
+  ['disparity 14', 'disparity', () => f.disparityIndex(dense, { period: 14 })],
+  ['dpo 20', 'dpo', () => f.detrendedPriceOscillator(dense, { period: 20 })],
+  ['guppy', 'gmmaL60', () => f.guppy(dense)],
+  ['rainbow', 'rainbow10', () => f.rainbow(dense)],
+  ['rbo', 'rbo', () => f.rainbowOscillator(dense)],
+  ['trix', 'trixSignal', () => f.trix(dense)],
+  ['stc', 'stc', () => f.schaffTrendCycle(dense)],
+  ['coppock', 'coppock', () => f.coppock(dense)],
+  ['kst', 'kstSignal', () => f.kst(dense)],
+  ['specialK', 'specialK', () => f.specialK(dense)],
+  ['pmo', 'pmoSignal', () => f.priceMomentumOscillator(dense)],
 ];
 
 const only = process.argv[2];

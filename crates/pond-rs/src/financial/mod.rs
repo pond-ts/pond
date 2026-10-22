@@ -1,13 +1,19 @@
 //! Technical-analysis studies for price bars (pond-ts `@pond-ts/financial`):
-//! moving averages, rolling statistics and the z-score so far, each a method
-//! on [`TimeSeries`] that adds one number column and keeps every row.
+//! moving averages and the studies built on them (MACD, price oscillator,
+//! Guppy, rainbow, TRIX, Schaff, Coppock, KST, …), rolling statistics and
+//! the z-score so far, each a method on [`TimeSeries`] that adds its
+//! number columns and keeps every row.
 //!
 //! Every study follows the same rules, as in pond-ts:
 //!
 //! - It reads one number column, `close` unless [`Study::column`] names
-//!   another, and writes a new optional column named after the study
-//!   (`sma`, `ema`, …) unless [`Study::output`] names it. The output must
-//!   not be the name of a column the series already has.
+//!   another, and writes new optional columns named after the study
+//!   (`sma`, `ema`, …) unless [`Study::output`] names it. A study with
+//!   several settings takes an options struct named after it instead
+//!   ([`Macd`], [`Trix`], …): `Default` is pond-ts's defaults, with a
+//!   setter per setting, `column`, and `output` (or `prefix`, for a study
+//!   that writes several columns: `macdLine`, `macdSignal`, `macdHist`).
+//!   No output may take the name of a column the series already has.
 //! - Periods count rows (bars), not time: a 20-bar average spans a weekend
 //!   gap as easily as a minute.
 //! - The first rows, before a full window, get gaps; the row count never
@@ -31,7 +37,13 @@
 //! # Ok::<(), pond_rs::PondError>(())
 //! ```
 
+mod averages;
 mod kernels;
+
+pub use averages::{
+    Coppock, Guppy, Kst, Macd, MovingAverageCross, OscillatorMode, PriceMomentumOscillator,
+    PriceOscillator, Rainbow, RainbowOscillator, SchaffTrendCycle, SpecialK, Trix,
+};
 
 use std::borrow::Cow;
 
@@ -308,8 +320,8 @@ impl TimeSeries {
         self.study_output(call, output, values)
     }
 
-    /// The checks every study runs, and its source column's numbers with
-    /// every gap as `NaN` (borrowed when they already are).
+    /// The checks every single-period study runs, and its source column's
+    /// numbers with every gap as `NaN`.
     fn study_input(
         &self,
         call: &'static str,
@@ -323,26 +335,42 @@ impl TimeSeries {
             });
         }
         let output = study.output_or(default).to_string();
-        if output == self.key_name() || self.columns().iter().any(|c| c.name() == output) {
-            return Err(PondError::InvalidData {
-                call,
-                message: format!(
-                    "study output column '{output}' collides with an existing column; pass a different 'output'"
-                ),
-            });
+        self.free_names(call, &[&output])?;
+        Ok((self.study_source(call, study.source())?, output))
+    }
+
+    /// Refuses a study output named like a column the series already has.
+    fn free_names(&self, call: &'static str, names: &[impl AsRef<str>]) -> Result<()> {
+        for name in names {
+            let name = name.as_ref();
+            if name == self.key_name() || self.columns().iter().any(|c| c.name() == name) {
+                return Err(PondError::InvalidData {
+                    call,
+                    message: format!(
+                        "study output column '{name}' collides with an existing column; pass a different 'output'"
+                    ),
+                });
+            }
         }
-        let source = &self.columns()[self.column_index(call, study.source())?];
+        Ok(())
+    }
+
+    /// A study's source column's numbers with every gap as `NaN` (borrowed
+    /// when they already are).
+    fn study_source(&self, call: &'static str, column: &str) -> Result<Cow<'_, [f64]>> {
+        let source = &self.columns()[self.column_index(call, column)?];
         match source.data() {
             ColumnData::Number(v) => {
                 // Gaps must read as NaN; copy only if one is stored as an
                 // infinity.
                 let values = v.values();
-                let values = if v.all_finite() || !values.iter().any(|x| x.is_infinite()) {
-                    Cow::Borrowed(values)
-                } else {
-                    Cow::Owned(kernels::gaps_as_nan(values))
-                };
-                Ok((values, output))
+                Ok(
+                    if v.all_finite() || !values.iter().any(|x| x.is_infinite()) {
+                        Cow::Borrowed(values)
+                    } else {
+                        Cow::Owned(kernels::gaps_as_nan(values))
+                    },
+                )
             }
             other => Err(PondError::WrongKind {
                 call,
@@ -359,8 +387,26 @@ impl TimeSeries {
         output: String,
         values: Vec<f64>,
     ) -> Result<TimeSeries> {
-        self.with_column(Column::optional(output, values))
-            .map_err(|e| e.renamed(call))
+        self.study_outputs(call, [(output, values)])
+    }
+
+    /// Adds the study's columns, in order, as optional number columns.
+    fn study_outputs(
+        &self,
+        call: &'static str,
+        columns: impl IntoIterator<Item = (String, Vec<f64>)>,
+    ) -> Result<TimeSeries> {
+        let mut columns = columns.into_iter();
+        let (name, values) = columns.next().expect("a study writes a column");
+        let mut out = self
+            .with_column(Column::optional(name, values))
+            .map_err(|e| e.renamed(call))?;
+        for (name, values) in columns {
+            out = out
+                .with_column(Column::optional(name, values))
+                .map_err(|e| e.renamed(call))?;
+        }
+        Ok(out)
     }
 }
 
@@ -419,10 +465,52 @@ mod tests {
             for kind in MaType::ALL {
                 results.push(series.moving_average(kind, study()));
             }
+            for kind in MaType::ALL {
+                results.push(series.moving_average_deviation(kind, study()));
+                results.push(series.disparity_index(kind, study()));
+                results.push(series.detrended_price_oscillator(kind, study()));
+                let (fast, slow) = (period - 1, period);
+                results.push(
+                    series.price_oscillator(
+                        PriceOscillator::default().fast(fast).slow(slow).ma(kind),
+                    ),
+                );
+                results.push(series.moving_average_cross(
+                    MovingAverageCross::default().fast(fast).slow(slow).ma(kind),
+                ));
+                results.push(series.rainbow(Rainbow::default().period(period).ma(kind)));
+                results.push(
+                    series.rainbow_oscillator(
+                        RainbowOscillator::default()
+                            .period(period)
+                            .lookback(period)
+                            .ma(kind),
+                    ),
+                );
+            }
+            let (fast, slow) = (period - 1, period);
+            results.push(series.macd(Macd::default().fast(fast).slow(slow).signal(period)));
+            results.push(series.trix(Trix::default().period(period).signal(period)));
+            results.push(
+                series.schaff_trend_cycle(
+                    SchaffTrendCycle::default()
+                        .fast(fast)
+                        .slow(slow)
+                        .cycle(period),
+                ),
+            );
+            results.push(series.coppock(Coppock::default().long(period).short(period).wma(period)));
             for result in results {
                 let out = result.unwrap();
-                let values = out.column("out").unwrap().numbers().unwrap();
-                assert!((0..10).all(|i| values.get(i).is_none()), "period {period}");
+                // Every column the study added is all gaps.
+                for column in &out.columns()[1..] {
+                    let values = column.numbers().unwrap();
+                    assert!(
+                        (0..10).all(|i| values.get(i).is_none()),
+                        "period {period}: {}",
+                        column.name()
+                    );
+                }
             }
         }
     }

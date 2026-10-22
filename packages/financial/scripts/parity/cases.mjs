@@ -90,6 +90,25 @@ const FLAT_SCHEMA = [
   { name: 'open', kind: 'number' },
 ];
 
+// A series that already has columns a study writes (or, for macd, its
+// scratch column), so the collision errors are recorded.
+const NAMED_ROWS = Array.from({ length: 12 }, (_, i) => [
+  i * 1000,
+  10 + i,
+  i,
+  i,
+  i,
+  i,
+]);
+const NAMED_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'close', kind: 'number' },
+  { name: 'macdHist', kind: 'number' },
+  { name: '__macdLine__', kind: 'number' },
+  { name: 'gmmaL60', kind: 'number' },
+  { name: 'rainbow10', kind: 'number' },
+];
+
 const TINY_ROWS = [
   [0, 3],
   [1000, 1],
@@ -126,6 +145,7 @@ function inputs(oracle) {
     large: { name: 'large', schema: LARGE_SCHEMA, rows: LARGE_ROWS },
     flat: { name: 'flat', schema: FLAT_SCHEMA, rows: FLAT_ROWS },
     tiny: { name: 'tiny', schema: CLOSE_SCHEMA, rows: TINY_ROWS },
+    named: { name: 'named', schema: NAMED_SCHEMA, rows: NAMED_ROWS },
     empty: { name: 'empty', schema: CLOSE_SCHEMA, rows: [] },
   };
 }
@@ -223,7 +243,176 @@ function cases() {
   add('movingAverage', 'bars', { period: 0, type: 'nope' });
   for (const q of [-1, 101]) add('rollingPercentile', 'bars', { period: 5, q });
 
+  averageFamilyCases(add);
   return out;
+}
+
+// R2 step 2a: the moving-average family. Every study at its defaults on
+// every input, then small settings (so 80 bars reach a value), every
+// moving-average type where the study takes one, other columns, and every
+// error.
+const AVERAGE_FAMILY = [
+  'macd',
+  'priceOscillator',
+  'movingAverageCross',
+  'movingAverageDeviation',
+  'disparityIndex',
+  'detrendedPriceOscillator',
+  'guppy',
+  'rainbow',
+  'rainbowOscillator',
+  'trix',
+  'schaffTrendCycle',
+  'coppock',
+  'kst',
+  'specialK',
+  'priceMomentumOscillator',
+];
+
+// Small settings per study, and the option that names its moving-average
+// type (if any).
+const AVERAGE_SMALL = {
+  macd: [
+    { fastPeriod: 3, slowPeriod: 7, signalPeriod: 4 },
+    { fastPeriod: 1, slowPeriod: 2, signalPeriod: 1 },
+  ],
+  priceOscillator: [
+    { fastPeriod: 3, slowPeriod: 7 },
+    { fastPeriod: 3, slowPeriod: 7, mode: 'absolute' },
+    { fastPeriod: 1, slowPeriod: 2, mode: 'percent' },
+  ],
+  movingAverageCross: [
+    { fastPeriod: 3, slowPeriod: 7 },
+    { fastPeriod: 1, slowPeriod: 2 },
+  ],
+  movingAverageDeviation: [{ period: 1 }, { period: 2 }, { period: 5 }],
+  disparityIndex: [{ period: 1 }, { period: 2 }, { period: 5 }],
+  detrendedPriceOscillator: [{ period: 1 }, { period: 2 }, { period: 5 }],
+  guppy: [{}],
+  rainbow: [{ period: 2 }, { period: 1 }, { period: 3 }],
+  rainbowOscillator: [
+    { period: 2, lookback: 3 },
+    { period: 3, lookback: 25 },
+    { period: 1, lookback: 1 },
+  ],
+  trix: [
+    { period: 5, signalPeriod: 3 },
+    { period: 1, signalPeriod: 1 },
+  ],
+  schaffTrendCycle: [
+    { fastPeriod: 5, slowPeriod: 12, cyclePeriod: 4 },
+    { fastPeriod: 2, slowPeriod: 3, cyclePeriod: 2 },
+  ],
+  coppock: [
+    { longPeriod: 6, shortPeriod: 3, wmaPeriod: 4 },
+    { longPeriod: 1, shortPeriod: 1, wmaPeriod: 1 },
+  ],
+  kst: [{ signalPeriod: 3 }, { signalPeriod: 1 }],
+  specialK: [{}],
+  priceMomentumOscillator: [{}],
+};
+const AVERAGE_TYPE_OPTION = {
+  priceOscillator: 'maType',
+  movingAverageCross: 'maType',
+  movingAverageDeviation: 'maType',
+  disparityIndex: 'maType',
+  detrendedPriceOscillator: 'maType',
+  guppy: 'type',
+  rainbow: 'type',
+  rainbowOscillator: 'type',
+};
+// The option naming what a study writes, and the period options it checks.
+const AVERAGE_NAMING = {
+  macd: 'prefix',
+  guppy: 'prefix',
+  rainbow: 'prefix',
+  rainbowOscillator: 'prefix',
+  trix: 'prefix',
+  kst: 'prefix',
+  priceMomentumOscillator: 'prefix',
+};
+const AVERAGE_PERIODS = {
+  macd: ['fastPeriod', 'slowPeriod', 'signalPeriod'],
+  priceOscillator: ['fastPeriod', 'slowPeriod'],
+  movingAverageCross: ['fastPeriod', 'slowPeriod'],
+  movingAverageDeviation: ['period'],
+  disparityIndex: ['period'],
+  detrendedPriceOscillator: ['period'],
+  guppy: [],
+  rainbow: ['period'],
+  rainbowOscillator: ['period', 'lookback'],
+  trix: ['period', 'signalPeriod'],
+  schaffTrendCycle: ['fastPeriod', 'slowPeriod', 'cyclePeriod'],
+  coppock: ['longPeriod', 'shortPeriod', 'wmaPeriod'],
+  kst: ['signalPeriod'],
+  specialK: [],
+  priceMomentumOscillator: [],
+};
+
+function averageFamilyCases(add) {
+  const inputs = ['bars', 'long', 'gappy', 'large', 'flat', 'tiny', 'empty'];
+  for (const study of AVERAGE_FAMILY) {
+    for (const input of inputs) add(study, input, {});
+    const typeOption = AVERAGE_TYPE_OPTION[study];
+    for (const [index, small] of AVERAGE_SMALL[study].entries()) {
+      for (const input of ['bars', 'gappy', 'large', 'flat']) {
+        add(study, input, small);
+      }
+      // Every moving-average type, on clean and gappy input (for the
+      // ten- and twelve-column stacks, at the first setting only).
+      const stack = study === 'guppy' || study === 'rainbow';
+      if (typeOption && (index === 0 || !stack)) {
+        for (const type of MA_TYPES) {
+          add(study, 'bars', { ...small, [typeOption]: type });
+          add(study, 'gappy', { ...small, [typeOption]: type });
+        }
+      }
+    }
+    const small = AVERAGE_SMALL[study][0];
+    // Other source columns: open, a gappy volume, the signed zeros of
+    // flat.open (zero denominators), and the ones pond-rs refuses.
+    add(study, 'bars', { ...small, column: 'open' });
+    add(study, 'gappy', { ...small, column: 'volume' });
+    add(study, 'flat', { ...small, column: 'open' });
+    for (const column of ['name', 'flag', 'nope']) {
+      add(study, 'gappy', { ...small, column });
+    }
+    // Custom names, and names that collide.
+    const naming = AVERAGE_NAMING[study] ?? 'output';
+    add(study, 'bars', { ...small, [naming]: 'x' });
+    add(study, 'bars', { ...small, [naming]: 'close' });
+    add(study, 'bars', { ...small, [naming]: 'time' });
+    add(study, 'named', small);
+    // Periods that are not positive whole numbers.
+    for (const option of AVERAGE_PERIODS[study]) {
+      for (const bad of [0, -1, 1.5]) {
+        add(study, 'bars', { ...small, [option]: bad });
+      }
+    }
+    if (typeOption) add(study, 'bars', { ...small, [typeOption]: 'nope' });
+  }
+  // fast must be shorter than slow.
+  for (const study of [
+    'macd',
+    'priceOscillator',
+    'movingAverageCross',
+    'schaffTrendCycle',
+  ]) {
+    add(study, 'bars', { fastPeriod: 7, slowPeriod: 7 });
+    add(study, 'bars', { fastPeriod: 9, slowPeriod: 7 });
+  }
+  add('priceOscillator', 'bars', { mode: 'nope' });
+  // Only macd's scratch column collides.
+  add('macd', 'named', { fastPeriod: 3, slowPeriod: 7, prefix: 'z' });
+  // Longer settings on the 900 closes.
+  add('macd', 'long', { fastPeriod: 50, slowPeriod: 200, signalPeriod: 30 });
+  add('schaffTrendCycle', 'long', {
+    fastPeriod: 10,
+    slowPeriod: 40,
+    cyclePeriod: 20,
+  });
+  add('detrendedPriceOscillator', 'long', { period: 101 });
+  add('rainbowOscillator', 'long', { period: 5, lookback: 60 });
 }
 
 function encodeCell(cell) {
