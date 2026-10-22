@@ -417,6 +417,7 @@ function cases() {
   momentumFamilyCases(add);
   trendFamilyCases(add);
   trendFamilyCases2(add);
+  volatilityFamilyCases(add);
   return out;
 }
 
@@ -1193,4 +1194,107 @@ export function buildFixture(pond, financial, oracle) {
       ...run(pond, financial, series[c.input], c),
     })),
   };
+}
+
+function volatilityFamilyCases(add) {
+  const bar = ['high', 'low', 'close'];
+  familyCases(add, {
+    small: {
+      atr: [{ period: 3 }, { period: 1 }],
+      historicalVolatility: [
+        { period: 3, annualize: 1 },
+        { period: 1, annualize: 0.5 },
+      ],
+      chaikinVolatility: [
+        { period: 3, rocPeriod: 2 },
+        { period: 1, rocPeriod: 1 },
+      ],
+      massIndex: [
+        { emaPeriod: 3, sumPeriod: 4 },
+        { emaPeriod: 1, sumPeriod: 1 },
+      ],
+      choppinessIndex: [{ period: 3 }, { period: 2 }],
+      gopalakrishnanRangeIndex: [{ period: 3 }, { period: 2 }],
+      ulcerIndex: [{ period: 3 }, { period: 1 }],
+      relativeVolatilityIndex: [
+        { period: 3, stdevPeriod: 4 },
+        { period: 1, stdevPeriod: 1 },
+      ],
+    },
+    reads: {
+      atr: bar,
+      historicalVolatility: ['column'],
+      chaikinVolatility: ['high', 'low'],
+      massIndex: ['high', 'low'],
+      choppinessIndex: bar,
+      gopalakrishnanRangeIndex: ['high', 'low'],
+      ulcerIndex: ['column'],
+      relativeVolatilityIndex: ['column'],
+    },
+    typeOption: {},
+    naming: {},
+    periods: {
+      atr: ['period'],
+      historicalVolatility: ['period'],
+      chaikinVolatility: ['period', 'rocPeriod'],
+      massIndex: ['emaPeriod', 'sumPeriod'],
+      choppinessIndex: ['period'],
+      gopalakrishnanRangeIndex: ['period'],
+      ulcerIndex: ['period'],
+      relativeVolatilityIndex: ['period', 'stdevPeriod'],
+    },
+    numbers: { historicalVolatility: ['annualize'] },
+  });
+  // Period 1 where a logarithm of it divides; prices at or below zero
+  // (zeros, a ramp from 0, the edge bars' -1.7e308) and leading gaps for
+  // the log returns; flat bars, where ranges, EMAs and spans are 0; a
+  // window of only new highs (the ulcer index's exact 0) and of a peak of
+  // 0; unchanged closes (the relative volatility index counts them as
+  // down); bars flat while the close moves (the choppiness span is 0 but
+  // its true-range sum is not); and the edge bars.
+  add('choppinessIndex', 'bars', { period: 1 });
+  add('gopalakrishnanRangeIndex', 'bars', { period: 1 });
+  add('historicalVolatility', 'flat', { column: 'open' });
+  add('historicalVolatility', 'flat', { column: 'ramp', period: 5 });
+  add('historicalVolatility', 'lead', { period: 5 });
+  add('historicalVolatility', 'long', {});
+  add('historicalVolatility', 'tiny', { period: 1 });
+  for (const study of ['chaikinVolatility', 'massIndex']) {
+    add(study, 'flat', { high: 'close', low: 'close', period: 3 });
+    add(study, 'lead', {});
+    add(study, 'long', { high: 'close', low: 'open' });
+  }
+  add('choppinessIndex', 'flat', {
+    high: 'close',
+    low: 'close',
+    close: 'ramp',
+    period: 4,
+  });
+  add('choppinessIndex', 'lead', {});
+  add('gopalakrishnanRangeIndex', 'flat', { high: 'close', low: 'close' });
+  add('gopalakrishnanRangeIndex', 'lead', {});
+  add('ulcerIndex', 'flat', { column: 'ramp', period: 4 });
+  add('ulcerIndex', 'flat', { column: 'open', period: 4 });
+  add('ulcerIndex', 'named', { period: 3 });
+  add('ulcerIndex', 'long', {});
+  add('relativeVolatilityIndex', 'flat', { period: 3, stdevPeriod: 3 });
+  add('relativeVolatilityIndex', 'long', {});
+  add('atr', 'lead', {});
+  for (const study of [
+    'atr',
+    'historicalVolatility',
+    'chaikinVolatility',
+    'massIndex',
+    'choppinessIndex',
+    'gopalakrishnanRangeIndex',
+    'ulcerIndex',
+    'relativeVolatilityIndex',
+  ]) {
+    add(study, 'edge', {});
+    add(
+      study,
+      'edge',
+      study === 'massIndex' ? { emaPeriod: 2, sumPeriod: 3 } : { period: 3 },
+    );
+  }
 }

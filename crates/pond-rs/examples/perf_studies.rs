@@ -560,6 +560,59 @@ fn main() -> pond_rs::Result<()> {
         ),
     ];
     cases.extend(trend2);
+    // R2 step 2e part 1.
+    let volatility: Vec<Case> = vec![
+        (
+            "v-atr".into(),
+            "atr",
+            Box::new(|| bars.atr(Atr::default()).unwrap()),
+        ),
+        (
+            "v-hv".into(),
+            "hv",
+            Box::new(|| {
+                bars.historical_volatility(HistoricalVolatility::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "v-chaikin".into(),
+            "chaikinVol",
+            Box::new(|| bars.chaikin_volatility(ChaikinVolatility::default()).unwrap()),
+        ),
+        (
+            "v-mass".into(),
+            "mass",
+            Box::new(|| bars.mass_index(MassIndex::default()).unwrap()),
+        ),
+        (
+            "v-chop".into(),
+            "chop",
+            Box::new(|| bars.choppiness_index(ChoppinessIndex::default()).unwrap()),
+        ),
+        (
+            "v-gapo".into(),
+            "gapo",
+            Box::new(|| {
+                bars.gopalakrishnan_range_index(GopalakrishnanRangeIndex::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "v-ulcer".into(),
+            "ulcer",
+            Box::new(|| bars.ulcer_index(Study::period(14)).unwrap()),
+        ),
+        (
+            "v-relvol".into(),
+            "relVol",
+            Box::new(|| {
+                bars.relative_volatility_index(RelativeVolatilityIndex::default())
+                    .unwrap()
+            }),
+        ),
+    ];
+    cases.extend(volatility);
     // POND_BITS=1: instead of timing, print a hash of every bit of every
     // number column in the result (a gap hashes as one fixed value), the
     // same hash bench/studies_pond_ts.mjs prints under the same variable.

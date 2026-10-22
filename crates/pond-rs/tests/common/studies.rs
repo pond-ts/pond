@@ -77,6 +77,14 @@ pub const STUDIES: &[&str] = &[
     "ravi",
     "swingIndex",
     "accumulativeSwingIndex",
+    "atr",
+    "historicalVolatility",
+    "chaikinVolatility",
+    "massIndex",
+    "choppinessIndex",
+    "gopalakrishnanRangeIndex",
+    "ulcerIndex",
+    "relativeVolatilityIndex",
 ];
 
 /// The columns `study` reads with these options: `column` (default
@@ -115,7 +123,9 @@ pub fn sources(study: &str, options: &Map<String, Value>) -> Vec<String> {
         | "superTrend"
         | "atrTrailingStop"
         | "ichimoku"
-        | "elderRay" => vec![
+        | "elderRay"
+        | "atr"
+        | "choppinessIndex" => vec![
             text("high", "high"),
             text("low", "low"),
             text("close", "close"),
@@ -134,7 +144,15 @@ pub fn sources(study: &str, options: &Map<String, Value>) -> Vec<String> {
             text("low", "low"),
             text("close", "close"),
         ],
-        "donchian" | "highLowBands" | "primeNumberBands" | "aroon" | "parabolicSar" | "zigZag" => {
+        "donchian"
+        | "highLowBands"
+        | "primeNumberBands"
+        | "aroon"
+        | "parabolicSar"
+        | "zigZag"
+        | "chaikinVolatility"
+        | "massIndex"
+        | "gopalakrishnanRangeIndex" => {
             vec![text("high", "high"), text("low", "low")]
         }
         _ => vec![text("column", "close")],
@@ -166,6 +184,9 @@ const PERIODS: &[&str] = &[
     "basePeriod",
     "spanBPeriod",
     "displacement",
+    "rocPeriod",
+    "sumPeriod",
+    "stdevPeriod",
 ];
 
 /// Calls `study` on `series` with pond-ts `options`. `None` when Rust
@@ -693,6 +714,62 @@ pub fn call_study(
                 close
             ))
         }
+        "atr" => series.atr(reads!(
+            name_only!(Atr::default().period(int("period", 14)), output),
+            high,
+            low,
+            close
+        )),
+        "historicalVolatility" => series.historical_volatility(named!(
+            HistoricalVolatility::default()
+                .period(int("period", 20))
+                .annualize(num("annualize", 252.0)),
+            output
+        )),
+        "chaikinVolatility" => series.chaikin_volatility(reads!(
+            name_only!(
+                ChaikinVolatility::default()
+                    .period(int("period", 10))
+                    .roc_period(int("rocPeriod", 10)),
+                output
+            ),
+            high,
+            low
+        )),
+        "massIndex" => series.mass_index(reads!(
+            name_only!(
+                MassIndex::default()
+                    .ema(int("emaPeriod", 9))
+                    .sum(int("sumPeriod", 25)),
+                output
+            ),
+            high,
+            low
+        )),
+        "choppinessIndex" => series.choppiness_index(reads!(
+            name_only!(
+                ChoppinessIndex::default().period(int("period", 14)),
+                output
+            ),
+            high,
+            low,
+            close
+        )),
+        "gopalakrishnanRangeIndex" => series.gopalakrishnan_range_index(reads!(
+            name_only!(
+                GopalakrishnanRangeIndex::default().period(int("period", 10)),
+                output
+            ),
+            high,
+            low
+        )),
+        "ulcerIndex" => series.ulcer_index(study_of(14)),
+        "relativeVolatilityIndex" => series.relative_volatility_index(named!(
+            RelativeVolatilityIndex::default()
+                .period(int("period", 14))
+                .stdev(int("stdevPeriod", 10)),
+            output
+        )),
         other => panic!("no pond-rs call for study '{other}'"),
     })
 }
