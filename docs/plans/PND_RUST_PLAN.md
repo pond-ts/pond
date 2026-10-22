@@ -552,6 +552,21 @@ numbers did not reproduce: pond-ts `shift` / `fill` (fixed since, #776) and
 pond-rs `from_json` dense (45 ms in step 8d2's table; 75–91 ms at that
 step's own commit on this machine, so not a regression).
 
+**Revised 2026-10-22 after a Codex review** found polars runners doing
+different work or giving different answers (gap handling in cumulative
+sum, an off-by-one centred window, a missing reducer, dropped buckets, tie
+rules, missing time / interval columns, different JSON formats). Every
+pond-rs and polars runner now writes each case's answer (`BENCH_DUMP`) and
+`bench/check_outputs.py` / `check_all.sh` compare them cell by cell; all
+147 compared cases match. Polars cases were added where polars has a
+counterpart the first run missed (leading / centred time windows, minimum
+row counts, rolling list reducers). Re-timed on main with #811: pond-rs vs
+pond-ts faster in 170 of 173 (median 7.5×); vs polars on 4 cores faster in
+73, slower in 59, same in 9 (median 1.08). R1a A compute 117–120 vs polars
+142–177 ms on 4 cores; B's ≥2× single-core target still missed (1.9×).
+Decision: an answer check is now part of the benchmark, so a polars
+"equivalent" that is not equivalent fails rather than reads as a number.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:
