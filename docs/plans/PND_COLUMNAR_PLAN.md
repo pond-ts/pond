@@ -846,6 +846,23 @@ old path only had to sort them, while the merge still pays a few
 allocations per input. With fresh pieces (the partitioned version) the
 split dominates and the two are even.
 
+### Codex PR #810 ideas not built — decided 2026-10-22
+
+Peter agreed not to build these for now, and to look again only if one
+becomes a main drag on the studies or elsewhere:
+
+- **Packed list storage** (one element buffer + row offsets): Codex
+  measured 8–17 ms per 100k rows just to build it; after [PND-ARRAYSLOW] the
+  array ops are 10–80× faster already, and it changes what `get` returns.
+- **Lazy one-element lists** for one-row buckets: narrow, needs packed lists.
+- **Shift without copying** (chunked view): Codex measured `shift().diff()`
+  5.3 → 30.3 ms, slower, because `diff` falls back on chunked input.
+- **Column filter / maths API**: new public API; the first callback
+  `filter` is 0.52 s per 1M rows after [PND-EVENTMAP] (Codex's column-only
+  filter 10.4 ms). Agents write callbacks fine today.
+- **Attach without copy** for `withColumn`: the copy is 1.7 ms per 1M rows.
+- **`samples` as a list column**: changes the return type.
+
 ### [PND-EVENTMAP] — SHIPPED (build every row's Event without the per-row maps)
 
 Found while measuring the Codex PR #810 "callback filter" gap: on a 1M-row
