@@ -910,11 +910,11 @@ impl TimeSeries {
         positive(CALL, "period", options.period)?;
         let names = suffixed(options.name(), ["Bull", "Bear"]);
         self.free_names(CALL, &names)?;
-        let [high, low, close] = self.price_columns(
-            CALL,
-            [&options.high, &options.low, &options.close],
-            ["high", "low", "close"],
-        )?;
+        // pond-ts reads the close first (through its EMA), then the high
+        // and low: with two bad columns, the close's error wins.
+        let [close] = self.price_columns(CALL, [&options.close], ["close"])?;
+        let [high, low] =
+            self.price_columns(CALL, [&options.high, &options.low], ["high", "low"])?;
         let ema = kernels::ema_values(&close, options.period);
         let bull = high.iter().zip(&ema).map(|(h, e)| h - e).collect();
         let bear = low.iter().zip(&ema).map(|(l, e)| l - e).collect();
@@ -1287,6 +1287,23 @@ mod tests {
             assert!(zz.to_string().contains("zigZag deviation"), "{zz}");
         }
         assert!(series.swing_index(SwingIndex::new(1.0)).is_ok());
+    }
+
+    /// Elder ray reads the close before the high and low, as pond-ts: with
+    /// both missing, the error names the close.
+    #[test]
+    fn elder_ray_reads_close_first() {
+        let series = TimeSeries::new(
+            "s",
+            (0..3).collect(),
+            vec![crate::Column::required("low", vec![1.0, 2.0, 3.0])],
+        )
+        .unwrap();
+        let err = series
+            .elder_ray(ElderRay::default())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("close") && !err.contains("high"), "{err}");
     }
 
     /// Stretches started anywhere give the bits of one sweep, on bars with

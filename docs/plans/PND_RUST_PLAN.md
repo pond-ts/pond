@@ -2945,16 +2945,19 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     `SwingIndex::new(limit)` / `AccumulativeSwingIndex::new(limit)`: the
     limit move has no default in pond-ts either. Errors and their order as
     pond-ts, including `elderImpulse` refusing a series that already holds
-    its MACD scratch columns (`__elderMacd__Line` …).
+    its MACD scratch columns (`__elderMacd__Line` …; a `scratch` input
+    holds one), and `elder_ray` reading the close before the high and low
+    (review on #821; parity checks only that both sides fail, so a unit
+    test pins which column the error names).
   - Ported as pond-ts writes them: ZigZag's `zigZagStep` state machine
     plus the pass that fills the legs (each run of rows without a gap
     starts again; no leg crosses a gap); Ichimoku's midpoints on the
     strict rolling extremes; the swing index's branch order (ties go to A,
     then B, then D).
-  - Parity: the fixture grew to 3,229 cases, with a new `ties` input: a
+  - Parity: the fixture grew to 3,231 cases, with a new `ties` input: a
     first ZigZag swing of exactly the deviation (25 is 0.25 times 100, no
     rounding) and closes alternating 1 and -1 (a two-bar average of
-    exactly 0, which RAVI turns into a gap). 2,426 match bit for bit, 285
+    exactly 0, which RAVI turns into a gap). 2,427 match bit for bit, 286
     errors agree, 292 refused (known missing-column difference), 226 calls
     Rust cannot write. A unit test covers infinite and NaN limits and
     deviations (JSON cases cannot carry them).

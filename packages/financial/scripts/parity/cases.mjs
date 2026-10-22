@@ -252,6 +252,18 @@ const TIE_ROWS = [
   [240_000, 118, 100, 1, 105],
   [300_000, 116, 101, -1, 104],
 ];
+// A close and elderImpulse's own scratch column (and no `__macdLine__`), so
+// the refusal comes from the elder scratch alone.
+const SCRATCH_ROWS = Array.from({ length: 40 }, (_, i) => [
+  i * 60_000,
+  50 + Math.sin(i / 4) * 3,
+  i,
+]);
+const SCRATCH_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'close', kind: 'number' },
+  { name: '__elderMacd__Hist', kind: 'number' },
+];
 const LEAD_SCHEMA = [
   { name: 'time', kind: 'time' },
   { name: 'high', kind: 'number', required: false },
@@ -301,6 +313,7 @@ function inputs(oracle) {
     lead: { name: 'lead', schema: LEAD_SCHEMA, rows: LEAD_ROWS },
     edge: { name: 'edge', schema: LEAD_SCHEMA, rows: EDGE_ROWS },
     ties: { name: 'ties', schema: LEAD_SCHEMA, rows: TIE_ROWS },
+    scratch: { name: 'scratch', schema: SCRATCH_SCHEMA, rows: SCRATCH_ROWS },
     ohlcEmpty: { name: 'ohlcEmpty', schema: LEAD_SCHEMA, rows: [] },
     empty: { name: 'empty', schema: CLOSE_SCHEMA, rows: [] },
   };
@@ -1104,6 +1117,14 @@ function trendFamilyCases2(add) {
   // A first swing of exactly the deviation, and a zero long average.
   add('zigZag', 'ties', { deviation: 25 });
   add('ravi', 'ties', { shortPeriod: 1, longPeriod: 2 });
+  // elderImpulse refuses its MACD scratch column; elderRay and RAVI on the
+  // same series succeed (the column is not theirs).
+  add('elderImpulse', 'scratch', {
+    emaPeriod: 3,
+    fastPeriod: 2,
+    slowPeriod: 4,
+  });
+  add('ravi', 'scratch', { shortPeriod: 2, longPeriod: 5 });
 }
 
 function encodeCell(cell) {
