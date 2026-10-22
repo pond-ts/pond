@@ -3023,6 +3023,59 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | si      | 7.0      | 11.7    | 42.2    | 3.6x  |
     | asi     | 11.5     | 14.9    | 56.9    | 3.8x  |
 
+  **R2 step 2e part 1 (done): volatility, 8 of 14 studies.**
+  - Calls: `atr`, `historical_volatility`, `chaikin_volatility`,
+    `mass_index`, `choppiness_index`, `gopalakrishnan_range_index` and
+    `relative_volatility_index` take an options struct named after the
+    study (`high` / `low` / `close` setters or `column`, and `output`);
+    `ulcer_index` takes a plain `Study` (pond-ts default 14). Errors and
+    their order as pond-ts, including the choppiness and range indexes
+    refusing a period of 1 and historical volatility refusing an
+    `annualize` that is not a positive finite number.
+  - New kernel: `js_log10`, V8's `Math.log10` (fdlibm's
+    `__ieee754_log10` on top of `js_log`). Checked against node on 2M
+    values: 0 differ, where the system `log10` differed on 4,111. The
+    choppiness index needs it; the range index and historical volatility
+    use `js_log`. Everything else reuses kernels from earlier families
+    (Wilder's ATR, the rolling mean and spread, the count-window extremes,
+    the EMA and percent change).
+  - Parity: the fixture grew to 3,516 cases. 2,627 match bit for bit, 318
+    errors agree, 323 refused (known missing-column difference), 248
+    calls Rust cannot write. The new cases cover prices at or below zero
+    and a first log return of +Infinity (the `ties` input's open jumps
+    from 1e-300 to 1e300), flat bars (zero ranges, EMAs and spans), a
+    window of only new highs (the ulcer index's exact 0), unchanged closes
+    (the relative volatility index counts them as down) and the `edge`
+    bars. Oracle: 167 of 220 cases (was 133).
+  - Planted bugs: 18 of 29 caught at first; the overflowing return above,
+    a unit test for non-finite `annualize`, and three `log10` inputs below
+    1 caught 3 more: 21 of 29. The 8 missed change no output: a zero price
+    giving an infinite return instead of a gap (the spread kernel skips
+    both); dropping historical volatility's early return for too few
+    returns (the kernel then gives all gaps anyway); `powf(0.5)` for
+    `sqrt` (same bits on 22M values checked); `+ 0.0` on the mass index's
+    sum (its mean is never -0); dropping either half of the choppiness
+    guard, or `>=` in the range index's (the dropped case then gives an
+    infinity or NaN, both stored as a gap; review on #822 corrected an
+    earlier reason given here); and dropping the ulcer index's finite check on its exact-0
+    rule (a window with no drawdown is always full and finite: warm-up
+    rows have no peak, so their drawdown is a gap and counts).
+  - Perf: all O(N); the window kernels split rows across cores as before.
+    At 1M rows all eight match pond-ts on every bit, on 4 cores and on 1
+    (`POND_BITS=1`).
+  - Medians of 7, 1M bars at pond-ts's defaults, ms:
+
+    | Study   | 1 thread | 4 cores | pond-ts | ratio |
+    | ------- | -------- | ------- | ------- | ----- |
+    | atr     | 7.5      | 7.4     | 70.8    | 9.6x  |
+    | hv      | 25.9     | 15.4    | 72.2    | 4.7x  |
+    | chaikin | 4.4      | 6.0     | 25.7    | 4.3x  |
+    | mass    | 11.6     | 9.4     | 37.9    | 4.0x  |
+    | chop    | 34.2     | 22.8    | 215.6   | 9.5x  |
+    | gapo    | 18.8     | 10.9    | 268.8   | 25x   |
+    | ulcer   | 15.8     | 9.0     | 154.0   | 17x   |
+    | relvol  | 32.6     | 17.2    | 68.1    | 4.0x  |
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).

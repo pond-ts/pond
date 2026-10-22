@@ -56,6 +56,7 @@ mod kernels;
 mod momentum;
 mod regression;
 mod trend;
+mod volatility;
 
 pub use averages::{
     Coppock, Guppy, Kst, Macd, MovingAverageCross, OscillatorMode, PriceMomentumOscillator,
@@ -75,6 +76,10 @@ pub use trend::{
     AccumulativeSwingIndex, Aroon, AtrTrailingStop, DirectionalMovement, ElderImpulse, ElderRay,
     Ichimoku, ParabolicSar, RandomWalkIndex, Ravi, SuperTrend, SwingIndex, TrendIntensityIndex,
     Vortex, ZigZag,
+};
+pub use volatility::{
+    Atr, ChaikinVolatility, ChoppinessIndex, GopalakrishnanRangeIndex, HistoricalVolatility,
+    MassIndex, RelativeVolatilityIndex,
 };
 
 use std::borrow::Cow;

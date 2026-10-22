@@ -929,6 +929,51 @@ pub(crate) fn js_log(x: f64) -> f64 {
     }
 }
 
+/// JS `Math.log10`: V8's `base::ieee754::log10`, fdlibm's
+/// `__ieee754_log10` (scale to `[1, 2)`, then
+/// `k·log10(2) + log(x)/ln(10)` in split constants), step for step on top
+/// of [`js_log`]. The system `log10` can differ in the last bit.
+// fdlibm's constants, as written there (`IVLN10` is `1 / ln 10`).
+#[allow(clippy::excessive_precision, clippy::approx_constant)]
+pub(crate) fn js_log10(x: f64) -> f64 {
+    const TWO54: f64 = 1.801_439_850_948_198_400_00e+16;
+    const IVLN10: f64 = 4.342_944_819_032_518_166_68e-01;
+    const LOG10_2HI: f64 = 3.010_299_956_636_117_713_06e-01;
+    const LOG10_2LO: f64 = 3.694_239_077_158_930_786_16e-13;
+    let high = |v: f64| (v.to_bits() >> 32) as i32;
+    let mut x = x;
+    let mut hx = high(x);
+    let lx = x.to_bits() as u32;
+    let mut k: i32 = 0;
+    if hx < 0x0010_0000 {
+        // Below 2^-1022: zero, negative or subnormal.
+        if ((hx & 0x7fff_ffff) as u32 | lx) == 0 {
+            return f64::NEG_INFINITY;
+        }
+        if hx < 0 {
+            return f64::NAN;
+        }
+        k -= 54;
+        x *= TWO54;
+        hx = high(x);
+    }
+    if hx >= 0x7ff0_0000 {
+        return x + x;
+    }
+    k += (hx >> 20) - 1023;
+    let i = ((k as u32) & 0x8000_0000) >> 31;
+    let top = ((hx & 0x000f_ffff) as u32 | ((0x3ff - i) << 20)) as u64;
+    let y = f64::from(k + i as i32);
+    x = f64::from_bits((top << 32) | (x.to_bits() & 0xffff_ffff));
+    let z = y * LOG10_2LO + IVLN10 * js_log(x);
+    z + y * LOG10_2HI
+}
+
+/// pond-ts `barRangeValues`: `high - low` for every row.
+pub(crate) fn bar_range_values(high: &[f64], low: &[f64]) -> Vec<f64> {
+    high.iter().zip(low).map(|(h, l)| h - l).collect()
+}
+
 /// pond-ts `trueRangeValues`: [`true_range_at`] for every row.
 pub(crate) fn true_range_values(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
     (0..high.len())
@@ -1192,6 +1237,36 @@ mod tests {
         assert_eq!(js_log(f64::INFINITY), f64::INFINITY);
         assert_eq!(js_log(5e-324), -744.4400719213812);
         assert_eq!(js_log(2.0), std::f64::consts::LN_2);
+    }
+
+    /// `js_log10` gives V8's `Math.log10` bits. Checked against node on 2M
+    /// values (0 differ; the system `log10` differed on 4,111); these are
+    /// prices where the system `log10` is one bit off V8, and values below
+    /// 1 where scaling into `[1, 2)` instead would be.
+    #[test]
+    fn js_log10_matches_v8() {
+        for (x, expected) in [
+            (0x404ef9ee80000000_u64, 0x3ffcac468e0d0b52_u64),
+            (0x4064a807be000000, 0x4001bec2419b9366),
+            (0x403b436b40000000, 0x3ff6f82200bcfc2f),
+            (0x405b9defe8000000, 0x4000588be50e726e),
+            (0x4057a2b9f0000000, 0x3fff9c2b9e709c57),
+            (0x405a704df0000000, 0x400031c426e5334b),
+            // Below 1, where fdlibm scales into [0.5, 1) rather than [1, 2).
+            (0x3febbc6400000000, 0xbfafcc94a77f77ce),
+            (0x3fe3d46a80000000, 0xbfca9a435e71c76b),
+            (0x3fe286c600000000, 0xbfce61bb91084ed2),
+        ] {
+            assert_eq!(js_log10(f64::from_bits(x)).to_bits(), expected, "{x:#x}");
+        }
+        for (x, expected) in [(1.0, 0.0), (10.0, 1.0), (1000.0, 3.0), (1e308, 308.0)] {
+            assert_eq!(js_log10(x).to_bits(), f64::to_bits(expected), "{x}");
+        }
+        assert_eq!(js_log10(0.0), f64::NEG_INFINITY);
+        assert_eq!(js_log10(-0.0), f64::NEG_INFINITY);
+        assert!(js_log10(-1.0).is_nan() && js_log10(f64::NAN).is_nan());
+        assert_eq!(js_log10(f64::INFINITY), f64::INFINITY);
+        assert_eq!(js_log10(5e-324), -323.3062153431158);
     }
 
     /// The prime ladder against trial division, and its edges.
