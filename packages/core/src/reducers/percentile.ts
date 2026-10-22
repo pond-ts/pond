@@ -2,6 +2,29 @@ import type { Float64Column } from '../columnar/index.js';
 import type { ReducerDef } from './types.js';
 import { rollingSortedArray } from './rolling.js';
 
+/**
+ * An ascending copy of `numeric`: the same order as
+ * `numeric.slice().sort((a, b) => a - b)` — a stable sort, so equal values
+ * (`-0` and `0`) keep their input order — but by insertion sort when the
+ * list is short (an array cell, a small bucket), which skips the comparator
+ * calls that dominate sorting a handful of numbers.
+ */
+export function sortedNumbers(numeric: ReadonlyArray<number>): number[] {
+  const n = numeric.length;
+  if (n > 32) return numeric.slice().sort((a, b) => a - b);
+  const out = new Array<number>(n);
+  for (let i = 0; i < n; i += 1) {
+    const v = numeric[i]!;
+    let j = i - 1;
+    while (j >= 0 && out[j]! > v) {
+      out[j + 1] = out[j]!;
+      j -= 1;
+    }
+    out[j + 1] = v;
+  }
+  return out;
+}
+
 export function percentileOfSorted(sorted: number[], q: number): number {
   const rank = (q / 100) * (sorted.length - 1);
   const lo = Math.floor(rank);
@@ -206,8 +229,7 @@ export function percentileReducer(q: number): ReducerDef {
     outputKind: 'number',
     reduce(_d, numeric) {
       if (numeric.length === 0) return undefined;
-      const sorted = numeric.slice().sort((a, b) => a - b);
-      return percentileOfSorted(sorted, q);
+      return percentileOfSorted(sortedNumbers(numeric), q);
     },
     reduceColumn(col) {
       return reducePercentileColumn(col, q);
@@ -223,7 +245,7 @@ export function percentileReducer(q: number): ReducerDef {
         },
         snapshot() {
           if (collected.length === 0) return undefined;
-          const sorted = collected.slice().sort((a, b) => a - b);
+          const sorted = sortedNumbers(collected);
           return percentileOfSorted(sorted, q);
         },
       };

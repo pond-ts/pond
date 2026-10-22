@@ -12,7 +12,7 @@ import {
   ColumnarStore,
   Float64Column,
   IntervalKeyColumn,
-  arrayColumnFromArray,
+  arrayColumnFromOwnedCells,
   bitmapByteCount,
   stringColumnFromArray,
   validityFromBits,
@@ -556,8 +556,10 @@ export function tryAggregateColumnarStore(
         column = stringColumnFromArray(stringBufs[c]!);
         break;
       default:
-        column = arrayColumnFromArray(
-          arrayBufs[c]! as Parameters<typeof arrayColumnFromArray>[0],
+        // Each cell is this function's own frozen copy, already checked by
+        // `assertCellKind` — no second validation or copy.
+        column = arrayColumnFromOwnedCells(
+          arrayBufs[c]! as Array<ArrayValue | undefined>,
         );
         break;
     }

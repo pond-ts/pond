@@ -483,6 +483,14 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`arrayAggregate` and `arrayExplode` work on the array column directly**
+  ([PND-ARRAYSLOW]) instead of building an `Event` per row and re-reading
+  rows; the key and other columns are shared (aggregate) or gathered once
+  (explode). Same output, same errors. On 100k rows: `arrayAggregate` count
+  637 → 8 ms, median 734 → 16 ms; `arrayExplode` 792 → 68 ms. Building and
+  gathering array columns also stops re-validating cells it already owns
+  (`filter` on a series with an array column: 96 → 17 ms), and `median` /
+  percentiles sort short lists by insertion (same order).
 - **`keep`, `difference`, `unique`, `top${N}` and `samples` read the column
   directly** in `reduce` and `aggregate`, instead of going through `Event`s
   (whole-series `reduce`) or a per-bucket reducer state (`aggregate`). Same
