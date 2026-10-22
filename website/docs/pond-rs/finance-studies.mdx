@@ -15,11 +15,11 @@ this page lists what is built so far.
 Built so far: moving averages and rolling statistics, the
 moving-average family (MACD and 14 more), bands (Bollinger, Keltner and
 8 more), momentum (21 studies: RSI, stochastics, CCI, true strength index
-and more) and the first 8 trend studies (ADX, Aroon, SuperTrend,
-parabolic SAR and more).
+and more) and trend (16 studies: ADX, Aroon, SuperTrend, parabolic SAR,
+Ichimoku and more).
 
 The results match `@pond-ts/financial` exactly, number for number. That is
-checked against 2,918 cases that pond-ts itself writes out. They also match
+checked against 3,231 cases that pond-ts itself writes out. They also match
 the pandas and TA-Lib reference results pond-ts is tested against, to
 within 5e-10 (133 of those 220 cases cover studies built so far).
 
@@ -389,19 +389,40 @@ fn main() -> Result<(), pond_rs::PondError> {
 Whether the price is trending, which way, and where a trader might put a
 stop.
 
-| Call                                        | Writes                                                  | What it shows                                                                                                 |
-| ------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `directional_movement(DirectionalMovement)` | `dmiPlusDi`, `dmiMinusDi`, `dmiDx`, `dmiAdx`, `dmiAdxr` | Wilder's system: the up and down moves (+DI, −DI), and ADX, how strong the trend is whichever way it goes     |
-| `aroon(Aroon)`                              | `aroonUp`, `aroonDown`, `aroonOsc`                      | How recently the 25-bar high and low happened: 100 for this bar, 0 for 25 bars back                           |
-| `vortex(Vortex)`                            | `viPlus`, `viMinus`                                     | Upward against downward movement over 14 bars                                                                 |
-| `vertical_horizontal_filter(Study)`         | `vhf`                                                   | The window's range over the sum of its bar-to-bar moves: high when trending, low when choppy (period 28)      |
-| `random_walk_index(RandomWalkIndex)`        | `rwiHigh`, `rwiLow`                                     | How much further the price went than a random walk would, up and down, over 2 to 14 bars                      |
-| `super_trend(SuperTrend)`                   | `st`, `stTrend`                                         | A line 3 average true ranges below the price in an up trend (above in a down trend); `stTrend` is `1` or `-1` |
-| `parabolic_sar(ParabolicSar)`               | `psar`, `psarTrend`                                     | Wilder's stop-and-reverse: a stop that speeds up toward the price, and flips side when the price crosses it   |
-| `atr_trailing_stop(AtrTrailingStop)`        | `ats`, `atsTrend`                                       | A stop 3 average true ranges from the close that only moves toward the price, until the price crosses it      |
+| Call                                                           | Writes                                                                | What it shows                                                                                                              |
+| -------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `directional_movement(DirectionalMovement)`                    | `dmiPlusDi`, `dmiMinusDi`, `dmiDx`, `dmiAdx`, `dmiAdxr`               | Wilder's system: the up and down moves (+DI, −DI), and ADX, how strong the trend is whichever way it goes                  |
+| `aroon(Aroon)`                                                 | `aroonUp`, `aroonDown`, `aroonOsc`                                    | How recently the 25-bar high and low happened: 100 for this bar, 0 for 25 bars back                                        |
+| `vortex(Vortex)`                                               | `viPlus`, `viMinus`                                                   | Upward against downward movement over 14 bars                                                                              |
+| `vertical_horizontal_filter(Study)`                            | `vhf`                                                                 | The window's range over the sum of its bar-to-bar moves: high when trending, low when choppy (period 28)                   |
+| `random_walk_index(RandomWalkIndex)`                           | `rwiHigh`, `rwiLow`                                                   | How much further the price went than a random walk would, up and down, over 2 to 14 bars                                   |
+| `super_trend(SuperTrend)`                                      | `st`, `stTrend`                                                       | A line 3 average true ranges below the price in an up trend (above in a down trend); `stTrend` is `1` or `-1`              |
+| `parabolic_sar(ParabolicSar)`                                  | `psar`, `psarTrend`                                                   | Wilder's stop-and-reverse: a stop that speeds up toward the price, and flips side when the price crosses it                |
+| `atr_trailing_stop(AtrTrailingStop)`                           | `ats`, `atsTrend`                                                     | A stop 3 average true ranges from the close that only moves toward the price, until the price crosses it                   |
+| `zig_zag(ZigZag)`                                              | `zzPivot`, `zzDirection`, `zzLine`                                    | The price path cut down to swings of at least 5%: the turning points, the leg's direction, and straight lines between them |
+| `ichimoku(Ichimoku)`                                           | `ichiTenkan`, `ichiKijun`, `ichiSenkouA`, `ichiSenkouB`, `ichiChikou` | Ichimoku cloud: midpoints of the 9-, 26- and 52-bar ranges, and the close                                                  |
+| `elder_impulse(ElderImpulse)`                                  | `impulse`                                                             | `1` when both a 13-bar EMA and the MACD histogram rose, `-1` when both fell, `0` otherwise                                 |
+| `elder_ray(ElderRay)`                                          | `elderBull`, `elderBear`                                              | Bull power (high minus a 13-bar EMA of the close) and bear power (low minus it)                                            |
+| `trend_intensity_index(TrendIntensityIndex)`                   | `tii`                                                                 | Of the last 30 bars, the share above their 60-bar average, as a percent                                                    |
+| `ravi(Ravi)`                                                   | `ravi`                                                                | How far apart a 7-bar and a 65-bar average are, as a percent                                                               |
+| `swing_index(SwingIndex::new(limit))`                          | `si`                                                                  | Wilder's swing index: one bar's move against the last, from −100 to 100                                                    |
+| `accumulative_swing_index(AccumulativeSwingIndex::new(limit))` | `asi`                                                                 | The running total of the swing index                                                                                       |
 
 The random walk index needs a period of at least 2, and the parabolic
-SAR's `max_step` must be at least its `step`.
+SAR's `max_step` must be at least its `step`. The swing index needs a
+`limit`: the most the instrument's price may move in one bar, set by the
+exchange. pond-ts has no default for it either.
+
+Two of these behave differently from the rest:
+
+- **ZigZag can change rows it has already written.** A turning point only
+  counts once the price has moved the full 5% away from it, so a later bar
+  can confirm a pivot several bars back. The last leg, not yet confirmed,
+  gets a gap in `zzLine`.
+- **Ichimoku leaves every column on the bar it was worked out from.**
+  Charts draw the two Senkou lines 26 bars ahead and the Chikou line 26
+  bars back; `Ichimoku::offsets()` gives each column's shift, as pond-ts's
+  `ichimokuOffsets` does.
 
 SuperTrend, the SAR and the ATR stop each work bar by bar. After a missing
 bar, the SAR starts again with the next stretch of bars. SuperTrend and
@@ -409,7 +430,7 @@ the ATR stop use the average true range, so as with the bands, a missing
 bar in the middle of the data leaves them empty from there on.
 
 ```rust
-use pond_rs::financial::{Aroon, SuperTrend};
+use pond_rs::financial::{Aroon, ElderRay, Ichimoku, SuperTrend};
 use pond_rs::{Column, TimeSeries};
 
 fn main() -> Result<(), pond_rs::PondError> {
@@ -433,6 +454,15 @@ fn main() -> Result<(), pond_rs::PondError> {
     let st = bars.super_trend(SuperTrend::default().period(2))?;
     let names: Vec<&str> = st.columns().iter().map(|c| c.name()).collect();
     assert_eq!(names, ["high", "low", "close", "st", "stTrend"]);
+
+    // A 1-bar EMA is the close itself: bull power is high minus close.
+    let ray = bars.elder_ray(ElderRay::default().period(1))?;
+    let bull: Vec<_> = ray.column("elderBull")?.numbers()?.iter().collect();
+    assert_eq!(bull, [Some(0.5), Some(0.5), Some(0.5)]);
+
+    let shifts = Ichimoku::default().offsets()?;
+    assert!(shifts.contains(&("ichiSenkouA".to_string(), 26)));
+    assert!(shifts.contains(&("ichiChikou".to_string(), -26)));
     Ok(())
 }
 ```
@@ -646,9 +676,18 @@ At pond-ts's default settings, same machine and setup:
 | `super_trend`                | 22.0              | 23.8             | 98.7    | 4.1×  |
 | `parabolic_sar`              | 10.3              | 9.7              | 62.4    | 6.4×  |
 | `atr_trailing_stop`          | 18.2              | 21.0             | 73.4    | 3.5×  |
+| `zig_zag`                    | 18.1              | 17.5             | 254.1   | 15×   |
+| `ichimoku`                   | 113.2             | 36.5             | 284.9   | 7.8×  |
+| `elder_impulse`              | 19.2              | 12.6             | 125.6   | 10×   |
+| `elder_ray`                  | 9.6               | 9.6              | 39.5    | 4.1×  |
+| `trend_intensity_index`      | 30.6              | 14.6             | 110.0   | 7.5×  |
+| `ravi`                       | 15.8              | 8.0              | 58.4    | 7.3×  |
+| `swing_index` (limit 20)     | 7.0               | 11.7             | 42.2    | 3.6×  |
+| `accumulative_swing_index`   | 11.5              | 14.9             | 56.9    | 3.8×  |
 
 The machine is a shared virtual machine with four cores, and single runs
-move by up to a third, so read the ratios as rough. `atr_bands` gains the
+move by up to a third, so read the ratios as rough. The swing index runs on one
+core, so its 1-thread and 4-core times differ only by that noise. `atr_bands` gains the
 least because its average true range is one chain where each row needs
 the one before, which pond-ts pays for too.
 
@@ -670,5 +709,4 @@ them.
 
 ## Still to come
 
-The other 8 trend studies, then volatility, volume and price studies, one
-family at a time; then trading calendars and session VWAP.
+Volatility, volume and price studies, one family at a time; then trading calendars and session VWAP.
