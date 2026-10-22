@@ -107,6 +107,8 @@ import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
 import { mapOp, type ColumnMapper } from './operators/map.js';
 import { shiftOp } from './operators/shift.js';
 import { joinOp } from './operators/join.js';
+import { alignOp, materializeOp } from './operators/align.js';
+import { dedupeRows } from './operators/dedupe.js';
 import { collapseOp, type CollapseReducer } from './operators/collapse.js';
 import {
   assertColumnValuesMatchKind,
@@ -208,7 +210,6 @@ type PrefixJoinOptions<Prefixes extends readonly string[]> = {
   onConflict: 'prefix';
   prefixes: Prefixes;
 };
-type AlignCursor = { index: number };
 type JoinOptions = ErrorJoinOptions | PrefixJoinOptions<readonly string[]>;
 type PivotByGroupOptions = { aggregate?: AggregateReducer };
 type PivotByGroupOptionsTyped<Groups extends readonly string[]> =
@@ -640,6 +641,65 @@ function toBoundedSequence(
   return sequence instanceof BoundedSequence
     ? sequence
     : sequence.bounded(range, { sample, coverage });
+}
+
+/**
+ * The buckets `align` / `materialize` sample, as an interval key column plus
+ * each bucket's sample time. A fixed-step `Sequence` is laid out straight
+ * into buffers ([PND-ALIGNHOLD]): building one `Interval` per bucket was most
+ * of a 1M-bucket call once the per-bucket `Event`s were gone. Everything
+ * else — a calendar sequence, a `BoundedSequence`, an empty grid, or a grid
+ * `bounded` would reject — goes through `bounded(...).intervals()` as
+ * before, so its keys and errors are unchanged.
+ */
+function sampledGrid(
+  sequence: SequenceLike,
+  range: TemporalLike,
+  sample: AlignSample,
+): {
+  begin: Float64Array;
+  end: Float64Array;
+  times: Float64Array;
+  /** Interval keys, built on demand: `materialize` never needs them. */
+  keys: () => IntervalKeyColumn;
+} {
+  const fixed =
+    sequence instanceof Sequence
+      ? Sequence._fixedGridModulePrivate(sequence, range, sample, 'sample')
+      : undefined;
+  if (fixed !== undefined && fixed.begin.length > 0) {
+    const { begin, end } = fixed;
+    const len = begin.length;
+    let times = begin;
+    if (sample === 'end') times = end;
+    if (sample === 'center') {
+      times = new Float64Array(len);
+      for (let i = 0; i < len; i += 1) {
+        times[i] = begin[i]! + (end[i]! - begin[i]!) / 2;
+      }
+    }
+    // Each bucket's label is its start, as `bounded` sets it.
+    const keys = () =>
+      new IntervalKeyColumn(
+        begin,
+        end,
+        new Float64Column(begin.slice(), len),
+        len,
+      );
+    return { begin, end, times, keys };
+  }
+  const intervals = toBoundedSequence(sequence, range, sample).intervals();
+  const len = intervals.length;
+  const begin = new Float64Array(len);
+  const end = new Float64Array(len);
+  const times = new Float64Array(len);
+  for (let i = 0; i < len; i += 1) {
+    const interval = intervals[i]!;
+    begin[i] = interval.begin();
+    end[i] = interval.end();
+    times[i] = sampleTime(interval, sample);
+  }
+  return { begin, end, times, keys: () => intervalKeysForBuckets(intervals) };
 }
 
 function isTimeKeyed<S extends SeriesSchema>(series: TimeSeries<S>): boolean {
@@ -2527,49 +2587,20 @@ export class TimeSeries<S extends SeriesSchema> {
       );
     }
 
-    const intervals = toBoundedSequence(sequence, range, sample).intervals();
-    const valueColumns = this.schema.slice(1) as ValueColumnsForSchema<S>;
-    const resultColumns = resultSchema.slice(1);
-
-    const alignedRows =
-      method === 'linear'
-        ? (() => {
-            const cursor: AlignCursor = { index: 0 };
-            const rows = new Array(intervals.length);
-
-            for (let i = 0; i < intervals.length; i += 1) {
-              const interval = intervals[i]!;
-              const t = sampleTime(interval, sample);
-              const data = alignLinearAt(this, t, valueColumns, cursor);
-              const row = new Array(resultColumns.length + 1);
-              row[0] = interval;
-
-              for (let j = 0; j < resultColumns.length; j += 1) {
-                const column = resultColumns[j]!;
-                row[j + 1] = data[column.name as keyof typeof data];
-              }
-
-              rows[i] = Object.freeze(row);
-            }
-
-            return rows;
-          })()
-        : intervals.map((interval) => {
-            const t = sampleTime(interval, sample);
-            const data = alignHoldAt(this, t);
-
-            return Object.freeze([
-              interval,
-              ...resultSchema
-                .slice(1)
-                .map((column) => data[column.name as keyof typeof data]),
-            ]);
-          });
-
-    return timeSeriesFromComputedRows(
+    const grid = sampledGrid(sequence, range, sample);
+    // Column-native: pick a source row per bucket, gather each column by
+    // those row numbers ([PND-ALIGNHOLD]). See `alignOp`.
+    const store = alignOp(
+      this.#store.store as unknown as ColumnarStore<ColumnSchema>,
+      resultSchema as unknown as ColumnSchema,
+      grid.keys(),
+      grid.times,
+      method,
+    );
+    return TimeSeries.#fromTrustedStore(
       this.name,
       resultSchema as unknown as SeriesSchema,
-      alignedRows,
+      store,
     ) as unknown as TimeSeries<AlignSchema<S>>;
   }
 
@@ -2645,87 +2676,24 @@ export class TimeSeries<S extends SeriesSchema> {
       }) as unknown as TimeSeries<MaterializeSchema<S>>;
     }
 
-    const intervals = toBoundedSequence(sequence, range, sample).intervals();
-    const valueColumnNames = this.schema.slice(1).map((c) => c.name);
-    const sourceEvents = this.events;
-    const sourceLen = sourceEvents.length;
-    const colCount = valueColumnNames.length;
-
-    // Single forward cursor over source events. Each bucket advances
-    // it past events whose begin() < bucket.begin(); within the
-    // bucket, scan inline to find the chosen event without buffering
-    // the bucket's event indexes in a temporary array.
-    let cursor = 0;
-    const rows: unknown[][] = new Array(intervals.length);
-
-    for (let i = 0; i < intervals.length; i += 1) {
-      const interval = intervals[i]!;
-      const bStart = interval.begin();
-      const bEnd = interval.end();
-      const sampleAt = sampleTime(interval, sample);
-
-      // Skip events before this bucket's start.
-      while (cursor < sourceLen && sourceEvents[cursor]!.begin() < bStart) {
-        cursor += 1;
-      }
-
-      // Find the chosen event index in [bStart, bEnd) inline. -1 means
-      // empty bucket. Per-mode logic:
-      // - 'first': early-exit at the first in-bucket event — O(1)
-      // - 'last': walk forward, last index in-bucket wins — O(K_i)
-      // - 'nearest': walk forward, track min distance with strict `<`
-      //   so the earliest tied event wins — O(K_i)
-      let pick = -1;
-      if (select === 'first') {
-        if (cursor < sourceLen && sourceEvents[cursor]!.begin() < bEnd) {
-          pick = cursor;
-        }
-      } else if (select === 'last') {
-        let scan = cursor;
-        while (scan < sourceLen && sourceEvents[scan]!.begin() < bEnd) {
-          pick = scan;
-          scan += 1;
-        }
-      } else {
-        let scan = cursor;
-        let bestDist = Infinity;
-        while (scan < sourceLen && sourceEvents[scan]!.begin() < bEnd) {
-          const d = Math.abs(sourceEvents[scan]!.begin() - sampleAt);
-          if (d < bestDist) {
-            pick = scan;
-            bestDist = d;
-          }
-          scan += 1;
-        }
-      }
-
-      const row = new Array(colCount + 1);
-      row[0] = new Time(sampleAt);
-
-      if (pick === -1) {
-        // Empty bucket — every value column is undefined.
-        for (let j = 0; j < colCount; j += 1) {
-          row[j + 1] = undefined;
-        }
-      } else {
-        const data = sourceEvents[pick]!.data() as Record<string, unknown>;
-        for (let j = 0; j < colCount; j += 1) {
-          row[j + 1] = data[valueColumnNames[j]!];
-        }
-      }
-
-      rows[i] = row;
-      // Cursor stays at the first event of (or just past) the current
-      // bucket; the next iteration's skip-loop advances it past events
-      // < bStart_{i+1}. Half-open membership ensures an event at
-      // begin() === bEnd belongs to the next bucket, not this one.
-    }
-
-    return new TimeSeries({
-      name: this.name,
-      schema: resultSchema as unknown as SeriesSchema,
-      rows: rows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-    }) as unknown as TimeSeries<MaterializeSchema<S>>;
+    const grid = sampledGrid(sequence, range, sample);
+    // Column-native: one forward cursor over the source `begin` buffer
+    // picks a row per bucket (half-open `[begin, end)` membership), then
+    // each column is gathered by those row numbers ([PND-DEDUPEMAP]). See
+    // `materializeOp`.
+    const store = materializeOp(
+      this.#store.store as unknown as ColumnarStore<ColumnSchema>,
+      resultSchema as unknown as ColumnSchema,
+      grid.begin,
+      grid.end,
+      grid.times,
+      select,
+    );
+    return TimeSeries.#fromTrustedStore(
+      this.name,
+      resultSchema as unknown as SeriesSchema,
+      store,
+    ) as unknown as TimeSeries<MaterializeSchema<S>>;
   }
 
   /**
@@ -3788,6 +3756,34 @@ export class TimeSeries<S extends SeriesSchema> {
   }
 
   /**
+   * @internal Fills every missing cell of each named column with a literal
+   * value — `fill({ col: value })` without the strategy-name lookup, so a
+   * string value such as `'hold'` is written as text. Used by partitioned
+   * `materialize` to stamp a partition's own value on its empty buckets.
+   */
+  _fillLiteralModulePrivate(
+    values: ReadonlyArray<readonly [string, ScalarValue]>,
+  ): TimeSeries<S> {
+    if (this.#store.store.length === 0 || values.length === 0) return this;
+    const specs: Map<string, ResolvedFillSpec> = new Map();
+    for (const [name, value] of values) {
+      specs.set(name, { mode: 'literal', value });
+    }
+    const { store, schema } = fillOp<S>(
+      this.#store.store,
+      this.schema,
+      specs,
+      undefined,
+      undefined,
+    );
+    return TimeSeries.#fromTrustedStore(
+      this.name,
+      schema,
+      store as unknown as ColumnarStore<ColumnSchema>,
+    );
+  }
+
+  /**
    * Example: `series.dedupe()`.
    * Collapses events that share a key. The default key is the full
    * event key — `begin()` for time-keyed series, `begin()`+`end()` for
@@ -3845,8 +3841,25 @@ export class TimeSeries<S extends SeriesSchema> {
    */
   dedupe(options: { keep?: DedupeKeep<S> } = {}): TimeSeries<S> {
     const keep = options.keep ?? 'last';
-    if (this.events.length === 0) {
+    if (this.#store.length === 0) {
       return this;
+    }
+
+    // Built-in policies: walk runs of equal keys over the key buffers and
+    // gather the kept rows ([PND-DEDUPEMAP]); kept events keep their
+    // identity. A custom resolver still needs the events, below.
+    if (typeof keep !== 'function') {
+      const rows = dedupeRows(
+        this.#store.store as unknown as ColumnarStore<ColumnSchema>,
+        keep,
+      );
+      const frozenSchema = Object.freeze(this.schema.slice()) as S;
+      const trustedInput: TrustedStoreInput<S> = {
+        name: this.name,
+        schema: frozenSchema,
+        [TRUSTED_STORE_SENTINEL]: this.#store._selectRowsModulePrivate(rows),
+      };
+      return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
     }
 
     // Bucket key encoder. For time-keyed series, `begin()` alone fully
@@ -3883,64 +3896,8 @@ export class TimeSeries<S extends SeriesSchema> {
     }
 
     const resolved: EventForSchema<S>[] = [];
-    for (const [keyStr, bucket] of buckets) {
-      if (bucket.length === 1) {
-        resolved.push(bucket[0]!);
-        continue;
-      }
-
-      // Multiple events sharing the same key — apply the policy.
-      if (typeof keep === 'function') {
-        resolved.push(keep(bucket));
-        continue;
-      }
-      if (keep === 'first') {
-        resolved.push(bucket[0]!);
-        continue;
-      }
-      if (keep === 'last') {
-        resolved.push(bucket[bucket.length - 1]!);
-        continue;
-      }
-      if (keep === 'error') {
-        // Use the first event's begin() for the human-readable timestamp.
-        // For interval/timeRange-keyed series, also include the full
-        // encoded key so the failure mode names the exact collision.
-        const t = bucket[0]!.begin();
-        const detail =
-          firstKind === 'time'
-            ? `${new Date(t).toISOString()} (${t})`
-            : `key "${keyStr}"`;
-        throw new Error(
-          `dedupe: ${bucket.length} events at ${detail}. ` +
-            `Specify a different 'keep' policy or fix upstream.`,
-        );
-      }
-      if (keep === 'drop') {
-        continue;
-      }
-      if ('min' in keep || 'max' in keep) {
-        const isMin = 'min' in keep;
-        const col = (isMin ? keep.min : keep.max) as string;
-        let best = bucket[0]!;
-        let bestVal = best.get(col) as number | undefined;
-        for (let i = 1; i < bucket.length; i += 1) {
-          const candidate = bucket[i]!;
-          const v = candidate.get(col) as number | undefined;
-          if (v === undefined) continue;
-          if (bestVal === undefined || (isMin ? v < bestVal : v > bestVal)) {
-            best = candidate;
-            bestVal = v;
-          }
-        }
-        resolved.push(best);
-        continue;
-      }
-      // Defensive fallthrough: unrecognized keep shape.
-      throw new TypeError(
-        `dedupe: invalid keep option ${JSON.stringify(keep)}. ` +
-          `Expected 'first' | 'last' | 'error' | 'drop' | { min: col } | { max: col } | (events) => Event.`,
-      );
+    for (const bucket of buckets.values()) {
+      resolved.push(bucket.length === 1 ? bucket[0]! : keep(bucket));
     }
 
     return TimeSeries.#fromTrustedEvents<S>(this.name, this.schema, resolved);
@@ -6748,70 +6705,6 @@ function aggregateInternal<S extends SeriesSchema>(
   });
 
   return timeSeriesFromComputedRows(series.name, resultSchema, resultRows);
-}
-
-function alignHoldAt<S extends SeriesSchema>(
-  series: TimeSeries<S>,
-  t: number,
-): EventDataForSchema<S> {
-  const event = series.atOrBefore(new Time(t));
-  return (event?.data() ?? {}) as EventDataForSchema<S>;
-}
-
-function alignLinearAt<S extends SeriesSchema>(
-  series: TimeSeries<S>,
-  t: number,
-  valueColumns: ValueColumnsForSchema<S>,
-  cursor?: AlignCursor,
-): EventDataForSchema<S> {
-  const events = series.events;
-  const hasCursor = cursor !== undefined;
-  let index = hasCursor ? cursor.index : series.bisect(t);
-
-  if (hasCursor) {
-    while (index < events.length && events[index]!.begin() < t) {
-      index += 1;
-    }
-    cursor.index = index;
-  }
-
-  if (index < events.length && events[index]!.begin() === t) {
-    return events[index]!.data() as EventDataForSchema<S>;
-  }
-
-  if (index === 0) {
-    return {} as EventDataForSchema<S>;
-  }
-
-  const previous = events[index - 1]!;
-  const next = events[index];
-  if (!next || previous.begin() === next.begin()) {
-    return previous.data() as EventDataForSchema<S>;
-  }
-
-  const ratio = (t - previous.begin()) / (next.begin() - previous.begin());
-  const result: Record<string, unknown> = {};
-  const previousData = previous.data();
-  const nextData = next.data();
-
-  for (const column of valueColumns) {
-    const previousValue =
-      previousData[column.name as keyof typeof previousData];
-    const nextValue = nextData[column.name as keyof typeof nextData];
-
-    if (
-      column.kind === 'number' &&
-      typeof previousValue === 'number' &&
-      typeof nextValue === 'number'
-    ) {
-      result[column.name] = previousValue + (nextValue - previousValue) * ratio;
-      continue;
-    }
-
-    result[column.name] = previousValue;
-  }
-
-  return result as EventDataForSchema<S>;
 }
 
 /**

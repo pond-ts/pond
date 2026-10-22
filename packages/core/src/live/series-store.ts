@@ -50,6 +50,7 @@ import {
   TimeRangeKeyColumn,
   columnBuilderForKind,
   stringColumnFromArray,
+  withRowSelection,
 } from '../columnar/index.js';
 import type { EventKey } from '../core/temporal.js';
 import type { RowForSchema, SeriesSchema } from '../schema/index.js';
@@ -110,14 +111,35 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   // Lazy full-materialization snapshot.
   #eventsArray?: ReadonlyArray<SeriesEvent>;
 
+  /**
+   * Row `i`'s event is row `row[i]`'s event of `sources[source[i]]` (or of
+   * `sources[0]` when `source` is absent), built there on first use. Set
+   * for stores gathered from other stores' rows (`dedupe`, …) so
+   * a result row and its source row share one `Event` whichever is asked
+   * for first, as when those ops rebuilt the store from the source events.
+   */
+  readonly #delegate:
+    | {
+        readonly sources: ReadonlyArray<SeriesStore<S>>;
+        readonly source: Int32Array | undefined;
+        readonly row: Int32Array;
+      }
+    | undefined;
+
   private constructor(
     store: ColumnarStore<S>,
     eventCache: Map<number, SeriesEvent>,
     dense?: ReadonlyArray<SeriesEvent>,
+    delegate?: {
+      readonly sources: ReadonlyArray<SeriesStore<S>>;
+      readonly source: Int32Array | undefined;
+      readonly row: Int32Array;
+    },
   ) {
     this.store = store;
     this.#eventCache = eventCache;
     this.#dense = dense;
+    this.#delegate = delegate;
   }
 
   /** Schema declared at construction. */
@@ -282,6 +304,19 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   }
 
   /**
+   * The rows `rows` (ascending, in range) as a new store whose events are
+   * this store's events for those rows (see `#delegate`). Module-private.
+   */
+  _selectRowsModulePrivate(rows: Int32Array): SeriesStore<S> {
+    const store = withRowSelection(this.store, rows) as ColumnarStore<S>;
+    return new SeriesStore<S>(store, new Map(), undefined, {
+      sources: [this],
+      source: undefined,
+      row: rows,
+    });
+  }
+
+  /**
    * Materializes the `EventKey` for row `i`. Returns the concrete
    * `Time` / `TimeRange` / `Interval` instance depending on the
    * underlying key column kind. Lazily cached — `keyAt(i) ===
@@ -314,6 +349,14 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
     }
     const dense = this.#dense;
     if (dense !== undefined) return dense[i]!;
+    const delegate = this.#delegate;
+    if (delegate !== undefined) {
+      const from =
+        delegate.source === undefined
+          ? delegate.sources[0]!
+          : delegate.sources[delegate.source[i]!]!;
+      return from.eventAt(delegate.row[i]!);
+    }
     let cached = this.#eventCache.get(i);
     if (cached === undefined) {
       const key = this.keyAt(i) as Time | TimeRange | Interval;

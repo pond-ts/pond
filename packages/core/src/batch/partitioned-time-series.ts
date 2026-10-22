@@ -26,6 +26,7 @@ import type {
   SmoothMethod,
   SmoothSchema,
   ValidatedAggregateMap,
+  ScalarValue,
 } from '../schema/index.js';
 import type { ScanStep } from './operators/scan.js';
 
@@ -578,47 +579,25 @@ export class PartitionedTimeSeries<
     const partitionCols = this.by as ReadonlyArray<string>;
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) => {
-        const out = g.materialize(sequence, options);
-        if (g.events.length === 0) return out;
+        let out = g.materialize(sequence, options);
+        if (g.length === 0) return out;
 
-        // Detect whether any output row needs partition-column patching
-        // (i.e., whether any bucket was empty). If the source covered
-        // the grid, every row already carries the partition columns
-        // from its source event — skip the map() pass entirely. This
-        // avoids the per-event closure-call + new event allocation
-        // cost when no patching is required.
-        const events = out.events;
-        let needsPatch = false;
-        outer: for (let i = 0; i < events.length; i += 1) {
-          const data = events[i]!.data() as Record<string, unknown>;
-          for (let c = 0; c < partitionCols.length; c += 1) {
-            if (data[partitionCols[c]!] === undefined) {
-              needsPatch = true;
-              break outer;
-            }
-          }
-        }
-        if (!needsPatch) return out;
-
-        // Patch partition columns where undefined (empty-bucket rows).
-        // All events in this partition share the partition columns —
-        // capture them once from the first source event.
-        const firstData = g.events[0]!.data() as Record<string, unknown>;
-        const partValues: Record<string, unknown> = {};
+        // Empty-bucket rows come out with every column missing, partition
+        // columns included. Every row of this partition shares the
+        // partition values, so fill those columns' gaps with the first
+        // source row's value — a column-native literal `fill`, no per-row
+        // `Event` ([PND-DEDUPEMAP]). A missing partition value (the
+        // partition of rows with no value) leaves the column as is.
+        const first = g.at(0)! as unknown as {
+          get(name: string): unknown;
+        };
+        const fills: Array<readonly [string, ScalarValue]> = [];
         for (const col of partitionCols) {
-          partValues[col] = firstData[col];
+          const value = first.get(col);
+          if (value !== undefined) fills.push([col, value as ScalarValue]);
         }
-        return out.map(out.schema, (event) => {
-          const data = event.data() as Record<string, unknown>;
-          let result = event;
-          for (const col of partitionCols) {
-            if (data[col] === undefined) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              result = (result as any).set(col, partValues[col]);
-            }
-          }
-          return result;
-        });
+        out = out._fillLiteralModulePrivate(fills);
+        return out;
       }),
     );
   }

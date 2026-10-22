@@ -846,27 +846,6 @@ undefined`, or required only when it has no gaps) changes a public
   ties) and copy each column by those row numbers, as pond-rs does.
   Repro: `crates/pond-rs/bench/partition_pond_ts.mjs`. Found 2026-10-19
   (pond-rs R1b step 4a).
-- **[PND-ALIGNHOLD]** — pond-ts `align` with `method: 'hold'` (the
-  default) is ~4× slower than `'linear'` on the same grid: 4.6 s vs 1.2 s
-  for 1M rows onto a 1 s grid (pond-rs: 64 ms). Hold does, per bucket, a
-  `new Time`, a binary search through `atOrBefore` (each probe goes through
-  the store's key cache), builds the whole `Event` and its data object, then
-  `resultSchema.slice(1).map(...)` and an array spread. Linear walks a
-  cursor and reuses the column list. CPU profile: ~20% in the hold closure
-  itself, ~10% `bisect`, a third garbage collection. Proposed fix: walk a
-  cursor as linear does (the sample points rise) and read values straight
-  from the columns. Repro: `crates/pond-rs/bench/grid_pond_ts.mjs`. Found
-  2026-10-19 (pond-rs R1b step 5).
-- **[PND-DEDUPEMAP]** — pond-ts `dedupe` takes ~2.3 s on 1M rows with 10%
-  repeated times (pond-rs: 30–40 ms). CPU profile: a third in `dedupe`
-  itself, which builds a string key per row (`${event.begin()}`) and an
-  array per key in a `Map`; a third garbage collection; ~10% rebuilding the
-  column store from `Event` objects (as in [PND-FILTERTAKE]). Proposed fix:
-  rows are sorted by key, so equal keys are next to each other (except
-  interval labels on equal spans): compare neighbours, keep row numbers,
-  and take columns by row number. `materialize` (~1 s on the same size)
-  also goes through `Event` objects. Repro: as above. Found 2026-10-19
-  (pond-rs R1b step 5).
 - **[PND-FLATSTDEV]** — rolling `stdev` (pond-ts and pond-rs alike, same
   bits) over a window of identical values is not exactly 0 once different
   values have left the window: ~1e-16 of the value (`5.1e-16` for a flat
