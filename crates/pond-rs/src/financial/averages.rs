@@ -201,7 +201,7 @@ const SPECIAL_K: [(usize, usize, f64); 12] = [
 
 /// The scratch column pond-ts takes the MACD signal over; a series that
 /// already has it is refused, as in pond-ts.
-const MACD_SCRATCH: &str = "__macdLine__";
+pub(super) const MACD_SCRATCH: &str = "__macdLine__";
 
 /// Moving-average studies, as pond-ts's `@pond-ts/financial` functions.
 /// The family's shared rules: averages read from the column are
