@@ -7,7 +7,7 @@
  * which public intake never builds) and the ones they hand to the general
  * read path (fallback strings, booleans, arrays, chunked numbers).
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ChunkedFloat64Column,
   arrayColumnFromArray,
@@ -19,6 +19,7 @@ import {
   type Column,
 } from '../src/columnar/index.js';
 import { resolveReducer } from '../src/reducers/index.js';
+import { Sequence, TimeSeries } from '../src/index.js';
 import type { ColumnValue } from '../src/schema/index.js';
 
 const REDUCERS = ['keep', 'difference', 'unique', 'top1', 'top3', 'samples'];
@@ -144,3 +145,84 @@ describe('reduceCellRange matches reduce', () => {
     );
   });
 });
+
+describe('series.reduce / aggregate take the kernels and match the row path', () => {
+  function makeSeries(seed: number) {
+    let s = seed >>> 0;
+    const r = () => {
+      s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+      return s / 4294967296;
+    };
+    const rows: unknown[][] = [];
+    for (let i = 0; i < 120; i += 1) {
+      rows.push([
+        i * 1000,
+        r() < 0.15 ? undefined : r() < 0.05 ? -0 : Math.floor(r() * 6),
+        r() < 0.15 ? undefined : ['a', 'b', 'c'][Math.floor(r() * 3)],
+      ]);
+    }
+    return new TimeSeries({
+      name: 's',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number', required: false },
+        { name: 'host', kind: 'string', required: false },
+      ] as const,
+      rows: rows as never,
+    });
+  }
+
+  it('calls reduceCellRange and gives the row-path answer', () => {
+    const custom = (values: ReadonlyArray<ColumnValue | undefined>) =>
+      values.filter((v) => v !== undefined).length;
+    for (let seed = 1; seed <= 20; seed += 1) {
+      const series = makeSeries(seed);
+      const events = series.toArray();
+      for (const col of ['v', 'host'] as const) {
+        const cells = events.map((e) => e.get(col) as ColumnValue | undefined);
+        for (const name of REDUCERS) {
+          const def = resolveReducer(name);
+          const spy = vi.spyOn(def, 'reduceCellRange');
+          const whole = series.reduce(col, name as never);
+          // `topN` builds a fresh def per lookup, so only the registry
+          // reducers can be spied on.
+          if (!name.startsWith('top')) expect(spy).toHaveBeenCalled();
+          spy.mockRestore();
+          const want = rowPathCells(name, cells);
+          expect(same(whole, want), `${seed} ${col} ${name}`).toBe(true);
+          // Per 10-second bucket.
+          const agg = series
+            .aggregate(Sequence.every('10s'), {
+              out: { from: col, using: name as never },
+            })
+            .toArray();
+          agg.forEach((bucket, b) => {
+            const slice = cells.slice(b * 10, b * 10 + 10);
+            expect(
+              same(bucket.get('out'), rowPathCells(name, slice)),
+              `${seed} ${col} ${name} bucket ${b}`,
+            ).toBe(true);
+          });
+        }
+        // A custom reducer reads the column's cells, not Events.
+        expect(series.reduce(col, custom as never)).toBe(custom(cells));
+      }
+    }
+  });
+});
+
+function rowPathCells(
+  name: string,
+  cells: ReadonlyArray<ColumnValue | undefined>,
+): ColumnValue | undefined {
+  const defined: ColumnValue[] = [];
+  const numeric: number[] = [];
+  for (const v of cells) {
+    if (v === undefined) continue;
+    if (typeof v === 'number' && !Number.isFinite(v)) continue;
+    if (typeof v === 'number') numeric.push(v);
+    defined.push(v);
+  }
+  const out = resolveReducer(name).reduce(defined, numeric);
+  return typeof out === 'number' && !Number.isFinite(out) ? undefined : out;
+}

@@ -189,8 +189,8 @@ type ColumnarAggregatePlan =
     }
   | {
       /**
-       * Everything else — `unique` / `top` / `samples` / `keep` /
-       * `difference`, a reducer over a non-number or chunked column, or a
+       * Everything else — a built-in reducer with no range kernel for this
+       * column (e.g. `sum` over a chunked or non-number column), or a
        * custom function: the reducer's own bucket state, fed this
        * column's cells in order. The same values in the same order the
        * row path feeds it, so the answer is what this column alone gets.
@@ -213,10 +213,11 @@ type ColumnarAggregatePlan =
  *   `ReducerDef.definedBoundary`). That is what lets a partitioned
  *   `aggregate`, whose auto-injected partition-column reducer is
  *   `'first'`, take this path;
- * - every other column (`unique` / `top` / `samples` / `keep` /
- *   `difference`, a reducer over a non-number or chunked column, a
- *   custom function) feeds its reducer's bucket state, as the row path
- *   does.
+ * - `keep` / `difference` / `unique` / `top${N}` / `samples` take their
+ *   range kernel (`reduceCellRange`) over any column kind;
+ * - every other column (a reducer with no range kernel for it, such as
+ *   `sum` over a chunked or non-number column, or a custom function)
+ *   feeds its reducer's bucket state, as the row path does.
  *
  * This used to be all-or-nothing: one column of the third kind sent the
  * whole call to the row path, where `sum` / `avg` lose the blocked

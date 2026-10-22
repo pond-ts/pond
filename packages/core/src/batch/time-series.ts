@@ -669,10 +669,11 @@ function aggregateValues(
  * reducer)`. When the reducer defines `reduceColumn` and the column
  * is a packed `Float64Column`, skip `series.events` materialization
  * + the row-API `defined` / `numeric` filter passes; walk the
- * underlying typed array directly. Falls back to `null` for the
- * caller to take the row-API path otherwise (mixed kinds, chunked
- * storage, reducers that don't have a column fast path like
- * `first` / `last`).
+ * underlying typed array directly; `keep` / `difference` / `unique` /
+ * `top${N}` / `samples` use their `reduceCellRange` kernel on any column.
+ * Otherwise `{ ok: false }`: the caller reads the column's cells
+ * (`columnCells`) and runs the reducer over them, still without building
+ * `Event`s.
  */
 function tryReduceColumnFastPath(
   reducer: AggregateReducer,
