@@ -9,10 +9,18 @@ gap every 17th row.
 - outliers: the rows outside a 1.5-stdev band.
 - scan running sum: `fill_null(0).cum_sum()` (pond carries the sum
   through gaps).
-- sample: `gather_every(10, offset=9)` (pond keeps every tenth row from the tenth), `sample(1000, seed=1)` (different picks
-  from pond's reservoir, so only the time compares).
-- No polars counterpart: centred time windows, range keys, loess, a scan
-  with a custom state (the "gain" case).
+- centred moving average keeping gaps: the general
+  `DataFrame.rolling(period="5m", offset="-150s", closed="left")` (pond's
+  `[t - 2.5m, t + 2.5m)`), gap rows left as gaps.
+- sample: `gather_every(10, offset=9)` (pond keeps every tenth row from the
+  tenth); `sample(1000, seed=1)` then sorted back into time order, as pond
+  returns its reservoir. The picks differ from pond's (different random
+  numbers), so that case's answer is checked only for shape.
+- No polars counterpart: range keys, loess, a scan with a custom state (the
+  "gain" case).
+- Each case returns what pond returns (key and value columns, with the new
+  column where pond puts it) and is checked against pond-rs's
+  (`../check_outputs.py`).
 """
 
 import numpy as np
@@ -34,6 +42,11 @@ v = pl.col("v")
 def ema(**kw):
     e = v.ewm_mean(adjust=False, ignore_nulls=True, **kw)
     return big.with_columns(pl.when(v.is_not_null()).then(e).alias("out"))
+
+
+def centered_skip():
+    m = big.rolling("time", period="5m", offset="-150s", closed="left").agg(v.mean().alias("out"))
+    return big.with_columns(pl.when(v.is_not_null()).then(m["out"]).alias("out"))
 
 
 def band():
@@ -63,11 +76,12 @@ cases = [
         "out",
         lambda: big.with_columns(v.rolling_mean_by("time", "5m", closed="right").alias("out")),
     ),
+    ("moving average 5m centered skip", "out", centered_skip),
     ("baseline 5m", "out", baseline),
     ("outliers 5m", "v", outliers),
     ("scan sum", "out", lambda: big.with_columns(v.fill_null(0).cum_sum().alias("out"))),
     ("sample stride 10", "v", lambda: big.gather_every(10, offset=9)),
-    ("sample reservoir 1000", "v", lambda: big.sample(1000, seed=1)),
+    ("sample reservoir 1000", "v", lambda: big.sample(1000, seed=1).sort("time")),
 ]
 for name, column, f in cases:
     run([(name, f)], column=column)

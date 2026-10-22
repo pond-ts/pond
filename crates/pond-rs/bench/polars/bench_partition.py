@@ -4,6 +4,8 @@ bars (500k rows, symbols interleaved, ~2% gaps).
 pond's partition ops give back one series in time order; polars window
 expressions (`.over("symbol")`) keep the input's row order, which is already
 time order here, so no extra sort is needed to match "collect".
+
+Each case's answer is checked against pond-rs's (`../check_outputs.py`).
 """
 
 import polars as pl
@@ -32,10 +34,22 @@ c = pl.col("close")
 
 
 def rolled():
-    # pond's trailing window is (t - 60m, t]; polars closed="right" is the same.
-    return df.with_columns(
+    # pond's trailing window is (t - 60m, t]; polars closed="right" is the
+    # same. The third output is pond's `last` reducer on `close`: the last
+    # present close inside the window (a gap if none). polars has no
+    # rolling "last present" by time, so: carry the last present close and
+    # its time forward per symbol, and keep it while that time is inside
+    # the window. Columns in pond's order (key, outputs, then the
+    # partition column).
+    t = pl.col("time")
+    seen = pl.when(c.is_not_null()).then(t).forward_fill().over("symbol")
+    last = pl.when(seen > t - pl.duration(minutes=60)).then(c.forward_fill().over("symbol"))
+    return df.select(
+        t,
         c.rolling_mean_by("time", "60m", closed="right").over("symbol").alias("mean"),
         c.rolling_std_by("time", "60m", closed="right", ddof=0).over("symbol").alias("sd"),
+        last.alias("close"),
+        "symbol",
     )
 
 
@@ -47,6 +61,7 @@ def q11():
         .drop_nulls("z")
         .sort(pl.col("z").abs(), descending=True)
         .head(20)
+        .select("symbol", "z")
     )
     assert z.height == 20
     return z

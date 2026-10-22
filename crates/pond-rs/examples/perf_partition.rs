@@ -11,22 +11,11 @@
 //! its own cost per partition, run on several cores; collecting is a sort
 //! of P already-sorted runs (O(N log P)) and one copy.
 
-use std::time::Instant;
+mod common;
 
+use common::{Dump, Dumped};
 use pond_rs::{Agg, Column, Fill, FillLimits, FirstRow, Reducer, TimeSeries};
-
-fn median_ms(mut f: impl FnMut()) -> f64 {
-    f();
-    let mut t: Vec<f64> = (0..7)
-        .map(|_| {
-            let s = Instant::now();
-            f();
-            s.elapsed().as_secs_f64() * 1000.0
-        })
-        .collect();
-    t.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    t[3]
-}
+use serde_json::json;
 
 fn main() -> pond_rs::Result<()> {
     let (symbols, bars) = (500usize, 1000usize);
@@ -69,16 +58,16 @@ fn main() -> pond_rs::Result<()> {
         Agg::new("sd", "close", Reducer::Stdev),
         Agg::of("close", Reducer::Last),
     ];
-    type Case<'a> = (&'a str, Box<dyn Fn() + 'a>);
+    type Case<'a> = (&'a str, Box<dyn Fn() -> Box<dyn Dump> + 'a>);
     let cases: Vec<Case> = vec![
         (
             "split",
-            Box::new(|| drop(series.partition_by(&["symbol"]).unwrap())),
+            Box::new(|| Box::new(series.partition_by(&["symbol"]).unwrap())),
         ),
         (
             "diff + collect",
             Box::new(|| {
-                drop(
+                Box::new(
                     series
                         .partition_by(&["symbol"])
                         .unwrap()
@@ -92,7 +81,7 @@ fn main() -> pond_rs::Result<()> {
         (
             "fill linear + collect",
             Box::new(|| {
-                drop(
+                Box::new(
                     series
                         .partition_by(&["symbol"])
                         .unwrap()
@@ -106,7 +95,7 @@ fn main() -> pond_rs::Result<()> {
         (
             "rolling 60m mean/sd + collect",
             Box::new(|| {
-                drop(
+                Box::new(
                     series
                         .partition_by(&["symbol"])
                         .unwrap()
@@ -138,11 +127,15 @@ fn main() -> pond_rs::Result<()> {
                 z.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs()));
                 z.truncate(20);
                 assert_eq!(z.len(), 20);
+                Box::new(Dumped::Columns(vec![
+                    ("symbol".into(), z.iter().map(|(n, _)| json!(n)).collect()),
+                    ("z".into(), z.iter().map(|(_, z)| json!(z)).collect()),
+                ]))
             }),
         ),
     ];
     for (name, f) in cases {
-        println!("| {name} | {:.1} ms |", median_ms(&f));
+        println!("| {name} | {:.1} ms |", common::time_case(name, 7, &f));
     }
     Ok(())
 }

@@ -9,6 +9,8 @@
 //! gathered once (O(R) per column). Text labels on equal interval spans
 //! also pay a Unicode collation compare.
 
+mod common;
+
 use std::time::Instant;
 
 use pond_rs::{Column, Join, JoinType, TimeSeries};
@@ -143,7 +145,10 @@ fn main() -> pond_rs::Result<()> {
         if only.as_deref().is_some_and(|o| !name.contains(o)) {
             continue;
         }
-        let (rows, sum) = checksum(&f());
+        let out = f();
+        common::write_dump(name, &out);
+        let (rows, sum) = checksum(&out);
+        drop(out);
         let ms = median_ms(|| {
             std::hint::black_box(f());
         });
