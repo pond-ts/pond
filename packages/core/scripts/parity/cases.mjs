@@ -3777,6 +3777,217 @@ const CASES = [
     'partitionBy',
     ['b', [['cumulative', { a: 'sum' }]], 'collect'],
   ],
+  // smooth / baseline / outliers / scan / sample per partition: each
+  // partition on its own rows (`hosts` has a gap-only stretch for b's cpu
+  // and a row with no host).
+  [
+    'partition-smooth-ema',
+    'hosts',
+    'partitionBy',
+    ['host', [['smooth', 'cpu', 'ema', { alpha: 0.4 }]], 'collect'],
+  ],
+  [
+    'partition-smooth-ema-output-warmup',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [['smooth', 'mem', 'ema', { span: 3, warmup: 2, output: 'memE' }]],
+      'toMap',
+    ],
+  ],
+  [
+    'partition-smooth-movingAverage',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [['smooth', 'cpu', 'movingAverage', { window: '5s', output: 'ma' }]],
+      'collect',
+    ],
+  ],
+  [
+    'partition-smooth-movingAverage-centered',
+    'hosts',
+    'partitionBy',
+    [
+      'region',
+      [
+        [
+          'smooth',
+          'mem',
+          'movingAverage',
+          { window: '4s', alignment: 'centered' },
+        ],
+      ],
+      'toMap',
+    ],
+  ],
+  [
+    'partition-smooth-loess',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [['smooth', 'mem', 'loess', { span: 0.8, output: 'lo' }]],
+      'collect',
+    ],
+  ],
+  [
+    'partition-smooth-then-diff',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [
+        ['smooth', 'cpu', 'ema', { alpha: 0.5 }],
+        ['diff', 'cpu'],
+      ],
+      'collect',
+    ],
+  ],
+  // Smoothing the partition column itself moves rows between partitions.
+  [
+    'partition-smooth-key-column',
+    'hosts',
+    'partitionBy',
+    ['mem', [['smooth', 'mem', 'ema', { alpha: 0.5 }]], 'toMap'],
+  ],
+  [
+    'partition-smooth-text',
+    'hosts',
+    'partitionBy',
+    ['host', [['smooth', 'host', 'ema', { alpha: 0.5 }]], 'collect'],
+  ],
+  [
+    'partition-smooth-empty',
+    'emptyHosts',
+    'partitionBy',
+    ['host', [['smooth', 'cpu', 'ema', { alpha: 0.5 }]], 'collect'],
+  ],
+  [
+    'partition-baseline',
+    'hosts',
+    'partitionBy',
+    ['host', [['baseline', 'mem', { window: '10s', sigma: 1 }]], 'collect'],
+  ],
+  [
+    'partition-baseline-names-minSamples',
+    'hosts',
+    'partitionBy',
+    [
+      'region',
+      [
+        [
+          'baseline',
+          'cpu',
+          {
+            window: '6s',
+            sigma: 0.5,
+            alignment: 'centered',
+            minSamples: 2,
+            names: { avg: 'mu', upper: 'hi' },
+          },
+        ],
+      ],
+      'toMap',
+    ],
+  ],
+  [
+    'partition-outliers',
+    'hosts',
+    'partitionBy',
+    ['host', [['outliers', 'mem', { window: '10s', sigma: 0.5 }]], 'toMap'],
+  ],
+  // A sigma no row passes: every partition empties and is dropped.
+  [
+    'partition-outliers-none',
+    'hosts',
+    'partitionBy',
+    ['host', [['outliers', 'mem', { window: '10s', sigma: 1e9 }]], 'collect'],
+  ],
+  [
+    'partition-outliers-then-collect',
+    'hosts',
+    'partitionBy',
+    [
+      'region',
+      [
+        [
+          'outliers',
+          'cpu',
+          { window: '20s', sigma: 0.25, alignment: 'leading' },
+        ],
+      ],
+      'collect',
+    ],
+  ],
+  [
+    'partition-scan-sum',
+    'hosts',
+    'partitionBy',
+    ['host', [['scan', 'mem', { fn: { scan: 'sum' } }, 0]], 'collect'],
+  ],
+  [
+    'partition-scan-index-output',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [['scan', 'cpu', { fn: { scan: 'index' } }, 1, { output: 'r' }]],
+      'toMap',
+    ],
+  ],
+  [
+    'partition-scan-gain',
+    'hosts',
+    'partitionBy',
+    [
+      'region',
+      [
+        [
+          'scan',
+          'mem',
+          { fn: { scan: 'gain', band: 3 } },
+          { ref: null, gain: 0 },
+          { output: 'g' },
+        ],
+      ],
+      'collect',
+    ],
+  ],
+  [
+    'partition-scan-error',
+    'hosts',
+    'partitionBy',
+    ['host', [['scan', 'region', { fn: { scan: 'sum' } }, 0]], 'collect'],
+  ],
+  [
+    'partition-sample-stride',
+    'hosts',
+    'partitionBy',
+    ['host', [['sample', { stride: 2 }]], 'collect'],
+  ],
+  [
+    'partition-sample-stride-toMap',
+    'hosts',
+    'partitionBy',
+    ['region', [['sample', { stride: 3 }]], 'toMap'],
+  ],
+  // A reservoir as large as every partition keeps them whole (pond-ts
+  // picks at random otherwise, which a fixture cannot pin).
+  [
+    'partition-sample-reservoir-all',
+    'hosts',
+    'partitionBy',
+    ['host', [['sample', { reservoir: { size: 7 } }]], 'collect'],
+  ],
+  [
+    'partition-sample-error',
+    'hosts',
+    'partitionBy',
+    ['host', [['sample', { stride: 0 }]], 'collect'],
+  ],
   [
     'partition-empty',
     'emptyHosts',

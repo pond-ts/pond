@@ -804,7 +804,7 @@ impl TimeSeries {
         Ok(TimeSeries::from_parts(
             self.name().to_string(),
             self.key_name().to_string(),
-            self.key().clone(),
+            self.shared_key(),
             columns,
         ))
     }
