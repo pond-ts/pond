@@ -152,10 +152,12 @@ impl TimeSeries {
         // Seconds between each row and the one before, as pond-ts computes
         // them: one subtraction, one division.
         let seconds = |t: i64, t0: i64| (t - t0) as f64 / 1000.0;
-        // No per-row gap test: a gap is non-finite, and anything minus or
-        // divided by a non-finite value is non-finite, so `finite_or_gap`
-        // turns it into a gap. Dividing by a zero `dt` or `prev` gives an
-        // infinity or NaN, which becomes a gap the same way. Without the
+        // No per-row gap test: a gap is non-finite, so `cur - prev` is
+        // non-finite when either side is a gap, and so is every result
+        // built on it (`pct_change` divides it by `prev`, `rate` by a
+        // finite `dt`); `finite_or_gap` turns that into a gap. Dividing by
+        // a zero `dt` or `prev` gives an infinity or NaN, which becomes a
+        // gap the same way. Without the
         // branch the compiler can work on several rows at once (the diff loop
         // on 1M rows with 5% gaps: about 3 ms with the branch, 0.65 ms
         // without).
