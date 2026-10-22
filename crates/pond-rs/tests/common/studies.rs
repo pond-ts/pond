@@ -739,8 +739,8 @@ pub fn call_study(
         "massIndex" => series.mass_index(reads!(
             name_only!(
                 MassIndex::default()
-                    .ema(int("emaPeriod", 9))
-                    .sum(int("sumPeriod", 25)),
+                    .ema_period(int("emaPeriod", 9))
+                    .sum_period(int("sumPeriod", 25)),
                 output
             ),
             high,
@@ -764,7 +764,7 @@ pub fn call_study(
         "relativeVolatilityIndex" => series.relative_volatility_index(named!(
             RelativeVolatilityIndex::default()
                 .period(int("period", 14))
-                .stdev(int("stdevPeriod", 10)),
+                .stdev_period(int("stdevPeriod", 10)),
             output
         )),
         other => panic!("no pond-rs call for study '{other}'"),

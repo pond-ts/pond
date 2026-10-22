@@ -6,8 +6,8 @@
 use super::Study;
 use super::averages::positive;
 use super::kernels::{
-    self, js_log, js_log10, percent_change_values, rolling_extreme, rolling_mean_sd,
-    rolling_mean_values, wilder_values,
+    self, bar_range_values, js_log, js_log10, percent_change_values, rolling_extreme,
+    rolling_mean_sd, rolling_mean_values, wilder_values,
 };
 use crate::error::{PondError, Result};
 use crate::par;
@@ -51,9 +51,9 @@ study_options! {
     /// `mass`.
     MassIndex, output = "mass", reads [high, low] {
         /// The EMAs' length in bars (default 9).
-        ema: usize = 9,
+        ema_period: usize = 9,
         /// How many ratios are summed (default 25).
-        sum: usize = 25,
+        sum_period: usize = 25,
     }
 }
 
@@ -83,7 +83,7 @@ study_options! {
         /// The Wilder smoothing's length in bars (default 14).
         period: usize = 14,
         /// The spread's window in bars (default 10).
-        stdev: usize = 10,
+        stdev_period: usize = 10,
     }
 }
 
@@ -133,8 +133,9 @@ impl TimeSeries {
 
     /// Chaikin volatility (pond-ts `chaikinVolatility`): the percent change
     /// over `roc_period` bars of a `period`-bar EMA of the bar range
-    /// (`high - low`). The EMA skips leading gaps; a gap where the earlier
-    /// average is zero or a gap.
+    /// (`high - low`). The EMA skips gaps (a gap row gets a gap) and waits
+    /// for `period` values; a gap where the earlier average is zero or a
+    /// gap.
     pub fn chaikin_volatility(&self, options: ChaikinVolatility) -> Result<TimeSeries> {
         const CALL: &str = "TimeSeries::chaikin_volatility";
         positive(CALL, "period", options.period)?;
@@ -143,28 +144,29 @@ impl TimeSeries {
         self.free_names(CALL, &[&output])?;
         let [high, low] =
             self.price_columns(CALL, [&options.high, &options.low], ["high", "low"])?;
-        let smoothed = kernels::ema_values(&bar_range(&high, &low), options.period);
+        let smoothed = kernels::ema_values(&bar_range_values(&high, &low), options.period);
         let out = percent_change_values(&smoothed, options.roc_period);
         self.study_output(CALL, output, out)
     }
 
     /// Mass index (pond-ts `massIndex`): the ratio of a single to a double
-    /// `ema`-bar EMA of the bar range, summed over the last `sum` bars. A
-    /// gap until the double EMA has warmed up and `sum` ratios are
+    /// `ema_period`-bar EMA of the bar range, summed over the last
+    /// `sum_period` bars. A
+    /// gap until the double EMA has warmed up and `sum_period` ratios are
     /// present, and wherever the window holds a gap.
     pub fn mass_index(&self, options: MassIndex) -> Result<TimeSeries> {
         const CALL: &str = "TimeSeries::mass_index";
-        positive(CALL, "emaPeriod", options.ema)?;
-        positive(CALL, "sumPeriod", options.sum)?;
+        positive(CALL, "emaPeriod", options.ema_period)?;
+        positive(CALL, "sumPeriod", options.sum_period)?;
         let output = options.name().to_string();
         self.free_names(CALL, &[&output])?;
         let [high, low] =
             self.price_columns(CALL, [&options.high, &options.low], ["high", "low"])?;
-        let single = kernels::ema_values(&bar_range(&high, &low), options.ema);
-        let double = kernels::ema_values(&single, options.ema);
+        let single = kernels::ema_values(&bar_range_values(&high, &low), options.ema_period);
+        let double = kernels::ema_values(&single, options.ema_period);
         let ratio: Vec<f64> = single.iter().zip(&double).map(|(s, d)| s / d).collect();
-        let sum = options.sum as f64;
-        let out = rolling_mean_values(&ratio, options.sum)
+        let sum = options.sum_period as f64;
+        let out = rolling_mean_values(&ratio, options.sum_period)
             .into_iter()
             .map(|m| m * sum)
             .collect();
@@ -261,7 +263,7 @@ impl TimeSeries {
     }
 
     /// Relative volatility index (pond-ts `relativeVolatilityIndex`):
-    /// RSI's arithmetic on the `stdev`-bar standard deviation instead of the
+    /// RSI's arithmetic on the `stdev_period`-bar standard deviation instead of the
     /// change, routed to the up leg on a rise and the down leg otherwise
     /// (an unchanged value counts as down), each leg Wilder-smoothed over
     /// `period` bars: `100 * up / (up + down)`.
@@ -271,11 +273,11 @@ impl TimeSeries {
     ) -> Result<TimeSeries> {
         const CALL: &str = "TimeSeries::relative_volatility_index";
         positive(CALL, "period", options.period)?;
-        positive(CALL, "stdevPeriod", options.stdev)?;
+        positive(CALL, "stdevPeriod", options.stdev_period)?;
         let output = options.name().to_string();
         self.free_names(CALL, &[&output])?;
         let values = self.study_source(CALL, options.source())?;
-        let out = relative_volatility_values(&values, options.period, options.stdev);
+        let out = relative_volatility_values(&values, options.period, options.stdev_period);
         self.study_output(CALL, output, out)
     }
 }
@@ -292,11 +294,6 @@ fn at_least_two(call: &'static str, study: &str, log: &str, period: usize) -> Re
         });
     }
     Ok(())
-}
-
-/// pond-ts `barRangeValues`: `high - low` for every row.
-fn bar_range(high: &[f64], low: &[f64]) -> Vec<f64> {
-    high.iter().zip(low).map(|(h, l)| h - l).collect()
 }
 
 /// pond-ts `historicalVolatility` after its checks.

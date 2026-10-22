@@ -3023,8 +3023,8 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     `sqrt` (same bits on 22M values checked); `+ 0.0` on the mass index's
     sum (its mean is never -0); dropping either half of the choppiness
     guard, or `>=` in the range index's (the dropped case then gives an
-    infinity or NaN, both stored as a gap; a zero true-range sum forces a
-    zero span); and dropping the ulcer index's finite check on its exact-0
+    infinity or NaN, both stored as a gap; review on #822 corrected an
+    earlier reason given here); and dropping the ulcer index's finite check on its exact-0
     rule (a window with no drawdown is always full and finite: warm-up
     rows have no peak, so their drawdown is a gap and counts).
   - Perf: all O(N); the window kernels split rows across cores as before.

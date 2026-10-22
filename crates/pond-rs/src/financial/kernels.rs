@@ -969,6 +969,11 @@ pub(crate) fn js_log10(x: f64) -> f64 {
     z + y * LOG10_2HI
 }
 
+/// pond-ts `barRangeValues`: `high - low` for every row.
+pub(crate) fn bar_range_values(high: &[f64], low: &[f64]) -> Vec<f64> {
+    high.iter().zip(low).map(|(h, l)| h - l).collect()
+}
+
 /// pond-ts `trueRangeValues`: [`true_range_at`] for every row.
 pub(crate) fn true_range_values(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
     (0..high.len())
