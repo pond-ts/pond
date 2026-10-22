@@ -658,6 +658,13 @@ undefined`; `rolling` with an unknown column says "aggregate mapping".
   agents) reach it. pond-rs returns an error naming the column; pond-ts
   should throw the same. Found 2026-10-18 while adding text columns to
   pond-rs (R1b step 2a).
+- **[PND-ARROWTYPE]** — pond-ts `TimeSeries.fromArrow(table, { time: 'ts' })`
+  can't be typed truthfully: without a schema type argument a chain fails to
+  type-check at `rolling` (mapping becomes `never`), and the schema type's key
+  must be named `'time'` (`FirstColumn`), so a file keyed `ts` has to be
+  described as `time` while the series really calls it `ts`. The docs
+  (`creating.mdx`) suggest exactly that pair. Found 2026-10-22 writing a whole
+  read-Arrow-then-chain program (thread "Chaining studies and operators").
 - **[PND-ARROWREQ]** — pond-ts `fromArrow` declares every value column
   required, even one with nulls, so its own `toJSON` → `fromJSON` round trip
   then throws ("row 1 col 1 (v) is required"). Reproduced 2026-10-17 with a
@@ -857,6 +864,10 @@ Robustness debt plus the queued composition workstreams. Plan:
   exact-removal eviction channel.
 - **[PND-TAPOBS]** — Evaluate `tap()` per-partition observer now that fused
   rolling shipped.
+- **[PND-LIVEAPPEND]** — Live `rolling` / `diff` / `rate` / `pctChange` don't
+  take the batch `{ append: true }` / `{ output }` options added in
+  [PND-CHAIN] (2026-10-22). Add them if a live consumer asks; batch-only for
+  now.
 
 ### Streaming semantics (Phase 4.5)
 

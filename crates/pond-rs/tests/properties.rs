@@ -188,6 +188,7 @@ impl RollCase {
             options: Rolling {
                 alignment,
                 min_samples,
+                ..Rolling::default()
             },
         }
     }
@@ -1150,7 +1151,7 @@ fn moving_average_matches_brute_force() {
                 &[Agg::new("v", "v", Reducer::Avg)],
                 Rolling {
                     alignment,
-                    min_samples: 0,
+                    ..Rolling::default()
                 },
             )
             .unwrap();

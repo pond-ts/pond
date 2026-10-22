@@ -45,6 +45,7 @@ import type {
   ColumnDef,
   RenameSchema,
   RollingAlignment,
+  RollingAppendSchema,
   RollingSchema,
   ColumnValue,
   CustomAggregateReducer,
@@ -3278,6 +3279,11 @@ export class TimeSeries<S extends SeriesSchema> {
    * Example: `series.diff("requests", { drop: true })`.
    * Drops the first event instead of keeping it with undefined values.
    *
+   * Example: `series.diff("rsi", { output: "rsiChange" })`.
+   * With `output`, the result goes in a new optional `number` column of that
+   * name and the source column is kept as it was (one source column only;
+   * the name must not already exist). Same for `rate` and `pctChange`.
+   *
    * **Multi-entity series:** the "previous event" may belong to a
    * different entity, producing meaningless deltas across entity
    * boundaries. On a series carrying multiple entities (host, region,
@@ -3285,11 +3291,22 @@ export class TimeSeries<S extends SeriesSchema> {
    * `series.partitionBy(col).diff(...).collect()` to scope per entity.
    * See {@link TimeSeries.partitionBy}.
    */
+  diff<
+    const Target extends NumericColumnNameForSchema<S>,
+    const Name extends string,
+  >(
+    column: Target,
+    options: { output: Name; drop?: boolean },
+  ): TimeSeries<SmoothAppendSchema<S, Name>>;
   diff<const Target extends NumericColumnNameForSchema<S>>(
     columns: Target | readonly Target[],
     options?: { drop?: boolean },
-  ): TimeSeries<DiffSchema<S, Target>> {
-    return TimeSeries.#diffOrRate(this, 'diff', columns, options);
+  ): TimeSeries<DiffSchema<S, Target>>;
+  diff(
+    columns: string | readonly string[],
+    options?: { drop?: boolean; output?: string },
+  ): TimeSeries<SeriesSchema> {
+    return TimeSeries.#diffOrRate(this, 'diff', columns as never, options);
   }
 
   /**
@@ -3312,11 +3329,22 @@ export class TimeSeries<S extends SeriesSchema> {
    * `series.partitionBy(col).rate(...).collect()` to scope per entity.
    * See {@link TimeSeries.partitionBy}.
    */
+  rate<
+    const Target extends NumericColumnNameForSchema<S>,
+    const Name extends string,
+  >(
+    column: Target,
+    options: { output: Name; drop?: boolean },
+  ): TimeSeries<SmoothAppendSchema<S, Name>>;
   rate<const Target extends NumericColumnNameForSchema<S>>(
     columns: Target | readonly Target[],
     options?: { drop?: boolean },
-  ): TimeSeries<DiffSchema<S, Target>> {
-    return TimeSeries.#diffOrRate(this, 'rate', columns, options);
+  ): TimeSeries<DiffSchema<S, Target>>;
+  rate(
+    columns: string | readonly string[],
+    options?: { drop?: boolean; output?: string },
+  ): TimeSeries<SeriesSchema> {
+    return TimeSeries.#diffOrRate(this, 'rate', columns as never, options);
   }
 
   /**
@@ -3333,11 +3361,22 @@ export class TimeSeries<S extends SeriesSchema> {
    * `series.partitionBy(col).pctChange(...).collect()` to scope per
    * entity. See {@link TimeSeries.partitionBy}.
    */
+  pctChange<
+    const Target extends NumericColumnNameForSchema<S>,
+    const Name extends string,
+  >(
+    column: Target,
+    options: { output: Name; drop?: boolean },
+  ): TimeSeries<SmoothAppendSchema<S, Name>>;
   pctChange<const Target extends NumericColumnNameForSchema<S>>(
     columns: Target | readonly Target[],
     options?: { drop?: boolean },
-  ): TimeSeries<DiffSchema<S, Target>> {
-    return TimeSeries.#diffOrRate(this, 'pctChange', columns, options);
+  ): TimeSeries<DiffSchema<S, Target>>;
+  pctChange(
+    columns: string | readonly string[],
+    options?: { drop?: boolean; output?: string },
+  ): TimeSeries<SeriesSchema> {
+    return TimeSeries.#diffOrRate(this, 'pctChange', columns as never, options);
   }
 
   // Static private — the brand check is on the class itself, which
@@ -3353,7 +3392,7 @@ export class TimeSeries<S extends SeriesSchema> {
     series: TimeSeries<SX>,
     mode: DiffRateMode,
     columns: Target | readonly Target[],
-    options?: { drop?: boolean },
+    options?: { drop?: boolean; output?: string },
   ): TimeSeries<DiffSchema<SX, Target>> {
     type OutSchema = DiffSchema<SX, Target>;
     // Column-native (Step 4): successive differences are folded straight
@@ -3369,6 +3408,7 @@ export class TimeSeries<S extends SeriesSchema> {
       mode,
       cols as readonly string[],
       options?.drop === true,
+      options?.output,
     );
     return TimeSeries.#fromTrustedStore(
       series.name,
@@ -3850,8 +3890,17 @@ export class TimeSeries<S extends SeriesSchema> {
    * Defaults:
    * - `alignment`: `"trailing"`
    * - `minSamples`: `0` (no gate)
+   * - `append`: `false` (the result holds the key and the outputs only)
    * - sequence-driven only: `sample: "begin"`
    * - sequence-driven only: `range: series.timeRange()`
+   *
+   * `append: true` (event-driven form only) keeps every column of this
+   * series and adds the outputs after them, as the financial studies do, so
+   * a chain can keep reading the source columns:
+   * `series.rolling('10m', { rsi10m: { from: 'rsi', using: 'avg' } }, { append: true })`.
+   * An output may not take the name of an existing column, so the shorthand
+   * form (`{ rsi: 'avg' }`, whose output is the source's own name) is an
+   * error with `append`; name each output instead.
    *
    * `minSamples` suppresses output until the window contains at least
    * that many source events: rows where the count is below the threshold
@@ -3880,7 +3929,20 @@ export class TimeSeries<S extends SeriesSchema> {
   rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     window: DurationInput | { count: number },
     mapping: Mapping,
-    options?: { alignment?: RollingAlignment; minSamples?: number },
+    options: {
+      alignment?: RollingAlignment;
+      minSamples?: number;
+      append: true;
+    },
+  ): TimeSeries<RollingAppendSchema<S, Mapping>>;
+  rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
+    window: DurationInput | { count: number },
+    mapping: Mapping,
+    options?: {
+      alignment?: RollingAlignment;
+      minSamples?: number;
+      append?: false;
+    },
   ): TimeSeries<RollingSchema<S, Mapping>>;
   rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     sequence: SequenceLike,
@@ -3893,7 +3955,51 @@ export class TimeSeries<S extends SeriesSchema> {
       minSamples?: number;
     },
   ): TimeSeries<AggregateSchema<S, Mapping>>;
-  rolling(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  rolling(...args: any[]): TimeSeries<SeriesSchema> {
+    const first = args[0];
+    const sequenceForm =
+      first instanceof Sequence || first instanceof BoundedSequence;
+    const options = (sequenceForm ? args[3] : args[2]) as
+      | { append?: boolean }
+      | undefined;
+    if (options?.append !== true) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (this.#rolling as any)(...args);
+    }
+    if (sequenceForm) {
+      throw new TypeError(
+        "rolling: append is not supported with a sequence (its rows are the sequence's buckets, not this series' rows)",
+      );
+    }
+    // Append: roll as usual, then put the outputs after this series' own
+    // columns. The rolled series has one row per row of this one, in the
+    // same order, so its columns line up.
+    const { append: _append, ...rest } = options as Record<string, unknown>;
+    void _append;
+    const rolled = this.#rolling(args[0], args[1], rest);
+    let store = this.#store.store as unknown as ColumnarStore<ColumnSchema>;
+    const outputs = rolled.schema.slice(1);
+    for (const def of outputs) {
+      if (this.schema.some((c) => c.name === def.name)) {
+        throw new RangeError(
+          `rolling: output column '${def.name}' already exists; with append, give each output a new name ({ newName: { from, using } })`,
+        );
+      }
+      store = withColumnAppended(
+        store,
+        def.name,
+        rolled.#store.store.columns.get(def.name)!,
+      );
+    }
+    const schema = Object.freeze([
+      ...this.schema,
+      ...outputs,
+    ]) as unknown as SeriesSchema;
+    return TimeSeries.#fromTrustedStore(this.name, schema, store);
+  }
+
+  #rolling(
     sequenceOrWindow: SequenceLike | DurationInput | { count: number },
     windowOrMapping: DurationInput | AggregateMap<S>,
     mappingOrOptions?:

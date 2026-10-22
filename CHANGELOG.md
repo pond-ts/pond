@@ -78,6 +78,24 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **Chain-friendly options on `rolling`, `diff`, `rate` and `pctChange`**
+  ([PND-CHAIN]). `rolling(window, mapping, { append: true })` keeps every
+  source column and adds the outputs after them (before, `rolling` returned
+  only the key and its outputs, so a chain lost `close`, `sma`, …). An output
+  may not reuse an existing name, so name each output with `{ from, using }`.
+  Event-driven form only; also on `partitionBy(...).rolling`. And
+  `diff('rsi', { output: 'rsiChange' })` (same for `rate` / `pctChange`)
+  puts the change in a new optional number column and keeps the source
+  (one source column; the name must be new). Both reuse names pond-ts already
+  has (`collapse`'s `append`, `scan` / `smooth`'s `output`). New public type
+  `RollingAppendSchema`. pond-rs gets the same (`Rolling { append }`,
+  `diff_with(&cols, Change::default().output(..))`), plus Rust-only short
+  forms: `diff` / `rate` / `pct_change` / `fill` / `fill_all` without the
+  default arguments (`_with` forms take them), and `reduce_number` /
+  `reduce_value` for a single column's answer.
+
 ### Changed
 
 - **`rolling(sequence, window, mapping)` no longer scans every row for every

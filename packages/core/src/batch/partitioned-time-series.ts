@@ -19,6 +19,7 @@ import type {
   MaterializeSchema,
   NumericColumnNameForSchema,
   RollingAlignment,
+  RollingAppendSchema,
   RollingSchema,
   SeriesSchema,
   SmoothAppendSchema,
@@ -626,6 +627,15 @@ export class PartitionedTimeSeries<
   rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     window: DurationInput,
     mapping: Mapping,
+    options: {
+      alignment?: RollingAlignment;
+      minSamples?: number;
+      append: true;
+    },
+  ): PartitionedTimeSeries<RollingAppendSchema<S, Mapping>, K, By>;
+  rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
+    window: DurationInput,
+    mapping: Mapping,
     options?: { alignment?: RollingAlignment; minSamples?: number },
   ): PartitionedTimeSeries<
     RollingSchema<S, WithPartitionColumns<S, Mapping, By>>,
@@ -667,9 +677,16 @@ export class PartitionedTimeSeries<
     // depending on whether opts is supplied. We can disambiguate
     // by checking whether the third arg looks like a mapping
     // (record of reducers) vs an opts object.
-    const augmentedArgs = augmentRollingArgsWithPartitionCols(args, (mapping) =>
-      this.augmentMappingWithPartitionCols(mapping),
-    );
+    // `append: true` keeps every source column, partition columns included,
+    // so there is nothing to carry through the mapping.
+    const appending =
+      !(args[0] instanceof Sequence || args[0] instanceof BoundedSequence) &&
+      (args[2] as { append?: boolean } | undefined)?.append === true;
+    const augmentedArgs = appending
+      ? args
+      : augmentRollingArgsWithPartitionCols(args, (mapping) =>
+          this.augmentMappingWithPartitionCols(mapping),
+        );
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -754,37 +771,76 @@ export class PartitionedTimeSeries<
   }
 
   /** Per-partition `diff`. See {@link TimeSeries.diff}. */
+  diff<
+    const Target extends NumericColumnNameForSchema<S>,
+    const Name extends string,
+  >(
+    column: Target,
+    options: { output: Name; drop?: boolean },
+  ): PartitionedTimeSeries<SmoothAppendSchema<S, Name>, K, By>;
   diff<const Target extends NumericColumnNameForSchema<S>>(
     columns: Target | readonly Target[],
     options?: { drop?: boolean },
-  ): PartitionedTimeSeries<DiffSchema<S, Target>, K, By> {
+  ): PartitionedTimeSeries<DiffSchema<S, Target>, K, By>;
+  diff(
+    columns: string | readonly string[],
+    options?: { drop?: boolean; output?: string },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ): any {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
-        g.diff(columns, options),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (g.diff as any)(columns, options),
       ),
     );
   }
 
   /** Per-partition `rate`. See {@link TimeSeries.rate}. */
+  rate<
+    const Target extends NumericColumnNameForSchema<S>,
+    const Name extends string,
+  >(
+    column: Target,
+    options: { output: Name; drop?: boolean },
+  ): PartitionedTimeSeries<SmoothAppendSchema<S, Name>, K, By>;
   rate<const Target extends NumericColumnNameForSchema<S>>(
     columns: Target | readonly Target[],
     options?: { drop?: boolean },
-  ): PartitionedTimeSeries<DiffSchema<S, Target>, K, By> {
+  ): PartitionedTimeSeries<DiffSchema<S, Target>, K, By>;
+  rate(
+    columns: string | readonly string[],
+    options?: { drop?: boolean; output?: string },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ): any {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
-        g.rate(columns, options),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (g.rate as any)(columns, options),
       ),
     );
   }
 
   /** Per-partition `pctChange`. See {@link TimeSeries.pctChange}. */
+  pctChange<
+    const Target extends NumericColumnNameForSchema<S>,
+    const Name extends string,
+  >(
+    column: Target,
+    options: { output: Name; drop?: boolean },
+  ): PartitionedTimeSeries<SmoothAppendSchema<S, Name>, K, By>;
   pctChange<const Target extends NumericColumnNameForSchema<S>>(
     columns: Target | readonly Target[],
     options?: { drop?: boolean },
-  ): PartitionedTimeSeries<DiffSchema<S, Target>, K, By> {
+  ): PartitionedTimeSeries<DiffSchema<S, Target>, K, By>;
+  pctChange(
+    columns: string | readonly string[],
+    options?: { drop?: boolean; output?: string },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ): any {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
-        g.pctChange(columns, options),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (g.pctChange as any)(columns, options),
       ),
     );
   }

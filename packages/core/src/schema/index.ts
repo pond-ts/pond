@@ -111,6 +111,7 @@ export type {
   FusedPartitionedRollingSchema,
   FusedRollingSchema,
   RollingAlignment,
+  RollingAppendSchema,
   RollingSchema,
 } from './rolling.js';
 export type {

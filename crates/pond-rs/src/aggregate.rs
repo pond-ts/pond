@@ -150,6 +150,38 @@ impl TimeSeries {
     /// output name from the [`Reduced`]. See [`TimeSeries::tail`] for an
     /// example.
     pub fn reduce(&self, aggs: &[Agg]) -> Result<Reduced> {
+        self.reduce_all(aggs)
+    }
+
+    /// One column reduced to one number, as pond-ts
+    /// `reduce(column, reducer)`: the end of a chain that asks for a single
+    /// figure. `None` when the reducer has no answer (no present values for
+    /// `avg`, say). An error when the result is not a number column (`first`
+    /// of a text column, `sum` of a decimal column); use
+    /// [`TimeSeries::reduce_value`] for those.
+    ///
+    /// ```
+    /// use pond_rs::{Column, Reducer, TimeSeries};
+    /// let s = TimeSeries::new("cpu", vec![0, 1_000, 2_000],
+    ///     vec![Column::required("v", vec![1.0, 2.0, 6.0])])?;
+    /// assert_eq!(s.reduce_number("v", Reducer::Avg)?, Some(3.0));
+    /// assert_eq!(s.tail("1s")?.reduce_number("v", Reducer::Max)?, Some(6.0));
+    /// # Ok::<(), pond_rs::PondError>(())
+    /// ```
+    pub fn reduce_number(&self, column: &str, reducer: Reducer) -> Result<Option<f64>> {
+        self.reduce_all(&[Agg::new(column, column, reducer)])?
+            .number(column)
+            .map_err(|e| as_call(e, "reduce_number"))
+    }
+
+    /// One column reduced to one value of any kind, as pond-ts
+    /// `reduce(column, reducer)`. `None` when the reducer has no answer.
+    pub fn reduce_value(&self, column: &str, reducer: Reducer) -> Result<Option<Value>> {
+        self.reduce_all(&[Agg::new(column, column, reducer)])?
+            .get(column)
+    }
+
+    fn reduce_all(&self, aggs: &[Agg]) -> Result<Reduced> {
         const CALL: &str = "reduce";
         let mut sources = Vec::with_capacity(aggs.len());
         for (i, agg) in aggs.iter().enumerate() {
