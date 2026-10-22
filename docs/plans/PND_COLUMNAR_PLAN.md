@@ -846,6 +846,45 @@ old path only had to sort them, while the merge still pays a few
 allocations per input. With fresh pieces (the partitioned version) the
 split dominates and the two are even.
 
+### [PND-EVENTMAP] — SHIPPED (build every row's Event without the per-row maps)
+
+Found while measuring the Codex PR #810 "callback filter" gap: on a 1M-row
+series built from columns, `filter(e => …)` took ~1.45 s, of which ~1.4 s
+was `series.events`, and a CPU profile put most of that in
+`SeriesStore.toEvents` → `eventAt` → `keyAt` and the garbage collector:
+each row went into two `Map`s (`#keyCache`, `#eventCache`). The loop over
+the built events was ~40 ms.
+
+`toEvents()` on a store with no dense array and no delegate now builds each
+row into the array directly: an event already handed out by `eventAt` is
+reused, a key already made by `keyAt` is reused, everything else is built
+fresh. The array is kept (`#built`), and `eventAt` / `keyAt` look there
+after their `Map`s, so `eventAt(i) === toEvents()[i]` and
+`eventAt(i).key() === keyAt(i)` hold as before. Stores with a delegate keep
+the old loop (their rows come from the source store).
+
+Checked: 2,000 random series (three key kinds; built from rows, `slice`,
+`filter`, `select`, `dedupe`), each driven through a random mix of `at`,
+`events`, `key()`, `bisect`, `includesKey`, `atOrBefore`, `toArray`; the
+identity pattern among every object handed out, and the JSON, match the
+previous build. Planted bug caught: not reusing events already handed out
+(889/2000). Not reusing cached keys, or `keyAt` ignoring the array, is not
+visible from outside (`keyAt` results are only compared, never returned)
+and was not caught; the reuse is kept so the two stay one object anyway.
+
+`scripts/perf-events.mjs`, 1M rows, fresh series per run, two runs:
+
+| Case                        | Before         | After        |
+| --------------------------- | -------------- | ------------ |
+| events, time key, 3 columns | 1373 / 1361 ms | 484 / 518 ms |
+| events, interval key        | 1370 / 1330 ms | 554 / 536 ms |
+| filter a > 50               | 1419 / 1483 ms | 521 / 528 ms |
+| toArray then at(i) loop     | 1548 / 1564 ms | 534 / 578 ms |
+
+What is left is the `Event` and key objects themselves (each copies and
+freezes its data) and the garbage they make. Making those cheaper means
+changing the public `Event` / `Time` constructors; not done.
+
 ### [PND-ARROWTEXT] — SHIPPED (Arrow text columns read from buffers)
 
 Logged from pond-rs R1b step 8i4, picked up from the Codex PR #810

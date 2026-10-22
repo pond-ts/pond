@@ -840,3 +840,24 @@ describe('Framework independence (pure substrate contract)', () => {
     expect((series.toRows()[2]![0] as Time).begin()).toBe(2000);
   });
 });
+
+describe('toEvents builds rows straight into its array', () => {
+  it('reuses events and keys handed out before, and serves later reads from it', () => {
+    const { series } = makeBasicSeriesStore();
+    const key0 = series.keyAt(0);
+    const event1 = series.eventAt(1);
+    const events = series.toEvents();
+    expect(events[1]).toBe(event1);
+    expect(events[0]!.key()).toBe(key0);
+    expect(series.eventAt(2)).toBe(events[2]);
+    expect(series.keyAt(2)).toBe(events[2]!.key());
+    expect(series.keyAt(2)).toBe(series.keyAt(2));
+    expect(series.toEvents()).toBe(events);
+    expect(Object.isFrozen(events)).toBe(true);
+    expect(events.map((e) => [e.begin(), e.data()])).toEqual([
+      [1000, { value: 10, load: 0.5 }],
+      [2000, { value: 20, load: 0.75 }],
+      [3000, { value: 30, load: 0.9 }],
+    ]);
+  });
+});

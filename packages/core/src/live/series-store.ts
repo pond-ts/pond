@@ -110,6 +110,13 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   readonly #dense: ReadonlyArray<SeriesEvent> | undefined;
   // Lazy full-materialization snapshot.
   #eventsArray?: ReadonlyArray<SeriesEvent>;
+  /**
+   * The snapshot when `toEvents()` built it row by row itself (no dense
+   * array, no delegate, no `#keySource`). Rows not yet cached were built straight into it,
+   * skipping the per-row `Map`s, so `eventAt` / `keyAt` look here after
+   * their `Map`s.
+   */
+  #built?: ReadonlyArray<SeriesEvent>;
 
   /**
    * Row `i`'s event is row `row[i]`'s event of `sources[source[i]]` (or of
@@ -446,6 +453,8 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
     }
     let cached = this.#keyCache.get(i);
     if (cached === undefined) {
+      const built = this.#built;
+      if (built !== undefined) return built[i]!.key() as EventKey;
       cached = materializeKey(this.store.keys, i);
       this.#keyCache.set(i, cached);
     }
@@ -465,7 +474,11 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
     if (delegate !== undefined) {
       return delegate.sources.some((s) => s._hasBuiltEventsModulePrivate());
     }
-    return this.#dense !== undefined || this.#eventCache.size > 0;
+    return (
+      this.#dense !== undefined ||
+      this.#eventCache.size > 0 ||
+      this.#built !== undefined
+    );
   }
 
   /**
@@ -522,7 +535,7 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
     }
     const dense = this.#dense;
     if (dense !== undefined) return dense[i];
-    return this.#eventCache.get(i);
+    return this.#eventCache.get(i) ?? this.#built?.[i];
   }
 
   /**
@@ -571,6 +584,8 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
     }
     let cached = this.#eventCache.get(i);
     if (cached === undefined) {
+      const built = this.#built;
+      if (built !== undefined) return built[i]!;
       const key = this.keyAt(i) as Time | TimeRange | Interval;
       const data = buildRowData(this.store, i);
       cached = new Event(key, data) as SeriesEvent;
@@ -602,9 +617,43 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
         : Object.freeze(dense.slice());
       return this.#eventsArray;
     }
-    const events = new Array<SeriesEvent>(this.length);
-    for (let i = 0; i < this.length; i += 1) {
-      events[i] = this.eventAt(i);
+    const n = this.length;
+    const events = new Array<SeriesEvent>(n);
+    if (this.#delegate !== undefined || this.#keySource !== undefined) {
+      // A delegated row's event is its source's, and a `#keySource` row's
+      // key is its source's: both keep the per-row path.
+      for (let i = 0; i < n; i += 1) events[i] = this.eventAt(i);
+    } else {
+      // Build each row's event straight into the array, reusing any event
+      // or key already handed out, instead of going through `eventAt`'s
+      // per-row `Map`s (building 1M `Map` entries was most of the cost).
+      const eventCache = this.#eventCache.size > 0 ? this.#eventCache : null;
+      const keyCache = this.#keyCache.size > 0 ? this.#keyCache : null;
+      const keys = this.store.keys;
+      const names: string[] = [];
+      const columns: Array<{ read(i: number): unknown }> = [];
+      for (let c = 1; c < this.store.schema.length; c += 1) {
+        const name = this.store.schema[c]!.name;
+        names.push(name);
+        columns.push(this.store.columns.get(name)!);
+      }
+      for (let i = 0; i < n; i += 1) {
+        const cached = eventCache?.get(i);
+        if (cached !== undefined) {
+          events[i] = cached;
+          continue;
+        }
+        const key = (keyCache?.get(i) ?? materializeKey(keys, i)) as
+          | Time
+          | TimeRange
+          | Interval;
+        const data: Record<string, unknown> = {};
+        for (let c = 0; c < names.length; c += 1) {
+          data[names[c]!] = columns[c]!.read(i);
+        }
+        events[i] = new Event(key, data as SeriesRowData) as SeriesEvent;
+      }
+      this.#built = events;
     }
     Object.freeze(events);
     this.#eventsArray = events;
