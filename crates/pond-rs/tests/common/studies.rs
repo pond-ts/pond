@@ -51,6 +51,16 @@ pub const STUDIES: &[&str] = &[
     "intradayMomentumIndex",
     "awesomeOscillator",
     "ultimateOscillator",
+    "commodityChannelIndex",
+    "fisherTransform",
+    "psychologicalLine",
+    "prettyGoodOscillator",
+    "primeNumberOscillator",
+    "qstick",
+    "relativeVigorIndex",
+    "centerOfGravity",
+    "chandeForecastOscillator",
+    "trueStrengthIndex",
 ];
 
 /// The columns `study` reads with these options: `column` (default
@@ -69,7 +79,7 @@ pub fn sources(study: &str, options: &Map<String, Value>) -> Vec<String> {
             text("low", "low"),
             text("close", "close"),
         ],
-        "atrBands" => {
+        "atrBands" | "prettyGoodOscillator" => {
             let close = text("close", "close");
             vec![
                 text("column", &close),
@@ -78,13 +88,23 @@ pub fn sources(study: &str, options: &Map<String, Value>) -> Vec<String> {
                 close,
             ]
         }
-        "stochastic" | "stochasticMomentumIndex" | "williamsR" | "ultimateOscillator" => vec![
+        "stochastic"
+        | "stochasticMomentumIndex"
+        | "williamsR"
+        | "ultimateOscillator"
+        | "commodityChannelIndex" => vec![
             text("high", "high"),
             text("low", "low"),
             text("close", "close"),
         ],
-        "intradayMomentumIndex" => vec![text("open", "open"), text("close", "close")],
-        "awesomeOscillator" => vec![text("high", "high"), text("low", "low")],
+        "intradayMomentumIndex" | "qstick" => vec![text("open", "open"), text("close", "close")],
+        "awesomeOscillator" | "fisherTransform" => vec![text("high", "high"), text("low", "low")],
+        "relativeVigorIndex" => vec![
+            text("open", "open"),
+            text("high", "high"),
+            text("low", "low"),
+            text("close", "close"),
+        ],
         "donchian" | "highLowBands" | "primeNumberBands" => {
             vec![text("high", "high"), text("low", "low")]
         }
@@ -460,6 +480,59 @@ pub fn call_study(
             high,
             low,
             close
+        )),
+        "commodityChannelIndex" => series.commodity_channel_index(reads!(
+            name_only!(
+                CommodityChannelIndex::default().period(int("period", 20)),
+                output
+            ),
+            high,
+            low,
+            close
+        )),
+        "fisherTransform" => series.fisher_transform(reads!(
+            name_only!(FisherTransform::default().period(int("period", 10)), prefix),
+            high,
+            low
+        )),
+        "psychologicalLine" => series.psychological_line(study_of(12)),
+        "prettyGoodOscillator" => series.pretty_good_oscillator(reads!(
+            named!(
+                PrettyGoodOscillator::default().period(int("period", 14)),
+                output
+            ),
+            high,
+            low,
+            close
+        )),
+        "primeNumberOscillator" => {
+            series.prime_number_oscillator(named!(PrimeNumberOscillator::default(), output))
+        }
+        "qstick" => ma("maType", "sma").and_then(|kind| {
+            series.qstick(reads!(
+                name_only!(Qstick::default().period(int("period", 8)).ma(kind), output),
+                open,
+                close
+            ))
+        }),
+        "relativeVigorIndex" => series.relative_vigor_index(reads!(
+            name_only!(
+                RelativeVigorIndex::default().period(int("period", 10)),
+                prefix
+            ),
+            open,
+            high,
+            low,
+            close
+        )),
+        "centerOfGravity" => series.center_of_gravity(study_of(10)),
+        "chandeForecastOscillator" => series.chande_forecast_oscillator(study_of(14)),
+        "trueStrengthIndex" => series.true_strength_index(named!(
+            TrueStrengthIndex::default()
+                .long(int("longPeriod", 25))
+                .short(int("shortPeriod", 13))
+                .signal(int("signalPeriod", 7)),
+            prefix
         )),
         other => panic!("no pond-rs call for study '{other}'"),
     })

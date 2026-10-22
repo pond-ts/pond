@@ -3,7 +3,10 @@
 //! Guppy, rainbow, TRIX, Schaff, Coppock, KST, …), bands (Bollinger,
 //! Keltner, STARC, ATR, Donchian, high-low, prime number, envelope),
 //! momentum (RSI, stochastics, Williams %R, Chande momentum, momentum,
-//! percent change, intraday momentum, awesome and ultimate oscillators),
+//! percent change, intraday momentum, awesome and ultimate oscillators,
+//! CCI, Fisher transform, psychological line, pretty good and prime number
+//! oscillators, QStick, relative vigor, centre of gravity, Chande forecast,
+//! true strength),
 //! rolling statistics and the z-score so far, each a method on
 //! [`TimeSeries`] that adds its number columns and keeps every row.
 //!
@@ -48,6 +51,7 @@ mod averages;
 mod bands;
 mod kernels;
 mod momentum;
+mod regression;
 
 pub use averages::{
     Coppock, Guppy, Kst, Macd, MovingAverageCross, OscillatorMode, PriceMomentumOscillator,
@@ -58,8 +62,10 @@ pub use bands::{
     Keltner, PrimeNumberBands, StarcBands,
 };
 pub use momentum::{
-    AwesomeOscillator, IntradayMomentumIndex, PercentChange, Stochastic, StochasticMomentumIndex,
-    StochasticRsi, UltimateOscillator, WilliamsR,
+    AwesomeOscillator, CommodityChannelIndex, FisherTransform, IntradayMomentumIndex,
+    PercentChange, PrettyGoodOscillator, PrimeNumberOscillator, Qstick, RelativeVigorIndex,
+    Stochastic, StochasticMomentumIndex, StochasticRsi, TrueStrengthIndex, UltimateOscillator,
+    WilliamsR,
 };
 
 use std::borrow::Cow;
@@ -354,6 +360,21 @@ impl TimeSeries {
         let output = study.output_or(default).to_string();
         self.free_names(call, &[&output])?;
         Ok((self.study_source(call, study.source())?, output))
+    }
+
+    /// The price columns a study reads, each named by its option or its
+    /// default.
+    fn price_columns<const N: usize>(
+        &self,
+        call: &'static str,
+        names: [&Option<String>; N],
+        defaults: [&str; N],
+    ) -> Result<[std::borrow::Cow<'_, [f64]>; N]> {
+        let mut out = Vec::with_capacity(N);
+        for (name, default) in names.into_iter().zip(defaults) {
+            out.push(self.study_source(call, name.as_deref().unwrap_or(default))?);
+        }
+        Ok(out.try_into().unwrap_or_else(|_| unreachable!()))
     }
 
     /// Refuses a study output named like a column the series already has.

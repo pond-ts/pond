@@ -846,6 +846,89 @@ pub(crate) fn js_min(a: f64, b: f64) -> f64 {
     }
 }
 
+/// JS `Math.log`: V8 computes it with fdlibm's `__ieee754_log` (its
+/// `base::ieee754::log`), which can differ from the system's `f64::ln` in
+/// the last bit. This is that routine, step for step.
+#[allow(clippy::excessive_precision)] // fdlibm's constants, as written there
+pub(crate) fn js_log(x: f64) -> f64 {
+    const LN2_HI: f64 = 6.931_471_803_691_238_164_90e-01;
+    const LN2_LO: f64 = 1.908_214_929_270_587_700_02e-10;
+    const TWO54: f64 = 1.801_439_850_948_198_400_00e+16;
+    const LG1: f64 = 6.666_666_666_666_735_130e-01;
+    const LG2: f64 = 3.999_999_999_940_941_908e-01;
+    const LG3: f64 = 2.857_142_874_366_239_149e-01;
+    const LG4: f64 = 2.222_219_843_214_978_396e-01;
+    const LG5: f64 = 1.818_357_216_161_805_012e-01;
+    const LG6: f64 = 1.531_383_769_920_937_332e-01;
+    const LG7: f64 = 1.479_819_860_511_658_591e-01;
+    let high = |v: f64| (v.to_bits() >> 32) as i32;
+    let mut x = x;
+    let mut hx = high(x);
+    let lx = x.to_bits() as u32;
+    let mut k: i32 = 0;
+    if hx < 0x0010_0000 {
+        // Below 2^-1022: zero, negative or subnormal.
+        if ((hx & 0x7fff_ffff) as u32 | lx) == 0 {
+            return f64::NEG_INFINITY;
+        }
+        if hx < 0 {
+            return f64::NAN;
+        }
+        k -= 54;
+        x *= TWO54;
+        hx = high(x);
+    }
+    if hx >= 0x7ff0_0000 {
+        return x + x;
+    }
+    k += (hx >> 20) - 1023;
+    hx &= 0x000f_ffff;
+    let i = (hx + 0x95f64) & 0x0010_0000;
+    // Normalize x or x / 2: replace the high word.
+    let top = (hx | (i ^ 0x3ff0_0000)) as u32 as u64;
+    x = f64::from_bits((top << 32) | (x.to_bits() & 0xffff_ffff));
+    k += i >> 20;
+    let f = x - 1.0;
+    if (0x000f_ffff & (2 + hx)) < 3 {
+        // |f| < 2^-20.
+        if f == 0.0 {
+            if k == 0 {
+                return 0.0;
+            }
+            let dk = k as f64;
+            return dk * LN2_HI + dk * LN2_LO;
+        }
+        let r = f * f * (0.5 - 0.333_333_333_333_333_33 * f);
+        if k == 0 {
+            return f - r;
+        }
+        let dk = k as f64;
+        return dk * LN2_HI - ((r - dk * LN2_LO) - f);
+    }
+    let s = f / (2.0 + f);
+    let dk = k as f64;
+    let z = s * s;
+    let mut i = hx - 0x6147a;
+    let w = z * z;
+    let j = 0x6b851 - hx;
+    let t1 = w * (LG2 + w * (LG4 + w * LG6));
+    let t2 = z * (LG1 + w * (LG3 + w * (LG5 + w * LG7)));
+    i |= j;
+    let r = t2 + t1;
+    if i > 0 {
+        let hfsq = 0.5 * f * f;
+        if k == 0 {
+            f - (hfsq - s * (hfsq + r))
+        } else {
+            dk * LN2_HI - ((hfsq - (s * (hfsq + r) + dk * LN2_LO)) - f)
+        }
+    } else if k == 0 {
+        f - s * (f - r)
+    } else {
+        dk * LN2_HI - ((s * (f - r) - dk * LN2_LO) - f)
+    }
+}
+
 /// pond-ts `trueRangeValues`: [`true_range_at`] for every row.
 pub(crate) fn true_range_values(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
     (0..high.len())
@@ -988,6 +1071,59 @@ pub(crate) fn prime_at_or_below(x: f64) -> f64 {
         .map_or(f64::NAN, |n| n as f64)
 }
 
+/// pond-ts `nearestPrime`: the prime nearest `x`, the lower one on a tie;
+/// a gap outside the prime ladder (both sides are gaps there, and a
+/// comparison with a gap picks the upper one, as in pond-ts).
+pub(crate) fn nearest_prime(x: f64) -> f64 {
+    let below = prime_at_or_below(x);
+    let above = prime_at_or_above(x);
+    if x - below <= above - x { below } else { above }
+}
+
+/// pond-ts `rollingMeanAbsDevValues`: each full, gap-free window's mean
+/// distance from its own mean (a gap elsewhere). O(N·period); rows stand
+/// alone once the means are known, so stretches run on separate cores.
+pub(crate) fn rolling_mean_abs_dev_values(values: &[f64], period: usize) -> Vec<f64> {
+    let mean = rolling_mean_values(values, period);
+    let p = period as f64;
+    let mut out = vec![0.0; values.len()];
+    crate::par::fill_chunks(&mut out, &mut [], 1 << 14, |start, out, _| {
+        for (k, o) in out.iter_mut().enumerate() {
+            let i = start + k;
+            let m = mean[i];
+            if m.is_nan() {
+                *o = f64::NAN;
+                continue;
+            }
+            let mut sum = 0.0;
+            for &v in &values[i + 1 - period..=i] {
+                sum += (v - m).abs();
+            }
+            *o = sum / p;
+        }
+    });
+    out
+}
+
+/// pond-ts `symmetricWeightedValues`: the 4-bar symmetric weighted mean
+/// (weights 1, 2, 2, 1 from the current bar back, over 6); a gap for the
+/// first 3 rows, and a gap in the window gives a gap.
+pub(crate) fn symmetric_weighted_values(values: &[f64]) -> Vec<f64> {
+    const WEIGHTS: [f64; 4] = [1.0, 2.0, 2.0, 1.0];
+    (0..values.len())
+        .map(|i| {
+            if i < 3 {
+                return f64::NAN;
+            }
+            let mut sum = 0.0;
+            for (k, w) in WEIGHTS.iter().enumerate() {
+                sum += w * values[i - k];
+            }
+            sum / 6.0
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1032,6 +1168,30 @@ mod tests {
             assert!(up[i] == 0.0 && up[i].is_sign_positive(), "up {i}");
             assert!(down[i] == 0.0 && down[i].is_sign_positive(), "down {i}");
         }
+    }
+
+    /// `js_log` gives V8's `Math.log` bits. Checked against node on 2M
+    /// values (0 differ; the system `ln` differed on 2%); these are inputs
+    /// where the system `ln` is one bit off V8.
+    #[test]
+    fn js_log_matches_v8() {
+        for (x, expected) in [
+            (0x3fe3b61b4e436ffe_u64, 0xbfdf02b8973ca408_u64),
+            (0x40a3452893a2f8c3, 0x401f3e0aa9bcec18),
+            (0x40aa9d835d743864, 0x4020445c3465a0be),
+            (0x4004c8faecb2f9c3, 0x3fee8dabc63fc0b2),
+            (0x3fd804e64e9be505, 0xbfef5c6c4963f868),
+            (0x3fe73b191af10b2e, 0xbfd47f0d84498a5a),
+        ] {
+            assert_eq!(js_log(f64::from_bits(x)).to_bits(), expected, "{x:#x}");
+        }
+        assert_eq!(js_log(1.0).to_bits(), 0.0f64.to_bits());
+        assert_eq!(js_log(0.0), f64::NEG_INFINITY);
+        assert_eq!(js_log(-0.0), f64::NEG_INFINITY);
+        assert!(js_log(-1.0).is_nan() && js_log(f64::NAN).is_nan());
+        assert_eq!(js_log(f64::INFINITY), f64::INFINITY);
+        assert_eq!(js_log(5e-324), -744.4400719213812);
+        assert_eq!(js_log(2.0), std::f64::consts::LN_2);
     }
 
     /// The prime ladder against trial division, and its edges.

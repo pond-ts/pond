@@ -2788,6 +2788,71 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | ao         | 31.1     | 13.4    | 75.0    | 5.6x  |
     | uo         | 73.4     | 32.5    | 262.9   | 8.1x  |
 
+  **R2 step 2c part 2 (done): momentum, the other 10 studies.** The
+  momentum family is complete.
+  - Calls: `commodity_channel_index`, `fisher_transform`,
+    `pretty_good_oscillator`, `prime_number_oscillator`, `qstick`,
+    `relative_vigor_index` and `true_strength_index` take an options
+    struct named after the study; `psychological_line`,
+    `center_of_gravity` and `chande_forecast_oscillator` take a plain
+    `Study` (pond-ts's defaults 12, 10 and 14 are in their docs).
+    `pretty_good_oscillator`'s `column` defaults to its `close` setting,
+    as in pond-ts. The helper that reads price columns moved to
+    `mod.rs` and the bands family now uses it too (review nit on #817).
+  - New kernels, ported as pond-ts writes them: the rolling mean
+    absolute deviation (CCI), the 4-bar symmetric weighted mean (RVI),
+    the nearest prime (lower on a tie), and pond-ts's rolling linear
+    regression (`linearRegressionValues`, in `regression.rs`: shifted
+    running sums rebuilt every `period` rows, the flat-window rule and
+    the two-pass refit of windows whose spread is lost in the sums).
+    The regression splits across cores: a stretch starts at a rebuild
+    row and counts the window's changes first, the only state carried
+    across a rebuild (a unit test checks stretches of 1, 7, 64 and 1000
+    rows give the bits of one sweep). The trend family will reuse it.
+  - JS `Math.log`: the Fisher transform takes a logarithm. V8 computes
+    `Math.log` with fdlibm's `__ieee754_log`; the system `f64::ln`
+    differed from it on 2.2% of 2M test values.
+    `kernels::js_log` ports fdlibm's routine; it matched node on all 2M
+    values, and a unit test pins six inputs where `f64::ln` is off.
+    A planted swap back to `f64::ln` fails parity.
+  - Parity: the fixture grew to 2,632 cases (the `flat` input gained a
+    `ramp` column, for bars whose true range is 0 from the start).
+    2,013 match bit for bit, 226 errors agree, 215 refused (known
+    missing-column difference), 178 calls Rust cannot write. Oracle: 117
+    of 220 cases. Planted bugs: 19 of 25 caught. The 6 missed change no
+    output: `w / (2m)` vs `w / m / 2` (a halving is exact unless `2m` overflows or the result is too small for full precision); adding
+    `0 * mean`; the regression's flat-window intercept as the anchor
+    instead of the value (the anchor is always a value in the window,
+    so they differ only in the sign of a zero, which CFO then turns into
+    a gap); the refit's `scale == 0` branch (unreachable: a window equal
+    throughout has no changes and is caught first); the anchor kept
+    when the rebuild row is a gap (every window until the next rebuild
+    holds that gap, so all are gaps); and PGO's zero-denominator guard
+    (both pond-ts's `withColumn` and pond-rs store an infinite value as
+    a gap, so `x / 0` reads the same as the guard's gap). The
+    regression's r² is computed but no study reads it yet, so nothing
+    checks it against pond-ts until the trend family (which reads it)
+    adds parity cases.
+  - Perf: all O(N) except CCI's deviation (O(N·period), as pond-ts) and
+    the prime oscillator (O(√x) per value). The Fisher transform's pass
+    is sequential (each value needs the last) and pays a logarithm per
+    row; TSI runs its five EMAs row by row in one pass, like SMI.
+  - Medians of 7, 1M bars at pond-ts's defaults, ms (pond-ts run alone
+    per study):
+
+    | Study  | 1 thread | 4 cores | pond-ts | ratio |
+    | ------ | -------- | ------- | ------- | ----- |
+    | cci    | 41.2     | 21.8    | 136.0   | 6.2x  |
+    | fisher | 40.2     | 39.0    | 129.5   | 3.3x  |
+    | psy    | 11.5     | 7.8     | 61.1    | 7.8x  |
+    | pgo    | 19.2     | 14.8    | 113.5   | 7.7x  |
+    | pno    | 35.3     | 11.5    | 63.8    | 5.5x  |
+    | qstick | 11.0     | 6.7     | 52.2    | 7.8x  |
+    | rvi    | 31.0     | 32.1    | 161.9   | 5.0x  |
+    | cog    | 25.5     | 8.6     | 65.9    | 7.7x  |
+    | cfo    | 21.6     | 13.6    | 62.3    | 4.6x  |
+    | tsi    | 13.7     | 18.0    | 75.4    | 4.2x  |
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).
