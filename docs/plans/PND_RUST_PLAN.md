@@ -2605,9 +2605,9 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     series that already has columns the studies write): every study at
     its defaults on every input, small settings, every moving-average
     type, other columns, signed zeros, custom names, collisions and every
-    error. 1,163 match bit for bit, 96 errors agree, 93 refused (known),
-    59 calls Rust cannot write (negative or fractional periods, an
-    unknown `mode`). Oracle: all 29 family cases pass (58 of 220 now).
+    error. 1,163 match bit for bit, 86 errors agree, 93 refused (known),
+    69 calls Rust cannot write (negative or fractional periods, an
+    unknown `mode` or moving-average name). Oracle: all 29 family cases pass (58 of 220 now).
     Both harnesses call studies through one door,
     `tests/common/studies.rs`. Planted bugs: 12 of 16 caught at first;
     three cannot change any output (a guard that turns `±inf` into `NaN`,

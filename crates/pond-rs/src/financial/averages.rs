@@ -194,7 +194,7 @@ study_options! {
         /// The shorter percent change, in bars (default 11).
         short: usize = 11,
         /// The weighted average's length in bars (default 10).
-        wma: usize = 10,
+        wma_period: usize = 10,
     }
 }
 
@@ -392,6 +392,7 @@ impl TimeSeries {
 
     /// Moving-average deviation (pond-ts `movingAverageDeviation`), output
     /// `maDev`: the value minus its moving average, in the source's units.
+    /// pond-ts's defaults are `MaType::Sma` and a 20-bar period.
     pub fn moving_average_deviation(&self, kind: MaType, study: Study) -> Result<TimeSeries> {
         const CALL: &str = "TimeSeries::moving_average_deviation";
         let (values, output) = self.study_input(CALL, &study, "maDev")?;
@@ -402,7 +403,8 @@ impl TimeSeries {
 
     /// Disparity index (pond-ts `disparityIndex`), output `disparity`: how
     /// far the value sits from its moving average, as a percent of the
-    /// average; a gap where the average is zero.
+    /// average; a gap where the average is zero. pond-ts's defaults are
+    /// `MaType::Sma` and a 14-bar period.
     pub fn disparity_index(&self, kind: MaType, study: Study) -> Result<TimeSeries> {
         const CALL: &str = "TimeSeries::disparity_index";
         let (values, output) = self.study_input(CALL, &study, "disparity")?;
@@ -423,7 +425,8 @@ impl TimeSeries {
 
     /// Detrended price oscillator (pond-ts `detrendedPriceOscillator`),
     /// output `dpo`: the value minus the moving average from `period / 2 +
-    /// 1` bars earlier.
+    /// 1` bars earlier. pond-ts's defaults are `MaType::Sma` and a 20-bar
+    /// period.
     pub fn detrended_price_oscillator(&self, kind: MaType, study: Study) -> Result<TimeSeries> {
         const CALL: &str = "TimeSeries::detrended_price_oscillator";
         let (values, output) = self.study_input(CALL, &study, "dpo")?;
@@ -600,13 +603,13 @@ impl TimeSeries {
     }
 
     /// Coppock curve (pond-ts `coppock`): a weighted moving average over
-    /// `wma` bars of the sum of the percent changes over `long` and `short`
+    /// `wma_period` bars of the sum of the percent changes over `long` and `short`
     /// bars.
     pub fn coppock(&self, options: Coppock) -> Result<TimeSeries> {
         const CALL: &str = "TimeSeries::coppock";
         positive(CALL, "longPeriod", options.long)?;
         positive(CALL, "shortPeriod", options.short)?;
-        positive(CALL, "wmaPeriod", options.wma)?;
+        positive(CALL, "wmaPeriod", options.wma_period)?;
         let output = options.name().to_string();
         self.free_names(CALL, &[&output])?;
         let values = self.study_source(CALL, options.source())?;
@@ -615,7 +618,7 @@ impl TimeSeries {
             || kernels::percent_change_values(&values, options.short),
         );
         let sum: Vec<f64> = long.iter().zip(&short).map(|(l, s)| l + s).collect();
-        let curve = kernels::wma_values(&sum, options.wma);
+        let curve = kernels::wma_values(&sum, options.wma_period);
         self.study_outputs(CALL, [(output, curve)])
     }
 

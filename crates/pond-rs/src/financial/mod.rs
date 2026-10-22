@@ -499,7 +499,14 @@ mod tests {
                         .cycle(period),
                 ),
             );
-            results.push(series.coppock(Coppock::default().long(period).short(period).wma(period)));
+            results.push(
+                series.coppock(
+                    Coppock::default()
+                        .long(period)
+                        .short(period)
+                        .wma_period(period),
+                ),
+            );
             for result in results {
                 let out = result.unwrap();
                 // Every column the study added is all gaps.

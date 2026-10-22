@@ -68,6 +68,14 @@ pub fn call_study(
             .map_or(default, |v| v.as_f64().unwrap() as usize)
     };
     let text = |key: &str| options.get(key).map(|v| v.as_str().unwrap());
+    // An unknown moving-average name can't reach a study in Rust (`MaType`
+    // is an enum), so pond-ts's error for it is not something to compare.
+    if ["type", "maType"]
+        .iter()
+        .any(|k| text(k).is_some_and(|name| MaType::parse(name).is_err()))
+    {
+        return None;
+    }
     let ma = |key: &str, default: &str| MaType::parse(text(key).unwrap_or(default));
     let mode = match text("mode") {
         None | Some("percent") => OscillatorMode::Percent,
@@ -183,7 +191,7 @@ pub fn call_study(
             Coppock::default()
                 .long(int("longPeriod", 14))
                 .short(int("shortPeriod", 11))
-                .wma(int("wmaPeriod", 10)),
+                .wma_period(int("wmaPeriod", 10)),
             output
         )),
         "kst" => series.kst(named!(
