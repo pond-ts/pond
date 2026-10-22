@@ -2882,19 +2882,28 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     of 220 cases (was 117).
   - Planted bugs: 19 of 26 caught on the first version, plus 8 of 8 after
     the speed changes below (re-planted in the rewritten code; one
-    needed the outside bar above). The 7
-    missed change no output: starting the +DM / -DM average at row 0
-    instead of 1 (row 0 is always a gap, so both find row 1); adding
-    `0 * adx`; Aroon dropping only NaN, not infinities, from its window
-    count (no input value is ever infinite, see above); vortex's guard on
-    a zero true range (`x / 0` is an infinity or NaN, both stored as a
-    gap); the random walk's guard on a zero denominator (the mean true
-    range over a horizon is 0 only when every bar in it is the same
-    price, so the numerator is 0 too and `0 / 0` is a gap anyway);
-    `powf(0.5)` for `sqrt` (same bits for every whole number from 2 to
-    100,000, checked); and `f64::min` for `js_min` in the ATR stop (they
-    differ only on NaN, which the stop never holds, and on the sign of a
-    zero).
+    needed the outside bar above), plus the random walk's zero-denominator
+    guard once the review on #819 showed how to reach it (below): 20 of
+    26 on the first set. The 6 missed change no output: starting the
+    +DM / -DM average at row 0 instead of 1 (row 0 is always a gap, so
+    both find row 1); adding `0 * adx`; Aroon dropping only NaN, not
+    infinities, from its window count (no input value is ever infinite,
+    see above); vortex's guard on a zero true range (`x / 0` is an
+    infinity or NaN, both stored as a gap); `powf(0.5)` for `sqrt` (same
+    bits for every whole number from 2 to 100,000, checked); and
+    `f64::min` for `js_min` in the ATR stop (they differ only on NaN,
+    which the stop never holds, and on the sign of a zero).
+  - The random walk's guard first survived, and the reason first given
+    here (a zero mean true range means the numerator is 0 too) was wrong
+    (review on #819). A zero mean true range pins only the bars inside
+    the horizon, not the bar before it, so on a bar whose close lies
+    outside its high and low the term is `-inf`, which the other
+    horizons' maximum swallows where pond-ts gives a gap. The `edge`
+    input now has such a bar (row 45, then two flat bars at its close).
+    Also from that review: Wilder's ATR never recovers after a gap in
+    the middle of a series (pond-ts `atrValues`), so SuperTrend and the
+    ATR stop restart only after leading gaps; the `edge` input's later
+    runs test the restart for the SAR alone.
   - Perf: all O(N) except the random walk (O(N·period): a mean true
     range per horizon, as pond-ts). DMI first ran at 65 ms (1.8x pond-ts):
     about 4.5 ms of each pass is writing a fresh 1M-row array, and it made

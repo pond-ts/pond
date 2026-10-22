@@ -233,6 +233,10 @@ const EDGE_ROWS = Array.from({ length: 60 }, (_, i) => {
   if (i === 2) [high, low] = [21, 19];
   if (i === 3) [high, low] = [21.5, 18.5];
   let close = Math.min(high, Math.max(low, price));
+  // A close above its bar's high, then two bars flat at that close: the
+  // true range over them is 0 while the bar before them reaches below.
+  if (i === 45) [high, low, close] = [20, 19.5, 21];
+  if (i === 46 || i === 47) [high, low, close] = [21, 21, 21];
   if (i === 33) [high, low, close] = [-1.7e308, -1.7e308, -1.7e308];
   if (i === 34) [high, low, close] = [1.7e308, 1.7e308, 1.7e308];
   return [time, high, low, close, price];
