@@ -150,6 +150,7 @@ mod decimal;
 mod duration;
 mod elements;
 mod error;
+pub mod financial;
 mod grid;
 mod join;
 mod json;

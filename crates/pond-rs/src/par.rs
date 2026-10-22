@@ -4,8 +4,11 @@
 //! computed from start to finish, in order, by one thread, so its bits do
 //! not depend on how many threads ran. (Splitting one column's rows would
 //! change the order values are added in, and so the last bits of a sum.)
-//! The one exception is loess, where each row's value is a fit of its own
-//! that reads no other row's result, so rows can go to any thread.
+//! The exceptions: loess, where each row's value is a fit of its own that
+//! reads no other row's result, so rows can go to any thread; and the
+//! financial kernels that restart their sums from the window every
+//! `period` rows ([`fill_chunks`]), so a stretch of rows computed on its
+//! own gives the same bits as the whole column.
 
 /// `items.iter().map(f).collect()`, on several cores when the `parallel`
 /// feature is on (and not on wasm32). Output order is input order.
@@ -23,6 +26,45 @@ where
     #[cfg(not(all(feature = "parallel", not(target_arch = "wasm32"))))]
     {
         items.iter().map(f).collect()
+    }
+}
+
+/// Fill `a`, and `b` when it is not empty (then the same length), in
+/// stretches of `chunk` rows: `f(first_row, a_stretch, b_stretch)`, on
+/// several cores when the `parallel` feature is on (and not on wasm32).
+/// Only for kernels whose rows come out the same whatever row the stretch
+/// starts at.
+pub(crate) fn fill_chunks<F>(a: &mut [f64], b: &mut [f64], chunk: usize, f: F)
+where
+    F: Fn(usize, &mut [f64], &mut [f64]) + Sync + Send,
+{
+    debug_assert!(b.is_empty() || b.len() == a.len());
+    let chunk = chunk.max(1);
+    #[cfg(all(feature = "parallel", not(target_arch = "wasm32")))]
+    {
+        use rayon::prelude::*;
+        if b.is_empty() {
+            a.par_chunks_mut(chunk)
+                .enumerate()
+                .for_each(|(k, a)| f(k * chunk, a, &mut []));
+        } else {
+            a.par_chunks_mut(chunk)
+                .zip(b.par_chunks_mut(chunk))
+                .enumerate()
+                .for_each(|(k, (a, b))| f(k * chunk, a, b));
+        }
+    }
+    #[cfg(not(all(feature = "parallel", not(target_arch = "wasm32"))))]
+    {
+        if b.is_empty() {
+            for (k, a) in a.chunks_mut(chunk).enumerate() {
+                f(k * chunk, a, &mut []);
+            }
+        } else {
+            for (k, (a, b)) in a.chunks_mut(chunk).zip(b.chunks_mut(chunk)).enumerate() {
+                f(k * chunk, a, b);
+            }
+        }
     }
 }
 
