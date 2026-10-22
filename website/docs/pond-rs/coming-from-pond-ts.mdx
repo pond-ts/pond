@@ -24,6 +24,8 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `series.aggregate(seq, { cpu: 'avg' })`                           | `series.aggregate(&seq, &[Agg::of("cpu", Reducer::Avg)])`                                     |
 | `sma(bars, { period: 20 })` or `bars.sma({ period: 20 })`         | `bars.sma(Study::period(20))?` (`use pond_rs::financial::Study`)                              |
 | `movingAverage(bars, { type: 'hull', period: 20 })`               | `bars.moving_average(MaType::Hull, Study::period(20))?`                                       |
+| `bollinger(bars, { period: 20, stdDev: 2.5, prefix: 'wide' })`    | `bars.bollinger(Bollinger::new(20).std_dev(2.5).prefix("wide"))?`                             |
+| `macd(bars, { fast: 5 })`                                         | `bars.macd(Macd::default().fast(5))?`                                                         |
 | `{ cpu_avg: { from: 'cpu', using: 'avg' } }`                      | `Agg::new("cpu_avg", "cpu", Reducer::Avg)`                                                    |
 | `series.rolling('5m', m, { alignment, minSamples })`              | `series.rolling_with("5m", &aggs, Rolling { alignment, min_samples })`                        |
 | `series.rolling({ count: 20 }, m)`                                | `series.rolling_rows(20, &aggs, Rolling::default())`                                          |

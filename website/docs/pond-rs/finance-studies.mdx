@@ -12,10 +12,15 @@ studies as pond-ts's `@pond-ts/financial`, as methods on `TimeSeries` in
 the `pond_rs::financial` module. They are being added family by family;
 this page lists what is built so far.
 
+Built so far: moving averages and rolling statistics, the
+moving-average family (MACD and 14 more), bands (Bollinger, Keltner and
+8 more) and the first 11 momentum studies (RSI, stochastics, Williams %R
+and more).
+
 The results match `@pond-ts/financial` exactly, number for number. That is
-checked against 556 cases that pond-ts itself writes out. They also match
+checked against 2,274 cases that pond-ts itself writes out. They also match
 the pandas and TA-Lib reference results pond-ts is tested against, to
-within 5e-10.
+within 5e-10 (98 of those 220 cases cover studies built so far).
 
 ## How every study works
 
@@ -146,6 +151,193 @@ fn main() -> Result<(), pond_rs::PondError> {
 }
 ```
 
+## Studies with more settings
+
+Studies with only a period take a `Study`. The rest take an options value
+named after the study: `Macd`, `Bollinger`, `Stochastic` and so on.
+
+- **`::default()` gives pond-ts's defaults.** `Macd::default()` is fast 12,
+  slow 26, signal 9. Each setting has a setter of the same name:
+  `Macd::default().fast(5).signal(5)`.
+- **`Bollinger` and `Envelope` have no default period** in pond-ts either,
+  so they start from `new(period)`: `Bollinger::new(20).std_dev(2.5)`.
+- **Studies that write several columns** take a `prefix` instead of an
+  `output`. `bollinger` writes `bbMiddle`, `bbUpper` and `bbLower`;
+  `.prefix("wide")` makes them `wideMiddle`, `wideUpper` and `wideLower`.
+  The names are pond-ts's, camel case and all, so results line up with
+  pond-ts output.
+- **Studies of whole price bars** read `high`, `low`, `close` (and `open`
+  where they need it) by those names, with one setter per column to read
+  another: `Keltner::default().high("ask_high")`.
+
+```rust
+use pond_rs::financial::{Bollinger, Donchian};
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let bars = TimeSeries::new(
+        "bars",
+        vec![0, minute, 2 * minute],
+        vec![
+            Column::required("hi", vec![11.0, 13.0, 12.0]),
+            Column::required("low", vec![9.0, 11.0, 8.0]),
+            Column::required("close", vec![10.0, 12.0, 9.0]),
+        ],
+    )?;
+
+    // A 2-bar average with bands 2 standard deviations either side.
+    let bb = bars.bollinger(Bollinger::new(2))?;
+    let names: Vec<&str> = bb.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["hi", "low", "close", "bbMiddle", "bbUpper", "bbLower"]);
+    // Bar 2's window is 10 and 12: average 11, spread 1.
+    assert_eq!(bb.column("bbMiddle")?.numbers()?.get(1), Some(11.0));
+    assert_eq!(bb.column("bbUpper")?.numbers()?.get(1), Some(13.0));
+    assert_eq!(bb.column("bbLower")?.numbers()?.get(1), Some(9.0));
+
+    // The high prices are in "hi" here, not "high".
+    let dc = bars.donchian(Donchian::default().period(2).high("hi").prefix("ch"))?;
+    assert_eq!(dc.column("chUpper")?.numbers()?.get(2), Some(13.0));
+    assert_eq!(dc.column("chLower")?.numbers()?.get(2), Some(8.0));
+    assert_eq!(dc.column("chMiddle")?.numbers()?.get(2), Some(10.5));
+    Ok(())
+}
+```
+
+## More moving-average studies
+
+Studies built from moving averages. Where a study lets you pick the kind
+of average, the setter is `ma(MaType)` (pond-ts's `type` or `maType`).
+
+| Call                                                 | Writes                               | What it shows                                                                                                              |
+| ---------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `macd(Macd)`                                         | `macdLine`, `macdSignal`, `macdHist` | The fast EMA minus the slow one, an EMA of that, and the gap between the two                                               |
+| `price_oscillator(PriceOscillator)`                  | `priceOsc`                           | The gap between a fast and a slow average, as a percent of the slow one, or in price with `mode(OscillatorMode::Absolute)` |
+| `moving_average_cross(MovingAverageCross)`           | `maCross`                            | `1` on the bar the fast average moves above the slow one, `-1` when it moves below, `0` otherwise                          |
+| `moving_average_deviation(MaType, Study)`            | `maDev`                              | The price minus its average, in price                                                                                      |
+| `disparity_index(MaType, Study)`                     | `disparity`                          | The same as a percent of the average                                                                                       |
+| `detrended_price_oscillator(MaType, Study)`          | `dpo`                                | The price minus the average from half a period earlier, which takes out the trend                                          |
+| `guppy(Guppy)`                                       | `gmmaS3` … `gmmaL60`                 | Twelve EMAs: six short (3 to 15 bars), six long (30 to 60)                                                                 |
+| `rainbow(Rainbow)`                                   | `rainbow1` … `rainbow10`             | Ten averages, each of the one before                                                                                       |
+| `rainbow_oscillator(RainbowOscillator)`              | `rbo`, `rboUpper`, `rboLower`        | The price against the rainbow's average, scaled by the recent range                                                        |
+| `trix(Trix)`                                         | `trix`, `trixSignal`                 | The one-bar percent change of a triple EMA, and an EMA of that                                                             |
+| `schaff_trend_cycle(SchaffTrendCycle)`               | `stc`                                | A 0 to 100 cycle built from the MACD line                                                                                  |
+| `coppock(Coppock)`                                   | `coppock`                            | A weighted average of two percent changes                                                                                  |
+| `kst(Kst)`                                           | `kst`, `kstSignal`                   | Pring's Know Sure Thing: four smoothed percent changes, weighted                                                           |
+| `special_k(SpecialK)`                                | `specialK`                           | Pring's Special K: twelve of them, reaching back 530 bars, so it starts about 724 bars in                                  |
+| `price_momentum_oscillator(PriceMomentumOscillator)` | `pmo`, `pmoSignal`                   | DecisionPoint's PMO: a doubly smoothed percent change                                                                      |
+
+Each column starts as soon as it can. At the defaults, `macdLine` starts
+at bar 26 (row 25) and the signal and histogram at bar 34 (row 33).
+
+```rust
+use pond_rs::financial::{Macd, MaType, Study};
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let close: Vec<f64> = (0..40).map(|i| 100.0 + (i as f64 / 3.0).sin()).collect();
+    let bars = TimeSeries::new(
+        "bars",
+        (0..40).map(|i| i * 60_000).collect(),
+        vec![Column::required("close", close)],
+    )?;
+
+    let out = bars
+        .macd(Macd::default())?
+        .moving_average_deviation(MaType::Sma, Study::period(20))?;
+
+    let line = out.column("macdLine")?.numbers()?;
+    assert_eq!((line.get(24), line.get(25).is_some()), (None, true));
+    let signal = out.column("macdSignal")?.numbers()?;
+    assert_eq!((signal.get(32), signal.get(33).is_some()), (None, true));
+    assert!(out.column("maDev")?.numbers()?.get(19).is_some());
+    Ok(())
+}
+```
+
+## Bands
+
+Lines drawn above and below the price. Most write a middle, an upper and
+a lower column.
+
+| Call                                      | Writes                                    | The bands                                                                                |
+| ----------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `bollinger(Bollinger::new(period))`       | `bbMiddle`, `bbUpper`, `bbLower`          | An average, with bands `std_dev` standard deviations away (default 2)                    |
+| `bollinger_bandwidth(BollingerBandwidth)` | `bbWidth`                                 | How far apart the Bollinger bands are, as a percent of the middle                        |
+| `bollinger_percent_b(BollingerPercentB)`  | `percentB`                                | Where the price sits between the bands: 0 at the lower, 1 at the upper                   |
+| `keltner(Keltner)`                        | `kcMiddle`, `kcUpper`, `kcLower`          | An EMA of the typical price `(high + low + close) / 3`, bands 2 average true ranges away |
+| `starc_bands(StarcBands)`                 | `starcMiddle`, `starcUpper`, `starcLower` | A simple average of the close, bands 2 average true ranges away                          |
+| `atr_bands(AtrBands)`                     | `atrbUpper`, `atrbLower`                  | Bands 2 average true ranges either side of the close                                     |
+| `donchian(Donchian)`                      | `dcUpper`, `dcLower`, `dcMiddle`          | The highest high and lowest low of the last 20 bars, and halfway between                 |
+| `high_low_bands(HighLowBands)`            | `hlbMiddle`, `hlbUpper`, `hlbLower`       | A triangular average of the median price `(high + low) / 2`, bands 1% either side        |
+| `prime_number_bands(PrimeNumberBands)`    | `pnbUpper`, `pnbLower`                    | The nearest prime at or above each high, and at or below each low                        |
+| `envelope(Envelope::new(period))`         | `envMiddle`, `envUpper`, `envLower`       | An average, with bands 2.5% either side                                                  |
+
+The **true range** of a bar is how far the price moved, counting a jump
+from the last close: the largest of high minus low, high minus the last
+close, and the last close minus low. Its average uses Wilder's smoothing,
+which never recovers from a gap: after a missing bar inside the data, the
+bands that use it stay empty. A gap at the start only delays them.
+
+Prime number bands work on whole numbers up to 2^53 − 1 (the largest whole
+number a 64-bit float holds exactly); a price below 2 or above that gets a
+gap.
+
+## Momentum
+
+How fast and how far the price is moving.
+
+| Call                                                 | Writes                   | What it shows                                                                                           |
+| ---------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `rsi(Study)`                                         | `rsi`                    | Relative strength index, 0 to 100: recent rises against recent falls (pond-ts's period: 14)             |
+| `chande_momentum(Study)`                             | `cmo`                    | Chande's version, −100 to 100: rises minus falls over their total (period 14)                           |
+| `momentum(Study)`                                    | `momentum`               | The price minus the price `period` bars back (period 10)                                                |
+| `percent_change(PercentChange)`                      | `pctChange`              | The change from `periods` bars back, as a percent                                                       |
+| `stochastic(Stochastic)`                             | `stochK`, `stochD`       | Where the close sits in the recent high-low range, 0 to 100, smoothed (%K), and an average of that (%D) |
+| `stochastic_momentum_index(StochasticMomentumIndex)` | `smi`, `smiSignal`       | How far the close is from the middle of the recent range, smoothed twice                                |
+| `stochastic_rsi(StochasticRsi)`                      | `stochRsiK`, `stochRsiD` | The stochastic of the RSI instead of the price                                                          |
+| `williams_r(WilliamsR)`                              | `williamsR`              | Williams %R: where the close sits in the recent range, from −100 (the low) to 0 (the high)              |
+| `intraday_momentum_index(IntradayMomentumIndex)`     | `imi`                    | The RSI idea on each bar's body (close minus open)                                                      |
+| `awesome_oscillator(AwesomeOscillator)`              | `ao`                     | A 5-bar average of the median price minus a 34-bar one                                                  |
+| `ultimate_oscillator(UltimateOscillator)`            | `uo`                     | Buying pressure over three windows (7, 14 and 28 bars), weighted 4, 2 and 1                             |
+
+`rsi` is 100 when nothing fell in the window, and a gap when nothing moved.
+
+```rust
+use pond_rs::financial::{Study, WilliamsR};
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let bars = TimeSeries::new(
+        "bars",
+        (0..4).map(|i| i * minute).collect(),
+        vec![
+            Column::required("high", vec![11.0, 12.0, 13.0, 12.0]),
+            Column::required("low", vec![9.0, 10.0, 11.0, 10.0]),
+            Column::required("close", vec![10.0, 11.0, 12.0, 11.0]),
+        ],
+    )?;
+
+    let out = bars
+        .rsi(Study::period(2))?
+        .momentum(Study::period(1))?
+        .williams_r(WilliamsR::default().period(2))?;
+
+    // Two rises: nothing fell, so 100. Then one fall: rises and falls even.
+    let rsi: Vec<_> = out.column("rsi")?.numbers()?.iter().collect();
+    assert_eq!(rsi, [None, None, Some(100.0), Some(50.0)]);
+    let momentum: Vec<_> = out.column("momentum")?.numbers()?.iter().collect();
+    assert_eq!(momentum, [None, Some(1.0), Some(1.0), Some(-1.0)]);
+
+    // Last bar: the range over 2 bars is 10 to 13 and the close is 11,
+    // two thirds of the way down from the high.
+    let w = out.column("williamsR")?.numbers()?.get(3).unwrap();
+    assert!((w - -200.0 / 3.0).abs() < 1e-12);
+    Ok(())
+}
+```
+
 ## Gaps in the prices
 
 A gap in the source column never shifts the rows. What a study does with
@@ -230,7 +422,13 @@ the problem:
 
 - a period of 0;
 - an output name that is already a column (or the key);
-- a source column that does not exist, or is not numbers.
+- a source column that does not exist, or is not numbers (for studies of
+  price bars, each of the high, low, close or open columns it reads);
+- a Bollinger `std_dev`, band `multiplier` or `percent` that is not a finite
+  number above zero;
+- for `macd` and `stochastic_rsi`, a series that already has a column
+  named `__macdLine__` or `__stochRsiRsi__`. pond-ts writes its working
+  values there, so it refuses them too.
 
 The last one differs from pond-ts. pond-ts gives a column of all gaps for
 a misspelled or text source column, so a typo looks like "no data"
@@ -279,12 +477,63 @@ from all three runs. "1 thread" is pond-rs with `RAYON_NUM_THREADS=1`.
 | `z_score` 20        | 25.3              | 25.4             | 82.2    | 3.2×                       |
 | `Wma` 20            | 6.5               | 2.7              | 30.4    | 11×                        |
 | `Smma` 20           | 7.9               | 8.4              | 18.2    | 2.2×                       |
-| `Dema` 20           | 9.2               | 9.9              | 23.4    | 2.4×                       |
-| `Tema` 20           | 14.0              | 13.1             | 35.3    | 2.7×                       |
+| `Dema` 20           | 9.2               | 6.6 \*           | 23.4    | 3.5×                       |
+| `Tema` 20           | 14.0              | 5.6 \*           | 35.3    | 6.3×                       |
 | `Trima` 20          | 14.8              | 8.0              | 40.1    | 5.0×                       |
 | `Hull` 20           | 20.9              | 9.9              | 50.0    | 5.1×                       |
 | `Kama` 20           | 5.5               | 6.6              | 28.3    | 4.3×                       |
 | `Zlema` 20          | 6.1               | 5.7              | 18.9    | 3.3×                       |
+
+\* Measured again after the moving-average family work, which runs
+chained EMAs in one pass. The 1-thread times are from before that.
+
+### The moving-average family, bands and momentum
+
+At pond-ts's default settings, same machine and setup:
+
+| Study                        | pond-rs, 1 thread | pond-rs, 4 cores | pond-ts | ratio |
+| ---------------------------- | ----------------- | ---------------- | ------- | ----- |
+| `macd`                       | 7.9               | 8.1              | 73.5    | 9.1×  |
+| `price_oscillator`           | 8.6               | 11.5             | 48.1    | 4.2×  |
+| `moving_average_cross`       | 21.0              | 12.4             | 64.6    | 5.2×  |
+| `moving_average_deviation`   | 7.2               | 4.3              | 31.9    | 7.4×  |
+| `disparity_index`            | 8.4               | 4.4              | 44.1    | 10×   |
+| `detrended_price_oscillator` | 11.5              | 5.3              | 29.7    | 5.6×  |
+| `guppy`                      | 93.5              | 30.8             | 184.6   | 6.0×  |
+| `rainbow`                    | 101.0             | 41.4             | 234.2   | 5.7×  |
+| `rainbow_oscillator`         | 152.3             | 56.6             | 404.9   | 7.2×  |
+| `trix`                       | 8.6               | 8.0              | 45.0    | 5.6×  |
+| `schaff_trend_cycle`         | 55.3              | 41.6             | 158.5   | 3.8×  |
+| `coppock`                    | 19.4              | 12.8             | 38.4    | 3.0×  |
+| `kst`                        | 86.0              | 20.5             | 138.4   | 6.8×  |
+| `special_k`                  | 112.4             | 42.1             | 278.9   | 6.6×  |
+| `price_momentum_oscillator`  | 7.4               | 8.3              | 44.0    | 5.3×  |
+| `bollinger`                  | 39.8              | 12.2             | 80.2    | 6.6×  |
+| `bollinger_bandwidth`        | 24.3              | 10.7             | 53.5    | 5.0×  |
+| `bollinger_percent_b`        | 26.7              | 12.1             | 83.7    | 6.9×  |
+| `keltner`                    | 22.6              | 12.6             | 63.0    | 5.0×  |
+| `starc_bands`                | 24.1              | 12.8             | 71.0    | 5.5×  |
+| `atr_bands`                  | 24.5              | 16.2             | 49.3    | 3.0×  |
+| `donchian`                   | 17.7              | 8.6              | 165.9   | 19×   |
+| `high_low_bands`             | 36.1              | 15.0             | 78.8    | 5.3×  |
+| `prime_number_bands`         | 41.6              | 17.0             | 68.3    | 4.0×  |
+| `envelope`                   | 18.6              | 7.1              | 66.5    | 9.4×  |
+| `rsi`                        | 9.9               | 9.2              | 58.2    | 6.3×  |
+| `stochastic`                 | 61.7              | 19.8             | 320.9   | 16×   |
+| `stochastic_momentum_index`  | 49.5              | 25.5             | 284.9   | 11×   |
+| `stochastic_rsi`             | 47.0              | 30.3             | 218.2   | 7.2×  |
+| `williams_r`                 | 30.0              | 12.1             | 220.7   | 18×   |
+| `chande_momentum`            | 27.4              | 17.1             | 94.6    | 5.5×  |
+| `momentum`                   | 3.0               | 2.9              | 19.6    | 6.8×  |
+| `percent_change`             | 3.1               | 2.5              | 23.4    | 9.4×  |
+| `intraday_momentum_index`    | 27.5              | 17.2             | 116.6   | 6.8×  |
+| `awesome_oscillator`         | 31.1              | 13.4             | 75.0    | 5.6×  |
+| `ultimate_oscillator`        | 73.4              | 32.5             | 262.9   | 8.1×  |
+
+The machine is a shared virtual machine with four cores, and single runs
+move by up to a third, so read the ratios as rough. `atr_bands` gains the
+least because its average true range is one chain where each row needs
+the one before, which pond-ts pays for too.
 
 **Why some use several cores and some don't.** The window studies (`sma`,
 `rolling_stdev`, `rolling_min` / `rolling_max`, and the `Wma`, `Trima` and
@@ -304,6 +553,6 @@ them.
 
 ## Still to come
 
-Bands (Bollinger and others), momentum (RSI, MACD, …), trend, volatility,
-volume and price studies, one family at a time; then trading calendars and
-session VWAP.
+The rest of momentum (CCI, Fisher transform, true strength index and
+others), then trend, volatility, volume and price studies, one family at a
+time; then trading calendars and session VWAP.

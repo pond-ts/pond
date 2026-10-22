@@ -66,10 +66,12 @@ pond-rs = { git = "https://github.com/pond-ts/pond" }
 | Per entity            | `partition_by` / `group_by` on one or more columns, partitions run on several cores                                                                                                                                                                     |
 | Arrow and JSON        | Read and write Arrow IPC (Feather v2) files and streams, compressed or not; columns can share the file's memory instead of copying it. Read and write pond-ts's JSON format                                                                             |
 
-**Started:** financial studies. Moving averages, rolling statistics and
-the z-score are built; see [Finance studies](./finance-studies).
+**Started:** financial studies. Moving averages and rolling statistics,
+the moving-average family (MACD, …), bands (Bollinger, Keltner, …) and the
+first momentum studies (RSI, stochastics, …) are built; see
+[Finance studies](./finance-studies).
 
-**Not built yet:** the other financial studies (RSI, Bollinger bands, …),
+**Not built yet:** the other financial studies (CCI, ADX, OBV, …),
 the live (streaming) layer, and a WASM build that
 pond-ts can call. They come in roughly that order; see the
 [roadmap](#roadmap) below.
@@ -84,8 +86,8 @@ pond-ts can call. They come in roughly that order; see the
   filtering and mapping.
 - [Partitions](./partitions): the same work per host, per symbol, per
   anything.
-- [Finance studies](./finance-studies): moving averages and rolling
-  statistics over price bars, as `@pond-ts/financial`.
+- [Finance studies](./finance-studies): moving averages, MACD, bands, RSI
+  and more over price bars, as `@pond-ts/financial`.
 - [Arrow and JSON](./arrow): reading and writing files, when memory is shared, and pond-ts's JSON format.
 - [Performance](./performance): threads, and what the benchmarks measured.
 - [Coming from pond-ts](./coming-from-pond-ts): what is the same, what is
