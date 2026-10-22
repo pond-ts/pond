@@ -578,7 +578,10 @@ fn main() -> pond_rs::Result<()> {
         (
             "v-chaikin".into(),
             "chaikinVol",
-            Box::new(|| bars.chaikin_volatility(ChaikinVolatility::default()).unwrap()),
+            Box::new(|| {
+                bars.chaikin_volatility(ChaikinVolatility::default())
+                    .unwrap()
+            }),
         ),
         (
             "v-mass".into(),

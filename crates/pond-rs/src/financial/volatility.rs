@@ -388,3 +388,28 @@ fn relative_volatility_values(values: &[f64], period: usize, stdev: usize) -> Ve
         .map(|(u, d)| (100.0 * u) / (u + d))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An `annualize` that is not a positive finite number is refused (JSON
+    /// cases cannot carry an infinity or NaN).
+    #[test]
+    fn non_finite_annualize_is_refused() {
+        let series = TimeSeries::new(
+            "s",
+            (0..4).collect(),
+            vec![crate::Column::required("close", vec![1.0, 2.0, 3.0, 4.0])],
+        )
+        .unwrap();
+        for bad in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN, 0.0, -1.0] {
+            let err = series
+                .historical_volatility(HistoricalVolatility::default().annualize(bad))
+                .unwrap_err();
+            assert!(err.to_string().contains("annualize"), "{err}");
+        }
+        let ok = HistoricalVolatility::default().period(2).annualize(1.0);
+        assert!(series.historical_volatility(ok).is_ok());
+    }
+}

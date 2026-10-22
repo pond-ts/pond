@@ -1236,7 +1236,8 @@ mod tests {
 
     /// `js_log10` gives V8's `Math.log10` bits. Checked against node on 2M
     /// values (0 differ; the system `log10` differed on 4,111); these are
-    /// prices where the system `log10` is one bit off V8.
+    /// prices where the system `log10` is one bit off V8, and values below
+    /// 1 where scaling into `[1, 2)` instead would be.
     #[test]
     fn js_log10_matches_v8() {
         for (x, expected) in [
@@ -1246,6 +1247,10 @@ mod tests {
             (0x405b9defe8000000, 0x4000588be50e726e),
             (0x4057a2b9f0000000, 0x3fff9c2b9e709c57),
             (0x405a704df0000000, 0x400031c426e5334b),
+            // Below 1, where fdlibm scales into [0.5, 1) rather than [1, 2).
+            (0x3febbc6400000000, 0xbfafcc94a77f77ce),
+            (0x3fe3d46a80000000, 0xbfca9a435e71c76b),
+            (0x3fe286c600000000, 0xbfce61bb91084ed2),
         ] {
             assert_eq!(js_log10(f64::from_bits(x)).to_bits(), expected, "{x:#x}");
         }

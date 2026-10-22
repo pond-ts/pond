@@ -747,10 +747,7 @@ pub fn call_study(
             low
         )),
         "choppinessIndex" => series.choppiness_index(reads!(
-            name_only!(
-                ChoppinessIndex::default().period(int("period", 14)),
-                output
-            ),
+            name_only!(ChoppinessIndex::default().period(int("period", 14)), output),
             high,
             low,
             close

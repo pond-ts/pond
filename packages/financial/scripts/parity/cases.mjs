@@ -244,13 +244,16 @@ const EDGE_ROWS = Array.from({ length: 60 }, (_, i) => {
 // Exact ties: a ZigZag first swing of exactly 25% (25 = 0.25 * 100, no
 // rounding), then closes alternating 1 and -1, so a two-bar average is
 // exactly 0 (RAVI's zero long average).
+// The open jumps from 1e-300 to 1e300: a first log return of +Infinity
+// (the price ratio overflows), which historical volatility skips as it
+// skips a gap.
 const TIE_ROWS = [
-  [0, 100, 100, 1, 100],
-  [60_000, 125, 110, -1, 110],
-  [120_000, 124, 112, 1, 120],
-  [180_000, 120, 90, -1, 100],
-  [240_000, 118, 100, 1, 105],
-  [300_000, 116, 101, -1, 104],
+  [0, 100, 100, 1, 1e-300],
+  [60_000, 125, 110, -1, 1e300],
+  [120_000, 124, 112, 1, 2e300],
+  [180_000, 120, 90, -1, 1.5e300],
+  [240_000, 118, 100, 1, 3e300],
+  [300_000, 116, 101, -1, 2.5e300],
 ];
 // A close and elderImpulse's own scratch column (and no `__macdLine__`), so
 // the refusal comes from the elder scratch alone.
@@ -1273,6 +1276,7 @@ function volatilityFamilyCases(add) {
   add('choppinessIndex', 'lead', {});
   add('gopalakrishnanRangeIndex', 'flat', { high: 'close', low: 'close' });
   add('gopalakrishnanRangeIndex', 'lead', {});
+  add('historicalVolatility', 'ties', { column: 'open', period: 2 });
   add('ulcerIndex', 'flat', { column: 'ramp', period: 4 });
   add('ulcerIndex', 'flat', { column: 'open', period: 4 });
   add('ulcerIndex', 'named', { period: 3 });
