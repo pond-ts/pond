@@ -80,6 +80,13 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **`keep`, `difference`, `unique`, `top${N}` and `samples` read the column
+  directly** in `reduce` and `aggregate`, instead of going through `Event`s
+  (whole-series `reduce`) or a per-bucket reducer state (`aggregate`). Same
+  answers. On 1M rows, `reduce` with `difference` 104 → 3.5 ms, `unique`
+  139 → 9 ms, `top3` 124 → 19 ms, `keep` stops at the first value that
+  differs (95 ms → under 0.01 ms). Every other reducer in `reduce` also stops
+  building `Event`s when it has no column kernel.
 - **`rolling(sequence, window, mapping)` no longer scans every row for every
   grid point** ([PND-ROLLGRID]). Two forward cursors find each bucket's window,
   so finding windows costs O(rows + buckets) instead of O(rows × buckets). A

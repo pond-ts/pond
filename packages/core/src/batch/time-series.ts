@@ -669,10 +669,11 @@ function aggregateValues(
  * reducer)`. When the reducer defines `reduceColumn` and the column
  * is a packed `Float64Column`, skip `series.events` materialization
  * + the row-API `defined` / `numeric` filter passes; walk the
- * underlying typed array directly. Falls back to `null` for the
- * caller to take the row-API path otherwise (mixed kinds, chunked
- * storage, reducers that don't have a column fast path like
- * `first` / `last`).
+ * underlying typed array directly; `keep` / `difference` / `unique` /
+ * `top${N}` / `samples` use their `reduceCellRange` kernel on any column.
+ * Otherwise `{ ok: false }`: the caller reads the column's cells
+ * (`columnCells`) and runs the reducer over them, still without building
+ * `Event`s.
  */
 function tryReduceColumnFastPath(
   reducer: AggregateReducer,
@@ -680,12 +681,36 @@ function tryReduceColumnFastPath(
 ): { ok: true; value: ColumnValue | undefined } | { ok: false } {
   if (!isBuiltInAggregateReducer(reducer)) return { ok: false };
   if (column === undefined) return { ok: false };
+  const def = resolveReducer(reducer);
+  // `keep` / `difference` / `unique` / `top${N}` / `samples`: a range
+  // kernel over any column kind or storage.
+  if (def.reduceCellRange !== undefined) {
+    return {
+      ok: true,
+      value: finiteOrMissing(def.reduceCellRange(column, 0, column.length)),
+    };
+  }
   if (column.kind !== 'number' || column.storage !== 'packed') {
     return { ok: false };
   }
-  const def = resolveReducer(reducer);
   if (def.reduceColumn === undefined) return { ok: false };
   return { ok: true, value: finiteOrMissing(def.reduceColumn(column)) };
+}
+
+/**
+ * Every cell of `column` in row order — the values `series.events`' data
+ * would give (an `Event`'s data reads the same column), without building
+ * the `Event`s.
+ */
+function columnCells(
+  column: import('../columnar/index.js').Column,
+): Array<ColumnValue | undefined> {
+  const length = column.length;
+  const values = new Array<ColumnValue | undefined>(length);
+  for (let i = 0; i < length; i += 1) {
+    values[i] = column.read(i) as ColumnValue | undefined;
+  }
+  return values;
 }
 
 function isBuiltInAggregateReducer(
@@ -2766,10 +2791,14 @@ export class TimeSeries<S extends SeriesSchema> {
         this.column(columnOrMapping),
       );
       if (fastPath.ok) return fastPath.value;
-      const values = this.events.map((event) => {
-        const data = event.data();
-        return data[columnOrMapping as keyof typeof data];
-      }) as ReadonlyArray<ColumnValue | undefined>;
+      const column = this.column(columnOrMapping);
+      const values =
+        column !== undefined
+          ? columnCells(column)
+          : (this.events.map((event) => {
+              const data = event.data();
+              return data[columnOrMapping as keyof typeof data];
+            }) as ReadonlyArray<ColumnValue | undefined>);
       return applyAggregateReducer(reducer!, values);
     }
 
@@ -2786,10 +2815,14 @@ export class TimeSeries<S extends SeriesSchema> {
         result[col.output] = fastPath.value;
         continue;
       }
-      const values = this.events.map((event) => {
-        const data = event.data();
-        return data[col.source as keyof typeof data];
-      }) as ReadonlyArray<ColumnValue | undefined>;
+      const column = this.column(col.source);
+      const values =
+        column !== undefined
+          ? columnCells(column)
+          : (this.events.map((event) => {
+              const data = event.data();
+              return data[col.source as keyof typeof data];
+            }) as ReadonlyArray<ColumnValue | undefined>);
       result[col.output] = applyAggregateReducer(col.reducer, values);
     }
     return result;
