@@ -213,7 +213,11 @@ impl TimeSeries {
         positive_finite(CALL, "keltner multiplier", options.multiplier)?;
         let names = suffixed(options.name(), ["Middle", "Upper", "Lower"]);
         self.free_names(CALL, &names)?;
-        let [high, low, close] = self.ohlc(CALL, &options.high, &options.low, &options.close)?;
+        let [high, low, close] = self.price_columns(
+            CALL,
+            [&options.high, &options.low, &options.close],
+            ["high", "low", "close"],
+        )?;
         let (middle, atr) = par::join(
             || {
                 let typical = kernels::typical_price_values(&high, &low, &close);
@@ -234,7 +238,11 @@ impl TimeSeries {
         positive_finite(CALL, "starcBands multiplier", options.multiplier)?;
         let names = suffixed(options.name(), ["Middle", "Upper", "Lower"]);
         self.free_names(CALL, &names)?;
-        let [high, low, close] = self.ohlc(CALL, &options.high, &options.low, &options.close)?;
+        let [high, low, close] = self.price_columns(
+            CALL,
+            [&options.high, &options.low, &options.close],
+            ["high", "low", "close"],
+        )?;
         let (middle, atr) = par::join(
             || ma_column(&close, options.period, options.ma),
             || kernels::atr_values(&high, &low, &close, options.atr_period),
@@ -251,7 +259,11 @@ impl TimeSeries {
         positive_finite(CALL, "atrBands multiplier", options.multiplier)?;
         let names = suffixed(options.name(), ["Upper", "Lower"]);
         self.free_names(CALL, &names)?;
-        let [high, low, close] = self.ohlc(CALL, &options.high, &options.low, &options.close)?;
+        let [high, low, close] = self.price_columns(
+            CALL,
+            [&options.high, &options.low, &options.close],
+            ["high", "low", "close"],
+        )?;
         let column = (options.column.as_deref())
             .unwrap_or_else(|| options.close.as_deref().unwrap_or("close"));
         let field = self.study_source(CALL, column)?;
@@ -331,22 +343,6 @@ impl TimeSeries {
         let middle = ma_column(&values, options.period, options.ma);
         let (upper, lower) = scaled(&middle, options.percent);
         self.study_outputs(CALL, names.into_iter().zip([middle, upper, lower]))
-    }
-
-    /// The high, low and close columns a study reads (pond-ts's
-    /// `columnValues` order).
-    fn ohlc(
-        &self,
-        call: &'static str,
-        high: &Option<String>,
-        low: &Option<String>,
-        close: &Option<String>,
-    ) -> Result<[std::borrow::Cow<'_, [f64]>; 3]> {
-        Ok([
-            self.study_source(call, high.as_deref().unwrap_or("high"))?,
-            self.study_source(call, low.as_deref().unwrap_or("low"))?,
-            self.study_source(call, close.as_deref().unwrap_or("close"))?,
-        ])
     }
 }
 

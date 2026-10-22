@@ -78,16 +78,19 @@ const LARGE_SCHEMA = [
 ];
 
 // A flat run (zero spread: z-score and KAMA's efficiency ratio divide by
-// it), a step, then a flat run again; signed zeros in `open`.
+// it), a step, then a flat run again; signed zeros in `open`; a `ramp`
+// that keeps rising through the flat run.
 const FLAT_ROWS = Array.from({ length: 60 }, (_, i) => [
   i * 1000,
   i < 25 ? 5 : i < 40 ? 7.5 : 7.5 + (i % 2) * 0.125,
   i % 3 === 0 ? -0 : i % 3 === 1 ? 0 : -0,
+  i,
 ]);
 const FLAT_SCHEMA = [
   { name: 'time', kind: 'time' },
   { name: 'close', kind: 'number' },
   { name: 'open', kind: 'number' },
+  { name: 'ramp', kind: 'number' },
 ];
 
 // A series that already has columns a study writes (or, for macd, its
@@ -774,6 +777,83 @@ function momentumFamilyCases(add) {
   add('momentum', 'long', { period: 899 });
   add('momentum', 'long', { period: 900 });
   add('percentChange', 'long', { periods: 300 });
+
+  // Part 2.
+  familyCases(add, {
+    small: {
+      commodityChannelIndex: [{ period: 5 }, { period: 1 }],
+      fisherTransform: [{ period: 5 }, { period: 1 }],
+      psychologicalLine: [{ period: 5 }, { period: 1 }],
+      prettyGoodOscillator: [{ period: 5 }, { period: 1 }],
+      primeNumberOscillator: [{}],
+      qstick: [{ period: 3 }, { period: 1 }],
+      relativeVigorIndex: [{ period: 3 }, { period: 1 }],
+      centerOfGravity: [{ period: 5 }, { period: 1 }],
+      chandeForecastOscillator: [{ period: 5 }, { period: 2 }],
+      trueStrengthIndex: [
+        { longPeriod: 5, shortPeriod: 3, signalPeriod: 2 },
+        { longPeriod: 1, shortPeriod: 1, signalPeriod: 1 },
+      ],
+    },
+    reads: {
+      commodityChannelIndex: bar,
+      fisherTransform: ['high', 'low'],
+      psychologicalLine: ['column'],
+      prettyGoodOscillator: ['column', ...bar],
+      primeNumberOscillator: ['column'],
+      qstick: ['open', 'close'],
+      relativeVigorIndex: ['open', ...bar],
+      centerOfGravity: ['column'],
+      chandeForecastOscillator: ['column'],
+      trueStrengthIndex: ['column'],
+    },
+    typeOption: { qstick: 'maType' },
+    naming: {
+      fisherTransform: 'prefix',
+      relativeVigorIndex: 'prefix',
+      trueStrengthIndex: 'prefix',
+    },
+    periods: {
+      commodityChannelIndex: ['period'],
+      fisherTransform: ['period'],
+      psychologicalLine: ['period'],
+      prettyGoodOscillator: ['period'],
+      primeNumberOscillator: [],
+      qstick: ['period'],
+      relativeVigorIndex: ['period'],
+      centerOfGravity: ['period'],
+      chandeForecastOscillator: ['period'],
+      trueStrengthIndex: ['longPeriod', 'shortPeriod', 'signalPeriod'],
+    },
+    numbers: {},
+  });
+  // A one-bar regression, the oscillator's centre following a moved close,
+  // the prime ladder, and longer settings on the 900 closes and the large
+  // values (where the regression's running sums lose their low bits).
+  add('chandeForecastOscillator', 'bars', { period: 1 });
+  // Bars that never move (high = low = close) from the start: the true
+  // range's average is exactly 0 under a column that does move.
+  add('prettyGoodOscillator', 'flat', {
+    period: 3,
+    high: 'close',
+    low: 'close',
+    close: 'close',
+    column: 'ramp',
+  });
+  add('prettyGoodOscillator', 'ohlc', { period: 3, close: 'open' });
+  add('prettyGoodOscillator', 'ohlc', {
+    period: 3,
+    close: 'open',
+    column: 'close',
+  });
+  add('primeNumberOscillator', 'ohlc', { column: 'prime' });
+  add('fisherTransform', 'bars', { period: 40 });
+  add('commodityChannelIndex', 'bars', { period: 50 });
+  add('chandeForecastOscillator', 'long', { period: 101 });
+  add('chandeForecastOscillator', 'large', { period: 3 });
+  add('chandeForecastOscillator', 'large', { period: 14 });
+  add('centerOfGravity', 'large', { period: 7 });
+  add('trueStrengthIndex', 'long', { longPeriod: 60, shortPeriod: 30 });
 }
 
 function encodeCell(cell) {
