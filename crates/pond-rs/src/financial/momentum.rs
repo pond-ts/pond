@@ -257,7 +257,7 @@ impl TimeSeries {
         // The five EMAs run row by row in one pass (no column in between,
         // and the chains overlap in the processor): the same operations in
         // the same order as pond-ts's column-at-a-time EMAs, so the same bits.
-        let ema = |period: usize| Ema::new(2.0 / (period as f64 + 1.0), period);
+        let ema = Ema::period;
         let (mut num_long, mut num_short) = (ema(options.long), ema(options.short));
         let (mut den_long, mut den_short) = (ema(options.long), ema(options.short));
         let mut signal_ema = ema(options.signal);
@@ -763,7 +763,7 @@ impl TimeSeries {
         // The five EMAs run row by row in one pass, as in
         // `stochastic_momentum_index`: the same operations in the same
         // order as pond-ts's column-at-a-time EMAs, so the same bits.
-        let ema = |period: usize| Ema::new(2.0 / (period as f64 + 1.0), period);
+        let ema = Ema::period;
         let (mut num_long, mut num_short) = (ema(options.long), ema(options.short));
         let (mut den_long, mut den_short) = (ema(options.long), ema(options.short));
         let mut signal_ema = ema(options.signal);

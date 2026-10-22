@@ -2820,7 +2820,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     2,013 match bit for bit, 226 errors agree, 215 refused (known
     missing-column difference), 178 calls Rust cannot write. Oracle: 117
     of 220 cases. Planted bugs: 19 of 25 caught. The 6 missed change no
-    output: `w / (2m)` vs `w / m / 2` (a halving is exact); adding
+    output: `w / (2m)` vs `w / m / 2` (a halving is exact unless `2m` overflows or the result is too small for full precision); adding
     `0 * mean`; the regression's flat-window intercept as the anchor
     instead of the value (the anchor is always a value in the window,
     so they differ only in the sign of a zero, which CFO then turns into
@@ -2828,9 +2828,11 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     throughout has no changes and is caught first); the anchor kept
     when the rebuild row is a gap (every window until the next rebuild
     holds that gap, so all are gaps); and PGO's zero-denominator guard
-    (pond-rs stores an infinite value as a gap, so `x / 0` reads the
-    same as the guard's gap; pond-ts needs the guard because its
-    `withColumn` refuses infinities).
+    (both pond-ts's `withColumn` and pond-rs store an infinite value as
+    a gap, so `x / 0` reads the same as the guard's gap). The
+    regression's r² is computed but no study reads it yet, so nothing
+    checks it against pond-ts until the trend family (which reads it)
+    adds parity cases.
   - Perf: all O(N) except CCI's deviation (O(N·period), as pond-ts) and
     the prime oscillator (O(√x) per value). The Fisher transform's pass
     is sequential (each value needs the last) and pays a logarithm per
