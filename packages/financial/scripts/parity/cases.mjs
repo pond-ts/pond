@@ -241,6 +241,29 @@ const EDGE_ROWS = Array.from({ length: 60 }, (_, i) => {
   if (i === 34) [high, low, close] = [1.7e308, 1.7e308, 1.7e308];
   return [time, high, low, close, price];
 });
+// Exact ties: a ZigZag first swing of exactly 25% (25 = 0.25 * 100, no
+// rounding), then closes alternating 1 and -1, so a two-bar average is
+// exactly 0 (RAVI's zero long average).
+const TIE_ROWS = [
+  [0, 100, 100, 1, 100],
+  [60_000, 125, 110, -1, 110],
+  [120_000, 124, 112, 1, 120],
+  [180_000, 120, 90, -1, 100],
+  [240_000, 118, 100, 1, 105],
+  [300_000, 116, 101, -1, 104],
+];
+// A close and elderImpulse's own scratch column (and no `__macdLine__`), so
+// the refusal comes from the elder scratch alone.
+const SCRATCH_ROWS = Array.from({ length: 40 }, (_, i) => [
+  i * 60_000,
+  50 + Math.sin(i / 4) * 3,
+  i,
+]);
+const SCRATCH_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'close', kind: 'number' },
+  { name: '__elderMacd__Hist', kind: 'number' },
+];
 const LEAD_SCHEMA = [
   { name: 'time', kind: 'time' },
   { name: 'high', kind: 'number', required: false },
@@ -289,6 +312,8 @@ function inputs(oracle) {
     ohlc: { name: 'ohlc', schema: OHLC_GAPPY_SCHEMA, rows: OHLC_ROWS },
     lead: { name: 'lead', schema: LEAD_SCHEMA, rows: LEAD_ROWS },
     edge: { name: 'edge', schema: LEAD_SCHEMA, rows: EDGE_ROWS },
+    ties: { name: 'ties', schema: LEAD_SCHEMA, rows: TIE_ROWS },
+    scratch: { name: 'scratch', schema: SCRATCH_SCHEMA, rows: SCRATCH_ROWS },
     ohlcEmpty: { name: 'ohlcEmpty', schema: LEAD_SCHEMA, rows: [] },
     empty: { name: 'empty', schema: CLOSE_SCHEMA, rows: [] },
   };
@@ -391,6 +416,7 @@ function cases() {
   bandFamilyCases(add);
   momentumFamilyCases(add);
   trendFamilyCases(add);
+  trendFamilyCases2(add);
   return out;
 }
 
@@ -981,6 +1007,124 @@ function trendFamilyCases(add) {
     );
   }
   add('verticalHorizontalFilter', 'edge', { period: 3, column: 'high' });
+}
+
+// R2 step 2d: the trend family (part 2).
+function trendFamilyCases2(add) {
+  const bar = ['high', 'low', 'close'];
+  familyCases(add, {
+    small: {
+      zigZag: [{ deviation: 1 }, { deviation: 0.5 }],
+      ichimoku: [
+        { conversionPeriod: 3, basePeriod: 5, spanBPeriod: 8, displacement: 4 },
+        { conversionPeriod: 1, basePeriod: 1, spanBPeriod: 1, displacement: 1 },
+      ],
+      elderImpulse: [
+        { emaPeriod: 5, fastPeriod: 3, slowPeriod: 6, signalPeriod: 2 },
+        { emaPeriod: 1, fastPeriod: 1, slowPeriod: 2, signalPeriod: 1 },
+      ],
+      elderRay: [{ period: 5 }, { period: 1 }],
+      trendIntensityIndex: [
+        { period: 5, maPeriod: 8 },
+        { period: 1, maPeriod: 1 },
+      ],
+      ravi: [
+        { shortPeriod: 3, longPeriod: 8 },
+        { shortPeriod: 1, longPeriod: 1 },
+      ],
+      swingIndex: [{ limit: 3 }, { limit: 0.5 }],
+      accumulativeSwingIndex: [{ limit: 3 }, { limit: 0.5 }],
+    },
+    reads: {
+      zigZag: ['high', 'low'],
+      ichimoku: bar,
+      elderImpulse: ['column'],
+      elderRay: bar,
+      trendIntensityIndex: ['column'],
+      ravi: ['column'],
+      swingIndex: ['open', ...bar],
+      accumulativeSwingIndex: ['open', ...bar],
+    },
+    typeOption: {},
+    naming: { zigZag: 'prefix', ichimoku: 'prefix', elderRay: 'prefix' },
+    periods: {
+      zigZag: [],
+      ichimoku: [
+        'conversionPeriod',
+        'basePeriod',
+        'spanBPeriod',
+        'displacement',
+      ],
+      elderImpulse: ['emaPeriod', 'fastPeriod', 'slowPeriod', 'signalPeriod'],
+      elderRay: ['period'],
+      trendIntensityIndex: ['period', 'maPeriod'],
+      ravi: ['shortPeriod', 'longPeriod'],
+      swingIndex: [],
+      accumulativeSwingIndex: [],
+    },
+    numbers: {
+      zigZag: ['deviation'],
+      swingIndex: ['limit'],
+      accumulativeSwingIndex: ['limit'],
+    },
+  });
+  // The fast MACD period not shorter than the slow, the MACD's scratch
+  // column already on the series, a displacement that changes no value,
+  // swings over many legs (the 900 closes as a line) and none, bars that
+  // never move (the swing's span is 0 and the running total ends), an
+  // inverted RAVI pair, and the edge bars.
+  add('elderImpulse', 'ohlc', { fastPeriod: 26, slowPeriod: 12 });
+  add('elderImpulse', 'ohlc', { fastPeriod: 12, slowPeriod: 12 });
+  add('elderImpulse', 'named', {});
+  add('elderImpulse', 'long', { emaPeriod: 30 });
+  add('ichimoku', 'bars', { displacement: 1 });
+  add('ichimoku', 'long', { high: 'close', low: 'close' });
+  add('zigZag', 'long', { high: 'close', low: 'close', deviation: 2 });
+  add('zigZag', 'long', { high: 'close', low: 'close', deviation: 0.1 });
+  add('zigZag', 'bars', { deviation: 50 });
+  add('zigZag', 'bars', { high: 'low', low: 'high', deviation: 1 });
+  for (const study of ['swingIndex', 'accumulativeSwingIndex']) {
+    add(study, 'flat', {
+      limit: 1,
+      open: 'close',
+      high: 'close',
+      low: 'close',
+    });
+    add(study, 'flat', { limit: 1, high: 'close', low: 'close' });
+    add(study, 'bars', { limit: 1e-9 });
+    add(study, 'edge', { limit: 2 });
+  }
+  add('ravi', 'long', { shortPeriod: 65, longPeriod: 7 });
+  add('ravi', 'long', {});
+  add('trendIntensityIndex', 'long', {});
+  add('trendIntensityIndex', 'flat', { period: 3, maPeriod: 2 });
+  for (const study of ['zigZag', 'ichimoku', 'elderRay']) {
+    add(study, 'edge', {});
+  }
+  add('zigZag', 'edge', { deviation: 1 });
+  add('ichimoku', 'edge', {
+    conversionPeriod: 2,
+    basePeriod: 3,
+    spanBPeriod: 5,
+  });
+  // One-bar windows on the edge bars: a bar at 1.7e308 whose high plus
+  // low overflows (the midpoint is then infinite, as pond-ts adds first).
+  add('ichimoku', 'edge', {
+    conversionPeriod: 1,
+    basePeriod: 1,
+    spanBPeriod: 2,
+  });
+  // A first swing of exactly the deviation, and a zero long average.
+  add('zigZag', 'ties', { deviation: 25 });
+  add('ravi', 'ties', { shortPeriod: 1, longPeriod: 2 });
+  // elderImpulse refuses its MACD scratch column; elderRay and RAVI on the
+  // same series succeed (the column is not theirs).
+  add('elderImpulse', 'scratch', {
+    emaPeriod: 3,
+    fastPeriod: 2,
+    slowPeriod: 4,
+  });
+  add('ravi', 'scratch', { shortPeriod: 2, longPeriod: 5 });
 }
 
 function encodeCell(cell) {

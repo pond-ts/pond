@@ -69,6 +69,14 @@ pub const STUDIES: &[&str] = &[
     "superTrend",
     "parabolicSar",
     "atrTrailingStop",
+    "zigZag",
+    "ichimoku",
+    "elderImpulse",
+    "elderRay",
+    "trendIntensityIndex",
+    "ravi",
+    "swingIndex",
+    "accumulativeSwingIndex",
 ];
 
 /// The columns `study` reads with these options: `column` (default
@@ -105,7 +113,9 @@ pub fn sources(study: &str, options: &Map<String, Value>) -> Vec<String> {
         | "vortex"
         | "randomWalkIndex"
         | "superTrend"
-        | "atrTrailingStop" => vec![
+        | "atrTrailingStop"
+        | "ichimoku"
+        | "elderRay" => vec![
             text("high", "high"),
             text("low", "low"),
             text("close", "close"),
@@ -118,7 +128,13 @@ pub fn sources(study: &str, options: &Map<String, Value>) -> Vec<String> {
             text("low", "low"),
             text("close", "close"),
         ],
-        "donchian" | "highLowBands" | "primeNumberBands" | "aroon" | "parabolicSar" => {
+        "swingIndex" | "accumulativeSwingIndex" => vec![
+            text("open", "open"),
+            text("high", "high"),
+            text("low", "low"),
+            text("close", "close"),
+        ],
+        "donchian" | "highLowBands" | "primeNumberBands" | "aroon" | "parabolicSar" | "zigZag" => {
             vec![text("high", "high"), text("low", "low")]
         }
         _ => vec![text("column", "close")],
@@ -144,6 +160,12 @@ const PERIODS: &[&str] = &[
     "stochPeriod",
     "periods",
     "mediumPeriod",
+    "emaPeriod",
+    "maPeriod",
+    "conversionPeriod",
+    "basePeriod",
+    "spanBPeriod",
+    "displacement",
 ];
 
 /// Calls `study` on `series` with pond-ts `options`. `None` when Rust
@@ -606,6 +628,71 @@ pub fn call_study(
             low,
             close
         )),
+        "zigZag" => series.zig_zag(reads!(
+            name_only!(ZigZag::default().deviation(num("deviation", 5.0)), prefix),
+            high,
+            low
+        )),
+        "ichimoku" => series.ichimoku(reads!(
+            name_only!(
+                Ichimoku::default()
+                    .conversion(int("conversionPeriod", 9))
+                    .base(int("basePeriod", 26))
+                    .span_b(int("spanBPeriod", 52))
+                    .displacement(int("displacement", 26)),
+                prefix
+            ),
+            high,
+            low,
+            close
+        )),
+        "elderImpulse" => series.elder_impulse(named!(
+            ElderImpulse::default()
+                .ema(int("emaPeriod", 13))
+                .fast(int("fastPeriod", 12))
+                .slow(int("slowPeriod", 26))
+                .signal(int("signalPeriod", 9)),
+            output
+        )),
+        "elderRay" => series.elder_ray(reads!(
+            name_only!(ElderRay::default().period(int("period", 13)), prefix),
+            high,
+            low,
+            close
+        )),
+        "trendIntensityIndex" => series.trend_intensity_index(named!(
+            TrendIntensityIndex::default()
+                .period(int("period", 30))
+                .ma_period(int("maPeriod", 60)),
+            output
+        )),
+        "ravi" => series.ravi(named!(
+            Ravi::default()
+                .short(int("shortPeriod", 7))
+                .long(int("longPeriod", 65)),
+            output
+        )),
+        // pond-ts requires `limit`; a Rust call cannot leave it out.
+        "swingIndex" => {
+            let limit = options.get("limit")?.as_f64().unwrap();
+            series.swing_index(reads!(
+                name_only!(SwingIndex::new(limit), output),
+                open,
+                high,
+                low,
+                close
+            ))
+        }
+        "accumulativeSwingIndex" => {
+            let limit = options.get("limit")?.as_f64().unwrap();
+            series.accumulative_swing_index(reads!(
+                name_only!(AccumulativeSwingIndex::new(limit), output),
+                open,
+                high,
+                low,
+                close
+            ))
+        }
         other => panic!("no pond-rs call for study '{other}'"),
     })
 }

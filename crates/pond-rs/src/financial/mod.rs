@@ -8,7 +8,8 @@
 //! oscillators, QStick, relative vigor, centre of gravity, Chande forecast,
 //! true strength), trend (directional movement, Aroon, vortex, vertical
 //! horizontal filter, random walk index, SuperTrend, parabolic SAR, ATR
-//! trailing stop),
+//! trailing stop, ZigZag, Ichimoku, Elder impulse and ray, trend
+//! intensity, RAVI, swing index and its running total),
 //! rolling statistics and the z-score so far, each a method on
 //! [`TimeSeries`] that adds its number columns and keeps every row.
 //!
@@ -71,7 +72,9 @@ pub use momentum::{
     WilliamsR,
 };
 pub use trend::{
-    Aroon, AtrTrailingStop, DirectionalMovement, ParabolicSar, RandomWalkIndex, SuperTrend, Vortex,
+    AccumulativeSwingIndex, Aroon, AtrTrailingStop, DirectionalMovement, ElderImpulse, ElderRay,
+    Ichimoku, ParabolicSar, RandomWalkIndex, Ravi, SuperTrend, SwingIndex, TrendIntensityIndex,
+    Vortex, ZigZag,
 };
 
 use std::borrow::Cow;

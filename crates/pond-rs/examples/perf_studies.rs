@@ -510,6 +510,56 @@ fn main() -> pond_rs::Result<()> {
         ),
     ];
     cases.extend(trend);
+    // R2 step 2d part 2.
+    let trend2: Vec<Case> = vec![
+        (
+            "t2-zz".into(),
+            "zzLine",
+            Box::new(|| bars.zig_zag(ZigZag::default()).unwrap()),
+        ),
+        (
+            "t2-ichi".into(),
+            "ichiSenkouB",
+            Box::new(|| bars.ichimoku(Ichimoku::default()).unwrap()),
+        ),
+        (
+            "t2-impulse".into(),
+            "impulse",
+            Box::new(|| bars.elder_impulse(ElderImpulse::default()).unwrap()),
+        ),
+        (
+            "t2-ray".into(),
+            "elderBear",
+            Box::new(|| bars.elder_ray(ElderRay::default()).unwrap()),
+        ),
+        (
+            "t2-tii".into(),
+            "tii",
+            Box::new(|| {
+                bars.trend_intensity_index(TrendIntensityIndex::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "t2-ravi".into(),
+            "ravi",
+            Box::new(|| bars.ravi(Ravi::default()).unwrap()),
+        ),
+        (
+            "t2-si".into(),
+            "si",
+            Box::new(|| bars.swing_index(SwingIndex::new(20.0)).unwrap()),
+        ),
+        (
+            "t2-asi".into(),
+            "asi",
+            Box::new(|| {
+                bars.accumulative_swing_index(AccumulativeSwingIndex::new(20.0))
+                    .unwrap()
+            }),
+        ),
+    ];
+    cases.extend(trend2);
     // POND_BITS=1: instead of timing, print a hash of every bit of every
     // number column in the result (a gap hashes as one fixed value), the
     // same hash bench/studies_pond_ts.mjs prints under the same variable.

@@ -1,15 +1,17 @@
-//! The trend family (pond-ts `catalog/trend.ts`), part 1: directional
-//! movement, Aroon, the vortex indicator, the vertical horizontal filter,
-//! the random walk index, SuperTrend, the parabolic SAR and the ATR
-//! trailing stop.
+//! The trend family (pond-ts `catalog/trend.ts`): directional movement,
+//! Aroon, the vortex indicator, the vertical horizontal filter, the random
+//! walk index, SuperTrend, the parabolic SAR, the ATR trailing stop,
+//! ZigZag, Ichimoku, Elder's impulse system and ray, the trend intensity
+//! index, RAVI and Wilder's swing index (and its running total).
 
-use super::Study;
-use super::averages::positive;
+use super::averages::{MACD_SCRATCH, positive, shorter};
 use super::bands::{positive_finite, suffixed};
 use super::kernels::{
     self, js_max, js_min, mean_values_reads_from, rolling_extreme, rolling_mean_values,
     rolling_mean_values_into, wilder_values,
 };
+use super::kernels::{Ema, ma_column, rolling_extremes_strict};
+use super::{MaType, Study};
 use crate::error::{PondError, Result};
 use crate::par;
 use crate::series::TimeSeries;
@@ -672,9 +674,637 @@ impl Sar {
     }
 }
 
+study_options! {
+    /// Options for [`TimeSeries::zig_zag`]: legs that end on a 5% reversal;
+    /// writes `zzPivot`, `zzDirection` and `zzLine`.
+    ZigZag, prefix = "zz", reads [high, low] {
+        /// The reversal threshold, in percent of the leg's extreme
+        /// (default 5).
+        deviation: f64 = 5.0,
+    }
+}
+
+study_options! {
+    /// Options for [`TimeSeries::ichimoku`]: windows of 9, 26 and 52 bars;
+    /// writes `ichiTenkan`, `ichiKijun`, `ichiSenkouA`, `ichiSenkouB` and
+    /// `ichiChikou`.
+    Ichimoku, prefix = "ichi", reads [high, low, close] {
+        /// The Tenkan-sen (conversion line) window in bars (default 9).
+        conversion: usize = 9,
+        /// The Kijun-sen (base line) window in bars (default 26).
+        base: usize = 26,
+        /// The Senkou span B window in bars (default 52).
+        span_b: usize = 52,
+        /// How many bars a chart shifts the spans forward and the Chikou
+        /// span back (default 26). It changes no value the study writes
+        /// (the columns stay on the bar they are computed from); it is
+        /// checked, and [`Ichimoku::offsets`] reports it.
+        displacement: usize = 26,
+    }
+}
+
+impl Ichimoku {
+    /// pond-ts `ichimokuOffsets`: each column [`TimeSeries::ichimoku`]
+    /// writes with these options, and how many bars a chart shifts it:
+    /// `0` for Tenkan and Kijun, `+displacement` for the two Senkou spans
+    /// (drawn ahead), `-displacement` for the Chikou span (drawn back).
+    pub fn offsets(&self) -> Result<[(String, i64); 5]> {
+        positive(
+            "Ichimoku::offsets",
+            "ichimokuOffsets displacement",
+            self.displacement,
+        )?;
+        let d = self.displacement as i64;
+        let [tenkan, kijun, a, b, chikou] = suffixed(self.name(), ICHIMOKU_SUFFIXES);
+        Ok([(tenkan, 0), (kijun, 0), (a, d), (b, d), (chikou, -d)])
+    }
+}
+
+/// The columns [`TimeSeries::ichimoku`] writes, after the prefix.
+const ICHIMOKU_SUFFIXES: [&str; 5] = ["Tenkan", "Kijun", "SenkouA", "SenkouB", "Chikou"];
+
+study_options! {
+    /// Options for [`TimeSeries::elder_impulse`]: a 13-bar EMA and the
+    /// 12 / 26 / 9 MACD histogram; writes `impulse`.
+    ElderImpulse, output = "impulse" {
+        /// The trend EMA in bars (default 13).
+        ema: usize = 13,
+        /// The MACD's fast EMA in bars (default 12).
+        fast: usize = 12,
+        /// The MACD's slow EMA in bars (default 26).
+        slow: usize = 26,
+        /// The MACD's signal EMA in bars (default 9).
+        signal: usize = 9,
+    }
+}
+
+study_options! {
+    /// Options for [`TimeSeries::elder_ray`]: a 13-bar EMA of the close;
+    /// writes `elderBull` and `elderBear`.
+    ElderRay, prefix = "elder", reads [high, low, close] {
+        /// The EMA in bars (default 13).
+        period: usize = 13,
+    }
+}
+
+study_options! {
+    /// Options for [`TimeSeries::trend_intensity_index`]: deviations from a
+    /// 60-bar average, over 30 bars; writes `tii`.
+    TrendIntensityIndex, output = "tii" {
+        /// How many bars of deviations count (default 30).
+        period: usize = 30,
+        /// The average the deviations are from, in bars (default 60).
+        ma_period: usize = 60,
+    }
+}
+
+study_options! {
+    /// Options for [`TimeSeries::ravi`]: 7- and 65-bar simple averages;
+    /// writes `ravi`.
+    Ravi, output = "ravi" {
+        /// The short average in bars (default 7).
+        short: usize = 7,
+        /// The long average in bars (default 65).
+        long: usize = 65,
+    }
+}
+
+study_options! {
+    /// Options for [`TimeSeries::swing_index`]: writes `si`. The limit
+    /// move has no default (pond-ts requires it too): it is a fact about
+    /// the instrument.
+    SwingIndex(limit: f64), output = "si", reads [open, high, low, close] {}
+}
+
+study_options! {
+    /// Options for [`TimeSeries::accumulative_swing_index`]: writes `asi`.
+    /// The limit move has no default, as for [`SwingIndex`].
+    AccumulativeSwingIndex(limit: f64), output = "asi", reads [open, high, low, close] {}
+}
+
+/// The prefix pond-ts's `elderImpulse` computes its MACD under; a series
+/// that already has one of those columns is refused, as in pond-ts.
+const ELDER_SCRATCH: &str = "__elderMacd__";
+
+/// The trend family, part 2.
+impl TimeSeries {
+    /// ZigZag (pond-ts `zigZag`): the path reduced to swings of at least
+    /// `deviation` percent. `Pivot` holds each confirmed pivot's price on
+    /// the pivot's own bar (a gap elsewhere); `Direction` is `1` on a
+    /// rising leg and `-1` on a falling one; `Line` joins the pivots with
+    /// straight lines (a gap on the last, unconfirmed leg). A later bar can
+    /// confirm an earlier pivot, so the columns change as rows are added.
+    /// Each run of rows without a gap starts again, and no leg crosses a
+    /// gap.
+    pub fn zig_zag(&self, options: ZigZag) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::zig_zag";
+        let deviation = options.deviation;
+        if !deviation.is_finite() || deviation <= 0.0 {
+            return Err(PondError::InvalidData {
+                call: CALL,
+                message: "zigZag deviation must be a positive finite number (percent)".into(),
+            });
+        }
+        let names = suffixed(options.name(), ["Pivot", "Direction", "Line"]);
+        self.free_names(CALL, &names)?;
+        let [high, low] =
+            self.price_columns(CALL, [&options.high, &options.low], ["high", "low"])?;
+        let (pivot, direction, line) = zig_zag_values(&high, &low, deviation / 100.0);
+        self.study_outputs(CALL, names.into_iter().zip([pivot, direction, line]))
+    }
+
+    /// Ichimoku Kinko Hyo (pond-ts `ichimoku`): the midpoints of the
+    /// highest high and lowest low over the conversion, base and span B
+    /// windows (`Tenkan`, `Kijun`, `SenkouB`), the mean of the first two
+    /// (`SenkouA`) and the close (`Chikou`). A window holding a gap in
+    /// either the highs or the lows gives a gap. Every column stays on the
+    /// bar it is computed from; [`Ichimoku::offsets`] gives the shifts a
+    /// chart applies.
+    pub fn ichimoku(&self, options: Ichimoku) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::ichimoku";
+        positive(CALL, "ichimoku conversionPeriod", options.conversion)?;
+        positive(CALL, "ichimoku basePeriod", options.base)?;
+        positive(CALL, "ichimoku spanBPeriod", options.span_b)?;
+        positive(CALL, "ichimoku displacement", options.displacement)?;
+        let names = suffixed(options.name(), ICHIMOKU_SUFFIXES);
+        self.free_names(CALL, &names)?;
+        let [high, low, close] = self.price_columns(
+            CALL,
+            [&options.high, &options.low, &options.close],
+            ["high", "low", "close"],
+        )?;
+        let (tenkan, (kijun, senkou_b)) = par::join(
+            || midpoint_values(&high, &low, options.conversion),
+            || {
+                par::join(
+                    || midpoint_values(&high, &low, options.base),
+                    || midpoint_values(&high, &low, options.span_b),
+                )
+            },
+        );
+        let senkou_a = tenkan
+            .iter()
+            .zip(&kijun)
+            .map(|(t, k)| (t + k) / 2.0)
+            .collect();
+        let chikou = close.into_owned();
+        self.study_outputs(
+            CALL,
+            names
+                .into_iter()
+                .zip([tenkan, kijun, senkou_a, senkou_b, chikou]),
+        )
+    }
+
+    /// Elder's impulse system (pond-ts `elderImpulse`): `1` where both the
+    /// EMA and the MACD histogram rose from the bar before, `-1` where both
+    /// fell, `0` otherwise; a gap on row 0 and where either is a gap on
+    /// this bar or the one before.
+    pub fn elder_impulse(&self, options: ElderImpulse) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::elder_impulse";
+        positive(CALL, "emaPeriod", options.ema)?;
+        positive(CALL, "fastPeriod", options.fast)?;
+        positive(CALL, "slowPeriod", options.slow)?;
+        positive(CALL, "signalPeriod", options.signal)?;
+        shorter(CALL, "elderImpulse", options.fast, options.slow)?;
+        let output = options.name().to_string();
+        self.free_names(CALL, &[&output])?;
+        let values = self.study_source(CALL, options.source())?;
+        // pond-ts runs `macd` under a scratch prefix, which refuses a
+        // series holding any of its columns.
+        self.free_names(
+            CALL,
+            &[
+                format!("{ELDER_SCRATCH}Line"),
+                format!("{ELDER_SCRATCH}Signal"),
+                format!("{ELDER_SCRATCH}Hist"),
+                MACD_SCRATCH.to_string(),
+            ],
+        )?;
+        let (trend, hist) = par::join(
+            || kernels::ema_values(&values, options.ema),
+            || macd_hist(&values, options.fast, options.slow, options.signal),
+        );
+        let n = values.len();
+        let mut out = vec![f64::NAN; n];
+        for i in 1..n {
+            let (e, e_prev, h, h_prev) = (trend[i], trend[i - 1], hist[i], hist[i - 1]);
+            if e.is_nan() || e_prev.is_nan() || h.is_nan() || h_prev.is_nan() {
+                continue;
+            }
+            out[i] = if e > e_prev && h > h_prev {
+                1.0
+            } else if e < e_prev && h < h_prev {
+                -1.0
+            } else {
+                0.0
+            };
+        }
+        self.study_outputs(CALL, [(output, out)])
+    }
+
+    /// Elder ray (pond-ts `elderRay`): bull power `high - EMA(close)` and
+    /// bear power `low - EMA(close)`.
+    pub fn elder_ray(&self, options: ElderRay) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::elder_ray";
+        positive(CALL, "period", options.period)?;
+        let names = suffixed(options.name(), ["Bull", "Bear"]);
+        self.free_names(CALL, &names)?;
+        // pond-ts reads the close first (through its EMA), then the high
+        // and low: with two bad columns, the close's error wins.
+        let [close] = self.price_columns(CALL, [&options.close], ["close"])?;
+        let [high, low] =
+            self.price_columns(CALL, [&options.high, &options.low], ["high", "low"])?;
+        let ema = kernels::ema_values(&close, options.period);
+        let bull = high.iter().zip(&ema).map(|(h, e)| h - e).collect();
+        let bear = low.iter().zip(&ema).map(|(l, e)| l - e).collect();
+        self.study_outputs(CALL, names.into_iter().zip([bull, bear]))
+    }
+
+    /// Trend intensity index (pond-ts `trendIntensityIndex`): of the last
+    /// `period` deviations of the value from its `ma_period`-bar simple
+    /// average, the share above it, `100 * up / (up + down)`. A gap where
+    /// every deviation is 0.
+    pub fn trend_intensity_index(&self, options: TrendIntensityIndex) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::trend_intensity_index";
+        positive(CALL, "period", options.period)?;
+        positive(CALL, "maPeriod", options.ma_period)?;
+        let output = options.name().to_string();
+        self.free_names(CALL, &[&output])?;
+        let values = self.study_source(CALL, options.source())?;
+        let average = ma_column(&values, options.ma_period, MaType::Sma);
+        let (up, down): (Vec<f64>, Vec<f64>) = values
+            .iter()
+            .zip(&average)
+            .map(|(v, a)| {
+                let deviation = v - a;
+                (js_max(deviation, 0.0), js_max(-deviation, 0.0))
+            })
+            .unzip();
+        let (up_mean, down_mean) = par::join(
+            || rolling_mean_values(&up, options.period),
+            || rolling_mean_values(&down, options.period),
+        );
+        let out = up_mean
+            .iter()
+            .zip(&down_mean)
+            .map(|(u, d)| {
+                let total = u + d;
+                if total == 0.0 {
+                    f64::NAN
+                } else {
+                    (100.0 * u) / total
+                }
+            })
+            .collect();
+        self.study_output(CALL, output, out)
+    }
+
+    /// RAVI (pond-ts `ravi`): how far apart a short and a long simple
+    /// average are, `100 * |short - long| / long`; a gap where the long
+    /// average is 0.
+    pub fn ravi(&self, options: Ravi) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::ravi";
+        positive(CALL, "shortPeriod", options.short)?;
+        positive(CALL, "longPeriod", options.long)?;
+        let output = options.name().to_string();
+        self.free_names(CALL, &[&output])?;
+        let values = self.study_source(CALL, options.source())?;
+        let (short, long) = par::join(
+            || ma_column(&values, options.short, MaType::Sma),
+            || ma_column(&values, options.long, MaType::Sma),
+        );
+        let out = short
+            .iter()
+            .zip(&long)
+            .map(|(&s, &slow)| {
+                if slow == 0.0 {
+                    f64::NAN
+                } else {
+                    (100.0 * (s - slow).abs()) / slow
+                }
+            })
+            .collect();
+        self.study_output(CALL, output, out)
+    }
+
+    /// Wilder's swing index (pond-ts `swingIndex`): one bar's change, with
+    /// its body and the last bar's, over a true-range-like span, scaled by
+    /// its gap from the last close over the instrument's `limit` move
+    /// (which bounds it to -100 … 100). A gap on row 0 and where the span
+    /// is 0.
+    pub fn swing_index(&self, options: SwingIndex) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::swing_index";
+        let output = options.name().to_string();
+        self.free_names(CALL, &[&output])?;
+        let out = self.swing_values(
+            CALL,
+            "swingIndex",
+            options.limit,
+            [&options.open, &options.high, &options.low, &options.close],
+        )?;
+        self.study_output(CALL, output, out)
+    }
+
+    /// Wilder's accumulative swing index (pond-ts
+    /// `accumulativeSwingIndex`): the running total of
+    /// [`TimeSeries::swing_index`], from its first value; a gap after it
+    /// makes every later total a gap.
+    pub fn accumulative_swing_index(&self, options: AccumulativeSwingIndex) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::accumulative_swing_index";
+        let output = options.name().to_string();
+        self.free_names(CALL, &[&output])?;
+        let swings = self.swing_values(
+            CALL,
+            "accumulativeSwingIndex",
+            options.limit,
+            [&options.open, &options.high, &options.low, &options.close],
+        )?;
+        self.study_output(CALL, output, cumulative_values(&swings))
+    }
+
+    /// The swing index of the `open`, `high`, `low` and `close` columns,
+    /// after checking `limit` (pond-ts `swingValues`).
+    fn swing_values(
+        &self,
+        call: &'static str,
+        study: &str,
+        limit: f64,
+        names: [&Option<String>; 4],
+    ) -> Result<Vec<f64>> {
+        if !limit.is_finite() || limit <= 0.0 {
+            return Err(PondError::InvalidData {
+                call,
+                message: format!(
+                    "{study} limit must be a positive finite number (the instrument's limit move); got {}",
+                    crate::grid::js_number(limit)
+                ),
+            });
+        }
+        let [open, high, low, close] =
+            self.price_columns(call, names, ["open", "high", "low", "close"])?;
+        Ok(swing_index_values(&open, &high, &low, &close, limit))
+    }
+}
+
+/// pond-ts's zigZag machine (`zigZagStep`, then the pass that fills the
+/// legs): the pivot, direction and line columns for `high` and `low` with
+/// the reversal threshold `threshold` (`deviation / 100`).
+fn zig_zag_values(high: &[f64], low: &[f64], threshold: f64) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let n = high.len();
+    let mut pivot = vec![f64::NAN; n];
+    // The machine's state, as pond-ts's `ZigZagState` (an index of `None`
+    // is pond-ts's `-1`).
+    let mut dir = 0i8;
+    let (mut ext_val, mut ext_idx) = (f64::NAN, 0usize);
+    let (mut ctr_val, mut ctr_idx): (f64, Option<usize>) = (f64::NAN, None);
+    // Each run of rows without a gap, by its last row.
+    let mut segment_end: Vec<usize> = Vec::new();
+    // Confirmed pivots: row, price, the direction of the leg starting
+    // there, and the run it is in.
+    let mut pivots: Vec<(usize, f64, i8, usize)> = Vec::new();
+    let mut run = 0usize;
+    for i in 0..n {
+        let (h, l) = (high[i], low[i]);
+        if h.is_nan() || l.is_nan() {
+            run = 0;
+            continue;
+        }
+        run += 1;
+        if run == 1 {
+            segment_end.push(i);
+            dir = 0;
+            (ext_val, ext_idx) = (h, i);
+            (ctr_val, ctr_idx) = (l, Some(i));
+            continue;
+        }
+        let segment = segment_end.len() - 1;
+        segment_end[segment] = i;
+        let mut confirm = |row: usize, value: f64, dir_after: i8| {
+            pivots.push((row, value, dir_after, segment));
+            pivot[row] = value;
+        };
+        if dir == 0 {
+            if h > ext_val {
+                (ext_val, ext_idx) = (h, i);
+            }
+            let ctr = ctr_idx.expect("set while seeding");
+            let ctr = if l < ctr_val {
+                ctr_val = l;
+                i
+            } else {
+                ctr
+            };
+            ctr_idx = Some(ctr);
+            let gap = ext_val - ctr_val;
+            if ext_idx > ctr {
+                // The high came after the low: a rise from the trough.
+                if gap >= threshold * ctr_val {
+                    confirm(ctr, ctr_val, 1);
+                    dir = 1;
+                    ctr_idx = None;
+                }
+            } else if ctr > ext_idx && gap >= threshold * ext_val {
+                // The low came after the high: a fall from the peak.
+                confirm(ext_idx, ext_val, -1);
+                dir = -1;
+                (ext_val, ext_idx) = (ctr_val, ctr);
+                ctr_idx = None;
+            }
+            continue;
+        }
+        if dir == 1 {
+            if h > ext_val {
+                (ext_val, ext_idx) = (h, i);
+                ctr_idx = None;
+                continue;
+            }
+            if ctr_idx.is_none() || l < ctr_val {
+                (ctr_val, ctr_idx) = (l, Some(i));
+            }
+            if ext_val - ctr_val >= threshold * ext_val {
+                confirm(ext_idx, ext_val, -1);
+                dir = -1;
+                (ext_val, ext_idx) = (ctr_val, ctr_idx.expect("just set"));
+                ctr_idx = None;
+            }
+            continue;
+        }
+        if l < ext_val {
+            (ext_val, ext_idx) = (l, i);
+            ctr_idx = None;
+            continue;
+        }
+        if ctr_idx.is_none() || h > ctr_val {
+            (ctr_val, ctr_idx) = (h, Some(i));
+        }
+        if ctr_val - ext_val >= threshold * ext_val {
+            confirm(ext_idx, ext_val, 1);
+            dir = 1;
+            (ext_val, ext_idx) = (ctr_val, ctr_idx.expect("just set"));
+            ctr_idx = None;
+        }
+    }
+    // The legs: each pivot's leg runs to the next pivot of the same run
+    // (owning `[start, stop)`), or, for the last, unconfirmed leg, to the
+    // run's last row (direction only).
+    let mut direction = vec![f64::NAN; n];
+    let mut line = vec![f64::NAN; n];
+    for (k, &(start, from, leg_dir, segment)) in pivots.iter().enumerate() {
+        let next = pivots.get(k + 1).filter(|p| p.3 == segment);
+        let stop = next.map_or(segment_end[segment], |p| p.0);
+        direction[start..stop].fill(f64::from(leg_dir));
+        match next {
+            Some(&(_, to, _, _)) => {
+                let span = (stop - start) as f64;
+                line[start] = from;
+                line[stop] = to;
+                for (j, slot) in line.iter_mut().enumerate().take(stop).skip(start + 1) {
+                    *slot = from + ((to - from) * (j - start) as f64) / span;
+                }
+            }
+            None => direction[stop] = f64::from(leg_dir),
+        }
+    }
+    (pivot, direction, line)
+}
+
+/// pond-ts ichimoku's `midpointValues`: `(highest high + lowest low) / 2`
+/// over each `period`-bar window, with pond-ts `rollingBarExtremesValues`'
+/// strict rule (a gap in either column anywhere in the window gives a gap;
+/// of equal values the latest wins).
+fn midpoint_values(high: &[f64], low: &[f64], period: usize) -> Vec<f64> {
+    let ((highest, _), (_, lowest)) = par::join(
+        || rolling_extremes_strict(high, period),
+        || rolling_extremes_strict(low, period),
+    );
+    highest
+        .iter()
+        .zip(&lowest)
+        .map(|(h, l)| (h + l) / 2.0)
+        .collect()
+}
+
+/// The MACD histogram, as [`TimeSeries::macd`] computes it.
+fn macd_hist(values: &[f64], fast: usize, slow: usize, signal: usize) -> Vec<f64> {
+    let (mut fast, mut slow) = (Ema::period(fast), Ema::period(slow));
+    let mut signal_ema = Ema::period(signal);
+    values
+        .iter()
+        .map(|&v| {
+            let line = fast.push(v) - slow.push(v);
+            line - signal_ema.push(line)
+        })
+        .collect()
+}
+
+/// pond-ts `swingIndexValues`.
+fn swing_index_values(
+    open: &[f64],
+    high: &[f64],
+    low: &[f64],
+    close: &[f64],
+    limit: f64,
+) -> Vec<f64> {
+    let n = close.len();
+    let mut out = vec![f64::NAN; n];
+    for i in 1..n {
+        let (prev_close, prev_open) = (close[i - 1], open[i - 1]);
+        let (c, o, h, l) = (close[i], open[i], high[i], low[i]);
+        let a = (h - prev_close).abs();
+        let b = (l - prev_close).abs();
+        let d = (h - l).abs();
+        let yesterday_body = 0.25 * (prev_close - prev_open).abs();
+        // Ties go to the earlier branch (A, then B, then D).
+        let r = if a >= b && a >= d {
+            a - 0.5 * b + yesterday_body
+        } else if b >= a && b >= d {
+            b - 0.5 * a + yesterday_body
+        } else {
+            d + yesterday_body
+        };
+        let k = js_max(a, b);
+        let numerator = c - prev_close + 0.5 * (c - o) + 0.25 * (prev_close - prev_open);
+        out[i] = if r == 0.0 {
+            f64::NAN
+        } else {
+            ((50.0 * numerator) / r) * (k / limit)
+        };
+    }
+    out
+}
+
+/// pond-ts `cumulativeValues`: the running sum from the first value that
+/// is not a gap (gaps before it stay gaps; a later gap makes every later
+/// sum a gap).
+fn cumulative_values(values: &[f64]) -> Vec<f64> {
+    let first = values
+        .iter()
+        .position(|v| !v.is_nan())
+        .unwrap_or(values.len());
+    let mut out = vec![f64::NAN; values.len()];
+    let mut sum = 0.0;
+    for (slot, &v) in out.iter_mut().zip(values).skip(first) {
+        sum += v;
+        *slot = sum;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Limits and deviations that are not positive finite numbers are
+    /// refused (JSON cases cannot carry an infinity or NaN).
+    #[test]
+    fn non_finite_limits_and_deviations_are_refused() {
+        let price = |k: f64| (0..4).map(|i| 10.0 + k * f64::from(i)).collect::<Vec<_>>();
+        let series = TimeSeries::new(
+            "s",
+            (0..4).collect(),
+            vec![
+                crate::Column::required("open", price(0.5)),
+                crate::Column::required("high", price(1.5)),
+                crate::Column::required("low", price(0.2)),
+                crate::Column::required("close", price(1.0)),
+            ],
+        )
+        .unwrap();
+        for bad in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN, 0.0, -1.0] {
+            let si = series.swing_index(SwingIndex::new(bad)).unwrap_err();
+            assert!(si.to_string().contains("swingIndex limit"), "{si}");
+            let asi = series
+                .accumulative_swing_index(AccumulativeSwingIndex::new(bad))
+                .unwrap_err();
+            assert!(
+                asi.to_string().contains("accumulativeSwingIndex limit"),
+                "{asi}"
+            );
+            let zz = series
+                .zig_zag(ZigZag::default().deviation(bad))
+                .unwrap_err();
+            assert!(zz.to_string().contains("zigZag deviation"), "{zz}");
+        }
+        assert!(series.swing_index(SwingIndex::new(1.0)).is_ok());
+    }
+
+    /// Elder ray reads the close before the high and low, as pond-ts: with
+    /// both missing, the error names the close.
+    #[test]
+    fn elder_ray_reads_close_first() {
+        let series = TimeSeries::new(
+            "s",
+            (0..3).collect(),
+            vec![crate::Column::required("low", vec![1.0, 2.0, 3.0])],
+        )
+        .unwrap();
+        let err = series
+            .elder_ray(ElderRay::default())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("close") && !err.contains("high"), "{err}");
+    }
 
     /// Stretches started anywhere give the bits of one sweep, on bars with
     /// gaps, flat runs and a large offset.
