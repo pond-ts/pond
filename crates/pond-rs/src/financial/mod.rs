@@ -393,4 +393,37 @@ mod tests {
             assert_eq!(with(f64::NEG_INFINITY), with(f64::NAN), "{}", kind.as_str());
         }
     }
+
+    /// A period far longer than the series gives all gaps: no huge
+    /// allocation, no overflow.
+    #[test]
+    fn huge_periods_give_gaps() {
+        let close: Vec<f64> = (0..10).map(f64::from).collect();
+        let series = TimeSeries::new(
+            "s",
+            (0..10).collect(),
+            vec![Column::required("close", close)],
+        )
+        .unwrap();
+        for period in [11, 1 << 40, usize::MAX - 1, usize::MAX] {
+            let study = || Study::period(period).output("out");
+            let mut results = vec![
+                series.sma(study()),
+                series.ema(study()),
+                series.rolling_stdev(study()),
+                series.rolling_min(study()),
+                series.rolling_max(study()),
+                series.rolling_percentile(50.0, study()),
+                series.z_score(study()),
+            ];
+            for kind in MaType::ALL {
+                results.push(series.moving_average(kind, study()));
+            }
+            for result in results {
+                let out = result.unwrap();
+                let values = out.column("out").unwrap().numbers().unwrap();
+                assert!((0..10).all(|i| values.get(i).is_none()), "period {period}");
+            }
+        }
+    }
 }

@@ -2548,10 +2548,13 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     property), so it gives the same bits as one sweep; min / max read
     from the first row of the window. Output buffers start zeroed, so the
     system hands pages out as the threads write. A unit test cuts a
-    noisy column (gaps, signed zeros, an infinity, 1e15) into stretches of
+    noisy column (gaps, signed zeros, infinities, 1e15) into stretches of
     1 to 2,999 rows at periods 1 to 3,001 and checks every bit; 4 of 4
     planted bugs (stretch starting at its first row, min / max queue not
-    read back, no reset at the rebuild) are caught.
+    read back, no reset at the rebuild) are caught. Review found the
+    min / max queue reserved `period` slots (period 1e12 on 10 rows asked
+    for 8 TB) and `period + i` overflows at `usize::MAX`; fixed, and a
+    test runs every study at periods up to `usize::MAX`.
   - What does not split: EMA, Wilder (smma), Dema / Tema / Zlema / KAMA
     and the z-score, where each row waits on the one before (a
     multiply-add or a division per row, the same chain V8 runs; matching

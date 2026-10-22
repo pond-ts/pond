@@ -257,7 +257,7 @@ pub(crate) fn rolling_deviation_sd(values: &[f64], period: usize) -> (Vec<f64>, 
             window_start += 1;
         }
 
-        since_anchor += 1;
+        since_anchor = since_anchor.saturating_add(1);
         let x = values[i];
         if x.is_finite() && since_anchor >= period {
             anchor = x;
@@ -293,7 +293,7 @@ pub(crate) fn wilder_values(values: &[f64], period: usize) -> Vec<f64> {
     let n = values.len();
     let mut out = vec![f64::NAN; n];
     let first = values.iter().position(|v| !v.is_nan()).unwrap_or(n);
-    let seed_at = first + period - 1;
+    let seed_at = first.saturating_add(period - 1);
     if seed_at >= n {
         return out;
     }
@@ -471,7 +471,7 @@ fn kama_values(values: &[f64], period: usize) -> Vec<f64> {
     let n = values.len();
     let mut out = vec![f64::NAN; n];
     let first = values.iter().position(|v| v.is_finite()).unwrap_or(n);
-    let seed_at = first + period;
+    let seed_at = first.saturating_add(period);
     if seed_at >= n {
         return out;
     }
@@ -549,11 +549,13 @@ fn extreme_chunked<const MAX: bool>(values: &[f64], period: usize, chunk: usize)
 /// the sweep begins cannot change it).
 fn extreme_into<const MAX: bool>(values: &[f64], period: usize, start: usize, out: &mut [f64]) {
     let end = start + out.len();
-    let mut queue = std::collections::VecDeque::with_capacity(period.min(out.len() + period));
+    let from = (start + 1).saturating_sub(period);
+    // The queue never holds more than one window, nor more rows than are read.
+    let mut queue = std::collections::VecDeque::with_capacity(period.min(end - from));
     // `a` beats `b` strictly: a later equal value never pushes out an
     // earlier one.
     let beats = |a: f64, b: f64| if MAX { a > b } else { a < b };
-    for i in (start + 1).saturating_sub(period)..end {
+    for i in from..end {
         let x = values[i];
         if x.is_finite() {
             while queue.back().is_some_and(|&j: &usize| beats(x, values[j])) {
@@ -561,7 +563,7 @@ fn extreme_into<const MAX: bool>(values: &[f64], period: usize, start: usize, ou
             }
             queue.push_back(i);
         }
-        if queue.front().is_some_and(|&j| j + period <= i) {
+        if queue.front().is_some_and(|&j| i - j >= period) {
             queue.pop_front();
         }
         if i >= start {
@@ -577,8 +579,8 @@ fn extreme_into<const MAX: bool>(values: &[f64], period: usize, start: usize, ou
 mod tests {
     use super::*;
 
-    /// Noisy input with gaps, runs of gaps, signed zeros, a stored infinity
-    /// and values near 1e15, where a sum that kept its history would drift.
+    /// Noisy input with gaps, runs of gaps, signed zeros, stored
+    /// infinities (read as gaps) and values near 1e15, where a sum that kept its history would drift.
     fn noisy(n: usize) -> Vec<f64> {
         let mut x = 0x9E37_79B9_7F4A_7C15u64;
         (0..n)
@@ -592,6 +594,8 @@ mod tests {
                     _ if x % 23 == 0 => f64::NAN,
                     _ if x % 97 == 0 => -0.0,
                     _ if i % 1000 == 999 => 0.0,
+                    _ if i % 701 == 700 => f64::INFINITY,
+                    _ if i % 977 == 976 => f64::NEG_INFINITY,
                     _ if (2000..2600).contains(&i) => 1e15 + r,
                     _ => r - 70_000.0,
                 }
