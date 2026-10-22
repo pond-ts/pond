@@ -199,8 +199,8 @@ bug is logged in `PLAN.md` to fix there.
   (`1.50_cpu`).
 - **`reduce` returns a `Reduced`**, read by output name with `number`,
   `string` and so on, rather than a plain object. The one-column form
-  (`reduce('cpu', 'avg')`) and custom reducer functions are not built; one
-  `Agg` does the first.
+  (`reduce('cpu', 'avg')`) is `reduce_number` / `reduce_value`; custom
+  reducer functions are not built.
 - **`dedupe` has no custom keep function** yet (pond-ts takes a closure that
   builds the surviving row), and `align` / `materialize` take a range as an
   epoch-millisecond pair rather than a pond-ts `BoundedSequence`.

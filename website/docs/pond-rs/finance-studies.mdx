@@ -16,12 +16,13 @@ Built so far: moving averages and rolling statistics, the
 moving-average family (MACD and 14 more), bands (Bollinger, Keltner and
 8 more), momentum (21 studies: RSI, stochastics, CCI, true strength index
 and more) and trend (16 studies: ADX, Aroon, SuperTrend, parabolic SAR,
-Ichimoku and more).
+Ichimoku and more), volatility (8: ATR, historical volatility and
+more) and statistics (6: linear regression, beta, correlation and more).
 
 The results match `@pond-ts/financial` exactly, number for number. That is
-checked against 3,231 cases that pond-ts itself writes out. They also match
+checked against 3,931 cases that pond-ts itself writes out. They also match
 the pandas and TA-Lib reference results pond-ts is tested against, to
-within 5e-10 (133 of those 220 cases cover studies built so far).
+within 5e-10 (178 of those 220 cases cover studies built so far).
 
 ## How every study works
 
@@ -467,6 +468,78 @@ fn main() -> Result<(), pond_rs::PondError> {
 }
 ```
 
+## Volatility
+
+How much the price is moving, whichever way.
+
+| Call                                                   | Writes       | What it shows                                                                                       |
+| ------------------------------------------------------ | ------------ | --------------------------------------------------------------------------------------------------- |
+| `atr(Atr)`                                             | `atr`        | Average true range: Wilder's average of how far each bar moved, counting a jump from the last close |
+| `historical_volatility(HistoricalVolatility)`          | `hv`         | The spread of the last 20 bar-to-bar log returns, scaled to a year of 252 bars                      |
+| `chaikin_volatility(ChaikinVolatility)`                | `chaikinVol` | The percent change over 10 bars of a 10-bar EMA of each bar's range                                 |
+| `mass_index(MassIndex)`                                | `mass`       | A 9-bar EMA of the range over an EMA of that EMA, summed over 25 bars; it rises before reversals    |
+| `choppiness_index(ChoppinessIndex)`                    | `chop`       | High (up to 100) when the price chops sideways, low when it trends (14 bars)                        |
+| `gopalakrishnan_range_index(GopalakrishnanRangeIndex)` | `gapo`       | The size of the 10-bar range on a log scale                                                         |
+| `ulcer_index(Study)`                                   | `ulcer`      | How deep and how long the drops from the recent high are (period 14); exactly 0 with no drop        |
+| `relative_volatility_index(RelativeVolatilityIndex)`   | `relVol`     | The RSI idea applied to a 10-bar spread instead of the change, 0 to 100                             |
+
+`atr` never recovers from a missing bar in the middle of the data, as
+with the bands above. The choppiness and range indexes need a period of
+at least 2. Historical volatility gives a gap for the returns on either
+side of a price that is not above zero.
+
+## Statistics
+
+Straight-line fits, and comparisons with a second price series (a
+benchmark, such as an index).
+
+| Call                                                  | Writes                                                                     | What it shows                                                                                                                             |
+| ----------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `linear_regression(LinearRegression)`                 | `linregValue`, `linregSlope`, `linregIntercept`, `linregAngle`, `linregR2` | The best straight line through the last 14 bars: its value now, slope per bar, start, angle in degrees, and how well it fits (r², 0 to 1) |
+| `time_series_forecast(Study)`                         | `tsf`                                                                      | That line carried one bar further: a forecast for the next bar (period 14, at least 2)                                                    |
+| `beta(Beta::new(benchmark))`                          | `beta`                                                                     | How much this series' one-bar returns move with the benchmark's, over 5 returns                                                           |
+| `correlation(Correlation::new(benchmark))`            | `corr`                                                                     | Pearson's correlation with the benchmark over 30 bars, −1 to 1                                                                            |
+| `price_relative(PriceRelative::new(benchmark))`       | `priceRel`                                                                 | This series divided by the benchmark, bar by bar                                                                                          |
+| `performance_index(PerformanceIndex::new(benchmark))` | `perf`                                                                     | This series' growth over 20 bars divided by the benchmark's                                                                               |
+
+The four comparisons read the benchmark from another column of the same
+series, so line the two up first (for example with
+[`join`](./operations)). The benchmark has no default, as in pond-ts, so
+these start from `new("spy")`. It must be a number column, and not the
+column being studied.
+
+```rust
+use pond_rs::financial::{Correlation, LinearRegression, PriceRelative};
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let bars = TimeSeries::new(
+        "bars",
+        (0..4).map(|i| i * minute).collect(),
+        vec![
+            Column::required("close", vec![10.0, 12.0, 14.0, 16.0]),
+            Column::required("spy", vec![5.0, 6.0, 7.0, 8.0]),
+        ],
+    )?;
+
+    let out = bars
+        .linear_regression(LinearRegression::default().period(3))?
+        .correlation(Correlation::new("spy").period(3))?
+        .price_relative(PriceRelative::new("spy"))?;
+
+    // A straight line up by 2 a bar: slope 2, a perfect fit.
+    assert_eq!(out.column("linregSlope")?.numbers()?.get(3), Some(2.0));
+    assert_eq!(out.column("linregR2")?.numbers()?.get(3), Some(1.0));
+    assert_eq!(out.column("linregValue")?.numbers()?.get(3), Some(16.0));
+    // Both rise in step: correlation 1. And close is always twice spy.
+    assert_eq!(out.column("corr")?.numbers()?.get(3), Some(1.0));
+    let rel: Vec<_> = out.column("priceRel")?.numbers()?.iter().collect();
+    assert_eq!(rel, [Some(2.0); 4]);
+    Ok(())
+}
+```
+
 ## Gaps in the prices
 
 A gap in the source column never shifts the rows. What a study does with
@@ -616,7 +689,7 @@ from all three runs. "1 thread" is pond-rs with `RAYON_NUM_THREADS=1`.
 \* Measured again after the moving-average family work, which runs
 chained EMAs in one pass. The 1-thread times are from before that.
 
-### The moving-average family, bands, momentum and trend
+### The other families
 
 At pond-ts's default settings, same machine and setup:
 
@@ -684,10 +757,25 @@ At pond-ts's default settings, same machine and setup:
 | `ravi`                       | 15.8              | 8.0              | 58.4    | 7.3×  |
 | `swing_index` (limit 20)     | 7.0               | 11.7             | 42.2    | 3.6×  |
 | `accumulative_swing_index`   | 11.5              | 14.9             | 56.9    | 3.8×  |
+| `atr`                        | 7.5               | 7.4              | 70.8    | 9.6×  |
+| `historical_volatility`      | 25.9              | 15.4             | 72.2    | 4.7×  |
+| `chaikin_volatility`         | 4.4               | 6.0              | 25.7    | 4.3×  |
+| `mass_index`                 | 11.6              | 9.4              | 37.9    | 4.0×  |
+| `choppiness_index`           | 34.2              | 22.8             | 215.6   | 9.5×  |
+| `gopalakrishnan_range_index` | 18.8              | 10.9             | 268.8   | 25×   |
+| `ulcer_index`                | 15.8              | 9.0              | 154.0   | 17×   |
+| `relative_volatility_index`  | 32.6              | 17.2             | 68.1    | 4.0×  |
+| `linear_regression`          | 33.8              | 15.2             | 83.2    | 5.5×  |
+| `time_series_forecast`       | 13.7              | 4.6              | 23.9    | 5.2×  |
+| `beta` \*\*                  | 27.8              | 8.7              | 45.3    | 5.2×  |
+| `correlation` \*\*           | 29.5              | 10.3             | 53.0    | 5.1×  |
+| `price_relative` \*\*        | 1.3               | 1.2              | 16.9    | 14×   |
+| `performance_index` \*\*     | 2.6               | 2.5              | 10.8    | 4.3×  |
 
 The machine is a shared virtual machine with four cores, and single runs
 move by up to a third, so read the ratios as rough. The swing index runs on one
-core, so its 1-thread and 4-core times differ only by that noise. `atr_bands` gains the
+core, so its 1-thread and 4-core times differ only by that noise.
+\*\* With the open as the benchmark. `atr_bands` gains the
 least because its average true range is one chain where each row needs
 the one before, which pond-ts pays for too.
 
@@ -709,4 +797,4 @@ them.
 
 ## Still to come
 
-Volatility, volume and price studies, one family at a time; then trading calendars and session VWAP.
+Volume and price studies, one family at a time; then trading calendars and session VWAP.
