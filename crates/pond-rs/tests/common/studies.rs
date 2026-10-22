@@ -61,6 +61,14 @@ pub const STUDIES: &[&str] = &[
     "centerOfGravity",
     "chandeForecastOscillator",
     "trueStrengthIndex",
+    "directionalMovement",
+    "aroon",
+    "vortex",
+    "verticalHorizontalFilter",
+    "randomWalkIndex",
+    "superTrend",
+    "parabolicSar",
+    "atrTrailingStop",
 ];
 
 /// The columns `study` reads with these options: `column` (default
@@ -92,7 +100,12 @@ pub fn sources(study: &str, options: &Map<String, Value>) -> Vec<String> {
         | "stochasticMomentumIndex"
         | "williamsR"
         | "ultimateOscillator"
-        | "commodityChannelIndex" => vec![
+        | "commodityChannelIndex"
+        | "directionalMovement"
+        | "vortex"
+        | "randomWalkIndex"
+        | "superTrend"
+        | "atrTrailingStop" => vec![
             text("high", "high"),
             text("low", "low"),
             text("close", "close"),
@@ -105,7 +118,7 @@ pub fn sources(study: &str, options: &Map<String, Value>) -> Vec<String> {
             text("low", "low"),
             text("close", "close"),
         ],
-        "donchian" | "highLowBands" | "primeNumberBands" => {
+        "donchian" | "highLowBands" | "primeNumberBands" | "aroon" | "parabolicSar" => {
             vec![text("high", "high"), text("low", "low")]
         }
         _ => vec![text("column", "close")],
@@ -533,6 +546,65 @@ pub fn call_study(
                 .short(int("shortPeriod", 13))
                 .signal(int("signalPeriod", 7)),
             prefix
+        )),
+        "directionalMovement" => series.directional_movement(reads!(
+            name_only!(
+                DirectionalMovement::default().period(int("period", 14)),
+                prefix
+            ),
+            high,
+            low,
+            close
+        )),
+        "aroon" => series.aroon(reads!(
+            name_only!(Aroon::default().period(int("period", 25)), prefix),
+            high,
+            low
+        )),
+        "vortex" => series.vortex(reads!(
+            name_only!(Vortex::default().period(int("period", 14)), prefix),
+            high,
+            low,
+            close
+        )),
+        "verticalHorizontalFilter" => series.vertical_horizontal_filter(study_of(28)),
+        "randomWalkIndex" => series.random_walk_index(reads!(
+            name_only!(RandomWalkIndex::default().period(int("period", 14)), prefix),
+            high,
+            low,
+            close
+        )),
+        "superTrend" => series.super_trend(reads!(
+            name_only!(
+                SuperTrend::default()
+                    .period(int("period", 10))
+                    .multiplier(num("multiplier", 3.0)),
+                prefix
+            ),
+            high,
+            low,
+            close
+        )),
+        "parabolicSar" => series.parabolic_sar(reads!(
+            name_only!(
+                ParabolicSar::default()
+                    .step(num("step", 0.02))
+                    .max_step(num("maxStep", 0.2)),
+                prefix
+            ),
+            high,
+            low
+        )),
+        "atrTrailingStop" => series.atr_trailing_stop(reads!(
+            name_only!(
+                AtrTrailingStop::default()
+                    .period(int("period", 14))
+                    .multiplier(num("multiplier", 3.0)),
+                prefix
+            ),
+            high,
+            low,
+            close
         )),
         other => panic!("no pond-rs call for study '{other}'"),
     })

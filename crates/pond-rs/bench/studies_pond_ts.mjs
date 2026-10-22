@@ -105,6 +105,14 @@ const cases = [
   ['cog', 'cog', () => f.centerOfGravity(bars)],
   ['cfo', 'cfo', () => f.chandeForecastOscillator(bars)],
   ['tsi', 'tsiSignal', () => f.trueStrengthIndex(bars)],
+  ['t-dmi', 'dmiAdxr', () => f.directionalMovement(bars)],
+  ['t-aroon', 'aroonOsc', () => f.aroon(bars)],
+  ['t-vortex', 'viMinus', () => f.vortex(bars)],
+  ['t-vhf', 'vhf', () => f.verticalHorizontalFilter(bars)],
+  ['t-rwi', 'rwiHigh', () => f.randomWalkIndex(bars)],
+  ['t-st', 'st', () => f.superTrend(bars)],
+  ['t-psar', 'psar', () => f.parabolicSar(bars)],
+  ['t-ats', 'ats', () => f.atrTrailingStop(bars)],
 ];
 
 const only = process.argv[2];

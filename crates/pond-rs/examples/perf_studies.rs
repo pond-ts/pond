@@ -446,6 +446,53 @@ fn main() -> pond_rs::Result<()> {
         ),
     ];
     cases.extend(momentum2);
+    // R2 step 2d part 1.
+    let trend: Vec<Case> = vec![
+        (
+            "t-dmi".into(),
+            "dmiAdxr",
+            Box::new(|| {
+                bars.directional_movement(DirectionalMovement::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "t-aroon".into(),
+            "aroonOsc",
+            Box::new(|| bars.aroon(Aroon::default()).unwrap()),
+        ),
+        (
+            "t-vortex".into(),
+            "viMinus",
+            Box::new(|| bars.vortex(Vortex::default()).unwrap()),
+        ),
+        (
+            "t-vhf".into(),
+            "vhf",
+            Box::new(|| bars.vertical_horizontal_filter(Study::period(28)).unwrap()),
+        ),
+        (
+            "t-rwi".into(),
+            "rwiHigh",
+            Box::new(|| bars.random_walk_index(RandomWalkIndex::default()).unwrap()),
+        ),
+        (
+            "t-st".into(),
+            "st",
+            Box::new(|| bars.super_trend(SuperTrend::default()).unwrap()),
+        ),
+        (
+            "t-psar".into(),
+            "psar",
+            Box::new(|| bars.parabolic_sar(ParabolicSar::default()).unwrap()),
+        ),
+        (
+            "t-ats".into(),
+            "ats",
+            Box::new(|| bars.atr_trailing_stop(AtrTrailingStop::default()).unwrap()),
+        ),
+    ];
+    cases.extend(trend);
     println!("| Case | pond-rs | checksum |");
     println!("| --- | --- | --- |");
     for (name, column, f) in &cases {

@@ -2831,8 +2831,8 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     (both pond-ts's `withColumn` and pond-rs store an infinite value as
     a gap, so `x / 0` reads the same as the guard's gap). The
     regression's r² is computed but no study reads it yet, so nothing
-    checks it against pond-ts until the trend family (which reads it)
-    adds parity cases.
+    checks it against pond-ts until `linearRegression` (statistics
+    family, which reads it) adds parity cases.
   - Perf: all O(N) except CCI's deviation (O(N·period), as pond-ts) and
     the prime oscillator (O(√x) per value). The Fisher transform's pass
     is sequential (each value needs the last) and pays a logarithm per
@@ -2852,6 +2852,76 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | cog    | 25.5     | 8.6     | 65.9    | 7.7x  |
     | cfo    | 21.6     | 13.6    | 62.3    | 4.6x  |
     | tsi    | 13.7     | 18.0    | 75.4    | 4.2x  |
+
+  **R2 step 2d part 1 (done): trend, 8 of 16 studies.**
+  - Calls: `directional_movement`, `aroon`, `vortex`, `random_walk_index`,
+    `super_trend`, `parabolic_sar` and `atr_trailing_stop` take an options
+    struct named after the study (`high` / `low` / `close` setters and a
+    `prefix`; SuperTrend, the SAR and the ATR stop write the prefix itself
+    and `{prefix}Trend`); `vertical_horizontal_filter` takes a plain
+    `Study` (pond-ts default 28). Errors as pond-ts: the random walk's
+    period must be at least 2, the SAR's `max_step` at least its `step`,
+    multipliers and steps positive and finite.
+  - Ported as pond-ts writes them: `foldRows` (a state machine over rows
+    with no gap, restarting after each gap) for SuperTrend, the SAR and
+    the ATR stop; `barsSinceExtremeValues` for Aroon (a queue of candidate
+    rows, the latest of equal extremes); `sarStep` line for line.
+    SuperTrend keeps pond-ts's `!(close < lower)` rather than
+    `close >= lower`: the two differ when the band is NaN, which an
+    overflowing price produces.
+  - Parity: the fixture grew to 2,918 cases, with a new `edge` input: a
+    run whose second bar is an inside bar (the high falls further than
+    the low rises, so both moves are negative; the SAR picks its first
+    direction from that), short runs after whole-bar gaps, and a jump
+    from -1.7e308 to 1.7e308 whose ranges overflow to infinity (pond-ts
+    refuses infinite inputs and pond-rs reads them as gaps, so overflow
+    is the only way a study sees one), plus an outside bar whose high
+    rises exactly as far as its low falls (both moves then count as 0).
+    2,219 match bit for bit, 253 errors agree, 254 refused (known
+    missing-column difference), 192 calls Rust cannot write. Oracle: 133
+    of 220 cases (was 117).
+  - Planted bugs: 19 of 26 caught on the first version, plus 8 of 8 after
+    the speed changes below (re-planted in the rewritten code; one
+    needed the outside bar above). The 7
+    missed change no output: starting the +DM / -DM average at row 0
+    instead of 1 (row 0 is always a gap, so both find row 1); adding
+    `0 * adx`; Aroon dropping only NaN, not infinities, from its window
+    count (no input value is ever infinite, see above); vortex's guard on
+    a zero true range (`x / 0` is an infinity or NaN, both stored as a
+    gap); the random walk's guard on a zero denominator (the mean true
+    range over a horizon is 0 only when every bar in it is the same
+    price, so the numerator is 0 too and `0 / 0` is a gap anyway);
+    `powf(0.5)` for `sqrt` (same bits for every whole number from 2 to
+    100,000, checked); and `f64::min` for `js_min` in the ATR stop (they
+    differ only on NaN, which the stop never holds, and on the sign of a
+    zero).
+  - Perf: all O(N) except the random walk (O(N·period): a mean true
+    range per horizon, as pond-ts). DMI first ran at 65 ms (1.8x pond-ts):
+    about 4.5 ms of each pass is writing a fresh 1M-row array, and it made
+    ten. Now the +DM / -DM averages run side by side in one pass with no
+    raw columns (they have gaps on the same rows, so the same seed row;
+    same operations in the same order, as RSI), +DI / -DI / DX / ADXR
+    split across cores, and only ADX runs in order: 40 ms. Aroon writes
+    its percent in the queue pass (38 → 15 ms). The random walk splits
+    rows across cores (each row's maximum stands alone; a unit test checks
+    stretches of 1, 7, 64 and 1000 rows give the bits of one sweep).
+    SuperTrend, the SAR and the ATR stop are one sequential pass each
+    (each row needs the last). Checksums at 1M rows match pond-ts for all
+    eight, which also covers the split code (the parity inputs are
+    shorter than one stretch).
+  - Medians of 7, 1M bars at pond-ts's defaults, ms (pond-ts run alone
+    per study):
+
+    | Study  | 1 thread | 4 cores | pond-ts | ratio |
+    | ------ | -------- | ------- | ------- | ----- |
+    | dmi    | 73.2     | 38.8    | 136.3   | 3.5x  |
+    | aroon  | 25.3     | 15.3    | 106.6   | 7.0x  |
+    | vortex | 47.1     | 20.2    | 164.9   | 8.2x  |
+    | vhf    | 44.0     | 16.1    | 275.8   | 17x   |
+    | rwi    | 165.1    | 58.1    | 429.4   | 7.4x  |
+    | st     | 22.0     | 23.8    | 98.7    | 4.1x  |
+    | psar   | 10.3     | 9.7     | 62.4    | 6.4x  |
+    | ats    | 18.2     | 21.0    | 73.4    | 3.5x  |
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
