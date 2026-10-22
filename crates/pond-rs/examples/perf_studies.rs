@@ -377,6 +377,75 @@ fn main() -> pond_rs::Result<()> {
         ),
     ];
     cases.extend(momentum);
+    // R2 step 2c part 2.
+    let momentum2: Vec<Case> = vec![
+        (
+            "cci".into(),
+            "cci",
+            Box::new(|| {
+                bars.commodity_channel_index(CommodityChannelIndex::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "fisher".into(),
+            "fisher",
+            Box::new(|| bars.fisher_transform(FisherTransform::default()).unwrap()),
+        ),
+        (
+            "psy".into(),
+            "psy",
+            Box::new(|| bars.psychological_line(Study::period(12)).unwrap()),
+        ),
+        (
+            "pgo".into(),
+            "pgo",
+            Box::new(|| {
+                bars.pretty_good_oscillator(PrettyGoodOscillator::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "pno".into(),
+            "pno",
+            Box::new(|| {
+                bars.prime_number_oscillator(PrimeNumberOscillator::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "qstick".into(),
+            "qstick",
+            Box::new(|| bars.qstick(Qstick::default()).unwrap()),
+        ),
+        (
+            "rvi".into(),
+            "rviSignal",
+            Box::new(|| {
+                bars.relative_vigor_index(RelativeVigorIndex::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "cog".into(),
+            "cog",
+            Box::new(|| bars.center_of_gravity(Study::period(10)).unwrap()),
+        ),
+        (
+            "cfo".into(),
+            "cfo",
+            Box::new(|| bars.chande_forecast_oscillator(Study::period(14)).unwrap()),
+        ),
+        (
+            "tsi".into(),
+            "tsiSignal",
+            Box::new(|| {
+                bars.true_strength_index(TrueStrengthIndex::default())
+                    .unwrap()
+            }),
+        ),
+    ];
+    cases.extend(momentum2);
     println!("| Case | pond-rs | checksum |");
     println!("| --- | --- | --- |");
     for (name, column, f) in &cases {

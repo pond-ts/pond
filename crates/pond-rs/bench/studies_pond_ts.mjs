@@ -95,6 +95,16 @@ const cases = [
   ['imi', 'imi', () => f.intradayMomentumIndex(bars)],
   ['ao', 'ao', () => f.awesomeOscillator(bars)],
   ['uo', 'uo', () => f.ultimateOscillator(bars)],
+  ['cci', 'cci', () => f.commodityChannelIndex(bars)],
+  ['fisher', 'fisher', () => f.fisherTransform(bars)],
+  ['psy', 'psy', () => f.psychologicalLine(bars)],
+  ['pgo', 'pgo', () => f.prettyGoodOscillator(bars)],
+  ['pno', 'pno', () => f.primeNumberOscillator(bars)],
+  ['qstick', 'qstick', () => f.qstick(bars)],
+  ['rvi', 'rviSignal', () => f.relativeVigorIndex(bars)],
+  ['cog', 'cog', () => f.centerOfGravity(bars)],
+  ['cfo', 'cfo', () => f.chandeForecastOscillator(bars)],
+  ['tsi', 'tsiSignal', () => f.trueStrengthIndex(bars)],
 ];
 
 const only = process.argv[2];
