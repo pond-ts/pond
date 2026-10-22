@@ -3085,9 +3085,11 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     `beta`, `correlation`, `price_relative` and `performance_index`. Their
     options take the `benchmark` column in `new` (`Beta::new("spy")`), as
     pond-ts has no default for it; `study_options!` gained a
-    `Name(benchmark)` form for them. Errors and their order as pond-ts:
-    the period, then the benchmark (not the column itself, on the series,
-    a number column), then the output name, then the column.
+    `Name(benchmark)` form for them. Errors in pond-ts's order: the
+    period, then the benchmark (not the column itself, on the series, a
+    number column), then the output name, then the column. Parity checks
+    only that both sides fail; a unit test pins the order and part of
+    each message.
   - New kernels: `rolling_bivariate_values`, pond-ts
     `rollingBivariateValues` (covariance and the two variances of each
     window, in a frame shifted by the window's first pair, rebuilt every
@@ -3116,6 +3118,9 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     near-duplicate inputs: a looser Cauchy-Schwarz slack (1e-6 for 1e-9),
     and dropping the closed form for a window down to one pair. Neither
     is proven harmless; the inputs that would show them were not found.
+  - Parity inputs are under one 65,536-row stretch, so they never split
+    across cores; the split is checked by the stretch unit test and the
+    1M-row bit comparison below (review on #823).
   - Perf: all O(N). Beta's two return columns are one pass split across
     cores, as is the regression's angle. At 1M rows all six match pond-ts
     on every bit, on 4 cores and on 1 (`POND_BITS=1`).
