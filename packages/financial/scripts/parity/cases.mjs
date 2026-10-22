@@ -99,6 +99,7 @@ const NAMED_ROWS = Array.from({ length: 12 }, (_, i) => [
   i,
   i,
   i,
+  i,
 ]);
 const NAMED_SCHEMA = [
   { name: 'time', kind: 'time' },
@@ -107,6 +108,7 @@ const NAMED_SCHEMA = [
   { name: '__macdLine__', kind: 'number' },
   { name: 'gmmaL60', kind: 'number' },
   { name: 'rainbow10', kind: 'number' },
+  { name: '__stochRsiRsi__', kind: 'number' },
 ];
 
 // Bars with gaps on every side, for the studies that read high, low and
@@ -114,7 +116,7 @@ const NAMED_SCHEMA = [
 // (19), a run of 9 whole-bar gaps (40-48), a stretch where high = low =
 // close (60-74, so the spread and the true range are zero), signed zeros in
 // `open`, a `prime` column of values around and past the prime limits,
-// and columns a band prefix of `m`, `u` or `l` collides with.
+// and columns a prefix of `m`, `u` or `l` collides with.
 const OHLC_LENGTH = 100;
 const PRIME_VALUES = [
   -3,
@@ -167,6 +169,9 @@ const OHLC_ROWS = (() => {
       i,
       i,
       i,
+      i,
+      i,
+      i,
     ];
   });
 })();
@@ -181,6 +186,9 @@ const OHLC_GAPPY_SCHEMA = [
   { name: 'mMiddle', kind: 'number' },
   { name: 'uUpper', kind: 'number' },
   { name: 'lLower', kind: 'number' },
+  { name: 'mK', kind: 'number' },
+  { name: 'uD', kind: 'number' },
+  { name: 'lSignal', kind: 'number' },
 ];
 
 // Clean bars after a leading gap run, so the average true range warms up
@@ -197,6 +205,7 @@ const LEAD_ROWS = Array.from({ length: 90 }, (_, i) => {
     whole ? null : price + spread,
     whole ? null : price - spread,
     whole || i === 3 ? null : price + (unit(i, 2654435761) - 0.5) * spread,
+    whole ? null : price - (unit(i, 1103515245) - 0.5) * spread,
   ];
 });
 const LEAD_SCHEMA = [
@@ -204,6 +213,7 @@ const LEAD_SCHEMA = [
   { name: 'high', kind: 'number', required: false },
   { name: 'low', kind: 'number', required: false },
   { name: 'close', kind: 'number', required: false },
+  { name: 'open', kind: 'number', required: false },
 ];
 
 const TINY_ROWS = [
@@ -345,6 +355,7 @@ function cases() {
 
   averageFamilyCases(add);
   bandFamilyCases(add);
+  momentumFamilyCases(add);
   return out;
 }
 
@@ -578,15 +589,24 @@ const BAND_READS = {
   primeNumberBands: ['high', 'low'],
   envelope: ['column'],
 };
-const BAND_OUTPUT = {
-  bollingerBandwidth: 'output',
-  bollingerPercentB: 'output',
+const BAND_NAMING = {
+  bollinger: 'prefix',
+  keltner: 'prefix',
+  starcBands: 'prefix',
+  atrBands: 'prefix',
+  donchian: 'prefix',
+  highLowBands: 'prefix',
+  primeNumberBands: 'prefix',
+  envelope: 'prefix',
 };
 
-function bandFamilyCases(add) {
-  for (const [study, settings] of Object.entries(BAND_SMALL)) {
-    // Studies of price bars only take inputs that have high and low.
-    const bars = BAND_READS[study][0] !== 'column' || study === 'atrBands';
+// One study family's cases: every study at its defaults on every input it
+// can read, small settings, every moving-average type where it takes one,
+// other columns, custom and colliding names, and every error.
+function familyCases(add, F) {
+  for (const [study, settings] of Object.entries(F.small)) {
+    // Studies of price bars only take the inputs that have them.
+    const bars = F.reads[study].some((r) => r !== 'column');
     const inputs = bars
       ? ['bars', 'ohlc', 'lead', 'ohlcEmpty']
       : ['bars', 'long', 'gappy', 'large', 'flat', 'tiny', 'empty', 'ohlc'];
@@ -594,7 +614,7 @@ function bandFamilyCases(add) {
       ? ['bars', 'ohlc', 'lead']
       : ['bars', 'ohlc', 'lead', 'gappy', 'large', 'flat', 'tiny'];
     for (const input of inputs) add(study, input, {});
-    const typeOption = BAND_TYPE_OPTION[study];
+    const typeOption = F.typeOption[study];
     for (const [index, small] of settings.entries()) {
       for (const input of smallInputs) add(study, input, small);
       if (typeOption && index === 0) {
@@ -608,13 +628,13 @@ function bandFamilyCases(add) {
     const small = settings[0];
     // Other columns: the signed zeros of `open`, the prime ladder, a text
     // column and a missing one.
-    for (const option of BAND_READS[study]) {
+    for (const option of F.reads[study]) {
       for (const column of ['open', 'prime', 'name', 'nope']) {
         add(study, 'ohlc', { ...small, [option]: column });
       }
     }
     // Custom names, and names that collide.
-    const naming = BAND_OUTPUT[study] ?? 'prefix';
+    const naming = F.naming[study] ?? 'output';
     add(study, 'ohlc', { ...small, [naming]: 'x' });
     add(study, 'ohlc', { ...small, [naming]: 'close' });
     add(study, 'ohlc', { ...small, [naming]: 'time' });
@@ -626,18 +646,29 @@ function bandFamilyCases(add) {
     }
     // Periods that are not positive whole numbers, and multipliers or
     // percents that are not positive.
-    for (const option of BAND_PERIODS[study]) {
+    for (const option of F.periods[study]) {
       for (const bad of [0, -1, 1.5]) {
         add(study, 'ohlc', { ...small, [option]: bad });
       }
     }
-    for (const option of BAND_NUMBERS[study] ?? []) {
+    for (const option of F.numbers[study] ?? []) {
       for (const bad of [0, -1])
         add(study, 'ohlc', { ...small, [option]: bad });
       add(study, 'ohlc', { ...small, [option]: 1e-9 });
     }
     if (typeOption) add(study, 'ohlc', { ...small, [typeOption]: 'nope' });
   }
+}
+
+function bandFamilyCases(add) {
+  familyCases(add, {
+    small: BAND_SMALL,
+    reads: BAND_READS,
+    typeOption: BAND_TYPE_OPTION,
+    naming: BAND_NAMING,
+    periods: BAND_PERIODS,
+    numbers: BAND_NUMBERS,
+  });
   // A long period on the 900 closes, and the true range's own columns
   // moved: atrBands' centre follows a moved close.
   add('bollinger', 'long', { period: 101, stdDev: 2.5 });
@@ -646,6 +677,103 @@ function bandFamilyCases(add) {
   add('atrBands', 'ohlc', { period: 3, close: 'open', column: 'close' });
   add('keltner', 'bars', { period: 50, atrPeriod: 30, maType: 'kama' });
   add('donchian', 'bars', { period: 60, high: 'close', low: 'open' });
+}
+
+// R2 step 2c: the momentum family (part 1).
+function momentumFamilyCases(add) {
+  const bar = ['high', 'low', 'close'];
+  familyCases(add, {
+    small: {
+      rsi: [{ period: 5 }, { period: 2 }],
+      stochastic: [
+        { kPeriod: 5, slowing: 2, dPeriod: 2 },
+        { kPeriod: 3, slowing: 1, dPeriod: 1 },
+      ],
+      stochasticMomentumIndex: [
+        { period: 5, longPeriod: 4, shortPeriod: 2, signalPeriod: 2 },
+        { period: 3, longPeriod: 1, shortPeriod: 1, signalPeriod: 1 },
+      ],
+      stochasticRsi: [
+        { rsiPeriod: 5, stochPeriod: 4, kPeriod: 2, dPeriod: 2 },
+        { rsiPeriod: 2, stochPeriod: 2, kPeriod: 1, dPeriod: 1 },
+      ],
+      williamsR: [{ period: 5 }, { period: 1 }],
+      chandeMomentum: [{ period: 5 }, { period: 1 }],
+      momentum: [{ period: 3 }, { period: 1 }],
+      percentChange: [{ periods: 3 }, { periods: 1 }],
+      intradayMomentumIndex: [{ period: 5 }, { period: 1 }],
+      awesomeOscillator: [
+        { fastPeriod: 3, slowPeriod: 7 },
+        { fastPeriod: 1, slowPeriod: 2 },
+      ],
+      ultimateOscillator: [
+        { shortPeriod: 2, mediumPeriod: 4, longPeriod: 8 },
+        { shortPeriod: 1, mediumPeriod: 2, longPeriod: 3 },
+      ],
+    },
+    reads: {
+      rsi: ['column'],
+      stochastic: bar,
+      stochasticMomentumIndex: bar,
+      stochasticRsi: ['column'],
+      williamsR: bar,
+      chandeMomentum: ['column'],
+      momentum: ['column'],
+      percentChange: ['column'],
+      intradayMomentumIndex: ['open', 'close'],
+      awesomeOscillator: ['high', 'low'],
+      ultimateOscillator: bar,
+    },
+    typeOption: {},
+    naming: {
+      stochastic: 'prefix',
+      stochasticMomentumIndex: 'prefix',
+      stochasticRsi: 'prefix',
+    },
+    periods: {
+      rsi: ['period'],
+      stochastic: ['kPeriod', 'slowing', 'dPeriod'],
+      stochasticMomentumIndex: [
+        'period',
+        'longPeriod',
+        'shortPeriod',
+        'signalPeriod',
+      ],
+      stochasticRsi: ['rsiPeriod', 'stochPeriod', 'kPeriod', 'dPeriod'],
+      williamsR: ['period'],
+      chandeMomentum: ['period'],
+      momentum: ['period'],
+      percentChange: ['periods'],
+      intradayMomentumIndex: ['period'],
+      awesomeOscillator: ['fastPeriod', 'slowPeriod'],
+      ultimateOscillator: ['shortPeriod', 'mediumPeriod', 'longPeriod'],
+    },
+    numbers: {},
+  });
+  // Orders the periods must keep, the RSI's scratch column, and longer
+  // settings on the 900 closes.
+  add('awesomeOscillator', 'bars', { fastPeriod: 7, slowPeriod: 7 });
+  add('awesomeOscillator', 'bars', { fastPeriod: 9, slowPeriod: 7 });
+  for (const [s, m, l] of [
+    [3, 3, 8],
+    [2, 4, 4],
+    [5, 4, 8],
+  ]) {
+    add('ultimateOscillator', 'bars', {
+      shortPeriod: s,
+      mediumPeriod: m,
+      longPeriod: l,
+    });
+  }
+  add('stochasticRsi', 'named', { rsiPeriod: 3, stochPeriod: 3 });
+  add('stochasticRsi', 'named', { rsiPeriod: 3, prefix: 'z' });
+  add('rsi', 'named', { period: 3 });
+  add('rsi', 'long', { period: 50 });
+  add('stochasticRsi', 'long', { rsiPeriod: 30, stochPeriod: 60 });
+  add('chandeMomentum', 'long', { period: 101 });
+  add('momentum', 'long', { period: 899 });
+  add('momentum', 'long', { period: 900 });
+  add('percentChange', 'long', { periods: 300 });
 }
 
 function encodeCell(cell) {

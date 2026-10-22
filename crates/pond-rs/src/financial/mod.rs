@@ -2,6 +2,8 @@
 //! moving averages and the studies built on them (MACD, price oscillator,
 //! Guppy, rainbow, TRIX, Schaff, Coppock, KST, …), bands (Bollinger,
 //! Keltner, STARC, ATR, Donchian, high-low, prime number, envelope),
+//! momentum (RSI, stochastics, Williams %R, Chande momentum, momentum,
+//! percent change, intraday momentum, awesome and ultimate oscillators),
 //! rolling statistics and the z-score so far, each a method on
 //! [`TimeSeries`] that adds its number columns and keeps every row.
 //!
@@ -14,8 +16,8 @@
 //!   ([`Macd`], [`Trix`], …): `Default` is pond-ts's defaults, with a
 //!   setter per setting, `column`, and `output` (or `prefix`, for a study
 //!   that writes several columns: `macdLine`, `macdSignal`, `macdHist`).
-//!   A study that reads price bars takes `high`, `low` and `close` setters
-//!   instead of `column` ([`Keltner`], [`Donchian`], …).
+//!   A study that reads price bars takes `high`, `low`, `close` (and
+//!   `open`) setters instead of `column` ([`Keltner`], [`Donchian`], …).
 //!   No output may take the name of a column the series already has.
 //! - Periods count rows (bars), not time: a 20-bar average spans a weekend
 //!   gap as easily as a minute.
@@ -45,6 +47,7 @@ mod options;
 mod averages;
 mod bands;
 mod kernels;
+mod momentum;
 
 pub use averages::{
     Coppock, Guppy, Kst, Macd, MovingAverageCross, OscillatorMode, PriceMomentumOscillator,
@@ -53,6 +56,10 @@ pub use averages::{
 pub use bands::{
     AtrBands, Bollinger, BollingerBandwidth, BollingerPercentB, Donchian, Envelope, HighLowBands,
     Keltner, PrimeNumberBands, StarcBands,
+};
+pub use momentum::{
+    AwesomeOscillator, IntradayMomentumIndex, PercentChange, Stochastic, StochasticMomentumIndex,
+    StochasticRsi, UltimateOscillator, WilliamsR,
 };
 
 use std::borrow::Cow;

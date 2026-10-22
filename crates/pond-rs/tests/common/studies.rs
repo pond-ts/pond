@@ -40,6 +40,17 @@ pub const STUDIES: &[&str] = &[
     "highLowBands",
     "primeNumberBands",
     "envelope",
+    "rsi",
+    "stochastic",
+    "stochasticMomentumIndex",
+    "stochasticRsi",
+    "williamsR",
+    "chandeMomentum",
+    "momentum",
+    "percentChange",
+    "intradayMomentumIndex",
+    "awesomeOscillator",
+    "ultimateOscillator",
 ];
 
 /// The columns `study` reads with these options: `column` (default
@@ -67,6 +78,13 @@ pub fn sources(study: &str, options: &Map<String, Value>) -> Vec<String> {
                 close,
             ]
         }
+        "stochastic" | "stochasticMomentumIndex" | "williamsR" | "ultimateOscillator" => vec![
+            text("high", "high"),
+            text("low", "low"),
+            text("close", "close"),
+        ],
+        "intradayMomentumIndex" => vec![text("open", "open"), text("close", "close")],
+        "awesomeOscillator" => vec![text("high", "high"), text("low", "low")],
         "donchian" | "highLowBands" | "primeNumberBands" => {
             vec![text("high", "high"), text("low", "low")]
         }
@@ -86,6 +104,13 @@ const PERIODS: &[&str] = &[
     "shortPeriod",
     "wmaPeriod",
     "atrPeriod",
+    "kPeriod",
+    "dPeriod",
+    "slowing",
+    "rsiPeriod",
+    "stochPeriod",
+    "periods",
+    "mediumPeriod",
 ];
 
 /// Calls `study` on `series` with pond-ts `options`. `None` when Rust
@@ -360,6 +385,82 @@ pub fn call_study(
                 ))
             })
         }
+        "rsi" => series.rsi(study_of(14)),
+        "chandeMomentum" => series.chande_momentum(study_of(14)),
+        "momentum" => series.momentum(study_of(10)),
+        "percentChange" => series.percent_change(named!(
+            PercentChange::default().periods(int("periods", 1)),
+            output
+        )),
+        "stochastic" => series.stochastic(reads!(
+            name_only!(
+                Stochastic::default()
+                    .k_period(int("kPeriod", 14))
+                    .slowing(int("slowing", 3))
+                    .d_period(int("dPeriod", 3)),
+                prefix
+            ),
+            high,
+            low,
+            close
+        )),
+        "stochasticMomentumIndex" => series.stochastic_momentum_index(reads!(
+            name_only!(
+                StochasticMomentumIndex::default()
+                    .period(int("period", 13))
+                    .long(int("longPeriod", 25))
+                    .short(int("shortPeriod", 2))
+                    .signal(int("signalPeriod", 3)),
+                prefix
+            ),
+            high,
+            low,
+            close
+        )),
+        "stochasticRsi" => series.stochastic_rsi(named!(
+            StochasticRsi::default()
+                .rsi_period(int("rsiPeriod", 14))
+                .stoch_period(int("stochPeriod", 14))
+                .k_period(int("kPeriod", 3))
+                .d_period(int("dPeriod", 3)),
+            prefix
+        )),
+        "williamsR" => series.williams_r(reads!(
+            name_only!(WilliamsR::default().period(int("period", 14)), output),
+            high,
+            low,
+            close
+        )),
+        "intradayMomentumIndex" => series.intraday_momentum_index(reads!(
+            name_only!(
+                IntradayMomentumIndex::default().period(int("period", 14)),
+                output
+            ),
+            open,
+            close
+        )),
+        "awesomeOscillator" => series.awesome_oscillator(reads!(
+            name_only!(
+                AwesomeOscillator::default()
+                    .fast(int("fastPeriod", 5))
+                    .slow(int("slowPeriod", 34)),
+                output
+            ),
+            high,
+            low
+        )),
+        "ultimateOscillator" => series.ultimate_oscillator(reads!(
+            name_only!(
+                UltimateOscillator::default()
+                    .short(int("shortPeriod", 7))
+                    .medium(int("mediumPeriod", 14))
+                    .long(int("longPeriod", 28)),
+                output
+            ),
+            high,
+            low,
+            close
+        )),
         other => panic!("no pond-rs call for study '{other}'"),
     })
 }
