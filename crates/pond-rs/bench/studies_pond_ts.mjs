@@ -113,6 +113,14 @@ const cases = [
   ['t-st', 'st', () => f.superTrend(bars)],
   ['t-psar', 'psar', () => f.parabolicSar(bars)],
   ['t-ats', 'ats', () => f.atrTrailingStop(bars)],
+  ['t2-zz', 'zzLine', () => f.zigZag(bars)],
+  ['t2-ichi', 'ichiSenkouB', () => f.ichimoku(bars)],
+  ['t2-impulse', 'impulse', () => f.elderImpulse(bars)],
+  ['t2-ray', 'elderBear', () => f.elderRay(bars)],
+  ['t2-tii', 'tii', () => f.trendIntensityIndex(bars)],
+  ['t2-ravi', 'ravi', () => f.ravi(bars)],
+  ['t2-si', 'si', () => f.swingIndex(bars, { limit: 20 })],
+  ['t2-asi', 'asi', () => f.accumulativeSwingIndex(bars, { limit: 20 })],
 ];
 
 const only = process.argv[2];
