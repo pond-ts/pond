@@ -275,6 +275,44 @@ const LEAD_SCHEMA = [
   { name: 'open', kind: 'number', required: false },
 ];
 
+// Two columns for the two-column studies (beta, correlation, price
+// relative, performance index): `close` a wave near 100 and `bench` one
+// near 1e12 (the shifted frame's worst case), with gaps in each column on
+// different rows; `bench` flat while `close` moves (rows 140-179) and the
+// reverse (220-259); zeros in `bench` (300, 301) and in `close` (310);
+// `step`, prices that plateau between 1% steps with a jitter of a few ulps
+// (the windows the kernel fits again on demand); `twin` = 3 x close and
+// `mirror` = 7 - 2 x close (a correlation that rounds past +1 or -1).
+const PAIR_ROWS = Array.from({ length: 400 }, (_, i) => {
+  let close = 100 + Math.sin(i / 5) * 4 + unit(i, 69069) * 2;
+  let bench = 1e12 + Math.cos(i / 7) * 3 + unit(i, 40503);
+  if (i >= 140 && i < 180) bench = 1e12;
+  if (i >= 220 && i < 260) close = 101.5;
+  if (i === 300 || i === 301) bench = 0;
+  if (i === 310) close = 0;
+  const step = 100 * 1.01 ** Math.floor(i / 37) + (i % 3) * 2 ** -40;
+  const gapClose = i === 50 || i === 51 || i === 120;
+  const gapBench = i === 80 || (i >= 200 && i < 206);
+  return [
+    i * 60_000,
+    gapClose ? null : close,
+    gapBench ? null : bench,
+    step,
+    gapClose ? null : close * 3,
+    gapClose ? null : 7 - 2 * close,
+    i % 2 === 0 ? 'a' : 'b',
+  ];
+});
+const PAIR_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'close', kind: 'number', required: false },
+  { name: 'bench', kind: 'number', required: false },
+  { name: 'step', kind: 'number' },
+  { name: 'twin', kind: 'number', required: false },
+  { name: 'mirror', kind: 'number', required: false },
+  { name: 'name', kind: 'string' },
+];
+
 const TINY_ROWS = [
   [0, 3],
   [1000, 1],
@@ -317,6 +355,7 @@ function inputs(oracle) {
     edge: { name: 'edge', schema: LEAD_SCHEMA, rows: EDGE_ROWS },
     ties: { name: 'ties', schema: LEAD_SCHEMA, rows: TIE_ROWS },
     scratch: { name: 'scratch', schema: SCRATCH_SCHEMA, rows: SCRATCH_ROWS },
+    pair: { name: 'pair', schema: PAIR_SCHEMA, rows: PAIR_ROWS },
     ohlcEmpty: { name: 'ohlcEmpty', schema: LEAD_SCHEMA, rows: [] },
     empty: { name: 'empty', schema: CLOSE_SCHEMA, rows: [] },
   };
@@ -421,6 +460,7 @@ function cases() {
   trendFamilyCases(add);
   trendFamilyCases2(add);
   volatilityFamilyCases(add);
+  statisticsFamilyCases(add);
   return out;
 }
 
@@ -1300,5 +1340,97 @@ function volatilityFamilyCases(add) {
       'edge',
       study === 'massIndex' ? { emaPeriod: 2, sumPeriod: 3 } : { period: 3 },
     );
+  }
+}
+
+// R2 step 2e part 2: the statistics family. The two regression studies go
+// through `familyCases`; the four two-column studies need a benchmark on
+// every call, so they get their own list: each input with a second number
+// column, every small setting, then every error in pond-ts's order.
+function statisticsFamilyCases(add) {
+  familyCases(add, {
+    small: {
+      linearRegression: [{ period: 3 }, { period: 2 }],
+      timeSeriesForecast: [{ period: 3 }, { period: 2 }],
+    },
+    reads: { linearRegression: ['column'], timeSeriesForecast: ['column'] },
+    typeOption: {},
+    naming: { linearRegression: 'prefix' },
+    periods: { linearRegression: ['period'], timeSeriesForecast: ['period'] },
+    numbers: {},
+  });
+  for (const study of ['linearRegression', 'timeSeriesForecast']) {
+    add(study, 'bars', { period: 1 });
+    add(study, 'flat', { period: 5, column: 'open' });
+    add(study, 'flat', { period: 30, column: 'ramp' });
+    add(study, 'long', { period: 101 });
+    add(study, 'pair', { column: 'step', period: 30 });
+    add(study, 'pair', { column: 'bench' });
+    add(study, 'edge', {});
+    add(study, 'edge', { period: 3 });
+  }
+  const small = {
+    beta: [{ period: 3 }, { period: 2 }],
+    correlation: [{ period: 5 }, { period: 2 }],
+    priceRelative: [{}],
+    performanceIndex: [{ period: 3 }, { period: 1 }],
+  };
+  const pairs = [
+    ['bars', {}, 'open'],
+    ['bars', {}, 'volume'],
+    ['gappy', {}, 'volume'],
+    ['large', {}, 'open'],
+    ['flat', {}, 'open'],
+    ['flat', {}, 'ramp'],
+    ['flat', { column: 'ramp' }, 'open'],
+    ['ohlc', {}, 'open'],
+    ['ohlc', {}, 'prime'],
+    ['lead', {}, 'open'],
+    ['edge', {}, 'open'],
+    ['ties', {}, 'open'],
+    ['pair', {}, 'bench'],
+    ['pair', {}, 'twin'],
+    ['pair', {}, 'mirror'],
+    ['pair', { column: 'step' }, 'bench'],
+    ['pair', { column: 'step' }, 'close'],
+    ['pair', { column: 'bench' }, 'step'],
+  ];
+  for (const [study, settings] of Object.entries(small)) {
+    for (const [input, extra, benchmark] of pairs) {
+      add(study, input, { ...extra, benchmark });
+      for (const s of settings)
+        add(study, input, { ...extra, ...s, benchmark });
+    }
+    const first = { ...settings[0], benchmark: 'bench' };
+    add(study, 'pair', { ...first, period: 30 });
+    add(study, 'tiny', { benchmark: 'open' });
+    add(study, 'empty', { benchmark: 'open' });
+    add(study, 'ohlcEmpty', { benchmark: 'open' });
+    // The benchmark: the column itself (named or by default), missing, the
+    // key, a text or true/false column; then the output and the column.
+    add(study, 'pair', { ...first, benchmark: 'close' });
+    add(study, 'pair', { ...first, column: 'step', benchmark: 'step' });
+    add(study, 'pair', { ...first, benchmark: 'close', output: 'close' });
+    add(study, 'pair', { ...first, benchmark: 'nope' });
+    add(study, 'pair', { ...first, benchmark: 'nope', output: 'close' });
+    add(study, 'pair', { ...first, benchmark: 'time' });
+    add(study, 'pair', { ...first, benchmark: 'name' });
+    add(study, 'gappy', { ...first, benchmark: 'flag' });
+    for (const output of ['x', 'close', 'bench', 'time', '']) {
+      add(study, 'pair', { ...first, output });
+    }
+    add(study, 'pair', { ...first, column: 'nope' });
+    add(study, 'pair', { ...first, column: 'name' });
+    add(study, 'pair', { ...first, column: 'nope', output: 'close' });
+    if (study !== 'priceRelative') {
+      for (const period of [0, -1, 1.5])
+        add(study, 'pair', { ...first, period });
+      add(study, 'pair', { ...first, period: 0, benchmark: 'close' });
+      add(study, 'pair', { ...first, period: 500 });
+    }
+  }
+  for (const study of ['beta', 'correlation']) {
+    add(study, 'pair', { benchmark: 'bench', period: 1 });
+    add(study, 'pair', { benchmark: 'close', period: 1 });
   }
 }
