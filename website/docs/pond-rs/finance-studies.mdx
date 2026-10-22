@@ -14,13 +14,14 @@ this page lists what is built so far.
 
 Built so far: moving averages and rolling statistics, the
 moving-average family (MACD and 14 more), bands (Bollinger, Keltner and
-8 more) and momentum (21 studies: RSI, stochastics, CCI, true strength index
-and more).
+8 more), momentum (21 studies: RSI, stochastics, CCI, true strength index
+and more) and the first 8 trend studies (ADX, Aroon, SuperTrend,
+parabolic SAR and more).
 
 The results match `@pond-ts/financial` exactly, number for number. That is
-checked against 2,632 cases that pond-ts itself writes out. They also match
+checked against 2,918 cases that pond-ts itself writes out. They also match
 the pandas and TA-Lib reference results pond-ts is tested against, to
-within 5e-10 (117 of those 220 cases cover studies built so far).
+within 5e-10 (133 of those 220 cases cover studies built so far).
 
 ## How every study works
 
@@ -383,6 +384,59 @@ fn main() -> Result<(), pond_rs::PondError> {
 }
 ```
 
+## Trend
+
+Whether the price is trending, which way, and where a trader might put a
+stop.
+
+| Call                                        | Writes                                                  | What it shows                                                                                                 |
+| ------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `directional_movement(DirectionalMovement)` | `dmiPlusDi`, `dmiMinusDi`, `dmiDx`, `dmiAdx`, `dmiAdxr` | Wilder's system: the up and down moves (+DI, −DI), and ADX, how strong the trend is whichever way it goes     |
+| `aroon(Aroon)`                              | `aroonUp`, `aroonDown`, `aroonOsc`                      | How recently the 25-bar high and low happened: 100 for this bar, 0 for 25 bars back                           |
+| `vortex(Vortex)`                            | `viPlus`, `viMinus`                                     | Upward against downward movement over 14 bars                                                                 |
+| `vertical_horizontal_filter(Study)`         | `vhf`                                                   | The window's range over the sum of its bar-to-bar moves: high when trending, low when choppy (period 28)      |
+| `random_walk_index(RandomWalkIndex)`        | `rwiHigh`, `rwiLow`                                     | How much further the price went than a random walk would, up and down, over 2 to 14 bars                      |
+| `super_trend(SuperTrend)`                   | `st`, `stTrend`                                         | A line 3 average true ranges below the price in an up trend (above in a down trend); `stTrend` is `1` or `-1` |
+| `parabolic_sar(ParabolicSar)`               | `psar`, `psarTrend`                                     | Wilder's stop-and-reverse: a stop that speeds up toward the price, and flips side when the price crosses it   |
+| `atr_trailing_stop(AtrTrailingStop)`        | `ats`, `atsTrend`                                       | A stop 3 average true ranges from the close that only moves toward the price, until the price crosses it      |
+
+The random walk index needs a period of at least 2, and the parabolic
+SAR's `max_step` must be at least its `step`.
+
+SuperTrend, the SAR and the ATR stop each work bar by bar. After a missing
+bar, the SAR starts again with the next stretch of bars. SuperTrend and
+the ATR stop use the average true range, so as with the bands, a missing
+bar in the middle of the data leaves them empty from there on.
+
+```rust
+use pond_rs::financial::{Aroon, SuperTrend};
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let bars = TimeSeries::new(
+        "bars",
+        (0..3).map(|i| i * minute).collect(),
+        vec![
+            Column::required("high", vec![2.0, 3.0, 4.0]),
+            Column::required("low", vec![1.0, 2.0, 3.0]),
+            Column::required("close", vec![1.5, 2.5, 3.5]),
+        ],
+    )?;
+
+    let out = bars.aroon(Aroon::default().period(2))?;
+    // The highest high is this bar (100); the lowest low was 2 bars back (0).
+    assert_eq!(out.column("aroonUp")?.numbers()?.get(2), Some(100.0));
+    assert_eq!(out.column("aroonDown")?.numbers()?.get(2), Some(0.0));
+    assert_eq!(out.column("aroonOsc")?.numbers()?.get(2), Some(100.0));
+
+    let st = bars.super_trend(SuperTrend::default().period(2))?;
+    let names: Vec<&str> = st.columns().iter().map(|c| c.name()).collect();
+    assert_eq!(names, ["high", "low", "close", "st", "stTrend"]);
+    Ok(())
+}
+```
+
 ## Gaps in the prices
 
 A gap in the source column never shifts the rows. What a study does with
@@ -532,7 +586,7 @@ from all three runs. "1 thread" is pond-rs with `RAYON_NUM_THREADS=1`.
 \* Measured again after the moving-average family work, which runs
 chained EMAs in one pass. The 1-thread times are from before that.
 
-### The moving-average family, bands and momentum
+### The moving-average family, bands, momentum and trend
 
 At pond-ts's default settings, same machine and setup:
 
@@ -584,6 +638,14 @@ At pond-ts's default settings, same machine and setup:
 | `center_of_gravity`          | 25.5              | 8.6              | 65.9    | 7.7×  |
 | `chande_forecast_oscillator` | 21.6              | 13.6             | 62.3    | 4.6×  |
 | `true_strength_index`        | 13.7              | 18.0             | 75.4    | 4.2×  |
+| `directional_movement`       | 73.2              | 38.8             | 136.3   | 3.5×  |
+| `aroon`                      | 25.3              | 15.3             | 106.6   | 7.0×  |
+| `vortex`                     | 47.1              | 20.2             | 164.9   | 8.2×  |
+| `vertical_horizontal_filter` | 44.0              | 16.1             | 275.8   | 17×   |
+| `random_walk_index`          | 165.1             | 58.1             | 429.4   | 7.4×  |
+| `super_trend`                | 22.0              | 23.8             | 98.7    | 4.1×  |
+| `parabolic_sar`              | 10.3              | 9.7              | 62.4    | 6.4×  |
+| `atr_trailing_stop`          | 18.2              | 21.0             | 73.4    | 3.5×  |
 
 The machine is a shared virtual machine with four cores, and single runs
 move by up to a third, so read the ratios as rough. `atr_bands` gains the
@@ -608,5 +670,5 @@ them.
 
 ## Still to come
 
-Trend, volatility, volume and price studies, one family at a time; then
-trading calendars and session VWAP.
+The other 8 trend studies, then volatility, volume and price studies, one
+family at a time; then trading calendars and session VWAP.
