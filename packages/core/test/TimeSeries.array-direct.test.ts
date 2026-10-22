@@ -7,7 +7,13 @@
  * array is copied rather than frozen in place, and kind errors are the same.
  */
 import { describe, expect, it } from 'vitest';
-import { Sequence, TimeSeries, ValidationError } from '../src/index.js';
+import {
+  Event,
+  Sequence,
+  Time,
+  TimeSeries,
+  ValidationError,
+} from '../src/index.js';
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -112,5 +118,59 @@ describe('arrayAggregate builds columns directly', () => {
       [3, 4],
     ]);
     expect(cells.every((c) => Object.isFrozen(c))).toBe(true);
+  });
+});
+
+describe('arrayContains* read the array column', () => {
+  it('keeps the same rows, and each kept row is the source row', () => {
+    const s = new TimeSeries({
+      name: 's',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'tags', kind: 'array', required: false },
+        { name: 'name', kind: 'string', required: false },
+      ] as const,
+      rows: [
+        [0, ['a', 0], 'a'],
+        [1, [-0, 'b'], 'b'],
+        [2, undefined, 'a'],
+        [3, [], 'a'],
+        [4, [true, 'a'], undefined],
+      ],
+    });
+    const times = (t: TimeSeries<any>) => t.toArray().map((e) => e.begin());
+    expect(times(s.arrayContains('tags', 'a'))).toEqual([0, 4]);
+    // `includes` treats 0 and -0 as equal, as before.
+    expect(times(s.arrayContains('tags', -0))).toEqual([0, 1]);
+    expect(times(s.arrayContainsAll('tags', []))).toEqual([0, 1, 3, 4]);
+    expect(times(s.arrayContainsAny('tags', []))).toEqual([]);
+    expect(times(s.arrayContainsAny('tags', [true, 'b']))).toEqual([1, 4]);
+    // A text column or an unknown name keeps nothing.
+    expect(s.arrayContains('name' as never, 'a').length).toBe(0);
+    expect(s.arrayContains('nope' as never, 'a').length).toBe(0);
+    // Result event built first, then the source's: one object.
+    const r = s.arrayContains('tags', 'a');
+    const kept = r.at(1)!;
+    expect(s.at(4)).toBe(kept);
+    expect(kept.get('tags')).toBe(s.at(4)!.get('tags'));
+  });
+
+  it('reads the events of a fromEvents series, as before', () => {
+    // Its events can hold arrays its column stores differently (a null or
+    // NaN element), so these filters keep reading the events there.
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'tags', kind: 'array', required: false },
+    ] as const;
+    const s = TimeSeries.fromEvents(
+      [
+        new Event(new Time(0), { tags: [null, 'a'] as never }),
+        new Event(new Time(1), { tags: [NaN, 1] }),
+      ],
+      { name: 's', schema },
+    );
+    expect(s.arrayContains('tags', 'a').length).toBe(1);
+    expect(s.arrayContainsAny('tags', [1]).length).toBe(1);
+    expect(s.arrayContainsAll('tags', [NaN]).length).toBe(1);
   });
 });

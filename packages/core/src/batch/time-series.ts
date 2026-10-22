@@ -6276,15 +6276,7 @@ export class TimeSeries<S extends SeriesSchema> {
     col: Col,
     value: ScalarValue,
   ): TimeSeries<S> {
-    return TimeSeries.#fromTrustedEvents(
-      this.name,
-      this.schema,
-      this.events.filter((event) => {
-        const data = event.data();
-        const arr = data[col as keyof typeof data] as ArrayValue | undefined;
-        return Array.isArray(arr) && arr.includes(value);
-      }),
-    );
+    return this.#keepArrayRows(col, (arr) => arr.includes(value));
   }
 
   /**
@@ -6298,19 +6290,12 @@ export class TimeSeries<S extends SeriesSchema> {
     col: Col,
     values: readonly ScalarValue[],
   ): TimeSeries<S> {
-    return TimeSeries.#fromTrustedEvents(
-      this.name,
-      this.schema,
-      this.events.filter((event) => {
-        const data = event.data();
-        const arr = data[col as keyof typeof data] as ArrayValue | undefined;
-        if (!Array.isArray(arr)) return false;
-        for (const needle of values) {
-          if (!arr.includes(needle)) return false;
-        }
-        return true;
-      }),
-    );
+    return this.#keepArrayRows(col, (arr) => {
+      for (const needle of values) {
+        if (!arr.includes(needle)) return false;
+      }
+      return true;
+    });
   }
 
   /**
@@ -6323,19 +6308,56 @@ export class TimeSeries<S extends SeriesSchema> {
     col: Col,
     values: readonly ScalarValue[],
   ): TimeSeries<S> {
-    return TimeSeries.#fromTrustedEvents(
-      this.name,
-      this.schema,
-      this.events.filter((event) => {
-        const data = event.data();
-        const arr = data[col as keyof typeof data] as ArrayValue | undefined;
-        if (!Array.isArray(arr)) return false;
-        for (const needle of values) {
-          if (arr.includes(needle)) return true;
-        }
-        return false;
-      }),
-    );
+    return this.#keepArrayRows(col, (arr) => {
+      for (const needle of values) {
+        if (arr.includes(needle)) return true;
+      }
+      return false;
+    });
+  }
+
+  /**
+   * The rows whose cell in `col` is an array passing `test`, gathered from
+   * the columns ([PND-ARRAYSLOW]). The `arrayContains*` filters used to
+   * build every `Event` and keep the passing ones; a kept row's `Event` is
+   * still the source row's (`_selectRowsModulePrivate`). A missing column,
+   * or a cell that is not an array, keeps nothing, as before.
+   */
+  #keepArrayRows(
+    col: string,
+    test: (arr: ArrayValue) => boolean,
+  ): TimeSeries<S> {
+    if (this.#store._eventsMayDifferFromColumnsModulePrivate()) {
+      // A `fromEvents` series can hold event values its columns store
+      // differently, and these filters have always read the events.
+      return TimeSeries.#fromTrustedEvents(
+        this.name,
+        this.schema,
+        this.events.filter((event) => {
+          const data = event.data();
+          const arr = data[col as keyof typeof data] as ArrayValue | undefined;
+          return Array.isArray(arr) && test(arr);
+        }),
+      );
+    }
+    const column = this.#store.store.columns.get(col);
+    const n = this.length;
+    const rows = new Int32Array(column === undefined ? 0 : n);
+    let k = 0;
+    if (column !== undefined) {
+      for (let i = 0; i < n; i += 1) {
+        const arr = column.read(i);
+        if (Array.isArray(arr) && test(arr as ArrayValue)) rows[k++] = i;
+      }
+    }
+    const trustedInput: TrustedStoreInput<S> = {
+      name: this.name,
+      schema: Object.freeze(this.schema.slice()) as S,
+      [TRUSTED_STORE_SENTINEL]: this.#store._selectRowsModulePrivate(
+        rows.subarray(0, k),
+      ),
+    };
+    return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
   }
 
   /**
