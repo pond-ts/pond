@@ -84,6 +84,28 @@ gate). Same option is available on
 [`baseline()`](./anomaly-detection) and `outliers()` and threads
 through to their internal rolling pass.
 
+## Keeping the source columns (`append`)
+
+The per-event form returns the key and the reducer outputs only. Pass
+`append: true` to keep every column of the source and add the outputs
+after them, so a chain can keep reading the source columns, the way the
+financial studies add a column:
+
+```ts
+import '@pond-ts/financial/fluent'; // adds .rsi() to TimeSeries
+
+const out = bars
+  .rsi({ period: 14 })
+  .rolling('10m', { rsi10m: { from: 'rsi', using: 'avg' } }, { append: true });
+// out has time, close, rsi, rsi10m
+```
+
+An output may not take an existing column's name, so the shorthand
+`{ rsi: 'avg' }` (whose output is named after its source) is an error with
+`append`; name each output. That is a runtime error, not a type error.
+Not available on the grid form, whose rows are
+the sequence's points rather than the source's events.
+
 ## Two output shapes
 
 Pick the one that matches your output cadence:

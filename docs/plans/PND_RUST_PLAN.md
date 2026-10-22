@@ -537,6 +537,39 @@ The first two are logged as [PND-RUSTOUT] below.
 The one result short of a clean win is one-core B: polars is faster
 (22–28 vs 31–47 ms of compute). Adopting R1b is pjm17971's call.
 
+## [PND-CHAIN] — chain-friendly options, both libraries (2026-10-22)
+
+Peter asked what a fluent chain looks like (study → operators → a final fold
+such as "average of the last 5 minutes"). Writing it against main, in both
+libraries, surfaced five rough edges; he asked to work on them. Outcome:
+
+- **`rolling` with `append`** (pond-ts `{ append: true }`, pond-rs
+  `Rolling { append }`): keeps the source columns. Before, `rolling` returned
+  only the key and its outputs, so a chain lost every column it had built.
+  Name reused from `collapse(…, { append: true })`. An output may not reuse an
+  existing name, so the shorthand `{ rsi: 'avg' }` / `Agg::of` is an error
+  with `append` (replacing a column in place was considered and rejected:
+  explicit names are clearer, and replacing would be a second meaning for the
+  same flag). Not on the grid form (its rows are buckets). Partitioned: with
+  `append` the partition columns are already kept, so they are not carried
+  through the mapping.
+- **`diff` / `rate` / `pctChange` with `output`**: new optional number column,
+  source kept, one source column only. Name reused from `scan` / `smooth`.
+- **pond-rs short forms**: `diff(&cols)` etc. and `fill(&spec)` assume the
+  usual defaults; `diff_with(&cols, Change)` / `fill_with(&spec, &limits)`
+  take them, as `rolling` / `rolling_with` already did. A signature break,
+  fine while the crate is unpublished.
+- **`reduce_number` / `reduce_value`** (pond-rs): one column's single answer,
+  pond-ts `reduce(column, reducer)`. Two methods rather than one returning
+  `Value`, so the common number case needs no unwrapping.
+- **Not done: `Agg` helper** (`avg("x").named("y")`): `Agg::new(out, src,
+  reducer)` is already one call; a helper would only reorder its arguments.
+- Live layer not changed: logged as [PND-LIVEAPPEND].
+
+Parity: 10 new shared fixture cases (`rolling-append-*`, `*-output*`,
+partitioned variants); a mutation run (dropping one appended column, renaming
+the output) failed all 10.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:

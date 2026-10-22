@@ -13,7 +13,7 @@
 
 use std::time::Instant;
 
-use pond_rs::{Agg, Column, Fill, FillLimits, FirstRow, Reducer, TimeSeries};
+use pond_rs::{Agg, Column, Fill, Reducer, TimeSeries};
 
 fn median_ms(mut f: impl FnMut()) -> f64 {
     f();
@@ -82,7 +82,7 @@ fn main() -> pond_rs::Result<()> {
                     series
                         .partition_by(&["symbol"])
                         .unwrap()
-                        .diff(&["close"], FirstRow::Keep)
+                        .diff(&["close"])
                         .unwrap()
                         .collect()
                         .unwrap(),
@@ -96,7 +96,7 @@ fn main() -> pond_rs::Result<()> {
                     series
                         .partition_by(&["symbol"])
                         .unwrap()
-                        .fill_all(Fill::Linear, &FillLimits::none())
+                        .fill_all(Fill::Linear)
                         .unwrap()
                         .collect()
                         .unwrap(),

@@ -160,6 +160,7 @@ export type {
   JsonTimestampInput,
   JsonValueForKind,
   RollingAlignment,
+  RollingAppendSchema,
   RollingSchema,
   JoinConflictMode,
   JoinManySchema,

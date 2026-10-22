@@ -149,6 +149,15 @@ const both = series.diff(['cpu', 'mem']);
 const dropped = series.diff('requests', { drop: true });
 ```
 
+`diff`, `rate` and `pctChange` replace each named column with its change.
+To keep the source and add the change beside it, name an `output` (one
+source column only; the name must be new):
+
+```ts
+const withChange = series.diff('requests', { output: 'requestsDelta' });
+// requests unchanged; requestsDelta = curr - prev (optional number)
+```
+
 ### `rate(cols)` — delta per second
 
 `diff` divided by the time gap (in seconds). When two consecutive
