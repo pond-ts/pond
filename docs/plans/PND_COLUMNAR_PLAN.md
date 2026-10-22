@@ -742,6 +742,69 @@ amortised O(1) whatever the window.
 - Rolling over a `Sequence` turned out to scan every row for every point,
   for every reducer: already logged as [PND-ROLLGRID] (shipped, below).
 
+### [PND-SMOOTHSLOW] — SHIPPED (smooth / baseline / outliers / sample stride on columns)
+
+Logged from pond-rs R1b step 8h, picked up from the Codex PR #810
+investigation. `smooth`'s `movingAverage` / `loess` read anchors and values
+from `this.events` and rebuilt every row (`event.set` / `merge`, then row
+intake); `baseline` zipped the source events with `rolling.at(i)` and
+rebuilt rows; `outliers` and `sample({ stride })` rebuilt the store from the
+kept `Event`s. Now:
+
+- `smooth` reads anchors from the key buffers (a time key's timestamp; else
+  `begin + (end − begin) / 2`, which is what `timeRange().midpoint()`
+  computes) and values with `read`, runs the same window / LOESS code, and
+  writes one number column (replace or append) with the key and every other
+  column passed through. A target that is missing or not a number column
+  keeps the event path, so its current odd results ([PND-SMOOTHCHECK]) are
+  unchanged. The `ema` fast path was already columnar.
+- `baseline` appends the rolling result's `avg` / `sd` columns as they are
+  (one row per source row) and computes `upper` / `lower` from them. The
+  result store is built in one call against the result schema, so repeated
+  output names (`names: { avg: 'x', lower: 'x' }`) still fail with the
+  store's duplicate-name `RangeError` (the pond-rs parity fixture pins that
+  message; appending column by column gave a different one).
+- `outliers` and `sample({ stride })` collect row numbers and gather, with
+  `SeriesStore._selectRowsModulePrivate`, so a kept row's `Event` is the
+  source row's (as in `dedupe`, above). `sample({ reservoir })`
+  is unchanged: its key sort is stable over reservoir order, which a row
+  number sort would not reproduce for equal keys.
+- `scan` (80 ms on 1M vs 54 ms in pond-rs) left as is.
+
+Checked: 300 random series (time / time-range / interval keys incl. ranges
+whose midpoints run backwards, repeated keys, missing, `-0`, values near
+±1.7e308) give identical JSON against the previous build for
+`movingAverage` (4 windows × 4 alignments × 3 `missing` × replace/append),
+`loess` (6 spans incl. invalid × 2 `missing` × 2 columns), text / unknown /
+same-name / colliding targets, missing options, `ema`, `baseline` and
+`outliers` (3 windows × 3 alignments × 2 `minSamples` × 2 sigmas, names,
+collisions, sigma 0 and 1e308), partitioned `baseline` / `smooth` /
+`outliers`, and 7 strides incl. invalid; identity compared where every
+event was built first. Planted bugs caught: anchors taken as `begin` (56/90
+series differ), `sd >= 0` in baseline (88/90), `>=` in outliers (7/90). The
+non-finite guard on smoothed values is defensive: no case produced a
+non-finite average (the window sum uses `LanedSum`).
+
+Bench `scripts/perf-smooth.mjs` (median of 7 after 3 warm-ups; old build 5
+after 2). The old build's events were already built after its first
+warm-up, so its numbers leave out the ~1 s of building 1M events a first
+call pays:
+
+| Case                                 | Before | After  |
+| ------------------------------------ | ------ | ------ |
+| movingAverage 5 min, 1M rows         | 2.11 s | 205 ms |
+| movingAverage centered, skip, append | 2.21 s | 171 ms |
+| movingAverage 1 ms window (1 row)    | 2.05 s | 236 ms |
+| baseline 5 min, 1M rows              | 4.34 s | 798 ms |
+| outliers 5 min, 1M rows              | 2.40 s | 813 ms |
+| loess span 0.05, 20k rows            | 133 ms | 96 ms  |
+| partitioned baseline, 4 × 250k       | 9.58 s | 4.14 s |
+| sample stride 10, 1M rows            | 31 ms  | 7.8 ms |
+
+`baseline` / `outliers` are now the duration `rolling` call (~550 ms for
+`avg` + `stdev`), logged as [PND-ROLLTIME]; partitioned adds `concat`
+([PND-CONCATSORT]).
+
 ### [PND-ALIGNHOLD] / [PND-DEDUPEMAP] — SHIPPED (align / materialize / dedupe on columns)
 
 Logged from pond-rs R1b step 5, picked up from the Codex PR #810
