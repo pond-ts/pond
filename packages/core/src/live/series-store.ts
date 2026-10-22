@@ -114,7 +114,7 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   /**
    * Row `i`'s event is row `row[i]`'s event of `sources[source[i]]` (or of
    * `sources[0]` when `source` is absent), built there on first use. Set
-   * for stores gathered from other stores' rows (`dedupe`, …) so
+   * for stores gathered from other stores' rows (`dedupe`, `concat`, …) so
    * a result row and its source row share one `Event` whichever is asked
    * for first, as when those ops rebuilt the store from the source events.
    */
@@ -313,6 +313,24 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
       sources: [this],
       source: undefined,
       row: rows,
+    });
+  }
+
+  /**
+   * A store gathered from several stores' rows (`concat`'s merge): output
+   * row `k` is `sources[source[k]]`'s row `row[k]`, and its event is that
+   * row's event (see `#delegate`). Module-private.
+   */
+  static _fromGatheredModulePrivate<S extends SeriesSchema>(
+    store: ColumnarStore<S>,
+    sources: ReadonlyArray<SeriesStore<S>>,
+    source: Int32Array,
+    row: Int32Array,
+  ): SeriesStore<S> {
+    return new SeriesStore<S>(store, new Map(), undefined, {
+      sources,
+      source,
+      row,
     });
   }
 
