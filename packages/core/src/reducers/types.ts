@@ -1,4 +1,4 @@
-import type { Float64Column } from '../columnar/index.js';
+import type { Column, Float64Column } from '../columnar/index.js';
 import type { ColumnValue } from '../schema/index.js';
 
 /**
@@ -121,6 +121,22 @@ export type ReducerDef = {
    */
   reduceColumnRange?(
     col: Float64Column,
+    start: number,
+    end: number,
+  ): ColumnValue | undefined;
+
+  /**
+   * **Range kernel over a column of any kind or storage** — for the
+   * reducers with no numeric `reduceColumnRange` (`keep` / `difference` /
+   * `unique` / `top${N}` / `samples`). Returns exactly what `reduce` gives
+   * for the cells `col.read(start) … col.read(end - 1)` after the usual
+   * missing / non-finite filtering, without building those arrays or any
+   * `Event`. Implementations read packed number and dictionary-string
+   * columns straight off their buffers and fall back to
+   * {@link reduceCellsByRead} for anything else.
+   */
+  reduceCellRange?(
+    col: Column,
     start: number,
     end: number,
   ): ColumnValue | undefined;

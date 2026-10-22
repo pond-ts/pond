@@ -175,6 +175,20 @@ type ColumnarAggregatePlan =
   | { kind: 'boundary'; column: Column; which: 'first' | 'last' }
   | {
       /**
+       * `keep` / `difference` / `unique` / `top${N}` / `samples`: the
+       * reducer's range kernel over any column (`reduceCellRange`) — the
+       * answer its bucket state would give, read off the column.
+       */
+      kind: 'cells';
+      column: Column;
+      reduce: (
+        col: Column,
+        start: number,
+        end: number,
+      ) => ColumnValue | undefined;
+    }
+  | {
+      /**
        * Everything else — `unique` / `top` / `samples` / `keep` /
        * `difference`, a reducer over a non-number or chunked column, or a
        * custom function: the reducer's own bucket state, fed this
@@ -246,6 +260,15 @@ function planColumnarAggregate(
       continue;
     }
 
+    if (def?.reduceCellRange !== undefined) {
+      plans.push({
+        kind: 'cells',
+        column: source,
+        reduce: def.reduceCellRange,
+      });
+      continue;
+    }
+
     plans.push({ kind: 'state', column: source, reducer: spec.reducer });
   }
   return plans;
@@ -272,6 +295,8 @@ function reduceBucket(
     if (plan.kind === 'reduce') {
       // A non-finite result (an overflow) is missing — same as every
       // reducer result path (`finiteOrMissing`, [PND-NANREP]).
+      out[p] = finiteOrMissing(plan.reduce(plan.column, start, scan));
+    } else if (plan.kind === 'cells') {
       out[p] = finiteOrMissing(plan.reduce(plan.column, start, scan));
     } else if (plan.kind === 'state') {
       // `bucketStateFor` applies the non-finite policy in and out.
