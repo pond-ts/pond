@@ -823,9 +823,155 @@ pub(crate) fn stochastic_half_smooth(highest: &[f64], lowest: &[f64], values: &[
     out
 }
 
+/// JS `Math.max(a, b)`: a NaN gives NaN, and `+0` beats `-0` (Rust's
+/// `f64::max` drops a NaN and may pick either zero).
+pub(crate) fn js_max(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a > b || (a == b && b.is_sign_negative()) {
+        a
+    } else {
+        b
+    }
+}
+
+/// pond-ts `trueRangeValues` at row `i`: the largest of the bar's range
+/// and the gaps from the previous close; `NaN` on row 0 and wherever an
+/// input is missing.
+fn true_range_at(high: &[f64], low: &[f64], close: &[f64], i: usize) -> f64 {
+    if i == 0 {
+        return f64::NAN;
+    }
+    let previous = close[i - 1];
+    js_max(
+        js_max(high[i] - low[i], (high[i] - previous).abs()),
+        (low[i] - previous).abs(),
+    )
+}
+
+/// pond-ts `atrValues`: Wilder's smoothing ([`wilder_values`]) of the
+/// true range, taking each row's true range as it goes rather than
+/// building the column first (same values, one pass).
+pub(crate) fn atr_values(high: &[f64], low: &[f64], close: &[f64], period: usize) -> Vec<f64> {
+    let n = high.len();
+    let mut out = vec![f64::NAN; n];
+    let range = |i: usize| true_range_at(high, low, close, i);
+    let first = (1..n).find(|&i| !range(i).is_nan()).unwrap_or(n);
+    let seed_at = first.saturating_add(period - 1);
+    if seed_at >= n {
+        return out;
+    }
+    let p = period as f64;
+    let mut sum = 0.0;
+    for i in first..=seed_at {
+        sum += range(i);
+    }
+    let mut avg = sum / p;
+    out[seed_at] = avg;
+    for (i, slot) in out.iter_mut().enumerate().skip(seed_at + 1) {
+        avg = (avg * (p - 1.0) + range(i)) / p;
+        *slot = avg;
+    }
+    out
+}
+
+/// pond-ts `typicalPriceValues`: `(high + low + close) / 3`.
+pub(crate) fn typical_price_values(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
+    (0..high.len())
+        .map(|i| (high[i] + low[i] + close[i]) / 3.0)
+        .collect()
+}
+
+/// pond-ts `medianPriceValues`: `(high + low) / 2`.
+pub(crate) fn median_price_values(high: &[f64], low: &[f64]) -> Vec<f64> {
+    high.iter().zip(low).map(|(h, l)| (h + l) / 2.0).collect()
+}
+
+/// pond-ts `MAX_PRIME_INPUT` (`Number.MAX_SAFE_INTEGER`).
+const MAX_PRIME_INPUT: u64 = (1 << 53) - 1;
+
+/// pond-ts `isPrime`, for a whole number up to [`MAX_PRIME_INPUT`].
+fn is_prime(n: u64) -> bool {
+    if n < 2 {
+        return false;
+    }
+    if n < 4 {
+        return true;
+    }
+    if n % 2 == 0 || n % 3 == 0 {
+        return false;
+    }
+    let mut f = 5u64;
+    while f * f <= n {
+        if n % f == 0 || n % (f + 2) == 0 {
+            return false;
+        }
+        f += 6;
+    }
+    true
+}
+
+/// pond-ts `primeAtOrAbove`: the smallest prime `>= x`; `NaN` outside
+/// `[2, MAX_PRIME_INPUT]` or when no prime up to that limit qualifies.
+pub(crate) fn prime_at_or_above(x: f64) -> f64 {
+    if !x.is_finite() || x < 2.0 || x > MAX_PRIME_INPUT as f64 {
+        return f64::NAN;
+    }
+    (x.ceil() as u64..=MAX_PRIME_INPUT)
+        .find(|&n| is_prime(n))
+        .map_or(f64::NAN, |n| n as f64)
+}
+
+/// pond-ts `primeAtOrBelow`: the largest prime `<= x`; `NaN` outside
+/// `[2, MAX_PRIME_INPUT]`.
+pub(crate) fn prime_at_or_below(x: f64) -> f64 {
+    if !x.is_finite() || x < 2.0 || x > MAX_PRIME_INPUT as f64 {
+        return f64::NAN;
+    }
+    (2..=x.floor() as u64)
+        .rev()
+        .find(|&n| is_prime(n))
+        .map_or(f64::NAN, |n| n as f64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// JS `Math.max`: NaN wins, `+0` beats `-0` in either order.
+    #[test]
+    fn js_max_matches_math_max() {
+        assert!(js_max(f64::NAN, 1.0).is_nan());
+        assert!(js_max(1.0, f64::NAN).is_nan());
+        for (a, b) in [(-0.0, 0.0), (0.0, -0.0)] {
+            let m = js_max(a, b);
+            assert!(m == 0.0 && m.is_sign_positive(), "{a:?} {b:?}");
+        }
+        assert!(js_max(-0.0, -0.0).is_sign_negative());
+        assert_eq!(js_max(-1.0, 2.0), 2.0);
+        assert_eq!(js_max(3.0, 2.0), 3.0);
+    }
+
+    /// The prime ladder against trial division, and its edges.
+    #[test]
+    fn primes_match_trial_division() {
+        let slow = |n: u64| n >= 2 && (2..n).take_while(|d| d * d <= n).all(|d| n % d != 0);
+        for n in 0..5_000 {
+            assert_eq!(is_prime(n), slow(n), "{n}");
+        }
+        assert_eq!(prime_at_or_above(2.0), 2.0);
+        assert_eq!(prime_at_or_above(7.5), 11.0);
+        assert_eq!(prime_at_or_below(7.5), 7.0);
+        assert_eq!(prime_at_or_below(2.5), 2.0);
+        assert!(prime_at_or_below(1.99).is_nan());
+        assert!(prime_at_or_above(f64::INFINITY).is_nan());
+        // The largest prime below 2^53 is 2^53 - 111; above it, none qualify.
+        let largest = ((1u64 << 53) - 111) as f64;
+        assert_eq!(prime_at_or_below(((1u64 << 53) - 1) as f64), largest);
+        assert_eq!(prime_at_or_above(largest - 1.0), largest);
+        assert!(prime_at_or_above(largest + 1.0).is_nan());
+        assert!(prime_at_or_above((1u64 << 53) as f64).is_nan());
+    }
 
     /// Noisy input with gaps, runs of gaps, signed zeros, stored
     /// infinities (read as gaps) and values near 1e15, where a sum that kept its history would drift.

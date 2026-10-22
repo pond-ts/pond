@@ -96,14 +96,14 @@ fn to_series(json: &InputJson) -> TimeSeries {
 /// as all gaps (except where core `rolling` throws); pond-rs refuses it, as
 /// it refuses smoothing a text column.
 fn refused(series: &TimeSeries, case: &Case) -> bool {
-    let source = case
-        .options
-        .get("column")
-        .map_or("close", |c| c.as_str().unwrap());
-    !matches!(
-        series.column(source).map(|c| c.kind()),
-        Ok(pond_rs::ColumnKind::Number)
-    )
+    common::studies::sources(&case.study, &case.options)
+        .iter()
+        .any(|source| {
+            !matches!(
+                series.column(source).map(|c| c.kind()),
+                Ok(pond_rs::ColumnKind::Number)
+            )
+        })
 }
 
 fn check(case: &Case, input: &TimeSeries, got: &TimeSeries) -> Result<(), String> {

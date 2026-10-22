@@ -22,6 +22,24 @@ const make = (rows, gappy) =>
   });
 const dense = make(1_000_000, false);
 const gappy = make(1_000_000, true);
+// Price bars for the bands family: high and low a varying spread either
+// side of the close.
+const spread = (i) => ((i * 31) % 97) / 100 + 0.1;
+const bars = new TimeSeries({
+  name: 'bars',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'high', kind: 'number' },
+    { name: 'low', kind: 'number' },
+    { name: 'close', kind: 'number' },
+  ],
+  rows: Array.from({ length: 1_000_000 }, (_, i) => [
+    i * 60_000,
+    price(i) + spread(i),
+    price(i) - spread(i),
+    price(i),
+  ]),
+});
 
 const cases = [
   ['sma 20', 'sma', () => f.sma(dense, { period: 20 })],
@@ -54,6 +72,16 @@ const cases = [
   ['kst', 'kstSignal', () => f.kst(dense)],
   ['specialK', 'specialK', () => f.specialK(dense)],
   ['pmo', 'pmoSignal', () => f.priceMomentumOscillator(dense)],
+  ['bollinger 20', 'bbUpper', () => f.bollinger(bars, { period: 20 })],
+  ['bbWidth', 'bbWidth', () => f.bollingerBandwidth(bars)],
+  ['percentB', 'percentB', () => f.bollingerPercentB(bars)],
+  ['keltner', 'kcUpper', () => f.keltner(bars)],
+  ['starc', 'starcUpper', () => f.starcBands(bars)],
+  ['atrBands', 'atrbUpper', () => f.atrBands(bars)],
+  ['donchian', 'dcMiddle', () => f.donchian(bars)],
+  ['highLowBands', 'hlbUpper', () => f.highLowBands(bars)],
+  ['primeBands', 'pnbUpper', () => f.primeNumberBands(bars)],
+  ['envelope 20', 'envUpper', () => f.envelope(bars, { period: 20 })],
 ];
 
 const only = process.argv[2];

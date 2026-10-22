@@ -30,7 +30,49 @@ pub const STUDIES: &[&str] = &[
     "kst",
     "specialK",
     "priceMomentumOscillator",
+    "bollinger",
+    "bollingerBandwidth",
+    "bollingerPercentB",
+    "keltner",
+    "starcBands",
+    "atrBands",
+    "donchian",
+    "highLowBands",
+    "primeNumberBands",
+    "envelope",
 ];
+
+/// The columns `study` reads with these options: `column` (default
+/// `close`), or the price columns it takes (atrBands' `column` defaults to
+/// its `close`).
+pub fn sources(study: &str, options: &Map<String, Value>) -> Vec<String> {
+    let text = |key: &str, default: &str| {
+        options
+            .get(key)
+            .map_or(default, |v| v.as_str().unwrap())
+            .to_string()
+    };
+    match study {
+        "keltner" | "starcBands" => vec![
+            text("high", "high"),
+            text("low", "low"),
+            text("close", "close"),
+        ],
+        "atrBands" => {
+            let close = text("close", "close");
+            vec![
+                text("column", &close),
+                text("high", "high"),
+                text("low", "low"),
+                close,
+            ]
+        }
+        "donchian" | "highLowBands" | "primeNumberBands" => {
+            vec![text("high", "high"), text("low", "low")]
+        }
+        _ => vec![text("column", "close")],
+    }
+}
 
 /// Options pond-ts reads as bar counts.
 const PERIODS: &[&str] = &[
@@ -43,6 +85,7 @@ const PERIODS: &[&str] = &[
     "longPeriod",
     "shortPeriod",
     "wmaPeriod",
+    "atrPeriod",
 ];
 
 /// Calls `study` on `series` with pond-ts `options`. `None` when Rust
@@ -68,6 +111,20 @@ pub fn call_study(
             .map_or(default, |v| v.as_f64().unwrap() as usize)
     };
     let text = |key: &str| options.get(key).map(|v| v.as_str().unwrap());
+    let int_required = |key: &str| options.get(key).map(|v| v.as_f64().unwrap() as usize);
+    let num = |key: &str, default: f64| options.get(key).map_or(default, |v| v.as_f64().unwrap());
+    // Applies the price columns a study reads.
+    macro_rules! reads {
+        ($options:expr, $($src:ident),*) => {{
+            let mut o = $options;
+            $(
+                if let Some(c) = text(stringify!($src)) {
+                    o = o.$src(c);
+                }
+            )*
+            o
+        }};
+    }
     // An unknown moving-average name can't reach a study in Rust (`MaType`
     // is an enum), so pond-ts's error for it is not something to compare.
     if ["type", "maType"]
@@ -93,6 +150,16 @@ pub fn call_study(
         s
     };
     // Applies `column` and the naming option to an options struct.
+    // Applies only the naming option (for studies with no `column`).
+    macro_rules! name_only {
+        ($options:expr, $naming:ident) => {{
+            let mut o = $options;
+            if let Some(n) = text(stringify!($naming)) {
+                o = o.$naming(n);
+            }
+            o
+        }};
+    }
     macro_rules! named {
         ($options:expr, $naming:ident) => {{
             let mut o = $options;
@@ -201,6 +268,97 @@ pub fn call_study(
         "specialK" => series.special_k(named!(SpecialK::default(), output)),
         "priceMomentumOscillator" => {
             series.price_momentum_oscillator(named!(PriceMomentumOscillator::default(), prefix))
+        }
+        // pond-ts has no default period for these two: a call without one
+        // has no Rust spelling (it must throw in pond-ts).
+        "bollinger" => series.bollinger(named!(
+            Bollinger::new(int_required("period")?).std_dev(num("stdDev", 2.0)),
+            prefix
+        )),
+        "bollingerBandwidth" => series.bollinger_bandwidth(named!(
+            BollingerBandwidth::default()
+                .period(int("period", 20))
+                .std_dev(num("stdDev", 2.0)),
+            output
+        )),
+        "bollingerPercentB" => series.bollinger_percent_b(named!(
+            BollingerPercentB::default()
+                .period(int("period", 20))
+                .std_dev(num("stdDev", 2.0)),
+            output
+        )),
+        "keltner" => ma("maType", "ema").and_then(|kind| {
+            series.keltner(reads!(
+                name_only!(
+                    Keltner::default()
+                        .period(int("period", 20))
+                        .atr_period(int("atrPeriod", 10))
+                        .multiplier(num("multiplier", 2.0))
+                        .ma(kind),
+                    prefix
+                ),
+                high,
+                low,
+                close
+            ))
+        }),
+        "starcBands" => ma("maType", "sma").and_then(|kind| {
+            series.starc_bands(reads!(
+                name_only!(
+                    StarcBands::default()
+                        .period(int("period", 20))
+                        .atr_period(int("atrPeriod", 15))
+                        .multiplier(num("multiplier", 2.0))
+                        .ma(kind),
+                    prefix
+                ),
+                high,
+                low,
+                close
+            ))
+        }),
+        "atrBands" => series.atr_bands(reads!(
+            named!(
+                AtrBands::default()
+                    .period(int("period", 14))
+                    .multiplier(num("multiplier", 2.0)),
+                prefix
+            ),
+            high,
+            low,
+            close
+        )),
+        "donchian" => series.donchian(reads!(
+            name_only!(Donchian::default().period(int("period", 20)), prefix),
+            high,
+            low
+        )),
+        "highLowBands" => ma("maType", "trima").and_then(|kind| {
+            series.high_low_bands(reads!(
+                name_only!(
+                    HighLowBands::default()
+                        .period(int("period", 10))
+                        .percent(num("percent", 1.0))
+                        .ma(kind),
+                    prefix
+                ),
+                high,
+                low
+            ))
+        }),
+        "primeNumberBands" => series.prime_number_bands(reads!(
+            name_only!(PrimeNumberBands::default(), prefix),
+            high,
+            low
+        )),
+        "envelope" => {
+            let period = int_required("period")?;
+            ma("maType", "sma").and_then(|kind| {
+                series.envelope(named!(
+                    Envelope::new(period).percent(num("percent", 2.5)).ma(kind),
+                    prefix
+                ))
+            })
         }
         other => panic!("no pond-rs call for study '{other}'"),
     })

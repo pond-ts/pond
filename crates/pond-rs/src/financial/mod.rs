@@ -1,8 +1,9 @@
 //! Technical-analysis studies for price bars (pond-ts `@pond-ts/financial`):
 //! moving averages and the studies built on them (MACD, price oscillator,
-//! Guppy, rainbow, TRIX, Schaff, Coppock, KST, …), rolling statistics and
-//! the z-score so far, each a method on [`TimeSeries`] that adds its
-//! number columns and keeps every row.
+//! Guppy, rainbow, TRIX, Schaff, Coppock, KST, …), bands (Bollinger,
+//! Keltner, STARC, ATR, Donchian, high-low, prime number, envelope),
+//! rolling statistics and the z-score so far, each a method on
+//! [`TimeSeries`] that adds its number columns and keeps every row.
 //!
 //! Every study follows the same rules, as in pond-ts:
 //!
@@ -13,6 +14,8 @@
 //!   ([`Macd`], [`Trix`], …): `Default` is pond-ts's defaults, with a
 //!   setter per setting, `column`, and `output` (or `prefix`, for a study
 //!   that writes several columns: `macdLine`, `macdSignal`, `macdHist`).
+//!   A study that reads price bars takes `high`, `low` and `close` setters
+//!   instead of `column` ([`Keltner`], [`Donchian`], …).
 //!   No output may take the name of a column the series already has.
 //! - Periods count rows (bars), not time: a 20-bar average spans a weekend
 //!   gap as easily as a minute.
@@ -37,12 +40,19 @@
 //! # Ok::<(), pond_rs::PondError>(())
 //! ```
 
+#[macro_use]
+mod options;
 mod averages;
+mod bands;
 mod kernels;
 
 pub use averages::{
     Coppock, Guppy, Kst, Macd, MovingAverageCross, OscillatorMode, PriceMomentumOscillator,
     PriceOscillator, Rainbow, RainbowOscillator, SchaffTrendCycle, SpecialK, Trix,
+};
+pub use bands::{
+    AtrBands, Bollinger, BollingerBandwidth, BollingerPercentB, Donchian, Envelope, HighLowBands,
+    Keltner, PrimeNumberBands, StarcBands,
 };
 
 use std::borrow::Cow;
