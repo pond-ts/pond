@@ -1,6 +1,7 @@
-//! Timing for the R2 step 1 financial studies (`sma`, `ema`,
+//! Timing for the R2 financial studies: step 1 (`sma`, `ema`,
 //! `moving_average` of every type, `rolling_stdev` / `min` / `max` /
-//! `percentile`, `z_score`). Same data as `bench/studies_pond_ts.mjs` for
+//! `percentile`, `z_score`) and step 2a, the moving-average family (at
+//! pond-ts's defaults). Same data as `bench/studies_pond_ts.mjs` for
 //! the `@pond-ts/financial` side; both print a checksum per case (present
 //! values in the output and their sum) so the answers can be compared.
 //!
@@ -10,13 +11,15 @@
 //! exponential and z-score kernels read each row a constant number of
 //! times, plus a rebuild of P rows every P rows (O(N)). Min / max keep a
 //! queue of candidates (O(N)); the percentile goes through `rolling_rows`,
-//! which keeps the window sorted (O(N·P) worst case).
+//! which keeps the window sorted (O(N·P) worst case). Every step 2a study
+//! is a fixed number of those kernels plus O(N) arithmetic (guppy 12,
+//! rainbow 10, Special K 12 averages), so O(N).
 //! Mean / spread, WMA and min / max split rows across cores (same bits);
 //! `RAYON_NUM_THREADS=1` times them on one.
 
 use std::time::Instant;
 
-use pond_rs::financial::{MaType, Study};
+use pond_rs::financial::*;
 use pond_rs::{Column, TimeSeries};
 
 fn median_ms(mut f: impl FnMut() -> TimeSeries) -> (f64, TimeSeries) {
@@ -52,10 +55,33 @@ fn make(rows: usize, gappy: bool) -> TimeSeries {
     TimeSeries::new("bench", time, vec![Column::optional("close", close)]).unwrap()
 }
 
+/// 1M price bars: high and low a varying spread either side of the close,
+/// and an open (the next close).
+fn make_bars(rows: usize) -> TimeSeries {
+    let time = (0..rows as i64).map(|i| i * 60_000).collect();
+    let spread = |i: usize| ((i * 31) % 97) as f64 / 100.0 + 0.1;
+    let high: Vec<f64> = (0..rows).map(|i| price(i) + spread(i)).collect();
+    let low: Vec<f64> = (0..rows).map(|i| price(i) - spread(i)).collect();
+    let close: Vec<f64> = (0..rows).map(price).collect();
+    let open: Vec<f64> = (0..rows).map(|i| price(i + 1)).collect();
+    TimeSeries::new(
+        "bars",
+        time,
+        vec![
+            Column::required("high", high),
+            Column::required("low", low),
+            Column::required("close", close),
+            Column::required("open", open),
+        ],
+    )
+    .unwrap()
+}
+
 fn main() -> pond_rs::Result<()> {
     let only: Option<String> = std::env::args().nth(1);
     let dense = make(1_000_000, false);
     let gappy = make(1_000_000, true);
+    let bars = make_bars(1_000_000);
     let p = Study::period;
     type Case<'a> = (String, &'a str, Box<dyn Fn() -> TimeSeries + 'a>);
     let mut cases: Vec<Case> = vec![
@@ -118,6 +144,239 @@ fn main() -> pond_rs::Result<()> {
             Box::new(move || dense.moving_average(kind, p(20)).unwrap()),
         ));
     }
+    // R2 step 2a: the moving-average family, at pond-ts's defaults.
+    let family: Vec<Case> = vec![
+        (
+            "macd".into(),
+            "macdSignal",
+            Box::new(|| dense.macd(Macd::default()).unwrap()),
+        ),
+        (
+            "priceOsc".into(),
+            "priceOsc",
+            Box::new(|| dense.price_oscillator(PriceOscillator::default()).unwrap()),
+        ),
+        (
+            "maCross".into(),
+            "maCross",
+            Box::new(|| {
+                dense
+                    .moving_average_cross(MovingAverageCross::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "maDev 20".into(),
+            "maDev",
+            Box::new(|| dense.moving_average_deviation(MaType::Sma, p(20)).unwrap()),
+        ),
+        (
+            "disparity 14".into(),
+            "disparity",
+            Box::new(|| dense.disparity_index(MaType::Sma, p(14)).unwrap()),
+        ),
+        (
+            "dpo 20".into(),
+            "dpo",
+            Box::new(|| {
+                dense
+                    .detrended_price_oscillator(MaType::Sma, p(20))
+                    .unwrap()
+            }),
+        ),
+        (
+            "guppy".into(),
+            "gmmaL60",
+            Box::new(|| dense.guppy(Guppy::default()).unwrap()),
+        ),
+        (
+            "rainbow".into(),
+            "rainbow10",
+            Box::new(|| dense.rainbow(Rainbow::default()).unwrap()),
+        ),
+        (
+            "rbo".into(),
+            "rbo",
+            Box::new(|| {
+                dense
+                    .rainbow_oscillator(RainbowOscillator::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "trix".into(),
+            "trixSignal",
+            Box::new(|| dense.trix(Trix::default()).unwrap()),
+        ),
+        (
+            "stc".into(),
+            "stc",
+            Box::new(|| {
+                dense
+                    .schaff_trend_cycle(SchaffTrendCycle::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "coppock".into(),
+            "coppock",
+            Box::new(|| dense.coppock(Coppock::default()).unwrap()),
+        ),
+        (
+            "kst".into(),
+            "kstSignal",
+            Box::new(|| dense.kst(Kst::default()).unwrap()),
+        ),
+        (
+            "specialK".into(),
+            "specialK",
+            Box::new(|| dense.special_k(SpecialK::default()).unwrap()),
+        ),
+        (
+            "pmo".into(),
+            "pmoSignal",
+            Box::new(|| {
+                dense
+                    .price_momentum_oscillator(PriceMomentumOscillator::default())
+                    .unwrap()
+            }),
+        ),
+    ];
+    cases.extend(family);
+    // R2 step 2b: the bands family, at pond-ts's defaults.
+    let bands: Vec<Case> = vec![
+        (
+            "bollinger 20".into(),
+            "bbUpper",
+            Box::new(|| bars.bollinger(Bollinger::new(20)).unwrap()),
+        ),
+        (
+            "bbWidth".into(),
+            "bbWidth",
+            Box::new(|| {
+                bars.bollinger_bandwidth(BollingerBandwidth::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "percentB".into(),
+            "percentB",
+            Box::new(|| {
+                bars.bollinger_percent_b(BollingerPercentB::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "keltner".into(),
+            "kcUpper",
+            Box::new(|| bars.keltner(Keltner::default()).unwrap()),
+        ),
+        (
+            "starc".into(),
+            "starcUpper",
+            Box::new(|| bars.starc_bands(StarcBands::default()).unwrap()),
+        ),
+        (
+            "atrBands".into(),
+            "atrbUpper",
+            Box::new(|| bars.atr_bands(AtrBands::default()).unwrap()),
+        ),
+        (
+            "donchian".into(),
+            "dcMiddle",
+            Box::new(|| bars.donchian(Donchian::default()).unwrap()),
+        ),
+        (
+            "highLowBands".into(),
+            "hlbUpper",
+            Box::new(|| bars.high_low_bands(HighLowBands::default()).unwrap()),
+        ),
+        (
+            "primeBands".into(),
+            "pnbUpper",
+            Box::new(|| {
+                bars.prime_number_bands(PrimeNumberBands::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "envelope 20".into(),
+            "envUpper",
+            Box::new(|| bars.envelope(Envelope::new(20)).unwrap()),
+        ),
+    ];
+    cases.extend(bands);
+    // R2 step 2c part 1: momentum, at pond-ts's defaults.
+    let momentum: Vec<Case> = vec![
+        (
+            "rsi".into(),
+            "rsi",
+            Box::new(|| bars.rsi(Study::period(14)).unwrap()),
+        ),
+        (
+            "stochastic".into(),
+            "stochD",
+            Box::new(|| bars.stochastic(Stochastic::default()).unwrap()),
+        ),
+        (
+            "smi".into(),
+            "smiSignal",
+            Box::new(|| {
+                bars.stochastic_momentum_index(StochasticMomentumIndex::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "stochRsi".into(),
+            "stochRsiD",
+            Box::new(|| bars.stochastic_rsi(StochasticRsi::default()).unwrap()),
+        ),
+        (
+            "williamsR".into(),
+            "williamsR",
+            Box::new(|| bars.williams_r(WilliamsR::default()).unwrap()),
+        ),
+        (
+            "cmo".into(),
+            "cmo",
+            Box::new(|| bars.chande_momentum(Study::period(14)).unwrap()),
+        ),
+        (
+            "momentum".into(),
+            "momentum",
+            Box::new(|| bars.momentum(Study::period(10)).unwrap()),
+        ),
+        (
+            "pctChange".into(),
+            "pctChange",
+            Box::new(|| bars.percent_change(PercentChange::default()).unwrap()),
+        ),
+        (
+            "imi".into(),
+            "imi",
+            Box::new(|| {
+                bars.intraday_momentum_index(IntradayMomentumIndex::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "ao".into(),
+            "ao",
+            Box::new(|| {
+                bars.awesome_oscillator(AwesomeOscillator::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "uo".into(),
+            "uo",
+            Box::new(|| {
+                bars.ultimate_oscillator(UltimateOscillator::default())
+                    .unwrap()
+            }),
+        ),
+    ];
+    cases.extend(momentum);
     println!("| Case | pond-rs | checksum |");
     println!("| --- | --- | --- |");
     for (name, column, f) in &cases {

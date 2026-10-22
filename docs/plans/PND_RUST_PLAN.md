@@ -2598,6 +2598,196 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | ma kama 20  | 5.5              | 6.6             | 28.3    | 4.3x  |
     | ma zlema 20 | 6.1              | 5.7             | 18.9    | 3.3x  |
 
+  **R2 step 2a (done): the moving-average family.**
+  - Calls, as `@pond-ts/financial`'s moving-average family: `macd`,
+    `price_oscillator`, `moving_average_cross`, `guppy`, `rainbow`,
+    `rainbow_oscillator`, `trix`, `schaff_trend_cycle`, `coppock`, `kst`,
+    `special_k`, `price_momentum_oscillator` each take an options struct
+    named after the study (`Macd::default().fast(5).prefix("m")`):
+    `Default` is pond-ts's defaults, one setter per option, `column`, and
+    `output` or `prefix`. `moving_average_deviation`, `disparity_index`
+    and `detrended_price_oscillator` take `(MaType, Study)`, like
+    `moving_average`. `OscillatorMode` is the price oscillator's `mode`;
+    `ma` is pond-ts's `type` / `maType`.
+  - Ported as pond-ts writes them: averages read from the column go
+    through `ma_column` (pond-ts `movingAverageColumn`: `Sma` counts rows,
+    as `sma` does); averages of a derived line through
+    `moving_average_values` (waits for whole windows); `percentChange`,
+    `rollingExtremesValues`, `percentOfRangeValues`, `foldRows` (the cross
+    and the Schaff half-smoothing) and the KST / Special K terms in the
+    same order. macd refuses a series holding its scratch column
+    `__macdLine__`, as pond-ts does. Same known difference as step 1
+    (missing or non-number source refused).
+  - Parity: the fixture grew to 1,411 cases (inputs gained `named`, a
+    series that already has columns the studies write): every study at
+    its defaults on every input, small settings, every moving-average
+    type, other columns, signed zeros, custom names, collisions and every
+    error. 1,163 match bit for bit, 86 errors agree, 93 refused (known),
+    69 calls Rust cannot write (negative or fractional periods, an
+    unknown `mode` or moving-average name). Oracle: all 29 family cases pass (58 of 220 now).
+    Both harnesses call studies through one door,
+    `tests/common/studies.rs`. Planted bugs: 12 of 16 caught at first;
+    three cannot change any output (a guard that turns `±inf` into `NaN`,
+    and pond-rs reads every non-finite value as a gap anyway) and one (a
+    tie between `-0` and `0` in the high / low queue) is now caught by a
+    unit test against pond-ts's queue. 7 of 7 caught after the speed work.
+  - Perf (`examples/perf_studies.rs`, `bench/studies_pond_ts.mjs`; 1M
+    bars at pond-ts's defaults, checksums agree). All O(N): each study is
+    a fixed number of O(N) kernels. First cut was 2.3–5.8x pond-ts; what
+    was slow and the fixes, each giving the same bits:
+    - Fresh memory again: guppy holds twelve 8 MB columns, Special K made
+      24 in between. Independent averages now run on separate cores
+      (`par::map`, `par::join`); KST / Special K work through their terms
+      stretch by stretch with small buffers of their own (no term is
+      held for the whole column), checked by a unit test that cuts 6,000
+      rows into stretches of 1 to 6,000.
+    - Chained EMAs (macd, trix, the PMO, Schaff's MACD line, and step 1's
+      `Dema` / `Tema`) run in one pass with a row-at-a-time `Ema` (the
+      same operations in the same order): no column in between, and the
+      chains overlap in the processor. Dema 9.9 → 6.6 ms, Tema 13.1 → 5.6.
+    - pond-ts's high / low queue (Schaff) was 18 ms: replaced by van Herk
+      / Gil-Werman blocks (three comparisons a row, later rows win ties,
+      stretches on separate cores); a unit test checks it against the
+      queue, signed-zero ties included, at every stretch size (6 of 6
+      planted tie bugs caught). `rolling_mean_values` (the masked mean)
+      and the rainbow oscillator's per-row loop split across cores too.
+  - Medians of 7, 1M bars, ms; 1 thread is `RAYON_NUM_THREADS=1`:
+
+    | Study    | first cut | 1 thread | 4 cores | pond-ts | ratio |
+    | -------- | --------- | -------- | ------- | ------- | ----- |
+    | macd     | 26.6      | 7.9      | 8.1     | 73.5    | 9.1x  |
+    | priceOsc | 10.6      | 8.6      | 11.5    | 48.1    | 4.2x  |
+    | maCross  | 11.1      | 21.0     | 12.4    | 64.6    | 5.2x  |
+    | maDev    | 4.2       | 7.2      | 4.3     | 31.9    | 7.4x  |
+    | dispar.  | 3.9       | 8.4      | 4.4     | 44.1    | 10x   |
+    | dpo      | 3.8       | 11.5     | 5.3     | 29.7    | 5.6x  |
+    | guppy    | 79.1      | 93.5     | 30.8    | 184.6   | 6.0x  |
+    | rainbow  | 49.1      | 101.0    | 41.4    | 234.2   | 5.7x  |
+    | rbo      | 70.3      | 152.3    | 56.6    | 404.9   | 7.2x  |
+    | trix     | 18.7      | 8.6      | 8.0     | 45.0    | 5.6x  |
+    | stc      | 67.3      | 55.3     | 41.6    | 158.5   | 3.8x  |
+    | coppock  | 9.3       | 19.4     | 12.8    | 38.4    | 3.0x  |
+    | kst      | 47.5      | 86.0     | 20.5    | 138.4   | 6.8x  |
+    | specialK | 100.2     | 112.4    | 42.1    | 278.9   | 6.6x  |
+    | pmo      | 15.3      | 7.4      | 8.3     | 44.0    | 5.3x  |
+
+    This box runs four cores in a shared VM; single runs move by up to
+    a third, so read ratios to one significant figure.
+
+  **R2 step 2b (done): the bands family.**
+  - Calls, as `@pond-ts/financial`'s bands family: `bollinger`,
+    `bollinger_bandwidth`, `bollinger_percent_b`, `keltner`,
+    `starc_bands`, `atr_bands`, `donchian`, `high_low_bands`,
+    `prime_number_bands` and `envelope`, each with an options struct
+    named after it, as in step 2a. pond-ts has no default period for
+    `bollinger` and `envelope`, so those structs have `new(period)`
+    instead of `Default`. Studies that read price bars take `high`,
+    `low` and `close` setters instead of `column` (`atr_bands` has both;
+    its `column` follows a moved `close`, as in pond-ts). The macro that
+    writes the structs moved to `src/financial/options.rs`.
+  - Ported as pond-ts writes them: Bollinger through the range-exact
+    mean and spread; Keltner and high-low bands average a derived line
+    (typical or median price) through `moving_average_values`, STARC and
+    the envelope average the column through `ma_column`; the true range
+    takes JS `Math.max` (a gap gives a gap, `+0` beats `-0`), then
+    Wilder's smoothing; Donchian is step 1's rolling high and low; prime
+    bands port pond-ts's 6k ± 1 ladder (whole numbers up to 2^53 - 1).
+  - Parity: the fixture grew to 1,887 cases. A new `ohlc` input has gaps
+    in close only, high only, low only and whole bars, a stretch where
+    high = low = close (zero spread and zero true range), signed zeros,
+    a `prime` column across the prime limits, and columns a band prefix
+    collides with. Because Wilder's smoothing never recovers from a gap,
+    a second input, `lead`, has gaps only at the start (shifting the
+    seed) and a zero-true-range stretch, so the ATR studies get 70-80
+    values a case; `ohlcEmpty` is the empty bar input. Studies of price
+    bars only run on inputs with high and low. 1,504 match bit for bit,
+    139 errors agree, 133 refused (the known missing-column difference,
+    now checked for every price column a study reads), 111 calls Rust
+    cannot write. Oracle:
+    all 18 family cases pass (76 of 220 now); the oracle input now
+    carries open, high, low and volume too. Planted bugs: 17 of 20
+    caught; the other 3 change no output here: `c + -k * w` vs
+    `c - k * w` (twice) is always the same in floating point, and
+    `(h + l) / 2` vs `h / 2 + l / 2` differ only on overflow or numbers
+    too small for full precision, which no fixture input has. A unit
+    test pins `js_max` on signed zeros (the true range never produces
+    `-0`, so the fixture can't). Two ATR bugs planted after the review
+    (Wilder's seed not shifted past leading gaps; gaps dropped by the
+    max) are both caught.
+  - Perf: all O(N) except prime bands, which cost O(√x) per value (as in
+    pond-ts). The average true range is one sequential pass (each value
+    needs the last, so it cannot split across cores without changing
+    bits); it now takes each row's true range as it goes instead of
+    building the column first. Centre and true range run on separate
+    cores; band arithmetic and prime rows split across cores.
+  - Medians of 7, 1M bars at pond-ts's defaults, ms:
+
+    | Study     | 1 thread | 4 cores | pond-ts | ratio |
+    | --------- | -------- | ------- | ------- | ----- |
+    | bollinger | 39.8     | 12.2    | 80.2    | 6.6x  |
+    | bbWidth   | 24.3     | 10.7    | 53.5    | 5.0x  |
+    | percentB  | 26.7     | 12.1    | 83.7    | 6.9x  |
+    | keltner   | 22.6     | 12.6    | 63.0    | 5.0x  |
+    | starc     | 24.1     | 12.8    | 71.0    | 5.5x  |
+    | atrBands  | 24.5     | 16.2    | 49.3    | 3.0x  |
+    | donchian  | 17.7     | 8.6     | 165.9   | 19x   |
+    | hlBands   | 36.1     | 15.0    | 78.8    | 5.3x  |
+    | prime     | 41.6     | 17.0    | 68.3    | 4.0x  |
+    | envelope  | 18.6     | 7.1     | 66.5    | 9.4x  |
+
+    atrBands is the slowest ratio: its Wilder pass is a chain of
+    multiply, add and divide on every row (about 8 ms at 1M rows), which
+    pond-ts pays too.
+
+  **R2 step 2c part 1 (done): momentum, first 11 studies.**
+  - Calls, as `@pond-ts/financial`'s momentum family: `rsi`,
+    `chande_momentum` and `momentum` take a plain `Study` (pond-ts's
+    default periods 14, 14 and 10 are in their docs); `stochastic`,
+    `stochastic_momentum_index`, `stochastic_rsi`, `williams_r`,
+    `percent_change`, `intraday_momentum_index`, `awesome_oscillator`
+    and `ultimate_oscillator` take an options struct named after the
+    study, as in step 2b. `stochastic_rsi` refuses a series that has
+    pond-ts's scratch column `__stochRsiRsi__`, as pond-ts does (it
+    writes its RSI there first). Part 2 (cci, fisher transform,
+    psychological line, pretty good oscillator, prime number oscillator,
+    qstick, relative vigor index, centre of gravity, Chande forecast,
+    true strength index) is next.
+  - Ported as pond-ts writes them: rises and falls of each change, then
+    Wilder's average (RSI) or the window mean (CMO, IMI); stochastics
+    through step 1's rolling high and low, except stochastic RSI, which
+    uses pond-ts's own rolling-extremes kernel; JS `Math.min` (new
+    `js_min`: a gap gives a gap, `-0` beats `+0`) for the ultimate
+    oscillator's buying pressure.
+  - Parity: the fixture grew to 2,274 cases (the `lead` input gained an
+    open column; the `named` input gained the scratch column). 1,753
+    match bit for bit, 191 errors agree, 175 refused (known missing
+    column difference), 155 calls Rust cannot write. Oracle: 98 of 220
+    cases now. Planted bugs: 19 of 22 caught; the 3 missed were a change
+    of `-0` (neither a rise nor a fall, and no input row gives one), `-0`
+    in `js_min`, and a mutation that changed nothing. Unit tests now pin
+    both signed-zero cases.
+  - Perf: all O(N). RSI runs both Wilder averages in one pass with no
+    column in between (33 → 9 ms); SMI runs its five EMAs row by row in
+    one pass (48 → 25 ms). Both are the same operations in the same
+    order, so the same bits (parity still passes; planted swaps in
+    either are caught).
+  - Medians of 7, 1M bars at pond-ts's defaults, ms (pond-ts run alone
+    per study):
+
+    | Study      | 1 thread | 4 cores | pond-ts | ratio |
+    | ---------- | -------- | ------- | ------- | ----- |
+    | rsi        | 9.9      | 9.2     | 58.2    | 6.3x  |
+    | stochastic | 61.7     | 19.8    | 320.9   | 16x   |
+    | smi        | 49.5     | 25.5    | 284.9   | 11x   |
+    | stochRsi   | 47.0     | 30.3    | 218.2   | 7.2x  |
+    | williamsR  | 30.0     | 12.1    | 220.7   | 18x   |
+    | cmo        | 27.4     | 17.1    | 94.6    | 5.5x  |
+    | momentum   | 3.0      | 2.9     | 19.6    | 6.8x  |
+    | pctChange  | 3.1      | 2.5     | 23.4    | 9.4x  |
+    | imi        | 27.5     | 17.2    | 116.6   | 6.8x  |
+    | ao         | 31.1     | 13.4    | 75.0    | 5.6x  |
+    | uo         | 73.4     | 32.5    | 262.9   | 8.1x  |
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).

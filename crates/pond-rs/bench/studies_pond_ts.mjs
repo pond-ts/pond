@@ -22,6 +22,26 @@ const make = (rows, gappy) =>
   });
 const dense = make(1_000_000, false);
 const gappy = make(1_000_000, true);
+// Price bars for the bands family: high and low a varying spread either
+// side of the close.
+const spread = (i) => ((i * 31) % 97) / 100 + 0.1;
+const bars = new TimeSeries({
+  name: 'bars',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'high', kind: 'number' },
+    { name: 'low', kind: 'number' },
+    { name: 'close', kind: 'number' },
+    { name: 'open', kind: 'number' },
+  ],
+  rows: Array.from({ length: 1_000_000 }, (_, i) => [
+    i * 60_000,
+    price(i) + spread(i),
+    price(i) - spread(i),
+    price(i),
+    price(i + 1),
+  ]),
+});
 
 const cases = [
   ['sma 20', 'sma', () => f.sma(dense, { period: 20 })],
@@ -39,6 +59,42 @@ const cases = [
     'ma',
     () => f.movingAverage(dense, { period: 20, type }),
   ]),
+  ['macd', 'macdSignal', () => f.macd(dense)],
+  ['priceOsc', 'priceOsc', () => f.priceOscillator(dense)],
+  ['maCross', 'maCross', () => f.movingAverageCross(dense)],
+  ['maDev 20', 'maDev', () => f.movingAverageDeviation(dense, { period: 20 })],
+  ['disparity 14', 'disparity', () => f.disparityIndex(dense, { period: 14 })],
+  ['dpo 20', 'dpo', () => f.detrendedPriceOscillator(dense, { period: 20 })],
+  ['guppy', 'gmmaL60', () => f.guppy(dense)],
+  ['rainbow', 'rainbow10', () => f.rainbow(dense)],
+  ['rbo', 'rbo', () => f.rainbowOscillator(dense)],
+  ['trix', 'trixSignal', () => f.trix(dense)],
+  ['stc', 'stc', () => f.schaffTrendCycle(dense)],
+  ['coppock', 'coppock', () => f.coppock(dense)],
+  ['kst', 'kstSignal', () => f.kst(dense)],
+  ['specialK', 'specialK', () => f.specialK(dense)],
+  ['pmo', 'pmoSignal', () => f.priceMomentumOscillator(dense)],
+  ['bollinger 20', 'bbUpper', () => f.bollinger(bars, { period: 20 })],
+  ['bbWidth', 'bbWidth', () => f.bollingerBandwidth(bars)],
+  ['percentB', 'percentB', () => f.bollingerPercentB(bars)],
+  ['keltner', 'kcUpper', () => f.keltner(bars)],
+  ['starc', 'starcUpper', () => f.starcBands(bars)],
+  ['atrBands', 'atrbUpper', () => f.atrBands(bars)],
+  ['donchian', 'dcMiddle', () => f.donchian(bars)],
+  ['highLowBands', 'hlbUpper', () => f.highLowBands(bars)],
+  ['primeBands', 'pnbUpper', () => f.primeNumberBands(bars)],
+  ['envelope 20', 'envUpper', () => f.envelope(bars, { period: 20 })],
+  ['rsi', 'rsi', () => f.rsi(bars)],
+  ['stochastic', 'stochD', () => f.stochastic(bars)],
+  ['smi', 'smiSignal', () => f.stochasticMomentumIndex(bars)],
+  ['stochRsi', 'stochRsiD', () => f.stochasticRsi(bars)],
+  ['williamsR', 'williamsR', () => f.williamsR(bars)],
+  ['cmo', 'cmo', () => f.chandeMomentum(bars)],
+  ['momentum', 'momentum', () => f.momentum(bars)],
+  ['pctChange', 'pctChange', () => f.percentChange(bars)],
+  ['imi', 'imi', () => f.intradayMomentumIndex(bars)],
+  ['ao', 'ao', () => f.awesomeOscillator(bars)],
+  ['uo', 'uo', () => f.ultimateOscillator(bars)],
 ];
 
 const only = process.argv[2];

@@ -6,27 +6,14 @@
 
 mod common;
 
+use common::studies::{STUDIES, call_study};
 use common::{cell_number, compare_number, repo_path};
-use pond_rs::financial::{MaType, Study};
 use pond_rs::{Column, ColumnData, TimeSeries};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
 const FIXTURE: &str = "packages/financial/test/fixtures/study-parity.json";
-
-/// Studies with an arm in [`run`]. Every case for a listed study must run;
-/// a case for a study not listed fails `every_study_is_known`.
-const IMPLEMENTED: &[&str] = &[
-    "sma",
-    "ema",
-    "movingAverage",
-    "rollingStdev",
-    "rollingMin",
-    "rollingMax",
-    "rollingPercentile",
-    "zScore",
-];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -105,54 +92,18 @@ fn to_series(json: &InputJson) -> TimeSeries {
     TimeSeries::new(&json.name, time, columns).expect("fixture input is a valid series")
 }
 
-/// What a case asks for, or `None` when Rust cannot even express it (a
-/// period that is negative or not whole): pond-ts must then refuse it.
-fn run(series: &TimeSeries, case: &Case) -> Option<pond_rs::Result<TimeSeries>> {
-    let o = &case.options;
-    let period = o["period"].as_f64().unwrap();
-    if period < 0.0 || period.fract() != 0.0 {
-        return None;
-    }
-    let mut study = Study::period(period as usize);
-    if let Some(column) = o.get("column") {
-        study = study.column(column.as_str().unwrap());
-    }
-    if let Some(output) = o.get("output") {
-        study = study.output(output.as_str().unwrap());
-    }
-    Some(match case.study.as_str() {
-        "sma" => series.sma(study),
-        "ema" => series.ema(study),
-        "movingAverage" => {
-            let kind = o.get("type").map_or("sma", |t| t.as_str().unwrap());
-            // pond-ts checks the period before the type.
-            if period == 0.0 {
-                series.moving_average(MaType::Sma, study)
-            } else {
-                MaType::parse(kind).and_then(|kind| series.moving_average(kind, study))
-            }
-        }
-        "rollingStdev" => series.rolling_stdev(study),
-        "rollingMin" => series.rolling_min(study),
-        "rollingMax" => series.rolling_max(study),
-        "rollingPercentile" => series.rolling_percentile(o["q"].as_f64().unwrap(), study),
-        "zScore" => series.z_score(study),
-        other => panic!("{}: no arm for study '{other}'", case.id),
-    })
-}
-
 /// Known difference: pond-ts reads a missing or non-number source column
 /// as all gaps (except where core `rolling` throws); pond-rs refuses it, as
 /// it refuses smoothing a text column.
 fn refused(series: &TimeSeries, case: &Case) -> bool {
-    let source = case
-        .options
-        .get("column")
-        .map_or("close", |c| c.as_str().unwrap());
-    !matches!(
-        series.column(source).map(|c| c.kind()),
-        Ok(pond_rs::ColumnKind::Number)
-    )
+    common::studies::sources(&case.study, &case.options)
+        .iter()
+        .any(|source| {
+            !matches!(
+                series.column(source).map(|c| c.kind()),
+                Ok(pond_rs::ColumnKind::Number)
+            )
+        })
 }
 
 fn check(case: &Case, input: &TimeSeries, got: &TimeSeries) -> Result<(), String> {
@@ -210,16 +161,13 @@ fn studies_match_pond_ts() {
     let mut failures = Vec::new();
     let (mut matched, mut errors, mut refusals, mut unexpressible) = (0, 0, 0, 0);
     for case in &fixture.cases {
-        if !IMPLEMENTED.contains(&case.study.as_str()) {
-            continue;
-        }
         let label = format!("{} {}", case.id, Value::Object(case.options.clone()));
         let input = &inputs[case.input.as_str()];
-        let Some(got) = run(input, case) else {
+        let Some(got) = call_study(input, &case.study, &case.options) else {
             unexpressible += 1;
             if case.error.is_none() {
                 failures.push(format!(
-                    "{label}: pond-ts accepts a period Rust cannot express"
+                    "{label}: pond-ts accepts a call Rust cannot express"
                 ));
             }
             continue;
@@ -242,7 +190,7 @@ fn studies_match_pond_ts() {
         }
     }
     println!(
-        "study parity: {matched} matched, {errors} errors agree, {refusals} refused (known), {unexpressible} periods Rust cannot express"
+        "study parity: {matched} matched, {errors} errors agree, {refusals} refused (known), {unexpressible} calls Rust cannot express"
     );
     assert!(
         failures.is_empty(),
@@ -258,8 +206,8 @@ fn every_study_is_known() {
     let fixture = load();
     for case in &fixture.cases {
         assert!(
-            IMPLEMENTED.contains(&case.study.as_str()),
-            "{}: study '{}' has no arm in run()",
+            STUDIES.contains(&case.study.as_str()),
+            "{}: study '{}' has no arm in call_study()",
             case.id,
             case.study
         );

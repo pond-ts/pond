@@ -16,6 +16,8 @@
 
 #![allow(dead_code)] // each test binary uses a different subset
 
+pub mod studies;
+
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;

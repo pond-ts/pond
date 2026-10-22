@@ -200,22 +200,57 @@ fn mean_sd_into<const SD: bool>(
 }
 
 /// pond-ts `rollingMeanValues`: [`rolling_mean_sd`]'s mean, but a gap
-/// wherever the window holds a gap or is not yet full.
+/// wherever the window holds a gap or is not yet full. Split across cores
+/// like it, same bits.
 pub(crate) fn rolling_mean_values(values: &[f64], period: usize) -> Vec<f64> {
-    let (mut out, _) = rolling_mean_sd(values, period, false);
-    let mut missing = 0usize;
-    for i in 0..values.len() {
+    rolling_mean_values_chunked(values, period, chunk_rows(period))
+}
+
+fn rolling_mean_values_chunked(values: &[f64], period: usize, chunk: usize) -> Vec<f64> {
+    let mut out = vec![0.0; values.len()];
+    crate::par::fill_chunks(&mut out, &mut [], chunk, |start, out, _| {
+        rolling_mean_values_into(values, period, start, out)
+    });
+    out
+}
+
+/// [`rolling_mean_values`] for rows `start..start + out.len()`. Reads rows
+/// from [`mean_values_reads_from`]`(start, period)` on, so a caller may
+/// pass `values` with the rows before that cut off (and `start` shifted
+/// down to match): that cut is a multiple of `period`, so the rows where
+/// the sums are rebuilt stay the same.
+pub(crate) fn rolling_mean_values_into(
+    values: &[f64],
+    period: usize,
+    start: usize,
+    out: &mut [f64],
+) {
+    mean_sd_into::<false>(values, period, start, out, &mut []);
+    // Gaps in the window [i + 1 - period, i].
+    let from = (start + 1).saturating_sub(period);
+    let mut missing = values[from..start]
+        .iter()
+        .filter(|v| !v.is_finite())
+        .count();
+    for (k, o) in out.iter_mut().enumerate() {
+        let i = start + k;
         if !values[i].is_finite() {
             missing += 1;
         }
-        if i >= period && !values[i - period].is_finite() {
+        if i + 1 < period || missing > 0 {
+            *o = f64::NAN;
+        }
+        if i + 1 >= period && !values[i + 1 - period].is_finite() {
             missing -= 1;
         }
-        if i + 1 < period || missing > 0 {
-            out[i] = f64::NAN;
-        }
     }
-    out
+}
+
+/// The first row [`rolling_mean_values_into`] reads for rows from
+/// `start`: the window before the last rebuild row at or before `start`,
+/// rounded down to a multiple of `period`.
+pub(crate) fn mean_values_reads_from(start: usize, period: usize) -> usize {
+    (start / period * period + 1).saturating_sub(period) / period * period
 }
 
 /// pond-ts `rollingDeviationSd`, for the z-score: each value's distance
@@ -315,32 +350,64 @@ pub(crate) fn wilder_values(values: &[f64], period: usize) -> Vec<f64> {
 /// (a gap row gets a gap and leaves the average as it was), starting from
 /// the first value, with a gap until `min_samples` values have been read.
 pub(crate) fn alpha_ema_values(values: &[f64], alpha: f64, min_samples: usize) -> Vec<f64> {
-    let mut out = vec![f64::NAN; values.len()];
-    let mut previous = 0.0;
-    let mut seeded = false;
-    let mut seen = 0usize;
-    for (i, &raw) in values.iter().enumerate() {
-        if !raw.is_finite() {
-            continue;
-        }
-        previous = if seeded {
-            alpha * raw + (1.0 - alpha) * previous
-        } else {
-            raw
-        };
-        seeded = true;
-        seen += 1;
-        if seen >= min_samples {
-            out[i] = previous;
-        }
-    }
-    out
+    let mut ema = Ema::new(alpha, min_samples);
+    values.iter().map(|&raw| ema.push(raw)).collect()
 }
 
 /// The `period`-bar EMA: alpha `2 / (period + 1)`, a gap until `period`
 /// values have been read.
 pub(crate) fn ema_values(values: &[f64], period: usize) -> Vec<f64> {
     alpha_ema_values(values, 2.0 / (period as f64 + 1.0), period)
+}
+
+/// [`alpha_ema_values`] one row at a time, so studies that chain several
+/// averages can run them in one pass over the rows (no column in between,
+/// and the chains overlap in the processor). The same operations in the
+/// same order, so the same bits.
+#[derive(Debug, Clone)]
+pub(crate) struct Ema {
+    alpha: f64,
+    min_samples: usize,
+    previous: f64,
+    seeded: bool,
+    seen: usize,
+}
+
+impl Ema {
+    pub(crate) fn new(alpha: f64, min_samples: usize) -> Self {
+        Self {
+            alpha,
+            min_samples,
+            previous: 0.0,
+            seeded: false,
+            seen: 0,
+        }
+    }
+
+    /// The `period`-bar EMA ([`ema_values`]).
+    pub(crate) fn period(period: usize) -> Self {
+        Self::new(2.0 / (period as f64 + 1.0), period)
+    }
+
+    /// Reads the next row's value and gives that row's average.
+    #[inline]
+    pub(crate) fn push(&mut self, raw: f64) -> f64 {
+        if !raw.is_finite() {
+            return f64::NAN;
+        }
+        self.previous = if self.seeded {
+            self.alpha * raw + (1.0 - self.alpha) * self.previous
+        } else {
+            raw
+        };
+        self.seeded = true;
+        self.seen += 1;
+        if self.seen >= self.min_samples {
+            self.previous
+        } else {
+            f64::NAN
+        }
+    }
 }
 
 /// pond-ts `wmaValues`: weights 1..=period, newest heaviest. A gap wherever
@@ -418,24 +485,30 @@ fn wma_into(values: &[f64], period: usize, start: usize, out: &mut [f64]) {
 }
 
 fn dema_values(values: &[f64], period: usize) -> Vec<f64> {
-    let first = ema_values(values, period);
-    let mut out = ema_values(&first, period);
-    // In place: one fresh buffer fewer (getting fresh memory from the
-    // system is a real share of the cost at 1M rows).
-    for (o, &a) in out.iter_mut().zip(&first) {
-        *o = 2.0 * a - *o;
-    }
-    out
+    // One pass: the second EMA reads the first row by row.
+    let mut e1 = Ema::period(period);
+    let mut e2 = e1.clone();
+    values
+        .iter()
+        .map(|&v| {
+            let a = e1.push(v);
+            2.0 * a - e2.push(a)
+        })
+        .collect()
 }
 
 fn tema_values(values: &[f64], period: usize) -> Vec<f64> {
-    let first = ema_values(values, period);
-    let second = ema_values(&first, period);
-    let mut out = ema_values(&second, period);
-    for ((o, &a), &b) in out.iter_mut().zip(&first).zip(&second) {
-        *o += 3.0 * a - 3.0 * b; // (3a - 3b) + o, as pond-ts adds it
-    }
-    out
+    let mut e1 = Ema::period(period);
+    let (mut e2, mut e3) = (e1.clone(), e1.clone());
+    values
+        .iter()
+        .map(|&v| {
+            let a = e1.push(v);
+            let b = e2.push(a);
+            // (3a - 3b) + c, as pond-ts adds it.
+            e3.push(b) + (3.0 * a - 3.0 * b)
+        })
+        .collect()
 }
 
 /// An SMA of an SMA whose two lengths add up to `period + 1`.
@@ -575,9 +648,412 @@ fn extreme_into<const MAX: bool>(values: &[f64], period: usize, start: usize, ou
     }
 }
 
+/// The moving average a study takes from a column (pond-ts
+/// `movingAverageColumn`): `Sma` keeps [`rolling_mean_sd`]'s row-counting
+/// window, so it is exactly `sma()`; every other type is
+/// [`moving_average_values`].
+pub(crate) fn ma_column(values: &[f64], period: usize, kind: MaType) -> Vec<f64> {
+    match kind {
+        MaType::Sma => rolling_mean_sd(values, period, false).0,
+        other => moving_average_values(values, period, other),
+    }
+}
+
+/// pond-ts `percentChangeValues`: the percent change from `periods` rows
+/// back, `(value / previous - 1) * 100`; a gap for the first `periods`
+/// rows and where the earlier value is zero or a gap.
+pub(crate) fn percent_change_values(values: &[f64], periods: usize) -> Vec<f64> {
+    (0..values.len())
+        .map(|i| percent_change_at(values, periods, i))
+        .collect()
+}
+
+/// Row `i` of [`percent_change_values`].
+pub(crate) fn percent_change_at(values: &[f64], periods: usize, i: usize) -> f64 {
+    if i < periods {
+        return f64::NAN;
+    }
+    percent_change(values[i - periods], values[i])
+}
+
+/// `(value / previous - 1) * 100`, or a gap when `previous` is zero.
+#[inline]
+pub(crate) fn percent_change(previous: f64, value: f64) -> f64 {
+    if previous == 0.0 {
+        f64::NAN
+    } else {
+        (value / previous - 1.0) * 100.0
+    }
+}
+
+/// pond-ts `rollingExtremesValues`: the highest and lowest of each
+/// `period`-row window, a gap until the window is full and wherever it
+/// holds a gap (the strict rule for a derived input). Of equal values the
+/// latest wins (only `-0` and `0` can tell).
+///
+/// pond-ts keeps a queue of candidates; this gives the same values by
+/// van Herk / Gil-Werman blocks: cut the rows into blocks of `period`,
+/// keep each block's running best from its start (`prefix`) and from its
+/// end (`suffix`); a window is then one block's suffix and the next one's
+/// prefix. Three comparisons a row whatever the data, and a stretch of
+/// rows needs only its own blocks, so stretches run on separate cores.
+pub(crate) fn rolling_extremes_strict(values: &[f64], period: usize) -> (Vec<f64>, Vec<f64>) {
+    extremes_strict_chunked(values, period, chunk_rows(period))
+}
+
+fn extremes_strict_chunked(values: &[f64], period: usize, chunk: usize) -> (Vec<f64>, Vec<f64>) {
+    let n = values.len();
+    let mut highest = vec![0.0; n];
+    let mut lowest = vec![0.0; n];
+    crate::par::fill_chunks(&mut highest, &mut lowest, chunk, |start, high, low| {
+        extremes_strict_into(values, period, start, high, low)
+    });
+    (highest, lowest)
+}
+
+fn extremes_strict_into(
+    values: &[f64],
+    period: usize,
+    start: usize,
+    high: &mut [f64],
+    low: &mut [f64],
+) {
+    let end = start + high.len();
+    // The first window this stretch reads starts here; blocks are aligned
+    // to multiples of `period` from row 0.
+    let from = (start + 1).saturating_sub(period);
+    let base = from / period * period;
+    let len = end - base;
+    // Running bests within each block: from its start (`pre_*`) and from
+    // its end (`suf_*`). Later rows win ties.
+    let (mut pre_hi, mut pre_lo) = (vec![0.0; len], vec![0.0; len]);
+    let (mut suf_hi, mut suf_lo) = (vec![0.0; len], vec![0.0; len]);
+    for block in (base..end).step_by(period) {
+        let stop = block.saturating_add(period).min(end);
+        let (mut h, mut l) = (values[block], values[block]);
+        for i in block..stop {
+            let v = values[i];
+            if v >= h {
+                h = v;
+            }
+            if v <= l {
+                l = v;
+            }
+            pre_hi[i - base] = h;
+            pre_lo[i - base] = l;
+        }
+        let (mut h, mut l) = (values[stop - 1], values[stop - 1]);
+        for i in (block..stop).rev() {
+            let v = values[i];
+            if v > h {
+                h = v;
+            }
+            if v < l {
+                l = v;
+            }
+            suf_hi[i - base] = h;
+            suf_lo[i - base] = l;
+        }
+    }
+    // Gaps in the current window [i + 1 - period, i].
+    let mut missing = values[from..start]
+        .iter()
+        .filter(|v| !v.is_finite())
+        .count();
+    for i in start..end {
+        if !values[i].is_finite() {
+            missing += 1;
+        }
+        let k = i - start;
+        if i + 1 < period || missing > 0 {
+            high[k] = f64::NAN;
+            low[k] = f64::NAN;
+        } else {
+            // The window is the suffix of `first`'s block and the prefix of
+            // `i`'s (the same block, read twice, when `first` starts one).
+            // The suffix part is earlier, so the prefix wins ties.
+            let first = i + 1 - period;
+            let (ph, pl) = (pre_hi[i - base], pre_lo[i - base]);
+            let (sh, sl) = (suf_hi[first - base], suf_lo[first - base]);
+            high[k] = if sh > ph { sh } else { ph };
+            low[k] = if sl < pl { sl } else { pl };
+        }
+        if i + 1 >= period && !values[i + 1 - period].is_finite() {
+            missing -= 1;
+        }
+    }
+}
+
+/// pond-ts `percentOfRangeValues`: where `value` sits in `[lowest,
+/// highest]`, 0 to 100; a gap for an empty range.
+#[inline]
+pub(crate) fn percent_of_range(highest: f64, lowest: f64, value: f64) -> f64 {
+    let range = highest - lowest;
+    if range == 0.0 {
+        f64::NAN
+    } else {
+        (100.0 * (value - lowest)) / range
+    }
+}
+
+/// The Schaff trend cycle's step, in one pass: [`percent_of_range`] of
+/// each value over its window's highest and lowest, then pond-ts's
+/// `foldRows` half-smoothing of that: within each run of values, the
+/// first is kept as it is and each later one moves halfway from the
+/// previous output toward it. A gap row gets a gap and starts a new run.
+pub(crate) fn stochastic_half_smooth(highest: &[f64], lowest: &[f64], values: &[f64]) -> Vec<f64> {
+    let mut out = vec![0.0; values.len()];
+    let mut previous = f64::NAN;
+    let mut run = 0usize;
+    for (i, o) in out.iter_mut().enumerate() {
+        let raw = percent_of_range(highest[i], lowest[i], values[i]);
+        if raw.is_nan() {
+            run = 0;
+            *o = f64::NAN;
+            continue;
+        }
+        run += 1;
+        previous = if run == 1 {
+            raw
+        } else {
+            previous + 0.5 * (raw - previous)
+        };
+        *o = previous;
+    }
+    out
+}
+
+/// JS `Math.max(a, b)`: a NaN gives NaN, and `+0` beats `-0` (Rust's
+/// `f64::max` drops a NaN and may pick either zero).
+pub(crate) fn js_max(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a > b || (a == b && b.is_sign_negative()) {
+        a
+    } else {
+        b
+    }
+}
+
+/// JS `Math.min(a, b)`: a NaN gives NaN, and `-0` beats `+0`.
+pub(crate) fn js_min(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a < b || (a == b && a.is_sign_negative()) {
+        a
+    } else {
+        b
+    }
+}
+
+/// pond-ts `trueRangeValues`: [`true_range_at`] for every row.
+pub(crate) fn true_range_values(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
+    (0..high.len())
+        .map(|i| true_range_at(high, low, close, i))
+        .collect()
+}
+
+/// One change split into its rise (`d` when above zero, else 0) and its
+/// fall (`-d` when below zero, else 0); a gap in both where `d` is a gap.
+pub(crate) fn leg(d: f64) -> (f64, f64) {
+    if d.is_nan() {
+        (d, d)
+    } else {
+        (
+            if d > 0.0 { d } else { 0.0 },
+            if d < 0.0 { -d } else { 0.0 },
+        )
+    }
+}
+
+/// pond-ts `upDownLegValues`: [`leg`] for every change, in one pass.
+pub(crate) fn up_down_legs(deltas: impl ExactSizeIterator<Item = f64>) -> (Vec<f64>, Vec<f64>) {
+    let mut up = Vec::with_capacity(deltas.len());
+    let mut down = Vec::with_capacity(deltas.len());
+    for d in deltas {
+        let (u, w) = leg(d);
+        up.push(u);
+        down.push(w);
+    }
+    (up, down)
+}
+
+/// Row-to-row change: a gap on row 0, then `v[i] - v[i - 1]`.
+pub(crate) fn deltas(values: &[f64]) -> impl ExactSizeIterator<Item = f64> + '_ {
+    (0..values.len()).map(|i| {
+        if i == 0 {
+            f64::NAN
+        } else {
+            values[i] - values[i - 1]
+        }
+    })
+}
+
+/// pond-ts `trueRangeValues` at row `i`: the largest of the bar's range
+/// and the gaps from the previous close; `NaN` on row 0 and wherever an
+/// input is missing.
+fn true_range_at(high: &[f64], low: &[f64], close: &[f64], i: usize) -> f64 {
+    if i == 0 {
+        return f64::NAN;
+    }
+    let previous = close[i - 1];
+    js_max(
+        js_max(high[i] - low[i], (high[i] - previous).abs()),
+        (low[i] - previous).abs(),
+    )
+}
+
+/// pond-ts `atrValues`: Wilder's smoothing ([`wilder_values`]) of the
+/// true range, taking each row's true range as it goes rather than
+/// building the column first (same values, one pass).
+pub(crate) fn atr_values(high: &[f64], low: &[f64], close: &[f64], period: usize) -> Vec<f64> {
+    let n = high.len();
+    let mut out = vec![f64::NAN; n];
+    let range = |i: usize| true_range_at(high, low, close, i);
+    let first = (1..n).find(|&i| !range(i).is_nan()).unwrap_or(n);
+    let seed_at = first.saturating_add(period - 1);
+    if seed_at >= n {
+        return out;
+    }
+    let p = period as f64;
+    let mut sum = 0.0;
+    for i in first..=seed_at {
+        sum += range(i);
+    }
+    let mut avg = sum / p;
+    out[seed_at] = avg;
+    for (i, slot) in out.iter_mut().enumerate().skip(seed_at + 1) {
+        avg = (avg * (p - 1.0) + range(i)) / p;
+        *slot = avg;
+    }
+    out
+}
+
+/// pond-ts `typicalPriceValues`: `(high + low + close) / 3`.
+pub(crate) fn typical_price_values(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
+    (0..high.len())
+        .map(|i| (high[i] + low[i] + close[i]) / 3.0)
+        .collect()
+}
+
+/// pond-ts `medianPriceValues`: `(high + low) / 2`.
+pub(crate) fn median_price_values(high: &[f64], low: &[f64]) -> Vec<f64> {
+    high.iter().zip(low).map(|(h, l)| (h + l) / 2.0).collect()
+}
+
+/// pond-ts `MAX_PRIME_INPUT` (`Number.MAX_SAFE_INTEGER`).
+const MAX_PRIME_INPUT: u64 = (1 << 53) - 1;
+
+/// pond-ts `isPrime`, for a whole number up to [`MAX_PRIME_INPUT`].
+fn is_prime(n: u64) -> bool {
+    if n < 2 {
+        return false;
+    }
+    if n < 4 {
+        return true;
+    }
+    if n % 2 == 0 || n % 3 == 0 {
+        return false;
+    }
+    let mut f = 5u64;
+    while f * f <= n {
+        if n % f == 0 || n % (f + 2) == 0 {
+            return false;
+        }
+        f += 6;
+    }
+    true
+}
+
+/// pond-ts `primeAtOrAbove`: the smallest prime `>= x`; `NaN` outside
+/// `[2, MAX_PRIME_INPUT]` or when no prime up to that limit qualifies.
+pub(crate) fn prime_at_or_above(x: f64) -> f64 {
+    if !x.is_finite() || x < 2.0 || x > MAX_PRIME_INPUT as f64 {
+        return f64::NAN;
+    }
+    (x.ceil() as u64..=MAX_PRIME_INPUT)
+        .find(|&n| is_prime(n))
+        .map_or(f64::NAN, |n| n as f64)
+}
+
+/// pond-ts `primeAtOrBelow`: the largest prime `<= x`; `NaN` outside
+/// `[2, MAX_PRIME_INPUT]`.
+pub(crate) fn prime_at_or_below(x: f64) -> f64 {
+    if !x.is_finite() || x < 2.0 || x > MAX_PRIME_INPUT as f64 {
+        return f64::NAN;
+    }
+    (2..=x.floor() as u64)
+        .rev()
+        .find(|&n| is_prime(n))
+        .map_or(f64::NAN, |n| n as f64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// JS `Math.max`: NaN wins, `+0` beats `-0` in either order.
+    #[test]
+    fn js_max_matches_math_max() {
+        assert!(js_max(f64::NAN, 1.0).is_nan());
+        assert!(js_max(1.0, f64::NAN).is_nan());
+        for (a, b) in [(-0.0, 0.0), (0.0, -0.0)] {
+            let m = js_max(a, b);
+            assert!(m == 0.0 && m.is_sign_positive(), "{a:?} {b:?}");
+        }
+        assert!(js_max(-0.0, -0.0).is_sign_negative());
+        assert_eq!(js_max(-1.0, 2.0), 2.0);
+        assert_eq!(js_max(3.0, 2.0), 3.0);
+    }
+
+    /// JS `Math.min`: NaN wins, `-0` beats `+0` in either order.
+    #[test]
+    fn js_min_matches_math_min() {
+        assert!(js_min(f64::NAN, 1.0).is_nan());
+        assert!(js_min(1.0, f64::NAN).is_nan());
+        for (a, b) in [(-0.0, 0.0), (0.0, -0.0)] {
+            let m = js_min(a, b);
+            assert!(m == 0.0 && m.is_sign_negative(), "{a:?} {b:?}");
+        }
+        assert!(js_min(0.0, 0.0).is_sign_positive());
+        assert_eq!(js_min(-1.0, 2.0), -1.0);
+        assert_eq!(js_min(3.0, 2.0), 2.0);
+    }
+
+    /// A `-0` change is neither a rise nor a fall: both legs are `+0`, as
+    /// pond-ts's `d > 0 ? d : 0` gives.
+    #[test]
+    fn up_down_legs_split_changes() {
+        let (up, down) = up_down_legs([f64::NAN, 2.0, -3.0, -0.0, 0.0].into_iter());
+        assert!(up[0].is_nan() && down[0].is_nan());
+        assert_eq!((up[1], down[1]), (2.0, 0.0));
+        assert_eq!((up[2], down[2]), (0.0, 3.0));
+        for i in 3..5 {
+            assert!(up[i] == 0.0 && up[i].is_sign_positive(), "up {i}");
+            assert!(down[i] == 0.0 && down[i].is_sign_positive(), "down {i}");
+        }
+    }
+
+    /// The prime ladder against trial division, and its edges.
+    #[test]
+    fn primes_match_trial_division() {
+        let slow = |n: u64| n >= 2 && (2..n).take_while(|d| d * d <= n).all(|d| n % d != 0);
+        for n in 0..5_000 {
+            assert_eq!(is_prime(n), slow(n), "{n}");
+        }
+        assert_eq!(prime_at_or_above(2.0), 2.0);
+        assert_eq!(prime_at_or_above(7.5), 11.0);
+        assert_eq!(prime_at_or_below(7.5), 7.0);
+        assert_eq!(prime_at_or_below(2.5), 2.0);
+        assert!(prime_at_or_below(1.99).is_nan());
+        assert!(prime_at_or_above(f64::INFINITY).is_nan());
+        // The largest prime below 2^53 is 2^53 - 111; above it, none qualify.
+        let largest = ((1u64 << 53) - 111) as f64;
+        assert_eq!(prime_at_or_below(((1u64 << 53) - 1) as f64), largest);
+        assert_eq!(prime_at_or_above(largest - 1.0), largest);
+        assert!(prime_at_or_above(largest + 1.0).is_nan());
+        assert!(prime_at_or_above((1u64 << 53) as f64).is_nan());
+    }
 
     /// Noisy input with gaps, runs of gaps, signed zeros, stored
     /// infinities (read as gaps) and values near 1e15, where a sum that kept its history would drift.
@@ -621,6 +1097,7 @@ mod tests {
             let mean = mean_sd_chunked::<false>(&values, period, n).0;
             let (sd_mean, sd) = mean_sd_chunked::<true>(&values, period, n);
             let wma = wma_chunked(&values, period, n);
+            let masked = rolling_mean_values_chunked(&values, period, n);
             let min = extreme_chunked::<false>(&values, period, n);
             let max = extreme_chunked::<true>(&values, period, n);
             for chunk in [1, 2, 3, 5, 19, 64, 999, 2_999] {
@@ -628,6 +1105,13 @@ mod tests {
                 assert!(
                     same_bits(&mean, &mean_sd_chunked::<false>(&values, period, chunk).0),
                     "mean {label}"
+                );
+                assert!(
+                    same_bits(
+                        &masked,
+                        &rolling_mean_values_chunked(&values, period, chunk)
+                    ),
+                    "masked mean {label}"
                 );
                 let (m, s) = mean_sd_chunked::<true>(&values, period, chunk);
                 assert!(same_bits(&sd_mean, &m) && same_bits(&sd, &s), "sd {label}");
@@ -643,6 +1127,82 @@ mod tests {
                     same_bits(&max, &extreme_chunked::<true>(&values, period, chunk)),
                     "max {label}"
                 );
+            }
+        }
+    }
+
+    /// pond-ts `rollingExtremesValues` as written there (a queue of
+    /// candidates; later equal values push earlier ones out).
+    fn strict_extremes_queue(values: &[f64], period: usize) -> (Vec<f64>, Vec<f64>) {
+        let n = values.len();
+        let (mut highest, mut lowest) = (vec![f64::NAN; n], vec![f64::NAN; n]);
+        let (mut maxq, mut minq) = (
+            std::collections::VecDeque::new(),
+            std::collections::VecDeque::new(),
+        );
+        let mut missing = 0usize;
+        for (i, &value) in values.iter().enumerate() {
+            if i >= period && !values[i - period].is_finite() {
+                missing -= 1;
+            }
+            if !value.is_finite() {
+                missing += 1;
+            }
+            while maxq.front().is_some_and(|&j: &usize| j + period <= i) {
+                maxq.pop_front();
+            }
+            while minq.front().is_some_and(|&j: &usize| j + period <= i) {
+                minq.pop_front();
+            }
+            if value.is_finite() {
+                while maxq.back().is_some_and(|&j| values[j] <= value) {
+                    maxq.pop_back();
+                }
+                maxq.push_back(i);
+                while minq.back().is_some_and(|&j| values[j] >= value) {
+                    minq.pop_back();
+                }
+                minq.push_back(i);
+            }
+            if i + 1 >= period && missing == 0 {
+                highest[i] = values[maxq[0]];
+                lowest[i] = values[minq[0]];
+            }
+        }
+        (highest, lowest)
+    }
+
+    /// The block version gives pond-ts's queue values, signed zeros
+    /// included, cut into stretches of any size.
+    #[test]
+    fn strict_extremes_match_the_queue() {
+        // Gaps and runs of gaps, infinities, and long runs of -0 / 0 ties.
+        let mut values = noisy(3_000);
+        for (i, v) in values.iter_mut().enumerate() {
+            // Zeros of both signs among larger values (ties for the
+            // lowest), then among smaller ones (ties for the highest).
+            let zero = || if i % 3 == 0 { -0.0 } else { 0.0 };
+            if (1_200..1_500).contains(&i) {
+                *v = if i % 3 == 0 || i % 5 == 0 {
+                    zero()
+                } else {
+                    1.0
+                };
+            } else if (1_500..1_800).contains(&i) {
+                *v = if i % 3 == 0 || i % 5 == 0 {
+                    zero()
+                } else {
+                    -1.0
+                };
+            }
+        }
+        for period in [1, 2, 3, 7, 20, 64, 500, 3_001] {
+            let (want_hi, want_lo) = strict_extremes_queue(&values, period);
+            for chunk in [1, 2, 3, 5, 19, 64, 999, 3_000] {
+                let (hi, lo) = extremes_strict_chunked(&values, period, chunk);
+                let label = format!("period {period}, stretch {chunk}");
+                assert!(same_bits(&want_hi, &hi), "highest {label}");
+                assert!(same_bits(&want_lo, &lo), "lowest {label}");
             }
         }
     }
