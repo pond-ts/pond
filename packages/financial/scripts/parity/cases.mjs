@@ -244,13 +244,16 @@ const EDGE_ROWS = Array.from({ length: 60 }, (_, i) => {
 // Exact ties: a ZigZag first swing of exactly 25% (25 = 0.25 * 100, no
 // rounding), then closes alternating 1 and -1, so a two-bar average is
 // exactly 0 (RAVI's zero long average).
+// The open jumps from 1e-300 to 1e300: a first log return of +Infinity
+// (the price ratio overflows), which historical volatility skips as it
+// skips a gap.
 const TIE_ROWS = [
-  [0, 100, 100, 1, 100],
-  [60_000, 125, 110, -1, 110],
-  [120_000, 124, 112, 1, 120],
-  [180_000, 120, 90, -1, 100],
-  [240_000, 118, 100, 1, 105],
-  [300_000, 116, 101, -1, 104],
+  [0, 100, 100, 1, 1e-300],
+  [60_000, 125, 110, -1, 1e300],
+  [120_000, 124, 112, 1, 2e300],
+  [180_000, 120, 90, -1, 1.5e300],
+  [240_000, 118, 100, 1, 3e300],
+  [300_000, 116, 101, -1, 2.5e300],
 ];
 // A close and elderImpulse's own scratch column (and no `__macdLine__`), so
 // the refusal comes from the elder scratch alone.
@@ -270,6 +273,58 @@ const LEAD_SCHEMA = [
   { name: 'low', kind: 'number', required: false },
   { name: 'close', kind: 'number', required: false },
   { name: 'open', kind: 'number', required: false },
+];
+
+// Two columns for the two-column studies (beta, correlation, price
+// relative, performance index): `close` a wave near 100 and `bench` one
+// near 1e12 (the shifted frame's worst case), with gaps in each column on
+// different rows; `bench` flat while `close` moves (rows 140-179) and the
+// reverse (220-259); zeros in `bench` (300, 301) and in `close` (310);
+// `step`, prices that plateau between 1% steps with a jitter of a few ulps
+// (the windows the kernel fits again on demand); `twin` = 3 x close and
+// `mirror` = 7 - 2 x close (a correlation that rounds past +1 or -1);
+// `small` / `smallStep` and `big` / `bigStep` (close and step scaled by
+// 1e-100 and 1e100: the product of two variances underflows to 0 or
+// overflows to infinity, where each variance does not); and `stepTwin` =
+// 3 x step + 1.
+const PAIR_ROWS = Array.from({ length: 400 }, (_, i) => {
+  let close = 100 + Math.sin(i / 5) * 4 + unit(i, 69069) * 2;
+  let bench = 1e12 + Math.cos(i / 7) * 3 + unit(i, 40503);
+  if (i >= 140 && i < 180) bench = 1e12;
+  if (i >= 220 && i < 260) close = 101.5;
+  if (i === 300 || i === 301) bench = 0;
+  if (i === 310) close = 0;
+  const step = 100 * 1.01 ** Math.floor(i / 37) + (i % 3) * 2 ** -40;
+  const gapClose = i === 50 || i === 51 || i === 120;
+  const gapBench = i === 80 || (i >= 200 && i < 206);
+  return [
+    i * 60_000,
+    gapClose ? null : close,
+    gapBench ? null : bench,
+    step,
+    gapClose ? null : close * 3,
+    gapClose ? null : 7 - 2 * close,
+    i % 2 === 0 ? 'a' : 'b',
+    gapClose ? null : close * 1e-100,
+    step * 1e-100,
+    gapClose ? null : close * 1e100,
+    step * 1e100,
+    step * 3 + 1,
+  ];
+});
+const PAIR_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'close', kind: 'number', required: false },
+  { name: 'bench', kind: 'number', required: false },
+  { name: 'step', kind: 'number' },
+  { name: 'twin', kind: 'number', required: false },
+  { name: 'mirror', kind: 'number', required: false },
+  { name: 'name', kind: 'string' },
+  { name: 'small', kind: 'number', required: false },
+  { name: 'smallStep', kind: 'number' },
+  { name: 'big', kind: 'number', required: false },
+  { name: 'bigStep', kind: 'number' },
+  { name: 'stepTwin', kind: 'number' },
 ];
 
 const TINY_ROWS = [
@@ -314,6 +369,7 @@ function inputs(oracle) {
     edge: { name: 'edge', schema: LEAD_SCHEMA, rows: EDGE_ROWS },
     ties: { name: 'ties', schema: LEAD_SCHEMA, rows: TIE_ROWS },
     scratch: { name: 'scratch', schema: SCRATCH_SCHEMA, rows: SCRATCH_ROWS },
+    pair: { name: 'pair', schema: PAIR_SCHEMA, rows: PAIR_ROWS },
     ohlcEmpty: { name: 'ohlcEmpty', schema: LEAD_SCHEMA, rows: [] },
     empty: { name: 'empty', schema: CLOSE_SCHEMA, rows: [] },
   };
@@ -417,6 +473,8 @@ function cases() {
   momentumFamilyCases(add);
   trendFamilyCases(add);
   trendFamilyCases2(add);
+  volatilityFamilyCases(add);
+  statisticsFamilyCases(add);
   return out;
 }
 
@@ -1193,4 +1251,203 @@ export function buildFixture(pond, financial, oracle) {
       ...run(pond, financial, series[c.input], c),
     })),
   };
+}
+
+function volatilityFamilyCases(add) {
+  const bar = ['high', 'low', 'close'];
+  familyCases(add, {
+    small: {
+      atr: [{ period: 3 }, { period: 1 }],
+      historicalVolatility: [
+        { period: 3, annualize: 1 },
+        { period: 1, annualize: 0.5 },
+      ],
+      chaikinVolatility: [
+        { period: 3, rocPeriod: 2 },
+        { period: 1, rocPeriod: 1 },
+      ],
+      massIndex: [
+        { emaPeriod: 3, sumPeriod: 4 },
+        { emaPeriod: 1, sumPeriod: 1 },
+      ],
+      choppinessIndex: [{ period: 3 }, { period: 2 }],
+      gopalakrishnanRangeIndex: [{ period: 3 }, { period: 2 }],
+      ulcerIndex: [{ period: 3 }, { period: 1 }],
+      relativeVolatilityIndex: [
+        { period: 3, stdevPeriod: 4 },
+        { period: 1, stdevPeriod: 1 },
+      ],
+    },
+    reads: {
+      atr: bar,
+      historicalVolatility: ['column'],
+      chaikinVolatility: ['high', 'low'],
+      massIndex: ['high', 'low'],
+      choppinessIndex: bar,
+      gopalakrishnanRangeIndex: ['high', 'low'],
+      ulcerIndex: ['column'],
+      relativeVolatilityIndex: ['column'],
+    },
+    typeOption: {},
+    naming: {},
+    periods: {
+      atr: ['period'],
+      historicalVolatility: ['period'],
+      chaikinVolatility: ['period', 'rocPeriod'],
+      massIndex: ['emaPeriod', 'sumPeriod'],
+      choppinessIndex: ['period'],
+      gopalakrishnanRangeIndex: ['period'],
+      ulcerIndex: ['period'],
+      relativeVolatilityIndex: ['period', 'stdevPeriod'],
+    },
+    numbers: { historicalVolatility: ['annualize'] },
+  });
+  // Period 1 where a logarithm of it divides; prices at or below zero
+  // (zeros, a ramp from 0, the edge bars' -1.7e308) and leading gaps for
+  // the log returns; flat bars, where ranges, EMAs and spans are 0; a
+  // window of only new highs (the ulcer index's exact 0) and of a peak of
+  // 0; unchanged closes (the relative volatility index counts them as
+  // down); bars flat while the close moves (the choppiness span is 0 but
+  // its true-range sum is not); and the edge bars.
+  add('choppinessIndex', 'bars', { period: 1 });
+  add('gopalakrishnanRangeIndex', 'bars', { period: 1 });
+  add('historicalVolatility', 'flat', { column: 'open' });
+  add('historicalVolatility', 'flat', { column: 'ramp', period: 5 });
+  add('historicalVolatility', 'lead', { period: 5 });
+  add('historicalVolatility', 'long', {});
+  add('historicalVolatility', 'tiny', { period: 1 });
+  for (const study of ['chaikinVolatility', 'massIndex']) {
+    add(study, 'flat', { high: 'close', low: 'close', period: 3 });
+    add(study, 'lead', {});
+    add(study, 'long', { high: 'close', low: 'open' });
+  }
+  add('choppinessIndex', 'flat', {
+    high: 'close',
+    low: 'close',
+    close: 'ramp',
+    period: 4,
+  });
+  add('choppinessIndex', 'lead', {});
+  add('gopalakrishnanRangeIndex', 'flat', { high: 'close', low: 'close' });
+  add('gopalakrishnanRangeIndex', 'lead', {});
+  add('historicalVolatility', 'ties', { column: 'open', period: 2 });
+  add('ulcerIndex', 'flat', { column: 'ramp', period: 4 });
+  add('ulcerIndex', 'flat', { column: 'open', period: 4 });
+  add('ulcerIndex', 'named', { period: 3 });
+  add('ulcerIndex', 'long', {});
+  add('relativeVolatilityIndex', 'flat', { period: 3, stdevPeriod: 3 });
+  add('relativeVolatilityIndex', 'long', {});
+  add('atr', 'lead', {});
+  for (const study of [
+    'atr',
+    'historicalVolatility',
+    'chaikinVolatility',
+    'massIndex',
+    'choppinessIndex',
+    'gopalakrishnanRangeIndex',
+    'ulcerIndex',
+    'relativeVolatilityIndex',
+  ]) {
+    add(study, 'edge', {});
+    add(
+      study,
+      'edge',
+      study === 'massIndex' ? { emaPeriod: 2, sumPeriod: 3 } : { period: 3 },
+    );
+  }
+}
+
+// R2 step 2e part 2: the statistics family. The two regression studies go
+// through `familyCases`; the four two-column studies need a benchmark on
+// every call, so they get their own list: each input with a second number
+// column, every small setting, then every error in pond-ts's order.
+function statisticsFamilyCases(add) {
+  familyCases(add, {
+    small: {
+      linearRegression: [{ period: 3 }, { period: 2 }],
+      timeSeriesForecast: [{ period: 3 }, { period: 2 }],
+    },
+    reads: { linearRegression: ['column'], timeSeriesForecast: ['column'] },
+    typeOption: {},
+    naming: { linearRegression: 'prefix' },
+    periods: { linearRegression: ['period'], timeSeriesForecast: ['period'] },
+    numbers: {},
+  });
+  for (const study of ['linearRegression', 'timeSeriesForecast']) {
+    add(study, 'bars', { period: 1 });
+    add(study, 'flat', { period: 5, column: 'open' });
+    add(study, 'flat', { period: 30, column: 'ramp' });
+    add(study, 'long', { period: 101 });
+    add(study, 'pair', { column: 'step', period: 30 });
+    add(study, 'pair', { column: 'bench' });
+    add(study, 'edge', {});
+    add(study, 'edge', { period: 3 });
+  }
+  const small = {
+    beta: [{ period: 3 }, { period: 2 }],
+    correlation: [{ period: 5 }, { period: 2 }],
+    priceRelative: [{}],
+    performanceIndex: [{ period: 3 }, { period: 1 }],
+  };
+  const pairs = [
+    ['bars', {}, 'open'],
+    ['bars', {}, 'volume'],
+    ['gappy', {}, 'volume'],
+    ['large', {}, 'open'],
+    ['flat', {}, 'open'],
+    ['flat', {}, 'ramp'],
+    ['flat', { column: 'ramp' }, 'open'],
+    ['ohlc', {}, 'open'],
+    ['ohlc', {}, 'prime'],
+    ['lead', {}, 'open'],
+    ['edge', {}, 'open'],
+    ['ties', {}, 'open'],
+    ['pair', {}, 'bench'],
+    ['pair', {}, 'twin'],
+    ['pair', {}, 'mirror'],
+    ['pair', { column: 'step' }, 'bench'],
+    ['pair', { column: 'step' }, 'close'],
+    ['pair', { column: 'bench' }, 'step'],
+    ['pair', { column: 'small' }, 'smallStep'],
+    ['pair', { column: 'big' }, 'bigStep'],
+    ['pair', { column: 'step' }, 'stepTwin'],
+  ];
+  for (const [study, settings] of Object.entries(small)) {
+    for (const [input, extra, benchmark] of pairs) {
+      add(study, input, { ...extra, benchmark });
+      for (const s of settings)
+        add(study, input, { ...extra, ...s, benchmark });
+    }
+    const first = { ...settings[0], benchmark: 'bench' };
+    add(study, 'pair', { ...first, period: 30 });
+    add(study, 'tiny', { benchmark: 'open' });
+    add(study, 'empty', { benchmark: 'open' });
+    add(study, 'ohlcEmpty', { benchmark: 'open' });
+    // The benchmark: the column itself (named or by default), missing, the
+    // key, a text or true/false column; then the output and the column.
+    add(study, 'pair', { ...first, benchmark: 'close' });
+    add(study, 'pair', { ...first, column: 'step', benchmark: 'step' });
+    add(study, 'pair', { ...first, benchmark: 'close', output: 'close' });
+    add(study, 'pair', { ...first, benchmark: 'nope' });
+    add(study, 'pair', { ...first, benchmark: 'nope', output: 'close' });
+    add(study, 'pair', { ...first, benchmark: 'time' });
+    add(study, 'pair', { ...first, benchmark: 'name' });
+    add(study, 'gappy', { ...first, benchmark: 'flag' });
+    for (const output of ['x', 'close', 'bench', 'time', '']) {
+      add(study, 'pair', { ...first, output });
+    }
+    add(study, 'pair', { ...first, column: 'nope' });
+    add(study, 'pair', { ...first, column: 'name' });
+    add(study, 'pair', { ...first, column: 'nope', output: 'close' });
+    if (study !== 'priceRelative') {
+      for (const period of [0, -1, 1.5])
+        add(study, 'pair', { ...first, period });
+      add(study, 'pair', { ...first, period: 0, benchmark: 'close' });
+      add(study, 'pair', { ...first, period: 500 });
+    }
+  }
+  for (const study of ['beta', 'correlation']) {
+    add(study, 'pair', { benchmark: 'bench', period: 1 });
+    add(study, 'pair', { benchmark: 'close', period: 1 });
+  }
 }

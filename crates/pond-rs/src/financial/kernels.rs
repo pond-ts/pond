@@ -929,6 +929,133 @@ pub(crate) fn js_log(x: f64) -> f64 {
     }
 }
 
+/// JS `Math.log10`: V8's `base::ieee754::log10`, fdlibm's
+/// `__ieee754_log10` (scale to `[1, 2)`, then
+/// `k·log10(2) + log(x)/ln(10)` in split constants), step for step on top
+/// of [`js_log`]. The system `log10` can differ in the last bit.
+// fdlibm's constants, as written there (`IVLN10` is `1 / ln 10`).
+#[allow(clippy::excessive_precision, clippy::approx_constant)]
+pub(crate) fn js_log10(x: f64) -> f64 {
+    const TWO54: f64 = 1.801_439_850_948_198_400_00e+16;
+    const IVLN10: f64 = 4.342_944_819_032_518_166_68e-01;
+    const LOG10_2HI: f64 = 3.010_299_956_636_117_713_06e-01;
+    const LOG10_2LO: f64 = 3.694_239_077_158_930_786_16e-13;
+    let high = |v: f64| (v.to_bits() >> 32) as i32;
+    let mut x = x;
+    let mut hx = high(x);
+    let lx = x.to_bits() as u32;
+    let mut k: i32 = 0;
+    if hx < 0x0010_0000 {
+        // Below 2^-1022: zero, negative or subnormal.
+        if ((hx & 0x7fff_ffff) as u32 | lx) == 0 {
+            return f64::NEG_INFINITY;
+        }
+        if hx < 0 {
+            return f64::NAN;
+        }
+        k -= 54;
+        x *= TWO54;
+        hx = high(x);
+    }
+    if hx >= 0x7ff0_0000 {
+        return x + x;
+    }
+    k += (hx >> 20) - 1023;
+    let i = ((k as u32) & 0x8000_0000) >> 31;
+    let top = ((hx & 0x000f_ffff) as u32 | ((0x3ff - i) << 20)) as u64;
+    let y = f64::from(k + i as i32);
+    x = f64::from_bits((top << 32) | (x.to_bits() & 0xffff_ffff));
+    let z = y * LOG10_2LO + IVLN10 * js_log(x);
+    z + y * LOG10_2HI
+}
+
+/// JS `Math.atan`: V8's `base::ieee754::atan`, fdlibm's `atan` (reduce to
+/// one of five intervals, then an odd polynomial), step for step. The
+/// system `atan` can differ in the last bit.
+#[allow(clippy::excessive_precision, clippy::approx_constant)] // fdlibm's constants
+pub(crate) fn js_atan(x: f64) -> f64 {
+    const ATANHI: [f64; 4] = [
+        4.636_476_090_008_060_935_15e-01,
+        7.853_981_633_974_482_789_99e-01,
+        9.827_937_232_473_290_540_82e-01,
+        1.570_796_326_794_896_558_00e+00,
+    ];
+    const ATANLO: [f64; 4] = [
+        2.269_877_745_296_168_709_24e-17,
+        3.061_616_997_868_383_017_93e-17,
+        1.390_331_103_123_099_845_16e-17,
+        6.123_233_995_736_766_035_87e-17,
+    ];
+    const AT: [f64; 11] = [
+        3.333_333_333_333_293_180_27e-01,
+        -1.999_999_999_987_648_324_76e-01,
+        1.428_571_427_250_346_637_11e-01,
+        -1.111_111_040_546_235_578_80e-01,
+        9.090_887_133_436_506_561_96e-02,
+        -7.691_876_205_044_829_994_95e-02,
+        6.661_073_137_387_531_206_69e-02,
+        -5.833_570_133_790_573_486_45e-02,
+        4.976_877_994_615_932_360_17e-02,
+        -3.653_157_274_421_691_552_70e-02,
+        1.628_582_011_536_578_236_23e-02,
+    ];
+    let hx = (x.to_bits() >> 32) as i32;
+    let ix = hx & 0x7fff_ffff;
+    let mut x = x;
+    let id: i32;
+    if ix >= 0x4410_0000 {
+        // |x| >= 2^66, or NaN.
+        if x.is_nan() {
+            return x + x;
+        }
+        return if hx > 0 {
+            ATANHI[3] + ATANLO[3]
+        } else {
+            -ATANHI[3] - ATANLO[3]
+        };
+    }
+    if ix < 0x3fdc_0000 {
+        // |x| < 0.4375.
+        if ix < 0x3e40_0000 {
+            // |x| < 2^-27.
+            return x;
+        }
+        id = -1;
+    } else {
+        x = x.abs();
+        if ix < 0x3ff3_0000 {
+            if ix < 0x3fe6_0000 {
+                id = 0;
+                x = (2.0 * x - 1.0) / (2.0 + x);
+            } else {
+                id = 1;
+                x = (x - 1.0) / (x + 1.0);
+            }
+        } else if ix < 0x4003_8000 {
+            id = 2;
+            x = (x - 1.5) / (1.0 + 1.5 * x);
+        } else {
+            id = 3;
+            x = -1.0 / x;
+        }
+    }
+    let z = x * x;
+    let w = z * z;
+    let s1 = z * (AT[0] + w * (AT[2] + w * (AT[4] + w * (AT[6] + w * (AT[8] + w * AT[10])))));
+    let s2 = w * (AT[1] + w * (AT[3] + w * (AT[5] + w * (AT[7] + w * AT[9]))));
+    if id < 0 {
+        return x - x * (s1 + s2);
+    }
+    let id = id as usize;
+    let z = ATANHI[id] - ((x * (s1 + s2) - ATANLO[id]) - x);
+    if hx < 0 { -z } else { z }
+}
+
+/// pond-ts `barRangeValues`: `high - low` for every row.
+pub(crate) fn bar_range_values(high: &[f64], low: &[f64]) -> Vec<f64> {
+    high.iter().zip(low).map(|(h, l)| h - l).collect()
+}
+
 /// pond-ts `trueRangeValues`: [`true_range_at`] for every row.
 pub(crate) fn true_range_values(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
     (0..high.len())
@@ -1192,6 +1319,61 @@ mod tests {
         assert_eq!(js_log(f64::INFINITY), f64::INFINITY);
         assert_eq!(js_log(5e-324), -744.4400719213812);
         assert_eq!(js_log(2.0), std::f64::consts::LN_2);
+    }
+
+    /// `js_log10` gives V8's `Math.log10` bits. Checked against node on 2M
+    /// values (0 differ; the system `log10` differed on 4,111); these are
+    /// prices where the system `log10` is one bit off V8, and values below
+    /// 1 where scaling into `[1, 2)` instead would be.
+    #[test]
+    fn js_log10_matches_v8() {
+        for (x, expected) in [
+            (0x404ef9ee80000000_u64, 0x3ffcac468e0d0b52_u64),
+            (0x4064a807be000000, 0x4001bec2419b9366),
+            (0x403b436b40000000, 0x3ff6f82200bcfc2f),
+            (0x405b9defe8000000, 0x4000588be50e726e),
+            (0x4057a2b9f0000000, 0x3fff9c2b9e709c57),
+            (0x405a704df0000000, 0x400031c426e5334b),
+            // Below 1, where fdlibm scales into [0.5, 1) rather than [1, 2).
+            (0x3febbc6400000000, 0xbfafcc94a77f77ce),
+            (0x3fe3d46a80000000, 0xbfca9a435e71c76b),
+            (0x3fe286c600000000, 0xbfce61bb91084ed2),
+        ] {
+            assert_eq!(js_log10(f64::from_bits(x)).to_bits(), expected, "{x:#x}");
+        }
+        for (x, expected) in [(1.0, 0.0), (10.0, 1.0), (1000.0, 3.0), (1e308, 308.0)] {
+            assert_eq!(js_log10(x).to_bits(), f64::to_bits(expected), "{x}");
+        }
+        assert_eq!(js_log10(0.0), f64::NEG_INFINITY);
+        assert_eq!(js_log10(-0.0), f64::NEG_INFINITY);
+        assert!(js_log10(-1.0).is_nan() && js_log10(f64::NAN).is_nan());
+        assert_eq!(js_log10(f64::INFINITY), f64::INFINITY);
+        assert_eq!(js_log10(5e-324), -323.3062153431158);
+    }
+
+    /// `js_atan` gives V8's `Math.atan` bits. Checked against node on 2M
+    /// values (0 differ; the system `atan` differed on 29,361); these are
+    /// inputs in each of fdlibm's intervals where the system `atan` is one
+    /// bit off V8.
+    #[test]
+    fn js_atan_matches_v8() {
+        for (x, expected) in [
+            (0x3fcbab5a00000000_u64, 0x3fcb4003cbbac7f8_u64),
+            (0xbfdeb92200000000, 0xbfdca4d3ef311f1c),
+            (0xbfe70c2380000000, 0xbfe3f93f458db796),
+            (0x4003874940000000, 0x3ff2e96fea2df3ba),
+            (0x4003dd66c0000000, 0x3ff301d3c840404a),
+            (0xc007239c20000000, 0xbff3ce8b7be24ba8),
+        ] {
+            assert_eq!(js_atan(f64::from_bits(x)).to_bits(), expected, "{x:#x}");
+        }
+        assert_eq!(js_atan(0.0).to_bits(), 0.0f64.to_bits());
+        assert_eq!(js_atan(-0.0).to_bits(), (-0.0f64).to_bits());
+        assert_eq!(js_atan(1.0), std::f64::consts::FRAC_PI_4);
+        assert_eq!(js_atan(f64::INFINITY), std::f64::consts::FRAC_PI_2);
+        assert_eq!(js_atan(f64::NEG_INFINITY), -std::f64::consts::FRAC_PI_2);
+        assert!(js_atan(f64::NAN).is_nan());
+        assert_eq!(js_atan(1e-9), 1e-9);
     }
 
     /// The prime ladder against trial division, and its edges.

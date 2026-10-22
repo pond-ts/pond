@@ -17,7 +17,7 @@ columns. Operations on the result run on each partition separately, and
 `collect()` puts the rows back into one series, in time order.
 
 ```rust
-use pond_rs::{Column, FirstRow, TimeSeries};
+use pond_rs::{Column, TimeSeries};
 
 fn main() -> Result<(), pond_rs::PondError> {
     let s = TimeSeries::new(
@@ -30,14 +30,14 @@ fn main() -> Result<(), pond_rs::PondError> {
     )?;
 
     // Without partitions: each row minus the row directly above it.
-    let mixed = s.diff(&["load"], FirstRow::Keep)?;
+    let mixed = s.diff(&["load"])?;
     // Row 2 is host a minus host b: a meaningless number.
     assert_eq!(mixed.column("load")?.numbers()?.get(2), Some(-7.0));
 
     // With partitions: each host against its own previous reading.
     let per_host = s
         .partition_by(&["host"])?
-        .diff(&["load"], FirstRow::Keep)?
+        .diff(&["load"])?
         .collect()?;
     assert_eq!(per_host.column("load")?.numbers()?.get(2), Some(2.0)); // a: 3 - 1
     assert_eq!(per_host.column("load")?.numbers()?.get(3), Some(30.0)); // b: 40 - 10

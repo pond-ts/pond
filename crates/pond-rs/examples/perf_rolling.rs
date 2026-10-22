@@ -63,6 +63,7 @@ fn main() -> pond_rs::Result<()> {
     let at = |alignment, min_samples| Rolling {
         alignment,
         min_samples,
+        ..Rolling::default()
     };
     let minute = Sequence::every("1m")?;
     let second = Sequence::every("1s")?;

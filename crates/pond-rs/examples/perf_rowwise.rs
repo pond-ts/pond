@@ -11,7 +11,7 @@
 
 use std::time::Instant;
 
-use pond_rs::{Column, Fill, FillLimits, FirstRow, Reducer, TimeSeries};
+use pond_rs::{Change, Column, Fill, FillLimits, FirstRow, Reducer, TimeSeries};
 
 fn median_ms(mut f: impl FnMut()) -> f64 {
     f(); // warm-up
@@ -59,21 +59,20 @@ fn main() -> pond_rs::Result<()> {
     let extra = Column::optional_raw("w", s.column("v")?.numbers()?.values().to_vec());
     type Case<'a> = (&'a str, Box<dyn Fn() + 'a>);
     let cases: Vec<Case> = vec![
-        (
-            "diff",
-            Box::new(|| drop(s.diff(&["v"], FirstRow::Keep).unwrap())),
-        ),
+        ("diff", Box::new(|| drop(s.diff(&["v"]).unwrap()))),
         (
             "diff drop",
-            Box::new(|| drop(s.diff(&["v"], FirstRow::Drop).unwrap())),
+            Box::new(|| {
+                drop(
+                    s.diff_with(&["v"], Change::default().first(FirstRow::Drop))
+                        .unwrap(),
+                )
+            }),
         ),
-        (
-            "rate",
-            Box::new(|| drop(s.rate(&["v"], FirstRow::Keep).unwrap())),
-        ),
+        ("rate", Box::new(|| drop(s.rate(&["v"]).unwrap()))),
         (
             "pct_change",
-            Box::new(|| drop(s.pct_change(&["v"], FirstRow::Keep).unwrap())),
+            Box::new(|| drop(s.pct_change(&["v"]).unwrap())),
         ),
         (
             "cumulative sum",
@@ -82,17 +81,17 @@ fn main() -> pond_rs::Result<()> {
         ("shift 1", Box::new(|| drop(s.shift(&["v"], 1).unwrap()))),
         (
             "fill hold",
-            Box::new(|| drop(s.fill_all(Fill::Hold, &none).unwrap())),
+            Box::new(|| drop(s.fill_all_with(Fill::Hold, &none).unwrap())),
         ),
         (
             "fill linear",
-            Box::new(|| drop(s.fill_all(Fill::Linear, &none).unwrap())),
+            Box::new(|| drop(s.fill_all_with(Fill::Linear, &none).unwrap())),
         ),
         (
             "fill linear maxGap 3s",
             Box::new(|| {
                 drop(
-                    s.fill_all(Fill::Linear, &FillLimits::none().max_gap("3s"))
+                    s.fill_all_with(Fill::Linear, &FillLimits::none().max_gap("3s"))
                         .unwrap(),
                 )
             }),

@@ -192,7 +192,7 @@ pub use reducer::{Agg, Reducer};
 pub use reshape::At;
 pub use rolling::{Alignment, Rolling, RollingOver};
 pub use rows::Row;
-pub use rowwise::{Fill, FillLimits, FirstRow};
+pub use rowwise::{Change, Fill, FillLimits, FirstRow};
 pub use sequence::{CalendarUnit, Sequence, tzdb_version};
 pub use series::{
     Column, ColumnDef, ColumnKind, IntervalKeys, Key, Labels, MAX_TIME_MS, TimeRangeKeys,

@@ -14,10 +14,10 @@ use common::{
 use pond_rs::ColumnDef as RsColumnDef;
 use pond_rs::Value as Literal;
 use pond_rs::{
-    Agg, Align, AlignMethod, Alignment, ArrayOptions, ArrowKey, At, Bins, Column, ColumnData,
-    ColumnKind, Fill, FillLimits, FirstRow, IntervalKeys, Join, JoinType, JsonOptions, Keep, Key,
-    KeyOrder, Labels, Materialize, OnConflict, Pick, Reducer, Rolling, RollingOver, RowFormat,
-    Scalar, Sequence, TimeRangeKeys, TimeSeries, ValueSeries,
+    Agg, Align, AlignMethod, Alignment, ArrayOptions, ArrowKey, At, Bins, Change, Column,
+    ColumnData, ColumnKind, Fill, FillLimits, FirstRow, IntervalKeys, Join, JoinType, JsonOptions,
+    Keep, Key, KeyOrder, Labels, Materialize, OnConflict, Pick, Reducer, Rolling, RollingOver,
+    RowFormat, Scalar, Sequence, TimeRangeKeys, TimeSeries, ValueSeries,
 };
 use serde_json::{Value, json};
 
@@ -162,14 +162,17 @@ macro_rules! shared_op {
             }
             "diff" | "rate" | "pctChange" => {
                 let names = column_names(&args[0]);
-                let first = match args.get(1).and_then(|o| o["drop"].as_bool()) {
-                    Some(true) => FirstRow::Drop,
-                    _ => FirstRow::Keep,
-                };
+                let mut options = Change::default();
+                if args.get(1).and_then(|o| o["drop"].as_bool()) == Some(true) {
+                    options = options.first(FirstRow::Drop);
+                }
+                if let Some(output) = args.get(1).and_then(|o| o["output"].as_str()) {
+                    options = options.output(output);
+                }
                 Some(match $op {
-                    "diff" => $target.diff(&names, first),
-                    "rate" => $target.rate(&names, first),
-                    _ => $target.pct_change(&names, first),
+                    "diff" => $target.diff_with(&names, options),
+                    "rate" => $target.rate_with(&names, options),
+                    _ => $target.pct_change_with(&names, options),
                 })
             }
             "cumulative" => Some($target.cumulative(&cumulative_spec(&args[0]))),
@@ -180,13 +183,13 @@ macro_rules! shared_op {
             "fill" => {
                 let limits = fill_limits(args.get(1));
                 Some(match &args[0] {
-                    Value::String(_) => $target.fill_all(fill_strategy(&args[0]), &limits),
+                    Value::String(_) => $target.fill_all_with(fill_strategy(&args[0]), &limits),
                     Value::Object(map) => {
                         let spec: Vec<(&str, Fill)> = map
                             .iter()
                             .map(|(c, v)| (c.as_str(), fill_strategy(v)))
                             .collect();
-                        $target.fill(&spec, &limits)
+                        $target.fill_with(&spec, &limits)
                     }
                     other => panic!("fill takes a strategy or a mapping, got {other}"),
                 })
@@ -494,6 +497,7 @@ fn rolling_options(options: Option<&Value>) -> Rolling {
             Some(other) => panic!("unknown alignment {other}"),
         },
         min_samples: o["minSamples"].as_u64().unwrap_or(0) as usize,
+        append: o["append"].as_bool().unwrap_or(false),
     }
 }
 

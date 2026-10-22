@@ -42,9 +42,11 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `series.byValue('km')` / `nearestIndex(x)` / `sliceByValue(a, b)` | `series.by_value("km")?` / `nearest_index(x)` / `slice_by_value(a, b)`                        |
 | `Sequence.every('1m')`                                            | `Sequence::every("1m")?`                                                                      |
 | `Sequence.calendar('day', { timeZone })`                          | `Sequence::calendar("day", time_zone)?`                                                       |
-| `series.pctChange(...)`                                           | `series.pct_change(&cols, FirstRow::Keep)`                                                    |
-| `series.diff(cols, { drop: true })`                               | `series.diff(&cols, FirstRow::Drop)`                                                          |
-| `series.fill({ cpu: 'linear' }, { maxGap })`                      | `series.fill(&[("cpu", Fill::Linear)], &FillLimits::none().max_gap(..))`                      |
+| `series.pctChange(...)`                                           | `series.pct_change(&cols)`                                                                    |
+| `series.diff(cols, { drop: true })`                               | `series.diff_with(&cols, Change::default().first(FirstRow::Drop))`                            |
+| `series.diff('rsi', { output: 'dRsi' })`                          | `series.diff_with(&["rsi"], Change::default().output("dRsi"))`                                |
+| `series.rolling('10m', m, { append: true })`                      | `series.rolling_with("10m", &aggs, Rolling { append: true, ..Rolling::default() })`           |
+| `series.fill({ cpu: 'linear' }, { maxGap })`                      | `series.fill_with(&[("cpu", Fill::Linear)], &FillLimits::none().max_gap(..))`                 |
 | `series.mapColumns(...)`                                          | `map_numbers` / `map_strings` / `map_booleans` / `map_decimals`                               |
 | `series.asTime({ at: 'begin' })`                                  | `series.as_time(At::Begin)`                                                                   |
 | `a.join(b, { type: 'inner' })`                                    | `a.join(&b, Join { how: JoinType::Inner, ..Join::default() })`                                |
@@ -52,6 +54,7 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `Time.parse(text, { timeZone })`                                  | `parse_time_in(text, time_zone)?` (`parse_time` for UTC)                                      |
 | `series.tail('1h')`                                               | `series.tail("1h")?`                                                                          |
 | `series.reduce({ m: { from, using: 'avg' } })`                    | `series.reduce(&[Agg::new("m", from, Reducer::Avg)])?` then `.number("m")?`                   |
+| `series.reduce('cpu', 'avg')`                                     | `series.reduce_number("cpu", Reducer::Avg)?` (`reduce_value` for other kinds)                 |
 | `series.last()`                                                   | `series.last()` (an `Option<Row>`)                                                            |
 | `series.asInterval(fn)` / `offsetTime('-1h')`                     | `series.as_interval_with(fn)?` / `offset_time("-1h")?`                                        |
 | `series.partitionBy('host')`                                      | `series.partition_by(&["host"])`                                                              |

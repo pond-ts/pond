@@ -437,6 +437,12 @@ pub struct Rolling {
     /// output column (pond-ts `minSamples`). Rows are counted whether or
     /// not their value is a gap. 0 (the default) gives every row a value.
     pub min_samples: usize,
+    /// Keep every column of the series and add the outputs after them
+    /// (pond-ts `{ append: true }`), instead of a result holding only the
+    /// key and the outputs. An output may not take the name of an existing
+    /// column, so [`Agg::of`](crate::Agg::of) (output named after its
+    /// source) is an error here; use [`Agg::new`](crate::Agg::new).
+    pub append: bool,
 }
 
 /// Options for [`TimeSeries::rolling_over`]. `RollingOver::default()` is
@@ -800,7 +806,27 @@ impl TimeSeries {
             min_samples: options.min_samples,
         };
         let plan = self.rolling_plan(aggs, self.key_name())?;
-        let columns = self.roll_columns(CALL, &frame, &plan)?;
+        if options.append {
+            for agg in aggs {
+                let taken = agg.output == self.key_name()
+                    || self.columns().iter().any(|c| c.name() == agg.output);
+                if taken {
+                    return Err(PondError::InvalidData {
+                        call: CALL,
+                        message: format!(
+                            "output column '{}' already exists; with append, give each output its own name (Agg::new)",
+                            agg.output
+                        ),
+                    });
+                }
+            }
+        }
+        let mut columns = self.roll_columns(CALL, &frame, &plan)?;
+        if options.append {
+            let mut all = self.columns().to_vec();
+            all.append(&mut columns);
+            columns = all;
+        }
         Ok(TimeSeries::from_parts(
             self.name().to_string(),
             self.key_name().to_string(),

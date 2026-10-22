@@ -537,6 +537,39 @@ The first two are logged as [PND-RUSTOUT] below.
 The one result short of a clean win is one-core B: polars is faster
 (22–28 vs 31–47 ms of compute). Adopting R1b is pjm17971's call.
 
+## [PND-CHAIN] — chain-friendly options, both libraries (2026-10-22)
+
+Peter asked what a fluent chain looks like (study → operators → a final fold
+such as "average of the last 5 minutes"). Writing it against main, in both
+libraries, surfaced five rough edges; he asked to work on them. Outcome:
+
+- **`rolling` with `append`** (pond-ts `{ append: true }`, pond-rs
+  `Rolling { append }`): keeps the source columns. Before, `rolling` returned
+  only the key and its outputs, so a chain lost every column it had built.
+  Name reused from `collapse(…, { append: true })`. An output may not reuse an
+  existing name, so the shorthand `{ rsi: 'avg' }` / `Agg::of` is an error
+  with `append` (replacing a column in place was considered and rejected:
+  explicit names are clearer, and replacing would be a second meaning for the
+  same flag). Not on the grid form (its rows are buckets). Partitioned: with
+  `append` the partition columns are already kept, so they are not carried
+  through the mapping.
+- **`diff` / `rate` / `pctChange` with `output`**: new optional number column,
+  source kept, one source column only. Name reused from `scan` / `smooth`.
+- **pond-rs short forms**: `diff(&cols)` etc. and `fill(&spec)` assume the
+  usual defaults; `diff_with(&cols, Change)` / `fill_with(&spec, &limits)`
+  take them, as `rolling` / `rolling_with` already did. A signature break,
+  fine while the crate is unpublished.
+- **`reduce_number` / `reduce_value`** (pond-rs): one column's single answer,
+  pond-ts `reduce(column, reducer)`. Two methods rather than one returning
+  `Value`, so the common number case needs no unwrapping.
+- **Not done: `Agg` helper** (`avg("x").named("y")`): `Agg::new(out, src,
+  reducer)` is already one call; a helper would only reorder its arguments.
+- Live layer not changed: logged as [PND-LIVEAPPEND].
+
+Parity: 10 new shared fixture cases (`rolling-append-*`, `*-output*`,
+partitioned variants); a mutation run (dropping one appended column, renaming
+the output) failed all 10.
+
 ## Next
 
 - **[PND-RUST-R1A]** — Measured vertical slice (adopted). Steps:
@@ -2989,6 +3022,119 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | ravi    | 15.8     | 8.0     | 58.4    | 7.3x  |
     | si      | 7.0      | 11.7    | 42.2    | 3.6x  |
     | asi     | 11.5     | 14.9    | 56.9    | 3.8x  |
+
+  **R2 step 2e part 1 (done): volatility, 8 of 14 studies.**
+  - Calls: `atr`, `historical_volatility`, `chaikin_volatility`,
+    `mass_index`, `choppiness_index`, `gopalakrishnan_range_index` and
+    `relative_volatility_index` take an options struct named after the
+    study (`high` / `low` / `close` setters or `column`, and `output`);
+    `ulcer_index` takes a plain `Study` (pond-ts default 14). Errors and
+    their order as pond-ts, including the choppiness and range indexes
+    refusing a period of 1 and historical volatility refusing an
+    `annualize` that is not a positive finite number.
+  - New kernel: `js_log10`, V8's `Math.log10` (fdlibm's
+    `__ieee754_log10` on top of `js_log`). Checked against node on 2M
+    values: 0 differ, where the system `log10` differed on 4,111. The
+    choppiness index needs it; the range index and historical volatility
+    use `js_log`. Everything else reuses kernels from earlier families
+    (Wilder's ATR, the rolling mean and spread, the count-window extremes,
+    the EMA and percent change).
+  - Parity: the fixture grew to 3,516 cases. 2,627 match bit for bit, 318
+    errors agree, 323 refused (known missing-column difference), 248
+    calls Rust cannot write. The new cases cover prices at or below zero
+    and a first log return of +Infinity (the `ties` input's open jumps
+    from 1e-300 to 1e300), flat bars (zero ranges, EMAs and spans), a
+    window of only new highs (the ulcer index's exact 0), unchanged closes
+    (the relative volatility index counts them as down) and the `edge`
+    bars. Oracle: 167 of 220 cases (was 133).
+  - Planted bugs: 18 of 29 caught at first; the overflowing return above,
+    a unit test for non-finite `annualize`, and three `log10` inputs below
+    1 caught 3 more: 21 of 29. The 8 missed change no output: a zero price
+    giving an infinite return instead of a gap (the spread kernel skips
+    both); dropping historical volatility's early return for too few
+    returns (the kernel then gives all gaps anyway); `powf(0.5)` for
+    `sqrt` (same bits on 22M values checked); `+ 0.0` on the mass index's
+    sum (its mean is never -0); dropping either half of the choppiness
+    guard, or `>=` in the range index's (the dropped case then gives an
+    infinity or NaN, both stored as a gap; review on #822 corrected an
+    earlier reason given here); and dropping the ulcer index's finite check on its exact-0
+    rule (a window with no drawdown is always full and finite: warm-up
+    rows have no peak, so their drawdown is a gap and counts).
+  - Perf: all O(N); the window kernels split rows across cores as before.
+    At 1M rows all eight match pond-ts on every bit, on 4 cores and on 1
+    (`POND_BITS=1`).
+  - Medians of 7, 1M bars at pond-ts's defaults, ms:
+
+    | Study   | 1 thread | 4 cores | pond-ts | ratio |
+    | ------- | -------- | ------- | ------- | ----- |
+    | atr     | 7.5      | 7.4     | 70.8    | 9.6x  |
+    | hv      | 25.9     | 15.4    | 72.2    | 4.7x  |
+    | chaikin | 4.4      | 6.0     | 25.7    | 4.3x  |
+    | mass    | 11.6     | 9.4     | 37.9    | 4.0x  |
+    | chop    | 34.2     | 22.8    | 215.6   | 9.5x  |
+    | gapo    | 18.8     | 10.9    | 268.8   | 25x   |
+    | ulcer   | 15.8     | 9.0     | 154.0   | 17x   |
+    | relvol  | 32.6     | 17.2    | 68.1    | 4.0x  |
+
+  **R2 step 2e part 2 (done): statistics, the other 6 studies; the family
+  is complete.**
+  - Calls: `linear_regression` (`LinearRegression`, a `prefix`; writes
+    value, slope, intercept, angle in degrees and r squared, in that
+    order), `time_series_forecast` (a plain `Study`, pond-ts default 14),
+    and four studies that compare `column` with a second column:
+    `beta`, `correlation`, `price_relative` and `performance_index`. Their
+    options take the `benchmark` column in `new` (`Beta::new("spy")`), as
+    pond-ts has no default for it; `study_options!` gained a
+    `Name(benchmark)` form for them. Errors in pond-ts's order: the
+    period, then the benchmark (not the column itself, on the series, a
+    number column), then the output name, then the column. Parity checks
+    only that both sides fail; a unit test pins the order and part of
+    each message.
+  - New kernels: `rolling_bivariate_values`, pond-ts
+    `rollingBivariateValues` (covariance and the two variances of each
+    window, in a frame shifted by the window's first pair, rebuilt every
+    `period` rows and again where a moment looks like rounding residue),
+    split across cores by the same rebuild rows; and `js_atan`, V8's
+    `Math.atan` (fdlibm), checked against node on 2M values. The
+    regression's r squared, unchecked since part 2 of momentum, is now
+    checked by parity.
+  - A bug of mine the stretch test caught before review: a stretch
+    skipped the rebuild-on-demand check on the rows before its first
+    output row, but a rebuild there carries forward, so the bits
+    differed from one sweep.
+  - Parity: the fixture grew to 3,931 cases, with a new `pair` input
+    (gaps on different rows in each column, each column flat while the
+    other moves, zeros, plateau prices with a few ulps of jitter, columns
+    scaled by 1e-100 and 1e100 so the product of two variances underflows
+    or overflows, and exact multiples of the close). 2,948 match bit for
+    bit, 390 errors agree, 335 refused (known missing-column difference),
+    258 calls Rust cannot write. The oracle's bars gained its benchmark
+    column; oracle: 178 of 220 cases (was 167).
+  - Planted bugs: 22 of 28 caught at first; the scaled columns caught 2
+    more: 24 of 28. The 4 missed: price relative and the performance
+    index without their zero guards (dividing by 0 then gives an
+    infinity or NaN, both stored as a gap); and two in the kernel that
+    gave 0 differences in 8.4M readings of random gappy, plateau and
+    near-duplicate inputs: a looser Cauchy-Schwarz slack (1e-6 for 1e-9),
+    and dropping the closed form for a window down to one pair. Neither
+    is proven harmless; the inputs that would show them were not found.
+  - Parity inputs are under one 65,536-row stretch, so they never split
+    across cores; the split is checked by the stretch unit test and the
+    1M-row bit comparison below (review on #823).
+  - Perf: all O(N). Beta's two return columns are one pass split across
+    cores, as is the regression's angle. At 1M rows all six match pond-ts
+    on every bit, on 4 cores and on 1 (`POND_BITS=1`).
+  - Medians of 7, 1M bars at pond-ts's defaults (benchmark: the open),
+    ms:
+
+    | Study    | 1 thread | 4 cores | pond-ts | ratio |
+    | -------- | -------- | ------- | ------- | ----- |
+    | linreg   | 33.8     | 15.2    | 83.2    | 5.5x  |
+    | tsf      | 13.7     | 4.6     | 23.9    | 5.2x  |
+    | beta     | 27.8     | 8.7     | 45.3    | 5.2x  |
+    | corr     | 29.5     | 10.3    | 53.0    | 5.1x  |
+    | pricerel | 1.3      | 1.2     | 16.9    | 14x   |
+    | perf     | 2.6      | 2.5     | 10.8    | 4.3x  |
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

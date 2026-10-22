@@ -327,20 +327,23 @@ unchanged.
 
 | Call                            | Each row gets                                          |
 | ------------------------------- | ------------------------------------------------------ |
-| `diff(&cols, first)`            | value minus the previous row's                         |
-| `rate(&cols, first)`            | change per second of key time                          |
-| `pct_change(&cols, first)`      | change as a fraction of the previous value (not × 100) |
+| `diff(&cols)`                   | value minus the previous row's                         |
+| `rate(&cols)`                   | change per second of key time                          |
+| `pct_change(&cols)`             | change as a fraction of the previous value (not × 100) |
 | `shift(&cols, n)`               | the value from `n` rows up (negative `n`: rows down)   |
 | `cumulative(&[(col, reducer)])` | running `Sum`, `Min`, `Max` or `Count`                 |
 | `cumulative_with(col, closure)` | a running value of your own                            |
-| `fill(&[(col, Fill)], &limits)` | gaps filled by a rule                                  |
+| `fill(&[(col, Fill)])`          | gaps filled by a rule                                  |
 
-`first` is `FirstRow::Keep` (the first row stays, with a gap) or
-`FirstRow::Drop` (it is removed). "Previous row" means the row directly
-above, not the last row with a value, so a gap on either side gives a gap.
+`diff`, `rate` and `pct_change` keep the first row (with a gap) and replace
+each named column. `diff_with` / `rate_with` / `pct_change_with` take a
+`Change`: `.first(FirstRow::Drop)` removes the first row, and
+`.output("name")` puts the result in a new column and keeps the source (one
+source column only). "Previous row" means the row directly above, not the
+last row with a value, so a gap on either side gives a gap.
 
 ```rust
-use pond_rs::{Column, FirstRow, Reducer, TimeSeries};
+use pond_rs::{Column, Reducer, TimeSeries};
 
 fn main() -> Result<(), pond_rs::PondError> {
     // A counter read every 10 seconds; one reading is missing.
@@ -353,7 +356,7 @@ fn main() -> Result<(), pond_rs::PondError> {
         )],
     )?;
 
-    let per_second = s.rate(&["total"], FirstRow::Keep)?;
+    let per_second = s.rate(&["total"])?;
     let got: Vec<_> = per_second.column("total")?.numbers()?.iter().collect();
     assert_eq!(got, [None, Some(30.0), None, None]);
 
@@ -398,7 +401,7 @@ fn main() -> Result<(), pond_rs::PondError> {
     // Fill straight lines, but only across gaps of at most 2 minutes
     // (measured from the value before to the value after).
     let filled =
-        s.fill(&[("c", Fill::Linear)], &FillLimits::none().max_gap("2m"))?;
+        s.fill_with(&[("c", Fill::Linear)], &FillLimits::none().max_gap("2m"))?;
     let got: Vec<_> = filled.column("c")?.numbers()?.iter().collect();
     assert_eq!(
         got,

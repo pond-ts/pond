@@ -121,6 +121,24 @@ const cases = [
   ['t2-ravi', 'ravi', () => f.ravi(bars)],
   ['t2-si', 'si', () => f.swingIndex(bars, { limit: 20 })],
   ['t2-asi', 'asi', () => f.accumulativeSwingIndex(bars, { limit: 20 })],
+  ['v-atr', 'atr', () => f.atr(bars)],
+  ['v-hv', 'hv', () => f.historicalVolatility(bars)],
+  ['v-chaikin', 'chaikinVol', () => f.chaikinVolatility(bars)],
+  ['v-mass', 'mass', () => f.massIndex(bars)],
+  ['v-chop', 'chop', () => f.choppinessIndex(bars)],
+  ['v-gapo', 'gapo', () => f.gopalakrishnanRangeIndex(bars)],
+  ['v-ulcer', 'ulcer', () => f.ulcerIndex(bars)],
+  ['v-relvol', 'relVol', () => f.relativeVolatilityIndex(bars)],
+  ['s-linreg', 'linregR2', () => f.linearRegression(bars)],
+  ['s-tsf', 'tsf', () => f.timeSeriesForecast(bars)],
+  ['s-beta', 'beta', () => f.beta(bars, { benchmark: 'open' })],
+  ['s-corr', 'corr', () => f.correlation(bars, { benchmark: 'open' })],
+  [
+    's-pricerel',
+    'priceRel',
+    () => f.priceRelative(bars, { benchmark: 'open' }),
+  ],
+  ['s-perf', 'perf', () => f.performanceIndex(bars, { benchmark: 'open' })],
 ];
 
 const only = process.argv[2];

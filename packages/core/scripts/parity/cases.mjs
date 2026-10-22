@@ -1635,6 +1635,42 @@ const ROLLING_OPTION_CASES = [
       'toMap',
     ],
   ],
+  // `append: true` keeps the source columns and adds the outputs after them
+  ...ALIGNMENTS.map((alignment) => [
+    `rolling-append-noisy-20s-${alignment}`,
+    'noisy',
+    'rolling',
+    ['20s', ROLL_NOISY, { alignment, append: true }],
+  ]),
+  [
+    'rolling-append-runs-count3-min3',
+    'runs',
+    'rolling',
+    [{ count: 3 }, ROLL_RUNS, { minSamples: 3, append: true }],
+  ],
+  [
+    'rolling-append-tags-2s',
+    'tags',
+    'rolling',
+    ['2s', ROLL_TAGS, { append: true }],
+  ],
+  [
+    'rolling-append-partition-min2',
+    'hosts',
+    'partitionBy',
+    [
+      'host',
+      [
+        [
+          'rolling',
+          '2s',
+          { cpu_avg: { from: 'cpu', using: 'avg' } },
+          { minSamples: 2, append: true },
+        ],
+      ],
+      'collect',
+    ],
+  ],
 ];
 
 /** [id, input, op, args] — the call is `inputs[input][op](...decode(args))`. */
@@ -3355,6 +3391,16 @@ const CASES = [
   ['cumulative-signed', 'signed', 'cumulative', [{ v: 'sum' }]],
   // element-wise: options, other keys, overflow, every fill strategy
   ['diff-a-drop', 'gappy', 'diff', ['a', { drop: true }]],
+  // `output` keeps the source and puts the change in a new column
+  ['diff-a-output', 'gappy', 'diff', ['a', { output: 'da' }]],
+  ['rate-b-output-drop', 'gappy', 'rate', ['b', { output: 'rb', drop: true }]],
+  ['pctChange-signed-output', 'signed', 'pctChange', ['v', { output: 'pv' }]],
+  [
+    'diff-partition-output',
+    'hosts',
+    'partitionBy',
+    ['host', [['diff', 'cpu', { output: 'dcpu' }]], 'collect'],
+  ],
   ['rate-b-drop', 'gappy', 'rate', ['b', { drop: true }]],
   ['rate-ranges', 'ranges', 'rate', [['a', 'b']]],
   ['pctChange-labelled', 'labelled', 'pctChange', [['a', 'b']]],
