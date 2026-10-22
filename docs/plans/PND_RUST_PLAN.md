@@ -1019,6 +1019,23 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | fill linear, maxGap 3s | 4.9 | 69.1 |
 
     Each op is one O(N) pass (fill: one to find runs, one to fill).
+    - Gap loops sped up (2026-10-22, after the polars comparison in
+      `bench/COMPARISON.md`). `diff` / `rate` / `pct_change` tested
+      every row for a gap before doing the maths; that branch kept the
+      compiler from working on several rows at once. A gap is a
+      non-finite value, and the maths on one is non-finite too, so
+      `finite_or_gap` on the plain expression gives the same bits (unit
+      test against the old loop on NaN/±inf gaps, ±0, overflow and
+      repeated times). Number `shift` is now one block copy, and `fill`
+      finds gaps on the raw numbers. Medians of 7 runs, before → after:
+      diff 3.8 → 1.5, rate 4.7 → 2.1, pct_change 4.2 → 1.6, shift
+      3.8 → 1.7, fill hold 5.8 → 3.1, fill linear 6.1 → 3.7 ms. polars
+      (1 thread, same session): 1.0 / 4.5 / 2.0 / 0.0 / 3.7 / 4.0.
+      Partitioned `diff + collect` did not move (~40 ms: splitting and
+      collecting dominate). This also answered "should gaps stop being
+      NaN?": no. A NaN subtract (0.65 ms) is as fast as polars' bitmap
+      style (0.64 ms); the cost of NaN is only at Arrow in/out (about
+      2.3 / 0.7 ms per 1M-row column with gaps).
     - `FirstRow::Drop` first copied every column (14 ms, slower than
       pond-ts). It now shares the column buffers, as pond-ts's
       `withRowRange` does, and copies only the key. Step 3b's `slice`

@@ -151,29 +151,32 @@ impl TimeSeries {
         let n = self.len();
         // Seconds between each row and the one before, as pond-ts computes
         // them: one subtraction, one division.
-        let seconds = |i: usize| (begin[i] - begin[i - 1]) as f64 / 1000.0;
+        let seconds = |t: i64, t0: i64| (t - t0) as f64 / 1000.0;
+        // No per-row gap test: a gap is non-finite, and anything minus or
+        // divided by a non-finite value is non-finite, so `finite_or_gap`
+        // turns it into a gap. Dividing by a zero `dt` or `prev` gives an
+        // infinity or NaN, which becomes a gap the same way. Without the
+        // branch the compiler can work on several rows at once (the diff loop
+        // on 1M rows with 5% gaps: about 3 ms with the branch, 0.65 ms
+        // without).
         let floats = |values: &[f64]| -> Vec<f64> {
-            let mut out = vec![f64::NAN; n];
-            for i in 1..n {
-                let (prev, cur) = (values[i - 1], values[i]);
-                if !prev.is_finite() || !cur.is_finite() {
-                    continue;
+            let mut out = Vec::with_capacity(n);
+            if n == 0 {
+                return out;
+            }
+            out.push(f64::NAN);
+            let pairs = values[1..].iter().zip(&values[..n - 1]);
+            match change {
+                Delta::Diff => out.extend(pairs.map(|(&cur, &prev)| finite_or_gap(cur - prev))),
+                Delta::Rate => {
+                    let steps = begin[1..n].iter().zip(&begin[..n - 1]);
+                    out.extend(pairs.zip(steps).map(|((&cur, &prev), (&t, &t0))| {
+                        finite_or_gap((cur - prev) / seconds(t, t0))
+                    }))
                 }
-                let delta = cur - prev;
-                out[i] = finite_or_gap(match change {
-                    Delta::Diff => delta,
-                    Delta::Rate => {
-                        let dt = seconds(i);
-                        if dt == 0.0 { f64::NAN } else { delta / dt }
-                    }
-                    Delta::Pct => {
-                        if prev == 0.0 {
-                            f64::NAN
-                        } else {
-                            delta / prev
-                        }
-                    }
-                });
+                Delta::Pct => {
+                    out.extend(pairs.map(|(&cur, &prev)| finite_or_gap((cur - prev) / prev)))
+                }
             }
             out
         };
@@ -223,16 +226,27 @@ impl TimeSeries {
     pub fn shift(&self, columns: &[&str], n: i64) -> Result<TimeSeries> {
         let targets = self.targets("shift", columns)?;
         let len = self.len() as i64;
-        let rows: Vec<Option<usize>> = (0..len)
-            .map(|i| {
-                let from = i.checked_sub(n)?;
-                (0..len).contains(&from).then_some(from as usize)
+        // Row numbers for the other kinds, built only if one is shifted.
+        let rows = std::cell::OnceCell::new();
+        let rows = || {
+            rows.get_or_init(|| {
+                (0..len)
+                    .map(|i| {
+                        let from = i.checked_sub(n)?;
+                        (0..len).contains(&from).then_some(from as usize)
+                    })
+                    .collect::<Vec<Option<usize>>>()
             })
-            .collect();
+        };
         let mut out = self.columns().to_vec();
         for &c in &targets {
             let column = &self.columns()[c];
-            out[c] = Column::from_data(column.name().to_string(), column.data().take(&rows), false);
+            let data = match column.data() {
+                // Numbers: one block copy instead of a lookup per row.
+                ColumnData::Number(f) => shift_numbers(f.values(), n).into(),
+                other => other.take(rows()),
+            };
+            out[c] = Column::from_data(column.name().to_string(), data, false);
         }
         Ok(self.with_value_columns(out))
     }
@@ -397,9 +411,15 @@ impl TimeSeries {
             let column = &self.columns()[c];
             let data = column.data();
             let n = data.len();
-            let runs: Vec<Range<usize>> = gap_runs(n, |i| data.is_present(i))
-                .filter(|run| fillable(run, n, fill, limits.limit, max_gap, times))
-                .collect();
+            let keep = |run: &Range<usize>| fillable(run, n, fill, limits.limit, max_gap, times);
+            let runs: Vec<Range<usize>> = match data {
+                // Numbers: test the raw values, not the column kind per row.
+                ColumnData::Number(f) => {
+                    let v = f.values();
+                    gap_runs(n, |i| v[i].is_finite()).filter(keep).collect()
+                }
+                _ => gap_runs(n, |i| data.is_present(i)).filter(keep).collect(),
+            };
             if runs.is_empty() {
                 continue;
             }
@@ -633,6 +653,20 @@ fn running_decimal(name: &str, d: &DecimalColumn, reducer: Reducer) -> Result<De
     Ok(d.rebuild(values, precision))
 }
 
+/// `values` moved down `n` rows (up when negative), gaps in the rows moved
+/// away from: the same as `take` with the shifted row numbers.
+fn shift_numbers(values: &[f64], n: i64) -> Vec<f64> {
+    let len = values.len();
+    let k = usize::try_from(n.unsigned_abs()).map_or(len, |k| k.min(len));
+    let mut out = vec![f64::NAN; len];
+    if n >= 0 {
+        out[k..].copy_from_slice(&values[..len - k]);
+    } else {
+        out[..len - k].copy_from_slice(&values[k..]);
+    }
+    out
+}
+
 /// The maximal runs of rows where `present` is false.
 fn gap_runs(n: usize, present: impl Fn(usize) -> bool) -> impl Iterator<Item = Range<usize>> {
     let mut i = 0;
@@ -782,6 +816,133 @@ mod tests {
 
     fn strs(v: &[Option<&str>]) -> Vec<Option<String>> {
         v.iter().map(|s| s.map(str::to_string)).collect()
+    }
+
+    /// Raw values that hit every edge of the branch-free number loops:
+    /// gaps stored as NaN and as infinities, zeros of both signs, values
+    /// whose difference overflows, and repeated times (a zero `dt`).
+    fn edge_numbers(n: usize, seed: u64) -> TimeSeries {
+        let mut x = seed;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let picks = [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            0.0,
+            -0.0,
+            f64::MAX,
+            -f64::MAX,
+            1e-310,
+            1.5,
+            -2.25,
+        ];
+        let mut t = 0i64;
+        let mut times = Vec::with_capacity(n);
+        let mut values = Vec::with_capacity(n);
+        for _ in 0..n {
+            let r = next();
+            t += [0, 1, 1000, 1500][(r % 4) as usize];
+            times.push(t);
+            values.push(if r % 3 == 0 {
+                picks[(r / 3 % picks.len() as u64) as usize]
+            } else {
+                (r % 10_000) as f64 / 7.0 - 700.0
+            });
+        }
+        TimeSeries::new("s", times, vec![Column::optional_raw("v", values)]).unwrap()
+    }
+
+    fn raw_bits(s: &TimeSeries) -> Vec<u64> {
+        let v = s.column("v").unwrap().numbers().unwrap().values();
+        v.iter().map(|x| x.to_bits()).collect()
+    }
+
+    #[test]
+    fn number_changes_match_the_row_by_row_loop_bit_for_bit() {
+        // The loop `change` used before it went branch-free.
+        fn reference(begin: &[i64], values: &[f64], change: Delta) -> Vec<f64> {
+            let n = values.len();
+            let mut out = vec![f64::NAN; n];
+            for i in 1..n {
+                let (prev, cur) = (values[i - 1], values[i]);
+                if !prev.is_finite() || !cur.is_finite() {
+                    continue;
+                }
+                let delta = cur - prev;
+                out[i] = finite_or_gap(match change {
+                    Delta::Diff => delta,
+                    Delta::Rate => {
+                        let dt = (begin[i] - begin[i - 1]) as f64 / 1000.0;
+                        if dt == 0.0 { f64::NAN } else { delta / dt }
+                    }
+                    Delta::Pct => {
+                        if prev == 0.0 {
+                            f64::NAN
+                        } else {
+                            delta / prev
+                        }
+                    }
+                });
+            }
+            out
+        }
+        for (n, seed) in [(0, 1), (1, 2), (2, 3), (500, 4), (5000, 5)] {
+            let s = edge_numbers(n, seed);
+            let values = s.column("v").unwrap().numbers().unwrap().values().to_vec();
+            for (change, got) in [
+                (Delta::Diff, s.diff(&["v"], FirstRow::Keep)),
+                (Delta::Rate, s.rate(&["v"], FirstRow::Keep)),
+                (Delta::Pct, s.pct_change(&["v"], FirstRow::Keep)),
+            ] {
+                let want: Vec<u64> = reference(s.key().begin(), &values, change)
+                    .iter()
+                    .map(|x| x.to_bits())
+                    .collect();
+                assert_eq!(raw_bits(&got.unwrap()), want, "{}, {n} rows", change.call());
+            }
+        }
+    }
+
+    #[test]
+    fn number_shift_matches_a_row_lookup() {
+        for (n, seed) in [(0, 6), (1, 7), (7, 8), (300, 9)] {
+            let s = edge_numbers(n, seed);
+            let values = s.column("v").unwrap().numbers().unwrap().values().to_vec();
+            let len = n as i64;
+            for by in [
+                0,
+                1,
+                -1,
+                3,
+                -3,
+                len - 1,
+                1 - len,
+                len,
+                -len,
+                len + 5,
+                -len - 5,
+                i64::MAX,
+                i64::MIN,
+            ] {
+                let want: Vec<u64> = (0..len)
+                    .map(|i| match i.checked_sub(by) {
+                        Some(from) if (0..len).contains(&from) => values[from as usize],
+                        _ => f64::NAN,
+                    })
+                    .map(f64::to_bits)
+                    .collect();
+                assert_eq!(
+                    raw_bits(&s.shift(&["v"], by).unwrap()),
+                    want,
+                    "{n} rows by {by}"
+                );
+            }
+        }
     }
 
     #[test]
