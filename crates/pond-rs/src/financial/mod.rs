@@ -6,7 +6,9 @@
 //! percent change, intraday momentum, awesome and ultimate oscillators,
 //! CCI, Fisher transform, psychological line, pretty good and prime number
 //! oscillators, QStick, relative vigor, centre of gravity, Chande forecast,
-//! true strength),
+//! true strength), trend (directional movement, Aroon, vortex, vertical
+//! horizontal filter, random walk index, SuperTrend, parabolic SAR, ATR
+//! trailing stop),
 //! rolling statistics and the z-score so far, each a method on
 //! [`TimeSeries`] that adds its number columns and keeps every row.
 //!
@@ -52,6 +54,7 @@ mod bands;
 mod kernels;
 mod momentum;
 mod regression;
+mod trend;
 
 pub use averages::{
     Coppock, Guppy, Kst, Macd, MovingAverageCross, OscillatorMode, PriceMomentumOscillator,
@@ -66,6 +69,9 @@ pub use momentum::{
     PercentChange, PrettyGoodOscillator, PrimeNumberOscillator, Qstick, RelativeVigorIndex,
     Stochastic, StochasticMomentumIndex, StochasticRsi, TrueStrengthIndex, UltimateOscillator,
     WilliamsR,
+};
+pub use trend::{
+    Aroon, AtrTrailingStop, DirectionalMovement, ParabolicSar, RandomWalkIndex, SuperTrend, Vortex,
 };
 
 use std::borrow::Cow;

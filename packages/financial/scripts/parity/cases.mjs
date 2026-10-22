@@ -211,6 +211,36 @@ const LEAD_ROWS = Array.from({ length: 90 }, (_, i) => {
     whole ? null : price - (unit(i, 1103515245) - 0.5) * spread,
   ];
 });
+// Edge bars for the trend studies: a long first run whose second bar is an
+// inside bar (the high falls further than the low rises, so both moves are
+// negative) and which jumps from -1.7e308 to 1.7e308 near its end (rows
+// 33-34: the ranges and averages overflow to infinity and the bands to
+// NaN; pond-ts refuses infinite inputs, so overflow is the only way in),
+// then two short runs after whole-bar gaps, each opening with an inside
+// bar.
+const EDGE_ROWS = Array.from({ length: 60 }, (_, i) => {
+  const time = i * 60_000;
+  if (i === 40 || i === 50) return [time, null, null, null, null];
+  const start = i === 0 || i === 41 || i === 51;
+  const inside = i === 1 || i === 42 || i === 52;
+  const price = 20 + Math.sin(i / 3) * 2 + unit(i, 69069);
+  const spread = 0.3 + unit(i, 40503);
+  let high = price + spread;
+  let low = price - spread;
+  if (start) [high, low] = [21, 19];
+  if (inside) [high, low] = [20.5, 19.2];
+  // An outside bar whose high rises exactly as far as its low falls.
+  if (i === 2) [high, low] = [21, 19];
+  if (i === 3) [high, low] = [21.5, 18.5];
+  let close = Math.min(high, Math.max(low, price));
+  // A close above its bar's high, then two bars flat at that close: the
+  // true range over them is 0 while the bar before them reaches below.
+  if (i === 45) [high, low, close] = [20, 19.5, 21];
+  if (i === 46 || i === 47) [high, low, close] = [21, 21, 21];
+  if (i === 33) [high, low, close] = [-1.7e308, -1.7e308, -1.7e308];
+  if (i === 34) [high, low, close] = [1.7e308, 1.7e308, 1.7e308];
+  return [time, high, low, close, price];
+});
 const LEAD_SCHEMA = [
   { name: 'time', kind: 'time' },
   { name: 'high', kind: 'number', required: false },
@@ -258,6 +288,7 @@ function inputs(oracle) {
     named: { name: 'named', schema: NAMED_SCHEMA, rows: NAMED_ROWS },
     ohlc: { name: 'ohlc', schema: OHLC_GAPPY_SCHEMA, rows: OHLC_ROWS },
     lead: { name: 'lead', schema: LEAD_SCHEMA, rows: LEAD_ROWS },
+    edge: { name: 'edge', schema: LEAD_SCHEMA, rows: EDGE_ROWS },
     ohlcEmpty: { name: 'ohlcEmpty', schema: LEAD_SCHEMA, rows: [] },
     empty: { name: 'empty', schema: CLOSE_SCHEMA, rows: [] },
   };
@@ -359,6 +390,7 @@ function cases() {
   averageFamilyCases(add);
   bandFamilyCases(add);
   momentumFamilyCases(add);
+  trendFamilyCases(add);
   return out;
 }
 
@@ -854,6 +886,101 @@ function momentumFamilyCases(add) {
   add('chandeForecastOscillator', 'large', { period: 14 });
   add('centerOfGravity', 'large', { period: 7 });
   add('trueStrengthIndex', 'long', { longPeriod: 60, shortPeriod: 30 });
+}
+
+// R2 step 2d: the trend family (part 1).
+function trendFamilyCases(add) {
+  const bar = ['high', 'low', 'close'];
+  familyCases(add, {
+    small: {
+      directionalMovement: [{ period: 5 }, { period: 1 }],
+      aroon: [{ period: 5 }, { period: 1 }],
+      vortex: [{ period: 5 }, { period: 1 }],
+      verticalHorizontalFilter: [{ period: 5 }, { period: 1 }],
+      randomWalkIndex: [{ period: 5 }, { period: 2 }],
+      superTrend: [
+        { period: 3, multiplier: 1.5 },
+        { period: 1, multiplier: 0.5 },
+      ],
+      parabolicSar: [
+        { step: 0.05, maxStep: 0.3 },
+        { step: 0.2, maxStep: 0.2 },
+      ],
+      atrTrailingStop: [
+        { period: 3, multiplier: 1.5 },
+        { period: 1, multiplier: 0.5 },
+      ],
+    },
+    reads: {
+      directionalMovement: bar,
+      aroon: ['high', 'low'],
+      vortex: bar,
+      verticalHorizontalFilter: ['column'],
+      randomWalkIndex: bar,
+      superTrend: bar,
+      parabolicSar: ['high', 'low'],
+      atrTrailingStop: bar,
+    },
+    typeOption: {},
+    naming: {
+      directionalMovement: 'prefix',
+      aroon: 'prefix',
+      vortex: 'prefix',
+      randomWalkIndex: 'prefix',
+      superTrend: 'prefix',
+      parabolicSar: 'prefix',
+      atrTrailingStop: 'prefix',
+    },
+    periods: {
+      directionalMovement: ['period'],
+      aroon: ['period'],
+      vortex: ['period'],
+      verticalHorizontalFilter: ['period'],
+      randomWalkIndex: ['period'],
+      superTrend: ['period'],
+      parabolicSar: [],
+      atrTrailingStop: ['period'],
+    },
+    numbers: {
+      superTrend: ['multiplier'],
+      parabolicSar: ['step', 'maxStep'],
+      atrTrailingStop: ['multiplier'],
+    },
+  });
+  // A one-bar random walk (refused), a ceiling below the step (refused),
+  // moved columns, and longer settings on
+  // the 900 closes and the bars.
+  add('randomWalkIndex', 'ohlc', { period: 1 });
+  add('parabolicSar', 'ohlc', { step: 0.1, maxStep: 0.05 });
+  add('superTrend', 'ohlc', { period: 3, close: 'open' });
+  add('atrTrailingStop', 'ohlc', { period: 3, close: 'open' });
+  add('aroon', 'bars', { period: 60, high: 'close', low: 'close' });
+  add('parabolicSar', 'bars', { high: 'close', low: 'open' });
+  add('directionalMovement', 'bars', { period: 30 });
+  add('vortex', 'bars', { period: 40 });
+  add('randomWalkIndex', 'bars', { period: 40 });
+  add('verticalHorizontalFilter', 'long', { period: 101 });
+  add('verticalHorizontalFilter', 'large', { period: 7 });
+  add('superTrend', 'bars', { period: 30, multiplier: 2 });
+  add('atrTrailingStop', 'bars', { period: 30, multiplier: 1 });
+  // Inside bars after gaps, and prices that overflow.
+  for (const study of [
+    'directionalMovement',
+    'aroon',
+    'vortex',
+    'randomWalkIndex',
+    'superTrend',
+    'parabolicSar',
+    'atrTrailingStop',
+  ]) {
+    add(study, 'edge', {});
+    add(
+      study,
+      'edge',
+      study === 'parabolicSar' ? { step: 0.1, maxStep: 0.3 } : { period: 3 },
+    );
+  }
+  add('verticalHorizontalFilter', 'edge', { period: 3, column: 'high' });
 }
 
 function encodeCell(cell) {

@@ -384,12 +384,12 @@ fn scaled(centre: &[f64], percent: f64) -> (Vec<f64>, Vec<f64>) {
 }
 
 /// `prefix` plus each suffix.
-fn suffixed<const N: usize>(prefix: &str, suffixes: [&str; N]) -> [String; N] {
+pub(super) fn suffixed<const N: usize>(prefix: &str, suffixes: [&str; N]) -> [String; N] {
     suffixes.map(|s| format!("{prefix}{s}"))
 }
 
 /// pond-ts's check on a multiplier or percent: finite and above zero.
-fn positive_finite(call: &'static str, what: &str, value: f64) -> Result<()> {
+pub(super) fn positive_finite(call: &'static str, what: &str, value: f64) -> Result<()> {
     if !value.is_finite() || value <= 0.0 {
         return Err(PondError::InvalidData {
             call,
