@@ -2,6 +2,8 @@
 
 The R1b step 4b trial on a partitioned workload (top-20 z-scores across 500
 symbols) is in [`q11/`](q11/README.md).
+The R2 step 5 trial on financial studies (RSI, Bollinger bands and a
+session VWAP across a clock change) is in [`r2/`](r2/README.md).
 
 The last R1a target (RFC `docs/rfcs/pond-rs.md`, Amendment 1): _on workload B,
 an agent given pond-rs reaches the right answer at least as often as one given
