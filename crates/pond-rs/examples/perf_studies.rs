@@ -81,6 +81,9 @@ fn make_bars(rows: usize) -> TimeSeries {
     let low: Vec<f64> = (0..rows).map(|i| price(i) - spread(i)).collect();
     let close: Vec<f64> = (0..rows).map(price).collect();
     let open: Vec<f64> = (0..rows).map(|i| price(i + 1)).collect();
+    let volume: Vec<f64> = (0..rows)
+        .map(|i| 1000.0 + ((i * 7919) % 997) as f64)
+        .collect();
     TimeSeries::new(
         "bars",
         time,
@@ -89,6 +92,7 @@ fn make_bars(rows: usize) -> TimeSeries {
             Column::required("low", low),
             Column::required("close", close),
             Column::required("open", open),
+            Column::required("volume", volume),
         ],
     )
     .unwrap()
@@ -653,6 +657,68 @@ fn main() -> pond_rs::Result<()> {
         ),
     ];
     cases.extend(statistics);
+    // R2 step 2f part 1. The bars' close is the middle of the bar, where
+    // the close location is 0, so A/D and Chaikin's studies read the open.
+    let volume: Vec<Case> = vec![
+        (
+            "vo-obv".into(),
+            "obv",
+            Box::new(|| bars.obv(Obv::default()).unwrap()),
+        ),
+        (
+            "vo-ad".into(),
+            "ad",
+            Box::new(|| {
+                bars.accumulation_distribution(AccumulationDistribution::default().close("open"))
+                    .unwrap()
+            }),
+        ),
+        (
+            "vo-pvt".into(),
+            "pvt",
+            Box::new(|| {
+                bars.price_volume_trend(PriceVolumeTrend::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "vo-cmf".into(),
+            "cmf",
+            Box::new(|| {
+                bars.chaikin_money_flow(ChaikinMoneyFlow::default().close("open"))
+                    .unwrap()
+            }),
+        ),
+        (
+            "vo-chaikin".into(),
+            "chaikinOsc",
+            Box::new(|| {
+                bars.chaikin_oscillator(ChaikinOscillator::default().close("open"))
+                    .unwrap()
+            }),
+        ),
+        (
+            "vo-mfi".into(),
+            "mfi",
+            Box::new(|| bars.money_flow_index(MoneyFlowIndex::default()).unwrap()),
+        ),
+        (
+            "vo-tmf".into(),
+            "tmf",
+            Box::new(|| bars.twiggs_money_flow(TwiggsMoneyFlow::default()).unwrap()),
+        ),
+        (
+            "vo-force".into(),
+            "force",
+            Box::new(|| bars.force_index(ForceIndex::default()).unwrap()),
+        ),
+        (
+            "vo-eom".into(),
+            "eom",
+            Box::new(|| bars.ease_of_movement(EaseOfMovement::default()).unwrap()),
+        ),
+    ];
+    cases.extend(volume);
     // POND_BITS=1: instead of timing, print a hash of every bit of every
     // number column in the result (a gap hashes as one fixed value), the
     // same hash bench/studies_pond_ts.mjs prints under the same variable.

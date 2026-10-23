@@ -3136,6 +3136,62 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | pricerel | 1.3      | 1.2     | 16.9    | 14x   |
     | perf     | 2.6      | 2.5     | 10.8    | 4.3x  |
 
+  **R2 step 2f part 1 (done): volume, 9 of 17 studies** (the catalog's
+  18th, anchored VWAP, needs the key times and goes with session VWAP in
+  step 3).
+  - Calls: `obv`, `accumulation_distribution`, `price_volume_trend`,
+    `chaikin_money_flow`, `chaikin_oscillator`, `money_flow_index`,
+    `twiggs_money_flow`, `force_index` and `ease_of_movement`, each with
+    its own options struct (`high` / `low` / `close` / `volume` setters,
+    `output`; `ease_of_movement` also takes `ma` and `scale`).
+    `study_options!` gained a `volume` setter doc. Errors and their order
+    as pond-ts (periods, the oscillator's fast-before-slow rule, the
+    scale, the output, then the columns, Twiggs reading the close and
+    volume before the high and low).
+  - New kernels: `cumulative_values`, `clv` / `clv_values`,
+    `money_flow_volume_values`, `js_sign` (JS `Math.sign`: a zero keeps
+    its sign, where `f64::signum` gives 1 for +0) and
+    `wilder_values_from` (pond-ts `wilderValues`' `start`). On-balance
+    volume, the force index and Twiggs money flow fuse pond-ts's passes
+    into one, the same operations in the same order.
+  - Parity: the fixture grew to 4,300 cases, with two new inputs: `vol`
+    (price bars with volume and gaps in each column, bars with no range
+    and an unchanged close, zero volume, a zero close) and `blowup` (a bar
+    whose close location times volume overflows to -Infinity). 3,193
+    match bit for bit, 420 errors agree, 413 refused (known
+    missing-column difference), 274 calls Rust cannot write. Oracle: 193
+    of 220 cases (was 178).
+  - Planted bugs: 16 of 26 caught at first; the new cases (a bar with no
+    range whose close is a gap, the overflowing bar, a close before the
+    first volume) caught 4 more: 20 of 26. The 6 missed change no output:
+    `Math.sign` giving +0 for -0 (the running total starts from 0 plus a
+    volume, so it is never -0 and adding either zero gives the same);
+    Twiggs smoothing from row 0 instead of row 1, either sum (row 0's flow
+    is always a gap, as it has no previous close); dropping the zero
+    guards in the money flow index and Twiggs (dividing by 0 there gives
+    an infinity or NaN, both stored as a gap); and dropping ease of
+    movement's zero-volume guard (the infinity is skipped as a gap by
+    every moving-average type, as the guard's gap is; all ten were run).
+  - Perf: all O(N). The running totals (OBV, A/D, PVT) and the EMAs are
+    one sequential pass; Chaikin money flow and the money flow index
+    split rows across cores. At 1M rows all nine match pond-ts on every
+    bit, on 4 cores and on 1 (`POND_BITS=1`).
+  - Medians of 7, 1M bars at pond-ts's defaults, ms. The bench bars'
+    close is the middle of each bar (close location 0), so A/D and
+    Chaikin's two studies read the open as the close:
+
+    | Study   | 1 thread | 4 cores | pond-ts | ratio |
+    | ------- | -------- | ------- | ------- | ----- |
+    | obv     | 3.3      | 3.3     | 23.4    | 7.1x  |
+    | ad      | 7.4      | 6.7     | 29.5    | 4.4x  |
+    | pvt     | 5.5      | 5.7     | 28.9    | 5.1x  |
+    | cmf     | 26.7     | 14.2    | 69.6    | 4.9x  |
+    | chaikin | 19.1     | 13.0    | 45.7    | 3.5x  |
+    | mfi     | 25.7     | 15.1    | 75.9    | 5.0x  |
+    | tmf     | 27.2     | 17.8    | 61.0    | 3.4x  |
+    | force   | 5.4      | 4.4     | 17.4    | 4.0x  |
+    | eom     | 14.2     | 8.2     | 39.8    | 4.9x  |
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).

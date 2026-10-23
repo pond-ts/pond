@@ -327,6 +327,73 @@ const PAIR_SCHEMA = [
   { name: 'stepTwin', kind: 'number' },
 ];
 
+// Price bars with volume for the volume family: whole bars missing at
+// rows 0-2 (the running totals start late), a gap in the close only (7),
+// the high only (12), the low only (19), the volume only (25-26), whole
+// bars (40-44), a stretch where high = low = close and the close does not
+// change (60-69: no range, no change), zero volume (80-81), a close of 0
+// (110: the next percent change is a gap), signed zeros in `open`, a
+// `prime` column of the prime ladder and a text column.
+const VOL_ROWS = (() => {
+  let price = 50;
+  return Array.from({ length: 120 }, (_, i) => {
+    const flat = i >= 60 && i < 70;
+    if (!flat) price += (unit(i + 11, 2654435761) - 0.5) * 2;
+    const spread = flat ? 0 : 0.25 + unit(i, 40503) * 1.5;
+    const whole = i < 3 || (i >= 40 && i < 45);
+    const high = whole || i === 12 ? null : price + spread;
+    const low = whole || i === 19 ? null : price - spread;
+    let close =
+      whole || i === 7 ? null : price + (unit(i, 69069) - 0.5) * spread;
+    if (i === 110) close = 0;
+    const volume =
+      whole || i === 25 || i === 26
+        ? null
+        : i === 80 || i === 81
+          ? 0
+          : 1000 + Math.round(unit(i, 1103515245) * 900);
+    const open = i % 4 === 0 ? -0 : i % 4 === 2 ? 0 : price;
+    return [
+      i * 60_000,
+      open,
+      high,
+      low,
+      close,
+      volume,
+      PRIME_VALUES[i % PRIME_VALUES.length],
+      i % 2 === 0 ? 'a' : 'b',
+    ];
+  });
+})();
+const VOL_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'open', kind: 'number' },
+  { name: 'high', kind: 'number', required: false },
+  { name: 'low', kind: 'number', required: false },
+  { name: 'close', kind: 'number', required: false },
+  { name: 'volume', kind: 'number', required: false },
+  { name: 'prime', kind: 'number' },
+  { name: 'name', kind: 'string' },
+];
+const VOL_EMPTY_SCHEMA = VOL_SCHEMA.filter((c) => c.name !== 'name');
+
+// Bars that overflow: row 5's close is far below a bar that is itself
+// near the largest double, so where it sits in the bar (and that times
+// the volume) is -Infinity; everything else is ordinary.
+const BLOWUP_ROWS = Array.from({ length: 12 }, (_, i) => {
+  const t = i * 60_000;
+  if (i === 5) return [t, 1.5e308, 1.4e308, -1.7e308, 1000];
+  const price = 30 + Math.sin(i) * 2;
+  return [t, price + 1, price - 1, price + Math.cos(i) / 2, 900 + i * 10];
+});
+const BLOWUP_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'high', kind: 'number' },
+  { name: 'low', kind: 'number' },
+  { name: 'close', kind: 'number' },
+  { name: 'volume', kind: 'number' },
+];
+
 const TINY_ROWS = [
   [0, 3],
   [1000, 1],
@@ -370,6 +437,9 @@ function inputs(oracle) {
     ties: { name: 'ties', schema: LEAD_SCHEMA, rows: TIE_ROWS },
     scratch: { name: 'scratch', schema: SCRATCH_SCHEMA, rows: SCRATCH_ROWS },
     pair: { name: 'pair', schema: PAIR_SCHEMA, rows: PAIR_ROWS },
+    vol: { name: 'vol', schema: VOL_SCHEMA, rows: VOL_ROWS },
+    blowup: { name: 'blowup', schema: BLOWUP_SCHEMA, rows: BLOWUP_ROWS },
+    volEmpty: { name: 'volEmpty', schema: VOL_EMPTY_SCHEMA, rows: [] },
     ohlcEmpty: { name: 'ohlcEmpty', schema: LEAD_SCHEMA, rows: [] },
     empty: { name: 'empty', schema: CLOSE_SCHEMA, rows: [] },
   };
@@ -475,6 +545,7 @@ function cases() {
   trendFamilyCases2(add);
   volatilityFamilyCases(add);
   statisticsFamilyCases(add);
+  volumeFamilyCases(add);
   return out;
 }
 
@@ -726,12 +797,17 @@ function familyCases(add, F) {
   for (const [study, settings] of Object.entries(F.small)) {
     // Studies of price bars only take the inputs that have them.
     const bars = F.reads[study].some((r) => r !== 'column');
-    const inputs = bars
-      ? ['bars', 'ohlc', 'lead', 'ohlcEmpty']
-      : ['bars', 'long', 'gappy', 'large', 'flat', 'tiny', 'empty', 'ohlc'];
-    const smallInputs = bars
-      ? ['bars', 'ohlc', 'lead']
-      : ['bars', 'ohlc', 'lead', 'gappy', 'large', 'flat', 'tiny'];
+    const inputs =
+      F.inputs ??
+      (bars
+        ? ['bars', 'ohlc', 'lead', 'ohlcEmpty']
+        : ['bars', 'long', 'gappy', 'large', 'flat', 'tiny', 'empty', 'ohlc']);
+    const smallInputs =
+      F.smallInputs ??
+      (bars
+        ? ['bars', 'ohlc', 'lead']
+        : ['bars', 'ohlc', 'lead', 'gappy', 'large', 'flat', 'tiny']);
+    const other = F.otherInput ?? 'ohlc';
     for (const input of inputs) add(study, input, {});
     const typeOption = F.typeOption[study];
     for (const [index, small] of settings.entries()) {
@@ -749,33 +825,32 @@ function familyCases(add, F) {
     // column and a missing one.
     for (const option of F.reads[study]) {
       for (const column of ['open', 'prime', 'name', 'nope']) {
-        add(study, 'ohlc', { ...small, [option]: column });
+        add(study, other, { ...small, [option]: column });
       }
     }
     // Custom names, and names that collide.
     const naming = F.naming[study] ?? 'output';
-    add(study, 'ohlc', { ...small, [naming]: 'x' });
-    add(study, 'ohlc', { ...small, [naming]: 'close' });
-    add(study, 'ohlc', { ...small, [naming]: 'time' });
-    add(study, 'ohlc', { ...small, [naming]: '' });
+    add(study, other, { ...small, [naming]: 'x' });
+    add(study, other, { ...small, [naming]: 'close' });
+    add(study, other, { ...small, [naming]: 'time' });
+    add(study, other, { ...small, [naming]: '' });
     if (naming === 'prefix') {
       for (const prefix of ['m', 'u', 'l']) {
-        add(study, 'ohlc', { ...small, prefix });
+        add(study, other, { ...small, prefix });
       }
     }
     // Periods that are not positive whole numbers, and multipliers or
     // percents that are not positive.
     for (const option of F.periods[study]) {
       for (const bad of [0, -1, 1.5]) {
-        add(study, 'ohlc', { ...small, [option]: bad });
+        add(study, other, { ...small, [option]: bad });
       }
     }
     for (const option of F.numbers[study] ?? []) {
-      for (const bad of [0, -1])
-        add(study, 'ohlc', { ...small, [option]: bad });
-      add(study, 'ohlc', { ...small, [option]: 1e-9 });
+      for (const bad of [0, -1]) add(study, other, { ...small, [option]: bad });
+      add(study, other, { ...small, [option]: 1e-9 });
     }
-    if (typeOption) add(study, 'ohlc', { ...small, [typeOption]: 'nope' });
+    if (typeOption) add(study, other, { ...small, [typeOption]: 'nope' });
   }
 }
 
@@ -1450,4 +1525,109 @@ function statisticsFamilyCases(add) {
     add(study, 'pair', { benchmark: 'bench', period: 1 });
     add(study, 'pair', { benchmark: 'close', period: 1 });
   }
+}
+
+// R2 step 2f part 1: the volume family's first nine studies, on the bars
+// (oracle prices and volume) and the `vol` bars; other columns, names and
+// periods on `vol`; then the edges: the `edge` and `ties` bars with their
+// open as the volume (overflowing products), a flat close, and the
+// moving-average types and bad scales of ease of movement.
+function volumeFamilyCases(add) {
+  const all = ['high', 'low', 'close', 'volume'];
+  const cv = ['close', 'volume'];
+  familyCases(add, {
+    inputs: ['bars', 'vol', 'volEmpty'],
+    smallInputs: ['bars', 'vol'],
+    otherInput: 'vol',
+    small: {
+      obv: [{}],
+      accumulationDistribution: [{}],
+      priceVolumeTrend: [{}],
+      chaikinMoneyFlow: [{ period: 3 }, { period: 1 }],
+      chaikinOscillator: [
+        { fastPeriod: 2, slowPeriod: 4 },
+        { fastPeriod: 1, slowPeriod: 2 },
+      ],
+      moneyFlowIndex: [{ period: 3 }, { period: 1 }],
+      twiggsMoneyFlow: [{ period: 3 }, { period: 1 }],
+      forceIndex: [{ period: 3 }, { period: 1 }],
+      easeOfMovement: [{ period: 3 }, { period: 1, scale: 1 }],
+    },
+    reads: {
+      obv: cv,
+      accumulationDistribution: all,
+      priceVolumeTrend: cv,
+      chaikinMoneyFlow: all,
+      chaikinOscillator: all,
+      moneyFlowIndex: all,
+      twiggsMoneyFlow: all,
+      forceIndex: cv,
+      easeOfMovement: ['high', 'low', 'volume'],
+    },
+    typeOption: { easeOfMovement: 'maType' },
+    naming: {},
+    periods: {
+      obv: [],
+      accumulationDistribution: [],
+      priceVolumeTrend: [],
+      chaikinMoneyFlow: ['period'],
+      chaikinOscillator: ['fastPeriod', 'slowPeriod'],
+      moneyFlowIndex: ['period'],
+      twiggsMoneyFlow: ['period'],
+      forceIndex: ['period'],
+      easeOfMovement: ['period'],
+    },
+    numbers: { easeOfMovement: ['scale'] },
+  });
+  for (const study of [
+    'obv',
+    'accumulationDistribution',
+    'priceVolumeTrend',
+    'chaikinMoneyFlow',
+    'chaikinOscillator',
+    'moneyFlowIndex',
+    'twiggsMoneyFlow',
+    'forceIndex',
+    'easeOfMovement',
+  ]) {
+    add(study, 'edge', { volume: 'open' });
+    add(study, 'ties', { volume: 'open' });
+    add(study, 'lead', { volume: 'open' });
+    add(study, 'vol', { volume: 'open' });
+    add(study, 'vol', { volume: 'prime' });
+    add(study, 'vol', { high: 'close', low: 'close' });
+    // A bar with no range whose close is a gap (row 7), and the bars
+    // that overflow.
+    add(study, 'vol', { high: 'prime', low: 'prime' });
+    add(study, 'blowup', {});
+    add(
+      study,
+      'blowup',
+      study === 'chaikinOscillator'
+        ? { fastPeriod: 2, slowPeriod: 3 }
+        : { period: 3 },
+    );
+  }
+  // A close before the first volume (the volume is the close, whose rows
+  // 0-2 and 7 are gaps; the close is the open, never a gap).
+  add('obv', 'vol', { close: 'open', volume: 'close' });
+  // The `gappy` closes: rows 0-2 missing and row 3's volume missing, so
+  // the first complete row is 4.
+  for (const study of ['obv', 'priceVolumeTrend', 'forceIndex']) {
+    add(study, 'gappy', {});
+  }
+  // Zero volume (rows 80-81) under every moving-average type.
+  for (const maType of MA_TYPES) {
+    add('easeOfMovement', 'vol', { period: 3, maType });
+  }
+  add('chaikinOscillator', 'vol', { fastPeriod: 4, slowPeriod: 4 });
+  add('chaikinOscillator', 'vol', { fastPeriod: 5, slowPeriod: 4 });
+  add('chaikinOscillator', 'vol', { fastPeriod: 0, slowPeriod: 0 });
+  add('chaikinMoneyFlow', 'bars', { period: 50 });
+  add('moneyFlowIndex', 'bars', { period: 50 });
+  add('twiggsMoneyFlow', 'vol', { period: 200 });
+  for (const scale of [Number.MAX_VALUE, 1e-300, 2.5]) {
+    add('easeOfMovement', 'vol', { period: 3, scale });
+  }
+  add('easeOfMovement', 'vol', { period: 0, maType: 'nope' });
 }

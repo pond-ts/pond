@@ -33,6 +33,7 @@ const bars = new TimeSeries({
     { name: 'low', kind: 'number' },
     { name: 'close', kind: 'number' },
     { name: 'open', kind: 'number' },
+    { name: 'volume', kind: 'number' },
   ],
   rows: Array.from({ length: 1_000_000 }, (_, i) => [
     i * 60_000,
@@ -40,6 +41,7 @@ const bars = new TimeSeries({
     price(i) - spread(i),
     price(i),
     price(i + 1),
+    1000 + ((i * 7919) % 997),
   ]),
 });
 
@@ -139,6 +141,19 @@ const cases = [
     () => f.priceRelative(bars, { benchmark: 'open' }),
   ],
   ['s-perf', 'perf', () => f.performanceIndex(bars, { benchmark: 'open' })],
+  ['vo-obv', 'obv', () => f.obv(bars)],
+  ['vo-ad', 'ad', () => f.accumulationDistribution(bars, { close: 'open' })],
+  ['vo-pvt', 'pvt', () => f.priceVolumeTrend(bars)],
+  ['vo-cmf', 'cmf', () => f.chaikinMoneyFlow(bars, { close: 'open' })],
+  [
+    'vo-chaikin',
+    'chaikinOsc',
+    () => f.chaikinOscillator(bars, { close: 'open' }),
+  ],
+  ['vo-mfi', 'mfi', () => f.moneyFlowIndex(bars)],
+  ['vo-tmf', 'tmf', () => f.twiggsMoneyFlow(bars)],
+  ['vo-force', 'force', () => f.forceIndex(bars)],
+  ['vo-eom', 'eom', () => f.easeOfMovement(bars)],
 ];
 
 const only = process.argv[2];
