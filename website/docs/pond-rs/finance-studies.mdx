@@ -793,6 +793,78 @@ pond-ts, because the column already decided. Pivot points' "previous
 session" is the previous one with bars in the series, so the first
 session with bars gets gaps.
 
+### Session VWAP, start to finish
+
+The usual task: one-minute bars for a US stock, including pre-market and
+after-hours trading, and a VWAP that starts again at each 09:30 New York
+open and is empty outside regular hours. Three steps:
+
+1. Describe the exchange's hours with `SessionRules`, in its own time
+   zone. The calendar then places 09:30 correctly on both sides of a
+   clock change; you never write a UTC offset.
+2. Build the calendar over the bars' own dates. `from_rules` accepts the
+   first and last bar times (epoch milliseconds) as well as date strings,
+   and reads each as its local date in the rules' zone.
+3. Call `session_vwap(SessionVwap::new(&cal))`. Bars stamped with their
+   start time need nothing more: the default, `Stamped::Open`, puts a bar
+   at 09:30 in the session and a bar at 16:00 outside it.
+
+Don't use `vwap(Vwap::new(n))` for this: it is a trailing window of `n`
+bars and never starts again at the open.
+
+```rust
+use pond_rs::financial::{SessionRules, SessionVwap, TradingCalendar};
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    // 09:30 New York on Friday 2024-03-08 (UTC−5) and on Monday
+    // 2024-03-11 (UTC−4: the clocks moved on Sunday the 10th).
+    let fri = 1_709_908_200_000;
+    let mon = 1_710_163_800_000;
+    // Each day: a pre-market bar, two bars in regular hours, a bar at 16:00.
+    let times = vec![
+        fri - minute, fri, fri + minute, fri + 390 * minute,
+        mon - minute, mon, mon + minute, mon + 390 * minute,
+    ];
+    // Bars with no range, so the typical price is the close.
+    let price = vec![99.0, 10.0, 20.0, 99.0, 99.0, 30.0, 40.0, 99.0];
+    let bars = TimeSeries::new(
+        "bars",
+        times,
+        vec![
+            Column::required("high", price.clone()),
+            Column::required("low", price.clone()),
+            Column::required("close", price),
+            Column::required("volume", vec![500.0, 1.0, 3.0, 500.0, 500.0, 1.0, 1.0, 500.0]),
+        ],
+    )?;
+
+    let nyse = SessionRules::new("America/New_York", "09:30", "16:00");
+    let t = bars.key().begin();
+    let cal = TradingCalendar::from_rules(&nyse, t[0], t[t.len() - 1])?;
+    // The open moves an hour in UTC across the clock change.
+    assert_eq!(cal.session_on("2024-03-08").unwrap().open, fri);
+    assert_eq!(cal.session_on("2024-03-11").unwrap().open, mon);
+
+    let out = bars.session_vwap(SessionVwap::new(&cal))?;
+    let svwap: Vec<_> = out.column("svwap")?.numbers()?.iter().collect();
+    // Friday: 10, then (10·1 + 20·3) / 4. Monday starts again: 30, then 35.
+    // Out-of-hours bars, however heavy, are gaps and do not count.
+    assert_eq!(
+        svwap,
+        [None, Some(10.0), Some(17.5), None, None, Some(30.0), Some(35.0), None]
+    );
+    Ok(())
+}
+```
+
+If the bars already carry a session column (from `tag_sessions`, or
+from your own data), pass `SessionVwap::new(SessionAnchor::column("session"))`
+instead of a calendar.
+
+### Pivot points and anchored VWAP
+
 ```rust
 use pond_rs::financial::{AnchoredVwap, PivotPoints, Session, TradingCalendar};
 use pond_rs::{Column, TimeSeries};
@@ -973,6 +1045,86 @@ fn main() -> Result<(), pond_rs::PondError> {
     Ok(())
 }
 ```
+
+## The study catalog
+
+`pond_rs::financial::catalog` describes every study as data: what it is
+for, the columns it reads, each option with its default and legal range,
+and the columns it writes and their units. It can also run any study by
+its pond-ts name with options written as JSON. That is what a menu of
+studies, a settings form, a saved chart layout or an agent choosing a
+study needs, without a line of code per study. It matches
+`@pond-ts/financial/catalog`.
+
+- `STUDIES`: all 109 descriptors; `study_descriptor("rsi")` finds one by
+  name. `STUDY_FAMILIES` lists the 9 menu groups.
+- Each `StudyDescriptor` has `name`, `family`, `summary` (one line for a
+  menu), `inputs`, `params` (each a number, with `default`, `min`, `max`
+  and a suggested range, or a menu of names), `naming` (an `output` name
+  or a `prefix`), `outputs` (with units: same as the price, a percent, a
+  ratio, volume…), and `anchor` for the three session studies.
+- `output_names()` gives the column names under the default naming.
+- `run(&series, &options)` runs the study; the options are a JSON object
+  with pond-ts's option names (`"period"`, `"maType"`, `"stdDev"`,
+  `"high": "h"`, `"prefix"`…). Options the study does not have are
+  ignored, as in pond-ts; an option of the wrong type is an error.
+- `run_with(&series, &options, SessionAnchor::from(&cal))` gives a session
+  study a calendar, which has no JSON form. A session list or a session
+  column can go in the options instead (`"sessions"`, `"session"`).
+- `to_json()` writes the descriptor in pond-ts's JSON shape.
+
+Options are `serde_json` values, so add `serde_json = "1"` to your
+`Cargo.toml` to build them.
+
+```rust
+use pond_rs::financial::catalog::{STUDIES, StudyFamily, study_descriptor};
+use pond_rs::financial::{Session, SessionAnchor, TradingCalendar};
+use pond_rs::{Column, TimeSeries};
+use serde_json::{Map, json};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    assert_eq!(STUDIES.len(), 109);
+    let volume_studies = STUDIES.iter().filter(|d| d.family == StudyFamily::Volume);
+    assert_eq!(volume_studies.count(), 18);
+
+    let bollinger = study_descriptor("bollinger").unwrap();
+    assert_eq!(bollinger.output_names(), ["bbMiddle", "bbUpper", "bbLower"]);
+    assert_eq!(bollinger.param("stdDev").unwrap().default_number(), Some(2.0));
+    // The period has no default; the catalog suggests 20.
+    assert_eq!(bollinger.to_json()["params"]["period"]["example"], 20);
+
+    let bars = TimeSeries::new(
+        "bars",
+        vec![0, 50, 200],
+        vec![
+            Column::required("high", vec![10.0, 20.0, 30.0]),
+            Column::required("low", vec![10.0, 20.0, 30.0]),
+            Column::required("close", vec![10.0, 20.0, 30.0]),
+            Column::required("volume", vec![1.0, 3.0, 1.0]),
+        ],
+    )?;
+
+    // A 2-bar simple moving average, by name, written to `fast`.
+    let options = json!({ "period": 2, "output": "fast" });
+    let out = study_descriptor("sma").unwrap().run(&bars, options.as_object().unwrap())?;
+    let fast: Vec<_> = out.column("fast")?.numbers()?.iter().collect();
+    assert_eq!(fast, [None, Some(15.0), Some(25.0)]);
+
+    // A session study with a calendar.
+    let cal = TradingCalendar::from_sessions([
+        Session::new("2024-01-08", 0, 100),
+        Session::new("2024-01-09", 200, 300),
+    ])?;
+    let svwap = study_descriptor("sessionVwap").unwrap();
+    let out = svwap.run_with(&bars, &Map::new(), SessionAnchor::from(&cal))?;
+    let v: Vec<_> = out.column("svwap")?.numbers()?.iter().collect();
+    assert_eq!(v, [Some(10.0), Some(17.5), Some(30.0)]);
+    Ok(())
+}
+```
+
+One difference from pond-ts: a Rust descriptor has no `run` field to call
+as a function; `run` and `run_with` are its methods.
 
 ## Speed
 

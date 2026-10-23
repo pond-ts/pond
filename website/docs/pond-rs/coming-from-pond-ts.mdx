@@ -29,6 +29,7 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `TradingCalendar.fromRules(rules, { from, to })`                  | `TradingCalendar::from_rules(&rules, from, to)?`                                              |
 | `sessionVwap(bars, { sessions: cal })`                            | `bars.session_vwap(SessionVwap::new(&cal))?`                                                  |
 | `sessionVwap(bars, { session: 'sid' })`                           | `bars.session_vwap(SessionVwap::new(SessionAnchor::column("sid")))?`                          |
+| `studyDescriptor('rsi').run(bars, { period: 5 })`                 | `study_descriptor("rsi").unwrap().run(&bars, json!({ "period": 5 }).as_object().unwrap())?`   |
 | `{ cpu_avg: { from: 'cpu', using: 'avg' } }`                      | `Agg::new("cpu_avg", "cpu", Reducer::Avg)`                                                    |
 | `series.rolling('5m', m, { alignment, minSamples })`              | `series.rolling_with("5m", &aggs, Rolling { alignment, min_samples })`                        |
 | `series.rolling({ count: 20 }, m)`                                | `series.rolling_rows(20, &aggs, Rolling::default())`                                          |
