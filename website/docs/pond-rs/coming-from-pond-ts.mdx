@@ -22,6 +22,14 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `TimeSeries.fromJSON({ schema, rows })`                           | `TimeSeries::new(name, times, columns)`, or `from_json` for JSON text                         |
 | `{ name: 'cpu', kind: 'number' }`                                 | `Column::required("cpu", values)` / `Column::optional`                                        |
 | `series.aggregate(seq, { cpu: 'avg' })`                           | `series.aggregate(&seq, &[Agg::of("cpu", Reducer::Avg)])`                                     |
+| `sma(bars, { period: 20 })` or `bars.sma({ period: 20 })`         | `bars.sma(Study::period(20))?` (`use pond_rs::financial::Study`)                              |
+| `movingAverage(bars, { type: 'hull', period: 20 })`               | `bars.moving_average(MaType::Hull, Study::period(20))?`                                       |
+| `bollinger(bars, { period: 20, stdDev: 2.5, prefix: 'wide' })`    | `bars.bollinger(Bollinger::new(20).std_dev(2.5).prefix("wide"))?`                             |
+| `macd(bars, { fast: 5 })`                                         | `bars.macd(Macd::default().fast(5))?`                                                         |
+| `TradingCalendar.fromRules(rules, { from, to })`                  | `TradingCalendar::from_rules(&rules, from, to)?`                                              |
+| `sessionVwap(bars, { sessions: cal })`                            | `bars.session_vwap(SessionVwap::new(&cal))?`                                                  |
+| `sessionVwap(bars, { session: 'sid' })`                           | `bars.session_vwap(SessionVwap::new(SessionAnchor::column("sid")))?`                          |
+| `studyDescriptor('rsi').run(bars, { period: 5 })`                 | `study_descriptor("rsi").unwrap().run(&bars, json!({ "period": 5 }).as_object().unwrap())?`   |
 | `{ cpu_avg: { from: 'cpu', using: 'avg' } }`                      | `Agg::new("cpu_avg", "cpu", Reducer::Avg)`                                                    |
 | `series.rolling('5m', m, { alignment, minSamples })`              | `series.rolling_with("5m", &aggs, Rolling { alignment, min_samples })`                        |
 | `series.rolling({ count: 20 }, m)`                                | `series.rolling_rows(20, &aggs, Rolling::default())`                                          |
@@ -78,6 +86,10 @@ fixed from the message alone.
 Each of these is a case where pond-ts quietly does something surprising and
 pond-rs returns an error instead.
 
+- **A study on a missing or text column.** Most of pond-ts's financial
+  studies give a column of all gaps, so a typo in the column name looks like "no
+  data" (logged as a pond-ts issue, [PND-STUDYSRC]). pond-rs returns an
+  error naming the column.
 - **Number reducers on text.** pond-ts runs them anyway: `sum` of a text
   column gives 0 and `avg` gives gaps. pond-rs allows only `count`, `first`
   and `last` on text and true/false columns.
@@ -133,7 +145,8 @@ pond-rs returns an error instead.
 
 - **`smooth` and `baseline` on the wrong column.** An unknown column or
   one that is not numbers is an error. pond-ts passes the series through
-  unchanged (`smooth` on an unknown column) or gives a gap in every row.
+  unchanged (`smooth` on an unknown column) or gives a gap in every row,
+  on a partitioned series too.
 - **`baseline_named`** refuses a name that is the key's, or the same name
   twice; pond-ts only checks the existing columns.
 - **An option a smoothing method does not take** (`warmup` on a loess,
@@ -151,7 +164,9 @@ pond-rs returns an error instead.
 - **Repeatable random samples.** `Sample::Reservoir` takes a seed, so
   the same seed picks the same rows; pond-ts's reservoir has none. The
   picked rows keep their order in the series, where pond-ts sorts them by
-  key, which can order rows sharing a key differently.
+  key, which can order rows sharing a key differently. On a partitioned
+  series each partition gets its own seed, made from yours, so those picks
+  repeat too.
 - **Exact decimals.** A column kind of their own, for money and other exact
   values; see [Series and columns](./series-and-columns#value-columns-five-kinds).
 - **`with_column`** takes any kind of column and you choose required or
@@ -188,8 +203,8 @@ bug is logged in `PLAN.md` to fix there.
   (`1.50_cpu`).
 - **`reduce` returns a `Reduced`**, read by output name with `number`,
   `string` and so on, rather than a plain object. The one-column form
-  (`reduce('cpu', 'avg')`) and custom reducer functions are not built; one
-  `Agg` does the first.
+  (`reduce('cpu', 'avg')`) is `reduce_number` / `reduce_value`; custom
+  reducer functions are not built.
 - **`dedupe` has no custom keep function** yet (pond-ts takes a closure that
   builds the surviving row), and `align` / `materialize` take a range as an
   epoch-millisecond pair rather than a pond-ts `BoundedSequence`.
@@ -197,6 +212,10 @@ bug is logged in `PLAN.md` to fix there.
   an English (or the root) locale. Node uses the machine's locale, so
   pond-ts on a machine set to another language can order interval labels
   differently; pond-rs always uses the root order.
+- **A partitioned `scan` gives each partition its own copy of the start
+  value.** pond-ts hands every partition the same start object, so a step
+  that changes it in place carries state from one partition into the
+  next. In pond-rs every partition starts from a fresh copy.
 - **`align` with `Linear` holds exact decimal columns** instead of drawing a
   line through them, since a point between two decimals is generally not
   exact. pond-ts has no decimal kind.

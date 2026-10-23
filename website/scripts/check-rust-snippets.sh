@@ -20,6 +20,7 @@ edition = "2024"
 publish = false
 [dependencies]
 pond-rs = { path = "$crate" }
+serde_json = "1"
 [workspace]
 TOML
 python3 - "$repo/website/docs/pond-rs" "$work/src/bin" <<'PY'
