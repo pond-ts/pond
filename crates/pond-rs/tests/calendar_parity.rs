@@ -133,7 +133,17 @@ fn generate_case(case: &Value) -> Result<(), String> {
             Ok(())
         }
         // generateSessions throws (checked above), or fromRules refuses.
-        (Value::Null | Value::Object(_), Err(_)) => Ok(()),
+        (Value::Null, Err(_)) => Ok(()),
+        (Value::Object(want), Err(e)) => {
+            let want = want["message"].as_str().unwrap_or_default();
+            if e.to_string().contains(want) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "from_rules message differs\n  pond-ts: {want}\n  pond-rs: {e}"
+                ))
+            }
+        }
         (Value::Object(e), Ok(_)) => Err(format!(
             "fromRules throws ({}), from_rules succeeds",
             e["message"]

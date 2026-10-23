@@ -3311,6 +3311,15 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     since R1b) and `discontinuities` (a chart axis; charts are out of
     scope). Sessions hold whole milliseconds (pond-ts allows fractions).
     Years past 9999 are refused (jiff's range).
+  - Known differences in reading inputs (found in review, #827): a range
+    bound in another calendar (`2024-01-08[u-ca=gregory]`) is refused;
+    pond-ts accepts it and writes session dates with the annotation on,
+    which its own `fromRules` then refuses. A critical ISO annotation
+    (`[!u-ca=iso8601]`) is refused, and an offset of `+24:00` accepted,
+    where Temporal does the reverse. Zone names follow pond-rs's bundled
+    tz database, not Node's: `Etc/Unknown` and `Factory` are known to
+    pond-rs only, `Canada/East-Saskatchewan` and `US/Pacific-New` to Node
+    only (same caveat as `Sequence::calendar`).
   - Shared quirk: a zone that skipped a whole day (Pacific/Apia,
     2011-12-30) gets a session for the missing day, placed on the next one,
     which `from_rules` then refuses as an overlap. Same in pond-ts; left

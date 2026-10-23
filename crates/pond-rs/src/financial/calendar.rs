@@ -429,9 +429,23 @@ fn instant_at(date: Date, minutes: u32, zone: &TimeZone) -> Result<i64> {
 
 fn plain_date(bound: &DateBound, zone: &mut impl FnMut() -> Result<TimeZone>) -> Result<Date> {
     match bound {
-        DateBound::Date(text) => text.parse::<Date>().map_err(|e| {
-            generate_error(format!("cannot read {} as a date: {e}", json_string(text)))
-        }),
+        DateBound::Date(text) => {
+            // Temporal reads a date in another calendar (`[u-ca=gregory]`)
+            // and pond-ts then writes session dates with the annotation
+            // still on; jiff would drop it. Refuse it instead.
+            if let Some(at) = text.find("u-ca=") {
+                let value = text[at + 5..].split(']').next().unwrap_or_default();
+                if !value.eq_ignore_ascii_case("iso8601") {
+                    return Err(generate_error(format!(
+                        "cannot read {} as a date: only the ISO calendar is supported",
+                        json_string(text)
+                    )));
+                }
+            }
+            text.parse::<Date>().map_err(|e| {
+                generate_error(format!("cannot read {} as a date: {e}", json_string(text)))
+            })
+        }
         DateBound::At(ms) => {
             let at = Timestamp::from_millisecond(*ms)
                 .map_err(|e| generate_error(format!("instant {ms} out of range: {e}")))?;
@@ -806,5 +820,20 @@ mod tests {
             .iter()
             .collect();
         assert_eq!(ids, [None, Some(100.0), Some(100.0)]);
+    }
+
+    /// Known differences in reading a range bound, pinned here because
+    /// pond-ts's own result is not one to copy (see the plan's step 3a).
+    #[test]
+    fn date_bounds_outside_the_fixture() {
+        let rules = SessionRules::new("America/New_York", "09:30", "16:00");
+        let one = |from: &str| generate_sessions(&rules, from, "2024-01-08");
+        // pond-ts writes "2024-01-08[u-ca=gregory]" as the session date.
+        for other in ["2024-01-08[u-ca=gregory]", "2024-01-08[u-ca=japanese]"] {
+            let e = one(other).unwrap_err().to_string();
+            assert!(e.contains("only the ISO calendar"), "{e}");
+        }
+        assert_eq!(one("2024-01-08[u-ca=iso8601]").unwrap().len(), 1);
+        assert_eq!(one("2024-01-08[u-ca=ISO8601]").unwrap().len(), 1);
     }
 }

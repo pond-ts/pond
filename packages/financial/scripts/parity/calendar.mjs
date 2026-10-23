@@ -372,7 +372,7 @@ function sessionCases() {
     day('2024-01-09', 100, 200),
     day('2024-01-08', 300, 400),
   ]);
-  add('same open, duplicate checked first', [
+  add('same open: an overlap, not a duplicate', [
     day('2024-01-08', 100, 200),
     day('2024-01-09', 100, 150),
   ]);
