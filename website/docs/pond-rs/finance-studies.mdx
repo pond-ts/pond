@@ -17,12 +17,13 @@ moving-average family (MACD and 14 more), bands (Bollinger, Keltner and
 8 more), momentum (21 studies: RSI, stochastics, CCI, true strength index
 and more) and trend (16 studies: ADX, Aroon, SuperTrend, parabolic SAR,
 Ichimoku and more), volatility (8: ATR, historical volatility and
-more) and statistics (6: linear regression, beta, correlation and more).
+more) and statistics (6: linear regression, beta, correlation and more) and the
+first 9 volume studies (on-balance volume, money flow index and more).
 
 The results match `@pond-ts/financial` exactly, number for number. That is
-checked against 3,931 cases that pond-ts itself writes out. They also match
+checked against 4,300 cases that pond-ts itself writes out. They also match
 the pandas and TA-Lib reference results pond-ts is tested against, to
-within 5e-10 (178 of those 220 cases cover studies built so far).
+within 5e-10 (193 of those 220 cases cover studies built so far).
 
 ## How every study works
 
@@ -540,6 +541,51 @@ fn main() -> Result<(), pond_rs::PondError> {
 }
 ```
 
+## Volume
+
+Studies that weigh the price by how much traded. They read a `volume`
+column as well as the prices (rename it with `.volume("qty")`).
+
+| Call                                                  | Writes       | What it shows                                                                                                |
+| ----------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------ |
+| `obv(Obv)`                                            | `obv`        | On-balance volume: a running total that adds the volume when the close rises and takes it away when it falls |
+| `accumulation_distribution(AccumulationDistribution)` | `ad`         | A running total of each bar's volume times where its close sits in the bar (−1 at the low, +1 at the high)   |
+| `price_volume_trend(PriceVolumeTrend)`                | `pvt`        | A running total of each bar's volume times its close's percent change                                        |
+| `chaikin_money_flow(ChaikinMoneyFlow)`                | `cmf`        | Where the close sits in its bar, averaged over 20 bars and weighted by volume, −1 to 1                       |
+| `chaikin_oscillator(ChaikinOscillator)`               | `chaikinOsc` | A 3-bar EMA of the accumulation/distribution line minus a 10-bar one                                         |
+| `money_flow_index(MoneyFlowIndex)`                    | `mfi`        | The RSI idea on price times volume, 0 to 100 (14 bars)                                                       |
+| `twiggs_money_flow(TwiggsMoneyFlow)`                  | `tmf`        | Chaikin's money flow with the bar widened to the last close, smoothed Wilder's way over 21 bars              |
+| `force_index(ForceIndex)`                             | `force`      | Each bar's close change times its volume, as a 13-bar EMA                                                    |
+| `ease_of_movement(EaseOfMovement)`                    | `eom`        | How far the bar's midpoint moved for the volume traded, averaged over 14 bars                                |
+
+The running totals (`obv`, `accumulation_distribution`,
+`price_volume_trend`) and Twiggs money flow cannot pick up again after a
+missing bar in the middle of the data: every later value is a gap, as in
+pond-ts.
+
+```rust
+use pond_rs::financial::Obv;
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    let bars = TimeSeries::new(
+        "bars",
+        (0..4).map(|i| i * minute).collect(),
+        vec![
+            Column::required("close", vec![10.0, 11.0, 11.0, 10.0]),
+            Column::required("qty", vec![100.0, 200.0, 300.0, 400.0]),
+        ],
+    )?;
+
+    let out = bars.obv(Obv::default().volume("qty"))?;
+    // Start at 100; up: +200; unchanged: left out; down: −400.
+    let obv: Vec<_> = out.column("obv")?.numbers()?.iter().collect();
+    assert_eq!(obv, [Some(100.0), Some(300.0), Some(300.0), Some(-100.0)]);
+    Ok(())
+}
+```
+
 ## Gaps in the prices
 
 A gap in the source column never shifts the rows. What a study does with
@@ -693,89 +739,100 @@ chained EMAs in one pass. The 1-thread times are from before that.
 
 At pond-ts's default settings, same machine and setup:
 
-| Study                        | pond-rs, 1 thread | pond-rs, 4 cores | pond-ts | ratio |
-| ---------------------------- | ----------------- | ---------------- | ------- | ----- |
-| `macd`                       | 7.9               | 8.1              | 73.5    | 9.1×  |
-| `price_oscillator`           | 8.6               | 11.5             | 48.1    | 4.2×  |
-| `moving_average_cross`       | 21.0              | 12.4             | 64.6    | 5.2×  |
-| `moving_average_deviation`   | 7.2               | 4.3              | 31.9    | 7.4×  |
-| `disparity_index`            | 8.4               | 4.4              | 44.1    | 10×   |
-| `detrended_price_oscillator` | 11.5              | 5.3              | 29.7    | 5.6×  |
-| `guppy`                      | 93.5              | 30.8             | 184.6   | 6.0×  |
-| `rainbow`                    | 101.0             | 41.4             | 234.2   | 5.7×  |
-| `rainbow_oscillator`         | 152.3             | 56.6             | 404.9   | 7.2×  |
-| `trix`                       | 8.6               | 8.0              | 45.0    | 5.6×  |
-| `schaff_trend_cycle`         | 55.3              | 41.6             | 158.5   | 3.8×  |
-| `coppock`                    | 19.4              | 12.8             | 38.4    | 3.0×  |
-| `kst`                        | 86.0              | 20.5             | 138.4   | 6.8×  |
-| `special_k`                  | 112.4             | 42.1             | 278.9   | 6.6×  |
-| `price_momentum_oscillator`  | 7.4               | 8.3              | 44.0    | 5.3×  |
-| `bollinger`                  | 39.8              | 12.2             | 80.2    | 6.6×  |
-| `bollinger_bandwidth`        | 24.3              | 10.7             | 53.5    | 5.0×  |
-| `bollinger_percent_b`        | 26.7              | 12.1             | 83.7    | 6.9×  |
-| `keltner`                    | 22.6              | 12.6             | 63.0    | 5.0×  |
-| `starc_bands`                | 24.1              | 12.8             | 71.0    | 5.5×  |
-| `atr_bands`                  | 24.5              | 16.2             | 49.3    | 3.0×  |
-| `donchian`                   | 17.7              | 8.6              | 165.9   | 19×   |
-| `high_low_bands`             | 36.1              | 15.0             | 78.8    | 5.3×  |
-| `prime_number_bands`         | 41.6              | 17.0             | 68.3    | 4.0×  |
-| `envelope`                   | 18.6              | 7.1              | 66.5    | 9.4×  |
-| `rsi`                        | 9.9               | 9.2              | 58.2    | 6.3×  |
-| `stochastic`                 | 61.7              | 19.8             | 320.9   | 16×   |
-| `stochastic_momentum_index`  | 49.5              | 25.5             | 284.9   | 11×   |
-| `stochastic_rsi`             | 47.0              | 30.3             | 218.2   | 7.2×  |
-| `williams_r`                 | 30.0              | 12.1             | 220.7   | 18×   |
-| `chande_momentum`            | 27.4              | 17.1             | 94.6    | 5.5×  |
-| `momentum`                   | 3.0               | 2.9              | 19.6    | 6.8×  |
-| `percent_change`             | 3.1               | 2.5              | 23.4    | 9.4×  |
-| `intraday_momentum_index`    | 27.5              | 17.2             | 116.6   | 6.8×  |
-| `awesome_oscillator`         | 31.1              | 13.4             | 75.0    | 5.6×  |
-| `ultimate_oscillator`        | 73.4              | 32.5             | 262.9   | 8.1×  |
-| `commodity_channel_index`    | 41.2              | 21.8             | 136.0   | 6.2×  |
-| `fisher_transform`           | 40.2              | 39.0             | 129.5   | 3.3×  |
-| `psychological_line`         | 11.5              | 7.8              | 61.1    | 7.8×  |
-| `pretty_good_oscillator`     | 19.2              | 14.8             | 113.5   | 7.7×  |
-| `prime_number_oscillator`    | 35.3              | 11.5             | 63.8    | 5.5×  |
-| `qstick`                     | 11.0              | 6.7              | 52.2    | 7.8×  |
-| `relative_vigor_index`       | 31.0              | 32.1             | 161.9   | 5.0×  |
-| `center_of_gravity`          | 25.5              | 8.6              | 65.9    | 7.7×  |
-| `chande_forecast_oscillator` | 21.6              | 13.6             | 62.3    | 4.6×  |
-| `true_strength_index`        | 13.7              | 18.0             | 75.4    | 4.2×  |
-| `directional_movement`       | 73.2              | 38.8             | 136.3   | 3.5×  |
-| `aroon`                      | 25.3              | 15.3             | 106.6   | 7.0×  |
-| `vortex`                     | 47.1              | 20.2             | 164.9   | 8.2×  |
-| `vertical_horizontal_filter` | 44.0              | 16.1             | 275.8   | 17×   |
-| `random_walk_index`          | 165.1             | 58.1             | 429.4   | 7.4×  |
-| `super_trend`                | 22.0              | 23.8             | 98.7    | 4.1×  |
-| `parabolic_sar`              | 10.3              | 9.7              | 62.4    | 6.4×  |
-| `atr_trailing_stop`          | 18.2              | 21.0             | 73.4    | 3.5×  |
-| `zig_zag`                    | 18.1              | 17.5             | 254.1   | 15×   |
-| `ichimoku`                   | 113.2             | 36.5             | 284.9   | 7.8×  |
-| `elder_impulse`              | 19.2              | 12.6             | 125.6   | 10×   |
-| `elder_ray`                  | 9.6               | 9.6              | 39.5    | 4.1×  |
-| `trend_intensity_index`      | 30.6              | 14.6             | 110.0   | 7.5×  |
-| `ravi`                       | 15.8              | 8.0              | 58.4    | 7.3×  |
-| `swing_index` (limit 20)     | 7.0               | 11.7             | 42.2    | 3.6×  |
-| `accumulative_swing_index`   | 11.5              | 14.9             | 56.9    | 3.8×  |
-| `atr`                        | 7.5               | 7.4              | 70.8    | 9.6×  |
-| `historical_volatility`      | 25.9              | 15.4             | 72.2    | 4.7×  |
-| `chaikin_volatility`         | 4.4               | 6.0              | 25.7    | 4.3×  |
-| `mass_index`                 | 11.6              | 9.4              | 37.9    | 4.0×  |
-| `choppiness_index`           | 34.2              | 22.8             | 215.6   | 9.5×  |
-| `gopalakrishnan_range_index` | 18.8              | 10.9             | 268.8   | 25×   |
-| `ulcer_index`                | 15.8              | 9.0              | 154.0   | 17×   |
-| `relative_volatility_index`  | 32.6              | 17.2             | 68.1    | 4.0×  |
-| `linear_regression`          | 33.8              | 15.2             | 83.2    | 5.5×  |
-| `time_series_forecast`       | 13.7              | 4.6              | 23.9    | 5.2×  |
-| `beta` \*\*                  | 27.8              | 8.7              | 45.3    | 5.2×  |
-| `correlation` \*\*           | 29.5              | 10.3             | 53.0    | 5.1×  |
-| `price_relative` \*\*        | 1.3               | 1.2              | 16.9    | 14×   |
-| `performance_index` \*\*     | 2.6               | 2.5              | 10.8    | 4.3×  |
+| Study                              | pond-rs, 1 thread | pond-rs, 4 cores | pond-ts | ratio |
+| ---------------------------------- | ----------------- | ---------------- | ------- | ----- |
+| `macd`                             | 7.9               | 8.1              | 73.5    | 9.1×  |
+| `price_oscillator`                 | 8.6               | 11.5             | 48.1    | 4.2×  |
+| `moving_average_cross`             | 21.0              | 12.4             | 64.6    | 5.2×  |
+| `moving_average_deviation`         | 7.2               | 4.3              | 31.9    | 7.4×  |
+| `disparity_index`                  | 8.4               | 4.4              | 44.1    | 10×   |
+| `detrended_price_oscillator`       | 11.5              | 5.3              | 29.7    | 5.6×  |
+| `guppy`                            | 93.5              | 30.8             | 184.6   | 6.0×  |
+| `rainbow`                          | 101.0             | 41.4             | 234.2   | 5.7×  |
+| `rainbow_oscillator`               | 152.3             | 56.6             | 404.9   | 7.2×  |
+| `trix`                             | 8.6               | 8.0              | 45.0    | 5.6×  |
+| `schaff_trend_cycle`               | 55.3              | 41.6             | 158.5   | 3.8×  |
+| `coppock`                          | 19.4              | 12.8             | 38.4    | 3.0×  |
+| `kst`                              | 86.0              | 20.5             | 138.4   | 6.8×  |
+| `special_k`                        | 112.4             | 42.1             | 278.9   | 6.6×  |
+| `price_momentum_oscillator`        | 7.4               | 8.3              | 44.0    | 5.3×  |
+| `bollinger`                        | 39.8              | 12.2             | 80.2    | 6.6×  |
+| `bollinger_bandwidth`              | 24.3              | 10.7             | 53.5    | 5.0×  |
+| `bollinger_percent_b`              | 26.7              | 12.1             | 83.7    | 6.9×  |
+| `keltner`                          | 22.6              | 12.6             | 63.0    | 5.0×  |
+| `starc_bands`                      | 24.1              | 12.8             | 71.0    | 5.5×  |
+| `atr_bands`                        | 24.5              | 16.2             | 49.3    | 3.0×  |
+| `donchian`                         | 17.7              | 8.6              | 165.9   | 19×   |
+| `high_low_bands`                   | 36.1              | 15.0             | 78.8    | 5.3×  |
+| `prime_number_bands`               | 41.6              | 17.0             | 68.3    | 4.0×  |
+| `envelope`                         | 18.6              | 7.1              | 66.5    | 9.4×  |
+| `rsi`                              | 9.9               | 9.2              | 58.2    | 6.3×  |
+| `stochastic`                       | 61.7              | 19.8             | 320.9   | 16×   |
+| `stochastic_momentum_index`        | 49.5              | 25.5             | 284.9   | 11×   |
+| `stochastic_rsi`                   | 47.0              | 30.3             | 218.2   | 7.2×  |
+| `williams_r`                       | 30.0              | 12.1             | 220.7   | 18×   |
+| `chande_momentum`                  | 27.4              | 17.1             | 94.6    | 5.5×  |
+| `momentum`                         | 3.0               | 2.9              | 19.6    | 6.8×  |
+| `percent_change`                   | 3.1               | 2.5              | 23.4    | 9.4×  |
+| `intraday_momentum_index`          | 27.5              | 17.2             | 116.6   | 6.8×  |
+| `awesome_oscillator`               | 31.1              | 13.4             | 75.0    | 5.6×  |
+| `ultimate_oscillator`              | 73.4              | 32.5             | 262.9   | 8.1×  |
+| `commodity_channel_index`          | 41.2              | 21.8             | 136.0   | 6.2×  |
+| `fisher_transform`                 | 40.2              | 39.0             | 129.5   | 3.3×  |
+| `psychological_line`               | 11.5              | 7.8              | 61.1    | 7.8×  |
+| `pretty_good_oscillator`           | 19.2              | 14.8             | 113.5   | 7.7×  |
+| `prime_number_oscillator`          | 35.3              | 11.5             | 63.8    | 5.5×  |
+| `qstick`                           | 11.0              | 6.7              | 52.2    | 7.8×  |
+| `relative_vigor_index`             | 31.0              | 32.1             | 161.9   | 5.0×  |
+| `center_of_gravity`                | 25.5              | 8.6              | 65.9    | 7.7×  |
+| `chande_forecast_oscillator`       | 21.6              | 13.6             | 62.3    | 4.6×  |
+| `true_strength_index`              | 13.7              | 18.0             | 75.4    | 4.2×  |
+| `directional_movement`             | 73.2              | 38.8             | 136.3   | 3.5×  |
+| `aroon`                            | 25.3              | 15.3             | 106.6   | 7.0×  |
+| `vortex`                           | 47.1              | 20.2             | 164.9   | 8.2×  |
+| `vertical_horizontal_filter`       | 44.0              | 16.1             | 275.8   | 17×   |
+| `random_walk_index`                | 165.1             | 58.1             | 429.4   | 7.4×  |
+| `super_trend`                      | 22.0              | 23.8             | 98.7    | 4.1×  |
+| `parabolic_sar`                    | 10.3              | 9.7              | 62.4    | 6.4×  |
+| `atr_trailing_stop`                | 18.2              | 21.0             | 73.4    | 3.5×  |
+| `zig_zag`                          | 18.1              | 17.5             | 254.1   | 15×   |
+| `ichimoku`                         | 113.2             | 36.5             | 284.9   | 7.8×  |
+| `elder_impulse`                    | 19.2              | 12.6             | 125.6   | 10×   |
+| `elder_ray`                        | 9.6               | 9.6              | 39.5    | 4.1×  |
+| `trend_intensity_index`            | 30.6              | 14.6             | 110.0   | 7.5×  |
+| `ravi`                             | 15.8              | 8.0              | 58.4    | 7.3×  |
+| `swing_index` (limit 20)           | 7.0               | 11.7             | 42.2    | 3.6×  |
+| `accumulative_swing_index`         | 11.5              | 14.9             | 56.9    | 3.8×  |
+| `atr`                              | 7.5               | 7.4              | 70.8    | 9.6×  |
+| `historical_volatility`            | 25.9              | 15.4             | 72.2    | 4.7×  |
+| `chaikin_volatility`               | 4.4               | 6.0              | 25.7    | 4.3×  |
+| `mass_index`                       | 11.6              | 9.4              | 37.9    | 4.0×  |
+| `choppiness_index`                 | 34.2              | 22.8             | 215.6   | 9.5×  |
+| `gopalakrishnan_range_index`       | 18.8              | 10.9             | 268.8   | 25×   |
+| `ulcer_index`                      | 15.8              | 9.0              | 154.0   | 17×   |
+| `relative_volatility_index`        | 32.6              | 17.2             | 68.1    | 4.0×  |
+| `linear_regression`                | 33.8              | 15.2             | 83.2    | 5.5×  |
+| `time_series_forecast`             | 13.7              | 4.6              | 23.9    | 5.2×  |
+| `beta` \*\*                        | 27.8              | 8.7              | 45.3    | 5.2×  |
+| `correlation` \*\*                 | 29.5              | 10.3             | 53.0    | 5.1×  |
+| `price_relative` \*\*              | 1.3               | 1.2              | 16.9    | 14×   |
+| `performance_index` \*\*           | 2.6               | 2.5              | 10.8    | 4.3×  |
+| `obv`                              | 3.3               | 3.3              | 23.4    | 7.1×  |
+| `accumulation_distribution` \*\*\* | 7.4               | 6.7              | 29.5    | 4.4×  |
+| `price_volume_trend`               | 5.5               | 5.7              | 28.9    | 5.1×  |
+| `chaikin_money_flow` \*\*\*        | 26.7              | 14.2             | 69.6    | 4.9×  |
+| `chaikin_oscillator` \*\*\*        | 19.1              | 13.0             | 45.7    | 3.5×  |
+| `money_flow_index`                 | 25.7              | 15.1             | 75.9    | 5.0×  |
+| `twiggs_money_flow`                | 27.2              | 17.8             | 61.0    | 3.4×  |
+| `force_index`                      | 5.4               | 4.4              | 17.4    | 4.0×  |
+| `ease_of_movement`                 | 14.2              | 8.2              | 39.8    | 4.9×  |
 
 The machine is a shared virtual machine with four cores, and single runs
 move by up to a third, so read the ratios as rough. The swing index runs on one
 core, so its 1-thread and 4-core times differ only by that noise.
-\*\* With the open as the benchmark. `atr_bands` gains the
+\*\* With the open as the benchmark. \*\*\* With the open read as the
+close: the test bars close at the middle of each bar, where these three
+give 0. `atr_bands` gains the
 least because its average true range is one chain where each row needs
 the one before, which pond-ts pays for too.
 
@@ -797,4 +854,4 @@ them.
 
 ## Still to come
 
-Volume and price studies, one family at a time; then trading calendars and session VWAP.
+The other volume studies and the price studies; then trading calendars and session VWAP.
