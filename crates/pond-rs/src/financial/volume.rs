@@ -325,13 +325,7 @@ impl TimeSeries {
                 call: CALL,
                 message: format!(
                     "easeOfMovement scale must be a positive finite number, got {}",
-                    if scale.is_nan() {
-                        "NaN".to_string()
-                    } else if scale.is_infinite() {
-                        if scale > 0.0 { "Infinity" } else { "-Infinity" }.to_string()
-                    } else {
-                        crate::grid::js_number(scale)
-                    }
+                    crate::grid::js_number(scale)
                 ),
             });
         }
@@ -363,13 +357,23 @@ impl TimeSeries {
 /// [`rolling_mean_sd`]'s means of the same window, so their ratio is the
 /// weighted mean.
 fn rolling_weighted_mean_values(values: &[f64], weights: &[f64], period: usize) -> Vec<f64> {
-    const CHUNK: usize = 1 << 16;
+    rolling_weighted_mean_chunked(values, weights, period, 1 << 16)
+}
+
+/// [`rolling_weighted_mean_values`], its row-by-row steps split into
+/// stretches of `chunk` rows.
+fn rolling_weighted_mean_chunked(
+    values: &[f64],
+    weights: &[f64],
+    period: usize,
+    chunk: usize,
+) -> Vec<f64> {
     let n = values.len();
     let (mut product, mut masked) = (vec![0.0; n], vec![0.0; n]);
     par::fill_chunks(
         &mut product,
         &mut masked,
-        CHUNK,
+        chunk,
         |start, product, masked| {
             for (k, (p, m)) in product.iter_mut().zip(masked).enumerate() {
                 let w = weights[start + k];
@@ -382,10 +386,56 @@ fn rolling_weighted_mean_values(values: &[f64], weights: &[f64], period: usize) 
         || rolling_mean_sd(&product, period, false).0,
         || rolling_mean_sd(&masked, period, false).0,
     );
-    par::fill_chunks(&mut numerator, &mut [], CHUNK, |start, numerator, _| {
+    par::fill_chunks(&mut numerator, &mut [], chunk, |start, numerator, _| {
         for (k, x) in numerator.iter_mut().enumerate() {
             *x /= denominator[start + k];
         }
     });
     numerator
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Split into stretches of any size, the weighted mean has the same
+    /// bits as in one piece.
+    #[test]
+    fn weighted_mean_in_stretches_matches_one_piece() {
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let n = 5_000;
+        let (mut values, mut weights) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        for i in 0..n {
+            let (a, b) = (next(), next());
+            values.push(match i {
+                _ if (700..730).contains(&i) => f64::NAN,
+                _ if i % 1_009 == 3 => f64::NAN,
+                _ => (a % 2_001) as f64 / 1_000.0 - 1.0,
+            });
+            weights.push(match i {
+                _ if i % 997 == 11 => f64::NAN,
+                _ if (2_000..2_010).contains(&i) => 0.0,
+                _ => 1_000.0 + (b % 900) as f64,
+            });
+        }
+        for period in [1, 3, 20] {
+            let want = rolling_weighted_mean_chunked(&values, &weights, period, n);
+            assert!(want.iter().filter(|v| v.is_finite()).count() > 4_000);
+            for chunk in [1, 2, 7, 64, 999] {
+                let got = rolling_weighted_mean_chunked(&values, &weights, period, chunk);
+                assert!(
+                    want.iter()
+                        .zip(&got)
+                        .all(|(a, b)| a.to_bits() == b.to_bits()),
+                    "period {period}, chunk {chunk}"
+                );
+            }
+        }
+    }
 }
