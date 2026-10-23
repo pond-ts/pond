@@ -56,6 +56,7 @@ mod averages;
 mod bands;
 mod bivariate;
 mod calendar;
+pub mod catalog;
 mod kernels;
 mod momentum;
 mod price;

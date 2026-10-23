@@ -606,8 +606,8 @@ the study oracle) is done.
   rows across cores instead, same bits). Steps: 1. ~~foundations (study options and checks,
   shared kernels, `sma` / `ema` / `moving_average` / rolling stats /
   `z_score`)~~ — done; ~~2. one PR per family (averages, bands, momentum, trend, volatility and
-  statistics, volume, price)~~ — done (anchored VWAP is in step 3); 3. ~~trading calendars, then the session studies (pivot points, session VWAP) and anchored VWAP~~ — done (3a, 3b); 4. the
-  catalog; 5. perf check and an agent trial. Detail in the breakout plan.
+  statistics, volume, price)~~ — done (anchored VWAP is in step 3); 3. ~~trading calendars, then the session studies (pivot points, session VWAP) and anchored VWAP~~ — done (3a, 3b); 4. ~~the
+  catalog~~ — done; 5. perf check and an agent trial. Detail in the breakout plan.
 
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
   independent).
@@ -634,6 +634,13 @@ the study oracle) is done.
   dates. Found building pond-rs R2 step 3a. Fix idea: resolve each day's
   offset once and add the wall-clock minutes, falling back to Temporal only
   on the days the zone's offset changes.
+- **[PND-RWIBIG]** — `randomWalkIndex` takes time in proportion to its
+  `period`, even past the row count: it walks every horizon from 2 to
+  `period`, and any horizon longer than the series already makes every row
+  a gap. On 120 bars, period 1e4 takes 42 ms, 1e5 0.3 s, 1e6 5.2 s
+  (measured). A picker's slider or an agent can reach that. Fix: return all
+  gaps when `period >= length` (pond-rs does, same output). Found by the
+  pond-rs catalog's huge-option sweep (R2 step 4).
 - **[PND-ROLLGAP]** — pond-ts time-window `rolling` gets ~60% slower when a
   few windows are empty: 1M rows with three 10-minute outages (0.18% of rows)
   take `rolling('5m', avg)` from ~400 to ~650 ms. A profile puts the extra

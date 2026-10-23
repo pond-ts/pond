@@ -3388,6 +3388,52 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     costs ~5 ms to touch, so it is memory bound; fusing the passes did not
     make it faster. Bits match node at 1M rows.
 
+  **R2 step 4 (done): the study catalog.**
+  - Calls, in `pond_rs::financial::catalog`, as `@pond-ts/financial/catalog`:
+    `STUDIES` (all 109, in pond-ts's order), `study_descriptor(name)`,
+    `STUDY_FAMILIES`, and `StudyDescriptor` (name, family, summary, inputs,
+    params with defaults / examples / min / max / suggest / menu values,
+    naming, outputs with units, anchor) with `param`, `output_names`,
+    `to_json` (pond-ts's JSON shape) and `run(&series, &options)`: any study
+    by name with pond-ts's options as JSON. `run_with` takes a
+    `SessionAnchor` for a calendar, which has no JSON form; a session list
+    (`sessions`) or column (`session`) can go in the JSON.
+  - The descriptor table (`catalog/table.rs`) was generated once from
+    pond-ts's `STUDIES` and is edited by hand from now on;
+    `tests/study_catalog.rs` checks it against a new fixture,
+    `packages/financial/test/fixtures/catalog-parity.json` (written by
+    `scripts/parity/catalog.mjs`, kept fresh by `catalog-parity.test.ts`):
+    every descriptor equal, options in the same order. It also ports
+    pond-ts's `catalog.test.ts` on the same 120 bars: each study appends
+    exactly its declared columns; stating every default changes nothing
+    (so the table's defaults are the options structs' own); every menu
+    value, suggestion end and bound runs, one past a bound is refused. A
+    planted wrong default in an options-struct study fails both checks.
+    Where the runner reads the default from the table (a `Study` period:
+    `rsi`, `momentum`, `z_score`…, and the moving-average type of three
+    studies), the stated-defaults check compares the table with itself; the
+    fixture check and the parity cases that leave the option out (against
+    pond-ts) are what pin those (review, #829).
+  - The runner sets only the options given, so each options struct keeps
+    its own defaults; where a Rust call takes a value directly (a `Study`
+    period, a moving-average type) the default comes from the descriptor.
+    The study parity harness now calls every study through it (the old
+    test-only mapper is gone): 3,702 matched, 827 errors agree, 526
+    refused. The 320 calls Rust could not write before (such as negative or
+    fractional periods, unknown menu names, neither or both session doors)
+    are now runner errors, and pond-ts throws on all of them too.
+  - Known differences: the runner's own errors (a missing required option,
+    a wrong type, a bar count that is negative or not whole) are worded by
+    pond-rs. `null` reads as left out, as pond-ts's `??` does in most
+    studies. Unknown option keys are ignored, as in pond-ts. `to_json`'s `params`
+    is an object keyed by name (the field `params` keeps the order).
+  - Found by running every number option at 1e15: `random_walk_index`
+    walked every horizon up to the period (pond-ts does too, and takes
+    5.2 s at period 1e6 on 120 bars). Any horizon as long as the series
+    makes every row a gap, so pond-rs now returns that at once; output
+    unchanged. Logged for pond-ts as [PND-RWIBIG]. No other study was slow
+    or panicked at 0, 1, 1e9, 1e15 or 2^53.
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).
