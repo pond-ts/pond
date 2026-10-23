@@ -222,6 +222,21 @@ mod tests {
         let message = |r: Result<TimeSeries>| r.unwrap_err().to_string();
         let mp = message(s.median_price(MedianPrice::default().high("h?").low("l?")));
         assert!(mp.contains("h?"), "{mp}");
+        // Then high, low, close.
+        let tp = message(s.typical_price(TypicalPrice::default().high("h?").low("l?")));
+        assert!(tp.contains("h?"), "{tp}");
+        let tp = message(s.typical_price(TypicalPrice::default().low("l?").close("c?")));
+        assert!(tp.contains("l?"), "{tp}");
+        let wc = message(s.weighted_close(WeightedClose::default().high("h?").low("l?")));
+        assert!(wc.contains("h?"), "{wc}");
+        let wc = message(s.weighted_close(WeightedClose::default().low("l?").close("c?")));
+        assert!(wc.contains("l?"), "{wc}");
+        let ap = message(s.average_price(AveragePrice::default().high("h?").low("l?")));
+        assert!(ap.contains("h?"), "{ap}");
+        let ap = message(s.average_price(AveragePrice::default().low("l?").close("c?")));
+        assert!(ap.contains("l?"), "{ap}");
+        let bop = message(s.balance_of_power(BalanceOfPower::default().low("l?").close("c?")));
+        assert!(bop.contains("l?"), "{bop}");
         // The open is read first.
         let ap = message(s.average_price(AveragePrice::default().open("o?").high("h?")));
         assert!(ap.contains("o?"), "{ap}");
