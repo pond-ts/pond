@@ -3466,6 +3466,51 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     (2/10). All 10 noticed that the prompt's flat-window RSI rule (100)
     differs from pond-ts's documented gap; the data never has that case.
 
+- **[PND-RUST-R3]** — the live layer (drafted 2026-10-23, after R2; not
+  started). RFC phase R3: pond-ts `packages/core/src/live/`, 9.7k lines
+  (`LiveSeries` 1.65k, partitioned 1.6k + 1.15k rolling, `LiveView` 1.2k,
+  rolling / fused rolling 1.3k, aggregation 0.5k, reduce 0.5k, storage
+  1.4k, triggers 0.2k).
+  - Exactness: replaying the same events gives the same emissions (what
+    each operator hands out, and when) and the same snapshots as pond-ts,
+    bit for bit. Checked against a new fixture written by pond-ts
+    (`packages/core/test/fixtures/live-parity.json`, kept fresh by a pond-ts
+    test): each case is a schema, options, an operator chain and a list of
+    pushes / clock ticks, with every emission and the final snapshot
+    recorded. Numbers in snapshots go through the batch parity rules.
+  - Open choice (card posted 2026-10-23): how results reach the caller.
+    pond-ts views subscribe to their source with callbacks (`on('event')`
+    → unsubscribe). The Rust equivalent needs shared mutable handles
+    (`Rc<RefCell<…>>`), which agents find hard. The draft assumes **an
+    owned pipeline**: a `LiveSeries` owns the operators built on it;
+    `push` / `push_many` update them synchronously; callers read back
+    (`latest()`, `drain()` of new emissions, `to_time_series()`), with an
+    optional `FnMut` callback per operator. Everything is `Send`, so a
+    pipeline can move into a thread or async task. The alternatives on the
+    card: pond-ts-shaped shared handles + closures, or one channel per
+    operator.
+  - Steps (one PR each, parity + perf against pond-ts in each):
+    1. `LiveSeries`: schema, `push` / `push_many` / `push_json`, ordering
+       (`strict` / `drop` / `reorder` with `grace_window`), retention
+       (`max_events` / `max_age`) and eviction, key queries (`at`,
+       `first`, `last`, `bisect`, `at_or_before`…), snapshots
+       (`to_time_series`, rows, JSON), `stats`; the replay fixture and its
+       harness.
+    2. Views: `filter`, `map`, `select`, `sample`, `window`; live
+       `diff` / `rate` / `pct_change` / `fill` / `cumulative`.
+    3. Triggers (`event`, `clock(sequence)`, `every(duration)`,
+       `count(n)`) and `LiveAggregation` (sequence buckets, closed-bucket
+       emission).
+    4. Rolling: single-window (`LiveRollingAggregation`), fused
+       multi-window (`LiveFusedRolling`), `reduce`.
+    5. Partitioned: `partition_by`, `to_map` / `apply` / `collect`
+       (append-only fan-in), partitioned fused rolling with synchronised
+       emission.
+    6. Perf (events per second, pond-ts vs pond-rs) and an agent trial on
+       a streaming task against polars-or-hand-written Rust.
+  - Out of scope: React hooks, charts, `@pond-ts/process` graph binding
+    (`fromLive`), live financial studies (none exist in pond-ts).
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).
