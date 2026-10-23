@@ -113,6 +113,9 @@ pub const STUDIES: &[&str] = &[
     "weightedClose",
     "averagePrice",
     "balanceOfPower",
+    "sessionVwap",
+    "pivotPoints",
+    "anchoredVwap",
 ];
 
 /// The columns `study` reads with these options: `column` (default
@@ -201,14 +204,14 @@ pub fn sources(study: &str, options: &Map<String, Value>) -> Vec<String> {
             text("low", "low"),
             text("volume", "volume"),
         ],
-        "klinger" | "vwap" => vec![
+        "klinger" | "vwap" | "sessionVwap" | "anchoredVwap" => vec![
             text("high", "high"),
             text("low", "low"),
             text("close", "close"),
             text("volume", "volume"),
         ],
         "volumeOscillator" => vec![text("volume", "volume")],
-        "typicalPrice" | "weightedClose" => vec![
+        "typicalPrice" | "weightedClose" | "pivotPoints" => vec![
             text("high", "high"),
             text("low", "low"),
             text("close", "close"),
@@ -1035,6 +1038,113 @@ pub fn call_study(
             }
             series.balance_of_power(reads!(name_only!(o, output), open, high, low, close))
         }
+        "sessionVwap" | "pivotPoints" => {
+            // pond-ts throws on neither door or both, and on an unknown
+            // stamp; Rust cannot write those calls.
+            let sessions = options.get("sessions");
+            let session = text("session");
+            if sessions.is_some() == session.is_some() {
+                return None;
+            }
+            let stamped = match text("stamped") {
+                None => None,
+                Some("open") => Some(Stamped::Open),
+                Some("close") => Some(Stamped::Close),
+                Some(_) => return None,
+            };
+            let calendar;
+            let list;
+            let anchor = match (sessions, session) {
+                (Some(v @ Value::Array(_)), _) => {
+                    list = session_list(v);
+                    SessionAnchor::from(&list)
+                }
+                (Some(v), _) => {
+                    calendar = session_calendar(v);
+                    SessionAnchor::from(&calendar)
+                }
+                (None, Some(name)) => SessionAnchor::column(name),
+                (None, None) => unreachable!(),
+            };
+            if study == "sessionVwap" {
+                let mut o = name_only!(SessionVwap::new(anchor), output);
+                if let Some(s) = stamped {
+                    o = o.stamped(s);
+                }
+                series.session_vwap(reads!(o, high, low, close, volume))
+            } else {
+                let method = match text("method") {
+                    None | Some("standard") => PivotMethod::Standard,
+                    Some("fibonacci") => PivotMethod::Fibonacci,
+                    Some("woodie") => PivotMethod::Woodie,
+                    Some("camarilla") => PivotMethod::Camarilla,
+                    Some(_) => return None,
+                };
+                let mut o = name_only!(PivotPoints::new(anchor).method(method), prefix);
+                if let Some(s) = stamped {
+                    o = o.stamped(s);
+                }
+                series.pivot_points(reads!(o, high, low, close))
+            }
+        }
+        "anchoredVwap" => {
+            // pond-ts takes a Date or any finite number; Rust whole
+            // milliseconds. Keys are whole milliseconds, so a fractional
+            // anchor is the next whole one (`key < 40.5` is `key < 41`).
+            let anchor = options.get("anchor")?.as_f64()?;
+            if !anchor.is_finite() || anchor.abs() > 9.0e15 {
+                return None;
+            }
+            let anchor = anchor.ceil() as i64;
+            series.anchored_vwap(reads!(
+                name_only!(AnchoredVwap::new(anchor), output),
+                high,
+                low,
+                close,
+                volume
+            ))
+        }
         other => panic!("no pond-rs call for study '{other}'"),
     })
+}
+
+/// A session list written as pond-ts `Session` objects.
+pub fn session_list(v: &Value) -> Vec<Session> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            let mut session = Session::new(
+                s["date"].as_str().unwrap(),
+                s["open"].as_i64().unwrap(),
+                s["close"].as_i64().unwrap(),
+            );
+            for b in s["breaks"].as_array().into_iter().flatten() {
+                session =
+                    session.with_break(b["start"].as_i64().unwrap(), b["end"].as_i64().unwrap());
+            }
+            session
+        })
+        .collect()
+}
+
+/// The calendar `{ rules, from, to }` stands for (the fixture's way of
+/// writing a `TradingCalendar`).
+pub fn session_calendar(v: &Value) -> TradingCalendar {
+    let r = &v["rules"];
+    let text = |key: &str| r[key].as_str().unwrap();
+    let mut rules = SessionRules::new(text("timeZone"), text("open"), text("close"));
+    for h in r["holidays"].as_array().into_iter().flatten() {
+        rules = rules.holiday(h.as_str().unwrap());
+    }
+    assert!(
+        r.get("weekmask").is_none() && r.get("breaks").is_none() && r.get("earlyCloses").is_none(),
+        "session_calendar reads the zone, hours and holidays only"
+    );
+    TradingCalendar::from_rules(
+        &rules,
+        v["from"].as_str().unwrap(),
+        v["to"].as_str().unwrap(),
+    )
+    .expect("fixture calendar")
 }

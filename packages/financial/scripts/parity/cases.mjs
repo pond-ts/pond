@@ -385,6 +385,73 @@ const TICK_ROWS = TICK_CLOSES.map((close, i) => [
   close,
   100 * (i + 1),
 ]);
+// Thirty-minute bars on a New York clock, 08:00 to 17:00 local, every day
+// from 2024-01-08 to 2024-01-17 (so weekend and pre- and post-market bars
+// fall in closed time, and 2024-01-15 is the calendar's holiday). The
+// 09:30 bar on the 8th has no high (a leading gap), the 13:00 bar on the
+// 9th no close (an interior gap), the 10th has one bar without a low, the
+// 11th has no bars in session at all, the 12th opens on three bars of zero
+// volume, and the 16th has no highs. `sid` is a session-id column (the
+// date as a number in session, a gap outside); `name` is text; `S4`
+// collides with an empty pivot prefix.
+const SESSION_ROWS = (() => {
+  const rows = [];
+  let price = 470;
+  for (let d = 8; d <= 17; d += 1) {
+    for (let k = 0; k < 19; k += 1) {
+      const minutes = 8 * 60 + k * 30; // local, EST = UTC-5
+      const t = Date.UTC(2024, 0, d, 5) + minutes * 60_000;
+      const inSession = minutes >= 570 && minutes < 960;
+      const weekday = new Date(Date.UTC(2024, 0, d)).getUTCDay();
+      const trading = weekday >= 1 && weekday <= 5 && d !== 15;
+      if (d === 11 && inSession) continue;
+      price += (unit(d * 19 + k + 3, 2654435761) - 0.5) * 2;
+      const spread = 0.2 + unit(d * 19 + k, 40503);
+      let high = price + spread;
+      let low = price - spread;
+      let close = price + (unit(d * 19 + k, 69069) - 0.5) * spread;
+      let volume = 1000 + Math.round(unit(d * 19 + k, 48271) * 4000);
+      if (d === 8 && minutes === 570) high = null;
+      if (d === 9 && minutes === 780) close = null;
+      if (d === 10 && minutes === 690) low = null;
+      if (d === 12 && minutes >= 570 && minutes < 660) volume = 0;
+      if (d === 16) high = null;
+      rows.push([
+        t,
+        price,
+        high,
+        low,
+        close,
+        volume,
+        inSession && trading ? 20240100 + d : null,
+        k % 2 === 0 ? 'a' : 'b',
+        k,
+      ]);
+    }
+  }
+  return rows;
+})();
+// The same bars from the first session's close on (Jan 8, 16:00 New York):
+// under close stamping the first bar belongs to a session that opened
+// before the series. Jan 12's ids reuse Jan 9's, so an id comes back
+// after another (A, B, A).
+const SESSION_LATE_ROWS = SESSION_ROWS.filter(
+  (r) => r[0] >= Date.UTC(2024, 0, 8, 21),
+).map((r) =>
+  r[6] === 20240112 ? [...r.slice(0, 6), 20240109, ...r.slice(7)] : r,
+);
+const SESSION_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'open', kind: 'number' },
+  { name: 'high', kind: 'number', required: false },
+  { name: 'low', kind: 'number', required: false },
+  { name: 'close', kind: 'number', required: false },
+  { name: 'volume', kind: 'number' },
+  { name: 'sid', kind: 'number', required: false },
+  { name: 'name', kind: 'string' },
+  { name: 'S4', kind: 'number' },
+];
+
 const TICK_SCHEMA = [
   { name: 'time', kind: 'time' },
   { name: 'close', kind: 'number' },
@@ -455,6 +522,12 @@ function inputs(oracle) {
     blowup: { name: 'blowup', schema: BLOWUP_SCHEMA, rows: BLOWUP_ROWS },
     volEmpty: { name: 'volEmpty', schema: VOL_EMPTY_SCHEMA, rows: [] },
     ticks: { name: 'ticks', schema: TICK_SCHEMA, rows: TICK_ROWS },
+    sessions: { name: 'sessions', schema: SESSION_SCHEMA, rows: SESSION_ROWS },
+    sessionsLate: {
+      name: 'sessionsLate',
+      schema: SESSION_SCHEMA,
+      rows: SESSION_LATE_ROWS,
+    },
     ohlcEmpty: { name: 'ohlcEmpty', schema: LEAD_SCHEMA, rows: [] },
     empty: { name: 'empty', schema: CLOSE_SCHEMA, rows: [] },
   };
@@ -563,6 +636,7 @@ function cases() {
   volumeFamilyCases(add);
   volumeFamilyCases2(add);
   priceFamilyCases(add);
+  sessionFamilyCases(add);
   return out;
 }
 
@@ -1287,9 +1361,29 @@ function encodeCell(cell) {
   return cell;
 }
 
+// A `sessions` option written as `{ rules, from, to }` stands for the
+// TradingCalendar those rules give (a calendar is not JSON); a session list
+// is passed as it is.
+function decodeOptions(financial, options) {
+  const sessions = options.sessions;
+  if (sessions && !Array.isArray(sessions) && sessions.rules) {
+    return {
+      ...options,
+      sessions: financial.TradingCalendar.fromRules(sessions.rules, {
+        from: sessions.from,
+        to: sessions.to,
+      }),
+    };
+  }
+  return options;
+}
+
 function run(pond, financial, series, c) {
   try {
-    const result = financial[c.study](series, c.options);
+    const result = financial[c.study](
+      series,
+      decodeOptions(financial, c.options),
+    );
     const before = series.schema.length;
     const columns = result.schema.slice(before).map((def) => {
       const column = result.column(def.name);
@@ -1830,4 +1924,138 @@ function priceFamilyCases(add) {
     add('balanceOfPower', 'vol', { period: 3, maType });
   }
   add('balanceOfPower', 'bars', { period: 50, maType: 'kama' });
+}
+
+const NYSE_JAN = {
+  rules: {
+    timeZone: 'America/New_York',
+    open: '09:30',
+    close: '16:00',
+    holidays: ['2024-01-15'],
+  },
+  from: '2024-01-08',
+  to: '2024-01-17',
+};
+// The same sessions written out (09:30-16:00 EST is 14:30-21:00 UTC), the
+// 10th with a lunch break (breaks do not split a session).
+const jan = (d, breaks) => ({
+  date: `2024-01-${String(d).padStart(2, '0')}`,
+  open: Date.UTC(2024, 0, d, 14, 30),
+  close: Date.UTC(2024, 0, d, 21),
+  ...(breaks ? { breaks } : {}),
+});
+const LIST = [
+  jan(8),
+  jan(9),
+  jan(10, [
+    { start: Date.UTC(2024, 0, 10, 17), end: Date.UTC(2024, 0, 10, 18) },
+  ]),
+  jan(11),
+  jan(12),
+  jan(16),
+  jan(17),
+];
+const LIST_UNSORTED = [jan(12), jan(8), jan(16), jan(9)];
+const LIST_OVERLAP = [jan(8), { ...jan(9), open: Date.UTC(2024, 0, 8, 20) }];
+const PIVOT_METHODS_LIST = ['standard', 'fibonacci', 'woodie', 'camarilla'];
+
+function sessionFamilyCases(add) {
+  const doors = [
+    { sessions: NYSE_JAN },
+    { sessions: NYSE_JAN, stamped: 'close' },
+    { sessions: NYSE_JAN, stamped: 'open' },
+    { sessions: LIST },
+    { sessions: LIST, stamped: 'close' },
+    { sessions: LIST_UNSORTED },
+    { sessions: [] },
+    { session: 'sid' },
+  ];
+  const wrong = [
+    {},
+    { sessions: NYSE_JAN, session: 'sid' },
+    { session: 'sid', stamped: 'close' },
+    { session: 'nope' },
+    { session: 'name' },
+    { session: 'time' },
+    { sessions: LIST_OVERLAP },
+    { sessions: NYSE_JAN, stamped: 'middle' },
+  ];
+  const studies = [
+    ['sessionVwap', {}],
+    ...PIVOT_METHODS_LIST.map((method) => ['pivotPoints', { method }]),
+  ];
+  for (const [study, extra] of studies) {
+    for (const door of [...doors, ...wrong]) {
+      add(study, 'sessions', { ...extra, ...door });
+    }
+    // Bars far from any session, and no bars at all.
+    add(study, 'bars', { ...extra, sessions: NYSE_JAN });
+    add(study, 'ohlcEmpty', { ...extra, sessions: NYSE_JAN });
+    add(study, 'ohlcEmpty', { ...extra, session: 'nope' });
+    // Other columns, and a missing one.
+    add(study, 'sessions', { ...extra, sessions: NYSE_JAN, close: 'open' });
+    add(study, 'sessions', { ...extra, sessions: NYSE_JAN, high: 'nope' });
+    add(study, 'sessions', {
+      ...extra,
+      sessions: NYSE_JAN,
+      high: 'open',
+      low: 'open',
+    });
+  }
+  // A first bar on a session's close, and an id that comes back.
+  for (const [study, extra] of studies) {
+    for (const door of [
+      { sessions: NYSE_JAN, stamped: 'close' },
+      { sessions: NYSE_JAN },
+      { sessions: LIST, stamped: 'close' },
+      { session: 'sid' },
+    ]) {
+      add(study, 'sessionsLate', { ...extra, ...door });
+    }
+  }
+  add('sessionVwap', 'sessions', { session: 'sid', volume: 'S4' });
+  add('sessionVwap', 'sessions', { sessions: NYSE_JAN, output: 'close' });
+  add('sessionVwap', 'sessions', { sessions: NYSE_JAN, output: 'mine' });
+  // The output names are checked before the sessions.
+  add('sessionVwap', 'sessions', { session: 'nope', output: 'close' });
+  add('pivotPoints', 'sessions', { session: 'nope', prefix: '' });
+  add('pivotPoints', 'sessions', {
+    session: 'nope',
+    prefix: '',
+    method: 'camarilla',
+  });
+  for (const method of PIVOT_METHODS_LIST) {
+    add('pivotPoints', 'sessions', { sessions: NYSE_JAN, method, prefix: '' });
+    add('pivotPoints', 'sessions', { sessions: NYSE_JAN, method, prefix: 'x' });
+  }
+  add('pivotPoints', 'sessions', { sessions: NYSE_JAN, method: 'bogus' });
+  add('pivotPoints', 'sessions', { session: 'sid', method: 'bogus' });
+
+  const first = SESSION_ROWS[0][0];
+  const last = SESSION_ROWS[SESSION_ROWS.length - 1][0];
+  for (const anchor of [
+    -1e15,
+    0,
+    first,
+    first + 1,
+    SESSION_ROWS[40][0],
+    SESSION_ROWS[40][0] - 1,
+    Date.UTC(2024, 0, 12, 14, 30),
+    last,
+    last + 1,
+  ]) {
+    add('anchoredVwap', 'sessions', { anchor });
+  }
+  for (const anchor of [0, 40, 79, 80, 40.5]) {
+    add('anchoredVwap', 'bars', { anchor });
+    add('anchoredVwap', 'vol', { anchor });
+  }
+  add('anchoredVwap', 'sessions', { anchor: first, close: 'open' });
+  add('anchoredVwap', 'sessions', { anchor: first, high: 'nope' });
+  add('anchoredVwap', 'sessions', { anchor: first, output: 'close' });
+  add('anchoredVwap', 'sessions', { anchor: first, output: 'mine' });
+  add('anchoredVwap', 'ohlcEmpty', { anchor: 0 });
+  add('anchoredVwap', 'sessions', {});
+  add('anchoredVwap', 'sessions', { anchor: 'soon' });
+  add('anchoredVwap', 'sessions', { anchor: null, output: 'close' });
 }
