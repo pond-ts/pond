@@ -606,7 +606,7 @@ the study oracle) is done.
   rows across cores instead, same bits). Steps: 1. ~~foundations (study options and checks,
   shared kernels, `sma` / `ema` / `moving_average` / rolling stats /
   `z_score`)~~ — done; ~~2. one PR per family (averages, bands, momentum, trend, volatility and
-  statistics, volume, price)~~ — done (anchored VWAP is in step 3); 3. trading calendars, then the session studies (pivot points, session VWAP) and anchored VWAP; 4. the
+  statistics, volume, price)~~ — done (anchored VWAP is in step 3); 3. ~~trading calendars, then the session studies (pivot points, session VWAP) and anchored VWAP~~ — done (3a, 3b); 4. the
   catalog; 5. perf check and an agent trial. Detail in the breakout plan.
 
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
@@ -626,6 +626,14 @@ the study oracle) is done.
   the source in the shared study helpers (a behaviour change, so it needs a
   CHANGELOG entry); the study parity fixture's `name` / `flag` / `nope` cases
   pin today's behaviour.
+- **[PND-CALGEN]** — `TradingCalendar.fromRules` / `generateSessions` are
+  slow: a 30-year New York calendar with a lunch break takes ~1.3 s in
+  pond-ts (pond-rs: 3.4 ms). Measured: ~43 µs per Temporal-polyfill
+  `ZonedDateTime.from` call, one per open, close and break edge (four a
+  day here; dropping the break halves the time), plus ~0.24 s walking the
+  dates. Found building pond-rs R2 step 3a. Fix idea: resolve each day's
+  offset once and add the wall-clock minutes, falling back to Temporal only
+  on the days the zone's offset changes.
 - **[PND-ROLLGAP]** — pond-ts time-window `rolling` gets ~60% slower when a
   few windows are empty: 1M rows with three 10-minute outages (0.18% of rows)
   take `rolling('5m', avg)` from ~400 to ~650 ms. A profile puts the extra

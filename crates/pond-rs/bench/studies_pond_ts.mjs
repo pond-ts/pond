@@ -45,6 +45,13 @@ const bars = new TimeSeries({
   ]),
 });
 
+// Session tagging: a New York 09:30-16:00 calendar over the bars' two
+// years.
+const calendar = f.TradingCalendar.fromRules(
+  { timeZone: 'America/New_York', open: '09:30', close: '16:00' },
+  { from: '1969-12-31', to: '1971-12-31' },
+);
+
 const cases = [
   ['sma 20', 'sma', () => f.sma(dense, { period: 20 })],
   ['sma 200', 'sma', () => f.sma(dense, { period: 200 })],
@@ -168,6 +175,24 @@ const cases = [
   ['p-avg', 'averagePrice', () => f.averagePrice(bars)],
   ['p-bop', 'bop', () => f.balanceOfPower(bars)],
   ['p-bop14', 'bop', () => f.balanceOfPower(bars, { period: 14 })],
+  ['cal-tag', 'session', () => calendar.tagSessions(bars)],
+  [
+    'cal-tag-close',
+    'session',
+    () => calendar.tagSessions(bars, { stamped: 'close' }),
+  ],
+  ['sess-svwap', 'svwap', () => f.sessionVwap(bars, { sessions: calendar })],
+  ['sess-pivot', 'ppPivot', () => f.pivotPoints(bars, { sessions: calendar })],
+  [
+    'sess-pivot-cam',
+    'ppR4',
+    () => f.pivotPoints(bars, { sessions: calendar, method: 'camarilla' }),
+  ],
+  [
+    'sess-avwap',
+    'avwap',
+    () => f.anchoredVwap(bars, { anchor: 500_000 * 60_000 }),
+  ],
 ];
 
 const only = process.argv[2];

@@ -103,6 +103,10 @@ fn main() -> pond_rs::Result<()> {
     let dense = make(1_000_000, false);
     let gappy = make(1_000_000, true);
     let bars = make_bars(1_000_000);
+    // Session tagging: a New York 09:30-16:00 calendar over the bars' two
+    // years (about a quarter of the minute bars fall in a session).
+    let nyse = SessionRules::new("America/New_York", "09:30", "16:00");
+    let calendar = TradingCalendar::from_rules(&nyse, "1969-12-31", "1971-12-31")?;
     let p = Study::period;
     type Case<'a> = (String, &'a str, Box<dyn Fn() -> TimeSeries + 'a>);
     let mut cases: Vec<Case> = vec![
@@ -815,6 +819,57 @@ fn main() -> pond_rs::Result<()> {
         ),
     ];
     cases.extend(price);
+    let calendar = &calendar;
+    let bars_ref = &bars;
+    let tags: Vec<Case> = vec![
+        (
+            "cal-tag".into(),
+            "session",
+            Box::new(move || {
+                calendar
+                    .tag_sessions(bars_ref, TagSessions::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "cal-tag-close".into(),
+            "session",
+            Box::new(move || {
+                calendar
+                    .tag_sessions(bars_ref, TagSessions::default().stamped(Stamped::Close))
+                    .unwrap()
+            }),
+        ),
+        (
+            "sess-svwap".into(),
+            "svwap",
+            Box::new(move || bars_ref.session_vwap(SessionVwap::new(calendar)).unwrap()),
+        ),
+        (
+            "sess-pivot".into(),
+            "ppPivot",
+            Box::new(move || bars_ref.pivot_points(PivotPoints::new(calendar)).unwrap()),
+        ),
+        (
+            "sess-pivot-cam".into(),
+            "ppR4",
+            Box::new(move || {
+                bars_ref
+                    .pivot_points(PivotPoints::new(calendar).method(PivotMethod::Camarilla))
+                    .unwrap()
+            }),
+        ),
+        (
+            "sess-avwap".into(),
+            "avwap",
+            Box::new(move || {
+                bars_ref
+                    .anchored_vwap(AnchoredVwap::new(500_000 * 60_000))
+                    .unwrap()
+            }),
+        ),
+    ];
+    cases.extend(tags);
     // POND_BITS=1: instead of timing, print a hash of every bit of every
     // number column in the result (a gap hashes as one fixed value), the
     // same hash bench/studies_pond_ts.mjs prints under the same variable.

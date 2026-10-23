@@ -3282,6 +3282,112 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | bop     | 5.1      | 4.6     | 25.3    | 5.5x  |
     | bop 14  | 16.6     | 6.7     | 67.9    | 10.1x |
 
+  **R2 step 3 split** (planned 2026-10-23): 3a the trading calendar on its
+  own; 3b the three studies that read it (pivot points, session VWAP) or
+  the key times (anchored VWAP).
+
+  **R2 step 3a (done): trading calendars.**
+  - Calls, in `pond_rs::financial`, as pond-ts `calendar/`: `Session`
+    (date, open, close, breaks; `Session::new`, `.with_break`),
+    `normalize_sessions`, `SessionRules` (`new(zone, open, close)`,
+    `.weekmask`, `.with_break`, `.holiday(s)`, `.early_close`),
+    `generate_sessions(&rules, from, to)` (a bound is a date string or an
+    instant, `DateBound`), and `TradingCalendar` (`from_sessions`,
+    `from_rules`, `with_time_zone`, `time_zone`, `sessions`, `len`,
+    `session_on`, `is_trading_day`, `session_containing`, `is_open`,
+    `sessions_in_range(start, end)`, `next_session` / `previous_session`
+    (an instant or a date, `SessionRef`),
+    `tag_sessions(&series, TagSessions)` with `Stamped::Open` /
+    `Close`). Rules are resolved to
+    instants with jiff, day by day; a skipped time moves forward, a
+    repeated one takes the earlier instant (Temporal's `compatible`).
+  - Checks and error messages are pond-ts's word for word (the zone and
+    date parsing aside, which Temporal words), in pond-ts's order: the
+    hours, the breaks, the range, then each trading day's early close; the
+    zone is read only when a trading day needs it (a bad zone over a
+    weekend gives no sessions and no error, in both).
+  - Not built: `sessionSequence` / `barSequence` (pond-rs has no
+    `BoundedSequence` input for `aggregate`; listed as a known difference
+    since R1b) and `discontinuities` (a chart axis; charts are out of
+    scope). Sessions hold whole milliseconds (pond-ts allows fractions).
+    Years past 9999 are refused (jiff's range).
+  - Known differences in reading inputs (found in review, #827): a range
+    bound in another calendar (`2024-01-08[u-ca=gregory]`) is refused;
+    pond-ts accepts it and writes session dates with the annotation on,
+    which its own `fromRules` then refuses. A critical ISO annotation
+    (`[!u-ca=iso8601]`) is refused, and an offset of `+24:00` accepted,
+    where Temporal does the reverse. Zone names follow pond-rs's bundled
+    tz database, not Node's: `Etc/Unknown` and `Factory` are known to
+    pond-rs only, `Canada/East-Saskatchewan` and `US/Pacific-New` to Node
+    only (same caveat as `Sequence::calendar`).
+  - Shared quirk: a zone that skipped a whole day (Pacific/Apia,
+    2011-12-30) gets a session for the missing day, placed on the next one,
+    which `from_rules` then refuses as an overlap. Same in pond-ts; left
+    alone (one zone, once).
+  - Parity: a new fixture, `packages/financial/test/fixtures/calendar-parity.json`
+    (written by `scripts/parity/calendar.mjs`, kept fresh by
+    `calendar-parity.test.ts`), 110 cases checked by
+    `tests/calendar_parity.rs`: 73 rule sets (New York over 2005-2010 and
+    2024, Tokyo with a lunch break and early closes, London, Sydney,
+    Kolkata, a skipped and a repeated hour, a skipped midnight, the
+    missing Apia day, fixed-offset and lower-case zones, every date form
+    for a bound, bad hours, breaks, weekmasks, holidays and early
+    closes), 25 session lists, 4 calendars with ~2,700 lookups at every
+    session and break edge, and 8 tagging cases. Every case agrees; every
+    error message matches but the Temporal / core ones.
+  - Perf: tagging is one forward walk, O(N + sessions). 1M minute bars on
+    a New York calendar, medians of 3 runs of medians of 7, ms (pond-ts
+    run one case per process; it varied 10-18 ms between runs):
+
+    | Case      | 1 thread | 4 cores | pond-ts | ratio |
+    | --------- | -------- | ------- | ------- | ----- |
+    | tag open  | 2.3      | 1.9     | 18.0    | 9.5x  |
+    | tag close | 3.0      | 1.8     | 15.1    | 8.4x  |
+
+    Bits match node on 1 and 4 threads. Generating a 30-year calendar with a
+    lunch break: 3.4 ms against pond-ts's 1.3 s (the Temporal polyfill);
+    logged for pond-ts as [PND-CALGEN].
+
+  **R2 step 3b (done): session VWAP, pivot points, anchored VWAP.**
+  - Calls, in `pond_rs::financial`: `TimeSeries::session_vwap`
+    (`SessionVwap`, writes `svwap`), `pivot_points` (`PivotPoints`,
+    `PivotMethod::Standard` / `Fibonacci` / `Woodie` / `Camarilla`, prefix
+    `pp`) and `anchored_vwap` (`AnchoredVwap::new(anchor_ms)`, writes
+    `avwap`). The two session studies take a `SessionAnchor`: a calendar,
+    a session list (checked and sorted as `normalize_sessions`), or a
+    session-id column (`SessionAnchor::column`), with `.stamped` for the
+    first two. pond-ts's "exactly one of `sessions` / `session`" check is
+    the enum itself, so pond-rs cannot be given neither or both.
+  - Checks and messages are pond-ts's, in its order: the output names,
+    then the sessions (a stamp given with a column, the column, the list),
+    then the price columns. Two limits (review, #828): an output named
+    like the key column (`time`) is refused up front by pond-rs's shared
+    name check but only when appending by pond-ts, so that message and
+    order differ (all studies); and study parity counts error against
+    error without comparing messages, so the order is pinned by a Rust
+    unit test, not the fixture. Range and interval keys are not in the
+    fixture (its inputs are time keyed).
+  - Pivot points fuse pond-ts's two passes (previous-session high / low /
+    close, then the levels) into one walk; the arithmetic per level is
+    pond-ts's, so bits match. With a calendar only the sessions between
+    the first and last bar are walked.
+  - Parity: a `sessions` input (New York 30-minute bars, 08:00-17:00
+    local, 2024-01-08 to -17: out-of-hours bars, a weekend, the 15th as a
+    holiday, a trading day with no bars in hours, missing high / low /
+    close cells, a zero-volume first hour, a day with no highs, plus a
+    `sid` column; and the same from the first session's close, with an id
+    that comes back after another) with cases over every door, stamp,
+    method, a bad and unsorted list, overlap, collisions and missing
+    columns. The fixture encodes a calendar as its rules, so both sides
+    build it themselves. Study fixture now 5,055 cases; oracle 220 / 220
+    (the last seven, pivots and the two VWAPs, now covered).
+  - Perf: all three O(N + sessions), one pass. 1M bars, 4 cores, ms
+    (medians of medians of 7): svwap 15.5 vs pond-ts 47 (3.0x), pivots
+    44.9 vs 103 (2.3x), Camarilla 50.1 vs 105 (2.1x), anchored VWAP 6.7 vs
+    28 (4.2x). Pivots write 7 or 9 columns, and each fresh 1M-row column
+    costs ~5 ms to touch, so it is memory bound; fusing the passes did not
+    make it faster. Bits match node at 1M rows.
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).
