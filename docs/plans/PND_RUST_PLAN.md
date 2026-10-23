@@ -3282,6 +3282,72 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | bop     | 5.1      | 4.6     | 25.3    | 5.5x  |
     | bop 14  | 16.6     | 6.7     | 67.9    | 10.1x |
 
+  **R2 step 3 split** (planned 2026-10-23): 3a the trading calendar on its
+  own; 3b the three studies that read it (pivot points, session VWAP) or
+  the key times (anchored VWAP).
+
+  **R2 step 3a (done): trading calendars.**
+  - Calls, in `pond_rs::financial`, as pond-ts `calendar/`: `Session`
+    (date, open, close, breaks; `Session::new`, `.with_break`),
+    `normalize_sessions`, `SessionRules` (`new(zone, open, close)`,
+    `.weekmask`, `.with_break`, `.holiday(s)`, `.early_close`),
+    `generate_sessions(&rules, from, to)` (a bound is a date string or an
+    instant, `DateBound`), and `TradingCalendar` (`from_sessions`,
+    `from_rules`, `with_time_zone`, `time_zone`, `sessions`, `len`,
+    `session_on`, `is_trading_day`, `session_containing`, `is_open`,
+    `sessions_in_range(start, end)`, `next_session` / `previous_session`
+    (an instant or a date, `SessionRef`),
+    `tag_sessions(&series, TagSessions)` with `Stamped::Open` /
+    `Close`). Rules are resolved to
+    instants with jiff, day by day; a skipped time moves forward, a
+    repeated one takes the earlier instant (Temporal's `compatible`).
+  - Checks and error messages are pond-ts's word for word (the zone and
+    date parsing aside, which Temporal words), in pond-ts's order: the
+    hours, the breaks, the range, then each trading day's early close; the
+    zone is read only when a trading day needs it (a bad zone over a
+    weekend gives no sessions and no error, in both).
+  - Not built: `sessionSequence` / `barSequence` (pond-rs has no
+    `BoundedSequence` input for `aggregate`; listed as a known difference
+    since R1b) and `discontinuities` (a chart axis; charts are out of
+    scope). Sessions hold whole milliseconds (pond-ts allows fractions).
+    Years past 9999 are refused (jiff's range).
+  - Known differences in reading inputs (found in review, #827): a range
+    bound in another calendar (`2024-01-08[u-ca=gregory]`) is refused;
+    pond-ts accepts it and writes session dates with the annotation on,
+    which its own `fromRules` then refuses. A critical ISO annotation
+    (`[!u-ca=iso8601]`) is refused, and an offset of `+24:00` accepted,
+    where Temporal does the reverse. Zone names follow pond-rs's bundled
+    tz database, not Node's: `Etc/Unknown` and `Factory` are known to
+    pond-rs only, `Canada/East-Saskatchewan` and `US/Pacific-New` to Node
+    only (same caveat as `Sequence::calendar`).
+  - Shared quirk: a zone that skipped a whole day (Pacific/Apia,
+    2011-12-30) gets a session for the missing day, placed on the next one,
+    which `from_rules` then refuses as an overlap. Same in pond-ts; left
+    alone (one zone, once).
+  - Parity: a new fixture, `packages/financial/test/fixtures/calendar-parity.json`
+    (written by `scripts/parity/calendar.mjs`, kept fresh by
+    `calendar-parity.test.ts`), 110 cases checked by
+    `tests/calendar_parity.rs`: 73 rule sets (New York over 2005-2010 and
+    2024, Tokyo with a lunch break and early closes, London, Sydney,
+    Kolkata, a skipped and a repeated hour, a skipped midnight, the
+    missing Apia day, fixed-offset and lower-case zones, every date form
+    for a bound, bad hours, breaks, weekmasks, holidays and early
+    closes), 25 session lists, 4 calendars with ~2,700 lookups at every
+    session and break edge, and 8 tagging cases. Every case agrees; every
+    error message matches but the Temporal / core ones.
+  - Perf: tagging is one forward walk, O(N + sessions). 1M minute bars on
+    a New York calendar, medians of 3 runs of medians of 7, ms (pond-ts
+    run one case per process; it varied 10-18 ms between runs):
+
+    | Case      | 1 thread | 4 cores | pond-ts | ratio |
+    | --------- | -------- | ------- | ------- | ----- |
+    | tag open  | 2.3      | 1.9     | 18.0    | 9.5x  |
+    | tag close | 3.0      | 1.8     | 15.1    | 8.4x  |
+
+    Bits match node on 1 and 4 threads. Generating a 30-year calendar with a
+    lunch break: 3.4 ms against pond-ts's 1.3 s (the Temporal polyfill);
+    logged for pond-ts as [PND-CALGEN].
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).
