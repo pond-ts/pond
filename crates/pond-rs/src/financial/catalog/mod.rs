@@ -268,8 +268,10 @@ pub enum StudyAnchor {
     Time,
 }
 
-/// A study, described: everything a registry or a picker needs.
+/// A study, described: everything a registry or a picker needs. Only
+/// [`STUDIES`] holds them (fields may be added).
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct StudyDescriptor {
     /// pond-ts's name for the study (`"atr"`).
     pub name: &'static str,
@@ -311,8 +313,8 @@ impl StudyDescriptor {
     /// options by name (`"high": "h"`), numbers, menu names, `output` or
     /// `prefix`, and the anchor (`session`, `sessions`, `stamped`,
     /// `anchor`). Options the study does not have are ignored, as in
-    /// pond-ts; an option of the wrong type (`null` included) is an error,
-    /// as is a bar count that is negative or not whole.
+    /// pond-ts, and `null` reads as left out; an option of the wrong type is
+    /// an error, as is a bar count that is negative or not whole.
     pub fn run(&self, series: &TimeSeries, options: &Map<String, Value>) -> Result<TimeSeries> {
         run::run(self, series, options, None)
     }

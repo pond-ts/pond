@@ -26,8 +26,13 @@ impl<'a> Args<'a> {
         }
     }
 
+    /// The option, with `null` read as left out (pond-ts's `??`).
+    fn get(&self, key: &str) -> Option<&'a Value> {
+        self.map.get(key).filter(|v| !v.is_null())
+    }
+
     fn number(&self, key: &str) -> Result<Option<f64>> {
-        match self.map.get(key) {
+        match self.get(key) {
             None => Ok(None),
             Some(v) => v
                 .as_f64()
@@ -48,7 +53,7 @@ impl<'a> Args<'a> {
     }
 
     fn text(&self, key: &str) -> Result<Option<&'a str>> {
-        match self.map.get(key) {
+        match self.get(key) {
             None => Ok(None),
             Some(v) => v
                 .as_str()
@@ -664,12 +669,8 @@ pub(super) fn run(
         "anchoredVwap" => {
             let anchor = a.required_number("anchor")?;
             // Keys are whole milliseconds, so a fractional anchor is the
-            // next whole one (`key < 40.5` is `key < 41`).
-            if anchor.abs() > MAX_BARS {
-                return Err(a.error(format!(
-                    "anchoredVwap anchor must be a Date or a finite epoch-millisecond number; got {anchor}"
-                )));
-            }
+            // next whole one (`key < 40.5` is `key < 41`). Past i64 the
+            // cast saturates, still before or after every key.
             let mut o = AnchoredVwap::new(anchor.ceil() as i64);
             names!(a, o; high, low, close, volume, output);
             series.anchored_vwap(o)
@@ -748,7 +749,7 @@ pub(super) fn run(
         // Sessions.
         "sessionVwap" | "pivotPoints" => {
             let list;
-            let anchor = match (given, map.get("sessions"), a.text("session")?) {
+            let anchor = match (given, a.get("sessions"), a.text("session")?) {
                 (Some(anchor), None, None) => anchor,
                 (None, Some(v), None) => {
                     list = session_list(&a, v)?;
@@ -787,7 +788,7 @@ pub(super) fn run(
                 series.pivot_points(o)
             }
         }
-        other => unreachable!("catalog study '{other}' has no call"),
+        other => Err(a.error(format!("'{other}' is not a catalog study"))),
     }
 }
 

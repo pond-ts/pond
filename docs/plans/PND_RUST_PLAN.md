@@ -3408,7 +3408,12 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     exactly its declared columns; stating every default changes nothing
     (so the table's defaults are the options structs' own); every menu
     value, suggestion end and bound runs, one past a bound is refused. A
-    planted wrong default fails both checks.
+    planted wrong default in an options-struct study fails both checks.
+    Where the runner reads the default from the table (a `Study` period:
+    `rsi`, `momentum`, `z_score`…, and the moving-average type of three
+    studies), the stated-defaults check compares the table with itself; the
+    fixture check and the parity cases that leave the option out (against
+    pond-ts) are what pin those (review, #829).
   - The runner sets only the options given, so each options struct keeps
     its own defaults; where a Rust call takes a value directly (a `Study`
     period, a moving-average type) the default comes from the descriptor.
@@ -3418,9 +3423,9 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     fractional periods, unknown menu names, neither or both session doors)
     are now runner errors, and pond-ts throws on all of them too.
   - Known differences: the runner's own errors (a missing required option,
-    a wrong type, a bar count that is negative or not whole, `null`) are
-    worded by pond-rs; pond-ts treats `null` as left out in most studies.
-    Unknown option keys are ignored, as in pond-ts. `to_json`'s `params`
+    a wrong type, a bar count that is negative or not whole) are worded by
+    pond-rs. `null` reads as left out, as pond-ts's `??` does in most
+    studies. Unknown option keys are ignored, as in pond-ts. `to_json`'s `params`
     is an object keyed by name (the field `params` keeps the order).
   - Found by running every number option at 1e15: `random_walk_index`
     walked every horizon up to the period (pond-ts does too, and takes

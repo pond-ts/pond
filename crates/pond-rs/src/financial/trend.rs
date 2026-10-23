@@ -1314,6 +1314,48 @@ mod tests {
         assert!(err.contains("close") && !err.contains("high"), "{err}");
     }
 
+    /// A period as long as the series gives all gaps at once (the horizon
+    /// loop is skipped); one bar shorter still gives the last row a value.
+    #[test]
+    fn random_walk_period_past_the_series_is_all_gaps() {
+        let n = 40;
+        let col = |name: &str, f: fn(usize) -> f64| {
+            crate::series::Column::required(name, (0..n).map(f).collect::<Vec<f64>>())
+        };
+        let series = TimeSeries::new(
+            "bars",
+            (0..n as i64).collect(),
+            vec![
+                col("high", |i| 10.0 + (i % 7) as f64),
+                col("low", |i| 8.0 - (i % 3) as f64),
+                col("close", |i| 9.0 + (i % 5) as f64 / 2.0),
+            ],
+        )
+        .unwrap();
+        let last_two = |period: usize| {
+            let out = series
+                .random_walk_index(RandomWalkIndex::default().period(period))
+                .unwrap();
+            let cols = out.columns();
+            cols[cols.len() - 2..]
+                .iter()
+                .map(|c| c.numbers().unwrap().iter().collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        };
+        let shorter = last_two(n - 1);
+        assert!(
+            shorter
+                .iter()
+                .all(|c| c[n - 1].is_some() && c[n - 2].is_none())
+        );
+        for period in [n, n + 1, 1_000_000_000_000] {
+            assert!(
+                last_two(period).iter().flatten().all(Option::is_none),
+                "{period}"
+            );
+        }
+    }
+
     /// Stretches started anywhere give the bits of one sweep, on bars with
     /// gaps, flat runs and a large offset.
     #[test]

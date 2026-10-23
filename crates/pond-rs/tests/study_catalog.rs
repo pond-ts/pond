@@ -284,4 +284,11 @@ fn bad_options_are_errors() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("whole number"), "{err}");
+    // `null` is left out, as pond-ts's `??` reads it.
+    let rsi = study_descriptor("rsi").unwrap();
+    let with_null = rsi
+        .run(&bars, json!({ "period": null }).as_object().unwrap())
+        .unwrap();
+    let without = rsi.run(&bars, &Map::new()).unwrap();
+    assert_eq!(values(&with_null, "rsi"), values(&without, "rsi"));
 }
