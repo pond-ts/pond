@@ -14,8 +14,8 @@ use crate::series::TimeSeries;
 /// Where a session study finds its sessions (pond-ts's `sessions` /
 /// `session` options): a calendar, a session list (checked and sorted as
 /// [`normalize_sessions`] does), or the name of a session-id column already
-/// on the series (what [`TradingCalendar::tag_sessions`] writes; a run of
-/// one value is one session, a gap is closed time).
+/// on the series (what [`TradingCalendar::tag_sessions`] writes; each
+/// value is one session, wherever it appears, and a gap is closed time).
 ///
 /// `&calendar` and `&sessions[..]` convert into one;
 /// [`SessionAnchor::column`] names a column.

@@ -3360,7 +3360,13 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     the enum itself, so pond-rs cannot be given neither or both.
   - Checks and messages are pond-ts's, in its order: the output names,
     then the sessions (a stamp given with a column, the column, the list),
-    then the price columns.
+    then the price columns. Two limits (review, #828): an output named
+    like the key column (`time`) is refused up front by pond-rs's shared
+    name check but only when appending by pond-ts, so that message and
+    order differ (all studies); and study parity counts error against
+    error without comparing messages, so the order is pinned by a Rust
+    unit test, not the fixture. Range and interval keys are not in the
+    fixture (its inputs are time keyed).
   - Pivot points fuse pond-ts's two passes (previous-session high / low /
     close, then the levels) into one walk; the arithmetic per level is
     pond-ts's, so bits match. With a calendar only the sessions between
@@ -3369,10 +3375,11 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     local, 2024-01-08 to -17: out-of-hours bars, a weekend, the 15th as a
     holiday, a trading day with no bars in hours, missing high / low /
     close cells, a zero-volume first hour, a day with no highs, plus a
-    `sid` column) with cases over every door, stamp,
+    `sid` column; and the same from the first session's close, with an id
+    that comes back after another) with cases over every door, stamp,
     method, a bad and unsorted list, overlap, collisions and missing
     columns. The fixture encodes a calendar as its rules, so both sides
-    build it themselves. Study fixture now 5,035 cases; oracle 220 / 220
+    build it themselves. Study fixture now 5,055 cases; oracle 220 / 220
     (the last seven, pivots and the two VWAPs, now covered).
   - Perf: all three O(N + sessions), one pass. 1M bars, 4 cores, ms
     (medians of medians of 7): svwap 15.5 vs pond-ts 47 (3.0x), pivots

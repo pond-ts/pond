@@ -431,6 +431,15 @@ const SESSION_ROWS = (() => {
   }
   return rows;
 })();
+// The same bars from the first session's close on (Jan 8, 16:00 New York):
+// under close stamping the first bar belongs to a session that opened
+// before the series. Jan 12's ids reuse Jan 9's, so an id comes back
+// after another (A, B, A).
+const SESSION_LATE_ROWS = SESSION_ROWS.filter(
+  (r) => r[0] >= Date.UTC(2024, 0, 8, 21),
+).map((r) =>
+  r[6] === 20240112 ? [...r.slice(0, 6), 20240109, ...r.slice(7)] : r,
+);
 const SESSION_SCHEMA = [
   { name: 'time', kind: 'time' },
   { name: 'open', kind: 'number' },
@@ -514,6 +523,11 @@ function inputs(oracle) {
     volEmpty: { name: 'volEmpty', schema: VOL_EMPTY_SCHEMA, rows: [] },
     ticks: { name: 'ticks', schema: TICK_SCHEMA, rows: TICK_ROWS },
     sessions: { name: 'sessions', schema: SESSION_SCHEMA, rows: SESSION_ROWS },
+    sessionsLate: {
+      name: 'sessionsLate',
+      schema: SESSION_SCHEMA,
+      rows: SESSION_LATE_ROWS,
+    },
     ohlcEmpty: { name: 'ohlcEmpty', schema: LEAD_SCHEMA, rows: [] },
     empty: { name: 'empty', schema: CLOSE_SCHEMA, rows: [] },
   };
@@ -1987,6 +2001,17 @@ function sessionFamilyCases(add) {
       high: 'open',
       low: 'open',
     });
+  }
+  // A first bar on a session's close, and an id that comes back.
+  for (const [study, extra] of studies) {
+    for (const door of [
+      { sessions: NYSE_JAN, stamped: 'close' },
+      { sessions: NYSE_JAN },
+      { sessions: LIST, stamped: 'close' },
+      { session: 'sid' },
+    ]) {
+      add(study, 'sessionsLate', { ...extra, ...door });
+    }
   }
   add('sessionVwap', 'sessions', { session: 'sid', volume: 'S4' });
   add('sessionVwap', 'sessions', { sessions: NYSE_JAN, output: 'close' });
