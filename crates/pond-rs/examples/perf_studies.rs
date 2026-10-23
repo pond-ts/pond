@@ -778,6 +778,43 @@ fn main() -> pond_rs::Result<()> {
         ),
     ];
     cases.extend(volume2);
+    // R2 step 2g.
+    let price: Vec<Case> = vec![
+        (
+            "p-typical".into(),
+            "typicalPrice",
+            Box::new(|| bars.typical_price(TypicalPrice::default()).unwrap()),
+        ),
+        (
+            "p-median".into(),
+            "medianPrice",
+            Box::new(|| bars.median_price(MedianPrice::default()).unwrap()),
+        ),
+        (
+            "p-wclose".into(),
+            "weightedClose",
+            Box::new(|| bars.weighted_close(WeightedClose::default()).unwrap()),
+        ),
+        (
+            "p-avg".into(),
+            "averagePrice",
+            Box::new(|| bars.average_price(AveragePrice::default()).unwrap()),
+        ),
+        (
+            "p-bop".into(),
+            "bop",
+            Box::new(|| bars.balance_of_power(BalanceOfPower::default()).unwrap()),
+        ),
+        (
+            "p-bop14".into(),
+            "bop",
+            Box::new(|| {
+                bars.balance_of_power(BalanceOfPower::default().period(14))
+                    .unwrap()
+            }),
+        ),
+    ];
+    cases.extend(price);
     // POND_BITS=1: instead of timing, print a hash of every bit of every
     // number column in the result (a gap hashes as one fixed value), the
     // same hash bench/studies_pond_ts.mjs prints under the same variable.

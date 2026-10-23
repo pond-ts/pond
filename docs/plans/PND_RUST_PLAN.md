@@ -2540,7 +2540,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     `rolling_percentile`, `z_score`; 2. one PR per family: (a) moving
     averages, (b) bands, (c) momentum, (d) trend, (e) volatility and
     statistics, (f) volume, (g) price; 3. trading calendars, then
-    session VWAP and anchored VWAP; 4. the catalog; 5. perf check
+    pivot points, session VWAP and anchored VWAP; 4. the catalog; 5. perf check
     against pond-ts and an agent trial.
 
   **R2 step 1 (done): foundations.**
@@ -3244,6 +3244,43 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | bwmfi   | 5.3      | 5.3     | 39.2    | 7.4x  |
     | sir     | 45.2     | 19.8    | 160.7   | 8.1x  |
     | vwap    | 27.7     | 11.9    | 64.9    | 5.5x  |
+
+  **R2 step 2g (done): price, 5 studies. Step 2 is complete**: every
+  catalog study but the session family (pivot points, session VWAP) and
+  anchored VWAP, which need step 3's calendars.
+  - Calls: `typical_price`, `median_price`, `weighted_close`,
+    `average_price` and `balance_of_power`. `BalanceOfPower` is written
+    out by hand rather than with `study_options!`, because pond-ts's
+    `period` has no default (absent means the raw per-bar ratio) and its
+    `maType` is refused without a period: `.period(n)` and `.ma(t)` set
+    optional fields, and `.ma(t)` alone gives pond-ts's error.
+    `MedianPrice` has no `close` setter: pond-ts accepts a `close` there
+    and never reads it, so a bad `close` is not an error on either side
+    (the parity cases pass one).
+  - Errors and their order as pond-ts, pinned by a unit test: the
+    period, then a type without a period, then the output name, then the
+    columns, the open first for the two studies that read it.
+  - Parity: the fixture grew to 4,882 cases. 3,593 match bit for bit, 471
+    errors agree, 518 refused (known missing-column difference), 300
+    calls Rust cannot write. Oracle: 213 of 220 (was 206); the 7 left are
+    pivot points (4), anchored VWAP (2) and session VWAP (1).
+  - Planted bugs: 9 of 9 caught (the median's read order only after the
+    unit test gained a case for it). Regrouping the sums (`c + c` for
+    `2 · c`, the open first) changes bits and is caught.
+  - Perf: all O(N), one pass each. At 1M rows all five (and the smoothed
+    balance of power) match pond-ts on every bit, on 4 cores and on 1. The
+    bench bars' close is the middle of the bar, so the weighted close
+    equals the median there; parity covers the difference.
+  - Medians of 3 runs of medians of 7, 1M bars, ms:
+
+    | Study   | 1 thread | 4 cores | pond-ts | ratio |
+    | ------- | -------- | ------- | ------- | ----- |
+    | typical | 3.7      | 3.7     | 29.2    | 7.9x  |
+    | median  | 2.9      | 3.4     | 11.7    | 3.4x  |
+    | wclose  | 4.4      | 4.9     | 23.4    | 4.8x  |
+    | avg     | 4.3      | 5.7     | 23.1    | 4.1x  |
+    | bop     | 5.1      | 4.6     | 25.3    | 5.5x  |
+    | bop 14  | 16.6     | 6.7     | 67.9    | 10.1x |
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
