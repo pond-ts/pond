@@ -692,7 +692,8 @@ fn volume_index_start(call: &'static str, study: &str, start: f64) -> Result<()>
 fn volume_index_values(close: &[f64], volume: &[f64], start: f64, on_fall: bool) -> Vec<f64> {
     let n = close.len();
     let mut out = vec![f64::NAN; n];
-    let (mut first, mut value, mut prev_close, mut prev_volume) = (true, f64::NAN, 0.0, 0.0);
+    let (mut first, mut value, mut prev_close, mut prev_volume) =
+        (true, f64::NAN, f64::NAN, f64::NAN);
     for i in 0..n {
         let (c, v) = (close[i], volume[i]);
         if c.is_nan() || v.is_nan() {
@@ -848,6 +849,19 @@ mod tests {
         assert!(sir.contains("period must be"), "{sir}");
         let vwap = message(s.vwap(Vwap::new(3).output("close").volume("nope")));
         assert!(vwap.contains("collides"), "{vwap}");
+        let bwmfi = message(
+            s.market_facilitation_index(
+                MarketFacilitationIndex::default()
+                    .output("close")
+                    .volume("nope"),
+            ),
+        );
+        assert!(bwmfi.contains("collides"), "{bwmfi}");
+        // The volume indexes check the start before reading the columns.
+        let pvi = message(
+            s.positive_volume_index(PositiveVolumeIndex::default().start(-1.0).volume("nope")),
+        );
+        assert!(pvi.contains("positiveVolumeIndex start"), "{pvi}");
     }
 
     /// Split into stretches of any size, the weighted mean has the same
