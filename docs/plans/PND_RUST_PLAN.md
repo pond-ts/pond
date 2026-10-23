@@ -3192,6 +3192,59 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     | force   | 5.4      | 4.4     | 17.4    | 4.0x  |
     | eom     | 14.2     | 8.2     | 39.8    | 4.9x  |
 
+  **R2 step 2f part 2 (done): volume, the other 8 studies** (17 of the
+  catalog's 18; anchored VWAP goes with session VWAP in step 3).
+  - Calls: `klinger` (prefix `kvo`: `kvo`, `kvoSignal`),
+    `volume_oscillator`, `trade_volume_index`
+    (`TradeVolumeIndex::new(min_tick)`, no default), `negative_volume_index`,
+    `positive_volume_index` (`start`, default 1000),
+    `market_facilitation_index` (`bwmfi`), `shinohara_intensity_ratio`
+    (prefix `sir`: `sirStrong`, `sirWeak`) and `vwap` (`Vwap::new(period)`,
+    no default). The volume oscillator shares the price oscillator's
+    arithmetic (`averages::oscillator_values`, split out of
+    `price_oscillator`); the trailing VWAP reuses part 1's weighted mean.
+    Errors and their order as pond-ts, pinned by unit tests (the parity
+    check only sees that both sides fail): Klinger checks its periods
+    before fast-before-slow, the volume oscillator the other way round;
+    the trade volume index checks the tick before the output name, the
+    volume indexes the output name before the start. Non-finite ticks
+    and starts (which JSON cases cannot carry) are unit-tested too.
+  - pond-ts's `foldRows` studies (Klinger, the trade volume index, the
+    volume indexes) are one loop each with the same restart rule: a gap
+    in any column ends the stretch and the next one starts over (the
+    trade volume index stays a gap after an interior gap, as pond-ts).
+  - Parity: the fixture grew to 4,672 cases, with one new input, `ticks`
+    (closes moving by exactly 0.5 against the last decisive move, both
+    ways). 3,436 match bit for bit, 457 errors agree, 482 refused (known
+    missing-column difference), 297 calls Rust cannot write. Oracle: 206
+    of 220 cases (was 193).
+  - Planted bugs: 20 of 25 caught (the trade volume index's dead band was
+    missed until the `ticks` input and a prime-ladder case went in). The
+    5 missed change no output: Klinger's `v · |…| · t · 100` regrouped
+    as `v · |…| · (t · 100)` (`t` is ±1, so both are exact); the trade
+    volume index keeping its direction across a gap (after an interior
+    gap the index is a gap anyway); and dropping the zero guards in the
+    volume indexes, the market facilitation index and Shinohara's ratios
+    (dividing by 0 gives an infinity or NaN, both stored as a gap, and an
+    index that hits one stays a gap).
+  - Perf: all O(N). At 1M rows all eight match pond-ts on every bit, on 4
+    cores and on 1 (`POND_BITS=1`). Shinohara's terms are built with
+    zipped iterators rather than indexing (1 thread: 61-83 ms over three
+    runs before, 43-61 after on this noisy machine; same bits).
+  - Medians of 3 runs of medians of 7, 1M bars at pond-ts's defaults
+    (the trade volume index at `min_tick` 0.01, VWAP at 20 bars), ms:
+
+    | Study   | 1 thread | 4 cores | pond-ts | ratio |
+    | ------- | -------- | ------- | ------- | ----- |
+    | klinger | 22.6     | 19.3    | 81.4    | 4.2x  |
+    | volosc  | 13.5     | 6.6     | 65.1    | 9.9x  |
+    | tvi     | 4.2      | 4.8     | 47.8    | 10.0x |
+    | nvi     | 5.2      | 5.3     | 58.9    | 11.1x |
+    | pvi     | 4.7      | 4.4     | 31.7    | 7.2x  |
+    | bwmfi   | 5.3      | 5.3     | 39.2    | 7.4x  |
+    | sir     | 45.2     | 19.8    | 160.7   | 8.1x  |
+    | vwap    | 27.7     | 11.9    | 64.9    | 5.5x  |
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).

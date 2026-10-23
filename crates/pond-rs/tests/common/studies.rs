@@ -100,6 +100,14 @@ pub const STUDIES: &[&str] = &[
     "twiggsMoneyFlow",
     "forceIndex",
     "easeOfMovement",
+    "klinger",
+    "volumeOscillator",
+    "tradeVolumeIndex",
+    "negativeVolumeIndex",
+    "positiveVolumeIndex",
+    "marketFacilitationIndex",
+    "shinoharaIntensityRatio",
+    "vwap",
 ];
 
 /// The columns `study` reads with these options: `column` (default
@@ -183,10 +191,26 @@ pub fn sources(study: &str, options: &Map<String, Value>) -> Vec<String> {
             text("close", "close"),
             text("volume", "volume"),
         ],
-        "easeOfMovement" => vec![
+        "easeOfMovement" | "marketFacilitationIndex" => vec![
             text("high", "high"),
             text("low", "low"),
             text("volume", "volume"),
+        ],
+        "klinger" | "vwap" => vec![
+            text("high", "high"),
+            text("low", "low"),
+            text("close", "close"),
+            text("volume", "volume"),
+        ],
+        "volumeOscillator" => vec![text("volume", "volume")],
+        "tradeVolumeIndex" | "negativeVolumeIndex" | "positiveVolumeIndex" => {
+            vec![text("column", "close"), text("volume", "volume")]
+        }
+        "shinoharaIntensityRatio" => vec![
+            text("open", "open"),
+            text("high", "high"),
+            text("low", "low"),
+            text("close", "close"),
         ],
         _ => vec![text("column", "close")],
     }
@@ -893,6 +917,72 @@ pub fn call_study(
                 })
             }
         }
+        "klinger" => series.klinger(reads!(
+            name_only!(
+                Klinger::default()
+                    .fast(int("fastPeriod", 34))
+                    .slow(int("slowPeriod", 55))
+                    .signal(int("signalPeriod", 13)),
+                prefix
+            ),
+            high,
+            low,
+            close,
+            volume
+        )),
+        "volumeOscillator" => ma("maType", "sma").and_then(|kind| {
+            series.volume_oscillator(reads!(
+                name_only!(
+                    VolumeOscillator::default()
+                        .fast(int("fastPeriod", 5))
+                        .slow(int("slowPeriod", 10))
+                        .ma(kind),
+                    output
+                ),
+                volume
+            ))
+        }),
+        "tradeVolumeIndex" => {
+            let tick = options.get("minTick")?.as_f64().unwrap();
+            series.trade_volume_index(reads!(named!(TradeVolumeIndex::new(tick), output), volume))
+        }
+        "negativeVolumeIndex" => series.negative_volume_index(reads!(
+            named!(
+                NegativeVolumeIndex::default().start(num("start", 1000.0)),
+                output
+            ),
+            volume
+        )),
+        "positiveVolumeIndex" => series.positive_volume_index(reads!(
+            named!(
+                PositiveVolumeIndex::default().start(num("start", 1000.0)),
+                output
+            ),
+            volume
+        )),
+        "marketFacilitationIndex" => series.market_facilitation_index(reads!(
+            name_only!(MarketFacilitationIndex::default(), output),
+            high,
+            low,
+            volume
+        )),
+        "shinoharaIntensityRatio" => series.shinohara_intensity_ratio(reads!(
+            name_only!(
+                ShinoharaIntensityRatio::default().period(int("period", 26)),
+                prefix
+            ),
+            open,
+            high,
+            low,
+            close
+        )),
+        "vwap" => series.vwap(reads!(
+            name_only!(Vwap::new(int_required("period")?), output),
+            high,
+            low,
+            close,
+            volume
+        )),
         other => panic!("no pond-rs call for study '{other}'"),
     })
 }
