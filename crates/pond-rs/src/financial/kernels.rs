@@ -325,9 +325,19 @@ pub(crate) fn rolling_deviation_sd(values: &[f64], period: usize) -> (Vec<f64>, 
 /// `avg = (avg * (period - 1) + x) / period`. A later gap makes every value
 /// after it a gap.
 pub(crate) fn wilder_values(values: &[f64], period: usize) -> Vec<f64> {
+    wilder_values_from(values, period, 0)
+}
+
+/// [`wilder_values`] reading from row `start` on (pond-ts `wilderValues`'
+/// `start`): rows before it are skipped like leading gaps.
+pub(crate) fn wilder_values_from(values: &[f64], period: usize, start: usize) -> Vec<f64> {
     let n = values.len();
     let mut out = vec![f64::NAN; n];
-    let first = values.iter().position(|v| !v.is_nan()).unwrap_or(n);
+    let first = values
+        .iter()
+        .skip(start)
+        .position(|v| !v.is_nan())
+        .map_or(n, |k| k + start);
     let seed_at = first.saturating_add(period - 1);
     if seed_at >= n {
         return out;
@@ -821,6 +831,68 @@ pub(crate) fn stochastic_half_smooth(highest: &[f64], lowest: &[f64], values: &[
         *o = previous;
     }
     out
+}
+
+/// JS `Math.sign(x)`: a NaN gives NaN and a zero keeps its sign (Rust's
+/// `f64::signum` gives 1 for `+0`).
+pub(crate) fn js_sign(x: f64) -> f64 {
+    if x > 0.0 {
+        1.0
+    } else if x < 0.0 {
+        -1.0
+    } else {
+        x
+    }
+}
+
+/// pond-ts `cumulativeValues`: the running total, a gap until the first
+/// value that is not a gap; a gap after that makes every later total a
+/// gap.
+pub(crate) fn cumulative_values(values: &[f64]) -> Vec<f64> {
+    let first = values
+        .iter()
+        .position(|v| !v.is_nan())
+        .unwrap_or(values.len());
+    let mut out = vec![f64::NAN; values.len()];
+    let mut sum = 0.0;
+    for (o, &v) in out[first..].iter_mut().zip(&values[first..]) {
+        sum += v;
+        *o = sum;
+    }
+    out
+}
+
+/// pond-ts `clvValues`: where the close sits in its bar, from -1 (the
+/// low) to +1 (the high); 0 for a bar with no range and a close.
+pub(crate) fn clv_values(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
+    (0..high.len())
+        .map(|i| clv(high[i], low[i], close[i]))
+        .collect()
+}
+
+/// One row of [`clv_values`].
+#[inline]
+pub(crate) fn clv(high: f64, low: f64, close: f64) -> f64 {
+    let range = high - low;
+    if range == 0.0 {
+        if close.is_nan() { f64::NAN } else { 0.0 }
+    } else {
+        (2.0 * close - high - low) / range
+    }
+}
+
+/// pond-ts `moneyFlowVolumeValues`: [`clv_values`] times the volume.
+pub(crate) fn money_flow_volume_values(
+    high: &[f64],
+    low: &[f64],
+    close: &[f64],
+    volume: &[f64],
+) -> Vec<f64> {
+    let mut clv = clv_values(high, low, close);
+    for (c, v) in clv.iter_mut().zip(volume) {
+        *c *= v;
+    }
+    clv
 }
 
 /// JS `Math.max(a, b)`: a NaN gives NaN, and `+0` beats `-0` (Rust's

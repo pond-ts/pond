@@ -59,6 +59,7 @@ mod regression;
 mod statistics;
 mod trend;
 mod volatility;
+mod volume;
 
 pub use averages::{
     Coppock, Guppy, Kst, Macd, MovingAverageCross, OscillatorMode, PriceMomentumOscillator,
@@ -83,6 +84,10 @@ pub use trend::{
 pub use volatility::{
     Atr, ChaikinVolatility, ChoppinessIndex, GopalakrishnanRangeIndex, HistoricalVolatility,
     MassIndex, RelativeVolatilityIndex,
+};
+pub use volume::{
+    AccumulationDistribution, ChaikinMoneyFlow, ChaikinOscillator, EaseOfMovement, ForceIndex,
+    MoneyFlowIndex, Obv, PriceVolumeTrend, TwiggsMoneyFlow,
 };
 
 use std::borrow::Cow;

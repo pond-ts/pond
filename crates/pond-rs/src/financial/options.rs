@@ -168,6 +168,13 @@ macro_rules! study_options {
             self
         }
     };
+    (@source volume) => {
+        /// Read the volume from this column instead of `volume`.
+        pub fn volume(mut self, name: &str) -> Self {
+            self.volume = Some(name.to_string());
+            self
+        }
+    };
     (@source $src:ident) => {
         #[doc = concat!("Read the ", stringify!($src), " prices from this column instead of `", stringify!($src), "`.")]
         pub fn $src(mut self, name: &str) -> Self {
