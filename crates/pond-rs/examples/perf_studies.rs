@@ -719,6 +719,65 @@ fn main() -> pond_rs::Result<()> {
         ),
     ];
     cases.extend(volume);
+    // R2 step 2f part 2.
+    let volume2: Vec<Case> = vec![
+        (
+            "vo-klinger".into(),
+            "kvo",
+            Box::new(|| bars.klinger(Klinger::default()).unwrap()),
+        ),
+        (
+            "vo-volosc".into(),
+            "volOsc",
+            Box::new(|| bars.volume_oscillator(VolumeOscillator::default()).unwrap()),
+        ),
+        (
+            "vo-tvi".into(),
+            "tvi",
+            Box::new(|| {
+                bars.trade_volume_index(TradeVolumeIndex::new(0.01))
+                    .unwrap()
+            }),
+        ),
+        (
+            "vo-nvi".into(),
+            "nvi",
+            Box::new(|| {
+                bars.negative_volume_index(NegativeVolumeIndex::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "vo-pvi".into(),
+            "pvi",
+            Box::new(|| {
+                bars.positive_volume_index(PositiveVolumeIndex::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "vo-bwmfi".into(),
+            "bwmfi",
+            Box::new(|| {
+                bars.market_facilitation_index(MarketFacilitationIndex::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "vo-sir".into(),
+            "sirStrong",
+            Box::new(|| {
+                bars.shinohara_intensity_ratio(ShinoharaIntensityRatio::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "vo-vwap".into(),
+            "vwap",
+            Box::new(|| bars.vwap(Vwap::new(20)).unwrap()),
+        ),
+    ];
+    cases.extend(volume2);
     // POND_BITS=1: instead of timing, print a hash of every bit of every
     // number column in the result (a gap hashes as one fixed value), the
     // same hash bench/studies_pond_ts.mjs prints under the same variable.

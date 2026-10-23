@@ -87,7 +87,9 @@ pub use volatility::{
 };
 pub use volume::{
     AccumulationDistribution, ChaikinMoneyFlow, ChaikinOscillator, EaseOfMovement, ForceIndex,
-    MoneyFlowIndex, Obv, PriceVolumeTrend, TwiggsMoneyFlow,
+    Klinger, MarketFacilitationIndex, MoneyFlowIndex, NegativeVolumeIndex, Obv,
+    PositiveVolumeIndex, PriceVolumeTrend, ShinoharaIntensityRatio, TradeVolumeIndex,
+    TwiggsMoneyFlow, VolumeOscillator, Vwap,
 };
 
 use std::borrow::Cow;

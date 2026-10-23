@@ -264,19 +264,13 @@ impl TimeSeries {
         let output = options.name().to_string();
         self.free_names(CALL, &[&output])?;
         let values = self.study_source(CALL, options.source())?;
-        let (fast, slow) = par::join(
-            || ma_column(&values, options.fast, options.ma),
-            || ma_column(&values, options.slow, options.ma),
+        let out = oscillator_values(
+            &values,
+            options.fast,
+            options.slow,
+            options.ma,
+            options.mode,
         );
-        let out = fast
-            .iter()
-            .zip(&slow)
-            .map(|(&f, &s)| match options.mode {
-                OscillatorMode::Absolute => f - s,
-                OscillatorMode::Percent if s == 0.0 => f64::NAN,
-                OscillatorMode::Percent => (100.0 * (f - s)) / s,
-            })
-            .collect();
         self.study_outputs(CALL, [(output, out)])
     }
 
@@ -662,6 +656,30 @@ fn weighted_rates_chunked(values: &[f64], terms: &[(usize, usize, f64)], chunk: 
         }
     });
     line
+}
+
+/// The price oscillator's values: the `fast`-bar average less the
+/// `slow`-bar one, in the source's units or as a percent of the slow one
+/// (a gap where that is 0).
+pub(super) fn oscillator_values(
+    values: &[f64],
+    fast: usize,
+    slow: usize,
+    ma: MaType,
+    mode: OscillatorMode,
+) -> Vec<f64> {
+    let (fast, slow) = par::join(
+        || ma_column(values, fast, ma),
+        || ma_column(values, slow, ma),
+    );
+    fast.iter()
+        .zip(&slow)
+        .map(|(&f, &s)| match mode {
+            OscillatorMode::Absolute => f - s,
+            OscillatorMode::Percent if s == 0.0 => f64::NAN,
+            OscillatorMode::Percent => (100.0 * (f - s)) / s,
+        })
+        .collect()
 }
 
 pub(super) fn positive(call: &'static str, name: &str, period: usize) -> Result<()> {
