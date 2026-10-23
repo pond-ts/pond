@@ -154,6 +154,20 @@ const cases = [
   ['vo-tmf', 'tmf', () => f.twiggsMoneyFlow(bars)],
   ['vo-force', 'force', () => f.forceIndex(bars)],
   ['vo-eom', 'eom', () => f.easeOfMovement(bars)],
+  ['vo-klinger', 'kvo', () => f.klinger(bars)],
+  ['vo-volosc', 'volOsc', () => f.volumeOscillator(bars)],
+  ['vo-tvi', 'tvi', () => f.tradeVolumeIndex(bars, { minTick: 0.01 })],
+  ['vo-nvi', 'nvi', () => f.negativeVolumeIndex(bars)],
+  ['vo-pvi', 'pvi', () => f.positiveVolumeIndex(bars)],
+  ['vo-bwmfi', 'bwmfi', () => f.marketFacilitationIndex(bars)],
+  ['vo-sir', 'sirStrong', () => f.shinoharaIntensityRatio(bars)],
+  ['vo-vwap', 'vwap', () => f.vwap(bars, { period: 20 })],
+  ['p-typical', 'typicalPrice', () => f.typicalPrice(bars)],
+  ['p-median', 'medianPrice', () => f.medianPrice(bars)],
+  ['p-wclose', 'weightedClose', () => f.weightedClose(bars)],
+  ['p-avg', 'averagePrice', () => f.averagePrice(bars)],
+  ['p-bop', 'bop', () => f.balanceOfPower(bars)],
+  ['p-bop14', 'bop', () => f.balanceOfPower(bars, { period: 14 })],
 ];
 
 const only = process.argv[2];

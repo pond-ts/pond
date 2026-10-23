@@ -55,6 +55,7 @@ mod bands;
 mod bivariate;
 mod kernels;
 mod momentum;
+mod price;
 mod regression;
 mod statistics;
 mod trend;
@@ -75,6 +76,7 @@ pub use momentum::{
     Stochastic, StochasticMomentumIndex, StochasticRsi, TrueStrengthIndex, UltimateOscillator,
     WilliamsR,
 };
+pub use price::{AveragePrice, BalanceOfPower, MedianPrice, TypicalPrice, WeightedClose};
 pub use statistics::{Beta, Correlation, LinearRegression, PerformanceIndex, PriceRelative};
 pub use trend::{
     AccumulativeSwingIndex, Aroon, AtrTrailingStop, DirectionalMovement, ElderImpulse, ElderRay,
@@ -87,7 +89,9 @@ pub use volatility::{
 };
 pub use volume::{
     AccumulationDistribution, ChaikinMoneyFlow, ChaikinOscillator, EaseOfMovement, ForceIndex,
-    MoneyFlowIndex, Obv, PriceVolumeTrend, TwiggsMoneyFlow,
+    Klinger, MarketFacilitationIndex, MoneyFlowIndex, NegativeVolumeIndex, Obv,
+    PositiveVolumeIndex, PriceVolumeTrend, ShinoharaIntensityRatio, TradeVolumeIndex,
+    TwiggsMoneyFlow, VolumeOscillator, Vwap,
 };
 
 use std::borrow::Cow;

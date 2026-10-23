@@ -100,6 +100,19 @@ pub const STUDIES: &[&str] = &[
     "twiggsMoneyFlow",
     "forceIndex",
     "easeOfMovement",
+    "klinger",
+    "volumeOscillator",
+    "tradeVolumeIndex",
+    "negativeVolumeIndex",
+    "positiveVolumeIndex",
+    "marketFacilitationIndex",
+    "shinoharaIntensityRatio",
+    "vwap",
+    "typicalPrice",
+    "medianPrice",
+    "weightedClose",
+    "averagePrice",
+    "balanceOfPower",
 ];
 
 /// The columns `study` reads with these options: `column` (default
@@ -183,10 +196,39 @@ pub fn sources(study: &str, options: &Map<String, Value>) -> Vec<String> {
             text("close", "close"),
             text("volume", "volume"),
         ],
-        "easeOfMovement" => vec![
+        "easeOfMovement" | "marketFacilitationIndex" => vec![
             text("high", "high"),
             text("low", "low"),
             text("volume", "volume"),
+        ],
+        "klinger" | "vwap" => vec![
+            text("high", "high"),
+            text("low", "low"),
+            text("close", "close"),
+            text("volume", "volume"),
+        ],
+        "volumeOscillator" => vec![text("volume", "volume")],
+        "typicalPrice" | "weightedClose" => vec![
+            text("high", "high"),
+            text("low", "low"),
+            text("close", "close"),
+        ],
+        // pond-ts takes a `close` here and never reads it.
+        "medianPrice" => vec![text("high", "high"), text("low", "low")],
+        "averagePrice" | "balanceOfPower" => vec![
+            text("open", "open"),
+            text("high", "high"),
+            text("low", "low"),
+            text("close", "close"),
+        ],
+        "tradeVolumeIndex" | "negativeVolumeIndex" | "positiveVolumeIndex" => {
+            vec![text("column", "close"), text("volume", "volume")]
+        }
+        "shinoharaIntensityRatio" => vec![
+            text("open", "open"),
+            text("high", "high"),
+            text("low", "low"),
+            text("close", "close"),
         ],
         _ => vec![text("column", "close")],
     }
@@ -892,6 +934,106 @@ pub fn call_study(
                     ))
                 })
             }
+        }
+        "klinger" => series.klinger(reads!(
+            name_only!(
+                Klinger::default()
+                    .fast(int("fastPeriod", 34))
+                    .slow(int("slowPeriod", 55))
+                    .signal(int("signalPeriod", 13)),
+                prefix
+            ),
+            high,
+            low,
+            close,
+            volume
+        )),
+        "volumeOscillator" => ma("maType", "sma").and_then(|kind| {
+            series.volume_oscillator(reads!(
+                name_only!(
+                    VolumeOscillator::default()
+                        .fast(int("fastPeriod", 5))
+                        .slow(int("slowPeriod", 10))
+                        .ma(kind),
+                    output
+                ),
+                volume
+            ))
+        }),
+        "tradeVolumeIndex" => {
+            let tick = options.get("minTick")?.as_f64().unwrap();
+            series.trade_volume_index(reads!(named!(TradeVolumeIndex::new(tick), output), volume))
+        }
+        "negativeVolumeIndex" => series.negative_volume_index(reads!(
+            named!(
+                NegativeVolumeIndex::default().start(num("start", 1000.0)),
+                output
+            ),
+            volume
+        )),
+        "positiveVolumeIndex" => series.positive_volume_index(reads!(
+            named!(
+                PositiveVolumeIndex::default().start(num("start", 1000.0)),
+                output
+            ),
+            volume
+        )),
+        "marketFacilitationIndex" => series.market_facilitation_index(reads!(
+            name_only!(MarketFacilitationIndex::default(), output),
+            high,
+            low,
+            volume
+        )),
+        "shinoharaIntensityRatio" => series.shinohara_intensity_ratio(reads!(
+            name_only!(
+                ShinoharaIntensityRatio::default().period(int("period", 26)),
+                prefix
+            ),
+            open,
+            high,
+            low,
+            close
+        )),
+        "vwap" => series.vwap(reads!(
+            name_only!(Vwap::new(int_required("period")?), output),
+            high,
+            low,
+            close,
+            volume
+        )),
+        "typicalPrice" => series.typical_price(reads!(
+            name_only!(TypicalPrice::default(), output),
+            high,
+            low,
+            close
+        )),
+        "medianPrice" => series.median_price(reads!(
+            name_only!(MedianPrice::default(), output),
+            high,
+            low
+        )),
+        "weightedClose" => series.weighted_close(reads!(
+            name_only!(WeightedClose::default(), output),
+            high,
+            low,
+            close
+        )),
+        "averagePrice" => series.average_price(reads!(
+            name_only!(AveragePrice::default(), output),
+            open,
+            high,
+            low,
+            close
+        )),
+        "balanceOfPower" => {
+            let mut o = BalanceOfPower::default();
+            if let Some(period) = int_required("period") {
+                o = o.period(period);
+            }
+            if text("maType").is_some() {
+                o = o.ma(ma("maType", "sma").unwrap());
+            }
+            series.balance_of_power(reads!(name_only!(o, output), open, high, low, close))
         }
         other => panic!("no pond-rs call for study '{other}'"),
     })

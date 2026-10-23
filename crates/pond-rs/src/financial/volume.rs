@@ -1,12 +1,15 @@
-//! The volume family (pond-ts `catalog/volume.ts`), part 1: on-balance
-//! volume, the accumulation/distribution line, the price-volume trend,
-//! Chaikin money flow, the Chaikin oscillator, the money flow index,
-//! Twiggs money flow, the force index and ease of movement.
+//! The volume family (pond-ts `catalog/volume.ts`): on-balance volume,
+//! the accumulation/distribution line, the price-volume trend, Chaikin
+//! money flow, the Chaikin oscillator, the money flow index, Twiggs money
+//! flow, the force index, ease of movement, the Klinger oscillator, the
+//! volume oscillator, the trade volume index, the negative and positive
+//! volume indexes, the market facilitation index, Shinohara's intensity
+//! ratios and a trailing VWAP. (Anchored VWAP comes with the calendars.)
 
 use super::MaType;
-use super::averages::{positive, shorter};
+use super::averages::{OscillatorMode, oscillator_values, positive, shorter};
 use super::kernels::{
-    Ema, clv, clv_values, cumulative_values, ema_values, js_max, js_min, js_sign,
+    Ema, bar_range_values, clv, clv_values, cumulative_values, ema_values, js_max, js_min, js_sign,
     median_price_values, money_flow_volume_values, moving_average_values, percent_change_values,
     rolling_mean_sd, rolling_mean_values, typical_price_values, wilder_values_from,
 };
@@ -88,6 +91,80 @@ study_options! {
         /// (default 100,000,000).
         scale: f64 = 100_000_000.0,
     }
+}
+
+study_options! {
+    /// Options for [`TimeSeries::klinger`]: EMAs of 34 and 55 bars and a
+    /// 13-bar signal; writes `kvo` and `kvoSignal` (the prefix and
+    /// `Signal`).
+    Klinger, prefix = "kvo", reads [high, low, close, volume] {
+        /// The fast EMA's length in bars (default 34).
+        fast: usize = 34,
+        /// The slow EMA's length in bars, longer than `fast` (default 55).
+        slow: usize = 55,
+        /// The signal EMA's length in bars (default 13).
+        signal: usize = 13,
+    }
+}
+
+study_options! {
+    /// Options for [`TimeSeries::volume_oscillator`]: simple averages of 5
+    /// and 10 bars; writes `volOsc`.
+    VolumeOscillator, output = "volOsc", reads [volume] {
+        /// The fast average's length in bars (default 5).
+        fast: usize = 5,
+        /// The slow average's length in bars, longer than `fast` (default 10).
+        slow: usize = 10,
+        /// The averages' type (default simple).
+        ma: MaType = MaType::Sma,
+    }
+}
+
+study_options! {
+    /// Options for [`TimeSeries::trade_volume_index`]: the instrument's
+    /// minimum tick, which has no default; reads `column` (default
+    /// `close`) and `volume`; writes `tvi`.
+    TradeVolumeIndex(min_tick: f64), output = "tvi", reads [column, volume] {}
+}
+
+study_options! {
+    /// Options for [`TimeSeries::negative_volume_index`]: starts at 1000;
+    /// reads `column` (default `close`) and `volume`; writes `nvi`.
+    NegativeVolumeIndex, output = "nvi", reads [column, volume] {
+        /// The index's first value, a positive finite number (default 1000).
+        start: f64 = 1000.0,
+    }
+}
+
+study_options! {
+    /// Options for [`TimeSeries::positive_volume_index`]: starts at 1000;
+    /// reads `column` (default `close`) and `volume`; writes `pvi`.
+    PositiveVolumeIndex, output = "pvi", reads [column, volume] {
+        /// The index's first value, a positive finite number (default 1000).
+        start: f64 = 1000.0,
+    }
+}
+
+study_options! {
+    /// Options for [`TimeSeries::market_facilitation_index`]: writes
+    /// `bwmfi`.
+    MarketFacilitationIndex, output = "bwmfi", reads [high, low, volume] {}
+}
+
+study_options! {
+    /// Options for [`TimeSeries::shinohara_intensity_ratio`]: 26 bars;
+    /// writes `sirStrong` and `sirWeak` (the prefix and `Strong` /
+    /// `Weak`).
+    ShinoharaIntensityRatio, prefix = "sir", reads [open, high, low, close] {
+        /// The window in bars (default 26).
+        period: usize = 26,
+    }
+}
+
+study_options! {
+    /// Options for [`TimeSeries::vwap`]: the window in bars, which has no
+    /// default; writes `vwap`.
+    Vwap(period: usize), output = "vwap", reads [high, low, close, volume] {}
 }
 
 /// The volume family.
@@ -349,6 +426,308 @@ impl TimeSeries {
         let out = moving_average_values(&raw, options.period, options.ma);
         self.study_output(CALL, output, out)
     }
+
+    /// Klinger oscillator (pond-ts `klinger`): each bar's volume force
+    /// (its volume, signed by whether `high + low + close` rose, scaled by
+    /// how the bar's range compares with the range summed since the trend
+    /// last turned), a `fast`-bar EMA of it less a `slow`-bar one, and a
+    /// `signal`-bar EMA of that. The force starts on the second bar of
+    /// each stretch with no gaps.
+    pub fn klinger(&self, options: Klinger) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::klinger";
+        positive(CALL, "fastPeriod", options.fast)?;
+        positive(CALL, "slowPeriod", options.slow)?;
+        positive(CALL, "signalPeriod", options.signal)?;
+        shorter(CALL, "klinger", options.fast, options.slow)?;
+        let prefix = options.name();
+        let names = [prefix.to_string(), format!("{prefix}Signal")];
+        self.free_names(CALL, &names)?;
+        let [high, low, close, volume] = self.price_columns(
+            CALL,
+            [&options.high, &options.low, &options.close, &options.volume],
+            ["high", "low", "close", "volume"],
+        )?;
+        let n = high.len();
+        let mut force = vec![f64::NAN; n];
+        // pond-ts `foldRows`: a gap in any column ends the stretch, and
+        // the next one starts over.
+        let (mut first, mut trend, mut cm, mut prev_hlc, mut prev_dm) = (true, 0.0, 0.0, 0.0, 0.0);
+        for i in 0..n {
+            let (h, l, c, v) = (high[i], low[i], close[i], volume[i]);
+            if h.is_nan() || l.is_nan() || c.is_nan() || v.is_nan() {
+                first = true;
+                continue;
+            }
+            let hlc = h + l + c;
+            let dm = h - l;
+            if first {
+                first = false;
+                (trend, cm) = (0.0, 0.0);
+            } else {
+                let t = if hlc > prev_hlc { 1.0 } else { -1.0 };
+                cm = if t == trend { cm + dm } else { prev_dm + dm };
+                trend = t;
+                force[i] = v * (2.0 * (dm / cm) - 2.0).abs() * t * 100.0;
+            }
+            (prev_hlc, prev_dm) = (hlc, dm);
+        }
+        let (fast, slow) = par::join(
+            || ema_values(&force, options.fast),
+            || ema_values(&force, options.slow),
+        );
+        let line: Vec<f64> = fast.iter().zip(&slow).map(|(f, s)| f - s).collect();
+        let signal = ema_values(&line, options.signal);
+        self.study_outputs(CALL, names.into_iter().zip([line, signal]))
+    }
+
+    /// Volume oscillator (pond-ts `volumeOscillator`): the price
+    /// oscillator of the volume, in percent: a `fast`-bar average of the
+    /// volume less a `slow`-bar one, as a percent of the slow one.
+    pub fn volume_oscillator(&self, options: VolumeOscillator) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::volume_oscillator";
+        shorter(CALL, "volumeOscillator", options.fast, options.slow)?;
+        positive(CALL, "fastPeriod", options.fast)?;
+        positive(CALL, "slowPeriod", options.slow)?;
+        let output = options.name().to_string();
+        self.free_names(CALL, &[&output])?;
+        let [volume] = self.price_columns(CALL, [&options.volume], ["volume"])?;
+        let out = oscillator_values(
+            &volume,
+            options.fast,
+            options.slow,
+            options.ma,
+            OscillatorMode::Percent,
+        );
+        self.study_output(CALL, output, out)
+    }
+
+    /// Trade volume index (pond-ts `tradeVolumeIndex`): the running total
+    /// of the volume, added while the price last moved up by more than
+    /// `min_tick`, taken away while it last moved down by more, left out
+    /// before the first such move. Starts at 0 on the first bar with both
+    /// a price and a volume; a gap after that makes every later total a
+    /// gap.
+    pub fn trade_volume_index(&self, options: TradeVolumeIndex) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::trade_volume_index";
+        let tick = options.min_tick;
+        if !tick.is_finite() || tick <= 0.0 {
+            return Err(PondError::InvalidData {
+                call: CALL,
+                message: format!(
+                    "tradeVolumeIndex minTick must be a positive finite number (the instrument's minimum tick); got {}",
+                    crate::grid::js_number(tick)
+                ),
+            });
+        }
+        let output = options.name().to_string();
+        self.free_names(CALL, &[&output])?;
+        let [close, volume] = self.price_columns(
+            CALL,
+            [&options.column, &options.volume],
+            [super::DEFAULT_SOURCE, "volume"],
+        )?;
+        let n = close.len();
+        let mut out = vec![f64::NAN; n];
+        let (mut first, mut started) = (true, false);
+        let (mut value, mut direction, mut prev) = (f64::NAN, 0.0, 0.0);
+        for i in 0..n {
+            let (c, v) = (close[i], volume[i]);
+            if c.is_nan() || v.is_nan() {
+                first = true;
+                continue;
+            }
+            if first {
+                first = false;
+                // Only a leading gap moves the start; a later one ends
+                // the total (the missed bar's volume is unknown).
+                value = if started { f64::NAN } else { 0.0 };
+                started = true;
+                direction = 0.0;
+            } else {
+                let step = c - prev;
+                if step > tick {
+                    direction = 1.0;
+                } else if step < -tick {
+                    direction = -1.0;
+                }
+                value += direction * v;
+            }
+            out[i] = value;
+            prev = c;
+        }
+        self.study_output(CALL, output, out)
+    }
+
+    /// Negative volume index (pond-ts `negativeVolumeIndex`): starts at
+    /// `start` and compounds the price's return on each bar whose volume
+    /// fell; holds otherwise. Starts over after a gap; a gap from a
+    /// previous price of 0 on.
+    pub fn negative_volume_index(&self, options: NegativeVolumeIndex) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::negative_volume_index";
+        let output = options.name().to_string();
+        self.free_names(CALL, &[&output])?;
+        volume_index_start(CALL, "negativeVolumeIndex", options.start)?;
+        let [close, volume] = self.price_columns(
+            CALL,
+            [&options.column, &options.volume],
+            [super::DEFAULT_SOURCE, "volume"],
+        )?;
+        let out = volume_index_values(&close, &volume, options.start, true);
+        self.study_output(CALL, output, out)
+    }
+
+    /// Positive volume index (pond-ts `positiveVolumeIndex`): starts at
+    /// `start` and compounds the price's return on each bar whose volume
+    /// rose; holds otherwise. Starts over after a gap; a gap from a
+    /// previous price of 0 on.
+    pub fn positive_volume_index(&self, options: PositiveVolumeIndex) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::positive_volume_index";
+        let output = options.name().to_string();
+        self.free_names(CALL, &[&output])?;
+        volume_index_start(CALL, "positiveVolumeIndex", options.start)?;
+        let [close, volume] = self.price_columns(
+            CALL,
+            [&options.column, &options.volume],
+            [super::DEFAULT_SOURCE, "volume"],
+        )?;
+        let out = volume_index_values(&close, &volume, options.start, false);
+        self.study_output(CALL, output, out)
+    }
+
+    /// Market facilitation index (pond-ts `marketFacilitationIndex`): the
+    /// bar's range per unit of volume. A gap where the volume is 0.
+    pub fn market_facilitation_index(
+        &self,
+        options: MarketFacilitationIndex,
+    ) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::market_facilitation_index";
+        let output = options.name().to_string();
+        self.free_names(CALL, &[&output])?;
+        let [high, low, volume] = self.price_columns(
+            CALL,
+            [&options.high, &options.low, &options.volume],
+            ["high", "low", "volume"],
+        )?;
+        let range = bar_range_values(&high, &low);
+        let out = range
+            .iter()
+            .zip(volume.iter())
+            .map(|(&r, &v)| if v == 0.0 { f64::NAN } else { r / v })
+            .collect();
+        self.study_output(CALL, output, out)
+    }
+
+    /// Shinohara intensity ratios (pond-ts `shinoharaIntensityRatio`):
+    /// strong, the bars' highs above their opens over their lows below
+    /// them; weak, the same against the previous close; each a `period`-bar
+    /// average over a `period`-bar average, times 100. A gap where the
+    /// lower average is 0.
+    pub fn shinohara_intensity_ratio(
+        &self,
+        options: ShinoharaIntensityRatio,
+    ) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::shinohara_intensity_ratio";
+        positive(CALL, "period", options.period)?;
+        let prefix = options.name();
+        let names = [format!("{prefix}Strong"), format!("{prefix}Weak")];
+        self.free_names(CALL, &names)?;
+        let [open, high, low, close] = self.price_columns(
+            CALL,
+            [&options.open, &options.high, &options.low, &options.close],
+            ["open", "high", "low", "close"],
+        )?;
+        let period = options.period;
+        let (strong, weak) = par::join(
+            || {
+                let up: Vec<f64> = high.iter().zip(open.iter()).map(|(h, o)| h - o).collect();
+                let down: Vec<f64> = open.iter().zip(low.iter()).map(|(o, l)| o - l).collect();
+                intensity_ratio(&up, &down, period)
+            },
+            || {
+                // Against the previous close: none on row 0.
+                let prev = || std::iter::once(f64::NAN).chain(close.iter().copied());
+                let up: Vec<f64> = high.iter().zip(prev()).map(|(h, c)| h - c).collect();
+                let down: Vec<f64> = prev().zip(low.iter()).map(|(c, l)| c - l).collect();
+                intensity_ratio(&up, &down, period)
+            },
+        );
+        self.study_outputs(CALL, names.into_iter().zip([strong, weak]))
+    }
+
+    /// Volume-weighted average price over a trailing window (pond-ts
+    /// `vwap`): the typical price `(high + low + close) / 3`, averaged over
+    /// `period` bars weighted by volume. Bars whose weighted price is a gap
+    /// are left out of both sums.
+    pub fn vwap(&self, options: Vwap) -> Result<TimeSeries> {
+        const CALL: &str = "TimeSeries::vwap";
+        positive(CALL, "period", options.period)?;
+        let output = options.name().to_string();
+        self.free_names(CALL, &[&output])?;
+        let [high, low, close, volume] = self.price_columns(
+            CALL,
+            [&options.high, &options.low, &options.close, &options.volume],
+            ["high", "low", "close", "volume"],
+        )?;
+        let typical = typical_price_values(&high, &low, &close);
+        let out = rolling_weighted_mean_values(&typical, &volume, options.period);
+        self.study_output(CALL, output, out)
+    }
+}
+
+/// Refuses a volume index's `start` that is not a positive finite number.
+fn volume_index_start(call: &'static str, study: &str, start: f64) -> Result<()> {
+    if !start.is_finite() || start <= 0.0 {
+        return Err(PondError::InvalidData {
+            call,
+            message: format!("{study} start must be a positive finite number"),
+        });
+    }
+    Ok(())
+}
+
+/// pond-ts `volumeIndex`: from `start` on the first bar of each stretch
+/// with no gaps, the index compounds the price's return on bars whose
+/// volume fell (`on_fall`) or rose (otherwise) and holds on the rest,
+/// equal volumes included.
+fn volume_index_values(close: &[f64], volume: &[f64], start: f64, on_fall: bool) -> Vec<f64> {
+    let n = close.len();
+    let mut out = vec![f64::NAN; n];
+    let (mut first, mut value, mut prev_close, mut prev_volume) =
+        (true, f64::NAN, f64::NAN, f64::NAN);
+    for i in 0..n {
+        let (c, v) = (close[i], volume[i]);
+        if c.is_nan() || v.is_nan() {
+            first = true;
+            continue;
+        }
+        if first {
+            first = false;
+            value = start;
+        } else if on_fall == (v < prev_volume) && v != prev_volume {
+            value = if prev_close == 0.0 {
+                f64::NAN
+            } else {
+                value * (1.0 + (c - prev_close) / prev_close)
+            };
+        }
+        out[i] = value;
+        (prev_close, prev_volume) = (c, v);
+    }
+    out
+}
+
+/// pond-ts's Shinohara `ratio`: `100 · mean(up) / mean(down)` over
+/// `period` bars, a gap where the lower mean is 0.
+fn intensity_ratio(up: &[f64], down: &[f64], period: usize) -> Vec<f64> {
+    let (numerator, denominator) = par::join(
+        || rolling_mean_values(up, period),
+        || rolling_mean_values(down, period),
+    );
+    numerator
+        .iter()
+        .zip(&denominator)
+        .map(|(&u, &d)| if d == 0.0 { f64::NAN } else { (100.0 * u) / d })
+        .collect()
 }
 
 /// pond-ts `rollingWeightedMeanValues`: each window's sum of
@@ -397,6 +776,93 @@ fn rolling_weighted_mean_chunked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bars() -> TimeSeries {
+        let price = |k: f64| (0..4).map(|i| 10.0 + k * f64::from(i)).collect::<Vec<_>>();
+        TimeSeries::new(
+            "s",
+            (0..4).collect(),
+            vec![
+                crate::Column::required("open", price(0.5)),
+                crate::Column::required("high", price(1.5)),
+                crate::Column::required("low", price(0.2)),
+                crate::Column::required("close", price(1.0)),
+                crate::Column::required("volume", price(100.0)),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn message(r: Result<TimeSeries>) -> String {
+        r.unwrap_err().to_string()
+    }
+
+    /// Ticks and starts that are not positive finite numbers are refused
+    /// (JSON cases cannot carry an infinity or NaN), with the value
+    /// written as JavaScript writes it.
+    #[test]
+    fn non_finite_ticks_and_starts_are_refused() {
+        let s = bars();
+        for (bad, text) in [
+            (f64::INFINITY, "Infinity"),
+            (f64::NEG_INFINITY, "-Infinity"),
+            (f64::NAN, "NaN"),
+            (0.0, "0"),
+        ] {
+            let tvi = message(s.trade_volume_index(TradeVolumeIndex::new(bad)));
+            assert!(
+                tvi.ends_with(&format!("(the instrument's minimum tick); got {text}")),
+                "{tvi}"
+            );
+            let nvi = message(s.negative_volume_index(NegativeVolumeIndex::default().start(bad)));
+            assert!(nvi.contains("negativeVolumeIndex start"), "{nvi}");
+            let pvi = message(s.positive_volume_index(PositiveVolumeIndex::default().start(bad)));
+            assert!(pvi.contains("positiveVolumeIndex start"), "{pvi}");
+        }
+    }
+
+    /// Which error wins when several apply, as in pond-ts.
+    #[test]
+    fn errors_come_in_pond_ts_order() {
+        let s = bars();
+        // The tick before the output name; the output name before the start.
+        let tvi = message(s.trade_volume_index(TradeVolumeIndex::new(0.0).output("close")));
+        assert!(tvi.contains("minTick"), "{tvi}");
+        let nvi = message(
+            s.negative_volume_index(NegativeVolumeIndex::default().start(0.0).output("close")),
+        );
+        assert!(nvi.contains("collides"), "{nvi}");
+        // Klinger: the periods, then fast before slow.
+        let kvo = message(s.klinger(Klinger::default().fast(0).slow(0)));
+        assert!(kvo.contains("fastPeriod must be"), "{kvo}");
+        let kvo = message(s.klinger(Klinger::default().fast(5).slow(4).signal(0)));
+        assert!(kvo.contains("signalPeriod must be"), "{kvo}");
+        // The volume oscillator: fast before slow, then the periods.
+        let vo = message(s.volume_oscillator(VolumeOscillator::default().fast(0).slow(0)));
+        assert!(vo.contains("volumeOscillator fastPeriod (0)"), "{vo}");
+        let vo = message(s.volume_oscillator(VolumeOscillator::default().fast(0).slow(3)));
+        assert!(vo.contains("fastPeriod must be"), "{vo}");
+        // Periods before names, names before columns.
+        let sir = message(
+            s.shinohara_intensity_ratio(ShinoharaIntensityRatio::default().period(0).prefix("c")),
+        );
+        assert!(sir.contains("period must be"), "{sir}");
+        let vwap = message(s.vwap(Vwap::new(3).output("close").volume("nope")));
+        assert!(vwap.contains("collides"), "{vwap}");
+        let bwmfi = message(
+            s.market_facilitation_index(
+                MarketFacilitationIndex::default()
+                    .output("close")
+                    .volume("nope"),
+            ),
+        );
+        assert!(bwmfi.contains("collides"), "{bwmfi}");
+        // The volume indexes check the start before reading the columns.
+        let pvi = message(
+            s.positive_volume_index(PositiveVolumeIndex::default().start(-1.0).volume("nope")),
+        );
+        assert!(pvi.contains("positiveVolumeIndex start"), "{pvi}");
+    }
 
     /// Split into stretches of any size, the weighted mean has the same
     /// bits as in one piece.

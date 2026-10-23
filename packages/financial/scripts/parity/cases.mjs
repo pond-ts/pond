@@ -377,6 +377,20 @@ const VOL_SCHEMA = [
 ];
 const VOL_EMPTY_SCHEMA = VOL_SCHEMA.filter((c) => c.name !== 'name');
 
+// Closes that move by exactly 0.5 (exact in binary) against the last
+// decisive move, both ways, for the trade volume index's dead band.
+const TICK_CLOSES = [10, 11, 10.5, 11, 10, 10.5, 11.5, 11];
+const TICK_ROWS = TICK_CLOSES.map((close, i) => [
+  i * 60_000,
+  close,
+  100 * (i + 1),
+]);
+const TICK_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'close', kind: 'number' },
+  { name: 'volume', kind: 'number' },
+];
+
 // Bars that overflow: row 5's close is far below a bar that is itself
 // near the largest double, so where it sits in the bar (and that times
 // the volume) is -Infinity; everything else is ordinary.
@@ -440,6 +454,7 @@ function inputs(oracle) {
     vol: { name: 'vol', schema: VOL_SCHEMA, rows: VOL_ROWS },
     blowup: { name: 'blowup', schema: BLOWUP_SCHEMA, rows: BLOWUP_ROWS },
     volEmpty: { name: 'volEmpty', schema: VOL_EMPTY_SCHEMA, rows: [] },
+    ticks: { name: 'ticks', schema: TICK_SCHEMA, rows: TICK_ROWS },
     ohlcEmpty: { name: 'ohlcEmpty', schema: LEAD_SCHEMA, rows: [] },
     empty: { name: 'empty', schema: CLOSE_SCHEMA, rows: [] },
   };
@@ -546,6 +561,8 @@ function cases() {
   volatilityFamilyCases(add);
   statisticsFamilyCases(add);
   volumeFamilyCases(add);
+  volumeFamilyCases2(add);
+  priceFamilyCases(add);
   return out;
 }
 
@@ -1630,4 +1647,187 @@ function volumeFamilyCases(add) {
     add('easeOfMovement', 'vol', { period: 3, scale });
   }
   add('easeOfMovement', 'vol', { period: 0, maType: 'nope' });
+}
+
+// R2 step 2f part 2: the rest of the volume family (anchored VWAP waits
+// for the calendars).
+function volumeFamilyCases2(add) {
+  const all = ['high', 'low', 'close', 'volume'];
+  const cv = ['column', 'volume'];
+  familyCases(add, {
+    inputs: ['bars', 'vol', 'volEmpty'],
+    smallInputs: ['bars', 'vol', 'volEmpty'],
+    otherInput: 'vol',
+    small: {
+      klinger: [
+        { fastPeriod: 3, slowPeriod: 5, signalPeriod: 2 },
+        { fastPeriod: 1, slowPeriod: 2, signalPeriod: 1 },
+      ],
+      volumeOscillator: [
+        { fastPeriod: 2, slowPeriod: 4 },
+        { fastPeriod: 1, slowPeriod: 2 },
+      ],
+      tradeVolumeIndex: [{ minTick: 0.01 }, { minTick: 0.5 }],
+      negativeVolumeIndex: [{}, { start: 1 }],
+      positiveVolumeIndex: [{}, { start: 1 }],
+      marketFacilitationIndex: [{}],
+      shinoharaIntensityRatio: [{ period: 3 }, { period: 1 }],
+      vwap: [{ period: 3 }, { period: 1 }],
+    },
+    reads: {
+      klinger: all,
+      volumeOscillator: ['volume'],
+      tradeVolumeIndex: cv,
+      negativeVolumeIndex: cv,
+      positiveVolumeIndex: cv,
+      marketFacilitationIndex: ['high', 'low', 'volume'],
+      shinoharaIntensityRatio: ['open', 'high', 'low', 'close'],
+      vwap: all,
+    },
+    typeOption: { volumeOscillator: 'maType' },
+    naming: { klinger: 'prefix', shinoharaIntensityRatio: 'prefix' },
+    periods: {
+      klinger: ['fastPeriod', 'slowPeriod', 'signalPeriod'],
+      volumeOscillator: ['fastPeriod', 'slowPeriod'],
+      tradeVolumeIndex: [],
+      negativeVolumeIndex: [],
+      positiveVolumeIndex: [],
+      marketFacilitationIndex: [],
+      shinoharaIntensityRatio: ['period'],
+      vwap: ['period'],
+    },
+    numbers: {
+      tradeVolumeIndex: ['minTick'],
+      negativeVolumeIndex: ['start'],
+      positiveVolumeIndex: ['start'],
+    },
+  });
+  const base = {
+    klinger: { fastPeriod: 3, slowPeriod: 5, signalPeriod: 2 },
+    volumeOscillator: { fastPeriod: 2, slowPeriod: 4 },
+    tradeVolumeIndex: { minTick: 0.01 },
+    negativeVolumeIndex: {},
+    positiveVolumeIndex: {},
+    marketFacilitationIndex: {},
+    shinoharaIntensityRatio: { period: 3 },
+    vwap: { period: 3 },
+  };
+  for (const [study, small] of Object.entries(base)) {
+    for (const input of ['edge', 'ties', 'lead']) {
+      add(study, input, { ...small, volume: 'open' });
+    }
+    add(study, 'vol', { ...small, volume: 'open' });
+    add(study, 'vol', { ...small, volume: 'prime' });
+    if (study !== 'volumeOscillator') {
+      add(study, 'vol', { ...small, high: 'close', low: 'close' });
+      add(study, 'vol', { ...small, high: 'prime', low: 'prime' });
+    }
+    add(study, 'blowup', small);
+    add(study, 'gappy', small);
+  }
+  // Leading gaps in the volume only (it is the close: rows 0-2, 7), and
+  // an interior gap in the price only.
+  for (const study of [
+    'tradeVolumeIndex',
+    'negativeVolumeIndex',
+    'positiveVolumeIndex',
+  ]) {
+    const small = base[study];
+    add(study, 'vol', { ...small, column: 'open', volume: 'close' });
+    add(study, 'vol', { ...small, column: 'prime', volume: 'close' });
+    add(study, 'gappy', { ...small, volume: 'close' });
+  }
+  // A tick no move beats, and the trade volume index with no tick.
+  // Moves of exactly the tick do not change the direction: 0.5 both ways
+  // after a decisive move the other way, and the prime ladder's fall from
+  // 2^53 - 111 to 2^53 - 112 while rising (the ladder is its own volume;
+  // the open is 0 on that row).
+  add('tradeVolumeIndex', 'ticks', { minTick: 0.5 });
+  add('tradeVolumeIndex', 'ticks', { minTick: 0.25 });
+  add('tradeVolumeIndex', 'vol', {
+    minTick: 1,
+    column: 'prime',
+    volume: 'prime',
+  });
+  add('tradeVolumeIndex', 'vol', { minTick: 1e9 });
+  add('tradeVolumeIndex', 'vol', {});
+  add('tradeVolumeIndex', 'vol', { minTick: Number.MAX_VALUE });
+  for (const start of [Number.MAX_VALUE, 1e-300, 2.5]) {
+    add('negativeVolumeIndex', 'vol', { start });
+    add('positiveVolumeIndex', 'vol', { start });
+  }
+  add('negativeVolumeIndex', 'vol', { start: 0, output: 'close' });
+  // fast must be shorter than slow, checked before the periods.
+  for (const study of ['klinger', 'volumeOscillator']) {
+    add(study, 'vol', { ...base[study], fastPeriod: 4, slowPeriod: 4 });
+    add(study, 'vol', { ...base[study], fastPeriod: 5, slowPeriod: 4 });
+    add(study, 'vol', { ...base[study], fastPeriod: 0, slowPeriod: 0 });
+    add(study, 'vol', { ...base[study], fastPeriod: 0, slowPeriod: 4 });
+  }
+  add('klinger', 'bars', {});
+  add('klinger', 'vol', { fastPeriod: 2, slowPeriod: 3, signalPeriod: 0 });
+  for (const maType of MA_TYPES) {
+    add('volumeOscillator', 'vol', { fastPeriod: 2, slowPeriod: 4, maType });
+  }
+  add('vwap', 'vol', {});
+  add('vwap', 'bars', { period: 50 });
+  add('shinoharaIntensityRatio', 'bars', { period: 50 });
+  add('shinoharaIntensityRatio', 'vol', { period: 1, open: 'close' });
+}
+
+// R2 step 2g: the price family.
+function priceFamilyCases(add) {
+  const hlc = ['high', 'low', 'close'];
+  const ohlc = ['open', 'high', 'low', 'close'];
+  familyCases(add, {
+    small: {
+      typicalPrice: [{}],
+      medianPrice: [{}],
+      weightedClose: [{}],
+      averagePrice: [{}],
+      balanceOfPower: [{ period: 3 }, { period: 1 }, {}],
+    },
+    reads: {
+      typicalPrice: hlc,
+      medianPrice: hlc,
+      weightedClose: hlc,
+      averagePrice: ohlc,
+      balanceOfPower: ohlc,
+    },
+    typeOption: { balanceOfPower: 'maType' },
+    numbers: {},
+    naming: {},
+    periods: {
+      typicalPrice: [],
+      medianPrice: [],
+      weightedClose: [],
+      averagePrice: [],
+      balanceOfPower: ['period'],
+    },
+  });
+  for (const study of [
+    'typicalPrice',
+    'medianPrice',
+    'weightedClose',
+    'averagePrice',
+    'balanceOfPower',
+  ]) {
+    for (const input of ['edge', 'ties', 'vol', 'blowup'])
+      add(study, input, {});
+    // Bars with no range (and a gap in the close on row 7).
+    add(study, 'vol', { high: 'close', low: 'close' });
+    add(study, 'vol', { high: 'prime', low: 'prime' });
+  }
+  // The open read first: a missing open beats a missing high.
+  add('averagePrice', 'bars', { open: 'nope', high: 'nope2' });
+  add('balanceOfPower', 'bars', { open: 'nope', high: 'nope2' });
+  // A type needs a period; the period is checked first.
+  add('balanceOfPower', 'ohlc', { maType: 'ema' });
+  add('balanceOfPower', 'ohlc', { maType: 'sma' });
+  add('balanceOfPower', 'ohlc', { period: 0, maType: 'ema' });
+  add('balanceOfPower', 'vol', { period: 3, high: 'close', low: 'close' });
+  for (const maType of MA_TYPES) {
+    add('balanceOfPower', 'vol', { period: 3, maType });
+  }
+  add('balanceOfPower', 'bars', { period: 50, maType: 'kama' });
 }

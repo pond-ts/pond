@@ -719,6 +719,102 @@ fn main() -> pond_rs::Result<()> {
         ),
     ];
     cases.extend(volume);
+    // R2 step 2f part 2.
+    let volume2: Vec<Case> = vec![
+        (
+            "vo-klinger".into(),
+            "kvo",
+            Box::new(|| bars.klinger(Klinger::default()).unwrap()),
+        ),
+        (
+            "vo-volosc".into(),
+            "volOsc",
+            Box::new(|| bars.volume_oscillator(VolumeOscillator::default()).unwrap()),
+        ),
+        (
+            "vo-tvi".into(),
+            "tvi",
+            Box::new(|| {
+                bars.trade_volume_index(TradeVolumeIndex::new(0.01))
+                    .unwrap()
+            }),
+        ),
+        (
+            "vo-nvi".into(),
+            "nvi",
+            Box::new(|| {
+                bars.negative_volume_index(NegativeVolumeIndex::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "vo-pvi".into(),
+            "pvi",
+            Box::new(|| {
+                bars.positive_volume_index(PositiveVolumeIndex::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "vo-bwmfi".into(),
+            "bwmfi",
+            Box::new(|| {
+                bars.market_facilitation_index(MarketFacilitationIndex::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "vo-sir".into(),
+            "sirStrong",
+            Box::new(|| {
+                bars.shinohara_intensity_ratio(ShinoharaIntensityRatio::default())
+                    .unwrap()
+            }),
+        ),
+        (
+            "vo-vwap".into(),
+            "vwap",
+            Box::new(|| bars.vwap(Vwap::new(20)).unwrap()),
+        ),
+    ];
+    cases.extend(volume2);
+    // R2 step 2g.
+    let price: Vec<Case> = vec![
+        (
+            "p-typical".into(),
+            "typicalPrice",
+            Box::new(|| bars.typical_price(TypicalPrice::default()).unwrap()),
+        ),
+        (
+            "p-median".into(),
+            "medianPrice",
+            Box::new(|| bars.median_price(MedianPrice::default()).unwrap()),
+        ),
+        (
+            "p-wclose".into(),
+            "weightedClose",
+            Box::new(|| bars.weighted_close(WeightedClose::default()).unwrap()),
+        ),
+        (
+            "p-avg".into(),
+            "averagePrice",
+            Box::new(|| bars.average_price(AveragePrice::default()).unwrap()),
+        ),
+        (
+            "p-bop".into(),
+            "bop",
+            Box::new(|| bars.balance_of_power(BalanceOfPower::default()).unwrap()),
+        ),
+        (
+            "p-bop14".into(),
+            "bop",
+            Box::new(|| {
+                bars.balance_of_power(BalanceOfPower::default().period(14))
+                    .unwrap()
+            }),
+        ),
+    ];
+    cases.extend(price);
     // POND_BITS=1: instead of timing, print a hash of every bit of every
     // number column in the result (a gap hashes as one fixed value), the
     // same hash bench/studies_pond_ts.mjs prints under the same variable.
