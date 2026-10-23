@@ -11,7 +11,9 @@
 //! trailing stop, ZigZag, Ichimoku, Elder impulse and ray, trend
 //! intensity, RAVI, swing index and its running total),
 //! rolling statistics and the z-score so far, each a method on
-//! [`TimeSeries`] that adds its number columns and keeps every row.
+//! [`TimeSeries`] that adds its number columns and keeps every row. Also
+//! trading calendars ([`TradingCalendar`], [`SessionRules`]): the sessions
+//! an exchange trades, their lookups, and session tagging.
 //!
 //! Every study follows the same rules, as in pond-ts:
 //!
@@ -53,6 +55,7 @@ mod options;
 mod averages;
 mod bands;
 mod bivariate;
+mod calendar;
 mod kernels;
 mod momentum;
 mod price;
@@ -69,6 +72,10 @@ pub use averages::{
 pub use bands::{
     AtrBands, Bollinger, BollingerBandwidth, BollingerPercentB, Donchian, Envelope, HighLowBands,
     Keltner, PrimeNumberBands, StarcBands,
+};
+pub use calendar::{
+    DateBound, Session, SessionBreak, SessionRef, SessionRules, Stamped, TagSessions,
+    TradingCalendar, generate_sessions, normalize_sessions,
 };
 pub use momentum::{
     AwesomeOscillator, CommodityChannelIndex, FisherTransform, IntradayMomentumIndex,
