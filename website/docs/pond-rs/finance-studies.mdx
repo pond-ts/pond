@@ -17,13 +17,16 @@ moving-average family (MACD and 14 more), bands (Bollinger, Keltner and
 8 more), momentum (21 studies: RSI, stochastics, CCI, true strength index
 and more) and trend (16 studies: ADX, Aroon, SuperTrend, parabolic SAR,
 Ichimoku and more), volatility (8: ATR, historical volatility and
-more) and statistics (6: linear regression, beta, correlation and more) and the
-first 9 volume studies (on-balance volume, money flow index and more).
+more), statistics (6: linear regression, beta, correlation and more),
+volume (17: on-balance volume, money flow index, VWAP and more) and price
+(5: typical price, balance of power and more). That is every pond-ts
+study except the three that need trading sessions: pivot points, session
+VWAP and anchored VWAP.
 
 The results match `@pond-ts/financial` exactly, number for number. That is
-checked against 4,300 cases that pond-ts itself writes out. They also match
+checked against 4,882 cases that pond-ts itself writes out. They also match
 the pandas and TA-Lib reference results pond-ts is tested against, to
-within 5e-10 (193 of those 220 cases cover studies built so far).
+within 5e-10 (213 of those 220 cases cover studies built so far; the other 7 are the three session studies).
 
 ## How every study works
 
@@ -546,22 +549,38 @@ fn main() -> Result<(), pond_rs::PondError> {
 Studies that weigh the price by how much traded. They read a `volume`
 column as well as the prices (rename it with `.volume("qty")`).
 
-| Call                                                  | Writes       | What it shows                                                                                                |
-| ----------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------ |
-| `obv(Obv)`                                            | `obv`        | On-balance volume: a running total that adds the volume when the close rises and takes it away when it falls |
-| `accumulation_distribution(AccumulationDistribution)` | `ad`         | A running total of each bar's volume times where its close sits in the bar (−1 at the low, +1 at the high)   |
-| `price_volume_trend(PriceVolumeTrend)`                | `pvt`        | A running total of each bar's volume times its close's percent change                                        |
-| `chaikin_money_flow(ChaikinMoneyFlow)`                | `cmf`        | Where the close sits in its bar, averaged over 20 bars and weighted by volume, −1 to 1                       |
-| `chaikin_oscillator(ChaikinOscillator)`               | `chaikinOsc` | A 3-bar EMA of the accumulation/distribution line minus a 10-bar one                                         |
-| `money_flow_index(MoneyFlowIndex)`                    | `mfi`        | The RSI idea on price times volume, 0 to 100 (14 bars)                                                       |
-| `twiggs_money_flow(TwiggsMoneyFlow)`                  | `tmf`        | Chaikin's money flow with the bar widened to the last close, smoothed Wilder's way over 21 bars              |
-| `force_index(ForceIndex)`                             | `force`      | Each bar's close change times its volume, as a 13-bar EMA                                                    |
-| `ease_of_movement(EaseOfMovement)`                    | `eom`        | How far the bar's midpoint moved for the volume traded, averaged over 14 bars                                |
+| Call                                                  | Writes                 | What it shows                                                                                                                                      |
+| ----------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `obv(Obv)`                                            | `obv`                  | On-balance volume: a running total that adds the volume when the close rises and takes it away when it falls                                       |
+| `accumulation_distribution(AccumulationDistribution)` | `ad`                   | A running total of each bar's volume times where its close sits in the bar (−1 at the low, +1 at the high)                                         |
+| `price_volume_trend(PriceVolumeTrend)`                | `pvt`                  | A running total of each bar's volume times its close's percent change                                                                              |
+| `chaikin_money_flow(ChaikinMoneyFlow)`                | `cmf`                  | Where the close sits in its bar, averaged over 20 bars and weighted by volume, −1 to 1                                                             |
+| `chaikin_oscillator(ChaikinOscillator)`               | `chaikinOsc`           | A 3-bar EMA of the accumulation/distribution line minus a 10-bar one                                                                               |
+| `money_flow_index(MoneyFlowIndex)`                    | `mfi`                  | The RSI idea on price times volume, 0 to 100 (14 bars)                                                                                             |
+| `twiggs_money_flow(TwiggsMoneyFlow)`                  | `tmf`                  | Chaikin's money flow with the bar widened to the last close, smoothed Wilder's way over 21 bars                                                    |
+| `force_index(ForceIndex)`                             | `force`                | Each bar's close change times its volume, as a 13-bar EMA                                                                                          |
+| `ease_of_movement(EaseOfMovement)`                    | `eom`                  | How far the bar's midpoint moved for the volume traded, averaged over 14 bars                                                                      |
+| `klinger(Klinger)`                                    | `kvo`, `kvoSignal`     | Klinger oscillator: a 34-bar EMA of signed "volume force" minus a 55-bar one, with a 13-bar EMA signal line                                        |
+| `volume_oscillator(VolumeOscillator)`                 | `volOsc`               | A 5-bar average of the volume minus a 10-bar one, as a percent of the 10-bar one                                                                   |
+| `trade_volume_index(TradeVolumeIndex::new(min_tick))` | `tvi`                  | A running total of the volume, added while the price last moved up by more than `min_tick` and taken away while it last moved down by more         |
+| `negative_volume_index(NegativeVolumeIndex)`          | `nvi`                  | Starts at 1000 and follows the price only on bars where the volume fell                                                                            |
+| `positive_volume_index(PositiveVolumeIndex)`          | `pvi`                  | Starts at 1000 and follows the price only on bars where the volume rose                                                                            |
+| `market_facilitation_index(MarketFacilitationIndex)`  | `bwmfi`                | The bar's range (high minus low) per unit of volume                                                                                                |
+| `shinohara_intensity_ratio(ShinoharaIntensityRatio)`  | `sirStrong`, `sirWeak` | How far highs rose above the open against how far lows fell below it (strong), and the same against the last close (weak), over 26 bars, times 100 |
+| `vwap(Vwap::new(period))`                             | `vwap`                 | Volume-weighted average price over the last `period` bars, using the typical price `(high + low + close) / 3`                                      |
 
 The running totals (`obv`, `accumulation_distribution`,
-`price_volume_trend`) and Twiggs money flow cannot pick up again after a
-missing bar in the middle of the data: every later value is a gap, as in
-pond-ts.
+`price_volume_trend`, `trade_volume_index`) and Twiggs money flow cannot
+pick up again after a missing bar in the middle of the data: every later
+value is a gap, as in pond-ts. The negative and positive volume indexes
+start again from `start` after a gap instead. The Klinger force starts on
+the second bar of each stretch with no gaps.
+
+`TradeVolumeIndex` and `Vwap` have no defaults in pond-ts (the instrument's
+smallest price step, and the window), so they are built with `new`. The
+volume indexes change their first value with `.start(…)`. This `vwap` is a
+trailing window of bars; the VWAP that starts again each trading session
+comes with trading calendars.
 
 ```rust
 use pond_rs::financial::Obv;
@@ -582,6 +601,96 @@ fn main() -> Result<(), pond_rs::PondError> {
     // Start at 100; up: +200; unchanged: left out; down: −400.
     let obv: Vec<_> = out.column("obv")?.numbers()?.iter().collect();
     assert_eq!(obv, [Some(100.0), Some(300.0), Some(300.0), Some(-100.0)]);
+    Ok(())
+}
+```
+
+```rust
+use pond_rs::financial::{NegativeVolumeIndex, Vwap};
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let minute = 60_000;
+    // Bars with no range, so the typical price is the close.
+    let price = vec![10.0, 20.0, 30.0];
+    let bars = TimeSeries::new(
+        "bars",
+        (0..3).map(|i| i * minute).collect(),
+        vec![
+            Column::required("high", price.clone()),
+            Column::required("low", price.clone()),
+            Column::required("close", price),
+            Column::required("volume", vec![1.0, 3.0, 1.0]),
+        ],
+    )?;
+
+    // Over 2 bars: (10·1 + 20·3) / 4, then (20·3 + 30·1) / 4.
+    let out = bars.vwap(Vwap::new(2))?;
+    let vwap: Vec<_> = out.column("vwap")?.numbers()?.iter().collect();
+    assert_eq!(vwap, [None, Some(17.5), Some(22.5)]);
+
+    // The volume fell only on the last bar, where the price rose by half.
+    let out = bars.negative_volume_index(NegativeVolumeIndex::default())?;
+    let nvi: Vec<_> = out.column("nvi")?.numbers()?.iter().collect();
+    assert_eq!(nvi, [Some(1000.0), Some(1000.0), Some(1500.0)]);
+    Ok(())
+}
+```
+
+## Price
+
+Studies that turn each bar's open, high, low and close into one number.
+Rename the columns they read with `.open(…)`, `.high(…)`, `.low(…)` and
+`.close(…)`.
+
+| Call                               | Writes          | What it shows                                                                                                  |
+| ---------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------- |
+| `typical_price(TypicalPrice)`      | `typicalPrice`  | `(high + low + close) / 3`                                                                                     |
+| `median_price(MedianPrice)`        | `medianPrice`   | `(high + low) / 2`, the middle of the bar                                                                      |
+| `weighted_close(WeightedClose)`    | `weightedClose` | `(high + low + 2 × close) / 4`: the typical price leaning towards the close                                    |
+| `average_price(AveragePrice)`      | `averagePrice`  | `(open + high + low + close) / 4`                                                                              |
+| `balance_of_power(BalanceOfPower)` | `bop`           | `(close − open) / (high − low)`: how much of the bar's range the buyers won, −1 to 1, 0 on a bar with no range |
+
+`MedianPrice` has no `.close(…)` setter because it never reads the close
+(pond-ts accepts one and ignores it). `BalanceOfPower` gives the raw ratio
+of each bar unless you set `.period(n)`, which smooths it with a moving
+average over `n` bars: simple, or another type with `.ma(…)`. Setting
+`.ma(…)` without a period is an error, as in pond-ts, since there would be
+nothing to smooth.
+
+```rust
+use pond_rs::financial::{BalanceOfPower, MedianPrice, TypicalPrice};
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let bars = TimeSeries::new(
+        "bars",
+        vec![0, 60_000],
+        vec![
+            Column::required("open", vec![10.0, 11.0]),
+            Column::required("high", vec![16.0, 20.0]),
+            Column::required("low", vec![8.0, 8.0]),
+            Column::required("close", vec![12.0, 17.0]),
+        ],
+    )?;
+
+    let out = bars.typical_price(TypicalPrice::default())?;
+    let typical: Vec<_> = out.column("typicalPrice")?.numbers()?.iter().collect();
+    assert_eq!(typical, [Some(12.0), Some(15.0)]);
+
+    let out = bars.median_price(MedianPrice::default())?;
+    let median: Vec<_> = out.column("medianPrice")?.numbers()?.iter().collect();
+    assert_eq!(median, [Some(12.0), Some(14.0)]);
+
+    // (12 − 10) / 8 and (17 − 11) / 12.
+    let out = bars.balance_of_power(BalanceOfPower::default())?;
+    let bop: Vec<_> = out.column("bop")?.numbers()?.iter().collect();
+    assert_eq!(bop, [Some(0.25), Some(0.5)]);
+
+    // Smoothed over 2 bars: the average of the two.
+    let out = bars.balance_of_power(BalanceOfPower::default().period(2))?;
+    let bop: Vec<_> = out.column("bop")?.numbers()?.iter().collect();
+    assert_eq!(bop, [None, Some(0.375)]);
     Ok(())
 }
 ```
@@ -672,8 +781,10 @@ the problem:
 - an output name that is already a column (or the key);
 - a source column that does not exist, or is not numbers (for studies of
   price bars, each of the high, low, close or open columns it reads);
-- a Bollinger `std_dev`, band `multiplier` or `percent` that is not a finite
-  number above zero;
+- a Bollinger `std_dev`, band `multiplier` or `percent`, a trade volume
+  index `min_tick` or a volume index `start` that is not a finite number
+  above zero;
+- a balance of power `.ma(…)` without a `.period(…)`;
 - for `macd` and `stochastic_rsi`, a series that already has a column
   named `__macdLine__` or `__stochRsiRsi__`. pond-ts writes its working
   values there, so it refuses them too.
@@ -826,6 +937,20 @@ At pond-ts's default settings, same machine and setup:
 | `twiggs_money_flow`                | 27.2              | 17.8             | 61.0    | 3.4×  |
 | `force_index`                      | 5.4               | 4.4              | 17.4    | 4.0×  |
 | `ease_of_movement`                 | 14.2              | 8.2              | 39.8    | 4.9×  |
+| `klinger`                          | 22.6              | 19.3             | 81.4    | 4.2×  |
+| `volume_oscillator`                | 13.5              | 6.6              | 65.1    | 9.9×  |
+| `trade_volume_index`               | 4.2               | 4.8              | 47.8    | 10×   |
+| `negative_volume_index`            | 5.2               | 5.3              | 58.9    | 11×   |
+| `positive_volume_index`            | 4.7               | 4.4              | 31.7    | 7.2×  |
+| `market_facilitation_index`        | 5.3               | 5.3              | 39.2    | 7.4×  |
+| `shinohara_intensity_ratio`        | 45.2              | 19.8             | 160.7   | 8.1×  |
+| `vwap`                             | 27.7              | 11.9             | 64.9    | 5.5×  |
+| `typical_price`                    | 3.7               | 3.7              | 29.2    | 7.9×  |
+| `median_price`                     | 2.9               | 3.4              | 11.7    | 3.4×  |
+| `weighted_close`                   | 4.4               | 4.9              | 23.4    | 4.8×  |
+| `average_price`                    | 4.3               | 5.7              | 23.1    | 4.1×  |
+| `balance_of_power`                 | 5.1               | 4.6              | 25.3    | 5.5×  |
+| `balance_of_power` (14 bars)       | 16.6              | 6.7              | 67.9    | 10×   |
 
 The machine is a shared virtual machine with four cores, and single runs
 move by up to a third, so read the ratios as rough. The swing index runs on one
@@ -854,4 +979,4 @@ them.
 
 ## Still to come
 
-The other volume studies and the price studies; then trading calendars and session VWAP.
+Trading calendars, and with them the three studies that need trading sessions: pivot points, session VWAP and anchored VWAP.

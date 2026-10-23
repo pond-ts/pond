@@ -69,11 +69,12 @@ pond-rs = { git = "https://github.com/pond-ts/pond" }
 **Started:** financial studies. Moving averages and rolling statistics,
 the moving-average family (MACD, …), bands (Bollinger, Keltner, …),
 momentum (RSI, stochastics, CCI, …), trend (ADX, Ichimoku, …), volatility
-(ATR, …) and statistics (linear regression, beta, …) and
-volume (OBV, money flow index, …) are built; see
+(ATR, …), statistics (linear regression, beta, …), volume (OBV,
+money flow index, VWAP, …) and price (typical price, balance of power, …)
+are built; see
 [Finance studies](./finance-studies).
 
-**Not built yet:** the other financial studies (the rest of volume, VWAP, pivot points, …),
+**Not built yet:** trading calendars and the studies that need them (pivot points, session and anchored VWAP),
 the live (streaming) layer, and a WASM build that
 pond-ts can call. They come in roughly that order; see the
 [roadmap](#roadmap) below.
@@ -103,7 +104,7 @@ for the reasoning, `PLAN.md` for the current steps). In order:
 
 1. **Batch core** (done). The first slice, R1a, met every target it set
    itself; R1b added the rest of pond-ts's batch operations, step by step.
-2. **Financial studies** (in progress), checked against the same pandas / TA-Lib test
+2. **Financial studies** (all built except the three that need trading calendars, which come next), checked against the same pandas / TA-Lib test
    cases pond-ts uses.
 3. **Live layer**: series that update as data arrives.
 4. **WASM bridge**: the same Rust code running inside pond-ts where it
