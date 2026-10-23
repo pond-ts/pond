@@ -540,6 +540,14 @@ fn random_walk_into(
     high_out: &mut [f64],
     low_out: &mut [f64],
 ) {
+    // A horizon as long as the series leaves every row without a value
+    // (`i < horizon`), and a gap in the running maximum stays: every row is
+    // a gap. pond-ts walks all `period` horizons to get there.
+    if period >= high.len() {
+        high_out.fill(f64::NAN);
+        low_out.fill(f64::NAN);
+        return;
+    }
     high_out.fill(f64::NEG_INFINITY);
     low_out.fill(f64::NEG_INFINITY);
     let mut mean = vec![0.0; high_out.len()];

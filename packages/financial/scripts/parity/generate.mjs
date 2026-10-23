@@ -1,4 +1,5 @@
-// Writes test/fixtures/study-parity.json and calendar-parity.json from the
+// Writes test/fixtures/study-parity.json, calendar-parity.json and
+// catalog-parity.json from the
 // compiled packages.
 // Run after building pond-ts and @pond-ts/financial:
 //   npm run build --workspace=pond-ts
@@ -9,7 +10,9 @@ import { fileURLToPath } from 'node:url';
 import * as pond from 'pond-ts';
 import * as financial from '../../dist/index.js';
 import { buildFixture } from './cases.mjs';
+import * as catalog from '../../dist/catalog/index.js';
 import { buildCalendarFixture } from './calendar.mjs';
+import { buildCatalogFixture } from './catalog.mjs';
 
 const oracle = JSON.parse(
   readFileSync(
@@ -30,3 +33,10 @@ const calendarOut = fileURLToPath(
 const calendar = buildCalendarFixture(pond, financial);
 writeFileSync(calendarOut, JSON.stringify(calendar) + '\n');
 console.log(`wrote ${calendar.cases.length} cases to ${calendarOut}`);
+
+const catalogOut = fileURLToPath(
+  new URL('../../test/fixtures/catalog-parity.json', import.meta.url),
+);
+const described = buildCatalogFixture(catalog);
+writeFileSync(catalogOut, JSON.stringify(described) + '\n');
+console.log(`wrote ${described.studies.length} studies to ${catalogOut}`);
