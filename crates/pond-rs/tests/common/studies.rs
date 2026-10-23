@@ -108,6 +108,11 @@ pub const STUDIES: &[&str] = &[
     "marketFacilitationIndex",
     "shinoharaIntensityRatio",
     "vwap",
+    "typicalPrice",
+    "medianPrice",
+    "weightedClose",
+    "averagePrice",
+    "balanceOfPower",
 ];
 
 /// The columns `study` reads with these options: `column` (default
@@ -203,6 +208,19 @@ pub fn sources(study: &str, options: &Map<String, Value>) -> Vec<String> {
             text("volume", "volume"),
         ],
         "volumeOscillator" => vec![text("volume", "volume")],
+        "typicalPrice" | "weightedClose" => vec![
+            text("high", "high"),
+            text("low", "low"),
+            text("close", "close"),
+        ],
+        // pond-ts takes a `close` here and never reads it.
+        "medianPrice" => vec![text("high", "high"), text("low", "low")],
+        "averagePrice" | "balanceOfPower" => vec![
+            text("open", "open"),
+            text("high", "high"),
+            text("low", "low"),
+            text("close", "close"),
+        ],
         "tradeVolumeIndex" | "negativeVolumeIndex" | "positiveVolumeIndex" => {
             vec![text("column", "close"), text("volume", "volume")]
         }
@@ -983,6 +1001,40 @@ pub fn call_study(
             close,
             volume
         )),
+        "typicalPrice" => series.typical_price(reads!(
+            name_only!(TypicalPrice::default(), output),
+            high,
+            low,
+            close
+        )),
+        "medianPrice" => series.median_price(reads!(
+            name_only!(MedianPrice::default(), output),
+            high,
+            low
+        )),
+        "weightedClose" => series.weighted_close(reads!(
+            name_only!(WeightedClose::default(), output),
+            high,
+            low,
+            close
+        )),
+        "averagePrice" => series.average_price(reads!(
+            name_only!(AveragePrice::default(), output),
+            open,
+            high,
+            low,
+            close
+        )),
+        "balanceOfPower" => {
+            let mut o = BalanceOfPower::default();
+            if let Some(period) = int_required("period") {
+                o = o.period(period);
+            }
+            if text("maType").is_some() {
+                o = o.ma(ma("maType", "sma").unwrap());
+            }
+            series.balance_of_power(reads!(name_only!(o, output), open, high, low, close))
+        }
         other => panic!("no pond-rs call for study '{other}'"),
     })
 }

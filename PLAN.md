@@ -605,9 +605,8 @@ the study oracle) is done.
   crate; no worker pool (kernels that restart every `period` rows split
   rows across cores instead, same bits). Steps: 1. ~~foundations (study options and checks,
   shared kernels, `sma` / `ema` / `moving_average` / rolling stats /
-  `z_score`)~~ — done; 2. one PR per family: ~~(a) moving averages~~ — done, ~~(b) bands~~ — done, ~~(c)
-  momentum~~ — done, ~~(d) trend~~ — done, ~~(e) volatility and statistics~~ — done, ~~(f) volume~~ — done (anchored VWAP is in step 3), (g)
-  price; 3. trading calendars, then session VWAP and anchored VWAP; 4. the
+  `z_score`)~~ — done; ~~2. one PR per family (averages, bands, momentum, trend, volatility and
+  statistics, volume, price)~~ — done (anchored VWAP is in step 3); 3. trading calendars, then the session studies (pivot points, session VWAP) and anchored VWAP; 4. the
   catalog; 5. perf check and an agent trial. Detail in the breakout plan.
 
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or

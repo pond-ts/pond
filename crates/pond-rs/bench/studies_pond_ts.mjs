@@ -162,6 +162,12 @@ const cases = [
   ['vo-bwmfi', 'bwmfi', () => f.marketFacilitationIndex(bars)],
   ['vo-sir', 'sirStrong', () => f.shinoharaIntensityRatio(bars)],
   ['vo-vwap', 'vwap', () => f.vwap(bars, { period: 20 })],
+  ['p-typical', 'typicalPrice', () => f.typicalPrice(bars)],
+  ['p-median', 'medianPrice', () => f.medianPrice(bars)],
+  ['p-wclose', 'weightedClose', () => f.weightedClose(bars)],
+  ['p-avg', 'averagePrice', () => f.averagePrice(bars)],
+  ['p-bop', 'bop', () => f.balanceOfPower(bars)],
+  ['p-bop14', 'bop', () => f.balanceOfPower(bars, { period: 14 })],
 ];
 
 const only = process.argv[2];

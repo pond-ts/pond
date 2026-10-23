@@ -562,6 +562,7 @@ function cases() {
   statisticsFamilyCases(add);
   volumeFamilyCases(add);
   volumeFamilyCases2(add);
+  priceFamilyCases(add);
   return out;
 }
 
@@ -1772,4 +1773,61 @@ function volumeFamilyCases2(add) {
   add('vwap', 'bars', { period: 50 });
   add('shinoharaIntensityRatio', 'bars', { period: 50 });
   add('shinoharaIntensityRatio', 'vol', { period: 1, open: 'close' });
+}
+
+// R2 step 2g: the price family.
+function priceFamilyCases(add) {
+  const hlc = ['high', 'low', 'close'];
+  const ohlc = ['open', 'high', 'low', 'close'];
+  familyCases(add, {
+    small: {
+      typicalPrice: [{}],
+      medianPrice: [{}],
+      weightedClose: [{}],
+      averagePrice: [{}],
+      balanceOfPower: [{ period: 3 }, { period: 1 }, {}],
+    },
+    reads: {
+      typicalPrice: hlc,
+      medianPrice: hlc,
+      weightedClose: hlc,
+      averagePrice: ohlc,
+      balanceOfPower: ohlc,
+    },
+    typeOption: { balanceOfPower: 'maType' },
+    numbers: {},
+    naming: {},
+    periods: {
+      typicalPrice: [],
+      medianPrice: [],
+      weightedClose: [],
+      averagePrice: [],
+      balanceOfPower: ['period'],
+    },
+  });
+  for (const study of [
+    'typicalPrice',
+    'medianPrice',
+    'weightedClose',
+    'averagePrice',
+    'balanceOfPower',
+  ]) {
+    for (const input of ['edge', 'ties', 'vol', 'blowup'])
+      add(study, input, {});
+    // Bars with no range (and a gap in the close on row 7).
+    add(study, 'vol', { high: 'close', low: 'close' });
+    add(study, 'vol', { high: 'prime', low: 'prime' });
+  }
+  // The open read first: a missing open beats a missing high.
+  add('averagePrice', 'bars', { open: 'nope', high: 'nope2' });
+  add('balanceOfPower', 'bars', { open: 'nope', high: 'nope2' });
+  // A type needs a period; the period is checked first.
+  add('balanceOfPower', 'ohlc', { maType: 'ema' });
+  add('balanceOfPower', 'ohlc', { maType: 'sma' });
+  add('balanceOfPower', 'ohlc', { period: 0, maType: 'ema' });
+  add('balanceOfPower', 'vol', { period: 3, high: 'close', low: 'close' });
+  for (const maType of MA_TYPES) {
+    add('balanceOfPower', 'vol', { period: 3, maType });
+  }
+  add('balanceOfPower', 'bars', { period: 50, maType: 'kama' });
 }
