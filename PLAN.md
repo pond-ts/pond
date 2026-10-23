@@ -606,7 +606,7 @@ the study oracle) is done.
   rows across cores instead, same bits). Steps: 1. ~~foundations (study options and checks,
   shared kernels, `sma` / `ema` / `moving_average` / rolling stats /
   `z_score`)~~ — done; ~~2. one PR per family (averages, bands, momentum, trend, volatility and
-  statistics, volume, price)~~ — done (anchored VWAP is in step 3); 3. ~~trading calendars~~ — done (3a), then 3b the session studies (pivot points, session VWAP) and anchored VWAP; 4. the
+  statistics, volume, price)~~ — done (anchored VWAP is in step 3); 3. ~~trading calendars, then the session studies (pivot points, session VWAP) and anchored VWAP~~ — done (3a, 3b); 4. the
   catalog; 5. perf check and an agent trial. Detail in the breakout plan.
 
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or

@@ -30,13 +30,22 @@ fn bars(fixture: &StudyFixture, case: &StudyCase) -> TimeSeries {
             Column::required("bench", input.benchmarks.clone()),
         ],
         Some("long") => vec![Column::required("close", input.long_closes.clone())],
+        Some("session") => vec![
+            Column::required("open", input.opens.clone()),
+            Column::required("high", input.highs.clone()),
+            Column::required("low", input.lows.clone()),
+            Column::required("close", input.closes.clone()),
+            Column::required("volume", input.volumes.clone()),
+        ],
         Some(other) => panic!("{}: input '{other}' is not bars or closes", case.study),
     };
-    let rows = match case.input.as_deref() {
-        None => input.closes.len(),
-        _ => input.long_closes.len(),
+    let time = match case.input.as_deref() {
+        // The generator's session clock: 30-minute bars on a New York
+        // 09:30-16:00 grid, two bars in no session.
+        Some("session") => input.session_times.iter().map(|&t| t as i64).collect(),
+        None => (0..input.closes.len() as i64).collect(),
+        _ => (0..input.long_closes.len() as i64).collect(),
     };
-    let time = (0..rows as i64).collect();
     TimeSeries::new("oracle", time, columns).expect("oracle bars are a valid series")
 }
 
@@ -45,7 +54,25 @@ fn run(fixture: &StudyFixture, case: &StudyCase) -> Option<BTreeMap<String, Vec<
     if !STUDIES.contains(&case.study.as_str()) {
         return None;
     }
-    let out = call_study(&bars(fixture, case), &case.study, &case.params)
+    // The session studies read the calendar the generator laid its clock
+    // out on, rebuilt from the same rules (as study-oracle.test.ts does).
+    let mut params = case.params.clone();
+    if case.input.as_deref() == Some("session") {
+        params.insert(
+            "sessions".into(),
+            serde_json::json!({
+                "rules": {
+                    "timeZone": "America/New_York",
+                    "open": "09:30",
+                    "close": "16:00",
+                    "holidays": ["2024-01-15"],
+                },
+                "from": "2024-01-08",
+                "to": "2024-01-16",
+            }),
+        );
+    }
+    let out = call_study(&bars(fixture, case), &case.study, &params)
         .expect("oracle calls are expressible")
         .unwrap_or_else(|e| panic!("{}: {e}", case.study));
     Some(

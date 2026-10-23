@@ -60,6 +60,7 @@ mod kernels;
 mod momentum;
 mod price;
 mod regression;
+mod session;
 mod statistics;
 mod trend;
 mod volatility;
@@ -84,6 +85,7 @@ pub use momentum::{
     WilliamsR,
 };
 pub use price::{AveragePrice, BalanceOfPower, MedianPrice, TypicalPrice, WeightedClose};
+pub use session::{AnchoredVwap, PivotMethod, PivotPoints, SessionAnchor, SessionVwap};
 pub use statistics::{Beta, Correlation, LinearRegression, PerformanceIndex, PriceRelative};
 pub use trend::{
     AccumulativeSwingIndex, Aroon, AtrTrailingStop, DirectionalMovement, ElderImpulse, ElderRay,

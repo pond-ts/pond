@@ -181,6 +181,18 @@ const cases = [
     'session',
     () => calendar.tagSessions(bars, { stamped: 'close' }),
   ],
+  ['sess-svwap', 'svwap', () => f.sessionVwap(bars, { sessions: calendar })],
+  ['sess-pivot', 'ppPivot', () => f.pivotPoints(bars, { sessions: calendar })],
+  [
+    'sess-pivot-cam',
+    'ppR4',
+    () => f.pivotPoints(bars, { sessions: calendar, method: 'camarilla' }),
+  ],
+  [
+    'sess-avwap',
+    'avwap',
+    () => f.anchoredVwap(bars, { anchor: 500_000 * 60_000 }),
+  ],
 ];
 
 const only = process.argv[2];

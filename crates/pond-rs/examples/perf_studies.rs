@@ -840,6 +840,34 @@ fn main() -> pond_rs::Result<()> {
                     .unwrap()
             }),
         ),
+        (
+            "sess-svwap".into(),
+            "svwap",
+            Box::new(move || bars_ref.session_vwap(SessionVwap::new(calendar)).unwrap()),
+        ),
+        (
+            "sess-pivot".into(),
+            "ppPivot",
+            Box::new(move || bars_ref.pivot_points(PivotPoints::new(calendar)).unwrap()),
+        ),
+        (
+            "sess-pivot-cam".into(),
+            "ppR4",
+            Box::new(move || {
+                bars_ref
+                    .pivot_points(PivotPoints::new(calendar).method(PivotMethod::Camarilla))
+                    .unwrap()
+            }),
+        ),
+        (
+            "sess-avwap".into(),
+            "avwap",
+            Box::new(move || {
+                bars_ref
+                    .anchored_vwap(AnchoredVwap::new(500_000 * 60_000))
+                    .unwrap()
+            }),
+        ),
     ];
     cases.extend(tags);
     // POND_BITS=1: instead of timing, print a hash of every bit of every
