@@ -26,6 +26,9 @@ Methods are the pond-ts names in Rust's `snake_case`.
 | `movingAverage(bars, { type: 'hull', period: 20 })`               | `bars.moving_average(MaType::Hull, Study::period(20))?`                                       |
 | `bollinger(bars, { period: 20, stdDev: 2.5, prefix: 'wide' })`    | `bars.bollinger(Bollinger::new(20).std_dev(2.5).prefix("wide"))?`                             |
 | `macd(bars, { fast: 5 })`                                         | `bars.macd(Macd::default().fast(5))?`                                                         |
+| `TradingCalendar.fromRules(rules, { from, to })`                  | `TradingCalendar::from_rules(&rules, from, to)?`                                              |
+| `sessionVwap(bars, { sessions: cal })`                            | `bars.session_vwap(SessionVwap::new(&cal))?`                                                  |
+| `sessionVwap(bars, { session: 'sid' })`                           | `bars.session_vwap(SessionVwap::new(SessionAnchor::column("sid")))?`                          |
 | `{ cpu_avg: { from: 'cpu', using: 'avg' } }`                      | `Agg::new("cpu_avg", "cpu", Reducer::Avg)`                                                    |
 | `series.rolling('5m', m, { alignment, minSamples })`              | `series.rolling_with("5m", &aggs, Rolling { alignment, min_samples })`                        |
 | `series.rolling({ count: 20 }, m)`                                | `series.rolling_rows(20, &aggs, Rolling::default())`                                          |

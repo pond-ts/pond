@@ -19,14 +19,14 @@ and more) and trend (16 studies: ADX, Aroon, SuperTrend, parabolic SAR,
 Ichimoku and more), volatility (8: ATR, historical volatility and
 more), statistics (6: linear regression, beta, correlation and more),
 volume (17: on-balance volume, money flow index, VWAP and more) and price
-(5: typical price, balance of power and more). That is every pond-ts
-study except the three that need trading sessions: pivot points, session
-VWAP and anchored VWAP.
+(5: typical price, balance of power and more), plus trading calendars
+and the three studies that read them (session VWAP, pivot points and
+anchored VWAP). That is all 109 pond-ts studies.
 
 The results match `@pond-ts/financial` exactly, number for number. That is
-checked against 4,882 cases that pond-ts itself writes out. They also match
+checked against 5,055 cases that pond-ts itself writes out. They also match
 the pandas and TA-Lib reference results pond-ts is tested against, to
-within 5e-10 (213 of those 220 cases cover studies built so far; the other 7 are the three session studies).
+within 5e-10, all 220 of them.
 
 ## How every study works
 
@@ -579,8 +579,9 @@ the second bar of each stretch with no gaps.
 `TradeVolumeIndex` and `Vwap` have no defaults in pond-ts (the instrument's
 smallest price step, and the window), so they are built with `new`. The
 volume indexes change their first value with `.start(…)`. This `vwap` is a
-trailing window of bars; the VWAP that starts again each trading session
-comes with trading calendars.
+trailing window of bars; for the VWAP that starts again each trading
+session, see `session_vwap` under
+[Trading calendars](#trading-calendars-and-session-studies).
 
 ```rust
 use pond_rs::financial::Obv;
@@ -695,6 +696,157 @@ fn main() -> Result<(), pond_rs::PondError> {
 }
 ```
 
+## Trading calendars and session studies
+
+A trading calendar is the list of sessions an exchange trades: each one a
+date with an open and a close (and any lunch break inside it). Studies
+that care about the trading day, such as a VWAP that starts again at
+each open, read one. Build it from a list of sessions, or from rules:
+
+- `SessionRules::new(zone, open, close)`: the hours as local wall-clock
+  times (`"09:30"`, `"16:00"`) in a time zone, so a 09:30 open stays 09:30
+  local across clock changes. Monday to Friday unless `.weekmask(&[…])`
+  says otherwise (1 is Monday, 7 Sunday).
+- `.holiday(date)` / `.holidays([…])`: days with no session.
+- `.early_close(date, "13:00")`: a half day.
+- `.with_break("11:30", "12:30")`: a break every session.
+
+`TradingCalendar::from_rules(&rules, from, to)` makes the sessions for
+those dates (both included); `from_sessions([...])` takes a list you
+built with `Session::new(date, open_ms, close_ms)`. Then ask it questions:
+`session_on(date)`, `is_trading_day(date)`, `session_containing(ms)`,
+`is_open(ms)` (false during a break), `sessions_in_range(start, end)`,
+and `next_session` / `previous_session` from a time or a date.
+
+```rust
+use pond_rs::financial::{SessionRules, TradingCalendar};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let nyse = SessionRules::new("America/New_York", "09:30", "16:00")
+        .holiday("2024-01-15")
+        .early_close("2024-01-12", "13:00");
+    let cal = TradingCalendar::from_rules(&nyse, "2024-01-08", "2024-01-16")?;
+
+    // Nine days: two weekend days and a holiday are not sessions.
+    assert_eq!(cal.len(), 6);
+    assert!(!cal.is_trading_day("2024-01-13"));
+    assert!(!cal.is_trading_day("2024-01-15"));
+
+    // 09:30 in New York in January is 14:30 UTC.
+    let monday = cal.session_on("2024-01-08").unwrap();
+    assert_eq!(monday.open, 1_704_724_200_000);
+    let friday = cal.session_on("2024-01-12").unwrap();
+    assert_eq!(friday.close - friday.open, 3 * 3_600_000 + 30 * 60_000);
+
+    // From the holiday, the next session is Tuesday.
+    assert_eq!(cal.next_session("2024-01-15").unwrap().date, "2024-01-16");
+    Ok(())
+}
+```
+
+**Tagging bars with their session.** `cal.tag_sessions(&bars,
+TagSessions::default())` adds a `session` column: for each bar, the open
+time of the session it falls in, or a gap outside trading hours. Use it
+as a `partition_by` key so rolling windows and fills stop at the end of
+each session. A bar stamped with its start belongs to the session whose
+open it is at (the default, `Stamped::Open`); for bars stamped with their
+end, pass `.stamped(Stamped::Close)`, so a bar at the close belongs to
+the session that just ended.
+
+```rust
+use pond_rs::financial::{Session, Stamped, TagSessions, TradingCalendar};
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    let cal = TradingCalendar::from_sessions([Session::new("2024-01-08", 100, 200)])?;
+    let bars = TimeSeries::new(
+        "bars",
+        vec![100, 150, 200],
+        vec![Column::required("close", vec![1.0, 2.0, 3.0])],
+    )?;
+
+    let by_start = cal.tag_sessions(&bars, TagSessions::default())?;
+    let ids: Vec<_> = by_start.column("session")?.numbers()?.iter().collect();
+    assert_eq!(ids, [Some(100.0), Some(100.0), None]);
+
+    let by_end = cal.tag_sessions(&bars, TagSessions::default().stamped(Stamped::Close))?;
+    let ids: Vec<_> = by_end.column("session")?.numbers()?.iter().collect();
+    assert_eq!(ids, [None, Some(100.0), Some(100.0)]);
+    Ok(())
+}
+```
+
+The three session studies:
+
+| Call                                          | Writes                                                                      | What it shows                                                                                                                                                                                  |
+| --------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session_vwap(SessionVwap::new(sessions))`    | `svwap`                                                                     | The volume-weighted average of the typical price from the session's open, starting again at every open; a gap outside trading hours                                                            |
+| `pivot_points(PivotPoints::new(sessions))`    | `ppPivot`, `ppR1`–`ppR3`, `ppS1`–`ppS3` (and `ppR4` / `ppS4` for Camarilla) | Levels worked out from the previous session's high, low and close, held on every bar of the session. `.method(PivotMethod::…)`: `Standard` (the default), `Fibonacci`, `Woodie` or `Camarilla` |
+| `anchored_vwap(AnchoredVwap::new(anchor_ms))` | `avwap`                                                                     | The volume-weighted average of the typical price from the first bar at or after one moment to the end; gaps before it                                                                          |
+
+`session_vwap` and `pivot_points` take the sessions three ways: a
+calendar (`&cal`), a list of sessions (`&sessions`), or the name of a
+session column already on the series (`SessionAnchor::column("session")`,
+what `tag_sessions` writes). With a calendar or a list, `.stamped(…)`
+works as it does for tagging; with a column it is an error, as in
+pond-ts, because the column already decided. Pivot points' "previous
+session" is the previous one with bars in the series, so the first
+session with bars gets gaps.
+
+```rust
+use pond_rs::financial::{AnchoredVwap, PivotPoints, Session, TradingCalendar};
+use pond_rs::{Column, TimeSeries};
+
+fn main() -> Result<(), pond_rs::PondError> {
+    // Two sessions, two bars in each.
+    let cal = TradingCalendar::from_sessions([
+        Session::new("2024-01-08", 0, 100),
+        Session::new("2024-01-09", 200, 300),
+    ])?;
+    let bars = TimeSeries::new(
+        "bars",
+        vec![0, 50, 200, 250],
+        vec![
+            Column::required("high", vec![10.0, 12.0, 11.0, 13.0]),
+            Column::required("low", vec![6.0, 8.0, 9.0, 10.0]),
+            Column::required("close", vec![8.0, 9.0, 10.0, 12.0]),
+            Column::required("volume", vec![1.0, 3.0, 2.0, 2.0]),
+        ],
+    )?;
+
+    // The first session's high 12, low 6 and last close 9 give the second
+    // session's levels: pivot (12 + 6 + 9) / 3 = 9, R1 = 2·9 − 6, S1 = 2·9 − 12.
+    let out = bars.pivot_points(PivotPoints::new(&cal))?;
+    let pivot: Vec<_> = out.column("ppPivot")?.numbers()?.iter().collect();
+    assert_eq!(pivot, [None, None, Some(9.0), Some(9.0)]);
+    let r1: Vec<_> = out.column("ppR1")?.numbers()?.iter().collect();
+    assert_eq!(r1, [None, None, Some(12.0), Some(12.0)]);
+    let s1: Vec<_> = out.column("ppS1")?.numbers()?.iter().collect();
+    assert_eq!(s1, [None, None, Some(6.0), Some(6.0)]);
+
+    // From time 200 on. Typical prices 10 and 35/3, equal volumes.
+    let out = bars.anchored_vwap(AnchoredVwap::new(200))?;
+    let avwap: Vec<_> = out.column("avwap")?.numbers()?.iter().collect();
+    assert_eq!(avwap[..3], [None, None, Some(10.0)]);
+    assert!((avwap[3].unwrap() - 65.0 / 6.0).abs() < 1e-12);
+    Ok(())
+}
+```
+
+What differs from pond-ts:
+
+- A date in another calendar system as a range end
+  (`"2024-01-08[u-ca=gregory]"`) is refused. pond-ts accepts it but then
+  writes the annotation into the session dates, which its own
+  `fromRules` refuses.
+- Session times are whole milliseconds (pond-ts allows fractions), and
+  years past 9999 are refused.
+- Time-zone names follow pond-rs's own copy of the time-zone database, as
+  for calendar buckets (see [Coming from pond-ts](./coming-from-pond-ts)).
+- Not built: `sessionSequence` / `barSequence` (pond-rs's `aggregate`
+  does not take a list of uneven buckets yet) and `discontinuities`
+  (for chart axes; charts stay TypeScript only).
+
 ## Gaps in the prices
 
 A gap in the source column never shifts the rows. What a study does with
@@ -785,6 +937,9 @@ the problem:
   index `min_tick` or a volume index `start` that is not a finite number
   above zero;
 - a balance of power `.ma(…)` without a `.period(…)`;
+- a session list that is out of order on its dates, overlaps, or has a
+  break outside its session; session hours that are not `"HH:MM"`, or
+  close before they open; `.stamped(…)` with a session column;
 - for `macd` and `stochastic_rsi`, a series that already has a column
   named `__macdLine__` or `__stochRsiRsi__`. pond-ts writes its working
   values there, so it refuses them too.
@@ -951,9 +1106,15 @@ At pond-ts's default settings, same machine and setup:
 | `average_price`                    | 4.3               | 5.7              | 23.1    | 4.1×  |
 | `balance_of_power`                 | 5.1               | 4.6              | 25.3    | 5.5×  |
 | `balance_of_power` (14 bars)       | 16.6              | 6.7              | 67.9    | 10×   |
+| `tag_sessions`                     | 2.3               | 1.9              | 18.0    | 9.5×  |
+| `tag_sessions` (`Close`)           | 3.0               | 1.8              | 15.1    | 8.4×  |
+| `session_vwap`                     |                   | 15.5             | 47      | 3.0×  |
+| `pivot_points`                     |                   | 44.9             | 103     | 2.3×  |
+| `pivot_points` (Camarilla)         |                   | 50.1             | 105     | 2.1×  |
+| `anchored_vwap`                    |                   | 6.7              | 28      | 4.2×  |
 
 The machine is a shared virtual machine with four cores, and single runs
-move by up to a third, so read the ratios as rough. The swing index runs on one
+move by up to a third, so read the ratios as rough. The session studies were measured on 4 cores only, on a New York calendar. Pivot points write 7 or 9 new columns, and filling fresh memory is most of their time. The swing index runs on one
 core, so its 1-thread and 4-core times differ only by that noise.
 \*\* With the open as the benchmark. \*\*\* With the open read as the
 close: the test bars close at the middle of each bar, where these three
@@ -979,4 +1140,9 @@ them.
 
 ## Still to come
 
-Trading calendars, and with them the three studies that need trading sessions: pivot points, session VWAP and anchored VWAP.
+The studies are complete. Next on the roadmap is the live (streaming) layer.
+
+Building a calendar from rules is also much faster than in pond-ts: 30
+years with a lunch break takes 3.4 ms, against 1.3 s in pond-ts, which
+uses a slower stand-in for JavaScript's new date library (logged for
+pond-ts as [PND-CALGEN]).
