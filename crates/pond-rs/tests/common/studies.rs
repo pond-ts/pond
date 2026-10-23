@@ -91,6 +91,15 @@ pub const STUDIES: &[&str] = &[
     "correlation",
     "priceRelative",
     "performanceIndex",
+    "obv",
+    "accumulationDistribution",
+    "priceVolumeTrend",
+    "chaikinMoneyFlow",
+    "chaikinOscillator",
+    "moneyFlowIndex",
+    "twiggsMoneyFlow",
+    "forceIndex",
+    "easeOfMovement",
 ];
 
 /// The columns `study` reads with these options: `column` (default
@@ -161,6 +170,24 @@ pub fn sources(study: &str, options: &Map<String, Value>) -> Vec<String> {
         | "gopalakrishnanRangeIndex" => {
             vec![text("high", "high"), text("low", "low")]
         }
+        "obv" | "priceVolumeTrend" | "forceIndex" => {
+            vec![text("close", "close"), text("volume", "volume")]
+        }
+        "accumulationDistribution"
+        | "chaikinMoneyFlow"
+        | "chaikinOscillator"
+        | "moneyFlowIndex"
+        | "twiggsMoneyFlow" => vec![
+            text("high", "high"),
+            text("low", "low"),
+            text("close", "close"),
+            text("volume", "volume"),
+        ],
+        "easeOfMovement" => vec![
+            text("high", "high"),
+            text("low", "low"),
+            text("volume", "volume"),
+        ],
         _ => vec![text("column", "close")],
     }
 }
@@ -794,6 +821,78 @@ pub fn call_study(
             PerformanceIndex::new(text("benchmark").unwrap()).period(int("period", 20)),
             output
         )),
+        "obv" => series.obv(reads!(name_only!(Obv::default(), output), close, volume)),
+        "accumulationDistribution" => series.accumulation_distribution(reads!(
+            name_only!(AccumulationDistribution::default(), output),
+            high,
+            low,
+            close,
+            volume
+        )),
+        "priceVolumeTrend" => series.price_volume_trend(reads!(
+            name_only!(PriceVolumeTrend::default(), output),
+            close,
+            volume
+        )),
+        "chaikinMoneyFlow" => series.chaikin_money_flow(reads!(
+            name_only!(
+                ChaikinMoneyFlow::default().period(int("period", 20)),
+                output
+            ),
+            high,
+            low,
+            close,
+            volume
+        )),
+        "chaikinOscillator" => series.chaikin_oscillator(reads!(
+            name_only!(
+                ChaikinOscillator::default()
+                    .fast(int("fastPeriod", 3))
+                    .slow(int("slowPeriod", 10)),
+                output
+            ),
+            high,
+            low,
+            close,
+            volume
+        )),
+        "moneyFlowIndex" => series.money_flow_index(reads!(
+            name_only!(MoneyFlowIndex::default().period(int("period", 14)), output),
+            high,
+            low,
+            close,
+            volume
+        )),
+        "twiggsMoneyFlow" => series.twiggs_money_flow(reads!(
+            name_only!(TwiggsMoneyFlow::default().period(int("period", 21)), output),
+            high,
+            low,
+            close,
+            volume
+        )),
+        "forceIndex" => series.force_index(reads!(
+            name_only!(ForceIndex::default().period(int("period", 13)), output),
+            close,
+            volume
+        )),
+        "easeOfMovement" => {
+            // pond-ts checks the period before the type.
+            let o = EaseOfMovement::default()
+                .period(int("period", 14))
+                .scale(num("scale", 100_000_000.0));
+            if int("period", 14) == 0 {
+                series.ease_of_movement(o)
+            } else {
+                ma("maType", "sma").and_then(|kind| {
+                    series.ease_of_movement(reads!(
+                        name_only!(o.ma(kind), output),
+                        high,
+                        low,
+                        volume
+                    ))
+                })
+            }
+        }
         other => panic!("no pond-rs call for study '{other}'"),
     })
 }
