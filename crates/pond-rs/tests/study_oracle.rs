@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::studies::{STUDIES, call_study};
+use common::studies::call_study;
 use common::{
     STUDY_TOLERANCE, StudyCase, StudyFixture, check_coverage, compare_column, load_study_fixture,
     report,
@@ -51,9 +51,7 @@ fn bars(fixture: &StudyFixture, case: &StudyCase) -> TimeSeries {
 
 /// Run one case through pond-rs. `None` means the study is not implemented yet.
 fn run(fixture: &StudyFixture, case: &StudyCase) -> Option<BTreeMap<String, Vec<Option<f64>>>> {
-    if !STUDIES.contains(&case.study.as_str()) {
-        return None;
-    }
+    pond_rs::financial::catalog::study_descriptor(&case.study)?;
     // The session studies read the calendar the generator laid its clock
     // out on, rebuilt from the same rules (as study-oracle.test.ts does).
     let mut params = case.params.clone();
@@ -73,7 +71,6 @@ fn run(fixture: &StudyFixture, case: &StudyCase) -> Option<BTreeMap<String, Vec<
         );
     }
     let out = call_study(&bars(fixture, case), &case.study, &params)
-        .expect("oracle calls are expressible")
         .unwrap_or_else(|e| panic!("{}: {e}", case.study));
     Some(
         case.expected
@@ -118,6 +115,10 @@ fn implemented_studies_match_oracle() {
     let fixture = load_study_fixture();
     let mut implemented = 0;
     let mut failures = Vec::new();
+    let names: Vec<&str> = pond_rs::financial::catalog::STUDIES
+        .iter()
+        .map(|d| d.name)
+        .collect();
     for case in &fixture.cases {
         let label = format!(
             "{}({})",
@@ -125,13 +126,7 @@ fn implemented_studies_match_oracle() {
             serde_json::Value::Object(case.params.clone())
         );
         let actual = run(&fixture, case);
-        check_coverage(
-            &label,
-            &case.study,
-            STUDIES,
-            actual.is_some(),
-            &mut failures,
-        );
+        check_coverage(&label, &case.study, &names, actual.is_some(), &mut failures);
         let Some(actual) = actual else {
             continue;
         };
