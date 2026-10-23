@@ -3434,6 +3434,36 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     unchanged. Logged for pond-ts as [PND-RWIBIG]. No other study was slow
     or panicked at 0, 1, 1e9, 1e15 or 2^53.
 
+  **R2 step 5 (done): perf check and agent trial. R2 is complete.**
+  - Perf: every catalog study at its defaults on the same 1M bars,
+    pond-rs (`examples/perf_catalog.rs`, through the catalog runner) and
+    pond-ts (`bench/catalog_pond_ts.mjs`), median of 7, every output bit
+    hashed. Full table: `crates/pond-rs/bench/catalog-results.md`.
+    - All 109 studies give the same bits in pond-ts, pond-rs on 4 cores
+      and pond-rs on one thread.
+    - 4 cores against pond-ts: median 6.1x, from 2.3x (`ema`) to 32.5x
+      (`rollingMax`). Five are under 3x: `ema`, `historicalVolatility`,
+      `rollingPercentile`, `superTrend`, `averagePrice`.
+    - One thread against pond-ts: median 3.9x, from 1.0x
+      (`primeNumberOscillator`). Five are under 1.4x: the prime-number pair
+      and `correlation` / `beta` / `linearRegression` (the shared
+      bivariate kernel). Not investigated; these split across cores
+      (3.6-5.1x on 4).
+  - Agent trial (`bench/agent-trial/r2/README.md`): RSI, Bollinger bands
+    and a New York session VWAP across the March clock change, 10 fresh
+    agents per library. pond-rs 10/10 right (all bit for bit), 0 failed
+    runs; polars 10/10 right, 12 failed runs (every agent had one). No
+    polars agent used polars for the maths; 6 of 10 hard-coded the 2024
+    New York offset, right here and wrong for any other year. Every pond-rs
+    agent used `rsi` + `bollinger` + `session_vwap` with
+    `TradingCalendar::from_rules`.
+  - Friction from the trial (pond-rs, not scheduled): dropping or
+    reordering output columns is roundabout (9/10; `bollinger` always adds
+    `bbMiddle`, `select` keeps the series' order); the calendar route to
+    session VWAP took reading two files (4/10); no `times()` accessor
+    (2/10). All 10 noticed that the prompt's flat-window RSI rule (100)
+    differs from pond-ts's documented gap; the data never has that case.
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).
