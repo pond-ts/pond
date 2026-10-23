@@ -28,8 +28,10 @@ timezones dtype-datetime rolling_window cum_agg round_series abs`.
   task's formulas agrees with pond-ts's answer (RSI and VWAP exactly, bands
   within 4.7e-16 relative).
 - **Grading:** [`check.py`](check.py), run afterwards; the agents never saw
-  it. Same rows, equal times, every value within 1e-9 relative, nulls in
-  the same places. The reference is pond-ts ([`reference.mjs`](reference.mjs)).
+  it. The five columns in the order the task asks, same rows, equal times,
+  every value within 1e-9 relative, nulls in the same places. (The first
+  version of the grader skipped the column order; the Layer-2 review on
+  #830 caught it, and pondrs-03 fails on it.) The reference is pond-ts ([`reference.mjs`](reference.mjs)).
 - **Rules check:** every agent's tool calls were scanned afterwards. None
   ran `cargo` other than through `attempt.sh`, and none read outside its
   folder and its library's source. Two polars agents waited on their own
@@ -37,15 +39,16 @@ timezones dtype-datetime rolling_window cum_agg round_series abs`.
 
 ## Results
 
-|                                         | pond-rs   | polars    |
-| --------------------------------------- | --------- | --------- |
-| right answer                            | **10/10** | **10/10** |
-| answer identical to pond-ts, to the bit | 10/10     | 0/10      |
-| failed runs in total                    | **0**     | **12**    |
-| agents with a failed run                | 0         | 10        |
-| build-and-runs in total                 | 14        | 25        |
-| program length (lines)                  | 35–91     | 117–173   |
-| used the library for the calculation    | 10/10     | 0/10      |
+|                                         | pond-rs  | polars    |
+| --------------------------------------- | -------- | --------- |
+| right answer                            | **9/10** | **10/10** |
+| right values, ignoring column order     | 10/10    | 10/10     |
+| values identical to pond-ts, to the bit | 10/10    | 0/10      |
+| failed runs in total                    | **0**    | **12**    |
+| agents with a failed run                | 0        | 10        |
+| build-and-runs in total                 | 14       | 25        |
+| program length (lines)                  | 35–91    | 117–173   |
+| used the library for the calculation    | 10/10    | 0/10      |
 
 Per run (`0` success, `101` compile error or panic):
 
@@ -54,6 +57,12 @@ Per run (`0` success, `101` compile error or panic):
 - polars: 01, 02, 03, 06, 07, 08 `101 0`; 04 `101 0 0`; 05 `0 101 0`;
   09 `0 101 101 0`;
   10 `101 101 0`.
+
+pondrs-03 has every value right but writes `rsi` last: it dropped `rsi`,
+added its patched copy with `with_column`, then called
+`select(&["rsi", "bbUpper", "bbLower", "vwap"])`, which keeps the series'
+order rather than the order named (documented, and the same as pond-ts's
+`select`). It did not print its output's columns, so it never saw this.
 
 Polars answers differ from pond-ts by at most 6.4e-16 relative, only in the
 bands (each agent recomputed every 20-bar window from scratch; pond-ts keeps
@@ -87,7 +96,7 @@ running sums). RSI and VWAP are identical.
   documented choice (TA-Lib returns 0). The data has no such window. All
   10 pond-rs agents spotted the difference in the source; 8 added a step
   turning those gaps into 100, which changed nothing.
-- **n = 10 per side.** 0 failed runs against 12 points the same way as R1a
+- **n = 10 per side.** 9 against 10 right is one agent, and 0 failed runs against 12 points the same way as R1a
   (2 against 10) and step 4b (1 against 4).
 
 ## What the agents ran into
@@ -101,7 +110,8 @@ running sums). RSI and VWAP are identical.
    `bollinger` always adds `bbMiddle`. Most rebuilt the series with
    `TimeSeries::new` from copied columns; others used `select`, or
    `select(&[])` then `with_column`. Two noted `select` keeps the series'
-   column order rather than the order asked for.
+   column order rather than the order asked for, and it is what cost
+   pondrs-03 its answer (above). There is no way to reorder columns.
 3. **4/10: finding the session-VWAP route took reading `session.rs` and
    `calendar.rs`.** A whole `TradingCalendar` from `SessionRules`, and
    knowing that `Stamped::Open` (the default) means a session holds bars

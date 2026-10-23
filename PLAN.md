@@ -609,7 +609,8 @@ the study oracle) is done.
   statistics, volume, price)~~ — done (anchored VWAP is in step 3); 3. ~~trading calendars, then the session studies (pivot points, session VWAP) and anchored VWAP~~ — done (3a, 3b); 4. ~~the
   catalog~~ — done; 5. ~~perf check and an agent trial~~ — done
   (2026-10-23): all 109 studies same bits, 2.3–32.5x pond-ts on 4 cores;
-  trial 10/10 right both sides, 0 failed runs vs polars' 12. **R2 is
+  trial pond-rs 9/10 right (one wrong column order) vs polars 10/10,
+  0 failed runs vs polars' 12. **R2 is
   complete.** Detail in the breakout plan.
 
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or

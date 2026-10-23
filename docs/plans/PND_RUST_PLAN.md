@@ -3451,15 +3451,17 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
       (3.6-5.1x on 4).
   - Agent trial (`bench/agent-trial/r2/README.md`): RSI, Bollinger bands
     and a New York session VWAP across the March clock change, 10 fresh
-    agents per library. pond-rs 10/10 right (all bit for bit), 0 failed
-    runs; polars 10/10 right, 12 failed runs (every agent had one). No
+    agents per library. pond-rs 9/10 right (all 10 values bit for bit; one
+    wrote `rsi` last because `select` keeps the series' column order), 0
+    failed runs; polars 10/10 right, 12 failed runs (every agent had one). No
     polars agent used polars for the maths; 6 of 10 hard-coded the 2024
     New York offset, right here and wrong for any other year. Every pond-rs
     agent used `rsi` + `bollinger` + `session_vwap` with
     `TradingCalendar::from_rules`.
   - Friction from the trial (pond-rs, not scheduled): dropping or
     reordering output columns is roundabout (9/10; `bollinger` always adds
-    `bbMiddle`, `select` keeps the series' order); the calendar route to
+    `bbMiddle`, `select` keeps the series' order and there is no reorder,
+    which cost one agent its answer); the calendar route to
     session VWAP took reading two files (4/10); no `times()` accessor
     (2/10). All 10 noticed that the prompt's flat-window RSI rule (100)
     differs from pond-ts's documented gap; the data never has that case.

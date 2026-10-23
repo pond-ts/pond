@@ -2,7 +2,8 @@
 
     python check.py <reference.json> <agent out.arrow>
 
-Right answer: the same rows in the same order, equal times (as epoch ms),
+Right answer: the columns time, rsi, bbUpper, bbLower, vwap in that order
+(as the task asks), the same rows in the same order, equal times (as epoch ms),
 and rsi / bbUpper / bbLower / vwap each within 1e-9 relative, with nulls in
 the same places. Prints one JSON line: {"right": bool, "bitwise": bool,
 "why": str}.
@@ -28,6 +29,8 @@ def grade(ref, out):
     for c in ("time",) + COLUMNS:
         if c not in out.column_names:
             return False, False, f"no {c} column; got {out.column_names}"
+    if out.column_names != ["time", *COLUMNS]:
+        return False, False, f"columns out of order: {out.column_names}"
     n = len(ref["time"])
     if out.num_rows != n:
         return False, False, f"{out.num_rows} rows, want {n}"
