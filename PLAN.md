@@ -613,6 +613,17 @@ the study oracle) is done.
   0 failed runs vs polars' 12. **R2 is
   complete.** Detail in the breakout plan.
 
+- **[PND-RUST-R3]** — The live layer in pond-rs (RFC phase R3), drafted
+  2026-10-23 after R2; awaiting pjm17971's review of the plan. Port
+  pond-ts's live layer (`LiveSeries`, views, live aggregation / rolling /
+  reduce, triggers, partitioned live) so that replaying the same events
+  gives the same emissions and snapshots as pond-ts, checked against a new
+  pond-ts replay fixture. Results reach the caller through channels
+  (pjm17971 chose this on 2026-10-24 over an owned pipeline read back by
+  the caller and over pond-ts-style shared handles with callbacks): each
+  operator sends what it emits down a channel the caller holds. Steps 1–6 in the breakout plan; React hooks and charts stay
+  out of scope.
+
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
   independent).
 - **[PND-RUSTDOCS]** — pond-rs pages on the docs site
