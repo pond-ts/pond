@@ -124,3 +124,62 @@ of every output column across all three runs.
 | pivotPoints              | 26.3     | 17.4    | 105.6   | 6.1x  | same |
 
 109 studies; ratio min 2.3x, median 6.1x, max 32.5x; bits differ: none
+
+## Follow-up: the five slowest on one thread (2026-10-24)
+
+The table above put five studies under 1.4x pond-ts on one thread. Re-run 5
+times on another machine (median, one thread, ms), the gap was smaller but
+the same five were still the bottom of the list:
+
+| study                 | pond-rs | pond-ts | ratio |
+| --------------------- | ------- | ------- | ----- |
+| primeNumberBands      | 34.5    | 66.4    | 1.9x  |
+| primeNumberOscillator | 27.5    | 45.7    | 1.7x  |
+| linearRegression      | 35.5    | 62.0    | 1.8x  |
+| beta                  | 33.4    | 53.9    | 1.6x  |
+| correlation           | 31.3    | 117.6   | 3.8x  |
+| sma (for comparison)  | 5.7     | 36.8    | 6.4x  |
+
+Single runs on this machine vary by up to 30%, so small differences were
+checked with instruction counts (valgrind) as well as time.
+
+**Prime studies.** Each row searched for the nearest prime by trial
+division: about 230 instructions a row, most of them 64-bit integer
+divisions, plus two library calls for `floor` / `ceil` (Rust's default x86
+target has no rounding instruction). pond-ts runs the same divisions, so
+neither side could be much faster. Fixed: each stretch of rows now
+remembers the prime found for each whole number (prices revisit the same
+few whole numbers), and rounds by converting to an integer. Same answers
+(a test checks the memo against the plain search, and the 1M-row bit hash
+matches pond-ts on 1 and 4 cores):
+
+| study (ms)            | 1 thread before | after | 4 cores before | after |
+| --------------------- | --------------- | ----- | -------------- | ----- |
+| primeNumberBands      | 37.7            | 19.0  | 14.1           | 9.2   |
+| primeNumberOscillator | 27.4            | 13.1  | 8.9            | 4.6   |
+
+On a slow random walk around 150 the oscillator went 33-45 ms to 6-10 ms;
+on prices that never repeat a whole number nothing changes (each row still
+searches). Tried and dropped: 32-bit division (no gain; the compiler
+already uses it when the numbers fit).
+
+**correlation / beta / linearRegression.** Not changed. The shared kernels
+(`bivariate.rs`, `regression.rs`) do the arithmetic pond-ts specifies for
+accuracy (shifted frame, Welford updates, a full refit of the window every
+`period` rows): about 250 instructions a row for the bivariate kernel and
+150-180 for regression, and the core runs them close to its limit of ~4 a
+cycle. pond-ts writes these as tight loops over number arrays, which V8
+compiles nearly as well: kernel alone, pond-ts takes 31-46 ms on returns
+(beta's input) against pond-rs 20-30 ms, and 98 ms against 21 ms on prices
+(correlation's). The rest of each study is output columns, the same in
+both. Three bit-for-bit changes were tried and measured, none worth the
+code:
+
+- sweeping 4 stretches side by side (to overlap waiting on divisions): no
+  gain, so the kernel is not waiting, it is busy;
+- skipping the updates a rebuild row throws away: -4% instructions at
+  period 5, none at 30;
+- packing the x and y moments into pairs: -6% instructions, 6-9% faster.
+
+The remaining lever is hand-written SIMD over several stretches at once,
+which needs unsafe code for perhaps 1.3x on one thread; not done.
