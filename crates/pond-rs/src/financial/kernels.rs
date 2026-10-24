@@ -1297,8 +1297,8 @@ pub(crate) fn nearest_prime(x: f64) -> f64 {
 /// starts from. Prices revisit the same few whole numbers row after row,
 /// so most rows find their prime here rather than by trial division. The
 /// answers are those of pond-ts `primeAtOrAbove`, `primeAtOrBelow` and
-/// `nearestPrime` (the test-only functions above, which a test checks the
-/// memo against).
+/// `nearestPrime` (the test-only functions above are their line-by-line
+/// port, kept as the reference a test checks the memo against).
 pub(crate) struct PrimeMemo {
     above: Vec<(u64, f64)>,
     below: Vec<(u64, f64)>,
@@ -1564,7 +1564,11 @@ mod tests {
         let mut values = vec![
             f64::NAN,
             f64::INFINITY,
+            f64::NEG_INFINITY,
+            -0.0,
             -3.0,
+            100.99999999999999,
+            101.00000000000001,
             0.0,
             1.99,
             2.0,
