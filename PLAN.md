@@ -618,10 +618,10 @@ the study oracle) is done.
   pond-ts's live layer (`LiveSeries`, views, live aggregation / rolling /
   reduce, triggers, partitioned live) so that replaying the same events
   gives the same emissions and snapshots as pond-ts, checked against a new
-  pond-ts replay fixture. Open choice (asked 2026-10-23): how results reach
-  the caller; the draft assumes an owned pipeline (`push()` updates owned
-  operators, results read back), not pond-ts-style shared handles and
-  callbacks. Steps 1–6 in the breakout plan; React hooks and charts stay
+  pond-ts replay fixture. Results reach the caller through channels
+  (pjm17971 chose this on 2026-10-24 over an owned pipeline read back by
+  the caller and over pond-ts-style shared handles with callbacks): each
+  operator sends what it emits down a channel the caller holds. Steps 1–6 in the breakout plan; React hooks and charts stay
   out of scope.
 
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
