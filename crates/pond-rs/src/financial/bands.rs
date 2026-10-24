@@ -323,9 +323,10 @@ impl TimeSeries {
         let mut lower = vec![0.0; high.len()];
         // Each row stands alone, so stretches of rows can run on any core.
         par::fill_chunks(&mut upper, &mut lower, 1 << 14, |start, upper, lower| {
+            let mut primes = kernels::PrimeMemo::new();
             for (k, (u, l)) in upper.iter_mut().zip(lower.iter_mut()).enumerate() {
-                *u = kernels::prime_at_or_above(high[start + k]);
-                *l = kernels::prime_at_or_below(low[start + k]);
+                *u = primes.at_or_above(high[start + k]);
+                *l = primes.at_or_below(low[start + k]);
             }
         });
         self.study_outputs(CALL, names.into_iter().zip([upper, lower]))

@@ -3447,8 +3447,15 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     - One thread against pond-ts: median 3.9x, from 1.0x
       (`primeNumberOscillator`). Five are under 1.4x: the prime-number pair
       and `correlation` / `beta` / `linearRegression` (the shared
-      bivariate kernel). Not investigated; these split across cores
-      (3.6-5.1x on 4).
+      bivariate kernel). These split across cores (3.6-5.1x on 4).
+    - Follow-up (2026-10-24, `catalog-results.md` "Follow-up"): the prime
+      pair spent its time on trial division per row (and library
+      `floor`/`ceil`); a per-stretch memo of the prime for each whole
+      number took them to 19.0 / 13.1 ms on one thread (from 37.7 /
+      27.4), same bits. The bivariate trio is bound by the arithmetic
+      pond-ts specifies, which V8 compiles nearly as well as Rust; three
+      bit-exact tweaks gave 0-9% and were not kept. Hand-written SIMD is
+      the one lever left (unsafe code, maybe 1.3x); not scheduled.
   - Agent trial (`bench/agent-trial/r2/README.md`): RSI, Bollinger bands
     and a New York session VWAP across the March clock change, 10 fresh
     agents per library. pond-rs 9/10 right (all 10 values bit for bit; one

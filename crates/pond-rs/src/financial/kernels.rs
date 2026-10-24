@@ -1249,22 +1249,35 @@ fn is_prime(n: u64) -> bool {
 
 /// pond-ts `primeAtOrAbove`: the smallest prime `>= x`; `NaN` outside
 /// `[2, MAX_PRIME_INPUT]` or when no prime up to that limit qualifies.
+#[cfg(test)]
 pub(crate) fn prime_at_or_above(x: f64) -> f64 {
     if !x.is_finite() || x < 2.0 || x > MAX_PRIME_INPUT as f64 {
         return f64::NAN;
     }
-    (x.ceil() as u64..=MAX_PRIME_INPUT)
+    prime_from(x.ceil() as u64)
+}
+
+/// The smallest prime `>= n` (`n` at least 2), or `NaN` past
+/// [`MAX_PRIME_INPUT`].
+fn prime_from(n: u64) -> f64 {
+    (n..=MAX_PRIME_INPUT)
         .find(|&n| is_prime(n))
         .map_or(f64::NAN, |n| n as f64)
 }
 
 /// pond-ts `primeAtOrBelow`: the largest prime `<= x`; `NaN` outside
 /// `[2, MAX_PRIME_INPUT]`.
+#[cfg(test)]
 pub(crate) fn prime_at_or_below(x: f64) -> f64 {
     if !x.is_finite() || x < 2.0 || x > MAX_PRIME_INPUT as f64 {
         return f64::NAN;
     }
-    (2..=x.floor() as u64)
+    prime_to(x.floor() as u64)
+}
+
+/// The largest prime `<= n` (`n` at least 2).
+fn prime_to(n: u64) -> f64 {
+    (2..=n)
         .rev()
         .find(|&n| is_prime(n))
         .map_or(f64::NAN, |n| n as f64)
@@ -1273,10 +1286,82 @@ pub(crate) fn prime_at_or_below(x: f64) -> f64 {
 /// pond-ts `nearestPrime`: the prime nearest `x`, the lower one on a tie;
 /// a gap outside the prime ladder (both sides are gaps there, and a
 /// comparison with a gap picks the upper one, as in pond-ts).
+#[cfg(test)]
 pub(crate) fn nearest_prime(x: f64) -> f64 {
     let below = prime_at_or_below(x);
     let above = prime_at_or_above(x);
     if x - below <= above - x { below } else { above }
+}
+
+/// Remembers recent prime searches, keyed by the whole number a search
+/// starts from. Prices revisit the same few whole numbers row after row,
+/// so most rows find their prime here rather than by trial division. The
+/// answers are those of pond-ts `primeAtOrAbove`, `primeAtOrBelow` and
+/// `nearestPrime` (the test-only functions above, which a test checks the
+/// memo against).
+pub(crate) struct PrimeMemo {
+    above: Vec<(u64, f64)>,
+    below: Vec<(u64, f64)>,
+}
+
+/// `x.floor()` for `x` in `[2, MAX_PRIME_INPUT]`, by truncation to a
+/// signed integer: one instruction, where `floor` and `ceil` are library
+/// calls on x86 cores without SSE4.1 (Rust's default target) and a cast
+/// straight to unsigned takes several. Exact, as every whole number in
+/// that range is a double.
+#[inline]
+fn whole_part(x: f64) -> u64 {
+    x as i64 as u64
+}
+
+/// Slots in each [`PrimeMemo`] table (a power of two).
+const PRIME_MEMO_SLOTS: usize = 1024;
+
+impl PrimeMemo {
+    pub(crate) fn new() -> Self {
+        // No search starts below 2, so key 0 marks an empty slot.
+        PrimeMemo {
+            above: vec![(0, 0.0); PRIME_MEMO_SLOTS],
+            below: vec![(0, 0.0); PRIME_MEMO_SLOTS],
+        }
+    }
+
+    /// pond-ts `primeAtOrAbove`: the smallest prime `>= x`; `NaN` outside
+    /// `[2, MAX_PRIME_INPUT]` or when no prime up to that limit qualifies.
+    pub(crate) fn at_or_above(&mut self, x: f64) -> f64 {
+        if !x.is_finite() || x < 2.0 || x > MAX_PRIME_INPUT as f64 {
+            return f64::NAN;
+        }
+        let n = whole_part(x);
+        let n = n + u64::from((n as i64 as f64) < x);
+        let slot = &mut self.above[n as usize & (PRIME_MEMO_SLOTS - 1)];
+        if slot.0 != n {
+            *slot = (n, prime_from(n));
+        }
+        slot.1
+    }
+
+    /// pond-ts `primeAtOrBelow`: the largest prime `<= x`; `NaN` outside
+    /// `[2, MAX_PRIME_INPUT]`.
+    pub(crate) fn at_or_below(&mut self, x: f64) -> f64 {
+        if !x.is_finite() || x < 2.0 || x > MAX_PRIME_INPUT as f64 {
+            return f64::NAN;
+        }
+        let n = whole_part(x);
+        let slot = &mut self.below[n as usize & (PRIME_MEMO_SLOTS - 1)];
+        if slot.0 != n {
+            *slot = (n, prime_to(n));
+        }
+        slot.1
+    }
+
+    /// pond-ts `nearestPrime`: the prime nearest `x`, the lower one on a
+    /// tie; a gap outside the prime ladder.
+    pub(crate) fn nearest(&mut self, x: f64) -> f64 {
+        let below = self.at_or_below(x);
+        let above = self.at_or_above(x);
+        if x - below <= above - x { below } else { above }
+    }
 }
 
 /// pond-ts `rollingMeanAbsDevValues`: each full, gap-free window's mean
@@ -1467,6 +1552,47 @@ mod tests {
         assert_eq!(prime_at_or_above(largest - 1.0), largest);
         assert!(prime_at_or_above(largest + 1.0).is_nan());
         assert!(prime_at_or_above((1u64 << 53) as f64).is_nan());
+    }
+
+    /// The memo gives the plain searches' answers, through slot clashes
+    /// (keys 1024 apart), revisits, values past 2^32 and off the ladder.
+    #[test]
+    fn prime_memo_matches_the_plain_searches() {
+        let mut memo = PrimeMemo::new();
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let largest = ((1u64 << 53) - 111) as f64;
+        let mut values = vec![
+            f64::NAN,
+            f64::INFINITY,
+            -3.0,
+            0.0,
+            1.99,
+            2.0,
+            2.5,
+            3.0,
+            4.0,
+            u32::MAX as f64,
+            u32::MAX as f64 + 0.5,
+            4_294_967_311.0,
+            largest - 1.0,
+            largest,
+            largest + 1.0,
+            ((1u64 << 53) - 1) as f64,
+        ];
+        for _ in 0..20_000 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let base = [100.0, 1124.0, 2148.0, 65_521.0, 4_294_967_000.0][(x % 5) as usize];
+            values.push(base + (x >> 40) as f64 % 50.0 / 4.0);
+        }
+        // Twice over, so the second pass reads remembered answers.
+        for &v in values.iter().chain(&values) {
+            let bits = |a: f64| if a.is_nan() { u64::MAX } else { a.to_bits() };
+            assert_eq!(bits(memo.at_or_above(v)), bits(prime_at_or_above(v)), "{v}");
+            assert_eq!(bits(memo.at_or_below(v)), bits(prime_at_or_below(v)), "{v}");
+            assert_eq!(bits(memo.nearest(v)), bits(nearest_prime(v)), "{v}");
+        }
     }
 
     /// Noisy input with gaps, runs of gaps, signed zeros, stored
