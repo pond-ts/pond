@@ -3478,17 +3478,23 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     test): each case is a schema, options, an operator chain and a list of
     pushes / clock ticks, with every emission and the final snapshot
     recorded. Numbers in snapshots go through the batch parity rules.
-  - Open choice (card posted 2026-10-23): how results reach the caller.
-    pond-ts views subscribe to their source with callbacks (`on('event')`
-    → unsubscribe). The Rust equivalent needs shared mutable handles
-    (`Rc<RefCell<…>>`), which agents find hard. The draft assumes **an
-    owned pipeline**: a `LiveSeries` owns the operators built on it;
-    `push` / `push_many` update them synchronously; callers read back
-    (`latest()`, `drain()` of new emissions, `to_time_series()`), with an
-    optional `FnMut` callback per operator. Everything is `Send`, so a
-    pipeline can move into a thread or async task. The alternatives on the
-    card: pond-ts-shaped shared handles + closures, or one channel per
-    operator.
+  - How results reach the caller: **channels** (pjm17971 chose this on
+    2026-10-24, from a card offering also an owned pipeline read back by
+    the caller, and pond-ts-shaped shared handles with closures). pond-ts
+    views subscribe to their source with callbacks (`on('event')` →
+    unsubscribe); the direct Rust port needs shared mutable handles
+    (`Rc<RefCell<…>>`), which agents find hard. Instead each operator
+    sends what it emits (an event, a closed bucket, a rolling row, an
+    eviction) down a channel, and the caller holds the receiving end.
+    Defaults to settle in step 1 and confirm in its PR: the operators
+    still run inside `push` / `push_many` (so a push sends every emission
+    it causes before it returns, in pond-ts's order, and a replay is
+    deterministic); `std::sync::mpsc` (no new dependency; works from any
+    thread, and an async app can forward it); an unbounded channel by
+    default so a slow reader never blocks ingest, with a bounded option;
+    a dropped receiver unsubscribes that output. Everything is `Send`, so
+    a pipeline can move into a thread. Snapshots (`to_time_series()`) stay
+    plain calls.
   - Steps (one PR each, parity + perf against pond-ts in each):
     1. `LiveSeries`: schema, `push` / `push_many` / `push_json`, ordering
        (`strict` / `drop` / `reorder` with `grace_window`), retention
