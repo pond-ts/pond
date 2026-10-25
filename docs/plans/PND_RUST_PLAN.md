@@ -3473,6 +3473,105 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     (2/10). All 10 noticed that the prompt's flat-window RSI rule (100)
     differs from pond-ts's documented gap; the data never has that case.
 
+- **[PND-RUST-R3]** — the live layer (drafted 2026-10-23, after R2; revised
+  twice on 2026-10-25 after two reviews of the plan; not started). RFC
+  phase R3: pond-ts `packages/core/src/live/`, 9.7k lines (`LiveSeries`
+  1.65k, partitioned 1.6k + 1.15k rolling, `LiveView` 1.2k, rolling / fused
+  rolling 1.3k, aggregation 0.5k, reduce 0.5k, storage 1.4k, triggers
+  0.2k).
+  - Exactness: each push returns the same list of outputs as pond-ts
+    dispatches for it (every kind, in order), and every operator's state
+    after the last push matches, bit for bit. Checked against a new fixture
+    written by pond-ts (`packages/core/test/fixtures/live-parity.json`,
+    kept fresh by a pond-ts test, like `parity.json`). A case is a schema,
+    options, a list of nodes (`{id, op, from, args}`, each created at a
+    given push index so a view's replay of existing history is pinned),
+    and a list of pushes, each with the ordered outputs it caused
+    (`{node, kind, payload}`, recorded by one pond-ts listener per kind
+    per node, in dispatch order), then `final` (rows for series and views,
+    closed and open buckets, `value()`). `filter` / `map` use a small named
+    predicate set (`gt` / `lt` / `eq` on one column) both sides implement.
+    No clock input and no pause markers: pond-ts triggers and `max_age`
+    run on event times only.
+  - Design (proposed by the second review 2026-10-25, which built a 332-line
+    Rust prototype; replaces the channels design pjm17971 picked on
+    2026-10-24; he confirmed the switch on 2026-10-25): **one owner, typed handles,
+    ordered outputs.** The root `LiveSeries` owns every operator built from
+    it in a flat list (an arena); building one returns a `Copy + Send`
+    handle `Node<T>` with no lifetime, and the caller queries through it
+    (`live[bars].closed()`, `live[vwap].value()`). `push` / `push_many`
+    run pond-ts's phases (each row's events down the tree → retention →
+    batch → evict, then a settle phase where `reduce` emits) and return
+    `Result<Vec<Output>, PondError>` in that order; nothing inside calls
+    user code, blocks or drops. So no `Rc` / `RefCell` / `Mutex`, no
+    re-entrant push queue, no listener errors, and no channel dependency.
+    Channels, `tokio::sync::watch` (latest value only, e.g. an MCP tool)
+    or a plain function are the caller's choice downstream: a short
+    adapter, shown in the docs. Reads from another task: the caller puts
+    the owner behind `Arc<Mutex<_>>` or publishes a snapshot after each
+    push. Works under WASM (R4), where a blocking `recv()` does not.
+    Details:
+    - Outputs are opt-in per node and kind (`live.watch(node, kind)`), so
+      a push builds no output a caller doesn't want; pond-ts likewise
+      builds row objects only when a row listener is attached
+      (`live-series.ts` "row-materialising listeners"). A
+      `push_into(&mut Vec<Output>)` form reuses the caller's buffer.
+    - `push_many` validates the whole batch, then commits it whole, then
+      returns outputs (the chunked backing's behaviour; no half-committed
+      batch is ever visible). `drop` mode keeps counting `rejected`.
+    - `live.remove(node)` removes the node and its subtree (pond-ts
+      `dispose`). Slots are kept and marked removed, so a stale handle
+      returns `Err`, never another node; a handle used with the wrong
+      owner or type returns `Err` too.
+    - The live buffer is per-column with sealed chunks plus a mutable tail;
+      `to_time_series()` shares sealed chunks by `Arc` rather than
+      copying row by row.
+    - Live rolling reuses R1's incremental window states
+      (`rolling.rs` `trait WindowState`), as pond-ts reuses
+      `rollingStateFor`.
+  - `reduce` timing (first review 2026-10-25, reproduced): pond-ts
+    `LiveReduce` emits from a `queueMicrotask`, so three `push()` calls
+    with no `await` between them give ONE output (6) instead of 1, 3, 6,
+    and `count(2)` over four such pushes gives 10, 10 instead of 3, 10.
+    Logged as [PND-REDUCETICK]. Proposed: fix pond-ts first (an internal
+    end-of-push hook after `'evict'`; `reduce` flushes there), in its own
+    reviewed PR before the fixture is generated. pond-rs's settle phase is
+    then an exact copy. Until it lands, parity checks `reduce`'s final
+    value only.
+  - Steps (one PR each, parity + perf against pond-ts in each):
+    1. The replay fixture generator in `packages/core/test/` (a few dozen
+       cases across every operator), the Rust runner that compares, and
+       the pond-ts [PND-REDUCETICK] fix.
+    2. Owner and handles on a small chain: `LiveSeries` (schema, `push` /
+       `push_many` / `push_json`, ordering `strict` / `drop` / `reorder`
+       with `grace_window`, retention `max_events` / `max_age`, `clear`,
+       key queries `at` / `first` / `last` / `bisect` / `at_or_before` /
+       `find` / `some` / `every` / `includes_key`, `time_range` /
+       `event_rate`, snapshots incl. `to_json` / `from_json`, `stats`),
+       plus `filter` and a fixed-bucket `aggregate` queried through
+       handles, `watch`, and `remove`.
+    3. Views: `map`, `select`, `sample`, `window`; live `diff` / `rate` /
+       `pct_change` / `fill` / `cumulative`.
+    4. Rolling: single-window (`LiveRollingAggregation`), fused
+       multi-window (`LiveFusedRolling`), `reduce`.
+    5. Triggers (`event`, `clock(sequence)`, `every(duration)`,
+       `count(n)`; calendar sequences refused for clock triggers) across
+       rolling, reduce and the full `LiveAggregation` (closed and open
+       buckets).
+    6. Partitioned: `partition_by` (a node owning one subtree per key),
+       `to_map` / `apply` / `collect` (append-only fan-in), partitioned
+       fused rolling with synchronised emission.
+    7. Perf (events per second, pond-ts vs pond-rs) and an agent trial on
+       a streaming task against polars-or-hand-written Rust; also the same
+       task with a channel-style API vs owner-and-handles, to test rather
+       than assume which agents get right.
+  - Out of scope: React hooks, charts, live financial studies (none exist
+    in pond-ts), and `@pond-ts/process` (RFC decision 4), including its
+    `fromLive` binding. So R3 gives live series and studies, not the
+    process layer's op registry, envelopes or wire format; an app that
+    needs those keeps using `@pond-ts/process` in TypeScript, or a process
+    port becomes its own phase.
+
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as
   one thread (fixed chunks, ordered combine).
