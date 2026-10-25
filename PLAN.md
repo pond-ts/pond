@@ -621,7 +621,7 @@ the study oracle) is done.
   ends in the same state, checked against a new pond-ts replay fixture.
   Design (pjm17971 switched to it from channels on 2026-10-25): the root series owns every operator; callers
   hold copyable handles to query them; `push` returns a `Vec<Output>`;
-  channels are a caller-side adapter. `reduce` waits on [PND-REDUCETICK].
+  channels are a caller-side adapter. pond-ts `reduce` now emits at the end of each push ([PND-REDUCETICK], done).
   Steps 1–7 in the breakout plan; React hooks, charts and
   `@pond-ts/process` stay out of scope.
 
@@ -894,11 +894,6 @@ Robustness debt plus the queued composition workstreams. Plan:
   exact-removal eviction channel.
 - **[PND-TAPOBS]** — Evaluate `tap()` per-partition observer now that fused
   rolling shipped.
-- **[PND-REDUCETICK]** — `live.reduce` emits from a microtask, so several
-  `push()` calls with no `await` between them give one output instead of one
-  each (contrary to its own doc), and `count(n)` repeats the final value.
-  Fix: emit at the end of each push call. Found 2026-10-25 reviewing the
-  pond-rs R3 plan; blocks pond-rs `reduce` parity.
 - **[PND-LIVEAPPEND]** — Live `rolling` / `diff` / `rate` / `pctChange` don't
   take the batch `{ append: true }` / `{ output }` options added in
   [PND-CHAIN] (2026-10-22). Add them if a live consumer asks; batch-only for

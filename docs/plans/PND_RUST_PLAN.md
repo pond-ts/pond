@@ -3533,11 +3533,10 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     `LiveReduce` emits from a `queueMicrotask`, so three `push()` calls
     with no `await` between them give ONE output (6) instead of 1, 3, 6,
     and `count(2)` over four such pushes gives 10, 10 instead of 3, 10.
-    Logged as [PND-REDUCETICK]. Proposed: fix pond-ts first (an internal
-    end-of-push hook after `'evict'`; `reduce` flushes there), in its own
-    reviewed PR before the fixture is generated. pond-rs's settle phase is
-    then an exact copy. Until it lands, parity checks `reduce`'s final
-    value only.
+    Logged as [PND-REDUCETICK] and fixed in pond-ts 2026-10-25 (an
+    internal end-of-push hook after `'evict'`; `reduce` flushes there;
+    construction replay still emits on a microtask). pond-rs's settle
+    phase is an exact copy.
   - Steps (one PR each, parity + perf against pond-ts in each):
     1. The replay fixture generator in `packages/core/test/` (a few dozen
        cases across every operator), the Rust runner that compares, and
