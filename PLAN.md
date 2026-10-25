@@ -614,16 +614,16 @@ the study oracle) is done.
   complete.** Detail in the breakout plan.
 
 - **[PND-RUST-R3]** — The live layer in pond-rs (RFC phase R3), drafted
-  2026-10-23 after R2, revised 2026-10-25 after a review; awaiting
-  pjm17971's review of the plan. Port pond-ts's live layer (`LiveSeries`,
-  views, live aggregation / rolling / reduce, triggers, partitioned live) so
-  that replaying the same pushes gives the same outputs and snapshots as
-  pond-ts, checked against a new pond-ts replay fixture. Results reach the
-  caller through channels (pjm17971 chose this on 2026-10-24): one
-  subscription per operator carrying all its output kinds in order, a slow
-  reader never blocks the feed, and operators are reached through cloneable
-  handles so other threads can query current state. `reduce` waits on
-  [PND-REDUCETICK]. Steps 1–6 in the breakout plan; React hooks, charts and
+  2026-10-23 after R2, revised twice 2026-10-25 after two reviews; awaiting
+  pjm17971's review. Port pond-ts's live layer (`LiveSeries`, views, live
+  aggregation / rolling / reduce, triggers, partitioned live) so each push
+  returns the same ordered list of outputs as pond-ts and every operator
+  ends in the same state, checked against a new pond-ts replay fixture.
+  Proposed design (replacing the channels choice of 2026-10-24, pending
+  pjm17971's confirmation): the root series owns every operator; callers
+  hold copyable handles to query them; `push` returns a `Vec<Output>`;
+  channels are a caller-side adapter. `reduce` waits on [PND-REDUCETICK].
+  Steps 1–7 in the breakout plan; React hooks, charts and
   `@pond-ts/process` stay out of scope.
 
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
