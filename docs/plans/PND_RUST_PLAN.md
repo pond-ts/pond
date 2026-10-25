@@ -3495,7 +3495,7 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     run on event times only.
   - Design (proposed by the second review 2026-10-25, which built a 332-line
     Rust prototype; replaces the channels design pjm17971 picked on
-    2026-10-24, pending his confirmation): **one owner, typed handles,
+    2026-10-24; he confirmed the switch on 2026-10-25): **one owner, typed handles,
     ordered outputs.** The root `LiveSeries` owns every operator built from
     it in a flat list (an arena); building one returns a `Copy + Send`
     handle `Node<T>` with no lifetime, and the caller queries through it

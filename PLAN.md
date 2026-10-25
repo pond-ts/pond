@@ -619,8 +619,7 @@ the study oracle) is done.
   aggregation / rolling / reduce, triggers, partitioned live) so each push
   returns the same ordered list of outputs as pond-ts and every operator
   ends in the same state, checked against a new pond-ts replay fixture.
-  Proposed design (replacing the channels choice of 2026-10-24, pending
-  pjm17971's confirmation): the root series owns every operator; callers
+  Design (pjm17971 switched to it from channels on 2026-10-25): the root series owns every operator; callers
   hold copyable handles to query them; `push` returns a `Vec<Output>`;
   channels are a caller-side adapter. `reduce` waits on [PND-REDUCETICK].
   Steps 1–7 in the breakout plan; React hooks, charts and
