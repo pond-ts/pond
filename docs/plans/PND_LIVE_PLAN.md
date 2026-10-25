@@ -137,7 +137,7 @@ slim observation (per-host gauges, debug instrumentation) without reducer
 state. Re-triage now that fused rolling shipped — may be a small bolt-on on
 the shared dispatch path; may earn its own RFC. Don't pre-decide.
 
-### [PND-REDUCETICK] — `live.reduce` output count depends on where the caller awaits
+### [PND-REDUCETICK] — `live.reduce` output count depends on where the caller awaits — **fixed 2026-10-25**
 
 Found 2026-10-25 by a review of the pond-rs R3 plan, reproduced on main
 (9bf0b1d). `LiveReduce` emits from a `queueMicrotask` (`live-reduce.ts`
@@ -161,6 +161,22 @@ retention and `'evict'`, through an internal "push finished" hook on
 `LiveSeries` instead of a microtask. Behaviour change for callers who push
 several times without awaiting (they get one output per push again). The
 pond-rs live layer ([PND-RUST-R3]) waits on this for `reduce` parity.
+
+**Outcome (2026-10-25, pjm17971 said "fix it").** `LiveSeries` got an
+internal end-of-push hook (`_onSettle`, `src/live/settle.ts`): it fires once
+per push from the outermost re-entrancy guard, after `'evict'`, while still
+guarded, so a push made by a settle listener is queued like any re-entrant
+push. `LiveView`, `LiveAggregation`, `LiveRollingAggregation` and
+`LiveReduce` forward it to their source, so a reduce over a view (or a view
+over an aggregation) reaches the root series. `LiveReduce` flushes its
+pending emission there. Kept, deliberately: the construction-replay
+emission stays on a microtask (listeners attach after the constructor
+returns, so a synchronous emit would reach nobody), and a custom
+`LiveSource` without the hook falls back to the microtask. `count(n)` over
+one `pushMany` still emits floor(K / n) copies of the post-push value
+(documented; per-row values are not available after retention). Not
+changed: `LiveFusedRolling` and partitioned sources don't forward the hook,
+since neither is a `reduce` source today. Tests: `test/live/reducetick.test.ts`.
 
 ## Decisions
 

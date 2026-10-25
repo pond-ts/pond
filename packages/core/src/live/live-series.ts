@@ -255,6 +255,8 @@ export class LiveSeries<S extends SeriesSchema> {
   readonly #onEvent: ListenerSet<EventListener<S>>;
   readonly #onBatch: ListenerSet<BatchListener<S>>;
   readonly #onEvict: ListenerSet<EvictListener<S>>;
+  /** [PND-REDUCETICK] End-of-push listeners; see `settle.ts`. */
+  readonly #onSettle: ListenerSet<() => void> = new ListenerSet();
   /**
    * [PND-LIVFIX] Re-entrancy guard. `> 0` while a push is fanning out to
    * listeners. A push that arrives from inside a listener (`#dispatchDepth
@@ -465,6 +467,16 @@ export class LiveSeries<S extends SeriesSchema> {
     return this.#storage.at(this.bisect(key));
   }
 
+  /**
+   * @internal [PND-REDUCETICK] Subscribe to the end of every push: fires
+   * once per `push` / `pushMany` / `pushJson` (and each internal push),
+   * after `'evict'`, still inside the push. See `settle.ts`.
+   */
+  _onSettle(fn: () => void): () => void {
+    this.#onSettle.add(fn);
+    return () => this.#onSettle.delete(fn);
+  }
+
   push(...rows: RowForSchema<S>[]): void {
     this.pushMany(rows);
   }
@@ -587,6 +599,14 @@ export class LiveSeries<S extends SeriesSchema> {
     } catch (error) {
       failure = { error };
     } finally {
+      // [PND-REDUCETICK] Settle once per push, after every phase, from the
+      // outermost guard only and while still guarded, so a push made by a
+      // settle listener is queued like any other re-entrant push.
+      if (this.#dispatchDepth === 1 && this.#onSettle.size > 0) {
+        const errors: unknown[] = [];
+        this.#dispatch(this.#onSettle, undefined, errors);
+        if (errors.length > 0) failure ??= { error: errors[0] };
+      }
       this.#dispatchDepth -= 1;
     }
     if (this.#dispatchDepth === 0 && !this.#draining) {

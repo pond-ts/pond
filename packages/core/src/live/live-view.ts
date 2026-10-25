@@ -1,4 +1,5 @@
 import { ListenerSet } from './listener-set.js';
+import { onSourceSettle } from './settle.js';
 import { Event } from '../core/event.js';
 import { ValidationError } from '../core/errors.js';
 import { LiveAggregation } from './live-aggregation.js';
@@ -221,6 +222,11 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
 
   get length(): number {
     return this.#events.length;
+  }
+
+  /** @internal [PND-REDUCETICK] Forward the end-of-push hook to the source. */
+  _onSettle(fn: () => void): (() => void) | undefined {
+    return onSourceSettle(this.#source, fn);
   }
 
   at(index: number): EventForSchema<S> | undefined {

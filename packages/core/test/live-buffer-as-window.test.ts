@@ -22,13 +22,10 @@ function makeLive() {
 }
 
 /**
- * `LiveReduce` defers trigger fires to a `queueMicrotask` so the
- * snapshot reflects the post-retention buffer state. Tests that
- * inspect emitted output (`r.length`, `r.at(i)`, listener payloads)
- * must yield to microtasks first.
- *
- * `r.value()` reads reducer state synchronously and doesn't need
- * the flush.
+ * `LiveReduce` emits at the end of each push ([PND-REDUCETICK]), so
+ * most `await flush()` calls below are no longer needed; they stay as
+ * a check that awaiting changes nothing. The construction-replay
+ * emission still arrives on a microtask.
  */
 const flush = () => new Promise<void>((resolve) => queueMicrotask(resolve));
 
