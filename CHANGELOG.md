@@ -78,6 +78,19 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **`live.reduce` emits at the end of each push** ([PND-REDUCETICK]). It used
+  to emit from a microtask, so several `push()` calls with no `await` between
+  them shared one output: three pushes of 1, 2, 3 under a `sum` gave one output
+  (6) instead of 1, 3, 6, and `Trigger.count(2)` over four pushes gave 10, 10
+  instead of 3, 10. Now every `push` / `pushMany` / `pushJson` call emits
+  synchronously, after retention, before it returns, whether or not the caller
+  awaits. Code that awaited between pushes sees no change; code that pushed
+  several times without awaiting now gets one output per push. A `pushMany`
+  still emits once. A reduce built over a source that already holds events
+  still emits its replay once, on a microtask.
+
 ### Added
 
 - **Chain-friendly options on `rolling`, `diff`, `rate` and `pctChange`**

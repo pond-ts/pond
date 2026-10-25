@@ -1,3 +1,4 @@
+import { onSourceSettle } from './settle.js';
 import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
@@ -213,6 +214,8 @@ export class LiveRollingAggregation<
   readonly #historyMaxEvents: number;
   readonly #historyMaxAgeMs: number;
 
+  readonly #settleSource: unknown;
+
   constructor(
     source: LiveSource<S>,
     window: RollingWindow,
@@ -293,6 +296,7 @@ export class LiveRollingAggregation<
       this.#ingest(source.at(i)!);
     }
 
+    this.#settleSource = source;
     this.#unsubscribe = source.on('event', (event) => {
       this.#ingest(event);
       const val = this.value();
@@ -302,6 +306,11 @@ export class LiveRollingAggregation<
 
   get length(): number {
     return this.#outputEvents.length;
+  }
+
+  /** @internal [PND-REDUCETICK] Forward the end-of-push hook to the source. */
+  _onSettle(fn: () => void): (() => void) | undefined {
+    return onSourceSettle(this.#settleSource, fn);
   }
 
   at(index: number): EventForSchema<Out> | undefined {
