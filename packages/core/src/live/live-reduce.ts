@@ -86,14 +86,16 @@ declare function queueMicrotask(callback: () => void): void;
  * Users wanting per-row emissions should reach for
  * `LiveRollingAggregation` over a buffer-sized window instead.
  *
- * A source without the end-of-push hook (a custom `LiveSource`)
- * falls back to the old microtask.
+ * An event that reaches it outside any push (construction replay,
+ * an upstream reduce's replay emission, or a custom `LiveSource`
+ * without the end-of-push hook) is emitted on a microtask instead.
  *
  * **Construction-time replay.** Sources with existing buffer
  * content at construction replay through `#ingest`. With
  * `Trigger.event()` this fires ONE emission on a microtask
  * after construction (listeners attach after the constructor
- * returns); a push before that microtask merges into it. Test pin: `it('replay emits one deferred event ...')`.
+ * returns); a push before that microtask merges into it. Test
+ * pin: `it('replay emits ONE deferred event ...')`.
  *
  * **Caveat — `ordering: 'reorder'` source mode.** `LiveReduce`
  * processes events in arrival order, not sorted-by-timestamp
@@ -189,11 +191,12 @@ export class LiveReduce<
   #lastClockBucketIdx: number | undefined;
   #countSinceLastEmit: number;
   /**
-   * Deferred emission state. Trigger fires are deferred to a
-   * microtask so retention has finished running and `'evict'`
-   * callbacks have processed. `#pendingEmitKey` is set on each
-   * `#ingest` and cleared by the microtask flush; the most-recent
-   * key wins (we emit one snapshot per pushMany).
+   * Deferred emission state. Trigger fires are held until the end
+   * of the push (settle hook; a microtask outside any push) so
+   * retention has finished running and `'evict'` callbacks have
+   * processed. `#pendingEmitKey` is set on each `#ingest` and
+   * cleared by the flush; the most-recent key wins (we emit one
+   * snapshot per pushMany).
    */
   #pendingEmitKey: any | undefined;
   #pendingEmitTs: number;
@@ -203,7 +206,7 @@ export class LiveReduce<
   readonly #onEvent: Set<(event: EventForSchema<Out>) => void>;
   readonly #unsubscribeEvent: () => void;
   readonly #unsubscribeEvict: (() => void) | undefined;
-  /** [PND-REDUCETICK] Root series' end-of-push hook; `undefined` → microtask. */
+  /** [PND-REDUCETICK] Root series' end-of-push hook; `undefined` if the source has none. */
   readonly #unsubscribeSettle: (() => void) | undefined;
   readonly #source: LiveSource<S>;
   #disposed: boolean;
@@ -410,33 +413,35 @@ export class LiveReduce<
     }
 
     // For Trigger.count, increment per-event so we don't lose
-    // count progress across deferred microtasks (a pushMany of K
+    // count progress across deferred flushes (a pushMany of K
     // rows must increment K times, not 1). Other triggers settle
     // their state in the deferred flush.
     if (this.#trigger.kind === 'count') {
       this.#countSinceLastEmit++;
     }
 
-    // Schedule a deferred emission via microtask. By the time it
-    // runs, retention has applied AND `'evict'` callbacks have
-    // processed → reducer state is consistent with source's
-    // current buffer. Per-pushMany this fires once regardless of
-    // K rows; the most-recent key wins. See class JSDoc.
+    // Hold the emission until the end of the push (settle hook), when
+    // retention has applied AND `'evict'` callbacks have processed →
+    // reducer state is consistent with source's current buffer.
+    // Per-pushMany this fires once regardless of K rows; the
+    // most-recent key wins. See class JSDoc.
     this.#pendingEmitKey = event.key();
     this.#pendingEmitTs = event.begin();
-    // Inside a push with a settle hook the flush runs at the end of the
-    // push; otherwise (construction replay, or a source without the hook)
-    // fall back to a microtask.
-    if (this.#unsubscribeSettle === undefined && !this.#microtaskScheduled) {
+    // Inside a push the root series' settle hook flushes this at the end
+    // of the push, before any microtask runs. The microtask is the
+    // backstop for events that arrive outside any push: construction
+    // replay, an upstream reduce's own replay emission, or a source
+    // without the hook. After a settle flush it finds nothing pending.
+    if (!this.#microtaskScheduled) {
       this.#microtaskScheduled = true;
       queueMicrotask(() => this.#flushPendingEmit());
     }
   }
 
   /**
-   * Microtask flush: runs after the current synchronous push
-   * completes, including any retention-driven `'evict'` callbacks.
-   * Reducer state is post-retention by this point.
+   * Flush the pending emission: from the settle hook at the end of a
+   * push (after any retention-driven `'evict'` callbacks), or from the
+   * backstop microtask. Reducer state is post-retention by this point.
    */
   #flushPendingEmit(): void {
     this.#microtaskScheduled = false;
