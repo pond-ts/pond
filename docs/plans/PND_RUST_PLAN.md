@@ -3473,59 +3473,109 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     (2/10). All 10 noticed that the prompt's flat-window RSI rule (100)
     differs from pond-ts's documented gap; the data never has that case.
 
-- **[PND-RUST-R3]** — the live layer (drafted 2026-10-23, after R2; not
-  started). RFC phase R3: pond-ts `packages/core/src/live/`, 9.7k lines
-  (`LiveSeries` 1.65k, partitioned 1.6k + 1.15k rolling, `LiveView` 1.2k,
-  rolling / fused rolling 1.3k, aggregation 0.5k, reduce 0.5k, storage
-  1.4k, triggers 0.2k).
-  - Exactness: replaying the same events gives the same emissions (what
-    each operator hands out, and when) and the same snapshots as pond-ts,
-    bit for bit. Checked against a new fixture written by pond-ts
+- **[PND-RUST-R3]** — the live layer (drafted 2026-10-23, after R2; revised
+  2026-10-25 after a review of the plan; not started). RFC phase R3: pond-ts
+  `packages/core/src/live/`, 9.7k lines (`LiveSeries` 1.65k, partitioned
+  1.6k + 1.15k rolling, `LiveView` 1.2k, rolling / fused rolling 1.3k,
+  aggregation 0.5k, reduce 0.5k, storage 1.4k, triggers 0.2k).
+  - Exactness: replaying the same pushes gives the same outputs (every
+    kind, in the same order) and the same snapshots as pond-ts, bit for
+    bit. Checked against a new fixture written by pond-ts
     (`packages/core/test/fixtures/live-parity.json`, kept fresh by a pond-ts
-    test): each case is a schema, options, an operator chain and a list of
-    pushes / clock ticks, with every emission and the final snapshot
-    recorded. Numbers in snapshots go through the batch parity rules.
+    test, like `parity.json`): each case is a schema, options, an operator
+    chain and a list of `push` / `push_many` calls, with every output and
+    the final snapshot recorded. There is no clock input: pond-ts triggers
+    and `max_age` run on event times only (`triggers.ts` "Data-driven, not
+    wall-clock-driven"; `max_age` measured from the newest event). Numbers
+    in snapshots go through the batch parity rules.
+  - `reduce` timing (review 2026-10-25, reproduced): pond-ts `LiveReduce`
+    emits from a `queueMicrotask`, so three `push()` calls with no `await`
+    between them give ONE output (sum 6) instead of 1, 3, 6, and with
+    `count(2)` four such pushes give 10, 10 instead of 3, 10. Its own doc
+    says each `push()` gives one output, so this is logged as pond-ts bug
+    [PND-REDUCETICK]. It is the only deferred output in `live/` (no other
+    `queueMicrotask` / `setTimeout` / `Promise`). Proposed (to confirm):
+    fix pond-ts first so `reduce` emits at the end of each `push` /
+    `push_many` call (after retention); pond-rs does the same. Until then
+    the fixture writer awaits after every push call, which gives that
+    behaviour today. A `push_many` of K rows still gives one output
+    (`count(n)`: floor(K / n) copies of the final value, as pond-ts
+    documents).
   - How results reach the caller: **channels** (pjm17971 chose this on
     2026-10-24, from a card offering also an owned pipeline read back by
-    the caller, and pond-ts-shaped shared handles with closures). pond-ts
-    views subscribe to their source with callbacks (`on('event')` →
-    unsubscribe); the direct Rust port needs shared mutable handles
-    (`Rc<RefCell<…>>`), which agents find hard. Instead each operator
-    sends what it emits (an event, a closed bucket, a rolling row, an
-    eviction) down a channel, and the caller holds the receiving end.
-    Defaults to settle in step 1 and confirm in its PR: the operators
-    still run inside `push` / `push_many` (so a push sends every emission
-    it causes before it returns, in pond-ts's order, and a replay is
-    deterministic); the `flume` crate rather than `std::sync::mpsc`,
-    because long-running Rust services are mostly async (tokio) and
-    `flume` gives both a blocking `recv()` and `recv_async().await`;
-    bounded by default with a stated policy when a reader falls behind
-    (wait, or drop the oldest), since an unbounded channel nobody reads
-    grows memory without limit; a dropped receiver unsubscribes that
-    output. Everything is `Send`, so
-    a pipeline can move into a thread. Snapshots (`to_time_series()`) stay
-    plain calls.
+    the caller, and pond-ts-shaped shared handles with closures). Each
+    operator sends what it emits down a channel, and the caller holds the
+    receiving end. Proposed defaults, to confirm in step 1's PR:
+    - Operators run inside `push` / `push_many`: a push sends every output
+      it causes before it returns, in pond-ts's order (with `reduce` as
+      above), so a replay is deterministic. A reader cannot push back in
+      from inside a push, so pond-ts's re-entrant push queue
+      ([PND-LIVFIX]) is not needed outside partitioned fan-in.
+    - One subscription per operator carries every kind of output that
+      operator has, as one enum in pond-ts's order, so the order across
+      kinds survives: `LiveSeries` `Event` / `Batch` (once per
+      `push_many`) / `Evict` (a `push_many` of 3 rows into a series keeping
+      2 gives event 1, 2, 3, batch, evict 1); `LiveAggregation` `Closed` /
+      `Bucket` (the open bar's provisional value, on every event) /
+      `Update`; rolling and reduce `Event` / `Update`.
+    - A slow reader never blocks the feed. Per subscription: `Unbounded`
+      (pond-ts's behaviour: callbacks never drop), `Latest` (keep only the
+      newest output, for a reader that wants the current value),
+      `DropOldest(n)` (hand-built: `flume` has no drop-oldest send; the
+      operator keeps its own receiver and takes one item out before
+      sending into a full channel), and `Block(n)` only as an explicit
+      opt-in documented to hang if nobody reads. Dropped items are
+      counted. Default: `DropOldest(1024)`. Replay tests use `Unbounded`.
+    - `flume` rather than `std::sync::mpsc`: both a blocking `recv()` and
+      `recv_async().await` (tokio services). pond-rs has no channel
+      dependency today, so the live layer goes behind a `live` cargo
+      feature and batch-only users don't pull it in.
+    - A dropped receiver unsubscribes that output.
+  - Who owns the operators (review 2026-10-25): channels only carry
+    outputs; the caller must also ask an operator for its state
+    (`LiveAggregation::closed()` / `snapshot()` / `at()`; rolling and
+    reduce `value()`; views `at` / `first` / `last` / `bisect` /
+    `to_time_series`), often from another thread while the feed pushes
+    (for example an MCP server answering "what is the latest value?").
+    Proposed: each operator call (`live.filter(…)`, `.aggregate(…)`)
+    returns a small handle the caller can clone and send to other threads;
+    the operators themselves live in one graph owned by the source, behind
+    a lock the library takes. A `push` holds it for the whole push; a
+    query holds it only to copy out its answer. So callers never write
+    `Rc<RefCell<…>>` or `Arc<Mutex<…>>` themselves; one writer, many
+    readers. (The plan's earlier line that agents find `Rc<RefCell<…>>`
+    hard was an expectation, not a trial result.) Step 1 builds this with
+    a two-operator chain (filter then aggregate, both queried from another
+    thread while a feed pushes) before the rest is built on it.
   - Steps (one PR each, parity + perf against pond-ts in each):
     1. `LiveSeries`: schema, `push` / `push_many` / `push_json`, ordering
        (`strict` / `drop` / `reorder` with `grace_window`), retention
-       (`max_events` / `max_age`) and eviction, key queries (`at`,
-       `first`, `last`, `bisect`, `at_or_before`…), snapshots
-       (`to_time_series`, rows, JSON), `stats`; the replay fixture and its
-       harness.
-    2. Views: `filter`, `map`, `select`, `sample`, `window`; live
-       `diff` / `rate` / `pct_change` / `fill` / `cumulative`.
+       (`max_events` / `max_age`) and eviction, `clear`, key queries
+       (`at`, `first`, `last`, `bisect`, `at_or_before`, `find`, `some`,
+       `every`, `includes_key`…), `time_range` / `event_rate`, snapshots
+       (`to_time_series`, rows, JSON, `to_json` / `from_json`), `stats`;
+       the subscription and slow-reader policies; the ownership design
+       with a minimal filter → aggregate chain queried from another
+       thread; the replay fixture and its harness.
+    2. Views: `filter`, `map`, `select`, `sample`, `window`, `dispose`;
+       live `diff` / `rate` / `pct_change` / `fill` / `cumulative`.
     3. Triggers (`event`, `clock(sequence)`, `every(duration)`,
-       `count(n)`) and `LiveAggregation` (sequence buckets, closed-bucket
-       emission).
+       `count(n)`; calendar sequences refused for clock triggers, as
+       pond-ts) and the full `LiveAggregation` (closed and open buckets).
     4. Rolling: single-window (`LiveRollingAggregation`), fused
-       multi-window (`LiveFusedRolling`), `reduce`.
+       multi-window (`LiveFusedRolling`), `reduce` (after
+       [PND-REDUCETICK]).
     5. Partitioned: `partition_by`, `to_map` / `apply` / `collect`
        (append-only fan-in), partitioned fused rolling with synchronised
        emission.
     6. Perf (events per second, pond-ts vs pond-rs) and an agent trial on
        a streaming task against polars-or-hand-written Rust.
-  - Out of scope: React hooks, charts, `@pond-ts/process` graph binding
-    (`fromLive`), live financial studies (none exist in pond-ts).
+  - Out of scope: React hooks, charts, live financial studies (none exist
+    in pond-ts), and `@pond-ts/process` (RFC decision 4), including its
+    `fromLive` binding. So R3 gives live series and studies, not the
+    process layer's op registry, envelopes or wire format; an app that
+    needs those keeps using `@pond-ts/process` in TypeScript, or a process
+    port becomes its own phase.
 
 - Threading: done in R1a step 4 (per output column). If R1b needs one
   column split across threads, reductions must still give the same bits as

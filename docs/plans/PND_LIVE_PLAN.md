@@ -137,6 +137,31 @@ slim observation (per-host gauges, debug instrumentation) without reducer
 state. Re-triage now that fused rolling shipped — may be a small bolt-on on
 the shared dispatch path; may earn its own RFC. Don't pre-decide.
 
+### [PND-REDUCETICK] — `live.reduce` output count depends on where the caller awaits
+
+Found 2026-10-25 by a review of the pond-rs R3 plan, reproduced on main
+(9bf0b1d). `LiveReduce` emits from a `queueMicrotask` (`live-reduce.ts`
+`#ingest` / `#flushPendingEmit`) so its output reflects the buffer after
+retention. Side effect: pushes with no `await` between them share one
+emission.
+
+| calls (sum reducer)                     | outputs             |
+| --------------------------------------- | ------------------- |
+| `push` ×3 (values 1, 2, 3), no `await`  | 6                   |
+| `push` ×3, `await` after each           | 1, 3, 6             |
+| `count(2)`, `push` ×4 (1..4), no await  | 10, 10              |
+| `count(2)`, `push` ×4, await after each | 3, 10               |
+| `count(2)`, `pushMany` of 4             | 10, 10 (documented) |
+
+The class doc says "each individual `push()` is one row → one emission",
+so the first and third rows are a bug: the output depends on the caller's
+code layout, not on the data. It is the only deferred output in `live/`.
+Proposed fix: emit at the end of each `push` / `pushMany` call, after
+retention and `'evict'`, through an internal "push finished" hook on
+`LiveSeries` instead of a microtask. Behaviour change for callers who push
+several times without awaiting (they get one output per push again). The
+pond-rs live layer ([PND-RUST-R3]) waits on this for `reduce` parity.
+
 ## Decisions
 
 ### Live column reads promoted out of experimental — 2026-10-10 (1.0 readiness)

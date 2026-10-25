@@ -614,15 +614,17 @@ the study oracle) is done.
   complete.** Detail in the breakout plan.
 
 - **[PND-RUST-R3]** — The live layer in pond-rs (RFC phase R3), drafted
-  2026-10-23 after R2; awaiting pjm17971's review of the plan. Port
-  pond-ts's live layer (`LiveSeries`, views, live aggregation / rolling /
-  reduce, triggers, partitioned live) so that replaying the same events
-  gives the same emissions and snapshots as pond-ts, checked against a new
-  pond-ts replay fixture. Results reach the caller through channels
-  (pjm17971 chose this on 2026-10-24 over an owned pipeline read back by
-  the caller and over pond-ts-style shared handles with callbacks): each
-  operator sends what it emits down a channel the caller holds. Steps 1–6 in the breakout plan; React hooks and charts stay
-  out of scope.
+  2026-10-23 after R2, revised 2026-10-25 after a review; awaiting
+  pjm17971's review of the plan. Port pond-ts's live layer (`LiveSeries`,
+  views, live aggregation / rolling / reduce, triggers, partitioned live) so
+  that replaying the same pushes gives the same outputs and snapshots as
+  pond-ts, checked against a new pond-ts replay fixture. Results reach the
+  caller through channels (pjm17971 chose this on 2026-10-24): one
+  subscription per operator carrying all its output kinds in order, a slow
+  reader never blocks the feed, and operators are reached through cloneable
+  handles so other threads can query current state. `reduce` waits on
+  [PND-REDUCETICK]. Steps 1–6 in the breakout plan; React hooks, charts and
+  `@pond-ts/process` stay out of scope.
 
 - **[PND-RUSTRFC]** — Still open: versioning (lock-step with `v*` or
   independent).
@@ -893,6 +895,11 @@ Robustness debt plus the queued composition workstreams. Plan:
   exact-removal eviction channel.
 - **[PND-TAPOBS]** — Evaluate `tap()` per-partition observer now that fused
   rolling shipped.
+- **[PND-REDUCETICK]** — `live.reduce` emits from a microtask, so several
+  `push()` calls with no `await` between them give one output instead of one
+  each (contrary to its own doc), and `count(n)` repeats the final value.
+  Fix: emit at the end of each push call. Found 2026-10-25 reviewing the
+  pond-rs R3 plan; blocks pond-rs `reduce` parity.
 - **[PND-LIVEAPPEND]** — Live `rolling` / `diff` / `rate` / `pctChange` don't
   take the batch `{ append: true }` / `{ output }` options added in
   [PND-CHAIN] (2026-10-22). Add them if a live consumer asks; batch-only for
