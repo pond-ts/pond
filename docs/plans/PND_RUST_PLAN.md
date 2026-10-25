@@ -3496,10 +3496,13 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
     Defaults to settle in step 1 and confirm in its PR: the operators
     still run inside `push` / `push_many` (so a push sends every emission
     it causes before it returns, in pond-ts's order, and a replay is
-    deterministic); `std::sync::mpsc` (no new dependency; works from any
-    thread, and an async app can forward it); an unbounded channel by
-    default so a slow reader never blocks ingest, with a bounded option;
-    a dropped receiver unsubscribes that output. Everything is `Send`, so
+    deterministic); the `flume` crate rather than `std::sync::mpsc`,
+    because long-running Rust services are mostly async (tokio) and
+    `flume` gives both a blocking `recv()` and `recv_async().await`;
+    bounded by default with a stated policy when a reader falls behind
+    (wait, or drop the oldest), since an unbounded channel nobody reads
+    grows memory without limit; a dropped receiver unsubscribes that
+    output. Everything is `Send`, so
     a pipeline can move into a thread. Snapshots (`to_time_series()`) stay
     plain calls.
   - Steps (one PR each, parity + perf against pond-ts in each):
