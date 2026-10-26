@@ -78,6 +78,20 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **Annotation roles `wash` and `argument`** ([PND-ANNROLE]). A resting
+  annotation draws at 0.4 alpha, which was too loud for a focus tint behind
+  data and too quiet for a mark that carries the chart's point, so consumers
+  replaced `theme.annotation` wholesale in both directions. `annotation.roles`
+  entries can now set `depth` (their own three-level ramp), and `color` is
+  optional (a role without it takes the register hue). `defaultTheme` and
+  `estelaTheme` ship two roles: `wash` (edges rest at 0.2, fill 0.06; estela's
+  is a 7% foam tint) and `argument` (rests at 0.85). Use them as
+  `<Region role="wash">` / `<Marker role="argument">`. Marks with no `role`
+  are unchanged. A theme that replaces `annotation` without spreading the
+  base's `roles` has neither role, so `role="wash"` falls back to the register.
+
 ### Changed
 
 - **`live.reduce` emits at the end of each push** ([PND-REDUCETICK]). It used
