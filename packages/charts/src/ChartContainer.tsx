@@ -121,7 +121,8 @@ export interface ChartContainerProps {
    * fills them. An entry is a string, or `{ key, label }` when the slot's
    * identity and its display string differ ([PND-CATID]) — the slots, the
    * agreement check against a `<BarChart categories>` layer and selection all
-   * speak `key`; the axis draws `label`. A plain string is its own key.
+   * speak `key`; the axis draws `label`. A plain string is a key whose label
+   * comes from the category layer (or is the key, with no layer to say).
    *
    * Until this prop, the band scale was reachable only *through a layer*:
    * `<BarChart categories>` (and a **horizontal** heat map) reported
@@ -907,11 +908,16 @@ function ResolvedChartContainer({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- content identity
     [categoriesKey],
   );
+  // A bare-string entry declares a slot, not a label: it defers to a layer's
+  // label for that slot, so declaring keys on the container does not replace
+  // the bars' display strings with keys.
   const declaredLabels = useMemo(
-    (): readonly string[] | null =>
+    (): readonly (string | undefined)[] | null =>
       categoriesProp === undefined
         ? null
-        : categoriesProp.map((c) => (typeof c === 'string' ? c : c.label)),
+        : categoriesProp.map((c) =>
+            typeof c === 'string' ? undefined : c.label,
+          ),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- content identity
     [categoriesKey],
   );
@@ -1315,14 +1321,29 @@ function ResolvedChartContainer({
   // it declares them, else the first category layer's. Only the keys are
   // checked for agreement — two layers may label one slot differently, and
   // the declaring side wins rather than throwing over presentation.
-  const categoryLabels = useMemo((): readonly string[] | null => {
-    if (declaredLabels !== null) return declaredLabels;
+  const categoryLabelsFresh = useMemo((): readonly string[] | null => {
+    let layer: readonly string[] | null = null;
     for (const s of sources.values()) {
       if ((s.xCategories?.() ?? null) === null) continue;
-      return s.xCategoryLabels?.() ?? null;
+      layer = s.xCategoryLabels?.() ?? null;
+      break;
     }
-    return null;
-  }, [sources, declaredLabels]);
+    if (declaredLabels === null) return layer;
+    // Declared label, else the layer's, else the key itself.
+    return declaredLabels.map(
+      (label, i) => label ?? layer?.[i] ?? categories?.[i] ?? '',
+    );
+  }, [sources, declaredLabels, categories]);
+  // Held by content, like the declared list: the merge builds a new array
+  // whenever a layer re-registers, and the band scale must not rebuild (and
+  // repaint every row) for labels that did not change.
+  const categoryLabelsKey =
+    categoryLabelsFresh === null ? null : JSON.stringify(categoryLabelsFresh);
+  const categoryLabels = useMemo(
+    () => categoryLabelsFresh,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- content identity
+    [categoryLabelsKey],
+  );
 
   // Auto-fit extent — the union of the layers' x extents — used as the domain
   // when no explicit `range` is given. (Same source registry as the kind; the

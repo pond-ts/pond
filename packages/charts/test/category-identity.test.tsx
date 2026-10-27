@@ -9,6 +9,7 @@ import { CategoryAxis } from '../src/CategoryAxis.js';
 import { Selector } from '../src/selectors.js';
 import { YAxis } from '../src/YAxis.js';
 import { scaleBand } from '../src/bandScale.js';
+import { sameMark, selectionContains } from '../src/span.js';
 import { useChartFrame, type ChartBands } from '../src/useChartFrame.js';
 import {
   categoryStack,
@@ -55,6 +56,12 @@ describe('the reader', () => {
       { label: 'b', value: 2 },
     ]);
     expect(ss.marks).toEqual(['a', 'b']);
+    expect('markLabels' in ss).toBe(false);
+  });
+
+  it('the stacked reader builds the same series for a list without keys', () => {
+    const ss = categoryStacks([{ label: 'a', values: { x: 1 } }], ['x']);
+    expect(ss.marks).toEqual(['a']);
     expect('markLabels' in ss).toBe(false);
   });
 
@@ -199,10 +206,11 @@ describe('the chart', () => {
         'q2-2026',
       ],
     });
-    // The container's labels win — they are what it declared — and a plain
-    // string entry is its own label.
+    // The container's labels win where it declares them; a bare-string entry
+    // declares only the slot, so that one keeps the bar's own label.
     expect(m.text()).toContain('Q1 ’25');
-    expect(m.text()).toContain('q2-2026');
+    expect(m.text()).toContain('Q2');
+    expect(m.text()).not.toContain('q2-2026');
   });
 
   it('a container list that disagrees on keys still throws', () => {
@@ -215,5 +223,72 @@ describe('the chart', () => {
     } finally {
       console.error = quiet;
     }
+  });
+
+  it('a hit-built entry round-trips through `selectionContains`', () => {
+    // The toggle recipe: an entry built from a hit must be found by the next
+    // hit on the same bar, and NOT by a hit on the other bar drawing 'Q1'.
+    const m = mount(null);
+    const cf = m.frame();
+    const layer = m.row().layers[0]!.layer;
+    const y = m.row().yScales.get('v')!;
+    const hitAt = (slot: number) =>
+      layer.hitTest!(cf.xScale(slot + 0.5), y(1), cf.xScale, y, 'select')!;
+    const sel = [hitAt(1)];
+    expect(selectionContains(sel, hitAt(1))).toBe(true);
+    expect(selectionContains(sel, hitAt(0))).toBe(false);
+    expect(sameMark(hitAt(0), hitAt(1))).toBe(false);
+  });
+});
+
+describe('the stacked chart', () => {
+  it('a keyed stack selects the whole bar by key, not by label', () => {
+    let cf: ContainerFrame | null = null;
+    let rf: RowFrame | null = null;
+    function Capture() {
+      const c = useContext(ContainerContext);
+      const r = useContext(RowContext);
+      useEffect(() => {
+        if (c) cf = c;
+        if (r) rf = r;
+      });
+      return null;
+    }
+    const stub = stubCanvasContext();
+    try {
+      render(
+        <ChartContainer width={400} showAxis={false}>
+          <Selector enabled={false} selected={[pick('b')]} />
+          <ChartRow height={160}>
+            <YAxis id="v" min={0} max={10} label="" />
+            <Layers>
+              <BarChart
+                categories={[
+                  { key: 'a', label: 'Same', values: { x: 1, y: 2 } },
+                  { key: 'b', label: 'Same', values: { x: 2, y: 1 } },
+                ]}
+                columns={['x', 'y']}
+                colors={{ x: '#aa0000', y: '#0000aa' }}
+                axis="v"
+                id="q"
+              />
+              <Capture />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>,
+      );
+    } finally {
+      stub.restore();
+    }
+    const { ctx, calls } = recordingContext();
+    rf!.layers[0]!.layer.draw(ctx, cf!.xScale, rf!.yScales.get('v')!);
+    const dim = defaultTheme.bar.default.dimmed!;
+    // Bar 'a' (two segments) recedes; bar 'b', which draws the same label,
+    // does not.
+    expect(
+      calls.filter(
+        (c) => c.type === 'set' && c.name === 'fillStyle' && c.args[0] === dim,
+      ),
+    ).toHaveLength(2);
   });
 });

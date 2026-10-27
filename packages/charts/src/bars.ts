@@ -1274,11 +1274,13 @@ export function drawStacks(
       }
       // A span covers this segment when the bin's `begin` is inside its
       // half-open `x` (and its `y` / `rows` channels pass — see the param doc).
-      // The label channel is what the hit reports: the stable per-bin `mark`
-      // (a categorical bar's category name) when the series carries marks,
-      // else the group — `hitTest` builds `label: stableMark ?? name`, and the
-      // span test must read the same field or `selectionContains` and the
-      // canvas disagree on every categorical bar.
+      // The label channel is what the hit reports: a categorical bar's display
+      // label (`markLabels`, else its `mark`) when the series carries marks,
+      // else the group — `hitTest` builds `label: markLabels?.[b] ?? stableMark
+      // ?? name`, and the span test must read the same field or
+      // `selectionContains` and the canvas disagree on every categorical bar.
+      // It stays a LABEL channel ([PND-CATID]): a `rows` span names every
+      // category that draws that string.
       if (!selected && hasSpans) {
         selected = spanMatchesAny(
           spans,
