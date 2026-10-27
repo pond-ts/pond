@@ -3562,8 +3562,9 @@ scale }`, written back as `Decimal128`). Exact for `count` / `first`
        `drop` / `reorder`, `pushMany` with a bad second row commits and
        emits the first row's `event` (no `batch`) before throwing, while
        `strict` refuses the whole batch, so the "never half-committed"
-       rule in the design above holds for pond-ts only under `strict`
-       (step 2 decides: copy, or fix pond-ts first); disposing the last
+       rule in the design above held for pond-ts only under `strict`
+       (pjm17971 chose to fix pond-ts: [PND-BATCHATOM], so every mode
+       now refuses a bad batch whole); disposing the last
        view on an intermediate view disposes the intermediate too, but
        only when nothing listens to it (case `view-dispose-chain`, an
        unwatched node; pond-rs's `remove` goes down the tree, so this
