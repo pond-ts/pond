@@ -8,6 +8,9 @@ import { Layers } from '../src/Layers.js';
 import { LineChart } from '../src/LineChart.js';
 import { XAxis } from '../src/XAxis.js';
 import { TimeAxis } from '../src/TimeAxis.js';
+import { CategoryAxis } from '../src/CategoryAxis.js';
+import { BarChart } from '../src/BarChart.js';
+import { YAxis } from '../src/YAxis.js';
 
 afterEach(cleanup);
 
@@ -99,9 +102,67 @@ describe('a mounted <XAxis> owns the x axis', () => {
     expect(container.textContent).not.toContain('mine');
   });
 
-  it('`showAxis={false}` still hides everything but the declared axis', () => {
+  it('`showAxis={false}` with nothing declared draws no axis', () => {
     const { container } = render(<Chart showAxis={false} />);
     expect(axes(container)).toHaveLength(0);
+  });
+
+  it('`showAxis={false}` plus a declared axis draws just that one (unchanged)', () => {
+    // The path every existing consumer that worked around the default is on.
+    const { container } = render(
+      <Chart showAxis={false}>
+        <XAxis label="mine" />
+      </Chart>,
+    );
+    expect(axes(container)).toHaveLength(1);
+    expect(container.textContent).toContain('mine');
+  });
+
+  it('a <CategoryAxis> stands the implicit strip down too', () => {
+    const { container } = render(
+      <ChartContainer width={400}>
+        <ChartRow height={120}>
+          <YAxis id="v" min={0} />
+          <Layers>
+            <BarChart
+              categories={[
+                { label: 'AAPL', value: 10 },
+                { label: 'MSFT', value: 20 },
+              ]}
+            />
+          </Layers>
+          <CategoryAxis />
+        </ChartRow>
+      </ChartContainer>,
+    );
+    expect(axes(container)).toHaveLength(1);
+    expect(container.textContent).toContain('AAPL');
+  });
+
+  it('a managed-height container still subtracts the implicit strip', () => {
+    // `showAxis` is now undefined by default rather than `true`. Nothing else
+    // reads it, and the managed layout must be exactly as before: a flex
+    // column whose rows block flexes and whose implicit strip sits outside
+    // it, taking its natural height. (happy-dom has no layout engine, so the
+    // subtraction is pinned as this structure, as in container-height.test.)
+    const { container } = render(
+      <ChartContainer width={400} height={200}>
+        <ChartRow>
+          <Layers>
+            <LineChart series={series()} column="v" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const outer = Array.from(container.querySelectorAll('div')).find(
+      (d) => d.style.height === '200px',
+    )!;
+    expect(outer.style.display).toBe('flex');
+    expect(outer.style.flexDirection).toBe('column');
+    const rowsBlock = outer.firstElementChild as HTMLElement;
+    expect(rowsBlock.style.flex).toBe('1 1 0%');
+    expect(rowsBlock.querySelector("[data-axis='x']")).toBeNull();
+    expect(axes(outer)).toHaveLength(1);
   });
 
   it('`showAxis` true + a declared axis keeps both, and warns', () => {
