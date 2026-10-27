@@ -507,6 +507,14 @@ export interface ContainerFrame {
    */
   registerCursor(key: symbol, entry: CursorEntry): void;
   unregisterCursor(key: symbol): void;
+  /**
+   * A mounted, caller-declared `<XAxis>` announces itself here
+   * ([PND-XAXISOWN]), so the container's implicit strip can stand down — a
+   * declared axis is what the caller meant, and two was never the intent.
+   * The container's own implicit strip does not register.
+   */
+  registerXAxis(key: symbol): void;
+  unregisterXAxis(key: symbol): void;
   /** Every registered cursor, in mount order (see {@link registerCursor}). */
   readonly cursors: readonly CursorEntry[];
   /**
@@ -1971,3 +1979,10 @@ export interface LayerRegistry {
 }
 
 export const LayersContext = createContext<LayerRegistry | null>(null);
+
+/**
+ * `true` only around the container's own implicit x-axis strip, so that
+ * `<XAxis>` can tell it is the implicit one and not register as declared
+ * ([PND-XAXISOWN]). Internal; not exported from the package.
+ */
+export const ImplicitXAxisContext = createContext(false);
