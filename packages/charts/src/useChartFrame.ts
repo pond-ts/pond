@@ -98,8 +98,10 @@ export interface ChartBand {
   readonly x1: number;
   /** The slot's centre in px — where a bar centres and a tick labels. */
   readonly center: number;
-  /** The category name at this slot. */
+  /** The category's display label at this slot. */
   readonly label: string;
+  /** The category's key — its identity, equal to {@link label} unless distinct labels were given ([PND-CATID]). */
+  readonly key: string;
 }
 
 /**
@@ -117,8 +119,10 @@ export interface ChartBands {
   readonly count: number;
   /** One slot's width in px (the pitch; slots are contiguous and equal). */
   readonly pitch: number;
-  /** The ordered category names, index-aligned with the slots. */
+  /** The ordered display labels, index-aligned with the slots. */
   readonly labels: readonly string[];
+  /** The ordered category keys, index-aligned with the slots ([PND-CATID]). */
+  readonly keys: readonly string[];
   /** The slot at `index`, or `null` when `index` is not a real slot. */
   at(index: number): ChartBand | null;
 }
@@ -230,11 +234,16 @@ export function useChartFrame(): ChartFrame {
     // `domain([0, n])` so `d0` is 0 today, but every read goes through it so
     // an offset domain could never silently shift the labels off the slots.
     const labels: string[] = [];
-    for (let i = 0; i < count; i++) labels.push(band.label(d0 + i + 0.5));
+    const keys: string[] = [];
+    for (let i = 0; i < count; i++) {
+      labels.push(band.label(d0 + i + 0.5));
+      keys.push(band.key(d0 + i + 0.5));
+    }
     return {
       count,
       pitch,
       labels,
+      keys,
       at(index: number): ChartBand | null {
         if (!Number.isInteger(index) || index < 0 || index >= count) {
           return null;
@@ -244,6 +253,7 @@ export function useChartFrame(): ChartFrame {
           x1: band(d0 + index + 1),
           center: band(d0 + index + 0.5),
           label: labels[index] ?? '',
+          key: keys[index] ?? '',
         };
       },
     };

@@ -1284,7 +1284,7 @@ export function drawStacks(
           spans,
           ss.begin[b]!,
           v,
-          stableMark ?? ss.groups[g]!,
+          ss.markLabels?.[b] ?? stableMark ?? ss.groups[g]!,
         );
       }
       let isHovered = false;

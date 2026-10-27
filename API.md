@@ -350,27 +350,27 @@ consumers writing custom draw code; no shipped layer needs their output.
 The ValueSeries siblings (`fromValueSeries` etc.) are deliberately
 **unexported** (adapters are internal; see [PND-VSADAPT]).
 
-| Export               | Signature gist                                         | Feeds                                                     |
-| -------------------- | ------------------------------------------------------ | --------------------------------------------------------- |
-| `fromTimeSeries`     | `(series, column) → ChartSeries`                       | Line/Area/Scatter                                         |
-| `bandFromTimeSeries` | `(series, lower, upper) → BandSeries`                  | BandChart                                                 |
-| `boxFromTimeSeries`  | `(series, BoxColumns) → BoxSeries`                     | BoxPlot                                                   |
-| `barsFromTimeSeries` | `(series, column) → BarSeries`                         | BarChart                                                  |
-| `ohlcFromTimeSeries` | `(series, OhlcColumns) → OhlcSeries`                   | Candlestick                                               |
-| `stacksFromGroups`   | `(Map<string, TimeSeries>, column) → StackedBarSeries` | Stacked bars from grouped series                          |
-| `stacksFromColumns`  | `(series, columns[]) → StackedBarSeries`               | Stacked bars from wide columns                            |
-| `barsFromBins`       | `(bins, column, opts?) → BarSeries`                    | One-column histogram (single-series path, [PND-BARSEM])   |
-| `stacksFromBins`     | `(bins, columns[], opts?) → StackedBarSeries`          | Multi-column histograms from `byColumn` output            |
-| `categoryStack`      | `(CategoryDatum[]) → StackedBarSeries`                 | Categorical bars                                          |
-| `categoryStacks`     | `(CategoryStackDatum[], columns) → StackedBarSeries`   | Stacked categorical bars ([PND-CATSTACK])                 |
-| `bandedColor`        | `(value, colors[], lo, hi) → string \| undefined`      | The heat map's own banding — for a matching legend        |
-| `heatValueExtent`    | `(StackedBarSeries) → [lo, hi] \| null`                | Finite extent across a grid; `<HeatMap>`'s domain default |
-| `transposeRow`       | `(series, opts?) → CategoryDatum[]`                    | One row read across as categories                         |
+| Export               | Signature gist                                         | Feeds                                                                                                 |
+| -------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `fromTimeSeries`     | `(series, column) → ChartSeries`                       | Line/Area/Scatter                                                                                     |
+| `bandFromTimeSeries` | `(series, lower, upper) → BandSeries`                  | BandChart                                                                                             |
+| `boxFromTimeSeries`  | `(series, BoxColumns) → BoxSeries`                     | BoxPlot                                                                                               |
+| `barsFromTimeSeries` | `(series, column) → BarSeries`                         | BarChart                                                                                              |
+| `ohlcFromTimeSeries` | `(series, OhlcColumns) → OhlcSeries`                   | Candlestick                                                                                           |
+| `stacksFromGroups`   | `(Map<string, TimeSeries>, column) → StackedBarSeries` | Stacked bars from grouped series                                                                      |
+| `stacksFromColumns`  | `(series, columns[]) → StackedBarSeries`               | Stacked bars from wide columns                                                                        |
+| `barsFromBins`       | `(bins, column, opts?) → BarSeries`                    | One-column histogram (single-series path, [PND-BARSEM])                                               |
+| `stacksFromBins`     | `(bins, columns[], opts?) → StackedBarSeries`          | Multi-column histograms from `byColumn` output                                                        |
+| `categoryStack`      | `(CategoryDatum[]) → StackedBarSeries`                 | Categorical bars; a datum's optional `key` is its selection identity (`marks`), `label` what is drawn |
+| `categoryStacks`     | `(CategoryStackDatum[], columns) → StackedBarSeries`   | Stacked categorical bars ([PND-CATSTACK])                                                             |
+| `bandedColor`        | `(value, colors[], lo, hi) → string \| undefined`      | The heat map's own banding — for a matching legend                                                    |
+| `heatValueExtent`    | `(StackedBarSeries) → [lo, hi] \| null`                | Finite extent across a grid; `<HeatMap>`'s domain default                                             |
+| `transposeRow`       | `(series, opts?) → CategoryDatum[]`                    | One row read across as categories                                                                     |
 
 Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 `BarSeries`, `OhlcSeries`, `StackedBarSeries`; option types `BoxColumns`,
 `OhlcColumns`, `BinRecord`, `StacksFromBinsOptions`, `CategoryDatum`,
-`CategoryStackDatum`, `RowAt`,
+`CategoryStackDatum`, `RowAt`, `CategoryEntry` (a container `categories` slot `{ key, label }`, from `ChartContainer.tsx`),
 `TransposeRowOptions`.
 
 ### Theming
@@ -395,7 +395,7 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 | `identityProvider`                         | The gap-free provider a plain continuous time axis runs on; `identityProvider({ timeZone })` puts its day anchors on that zone's midnights                                                                                           | `packages/charts/src/tradingTimeScale.ts` |
 | `TradingCalendarLike`                      | Structural shape of a trading calendar `ChartContainer calendar` accepts: `discontinuities({ spacing })` + optional `timeZone` (the axis default)                                                                                    | `packages/charts/src/tradingTimeScale.ts` |
 | `ScaleTimeZoneOptions`                     | `{ timeZone? }` for `scaleTradingTime` / `identityProvider`                                                                                                                                                                          | `packages/charts/src/tradingTimeScale.ts` |
-| `scaleBand` / `ScaleBand`                  | Ordinal slot scale for the category axis                                                                                                                                                                                             | `packages/charts/src/bandScale.ts`        |
+| `scaleBand` / `ScaleBand`                  | Ordinal slot scale for the category axis (`label(v)` draws, `key(v)` identifies)                                                                                                                                                     | `packages/charts/src/bandScale.ts`        |
 | `GapMode`                                  | `'none' \| 'empty' \| 'dashed' \| 'step' \| 'fade'` (Line/Area `gaps` prop)                                                                                                                                                          | `packages/charts/src/gaps.ts`             |
 | `DecimateOption`                           | `<LineChart decimate>` — M4 viewport decimation (`bool \| { threshold }`)                                                                                                                                                            | `packages/charts/src/decimate.ts`         |
 | `TrackerInfo` / `TrackerSample`            | Hover readout payload (`onTrackerChanged`)                                                                                                                                                                                           | `packages/charts/src/context.ts`          |
@@ -418,7 +418,7 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 | `ChartLegend` / `LegendRow` / `LegendItem` | The hook's return shape (`rows` group `items`; items carry `selected`/`hovered`)                                                                                                                                                     | `packages/charts/src/useChartLegend.ts`   |
 | `useChartFrame`                            | Resolved plot geometry: plot rect, gutters, x scale, a row's y scales, band slot edges                                                                                                                                               | `packages/charts/src/useChartFrame.ts`    |
 | `ChartFrame` / `ChartFrameRow`             | The hook's return shape — container x half, plus a row y half that is `null` outside a `<ChartRow>`                                                                                                                                  | `packages/charts/src/useChartFrame.ts`    |
-| `ChartBands` / `ChartBand`                 | Ordinal slot geometry on a category axis (`count`/`pitch`/`labels`/`at(i)`); `null` on time/value                                                                                                                                    | `packages/charts/src/useChartFrame.ts`    |
+| `ChartBands` / `ChartBand`                 | Ordinal slot geometry on a category axis (`count`/`pitch`/`labels`/`keys`/`at(i)`); `null` on time/value                                                                                                                             | `packages/charts/src/useChartFrame.ts`    |
 | `ChartXScale`                              | The union the container's shared x scale resolves to (time / linear / trading / band / elapsed)                                                                                                                                      | `packages/charts/src/context.ts`          |
 | `LegendPlacement`                          | `'top-left' \| 'top-right' \| 'bottom-left' \| 'bottom-right'`                                                                                                                                                                       | `packages/charts/src/Legend.tsx`          |
 | `Curve`                                    | Path interpolation: `'linear' \| 'monotone' \| 'natural' \| 'basis' \| 'step'`                                                                                                                                                       | `packages/charts/src/curve.ts`            |

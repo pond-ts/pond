@@ -2482,20 +2482,20 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-        **The fix is located, and it is a code fix rather than the documentation
-        sentence proposed below** (Codex, reviewing the `<Domain>` RFC,
-        2026-08-13). Suppression is global because **every row runs a query over
-        **all** annotations** — `Layers.tsx` (the `annotations.some(a => a.editing)` query). Row-scope that query to the
-        row's own marks (annotations already register their `rowKey`, which is
-        how the container draws a mark's guide on the *other* rows), or make
-        global editing say so explicitly. Available today; it was wrongly claimed
-        as something only a container decomposition could fix.
+            **The fix is located, and it is a code fix rather than the documentation
+            sentence proposed below** (Codex, reviewing the `<Domain>` RFC,
+            2026-08-13). Suppression is global because **every row runs a query over
+            **all** annotations** — `Layers.tsx` (the `annotations.some(a => a.editing)` query). Row-scope that query to the
+            row's own marks (annotations already register their `rowKey`, which is
+            how the container draws a mark's guide on the *other* rows), or make
+            global editing say so explicitly. Available today; it was wrongly claimed
+            as something only a container decomposition could fix.
 
-        _Still true; no longer felt here._ The draggable marker is gone — selection
-        is a click — so nothing on this page is in edit mode. But it cost a design
-        iteration to discover, and the docs still don't mention it. **The one-line
-        fix is a sentence on `editing`**: "while any mark in a row is editing, that
-        row's data cursor is suppressed."
+            _Still true; no longer felt here._ The draggable marker is gone — selection
+            is a click — so nothing on this page is in edit mode. But it cost a design
+            iteration to discover, and the docs still don't mention it. **The one-line
+            fix is a sentence on `editing`**: "while any mark in a row is editing, that
+            row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -4193,7 +4193,35 @@ decision: today duplicate labels are structurally meaningless (they merge);
 with keys they become legal, and the container's category-agreement check
 compares label lists.
 
-**Not started.** Blocked on owner review of the sketch.
+**Shipped (wave "Path to 1.0") as sketched — owner gate via the wave's
+independent review.** Decisions:
+
+- **`key?: string` on `CategoryDatum` and `CategoryStackDatum`, default
+  `label`.** The readers put keys in `marks` and add `markLabels` only when some
+  key differs from its label. An unkeyed list therefore builds the _identical_
+  series (pinned by test), not just an equivalent one.
+- **The axis domain is keys; labels ride alongside.** `scaleBand(keys,
+labels?)` — `label(v)` draws and the new `key(v)` identifies. A layer adds
+  `xCategoryLabels()` next to `xCategories()` (keys). The container checks
+  agreement on **keys only**. When labels conflict across layers it does not
+  throw: the container's declared labels win, otherwise the first category
+  layer's. Labels are presentation, so a disagreement there is not worth an
+  error.
+- **Container `categories` widens to `(string | { key, label })[]`**, not a
+  sibling prop. A bare string stays its own key, so every existing call is
+  unchanged.
+- **`SelectInfo.label` is the display label**, `mark` the key. The span/sweep
+  `rows` channel reads the same label field `hitTest` reports, as it did
+  before. It stays label-based, so a `rows` filter matches every category that
+  draws that string. `binCategories` (the horizontal chart's y labels) carries
+  labels, since it only ever labelled slots.
+- **Duplicate validation: none added.** Duplicate _labels_ are now legal (that
+  is the feature). Duplicate _keys_ collapse to one slot exactly as duplicate
+  labels did before. A throw would turn a silently-wrong chart that some caller
+  may have shipped into a crash, so that call is left to the owner as a
+  possible dev warning.
+- `useChartFrame().bands` gains `keys` and `ChartBand.key`, so header strips
+  can map a slot back to data without a side table.
 
 ---
 
